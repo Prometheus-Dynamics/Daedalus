@@ -1,0 +1,15 @@
+[package]
+name = "daedalus-wgsl-infer"
+version = "1.0.0"
+edition = "2024"
+description = "WGSL binding/workgroup inference helpers for Daedalus GPU tooling."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-wgsl-infer"
+readme = "README.md"
+keywords = ["wgsl", "gpu", "shader"]
+categories = ["graphics"]
+
+[lib]
+path = "src/lib.rs"

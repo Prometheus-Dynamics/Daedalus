@@ -1,0 +1,36 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "n",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "GpuRequired",
+        "const_inputs": []
+      }
+    ],
+    "edges": [],
+    "metadata": {
+      "gpu_segments": "n",
+      "gpu_why": "gpu-disabled",
+      "schedule_order": "n",
+      "schedule_priority": "n:2",
+      "topo_order": "n"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "GpuUnsupported",
+      "message": "node n requires GPU but GPU is disabled",
+      "span": {
+        "pass": "gpu",
+        "node": "n",
+        "port": null
+      }
+    }
+  ],
+  "hash": 12135694187366437492
+}

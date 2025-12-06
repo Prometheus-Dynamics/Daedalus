@@ -1,0 +1,19 @@
+{
+  "name": "@daedalus/node",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "esbuild": "^0.20.2",
+    "typescript": "^5.8.2"
+  },
+  "exports": {
+    ".": {
+      "import": "./index.mjs",
+      "types": "./index.d.ts"
+    }
+  },
+  "bin": {
+    "daedalus-node-tsc": "./tools/emit_manifest_ts.mjs",
+    "daedalus-node-ts-pack": "./tools/pack_ts_project.mjs"
+  }
+}

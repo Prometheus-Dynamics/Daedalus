@@ -1,0 +1,36 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "n",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "GpuPreferred",
+        "const_inputs": []
+      }
+    ],
+    "edges": [],
+    "metadata": {
+      "gpu_segments": "n",
+      "gpu_why": "insufficient-caps:queues=0 transfer=false format_sampleable=false",
+      "schedule_order": "n",
+      "schedule_priority": "n:1",
+      "topo_order": "n"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "GpuUnsupported",
+      "message": "node n cannot run on GPU: insufficient caps (queues=0, transfer=false, format=Rgba8Unorm sampleable=false)",
+      "span": {
+        "pass": "gpu",
+        "node": "n",
+        "port": null
+      }
+    }
+  ],
+  "hash": 12135697485901322125
+}

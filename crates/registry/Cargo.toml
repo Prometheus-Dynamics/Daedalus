@@ -1,0 +1,36 @@
+[package]
+name = "daedalus-registry"
+version = "1.0.0"
+edition = "2024"
+description = "Node registry and plugin bundle loader for Daedalus graphs."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-registry"
+readme = "README.md"
+keywords = ["dataflow", "registry", "plugins"]
+categories = ["data-structures"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+bundle = []
+plugin = []
+plugins = ["plugin"] # alias for compatibility
+ffi = []
+gpu = ["daedalus-gpu"]
+
+[dependencies]
+daedalus-data = { path = "../data" }
+daedalus-gpu = { path = "../gpu", optional = true }
+daedalus-core = { path = "../core" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+once_cell = { workspace = true }
+serde_json = { workspace = true }

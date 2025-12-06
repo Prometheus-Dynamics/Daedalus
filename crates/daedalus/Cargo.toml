@@ -1,0 +1,134 @@
+[package]
+name = "daedalus-rs"
+version = "1.0.0"
+edition = "2024"
+description = "Facade crate for the Daedalus dataflow runtime (CPU/GPU node graphs)."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-rs"
+readme = "README.md"
+keywords = ["dataflow", "graph", "gpu", "wgpu", "pipeline"]
+categories = ["concurrency", "graphics"]
+
+[lib]
+path = "src/lib.rs"
+name = "daedalus"
+
+[features]
+default = []
+gpu = [
+    "daedalus-gpu",
+    "daedalus-registry/gpu",
+    "daedalus-planner/gpu",
+    "daedalus-runtime/gpu",
+    "daedalus-engine/gpu",
+]
+gpu-wgpu = ["gpu", "daedalus-gpu/gpu-wgpu"]
+gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
+schema = ["daedalus-data/schema", "daedalus-planner/schema"]
+proto = ["daedalus-data/proto", "daedalus-planner/proto"]
+plugins = ["daedalus-registry/plugins", "daedalus-runtime/plugins"]
+ffi = ["daedalus-registry/ffi", "daedalus-runtime/ffi", "dep:daedalus-ffi"]
+examples = []
+engine = ["dep:daedalus-engine"]
+
+[dependencies]
+daedalus-core = { path = "../core" }
+daedalus-data = { path = "../data" }
+daedalus-gpu = { path = "../gpu", optional = true }
+daedalus-registry = { path = "../registry" }
+daedalus-planner = { path = "../planner" }
+daedalus-runtime = { path = "../runtime", features = ["plugins"] }
+daedalus-macros = { path = "../macros" }
+daedalus-nodes = { path = "../nodes" }
+daedalus-engine = { path = "../engine", optional = true }
+daedalus-ffi = { path = "../ffi", optional = true }
+paste = { workspace = true }
+
+[dev-dependencies]
+wgpu = { workspace = true }
+pollster = { workspace = true }
+bytemuck = { workspace = true }
+image = { workspace = true }
+serde_json = { workspace = true }
+
+[[example]]
+name = "cpu_branch"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "cpu_image"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "cpu_pipeline"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "cpu_stateful"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "cpu_text"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "gpu_image"
+required-features = ["engine", "plugins", "gpu-wgpu"]
+
+[[example]]
+name = "gpu_segments"
+required-features = ["engine", "plugins", "gpu"]
+
+[[example]]
+name = "blur_node"
+required-features = ["engine", "plugins", "gpu-wgpu"]
+
+[[example]]
+name = "gpu_shader_nodes"
+required-features = ["engine", "plugins", "gpu-wgpu"]
+
+[[example]]
+name = "metadata_defaults"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "metadata_source"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "generic_add"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "typed_any"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "sync_policies"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "graph_json"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "math_ops"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "fanin_merge"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "fanin_mixed"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "fanin_multi"
+required-features = ["engine", "plugins"]
+
+[[example]]
+name = "graph_node"
+required-features = ["engine", "plugins"]

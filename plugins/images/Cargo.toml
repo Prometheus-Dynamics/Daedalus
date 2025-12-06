@@ -1,0 +1,16 @@
+[package]
+name = "daedalus-plugins-images"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+gpu = ["daedalus/gpu"]
+
+[dependencies]
+daedalus = { path = "../../crates/daedalus", package = "daedalus-rs", features = ["plugins"] }
+image = { workspace = true }

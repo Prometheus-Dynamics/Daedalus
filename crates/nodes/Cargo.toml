@@ -1,0 +1,40 @@
+[package]
+name = "daedalus-nodes"
+version = "1.0.0"
+edition = "2024"
+description = "Demo node implementations and fixtures for Daedalus."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-nodes"
+readme = "README.md"
+keywords = ["dataflow", "nodes", "fixtures"]
+categories = ["development-tools::testing"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+examples = ["bundle-starter"]
+bundle-starter = []
+registry-adapter = []
+planner-adapter = []
+bundle-utils = []
+plugins = []
+
+[dependencies]
+daedalus-macros = { path = "../macros" }
+daedalus-registry = { path = "../registry" }
+daedalus-planner = { path = "../planner" }
+daedalus-runtime = { path = "../runtime", features = ["plugins"] }
+daedalus-data = { path = "../data" }
+daedalus-core = { path = "../core" }
+paste = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+trybuild = { workspace = true }
+daedalus-data = { path = "../data" }
+daedalus-planner = { path = "../planner" }
+daedalus-runtime = { path = "../runtime" }

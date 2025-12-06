@@ -1,0 +1,17 @@
+[package]
+name = "daedalus-plugins-math"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["plugins"]
+gpu = ["daedalus/gpu"]
+plugins = []
+
+[dependencies]
+daedalus = { path = "../../crates/daedalus", package = "daedalus-rs", features = ["plugins"] }
+paste = { workspace = true }

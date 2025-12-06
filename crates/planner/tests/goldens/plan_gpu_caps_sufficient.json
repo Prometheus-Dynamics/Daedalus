@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "n",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "GpuPreferred",
+        "const_inputs": []
+      }
+    ],
+    "edges": [],
+    "metadata": {
+      "gpu_segments": "n",
+      "schedule_order": "n",
+      "schedule_priority": "n:1",
+      "topo_order": "n"
+    }
+  },
+  "diagnostics": [],
+  "hash": 12135697485901322125
+}

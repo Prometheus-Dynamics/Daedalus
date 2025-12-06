@@ -1,0 +1,38 @@
+[package]
+name = "daedalus-engine"
+version = "1.0.0"
+edition = "2024"
+description = "High-level engine facade for planning and running Daedalus graphs."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-engine"
+readme = "README.md"
+keywords = ["dataflow", "engine", "runtime"]
+categories = ["concurrency"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["config-env"]
+config-env = ["serde", "serde_json"]
+gpu = ["daedalus-runtime/gpu", "daedalus-planner/gpu", "daedalus-gpu"]
+gpu-mock = ["gpu", "daedalus-runtime/gpu-mock", "daedalus-gpu/gpu-mock"]
+lockfree-queues = ["daedalus-runtime/lockfree-queues"]
+executor-pool = ["daedalus-runtime/executor-pool"]
+metrics = ["daedalus-runtime/metrics"]
+snapshots = ["daedalus-runtime/snapshots"]
+
+[dependencies]
+daedalus-runtime = { path = "../runtime", default-features = false }
+daedalus-planner = { path = "../planner", default-features = false }
+daedalus-registry = { path = "../registry", default-features = false }
+daedalus-gpu = { path = "../gpu", optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+daedalus-data = { path = "../data" }

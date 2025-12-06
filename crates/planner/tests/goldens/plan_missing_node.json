@@ -1,0 +1,43 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "a",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      },
+      {
+        "id": "c",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      }
+    ],
+    "edges": [],
+    "metadata": {
+      "schedule_order": "a,c",
+      "schedule_priority": "a:2,c:2",
+      "topo_order": "a,c"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "NodeMissing",
+      "message": "node c not found in registry",
+      "span": {
+        "pass": "hydrate_registry",
+        "node": "c",
+        "port": null
+      }
+    }
+  ],
+  "hash": 1412614712956646749
+}

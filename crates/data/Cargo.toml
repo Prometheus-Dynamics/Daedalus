@@ -1,0 +1,35 @@
+[package]
+name = "daedalus-data"
+version = "1.0.0"
+edition = "2024"
+description = "Type/value model and serialization helpers for Daedalus node ports."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-data"
+readme = "README.md"
+keywords = ["dataflow", "serialization", "schema"]
+categories = ["encoding", "data-structures"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["json"]
+schema = []
+proto = []
+gpu = ["daedalus-gpu"]
+async = []
+json = ["base64"]
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true, optional = true }
+daedalus-gpu = { path = "../gpu", optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+once_cell = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "daedalus-plugins-example-project"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["plugins"]
+plugins = []
+
+[dependencies]
+daedalus = { path = "../../crates/daedalus", package = "daedalus-rs", features = ["plugins"] }
+paste = { workspace = true }

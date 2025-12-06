@@ -1,0 +1,112 @@
+{
+  "backpressure": "None",
+  "default_policy": "Fifo",
+  "edges": [
+    [
+      0,
+      "out",
+      1,
+      "in",
+      "Fifo"
+    ],
+    [
+      1,
+      "out",
+      2,
+      "in",
+      "Fifo"
+    ],
+    [
+      2,
+      "out",
+      3,
+      "in",
+      "Fifo"
+    ]
+  ],
+  "gpu_edges": [
+    {
+      "buffer_id": null,
+      "edge_index": 0,
+      "gpu_fast_path": false
+    },
+    {
+      "buffer_id": 0,
+      "edge_index": 1,
+      "gpu_fast_path": true
+    },
+    {
+      "buffer_id": null,
+      "edge_index": 2,
+      "gpu_fast_path": false
+    }
+  ],
+  "gpu_entries": [
+    0
+  ],
+  "gpu_exits": [
+    2
+  ],
+  "gpu_segments": [
+    {
+      "buffer_id": 0,
+      "nodes": [
+        1,
+        2
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "bundle": null,
+      "compute": "CpuOnly",
+      "id": "cpu0",
+      "label": null
+    },
+    {
+      "bundle": null,
+      "compute": "GpuRequired",
+      "id": "gpu1",
+      "label": null
+    },
+    {
+      "bundle": null,
+      "compute": "GpuPreferred",
+      "id": "gpu2",
+      "label": null
+    },
+    {
+      "bundle": null,
+      "compute": "CpuOnly",
+      "id": "cpu1",
+      "label": null
+    }
+  ],
+  "schedule_order": [
+    1,
+    2,
+    0,
+    3
+  ],
+  "segments": [
+    {
+      "compute": "CpuOnly",
+      "nodes": [
+        0
+      ]
+    },
+    {
+      "compute": "GpuRequired",
+      "nodes": [
+        1,
+        2
+      ]
+    },
+    {
+      "compute": "CpuOnly",
+      "nodes": [
+        3
+      ]
+    }
+  ]
+}

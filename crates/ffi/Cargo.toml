@@ -1,0 +1,87 @@
+[package]
+name = "daedalus-ffi"
+version.workspace = true
+edition.workspace = true
+description = "FFI helpers and language bridges for Daedalus plugins."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-ffi"
+readme = "README.md"
+keywords = ["ffi", "plugins", "dataflow"]
+categories = ["api-bindings"]
+
+[features]
+default = ["plugins"]
+plugins = []
+inline_py = ["pyo3"]
+gpu = []
+gpu-wgpu = ["dep:daedalus-gpu", "daedalus-gpu/gpu-wgpu", "dep:wgpu"]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+daedalus-runtime = { path = "../runtime", features = ["plugins", "gpu"] }
+daedalus-registry = { path = "../registry" }
+daedalus-planner = { path = "../planner" }
+daedalus-core = { path = "../core" }
+daedalus-data = { path = "../data" }
+daedalus-gpu = { path = "../gpu", optional = true }
+wgpu = { workspace = true, optional = true }
+libloading = "0.9"
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
+base64 = "0.22"
+image = { workspace = true }
+
+[dev-dependencies]
+daedalus = { path = "../daedalus", package = "daedalus-rs", features = ["engine", "plugins", "ffi", "gpu"] }
+paste = { workspace = true }
+
+[[example]]
+name = "plugin_lib"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "generated_py_plugin"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "generated_py_image_plugin"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "plugin_nested"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "ffi_signature_matrix"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "plugin_clahe_passthrough"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "plugin_enum_mode"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "plugin_grayscale_arc"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "run_enum_mode"
+crate-type = ["bin"]
+
+[[example]]
+name = "run_grayscale_arc"
+crate-type = ["bin"]
+
+[[example]]
+name = "run_graph_json"
+crate-type = ["bin"]

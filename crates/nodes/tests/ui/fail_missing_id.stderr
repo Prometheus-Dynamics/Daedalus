@@ -1,0 +1,15 @@
+error: missing required argument `id`
+ --> tests/ui/fail_missing_id.rs:4:1
+  |
+4 | #[node(inputs("value"), outputs("out"))]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `node` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused import: `daedalus_runtime::NodeError`
+ --> tests/ui/fail_missing_id.rs:2:5
+  |
+2 | use daedalus_runtime::NodeError;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

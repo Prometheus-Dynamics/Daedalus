@@ -1,0 +1,54 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "a",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      },
+      {
+        "id": "b",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": 0,
+          "port": "out"
+        },
+        "to": {
+          "node": 1,
+          "port": "in"
+        }
+      }
+    ],
+    "metadata": {
+      "schedule_order": "a,b",
+      "schedule_priority": "a:2,b:2",
+      "topo_order": "a,b"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "ConverterMissing",
+      "message": "no converter from Scalar(Int) to Scalar(Bool) for edge a.out -> b.in [features: none; gpu: false]",
+      "span": {
+        "pass": "convert",
+        "node": "b",
+        "port": "in"
+      }
+    }
+  ],
+  "hash": 15685890973402632871
+}

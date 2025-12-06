@@ -1,0 +1,30 @@
+[package]
+name = "daedalus-core"
+version = "1.0.0"
+edition = "2024"
+description = "Core types and shared utilities for the Daedalus dataflow stack."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-core"
+readme = "README.md"
+keywords = ["dataflow", "graph", "core"]
+categories = ["concurrency", "data-structures"]
+
+[features]
+default = []
+metrics = []
+async-channels = ["tokio"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+crossbeam-queue = { workspace = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+proptest = { workspace = true }

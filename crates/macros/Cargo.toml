@@ -1,0 +1,24 @@
+[package]
+name = "daedalus-macros"
+version = "1.0.0"
+edition = "2024"
+description = "Proc macros for Daedalus nodes and GPU binding helpers."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-macros"
+readme = "README.md"
+keywords = ["proc-macro", "macros", "gpu"]
+categories = ["development-tools::procedural-macro-helpers"]
+
+[lib]
+path = "src/lib.rs"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.103"
+quote = "1.0.42"
+syn = { version = "2.0.111", features = ["full"] }
+daedalus-runtime = { path = "../runtime" }
+proc-macro-crate = "3.2.0"
+daedalus-wgsl-infer = { path = "../wgsl-infer" }

@@ -1,0 +1,33 @@
+[package]
+name = "daedalus-gpu"
+version = "1.0.0"
+edition = "2024"
+description = "GPU backends and WGSL dispatch helpers for the Daedalus runtime."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-gpu"
+readme = "README.md"
+keywords = ["gpu", "wgsl", "wgpu", "compute"]
+categories = ["graphics"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["gpu-noop"]
+gpu-noop = []
+gpu-mock = []
+gpu-wgpu = ["wgpu", "pollster", "bytemuck", "half", "daedalus-wgsl-infer"]
+gpu-async = ["async-trait"]
+
+[dependencies]
+serde = { workspace = true }
+async-trait = { workspace = true, optional = true }
+bitflags = { workspace = true }
+wgpu = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+image = { workspace = true }
+half = { version = "2", optional = true }
+daedalus-wgsl-infer = { path = "../wgsl-infer", optional = true }

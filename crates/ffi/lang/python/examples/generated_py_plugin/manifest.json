@@ -1,0 +1,35 @@
+{
+  "manifest_version": "1",
+  "language": "python",
+  "plugin": {
+    "name": "generated_py_plugin",
+    "version": "0.1.0",
+    "description": "Embedded python manifest example"
+  },
+  "nodes": [
+    {
+      "id": "generated_py_plugin:add",
+      "label": "Add",
+      "py_path": "rt.py",
+      "py_module": "generated_py_plugin",
+      "py_function": "add",
+      "raw_io": false,
+      "stateful": false,
+      "state": null,
+      "capability": null,
+      "shader": null,
+      "feature_flags": [],
+      "default_compute": "CpuOnly",
+      "sync_groups": [],
+      "metadata": {},
+      "inputs": [
+        { "name": "a", "ty": { "Scalar": "Int" }, "const_value": 2 },
+        { "name": "b", "ty": { "Scalar": "Int" }, "const_value": 3 }
+      ],
+      "outputs": [
+        { "name": "out", "ty": { "Scalar": "Int" } }
+      ]
+    }
+  ]
+}
+

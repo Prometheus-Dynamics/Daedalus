@@ -1,0 +1,58 @@
+{
+  "manifest_version": "1",
+  "language": "python",
+  "plugin": {
+    "name": "generated_py_image_plugin",
+    "version": "0.1.0",
+    "description": "Embedded python image manifest example"
+  },
+  "nodes": [
+    {
+      "id": "generated_py_image_plugin:passthrough",
+      "label": "Passthrough",
+      "py_path": "rt.py",
+      "py_module": "generated_py_image_plugin",
+      "py_function": "passthrough",
+      "raw_io": false,
+      "stateful": false,
+      "state": null,
+      "capability": null,
+      "shader": null,
+      "feature_flags": [],
+      "default_compute": "CpuOnly",
+      "sync_groups": [],
+      "metadata": {},
+      "inputs": [
+        {
+          "name": "img",
+          "ty": {
+            "Struct": [
+              { "name": "data_b64", "ty": { "Scalar": "String" } },
+              { "name": "width", "ty": { "Scalar": "Int" } },
+              { "name": "height", "ty": { "Scalar": "Int" } },
+              { "name": "channels", "ty": { "Scalar": "Int" } },
+              { "name": "dtype", "ty": { "Scalar": "String" } },
+              { "name": "layout", "ty": { "Scalar": "String" } }
+            ]
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "ty": {
+            "Struct": [
+              { "name": "data_b64", "ty": { "Scalar": "String" } },
+              { "name": "width", "ty": { "Scalar": "Int" } },
+              { "name": "height", "ty": { "Scalar": "Int" } },
+              { "name": "channels", "ty": { "Scalar": "Int" } },
+              { "name": "dtype", "ty": { "Scalar": "String" } },
+              { "name": "layout", "ty": { "Scalar": "String" } }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+

@@ -1,0 +1,53 @@
+{
+  "backpressure": "None",
+  "default_policy": "Fifo",
+  "edges": [
+    [
+      0,
+      "out",
+      1,
+      "in",
+      "Fifo"
+    ]
+  ],
+  "gpu_edges": [
+    {
+      "buffer_id": null,
+      "edge_index": 0,
+      "gpu_fast_path": false
+    }
+  ],
+  "gpu_segments": [],
+  "nodes": [
+    {
+      "bundle": null,
+      "compute": "CpuOnly",
+      "id": "a",
+      "label": null
+    },
+    {
+      "bundle": null,
+      "compute": "CpuOnly",
+      "id": "b",
+      "label": null
+    }
+  ],
+  "schedule_order": [
+    0,
+    1
+  ],
+  "segments": [
+    {
+      "compute": "CpuOnly",
+      "nodes": [
+        0
+      ]
+    },
+    {
+      "compute": "CpuOnly",
+      "nodes": [
+        1
+      ]
+    }
+  ]
+}

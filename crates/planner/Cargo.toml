@@ -1,0 +1,33 @@
+[package]
+name = "daedalus-planner"
+version = "1.0.0"
+edition = "2024"
+description = "Planner that validates and schedules Daedalus dataflow graphs."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-planner"
+readme = "README.md"
+keywords = ["dataflow", "graph", "planner"]
+categories = ["algorithms"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+gpu = ["daedalus-gpu"]
+proto = []
+schema = []
+
+[dependencies]
+daedalus-data = { path = "../data" }
+daedalus-registry = { path = "../registry" }
+daedalus-gpu = { path = "../gpu", optional = true }
+daedalus-core = { path = "../core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+once_cell = { workspace = true }
+daedalus-data = { path = "../data" }

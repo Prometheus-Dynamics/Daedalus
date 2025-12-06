@@ -1,0 +1,16 @@
+[package]
+name = "daedalus_rust_ffi_example"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[features]
+default = []
+gpu-wgpu = ["daedalus/gpu-wgpu"]
+
+[dependencies]
+daedalus = { path = "../../../daedalus", package = "daedalus-rs", features = ["plugins"] }
+bytemuck = { version = "1", features = ["derive"] }

@@ -1,0 +1,5 @@
+error[E0308]: mismatched types
+ --> tests/ui/fail_bad_compute.rs:6:15
+  |
+6 |     compute = "wat"
+  |               ^^^^^ expected `ComputeAffinity`, found `&str`

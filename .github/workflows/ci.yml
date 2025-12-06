@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cargo fmt
+        run: cargo fmt --all -- --check
+      - name: Clippy (core feature set)
+        run: cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
+      - name: Examples build
+        run: cargo check -p daedalus --features "engine,plugins" --examples
+      - name: Tests (workspace, core feature set)
+        run: cargo test --workspace --all-targets --features "engine,plugins"
+      - name: Example tests
+        run: cargo test -p daedalus --features "engine,plugins" --examples

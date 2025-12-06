@@ -1,0 +1,63 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "n",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      },
+      {
+        "id": "n",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": 0,
+          "port": "out"
+        },
+        "to": {
+          "node": 1,
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "node": 1,
+          "port": "out"
+        },
+        "to": {
+          "node": 0,
+          "port": "in"
+        }
+      }
+    ],
+    "metadata": {
+      "schedule_order": "n,n",
+      "schedule_priority": "n:2,n:2"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "ScheduleConflict",
+      "message": "graph contains a cycle involving nodes: n,n",
+      "span": {
+        "pass": "align",
+        "node": null,
+        "port": null
+      }
+    }
+  ],
+  "hash": 6289801407642826757
+}

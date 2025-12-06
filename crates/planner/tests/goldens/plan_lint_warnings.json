@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "a",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [
+          "out"
+        ],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      },
+      {
+        "id": "b",
+        "bundle": null,
+        "label": null,
+        "inputs": [
+          "in"
+        ],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      }
+    ],
+    "edges": [],
+    "metadata": {
+      "schedule_order": "a,b",
+      "schedule_priority": "a:2,b:2",
+      "topo_order": "a,b"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "LintWarning",
+      "message": "node a has unused outputs: out",
+      "span": {
+        "pass": "lint",
+        "node": "a",
+        "port": null
+      }
+    },
+    {
+      "code": "LintWarning",
+      "message": "node b has unconnected inputs: in",
+      "span": {
+        "pass": "lint",
+        "node": "b",
+        "port": null
+      }
+    }
+  ],
+  "hash": 1411658137840292404
+}

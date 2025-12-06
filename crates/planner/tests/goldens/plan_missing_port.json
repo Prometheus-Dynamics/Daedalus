@@ -1,0 +1,54 @@
+{
+  "version": "0.1",
+  "graph": {
+    "nodes": [
+      {
+        "id": "a",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      },
+      {
+        "id": "b",
+        "bundle": null,
+        "label": null,
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": 0,
+          "port": "missing"
+        },
+        "to": {
+          "node": 1,
+          "port": "in"
+        }
+      }
+    ],
+    "metadata": {
+      "schedule_order": "a,b",
+      "schedule_priority": "a:2,b:2",
+      "topo_order": "a,b"
+    }
+  },
+  "diagnostics": [
+    {
+      "code": "PortMissing",
+      "message": "output port `missing` not found on node a",
+      "span": {
+        "pass": "typecheck",
+        "node": "a",
+        "port": "missing"
+      }
+    }
+  ],
+  "hash": 11119205480161273659
+}
