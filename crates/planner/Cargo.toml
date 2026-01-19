@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-planner"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2024"
 description = "Planner that validates and schedules Daedalus dataflow graphs."
 license.workspace = true
@@ -21,13 +21,13 @@ proto = []
 schema = []
 
 [dependencies]
-daedalus-data = { path = "../data" }
-daedalus-registry = { path = "../registry" }
-daedalus-gpu = { path = "../gpu", optional = true }
-daedalus-core = { path = "../core" }
+daedalus-data = { version = "0.1.0", path = "../data" }
+daedalus-registry = { version = "0.1.0", path = "../registry" }
+daedalus-gpu = { version = "0.1.0", path = "../gpu", optional = true }
+daedalus-core = { version = "0.1.0", path = "../core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 once_cell = { workspace = true }
-daedalus-data = { path = "../data" }
+daedalus-data = { version = "0.1.0", path = "../data" }

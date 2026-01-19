@@ -23,12 +23,12 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-daedalus-runtime = { path = "../runtime", features = ["plugins", "gpu"] }
-daedalus-registry = { path = "../registry" }
-daedalus-planner = { path = "../planner" }
-daedalus-core = { path = "../core" }
-daedalus-data = { path = "../data" }
-daedalus-gpu = { path = "../gpu", optional = true }
+daedalus-runtime = { version = "0.1.0", path = "../runtime", features = ["plugins", "gpu"] }
+daedalus-registry = { version = "0.1.0", path = "../registry" }
+daedalus-planner = { version = "0.1.0", path = "../planner" }
+daedalus-core = { version = "0.1.0", path = "../core" }
+daedalus-data = { version = "0.1.0", path = "../data" }
+daedalus-gpu = { version = "0.1.0", path = "../gpu", optional = true }
 wgpu = { workspace = true, optional = true }
 libloading = "0.9"
 thiserror = { workspace = true }
@@ -39,7 +39,7 @@ base64 = "0.22"
 image = { workspace = true }
 
 [dev-dependencies]
-daedalus = { path = "../daedalus", package = "daedalus-rs", features = ["engine", "plugins", "ffi", "gpu"] }
+daedalus = { version = "0.1.0", path = "../daedalus", package = "daedalus-rs", features = ["engine", "plugins", "ffi", "gpu"] }
 paste = { workspace = true }
 
 [[example]]
