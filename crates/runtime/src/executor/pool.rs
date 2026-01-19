@@ -35,7 +35,7 @@ where
         #[cfg(feature = "gpu")]
         gpu_exit_set,
         const_coercers,
-        output_packers,
+        output_movers,
         graph_metadata,
         ..
     } = exec;
@@ -77,7 +77,7 @@ where
     let policies = Arc::new(edges.to_vec());
     let nodes = nodes.clone();
     let const_inputs = const_inputs.clone();
-    let output_packers = output_packers.clone();
+    let output_movers = output_movers.clone();
     let graph_metadata = graph_metadata.clone();
     #[cfg(feature = "gpu")]
     let gpu_entry_set = gpu_entry_set.clone();
@@ -141,7 +141,7 @@ where
         let const_inputs = const_inputs.clone();
         let const_coercers = const_coercers.clone();
         let graph_metadata = graph_metadata.clone();
-        let output_packers = output_packers.clone();
+        let output_movers = output_movers.clone();
         #[cfg(feature = "gpu")]
         let gpu_entry_set = gpu_entry_set.clone();
         #[cfg(feature = "gpu")]
@@ -165,7 +165,7 @@ where
                 gpu_available,
                 &const_inputs,
                 const_coercers,
-                output_packers,
+                output_movers,
                 #[cfg(feature = "gpu")]
                 &gpu_entry_set,
                 #[cfg(feature = "gpu")]

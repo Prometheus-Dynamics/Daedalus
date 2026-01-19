@@ -89,6 +89,6 @@ pub use host_bridge::{
     HOST_BRIDGE_META_KEY, HostBridgeHandle, HostBridgeManager, HostBridgeSerialized,
     HostBridgeSerializedPayload, bridge_handler,
 };
-pub use io::{NodeIo, register_output_packer};
+pub use io::{NodeIo, register_output_mover};
 pub use plan::{BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment};
 pub use scheduler::{SchedulerConfig, build_runtime};

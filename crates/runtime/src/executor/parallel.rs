@@ -82,6 +82,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         _gpu_exits: _,
         gpu_entry_set,
         gpu_exit_set,
+        payload_edges,
         segments,
         schedule_order,
         const_inputs,
@@ -96,7 +97,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         pool_size,
         host_bridges,
         const_coercers,
-        output_packers,
+        output_movers,
         graph_metadata,
         ..
     } = exec;
@@ -120,7 +121,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         pool_size,
         host_bridges,
         const_coercers,
-        output_packers,
+        output_movers,
         graph_metadata,
         ..
     } = exec;
@@ -198,16 +199,18 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         &outgoing,
         &queues,
         &warnings,
-        &policies,
-        &const_inputs,
-        const_coercers.clone(),
-        output_packers.clone(),
-        &mut telemetry,
+    &policies,
+    &const_inputs,
+    const_coercers.clone(),
+    output_movers.clone(),
+    &mut telemetry,
         backpressure.clone(),
         #[cfg(feature = "gpu")]
         &gpu_entry_set,
         #[cfg(feature = "gpu")]
         &gpu_exit_set,
+        #[cfg(feature = "gpu")]
+        &payload_edges,
         gpu_clone,
         host_bridges.clone(),
         state.clone(),
@@ -256,12 +259,14 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                 let policies = policies.clone();
                 let const_inputs = const_inputs.clone();
                 let const_coercers = const_coercers.clone();
-                let output_packers = output_packers.clone();
+                let output_movers = output_movers.clone();
                 let graph_metadata = graph_metadata.clone();
                 #[cfg(feature = "gpu")]
                 let gpu_entry_set = gpu_entry_set.clone();
                 #[cfg(feature = "gpu")]
                 let gpu_exit_set = gpu_exit_set.clone();
+                #[cfg(feature = "gpu")]
+                let payload_edges = payload_edges.clone();
                 let txc = tx.clone();
                 scope.spawn(move || {
                     let res = run_segment_external(
@@ -281,11 +286,13 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                         gpu_available,
                         &const_inputs,
                         const_coercers,
-                        output_packers,
+                        output_movers,
                         #[cfg(feature = "gpu")]
                         &gpu_entry_set,
                         #[cfg(feature = "gpu")]
                         &gpu_exit_set,
+                        #[cfg(feature = "gpu")]
+                        &payload_edges,
                     );
                     let _ = txc.send((seg_id, res));
                 });
@@ -381,13 +388,15 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         &policies,
         &const_inputs,
         const_coercers,
-        output_packers,
+        output_movers,
         &mut telemetry,
         backpressure,
         #[cfg(feature = "gpu")]
         &gpu_entry_set,
         #[cfg(feature = "gpu")]
         &gpu_exit_set,
+        #[cfg(feature = "gpu")]
+        &payload_edges,
         gpu,
         host_bridges,
         state,
@@ -437,11 +446,12 @@ fn run_host_bridges(
     policies: &Arc<PolicyList>,
     const_inputs: &Arc<Vec<Vec<(String, daedalus_data::model::Value)>>>,
     const_coercers: Option<crate::io::ConstCoercerMap>,
-    output_packers: Option<crate::io::OutputPackerMap>,
+    output_movers: Option<crate::io::OutputMoverMap>,
     telemetry: &mut ExecutionTelemetry,
     backpressure: crate::plan::BackpressureStrategy,
     #[cfg(feature = "gpu")] gpu_entry_set: &Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")] gpu_exit_set: &Arc<HashSet<usize>>,
+    #[cfg(feature = "gpu")] payload_edges: &Arc<HashSet<usize>>,
     gpu: MaybeGpu,
     host_mgr: Option<HostBridgeManager>,
     state: crate::state::StateStore,
@@ -527,13 +537,14 @@ fn run_host_bridges(
             node.sync_groups.clone(),
             gpu_entry_set,
             gpu_exit_set,
+            payload_edges,
             segment_of.get(node_ref.0).copied().unwrap_or(0),
             node.id.clone(),
             telemetry,
             backpressure.clone(),
             &const_inputs[node_ref.0],
             const_coercers.clone(),
-            output_packers.clone(),
+            output_movers.clone(),
             gpu.clone(),
             node.compute,
         );
@@ -551,7 +562,7 @@ fn run_host_bridges(
             backpressure.clone(),
             &const_inputs[node_ref.0],
             const_coercers.clone(),
-            output_packers.clone(),
+            output_movers.clone(),
         );
 
         if matches!(phase, HostBridgePhase::Post) && !io.sync_groups().is_empty() && io.inputs().is_empty() {
@@ -608,9 +619,10 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
     gpu_available: bool,
     const_inputs: &Arc<Vec<Vec<(String, daedalus_data::model::Value)>>>,
     const_coercers: Option<crate::io::ConstCoercerMap>,
-    output_packers: Option<crate::io::OutputPackerMap>,
+    output_movers: Option<crate::io::OutputMoverMap>,
     #[cfg(feature = "gpu")] gpu_entry_set: &Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")] gpu_exit_set: &Arc<HashSet<usize>>,
+    #[cfg(feature = "gpu")] payload_edges: &Arc<HashSet<usize>>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
     #[cfg(not(feature = "gpu"))]
     let _ = &gpu;
@@ -681,13 +693,14 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             node.sync_groups.clone(),
             gpu_entry_set,
             gpu_exit_set,
+            payload_edges,
             seg_idx,
             node.id.clone(),
             &mut telem,
             backpressure.clone(),
             &const_inputs[node_ref.0],
             const_coercers.clone(),
-            output_packers.clone(),
+            output_movers.clone(),
             ctx.gpu.clone(),
             node.compute,
         );
@@ -705,9 +718,12 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             backpressure.clone(),
             &const_inputs[node_ref.0],
             const_coercers.clone(),
-            output_packers.clone(),
+            output_movers.clone(),
         );
 
+        if io.inputs().is_empty() && io.has_incoming_edges() {
+            continue;
+        }
         if !io.sync_groups().is_empty() && io.inputs().is_empty() {
             continue;
         }

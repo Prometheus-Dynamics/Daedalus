@@ -160,21 +160,46 @@ impl RuntimePlan {
             })
             .collect();
 
+        let mut order: Vec<NodeRef> = Vec::new();
+        if let Some(order_str) = plan.graph.metadata.get("schedule_order") {
+            let mut by_id: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for (idx, node) in plan.graph.nodes.iter().enumerate() {
+                by_id.insert(node.id.0.as_str(), idx);
+            }
+            let mut seen = vec![false; plan.graph.nodes.len()];
+            for id in order_str.split(',').map(str::trim).filter(|v| !v.is_empty()) {
+                if let Some(idx) = by_id.get(id).copied() {
+                    if !seen[idx] {
+                        seen[idx] = true;
+                        order.push(NodeRef(idx));
+                    }
+                }
+            }
+            for (idx, was_seen) in seen.iter().enumerate() {
+                if !*was_seen {
+                    order.push(NodeRef(idx));
+                }
+            }
+        } else {
+            order = (0..plan.graph.nodes.len()).map(NodeRef).collect();
+        }
+
         // Simple segmentation: group consecutive GPU-pref/required nodes into a single segment,
         // leave CPU-only nodes as singletons. This is a placeholder until planner emits segments.
         let mut segments = Vec::new();
         let mut current_gpu: Option<RuntimeSegment> = None;
-        for (idx, node) in plan.graph.nodes.iter().enumerate() {
+        for node_ref in &order {
+            let node = &plan.graph.nodes[node_ref.0];
             match node.compute {
                 ComputeAffinity::GpuPreferred | ComputeAffinity::GpuRequired => {
                     if let Some(seg) = &mut current_gpu {
-                        seg.nodes.push(NodeRef(idx));
+                        seg.nodes.push(*node_ref);
                         if matches!(node.compute, ComputeAffinity::GpuRequired) {
                             seg.compute = ComputeAffinity::GpuRequired;
                         }
                     } else {
                         current_gpu = Some(RuntimeSegment {
-                            nodes: vec![NodeRef(idx)],
+                            nodes: vec![*node_ref],
                             compute: node.compute,
                         });
                     }
@@ -184,7 +209,7 @@ impl RuntimePlan {
                         segments.push(seg);
                     }
                     segments.push(RuntimeSegment {
-                        nodes: vec![NodeRef(idx)],
+                        nodes: vec![*node_ref],
                         compute: ComputeAffinity::CpuOnly,
                     });
                 }
@@ -208,7 +233,7 @@ impl RuntimePlan {
             gpu_entries,
             gpu_exits,
             segments,
-            schedule_order: Vec::new(),
+            schedule_order: order,
         }
     }
 }

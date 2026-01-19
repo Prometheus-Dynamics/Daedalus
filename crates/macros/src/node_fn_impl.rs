@@ -1345,7 +1345,8 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
         } else {
-            let mut arg_fetch_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+            let mut arg_fetch_mut_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+            let mut arg_fetch_ref_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
             let mut config_fetch_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
             for (idx, cfg) in config_args.iter().enumerate() {
                 let ident = &cfg.ident;
@@ -1392,6 +1393,14 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     "owned_mut"
                 } else {
                     "owned"
+                };
+                let is_payload = if let syn::Type::Path(tp) = ty_core
+                    && tp.qself.is_none()
+                    && let Some(seg) = tp.path.segments.last()
+                {
+                    seg.ident == "Payload"
+                } else {
+                    false
                 };
 
                 let fanin_inner = if let syn::Type::Path(tp) = ty_core
@@ -1446,7 +1455,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                         },
                                         _ => quote! {
                                             let #ident = io
-                                                .get_payload::<#inner_ty>(#port)
+                                                .get_payload_mut::<#inner_ty>(#port)
                                                 .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                         },
                                     }
@@ -1487,7 +1496,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                 },
                                 _ => quote! {
                                     let #ident = io
-                                        .get_typed::<#ty_core>(#port)
+                                        .get_typed_mut::<#ty_core>(#port)
                                         .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                 },
                             }
@@ -1515,7 +1524,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                             },
                             _ => quote! {
                                 let #ident = io
-                                    .get_any::<#ty_core>(#port)
+                                    .get_any_mut::<#ty_core>(#port)
                                     .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                             },
                         }
@@ -1543,12 +1552,17 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                         },
                         _ => quote! {
                             let #ident = io
-                                .get_typed::<#ty_core>(#port)
+                                .get_typed_mut::<#ty_core>(#port)
                                 .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                         },
                     }
                 };
-                arg_fetch_stmts.push(fetch);
+                let needs_immut_borrow = mode == "borrowed" && !is_payload;
+                if needs_immut_borrow {
+                    arg_fetch_ref_stmts.push(fetch);
+                } else {
+                    arg_fetch_mut_stmts.push(fetch);
+                }
             }
 
             let shader_gpu_init = if shader_tokens.is_some() {
@@ -1559,7 +1573,8 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
 
             quote! {
                 #(#config_fetch_stmts)*
-                #(#arg_fetch_stmts)*
+                #(#arg_fetch_mut_stmts)*
+                #(#arg_fetch_ref_stmts)*
                 #shader_gpu_init
                 #state_support
                 #state_binding

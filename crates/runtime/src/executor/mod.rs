@@ -52,6 +52,8 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) gpu_entry_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
+    #[cfg(feature = "gpu")]
+    pub(crate) payload_edges: Arc<HashSet<usize>>,
     #[cfg(not(feature = "gpu"))]
     #[allow(dead_code)]
     pub(crate) gpu_edges: &'a [()],
@@ -69,7 +71,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) pool_size: Option<usize>,
     pub(crate) host_bridges: Option<crate::host_bridge::HostBridgeManager>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
-    pub(crate) output_packers: Option<crate::io::OutputPackerMap>,
+    pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
 }
 
@@ -85,6 +87,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     pub fn new(plan: &'a RuntimePlan, handler: H) -> Self {
         let nodes: Arc<[RuntimeNode]> = plan.nodes.clone().into();
         let queues = queue::build_queues(plan);
+        #[cfg(feature = "gpu")]
+        let payload_edges = Arc::new(collect_payload_edges(&nodes, &plan.edges));
         Self {
             nodes,
             edges: &plan.edges,
@@ -98,6 +102,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             gpu_entry_set: Arc::new(plan.gpu_entries.iter().cloned().collect()),
             #[cfg(feature = "gpu")]
             gpu_exit_set: Arc::new(plan.gpu_exits.iter().cloned().collect()),
+            #[cfg(feature = "gpu")]
+            payload_edges,
             #[cfg(not(feature = "gpu"))]
             gpu_edges: &[],
             segments: &plan.segments,
@@ -117,7 +123,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             pool_size: None,
             host_bridges: None,
             const_coercers: None,
-            output_packers: None,
+            output_movers: None,
             graph_metadata: Arc::new(plan.graph_metadata.clone()),
         }
     }
@@ -128,9 +134,9 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
-    /// Provide a shared output packer registry (used by dynamic plugins).
-    pub fn with_output_packers(mut self, packers: crate::io::OutputPackerMap) -> Self {
-        self.output_packers = Some(packers);
+    /// Provide a shared output mover registry (used by dynamic plugins).
+    pub fn with_output_movers(mut self, movers: crate::io::OutputMoverMap) -> Self {
+        self.output_movers = Some(movers);
         self
     }
 
@@ -211,6 +217,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             gpu_entry_set: self.gpu_entry_set.clone(),
             #[cfg(feature = "gpu")]
             gpu_exit_set: self.gpu_exit_set.clone(),
+            #[cfg(feature = "gpu")]
+            payload_edges: self.payload_edges.clone(),
             #[cfg(not(feature = "gpu"))]
             gpu_edges: self.gpu_edges,
             segments: self.segments,
@@ -230,7 +238,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             pool_size: self.pool_size,
             host_bridges: self.host_bridges.clone(),
             const_coercers: self.const_coercers.clone(),
-            output_packers: self.output_packers.clone(),
+            output_movers: self.output_movers.clone(),
             graph_metadata: self.graph_metadata.clone(),
         }
     }
@@ -294,6 +302,19 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     }
 }
 
+#[cfg(feature = "gpu")]
+fn collect_payload_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usize> {
+    let mut out = HashSet::new();
+    for (idx, (_from, _from_port, to, _to_port, _policy)) in edges.iter().enumerate() {
+        if let Some(node) = nodes.get(to.0) {
+            if node.id.ends_with("io.host_output") {
+                out.insert(idx);
+            }
+        }
+    }
+    out
+}
+
 /// Owned executor that can be reused across runs without leaking the plan.
 pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) nodes: Arc<[RuntimeNode]>,
@@ -309,6 +330,8 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) gpu_entry_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
+    #[cfg(feature = "gpu")]
+    pub(crate) payload_edges: Arc<HashSet<usize>>,
     #[cfg(not(feature = "gpu"))]
     #[allow(dead_code)]
     pub(crate) gpu_edges: Arc<Vec<()>>,
@@ -326,7 +349,7 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) pool_size: Option<usize>,
     pub(crate) host_bridges: Option<crate::host_bridge::HostBridgeManager>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
-    pub(crate) output_packers: Option<crate::io::OutputPackerMap>,
+    pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
 }
 
@@ -334,6 +357,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     pub fn new(plan: Arc<RuntimePlan>, handler: H) -> Self {
         let nodes: Arc<[RuntimeNode]> = plan.nodes.clone().into();
         let queues = queue::build_queues(&plan);
+        #[cfg(feature = "gpu")]
+        let payload_edges = Arc::new(collect_payload_edges(&nodes, &plan.edges));
         Self {
             nodes,
             edges: Arc::new(plan.edges.clone()),
@@ -347,6 +372,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             gpu_entry_set: Arc::new(plan.gpu_entries.iter().cloned().collect()),
             #[cfg(feature = "gpu")]
             gpu_exit_set: Arc::new(plan.gpu_exits.iter().cloned().collect()),
+            #[cfg(feature = "gpu")]
+            payload_edges,
             #[cfg(not(feature = "gpu"))]
             gpu_edges: Arc::new(Vec::new()),
             segments: Arc::new(plan.segments.clone()),
@@ -366,7 +393,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             pool_size: None,
             host_bridges: None,
             const_coercers: None,
-            output_packers: None,
+            output_movers: None,
             graph_metadata: Arc::new(plan.graph_metadata.clone()),
         }
     }
@@ -377,9 +404,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
-    /// Provide a shared output packer registry (used by dynamic plugins).
-    pub fn with_output_packers(mut self, packers: crate::io::OutputPackerMap) -> Self {
-        self.output_packers = Some(packers);
+    /// Provide a shared output mover registry (used by dynamic plugins).
+    pub fn with_output_movers(mut self, movers: crate::io::OutputMoverMap) -> Self {
+        self.output_movers = Some(movers);
         self
     }
 
@@ -453,6 +480,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             gpu_entry_set: self.gpu_entry_set.clone(),
             #[cfg(feature = "gpu")]
             gpu_exit_set: self.gpu_exit_set.clone(),
+            #[cfg(feature = "gpu")]
+            payload_edges: self.payload_edges.clone(),
             #[cfg(not(feature = "gpu"))]
             gpu_edges: self.gpu_edges.as_slice(),
             segments: self.segments.as_slice(),
@@ -472,7 +501,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             pool_size: self.pool_size,
             host_bridges: self.host_bridges.clone(),
             const_coercers: self.const_coercers.clone(),
-            output_packers: self.output_packers.clone(),
+            output_movers: self.output_movers.clone(),
             graph_metadata: self.graph_metadata.clone(),
         }
     }

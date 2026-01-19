@@ -188,6 +188,18 @@ fn run_segment<H: crate::executor::NodeHandler>(
     queues: &Arc<Vec<EdgeStorage>>,
     warnings_seen: &Arc<Mutex<HashSet<String>>>,
 ) -> Result<(), ExecuteError> {
+    if std::env::var_os("DAEDALUS_TRACE_SCHEDULE").is_some() {
+        let order: Vec<String> = segment
+            .nodes
+            .iter()
+            .filter_map(|node_ref| {
+                exec.nodes
+                    .get(node_ref.0)
+                    .map(|node| format!("{}:{}", node_ref.0, node.id))
+            })
+            .collect();
+        log::warn!("segment order seg={} nodes={:?}", seg_idx, order);
+    }
     for node_ref in &segment.nodes {
         if host_nodes.contains(node_ref) {
             continue;
@@ -226,13 +238,14 @@ fn run_segment<H: crate::executor::NodeHandler>(
             node.sync_groups.clone(),
             &exec.gpu_entry_set,
             &exec.gpu_exit_set,
+            &exec.payload_edges,
             seg_idx,
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
             &exec.const_inputs[node_ref.0],
             exec.const_coercers.clone(),
-            exec.output_packers.clone(),
+            exec.output_movers.clone(),
             ctx.gpu.clone(),
             node.compute,
         );
@@ -250,7 +263,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             exec.backpressure.clone(),
             &exec.const_inputs[node_ref.0],
             exec.const_coercers.clone(),
-            exec.output_packers.clone(),
+            exec.output_movers.clone(),
         );
 
         if log::log_enabled!(log::Level::Debug) && node.id == "cv:image:to_gray" {
@@ -273,9 +286,91 @@ fn run_segment<H: crate::executor::NodeHandler>(
                     crate::executor::EdgePayload::Unit => format!("{port}:Unit"),
                 })
                 .collect();
-            log::debug!("to_gray inputs = {:?} get_any={}", inputs, has_image);
+            let outgoing_desc: Vec<String> = outgoing
+                .get(node_ref.0)
+                .into_iter()
+                .flat_map(|edges| edges.iter().filter_map(|edge_idx| {
+                    exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
+                }))
+                .filter_map(|(edge_idx, (_, from_port, to, to_port, _))| {
+                    let to_node = exec.nodes.get(to.0)?;
+                    let to_label = to_node.label.as_deref().unwrap_or(&to_node.id);
+                    Some(format!("#{edge_idx} {from_port} -> {to_label}:{to_port}"))
+                })
+                .collect();
+            let incoming_desc: Vec<String> = incoming
+                .get(node_ref.0)
+                .into_iter()
+                .flat_map(|edges| edges.iter().filter_map(|edge_idx| {
+                    exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
+                }))
+                .filter_map(|(edge_idx, (from, from_port, _, to_port, _))| {
+                    let from_node = exec.nodes.get(from.0)?;
+                    let from_label = from_node.label.as_deref().unwrap_or(&from_node.id);
+                    Some(format!("#{edge_idx} {from_label}:{from_port} -> {to_port}"))
+                })
+                .collect();
+            log::debug!(
+                "to_gray inputs={:?} get_any={} incoming={:?} outgoing={:?}",
+                inputs,
+                has_image,
+                incoming_desc,
+                outgoing_desc
+            );
+        }
+        if log::log_enabled!(log::Level::Debug) && node.id == "cv:aruco:mask_downscale_gray" {
+            let inputs: Vec<String> = io
+                .inputs()
+                .iter()
+                .map(|(port, payload)| match &payload.inner {
+                    crate::executor::EdgePayload::Any(any) => format!(
+                        "{port}:Any({})",
+                        std::any::type_name_of_val(any.as_ref())
+                    ),
+                    #[cfg(feature = "gpu")]
+                    crate::executor::EdgePayload::Payload(ep) => format!("{port}:Payload({ep:?})"),
+                    #[cfg(feature = "gpu")]
+                    crate::executor::EdgePayload::GpuImage(_) => format!("{port}:GpuImage"),
+                    crate::executor::EdgePayload::Bytes(bytes) => format!("{port}:Bytes({}b)", bytes.len()),
+                    crate::executor::EdgePayload::Value(value) => format!("{port}:Value({value:?})"),
+                    crate::executor::EdgePayload::Unit => format!("{port}:Unit"),
+                })
+                .collect();
+            let outgoing_desc: Vec<String> = outgoing
+                .get(node_ref.0)
+                .into_iter()
+                .flat_map(|edges| edges.iter().filter_map(|edge_idx| {
+                    exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
+                }))
+                .filter_map(|(edge_idx, (_, from_port, to, to_port, _))| {
+                    let to_node = exec.nodes.get(to.0)?;
+                    let to_label = to_node.label.as_deref().unwrap_or(&to_node.id);
+                    Some(format!("#{edge_idx} {from_port} -> {to_label}:{to_port}"))
+                })
+                .collect();
+            let incoming_desc: Vec<String> = incoming
+                .get(node_ref.0)
+                .into_iter()
+                .flat_map(|edges| edges.iter().filter_map(|edge_idx| {
+                    exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
+                }))
+                .filter_map(|(edge_idx, (from, from_port, _, to_port, _))| {
+                    let from_node = exec.nodes.get(from.0)?;
+                    let from_label = from_node.label.as_deref().unwrap_or(&from_node.id);
+                    Some(format!("#{edge_idx} {from_label}:{from_port} -> {to_port}"))
+                })
+                .collect();
+            log::debug!(
+                "mask_downscale inputs={:?} incoming={:?} outgoing={:?}",
+                inputs,
+                incoming_desc,
+                outgoing_desc
+            );
         }
 
+        if io.inputs().is_empty() && io.has_incoming_edges() {
+            continue;
+        }
         if !io.sync_groups().is_empty() && io.inputs().is_empty() {
             continue;
         }
@@ -424,13 +519,14 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             node.sync_groups.clone(),
             &exec.gpu_entry_set,
             &exec.gpu_exit_set,
+            &exec.payload_edges,
             0,
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
             &exec.const_inputs[node_ref.0],
             exec.const_coercers.clone(),
-            exec.output_packers.clone(),
+            exec.output_movers.clone(),
             ctx.gpu.clone(),
             node.compute,
         );
@@ -448,7 +544,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             exec.backpressure.clone(),
             &exec.const_inputs[node_ref.0],
             exec.const_coercers.clone(),
-            exec.output_packers.clone(),
+            exec.output_movers.clone(),
         );
 
         if matches!(phase, HostBridgePhase::Post) && !io.sync_groups().is_empty() && io.inputs().is_empty() {

@@ -154,6 +154,17 @@ impl HostBridgeHandle {
         id
     }
 
+    fn restore_outbound(&self, port: &str, payload: CorrelatedPayload) {
+        if let Ok(mut buf) = self.shared.lock() {
+            let key = port.to_ascii_lowercase();
+            let q = buf.outbound.entry(key.clone()).or_default();
+            q.push_front(payload);
+            if let Some(waker) = buf.wakers.get(&key) {
+                waker.wake();
+            }
+        }
+    }
+
     /// Push any typed payload (auto-wrapped).
     pub fn push_any<T: Any + Send + Sync + 'static>(&self, port: impl AsRef<str>, value: T) -> u64 {
         self.push(port, EdgePayload::Any(Arc::new(value)), None)
@@ -452,8 +463,13 @@ impl<'a> HostPortOwned<'a> {
             return Ok(None);
         };
         let corr = payload.correlation_id;
-        let value = T::decode(self.handle, self.name(), self.resolved_type(), payload)?;
-        Ok(Some((corr, value)))
+        match T::decode(self.handle, self.name(), self.resolved_type(), payload.clone()) {
+            Ok(value) => Ok(Some((corr, value))),
+            Err(err) => {
+                self.handle.restore_outbound(self.name(), payload);
+                Err(err)
+            }
+        }
     }
 
     /// Pop and attempt to downcast directly from `Any` without going through `Value`.
@@ -527,8 +543,13 @@ impl<'a> HostPort<'a> {
             return Ok(None);
         };
         let corr = payload.correlation_id;
-        let value = T::decode(self.handle, self.name, self.resolved_type(), payload)?;
-        Ok(Some((corr, value)))
+        match T::decode(self.handle, self.name, self.resolved_type(), payload.clone()) {
+            Ok(value) => Ok(Some((corr, value))),
+            Err(err) => {
+                self.handle.restore_outbound(self.name, payload);
+                Err(err)
+            }
+        }
     }
 
     /// Pop and attempt to downcast directly from `Any` without going through `Value`.

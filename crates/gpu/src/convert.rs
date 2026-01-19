@@ -97,9 +97,20 @@ impl ErasedPayload {
         if expected != actual && !expected.ends_with(actual) && !actual.ends_with(expected) {
             return None;
         }
-        if std::mem::size_of_val(any) != std::mem::size_of::<T>()
-            || std::mem::align_of_val(any) != std::mem::align_of::<T>()
-        {
+        let size_ok = std::mem::size_of_val(any) == std::mem::size_of::<T>();
+        let align_ok = std::mem::align_of_val(any) == std::mem::align_of::<T>();
+        if !(size_ok && align_ok) {
+            if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_CROSS_DYLIB").is_some() {
+                eprintln!(
+                    "daedalus-gpu: cross_dylib_ref size/align mismatch expected={} actual={} size_any={} size_t={} align_any={} align_t={}",
+                    expected,
+                    actual,
+                    std::mem::size_of_val(any),
+                    std::mem::size_of::<T>(),
+                    std::mem::align_of_val(any),
+                    std::mem::align_of::<T>(),
+                );
+            }
             return None;
         }
         let (data_ptr, _): (*const (), *const ()) = unsafe { std::mem::transmute(any) };
@@ -230,6 +241,20 @@ impl ErasedPayload {
         }
     }
 
+    pub fn try_downcast_cpu_any<T>(&self) -> Option<T>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        if self.is_gpu {
+            return None;
+        }
+        let ErasedPayloadInner::Any(inner) = &self.inner;
+        if let Some(v) = inner.downcast_ref::<T>() {
+            return Some(v.clone());
+        }
+        Self::cross_dylib_ref::<T>(inner.as_ref(), self.cpu_type_name).cloned()
+    }
+
     pub fn clone_cpu<T>(&self) -> Option<T>
     where
         T: GpuSendable + Clone + 'static,
@@ -275,6 +300,45 @@ impl ErasedPayload {
                 Ok(arc) => match Arc::try_unwrap(arc) {
                     Ok(v) => Ok(v),
                     Err(arc) => Err(restore(ErasedPayloadInner::Any(arc))),
+                },
+                Err(arc) => {
+                    if let Some(v) = Self::cross_dylib_ref::<T>(arc.as_ref(), cpu_type_name) {
+                        return Ok(v.clone());
+                    }
+                    Err(restore(ErasedPayloadInner::Any(arc)))
+                }
+            },
+        }
+    }
+
+    pub fn take_cpu_any<T>(self) -> Result<T, Self>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        if self.is_gpu {
+            return Err(self);
+        }
+
+        let ErasedPayload {
+            is_gpu,
+            inner,
+            cpu_type_name,
+            upload,
+            download,
+        } = self;
+        let restore = |inner| ErasedPayload {
+            is_gpu,
+            inner,
+            cpu_type_name,
+            upload,
+            download,
+        };
+
+        match inner {
+            ErasedPayloadInner::Any(inner) => match Arc::downcast::<T>(inner) {
+                Ok(arc) => match Arc::try_unwrap(arc) {
+                    Ok(v) => Ok(v),
+                    Err(arc) => Ok((*arc).clone()),
                 },
                 Err(arc) => {
                     if let Some(v) = Self::cross_dylib_ref::<T>(arc.as_ref(), cpu_type_name) {

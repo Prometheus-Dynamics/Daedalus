@@ -59,7 +59,7 @@ pub struct PluginRegistry {
     pub current_prefix: Option<String>,
     pub capabilities: CapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,
-    pub output_packers: crate::io::OutputPackerMap,
+    pub output_movers: crate::io::OutputMoverMap,
     pub type_compatibilities: BTreeSet<(TypeExpr, TypeExpr)>,
 }
 
@@ -77,7 +77,7 @@ impl PluginRegistry {
             current_prefix: None,
             capabilities: CapabilityRegistry::new(),
             const_coercers: crate::io::new_const_coercer_map(),
-            output_packers: crate::io::new_output_packer_map(),
+            output_movers: crate::io::new_output_mover_map(),
             type_compatibilities: BTreeSet::new(),
         }
     }
@@ -131,13 +131,13 @@ impl PluginRegistry {
         crate::host_bridge::register_value_serializer::<T, F>(serializer);
     }
 
-    /// Register a packer to emit a typed output payload without `Any`.
-    pub fn register_output_packer<T, F>(&mut self, packer: F)
+    /// Register an output mover to emit a typed output payload by value.
+    pub fn register_output_mover<T, F>(&mut self, mover: F)
     where
-        T: Any + Clone + Send + Sync + 'static,
-        F: Fn(&T) -> crate::executor::EdgePayload + Send + Sync + 'static,
+        T: Any + Send + Sync + 'static,
+        F: Fn(T) -> crate::executor::EdgePayload + Send + Sync + 'static,
     {
-        crate::io::register_output_packer_in::<T, F>(&self.output_packers, packer);
+        crate::io::register_output_mover_in::<T, F>(&self.output_movers, mover);
     }
 
     /// Register a type-compatibility edge to support dynamic port polling.

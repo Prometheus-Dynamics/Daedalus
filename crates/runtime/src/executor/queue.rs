@@ -276,6 +276,100 @@ pub fn apply_policy(
     }
 }
 
+pub fn apply_policy_owned(
+    edge_idx: usize,
+    policy: &EdgePolicyKind,
+    mut payload: CorrelatedPayload,
+    queues: &Arc<Vec<EdgeStorage>>,
+    warnings_seen: &Arc<Mutex<std::collections::HashSet<String>>>,
+    telem: &mut ExecutionTelemetry,
+    warning_label: Option<String>,
+    backpressure: BackpressureStrategy,
+) {
+    if let Some(storage) = queues.get(edge_idx) {
+        match storage {
+            EdgeStorage::Locked(q_arc) => {
+                if let Ok(mut q) = q_arc.lock() {
+                    q.ensure_policy(policy);
+                    let dropped = match (policy, backpressure) {
+                        (EdgePolicyKind::Bounded { .. }, BackpressureStrategy::BoundedQueues)
+                            if q.is_full() =>
+                        {
+                            true
+                        }
+                        (EdgePolicyKind::Bounded { .. }, BackpressureStrategy::ErrorOnOverflow)
+                            if q.is_full() =>
+                        {
+                            telem.backpressure_events += 1;
+                            let label = warning_label
+                                .clone()
+                                .unwrap_or_else(|| format!("bounded_error_edge_{edge_idx}"));
+                            record_warning(&label, warnings_seen, telem);
+                            return;
+                        }
+                        _ => {
+                            payload.enqueued_at = Instant::now();
+                            q.push(policy, payload)
+                        }
+                    };
+                    if dropped {
+                        telem.backpressure_events += 1;
+                        let label = warning_label
+                            .clone()
+                            .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
+                        record_warning(&label, warnings_seen, telem);
+                    }
+                }
+            }
+            #[cfg(feature = "lockfree-queues")]
+            EdgeStorage::BoundedLf(q) => {
+                let mut dropped = false;
+                match backpressure {
+                    BackpressureStrategy::BoundedQueues => {
+                        if q.is_full() {
+                            dropped = true;
+                        } else {
+                            payload.enqueued_at = Instant::now();
+                            q.push(payload).unwrap();
+                        }
+                    }
+                    BackpressureStrategy::ErrorOnOverflow => {
+                        if q.is_full() {
+                            telem.backpressure_events += 1;
+                            let label = warning_label
+                                .clone()
+                                .unwrap_or_else(|| format!("bounded_error_edge_{edge_idx}"));
+                            record_warning(&label, warnings_seen, telem);
+                            return;
+                        } else {
+                            payload.enqueued_at = Instant::now();
+                            q.push(payload).unwrap();
+                        }
+                    }
+                    BackpressureStrategy::None => {
+                        payload.enqueued_at = Instant::now();
+                        if q.push(payload).is_err() {
+                            dropped = true;
+                        }
+                    }
+                }
+                if dropped {
+                    telem.backpressure_events += 1;
+                    let label = warning_label
+                        .clone()
+                        .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
+                    record_warning(&label, warnings_seen, telem);
+                }
+            }
+            #[cfg(feature = "lockfree-queues")]
+            EdgeStorage::UnboundedLf(q) => {
+                payload.enqueued_at = Instant::now();
+                q.push(payload).unwrap();
+            }
+        }
+    }
+}
+
 fn record_warning(
     label: &str,
     seen: &Arc<Mutex<std::collections::HashSet<String>>>,

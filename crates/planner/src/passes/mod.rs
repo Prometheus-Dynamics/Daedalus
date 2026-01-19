@@ -1048,13 +1048,11 @@ fn align(graph: &mut Graph, diags: &mut Vec<Diagnostic>) {
             .in_pass("align"),
         );
     } else {
-        let topo_ids: Vec<String> = order
+        let value = order
             .iter()
             .map(|&idx| graph.nodes[idx].id.0.clone())
-            .collect();
-        let mut topo_ids = topo_ids;
-        topo_ids.sort();
-        let value = topo_ids.join(",");
+            .collect::<Vec<_>>()
+            .join(",");
         graph.metadata.insert("topo_order".into(), value);
     }
 }
