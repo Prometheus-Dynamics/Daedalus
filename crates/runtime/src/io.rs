@@ -13,7 +13,7 @@ use daedalus_data::typing;
 #[cfg(feature = "gpu")]
 use image::{DynamicImage, GrayAlphaImage, GrayImage, RgbImage, RgbaImage};
 
-use crate::executor::queue::{apply_policy, apply_policy_owned};
+use crate::executor::queue::{apply_policy, apply_policy_owned, ApplyPolicyOwnedArgs};
 use crate::executor::{
     CorrelatedPayload, EdgePayload, EdgeStorage, ExecutionTelemetry, next_correlation_id,
 };
@@ -638,23 +638,23 @@ impl<'a> NodeIo<'a> {
                 effective_policy = EdgePolicyKind::Bounded { cap };
             }
             #[cfg(feature = "gpu")]
-            let mut correlated = if needs_payload {
+            let correlated = if needs_payload {
                 let mut updated = correlated;
                 updated.inner = promote_payload_for_host(updated.inner);
                 updated
             } else {
                 correlated
             };
-            apply_policy_owned(
+            apply_policy_owned(ApplyPolicyOwnedArgs {
                 edge_idx,
-                &effective_policy,
-                correlated,
-                self.queues,
-                self.warnings_seen,
-                self.telemetry,
-                Some(format!("edge_{}_{}", self.node_id, from_port)),
-                bp,
-            );
+                policy: &effective_policy,
+                payload: correlated,
+                queues: self.queues,
+                warnings_seen: self.warnings_seen,
+                telem: self.telemetry,
+                warning_label: Some(format!("edge_{}_{}", self.node_id, from_port)),
+                backpressure: bp,
+            });
             return;
         }
 
@@ -991,27 +991,27 @@ impl<'a> NodeIo<'a> {
                 let downcast_owned = |value: Box<dyn Any + Send + Sync>| {
                     value.downcast::<T>().ok().map(|boxed| *boxed)
                 };
-                if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_TAKE").is_some() {
-                    if let Some(ep) = ep_opt.as_ref() {
-                        let clone_ok = if want == TypeId::of::<DynamicImage>() {
-                            ep.clone_cpu::<DynamicImage>().is_some()
-                        } else if want == TypeId::of::<GrayImage>() {
-                            ep.clone_cpu::<GrayImage>().is_some()
-                        } else if want == TypeId::of::<RgbImage>() {
-                            ep.clone_cpu::<RgbImage>().is_some()
-                        } else if want == TypeId::of::<RgbaImage>() {
-                            ep.clone_cpu::<RgbaImage>().is_some()
-                        } else {
-                            false
-                        };
-                        eprintln!(
-                            "daedalus-runtime: payload probe node={} port={} type={} clone_cpu={}",
-                            self.node_id,
-                            port,
-                            std::any::type_name::<T>(),
-                            clone_ok
-                        );
-                    }
+                if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_TAKE").is_some()
+                    && let Some(ep) = ep_opt.as_ref()
+                {
+                    let clone_ok = if want == TypeId::of::<DynamicImage>() {
+                        ep.clone_cpu::<DynamicImage>().is_some()
+                    } else if want == TypeId::of::<GrayImage>() {
+                        ep.clone_cpu::<GrayImage>().is_some()
+                    } else if want == TypeId::of::<RgbImage>() {
+                        ep.clone_cpu::<RgbImage>().is_some()
+                    } else if want == TypeId::of::<RgbaImage>() {
+                        ep.clone_cpu::<RgbaImage>().is_some()
+                    } else {
+                        false
+                    };
+                    eprintln!(
+                        "daedalus-runtime: payload probe node={} port={} type={} clone_cpu={}",
+                        self.node_id,
+                        port,
+                        std::any::type_name::<T>(),
+                        clone_ok
+                    );
                 }
                 if want == TypeId::of::<DynamicImage>() {
                     if let Some(ep) = ep_opt.take() {
@@ -1052,32 +1052,29 @@ impl<'a> NodeIo<'a> {
                             }
                         }
                     }
-                } else if want == TypeId::of::<RgbaImage>() {
-                    if let Some(ep) = ep_opt.take() {
-                        match ep.take_cpu::<RgbaImage>() {
-                            Ok(cpu) => out = downcast_owned(Box::new(cpu)),
-                            Err(rest) => {
-                                if let Some(cpu) = rest.clone_cpu::<RgbaImage>() {
-                                    out = downcast_owned(Box::new(cpu));
-                                } else {
-                                    ep_opt = Some(rest);
-                                }
+                } else if want == TypeId::of::<RgbaImage>() && let Some(ep) = ep_opt.take() {
+                    match ep.take_cpu::<RgbaImage>() {
+                        Ok(cpu) => out = downcast_owned(Box::new(cpu)),
+                        Err(rest) => {
+                            if let Some(cpu) = rest.clone_cpu::<RgbaImage>() {
+                                out = downcast_owned(Box::new(cpu));
+                            } else {
+                                ep_opt = Some(rest);
                             }
                         }
                     }
                 }
 
-                if out.is_none() {
-                    if let Some(ep) = ep_opt.as_ref()
-                        && (want == TypeId::of::<DynamicImage>()
-                            || want == TypeId::of::<GrayImage>()
-                            || want == TypeId::of::<GrayAlphaImage>()
-                            || want == TypeId::of::<RgbImage>()
-                            || want == TypeId::of::<RgbaImage>())
-                        && let Some(img) = ep.clone_cpu::<DynamicImage>()
-                    {
-                        out = Self::dynamic_image_to_t::<T>(img);
-                    }
+                if out.is_none()
+                    && let Some(ep) = ep_opt.as_ref()
+                    && (want == TypeId::of::<DynamicImage>()
+                        || want == TypeId::of::<GrayImage>()
+                        || want == TypeId::of::<GrayAlphaImage>()
+                        || want == TypeId::of::<RgbImage>()
+                        || want == TypeId::of::<RgbaImage>())
+                    && let Some(img) = ep.clone_cpu::<DynamicImage>()
+                {
+                    out = Self::dynamic_image_to_t::<T>(img);
                 }
                 if out.is_none()
                     && let Some(ep) = ep_opt

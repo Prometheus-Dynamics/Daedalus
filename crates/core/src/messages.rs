@@ -58,12 +58,10 @@ impl Token {
 ///
 /// ```
 /// use daedalus_core::messages::TokenGenerator;
-/// fn main() {
-///     let generator = TokenGenerator::new();
-///     let a = generator.next();
-///     let b = generator.next();
-///     assert!(b.value() > a.value());
-/// }
+/// let generator = TokenGenerator::new();
+/// let a = generator.next();
+/// let b = generator.next();
+/// assert!(b.value() > a.value());
 /// ```
 #[derive(Debug, Default)]
 pub struct TokenGenerator {

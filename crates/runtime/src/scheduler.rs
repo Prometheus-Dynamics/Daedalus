@@ -95,8 +95,8 @@ fn topo_order(runtime: &RuntimePlan) -> Option<Vec<daedalus_planner::NodeRef>> {
     }
 
     let mut heap: BinaryHeap<Reverse<(u8, usize)>> = BinaryHeap::new();
-    for idx in 0..node_count {
-        if indegree[idx] == 0 {
+    for (idx, &count) in indegree.iter().enumerate() {
+        if count == 0 {
             heap.push(Reverse((node_priority(runtime, idx), idx)));
         }
     }

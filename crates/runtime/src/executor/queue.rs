@@ -276,16 +276,28 @@ pub fn apply_policy(
     }
 }
 
-pub fn apply_policy_owned(
-    edge_idx: usize,
-    policy: &EdgePolicyKind,
-    mut payload: CorrelatedPayload,
-    queues: &Arc<Vec<EdgeStorage>>,
-    warnings_seen: &Arc<Mutex<std::collections::HashSet<String>>>,
-    telem: &mut ExecutionTelemetry,
-    warning_label: Option<String>,
-    backpressure: BackpressureStrategy,
-) {
+pub struct ApplyPolicyOwnedArgs<'a> {
+    pub edge_idx: usize,
+    pub policy: &'a EdgePolicyKind,
+    pub payload: CorrelatedPayload,
+    pub queues: &'a Arc<Vec<EdgeStorage>>,
+    pub warnings_seen: &'a Arc<Mutex<std::collections::HashSet<String>>>,
+    pub telem: &'a mut ExecutionTelemetry,
+    pub warning_label: Option<String>,
+    pub backpressure: BackpressureStrategy,
+}
+
+pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
+    let ApplyPolicyOwnedArgs {
+        edge_idx,
+        policy,
+        mut payload,
+        queues,
+        warnings_seen,
+        telem,
+        warning_label,
+        backpressure,
+    } = args;
     if let Some(storage) = queues.get(edge_idx) {
         match storage {
             EdgeStorage::Locked(q_arc) => {

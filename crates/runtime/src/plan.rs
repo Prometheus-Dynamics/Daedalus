@@ -168,11 +168,11 @@ impl RuntimePlan {
             }
             let mut seen = vec![false; plan.graph.nodes.len()];
             for id in order_str.split(',').map(str::trim).filter(|v| !v.is_empty()) {
-                if let Some(idx) = by_id.get(id).copied() {
-                    if !seen[idx] {
-                        seen[idx] = true;
-                        order.push(NodeRef(idx));
-                    }
+                if let Some(idx) = by_id.get(id).copied()
+                    && !seen[idx]
+                {
+                    seen[idx] = true;
+                    order.push(NodeRef(idx));
                 }
             }
             for (idx, was_seen) in seen.iter().enumerate() {

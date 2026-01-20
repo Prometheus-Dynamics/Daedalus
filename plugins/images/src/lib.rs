@@ -2,7 +2,7 @@
 //! doesn't depend on `image`.
 
 use daedalus::{Plugin, PluginRegistry};
-use image::{DynamicImage, GrayAlphaImage, GrayImage, RgbImage, RgbaImage};
+use image::{DynamicImage, GrayImage, RgbImage, RgbaImage};
 
 /// Register common image conversions into the global conversion registry.
 pub fn register_image_conversions(reg: &mut PluginRegistry) {

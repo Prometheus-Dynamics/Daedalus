@@ -306,10 +306,10 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 fn collect_payload_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usize> {
     let mut out = HashSet::new();
     for (idx, (_from, _from_port, to, _to_port, _policy)) in edges.iter().enumerate() {
-        if let Some(node) = nodes.get(to.0) {
-            if node.id.ends_with("io.host_output") {
-                out.insert(idx);
-            }
+        if let Some(node) = nodes.get(to.0)
+            && node.id.ends_with("io.host_output")
+        {
+            out.insert(idx);
         }
     }
     out
