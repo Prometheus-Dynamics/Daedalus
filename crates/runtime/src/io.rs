@@ -910,31 +910,39 @@ impl<'a> NodeIo<'a> {
             return Some(self.cache_borrowed(v));
         }
 
-        if let Some(v) = self.get_any_ref::<i64>(port)
-            && let Some(t) = Self::coerce_from_i64::<T>(*v)
-        {
-            return Some(self.cache_borrowed(t));
-        }
-        if let Some(v) = self.get_any_ref::<f64>(port)
-            && let Some(t) = Self::coerce_from_f64::<T>(*v)
-        {
-            return Some(self.cache_borrowed(t));
-        }
-        if let Some(v) = self.get_any_ref::<bool>(port)
-            && let Some(t) = {
-                let any_ref: &dyn Any = v;
-                any_ref.downcast_ref::<T>().cloned()
+        if let Some(v) = self.get_any_ref::<i64>(port) {
+            if let Some(t) = Self::coerce_from_i64::<T>(*v) {
+                return Some(self.cache_borrowed(t));
             }
-        {
-            return Some(self.cache_borrowed(t));
-        }
-        if let Some(v) = self.get_any_ref::<String>(port)
-            && let Some(t) = {
-                let any_ref: &dyn Any = v;
-                any_ref.downcast_ref::<T>().cloned()
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::Int(*v)) {
+                return Some(self.cache_borrowed(t));
             }
-        {
-            return Some(self.cache_borrowed(t));
+        }
+        if let Some(v) = self.get_any_ref::<f64>(port) {
+            if let Some(t) = Self::coerce_from_f64::<T>(*v) {
+                return Some(self.cache_borrowed(t));
+            }
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::Float(*v)) {
+                return Some(self.cache_borrowed(t));
+            }
+        }
+        if let Some(v) = self.get_any_ref::<bool>(port) {
+            let any_ref: &dyn Any = v;
+            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
+                return Some(self.cache_borrowed(t));
+            }
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::Bool(*v)) {
+                return Some(self.cache_borrowed(t));
+            }
+        }
+        if let Some(v) = self.get_any_ref::<String>(port) {
+            let any_ref: &dyn Any = v;
+            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
+                return Some(self.cache_borrowed(t));
+            }
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::String(v.clone().into())) {
+                return Some(self.cache_borrowed(t));
+            }
         }
         if let Some(v) = self.get_value(port)
             && let Some(t) = self.coerce_from_value::<T>(v)
@@ -1097,7 +1105,8 @@ impl<'a> NodeIo<'a> {
                                 Ok(v) => v,
                                 Err(arc) => *arc,
                             };
-                            out = Self::coerce_from_i64::<T>(v);
+                            out = Self::coerce_from_i64::<T>(v)
+                                .or_else(|| self.coerce_via_registry::<T>(&Value::Int(v)));
                         }
                         Err(any) => match Arc::downcast::<f64>(any) {
                             Ok(arc) => {
@@ -1105,7 +1114,8 @@ impl<'a> NodeIo<'a> {
                                     Ok(v) => v,
                                     Err(arc) => *arc,
                                 };
-                                out = Self::coerce_from_f64::<T>(v);
+                                out = Self::coerce_from_f64::<T>(v)
+                                    .or_else(|| self.coerce_via_registry::<T>(&Value::Float(v)));
                             }
                             Err(any) => match Arc::downcast::<bool>(any) {
                                 Ok(arc) => {
@@ -1114,7 +1124,10 @@ impl<'a> NodeIo<'a> {
                                         Err(arc) => *arc,
                                     };
                                     let any_ref: &dyn Any = &v;
-                                    out = any_ref.downcast_ref::<T>().cloned();
+                                    out = any_ref
+                                        .downcast_ref::<T>()
+                                        .cloned()
+                                        .or_else(|| self.coerce_via_registry::<T>(&Value::Bool(v)));
                                 }
                                 Err(any) => match Arc::downcast::<String>(any) {
                                     Ok(arc) => {
@@ -1123,7 +1136,10 @@ impl<'a> NodeIo<'a> {
                                             Err(arc) => (*arc).clone(),
                                         };
                                         let any_ref: &dyn Any = &v;
-                                        out = any_ref.downcast_ref::<T>().cloned();
+                                        out = any_ref
+                                            .downcast_ref::<T>()
+                                            .cloned()
+                                            .or_else(|| self.coerce_via_registry::<T>(&Value::String(v.into())));
                                     }
                                     Err(any) => match Arc::downcast::<daedalus_data::model::Value>(any) {
                                         Ok(arc) => {
@@ -1399,31 +1415,39 @@ impl<'a> NodeIo<'a> {
         }
 
         // Common scalar carriers produced by const injection.
-        if let Some(v) = self.get_any::<i64>(port)
-            && let Some(t) = Self::coerce_from_i64::<T>(v)
-        {
-            return Some(t);
-        }
-        if let Some(v) = self.get_any::<f64>(port)
-            && let Some(t) = Self::coerce_from_f64::<T>(v)
-        {
-            return Some(t);
-        }
-        if let Some(v) = self.get_any::<bool>(port)
-            && let Some(t) = {
-                let any_ref: &dyn Any = &v;
-                any_ref.downcast_ref::<T>().cloned()
+        if let Some(v) = self.get_any::<i64>(port) {
+            if let Some(t) = Self::coerce_from_i64::<T>(v) {
+                return Some(t);
             }
-        {
-            return Some(t);
-        }
-        if let Some(v) = self.get_any::<String>(port)
-            && let Some(t) = {
-                let any_ref: &dyn Any = &v;
-                any_ref.downcast_ref::<T>().cloned()
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::Int(v)) {
+                return Some(t);
             }
-        {
-            return Some(t);
+        }
+        if let Some(v) = self.get_any::<f64>(port) {
+            if let Some(t) = Self::coerce_from_f64::<T>(v) {
+                return Some(t);
+            }
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::Float(v)) {
+                return Some(t);
+            }
+        }
+        if let Some(v) = self.get_any::<bool>(port) {
+            let any_ref: &dyn Any = &v;
+            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
+                return Some(t);
+            }
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::Bool(v)) {
+                return Some(t);
+            }
+        }
+        if let Some(v) = self.get_any::<String>(port) {
+            let any_ref: &dyn Any = &v;
+            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
+                return Some(t);
+            }
+            if let Some(t) = self.coerce_via_registry::<T>(&Value::String(v.into())) {
+                return Some(t);
+            }
         }
         if let Some(v) = self.get_any::<daedalus_data::model::Value>(port)
             && let Some(t) = self.coerce_from_value::<T>(&v) {

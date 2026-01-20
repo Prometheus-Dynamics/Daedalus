@@ -1414,6 +1414,17 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                 } else {
                     None
                 };
+                let option_inner = if let syn::Type::Path(tp) = ty_core
+                    && tp.qself.is_none()
+                    && let Some(seg) = tp.path.segments.last()
+                    && seg.ident == "Option"
+                    && let syn::PathArguments::AngleBracketed(ab) = &seg.arguments
+                    && let Some(syn::GenericArgument::Type(inner_ty)) = ab.args.first()
+                {
+                    Some(inner_ty)
+                } else {
+                    None
+                };
 
                 let fetch = if let Some(inner_ty) = fanin_inner {
                     let tmp_ident =
@@ -1421,6 +1432,11 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     quote! {
                         let #tmp_ident = io.get_any_all_fanin_indexed::<#inner_ty>(#port);
                         let #ident = #runtime_crate::FanIn::<#inner_ty>::from_indexed(#tmp_ident);
+                    }
+                } else if option_inner.is_some() && mode == "owned" {
+                    let inner_ty = option_inner.unwrap();
+                    quote! {
+                        let #ident = io.get_typed::<#inner_ty>(#port);
                     }
                 } else if let syn::Type::Path(tp) = ty_core {
                     if let Some(seg) = tp.path.segments.last() {

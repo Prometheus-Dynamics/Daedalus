@@ -378,6 +378,23 @@ fn expand_embedded_graphs(
     input.graph.edges = new_edges;
 }
 
+fn apply_descriptor_defaults(graph: &mut Graph, view: &daedalus_registry::store::RegistryView) {
+    for node in &mut graph.nodes {
+        let Some(desc) = latest_node(view, &node.id) else {
+            continue;
+        };
+        for port in &desc.inputs {
+            let Some(value) = &port.const_value else {
+                continue;
+            };
+            if node.const_inputs.iter().any(|(name, _)| name == &port.name) {
+                continue;
+            }
+            node.const_inputs.push((port.name.clone(), value.clone()));
+        }
+    }
+}
+
 /// Build an execution plan by running the ordered pass pipeline.
 /// Currently stubs; contracts are enforced via deterministic diagnostics ordering.
 /// Build an execution plan from a graph and registry.
@@ -404,6 +421,7 @@ pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> Planner
 
     // Placeholder passes; extend with real logic per PLAN.md.
     expand_embedded_graphs(&mut input, &view, &mut diags);
+    apply_descriptor_defaults(&mut input.graph, &view);
     hydrate_registry(&input, &view, &mut diags);
     typecheck(&mut input.graph, &view, &mut diags);
     convert(&mut input.graph, input.registry, &view, &mut diags, &config);

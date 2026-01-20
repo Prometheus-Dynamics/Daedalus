@@ -64,7 +64,7 @@ unsafe fn install_signal_handler(sig: libc::c_int) {
 }
 
 #[cfg(unix)]
-extern "C" fn handler_siginfo(sig: libc::c_int, info: *mut libc::siginfo_t, uctx: *mut libc::c_void) {
+extern "C" fn handler_siginfo(sig: libc::c_int, info: *mut libc::siginfo_t, _uctx: *mut libc::c_void) {
     unsafe {
         let _ = write_str("daedalus-runtime: fatal signal received\n");
         if sig == libc::SIGSEGV {
@@ -75,7 +75,7 @@ extern "C" fn handler_siginfo(sig: libc::c_int, info: *mut libc::siginfo_t, uctx
             }
             #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
             {
-                if let Some(rip) = linux_x86_64_rip(uctx) {
+                if let Some(rip) = linux_x86_64_rip(_uctx) {
                     let mut buf = [0u8; 64];
                     let n = write_hex_line(&mut buf, "rip=0x", rip);
                     let _ = libc::write(libc::STDERR_FILENO, buf.as_ptr() as *const _, n);
