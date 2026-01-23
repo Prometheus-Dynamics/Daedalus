@@ -58,7 +58,7 @@ pub fn set_current_node(idx: usize) {
 unsafe fn install_signal_handler(sig: libc::c_int) {
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
     sa.sa_flags = libc::SA_SIGINFO | libc::SA_RESETHAND;
-    sa.sa_sigaction = handler_siginfo as usize;
+    sa.sa_sigaction = handler_siginfo as *const () as usize;
     unsafe { libc::sigemptyset(&mut sa.sa_mask) };
     unsafe { libc::sigaction(sig, &sa, std::ptr::null_mut()) };
 }

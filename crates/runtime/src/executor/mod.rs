@@ -3,6 +3,7 @@ use crate::state::StateStore;
 use daedalus_planner::NodeRef;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 mod errors;
 mod crash_diag;
@@ -19,7 +20,8 @@ pub use errors::{ExecuteError, NodeError};
 pub use handler::NodeHandler;
 pub use payload::{CorrelatedPayload, EdgePayload, next_correlation_id};
 pub use queue::EdgeStorage;
-pub use telemetry::{EdgeMetrics, ExecutionTelemetry, NodeMetrics};
+pub use telemetry::{EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeMetrics};
+pub(crate) use telemetry::payload_size_bytes;
 /// Runtime executor for planner-generated runtime plans.
 ///
 /// ```no_run
@@ -68,6 +70,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) queues: Arc<Vec<EdgeStorage>>,
     pub(crate) warnings_seen: Arc<Mutex<HashSet<String>>>,
     pub(crate) telemetry: ExecutionTelemetry,
+    pub(crate) metrics_level: MetricsLevel,
     pub(crate) pool_size: Option<usize>,
     pub(crate) host_bridges: Option<crate::host_bridge::HostBridgeManager>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
@@ -119,7 +122,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             gpu: None,
             queues: Arc::new(queues),
             warnings_seen: Arc::new(Mutex::new(HashSet::new())),
-            telemetry: ExecutionTelemetry::default(),
+            telemetry: ExecutionTelemetry::with_level(MetricsLevel::default()),
+            metrics_level: MetricsLevel::default(),
             pool_size: None,
             host_bridges: None,
             const_coercers: None,
@@ -169,6 +173,12 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
+    pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
+        self.metrics_level = level;
+        self.telemetry.metrics_level = level;
+        self
+    }
+
     /// Attach a host bridge manager to enable implicit host I/O nodes.
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
         #[cfg(feature = "gpu")]
@@ -181,7 +191,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
     /// Reset per-run state (queues, telemetry, warnings) so this executor can be reused.
     pub fn reset(&mut self) {
-        self.telemetry = ExecutionTelemetry::default();
+        self.telemetry = ExecutionTelemetry::with_level(self.metrics_level);
         if let Ok(mut warnings) = self.warnings_seen.lock() {
             warnings.clear();
         }
@@ -234,7 +244,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             gpu: self.gpu,
             queues: self.queues.clone(),
             warnings_seen: self.warnings_seen.clone(),
-            telemetry: ExecutionTelemetry::default(),
+            telemetry: ExecutionTelemetry::with_level(self.metrics_level),
+            metrics_level: self.metrics_level,
             pool_size: self.pool_size,
             host_bridges: self.host_bridges.clone(),
             const_coercers: self.const_coercers.clone(),
@@ -315,6 +326,20 @@ fn collect_payload_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<u
     out
 }
 
+pub(crate) fn thread_cpu_time() -> Option<Duration> {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        if libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) == 0 {
+            return Some(Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32));
+        }
+    }
+    None
+}
+
 /// Owned executor that can be reused across runs without leaking the plan.
 pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) nodes: Arc<[RuntimeNode]>,
@@ -346,6 +371,7 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) queues: Arc<Vec<EdgeStorage>>,
     pub(crate) warnings_seen: Arc<Mutex<HashSet<String>>>,
     pub(crate) telemetry: ExecutionTelemetry,
+    pub(crate) metrics_level: MetricsLevel,
     pub(crate) pool_size: Option<usize>,
     pub(crate) host_bridges: Option<crate::host_bridge::HostBridgeManager>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
@@ -389,7 +415,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             gpu: None,
             queues: Arc::new(queues),
             warnings_seen: Arc::new(Mutex::new(HashSet::new())),
-            telemetry: ExecutionTelemetry::default(),
+            telemetry: ExecutionTelemetry::with_level(MetricsLevel::default()),
+            metrics_level: MetricsLevel::default(),
             pool_size: None,
             host_bridges: None,
             const_coercers: None,
@@ -446,7 +473,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     }
 
     pub fn reset(&mut self) {
-        self.telemetry = ExecutionTelemetry::default();
+        self.telemetry = ExecutionTelemetry::with_level(self.metrics_level);
         if let Ok(mut warnings) = self.warnings_seen.lock() {
             warnings.clear();
         }
@@ -497,7 +524,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             gpu: self.gpu,
             queues: self.queues.clone(),
             warnings_seen: self.warnings_seen.clone(),
-            telemetry: ExecutionTelemetry::default(),
+            telemetry: ExecutionTelemetry::with_level(self.metrics_level),
+            metrics_level: self.metrics_level,
             pool_size: self.pool_size,
             host_bridges: self.host_bridges.clone(),
             const_coercers: self.const_coercers.clone(),

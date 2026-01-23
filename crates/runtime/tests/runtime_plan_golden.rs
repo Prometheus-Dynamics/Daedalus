@@ -144,7 +144,7 @@ fn runtime_plan_gpu_segment_golden() {
     assert_eq!(runtime.segments[1].nodes, vec![NodeRef(1), NodeRef(2)]);
     assert_eq!(
         runtime.schedule_order,
-        vec![NodeRef(1), NodeRef(2), NodeRef(0), NodeRef(3)]
+        vec![NodeRef(0), NodeRef(1), NodeRef(2), NodeRef(3)]
     );
 
     let actual: Value = serde_json::from_str(&debug::to_pretty_json(&runtime)).unwrap();

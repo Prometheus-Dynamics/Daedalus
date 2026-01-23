@@ -235,6 +235,7 @@ pub struct NodeIo<'a> {
     edges: &'a [EdgeInfo],
     #[allow(dead_code)]
     seg_idx: usize,
+    node_idx: usize,
     node_id: String,
     warnings_seen: &'a std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     backpressure: BackpressureStrategy,
@@ -292,6 +293,7 @@ impl<'a> NodeIo<'a> {
         #[cfg(feature = "gpu")] gpu_exit_edges: &'a HashSet<usize>,
         #[cfg(feature = "gpu")] payload_edges: &'a HashSet<usize>,
         seg_idx: usize,
+        node_idx: usize,
         node_id: String,
         telemetry: &'a mut ExecutionTelemetry,
         backpressure: BackpressureStrategy,
@@ -338,6 +340,14 @@ impl<'a> NodeIo<'a> {
                                 let now = Instant::now();
                                 telemetry
                                     .record_edge_wait(*edge_idx, now.saturating_duration_since(payload.enqueued_at));
+                                let payload_bytes = if cfg!(feature = "metrics")
+                                    && telemetry.metrics_level.is_detailed()
+                                {
+                                    crate::executor::payload_size_bytes(&payload.inner)
+                                } else {
+                                    None
+                                };
+                                telemetry.record_node_payload_in(node_idx, payload_bytes);
                                 let port = edges
                                     .get(*edge_idx)
                                     .map(|(_, _, _, to_port, _)| to_port.clone())
@@ -350,6 +360,7 @@ impl<'a> NodeIo<'a> {
                                         gpu_entry_edges,
                                         gpu_exit_edges,
                                         gpu.as_ref(),
+                                        telemetry,
                                     );
                                 }
                                 drained.push(DrainedInput {
@@ -368,6 +379,14 @@ impl<'a> NodeIo<'a> {
                             let now = Instant::now();
                             telemetry
                                 .record_edge_wait(*edge_idx, now.saturating_duration_since(payload.enqueued_at));
+                            let payload_bytes = if cfg!(feature = "metrics")
+                                && telemetry.metrics_level.is_detailed()
+                            {
+                                crate::executor::payload_size_bytes(&payload.inner)
+                            } else {
+                                None
+                            };
+                            telemetry.record_node_payload_in(node_idx, payload_bytes);
                             let port = edges
                                 .get(*edge_idx)
                                 .map(|(_, _, _, to_port, _)| to_port.clone())
@@ -380,6 +399,7 @@ impl<'a> NodeIo<'a> {
                                     gpu_entry_edges,
                                     gpu_exit_edges,
                                     gpu.as_ref(),
+                                    telemetry,
                                 );
                             }
                             drained.push(DrainedInput {
@@ -474,6 +494,7 @@ impl<'a> NodeIo<'a> {
             telemetry,
             edges,
             seg_idx,
+            node_idx,
             node_id,
             warnings_seen,
             backpressure,
@@ -645,6 +666,15 @@ impl<'a> NodeIo<'a> {
             } else {
                 correlated
             };
+            let payload_bytes = if cfg!(feature = "metrics")
+                && self.telemetry.metrics_level.is_detailed()
+            {
+                crate::executor::payload_size_bytes(&correlated.inner)
+            } else {
+                None
+            };
+            self.telemetry
+                .record_node_payload_out(self.node_idx, payload_bytes);
             apply_policy_owned(ApplyPolicyOwnedArgs {
                 edge_idx,
                 policy: &effective_policy,
@@ -685,6 +715,15 @@ impl<'a> NodeIo<'a> {
             if needs_payload {
                 payload.inner = promote_payload_for_host(payload.inner);
             }
+            let payload_bytes = if cfg!(feature = "metrics")
+                && self.telemetry.metrics_level.is_detailed()
+            {
+                crate::executor::payload_size_bytes(&payload.inner)
+            } else {
+                None
+            };
+            self.telemetry
+                .record_node_payload_out(self.node_idx, payload_bytes);
             apply_policy(
                 edge_idx,
                 &policy,
@@ -719,6 +758,15 @@ impl<'a> NodeIo<'a> {
             if let Some(cap) = cap_override {
                 policy = EdgePolicyKind::Bounded { cap };
             }
+            let payload_bytes = if cfg!(feature = "metrics")
+                && self.telemetry.metrics_level.is_detailed()
+            {
+                crate::executor::payload_size_bytes(&correlated.inner)
+            } else {
+                None
+            };
+            self.telemetry
+                .record_node_payload_out(self.node_idx, payload_bytes);
             apply_policy(
                 edge_idx,
                 &policy,
@@ -1840,11 +1888,13 @@ impl<'a> NodeIo<'a> {
         entries: &HashSet<usize>,
         exits: &HashSet<usize>,
         gpu: Option<&daedalus_gpu::GpuContextHandle>,
+        telemetry: &mut ExecutionTelemetry,
     ) -> CorrelatedPayload {
         let Some(ctx) = gpu else {
             return payload;
         };
         if entries.contains(&edge_idx) {
+            telemetry.record_edge_gpu_transfer(edge_idx, true);
             payload.inner = match payload.inner {
                 EdgePayload::Any(ref a) => {
                     if let Some(ep) = a.downcast_ref::<daedalus_gpu::ErasedPayload>() {
@@ -1864,6 +1914,7 @@ impl<'a> NodeIo<'a> {
                 other => other,
             };
         } else if exits.contains(&edge_idx) {
+            telemetry.record_edge_gpu_transfer(edge_idx, false);
             payload.inner = match payload.inner {
                 EdgePayload::Any(ref a) => {
                     if let Some(ep) = a.downcast_ref::<daedalus_gpu::ErasedPayload>() {
@@ -2410,6 +2461,7 @@ mod tests {
             #[cfg(feature = "gpu")]
             &payload_edges,
             0,
+            0,
             "node".into(),
             &mut telem,
             BackpressureStrategy::None,
@@ -2491,6 +2543,7 @@ mod tests {
             gpu_exit_edges,
             payload_edges,
             0,
+            0,
             "node".into(),
             telem,
             BackpressureStrategy::None,
@@ -2564,6 +2617,7 @@ mod tests {
             #[cfg(feature = "gpu")]
             &payload_edges,
             0,
+            0,
             "node".into(),
             &mut telem,
             BackpressureStrategy::None,
@@ -2615,6 +2669,7 @@ mod tests {
             #[cfg(feature = "gpu")]
             &payload_edges,
             0,
+            0,
             "node".into(),
             &mut telem,
             BackpressureStrategy::None,
@@ -2661,6 +2716,7 @@ mod tests {
             &gpu_exit_edges,
             #[cfg(feature = "gpu")]
             &payload_edges,
+            0,
             0,
             "node".into(),
             &mut telem,

@@ -3,7 +3,7 @@ use std::env;
 #[cfg(feature = "config-env")]
 use serde::{Deserialize, Serialize};
 
-use daedalus_runtime::{BackpressureStrategy, EdgePolicyKind};
+use daedalus_runtime::{BackpressureStrategy, EdgePolicyKind, MetricsLevel};
 
 /// GPU backend selection; device requires the `gpu` feature.
 ///
@@ -82,6 +82,8 @@ pub struct RuntimeSection {
     pub backpressure: BackpressureStrategy,
     #[cfg_attr(feature = "config-env", serde(default))]
     pub mode: RuntimeMode,
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub metrics_level: MetricsLevel,
     /// Prefer lock-free bounded edge queues when available.
     ///
     /// Requires the `lockfree-queues` Cargo feature.
@@ -97,6 +99,7 @@ impl Default for RuntimeSection {
             default_policy: EdgePolicyKind::Fifo,
             backpressure: BackpressureStrategy::None,
             mode: RuntimeMode::Serial,
+            metrics_level: MetricsLevel::default(),
             lockfree_queues: false,
             pool_size: None,
         }
@@ -163,6 +166,9 @@ impl EngineConfig {
     /// unsafe { std::env::remove_var("DAEDALUS_GPU"); }
     /// # }
     /// ```
+    ///
+    /// Environment variables:
+    /// - `DAEDALUS_METRICS_LEVEL=off|basic|detailed|profile`
     #[cfg(feature = "config-env")]
     pub fn from_env() -> Result<Self, String> {
         let mut cfg = EngineConfig::default();
@@ -218,6 +224,15 @@ impl EngineConfig {
                 "serial" => RuntimeMode::Serial,
                 "parallel" => RuntimeMode::Parallel,
                 other => return Err(format!("unknown DAEDALUS_RUNTIME_MODE '{}'", other)),
+            };
+        }
+        if let Ok(raw) = env::var("DAEDALUS_METRICS_LEVEL") {
+            cfg.runtime.metrics_level = match raw.to_ascii_lowercase().as_str() {
+                "off" => MetricsLevel::Off,
+                "basic" => MetricsLevel::Basic,
+                "detailed" => MetricsLevel::Detailed,
+                "profile" => MetricsLevel::Profile,
+                other => return Err(format!("unknown DAEDALUS_METRICS_LEVEL '{}'", other)),
             };
         }
         if let Ok(raw) = env::var("DAEDALUS_RUNTIME_POOL_SIZE") {

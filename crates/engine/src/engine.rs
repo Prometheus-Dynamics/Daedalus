@@ -135,7 +135,8 @@ impl Engine {
         runtime_plan: RuntimePlan,
         handler: H,
     ) -> Result<ExecutionTelemetry, EngineError> {
-        let mut exec = Executor::new(&runtime_plan, handler);
+        let mut exec = Executor::new(&runtime_plan, handler)
+            .with_metrics_level(self.config.runtime.metrics_level);
         #[cfg(feature = "gpu")]
         {
             if let Some(gpu) = self.get_gpu_handle()? {
@@ -184,7 +185,9 @@ impl Engine {
         host: HostBridgeManager,
         handler: H,
     ) -> Result<ExecutionTelemetry, EngineError> {
-        let mut exec = Executor::new(&runtime_plan, handler).with_host_bridges(host);
+        let mut exec = Executor::new(&runtime_plan, handler)
+            .with_host_bridges(host)
+            .with_metrics_level(self.config.runtime.metrics_level);
         #[cfg(feature = "gpu")]
         {
             if let Some(gpu) = self.get_gpu_handle()? {

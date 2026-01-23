@@ -8,5 +8,6 @@ mod engine;
 mod error;
 
 pub use config::{EngineConfig, GpuBackend, RuntimeMode};
+pub use daedalus_runtime::MetricsLevel;
 pub use engine::{Engine, RunResult};
 pub use error::EngineError;

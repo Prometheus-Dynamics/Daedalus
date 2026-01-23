@@ -15,7 +15,7 @@ categories = ["concurrency"]
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["metrics"]
 gpu = ["daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
 executor-pool = ["rayon"]

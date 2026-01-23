@@ -13,6 +13,7 @@ pub mod handles;
 pub mod host_bridge;
 pub mod io;
 mod plan;
+mod perf;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 mod scheduler;
@@ -81,7 +82,8 @@ pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
 pub use config::*;
 pub use convert::{ConversionRegistry, convert_arc};
 pub use executor::{
-    EdgePayload, ExecuteError, ExecutionTelemetry, Executor, NodeError, NodeHandler, NodeMetrics,
+    EdgePayload, ExecuteError, ExecutionTelemetry, Executor, MetricsLevel, NodeError, NodeHandler,
+    NodeMetrics,
 };
 pub use fanin::FanIn;
 pub use handles::{NodeHandle, PortHandle};

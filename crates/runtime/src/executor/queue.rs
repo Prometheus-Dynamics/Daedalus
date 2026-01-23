@@ -7,6 +7,7 @@ use crossbeam_queue::ArrayQueue;
 use crate::plan::{BackpressureStrategy, EdgePolicyKind};
 
 use super::{CorrelatedPayload, ExecutionTelemetry};
+use super::payload_size_bytes;
 
 /// Simple ring buffer for bounded queues.
 pub struct RingBuf {
@@ -55,6 +56,10 @@ impl RingBuf {
     pub fn is_full(&self) -> bool {
         self.len == self.cap()
     }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
 }
 
 pub enum EdgeQueue {
@@ -102,6 +107,13 @@ impl EdgeQueue {
         match self {
             EdgeQueue::Deque(_) => false,
             EdgeQueue::Bounded { ring } => ring.is_full(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            EdgeQueue::Deque(d) => d.len(),
+            EdgeQueue::Bounded { ring } => ring.len(),
         }
     }
 
@@ -192,6 +204,14 @@ pub fn apply_policy(
     backpressure: BackpressureStrategy,
 ) {
     if let Some(storage) = queues.get(edge_idx) {
+        let payload_bytes = if cfg!(feature = "metrics")
+            && telem.metrics_level.is_detailed()
+        {
+            payload_size_bytes(&payload.inner)
+        } else {
+            None
+        };
+        telem.record_edge_payload(edge_idx, payload_bytes);
         match storage {
             EdgeStorage::Locked(q_arc) => {
                 if let Ok(mut q) = q_arc.lock() {
@@ -225,6 +245,7 @@ pub fn apply_policy(
                             .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                         record_warning(&label, warnings_seen, telem);
                     }
+                    telem.record_edge_depth(edge_idx, q.len());
                 }
             }
             #[cfg(feature = "lockfree-queues")]
@@ -271,6 +292,7 @@ pub fn apply_policy(
                         .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                     record_warning(&label, warnings_seen, telem);
                 }
+                telem.record_edge_depth(edge_idx, q.len());
             }
         }
     }
@@ -299,6 +321,14 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
         backpressure,
     } = args;
     if let Some(storage) = queues.get(edge_idx) {
+        let payload_bytes = if cfg!(feature = "metrics")
+            && telem.metrics_level.is_detailed()
+        {
+            payload_size_bytes(&payload.inner)
+        } else {
+            None
+        };
+        telem.record_edge_payload(edge_idx, payload_bytes);
         match storage {
             EdgeStorage::Locked(q_arc) => {
                 if let Ok(mut q) = q_arc.lock() {
@@ -331,6 +361,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
                             .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                         record_warning(&label, warnings_seen, telem);
                     }
+                    telem.record_edge_depth(edge_idx, q.len());
                 }
             }
             #[cfg(feature = "lockfree-queues")]
@@ -372,11 +403,13 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
                         .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                     record_warning(&label, warnings_seen, telem);
                 }
+                telem.record_edge_depth(edge_idx, q.len());
             }
             #[cfg(feature = "lockfree-queues")]
             EdgeStorage::UnboundedLf(q) => {
                 payload.enqueued_at = Instant::now();
                 q.push(payload).unwrap();
+                telem.record_edge_depth(edge_idx, q.len());
             }
         }
     }

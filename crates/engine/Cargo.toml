@@ -15,7 +15,7 @@ categories = ["concurrency"]
 path = "src/lib.rs"
 
 [features]
-default = ["config-env"]
+default = ["config-env", "metrics"]
 config-env = ["serde", "serde_json"]
 gpu = ["daedalus-runtime/gpu", "daedalus-planner/gpu", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-runtime/gpu-mock", "daedalus-gpu/gpu-mock"]

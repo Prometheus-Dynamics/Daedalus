@@ -9,6 +9,7 @@ use crate::executor::crash_diag;
 use crate::executor::NodeError;
 #[cfg(feature = "gpu")]
 use crate::executor::EdgePayload;
+use crate::perf;
 use crate::io::NodeIo;
 use crate::state::ExecutionContext;
 use crate::{HOST_BRIDGE_META_KEY, bridge_handler};
@@ -91,6 +92,7 @@ pub fn run<H: crate::executor::NodeHandler>(
         &outgoing,
         &queues,
         &warnings_seen,
+        &graph_start,
         HostBridgePhase::Pre,
     )?;
 
@@ -107,6 +109,7 @@ pub fn run<H: crate::executor::NodeHandler>(
                     &outgoing,
                     &queues,
                     &warnings_seen,
+                    &graph_start,
                 )?;
             }
             ComputeAffinity::GpuPreferred => {
@@ -121,6 +124,7 @@ pub fn run<H: crate::executor::NodeHandler>(
                         &outgoing,
                         &queues,
                         &warnings_seen,
+                        &graph_start,
                     )?;
                 } else {
                     exec.telemetry.gpu_fallbacks += 1;
@@ -138,6 +142,7 @@ pub fn run<H: crate::executor::NodeHandler>(
                         &outgoing,
                         &queues,
                         &warnings_seen,
+                        &graph_start,
                     )?;
                 }
             }
@@ -157,6 +162,7 @@ pub fn run<H: crate::executor::NodeHandler>(
                     &outgoing,
                     &queues,
                     &warnings_seen,
+                    &graph_start,
                 )?;
             }
         }
@@ -170,6 +176,7 @@ pub fn run<H: crate::executor::NodeHandler>(
         &outgoing,
         &queues,
         &warnings_seen,
+        &graph_start,
         HostBridgePhase::Post,
     )?;
     exec.telemetry.graph_duration = graph_start.elapsed();
@@ -187,6 +194,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
     outgoing: &[Vec<usize>],
     queues: &Arc<Vec<EdgeStorage>>,
     warnings_seen: &Arc<Mutex<HashSet<String>>>,
+    graph_start: &Instant,
 ) -> Result<(), ExecuteError> {
     if std::env::var_os("DAEDALUS_TRACE_SCHEDULE").is_some() {
         let order: Vec<String> = segment
@@ -228,6 +236,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             #[cfg(feature = "gpu")]
             gpu: exec.gpu.clone(),
         };
+        let metrics_level = exec.telemetry.metrics_level;
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -240,6 +249,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             &exec.gpu_exit_set,
             &exec.payload_edges,
             seg_idx,
+            node_ref.0,
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
@@ -258,6 +268,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             exec.edges,
             node.sync_groups.clone(),
             seg_idx,
+            node_ref.0,
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
@@ -368,13 +379,28 @@ fn run_segment<H: crate::executor::NodeHandler>(
             );
         }
 
-        if io.inputs().is_empty() && io.has_incoming_edges() {
-            continue;
-        }
         if !io.sync_groups().is_empty() && io.inputs().is_empty() {
             continue;
         }
 
+        let cpu_start = if metrics_level.is_detailed() {
+            crate::executor::thread_cpu_time()
+        } else {
+            None
+        };
+        let perf_guard = if perf::node_perf_enabled() {
+            match perf::PerfCounterGuard::start() {
+                Ok(guard) => Some(guard),
+                Err(err) => {
+                    if perf::disable_node_perf() {
+                        log::warn!("node perf counters disabled: {err}");
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let node_start = Instant::now();
         crash_diag::set_current_node(node_ref.0);
         preflight_inputs(&ctx, &io).map_err(|error| ExecuteError::HandlerFailed {
@@ -394,8 +420,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
                 );
             }
         }
-        let run_result = match catch_unwind(AssertUnwindSafe(|| exec.handler.run(node, &ctx, &mut io)))
-        {
+        let run_result = match catch_unwind(AssertUnwindSafe(|| exec.handler.run(node, &ctx, &mut io))) {
             Ok(r) => r,
             Err(p) => {
                 let msg = if let Some(s) = p.downcast_ref::<&str>() {
@@ -412,18 +437,33 @@ fn run_segment<H: crate::executor::NodeHandler>(
             }
         };
         let elapsed = node_start.elapsed();
-        match run_result {
-            Ok(_) => {
-                io.flush()?;
-                exec.telemetry.record_node_duration(node_ref.0, elapsed);
+        let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
+        let flush_error = if run_result.is_ok() {
+            io.flush().err()
+        } else {
+            None
+        };
+        drop(io);
+        if let Some(sample) = perf_sample {
+            exec.telemetry.record_node_perf(node_ref.0, sample);
+        }
+        if let Some(cpu_start) = cpu_start {
+            if let Some(cpu_end) = crate::executor::thread_cpu_time() {
+                exec.telemetry
+                    .record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
             }
-            Err(e) => {
-                exec.telemetry.record_node_duration(node_ref.0, elapsed);
-                return Err(ExecuteError::HandlerFailed {
-                    node: node.id.clone(),
-                    error: e,
-                });
-            }
+        }
+        exec.telemetry.record_node_duration(node_ref.0, elapsed);
+        exec.telemetry
+            .record_trace_event(node_ref.0, node_start.saturating_duration_since(*graph_start), elapsed);
+        if let Err(e) = run_result {
+            return Err(ExecuteError::HandlerFailed {
+                node: node.id.clone(),
+                error: e,
+            });
+        }
+        if let Some(e) = flush_error {
+            return Err(e);
         }
         exec.telemetry.nodes_executed += 1;
     }
@@ -437,6 +477,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
     outgoing: &[Vec<usize>],
     queues: &Arc<Vec<EdgeStorage>>,
     warnings_seen: &Arc<Mutex<HashSet<String>>>,
+    graph_start: &Instant,
     phase: HostBridgePhase,
 ) -> Result<(), ExecuteError> {
     let Some(manager) = exec.host_bridges.clone() else {
@@ -509,6 +550,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             #[cfg(feature = "gpu")]
             gpu: exec.gpu.clone(),
         };
+        let metrics_level = exec.telemetry.metrics_level;
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -521,6 +563,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             &exec.gpu_exit_set,
             &exec.payload_edges,
             0,
+            node_ref.0,
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
@@ -539,6 +582,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             exec.edges,
             node.sync_groups.clone(),
             0,
+            node_ref.0,
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
@@ -563,21 +607,54 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             }
         }
 
+        let cpu_start = if metrics_level.is_detailed() {
+            crate::executor::thread_cpu_time()
+        } else {
+            None
+        };
+        let perf_guard = if perf::node_perf_enabled() {
+            match perf::PerfCounterGuard::start() {
+                Ok(guard) => Some(guard),
+                Err(err) => {
+                    if perf::disable_node_perf() {
+                        log::warn!("node perf counters disabled: {err}");
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let node_start = Instant::now();
         let run_result = bridge(node, &ctx, &mut io);
         let elapsed = node_start.elapsed();
-        match run_result {
-            Ok(_) => {
-                io.flush()?;
-                exec.telemetry.record_node_duration(node_ref.0, elapsed);
+        let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
+        let flush_error = if run_result.is_ok() {
+            io.flush().err()
+        } else {
+            None
+        };
+        drop(io);
+        if let Some(sample) = perf_sample {
+            exec.telemetry.record_node_perf(node_ref.0, sample);
+        }
+        if let Some(cpu_start) = cpu_start {
+            if let Some(cpu_end) = crate::executor::thread_cpu_time() {
+                exec.telemetry
+                    .record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
             }
-            Err(e) => {
-                exec.telemetry.record_node_duration(node_ref.0, elapsed);
-                return Err(ExecuteError::HandlerFailed {
-                    node: node.id.clone(),
-                    error: e,
-                });
-            }
+        }
+        exec.telemetry.record_node_duration(node_ref.0, elapsed);
+        exec.telemetry
+            .record_trace_event(node_ref.0, node_start.saturating_duration_since(*graph_start), elapsed);
+        if let Err(e) = run_result {
+            return Err(ExecuteError::HandlerFailed {
+                node: node.id.clone(),
+                error: e,
+            });
+        }
+        if let Some(e) = flush_error {
+            return Err(e);
         }
     }
     Ok(())

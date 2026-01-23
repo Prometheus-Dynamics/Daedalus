@@ -3,6 +3,7 @@
 use daedalus::{
     ErasedPayload, PluginLibrary,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
+    gpu::Payload as GpuPayload,
     host_bridge::install_host_bridge,
     runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
     runtime::plugins::PluginRegistry,
@@ -10,10 +11,12 @@ use daedalus::{
 use daedalus_runtime::executor::Executor;
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_planner::Graph;
-use image::DynamicImage;
+use image::{DynamicImage, GrayImage, RgbImage, RgbaImage};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plugin_path = resolve_plugin_path()?;
@@ -68,8 +71,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if incoming.is_empty() {
         eprintln!("warning: no host output ports found");
     }
+    for port in &incoming {
+        let ty = output.incoming_port_type(port).map(|t| format!("{t:?}")).unwrap_or_else(|| "unknown".to_string());
+        eprintln!("host output port: {port} ({ty})");
+    }
+    let output_dir = resolve_output_dir();
+    if let Some(dir) = &output_dir {
+        fs::create_dir_all(dir)?;
+    }
+    let prefix = resolve_output_prefix();
+
     let mut emitted = 0usize;
+    let mut image_ports = HashSet::new();
+    for port in &incoming {
+        if port != "frame" && port != "mask" {
+            continue;
+        }
+        let mut idx = 0usize;
+        while let Some(payload) = output.try_pop(port) {
+            if let Some(image) = payload_to_image(payload.inner.clone()) {
+                emitted += 1;
+                image_ports.insert(port.to_string());
+                if let Some(dir) = &output_dir {
+                    let filename = format!("{prefix}_{}_{}.png", port, idx);
+                    let path = dir.join(filename);
+                    image.save(&path)?;
+                    eprintln!("saved image: {}", path.display());
+                }
+                idx += 1;
+            } else {
+                eprintln!("note: dropped non-image payload on {port}: {:?}", payload.inner);
+            }
+        }
+    }
+
     for port in incoming {
+        if image_ports.contains(&port) {
+            continue;
+        }
         if port != "json" && port != "debug_json" {
             continue;
         }
@@ -77,7 +116,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             emitted += 1;
             match payload.payload {
                 daedalus_runtime::host_bridge::HostBridgeSerialized::Json(json) => {
-                    println!("[{port}] {json}");
+                    if let Some(rendered) = unwrap_json_string(&json) {
+                        println!("[{port}] {rendered}");
+                    } else {
+                        println!("[{port}] {json}");
+                    }
                 }
                 daedalus_runtime::host_bridge::HostBridgeSerialized::Bytes(bytes) => {
                     let text = String::from_utf8_lossy(&bytes);
@@ -91,6 +134,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn unwrap_json_string(raw: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let obj = parsed.as_object()?;
+    let ty = obj.get("type")?.as_str()?;
+    if ty != "string" {
+        return None;
+    }
+    let value = obj.get("value")?.as_str()?;
+    Some(value.to_string())
 }
 
 fn find_host_alias_output(graph: &Graph, port: &str) -> Option<String> {
@@ -177,4 +231,95 @@ fn resolve_image_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         return Ok(default);
     }
     Err("DAEDALUS_IMG_PATH is required (default image not found)".into())
+}
+
+fn resolve_output_dir() -> Option<PathBuf> {
+    env::var("DAEDALUS_OUTPUT_DIR").ok().map(PathBuf::from)
+}
+
+fn resolve_output_prefix() -> String {
+    env::var("DAEDALUS_OUTPUT_PREFIX").unwrap_or_else(|_| "stage".to_string())
+}
+
+fn payload_to_image(payload: EdgePayload) -> Option<DynamicImage> {
+    match payload {
+        EdgePayload::Any(any) => {
+            if let Some(inner) = any.downcast_ref::<Arc<dyn std::any::Any + Send + Sync>>() {
+                let inner_ref = inner.as_ref();
+                if let Some(img) = inner_ref.downcast_ref::<DynamicImage>().cloned() {
+                    return Some(img);
+                }
+                if let Some(img) = inner_ref.downcast_ref::<GrayImage>() {
+                    return Some(DynamicImage::ImageLuma8(img.clone()));
+                }
+                if let Some(img) = inner_ref.downcast_ref::<RgbImage>() {
+                    return Some(DynamicImage::ImageRgb8(img.clone()));
+                }
+                if let Some(img) = inner_ref.downcast_ref::<RgbaImage>() {
+                    return Some(DynamicImage::ImageRgba8(img.clone()));
+                }
+                if let Some(payload) = inner_ref.downcast_ref::<GpuPayload<DynamicImage>>() {
+                    if let Some(cpu) = payload.as_cpu() {
+                        return Some(cpu.clone());
+                    }
+                }
+                if let Some(payload) = inner_ref.downcast_ref::<ErasedPayload>() {
+                    if let Some(img) = payload.as_cpu::<DynamicImage>() {
+                        return Some(img.clone());
+                    }
+                }
+            }
+            if let Some(payload) = any.downcast_ref::<ErasedPayload>() {
+                if let Some(img) = payload.as_cpu::<DynamicImage>() {
+                    return Some(img.clone());
+                }
+                if let Some(img) = payload.try_downcast_cpu_any::<GrayImage>() {
+                    return Some(DynamicImage::ImageLuma8(img));
+                }
+                if let Some(img) = payload.try_downcast_cpu_any::<RgbImage>() {
+                    return Some(DynamicImage::ImageRgb8(img));
+                }
+                if let Some(img) = payload.try_downcast_cpu_any::<RgbaImage>() {
+                    return Some(DynamicImage::ImageRgba8(img));
+                }
+            }
+            if let Some(img) = any.downcast_ref::<DynamicImage>().cloned() {
+                return Some(img);
+            }
+            if let Some(img) = any.downcast_ref::<Arc<DynamicImage>>() {
+                return Some((**img).clone());
+            }
+            if let Some(img) = any.downcast_ref::<GrayImage>() {
+                return Some(DynamicImage::ImageLuma8(img.clone()));
+            }
+            if let Some(img) = any.downcast_ref::<RgbImage>() {
+                return Some(DynamicImage::ImageRgb8(img.clone()));
+            }
+            if let Some(img) = any.downcast_ref::<RgbaImage>() {
+                return Some(DynamicImage::ImageRgba8(img.clone()));
+            }
+            if let Some(payload) = any.downcast_ref::<GpuPayload<DynamicImage>>() {
+                if let Some(cpu) = payload.as_cpu() {
+                    return Some(cpu.clone());
+                }
+            }
+            None
+        }
+        EdgePayload::Payload(payload) => {
+            if let Some(img) = payload.as_cpu::<DynamicImage>() {
+                return Some(img.clone());
+            }
+            if let Some(img) = payload.try_downcast_cpu_any::<GrayImage>() {
+                return Some(DynamicImage::ImageLuma8(img));
+            }
+            if let Some(img) = payload.try_downcast_cpu_any::<RgbImage>() {
+                return Some(DynamicImage::ImageRgb8(img));
+            }
+            if let Some(img) = payload.try_downcast_cpu_any::<RgbaImage>() {
+                return Some(DynamicImage::ImageRgba8(img));
+            }
+            None
+        }
+        _ => None,
+    }
 }

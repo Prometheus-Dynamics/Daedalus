@@ -41,6 +41,7 @@ where
     } = exec;
 
     let graph_start = Instant::now();
+    let metrics_level = telemetry.metrics_level;
 
     // Map node -> segment
     let mut segment_of = vec![0usize; nodes.len()];
@@ -166,6 +167,8 @@ where
                 &const_inputs,
                 const_coercers,
                 output_movers,
+                graph_start,
+                metrics_level,
                 #[cfg(feature = "gpu")]
                 &gpu_entry_set,
                 #[cfg(feature = "gpu")]
