@@ -24,7 +24,7 @@ def main() -> None:
     out = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else (Path.cwd() / "example_py.so")
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    plugin = Plugin(name="example_py", version="0.1.0", description="Python example project")
+    plugin = Plugin(name="example_py", version="0.1.1", description="Python example project")
     register_all(plugin)
 
     # Point runtime at the nodes module.

@@ -33,7 +33,7 @@ public final class EmitManifestOpenCvDemo {
     Files.createDirectories(out.getParent());
 
     Plugin plugin = new Plugin("demo_java_opencv");
-    plugin.version = "0.1.0";
+    plugin.version = "0.1.1";
     plugin.description = "OpenCV image demo";
 
     AnnotationEmitter.registerAnnotated(plugin, ".", JavaOpenCvDemoNodes.class);

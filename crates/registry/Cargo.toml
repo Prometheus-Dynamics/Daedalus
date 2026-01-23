@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-registry"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Node registry and plugin bundle loader for Daedalus graphs."
 license.workspace = true
@@ -23,9 +23,9 @@ ffi = []
 gpu = ["daedalus-gpu"]
 
 [dependencies]
-daedalus-data = { version = "0.1.0", path = "../data" }
-daedalus-gpu = { version = "0.1.0", path = "../gpu", optional = true }
-daedalus-core = { version = "0.1.0", path = "../core" }
+daedalus-data = { version = "0.1.1", path = "../data" }
+daedalus-gpu = { version = "0.1.1", path = "../gpu", optional = true }
+daedalus-core = { version = "0.1.1", path = "../core" }
 serde = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }

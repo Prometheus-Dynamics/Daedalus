@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Facade crate for the Daedalus dataflow runtime (CPU/GPU node graphs)."
 license.workspace = true
@@ -34,16 +34,16 @@ examples = []
 engine = ["dep:daedalus-engine"]
 
 [dependencies]
-daedalus-core = { version = "0.1.0", path = "../core" }
-daedalus-data = { version = "0.1.0", path = "../data" }
-daedalus-gpu = { version = "0.1.0", path = "../gpu", optional = true }
-daedalus-registry = { version = "0.1.0", path = "../registry" }
-daedalus-planner = { version = "0.1.0", path = "../planner" }
-daedalus-runtime = { version = "0.1.0", path = "../runtime", features = ["plugins"] }
-daedalus-macros = { version = "0.1.0", path = "../macros" }
-daedalus-nodes = { version = "0.1.0", path = "../nodes" }
-daedalus-engine = { version = "0.1.0", path = "../engine", optional = true }
-daedalus-ffi = { version = "0.1.0", path = "../ffi", optional = true }
+daedalus-core = { version = "0.1.1", path = "../core" }
+daedalus-data = { version = "0.1.1", path = "../data" }
+daedalus-gpu = { version = "0.1.1", path = "../gpu", optional = true }
+daedalus-registry = { version = "0.1.1", path = "../registry" }
+daedalus-planner = { version = "0.1.1", path = "../planner" }
+daedalus-runtime = { version = "0.1.1", path = "../runtime", features = ["plugins"] }
+daedalus-macros = { version = "0.1.1", path = "../macros" }
+daedalus-nodes = { version = "0.1.1", path = "../nodes" }
+daedalus-engine = { version = "0.1.1", path = "../engine", optional = true }
+daedalus-ffi = { version = "0.1.1", path = "../ffi", optional = true }
 paste = { workspace = true }
 
 [dev-dependencies]

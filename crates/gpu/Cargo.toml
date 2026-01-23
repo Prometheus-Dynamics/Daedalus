@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-gpu"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "GPU backends and WGSL dispatch helpers for the Daedalus runtime."
 license.workspace = true
@@ -30,4 +30,4 @@ pollster = { workspace = true, optional = true }
 bytemuck = { workspace = true, optional = true }
 image = { workspace = true }
 half = { version = "2", optional = true }
-daedalus-wgsl-infer = { version = "0.1.0", path = "../wgsl-infer", optional = true }
+daedalus-wgsl-infer = { version = "0.1.1", path = "../wgsl-infer", optional = true }

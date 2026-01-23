@@ -42,7 +42,7 @@ public final class EmitManifestFeatures {
 
     String prefix = "demo_java_feat";
     Plugin plugin = new Plugin(prefix);
-    plugin.version = "0.1.0";
+    plugin.version = "0.1.1";
     plugin.description = "Java feature fixture";
     plugin.metadata.put("category", "tests");
 

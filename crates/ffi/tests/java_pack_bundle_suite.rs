@@ -95,7 +95,7 @@ public final class PackMain {{
     String outName = args[1];
 
     Plugin plugin = new Plugin("demo_pack_java");
-    plugin.version = "0.1.0";
+    plugin.version = "0.1.1";
 
     NodeDef add = new NodeDef("demo_pack_java:add")
       .javaEntrypoint(".", "demo.PackNodes", "add");

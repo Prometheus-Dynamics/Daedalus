@@ -43,7 +43,7 @@ export const blur = node({
 
 const plugin = new Plugin({
   name: "demo_node_opencv",
-  version: "0.1.0",
+  version: "0.1.1",
   description: "OpenCV image demo",
 });
 plugin.register(blur.__daedalus_node__);

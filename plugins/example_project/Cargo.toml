@@ -12,5 +12,5 @@ default = ["plugins"]
 plugins = []
 
 [dependencies]
-daedalus = { version = "0.1.0", path = "../../crates/daedalus", package = "daedalus-rs", features = ["plugins"] }
+daedalus = { version = "0.1.1", path = "../../crates/daedalus", package = "daedalus-rs", features = ["plugins"] }
 paste = { workspace = true }

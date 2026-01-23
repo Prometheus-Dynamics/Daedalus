@@ -72,7 +72,7 @@ DAEDALUS_REGISTER_SHADER_NODE_T(demo_cpp_shader_write_u32,
                                 std::tuple<uint32_t>{{}},
                                 daedalus::shader().file("shaders/write_u32.wgsl").shader_name("write_u32").invocations(1,1,1).storage_u32_rw(0, "out", 4, true))
 
-DAEDALUS_PLUGIN("{plugin_name}", "0.1.0", "cpp pack/bundle test plugin")
+DAEDALUS_PLUGIN("{plugin_name}", "0.1.1", "cpp pack/bundle test plugin")
 "#
     );
     fs::write(&src, code).expect("write cpp source");

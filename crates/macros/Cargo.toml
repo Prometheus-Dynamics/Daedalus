@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-macros"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Proc macros for Daedalus nodes and GPU binding helpers."
 license.workspace = true
@@ -19,6 +19,6 @@ proc-macro = true
 proc-macro2 = "1.0.103"
 quote = "1.0.42"
 syn = { version = "2.0.111", features = ["full"] }
-daedalus-runtime = { version = "0.1.0", path = "../runtime" }
+daedalus-runtime = { version = "0.1.1", path = "../runtime" }
 proc-macro-crate = "3.2.0"
-daedalus-wgsl-infer = { version = "0.1.0", path = "../wgsl-infer" }
+daedalus-wgsl-infer = { version = "0.1.1", path = "../wgsl-infer" }

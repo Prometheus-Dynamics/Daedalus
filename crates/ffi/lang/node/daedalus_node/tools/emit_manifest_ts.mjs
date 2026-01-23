@@ -37,7 +37,7 @@ function parseArgs(argv) {
           "Usage:",
           "  daedalus-node-tsc --project tsconfig.json --out ./dist/plugin.manifest.json \\",
           "    [--emit-dir ./dist] \\",
-          "    --plugin-name my_plugin [--plugin-version 0.1.0] [--plugin-description ...]",
+          "    --plugin-name my_plugin [--plugin-version 0.1.1] [--plugin-description ...]",
           "",
           "Notes:",
           "- Finds @nodeMethod(...) and @node(...) decorators in your TS sources.",

@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-wgsl-infer"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "WGSL binding/workgroup inference helpers for Daedalus GPU tooling."
 license.workspace = true

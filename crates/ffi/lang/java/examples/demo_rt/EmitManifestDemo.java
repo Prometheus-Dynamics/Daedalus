@@ -21,7 +21,7 @@ public final class EmitManifestDemo {
     Files.createDirectories(out.getParent());
 
     Plugin plugin = new Plugin("demo_java_rt");
-    plugin.version = "0.1.0";
+    plugin.version = "0.1.1";
     plugin.description = "Demo Java nodes";
     plugin.metadata.put("author", "example");
 

@@ -30,7 +30,7 @@ from daedalus_py import (  # noqa: E402
 )
 
 
-plugin = Plugin(name="demo_py_feat", version="0.1.0", description="Python feature fixture")
+plugin = Plugin(name="demo_py_feat", version="0.1.1", description="Python feature fixture")
 node = partial(node, plugin=plugin)
 
 @dataclass

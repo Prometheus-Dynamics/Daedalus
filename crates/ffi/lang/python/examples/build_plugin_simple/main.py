@@ -17,7 +17,7 @@ from daedalus_py import Plugin, node  # noqa: E402
 
 plugin = Plugin(
     name="demo_py",
-    version="0.1.0",
+    version="0.1.1",
     description="Demo Python nodes",
     metadata={"author": "example"},
 )

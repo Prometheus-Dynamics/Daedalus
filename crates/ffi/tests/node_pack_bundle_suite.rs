@@ -95,7 +95,7 @@ import {{ Plugin, NodeDef, t }} from "{index_url}";
 
 process.chdir({workspace:?});
 
-const plugin = new Plugin({{ name: "demo_pack", version: "0.1.0" }});
+const plugin = new Plugin({{ name: "demo_pack", version: "0.1.1" }});
 plugin.register(new NodeDef({{
   id: "demo_pack:add_defaults",
   js_path: {entry:?},

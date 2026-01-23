@@ -13,7 +13,7 @@ const out = process.argv[2]
 
 const plugin = new Plugin({
   name: "demo_node_opencv",
-  version: "0.1.0",
+  version: "0.1.1",
   description: "OpenCV image demo",
 });
 

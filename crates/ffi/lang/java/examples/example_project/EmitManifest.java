@@ -47,7 +47,7 @@ public final class EmitManifest {
     copyWgsl(out.getParent());
 
     Plugin plugin = new Plugin("example_java");
-    plugin.version = "0.1.0";
+    plugin.version = "0.1.1";
     plugin.description = "Java example project";
 
     // Register nodes via annotations (Rust-like ergonomics).

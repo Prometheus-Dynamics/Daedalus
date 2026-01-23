@@ -93,4 +93,4 @@ DAEDALUS_REGISTER_SHADER_NODE_T(
     daedalus::shader().file("shaders/write_u32.wgsl").shader_name("write_u32").invocations(1, 1, 1).storage_u32_rw(0, "out", 4, true))
 
 // Export plugin manifest symbol (single-artifact flow).
-DAEDALUS_PLUGIN("example_cpp", "0.1.0", "C/C++ example project")
+DAEDALUS_PLUGIN("example_cpp", "0.1.1", "C/C++ example project")

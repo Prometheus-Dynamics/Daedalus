@@ -58,7 +58,7 @@ sys.path.insert(0, {repo_str:?})
 
 from daedalus_py import Plugin, node_rs as node
 
-plugin = Plugin(name="demo_pack", version="0.1.0")
+plugin = Plugin(name="demo_pack", version="0.1.1")
 
 @node(id="demo_pack:add", py_path=__file__, inputs=("a","b"), outputs=("out",))
 def add(a: int, b: int) -> int:

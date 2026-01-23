@@ -172,4 +172,4 @@ DAEDALUS_NODE_WITH(
       def.set_metadata_json("{\"requires\":\"opencv\"}");
     })
 
-DAEDALUS_PLUGIN("demo_cpp_opencv", "0.1.0", "OpenCV image demo")
+DAEDALUS_PLUGIN("demo_cpp_opencv", "0.1.1", "OpenCV image demo")
