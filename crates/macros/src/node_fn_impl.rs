@@ -1021,6 +1021,17 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         let mut call_args: Vec<proc_macro2::TokenStream> = Vec::new();
         for arg in &input.sig.inputs {
             if let syn::FnArg::Typed(pat) = arg {
+                let is_shader_ctx_param = match &*pat.ty {
+                    syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident == "ShaderContext").unwrap_or(false),
+                    syn::Type::Reference(r) => match &*r.elem {
+                        syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident == "ShaderContext").unwrap_or(false),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if is_shader_ctx_param && shader_ctx_ident.is_none() {
+                    continue;
+                }
                 if let syn::Pat::Ident(id) = &*pat.pat {
                     let ident = &id.ident;
                     if let Some(n) = &runtime_node_ident {
