@@ -595,6 +595,11 @@ impl HostPollable for Value {
             EdgePayload::Value(value) => Ok(value),
             EdgePayload::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
                 let ty = std::any::type_name_of_val(any.as_ref());
+                log::warn!(
+                    "host bridge port {}: Any payload not value-like (type={})",
+                    port,
+                    ty
+                );
                 NodeError::InvalidInput(format!(
                     "host bridge port {port}: payload is not value-like (type={ty})"
                 ))
@@ -1340,6 +1345,10 @@ fn serialize_outbound_payload(
                 } else if let Some(value) = any_to_value(any.as_ref()) {
                     HostBridgeSerialized::Json(serialize_value_to_json(port, &value)?)
                 } else {
+                    log::warn!(
+                        "host bridge port {}: unsupported Any payload for bytes output",
+                        port
+                    );
                     return Err(NodeError::InvalidInput(format!(
                         "host bridge port {port}: unsupported Any payload for bytes output"
                     )));
@@ -1349,6 +1358,7 @@ fn serialize_outbound_payload(
             } else if let Some(bytes) = any_to_bytes(any.as_ref()) {
                 HostBridgeSerialized::Bytes(bytes)
             } else {
+                log::warn!("host bridge port {}: unsupported Any payload", port);
                 return Err(NodeError::InvalidInput(format!(
                     "host bridge port {port}: unsupported Any payload"
                 )));
@@ -1356,6 +1366,7 @@ fn serialize_outbound_payload(
         }
         #[cfg(feature = "gpu")]
         EdgePayload::Payload(_) | EdgePayload::GpuImage(_) => {
+            log::warn!("host bridge port {}: gpu payloads cannot be serialized", port);
             return Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: gpu payloads cannot be serialized"
             )));
@@ -1393,11 +1404,17 @@ fn value_payload(value: Value) -> EdgePayload {
     EdgePayload::Value(value)
 }
 
-type AnyValueSerializer = Box<dyn Fn(&dyn Any) -> Option<Value> + Send + Sync + 'static>;
+pub type ValueSerializer = Box<dyn Fn(&dyn Any) -> Option<Value> + Send + Sync + 'static>;
+pub type ValueSerializerMap = Arc<RwLock<Vec<ValueSerializer>>>;
 
-fn value_serializers() -> &'static RwLock<Vec<AnyValueSerializer>> {
-    static REGISTRY: OnceLock<RwLock<Vec<AnyValueSerializer>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| RwLock::new(Vec::new()))
+fn value_serializers() -> &'static ValueSerializerMap {
+    static REGISTRY: OnceLock<ValueSerializerMap> = OnceLock::new();
+    REGISTRY.get_or_init(|| Arc::new(RwLock::new(Vec::new())))
+}
+
+/// Shared registry for value serializers.
+pub fn value_serializer_map() -> ValueSerializerMap {
+    value_serializers().clone()
 }
 
 fn try_serialize_any_value(any: &dyn Any) -> Option<Value> {
@@ -1413,12 +1430,12 @@ fn try_serialize_any_value(any: &dyn Any) -> Option<Value> {
 /// Register a conversion from a typed payload `T` into a runtime `Value`.
 ///
 /// This allows host-bridge output serialization to support plugin-defined structured types.
-pub fn register_value_serializer<T, F>(serializer: F)
+pub fn register_value_serializer_in<T, F>(map: &ValueSerializerMap, serializer: F)
 where
     T: Any + Clone + Send + Sync + 'static,
     F: Fn(&T) -> Value + Send + Sync + 'static,
 {
-    let mut guard = value_serializers()
+    let mut guard = map
         .write()
         .expect("daedalus-runtime host bridge serializer lock poisoned");
     guard.push(Box::new(move |any| {
@@ -1429,7 +1446,30 @@ where
     }));
 }
 
+/// Register a conversion from a typed payload `T` into a runtime `Value`.
+///
+/// This allows host-bridge output serialization to support plugin-defined structured types.
+pub fn register_value_serializer<T, F>(serializer: F)
+where
+    T: Any + Clone + Send + Sync + 'static,
+    F: Fn(&T) -> Value + Send + Sync + 'static,
+{
+    register_value_serializer_in(&value_serializer_map(), serializer);
+}
+
 fn any_to_value(any: &dyn Any) -> Option<Value> {
+    if let Some(inner) = any.downcast_ref::<Arc<dyn Any + Send + Sync>>() {
+        return any_to_value(inner.as_ref());
+    }
+    if let Some(inner) = any.downcast_ref::<Box<dyn Any + Send + Sync>>() {
+        return any_to_value(inner.as_ref());
+    }
+    if let Some(inner) = any.downcast_ref::<Arc<Box<dyn Any + Send + Sync>>>() {
+        return any_to_value(inner.as_ref());
+    }
+    if let Some(inner) = any.downcast_ref::<Box<Arc<dyn Any + Send + Sync>>>() {
+        return any_to_value(inner.as_ref());
+    }
     if let Some(value) = try_serialize_any_value(any) {
         return Some(value);
     }

@@ -998,6 +998,28 @@ impl<'a> NodeIo<'a> {
             return Some(self.cache_borrowed(t));
         }
 
+        if std::env::var_os("DAEDALUS_TRACE_MISSING_INPUTS").is_some() {
+            let desc = self.inputs_for(port).next().map(|payload| {
+                match &payload.inner {
+                    EdgePayload::Any(a) => format!("Any({})", std::any::type_name_of_val(a.as_ref())),
+                    #[cfg(feature = "gpu")]
+                    EdgePayload::Payload(ep) => format!("Payload({ep:?})"),
+                    #[cfg(feature = "gpu")]
+                    EdgePayload::GpuImage(_) => "GpuImage".to_string(),
+                    EdgePayload::Value(v) => format!("Value({v:?})"),
+                    EdgePayload::Bytes(_) => "Bytes".to_string(),
+                    EdgePayload::Unit => "Unit".to_string(),
+                }
+            }).unwrap_or_else(|| "None".to_string());
+            eprintln!(
+                "daedalus-runtime: input mismatch node={} port={} expected={} payload={}",
+                self.node_id,
+                port,
+                std::any::type_name::<T>(),
+                desc
+            );
+        }
+
         None
     }
 

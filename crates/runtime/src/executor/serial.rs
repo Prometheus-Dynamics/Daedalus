@@ -237,6 +237,14 @@ fn run_segment<H: crate::executor::NodeHandler>(
             gpu: exec.gpu.clone(),
         };
         let metrics_level = exec.telemetry.metrics_level;
+        let const_inputs_guard = exec
+            .const_inputs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let const_inputs = const_inputs_guard
+            .get(node_ref.0)
+            .map(|inputs| inputs.as_slice())
+            .unwrap_or(&[]);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -253,7 +261,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
-            &exec.const_inputs[node_ref.0],
+            const_inputs,
             exec.const_coercers.clone(),
             exec.output_movers.clone(),
             ctx.gpu.clone(),
@@ -272,7 +280,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
-            &exec.const_inputs[node_ref.0],
+            const_inputs,
             exec.const_coercers.clone(),
             exec.output_movers.clone(),
         );
@@ -551,6 +559,14 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             gpu: exec.gpu.clone(),
         };
         let metrics_level = exec.telemetry.metrics_level;
+        let const_inputs_guard = exec
+            .const_inputs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let const_inputs = const_inputs_guard
+            .get(node_ref.0)
+            .map(|inputs| inputs.as_slice())
+            .unwrap_or(&[]);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -567,7 +583,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
-            &exec.const_inputs[node_ref.0],
+            const_inputs,
             exec.const_coercers.clone(),
             exec.output_movers.clone(),
             ctx.gpu.clone(),
@@ -586,7 +602,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             node.id.clone(),
             &mut exec.telemetry,
             exec.backpressure.clone(),
-            &exec.const_inputs[node_ref.0],
+            const_inputs,
             exec.const_coercers.clone(),
             exec.output_movers.clone(),
         );

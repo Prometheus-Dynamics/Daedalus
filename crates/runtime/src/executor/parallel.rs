@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use daedalus_data::model::Value;
@@ -450,7 +450,7 @@ fn run_host_bridges(
     queues: &Arc<Vec<EdgeStorage>>,
     warnings_seen: &Arc<Mutex<HashSet<String>>>,
     policies: &Arc<PolicyList>,
-    const_inputs: &Arc<Vec<Vec<(String, daedalus_data::model::Value)>>>,
+    const_inputs: &Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
     const_coercers: Option<crate::io::ConstCoercerMap>,
     output_movers: Option<crate::io::OutputMoverMap>,
     telemetry: &mut ExecutionTelemetry,
@@ -535,6 +535,13 @@ fn run_host_bridges(
             gpu: gpu.clone(),
         };
         let metrics_level = telemetry.metrics_level;
+        let const_inputs_guard = const_inputs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let const_inputs_slice = const_inputs_guard
+            .get(node_ref.0)
+            .map(|inputs| inputs.as_slice())
+            .unwrap_or(&[]);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -551,7 +558,7 @@ fn run_host_bridges(
             node.id.clone(),
             telemetry,
             backpressure.clone(),
-            &const_inputs[node_ref.0],
+            const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
             gpu.clone(),
@@ -570,7 +577,7 @@ fn run_host_bridges(
             node.id.clone(),
             telemetry,
             backpressure.clone(),
-            &const_inputs[node_ref.0],
+            const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
         );
@@ -663,7 +670,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
     seg_idx: usize,
     backpressure: crate::plan::BackpressureStrategy,
     gpu_available: bool,
-    const_inputs: &Arc<Vec<Vec<(String, daedalus_data::model::Value)>>>,
+    const_inputs: &Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
     const_coercers: Option<crate::io::ConstCoercerMap>,
     output_movers: Option<crate::io::OutputMoverMap>,
     graph_start: Instant,
@@ -732,6 +739,13 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             gpu: gpu.clone(),
         };
         let detailed = metrics_level.is_detailed();
+        let const_inputs_guard = const_inputs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let const_inputs_slice = const_inputs_guard
+            .get(node_ref.0)
+            .map(|inputs| inputs.as_slice())
+            .unwrap_or(&[]);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -748,7 +762,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             node.id.clone(),
             &mut telem,
             backpressure.clone(),
-            &const_inputs[node_ref.0],
+            const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
             ctx.gpu.clone(),
@@ -767,7 +781,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             node.id.clone(),
             &mut telem,
             backpressure.clone(),
-            &const_inputs[node_ref.0],
+            const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
         );

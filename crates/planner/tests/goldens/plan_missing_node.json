@@ -23,9 +23,9 @@
     ],
     "edges": [],
     "metadata": {
-      "schedule_order": "a,c",
+      "schedule_order": "c,a",
       "schedule_priority": "a:2,c:2",
-      "topo_order": "a,c"
+      "topo_order": "c,a"
     }
   },
   "diagnostics": [

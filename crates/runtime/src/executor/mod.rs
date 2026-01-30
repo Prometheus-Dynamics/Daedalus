@@ -1,8 +1,8 @@
 use crate::plan::{BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment};
 use crate::state::StateStore;
-use daedalus_planner::NodeRef;
+use daedalus_planner::{GraphNodeSelector, GraphPatch, GraphPatchOp, NodeRef, PatchReport};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 mod errors;
@@ -61,7 +61,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) gpu_edges: &'a [()],
     pub(crate) segments: &'a [RuntimeSegment],
     pub(crate) schedule_order: &'a [NodeRef],
-    pub(crate) const_inputs: Arc<Vec<Vec<(String, daedalus_data::model::Value)>>>,
+    pub(crate) const_inputs: Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
     pub(crate) backpressure: BackpressureStrategy,
     pub(crate) handler: Arc<H>,
     pub(crate) state: StateStore,
@@ -111,7 +111,9 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             gpu_edges: &[],
             segments: &plan.segments,
             schedule_order: &plan.schedule_order,
-            const_inputs: Arc::new(plan.nodes.iter().map(|n| n.const_inputs.clone()).collect()),
+            const_inputs: Arc::new(RwLock::new(
+                plan.nodes.iter().map(|n| n.const_inputs.clone()).collect(),
+            )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
             state: StateStore::default(),
@@ -177,6 +179,12 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self.metrics_level = level;
         self.telemetry.metrics_level = level;
         self
+    }
+
+    /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
+    pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
+        let mut guard = self.const_inputs.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        apply_patch_to_const_inputs(patch, &self.nodes, &mut guard)
     }
 
     /// Attach a host bridge manager to enable implicit host I/O nodes.
@@ -362,7 +370,7 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) gpu_edges: Arc<Vec<()>>,
     pub(crate) segments: Arc<Vec<RuntimeSegment>>,
     pub(crate) schedule_order: Arc<Vec<NodeRef>>,
-    pub(crate) const_inputs: Arc<Vec<Vec<(String, daedalus_data::model::Value)>>>,
+    pub(crate) const_inputs: Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
     pub(crate) backpressure: BackpressureStrategy,
     pub(crate) handler: Arc<H>,
     pub(crate) state: StateStore,
@@ -404,7 +412,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             gpu_edges: Arc::new(Vec::new()),
             segments: Arc::new(plan.segments.clone()),
             schedule_order: Arc::new(plan.schedule_order.clone()),
-            const_inputs: Arc::new(plan.nodes.iter().map(|n| n.const_inputs.clone()).collect()),
+            const_inputs: Arc::new(RwLock::new(
+                plan.nodes.iter().map(|n| n.const_inputs.clone()).collect(),
+            )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
             state: StateStore::default(),
@@ -560,6 +570,115 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         };
         self.reset();
         res
+    }
+
+    /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
+    pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
+        let mut guard = self.const_inputs.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        apply_patch_to_const_inputs(patch, &self.nodes, &mut guard)
+    }
+}
+
+fn apply_patch_to_const_inputs(
+    patch: &GraphPatch,
+    nodes: &[RuntimeNode],
+    const_inputs: &mut Vec<Vec<(String, daedalus_data::model::Value)>>,
+) -> PatchReport {
+    let mut report = PatchReport::default();
+    for op in &patch.ops {
+        match op {
+            GraphPatchOp::SetNodeConst { node, port, value } => {
+                let indices = resolve_runtime_indices(nodes, node);
+                if indices.is_empty() {
+                    report.skipped_ops += 1;
+                    continue;
+                }
+                let normalized_port = normalize_port(port);
+                for idx in indices {
+                    if let Some(entry) = const_inputs.get_mut(idx) {
+                        apply_const_override(entry, &normalized_port, port, value);
+                        report.matched_nodes += 1;
+                    }
+                }
+                report.applied_ops += 1;
+            }
+        }
+    }
+    report
+}
+
+fn resolve_runtime_indices(nodes: &[RuntimeNode], selector: &GraphNodeSelector) -> Vec<usize> {
+    if let Some(index) = selector.index {
+        if index < nodes.len() {
+            return vec![index];
+        }
+        return Vec::new();
+    }
+
+    if let Some(meta) = selector.metadata.as_ref() {
+        let key = meta.key.trim();
+        if !key.is_empty() {
+            return nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, node)| {
+                    node.metadata
+                        .get(key)
+                        .filter(|value| *value == &meta.value)
+                        .map(|_| idx)
+                })
+                .collect();
+        }
+    }
+
+    if let Some(id) = selector.id.as_ref() {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, node)| (node.id == trimmed).then_some(idx))
+                .collect();
+        }
+    }
+
+    Vec::new()
+}
+
+fn normalize_port(port: &str) -> String {
+    port.trim().to_ascii_lowercase()
+}
+
+fn apply_const_override(
+    const_inputs: &mut Vec<(String, daedalus_data::model::Value)>,
+    normalized_port: &str,
+    port: &str,
+    value: &Option<daedalus_data::model::Value>,
+) {
+    let mut matched = None;
+    for (idx, (name, _)) in const_inputs.iter().enumerate() {
+        if normalize_port(name) == normalized_port {
+            matched = Some(idx);
+            break;
+        }
+    }
+
+    match (matched, value) {
+        (Some(idx), Some(next)) => {
+            const_inputs[idx] = (const_inputs[idx].0.clone(), next.clone());
+        }
+        (Some(idx), None) => {
+            const_inputs.remove(idx);
+        }
+        (None, Some(next)) => {
+            let key = if port.trim().is_empty() {
+                normalized_port.to_string()
+            } else {
+                port.trim().to_string()
+            };
+            const_inputs.push((key, next.clone()));
+        }
+        (None, None) => {}
     }
 }
 

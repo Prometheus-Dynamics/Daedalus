@@ -111,6 +111,22 @@ fn infers_host_bridge_output_type_from_connection() {
     };
     let ty: TypeExpr = serde_json::from_str(json).expect("parse inferred TypeExpr");
     assert_eq!(ty, TypeExpr::opaque("image:dynamic"));
+
+    let labels = host
+        .metadata
+        .get("dynamic_output_labels")
+        .expect("expected dynamic_output_labels in host metadata");
+    let Value::Map(label_entries) = labels else {
+        panic!("expected dynamic_output_labels to be a map, got {labels:?}");
+    };
+    let (_, label_value) = label_entries
+        .iter()
+        .find(|(k, _)| matches!(k, Value::String(s) if s.eq_ignore_ascii_case("frame")))
+        .expect("expected inferred frame label entry");
+    let Value::String(label) = label_value else {
+        panic!("expected label entry to be string, got {label_value:?}");
+    };
+    assert_eq!(label.as_ref(), "Image (dynamic)");
 }
 
 #[test]

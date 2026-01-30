@@ -23,7 +23,17 @@ pub use dispatch::{ManifestDispatchError, ManifestPlugin, load_manifest_plugin};
 pub use java::{JavaManifest, JavaManifestError, JavaManifestPlugin, load_java_manifest};
 pub use manifest::Manifest;
 pub use node::{NodeManifest, NodeManifestError, NodeManifestPlugin, load_node_manifest};
-pub use plugin::{FfiPluginError, PluginLibrary, REGISTER_SYMBOL};
+pub use plugin::{
+    FFI_VERSION,
+    PLUGIN_ABI_SYMBOL,
+    PLUGIN_ABI_VERSION,
+    PLUGIN_INFO_SYMBOL,
+    PluginInfo,
+    StrView,
+    FfiPluginError,
+    PluginLibrary,
+    REGISTER_SYMBOL,
+};
 pub use python::{
     ImagePayload, PythonManifest, PythonManifestError, PythonManifestPlugin, load_python_manifest,
 };

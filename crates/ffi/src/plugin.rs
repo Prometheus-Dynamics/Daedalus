@@ -13,6 +13,57 @@ use thiserror::Error;
 /// assert_eq!(REGISTER_SYMBOL, "daedalus_plugin_register");
 /// ```
 pub const REGISTER_SYMBOL: &str = "daedalus_plugin_register";
+pub const PLUGIN_INFO_SYMBOL: &str = "daedalus_plugin_info";
+pub const PLUGIN_ABI_SYMBOL: &str = "daedalus_plugin_abi_version";
+pub const PLUGIN_ABI_VERSION: u32 = 2;
+pub const FFI_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct StrView {
+    pub ptr: *const u8,
+    pub len: usize,
+}
+
+impl StrView {
+    pub fn from_str(value: &'static str) -> Self {
+        Self {
+            ptr: value.as_ptr(),
+            len: value.len(),
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&'static str> {
+        if self.ptr.is_null() {
+            return None;
+        }
+        // Safety: caller guarantees the pointer and length are valid for the program lifetime.
+        let bytes = unsafe { std::slice::from_raw_parts(self.ptr, self.len) };
+        std::str::from_utf8(bytes).ok()
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct PluginInfo {
+    pub abi_version: u32,
+    pub ffi_version: StrView,
+    pub daedalus_version: StrView,
+    pub plugin_name: StrView,
+    pub plugin_version: StrView,
+}
+
+impl PluginInfo {
+    pub fn new(plugin_name: &'static str, plugin_version: &'static str, daedalus_version: &'static str) -> Self {
+        Self {
+            abi_version: PLUGIN_ABI_VERSION,
+            ffi_version: StrView::from_str(FFI_VERSION),
+            daedalus_version: StrView::from_str(daedalus_version),
+            plugin_name: StrView::from_str(plugin_name),
+            plugin_version: StrView::from_str(plugin_version),
+        }
+    }
+}
 
 /// Errors that can occur while loading or installing a dynamic plugin.
 ///
@@ -32,6 +83,8 @@ pub enum FfiPluginError {
 }
 
 type RegisterFn = unsafe extern "C" fn(*mut PluginRegistry) -> bool;
+type InfoFn = unsafe extern "C" fn() -> PluginInfo;
+type AbiFn = unsafe extern "C" fn() -> u32;
 
 /// Loaded plugin library that can install itself into a registry.
 ///
@@ -52,6 +105,8 @@ pub struct PluginLibrary {
     #[allow(dead_code)]
     lib: &'static Library,
     register: RegisterFn,
+    info: Option<InfoFn>,
+    abi_version: Option<AbiFn>,
     _path: PathBuf,
 }
 
@@ -74,9 +129,17 @@ impl PluginLibrary {
         let register = unsafe { lib.get::<RegisterFn>(REGISTER_SYMBOL.as_bytes()) }
             .map(|f| *f)
             .map_err(|_| FfiPluginError::MissingSymbol)?;
+        let info = unsafe { lib.get::<InfoFn>(PLUGIN_INFO_SYMBOL.as_bytes()) }
+            .map(|f| *f)
+            .ok();
+        let abi_version = unsafe { lib.get::<AbiFn>(PLUGIN_ABI_SYMBOL.as_bytes()) }
+            .map(|f| *f)
+            .ok();
         Ok(Self {
             lib,
             register,
+            info,
+            abi_version,
             _path: path,
         })
     }
@@ -100,6 +163,14 @@ impl PluginLibrary {
         } else {
             Err(FfiPluginError::RegisterReturnedError)
         }
+    }
+
+    pub fn info(&self) -> Option<PluginInfo> {
+        self.info.map(|f| unsafe { f() })
+    }
+
+    pub fn abi_version(&self) -> Option<u32> {
+        self.abi_version.map(|f| unsafe { f() })
     }
 }
 
@@ -178,6 +249,16 @@ impl ScopedPluginLibrary {
 #[macro_export]
 macro_rules! export_plugin {
     ($ty:ty) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_abi_version() -> u32 {
+            $crate::PLUGIN_ABI_VERSION
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_info() -> $crate::PluginInfo {
+            $crate::PluginInfo::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), daedalus::version())
+        }
+
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn daedalus_plugin_register(
             registry: *mut daedalus::runtime::plugins::PluginRegistry,

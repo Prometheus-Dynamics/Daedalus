@@ -10,6 +10,8 @@ use crate::graph::{ComputeAffinity, Edge, ExecutionPlan, Graph, NodeRef, PortRef
 
 const DYNAMIC_INPUT_TYPES_KEY: &str = "dynamic_input_types";
 const DYNAMIC_OUTPUT_TYPES_KEY: &str = "dynamic_output_types";
+const DYNAMIC_INPUT_LABELS_KEY: &str = "dynamic_input_labels";
+const DYNAMIC_OUTPUT_LABELS_KEY: &str = "dynamic_output_labels";
 const EMBEDDED_GRAPH_KEY: &str = "daedalus.embedded_graph";
 const EMBEDDED_HOST_KEY: &str = "daedalus.embedded_host";
 const EMBEDDED_GROUP_KEY: &str = "daedalus.embedded_group";
@@ -415,6 +417,8 @@ pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> Planner
     for node in &mut input.graph.nodes {
         node.metadata.remove(DYNAMIC_INPUT_TYPES_KEY);
         node.metadata.remove(DYNAMIC_OUTPUT_TYPES_KEY);
+        node.metadata.remove(DYNAMIC_INPUT_LABELS_KEY);
+        node.metadata.remove(DYNAMIC_OUTPUT_LABELS_KEY);
         node.metadata.remove("dynamic_inputs");
         node.metadata.remove("dynamic_outputs");
     }
@@ -589,8 +593,116 @@ fn typecheck(
         });
     }
 
+    fn build_type_label_lookup(
+        view: &daedalus_registry::store::RegistryView,
+    ) -> BTreeMap<TypeExpr, String> {
+        let mut out = BTreeMap::new();
+        for desc in view.values.values() {
+            let Some(ty) = desc.type_expr.clone() else {
+                continue;
+            };
+            let label = desc
+                .label
+                .as_ref()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| desc.id.0.clone());
+            out.entry(ty).or_insert(label);
+        }
+        out
+    }
+
+    fn simplify_rust_name(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return raw.to_string();
+        }
+        let outer = trimmed.split('<').next().unwrap_or(trimmed);
+        let simple = outer.rsplit("::").next().unwrap_or(outer);
+        if simple.is_empty() {
+            trimmed.to_string()
+        } else {
+            simple.to_string()
+        }
+    }
+
+    fn display_label_for_type(
+        ty: &TypeExpr,
+        lookup: &BTreeMap<TypeExpr, String>,
+    ) -> String {
+        if let Some(found) = lookup.get(ty) {
+            return found.clone();
+        }
+
+        match ty {
+            TypeExpr::Opaque(name) => {
+                if name == "image" {
+                    return "Image".to_string();
+                }
+                if let Some(flavor) = name.strip_prefix("image:") {
+                    return if flavor.is_empty() {
+                        "Image".to_string()
+                    } else {
+                        format!("Image ({flavor})")
+                    };
+                }
+                if name == "cv:binary_image" {
+                    return "Image (binary)".to_string();
+                }
+                if let Some(raw) = name.strip_prefix("rust:") {
+                    return simplify_rust_name(raw);
+                }
+                name.clone()
+            }
+            TypeExpr::Scalar(value) => format!("{value:?}"),
+            TypeExpr::Optional(inner) => {
+                let inner_label = display_label_for_type(inner, lookup);
+                format!("{inner_label}?")
+            }
+            TypeExpr::List(inner) => {
+                let inner_label = display_label_for_type(inner, lookup);
+                format!("{inner_label}[]")
+            }
+            TypeExpr::Map(key, value) => {
+                let key_label = display_label_for_type(key, lookup);
+                let value_label = display_label_for_type(value, lookup);
+                format!("map<{key_label}, {value_label}>")
+            }
+            TypeExpr::Tuple(items) => {
+                let parts = items
+                    .iter()
+                    .map(|item| display_label_for_type(item, lookup))
+                    .collect::<Vec<_>>();
+                format!("({})", parts.join(", "))
+            }
+            TypeExpr::Struct(fields) => {
+                let mut names = BTreeSet::new();
+                for field in fields {
+                    names.insert(field.name.trim().to_ascii_lowercase());
+                }
+                if names.len() == 2 && names.contains("x") && names.contains("y") {
+                    return "Point".to_string();
+                }
+                if names.len() == 4 && names.contains("r") && names.contains("g") && names.contains("b") && names.contains("a") {
+                    return "Pixel".to_string();
+                }
+                if names.contains("data_b64") && names.contains("width") && names.contains("height") {
+                    return "Image".to_string();
+                }
+                "Struct".to_string()
+            }
+            TypeExpr::Enum(_) => "Enum".to_string(),
+        }
+    }
+
+    fn label_for_type(ty: &TypeExpr, lookup: &BTreeMap<TypeExpr, String>) -> String {
+        display_label_for_type(ty, lookup)
+    }
+
     let mut vars: BTreeMap<TypeVarKey, usize> = BTreeMap::new();
     let mut dsu = Dsu::new();
+    let type_label_lookup = build_type_label_lookup(view);
 
     for edge in &graph.edges {
         let from_node = match graph.nodes.get(edge.from.node.0) {
@@ -744,6 +856,14 @@ fn typecheck(
             DYNAMIC_OUTPUT_TYPES_KEY
         };
         upsert_string_map(&mut node.metadata, meta_key, &key.port, json);
+
+        let label_key = if key.is_input {
+            DYNAMIC_INPUT_LABELS_KEY
+        } else {
+            DYNAMIC_OUTPUT_LABELS_KEY
+        };
+        let label = label_for_type(&ty, &type_label_lookup);
+        upsert_string_map(&mut node.metadata, label_key, &key.port, label);
     }
 }
 

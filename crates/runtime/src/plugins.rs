@@ -60,6 +60,7 @@ pub struct PluginRegistry {
     pub capabilities: CapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,
     pub output_movers: crate::io::OutputMoverMap,
+    pub value_serializers: crate::host_bridge::ValueSerializerMap,
     pub type_compatibilities: BTreeSet<(TypeExpr, TypeExpr)>,
 }
 
@@ -78,6 +79,7 @@ impl PluginRegistry {
             capabilities: CapabilityRegistry::new(),
             const_coercers: crate::io::new_const_coercer_map(),
             output_movers: crate::io::new_output_mover_map(),
+            value_serializers: crate::host_bridge::value_serializer_map(),
             type_compatibilities: BTreeSet::new(),
         }
     }
@@ -128,7 +130,7 @@ impl PluginRegistry {
         T: Any + Clone + Send + Sync + 'static,
         F: Fn(&T) -> daedalus_data::model::Value + Send + Sync + 'static,
     {
-        crate::host_bridge::register_value_serializer::<T, F>(serializer);
+        crate::host_bridge::register_value_serializer_in::<T, F>(&self.value_serializers, serializer);
     }
 
     /// Register an output mover to emit a typed output payload by value.

@@ -7,6 +7,7 @@
 pub mod debug;
 mod diagnostics;
 mod graph;
+mod patch;
 pub mod helpers;
 mod passes;
 
@@ -15,6 +16,7 @@ pub use graph::{
     ComputeAffinity, DEFAULT_PLAN_VERSION, Edge, EdgeBufferInfo, ExecutionPlan, GpuSegment, Graph,
     NodeInstance, NodeRef, PortRef, StableHash,
 };
+pub use patch::{GraphMetadataSelector, GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
 pub use passes::{PlannerConfig, PlannerInput, PlannerOutput, build_plan};
 
 #[cfg(test)]

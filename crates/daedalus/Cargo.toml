@@ -118,6 +118,10 @@ name = "math_ops"
 required-features = ["engine", "plugins"]
 
 [[example]]
+name = "graph_patch"
+required-features = ["engine", "plugins"]
+
+[[example]]
 name = "fanin_merge"
 required-features = ["engine", "plugins"]
 
