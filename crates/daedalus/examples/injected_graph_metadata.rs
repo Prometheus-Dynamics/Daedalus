@@ -1,6 +1,6 @@
 //! Demonstrates graph-level metadata visible to nodes at runtime.
 //!
-//! `Graph.metadata_values` (a typed `Value` map) is propagated into every node's
+//! `Graph.metadata` (a typed `Value` map) is propagated into every node's
 //! `ExecutionContext.graph_metadata`. This avoids "broadcasting" the same key/value into every
 //! node's metadata.
 //!

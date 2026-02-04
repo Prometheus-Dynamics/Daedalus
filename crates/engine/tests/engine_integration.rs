@@ -95,7 +95,6 @@ fn make_graph(compute: ComputeAffinity) -> Graph {
         nodes,
         edges,
         metadata: Default::default(),
-        metadata_values: Default::default(),
     }
 }
 

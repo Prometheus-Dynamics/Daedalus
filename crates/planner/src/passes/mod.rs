@@ -1132,7 +1132,7 @@ fn convert(
     }
     converter_metadata.sort_by(|a, b| a.0.cmp(&b.0));
     for (k, v) in converter_metadata {
-        graph.metadata.insert(k, v);
+        graph.metadata.insert(k, Value::String(v.into()));
     }
 }
 fn align(graph: &mut Graph, diags: &mut Vec<Diagnostic>) {
@@ -1191,7 +1191,9 @@ fn align(graph: &mut Graph, diags: &mut Vec<Diagnostic>) {
             .map(|&idx| graph.nodes[idx].id.0.clone())
             .collect::<Vec<_>>()
             .join(",");
-        graph.metadata.insert("topo_order".into(), value);
+        graph
+            .metadata
+            .insert("topo_order".into(), Value::String(value.into()));
     }
 }
 fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Diagnostic>) {
@@ -1214,12 +1216,14 @@ fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Diagnostic>) {
             }
         }
         if !gpu_nodes.is_empty() {
-            graph
-                .metadata
-                .insert("gpu_segments".into(), gpu_nodes.join(","));
-            graph
-                .metadata
-                .insert("gpu_why".into(), gpu_reasons.join(","));
+            graph.metadata.insert(
+                "gpu_segments".into(),
+                Value::String(gpu_nodes.join(",").into()),
+            );
+            graph.metadata.insert(
+                "gpu_why".into(),
+                Value::String(gpu_reasons.join(",").into()),
+            );
         }
         return;
     }
@@ -1292,16 +1296,17 @@ fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Diagnostic>) {
     }
     if !segments.is_empty() {
         let seg_strs: Vec<String> = segments.into_iter().map(|seg| seg.join("->")).collect();
-        graph
-            .metadata
-            .insert("gpu_segments".into(), seg_strs.join("|"));
+        graph.metadata.insert(
+            "gpu_segments".into(),
+            Value::String(seg_strs.join("|").into()),
+        );
     }
     if !gpu_reasons.is_empty() {
         gpu_reasons.sort();
         gpu_reasons.dedup();
         graph
             .metadata
-            .insert("gpu_why".into(), gpu_reasons.join(";"));
+            .insert("gpu_why".into(), Value::String(gpu_reasons.join(";").into()));
     }
 }
 fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
@@ -1309,7 +1314,10 @@ fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
     let order = graph
         .metadata
         .get("topo_order")
-        .cloned()
+        .and_then(|value| match value {
+            Value::String(s) => Some(s.to_string()),
+            _ => None,
+        })
         .unwrap_or_else(|| {
             graph
                 .nodes
@@ -1318,7 +1326,9 @@ fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
                 .collect::<Vec<_>>()
                 .join(",")
         });
-    graph.metadata.insert("schedule_order".into(), order);
+    graph
+        .metadata
+        .insert("schedule_order".into(), Value::String(order.into()));
 
     // Prefer GPU-required nodes first within same topo layer (simple heuristic).
     let mut priorities: Vec<(String, u8)> = graph
@@ -1338,7 +1348,9 @@ fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
         .map(|(id, p)| format!("{id}:{p}"))
         .collect::<Vec<_>>()
         .join(",");
-    graph.metadata.insert("schedule_priority".into(), pr_str);
+    graph
+        .metadata
+        .insert("schedule_priority".into(), Value::String(pr_str.into()));
 }
 fn lint(input: &PlannerInput<'_>, diags: &mut Vec<Diagnostic>) {
     let n = input.graph.nodes.len();

@@ -182,8 +182,7 @@ pub struct GraphBuilder<'r> {
     edges: Vec<Edge>,
     const_overrides: HashMap<String, HashMap<String, Option<Value>>>,
     node_metadata_overrides: HashMap<String, BTreeMap<String, Value>>,
-    graph_metadata: BTreeMap<String, String>,
-    graph_metadata_values: BTreeMap<String, Value>,
+    graph_metadata: BTreeMap<String, Value>,
     injected_node_metadata: BTreeMap<String, Value>,
     injected_node_metadata_overwrite: BTreeMap<String, Value>,
     host_bridge_alias: Option<String>,
@@ -200,7 +199,6 @@ impl<'r> GraphBuilder<'r> {
             const_overrides: HashMap::new(),
             node_metadata_overrides: HashMap::new(),
             graph_metadata: BTreeMap::new(),
-            graph_metadata_values: BTreeMap::new(),
             injected_node_metadata: BTreeMap::new(),
             injected_node_metadata_overwrite: BTreeMap::new(),
             host_bridge_alias: Some("host".to_string()),
@@ -209,23 +207,20 @@ impl<'r> GraphBuilder<'r> {
         }
     }
 
-    /// Attach string graph-level metadata to the built graph (`Graph.metadata`).
-    ///
-    /// For typed graph metadata visible to nodes at runtime, prefer `graph_metadata_value`.
+    /// Attach graph-level metadata to the built graph (`Graph.metadata`).
     pub fn graph_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         let key = key.into();
         let value = value.into();
-        self.graph_metadata.insert(key.clone(), value.clone());
-        self.graph_metadata_values
+        self.graph_metadata
             .insert(key, Value::String(value.into()));
         self
     }
 
-    /// Attach graph-level metadata (typed `Value`) to the built graph (`Graph.metadata_values`).
+    /// Attach graph-level metadata (typed `Value`) to the built graph (`Graph.metadata`).
     ///
     /// Nodes can read this via `ExecutionContext.graph_metadata` at runtime.
     pub fn graph_metadata_value(mut self, key: impl Into<String>, value: Value) -> Self {
-        self.graph_metadata_values.insert(key.into(), value);
+        self.graph_metadata.insert(key.into(), value);
         self
     }
 
@@ -935,7 +930,6 @@ impl<'r> GraphBuilder<'r> {
             nodes,
             edges: self.edges,
             metadata: self.graph_metadata,
-            metadata_values: self.graph_metadata_values,
         }
     }
 }
@@ -1058,15 +1052,11 @@ mod tests {
             .node_from_id("demo.node", "alias")
             .build();
 
-        assert_eq!(graph.metadata.get("graph_run_id"), Some(&"run-123".into()));
         assert_eq!(
-            graph.metadata_values.get("graph_run_id"),
+            graph.metadata.get("graph_run_id"),
             Some(&Value::String("run-123".into()))
         );
-        assert_eq!(
-            graph.metadata_values.get("multiplier"),
-            Some(&Value::Int(3))
-        );
+        assert_eq!(graph.metadata.get("multiplier"), Some(&Value::Int(3)));
         let meta = &graph.nodes[0].metadata;
         assert_eq!(
             meta.get("trace_id"),

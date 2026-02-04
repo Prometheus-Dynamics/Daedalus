@@ -76,7 +76,6 @@ fn setup() -> (Engine, Registry, Graph) {
             metadata: Default::default(),
         }],
         metadata: Default::default(),
-        metadata_values: Default::default(),
     };
     (Engine::new(EngineConfig::default()).unwrap(), reg, graph)
 }

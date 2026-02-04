@@ -75,7 +75,10 @@ fn schedule_order_respects_topology() {
         .graph
         .metadata
         .get("schedule_order")
-        .cloned()
+        .and_then(|value| match value {
+            daedalus_data::model::Value::String(s) => Some(s.to_string()),
+            _ => None,
+        })
         .unwrap_or_default();
     let parts: Vec<&str> = order_str.split(',').collect();
     let pos = |id: &str| parts.iter().position(|p| *p == id).unwrap_or(usize::MAX);

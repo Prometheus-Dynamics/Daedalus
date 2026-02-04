@@ -1155,6 +1155,14 @@ impl<'a> NodeIo<'a> {
                     out = Self::dynamic_image_to_t::<T>(img);
                 }
                 if out.is_none()
+                    && let Some(ep) = ep_opt.take()
+                {
+                    match ep.take_cpu_any::<T>() {
+                        Ok(value) => out = Some(value),
+                        Err(rest) => ep_opt = Some(rest),
+                    }
+                }
+                if out.is_none()
                     && let Some(ep) = ep_opt
                 {
                     payload.inner = EdgePayload::Payload(ep);
@@ -2467,7 +2475,9 @@ mod tests {
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
-        let payload_edges = HashSet::new();
+        let payload_edges: HashSet<usize> = HashSet::new();
+        #[cfg(feature = "gpu")]
+        let payload_edges: HashSet<usize> = HashSet::new();
 
         let mut io = NodeIo::new(
             vec![],
@@ -2619,6 +2629,8 @@ mod tests {
         let gpu_entry_edges = HashSet::new();
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
+        #[cfg(feature = "gpu")]
+        let payload_edges: HashSet<usize> = HashSet::new();
 
         assert_eq!(
             NodeIo::enum_name_from_index::<TestEnum>(&Value::Int(2)),
@@ -2675,7 +2687,7 @@ mod tests {
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
-        let payload_edges = HashSet::new();
+        let payload_edges: HashSet<usize> = HashSet::new();
 
         let io = NodeIo::new(
             vec![],
@@ -2722,7 +2734,7 @@ mod tests {
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
-        let payload_edges = HashSet::new();
+        let payload_edges: HashSet<usize> = HashSet::new();
 
         // ExecMode variants are registered in order [Auto, Cpu, Gpu]; index 2 => Gpu.
         let io = NodeIo::new(

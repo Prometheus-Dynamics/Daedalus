@@ -82,7 +82,6 @@ fn planner_dump_is_stable() {
             metadata: Default::default(),
         }],
         metadata: Default::default(),
-        metadata_values: Default::default(),
     };
     let engine = Engine::new(EngineConfig::default()).unwrap();
     let plan = engine.plan(&reg, graph).unwrap().plan;

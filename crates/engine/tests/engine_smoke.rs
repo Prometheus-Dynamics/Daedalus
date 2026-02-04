@@ -97,7 +97,6 @@ fn sample_graph() -> Graph {
         nodes,
         edges,
         metadata: Default::default(),
-        metadata_values: Default::default(),
     }
 }
 
@@ -130,9 +129,7 @@ fn graph_metadata_is_visible_to_nodes() {
     let engine = Engine::new(EngineConfig::default()).unwrap();
     let registry = sample_registry();
     let mut graph = sample_graph();
-    graph
-        .metadata_values
-        .insert("multiplier".into(), Value::Int(3));
+    graph.metadata.insert("multiplier".into(), Value::Int(3));
 
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let handler = {

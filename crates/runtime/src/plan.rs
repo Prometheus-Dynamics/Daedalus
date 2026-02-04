@@ -161,7 +161,15 @@ impl RuntimePlan {
             .collect();
 
         let mut order: Vec<NodeRef> = Vec::new();
-        if let Some(order_str) = plan.graph.metadata.get("schedule_order") {
+        if let Some(order_str) = plan
+            .graph
+            .metadata
+            .get("schedule_order")
+            .and_then(|value| match value {
+                daedalus_data::model::Value::String(s) => Some(s.to_string()),
+                _ => None,
+            })
+        {
             let mut by_id: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
             for (idx, node) in plan.graph.nodes.iter().enumerate() {
                 by_id.insert(node.id.0.as_str(), idx);
@@ -219,7 +227,7 @@ impl RuntimePlan {
             segments.push(seg);
         }
 
-        let graph_metadata = plan.graph.metadata_values.clone();
+        let graph_metadata = plan.graph.metadata.clone();
 
         RuntimePlan {
             default_policy: EdgePolicyKind::Fifo,

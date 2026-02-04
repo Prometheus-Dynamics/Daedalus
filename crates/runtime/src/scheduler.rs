@@ -37,7 +37,15 @@ pub fn build_runtime(plan: &ExecutionPlan, config: &SchedulerConfig) -> RuntimeP
         .iter_mut()
         .for_each(|edge| edge.4 = config.default_policy.clone());
 
-    if let Some(order) = plan.graph.metadata.get("schedule_order") {
+    if let Some(order) = plan
+        .graph
+        .metadata
+        .get("schedule_order")
+        .and_then(|value| match value {
+            daedalus_data::model::Value::String(s) => Some(s.to_string()),
+            _ => None,
+        })
+    {
         let mut id_to_ref = std::collections::HashMap::new();
         for (idx, node) in runtime.nodes.iter().enumerate() {
             id_to_ref.insert(node.id.as_str(), daedalus_planner::NodeRef(idx));

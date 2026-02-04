@@ -124,14 +124,134 @@ pub struct NodeInstance {
 pub struct Graph {
     pub nodes: Vec<NodeInstance>,
     pub edges: Vec<Edge>,
-    /// Arbitrary metadata retained for goldens/debug.
-    pub metadata: BTreeMap<String, String>,
     /// Graph-level metadata (typed values) that should be visible to nodes at runtime.
     ///
-    /// This is distinct from `metadata` (string-only planner debug/golden output). Planner passes
-    /// may write to `metadata`; graph authors should write to `metadata_values`.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub metadata_values: BTreeMap<String, daedalus_data::model::Value>,
+    /// Stored as plain JSON in persisted graphs (no tagged `type/value` wrappers).
+    #[serde(default, with = "graph_metadata_serde")]
+    pub metadata: BTreeMap<String, daedalus_data::model::Value>,
+}
+
+mod graph_metadata_serde {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+    use serde_json::Value as JsonValue;
+
+    fn json_to_value(value: JsonValue) -> Result<daedalus_data::model::Value, String> {
+        Ok(match value {
+            JsonValue::Null => daedalus_data::model::Value::Unit,
+            JsonValue::Bool(b) => daedalus_data::model::Value::Bool(b),
+            JsonValue::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    daedalus_data::model::Value::Int(i)
+                } else if let Some(f) = n.as_f64() {
+                    daedalus_data::model::Value::Float(f)
+                } else {
+                    return Err(n.to_string());
+                }
+            }
+            JsonValue::String(s) => daedalus_data::model::Value::String(s.into()),
+            JsonValue::Array(items) => {
+                let mut vals = Vec::with_capacity(items.len());
+                for item in items {
+                    vals.push(json_to_value(item)?);
+                }
+                daedalus_data::model::Value::List(vals)
+            }
+            JsonValue::Object(map) => {
+                let mut entries = Vec::with_capacity(map.len());
+                for (k, v) in map {
+                    entries.push((daedalus_data::model::Value::String(k.into()), json_to_value(v)?));
+                }
+                daedalus_data::model::Value::Map(entries)
+            }
+        })
+    }
+
+    fn value_to_plain_json(value: &daedalus_data::model::Value) -> JsonValue {
+        use daedalus_data::model::Value;
+        match value {
+            Value::Unit => JsonValue::Null,
+            Value::Bool(b) => JsonValue::Bool(*b),
+            Value::Int(i) => serde_json::json!(i),
+            Value::Float(f) => serde_json::json!(f),
+            Value::String(s) => serde_json::json!(s),
+            Value::Bytes(b) => serde_json::json!(b.as_ref()),
+            Value::List(items) | Value::Tuple(items) => {
+                JsonValue::Array(items.iter().map(value_to_plain_json).collect())
+            }
+            Value::Struct(fields) => {
+                let mut obj = serde_json::Map::new();
+                for f in fields {
+                    obj.insert(f.name.clone(), value_to_plain_json(&f.value));
+                }
+                JsonValue::Object(obj)
+            }
+            Value::Enum(ev) => {
+                let mut obj = serde_json::Map::new();
+                obj.insert("name".into(), JsonValue::String(ev.name.clone()));
+                if let Some(v) = &ev.value {
+                    obj.insert("value".into(), value_to_plain_json(v));
+                }
+                JsonValue::Object(obj)
+            }
+            Value::Map(entries) => {
+                let mut obj = serde_json::Map::new();
+                let mut all_string_keys = true;
+                for (k, _) in entries {
+                    if !matches!(k, Value::String(_)) {
+                        all_string_keys = false;
+                        break;
+                    }
+                }
+                if all_string_keys {
+                    for (k, v) in entries {
+                        if let Value::String(s) = k {
+                            obj.insert(s.to_string(), value_to_plain_json(v));
+                        }
+                    }
+                    JsonValue::Object(obj)
+                } else {
+                    JsonValue::Array(
+                        entries
+                            .iter()
+                            .map(|(k, v)| {
+                                JsonValue::Array(vec![value_to_plain_json(k), value_to_plain_json(v)])
+                            })
+                            .collect(),
+                    )
+                }
+            }
+        }
+    }
+
+    pub fn serialize<S>(
+        value: &BTreeMap<String, daedalus_data::model::Value>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serde_json::Map::new();
+        for (k, v) in value {
+            map.insert(k.clone(), value_to_plain_json(v));
+        }
+        map.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<BTreeMap<String, daedalus_data::model::Value>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = BTreeMap::<String, JsonValue>::deserialize(deserializer)?;
+        let mut out = BTreeMap::new();
+        for (k, v) in raw {
+            let converted = json_to_value(v).map_err(serde::de::Error::custom)?;
+            out.insert(k, converted);
+        }
+        Ok(out)
+    }
 }
 
 /// Contiguous GPU segment metadata.
