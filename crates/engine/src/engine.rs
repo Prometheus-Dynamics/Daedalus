@@ -355,6 +355,7 @@ impl Engine {
             enable_gpu: self.config.planner.enable_gpu,
             enable_lints: self.config.planner.enable_lints,
             active_features: self.config.planner.active_features.clone(),
+            strict_port_declarations: false,
             #[cfg(feature = "gpu")]
             gpu_caps: None,
         };

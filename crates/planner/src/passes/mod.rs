@@ -28,6 +28,12 @@ pub struct PlannerConfig {
     pub enable_gpu: bool,
     pub enable_lints: bool,
     pub active_features: Vec<String>,
+    /// When true, validate `GraphNode.inputs/outputs` strictly against the registry.
+    ///
+    /// This is intended for UI-persisted graphs where the node port lists are part of the
+    /// persisted contract. It is deliberately off by default so "minimal" graphs (that omit
+    /// declared ports and rely only on edges) remain valid.
+    pub strict_port_declarations: bool,
     #[cfg(feature = "gpu")]
     pub gpu_caps: Option<daedalus_gpu::GpuCapabilities>,
 }
@@ -550,7 +556,12 @@ pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> Planner
     expand_embedded_graphs(&mut input, &view, &mut diags);
     apply_descriptor_defaults(&mut input.graph, &view);
     hydrate_registry(&input, &view, &mut diags);
-    validate_port_declarations(&input.graph, &view, &mut diags);
+    validate_port_declarations(
+        &input.graph,
+        &view,
+        &mut diags,
+        config.strict_port_declarations,
+    );
     typecheck(&mut input.graph, &view, &mut diags);
     convert(&mut input.graph, input.registry, &view, &mut diags, &config);
     align(&mut input.graph, &mut diags);
@@ -571,6 +582,7 @@ fn validate_port_declarations(
     graph: &Graph,
     view: &daedalus_registry::store::RegistryView,
     diags: &mut Vec<Diagnostic>,
+    strict_port_declarations: bool,
 ) {
     fn is_dynamic(desc: &NodeDescriptor, is_input: bool) -> bool {
         let key = if is_input {
@@ -677,11 +689,9 @@ fn validate_port_declarations(
             );
         }
 
-        // Validate missing ports even when the graph omitted declared port lists.
-        // In the Daedalus/Helios UI model, `GraphNode.inputs/outputs` are part of the persisted
-        // graph contract. If they are stale/empty relative to the registry, the UI cannot reason
-        // about wiring and users get confusing behavior.
-        if !dynamic_inputs {
+        // Validate missing ports when the graph declares port lists (normal UI-persisted graphs),
+        // or when strict mode is enabled.
+        if !dynamic_inputs && (strict_port_declarations || !node.inputs.is_empty()) {
             let node_inputs_lc: HashSet<String> = node
                 .inputs
                 .iter()
@@ -783,7 +793,7 @@ fn validate_port_declarations(
             );
         }
 
-        if !dynamic_outputs {
+        if !dynamic_outputs && (strict_port_declarations || !node.outputs.is_empty()) {
             let node_outputs_lc: HashSet<String> = node
                 .outputs
                 .iter()
