@@ -1,7 +1,7 @@
 //! Bundle loading (feature-gated).
 
 use crate::diagnostics::RegistryResult;
-use crate::store::{NodeDescriptor, Registry};
+use crate::store::{GroupDescriptor, NodeDescriptor, Registry};
 use daedalus_data::convert::Converter;
 use daedalus_data::descriptor::DataDescriptor;
 
@@ -9,6 +9,7 @@ use daedalus_data::descriptor::DataDescriptor;
 pub struct Bundle {
     pub values: Vec<DataDescriptor>,
     pub nodes: Vec<NodeDescriptor>,
+    pub groups: Vec<GroupDescriptor>,
     pub converters: Vec<Box<dyn Converter>>,
 }
 
@@ -17,6 +18,7 @@ impl Bundle {
         Self {
             values: Vec::new(),
             nodes: Vec::new(),
+            groups: Vec::new(),
             converters: Vec::new(),
         }
     }
@@ -28,6 +30,11 @@ impl Bundle {
 
     pub fn with_node(mut self, desc: NodeDescriptor) -> Self {
         self.nodes.push(desc);
+        self
+    }
+
+    pub fn with_group(mut self, desc: GroupDescriptor) -> Self {
+        self.groups.push(desc);
         self
     }
 
@@ -47,6 +54,11 @@ impl Bundle {
         nodes.sort_by(|a, b| a.id.cmp(&b.id));
         for n in nodes {
             registry.register_node(n)?;
+        }
+        let mut groups = self.groups;
+        groups.sort_by(|a, b| a.id.cmp(&b.id));
+        for g in groups {
+            registry.register_group(g)?;
         }
         for c in self.converters {
             registry.register_converter(c)?;
@@ -88,6 +100,7 @@ mod tests {
                 id: NodeId::new("n2"),
                 feature_flags: vec![],
                 label: None,
+                group: None,
                 inputs: Vec::new(),
                 fanin_inputs: Vec::new(),
                 outputs: Vec::new(),
@@ -99,6 +112,7 @@ mod tests {
                 id: NodeId::new("n1"),
                 feature_flags: vec![],
                 label: None,
+                group: None,
                 inputs: Vec::new(),
                 fanin_inputs: Vec::new(),
                 outputs: Vec::new(),

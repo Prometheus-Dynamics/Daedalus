@@ -489,6 +489,7 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                 #registry_crate::store::Port {
                     name: #name.into(),
                     ty: #ty_expr,
+                    access: ::core::default::Default::default(),
                     source: #source,
                     const_value: #default_value,
                 }

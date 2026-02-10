@@ -1,6 +1,9 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, OnceLock, RwLock,
+};
 
 use image::{DynamicImage, GrayAlphaImage, GrayImage, ImageBuffer, Luma, LumaA, Rgb, RgbImage, Rgba, RgbaImage};
 
@@ -8,19 +11,17 @@ use image::{DynamicImage, GrayAlphaImage, GrayImage, ImageBuffer, Luma, LumaA, R
 ///
 /// This mirrors the `GpuSendable` story: users can register additional conversions
 /// at runtime if needed, while we ship a set of defaults (numeric widenings, image casts).
-type ConvertFn =
-    Box<dyn Fn(&Arc<dyn Any + Send + Sync>) -> Option<Box<dyn Any + Send + Sync>> + Send + Sync>;
+type AnyArc = Arc<dyn Any + Send + Sync>;
+type ConvertFn = Arc<dyn Fn(&AnyArc) -> Option<AnyArc> + Send + Sync>;
 
 pub struct ConversionRegistry {
     inner: HashMap<(TypeId, TypeId), ConvertFn>,
-    resolved_paths: HashMap<(TypeId, TypeId), Option<Vec<TypeId>>>,
 }
 
 impl ConversionRegistry {
     pub fn new() -> Self {
         Self {
             inner: HashMap::new(),
-            resolved_paths: HashMap::new(),
         }
     }
 
@@ -31,109 +32,101 @@ impl ConversionRegistry {
         let key = (TypeId::of::<S>(), TypeId::of::<T>());
         self.inner.insert(
             key,
-            Box::new(move |a| {
-                a.downcast_ref::<S>()
-                    .and_then(|s| f(s).map(|t| Box::new(t) as Box<dyn Any + Send + Sync>))
+            Arc::new(move |a: &AnyArc| {
+                a.downcast_ref::<S>().and_then(|s| {
+                    f(s).map(|t| {
+                        let out: AnyArc = Arc::new(t);
+                        out
+                    })
+                })
             }),
         );
-        self.resolved_paths.clear();
         self
     }
 
-    fn convert_boxed(
-        &self,
-        a: &Arc<dyn Any + Send + Sync>,
-        to: TypeId,
-    ) -> Option<Box<dyn Any + Send + Sync>> {
+    fn convert_direct(&self, a: &AnyArc, to: TypeId) -> Option<AnyArc> {
         let from = a.as_ref().type_id();
         self.inner.get(&(from, to)).and_then(|f| f(a))
     }
 
-    fn resolve_path(&mut self, from: TypeId, to: TypeId) -> Option<Vec<TypeId>> {
-        if let Some(cached) = self.resolved_paths.get(&(from, to)) {
-            return cached.clone();
-        }
-
-        if from == to {
-            self.resolved_paths.insert((from, to), Some(vec![from]));
-            return Some(vec![from]);
-        }
-
+    fn resolve_program(&self, from: TypeId, to: TypeId) -> Option<Arc<[ConvertFn]>> {
         // BFS over available conversions (unweighted; good enough for now).
         let mut queue: std::collections::VecDeque<TypeId> = std::collections::VecDeque::new();
-        let mut prev: HashMap<TypeId, TypeId> = HashMap::new();
+        // prev[dst] = (src, converter_used_for_src_to_dst)
+        let mut prev: HashMap<TypeId, (TypeId, ConvertFn)> = HashMap::new();
         queue.push_back(from);
-        prev.insert(from, from);
+        // Seed with a sentinel; converter unused for the root.
+        prev.insert(from, (from, Arc::new(|_| None)));
 
         while let Some(cur) = queue.pop_front() {
             if cur == to {
                 break;
             }
-            for &(src, dst) in self.inner.keys() {
+            for (&(src, dst), conv) in &self.inner {
                 if src != cur {
                     continue;
                 }
                 if prev.contains_key(&dst) {
                     continue;
                 }
-                prev.insert(dst, cur);
+                prev.insert(dst, (cur, conv.clone()));
                 queue.push_back(dst);
             }
         }
 
         if !prev.contains_key(&to) {
-            self.resolved_paths.insert((from, to), None);
             return None;
         }
 
-        let mut path: Vec<TypeId> = Vec::new();
+        let mut steps: Vec<ConvertFn> = Vec::new();
         let mut cur = to;
-        loop {
-            path.push(cur);
-            let p = *prev.get(&cur).unwrap();
-            if p == cur {
-                break;
-            }
+        while cur != from {
+            let (p, conv) = prev.get(&cur).cloned()?;
+            steps.push(conv);
             cur = p;
         }
-        path.reverse();
-        self.resolved_paths.insert((from, to), Some(path.clone()));
-        Some(path)
+        steps.reverse();
+
+        let program: Arc<[ConvertFn]> = Arc::from(steps);
+        Some(program)
     }
 
-    pub fn convert_to<T: Any + Clone + Send + Sync + 'static>(
-        &mut self,
-        a: &Arc<dyn Any + Send + Sync>,
-    ) -> Option<T> {
+    fn convert_arc_any(
+        &self,
+        a: &AnyArc,
+        to: TypeId,
+        program_cache: &mut ProgramCache,
+    ) -> Option<AnyArc> {
         let from = a.as_ref().type_id();
-        let to = TypeId::of::<T>();
+        if from == to {
+            return Some(a.clone());
+        }
 
         // Fast path: direct conversion.
-        if let Some(b) = self
-            .convert_boxed(a, to)
-            .and_then(|b| b.downcast::<T>().ok())
-        {
-            return Some((*b).clone());
+        if let Some(out) = self.convert_direct(a, to) {
+            return Some(out);
         }
 
-        // Chained conversion.
-        let path = self.resolve_path(from, to)?;
-        if path.len() < 2 {
-            return None;
+        // Cached conversion chain (thread-local).
+        let program = program_cache.program_for(self, from, to)?;
+        let mut cur: AnyArc = a.clone();
+        for step in program.iter() {
+            cur = step(&cur)?;
+        }
+        Some(cur)
+    }
+
+    pub fn convert_to<T: Any + Clone + Send + Sync + 'static>(&self, a: &AnyArc) -> Option<T> {
+        let to = TypeId::of::<T>();
+
+        if let Some(v) = a.downcast_ref::<T>() {
+            return Some(v.clone());
         }
 
-        let mut cur: Arc<dyn Any + Send + Sync> = a.clone();
-        for win in path.windows(2) {
-            let from = win[0];
-            let to = win[1];
-            if cur.as_ref().type_id() != from {
-                return None;
-            }
-            let boxed = self.convert_boxed(&cur, to)?;
-            cur = Arc::from(boxed);
-        }
-
-        cur.downcast_ref::<T>().cloned()
+        // Local registry instance: resolve programs without TLS/versioning.
+        let mut cache = ProgramCache::default();
+        self.convert_arc_any(a, to, &mut cache)
+            .and_then(|out| out.downcast_ref::<T>().cloned())
     }
 }
 
@@ -143,9 +136,14 @@ impl Default for ConversionRegistry {
     }
 }
 
+struct RegistryState {
+    version: AtomicU64,
+    reg: RwLock<ConversionRegistry>,
+}
+
 /// Global registry with common conversions.
-fn default_registry() -> &'static Mutex<ConversionRegistry> {
-    static REG: OnceLock<Mutex<ConversionRegistry>> = OnceLock::new();
+fn default_registry() -> &'static RegistryState {
+    static REG: OnceLock<RegistryState> = OnceLock::new();
     REG.get_or_init(|| {
         let mut reg = ConversionRegistry::new();
         // Numeric widenings (lossless).
@@ -192,8 +190,55 @@ fn default_registry() -> &'static Mutex<ConversionRegistry> {
             .register::<ImageBuffer<LumaA<u8>, Vec<u8>>, DynamicImage>(|img| {
                 Some(DynamicImage::ImageLumaA8(img.clone()))
             });
+        RegistryState {
+            version: AtomicU64::new(1),
+            reg: RwLock::new(reg),
+        }
+    })
+}
 
-        Mutex::new(reg)
+#[derive(Default)]
+struct ProgramCache {
+    version: u64,
+    programs: HashMap<(TypeId, TypeId), Option<Arc<[ConvertFn]>>>,
+}
+
+impl ProgramCache {
+    fn sync_version(&mut self, version: u64) {
+        if self.version != version {
+            self.version = version;
+            self.programs.clear();
+        }
+    }
+
+    fn program_for(
+        &mut self,
+        reg: &ConversionRegistry,
+        from: TypeId,
+        to: TypeId,
+    ) -> Option<Arc<[ConvertFn]>> {
+        if let Some(cached) = self.programs.get(&(from, to)) {
+            return cached.clone();
+        }
+        if from == to {
+            let program: Arc<[ConvertFn]> = Arc::from([]);
+            self.programs.insert((from, to), Some(program.clone()));
+            return Some(program);
+        }
+        let resolved = reg.resolve_program(from, to);
+        self.programs.insert((from, to), resolved.clone());
+        resolved
+    }
+}
+
+thread_local! {
+    static TLS_PROGRAM_CACHE: std::cell::RefCell<ProgramCache> = std::cell::RefCell::new(ProgramCache::default());
+}
+
+fn with_tls_program_cache<R>(f: impl FnOnce(&mut ProgramCache) -> R) -> R {
+    TLS_PROGRAM_CACHE.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        f(&mut guard)
     })
 }
 
@@ -201,10 +246,43 @@ fn default_registry() -> &'static Mutex<ConversionRegistry> {
 pub fn convert_arc<T: Any + Clone + Send + Sync + 'static>(
     a: &Arc<dyn Any + Send + Sync>,
 ) -> Option<T> {
-    default_registry()
-        .lock()
-        .ok()
-        .and_then(|mut r| r.convert_to::<T>(a))
+    let state = default_registry();
+    let version = state.version.load(Ordering::Relaxed);
+    let reg_guard = state.reg.read().ok()?;
+    with_tls_program_cache(|cache| {
+        cache.sync_version(version);
+        reg_guard
+            .convert_arc_any(a, TypeId::of::<T>(), cache)
+            .and_then(|out| out.downcast_ref::<T>().cloned())
+    })
+}
+
+/// Convert an `Arc<dyn Any>` to a target type id, returning an `Arc<dyn Any>`.
+///
+/// This is the "zero-copy when possible" conversion entry point: it preserves sharing by
+/// returning an `Arc`, enabling fanout dedupe via caches at the executor/IO layer.
+pub fn convert_any_arc(
+    a: &Arc<dyn Any + Send + Sync>,
+    to: TypeId,
+) -> Option<Arc<dyn Any + Send + Sync>> {
+    let state = default_registry();
+    let version = state.version.load(Ordering::Relaxed);
+    let reg_guard = state.reg.read().ok()?;
+    with_tls_program_cache(|cache| {
+        cache.sync_version(version);
+        reg_guard.convert_arc_any(a, to, cache)
+    })
+}
+
+/// Convert an `Arc<dyn Any>` to `Arc<T>` using the default registry.
+pub fn convert_to_arc<T: Any + Send + Sync + 'static>(
+    a: &Arc<dyn Any + Send + Sync>,
+) -> Option<Arc<T>> {
+    if let Ok(arc) = Arc::downcast::<T>(a.clone()) {
+        return Some(arc);
+    }
+    let out = convert_any_arc(a, TypeId::of::<T>())?;
+    Arc::downcast::<T>(out).ok()
 }
 
 /// Allow callers (including plugins) to extend the global conversion registry.
@@ -214,8 +292,10 @@ where
     S: Any + Send + Sync + 'static,
     T: Any + Send + Sync + 'static,
 {
-    if let Ok(mut reg) = default_registry().lock() {
+    let state = default_registry();
+    if let Ok(mut reg) = state.reg.write() {
         reg.register::<S, T>(f);
+        state.version.fetch_add(1, Ordering::Relaxed);
     }
 }
 

@@ -50,6 +50,7 @@ pub struct RegistryError {
 pub enum ConflictKind {
     Value,
     Node,
+    Group,
     Converter,
 }
 

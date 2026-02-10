@@ -4,9 +4,11 @@ use std::collections::HashMap;
 #[cfg(feature = "gpu")]
 use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use std::time::Instant;
 use std::sync::{OnceLock, RwLock};
+use std::sync::Mutex;
 
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_data::typing;
@@ -50,6 +52,32 @@ static OUTPUT_MOVERS: OnceLock<OutputMoverMap> = OnceLock::new();
 
 fn output_movers() -> &'static OutputMoverMap {
     OUTPUT_MOVERS.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+/// Per-execution cache for expensive payload materializations (e.g. wrapping large CPU images into
+/// `ErasedPayload` so uploads/downloads are deduped across fanout).
+#[cfg(feature = "gpu")]
+pub(crate) type MaterializationCache = HashMap<usize, EdgePayload>;
+
+#[cfg(feature = "gpu")]
+pub(crate) type MaterializationCacheHandle = Arc<Mutex<MaterializationCache>>;
+
+#[cfg(feature = "gpu")]
+pub(crate) fn new_materialization_cache() -> MaterializationCacheHandle {
+    Arc::new(Mutex::new(HashMap::new()))
+}
+
+/// Per-execution cache for CPU-side `Any` conversions across fanout.
+///
+/// Keyed by (source_any_ptr, target_type_id) so a single producer feeding multiple consumers
+/// doesn't redo expensive conversions/materializations N times.
+pub(crate) type AnyConversionCache =
+    HashMap<(usize, TypeId), Arc<dyn Any + Send + Sync>>;
+
+pub(crate) type AnyConversionCacheHandle = Arc<Mutex<AnyConversionCache>>;
+
+pub(crate) fn new_any_conversion_cache() -> AnyConversionCacheHandle {
+    Arc::new(Mutex::new(HashMap::new()))
 }
 
 /// Create a new output mover registry.
@@ -169,6 +197,34 @@ fn promote_payload_for_host(payload: EdgePayload) -> EdgePayload {
     }
 }
 
+#[cfg(feature = "gpu")]
+fn promote_any_with_cache(
+    a: &Arc<dyn Any + Send + Sync>,
+    cache: Option<&MaterializationCacheHandle>,
+) -> EdgePayload {
+    // This is potentially expensive (cloning large CPU images). Cache it per execution so fanout
+    // doesn't duplicate the work.
+    let Some(cache) = cache else {
+        return promote_payload_for_host(EdgePayload::Any(a.clone()));
+    };
+
+    // `Arc::as_ptr` returns a fat pointer for trait objects; cast through `*const ()` to
+    // obtain the data pointer for hashing.
+    let key = (Arc::as_ptr(a) as *const ()) as usize;
+
+    if let Ok(guard) = cache.lock()
+        && let Some(hit) = guard.get(&key)
+    {
+        return hit.clone();
+    }
+
+    let promoted = promote_payload_for_host(EdgePayload::Any(a.clone()));
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(key, promoted.clone());
+    }
+    promoted
+}
+
 /// Create a new constant coercer registry.
 ///
 /// ```
@@ -245,8 +301,53 @@ pub struct NodeIo<'a> {
     target_compute: daedalus_planner::ComputeAffinity,
     #[cfg(feature = "gpu")]
     payload_edges: &'a HashSet<usize>,
+    #[cfg(feature = "gpu")]
+    materialization_cache: Option<MaterializationCacheHandle>,
     const_coercers: Option<ConstCoercerMap>,
     output_movers: Option<OutputMoverMap>,
+    any_conversion_cache: AnyConversionCacheHandle,
+}
+
+/// An `Arc<T>` wrapper that supports copy-on-write mutation via `Arc::make_mut`.
+///
+/// This is the ergonomic building block for `PortAccessMode::MutBorrowed`:
+/// if the graph proves exclusivity, mutation is in-place; otherwise it falls back to COW.
+pub struct CowArcMut<T> {
+    arc: Arc<T>,
+}
+
+impl<T> CowArcMut<T> {
+    pub fn new(arc: Arc<T>) -> Self {
+        Self { arc }
+    }
+
+    pub fn as_arc(&self) -> &Arc<T> {
+        &self.arc
+    }
+
+    pub fn into_arc(self) -> Arc<T> {
+        self.arc
+    }
+
+    pub fn make_mut(&mut self) -> &mut T
+    where
+        T: Clone,
+    {
+        Arc::make_mut(&mut self.arc)
+    }
+}
+
+impl<T> Deref for CowArcMut<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.arc
+    }
+}
+
+impl<T: Clone> DerefMut for CowArcMut<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.arc)
+    }
 }
 
 impl<'a> NodeIo<'a> {
@@ -300,6 +401,8 @@ impl<'a> NodeIo<'a> {
         const_inputs: &[(String, daedalus_data::model::Value)],
         const_coercers: Option<ConstCoercerMap>,
         output_movers: Option<OutputMoverMap>,
+        any_conversion_cache: AnyConversionCacheHandle,
+        #[cfg(feature = "gpu")] materialization_cache: Option<MaterializationCacheHandle>,
         #[cfg(feature = "gpu")] gpu: Option<daedalus_gpu::GpuContextHandle>,
         #[cfg(feature = "gpu")] target_compute: daedalus_planner::ComputeAffinity,
     ) -> Self {
@@ -359,6 +462,7 @@ impl<'a> NodeIo<'a> {
                                         *edge_idx,
                                         gpu_entry_edges,
                                         gpu_exit_edges,
+                                        materialization_cache.as_ref(),
                                         gpu.as_ref(),
                                         telemetry,
                                     );
@@ -398,6 +502,7 @@ impl<'a> NodeIo<'a> {
                                     *edge_idx,
                                     gpu_entry_edges,
                                     gpu_exit_edges,
+                                    materialization_cache.as_ref(),
                                     gpu.as_ref(),
                                     telemetry,
                                 );
@@ -504,8 +609,11 @@ impl<'a> NodeIo<'a> {
             target_compute,
             #[cfg(feature = "gpu")]
             payload_edges,
+            #[cfg(feature = "gpu")]
+            materialization_cache,
             const_coercers,
             output_movers,
+            any_conversion_cache,
         }
     }
 
@@ -661,7 +769,10 @@ impl<'a> NodeIo<'a> {
             #[cfg(feature = "gpu")]
             let correlated = if needs_payload {
                 let mut updated = correlated;
-                updated.inner = promote_payload_for_host(updated.inner);
+                updated.inner = match updated.inner {
+                    EdgePayload::Any(a) => promote_any_with_cache(&a, self.materialization_cache.as_ref()),
+                    other => promote_payload_for_host(other),
+                };
                 updated
             } else {
                 correlated
@@ -713,7 +824,10 @@ impl<'a> NodeIo<'a> {
             }
             let mut payload = correlated.clone();
             if needs_payload {
-                payload.inner = promote_payload_for_host(payload.inner);
+                payload.inner = match payload.inner {
+                    EdgePayload::Any(a) => promote_any_with_cache(&a, self.materialization_cache.as_ref()),
+                    other => promote_payload_for_host(other),
+                };
             }
             let payload_bytes = if cfg!(feature = "metrics")
                 && self.telemetry.metrics_level.is_detailed()
@@ -802,6 +916,19 @@ impl<'a> NodeIo<'a> {
         self.push_output(port, EdgePayload::Any(Arc::new(value)));
     }
 
+    /// Push an `Arc<T>` as an `Any` payload without re-wrapping/allocating.
+    ///
+    /// This is the preferred path for in-place / copy-on-write transforms:
+    /// nodes can `take_any_arc`, mutate via `Arc::make_mut`, then `push_any_arc`.
+    pub fn push_any_arc<T: Any + Send + Sync + 'static>(
+        &mut self,
+        port: Option<&str>,
+        value: Arc<T>,
+    ) {
+        let any: Arc<dyn Any + Send + Sync> = value;
+        self.push_output(port, EdgePayload::Any(any));
+    }
+
     pub fn push_typed<T>(&mut self, port: Option<&str>, value: T)
     where
         T: Any + Clone + Send + Sync + 'static,
@@ -870,7 +997,11 @@ impl<'a> NodeIo<'a> {
                 a.downcast_ref::<T>()
                     .cloned()
                     .or_else(|| self.coerce_const_any::<T>(a.as_ref()))
+                    // Allow CPU-side conversions between Any payloads (e.g., GrayImage -> DynamicImage)
+                    // using the global conversion registry.
+                    .or_else(|| self.convert_any_to_arc_cached::<T>(a).map(|arc| (*arc).clone()))
             }
+            EdgePayload::Value(v) => self.coerce_from_value::<T>(v),
             #[cfg(feature = "gpu")]
             EdgePayload::Payload(ep) => {
                 if let Some(v) = ep.try_downcast_cpu_any::<T>() {
@@ -1023,6 +1154,105 @@ impl<'a> NodeIo<'a> {
         None
     }
 
+    fn convert_any_to_arc_cached<T>(&self, a: &Arc<dyn Any + Send + Sync>) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        // Fast path: already the desired type.
+        if let Ok(arc) = Arc::downcast::<T>(a.clone()) {
+            return Some(arc);
+        }
+
+        // `Arc::as_ptr` returns a fat pointer for trait objects; cast through `*const ()` to
+        // obtain the data pointer for hashing.
+        let src_ptr = (Arc::as_ptr(a) as *const ()) as usize;
+        let key = (src_ptr, TypeId::of::<T>());
+
+        if let Ok(guard) = self.any_conversion_cache.lock()
+            && let Some(hit) = guard.get(&key)
+        {
+            return Arc::downcast::<T>(hit.clone()).ok();
+        }
+
+        let converted = crate::convert::convert_to_arc::<T>(a)?;
+        if let Ok(mut guard) = self.any_conversion_cache.lock() {
+            let as_any: Arc<dyn Any + Send + Sync> = converted.clone();
+            guard.insert(key, as_any);
+        }
+        Some(converted)
+    }
+
+    /// Borrow an `Arc<T>` from an `Any` payload (increments refcount, does not clone `T`).
+    pub fn get_any_arc<T>(&self, port: &str) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        self.inputs_for(port).find_map(|p| match &p.inner {
+            EdgePayload::Any(a) => self.convert_any_to_arc_cached::<T>(a),
+            #[cfg(feature = "gpu")]
+            EdgePayload::Payload(ep) => ep.arc_cpu_any::<T>(),
+            _ => None,
+        })
+    }
+
+    /// Borrow a typed CPU payload by reference (no clone).
+    #[cfg(feature = "gpu")]
+    pub fn get_payload_ref<T>(&self, port: &str) -> Option<&T>
+    where
+        T: daedalus_gpu::GpuSendable + 'static,
+    {
+        self.inputs_for(port).find_map(|p| match &p.inner {
+            EdgePayload::Payload(ep) => ep.as_cpu::<T>(),
+            _ => None,
+        })
+    }
+
+    /// Borrow a typed CPU payload as an `Arc<T>` (no clone) when possible.
+    #[cfg(feature = "gpu")]
+    pub fn get_payload_arc<T>(&self, port: &str) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.inputs_for(port).find_map(|p| match &p.inner {
+            EdgePayload::Payload(ep) => ep.arc_cpu_any::<T>(),
+            _ => None,
+        })
+    }
+
+    /// Take a typed CPU payload as an `Arc<T>`, dropping the input payload.
+    ///
+    /// This is a true move at the graph level: if the value is shared elsewhere it remains
+    /// valid (because the underlying allocation is reference-counted).
+    #[cfg(feature = "gpu")]
+    pub fn take_payload_arc<T>(&mut self, port: &str) -> Option<Arc<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        let (idx, mut payload) = self.take_input(port)?;
+        let mut out: Option<Arc<T>> = None;
+        match std::mem::replace(&mut payload.inner, EdgePayload::Unit) {
+            EdgePayload::Payload(ep) => {
+                out = ep.arc_cpu_any::<T>();
+            }
+            other => {
+                payload.inner = other;
+            }
+        }
+        if out.is_none() {
+            self.restore_input(idx, port, payload);
+        }
+        out
+    }
+
+    /// Take a typed CPU payload and return a COW-mutable wrapper.
+    #[cfg(feature = "gpu")]
+    pub fn take_payload_cow_mut<T>(&mut self, port: &str) -> Option<CowArcMut<T>>
+    where
+        T: Clone + Send + Sync + 'static,
+    {
+        self.take_payload_arc::<T>(port).map(CowArcMut::new)
+    }
+
     /// Move a typed Any payload, cloning only when shared.
     pub fn get_any_mut<T>(&mut self, port: &str) -> Option<T>
     where
@@ -1051,6 +1281,48 @@ impl<'a> NodeIo<'a> {
             self.restore_input(idx, port, payload);
         }
         handled
+    }
+
+    /// Take an `Arc<T>` from an `Any` payload without cloning `T`.
+    ///
+    /// This enables true in-place / COW transforms for `Arc<T>` payloads.
+    /// If the `Arc` is uniquely owned at this point in the graph, `Arc::make_mut`
+    /// will mutate without cloning.
+    pub fn take_any_arc<T>(&mut self, port: &str) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        let (idx, mut payload) = self.take_input(port)?;
+        let mut out: Option<Arc<T>> = None;
+        match std::mem::replace(&mut payload.inner, EdgePayload::Unit) {
+            EdgePayload::Any(a) => match Arc::downcast::<T>(a) {
+                Ok(arc) => {
+                    out = Some(arc);
+                }
+                Err(a) => {
+                    payload.inner = EdgePayload::Any(a);
+                }
+            },
+            other => {
+                payload.inner = other;
+            }
+        }
+        if out.is_none() {
+            self.restore_input(idx, port, payload);
+        }
+        out
+    }
+
+    /// Take an input `Arc<T>` and return a COW-mutable wrapper.
+    ///
+    /// This is the recommended pattern for `PortAccessMode::MutBorrowed` inputs: downstream code
+    /// can mutate in-place via `Arc::make_mut` when the graph proves exclusivity, otherwise it
+    /// transparently clones.
+    pub fn take_any_cow_mut<T>(&mut self, port: &str) -> Option<CowArcMut<T>>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        self.take_any_arc::<T>(port).map(CowArcMut::new)
     }
 
     /// Move a typed input with constant coercion support, cloning only when shared.
@@ -1917,6 +2189,7 @@ impl<'a> NodeIo<'a> {
         edge_idx: usize,
         entries: &HashSet<usize>,
         exits: &HashSet<usize>,
+        materialization_cache: Option<&MaterializationCacheHandle>,
         gpu: Option<&daedalus_gpu::GpuContextHandle>,
         telemetry: &mut ExecutionTelemetry,
     ) -> CorrelatedPayload {
@@ -1927,14 +2200,20 @@ impl<'a> NodeIo<'a> {
             telemetry.record_edge_gpu_transfer(edge_idx, true);
             payload.inner = match payload.inner {
                 EdgePayload::Any(ref a) => {
-                    if let Some(ep) = a.downcast_ref::<daedalus_gpu::ErasedPayload>() {
-                        ep.upload(ctx)
-                            .map(EdgePayload::Payload)
-                            .unwrap_or_else(|_| EdgePayload::Any(a.clone()))
-                    } else if let Some(img) = a.downcast_ref::<daedalus_gpu::GpuImageHandle>() {
-                        EdgePayload::GpuImage(img.clone())
-                    } else {
-                        EdgePayload::Any(a.clone())
+                    let promoted = promote_any_with_cache(a, materialization_cache);
+                    match promoted {
+                        EdgePayload::Payload(ep) => match ep.upload(ctx) {
+                            Ok(uploaded) => EdgePayload::Payload(uploaded),
+                            Err(_) => EdgePayload::Payload(ep),
+                        },
+                        EdgePayload::Any(a) => {
+                            if let Some(img) = a.downcast_ref::<daedalus_gpu::GpuImageHandle>() {
+                                EdgePayload::GpuImage(img.clone())
+                            } else {
+                                EdgePayload::Any(a)
+                            }
+                        }
+                        other => other,
                     }
                 }
                 EdgePayload::Payload(ref ep) => ep
@@ -2476,8 +2755,6 @@ mod tests {
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
         let payload_edges: HashSet<usize> = HashSet::new();
-        #[cfg(feature = "gpu")]
-        let payload_edges: HashSet<usize> = HashSet::new();
 
         let mut io = NodeIo::new(
             vec![],
@@ -2499,6 +2776,9 @@ mod tests {
             BackpressureStrategy::None,
             &[],
             None,
+            None,
+            new_any_conversion_cache(),
+            #[cfg(feature = "gpu")]
             None,
             #[cfg(feature = "gpu")]
             None,
@@ -2582,6 +2862,8 @@ mod tests {
             &[],
             None,
             None,
+            new_any_conversion_cache(),
+            Some(new_materialization_cache()),
             None,
             daedalus_planner::ComputeAffinity::CpuOnly,
         );
@@ -2664,6 +2946,9 @@ mod tests {
             )],
             None,
             None,
+            new_any_conversion_cache(),
+            #[cfg(feature = "gpu")]
+            None,
             #[cfg(feature = "gpu")]
             None,
             #[cfg(feature = "gpu")]
@@ -2709,6 +2994,9 @@ mod tests {
             BackpressureStrategy::None,
             &[("mode".to_string(), Value::String("cpu".into()))],
             None,
+            None,
+            new_any_conversion_cache(),
+            #[cfg(feature = "gpu")]
             None,
             #[cfg(feature = "gpu")]
             None,
@@ -2757,6 +3045,9 @@ mod tests {
             BackpressureStrategy::None,
             &[("mode".to_string(), Value::Int(2))],
             None,
+            None,
+            new_any_conversion_cache(),
+            #[cfg(feature = "gpu")]
             None,
             #[cfg(feature = "gpu")]
             None,

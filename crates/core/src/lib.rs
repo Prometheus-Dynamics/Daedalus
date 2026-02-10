@@ -45,6 +45,7 @@ pub mod ids;
 pub mod messages;
 pub mod policy;
 pub mod sync;
+pub mod stable_id;
 
 #[cfg(feature = "metrics")]
 pub mod metrics;

@@ -1,7 +1,7 @@
 use daedalus_data::convert::{ConversionProvenance, ConversionResolution, ConverterId};
 use daedalus_data::model::{TypeExpr, Value, ValueType};
-use daedalus_registry::ids::NodeId;
-use daedalus_registry::store::NodeDescriptor;
+use daedalus_registry::ids::{GroupId, NodeId};
+use daedalus_registry::store::{GroupDescriptor, NodeDescriptor, PortAccessMode};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
@@ -89,19 +89,21 @@ fn expand_embedded_graphs(
     view: &daedalus_registry::store::RegistryView,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let mut embedded_graphs: HashMap<usize, Graph> = HashMap::new();
-    for (idx, node) in input.graph.nodes.iter().enumerate() {
-        let Some(desc) = latest_node(view, &node.id) else {
-            continue;
-        };
-        let Some(Value::String(raw)) = desc.metadata.get(EMBEDDED_GRAPH_KEY) else {
-            continue;
-        };
-        let parsed: Result<Graph, _> = serde_json::from_str(raw.as_ref());
-        match parsed {
-            Ok(graph) => {
-                embedded_graphs.insert(idx, graph);
-            }
+    #[derive(Clone)]
+    struct EmbeddedSpec {
+        graph: Graph,
+        group_id: Option<String>,
+        group_label: Option<String>,
+        host_label: Option<String>,
+    }
+
+    fn parse_embedded(
+        raw: &str,
+        node_id: &str,
+        diags: &mut Vec<Diagnostic>,
+    ) -> Option<Graph> {
+        match serde_json::from_str::<Graph>(raw) {
+            Ok(graph) => Some(graph),
             Err(err) => {
                 diags.push(
                     Diagnostic::new(
@@ -109,10 +111,118 @@ fn expand_embedded_graphs(
                         format!("embedded graph parse failed: {err}"),
                     )
                     .in_pass("expand_embedded")
-                    .at_node(diagnostic_node_id(node)),
+                    .at_node(node_id.to_string()),
                 );
+                None
             }
         }
+    }
+
+    fn suggest_groups(view: &daedalus_registry::store::RegistryView, missing: &str) -> Vec<String> {
+        fn edit_distance(a: &str, b: &str) -> usize {
+            let mut prev: Vec<usize> = (0..=b.len()).collect();
+            let mut curr = vec![0; b.len() + 1];
+            for (i, ca) in a.bytes().enumerate() {
+                curr[0] = i + 1;
+                for (j, cb) in b.bytes().enumerate() {
+                    let cost = if ca == cb { 0 } else { 1 };
+                    curr[j + 1] = (prev[j + 1] + 1)
+                        .min(curr[j] + 1)
+                        .min(prev[j] + cost);
+                }
+                prev.clone_from_slice(&curr);
+            }
+            prev[b.len()]
+        }
+
+        let needle = missing.trim().to_ascii_lowercase();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let mut scored: Vec<(usize, String)> = view
+            .groups
+            .keys()
+            .map(|id| {
+                let id_str = id.0.clone();
+                let score = edit_distance(&needle, &id_str.to_ascii_lowercase());
+                (score, id_str)
+            })
+            .collect();
+        scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        scored.into_iter().take(5).map(|(_, id)| id).collect()
+    }
+
+    let mut embedded_graphs: HashMap<usize, EmbeddedSpec> = HashMap::new();
+    for (idx, node) in input.graph.nodes.iter().enumerate() {
+        let Some(desc) = latest_node(view, &node.id) else {
+            continue;
+        };
+        if let Some(group_id) = desc.group.as_ref() {
+            let Some(group) = latest_group(view, group_id) else {
+                let suggestions = suggest_groups(view, &group_id.0);
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::NodeMissing,
+                        format!("embedded group {} not found in registry", group_id.0),
+                    )
+                    .in_pass("expand_embedded")
+                    .at_node(diagnostic_node_id(node))
+                    .with_meta(
+                        "missing_group_id",
+                        Value::String(std::borrow::Cow::Owned(group_id.0.clone())),
+                    )
+                    .with_meta(
+                        "suggestions",
+                        Value::List(
+                            suggestions
+                                .into_iter()
+                                .map(|s| Value::String(std::borrow::Cow::Owned(s)))
+                                .collect(),
+                        ),
+                    ),
+                );
+                continue;
+            };
+            let Some(graph) = parse_embedded(&group.graph, &diagnostic_node_id(node), diags) else {
+                continue;
+            };
+            let host_label = group
+                .metadata
+                .get(EMBEDDED_HOST_KEY)
+                .and_then(|val| match val {
+                    Value::String(s) => {
+                        let trimmed = s.trim();
+                        (!trimmed.is_empty()).then_some(trimmed.to_string())
+                    }
+                    _ => None,
+                });
+            embedded_graphs.insert(
+                idx,
+                EmbeddedSpec {
+                    graph,
+                    group_id: Some(group_id.0.clone()),
+                    group_label: group.label.clone(),
+                    host_label,
+                },
+            );
+            continue;
+        }
+
+        if let Some(Value::String(raw)) = desc.metadata.get(EMBEDDED_GRAPH_KEY) {
+            if let Some(graph) = parse_embedded(raw.as_ref(), &diagnostic_node_id(node), diags) {
+                embedded_graphs.insert(
+                    idx,
+                    EmbeddedSpec {
+                        graph,
+                        group_id: None,
+                        group_label: None,
+                        host_label: None,
+                    },
+                );
+            }
+            continue;
+        }
+
     }
 
     if embedded_graphs.is_empty() {
@@ -141,12 +251,13 @@ fn expand_embedded_graphs(
     let mut embedded_maps: HashMap<usize, EmbeddedMap> = HashMap::new();
 
     for (idx, node) in input.graph.nodes.iter().enumerate() {
-        let Some(graph) = embedded_graphs.get(&idx) else {
+        let Some(spec) = embedded_graphs.get(&idx) else {
             let new_idx = new_nodes.len();
             new_nodes.push(node.clone());
             remap[idx] = Some(new_idx);
             continue;
         };
+        let graph = &spec.graph;
 
         let host_index = graph.nodes.iter().position(is_host_bridge).or_else(|| {
             let host_label = latest_node(view, &node.id)
@@ -162,6 +273,7 @@ fn expand_embedded_graphs(
                     }
                     _ => None,
                 });
+            let host_label = host_label.or_else(|| spec.host_label.clone());
             host_label.and_then(|label| {
                 graph
                     .nodes
@@ -188,7 +300,10 @@ fn expand_embedded_graphs(
         let group_label = node
             .label
             .clone()
+            .or_else(|| latest_node(view, &node.id).and_then(|desc| desc.label.clone()))
+            .or_else(|| spec.group_label.clone())
             .unwrap_or_else(|| node.id.0.clone());
+        let group_id = spec.group_id.clone().unwrap_or_else(|| group_label.clone());
         let prefix = format!("{group_label}::");
         let mut index_map: Vec<Option<usize>> = vec![None; graph.nodes.len()];
 
@@ -204,6 +319,14 @@ fn expand_embedded_graphs(
             cloned.label = Some(format!("{prefix}{base_label}"));
             cloned.metadata.insert(
                 EMBEDDED_GROUP_KEY.to_string(),
+                Value::String(std::borrow::Cow::from(group_label.clone())),
+            );
+            cloned.metadata.insert(
+                "daedalus.group_id".to_string(),
+                Value::String(std::borrow::Cow::from(group_id.clone())),
+            );
+            cloned.metadata.insert(
+                "daedalus.group_label".to_string(),
                 Value::String(std::borrow::Cow::from(group_label.clone())),
             );
             let new_idx = new_nodes.len();
@@ -427,6 +550,7 @@ pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> Planner
     expand_embedded_graphs(&mut input, &view, &mut diags);
     apply_descriptor_defaults(&mut input.graph, &view);
     hydrate_registry(&input, &view, &mut diags);
+    validate_port_declarations(&input.graph, &view, &mut diags);
     typecheck(&mut input.graph, &view, &mut diags);
     convert(&mut input.graph, input.registry, &view, &mut diags, &config);
     align(&mut input.graph, &mut diags);
@@ -443,11 +567,316 @@ pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> Planner
     }
 }
 
+fn validate_port_declarations(
+    graph: &Graph,
+    view: &daedalus_registry::store::RegistryView,
+    diags: &mut Vec<Diagnostic>,
+) {
+    fn is_dynamic(desc: &NodeDescriptor, is_input: bool) -> bool {
+        let key = if is_input {
+            "dynamic_inputs"
+        } else {
+            "dynamic_outputs"
+        };
+        matches!(desc.metadata.get(key), Some(Value::String(s)) if !s.trim().is_empty())
+    }
+
+    fn fanin_hints(desc: &NodeDescriptor) -> Vec<String> {
+        desc.fanin_inputs
+            .iter()
+            .map(|spec| format!("{}{}+", spec.prefix, spec.start))
+            .collect()
+    }
+
+    fn available_inputs(desc: &NodeDescriptor) -> Vec<Value> {
+        let mut out: Vec<Value> = desc
+            .inputs
+            .iter()
+            .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+            .collect();
+        for hint in fanin_hints(desc) {
+            out.push(Value::String(std::borrow::Cow::Owned(hint)));
+        }
+        out
+    }
+
+    fn available_outputs(desc: &NodeDescriptor) -> Vec<Value> {
+        desc.outputs
+            .iter()
+            .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+            .collect()
+    }
+
+    for node in &graph.nodes {
+        let Some(desc) = latest_node(view, &node.id) else {
+            continue;
+        };
+
+        let node_label = diagnostic_node_id(node);
+
+        // Inputs: stale graph can carry extra/missing port entries even when there are no edges.
+        let dynamic_inputs = is_dynamic(desc, true);
+        let mut seen_inputs: HashSet<String> = HashSet::new();
+        for port in &node.inputs {
+            let port_lc = port.trim().to_ascii_lowercase();
+            if port_lc.is_empty() {
+                continue;
+            }
+            if !seen_inputs.insert(port_lc.clone()) {
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::PortMissing,
+                        format!(
+                            "graph declares duplicate input port `{}` on node {}",
+                            port, node.id.0
+                        ),
+                    )
+                    .in_pass("validate_ports")
+                    .at_node(node_label.clone())
+                    .at_port(port.clone())
+                    .with_meta(
+                        "missing_port",
+                        Value::String(std::borrow::Cow::Owned(port.clone())),
+                    )
+                    .with_meta(
+                        "missing_port_direction",
+                        Value::String(std::borrow::Cow::Borrowed("input")),
+                    )
+                    .with_meta("available_ports", Value::List(available_inputs(desc))),
+                );
+                continue;
+            }
+
+            if dynamic_inputs {
+                continue;
+            }
+            if desc.input_ty_for(port).is_some() {
+                continue;
+            }
+
+            diags.push(
+                Diagnostic::new(
+                    DiagnosticCode::PortMissing,
+                    format!(
+                        "graph declares input port `{}` on node {}, but the registry descriptor does not provide that port",
+                        port, node.id.0
+                    ),
+                )
+                .in_pass("validate_ports")
+                .at_node(node_label.clone())
+                .at_port(port.clone())
+                .with_meta(
+                    "missing_port",
+                    Value::String(std::borrow::Cow::Owned(port.clone())),
+                )
+                .with_meta(
+                    "missing_port_direction",
+                    Value::String(std::borrow::Cow::Borrowed("input")),
+                )
+                .with_meta("available_ports", Value::List(available_inputs(desc))),
+            );
+        }
+
+        // Validate missing ports even when the graph omitted declared port lists.
+        // In the Daedalus/Helios UI model, `GraphNode.inputs/outputs` are part of the persisted
+        // graph contract. If they are stale/empty relative to the registry, the UI cannot reason
+        // about wiring and users get confusing behavior.
+        if !dynamic_inputs {
+            let node_inputs_lc: HashSet<String> = node
+                .inputs
+                .iter()
+                .map(|p| p.trim().to_ascii_lowercase())
+                .filter(|p| !p.is_empty())
+                .collect();
+            for port in &desc.inputs {
+                let port_lc = port.name.trim().to_ascii_lowercase();
+                if port_lc.is_empty() {
+                    continue;
+                }
+                if node_inputs_lc.contains(&port_lc) {
+                    continue;
+                }
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::PortMissing,
+                        format!(
+                            "graph is missing input port `{}` on node {} (graph is stale; regenerate ports from registry)",
+                            port.name, node.id.0
+                        ),
+                    )
+                    .in_pass("validate_ports")
+                    .at_node(node_label.clone())
+                    .at_port(port.name.clone())
+                    .with_meta(
+                        "missing_port",
+                        Value::String(std::borrow::Cow::Owned(port.name.clone())),
+                    )
+                    .with_meta(
+                        "missing_port_direction",
+                        Value::String(std::borrow::Cow::Borrowed("input")),
+                    )
+                    .with_meta("available_ports", Value::List(available_inputs(desc))),
+                );
+            }
+        }
+
+        // Outputs: same story.
+        let dynamic_outputs = is_dynamic(desc, false);
+        let mut seen_outputs: HashSet<String> = HashSet::new();
+        for port in &node.outputs {
+            let port_lc = port.trim().to_ascii_lowercase();
+            if port_lc.is_empty() {
+                continue;
+            }
+            if !seen_outputs.insert(port_lc.clone()) {
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::PortMissing,
+                        format!(
+                            "graph declares duplicate output port `{}` on node {}",
+                            port, node.id.0
+                        ),
+                    )
+                    .in_pass("validate_ports")
+                    .at_node(node_label.clone())
+                    .at_port(port.clone())
+                    .with_meta(
+                        "missing_port",
+                        Value::String(std::borrow::Cow::Owned(port.clone())),
+                    )
+                    .with_meta(
+                        "missing_port_direction",
+                        Value::String(std::borrow::Cow::Borrowed("output")),
+                    )
+                    .with_meta("available_ports", Value::List(available_outputs(desc))),
+                );
+                continue;
+            }
+
+            if dynamic_outputs {
+                continue;
+            }
+            if desc.outputs.iter().any(|p| p.name == *port) {
+                continue;
+            }
+
+            diags.push(
+                Diagnostic::new(
+                    DiagnosticCode::PortMissing,
+                    format!(
+                        "graph declares output port `{}` on node {}, but the registry descriptor does not provide that port",
+                        port, node.id.0
+                    ),
+                )
+                .in_pass("validate_ports")
+                .at_node(node_label.clone())
+                .at_port(port.clone())
+                .with_meta(
+                    "missing_port",
+                    Value::String(std::borrow::Cow::Owned(port.clone())),
+                )
+                .with_meta(
+                    "missing_port_direction",
+                    Value::String(std::borrow::Cow::Borrowed("output")),
+                )
+                .with_meta("available_ports", Value::List(available_outputs(desc))),
+            );
+        }
+
+        if !dynamic_outputs {
+            let node_outputs_lc: HashSet<String> = node
+                .outputs
+                .iter()
+                .map(|p| p.trim().to_ascii_lowercase())
+                .filter(|p| !p.is_empty())
+                .collect();
+            for port in &desc.outputs {
+                let port_lc = port.name.trim().to_ascii_lowercase();
+                if port_lc.is_empty() {
+                    continue;
+                }
+                if node_outputs_lc.contains(&port_lc) {
+                    continue;
+                }
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::PortMissing,
+                        format!(
+                            "graph is missing output port `{}` on node {} (graph is stale; regenerate ports from registry)",
+                            port.name, node.id.0
+                        ),
+                    )
+                    .in_pass("validate_ports")
+                    .at_node(node_label.clone())
+                    .at_port(port.name.clone())
+                    .with_meta(
+                        "missing_port",
+                        Value::String(std::borrow::Cow::Owned(port.name.clone())),
+                    )
+                    .with_meta(
+                        "missing_port_direction",
+                        Value::String(std::borrow::Cow::Borrowed("output")),
+                    )
+                    .with_meta("available_ports", Value::List(available_outputs(desc))),
+                );
+            }
+        }
+    }
+}
+
 fn latest_node<'a>(
     view: &'a daedalus_registry::store::RegistryView,
     id: &NodeId,
 ) -> Option<&'a NodeDescriptor> {
     view.nodes.get(id)
+}
+
+fn latest_group<'a>(
+    view: &'a daedalus_registry::store::RegistryView,
+    id: &GroupId,
+) -> Option<&'a GroupDescriptor> {
+    view.groups.get(id)
+}
+
+fn suggest_nodes(view: &daedalus_registry::store::RegistryView, missing: &str) -> Vec<String> {
+    fn edit_distance(a: &str, b: &str) -> usize {
+        let (a, b) = (a.as_bytes(), b.as_bytes());
+        if a.is_empty() {
+            return b.len();
+        }
+        if b.is_empty() {
+            return a.len();
+        }
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        let mut curr = vec![0; b.len() + 1];
+        for (i, &ac) in a.iter().enumerate() {
+            curr[0] = i + 1;
+            for (j, &bc) in b.iter().enumerate() {
+                let cost = if ac == bc { 0 } else { 1 };
+                curr[j + 1] = (prev[j + 1] + 1)
+                    .min(curr[j] + 1)
+                    .min(prev[j] + cost);
+            }
+            prev.clone_from_slice(&curr);
+        }
+        prev[b.len()]
+    }
+
+    let needle = missing.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(usize, String)> = view
+        .nodes
+        .keys()
+        .map(|id| {
+            let id_str = id.0.clone();
+            let score = edit_distance(&needle, &id_str.to_ascii_lowercase());
+            (score, id_str)
+        })
+        .collect();
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    scored.into_iter().take(5).map(|(_, id)| id).collect()
 }
 
 fn hydrate_registry(
@@ -457,13 +886,27 @@ fn hydrate_registry(
 ) {
     for node in &input.graph.nodes {
         if latest_node(view, &node.id).is_none() {
+            let suggestions = suggest_nodes(view, &node.id.0);
             diags.push(
                 Diagnostic::new(
                     DiagnosticCode::NodeMissing,
                     format!("node {} not found in registry", node.id.0),
                 )
                 .in_pass("hydrate_registry")
-                .at_node(diagnostic_node_id(node)),
+                .at_node(diagnostic_node_id(node))
+                .with_meta(
+                    "missing_node_id",
+                    Value::String(std::borrow::Cow::Owned(node.id.0.clone())),
+                )
+                .with_meta(
+                    "suggestions",
+                    Value::List(
+                        suggestions
+                            .into_iter()
+                            .map(|s| Value::String(std::borrow::Cow::Owned(s)))
+                            .collect(),
+                    ),
+                ),
             );
         }
     }
@@ -720,29 +1163,65 @@ fn typecheck(
         let to_ty = to_desc.and_then(|d| port_type(to_node, d, &edge.to.port, true));
 
         if from_desc.is_none() {
+            let suggestions = suggest_nodes(view, &from_node.id.0);
             diags.push(
                 Diagnostic::new(
                     DiagnosticCode::NodeMissing,
                     format!("node {} not found in registry", from_node.id.0),
                 )
                 .in_pass("typecheck")
-                .at_node(diagnostic_node_id(from_node)),
+                .at_node(diagnostic_node_id(from_node))
+                .with_meta(
+                    "missing_node_id",
+                    Value::String(std::borrow::Cow::Owned(from_node.id.0.clone())),
+                )
+                .with_meta(
+                    "suggestions",
+                    Value::List(
+                        suggestions
+                            .into_iter()
+                            .map(|s| Value::String(std::borrow::Cow::Owned(s)))
+                            .collect(),
+                    ),
+                ),
             );
             continue;
         }
         if to_desc.is_none() {
+            let suggestions = suggest_nodes(view, &to_node.id.0);
             diags.push(
                 Diagnostic::new(
                     DiagnosticCode::NodeMissing,
                     format!("node {} not found in registry", to_node.id.0),
                 )
                 .in_pass("typecheck")
-                .at_node(diagnostic_node_id(to_node)),
+                .at_node(diagnostic_node_id(to_node))
+                .with_meta(
+                    "missing_node_id",
+                    Value::String(std::borrow::Cow::Owned(to_node.id.0.clone())),
+                )
+                .with_meta(
+                    "suggestions",
+                    Value::List(
+                        suggestions
+                            .into_iter()
+                            .map(|s| Value::String(std::borrow::Cow::Owned(s)))
+                            .collect(),
+                    ),
+                ),
             );
             continue;
         }
 
         if from_ty.is_none() {
+            let available: Vec<Value> = from_desc
+                .map(|d| {
+                    d.outputs
+                        .iter()
+                        .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+                        .collect()
+                })
+                .unwrap_or_default();
             diags.push(
                 Diagnostic::new(
                     DiagnosticCode::PortMissing,
@@ -753,10 +1232,27 @@ fn typecheck(
                 )
                 .in_pass("typecheck")
                 .at_node(diagnostic_node_id(from_node))
-                .at_port(edge.from.port.clone()),
+                .at_port(edge.from.port.clone())
+                .with_meta(
+                    "missing_port",
+                    Value::String(std::borrow::Cow::Owned(edge.from.port.clone())),
+                )
+                .with_meta(
+                    "missing_port_direction",
+                    Value::String(std::borrow::Cow::Borrowed("output")),
+                )
+                .with_meta("available_ports", Value::List(available)),
             );
         }
         if to_ty.is_none() {
+            let available: Vec<Value> = to_desc
+                .map(|d| {
+                    d.inputs
+                        .iter()
+                        .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+                        .collect()
+                })
+                .unwrap_or_default();
             diags.push(
                 Diagnostic::new(
                     DiagnosticCode::PortMissing,
@@ -767,7 +1263,16 @@ fn typecheck(
                 )
                 .in_pass("typecheck")
                 .at_node(diagnostic_node_id(to_node))
-                .at_port(edge.to.port.clone()),
+                .at_port(edge.to.port.clone())
+                .with_meta(
+                    "missing_port",
+                    Value::String(std::borrow::Cow::Owned(edge.to.port.clone())),
+                )
+                .with_meta(
+                    "missing_port_direction",
+                    Value::String(std::borrow::Cow::Borrowed("input")),
+                )
+                .with_meta("available_ports", Value::List(available)),
             );
         }
 
@@ -833,7 +1338,19 @@ fn typecheck(
                 )
                 .in_pass("typecheck")
                 .at_node(diagnostic_node_id(host))
-                .at_port(port),
+                .at_port(port)
+                .with_meta(
+                    "type_a",
+                    Value::String(std::borrow::Cow::Owned(
+                        serde_json::to_string(&a).unwrap_or_default(),
+                    )),
+                )
+                .with_meta(
+                    "type_b",
+                    Value::String(std::borrow::Cow::Owned(
+                        serde_json::to_string(&b).unwrap_or_default(),
+                    )),
+                ),
             );
         }
     }
@@ -1362,6 +1879,53 @@ fn lint(input: &PlannerInput<'_>, diags: &mut Vec<Diagnostic>) {
         }
         if e.to.node.0 < n {
             incoming[e.to.node.0] += 1;
+        }
+    }
+
+    // Enforce exclusivity for ports that declare `Owned`/`MutBorrowed` access.
+    // This is the planner-level guardrail that makes in-place / COW transforms predictable:
+    // if a producer output is fanned out, a downstream node cannot claim exclusive access.
+    let view = input.registry.view();
+    let mut fanout: HashMap<(usize, String), usize> = HashMap::new();
+    for e in &input.graph.edges {
+        *fanout
+            .entry((e.from.node.0, e.from.port.clone()))
+            .or_insert(0) += 1;
+    }
+    for e in &input.graph.edges {
+        let Some(to_node) = input.graph.nodes.get(e.to.node.0) else {
+            continue;
+        };
+        let Some(desc) = latest_node(&view, &to_node.id) else {
+            continue;
+        };
+        let access = desc.input_access_for(&e.to.port);
+        if matches!(access, PortAccessMode::Owned | PortAccessMode::MutBorrowed) {
+            let count = fanout
+                .get(&(e.from.node.0, e.from.port.clone()))
+                .copied()
+                .unwrap_or(0);
+            if count > 1 {
+                let Some(from_node) = input.graph.nodes.get(e.from.node.0) else {
+                    continue;
+                };
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::AccessViolation,
+                        format!(
+                            "input {}:{} requires exclusive access ({access:?}), but source {}:{} is fanned out to {} consumers",
+                            diagnostic_node_id(to_node),
+                            e.to.port,
+                            diagnostic_node_id(from_node),
+                            e.from.port,
+                            count
+                        ),
+                    )
+                    .in_pass("lint")
+                    .at_node(diagnostic_node_id(to_node))
+                    .at_port(e.to.port.clone()),
+                );
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -100,6 +100,9 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         const_coercers,
         output_movers,
         graph_metadata,
+        active_nodes,
+        host_outputs_in_graph,
+        fail_fast,
         ..
     } = exec;
 
@@ -124,12 +127,40 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         const_coercers,
         output_movers,
         graph_metadata,
+        active_nodes,
+        host_outputs_in_graph,
+        fail_fast,
         ..
     } = exec;
 
     let graph_start = Instant::now();
     let metrics_level = telemetry.metrics_level;
     crash_diag::install_if_enabled(&nodes);
+
+    let failed_nodes: Arc<Vec<AtomicBool>> = Arc::new(
+        (0..nodes.len())
+            .map(|_| AtomicBool::new(false))
+            .collect::<Vec<_>>(),
+    );
+
+    let node_is_active = |idx: usize| {
+        active_nodes
+            .as_deref()
+            .and_then(|v| v.get(idx).copied())
+            .unwrap_or(true)
+    };
+    let node_exec_active = |idx: usize| {
+        if !node_is_active(idx) {
+            return false;
+        }
+        let Some(node) = nodes.get(idx) else {
+            return false;
+        };
+        if !is_host_bridge(node) {
+            return true;
+        }
+        host_outputs_in_graph && node.id.ends_with("io.host_output")
+    };
 
     // Map node -> segment
     let mut segment_of = vec![0usize; nodes.len()];
@@ -142,6 +173,9 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
     // Precompute segment rank based on schedule_order for determinism.
     let mut segment_rank: Vec<usize> = vec![usize::MAX; segments.len()];
     for (rank, node_ref) in schedule_order.iter().enumerate() {
+        if !node_exec_active(node_ref.0) {
+            continue;
+        }
         let s = segment_of[node_ref.0];
         if rank < segment_rank[s] {
             segment_rank[s] = rank;
@@ -149,14 +183,24 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
     }
 
     // Build segment dependency graph.
+    let mut segment_active = vec![false; segments.len()];
+    for (sid, seg) in segments.iter().enumerate() {
+        segment_active[sid] = seg.nodes.iter().any(|n| node_exec_active(n.0));
+    }
     let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); segments.len()];
     let mut indegree = vec![0usize; segments.len()];
     for (from, _, to, _, _) in edges.iter() {
+        if !node_exec_active(from.0) || !node_exec_active(to.0) {
+            continue;
+        }
         if is_host_bridge(&nodes[from.0]) || is_host_bridge(&nodes[to.0]) {
             continue;
         }
         let a = segment_of[from.0];
         let b = segment_of[to.0];
+        if !segment_active[a] || !segment_active[b] {
+            continue;
+        }
         if a != b && adj[a].insert(b) {
             indegree[b] += 1;
         }
@@ -166,6 +210,9 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
     let state = state.clone();
     let queues = queues.clone();
     let warnings = warnings_seen.clone();
+    let any_conversion_cache = crate::io::new_any_conversion_cache();
+    #[cfg(feature = "gpu")]
+    let materialization_cache = crate::io::new_materialization_cache();
     let (incoming, outgoing) = edge_maps(edges);
     let policies: Arc<PolicyList> = Arc::new(edges.to_vec());
     let nodes = nodes.clone();
@@ -180,6 +227,9 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         .iter()
         .enumerate()
         .filter_map(|(idx, n)| {
+            if !node_is_active(idx) {
+                return None;
+            }
             n.metadata
                 .get(HOST_BRIDGE_META_KEY)
                 .map(|v| matches!(v, Value::Bool(true)))
@@ -205,6 +255,9 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         &const_inputs,
         const_coercers.clone(),
         output_movers.clone(),
+        any_conversion_cache.clone(),
+        #[cfg(feature = "gpu")]
+        materialization_cache.clone(),
         &mut telemetry,
         backpressure.clone(),
         &graph_start,
@@ -218,8 +271,15 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         host_bridges.clone(),
         state.clone(),
         graph_metadata.clone(),
+        &failed_nodes,
+        fail_fast,
         HostBridgePhase::Pre,
     )?;
+
+    // Clone these once so inner `move` closures don't capture and move the originals.
+    let active_nodes_mask = active_nodes.clone();
+    let host_bridges_for_workers = host_bridges.clone();
+    let host_outputs_in_graph_flag = host_outputs_in_graph;
 
     thread::scope(|scope| {
         let (tx, rx) =
@@ -227,7 +287,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         let mut ready: Vec<usize> = indegree
             .iter()
             .enumerate()
-            .filter_map(|(i, deg)| if *deg == 0 { Some(i) } else { None })
+            .filter_map(|(i, deg)| if *deg == 0 && segment_active[i] { Some(i) } else { None })
             .collect();
         ready.sort_by_key(|sid| segment_rank.get(*sid).copied().unwrap_or(usize::MAX));
         let mut ready: VecDeque<usize> = ready.into();
@@ -263,6 +323,9 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                 let const_inputs = const_inputs.clone();
                 let const_coercers = const_coercers.clone();
                 let output_movers = output_movers.clone();
+                let any_conversion_cache = any_conversion_cache.clone();
+                #[cfg(feature = "gpu")]
+                let materialization_cache = materialization_cache.clone();
                 let graph_metadata = graph_metadata.clone();
                 #[cfg(feature = "gpu")]
                 let gpu_entry_set = gpu_entry_set.clone();
@@ -271,6 +334,11 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                 #[cfg(feature = "gpu")]
                 let payload_edges = payload_edges.clone();
                 let txc = tx.clone();
+                let active_nodes = active_nodes_mask.clone();
+                let host_outputs_in_graph = host_outputs_in_graph_flag;
+                let host_bridges = host_bridges_for_workers.clone();
+                let failed_nodes = failed_nodes.clone();
+                let fail_fast = fail_fast;
                 scope.spawn(move || {
                     let res = run_segment_external(
                         &nodes,
@@ -290,6 +358,14 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                         &const_inputs,
                         const_coercers,
                         output_movers,
+                        any_conversion_cache,
+                        active_nodes,
+                        host_outputs_in_graph,
+                        host_bridges,
+                        failed_nodes,
+                        fail_fast,
+                        #[cfg(feature = "gpu")]
+                        materialization_cache,
                         graph_start,
                         metrics_level,
                         #[cfg(feature = "gpu")]
@@ -382,33 +458,40 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
     })?;
 
     // Post-pass: capture outputs for host bridges.
-    run_host_bridges(
-        &nodes,
-        &host_nodes,
-        &segment_of,
-        &incoming,
-        &outgoing,
-        &queues,
-        &warnings,
-        &policies,
-        &const_inputs,
-        const_coercers,
-        output_movers,
-        &mut telemetry,
-        backpressure,
-        &graph_start,
-        #[cfg(feature = "gpu")]
-        &gpu_entry_set,
-        #[cfg(feature = "gpu")]
-        &gpu_exit_set,
-        #[cfg(feature = "gpu")]
-        &payload_edges,
-        gpu,
-        host_bridges,
-        state,
-        graph_metadata,
-        HostBridgePhase::Post,
-    )?;
+    if !host_outputs_in_graph {
+        run_host_bridges(
+            &nodes,
+            &host_nodes,
+            &segment_of,
+            &incoming,
+            &outgoing,
+            &queues,
+            &warnings,
+            &policies,
+            &const_inputs,
+            const_coercers,
+            output_movers,
+            any_conversion_cache.clone(),
+            #[cfg(feature = "gpu")]
+            materialization_cache.clone(),
+            &mut telemetry,
+            backpressure,
+            &graph_start,
+            #[cfg(feature = "gpu")]
+            &gpu_entry_set,
+            #[cfg(feature = "gpu")]
+            &gpu_exit_set,
+            #[cfg(feature = "gpu")]
+            &payload_edges,
+            gpu,
+            host_bridges,
+            state,
+            graph_metadata,
+            &failed_nodes,
+            fail_fast,
+            HostBridgePhase::Post,
+        )?;
+    }
 
     telemetry.graph_duration = graph_start.elapsed();
     telemetry.aggregate_groups(&nodes);
@@ -453,6 +536,8 @@ fn run_host_bridges(
     const_inputs: &Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
     const_coercers: Option<crate::io::ConstCoercerMap>,
     output_movers: Option<crate::io::OutputMoverMap>,
+    any_conversion_cache: crate::io::AnyConversionCacheHandle,
+    #[cfg(feature = "gpu")] materialization_cache: crate::io::MaterializationCacheHandle,
     telemetry: &mut ExecutionTelemetry,
     backpressure: crate::plan::BackpressureStrategy,
     graph_start: &Instant,
@@ -463,6 +548,8 @@ fn run_host_bridges(
     host_mgr: Option<HostBridgeManager>,
     state: crate::state::StateStore,
     graph_metadata: Arc<BTreeMap<String, Value>>,
+    failed_nodes: &Arc<Vec<AtomicBool>>,
+    fail_fast: bool,
     phase: HostBridgePhase,
 ) -> Result<(), ExecuteError> {
     let Some(manager) = host_mgr else {
@@ -514,6 +601,32 @@ fn run_host_bridges(
         let Some(node) = nodes.get(node_ref.0) else {
             continue;
         };
+        // Error isolation: skip host nodes that depend on a failed upstream node unless boundary.
+        let is_error_boundary = node
+            .metadata
+            .get("daedalus.error_boundary")
+            .map(|v| matches!(v, Value::Bool(true)))
+            .unwrap_or(false);
+        if !is_error_boundary {
+            let has_failed_dep = incoming
+                .get(node_ref.0)
+                .into_iter()
+                .flat_map(|v| v.iter())
+                .any(|edge_idx| {
+                    policies
+                        .get(*edge_idx)
+                        .map(|(from, _, _, _, _)| {
+                            failed_nodes
+                                .get(from.0)
+                                .map(|f| f.load(Ordering::Relaxed))
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
+                });
+            if has_failed_dep {
+                continue;
+            }
+        }
         let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
         if let Some(label) = &node.label {
             metadata
@@ -561,6 +674,8 @@ fn run_host_bridges(
             const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
+            any_conversion_cache.clone(),
+            Some(materialization_cache.clone()),
             gpu.clone(),
             node.compute,
         );
@@ -580,6 +695,7 @@ fn run_host_bridges(
             const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
+            any_conversion_cache.clone(),
         );
 
         if matches!(phase, HostBridgePhase::Post) && !io.sync_groups().is_empty() && io.inputs().is_empty() {
@@ -642,13 +758,35 @@ fn run_host_bridges(
             elapsed,
         );
         if let Err(e) = run_result {
-            return Err(ExecuteError::HandlerFailed {
-                node: node.id.clone(),
-                error: e,
+            if let Some(f) = failed_nodes.get(node_ref.0) {
+                f.store(true, Ordering::Relaxed);
+            }
+            telemetry.errors.push(crate::executor::NodeFailure {
+                node_idx: node_ref.0,
+                node_id: node.id.clone(),
+                code: e.code().to_string(),
+                message: e.to_string(),
             });
+            if fail_fast {
+                return Err(ExecuteError::HandlerFailed {
+                    node: node.id.clone(),
+                    error: e,
+                });
+            }
         }
         if let Some(e) = flush_error {
-            return Err(e);
+            if let Some(f) = failed_nodes.get(node_ref.0) {
+                f.store(true, Ordering::Relaxed);
+            }
+            telemetry.errors.push(crate::executor::NodeFailure {
+                node_idx: node_ref.0,
+                node_id: node.id.clone(),
+                code: e.code().to_string(),
+                message: e.to_string(),
+            });
+            if fail_fast {
+                return Err(e);
+            }
         }
     }
     Ok(())
@@ -673,6 +811,13 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
     const_inputs: &Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
     const_coercers: Option<crate::io::ConstCoercerMap>,
     output_movers: Option<crate::io::OutputMoverMap>,
+    any_conversion_cache: crate::io::AnyConversionCacheHandle,
+    active_nodes: Option<Arc<Vec<bool>>>,
+    host_outputs_in_graph: bool,
+    host_bridges: Option<crate::HostBridgeManager>,
+    failed_nodes: Arc<Vec<AtomicBool>>,
+    fail_fast: bool,
+    #[cfg(feature = "gpu")] materialization_cache: crate::io::MaterializationCacheHandle,
     graph_start: Instant,
     metrics_level: crate::executor::MetricsLevel,
     #[cfg(feature = "gpu")] gpu_entry_set: &Arc<HashSet<usize>>,
@@ -708,14 +853,196 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
     }
 
     for node_ref in &segment.nodes {
+        if let Some(active) = active_nodes.as_deref()
+            && !active.get(node_ref.0).copied().unwrap_or(false)
+        {
+            continue;
+        }
         let Some(node) = nodes.get(node_ref.0) else {
             continue;
         };
-        if matches!(
-            node.metadata.get(HOST_BRIDGE_META_KEY),
-            Some(daedalus_data::model::Value::Bool(true))
-        ) {
-            continue;
+
+        // Error isolation: skip nodes that depend on a failed upstream node unless boundary.
+        let is_error_boundary = node
+            .metadata
+            .get("daedalus.error_boundary")
+            .map(|v| matches!(v, Value::Bool(true)))
+            .unwrap_or(false);
+        if !is_error_boundary {
+            let has_failed_dep = incoming
+                .get(node_ref.0)
+                .into_iter()
+                .flat_map(|v| v.iter())
+                .any(|edge_idx| {
+                    policies
+                        .get(*edge_idx)
+                        .map(|(from, _, _, _, _)| {
+                            failed_nodes
+                                .get(from.0)
+                                .map(|f| f.load(Ordering::Relaxed))
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
+                });
+            if has_failed_dep {
+                continue;
+            }
+        }
+
+        if is_host_bridge(node) {
+            if host_outputs_in_graph
+                && node.id.ends_with("io.host_output")
+                && let Some(manager) = host_bridges.clone()
+            {
+                let mut bridge = bridge_handler(manager);
+                let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
+                if let Some(label) = &node.label {
+                    metadata
+                        .entry("label".to_string())
+                        .or_insert_with(|| Value::String(label.clone().into()));
+                }
+                if let Some(bundle) = &node.bundle {
+                    metadata
+                        .entry("bundle".to_string())
+                        .or_insert_with(|| Value::String(bundle.clone().into()));
+                }
+
+                #[allow(unused_mut)]
+                let mut ctx = ExecutionContext {
+                    state: state.clone(),
+                    metadata,
+                    graph_metadata: graph_metadata.clone(),
+                    #[cfg(feature = "gpu")]
+                    gpu: gpu.clone(),
+                };
+
+                let const_inputs_guard = const_inputs
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let const_inputs_slice = const_inputs_guard
+                    .get(node_ref.0)
+                    .map(|inputs| inputs.as_slice())
+                    .unwrap_or(&[]);
+                #[cfg(feature = "gpu")]
+                let mut io = NodeIo::new(
+                    incoming.get(node_ref.0).cloned().unwrap_or_default(),
+                    outgoing.get(node_ref.0).cloned().unwrap_or_default(),
+                    &queues,
+                    warnings_seen,
+                    policies,
+                    node.sync_groups.clone(),
+                    gpu_entry_set,
+                    gpu_exit_set,
+                    payload_edges,
+                    seg_idx,
+                    node_ref.0,
+                    node.id.clone(),
+                    &mut telem,
+                    backpressure.clone(),
+                    const_inputs_slice,
+                    const_coercers.clone(),
+                    output_movers.clone(),
+                    any_conversion_cache.clone(),
+                    Some(materialization_cache.clone()),
+                    ctx.gpu.clone(),
+                    node.compute,
+                );
+                #[cfg(not(feature = "gpu"))]
+                let mut io = NodeIo::new(
+                    incoming.get(node_ref.0).cloned().unwrap_or_default(),
+                    outgoing.get(node_ref.0).cloned().unwrap_or_default(),
+                    &queues,
+                    warnings_seen,
+                    policies,
+                    node.sync_groups.clone(),
+                    seg_idx,
+                    node_ref.0,
+                    node.id.clone(),
+                    &mut telem,
+                    backpressure.clone(),
+                    const_inputs_slice,
+                    const_coercers.clone(),
+                    output_movers.clone(),
+                    any_conversion_cache.clone(),
+                );
+                if !io.sync_groups().is_empty() && io.inputs().is_empty() {
+                    continue;
+                }
+
+                let cpu_start = if metrics_level.is_detailed() {
+                    crate::executor::thread_cpu_time()
+                } else {
+                    None
+                };
+                let perf_guard = if perf::node_perf_enabled() {
+                    match perf::PerfCounterGuard::start() {
+                        Ok(guard) => Some(guard),
+                        Err(err) => {
+                            if perf::disable_node_perf() {
+                                log::warn!("node perf counters disabled: {err}");
+                            }
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                let node_start = Instant::now();
+                let run_result = bridge(node, &ctx, &mut io);
+                let elapsed = node_start.elapsed();
+                let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
+                let flush_error = if run_result.is_ok() { io.flush().err() } else { None };
+                drop(io);
+
+                if let Some(sample) = perf_sample {
+                    telem.record_node_perf(node_ref.0, sample);
+                }
+                if let Some(cpu_start) = cpu_start {
+                    if let Some(cpu_end) = crate::executor::thread_cpu_time() {
+                        telem.record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
+                    }
+                }
+                telem.record_node_duration(node_ref.0, elapsed);
+                telem.record_trace_event(
+                    node_ref.0,
+                    node_start.saturating_duration_since(graph_start),
+                    elapsed,
+                );
+                if let Err(e) = run_result {
+                    if let Some(f) = failed_nodes.get(node_ref.0) {
+                        f.store(true, Ordering::Relaxed);
+                    }
+                    telem.errors.push(crate::executor::NodeFailure {
+                        node_idx: node_ref.0,
+                        node_id: node.id.clone(),
+                        code: e.code().to_string(),
+                        message: e.to_string(),
+                    });
+                    if fail_fast {
+                        return Err(ExecuteError::HandlerFailed {
+                            node: node.id.clone(),
+                            error: e,
+                        });
+                    }
+                }
+                if let Some(e) = flush_error {
+                    if let Some(f) = failed_nodes.get(node_ref.0) {
+                        f.store(true, Ordering::Relaxed);
+                    }
+                    telem.errors.push(crate::executor::NodeFailure {
+                        node_idx: node_ref.0,
+                        node_id: node.id.clone(),
+                        code: e.code().to_string(),
+                        message: e.to_string(),
+                    });
+                    if fail_fast {
+                        return Err(e);
+                    }
+                }
+                continue;
+            } else {
+                continue;
+            }
         }
 
         let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
@@ -765,6 +1092,8 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
+            any_conversion_cache.clone(),
+            Some(materialization_cache.clone()),
             ctx.gpu.clone(),
             node.compute,
         );
@@ -784,6 +1113,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             const_inputs_slice,
             const_coercers.clone(),
             output_movers.clone(),
+            any_conversion_cache.clone(),
         );
 
         if !io.sync_groups().is_empty() && io.inputs().is_empty() {
@@ -823,10 +1153,24 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             }
         }
         crash_diag::set_current_node(node_ref.0);
-        preflight_inputs(&ctx, &io).map_err(|error| ExecuteError::HandlerFailed {
-            node: node.id.clone(),
-            error,
-        })?;
+        if let Err(error) = preflight_inputs(&ctx, &io) {
+            if let Some(f) = failed_nodes.get(node_ref.0) {
+                f.store(true, Ordering::Relaxed);
+            }
+            telem.errors.push(crate::executor::NodeFailure {
+                node_idx: node_ref.0,
+                node_id: node.id.clone(),
+                code: error.code().to_string(),
+                message: error.to_string(),
+            });
+            if fail_fast {
+                return Err(ExecuteError::HandlerFailed {
+                    node: node.id.clone(),
+                    error,
+                });
+            }
+            continue;
+        }
         let run_result = match catch_unwind(AssertUnwindSafe(|| handler.run(node, &ctx, &mut io)))
         {
             Ok(r) => r,
@@ -838,10 +1182,22 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                 } else {
                     "non-string panic payload".to_string()
                 };
-                return Err(ExecuteError::HandlerPanicked {
-                    node: node.id.clone(),
-                    message: msg,
+                if let Some(f) = failed_nodes.get(node_ref.0) {
+                    f.store(true, Ordering::Relaxed);
+                }
+                telem.errors.push(crate::executor::NodeFailure {
+                    node_idx: node_ref.0,
+                    node_id: node.id.clone(),
+                    code: "handler_panicked".to_string(),
+                    message: msg.clone(),
                 });
+                if fail_fast {
+                    return Err(ExecuteError::HandlerPanicked {
+                        node: node.id.clone(),
+                        message: msg,
+                    });
+                }
+                continue;
             }
         };
         let elapsed = node_start.elapsed();
@@ -867,13 +1223,35 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             elapsed,
         );
         if let Err(e) = run_result {
-            return Err(ExecuteError::HandlerFailed {
-                node: node.id.clone(),
-                error: e,
+            if let Some(f) = failed_nodes.get(node_ref.0) {
+                f.store(true, Ordering::Relaxed);
+            }
+            telem.errors.push(crate::executor::NodeFailure {
+                node_idx: node_ref.0,
+                node_id: node.id.clone(),
+                code: e.code().to_string(),
+                message: e.to_string(),
             });
+            if fail_fast {
+                return Err(ExecuteError::HandlerFailed {
+                    node: node.id.clone(),
+                    error: e,
+                });
+            }
         }
         if let Some(e) = flush_error {
-            return Err(e);
+            if let Some(f) = failed_nodes.get(node_ref.0) {
+                f.store(true, Ordering::Relaxed);
+            }
+            telem.errors.push(crate::executor::NodeFailure {
+                node_idx: node_ref.0,
+                node_id: node.id.clone(),
+                code: e.code().to_string(),
+                message: e.to_string(),
+            });
+            if fail_fast {
+                return Err(e);
+            }
         }
         telem.nodes_executed += 1;
     }

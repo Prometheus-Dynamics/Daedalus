@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{RegistryError, RegistryErrorCode, RegistryResult};
-use crate::ids::NodeId;
+use crate::ids::{GroupId, NodeId};
 use daedalus_core::compute::ComputeAffinity;
 use daedalus_core::sync::SyncGroup;
 use daedalus_data::convert::{ConversionResolution, ConverterGraph, ConverterId};
@@ -22,6 +22,7 @@ use daedalus_data::model::{TypeExpr, Value};
 pub struct RegistryView {
     pub values: BTreeMap<(DescriptorId, DescriptorVersion), DataDescriptor>,
     pub nodes: BTreeMap<NodeId, NodeDescriptor>,
+    pub groups: BTreeMap<GroupId, GroupDescriptor>,
     pub converters: BTreeMap<ConverterId, (TypeExpr, TypeExpr)>,
 }
 
@@ -37,6 +38,7 @@ pub struct RegistryView {
 pub struct RegistrySnapshot {
     pub values: Vec<String>,
     pub nodes: Vec<String>,
+    pub groups: Vec<String>,
     pub converters: Vec<String>,
 }
 
@@ -50,6 +52,7 @@ pub struct RegistrySnapshot {
 pub struct Registry {
     values: BTreeMap<(DescriptorId, DescriptorVersion), DataDescriptor>,
     nodes: BTreeMap<NodeId, NodeDescriptor>,
+    groups: BTreeMap<GroupId, GroupDescriptor>,
     converters: BTreeMap<ConverterId, (TypeExpr, TypeExpr)>,
     graph: ConverterGraph,
 }
@@ -59,6 +62,7 @@ impl std::fmt::Debug for Registry {
         f.debug_struct("Registry")
             .field("values", &self.values.len())
             .field("nodes", &self.nodes.len())
+            .field("groups", &self.groups.len())
             .field("converters", &self.converters.len())
             .finish()
     }
@@ -70,6 +74,7 @@ impl Registry {
         Self {
             values: BTreeMap::new(),
             nodes: BTreeMap::new(),
+            groups: BTreeMap::new(),
             converters: BTreeMap::new(),
             graph: ConverterGraph::new(),
         }
@@ -140,6 +145,28 @@ impl Registry {
         Ok(())
     }
 
+    /// Register a node group descriptor.
+    pub fn register_group(&mut self, group: GroupDescriptor) -> RegistryResult<()> {
+        group
+            .validate()
+            .map_err(|e| RegistryError::new(RegistryErrorCode::Conflict, e))?;
+        let key = group.id.clone();
+        if self.groups.contains_key(&key) {
+            return Err(RegistryError::new(
+                RegistryErrorCode::Conflict,
+                format!("duplicate group {:?}", key),
+            )
+            .with_conflict_key(key.0.clone())
+            .with_conflict_kind(crate::diagnostics::ConflictKind::Group)
+            .with_payload(crate::diagnostics::RegistryErrorPayload::Conflict {
+                key: key.0.clone(),
+                kind: crate::diagnostics::ConflictKind::Group,
+            }));
+        }
+        self.groups.insert(key, group);
+        Ok(())
+    }
+
     /// Resolve a conversion path without feature/GPU context.
     pub fn resolve_converter(
         &self,
@@ -169,6 +196,7 @@ impl Registry {
         RegistryView {
             values: self.values.clone(),
             nodes: self.nodes.clone(),
+            groups: self.groups.clone(),
             converters: self.converters.clone(),
         }
     }
@@ -196,9 +224,20 @@ impl Registry {
             })
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+        let groups = self
+            .groups
+            .iter()
+            .filter(|(_, desc)| {
+                desc.feature_flags
+                    .iter()
+                    .all(|f| active_features.contains(f))
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         RegistryView {
             values,
             nodes,
+            groups,
             converters: self.converters.clone(),
         }
     }
@@ -225,11 +264,18 @@ impl Registry {
             })
             .collect();
         nodes.sort();
+        let mut groups: Vec<String> = self
+            .groups
+            .iter()
+            .map(|(id, group)| format!("{}:{}", id.0, group.label.clone().unwrap_or_default()))
+            .collect();
+        groups.sort();
         let mut converters: Vec<String> = self.converters.keys().map(|id| id.0.clone()).collect();
         converters.sort();
         RegistrySnapshot {
             values,
             nodes,
+            groups,
             converters,
         }
     }
@@ -253,7 +299,8 @@ impl Default for Registry {
 ///     id: NodeId::new("demo.node"),
 ///     feature_flags: vec![],
 ///     label: None,
-///     inputs: vec![Port { name: "in".into(), ty: TypeExpr::Scalar(ValueType::Int), source: None, const_value: None }],
+///     group: None,
+///     inputs: vec![Port { name: "in".into(), ty: TypeExpr::Scalar(ValueType::Int), access: Default::default(), source: None, const_value: None }],
 ///     fanin_inputs: vec![],
 ///     outputs: vec![],
 ///     default_compute: ComputeAffinity::CpuOnly,
@@ -267,6 +314,9 @@ pub struct NodeDescriptor {
     pub id: NodeId,
     pub feature_flags: Vec<String>,
     pub label: Option<String>,
+    /// Optional reference to a registered node group implementation (subgraph).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<GroupId>,
     pub inputs: Vec<Port>,
     /// Indexed fan-in port groups (e.g. `ins0`, `ins1`, ...), matched by numeric suffix.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -278,6 +328,91 @@ pub struct NodeDescriptor {
     pub sync_groups: Vec<SyncGroup>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, daedalus_data::model::Value>,
+}
+
+/// Descriptor for a node group (subgraph).
+///
+/// Groups are registry-level entities that can be referenced by node descriptors and expanded by the planner.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GroupDescriptor {
+    pub id: GroupId,
+    pub feature_flags: Vec<String>,
+    pub label: Option<String>,
+    /// Serialized planner graph (`daedalus_planner::Graph`) as JSON.
+    pub graph: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, daedalus_data::model::Value>,
+}
+
+/// Builder for `GroupDescriptor`.
+pub struct GroupDescriptorBuilder {
+    id: GroupId,
+    feature_flags: Vec<String>,
+    label: Option<String>,
+    graph: String,
+    metadata: BTreeMap<String, daedalus_data::model::Value>,
+}
+
+impl GroupDescriptorBuilder {
+    pub fn new(id: impl Into<String>, graph_json: impl Into<String>) -> Self {
+        Self {
+            id: GroupId::new(id.into()),
+            feature_flags: Vec::new(),
+            label: None,
+            graph: graph_json.into(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn feature_flag(mut self, flag: impl Into<String>) -> Self {
+        self.feature_flags.push(flag.into());
+        self
+    }
+
+    pub fn metadata(mut self, key: impl Into<String>, value: daedalus_data::model::Value) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+
+    pub fn metadata_map<
+        K: Into<String>,
+        V: IntoIterator<Item = (K, daedalus_data::model::Value)>,
+    >(
+        mut self,
+        entries: V,
+    ) -> Self {
+        for (k, v) in entries {
+            self.metadata.insert(k.into(), v);
+        }
+        self
+    }
+
+    pub fn build(mut self) -> Result<GroupDescriptor, &'static str> {
+        self.feature_flags.sort();
+        let desc = GroupDescriptor {
+            id: self.id,
+            feature_flags: self.feature_flags,
+            label: self.label,
+            graph: self.graph,
+            metadata: self.metadata,
+        };
+        desc.validate().map(|_| desc)
+    }
+}
+
+impl GroupDescriptor {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        self.id.validate()?;
+        if self.graph.trim().is_empty() {
+            return Err("group graph must not be empty");
+        }
+        Ok(())
+    }
 }
 
 /// Port-group metadata for indexed fan-in inputs.
@@ -312,6 +447,7 @@ pub struct NodeDescriptorBuilder {
     id: NodeId,
     feature_flags: Vec<String>,
     label: Option<String>,
+    group: Option<GroupId>,
     inputs: Vec<Port>,
     fanin_inputs: Vec<FanInPort>,
     outputs: Vec<Port>,
@@ -327,6 +463,7 @@ impl NodeDescriptorBuilder {
             id: NodeId::new(id.into()),
             feature_flags: Vec::new(),
             label: None,
+            group: None,
             inputs: Vec::new(),
             fanin_inputs: Vec::new(),
             outputs: Vec::new(),
@@ -350,9 +487,21 @@ impl NodeDescriptorBuilder {
 
     /// Add an input port.
     pub fn input(mut self, name: impl Into<String>, ty: TypeExpr) -> Self {
+        self = self.input_with_access(name, ty, PortAccessMode::Borrowed);
+        self
+    }
+
+    /// Add an input port with an explicit access mode.
+    pub fn input_with_access(
+        mut self,
+        name: impl Into<String>,
+        ty: TypeExpr,
+        access: PortAccessMode,
+    ) -> Self {
         self.inputs.push(Port {
             name: name.into(),
             ty,
+            access,
             source: None,
             const_value: None,
         });
@@ -374,6 +523,7 @@ impl NodeDescriptorBuilder {
         self.outputs.push(Port {
             name: name.into(),
             ty,
+            access: PortAccessMode::Borrowed,
             source: None,
             const_value: None,
         });
@@ -395,6 +545,12 @@ impl NodeDescriptorBuilder {
     /// Add metadata for this node.
     pub fn metadata(mut self, key: impl Into<String>, value: daedalus_data::model::Value) -> Self {
         self.metadata.insert(key.into(), value);
+        self
+    }
+
+    /// Reference a node group implementation by id.
+    pub fn group(mut self, id: impl Into<String>) -> Self {
+        self.group = Some(GroupId::new(id.into()));
         self
     }
 
@@ -424,6 +580,7 @@ impl NodeDescriptorBuilder {
                 self.feature_flags
             },
             label: self.label,
+            group: self.group,
             inputs: self.inputs,
             fanin_inputs: self.fanin_inputs,
             outputs: self.outputs,
@@ -442,6 +599,9 @@ impl NodeDescriptor {
     /// Validate the descriptor for uniqueness and consistency.
     pub fn validate(&self) -> Result<(), &'static str> {
         self.id.validate()?;
+        if let Some(group) = &self.group {
+            group.validate()?;
+        }
         // Ensure deterministic ordering and uniqueness of ports by name.
         let mut inputs = self.inputs.clone();
         inputs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -509,6 +669,17 @@ impl NodeDescriptor {
         }
         None
     }
+
+    /// Find the declared access mode for an input port name.
+    ///
+    /// Fan-in prefixes (e.g. `ins0`, `ins1`) default to `Borrowed`.
+    pub fn input_access_for(&self, port: &str) -> PortAccessMode {
+        if let Some(p) = self.inputs.iter().find(|p| p.name == port) {
+            return p.access;
+        }
+        // Fan-in inputs are implicitly borrowed unless we add access metadata to FanInPort.
+        PortAccessMode::Borrowed
+    }
 }
 
 /// Node port metadata.
@@ -516,13 +687,27 @@ impl NodeDescriptor {
 /// ```
 /// use daedalus_registry::store::Port;
 /// use daedalus_data::model::{TypeExpr, ValueType};
-/// let port = Port { name: "out".into(), ty: TypeExpr::Scalar(ValueType::Bool), source: None, const_value: None };
+/// let port = Port { name: "out".into(), ty: TypeExpr::Scalar(ValueType::Bool), access: Default::default(), source: None, const_value: None };
 /// assert_eq!(port.name, "out");
 /// ```
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PortAccessMode {
+    /// Input is read-only; aliasing/fanout is allowed.
+    #[default]
+    Borrowed,
+    /// Node intends to take ownership of the input value (may still be COW under the hood).
+    Owned,
+    /// Node intends to mutate the input in-place. This requires exclusivity (no fanout).
+    MutBorrowed,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Port {
     pub name: String,
     pub ty: TypeExpr,
+    #[serde(default)]
+    pub access: PortAccessMode,
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
@@ -655,6 +840,7 @@ mod tests {
             id: NodeId::new("n2"),
             feature_flags: vec![],
             label: None,
+            group: None,
             inputs: Vec::new(),
             fanin_inputs: Vec::new(),
             outputs: Vec::new(),

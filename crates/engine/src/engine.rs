@@ -5,7 +5,7 @@ use daedalus_planner::{Graph, PlannerConfig, PlannerInput, build_plan};
 use daedalus_registry::store::Registry;
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{Executor, NodeHandler};
-use daedalus_runtime::{HostBridgeManager, RuntimePlan, SchedulerConfig, build_runtime};
+use daedalus_runtime::{HostBridgeManager, RuntimePlan, RuntimeSink, SchedulerConfig, build_runtime};
 
 use crate::config::{EngineConfig, GpuBackend, RuntimeMode};
 use crate::error::EngineError;
@@ -135,8 +135,17 @@ impl Engine {
         runtime_plan: RuntimePlan,
         handler: H,
     ) -> Result<ExecutionTelemetry, EngineError> {
+        if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
+            return self.execute_scoped(
+                runtime_plan,
+                &self.config.runtime.demand_sinks,
+                handler,
+            );
+        }
         let mut exec = Executor::new(&runtime_plan, handler)
+            .with_fail_fast(self.config.runtime.fail_fast)
             .with_metrics_level(self.config.runtime.metrics_level);
+        exec = exec.with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph);
         #[cfg(feature = "gpu")]
         {
             if let Some(gpu) = self.get_gpu_handle()? {
@@ -155,6 +164,47 @@ impl Engine {
             exec = exec.with_pool_size(self.config.runtime.pool_size);
         }
 
+        let telemetry = match self.config.runtime.mode {
+            RuntimeMode::Serial => exec.run(),
+            RuntimeMode::Parallel => exec.run_parallel(),
+        }?;
+        Ok(telemetry)
+    }
+
+    /// Execute a runtime plan, computing only the subgraph needed for the requested sinks.
+    ///
+    /// This is the demand-driven execution mode: it skips unrelated branches so slow previews
+    /// don't tax unrelated outputs.
+    pub fn execute_scoped<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        runtime_plan: RuntimePlan,
+        sinks: &[RuntimeSink],
+        handler: H,
+    ) -> Result<ExecutionTelemetry, EngineError> {
+        let active = runtime_plan
+            .active_nodes_for_sinks(sinks)
+            .map_err(EngineError::Config)?;
+        let mut exec = Executor::new(&runtime_plan, handler)
+            .with_active_nodes(active)
+            .with_fail_fast(self.config.runtime.fail_fast)
+            .with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph)
+            .with_metrics_level(self.config.runtime.metrics_level);
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(gpu) = self.get_gpu_handle()? {
+                exec = exec.with_gpu((*gpu).clone());
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            if !matches!(self.config.gpu, GpuBackend::Cpu) {
+                return Err(EngineError::FeatureDisabled("gpu"));
+            }
+            let _ = exec;
+        }
+        if matches!(self.config.runtime.mode, RuntimeMode::Parallel) {
+            exec = exec.with_pool_size(self.config.runtime.pool_size);
+        }
         let telemetry = match self.config.runtime.mode {
             RuntimeMode::Serial => exec.run(),
             RuntimeMode::Parallel => exec.run_parallel(),
@@ -185,9 +235,19 @@ impl Engine {
         host: HostBridgeManager,
         handler: H,
     ) -> Result<ExecutionTelemetry, EngineError> {
+        if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
+            return self.execute_with_host_scoped(
+                runtime_plan,
+                host,
+                &self.config.runtime.demand_sinks,
+                handler,
+            );
+        }
         let mut exec = Executor::new(&runtime_plan, handler)
             .with_host_bridges(host)
+            .with_fail_fast(self.config.runtime.fail_fast)
             .with_metrics_level(self.config.runtime.metrics_level);
+        exec = exec.with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph);
         #[cfg(feature = "gpu")]
         {
             if let Some(gpu) = self.get_gpu_handle()? {
@@ -206,6 +266,45 @@ impl Engine {
             exec = exec.with_pool_size(self.config.runtime.pool_size);
         }
 
+        let telemetry = match self.config.runtime.mode {
+            RuntimeMode::Serial => exec.run(),
+            RuntimeMode::Parallel => exec.run_parallel(),
+        }?;
+        Ok(telemetry)
+    }
+
+    pub fn execute_with_host_scoped<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        runtime_plan: RuntimePlan,
+        host: HostBridgeManager,
+        sinks: &[RuntimeSink],
+        handler: H,
+    ) -> Result<ExecutionTelemetry, EngineError> {
+        let active = runtime_plan
+            .active_nodes_for_sinks(sinks)
+            .map_err(EngineError::Config)?;
+        let mut exec = Executor::new(&runtime_plan, handler)
+            .with_active_nodes(active)
+            .with_host_bridges(host)
+            .with_fail_fast(self.config.runtime.fail_fast)
+            .with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph)
+            .with_metrics_level(self.config.runtime.metrics_level);
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(gpu) = self.get_gpu_handle()? {
+                exec = exec.with_gpu((*gpu).clone());
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            if !matches!(self.config.gpu, GpuBackend::Cpu) {
+                return Err(EngineError::FeatureDisabled("gpu"));
+            }
+            let _ = exec;
+        }
+        if matches!(self.config.runtime.mode, RuntimeMode::Parallel) {
+            exec = exec.with_pool_size(self.config.runtime.pool_size);
+        }
         let telemetry = match self.config.runtime.mode {
             RuntimeMode::Serial => exec.run(),
             RuntimeMode::Parallel => exec.run_parallel(),

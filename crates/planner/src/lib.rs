@@ -11,7 +11,10 @@ mod patch;
 pub mod helpers;
 mod passes;
 
-pub use diagnostics::{Diagnostic, DiagnosticCode, DiagnosticSpan};
+pub use diagnostics::{
+    bundle, Diagnostic, DiagnosticCode, DiagnosticSpan, DiagnosticsBundle, MissingGroup,
+    MissingNode, MissingPort, TypeMismatch,
+};
 pub use graph::{
     ComputeAffinity, DEFAULT_PLAN_VERSION, Edge, EdgeBufferInfo, ExecutionPlan, GpuSegment, Graph,
     NodeInstance, NodeRef, PortRef, StableHash,

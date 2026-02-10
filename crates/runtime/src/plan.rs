@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub use daedalus_core::policy::BackpressureStrategy;
-use daedalus_planner::{ComputeAffinity, EdgeBufferInfo, ExecutionPlan, GpuSegment, NodeRef};
+use daedalus_planner::{ComputeAffinity, EdgeBufferInfo, ExecutionPlan, GpuSegment, NodeRef, GraphNodeSelector};
+use std::collections::VecDeque;
 
 /// Edge policy kinds; default is FIFO.
 ///
@@ -29,6 +30,7 @@ pub enum EdgePolicyKind {
 /// use daedalus_planner::ComputeAffinity;
 /// let node = RuntimeNode {
 ///     id: "demo".into(),
+///     stable_id: 0,
 ///     bundle: None,
 ///     label: None,
 ///     compute: ComputeAffinity::CpuOnly,
@@ -41,6 +43,12 @@ pub enum EdgePolicyKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeNode {
     pub id: String,
+    /// Stable numeric id for runtime hot paths (e.g. handler dispatch).
+    ///
+    /// Derived deterministically from `id` and validated for collision-free use
+    /// within a graph/registry.
+    #[serde(skip)]
+    pub stable_id: u128,
     pub bundle: Option<String>,
     pub label: Option<String>,
     pub compute: ComputeAffinity,
@@ -100,6 +108,20 @@ pub struct RuntimePlan {
     pub schedule_order: Vec<NodeRef>,
 }
 
+/// Select a subset of graph outputs to compute (demand-driven execution).
+///
+/// `node` matches the runtime node via index, id, or metadata.
+/// If `port` is provided, only edges that feed that input port of the sink node are followed
+/// when building the upstream closure (useful for `io.host_output` nodes that have multiple inputs).
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeSink {
+    #[serde(default)]
+    pub node: GraphNodeSelector,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<String>,
+}
+
 impl RuntimePlan {
     /// Convert a planner execution plan into a runtime plan.
     pub fn from_execution(plan: &ExecutionPlan) -> Self {
@@ -131,12 +153,13 @@ impl RuntimePlan {
             }
             (entries, exits)
         };
-        let nodes = plan
+        let nodes: Vec<RuntimeNode> = plan
             .graph
             .nodes
             .iter()
             .map(|n| RuntimeNode {
                 id: n.id.0.clone(),
+                stable_id: daedalus_core::stable_id::stable_id128("node", &n.id.0),
                 bundle: n.bundle.clone(),
                 label: n.label.clone(),
                 compute: n.compute,
@@ -145,6 +168,23 @@ impl RuntimePlan {
                 metadata: n.metadata.clone(),
             })
             .collect();
+        // Collision check: if this ever triggers, it indicates a stable-id hashing collision.
+        // We treat it as a hard error to avoid silent handler dispatch mismatches.
+        {
+            let mut seen: std::collections::HashMap<u128, String> = std::collections::HashMap::new();
+            for n in &nodes {
+                if let Some(prev) = seen.insert(n.stable_id, n.id.clone())
+                    && prev != n.id
+                {
+                    panic!(
+                        "daedalus-runtime: stable_id collision: id='{}' and id='{}' map to {:x}",
+                        prev,
+                        n.id,
+                        n.stable_id
+                    );
+                }
+            }
+        }
         let edges = plan
             .graph
             .edges
@@ -243,5 +283,99 @@ impl RuntimePlan {
             segments,
             schedule_order: order,
         }
+    }
+
+    /// Compute an "active nodes" mask for demand-driven execution given a set of sinks.
+    ///
+    /// The returned mask can be passed to `Executor::with_active_nodes` to skip unrelated branches.
+    pub fn active_nodes_for_sinks(&self, sinks: &[RuntimeSink]) -> Result<Vec<bool>, String> {
+        if sinks.is_empty() {
+            return Ok(vec![true; self.nodes.len()]);
+        }
+
+        fn resolve_indices(nodes: &[RuntimeNode], selector: &GraphNodeSelector) -> Vec<usize> {
+            if let Some(index) = selector.index {
+                if index < nodes.len() {
+                    return vec![index];
+                }
+                return Vec::new();
+            }
+            if let Some(meta) = selector.metadata.as_ref() {
+                let key = meta.key.trim();
+                if !key.is_empty() {
+                    return nodes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, node)| {
+                            node.metadata
+                                .get(key)
+                                .filter(|value| *value == &meta.value)
+                                .map(|_| idx)
+                        })
+                        .collect();
+                }
+            }
+            if let Some(id) = selector.id.as_ref() {
+                let trimmed = id.trim();
+                if !trimmed.is_empty() {
+                    return nodes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, node)| (node.id == trimmed).then_some(idx))
+                        .collect();
+                }
+            }
+            Vec::new()
+        }
+
+        let mut incoming_edges: Vec<Vec<usize>> = vec![Vec::new(); self.nodes.len()];
+        for (edge_idx, (_from, _from_port, to, _to_port, _policy)) in self.edges.iter().enumerate() {
+            if to.0 < incoming_edges.len() {
+                incoming_edges[to.0].push(edge_idx);
+            }
+        }
+
+        let mut active = vec![false; self.nodes.len()];
+        let mut edge_port_filter: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        let mut q: VecDeque<usize> = VecDeque::new();
+
+        for sink in sinks {
+            let indices = resolve_indices(&self.nodes, &sink.node);
+            if indices.is_empty() {
+                return Err("runtime sink selector did not match any nodes".into());
+            }
+            for idx in indices {
+                if let Some(port) = sink.port.as_ref() {
+                    edge_port_filter.insert(idx, port.clone());
+                }
+                if !active[idx] {
+                    active[idx] = true;
+                    q.push_back(idx);
+                }
+            }
+        }
+
+        while let Some(node_idx) = q.pop_front() {
+            let filter_port = edge_port_filter.get(&node_idx);
+            for &eidx in incoming_edges
+                .get(node_idx)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[])
+            {
+                let (from, _from_port, _to, to_port, _policy) = &self.edges[eidx];
+                if let Some(filter_port) = filter_port
+                    && to_port != filter_port
+                {
+                    continue;
+                }
+                let src = from.0;
+                if src < active.len() && !active[src] {
+                    active[src] = true;
+                    q.push_back(src);
+                }
+            }
+        }
+
+        Ok(active)
     }
 }

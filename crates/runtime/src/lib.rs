@@ -92,5 +92,5 @@ pub use host_bridge::{
     HostBridgeSerializedPayload, bridge_handler,
 };
 pub use io::{NodeIo, register_output_mover};
-pub use plan::{BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment};
+pub use plan::{BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment, RuntimeSink};
 pub use scheduler::{SchedulerConfig, build_runtime};

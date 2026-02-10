@@ -1857,6 +1857,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     #registry_crate::store::Port {
                         name: #name.into(),
                         ty: #ty_expr,
+                        access: ::core::default::Default::default(),
                         source: #source,
                         const_value: #default,
                     }
@@ -1901,6 +1902,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     #registry_crate::store::Port {
                         name: #name.into(),
                         ty: #ty_expr,
+                        access: ::core::default::Default::default(),
                         source: #source,
                         const_value: #default,
                     }
@@ -2270,6 +2272,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     id: #registry_crate::ids::NodeId::new(&id_str),
                     feature_flags: vec![],
                     label: None,
+                    group: None,
                     inputs: {
                         let mut __inputs = vec![#(#descriptor_input_ports_tokens),*];
                         #(#config_inputs_extend)*
@@ -2279,6 +2282,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     outputs: vec![#(#registry_crate::store::Port {
                         name: #output_names.into(),
                         ty: #output_type_exprs,
+                        access: ::core::default::Default::default(),
                         source: #output_sources,
                         const_value: None,
                     }),*],
@@ -2295,6 +2299,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     id: #registry_crate::ids::NodeId::new(#id),
                     feature_flags: vec![],
                     label: None,
+                    group: None,
                     inputs: {
                         let mut __inputs = vec![#(#descriptor_input_ports_tokens),*];
                         #(#config_inputs_extend)*
@@ -2304,6 +2309,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     outputs: vec![#(#registry_crate::store::Port {
                         name: #output_names.into(),
                         ty: #output_type_exprs,
+                        access: ::core::default::Default::default(),
                         source: #output_sources,
                         const_value: None,
                     }),*],
@@ -2370,14 +2376,28 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             let __graph = __graph_ctx.build();
             let __graph_json = #runtime_crate::graph_builder::graph_to_json(&__graph)
                 .map_err(|_| "graph serialization failed")?;
-            desc.metadata.insert(
-                ::std::string::String::from("daedalus.embedded_graph"),
-                #data_crate::model::Value::String(::std::borrow::Cow::from(__graph_json)),
-            );
-            desc.metadata.insert(
+            let __group_id = ::std::format!("{}::group", desc.id.0);
+            let mut __group_builder =
+                #registry_crate::store::GroupDescriptorBuilder::new(__group_id.clone(), __graph_json);
+            let __group_label = desc
+                .label
+                .clone()
+                .unwrap_or_else(|| desc.id.0.clone());
+            __group_builder = __group_builder.label(__group_label);
+            for __flag in desc.feature_flags.iter() {
+                __group_builder = __group_builder.feature_flag(__flag.clone());
+            }
+            __group_builder = __group_builder.metadata(
                 ::std::string::String::from("daedalus.embedded_host"),
                 #data_crate::model::Value::String(::std::borrow::Cow::from("host")),
             );
+            let __group_desc = __group_builder.build().map_err(|_| "group descriptor invalid")?;
+            match into.registry.register_group(__group_desc) {
+                Ok(_) => {}
+                Err(e) if e.code() == #registry_crate::diagnostics::RegistryErrorCode::Conflict => {}
+                Err(_) => return Err("registry conflict"),
+            }
+            desc.group = Some(#registry_crate::ids::GroupId::new(__group_id));
         }
     } else {
         quote! {}

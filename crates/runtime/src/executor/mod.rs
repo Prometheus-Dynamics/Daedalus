@@ -20,7 +20,7 @@ pub use errors::{ExecuteError, NodeError};
 pub use handler::NodeHandler;
 pub use payload::{CorrelatedPayload, EdgePayload, next_correlation_id};
 pub use queue::EdgeStorage;
-pub use telemetry::{EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeMetrics};
+pub use telemetry::{EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeFailure, NodeMetrics};
 pub(crate) use telemetry::payload_size_bytes;
 /// Runtime executor for planner-generated runtime plans.
 ///
@@ -76,6 +76,12 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
     pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
+    /// Optional execution scope: when set, nodes with `false` are skipped.
+    pub(crate) active_nodes: Option<Arc<Vec<bool>>>,
+    /// When enabled, `io.host_output` nodes are executed in-graph as soon as their inputs are ready,
+    /// instead of being deferred to the end-of-run host-bridge post pass.
+    pub(crate) host_outputs_in_graph: bool,
+    pub(crate) fail_fast: bool,
 }
 
 #[cfg(feature = "gpu")]
@@ -88,7 +94,29 @@ type EdgeSpec = (NodeRef, String, NodeRef, String, EdgePolicyKind);
 impl<'a, H: NodeHandler> Executor<'a, H> {
     /// Build an executor from a runtime plan and handler.
     pub fn new(plan: &'a RuntimePlan, handler: H) -> Self {
-        let nodes: Arc<[RuntimeNode]> = plan.nodes.clone().into();
+        let mut nodes_vec = plan.nodes.clone();
+        for n in &mut nodes_vec {
+            if n.stable_id == 0 {
+                n.stable_id = daedalus_core::stable_id::stable_id128("node", &n.id);
+            }
+        }
+        // Collision check (defensive): refuse to run if two ids map to the same stable key.
+        {
+            let mut seen: std::collections::HashMap<u128, &str> = std::collections::HashMap::new();
+            for n in &nodes_vec {
+                if let Some(prev) = seen.insert(n.stable_id, n.id.as_str())
+                    && prev != n.id
+                {
+                    panic!(
+                        "daedalus-runtime: stable_id collision: id='{}' and id='{}' map to {:x}",
+                        prev,
+                        n.id,
+                        n.stable_id
+                    );
+                }
+            }
+        }
+        let nodes: Arc<[RuntimeNode]> = nodes_vec.into();
         let queues = queue::build_queues(plan);
         #[cfg(feature = "gpu")]
         let payload_edges = Arc::new(collect_payload_edges(&nodes, &plan.edges));
@@ -131,7 +159,32 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             const_coercers: None,
             output_movers: None,
             graph_metadata: Arc::new(plan.graph_metadata.clone()),
+            active_nodes: None,
+            host_outputs_in_graph: false,
+            fail_fast: true,
         }
+    }
+
+    /// Restrict execution to a subset of nodes (by index).
+    ///
+    /// `active_nodes.len()` must equal `plan.nodes.len()`.
+    pub fn with_active_nodes(mut self, active_nodes: Vec<bool>) -> Self {
+        debug_assert_eq!(active_nodes.len(), self.nodes.len());
+        if active_nodes.len() == self.nodes.len() {
+            self.active_nodes = Some(Arc::new(active_nodes));
+        }
+        self
+    }
+
+    /// Execute host output nodes in-graph (more responsive outputs).
+    pub fn with_host_outputs_in_graph(mut self, enabled: bool) -> Self {
+        self.host_outputs_in_graph = enabled;
+        self
+    }
+
+    pub fn with_fail_fast(mut self, enabled: bool) -> Self {
+        self.fail_fast = enabled;
+        self
     }
 
     /// Provide a shared constant coercer registry (used by dynamic plugins).
@@ -259,6 +312,9 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             const_coercers: self.const_coercers.clone(),
             output_movers: self.output_movers.clone(),
             graph_metadata: self.graph_metadata.clone(),
+            active_nodes: self.active_nodes.clone(),
+            host_outputs_in_graph: self.host_outputs_in_graph,
+            fail_fast: self.fail_fast,
         }
     }
 
@@ -385,11 +441,35 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
     pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
+    pub(crate) active_nodes: Option<Arc<Vec<bool>>>,
+    pub(crate) host_outputs_in_graph: bool,
+    pub(crate) fail_fast: bool,
 }
 
 impl<H: NodeHandler> OwnedExecutor<H> {
     pub fn new(plan: Arc<RuntimePlan>, handler: H) -> Self {
-        let nodes: Arc<[RuntimeNode]> = plan.nodes.clone().into();
+        let mut nodes_vec = plan.nodes.clone();
+        for n in &mut nodes_vec {
+            if n.stable_id == 0 {
+                n.stable_id = daedalus_core::stable_id::stable_id128("node", &n.id);
+            }
+        }
+        {
+            let mut seen: std::collections::HashMap<u128, &str> = std::collections::HashMap::new();
+            for n in &nodes_vec {
+                if let Some(prev) = seen.insert(n.stable_id, n.id.as_str())
+                    && prev != n.id
+                {
+                    panic!(
+                        "daedalus-runtime: stable_id collision: id='{}' and id='{}' map to {:x}",
+                        prev,
+                        n.id,
+                        n.stable_id
+                    );
+                }
+            }
+        }
+        let nodes: Arc<[RuntimeNode]> = nodes_vec.into();
         let queues = queue::build_queues(&plan);
         #[cfg(feature = "gpu")]
         let payload_edges = Arc::new(collect_payload_edges(&nodes, &plan.edges));
@@ -432,7 +512,28 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             const_coercers: None,
             output_movers: None,
             graph_metadata: Arc::new(plan.graph_metadata.clone()),
+            active_nodes: None,
+            host_outputs_in_graph: false,
+            fail_fast: true,
         }
+    }
+
+    pub fn with_active_nodes(mut self, active_nodes: Vec<bool>) -> Self {
+        debug_assert_eq!(active_nodes.len(), self.nodes.len());
+        if active_nodes.len() == self.nodes.len() {
+            self.active_nodes = Some(Arc::new(active_nodes));
+        }
+        self
+    }
+
+    pub fn with_host_outputs_in_graph(mut self, enabled: bool) -> Self {
+        self.host_outputs_in_graph = enabled;
+        self
+    }
+
+    pub fn with_fail_fast(mut self, enabled: bool) -> Self {
+        self.fail_fast = enabled;
+        self
     }
 
     /// Provide a shared constant coercer registry (used by dynamic plugins).
@@ -541,6 +642,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             const_coercers: self.const_coercers.clone(),
             output_movers: self.output_movers.clone(),
             graph_metadata: self.graph_metadata.clone(),
+            active_nodes: self.active_nodes.clone(),
+            host_outputs_in_graph: self.host_outputs_in_graph,
+            fail_fast: self.fail_fast,
         }
     }
 
@@ -601,6 +705,12 @@ fn apply_patch_to_const_inputs(
                     }
                 }
                 report.applied_ops += 1;
+            }
+            GraphPatchOp::ReplaceNodeId { .. } => {
+                report.skipped_ops += 1;
+            }
+            GraphPatchOp::DeleteNodes { .. } => {
+                report.skipped_ops += 1;
             }
         }
     }

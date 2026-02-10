@@ -1,5 +1,6 @@
 use crate::graph::Graph;
 use daedalus_data::model::Value as DaedalusValue;
+use daedalus_registry::ids::NodeId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -23,6 +24,13 @@ pub enum GraphPatchOp {
         port: String,
         #[serde(default)]
         value: Option<DaedalusValue>,
+    },
+    ReplaceNodeId {
+        node: GraphNodeSelector,
+        new_id: String,
+    },
+    DeleteNodes {
+        node: GraphNodeSelector,
     },
 }
 
@@ -70,6 +78,66 @@ impl GraphPatch {
                             report.matched_nodes += 1;
                         }
                     }
+                    report.applied_ops += 1;
+                }
+                GraphPatchOp::ReplaceNodeId { node, new_id } => {
+                    let indices = resolve_graph_indices(graph, node);
+                    if indices.is_empty() {
+                        report.skipped_ops += 1;
+                        continue;
+                    }
+                    let trimmed = new_id.trim();
+                    if trimmed.is_empty() {
+                        report.skipped_ops += 1;
+                        continue;
+                    }
+                    for idx in indices {
+                        if let Some(node) = graph.nodes.get_mut(idx) {
+                            node.id = NodeId::new(trimmed.to_string());
+                            report.matched_nodes += 1;
+                        }
+                    }
+                    report.applied_ops += 1;
+                }
+                GraphPatchOp::DeleteNodes { node } => {
+                    let indices = resolve_graph_indices(graph, node);
+                    if indices.is_empty() {
+                        report.skipped_ops += 1;
+                        continue;
+                    }
+                    let n = graph.nodes.len();
+                    let mut remove = vec![false; n];
+                    for idx in indices {
+                        if idx < n && !remove[idx] {
+                            remove[idx] = true;
+                            report.matched_nodes += 1;
+                        }
+                    }
+                    let mut remap: Vec<Option<usize>> = vec![None; n];
+                    let mut new_nodes = Vec::with_capacity(n.saturating_sub(report.matched_nodes));
+                    for (old_idx, node) in graph.nodes.iter().enumerate() {
+                        if remove[old_idx] {
+                            continue;
+                        }
+                        let new_idx = new_nodes.len();
+                        new_nodes.push(node.clone());
+                        remap[old_idx] = Some(new_idx);
+                    }
+                    let mut new_edges = Vec::with_capacity(graph.edges.len());
+                    for edge in &graph.edges {
+                        let Some(from) = remap.get(edge.from.node.0).and_then(|v| *v) else {
+                            continue;
+                        };
+                        let Some(to) = remap.get(edge.to.node.0).and_then(|v| *v) else {
+                            continue;
+                        };
+                        let mut cloned = edge.clone();
+                        cloned.from.node.0 = from;
+                        cloned.to.node.0 = to;
+                        new_edges.push(cloned);
+                    }
+                    graph.nodes = new_nodes;
+                    graph.edges = new_edges;
                     report.applied_ops += 1;
                 }
             }
@@ -159,7 +227,6 @@ fn apply_const_override(
 mod tests {
     use super::*;
     use crate::graph::{ComputeAffinity, NodeInstance};
-    use daedalus_registry::ids::NodeId;
 
     #[test]
     fn apply_patch_sets_const_by_metadata() {
@@ -201,5 +268,91 @@ mod tests {
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.nodes[0].const_inputs.len(), 1);
         assert_eq!(graph.nodes[0].const_inputs[0].0, "threshold");
+    }
+
+    #[test]
+    fn apply_patch_replaces_node_id() {
+        let mut graph = Graph::default();
+        graph.nodes.push(NodeInstance {
+            id: NodeId::new("demo.old"),
+            bundle: None,
+            label: None,
+            inputs: vec![],
+            outputs: vec![],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+
+        let patch = GraphPatch {
+            version: 1,
+            ops: vec![GraphPatchOp::ReplaceNodeId {
+                node: GraphNodeSelector {
+                    id: Some("demo.old".to_string()),
+                    ..Default::default()
+                },
+                new_id: "demo.new".to_string(),
+            }],
+        };
+
+        let report = patch.apply_to_graph(&mut graph);
+        assert_eq!(report.applied_ops, 1);
+        assert_eq!(graph.nodes[0].id.0, "demo.new");
+    }
+
+    #[test]
+    fn apply_patch_deletes_nodes_and_remaps_edges() {
+        let mut graph = Graph::default();
+        graph.nodes.push(NodeInstance {
+            id: NodeId::new("a"),
+            bundle: None,
+            label: None,
+            inputs: vec![],
+            outputs: vec!["out".into()],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+        graph.nodes.push(NodeInstance {
+            id: NodeId::new("b"),
+            bundle: None,
+            label: None,
+            inputs: vec!["in".into()],
+            outputs: vec![],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+        graph.edges.push(crate::graph::Edge {
+            from: crate::graph::PortRef {
+                node: crate::graph::NodeRef(0),
+                port: "out".into(),
+            },
+            to: crate::graph::PortRef {
+                node: crate::graph::NodeRef(1),
+                port: "in".into(),
+            },
+            metadata: Default::default(),
+        });
+
+        let patch = GraphPatch {
+            version: 1,
+            ops: vec![GraphPatchOp::DeleteNodes {
+                node: GraphNodeSelector {
+                    id: Some("a".to_string()),
+                    ..Default::default()
+                },
+            }],
+        };
+
+        let report = patch.apply_to_graph(&mut graph);
+        assert_eq!(report.applied_ops, 1);
+        assert_eq!(report.matched_nodes, 1);
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].id.0, "b");
+        assert_eq!(graph.edges.len(), 0);
     }
 }

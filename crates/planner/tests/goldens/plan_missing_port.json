@@ -47,6 +47,25 @@
         "pass": "typecheck",
         "node": "a",
         "port": "missing"
+      },
+      "metadata": {
+        "available_ports": {
+          "type": "List",
+          "value": [
+            {
+              "type": "String",
+              "value": "out"
+            }
+          ]
+        },
+        "missing_port": {
+          "type": "String",
+          "value": "missing"
+        },
+        "missing_port_direction": {
+          "type": "String",
+          "value": "output"
+        }
       }
     }
   ],

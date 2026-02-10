@@ -36,6 +36,21 @@
         "pass": "hydrate_registry",
         "node": "c",
         "port": null
+      },
+      "metadata": {
+        "missing_node_id": {
+          "type": "String",
+          "value": "c"
+        },
+        "suggestions": {
+          "type": "List",
+          "value": [
+            {
+              "type": "String",
+              "value": "a"
+            }
+          ]
+        }
       }
     }
   ],

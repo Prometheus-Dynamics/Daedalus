@@ -370,6 +370,7 @@ pub(crate) fn manifest_node_to_descriptor(node: &NodeManifest) -> Result<NodeDes
         inputs.push(Port {
             name: p.name.clone(),
             ty: p.ty.clone(),
+            access: Default::default(),
             source: p.source.clone(),
             const_value,
         });
@@ -381,6 +382,7 @@ pub(crate) fn manifest_node_to_descriptor(node: &NodeManifest) -> Result<NodeDes
         .map(|p| Port {
             name: p.name.clone(),
             ty: p.ty.clone(),
+            access: Default::default(),
             source: p.source.clone(),
             const_value: None,
         })
@@ -427,6 +429,7 @@ pub(crate) fn manifest_node_to_descriptor(node: &NodeManifest) -> Result<NodeDes
         id: NodeId::new(node.id.clone()),
         feature_flags: node.feature_flags.clone(),
         label: node.label.clone(),
+        group: None,
         inputs,
         fanin_inputs: Vec::new(),
         outputs,

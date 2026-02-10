@@ -4,6 +4,7 @@ use std::env;
 use serde::{Deserialize, Serialize};
 
 use daedalus_runtime::{BackpressureStrategy, EdgePolicyKind, MetricsLevel};
+use daedalus_runtime::RuntimeSink;
 
 /// GPU backend selection; device requires the `gpu` feature.
 ///
@@ -45,7 +46,7 @@ pub enum RuntimeMode {
 /// let planner = PlannerSection::default();
 /// assert!(!planner.enable_gpu);
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 pub struct PlannerSection {
     #[cfg_attr(feature = "config-env", serde(default))]
@@ -73,7 +74,7 @@ impl Default for PlannerSection {
 /// let runtime = RuntimeSection::default();
 /// assert_eq!(runtime.pool_size, None);
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 pub struct RuntimeSection {
     #[cfg_attr(feature = "config-env", serde(default))]
@@ -89,8 +90,31 @@ pub struct RuntimeSection {
     /// Requires the `lockfree-queues` Cargo feature.
     #[cfg_attr(feature = "config-env", serde(default))]
     pub lockfree_queues: bool,
+    /// When true, abort the run on the first node error. When false, keep running and
+    /// collect failures in `ExecutionTelemetry.errors`.
+    #[cfg_attr(feature = "config-env", serde(default = "default_fail_fast"))]
+    pub fail_fast: bool,
+    /// Execute `io.host_output` nodes in-graph instead of deferring them to a post-pass.
+    ///
+    /// This improves output responsiveness when parts of the graph are slow but unrelated.
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub host_outputs_in_graph: bool,
+    /// Demand-driven execution: compute only the subgraph needed for the selected sinks.
+    ///
+    /// This is useful when a slow preview branch would otherwise drag down unrelated outputs.
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub demand_driven: bool,
+    /// Active sinks to compute when `demand_driven` is enabled.
+    ///
+    /// When empty, the engine falls back to full-graph execution.
+    #[cfg_attr(feature = "config-env", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    pub demand_sinks: Vec<RuntimeSink>,
     #[cfg_attr(feature = "config-env", serde(default))]
     pub pool_size: Option<usize>,
+}
+
+fn default_fail_fast() -> bool {
+    true
 }
 
 impl Default for RuntimeSection {
@@ -101,6 +125,10 @@ impl Default for RuntimeSection {
             mode: RuntimeMode::Serial,
             metrics_level: MetricsLevel::default(),
             lockfree_queues: false,
+            fail_fast: default_fail_fast(),
+            host_outputs_in_graph: false,
+            demand_driven: false,
+            demand_sinks: Vec::new(),
             pool_size: None,
         }
     }
@@ -113,7 +141,7 @@ impl Default for RuntimeSection {
 /// let cfg = EngineConfig::default();
 /// assert!(cfg.validate().is_ok());
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 pub struct EngineConfig {
     #[cfg_attr(feature = "config-env", serde(default))]
@@ -226,6 +254,15 @@ impl EngineConfig {
                 other => return Err(format!("unknown DAEDALUS_RUNTIME_MODE '{}'", other)),
             };
         }
+        cfg.runtime.fail_fast = read_bool("DAEDALUS_RUNTIME_FAIL_FAST", cfg.runtime.fail_fast)?;
+        cfg.runtime.host_outputs_in_graph = read_bool(
+            "DAEDALUS_RUNTIME_HOST_OUTPUTS_IN_GRAPH",
+            cfg.runtime.host_outputs_in_graph,
+        )?;
+        cfg.runtime.demand_driven = read_bool(
+            "DAEDALUS_RUNTIME_DEMAND_DRIVEN",
+            cfg.runtime.demand_driven,
+        )?;
         if let Ok(raw) = env::var("DAEDALUS_METRICS_LEVEL") {
             cfg.runtime.metrics_level = match raw.to_ascii_lowercase().as_str() {
                 "off" => MetricsLevel::Off,

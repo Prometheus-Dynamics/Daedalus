@@ -11,6 +11,7 @@
 //!     nodes: vec![
 //!         RuntimeNode {
 //!             id: "a".into(),
+//!             stable_id: 0,
 //!             bundle: None,
 //!             label: None,
 //!             compute: ComputeAffinity::CpuOnly,

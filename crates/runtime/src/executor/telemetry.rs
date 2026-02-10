@@ -93,6 +93,14 @@ pub struct TraceEvent {
     pub duration_ns: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NodeFailure {
+    pub node_idx: usize,
+    pub node_id: String,
+    pub code: String,
+    pub message: String,
+}
+
 /// Aggregated timing + diagnostics for a run.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionTelemetry {
@@ -102,6 +110,8 @@ pub struct ExecutionTelemetry {
     pub gpu_fallbacks: usize,
     pub backpressure_events: usize,
     pub warnings: smallvec::SmallVec<[String; 8]>,
+    #[serde(default, skip_serializing_if = "smallvec::SmallVec::is_empty")]
+    pub errors: smallvec::SmallVec<[NodeFailure; 4]>,
     pub graph_duration: Duration,
     #[serde(default)]
     pub metrics_level: MetricsLevel,
@@ -238,6 +248,7 @@ impl ExecutionTelemetry {
         self.gpu_fallbacks += other.gpu_fallbacks;
         self.backpressure_events += other.backpressure_events;
         self.warnings.extend(other.warnings);
+        self.errors.extend(other.errors);
         self.graph_duration = self.graph_duration.max(other.graph_duration);
         self.metrics_level = self.metrics_level.max(other.metrics_level);
         for (node, metrics) in other.node_metrics {
@@ -400,12 +411,26 @@ impl ExecutionTelemetry {
     }
 
     pub fn aggregate_groups(&mut self, nodes: &[crate::plan::RuntimeNode]) {
+        const GROUP_ID_KEY: &str = "daedalus.group_id";
         const GROUP_KEY: &str = "daedalus.embedded_group";
         for (idx, metrics) in &self.node_metrics {
             let Some(node) = nodes.get(*idx) else {
                 continue;
             };
-            let Some(daedalus_data::model::Value::String(group)) = node.metadata.get(GROUP_KEY) else {
+            let group = node
+                .metadata
+                .get(GROUP_ID_KEY)
+                .and_then(|v| match v {
+                    daedalus_data::model::Value::String(s) => Some(s.as_ref()),
+                    _ => None,
+                })
+                .or_else(|| {
+                    node.metadata.get(GROUP_KEY).and_then(|v| match v {
+                        daedalus_data::model::Value::String(s) => Some(s.as_ref()),
+                        _ => None,
+                    })
+                });
+            let Some(group) = group else {
                 continue;
             };
             let trimmed = group.trim();
