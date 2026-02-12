@@ -1,12 +1,19 @@
 #![crate_type = "cdylib"]
 //! Minimal dynamic plugin that exposes an enum input to reproduce mode-binding issues.
 
-use daedalus::{ComputeAffinity, declare_plugin, ffi::export_plugin, macros::node, runtime::NodeError};
+use daedalus::{
+    ComputeAffinity, declare_plugin, ffi::export_plugin, macros::node, runtime::NodeError,
+};
 use serde::{Deserialize, Serialize};
 
-declare_plugin!(EnumModePlugin, "ffi.enum_mode", [enum_mode], install = |reg| {
-    reg.register_enum::<ExecMode>(["auto", "cpu", "gpu"]);
-});
+declare_plugin!(
+    EnumModePlugin,
+    "ffi.enum_mode",
+    [enum_mode],
+    install = |reg| {
+        reg.register_enum::<ExecMode>(["auto", "cpu", "gpu"]);
+    }
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -34,4 +41,3 @@ fn enum_mode(mode: ExecMode) -> Result<i32, NodeError> {
 }
 
 export_plugin!(EnumModePlugin);
-

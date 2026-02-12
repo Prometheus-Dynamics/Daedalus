@@ -4,30 +4,29 @@ use daedalus::{
     ErasedPayload, PluginLibrary,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     host_bridge::install_host_bridge,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
     runtime::plugins::PluginRegistry,
+    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
 };
-use daedalus_runtime::host_bridge::HOST_BRIDGE_META_KEY;
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_planner::{Edge, Graph, NodeRef, PortRef};
 use daedalus_registry::store::NodeDescriptorBuilder;
+use daedalus_runtime::host_bridge::HOST_BRIDGE_META_KEY;
 use image::GrayImage;
 use image::{DynamicImage, ImageBuffer, Rgb};
 use std::env;
 use std::fs;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let plugin_path = env::var("DAEDALUS_PLUGIN_PATH")
-        .map_err(|_| "DAEDALUS_PLUGIN_PATH is required")?;
-    let graph_path = env::var("DAEDALUS_GRAPH_PATH")
-        .map_err(|_| "DAEDALUS_GRAPH_PATH is required")?;
+    let plugin_path =
+        env::var("DAEDALUS_PLUGIN_PATH").map_err(|_| "DAEDALUS_PLUGIN_PATH is required")?;
+    let graph_path =
+        env::var("DAEDALUS_GRAPH_PATH").map_err(|_| "DAEDALUS_GRAPH_PATH is required")?;
 
     let graph_text = fs::read_to_string(&graph_path)?;
     let graph: Graph = serde_json::from_str(&graph_text)?;
     let graph = rewrite_graph_for_local(graph);
 
-    let host_alias = find_host_alias(&graph, "frame")
-        .unwrap_or_else(|| "host".to_string());
+    let host_alias = find_host_alias(&graph, "frame").unwrap_or_else(|| "host".to_string());
 
     let mut plugins = PluginRegistry::new();
     let host_mgr = HostBridgeManager::new();
@@ -59,11 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(800);
 
-    let img = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(
-        width,
-        height,
-        Rgb([7, 8, 9]),
-    ));
+    let img = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(width, height, Rgb([7, 8, 9])));
     let ep = ErasedPayload::from_cpu::<DynamicImage>(img);
     handle.push("frame", EdgePayload::Payload(ep), None);
 
@@ -75,7 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("ok: executed graph, telemetry={:?}", telemetry);
 
     for alias in find_output_aliases(&graph) {
-        let Some(out) = mgr.handle(&alias) else { continue };
+        let Some(out) = mgr.handle(&alias) else {
+            continue;
+        };
         for port in out.incoming_ports() {
             let Some(payload) = out.try_pop(port.name()) else {
                 eprintln!("output {}:{} -> empty", alias, port.name());
@@ -102,12 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
                 other => {
-                    eprintln!(
-                        "output {}:{} -> payload={:?}",
-                        alias,
-                        port.name(),
-                        other
-                    );
+                    eprintln!("output {}:{} -> payload={:?}", alias, port.name(), other);
                 }
             }
         }
@@ -131,7 +123,9 @@ fn rewrite_graph_for_local(mut graph: Graph) -> Graph {
         }
     }
 
-    graph.edges.retain(|edge| edge.from.port != "mode" && edge.to.port != "mode");
+    graph
+        .edges
+        .retain(|edge| edge.from.port != "mode" && edge.to.port != "mode");
 
     graph
 }
@@ -139,17 +133,17 @@ fn rewrite_graph_for_local(mut graph: Graph) -> Graph {
 fn find_host_alias(graph: &Graph, port: &str) -> Option<String> {
     let target = port.to_ascii_lowercase();
     graph.nodes.iter().find_map(|node| {
-        let is_host = matches!(node.metadata.get("host_bridge"), Some(DaedalusValue::Bool(true)));
+        let is_host = matches!(
+            node.metadata.get("host_bridge"),
+            Some(DaedalusValue::Bool(true))
+        );
         if !is_host {
             return None;
         }
         if !node.outputs.iter().any(|p| p.eq_ignore_ascii_case(&target)) {
             return None;
         }
-        let alias = node
-            .label
-            .clone()
-            .unwrap_or_else(|| node.id.0.to_string());
+        let alias = node.label.clone().unwrap_or_else(|| node.id.0.to_string());
         Some(alias)
     })
 }
@@ -157,17 +151,17 @@ fn find_host_alias(graph: &Graph, port: &str) -> Option<String> {
 fn find_output_aliases(graph: &Graph) -> Vec<String> {
     let mut out = Vec::new();
     for node in &graph.nodes {
-        let is_host = matches!(node.metadata.get("host_bridge"), Some(DaedalusValue::Bool(true)));
+        let is_host = matches!(
+            node.metadata.get("host_bridge"),
+            Some(DaedalusValue::Bool(true))
+        );
         if !is_host {
             continue;
         }
         if node.id.0 != "io.host_output" {
             continue;
         }
-        let alias = node
-            .label
-            .clone()
-            .unwrap_or_else(|| node.id.0.to_string());
+        let alias = node.label.clone().unwrap_or_else(|| node.id.0.to_string());
         out.push(alias);
     }
     out
@@ -200,6 +194,7 @@ fn install_host_output(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn prune_host_output(mut graph: Graph) -> Graph {
     let keep: Vec<bool> = graph
         .nodes

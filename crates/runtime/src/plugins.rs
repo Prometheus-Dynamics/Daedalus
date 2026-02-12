@@ -3,7 +3,10 @@
 use crate::capabilities::CapabilityRegistry;
 use crate::convert;
 use crate::handler_registry::HandlerRegistry;
+use daedalus_data::daedalus_type::DaedalusTypeExpr;
 use daedalus_data::model::TypeExpr;
+use daedalus_data::named_types::HostExportPolicy;
+use daedalus_data::to_value::ToValue;
 use daedalus_registry::store::Registry;
 use serde::de::DeserializeOwned;
 use std::any::Any;
@@ -22,6 +25,50 @@ pub trait Plugin {
 /// than invoking the plugin directly.
 pub trait RegistryPluginExt {
     fn install_plugin<P: Plugin>(&mut self, plugin: &P) -> Result<(), &'static str>;
+}
+
+/// Register a set of `DaedalusTypeExpr + ToValue` types as host-exportable values.
+///
+/// This is a convenience macro to reduce boilerplate in plugin `install()` functions.
+///
+/// ```ignore
+/// register_daedalus_values!(registry, MyType, OtherType)?;
+/// ```
+#[macro_export]
+macro_rules! register_daedalus_values {
+    ($registry:expr, $( $ty:ty ),+ $(,)?) => {{
+        $( $registry.register_daedalus_value::<$ty>()?; )+
+        Ok::<(), &'static str>(())
+    }};
+}
+
+/// Register a set of `DaedalusTypeExpr` types as named schemas (no `ToValue` required).
+///
+/// Useful for non-host-serialized types (e.g. large binary payloads) where you still want a
+/// stable `TypeExpr::Opaque(<key>)` identity for UI typing and graph validation.
+///
+/// ```ignore
+/// use daedalus_data::named_types::HostExportPolicy;
+/// register_daedalus_types!(registry, HostExportPolicy::None, MyOpaqueType)?;
+/// ```
+#[macro_export]
+macro_rules! register_daedalus_types {
+    ($registry:expr, $export:expr, $( $ty:ty ),+ $(,)?) => {{
+        $( $registry.register_daedalus_type::<$ty>($export)?; )+
+        Ok::<(), &'static str>(())
+    }};
+}
+
+/// Register `ToValue` serializers for container/derived types that do not have stable type keys.
+///
+/// ```ignore
+/// register_to_value_serializers!(registry, Vec<MyType>, Arc<Vec<MyType>>);
+/// ```
+#[macro_export]
+macro_rules! register_to_value_serializers {
+    ($registry:expr, $( $ty:ty ),+ $(,)?) => {{
+        $( $registry.register_to_value_serializer::<$ty>(); )+
+    }};
 }
 
 impl RegistryPluginExt for PluginRegistry {
@@ -99,6 +146,54 @@ impl PluginRegistry {
         T: 'static + Send + Sync + std::any::Any,
     {
         convert::register_conversion(f);
+        // Also register a schema-level compatibility edge so the planner/typed host polling can
+        // treat these types as coercible without needing separate manual wiring.
+        let from = daedalus_data::typing::type_expr::<S>();
+        let to = daedalus_data::typing::type_expr::<T>();
+        self.register_type_compatibility(from, to);
+    }
+
+    /// Register a named schema keyed by a stable `TypeExpr::Opaque(<key>)` string.
+    pub fn register_named_type(
+        &mut self,
+        key: impl Into<String>,
+        expr: TypeExpr,
+        export: HostExportPolicy,
+    ) -> Result<(), &'static str> {
+        daedalus_data::named_types::register_named_type(key, expr, export)
+            .map_err(|_| "named type register failed")
+    }
+
+    /// Register a stable, Daedalus-facing schema identity for a Rust type.
+    ///
+    /// This links the Rust runtime type `T` to `TypeExpr::Opaque(T::TYPE_KEY)` for port typing,
+    /// and registers the richer schema (`T::type_expr()`) for UI/tooling.
+    pub fn register_daedalus_type<T: DaedalusTypeExpr>(
+        &mut self,
+        export: HostExportPolicy,
+    ) -> Result<(), &'static str> {
+        daedalus_data::typing::register_type::<T>(TypeExpr::opaque(T::TYPE_KEY));
+        self.register_named_type(T::TYPE_KEY, T::type_expr(), export)
+    }
+
+    /// Register a stable schema identity *and* a `ToValue` serializer for host-visible transport.
+    pub fn register_daedalus_value<T>(&mut self) -> Result<(), &'static str>
+    where
+        T: DaedalusTypeExpr + ToValue + Clone + Send + Sync + 'static,
+    {
+        self.register_daedalus_type::<T>(HostExportPolicy::Value)?;
+        self.register_value_serializer::<T, _>(|v| v.to_value());
+        Ok(())
+    }
+
+    /// Register a host-bridge value serializer for `T` using `ToValue`.
+    ///
+    /// Useful for container types like `Vec<T>` where you don't want a separate named type key.
+    pub fn register_to_value_serializer<T>(&mut self)
+    where
+        T: ToValue + Clone + Send + Sync + 'static,
+    {
+        self.register_value_serializer::<T, _>(|v| v.to_value());
     }
 
     /// Register a conversion for constant default values.
@@ -130,7 +225,10 @@ impl PluginRegistry {
         T: Any + Clone + Send + Sync + 'static,
         F: Fn(&T) -> daedalus_data::model::Value + Send + Sync + 'static,
     {
-        crate::host_bridge::register_value_serializer_in::<T, F>(&self.value_serializers, serializer);
+        crate::host_bridge::register_value_serializer_in::<T, F>(
+            &self.value_serializers,
+            serializer,
+        );
     }
 
     /// Register an output mover to emit a typed output payload by value.
@@ -190,7 +288,9 @@ impl PluginRegistry {
                 return None;
             }
             daedalus_data::typing::lookup_type::<T>().and_then(|te| match te {
-                daedalus_data::model::TypeExpr::Enum(vars) => vars.get(idx as usize).map(|ev| ev.name.clone()),
+                daedalus_data::model::TypeExpr::Enum(vars) => {
+                    vars.get(idx as usize).map(|ev| ev.name.clone())
+                }
                 _ => None,
             })
         }
@@ -203,6 +303,21 @@ impl PluginRegistry {
                 _ => None,
             }?;
             serde_json::from_value::<T>(serde_json::Value::String(name)).ok()
+        });
+
+        // Optional enum inputs are common in node signatures (e.g. `mode: Option<ExecMode>`).
+        // Register a dedicated coercer so const/default values can bind directly without each
+        // plugin having to duplicate Option<T> registration glue.
+        self.register_const_coercer::<Option<T>, _>(|v| {
+            let name = match v {
+                daedalus_data::model::Value::Int(i) => resolve_enum_name_from_index::<T>(*i),
+                daedalus_data::model::Value::String(s) => resolve_enum_name::<T>(s.as_ref()),
+                daedalus_data::model::Value::Enum(ev) => resolve_enum_name::<T>(&ev.name),
+                _ => None,
+            }?;
+            serde_json::from_value::<T>(serde_json::Value::String(name))
+                .ok()
+                .map(Some)
         });
     }
 

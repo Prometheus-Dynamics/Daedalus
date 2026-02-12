@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
 use super::fallback::{cached_spec, ctx};
@@ -24,6 +24,77 @@ pub struct ShaderContext {
 pub struct SingleDispatch<'ctx, 'a, B: GpuBindings<'a>> {
     pub(super) ctx: &'ctx ShaderContext,
     pub(super) bindings: &'a B,
+}
+
+const MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE: usize = 2;
+
+pub(super) fn track_submission_and_throttle(device: &wgpu::Device, submission: wgpu::SubmissionIndex) {
+    static INFLIGHT: OnceLock<Mutex<HashMap<usize, VecDeque<wgpu::SubmissionIndex>>>> =
+        OnceLock::new();
+    let device_key = device as *const _ as usize;
+    if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        let q = guard.entry(device_key).or_default();
+        q.push_back(submission);
+    }
+
+    loop {
+        let wait_for = if let Ok(guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+            guard
+                .get(&device_key)
+                .and_then(|q| {
+                    if q.len() > MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE {
+                        q.front().cloned()
+                    } else {
+                        None
+                    }
+                })
+        } else {
+            None
+        };
+
+        let Some(wait_for) = wait_for else {
+            // Keep retirements moving even when we don't need to block.
+            let _ = device.poll(wgpu::PollType::Poll);
+            break;
+        };
+
+        let poll_result = device.poll(wgpu::PollType::Wait {
+            submission_index: Some(wait_for.clone()),
+            // Use a short timeout first to avoid blocking indefinitely in normal operation.
+            timeout: Some(std::time::Duration::from_millis(5)),
+        });
+
+        match poll_result {
+            Ok(status) if status.wait_finished() => {
+                if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
+                    && let Some(q) = guard.get_mut(&device_key)
+                {
+                    q.pop_front();
+                }
+            }
+            Err(wgpu::PollError::Timeout) => {
+                // Hard backpressure path: block until this submission completes so we do not allow
+                // unbounded in-flight GPU work (which can trigger OOM on embedded GPUs).
+                let _ = device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(wait_for),
+                    timeout: None,
+                });
+                if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
+                    && let Some(q) = guard.get_mut(&device_key)
+                {
+                    q.pop_front();
+                }
+            }
+            Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
+                if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
+                    && let Some(q) = guard.get_mut(&device_key)
+                {
+                    q.clear();
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl<'ctx, 'a, B: GpuBindings<'a>> SingleDispatch<'ctx, 'a, B> {
@@ -247,7 +318,8 @@ pub fn dispatch_shader_with_options(
     let (readbacks, pool_textures_to_return, texture_handles) =
         enqueue_readbacks(device, &prepared, &mut encoder);
 
-    queue.submit(Some(encoder.finish()));
+    let submission_idx = queue.submit(Some(encoder.finish()));
+    track_submission_and_throttle(device, submission_idx);
 
     let result = resolve_readbacks(device, readbacks)?;
     return_pooled_textures(pool_textures_to_return);

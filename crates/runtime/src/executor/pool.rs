@@ -1,4 +1,5 @@
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -34,14 +35,28 @@ where
         gpu_entry_set,
         #[cfg(feature = "gpu")]
         gpu_exit_set,
+        #[cfg(feature = "gpu")]
+        payload_edges,
         const_coercers,
         output_movers,
         graph_metadata,
+        active_nodes,
+        host_outputs_in_graph,
+        host_bridges,
+        fail_fast,
         ..
     } = exec;
 
     let graph_start = Instant::now();
     let metrics_level = telemetry.metrics_level;
+    let any_conversion_cache = crate::io::new_any_conversion_cache();
+    let failed_nodes: Arc<Vec<AtomicBool>> = Arc::new(
+        (0..nodes.len())
+            .map(|_| AtomicBool::new(false))
+            .collect::<Vec<_>>(),
+    );
+    #[cfg(feature = "gpu")]
+    let materialization_cache = crate::io::new_materialization_cache();
 
     // Map node -> segment
     let mut segment_of = vec![0usize; nodes.len()];
@@ -80,10 +95,18 @@ where
     let const_inputs = const_inputs.clone();
     let output_movers = output_movers.clone();
     let graph_metadata = graph_metadata.clone();
+    let any_conversion_cache = any_conversion_cache.clone();
+    let active_nodes = active_nodes.clone();
+    let host_bridges = host_bridges.clone();
+    let failed_nodes = failed_nodes.clone();
     #[cfg(feature = "gpu")]
     let gpu_entry_set = gpu_entry_set.clone();
     #[cfg(feature = "gpu")]
     let gpu_exit_set = gpu_exit_set.clone();
+    #[cfg(feature = "gpu")]
+    let payload_edges = payload_edges.clone();
+    #[cfg(feature = "gpu")]
+    let materialization_cache = materialization_cache.clone();
     let mut first_err: Option<ExecuteError> = None;
     let backpressure = backpressure.clone();
 
@@ -143,10 +166,18 @@ where
         let const_coercers = const_coercers.clone();
         let graph_metadata = graph_metadata.clone();
         let output_movers = output_movers.clone();
+        let any_conversion_cache = any_conversion_cache.clone();
+        let active_nodes = active_nodes.clone();
+        let host_bridges = host_bridges.clone();
+        let failed_nodes = failed_nodes.clone();
         #[cfg(feature = "gpu")]
         let gpu_entry_set = gpu_entry_set.clone();
         #[cfg(feature = "gpu")]
         let gpu_exit_set = gpu_exit_set.clone();
+        #[cfg(feature = "gpu")]
+        let payload_edges = payload_edges.clone();
+        #[cfg(feature = "gpu")]
+        let materialization_cache = materialization_cache.clone();
         let txc = tx.clone();
         pool.spawn(move || {
             let res = run_segment_external(
@@ -167,12 +198,22 @@ where
                 &const_inputs,
                 const_coercers,
                 output_movers,
+                any_conversion_cache,
+                active_nodes,
+                host_outputs_in_graph,
+                host_bridges,
+                failed_nodes,
+                fail_fast,
+                #[cfg(feature = "gpu")]
+                materialization_cache,
                 graph_start,
                 metrics_level,
                 #[cfg(feature = "gpu")]
                 &gpu_entry_set,
                 #[cfg(feature = "gpu")]
                 &gpu_exit_set,
+                #[cfg(feature = "gpu")]
+                &payload_edges,
             );
             let _ = txc.send((seg_id, res));
         });

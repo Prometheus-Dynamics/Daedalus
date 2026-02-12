@@ -1,8 +1,8 @@
 #![crate_type = "cdylib"]
 //! Minimal Rust FFI plugin that converts a frame to grayscale (CPU path).
 
-use daedalus::{ComputeAffinity, Payload, declare_plugin, ffi::export_plugin, macros::node};
 use daedalus::runtime::NodeError;
+use daedalus::{ComputeAffinity, Payload, declare_plugin, ffi::export_plugin, macros::node};
 use image::DynamicImage;
 
 declare_plugin!(
@@ -31,7 +31,10 @@ declare_plugin!(
         outputs(port(name = "mask"))
     )
 )]
-fn cv_grayscale_arc(frame: Payload<DynamicImage>, _mode: i64) -> Result<Payload<DynamicImage>, NodeError> {
+fn cv_grayscale_arc(
+    frame: Payload<DynamicImage>,
+    _mode: i64,
+) -> Result<Payload<DynamicImage>, NodeError> {
     match frame {
         Payload::Cpu(img) => {
             let out = match img {

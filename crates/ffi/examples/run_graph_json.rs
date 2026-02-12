@@ -5,17 +5,17 @@ use daedalus::{
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     gpu::Payload as GpuPayload,
     host_bridge::install_host_bridge,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
     runtime::plugins::PluginRegistry,
+    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
 };
-use daedalus_runtime::executor::Executor;
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_planner::Graph;
+use daedalus_runtime::executor::Executor;
 use image::{DynamicImage, GrayImage, RgbImage, RgbaImage};
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,10 +26,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let graph_text = fs::read_to_string(&graph_path)?;
     let graph: Graph = serde_json::from_str(&graph_text)?;
     let graph = sanitize_graph(graph);
-    let input_alias = find_host_alias_output(&graph, "frame")
-        .unwrap_or_else(|| "host".to_string());
-    let output_alias = find_host_alias_input(&graph, "json")
-        .unwrap_or_else(|| input_alias.clone());
+    let input_alias = find_host_alias_output(&graph, "frame").unwrap_or_else(|| "host".to_string());
+    let output_alias = find_host_alias_input(&graph, "json").unwrap_or_else(|| input_alias.clone());
 
     let mut plugins = PluginRegistry::new();
     let host_mgr = HostBridgeManager::new();
@@ -72,7 +70,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("warning: no host output ports found");
     }
     for port in &incoming {
-        let ty = output.incoming_port_type(port).map(|t| format!("{t:?}")).unwrap_or_else(|| "unknown".to_string());
+        let ty = output
+            .incoming_port_type(port)
+            .map(|t| format!("{t:?}"))
+            .unwrap_or_else(|| "unknown".to_string());
         eprintln!("host output port: {port} ({ty})");
     }
     let output_dir = resolve_output_dir();
@@ -100,7 +101,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 idx += 1;
             } else {
-                eprintln!("note: dropped non-image payload on {port}: {:?}", payload.inner);
+                eprintln!(
+                    "note: dropped non-image payload on {port}: {:?}",
+                    payload.inner
+                );
             }
         }
     }
@@ -150,7 +154,10 @@ fn unwrap_json_string(raw: &str) -> Option<String> {
 fn find_host_alias_output(graph: &Graph, port: &str) -> Option<String> {
     let target = port.to_ascii_lowercase();
     graph.nodes.iter().find_map(|node| {
-        let is_host = matches!(node.metadata.get("host_bridge"), Some(DaedalusValue::Bool(true)));
+        let is_host = matches!(
+            node.metadata.get("host_bridge"),
+            Some(DaedalusValue::Bool(true))
+        );
         if !is_host {
             return None;
         }
@@ -164,7 +171,10 @@ fn find_host_alias_output(graph: &Graph, port: &str) -> Option<String> {
 fn find_host_alias_input(graph: &Graph, port: &str) -> Option<String> {
     let target = port.to_ascii_lowercase();
     graph.nodes.iter().find_map(|node| {
-        let is_host = matches!(node.metadata.get("host_bridge"), Some(DaedalusValue::Bool(true)));
+        let is_host = matches!(
+            node.metadata.get("host_bridge"),
+            Some(DaedalusValue::Bool(true))
+        );
         if !is_host {
             return None;
         }
@@ -184,7 +194,9 @@ fn sanitize_graph(mut graph: Graph) -> Graph {
 
     let mut edges = Vec::with_capacity(graph.edges.len());
     for edge in graph.edges.into_iter() {
-        if edge.from.port.eq_ignore_ascii_case("stats") || edge.to.port.eq_ignore_ascii_case("decode_stats") {
+        if edge.from.port.eq_ignore_ascii_case("stats")
+            || edge.to.port.eq_ignore_ascii_case("decode_stats")
+        {
             continue;
         }
         edges.push(edge);
@@ -215,7 +227,9 @@ fn resolve_graph_path() -> Result<String, Box<dyn std::error::Error>> {
     if let Ok(path) = env::var("DAEDALUS_GRAPH_PATH") {
         return Ok(path);
     }
-    let default = PathBuf::from("/run/media/sozo/bd1d96d9-fa81-4fac-b25e-193cfcac2dcb/Github/HeliOS/helios-backend/src/helios-engine/resources/daedalus_aruco_opencv_defaults.json");
+    let default = PathBuf::from(
+        "/run/media/sozo/bd1d96d9-fa81-4fac-b25e-193cfcac2dcb/Github/HeliOS/helios-backend/src/helios-engine/resources/daedalus_aruco_opencv_defaults.json",
+    );
     if default.exists() {
         return Ok(default.display().to_string());
     }
@@ -226,7 +240,9 @@ fn resolve_image_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Ok(path) = env::var("DAEDALUS_IMG_PATH") {
         return Ok(PathBuf::from(path));
     }
-    let default = PathBuf::from("/run/media/sozo/bd1d96d9-fa81-4fac-b25e-193cfcac2dcb/Github/HeliOS/files/opencv_compare_now.jpg");
+    let default = PathBuf::from(
+        "/run/media/sozo/bd1d96d9-fa81-4fac-b25e-193cfcac2dcb/Github/HeliOS/files/opencv_compare_now.jpg",
+    );
     if default.exists() {
         return Ok(default);
     }
@@ -258,15 +274,15 @@ fn payload_to_image(payload: EdgePayload) -> Option<DynamicImage> {
                 if let Some(img) = inner_ref.downcast_ref::<RgbaImage>() {
                     return Some(DynamicImage::ImageRgba8(img.clone()));
                 }
-                if let Some(payload) = inner_ref.downcast_ref::<GpuPayload<DynamicImage>>() {
-                    if let Some(cpu) = payload.as_cpu() {
-                        return Some(cpu.clone());
-                    }
+                if let Some(payload) = inner_ref.downcast_ref::<GpuPayload<DynamicImage>>()
+                    && let Some(cpu) = payload.as_cpu()
+                {
+                    return Some(cpu.clone());
                 }
-                if let Some(payload) = inner_ref.downcast_ref::<ErasedPayload>() {
-                    if let Some(img) = payload.as_cpu::<DynamicImage>() {
-                        return Some(img.clone());
-                    }
+                if let Some(payload) = inner_ref.downcast_ref::<ErasedPayload>()
+                    && let Some(img) = payload.as_cpu::<DynamicImage>()
+                {
+                    return Some(img.clone());
                 }
             }
             if let Some(payload) = any.downcast_ref::<ErasedPayload>() {
@@ -298,10 +314,10 @@ fn payload_to_image(payload: EdgePayload) -> Option<DynamicImage> {
             if let Some(img) = any.downcast_ref::<RgbaImage>() {
                 return Some(DynamicImage::ImageRgba8(img.clone()));
             }
-            if let Some(payload) = any.downcast_ref::<GpuPayload<DynamicImage>>() {
-                if let Some(cpu) = payload.as_cpu() {
-                    return Some(cpu.clone());
-                }
+            if let Some(payload) = any.downcast_ref::<GpuPayload<DynamicImage>>()
+                && let Some(cpu) = payload.as_cpu()
+            {
+                return Some(cpu.clone());
             }
             None
         }

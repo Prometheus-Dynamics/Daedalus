@@ -241,14 +241,21 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                             "unsupported port attribute".into(),
                         ));
                     }
-                    NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("meta") || list.path.is_ident("metadata") => {
+                    NestedMeta::Meta(Meta::List(list))
+                        if list.path.is_ident("meta") || list.path.is_ident("metadata") =>
+                    {
                         let Ok(items) = parse_nested(&list) else {
                             return TokenStream::from(compile_error(
                                 "meta(...) expects comma-separated arguments".into(),
                             ));
                         };
                         for item in items {
-                            let NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) = item else {
+                            let NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                                path,
+                                value,
+                                ..
+                            })) = item
+                            else {
                                 return TokenStream::from(compile_error(
                                     "meta(...) entries must be name/value pairs".into(),
                                 ));

@@ -4,10 +4,22 @@ use std::time::Duration;
 use super::EdgePayload;
 use crate::perf::PerfSample;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricsLevel {
     Off,
+    #[default]
     Basic,
     Detailed,
     Profile,
@@ -27,12 +39,6 @@ impl MetricsLevel {
     }
 }
 
-impl Default for MetricsLevel {
-    fn default() -> Self {
-        MetricsLevel::Basic
-    }
-}
-
 const HIST_BUCKETS: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -42,7 +48,9 @@ pub struct Histogram {
 
 impl Default for Histogram {
     fn default() -> Self {
-        Self { buckets: [0; HIST_BUCKETS] }
+        Self {
+            buckets: [0; HIST_BUCKETS],
+        }
     }
 }
 
@@ -149,13 +157,17 @@ pub struct NodePerfMetrics {
 impl NodePerfMetrics {
     fn record(&mut self, sample: PerfSample) {
         self.cache_misses = self.cache_misses.saturating_add(sample.cache_misses);
-        self.branch_instructions = self.branch_instructions.saturating_add(sample.branch_instructions);
+        self.branch_instructions = self
+            .branch_instructions
+            .saturating_add(sample.branch_instructions);
         self.branch_misses = self.branch_misses.saturating_add(sample.branch_misses);
     }
 
     fn merge(&mut self, other: NodePerfMetrics) {
         self.cache_misses = self.cache_misses.saturating_add(other.cache_misses);
-        self.branch_instructions = self.branch_instructions.saturating_add(other.branch_instructions);
+        self.branch_instructions = self
+            .branch_instructions
+            .saturating_add(other.branch_instructions);
         self.branch_misses = self.branch_misses.saturating_add(other.branch_misses);
     }
 }
@@ -220,7 +232,9 @@ impl NodeMetrics {
             perf.merge(other_perf);
         }
         if let Some(other_hist) = other.duration_histogram {
-            let hist = self.duration_histogram.get_or_insert_with(Histogram::default);
+            let hist = self
+                .duration_histogram
+                .get_or_insert_with(Histogram::default);
             hist.merge(&other_hist);
         }
         if let Some(other_payload) = other.payload {
@@ -233,7 +247,10 @@ impl NodeMetrics {
 impl ExecutionTelemetry {
     pub fn with_level(level: MetricsLevel) -> Self {
         if !cfg!(feature = "metrics") {
-            return Self { metrics_level: MetricsLevel::Off, ..Default::default() };
+            return Self {
+                metrics_level: MetricsLevel::Off,
+                ..Default::default()
+            };
         }
         Self {
             metrics_level: level,
@@ -497,12 +514,24 @@ fn dynamic_image_size_bytes(img: &image::DynamicImage) -> u64 {
         image::DynamicImage::ImageLumaA8(i) => i.as_raw().len() as u64,
         image::DynamicImage::ImageRgb8(i) => i.as_raw().len() as u64,
         image::DynamicImage::ImageRgba8(i) => i.as_raw().len() as u64,
-        image::DynamicImage::ImageLuma16(i) => (i.as_raw().len() * std::mem::size_of::<u16>()) as u64,
-        image::DynamicImage::ImageLumaA16(i) => (i.as_raw().len() * std::mem::size_of::<u16>()) as u64,
-        image::DynamicImage::ImageRgb16(i) => (i.as_raw().len() * std::mem::size_of::<u16>()) as u64,
-        image::DynamicImage::ImageRgba16(i) => (i.as_raw().len() * std::mem::size_of::<u16>()) as u64,
-        image::DynamicImage::ImageRgb32F(i) => (i.as_raw().len() * std::mem::size_of::<f32>()) as u64,
-        image::DynamicImage::ImageRgba32F(i) => (i.as_raw().len() * std::mem::size_of::<f32>()) as u64,
+        image::DynamicImage::ImageLuma16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageLumaA16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageRgb16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageRgba16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageRgb32F(i) => {
+            (i.as_raw().len() * std::mem::size_of::<f32>()) as u64
+        }
+        image::DynamicImage::ImageRgba32F(i) => {
+            (i.as_raw().len() * std::mem::size_of::<f32>()) as u64
+        }
         _ => 0,
     }
 }

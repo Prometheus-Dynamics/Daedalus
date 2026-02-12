@@ -127,9 +127,12 @@ pub use daedalus_planner as planner;
 pub use daedalus_registry as registry;
 pub use daedalus_runtime as runtime;
 pub use daedalus_runtime::FanIn;
+pub use daedalus_runtime::graph_builder;
 pub use daedalus_runtime::handles::{NodeHandle, NodeHandleLike, PortHandle};
 pub use daedalus_runtime::plugins::{NodeInstall, Plugin, PluginRegistry};
-pub use daedalus_runtime::graph_builder;
+pub use daedalus_runtime::{
+    register_daedalus_types, register_daedalus_values, register_to_value_serializers,
+};
 /// Host-bridge helpers for wiring host-side inputs/outputs.
 ///
 /// ```no_run

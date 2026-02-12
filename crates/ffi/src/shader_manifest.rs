@@ -117,8 +117,16 @@ pub(crate) fn install_shader_node(
         .first()
         .map(|p| p.name.clone())
         .unwrap_or_default();
+    // If bindings reference from_state/to_state, this node is implicitly stateful even if the
+    // manifest didn't set `stateful=true` explicitly.
+    let uses_state = has_explicit_bindings
+        && bindings_spec
+            .iter()
+            .any(|b| b.from_state.is_some() || b.to_state.is_some());
+    let is_stateful = node.stateful || node.state.is_some() || uses_state;
+
     type StateBytes = Arc<Mutex<HashMap<String, Vec<u8>>>>;
-    let state_bytes: Option<StateBytes> = if node.stateful || node.state.is_some() {
+    let state_bytes: Option<StateBytes> = if is_stateful {
         Some(Arc::new(Mutex::new(HashMap::new())))
     } else {
         None
@@ -188,12 +196,11 @@ pub(crate) fn install_shader_node(
     }
 
     #[cfg(feature = "gpu-wgpu")]
-    let state_gpu_buffers: Option<Arc<Mutex<HashMap<String, GpuStateBuffer>>>> =
-        if node.stateful || node.state.is_some() {
-            Some(Arc::new(Mutex::new(HashMap::new())))
-        } else {
-            None
-        };
+    let state_gpu_buffers: Option<Arc<Mutex<HashMap<String, GpuStateBuffer>>>> = if is_stateful {
+        Some(Arc::new(Mutex::new(HashMap::new())))
+    } else {
+        None
+    };
 
     registry.handlers.on(&node.id, move |_node_rt, ctx_rt, io: &mut NodeIo| {
         let gpu = ctx_rt

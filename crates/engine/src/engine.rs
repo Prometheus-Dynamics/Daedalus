@@ -5,7 +5,9 @@ use daedalus_planner::{Graph, PlannerConfig, PlannerInput, build_plan};
 use daedalus_registry::store::Registry;
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{Executor, NodeHandler};
-use daedalus_runtime::{HostBridgeManager, RuntimePlan, RuntimeSink, SchedulerConfig, build_runtime};
+use daedalus_runtime::{
+    HostBridgeManager, RuntimePlan, RuntimeSink, SchedulerConfig, build_runtime,
+};
 
 use crate::config::{EngineConfig, GpuBackend, RuntimeMode};
 use crate::error::EngineError;
@@ -136,11 +138,7 @@ impl Engine {
         handler: H,
     ) -> Result<ExecutionTelemetry, EngineError> {
         if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
-            return self.execute_scoped(
-                runtime_plan,
-                &self.config.runtime.demand_sinks,
-                handler,
-            );
+            return self.execute_scoped(runtime_plan, &self.config.runtime.demand_sinks, handler);
         }
         let mut exec = Executor::new(&runtime_plan, handler)
             .with_fail_fast(self.config.runtime.fail_fast)

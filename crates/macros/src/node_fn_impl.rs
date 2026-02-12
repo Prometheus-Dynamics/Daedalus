@@ -373,16 +373,19 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                         for nm in inner_items {
                             let NestedMeta::Meta(Meta::NameValue(nv)) = nm else {
                                 if let NestedMeta::Meta(Meta::List(list)) = nm {
-                                    if list.path.is_ident("meta") || list.path.is_ident("metadata") {
-                        let Ok(meta_items) = parse_nested(&list) else {
+                                    if list.path.is_ident("meta") || list.path.is_ident("metadata")
+                                    {
+                                        let Ok(meta_items) = parse_nested(&list) else {
                                             return TokenStream::from(compile_error(
-                                                "meta(...) expects comma-separated arguments".into(),
+                                                "meta(...) expects comma-separated arguments"
+                                                    .into(),
                                             ));
                                         };
                                         for meta in meta_items {
                                             let NestedMeta::Meta(Meta::NameValue(nv)) = meta else {
                                                 return TokenStream::from(compile_error(
-                                                    "meta(...) entries must be name/value pairs".into(),
+                                                    "meta(...) entries must be name/value pairs"
+                                                        .into(),
                                                 ));
                                             };
                                             let Some(key_ident) = nv.path.get_ident() else {
@@ -396,7 +399,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                                 ));
                                             };
                                             meta_entries.push((
-                                                LitStr::new(&key_ident.to_string(), Span::call_site()),
+                                                LitStr::new(
+                                                    &key_ident.to_string(),
+                                                    Span::call_site(),
+                                                ),
                                                 value,
                                             ));
                                         }
@@ -533,16 +539,19 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                     }
                                 }
                                 if let NestedMeta::Meta(Meta::List(list)) = &nm {
-                                    if list.path.is_ident("meta") || list.path.is_ident("metadata") {
+                                    if list.path.is_ident("meta") || list.path.is_ident("metadata")
+                                    {
                                         let Ok(meta_items) = parse_nested(list) else {
                                             return TokenStream::from(compile_error(
-                                                "meta(...) expects comma-separated arguments".into(),
+                                                "meta(...) expects comma-separated arguments"
+                                                    .into(),
                                             ));
                                         };
                                         for meta in meta_items {
                                             let NestedMeta::Meta(Meta::NameValue(nv)) = meta else {
                                                 return TokenStream::from(compile_error(
-                                                    "meta(...) entries must be name/value pairs".into(),
+                                                    "meta(...) entries must be name/value pairs"
+                                                        .into(),
                                                 ));
                                             };
                                             let Some(key_ident) = nv.path.get_ident() else {
@@ -556,7 +565,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                                 ));
                                             };
                                             meta_entries.push((
-                                                LitStr::new(&key_ident.to_string(), Span::call_site()),
+                                                LitStr::new(
+                                                    &key_ident.to_string(),
+                                                    Span::call_site(),
+                                                ),
                                                 value,
                                             ));
                                         }
@@ -907,7 +919,13 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     }
                     if matches!(
                         last_ident.as_deref(),
-                        Some("NodeIo" | "RuntimeNode" | "ExecutionContext" | "ShaderContext" | "GraphCtx")
+                        Some(
+                            "NodeIo"
+                                | "RuntimeNode"
+                                | "ExecutionContext"
+                                | "ShaderContext"
+                                | "GraphCtx"
+                        )
                     ) {
                         continue;
                     }
@@ -1022,9 +1040,19 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         for arg in &input.sig.inputs {
             if let syn::FnArg::Typed(pat) = arg {
                 let is_shader_ctx_param = match &*pat.ty {
-                    syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident == "ShaderContext").unwrap_or(false),
+                    syn::Type::Path(tp) => tp
+                        .path
+                        .segments
+                        .last()
+                        .map(|s| s.ident == "ShaderContext")
+                        .unwrap_or(false),
                     syn::Type::Reference(r) => match &*r.elem {
-                        syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident == "ShaderContext").unwrap_or(false),
+                        syn::Type::Path(tp) => tp
+                            .path
+                            .segments
+                            .last()
+                            .map(|s| s.ident == "ShaderContext")
+                            .unwrap_or(false),
                         _ => false,
                     },
                     _ => false,
@@ -1399,7 +1427,11 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 let is_binding_mut = arg_mut_bindings.get(idx).copied().unwrap_or(false);
                 let mode = if is_ref {
-                    if is_ref_mut { "borrowed_mut" } else { "borrowed" }
+                    if is_ref_mut {
+                        "borrowed_mut"
+                    } else {
+                        "borrowed"
+                    }
                 } else if is_binding_mut {
                     "owned_mut"
                 } else {
@@ -1444,8 +1476,9 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                         let #tmp_ident = io.get_any_all_fanin_indexed::<#inner_ty>(#port);
                         let #ident = #runtime_crate::FanIn::<#inner_ty>::from_indexed(#tmp_ident);
                     }
-                } else if option_inner.is_some() && mode == "owned" {
-                    let inner_ty = option_inner.unwrap();
+                } else if let Some(inner_ty) = option_inner
+                    && mode == "owned"
+                {
                     quote! {
                         let #ident = io.get_typed::<#inner_ty>(#port);
                     }
@@ -1458,7 +1491,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                 {
                                     match mode {
                                         "borrowed" => {
-                                            let tmp_ident = syn::Ident::new(&format!("__payload_ref_{idx}"), Span::call_site());
+                                            let tmp_ident = syn::Ident::new(
+                                                &format!("__payload_ref_{idx}"),
+                                                Span::call_site(),
+                                            );
                                             quote! {
                                                 let #tmp_ident = io
                                                     .get_payload::<#inner_ty>(#port)
@@ -1467,7 +1503,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                             }
                                         }
                                         "borrowed_mut" => {
-                                            let tmp_ident = syn::Ident::new(&format!("__payload_mut_{idx}"), Span::call_site());
+                                            let tmp_ident = syn::Ident::new(
+                                                &format!("__payload_mut_{idx}"),
+                                                Span::call_site(),
+                                            );
                                             quote! {
                                                 let mut #tmp_ident = io
                                                     .get_payload_mut::<#inner_ty>(#port)
@@ -1482,7 +1521,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                         },
                                         _ => quote! {
                                             let #ident = io
-                                                .get_payload_mut::<#inner_ty>(#port)
+                                                .get_payload::<#inner_ty>(#port)
                                                 .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                         },
                                     }
@@ -1508,7 +1547,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                         .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                 },
                                 "borrowed_mut" => {
-                                    let tmp_ident = syn::Ident::new(&format!("__borrowed_mut_{idx}"), Span::call_site());
+                                    let tmp_ident = syn::Ident::new(
+                                        &format!("__borrowed_mut_{idx}"),
+                                        Span::call_site(),
+                                    );
                                     quote! {
                                         let mut #tmp_ident = io
                                             .get_typed_mut::<#ty_core>(#port)
@@ -1523,7 +1565,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                 },
                                 _ => quote! {
                                     let #ident = io
-                                        .get_typed_mut::<#ty_core>(#port)
+                                        .get_typed::<#ty_core>(#port)
                                         .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                 },
                             }
@@ -1536,7 +1578,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                     .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                             },
                             "borrowed_mut" => {
-                                let tmp_ident = syn::Ident::new(&format!("__borrowed_mut_{idx}"), Span::call_site());
+                                let tmp_ident = syn::Ident::new(
+                                    &format!("__borrowed_mut_{idx}"),
+                                    Span::call_site(),
+                                );
                                 quote! {
                                     let mut #tmp_ident = io
                                         .get_any_mut::<#ty_core>(#port)
@@ -1551,7 +1596,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                             },
                             _ => quote! {
                                 let #ident = io
-                                    .get_any_mut::<#ty_core>(#port)
+                                    .get_any::<#ty_core>(#port)
                                     .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                             },
                         }
@@ -1564,7 +1609,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                 .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                         },
                         "borrowed_mut" => {
-                            let tmp_ident = syn::Ident::new(&format!("__borrowed_mut_{idx}"), Span::call_site());
+                            let tmp_ident = syn::Ident::new(
+                                &format!("__borrowed_mut_{idx}"),
+                                Span::call_site(),
+                            );
                             quote! {
                                 let mut #tmp_ident = io
                                     .get_typed_mut::<#ty_core>(#port)
@@ -1579,7 +1627,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                         },
                         _ => quote! {
                             let #ident = io
-                                .get_typed_mut::<#ty_core>(#port)
+                                .get_typed::<#ty_core>(#port)
                                 .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                         },
                     }
@@ -2139,25 +2187,23 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let metadata_tokens: proc_macro2::TokenStream = {
         let mut inserts: Vec<proc_macro2::TokenStream> = Vec::new();
-        let lit_to_value = |lit: &Lit| {
-            match lit {
-                Lit::Str(s) => {
-                    quote! { #data_crate::model::Value::String(::std::borrow::Cow::from(#s)) }
-                }
-                Lit::Int(i) => {
-                    let v: i64 = i.base10_parse().unwrap_or(0);
-                    quote! { #data_crate::model::Value::Int(#v) }
-                }
-                Lit::Float(f) => {
-                    let v: f64 = f.base10_parse().unwrap_or(0.0);
-                    quote! { #data_crate::model::Value::Float(#v) }
-                }
-                Lit::Bool(b) => {
-                    let v = b.value;
-                    quote! { #data_crate::model::Value::Bool(#v) }
-                }
-                _ => quote! { #data_crate::model::Value::Unit },
+        let lit_to_value = |lit: &Lit| match lit {
+            Lit::Str(s) => {
+                quote! { #data_crate::model::Value::String(::std::borrow::Cow::from(#s)) }
             }
+            Lit::Int(i) => {
+                let v: i64 = i.base10_parse().unwrap_or(0);
+                quote! { #data_crate::model::Value::Int(#v) }
+            }
+            Lit::Float(f) => {
+                let v: f64 = f.base10_parse().unwrap_or(0.0);
+                quote! { #data_crate::model::Value::Float(#v) }
+            }
+            Lit::Bool(b) => {
+                let v = b.value;
+                quote! { #data_crate::model::Value::Bool(#v) }
+            }
+            _ => quote! { #data_crate::model::Value::Unit },
         };
         if let Some(summary) = &summary_attr {
             inserts.push(quote! {

@@ -5,8 +5,8 @@ use daedalus::{
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     graph_builder::GraphBuilder,
     host_bridge::install_host_bridge,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
     runtime::plugins::PluginRegistry,
+    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
 };
 use image::{DynamicImage, ImageBuffer, Rgba};
 use std::env;
@@ -32,7 +32,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .node(&grayscale)
         .connect(&PortHandle::new("host", "frame"), &grayscale.input("frame"))
         .connect(&grayscale.output("mask"), &PortHandle::new("host", "mask"))
-        .const_input(&grayscale.input("mode"), Some(daedalus::data::model::Value::Int(0)))
+        .const_input(
+            &grayscale.input("mode"),
+            Some(daedalus::data::model::Value::Int(0)),
+        )
         .build();
 
     let mut cfg = EngineConfig::default();
@@ -54,11 +57,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(2);
-    let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
-        width,
-        height,
-        Rgba([7, 8, 9, 255]),
-    ));
+    let img =
+        DynamicImage::ImageRgba8(ImageBuffer::from_pixel(width, height, Rgba([7, 8, 9, 255])));
     let ep = ErasedPayload::from_cpu::<DynamicImage>(img);
     handle.push("frame", EdgePayload::Payload(ep), None);
 

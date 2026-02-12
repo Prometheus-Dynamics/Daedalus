@@ -95,6 +95,7 @@ fn expand_embedded_graphs(
     view: &daedalus_registry::store::RegistryView,
     diags: &mut Vec<Diagnostic>,
 ) {
+    let trace = std::env::var_os("DAEDALUS_TRACE_EMBEDDED_EXPAND").is_some();
     #[derive(Clone)]
     struct EmbeddedSpec {
         graph: Graph,
@@ -103,11 +104,7 @@ fn expand_embedded_graphs(
         host_label: Option<String>,
     }
 
-    fn parse_embedded(
-        raw: &str,
-        node_id: &str,
-        diags: &mut Vec<Diagnostic>,
-    ) -> Option<Graph> {
+    fn parse_embedded(raw: &str, node_id: &str, diags: &mut Vec<Diagnostic>) -> Option<Graph> {
         match serde_json::from_str::<Graph>(raw) {
             Ok(graph) => Some(graph),
             Err(err) => {
@@ -132,9 +129,7 @@ fn expand_embedded_graphs(
                 curr[0] = i + 1;
                 for (j, cb) in b.bytes().enumerate() {
                     let cost = if ca == cb { 0 } else { 1 };
-                    curr[j + 1] = (prev[j + 1] + 1)
-                        .min(curr[j] + 1)
-                        .min(prev[j] + cost);
+                    curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
                 }
                 prev.clone_from_slice(&curr);
             }
@@ -228,7 +223,6 @@ fn expand_embedded_graphs(
             }
             continue;
         }
-
     }
 
     if embedded_graphs.is_empty() {
@@ -318,10 +312,7 @@ fn expand_embedded_graphs(
                 continue;
             }
             let mut cloned = g_node.clone();
-            let base_label = cloned
-                .label
-                .clone()
-                .unwrap_or_else(|| cloned.id.0.clone());
+            let base_label = cloned.label.clone().unwrap_or_else(|| cloned.id.0.clone());
             cloned.label = Some(format!("{prefix}{base_label}"));
             cloned.metadata.insert(
                 EMBEDDED_GROUP_KEY.to_string(),
@@ -393,13 +384,24 @@ fn expand_embedded_graphs(
             }
         }
 
-        embedded_maps.insert(
-            idx,
-            EmbeddedMap {
-                inputs,
-                outputs,
-            },
-        );
+        embedded_maps.insert(idx, EmbeddedMap { inputs, outputs });
+
+        if trace {
+            let mut in_keys: Vec<String> = embedded_maps
+                .get(&idx)
+                .map(|m| m.inputs.keys().cloned().collect())
+                .unwrap_or_default();
+            let mut out_keys: Vec<String> = embedded_maps
+                .get(&idx)
+                .map(|m| m.outputs.keys().cloned().collect())
+                .unwrap_or_default();
+            in_keys.sort();
+            out_keys.sort();
+            eprintln!(
+                "daedalus-planner: embedded expand node_idx={} node_id={} group_label={} embedded_inputs={:?} embedded_outputs={:?}",
+                idx, node.id.0, group_label, in_keys, out_keys
+            );
+        }
     }
 
     let mut new_edges: Vec<Edge> = Vec::new();
@@ -442,6 +444,38 @@ fn expand_embedded_graphs(
                             metadata: edge.metadata.clone(),
                         });
                     }
+                } else {
+                    // The outer edge targets an embedded-node input port that isn't wired to the host bridge.
+                    // This previously dropped the edge silently and later manifested as "missing <port>" at runtime.
+                    if let Some(node) = input.graph.nodes.get(edge.to.node.0) {
+                        diags.push(
+                            Diagnostic::new(
+                                DiagnosticCode::PortMissing,
+                                format!(
+                                    "edge targets embedded node {} input port `{}`, but the embedded graph does not expose/wire that input",
+                                    node.id.0, edge.to.port
+                                ),
+                            )
+                            .in_pass("expand_embedded")
+                            .at_node(diagnostic_node_id(node))
+                            .at_port(edge.to.port.clone())
+                            .with_meta(
+                                "missing_port",
+                                Value::String(std::borrow::Cow::Owned(edge.to.port.clone())),
+                            )
+                            .with_meta(
+                                "missing_port_direction",
+                                Value::String(std::borrow::Cow::Borrowed("input")),
+                            ),
+                        );
+                    }
+                    if trace {
+                        let keys: Vec<&String> = to.inputs.keys().collect();
+                        eprintln!(
+                            "daedalus-planner: embedded edge drop (missing input map) to_node_idx={} to_port={} available_inputs={:?}",
+                            edge.to.node.0, edge.to.port, keys
+                        );
+                    }
                 }
             }
             (Some(from), None) => {
@@ -459,6 +493,37 @@ fn expand_embedded_graphs(
                             metadata: edge.metadata.clone(),
                         });
                     }
+                } else {
+                    // The outer edge references an embedded-node output port that isn't wired from the host bridge.
+                    if let Some(node) = input.graph.nodes.get(edge.from.node.0) {
+                        diags.push(
+                            Diagnostic::new(
+                                DiagnosticCode::PortMissing,
+                                format!(
+                                    "edge sources embedded node {} output port `{}`, but the embedded graph does not expose/wire that output",
+                                    node.id.0, edge.from.port
+                                ),
+                            )
+                            .in_pass("expand_embedded")
+                            .at_node(diagnostic_node_id(node))
+                            .at_port(edge.from.port.clone())
+                            .with_meta(
+                                "missing_port",
+                                Value::String(std::borrow::Cow::Owned(edge.from.port.clone())),
+                            )
+                            .with_meta(
+                                "missing_port_direction",
+                                Value::String(std::borrow::Cow::Borrowed("output")),
+                            ),
+                        );
+                    }
+                    if trace {
+                        let keys: Vec<&String> = from.outputs.keys().collect();
+                        eprintln!(
+                            "daedalus-planner: embedded edge drop (missing output map) from_node_idx={} from_port={} available_outputs={:?}",
+                            edge.from.node.0, edge.from.port, keys
+                        );
+                    }
                 }
             }
             (Some(from), Some(to)) => {
@@ -474,6 +539,18 @@ fn expand_embedded_graphs(
                             });
                         }
                     }
+                } else if trace {
+                    let out_keys: Vec<&String> = from.outputs.keys().collect();
+                    let in_keys: Vec<&String> = to.inputs.keys().collect();
+                    eprintln!(
+                        "daedalus-planner: embedded edge drop (missing map) from_node_idx={} from_port={} available_outputs={:?} to_node_idx={} to_port={} available_inputs={:?}",
+                        edge.from.node.0,
+                        edge.from.port,
+                        out_keys,
+                        edge.to.node.0,
+                        edge.to.port,
+                        in_keys
+                    );
                 }
             }
         }
@@ -486,17 +563,16 @@ fn expand_embedded_graphs(
         };
         let connected = connected_inputs.get(&idx);
         for (port, value) in &node.const_inputs {
-            if connected
-                .map(|set| set.contains(port))
-                .unwrap_or(false)
-            {
+            if connected.map(|set| set.contains(port)).unwrap_or(false) {
                 continue;
             }
             if let Some(targets) = map.inputs.get(port) {
                 for target in targets {
                     if let Some(inner) = new_nodes.get_mut(target.node.0) {
                         inner.const_inputs.retain(|(name, _)| name != &target.port);
-                        inner.const_inputs.push((target.port.clone(), value.clone()));
+                        inner
+                            .const_inputs
+                            .push((target.port.clone(), value.clone()));
                     }
                 }
             }
@@ -637,7 +713,7 @@ fn validate_port_declarations(
             if !seen_inputs.insert(port_lc.clone()) {
                 diags.push(
                     Diagnostic::new(
-                        DiagnosticCode::PortMissing,
+                        DiagnosticCode::PortDuplicate,
                         format!(
                             "graph declares duplicate input port `{}` on node {}",
                             port, node.id.0
@@ -647,11 +723,11 @@ fn validate_port_declarations(
                     .at_node(node_label.clone())
                     .at_port(port.clone())
                     .with_meta(
-                        "missing_port",
+                        "extra_port",
                         Value::String(std::borrow::Cow::Owned(port.clone())),
                     )
                     .with_meta(
-                        "missing_port_direction",
+                        "extra_port_direction",
                         Value::String(std::borrow::Cow::Borrowed("input")),
                     )
                     .with_meta("available_ports", Value::List(available_inputs(desc))),
@@ -668,7 +744,7 @@ fn validate_port_declarations(
 
             diags.push(
                 Diagnostic::new(
-                    DiagnosticCode::PortMissing,
+                    DiagnosticCode::PortExtra,
                     format!(
                         "graph declares input port `{}` on node {}, but the registry descriptor does not provide that port",
                         port, node.id.0
@@ -678,11 +754,11 @@ fn validate_port_declarations(
                 .at_node(node_label.clone())
                 .at_port(port.clone())
                 .with_meta(
-                    "missing_port",
+                    "extra_port",
                     Value::String(std::borrow::Cow::Owned(port.clone())),
                 )
                 .with_meta(
-                    "missing_port_direction",
+                    "extra_port_direction",
                     Value::String(std::borrow::Cow::Borrowed("input")),
                 )
                 .with_meta("available_ports", Value::List(available_inputs(desc))),
@@ -741,7 +817,7 @@ fn validate_port_declarations(
             if !seen_outputs.insert(port_lc.clone()) {
                 diags.push(
                     Diagnostic::new(
-                        DiagnosticCode::PortMissing,
+                        DiagnosticCode::PortDuplicate,
                         format!(
                             "graph declares duplicate output port `{}` on node {}",
                             port, node.id.0
@@ -751,11 +827,11 @@ fn validate_port_declarations(
                     .at_node(node_label.clone())
                     .at_port(port.clone())
                     .with_meta(
-                        "missing_port",
+                        "extra_port",
                         Value::String(std::borrow::Cow::Owned(port.clone())),
                     )
                     .with_meta(
-                        "missing_port_direction",
+                        "extra_port_direction",
                         Value::String(std::borrow::Cow::Borrowed("output")),
                     )
                     .with_meta("available_ports", Value::List(available_outputs(desc))),
@@ -772,7 +848,7 @@ fn validate_port_declarations(
 
             diags.push(
                 Diagnostic::new(
-                    DiagnosticCode::PortMissing,
+                    DiagnosticCode::PortExtra,
                     format!(
                         "graph declares output port `{}` on node {}, but the registry descriptor does not provide that port",
                         port, node.id.0
@@ -782,11 +858,11 @@ fn validate_port_declarations(
                 .at_node(node_label.clone())
                 .at_port(port.clone())
                 .with_meta(
-                    "missing_port",
+                    "extra_port",
                     Value::String(std::borrow::Cow::Owned(port.clone())),
                 )
                 .with_meta(
-                    "missing_port_direction",
+                    "extra_port_direction",
                     Value::String(std::borrow::Cow::Borrowed("output")),
                 )
                 .with_meta("available_ports", Value::List(available_outputs(desc))),
@@ -832,6 +908,87 @@ fn validate_port_declarations(
             }
         }
     }
+
+    // Validate edge references against registry ports, even when the graph doesn't declare port
+    // lists (or when the lists are stale). This catches the common "node updated, edge still
+    // points at removed port" failure mode.
+    for edge in &graph.edges {
+        let Some(from_node) = graph.nodes.get(edge.from.node.0) else {
+            continue;
+        };
+        let Some(to_node) = graph.nodes.get(edge.to.node.0) else {
+            continue;
+        };
+        let Some(from_desc) = latest_node(view, &from_node.id) else {
+            continue;
+        };
+        let Some(to_desc) = latest_node(view, &to_node.id) else {
+            continue;
+        };
+
+        let from_dynamic_outputs = is_dynamic(from_desc, false);
+        if !from_dynamic_outputs {
+            let port = edge.from.port.trim();
+            if !port.is_empty()
+                && !from_desc
+                    .outputs
+                    .iter()
+                    .any(|p| p.name.eq_ignore_ascii_case(port))
+            {
+                let available = Value::List(available_outputs(from_desc));
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::PortMissing,
+                        format!(
+                            "edge references output port `{}` on node {}, but the registry descriptor does not provide that port",
+                            edge.from.port, from_node.id.0
+                        ),
+                    )
+                    .in_pass("validate_ports")
+                    .at_node(diagnostic_node_id(from_node))
+                    .at_port(edge.from.port.clone())
+                    .with_meta(
+                        "missing_port",
+                        Value::String(std::borrow::Cow::Owned(edge.from.port.clone())),
+                    )
+                    .with_meta(
+                        "missing_port_direction",
+                        Value::String(std::borrow::Cow::Borrowed("output")),
+                    )
+                    .with_meta("available_ports", available),
+                );
+            }
+        }
+
+        let to_dynamic_inputs = is_dynamic(to_desc, true);
+        if !to_dynamic_inputs {
+            let port = edge.to.port.trim();
+            if !port.is_empty() && to_desc.input_ty_for(port).is_none() {
+                let available = Value::List(available_inputs(to_desc));
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::PortMissing,
+                        format!(
+                            "edge references input port `{}` on node {}, but the registry descriptor does not provide that port",
+                            edge.to.port, to_node.id.0
+                        ),
+                    )
+                    .in_pass("validate_ports")
+                    .at_node(diagnostic_node_id(to_node))
+                    .at_port(edge.to.port.clone())
+                    .with_meta(
+                        "missing_port",
+                        Value::String(std::borrow::Cow::Owned(edge.to.port.clone())),
+                    )
+                    .with_meta(
+                        "missing_port_direction",
+                        Value::String(std::borrow::Cow::Borrowed("input")),
+                    )
+                    .with_meta("available_ports", available),
+                );
+            }
+        }
+    }
 }
 
 fn latest_node<'a>(
@@ -863,9 +1020,7 @@ fn suggest_nodes(view: &daedalus_registry::store::RegistryView, missing: &str) -
             curr[0] = i + 1;
             for (j, &bc) in b.iter().enumerate() {
                 let cost = if ac == bc { 0 } else { 1 };
-                curr[j + 1] = (prev[j + 1] + 1)
-                    .min(curr[j] + 1)
-                    .min(prev[j] + cost);
+                curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
             }
             prev.clone_from_slice(&curr);
         }
@@ -1080,10 +1235,7 @@ fn typecheck(
         }
     }
 
-    fn display_label_for_type(
-        ty: &TypeExpr,
-        lookup: &BTreeMap<TypeExpr, String>,
-    ) -> String {
+    fn display_label_for_type(ty: &TypeExpr, lookup: &BTreeMap<TypeExpr, String>) -> String {
         if let Some(found) = lookup.get(ty) {
             return found.clone();
         }
@@ -1137,10 +1289,16 @@ fn typecheck(
                 if names.len() == 2 && names.contains("x") && names.contains("y") {
                     return "Point".to_string();
                 }
-                if names.len() == 4 && names.contains("r") && names.contains("g") && names.contains("b") && names.contains("a") {
+                if names.len() == 4
+                    && names.contains("r")
+                    && names.contains("g")
+                    && names.contains("b")
+                    && names.contains("a")
+                {
                     return "Pixel".to_string();
                 }
-                if names.contains("data_b64") && names.contains("width") && names.contains("height") {
+                if names.contains("data_b64") && names.contains("width") && names.contains("height")
+                {
                     return "Image".to_string();
                 }
                 "Struct".to_string()
@@ -1831,9 +1989,10 @@ fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Diagnostic>) {
     if !gpu_reasons.is_empty() {
         gpu_reasons.sort();
         gpu_reasons.dedup();
-        graph
-            .metadata
-            .insert("gpu_why".into(), Value::String(gpu_reasons.join(";").into()));
+        graph.metadata.insert(
+            "gpu_why".into(),
+            Value::String(gpu_reasons.join(";").into()),
+        );
     }
 }
 fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {

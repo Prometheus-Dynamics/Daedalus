@@ -134,7 +134,8 @@ pub fn emit_bindings(
 
     if let Some(b) = auto_sampler_binding {
         let sampler_kind = if let Some(InferredAccess::Sampler(Some(k))) = inferred_map.get(&b) {
-            map_sampler_kind(k).unwrap_or(quote! { ::daedalus::gpu::shader::SamplerKind::Filtering })
+            map_sampler_kind(k)
+                .unwrap_or(quote! { ::daedalus::gpu::shader::SamplerKind::Filtering })
         } else {
             quote! { ::daedalus::gpu::shader::SamplerKind::Filtering }
         };
@@ -392,7 +393,8 @@ pub fn emit_bindings(
 
     if let Some(b) = auto_sampler_binding {
         let kind_token = if let Some(InferredAccess::Sampler(Some(k))) = inferred_map.get(&b) {
-            map_sampler_kind(k).unwrap_or(quote! { ::daedalus::gpu::shader::SamplerKind::Filtering })
+            map_sampler_kind(k)
+                .unwrap_or(quote! { ::daedalus::gpu::shader::SamplerKind::Filtering })
         } else {
             quote! { ::daedalus::gpu::shader::SamplerKind::Filtering }
         };

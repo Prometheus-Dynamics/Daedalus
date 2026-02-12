@@ -19,4 +19,3 @@ pub fn stable_id128(domain: &str, value: &str) -> u128 {
     let b = hash64(domain, value, 1);
     ((a as u128) << 64) | (b as u128)
 }
-

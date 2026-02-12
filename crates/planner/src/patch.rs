@@ -74,7 +74,12 @@ impl GraphPatch {
                     let normalized_port = normalize_port(port);
                     for idx in indices {
                         if let Some(node) = graph.nodes.get_mut(idx) {
-                            apply_const_override(&mut node.const_inputs, &normalized_port, port, value);
+                            apply_const_override(
+                                &mut node.const_inputs,
+                                &normalized_port,
+                                port,
+                                value,
+                            );
                             report.matched_nodes += 1;
                         }
                     }

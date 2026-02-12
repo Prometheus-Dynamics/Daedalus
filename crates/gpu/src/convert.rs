@@ -1,8 +1,8 @@
 use crate::{GpuContextHandle, GpuError, GpuImageHandle, upload_rgba8_texture};
 use image::{DynamicImage, GenericImageView, GrayImage, RgbImage, RgbaImage};
 use std::any::Any;
-use std::sync::OnceLock;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 /// Opt-in bridge to allow CPU types to participate in GPU segments.
 /// Users implement this for their own types to describe how to upload/download.
@@ -106,6 +106,62 @@ pub struct ErasedPayload {
     download: fn(&ErasedPayloadInner, &GpuContextHandle) -> Result<ErasedPayload, GpuError>,
 }
 
+impl ErasedPayload {
+    #[inline]
+    fn cached_has_gpu(&self) -> bool {
+        match &self.inner {
+            ErasedPayloadInner::Cached(cell) => cell.gpu.get().is_some(),
+        }
+    }
+
+    #[inline]
+    fn cached_has_cpu(&self) -> bool {
+        match &self.inner {
+            ErasedPayloadInner::Cached(cell) => cell.cpu.get().is_some(),
+        }
+    }
+
+    /// Upload to GPU only if this payload is not already GPU-resident.
+    ///
+    /// Returns `(payload, did_transfer)`. `did_transfer` is `true` only when this call performed
+    /// a real CPU->GPU materialization (i.e. the cache did not already contain a GPU repr).
+    ///
+    /// This is intended for runtimes that want to dedupe transfer accounting across fanout.
+    pub fn upload_if_needed(
+        &self,
+        ctx: &GpuContextHandle,
+    ) -> Result<(ErasedPayload, bool), GpuError> {
+        if self.is_gpu {
+            return Ok((self.clone(), false));
+        }
+        // If another edge already uploaded this cached payload, avoid doing the work again.
+        if self.cached_has_gpu() {
+            let uploaded = (self.upload)(&self.inner, ctx)?;
+            return Ok((uploaded, false));
+        }
+        let uploaded = (self.upload)(&self.inner, ctx)?;
+        Ok((uploaded, true))
+    }
+
+    /// Download to CPU only if this payload is not already CPU-resident.
+    ///
+    /// Returns `(payload, did_transfer)`. `did_transfer` is `true` only when this call performed
+    /// a real GPU->CPU materialization (i.e. the cache did not already contain a CPU repr).
+    pub fn download_if_needed(
+        &self,
+        ctx: &GpuContextHandle,
+    ) -> Result<(ErasedPayload, bool), GpuError> {
+        if !self.is_gpu {
+            return Ok((self.clone(), false));
+        }
+        if self.cached_has_cpu() {
+            let downloaded = (self.download)(&self.inner, ctx)?;
+            return Ok((downloaded, false));
+        }
+        let downloaded = (self.download)(&self.inner, ctx)?;
+        Ok((downloaded, true))
+    }
+}
 
 impl ErasedPayload {
     fn cross_dylib_ref<'a, T: 'static>(any: &'a dyn Any, expected: &str) -> Option<&'a T> {
@@ -138,7 +194,10 @@ impl ErasedPayload {
         T: GpuSendable + Clone + Send + Sync + 'static,
         T::GpuRepr: Clone + Send + Sync + 'static,
     {
-        fn upload<T>(inner: &ErasedPayloadInner, ctx: &GpuContextHandle) -> Result<ErasedPayload, GpuError>
+        fn upload<T>(
+            inner: &ErasedPayloadInner,
+            ctx: &GpuContextHandle,
+        ) -> Result<ErasedPayload, GpuError>
         where
             T: GpuSendable + Clone + Send + Sync + 'static,
             T::GpuRepr: Clone + Send + Sync + 'static,
@@ -154,7 +213,17 @@ impl ErasedPayload {
                 });
             }
             let cpu_arc = cell.cpu.get().ok_or(GpuError::Unsupported)?;
-            let cpu = cpu_arc.downcast_ref::<T>().ok_or(GpuError::Unsupported)?.clone();
+            let cpu = cpu_arc
+                .downcast_ref::<T>()
+                .cloned()
+                .or_else(|| {
+                    ErasedPayload::cross_dylib_ref::<T>(
+                        cpu_arc.as_ref(),
+                        std::any::type_name::<T>(),
+                    )
+                        .cloned()
+                })
+                .ok_or(GpuError::Unsupported)?;
             let handle = cpu.upload(ctx)?;
             let _ = cell.gpu.set(Arc::new(handle.clone()));
             Ok(ErasedPayload {
@@ -166,7 +235,10 @@ impl ErasedPayload {
             })
         }
 
-        fn download<T>(inner: &ErasedPayloadInner, _ctx: &GpuContextHandle) -> Result<ErasedPayload, GpuError>
+        fn download<T>(
+            inner: &ErasedPayloadInner,
+            _ctx: &GpuContextHandle,
+        ) -> Result<ErasedPayload, GpuError>
         where
             T: GpuSendable + Clone + Send + Sync + 'static,
             T::GpuRepr: Clone + Send + Sync + 'static,
@@ -174,7 +246,13 @@ impl ErasedPayload {
             // CPU input: downloading is a no-op.
             let ErasedPayloadInner::Cached(cell) = inner;
             let cpu_arc = cell.cpu.get().ok_or(GpuError::Unsupported)?;
-            if cpu_arc.downcast_ref::<T>().is_none() {
+            if cpu_arc.downcast_ref::<T>().is_none()
+                && ErasedPayload::cross_dylib_ref::<T>(
+                    cpu_arc.as_ref(),
+                    std::any::type_name::<T>(),
+                )
+                    .is_none()
+            {
                 return Err(GpuError::Unsupported);
             }
             Ok(ErasedPayload {
@@ -204,7 +282,10 @@ impl ErasedPayload {
         T: GpuSendable + Clone + Send + Sync + 'static,
         T::GpuRepr: Clone + Send + Sync + 'static,
     {
-        fn upload<T>(inner: &ErasedPayloadInner, _ctx: &GpuContextHandle) -> Result<ErasedPayload, GpuError>
+        fn upload<T>(
+            inner: &ErasedPayloadInner,
+            _ctx: &GpuContextHandle,
+        ) -> Result<ErasedPayload, GpuError>
         where
             T: GpuSendable + Clone + Send + Sync + 'static,
             T::GpuRepr: Clone + Send + Sync + 'static,
@@ -212,7 +293,13 @@ impl ErasedPayload {
             // GPU input: uploading is a no-op.
             let ErasedPayloadInner::Cached(cell) = inner;
             let gpu_arc = cell.gpu.get().ok_or(GpuError::Unsupported)?;
-            if gpu_arc.downcast_ref::<T::GpuRepr>().is_none() {
+            if gpu_arc.downcast_ref::<T::GpuRepr>().is_none()
+                && ErasedPayload::cross_dylib_ref::<T::GpuRepr>(
+                    gpu_arc.as_ref(),
+                    std::any::type_name::<T::GpuRepr>(),
+                )
+                .is_none()
+            {
                 return Err(GpuError::Unsupported);
             }
             Ok(ErasedPayload {
@@ -224,7 +311,10 @@ impl ErasedPayload {
             })
         }
 
-        fn download<T>(inner: &ErasedPayloadInner, ctx: &GpuContextHandle) -> Result<ErasedPayload, GpuError>
+        fn download<T>(
+            inner: &ErasedPayloadInner,
+            ctx: &GpuContextHandle,
+        ) -> Result<ErasedPayload, GpuError>
         where
             T: GpuSendable + Clone + Send + Sync + 'static,
             T::GpuRepr: Clone + Send + Sync + 'static,
@@ -232,7 +322,12 @@ impl ErasedPayload {
             let ErasedPayloadInner::Cached(cell) = inner;
             // Fast path: already downloaded by another clone.
             if let Some(cpu) = cell.cpu.get()
-                && cpu.downcast_ref::<T>().is_some()
+                && (cpu.downcast_ref::<T>().is_some()
+                    || ErasedPayload::cross_dylib_ref::<T>(
+                        cpu.as_ref(),
+                        std::any::type_name::<T>(),
+                    )
+                        .is_some())
             {
                 return Ok(ErasedPayload {
                     is_gpu: false,
@@ -244,7 +339,15 @@ impl ErasedPayload {
             }
 
             let gpu_arc = cell.gpu.get().ok_or(GpuError::Unsupported)?;
-            let g = gpu_arc.downcast_ref::<T::GpuRepr>().ok_or(GpuError::Unsupported)?;
+            let g = gpu_arc
+                .downcast_ref::<T::GpuRepr>()
+                .or_else(|| {
+                    ErasedPayload::cross_dylib_ref::<T::GpuRepr>(
+                        gpu_arc.as_ref(),
+                        std::any::type_name::<T::GpuRepr>(),
+                    )
+                })
+                .ok_or(GpuError::Unsupported)?;
             let cpu = T::download(g, ctx)?;
             let _ = cell.cpu.set(Arc::new(cpu));
             Ok(ErasedPayload {
@@ -405,14 +508,17 @@ impl ErasedPayload {
             ErasedPayloadInner::Cached(cell) => {
                 // Conservatively clone; `take_cpu` is an optimization path and should remain correct
                 // under sharing/fanout.
-                let cpu = cell.cpu.get().ok_or_else(|| restore(ErasedPayloadInner::Cached(cell.clone())))?;
+                let cpu = cell
+                    .cpu
+                    .get()
+                    .ok_or_else(|| restore(ErasedPayloadInner::Cached(cell.clone())))?;
                 if let Some(v) = cpu.downcast_ref::<T>().cloned() {
                     return Ok(v);
                 }
-                if cpu_type_name == std::any::type_name::<T>() {
-                    if let Some(v) = Self::cross_dylib_ref::<T>(cpu.as_ref(), cpu_type_name) {
-                        return Ok(v.clone());
-                    }
+                if cpu_type_name == std::any::type_name::<T>()
+                    && let Some(v) = Self::cross_dylib_ref::<T>(cpu.as_ref(), cpu_type_name)
+                {
+                    return Ok(v.clone());
                 }
                 Err(restore(ErasedPayloadInner::Cached(cell.clone())))
             }
@@ -444,7 +550,10 @@ impl ErasedPayload {
 
         match inner {
             ErasedPayloadInner::Cached(cell) => {
-                let cpu = cell.cpu.get().ok_or_else(|| restore(ErasedPayloadInner::Cached(cell.clone())))?;
+                let cpu = cell
+                    .cpu
+                    .get()
+                    .ok_or_else(|| restore(ErasedPayloadInner::Cached(cell.clone())))?;
                 if let Some(v) = cpu.downcast_ref::<T>().cloned() {
                     return Ok(v);
                 }
@@ -468,6 +577,11 @@ impl ErasedPayload {
         let inner = cell.gpu.get()?;
         if let Some(v) = inner.downcast_ref::<T::GpuRepr>().cloned() {
             return Some(v);
+        }
+        if let Some(v) =
+            Self::cross_dylib_ref::<T::GpuRepr>(inner.as_ref(), std::any::type_name::<T::GpuRepr>())
+        {
+            return Some(v.clone());
         }
         if self.cpu_type_name != std::any::type_name::<T>() {
             return None;

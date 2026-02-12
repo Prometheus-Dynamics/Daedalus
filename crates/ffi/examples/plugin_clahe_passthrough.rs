@@ -1,8 +1,8 @@
 #![crate_type = "cdylib"]
 //! Minimal Rust FFI plugin that accepts a `Payload<DynamicImage>` and returns it unchanged.
 
-use daedalus::{ComputeAffinity, Payload, declare_plugin, ffi::export_plugin, macros::node};
 use daedalus::runtime::NodeError;
+use daedalus::{ComputeAffinity, Payload, declare_plugin, ffi::export_plugin, macros::node};
 use image::DynamicImage;
 
 declare_plugin!(

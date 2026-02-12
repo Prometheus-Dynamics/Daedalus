@@ -1,16 +1,16 @@
 //! Build + load the `plugin_clahe_passthrough` Rust cdylib and send a CPU DynamicImage payload
 //! into it via the host bridge, verifying the node can decode `Payload<DynamicImage>`.
 
+use daedalus::runtime::executor::EdgePayload;
 use daedalus::{
     ErasedPayload, NodeHandle, PluginLibrary, PortHandle,
     data::model::Value,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     graph_builder::GraphBuilder,
     host_bridge::install_host_bridge,
-    runtime::{host_bridge::HostBridgeManager},
+    runtime::host_bridge::HostBridgeManager,
     runtime::plugins::PluginRegistry,
 };
-use daedalus::runtime::executor::EdgePayload;
 use image::{DynamicImage, ImageBuffer, Rgba};
 use std::env;
 use std::path::PathBuf;
@@ -103,7 +103,10 @@ fn debug_runtime_plan(runtime_plan: &daedalus::runtime::RuntimePlan) {
     let mut edges: Vec<(String, String)> = Vec::new();
     for (from, from_port, to, to_port, _policy) in &runtime_plan.edges {
         if from.0 == host_idx {
-            edges.push((from_port.clone(), format!("{}:{}", runtime_plan.nodes[to.0].id, to_port)));
+            edges.push((
+                from_port.clone(),
+                format!("{}:{}", runtime_plan.nodes[to.0].id, to_port),
+            ));
         }
     }
     edges.sort();

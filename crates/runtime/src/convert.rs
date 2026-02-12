@@ -1,11 +1,14 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc, OnceLock, RwLock,
+    atomic::{AtomicU64, Ordering},
 };
 
-use image::{DynamicImage, GrayAlphaImage, GrayImage, ImageBuffer, Luma, LumaA, Rgb, RgbImage, Rgba, RgbaImage};
+use image::{
+    DynamicImage, GrayAlphaImage, GrayImage, ImageBuffer, Luma, LumaA, Rgb, RgbImage, Rgba,
+    RgbaImage,
+};
 
 /// Runtime conversion registry for common CPU-side types.
 ///
@@ -13,6 +16,9 @@ use image::{DynamicImage, GrayAlphaImage, GrayImage, ImageBuffer, Luma, LumaA, R
 /// at runtime if needed, while we ship a set of defaults (numeric widenings, image casts).
 type AnyArc = Arc<dyn Any + Send + Sync>;
 type ConvertFn = Arc<dyn Fn(&AnyArc) -> Option<AnyArc> + Send + Sync>;
+type ProgramKey = (TypeId, TypeId);
+type Program = Arc<[ConvertFn]>;
+type ProgramCache = HashMap<ProgramKey, Option<Program>>;
 
 pub struct ConversionRegistry {
     inner: HashMap<(TypeId, TypeId), ConvertFn>,
@@ -91,12 +97,7 @@ impl ConversionRegistry {
         Some(program)
     }
 
-    fn convert_arc_any(
-        &self,
-        a: &AnyArc,
-        to: TypeId,
-        program_cache: &mut ProgramCache,
-    ) -> Option<AnyArc> {
+    fn convert_arc_any(&self, a: &AnyArc, to: TypeId) -> Option<AnyArc> {
         let from = a.as_ref().type_id();
         if from == to {
             return Some(a.clone());
@@ -107,8 +108,8 @@ impl ConversionRegistry {
             return Some(out);
         }
 
-        // Cached conversion chain (thread-local).
-        let program = program_cache.program_for(self, from, to)?;
+        // Local conversion chain resolution (no global cache; this is not the hot path).
+        let program = self.resolve_program(from, to)?;
         let mut cur: AnyArc = a.clone();
         for step in program.iter() {
             cur = step(&cur)?;
@@ -123,9 +124,7 @@ impl ConversionRegistry {
             return Some(v.clone());
         }
 
-        // Local registry instance: resolve programs without TLS/versioning.
-        let mut cache = ProgramCache::default();
-        self.convert_arc_any(a, to, &mut cache)
+        self.convert_arc_any(a, to)
             .and_then(|out| out.downcast_ref::<T>().cloned())
     }
 }
@@ -139,6 +138,8 @@ impl Default for ConversionRegistry {
 struct RegistryState {
     version: AtomicU64,
     reg: RwLock<ConversionRegistry>,
+    programs: RwLock<ProgramCache>,
+    programs_version: AtomicU64,
 }
 
 /// Global registry with common conversions.
@@ -193,68 +194,58 @@ fn default_registry() -> &'static RegistryState {
         RegistryState {
             version: AtomicU64::new(1),
             reg: RwLock::new(reg),
+            programs: RwLock::new(ProgramCache::new()),
+            programs_version: AtomicU64::new(1),
         }
     })
 }
 
-#[derive(Default)]
-struct ProgramCache {
-    version: u64,
-    programs: HashMap<(TypeId, TypeId), Option<Arc<[ConvertFn]>>>,
-}
-
-impl ProgramCache {
-    fn sync_version(&mut self, version: u64) {
-        if self.version != version {
-            self.version = version;
-            self.programs.clear();
+fn with_program_cached<R>(from: TypeId, to: TypeId, f: impl FnOnce(&Program) -> R) -> Option<R> {
+    let state = default_registry();
+    let reg_version = state.version.load(Ordering::Relaxed);
+    let prog_version = state.programs_version.load(Ordering::Relaxed);
+    if reg_version != prog_version {
+        if let Ok(mut guard) = state.programs.write() {
+            guard.clear();
         }
+        state.programs_version.store(reg_version, Ordering::Relaxed);
     }
 
-    fn program_for(
-        &mut self,
-        reg: &ConversionRegistry,
-        from: TypeId,
-        to: TypeId,
-    ) -> Option<Arc<[ConvertFn]>> {
-        if let Some(cached) = self.programs.get(&(from, to)) {
-            return cached.clone();
-        }
-        if from == to {
-            let program: Arc<[ConvertFn]> = Arc::from([]);
-            self.programs.insert((from, to), Some(program.clone()));
-            return Some(program);
-        }
-        let resolved = reg.resolve_program(from, to);
-        self.programs.insert((from, to), resolved.clone());
-        resolved
+    if let Ok(guard) = state.programs.read()
+        && let Some(hit) = guard.get(&(from, to))
+    {
+        return hit.as_ref().map(|p| f(p));
     }
-}
 
-thread_local! {
-    static TLS_PROGRAM_CACHE: std::cell::RefCell<ProgramCache> = std::cell::RefCell::new(ProgramCache::default());
-}
+    let reg_guard = state.reg.read().ok()?;
+    let resolved: Option<Program> = if from == to {
+        Some(Arc::from([] as [ConvertFn; 0]))
+    } else {
+        reg_guard.resolve_program(from, to)
+    };
 
-fn with_tls_program_cache<R>(f: impl FnOnce(&mut ProgramCache) -> R) -> R {
-    TLS_PROGRAM_CACHE.with(|cell| {
-        let mut guard = cell.borrow_mut();
-        f(&mut guard)
-    })
+    if let Ok(mut guard) = state.programs.write() {
+        guard.insert((from, to), resolved.clone());
+    }
+    resolved.as_ref().map(|p| f(p))
 }
 
 /// Attempt to convert an `Arc<dyn Any>` into `T` using the default registry.
 pub fn convert_arc<T: Any + Clone + Send + Sync + 'static>(
     a: &Arc<dyn Any + Send + Sync>,
 ) -> Option<T> {
-    let state = default_registry();
-    let version = state.version.load(Ordering::Relaxed);
-    let reg_guard = state.reg.read().ok()?;
-    with_tls_program_cache(|cache| {
-        cache.sync_version(version);
-        reg_guard
-            .convert_arc_any(a, TypeId::of::<T>(), cache)
-            .and_then(|out| out.downcast_ref::<T>().cloned())
-    })
+    let to = TypeId::of::<T>();
+    if let Some(v) = a.downcast_ref::<T>() {
+        return Some(v.clone());
+    }
+    let from = a.as_ref().type_id();
+    with_program_cached(from, to, |program| {
+        let mut cur: Arc<dyn Any + Send + Sync> = a.clone();
+        for step in program.iter() {
+            cur = step(&cur)?;
+        }
+        cur.downcast_ref::<T>().cloned()
+    })?
 }
 
 /// Convert an `Arc<dyn Any>` to a target type id, returning an `Arc<dyn Any>`.
@@ -265,13 +256,25 @@ pub fn convert_any_arc(
     a: &Arc<dyn Any + Send + Sync>,
     to: TypeId,
 ) -> Option<Arc<dyn Any + Send + Sync>> {
+    let from = a.as_ref().type_id();
+    if from == to {
+        return Some(a.clone());
+    }
+    // Fast path: direct conversion.
     let state = default_registry();
-    let version = state.version.load(Ordering::Relaxed);
-    let reg_guard = state.reg.read().ok()?;
-    with_tls_program_cache(|cache| {
-        cache.sync_version(version);
-        reg_guard.convert_arc_any(a, to, cache)
-    })
+    if let Ok(reg_guard) = state.reg.read()
+        && let Some(out) = reg_guard.convert_direct(a, to)
+    {
+        return Some(out);
+    }
+
+    with_program_cached(from, to, |program| {
+        let mut cur: Arc<dyn Any + Send + Sync> = a.clone();
+        for step in program.iter() {
+            cur = step(&cur)?;
+        }
+        Some(cur)
+    })?
 }
 
 /// Convert an `Arc<dyn Any>` to `Arc<T>` using the default registry.
@@ -296,6 +299,8 @@ where
     if let Ok(mut reg) = state.reg.write() {
         reg.register::<S, T>(f);
         state.version.fetch_add(1, Ordering::Relaxed);
+        // Clear the global program cache on next use.
+        state.programs_version.fetch_add(1, Ordering::Relaxed);
     }
 }
 

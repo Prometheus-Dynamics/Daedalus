@@ -3,7 +3,14 @@ use std::sync::Arc;
 use crate::traits::GpuBackend;
 use crate::{GpuContextHandle, GpuError};
 
-use super::{BindingData, BindingSpec, Prepared, ShaderBinding, temp_pool};
+use super::{Access, BindingData, BindingSpec, Prepared, ShaderBinding, temp_pool};
+
+fn should_register_texture_handle(binding: &ShaderBinding, layout: &BindingSpec) -> bool {
+    if binding.readback {
+        return false;
+    }
+    matches!(layout.access, Access::WriteOnly | Access::ReadWrite)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_texture_binding(
@@ -69,15 +76,19 @@ pub(super) fn prepare_texture_binding(
                     view_formats: &[],
                 }))
             };
-            let tex_handle = backend.and_then(|b| {
-                b.wgpu_register_texture(
-                    texture.clone(),
-                    wgpu::TextureFormat::Rgba8Unorm,
-                    *width,
-                    *height,
-                    usage,
-                )
-            });
+            let tex_handle = if should_register_texture_handle(binding, layout) {
+                backend.and_then(|b| {
+                    b.wgpu_register_texture(
+                        texture.clone(),
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        *width,
+                        *height,
+                        usage,
+                    )
+                })
+            } else {
+                None
+            };
             let bytes_per_row = (*width as usize) * 4;
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
             let padded_bpr = bytes_per_row.div_ceil(align) * align;
@@ -159,9 +170,13 @@ pub(super) fn prepare_texture_binding(
                     view_formats: &[],
                 }))
             };
-            let tex_handle = backend.and_then(|b| {
-                b.wgpu_register_texture(texture.clone(), format, *width, *height, usage)
-            });
+            let tex_handle = if should_register_texture_handle(binding, layout) {
+                backend.and_then(|b| {
+                    b.wgpu_register_texture(texture.clone(), format, *width, *height, usage)
+                })
+            } else {
+                None
+            };
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             Ok(Prepared::Texture {
                 spec: *layout,
@@ -241,15 +256,19 @@ pub(super) fn prepare_texture_binding(
                     view_formats: &[],
                 }))
             };
-            let tex_handle = backend.and_then(|b| {
-                b.wgpu_register_texture(
-                    texture.clone(),
-                    wgpu::TextureFormat::Rgba8Unorm,
-                    handle.width,
-                    handle.height,
-                    usage,
-                )
-            });
+            let tex_handle = if should_register_texture_handle(binding, layout) {
+                backend.and_then(|b| {
+                    b.wgpu_register_texture(
+                        texture.clone(),
+                        wgpu::TextureFormat::Rgba8Unorm,
+                        handle.width,
+                        handle.height,
+                        usage,
+                    )
+                })
+            } else {
+                None
+            };
             let bytes_per_row = (handle.width as usize) * 4;
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
             let padded_bpr = bytes_per_row.div_ceil(align) * align;

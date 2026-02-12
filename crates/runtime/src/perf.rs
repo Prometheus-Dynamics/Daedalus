@@ -15,7 +15,7 @@ static NODE_PERF_ENABLED: OnceLock<bool> = OnceLock::new();
 static NODE_PERF_AVAILABLE: AtomicBool = AtomicBool::new(true);
 
 pub fn node_perf_enabled() -> bool {
-    if !cfg!(all(target_os = "linux")) {
+    if !cfg!(target_os = "linux") {
         return false;
     }
     if !NODE_PERF_AVAILABLE.load(Ordering::Relaxed) {
@@ -33,19 +33,24 @@ pub fn disable_node_perf() -> bool {
 fn env_flag(name: &str) -> bool {
     std::env::var(name)
         .ok()
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
-#[cfg(all(target_os = "linux"))]
+#[cfg(target_os = "linux")]
 pub struct PerfCounterGuard {
     fds: [std::os::unix::io::RawFd; 3],
 }
 
-#[cfg(not(all(target_os = "linux")))]
+#[cfg(not(target_os = "linux"))]
 pub struct PerfCounterGuard;
 
-#[cfg(all(target_os = "linux"))]
+#[cfg(target_os = "linux")]
 impl PerfCounterGuard {
     pub fn start() -> io::Result<Self> {
         let cache_fd = sys::open_counter(sys::PERF_COUNT_HW_CACHE_MISSES, -1)?;
@@ -87,7 +92,7 @@ impl PerfCounterGuard {
     }
 }
 
-#[cfg(all(target_os = "linux"))]
+#[cfg(target_os = "linux")]
 impl Drop for PerfCounterGuard {
     fn drop(&mut self) {
         for fd in &self.fds {
@@ -96,7 +101,7 @@ impl Drop for PerfCounterGuard {
     }
 }
 
-#[cfg(not(all(target_os = "linux")))]
+#[cfg(not(target_os = "linux"))]
 impl PerfCounterGuard {
     pub fn start() -> io::Result<Self> {
         Err(io::Error::new(
@@ -113,7 +118,7 @@ impl PerfCounterGuard {
     }
 }
 
-#[cfg(all(target_os = "linux"))]
+#[cfg(target_os = "linux")]
 mod sys {
     use super::*;
 
@@ -156,12 +161,20 @@ mod sys {
         __reserved_2: u16,
     }
 
-    pub fn open_counter(config: u64, group_fd: std::os::unix::io::RawFd) -> io::Result<std::os::unix::io::RawFd> {
-        let mut attr = PerfEventAttr::default();
-        attr.type_ = PERF_TYPE_HARDWARE;
-        attr.size = std::mem::size_of::<PerfEventAttr>() as u32;
-        attr.config = config;
-        attr.flags = PERF_ATTR_DISABLED | PERF_ATTR_INHERIT | PERF_ATTR_EXCLUDE_KERNEL | PERF_ATTR_EXCLUDE_HV;
+    pub fn open_counter(
+        config: u64,
+        group_fd: std::os::unix::io::RawFd,
+    ) -> io::Result<std::os::unix::io::RawFd> {
+        let mut attr = PerfEventAttr {
+            type_: PERF_TYPE_HARDWARE,
+            size: std::mem::size_of::<PerfEventAttr>() as u32,
+            config,
+            flags: PERF_ATTR_DISABLED
+                | PERF_ATTR_INHERIT
+                | PERF_ATTR_EXCLUDE_KERNEL
+                | PERF_ATTR_EXCLUDE_HV,
+            ..Default::default()
+        };
 
         let fd = unsafe {
             libc::syscall(

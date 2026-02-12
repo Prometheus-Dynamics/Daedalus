@@ -160,7 +160,10 @@ mod graph_metadata_serde {
             JsonValue::Object(map) => {
                 let mut entries = Vec::with_capacity(map.len());
                 for (k, v) in map {
-                    entries.push((daedalus_data::model::Value::String(k.into()), json_to_value(v)?));
+                    entries.push((
+                        daedalus_data::model::Value::String(k.into()),
+                        json_to_value(v)?,
+                    ));
                 }
                 daedalus_data::model::Value::Map(entries)
             }
@@ -215,7 +218,10 @@ mod graph_metadata_serde {
                         entries
                             .iter()
                             .map(|(k, v)| {
-                                JsonValue::Array(vec![value_to_plain_json(k), value_to_plain_json(v)])
+                                JsonValue::Array(vec![
+                                    value_to_plain_json(k),
+                                    value_to_plain_json(v),
+                                ])
                             })
                             .collect(),
                     )

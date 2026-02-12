@@ -46,7 +46,9 @@ pub fn map_view_dimension(view: &str) -> Option<TokenStream2> {
 pub fn map_sampler_kind(kind: &str) -> Option<TokenStream2> {
     match kind.to_ascii_lowercase().as_str() {
         "comparison" => Some(quote::quote! { ::daedalus::gpu::shader::SamplerKind::Comparison }),
-        "nonfiltering" => Some(quote::quote! { ::daedalus::gpu::shader::SamplerKind::NonFiltering }),
+        "nonfiltering" => {
+            Some(quote::quote! { ::daedalus::gpu::shader::SamplerKind::NonFiltering })
+        }
         "filtering" | "nearest" | "linear" => {
             Some(quote::quote! { ::daedalus::gpu::shader::SamplerKind::Filtering })
         }

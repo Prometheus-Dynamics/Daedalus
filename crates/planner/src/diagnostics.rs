@@ -27,6 +27,8 @@ pub struct DiagnosticSpan {
 pub enum DiagnosticCode {
     NodeMissing,
     PortMissing,
+    PortExtra,
+    PortDuplicate,
     UnresolvedInput,
     ConverterMissing,
     TypeMismatch,
@@ -88,11 +90,7 @@ impl Diagnostic {
     }
 
     /// Attach machine-readable metadata to the diagnostic (for UI repair workflows).
-    pub fn with_meta(
-        mut self,
-        key: impl Into<String>,
-        value: daedalus_data::model::Value,
-    ) -> Self {
+    pub fn with_meta(mut self, key: impl Into<String>, value: daedalus_data::model::Value) -> Self {
         self.metadata.insert(key.into(), value);
         self
     }
@@ -104,6 +102,8 @@ pub struct DiagnosticsBundle {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_groups: Vec<MissingGroup>,
     pub missing_ports: Vec<MissingPort>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_ports: Vec<MissingPort>,
     pub type_mismatches: Vec<TypeMismatch>,
 }
 
@@ -181,7 +181,10 @@ pub fn bundle(diagnostics: &[Diagnostic]) -> DiagnosticsBundle {
                         suggestions,
                     });
                 } else if !node_id.is_empty() {
-                    out.missing_nodes.push(MissingNode { node_id, suggestions });
+                    out.missing_nodes.push(MissingNode {
+                        node_id,
+                        suggestions,
+                    });
                 }
             }
             DiagnosticCode::PortMissing => {
@@ -231,12 +234,63 @@ pub fn bundle(diagnostics: &[Diagnostic]) -> DiagnosticsBundle {
                     });
                 }
             }
+            DiagnosticCode::PortExtra | DiagnosticCode::PortDuplicate => {
+                let node_id = diag.span.node.clone().unwrap_or_default();
+                let port = diag
+                    .metadata
+                    .get("extra_port")
+                    .and_then(|v| match v {
+                        daedalus_data::model::Value::String(s) => Some(s.to_string()),
+                        _ => None,
+                    })
+                    .or_else(|| diag.span.port.clone())
+                    .unwrap_or_default();
+                let direction = diag
+                    .metadata
+                    .get("extra_port_direction")
+                    .and_then(|v| match v {
+                        daedalus_data::model::Value::String(s) => {
+                            let trimmed = s.trim();
+                            (!trimmed.is_empty()).then(|| trimmed.to_string())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+                let available = diag
+                    .metadata
+                    .get("available_ports")
+                    .and_then(|v| match v {
+                        daedalus_data::model::Value::List(items) => Some(
+                            items
+                                .iter()
+                                .filter_map(|v| match v {
+                                    daedalus_data::model::Value::String(s) => Some(s.to_string()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                if !node_id.is_empty() && !port.is_empty() {
+                    out.extra_ports.push(MissingPort {
+                        node_id,
+                        port,
+                        direction,
+                        available,
+                    });
+                }
+            }
             DiagnosticCode::TypeMismatch => {
                 let node_id = diag.span.node.clone().unwrap_or_default();
                 let port = diag.span.port.clone().unwrap_or_default();
                 let detail = diag.message.clone();
                 if !node_id.is_empty() {
-                    out.type_mismatches.push(TypeMismatch { node_id, port, detail });
+                    out.type_mismatches.push(TypeMismatch {
+                        node_id,
+                        port,
+                        detail,
+                    });
                 }
             }
             _ => {}

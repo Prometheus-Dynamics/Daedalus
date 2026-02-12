@@ -1,19 +1,19 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use daedalus_data::model::Value;
 use daedalus_planner::{ComputeAffinity, NodeRef};
 
 use crate::HOST_BRIDGE_META_KEY;
-use crate::executor::crash_diag;
+use crate::NodeError;
 #[cfg(feature = "gpu")]
 use crate::executor::EdgePayload;
+use crate::executor::crash_diag;
 use crate::io::NodeIo;
 use crate::perf;
-use crate::NodeError;
 use crate::state::ExecutionContext;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -58,10 +58,8 @@ use super::errors::ExecuteError;
 use super::{EdgePolicyKind, EdgeStorage, ExecutionTelemetry, MaybeGpu, RuntimeSegment};
 
 #[cfg(not(feature = "executor-pool"))]
-#[cfg(not(feature = "executor-pool"))]
 use super::{Executor, edge_maps};
-#[cfg(not(feature = "executor-pool"))]
-use crate::{HostBridgeManager, bridge_handler};
+use crate::bridge_handler;
 #[cfg(not(feature = "executor-pool"))]
 use std::collections::VecDeque;
 #[cfg(not(feature = "executor-pool"))]
@@ -69,6 +67,13 @@ use std::thread;
 
 #[allow(clippy::type_complexity)]
 type PolicyList = Vec<(NodeRef, String, NodeRef, String, EdgePolicyKind)>;
+
+fn is_host_bridge(node: &crate::plan::RuntimeNode) -> bool {
+    matches!(
+        node.metadata.get(HOST_BRIDGE_META_KEY),
+        Some(daedalus_data::model::Value::Bool(true))
+    )
+}
 
 #[cfg(not(feature = "executor-pool"))]
 pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
@@ -287,7 +292,13 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         let mut ready: Vec<usize> = indegree
             .iter()
             .enumerate()
-            .filter_map(|(i, deg)| if *deg == 0 && segment_active[i] { Some(i) } else { None })
+            .filter_map(|(i, deg)| {
+                if *deg == 0 && segment_active[i] {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
             .collect();
         ready.sort_by_key(|sid| segment_rank.get(*sid).copied().unwrap_or(usize::MAX));
         let mut ready: VecDeque<usize> = ready.into();
@@ -338,7 +349,6 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                 let host_outputs_in_graph = host_outputs_in_graph_flag;
                 let host_bridges = host_bridges_for_workers.clone();
                 let failed_nodes = failed_nodes.clone();
-                let fail_fast = fail_fast;
                 scope.spawn(move || {
                     let res = run_segment_external(
                         &nodes,
@@ -457,41 +467,43 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         Ok::<(), ExecuteError>(())
     })?;
 
-    // Post-pass: capture outputs for host bridges.
-    if !host_outputs_in_graph {
-        run_host_bridges(
-            &nodes,
-            &host_nodes,
-            &segment_of,
-            &incoming,
-            &outgoing,
-            &queues,
-            &warnings,
-            &policies,
-            &const_inputs,
-            const_coercers,
-            output_movers,
-            any_conversion_cache.clone(),
-            #[cfg(feature = "gpu")]
-            materialization_cache.clone(),
-            &mut telemetry,
-            backpressure,
-            &graph_start,
-            #[cfg(feature = "gpu")]
-            &gpu_entry_set,
-            #[cfg(feature = "gpu")]
-            &gpu_exit_set,
-            #[cfg(feature = "gpu")]
-            &payload_edges,
-            gpu,
-            host_bridges,
-            state,
-            graph_metadata,
-            &failed_nodes,
-            fail_fast,
-            HostBridgePhase::Post,
-        )?;
-    }
+    // Post-pass: always capture outputs for host bridges.
+    //
+    // Even when `host_outputs_in_graph` is enabled, schedule ordering can execute
+    // `io.host_output` before its producers in demand-driven graphs. Running a final
+    // post-pass guarantees late-produced payloads are drained to host outputs.
+    run_host_bridges(
+        &nodes,
+        &host_nodes,
+        &segment_of,
+        &incoming,
+        &outgoing,
+        &queues,
+        &warnings,
+        &policies,
+        &const_inputs,
+        const_coercers,
+        output_movers,
+        any_conversion_cache.clone(),
+        #[cfg(feature = "gpu")]
+        materialization_cache.clone(),
+        &mut telemetry,
+        backpressure,
+        &graph_start,
+        #[cfg(feature = "gpu")]
+        &gpu_entry_set,
+        #[cfg(feature = "gpu")]
+        &gpu_exit_set,
+        #[cfg(feature = "gpu")]
+        &payload_edges,
+        gpu,
+        host_bridges,
+        state,
+        graph_metadata,
+        &failed_nodes,
+        fail_fast,
+        HostBridgePhase::Post,
+    )?;
 
     telemetry.graph_duration = graph_start.elapsed();
     telemetry.aggregate_groups(&nodes);
@@ -501,14 +513,6 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
     }
 
     Ok(telemetry)
-}
-
-#[cfg(not(feature = "executor-pool"))]
-fn is_host_bridge(node: &crate::plan::RuntimeNode) -> bool {
-    matches!(
-        node.metadata.get(HOST_BRIDGE_META_KEY),
-        Some(daedalus_data::model::Value::Bool(true))
-    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -533,7 +537,7 @@ fn run_host_bridges(
     queues: &Arc<Vec<EdgeStorage>>,
     warnings_seen: &Arc<Mutex<HashSet<String>>>,
     policies: &Arc<PolicyList>,
-    const_inputs: &Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
+    const_inputs: &super::ConstInputStore,
     const_coercers: Option<crate::io::ConstCoercerMap>,
     output_movers: Option<crate::io::OutputMoverMap>,
     any_conversion_cache: crate::io::AnyConversionCacheHandle,
@@ -545,7 +549,7 @@ fn run_host_bridges(
     #[cfg(feature = "gpu")] gpu_exit_set: &Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")] payload_edges: &Arc<HashSet<usize>>,
     gpu: MaybeGpu,
-    host_mgr: Option<HostBridgeManager>,
+    host_mgr: Option<crate::HostBridgeManager>,
     state: crate::state::StateStore,
     graph_metadata: Arc<BTreeMap<String, Value>>,
     failed_nodes: &Arc<Vec<AtomicBool>>,
@@ -655,6 +659,13 @@ fn run_host_bridges(
             .get(node_ref.0)
             .map(|inputs| inputs.as_slice())
             .unwrap_or(&[]);
+        let use_best_effort_host_output_sync =
+            matches!(phase, HostBridgePhase::Post) && node.id.ends_with("io.host_output");
+        let host_sync_groups = if use_best_effort_host_output_sync {
+            Vec::new()
+        } else {
+            node.sync_groups.clone()
+        };
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -662,7 +673,7 @@ fn run_host_bridges(
             queues,
             warnings_seen,
             policies,
-            node.sync_groups.clone(),
+            host_sync_groups.clone(),
             gpu_entry_set,
             gpu_exit_set,
             payload_edges,
@@ -686,7 +697,7 @@ fn run_host_bridges(
             queues,
             warnings_seen,
             policies,
-            node.sync_groups.clone(),
+            host_sync_groups,
             segment_of.get(node_ref.0).copied().unwrap_or(0),
             node_ref.0,
             node.id.clone(),
@@ -698,7 +709,10 @@ fn run_host_bridges(
             any_conversion_cache.clone(),
         );
 
-        if matches!(phase, HostBridgePhase::Post) && !io.sync_groups().is_empty() && io.inputs().is_empty() {
+        if matches!(phase, HostBridgePhase::Post)
+            && !io.sync_groups().is_empty()
+            && io.inputs().is_empty()
+        {
             continue;
         }
         if matches!(phase, HostBridgePhase::Post) && has_incoming {
@@ -745,11 +759,10 @@ fn run_host_bridges(
         if let Some(sample) = perf_sample {
             telemetry.record_node_perf(node_ref.0, sample);
         }
-        if let Some(cpu_start) = cpu_start {
-            if let Some(cpu_end) = crate::executor::thread_cpu_time() {
-                telemetry
-                    .record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
-            }
+        if let Some(cpu_start) = cpu_start
+            && let Some(cpu_end) = crate::executor::thread_cpu_time()
+        {
+            telemetry.record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
         }
         telemetry.record_node_duration(node_ref.0, elapsed);
         telemetry.record_trace_event(
@@ -808,7 +821,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
     seg_idx: usize,
     backpressure: crate::plan::BackpressureStrategy,
     gpu_available: bool,
-    const_inputs: &Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
+    const_inputs: &super::ConstInputStore,
     const_coercers: Option<crate::io::ConstCoercerMap>,
     output_movers: Option<crate::io::OutputMoverMap>,
     any_conversion_cache: crate::io::AnyConversionCacheHandle,
@@ -930,7 +943,9 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     &queues,
                     warnings_seen,
                     policies,
-                    node.sync_groups.clone(),
+                    // Host output nodes are "best effort" sinks: drain/forward whatever is
+                    // available, without sync-group alignment across ports.
+                    Vec::new(),
                     gpu_entry_set,
                     gpu_exit_set,
                     payload_edges,
@@ -954,7 +969,9 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     &queues,
                     warnings_seen,
                     policies,
-                    node.sync_groups.clone(),
+                    // Host output nodes are "best effort" sinks: drain/forward whatever is
+                    // available, without sync-group alignment across ports.
+                    Vec::new(),
                     seg_idx,
                     node_ref.0,
                     node.id.clone(),
@@ -965,10 +982,6 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     output_movers.clone(),
                     any_conversion_cache.clone(),
                 );
-                if !io.sync_groups().is_empty() && io.inputs().is_empty() {
-                    continue;
-                }
-
                 let cpu_start = if metrics_level.is_detailed() {
                     crate::executor::thread_cpu_time()
                 } else {
@@ -991,16 +1004,20 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                 let run_result = bridge(node, &ctx, &mut io);
                 let elapsed = node_start.elapsed();
                 let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
-                let flush_error = if run_result.is_ok() { io.flush().err() } else { None };
+                let flush_error = if run_result.is_ok() {
+                    io.flush().err()
+                } else {
+                    None
+                };
                 drop(io);
 
                 if let Some(sample) = perf_sample {
                     telem.record_node_perf(node_ref.0, sample);
                 }
-                if let Some(cpu_start) = cpu_start {
-                    if let Some(cpu_end) = crate::executor::thread_cpu_time() {
-                        telem.record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
-                    }
+                if let Some(cpu_start) = cpu_start
+                    && let Some(cpu_end) = crate::executor::thread_cpu_time()
+                {
+                    telem.record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
                 }
                 telem.record_node_duration(node_ref.0, elapsed);
                 telem.record_trace_event(
@@ -1148,7 +1165,10 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     node_ref.0,
                     node.id,
                     node.label,
-                    io.inputs().iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+                    io.inputs()
+                        .iter()
+                        .map(|(p, _)| p.as_str())
+                        .collect::<Vec<_>>(),
                 );
             }
         }
@@ -1171,8 +1191,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             }
             continue;
         }
-        let run_result = match catch_unwind(AssertUnwindSafe(|| handler.run(node, &ctx, &mut io)))
-        {
+        let run_result = match catch_unwind(AssertUnwindSafe(|| handler.run(node, &ctx, &mut io))) {
             Ok(r) => r,
             Err(p) => {
                 let msg = if let Some(s) = p.downcast_ref::<&str>() {
@@ -1211,10 +1230,10 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
         if let Some(sample) = perf_sample {
             telem.record_node_perf(node_ref.0, sample);
         }
-        if let Some(cpu_start) = cpu_start {
-            if let Some(cpu_end) = crate::executor::thread_cpu_time() {
-                telem.record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
-            }
+        if let Some(cpu_start) = cpu_start
+            && let Some(cpu_end) = crate::executor::thread_cpu_time()
+        {
+            telem.record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
         }
         telem.record_node_duration(node_ref.0, elapsed);
         telem.record_trace_event(

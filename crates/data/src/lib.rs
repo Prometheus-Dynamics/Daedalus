@@ -15,9 +15,12 @@
 //! - `proto`: proto3 type emission.
 
 pub mod convert;
+pub mod daedalus_type;
 pub mod descriptor;
 pub mod errors;
 pub mod model;
+pub mod named_types;
+pub mod to_value;
 pub mod typing;
 pub mod units;
 
@@ -33,9 +36,12 @@ pub mod schema;
 pub mod gpu;
 
 pub mod prelude {
+    pub use crate::daedalus_type::DaedalusTypeExpr;
     pub use crate::descriptor::{
         DataDescriptor, DescriptorId, DescriptorVersion, GpuHints, MemoryLocation,
     };
     pub use crate::errors::{DataError, DataErrorCode, DataResult};
     pub use crate::model::{EnumValue, StructFieldValue, TypeExpr, Value, ValueRef, ValueType};
+    pub use crate::named_types::{HostExportPolicy, NamedType};
+    pub use crate::to_value::ToValue;
 }

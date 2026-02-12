@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-mod errors;
 mod crash_diag;
+mod errors;
 mod handler;
 mod parallel;
 mod payload;
@@ -20,8 +20,8 @@ pub use errors::{ExecuteError, NodeError};
 pub use handler::NodeHandler;
 pub use payload::{CorrelatedPayload, EdgePayload, next_correlation_id};
 pub use queue::EdgeStorage;
-pub use telemetry::{EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeFailure, NodeMetrics};
 pub(crate) use telemetry::payload_size_bytes;
+pub use telemetry::{EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeFailure, NodeMetrics};
 /// Runtime executor for planner-generated runtime plans.
 ///
 /// ```no_run
@@ -61,7 +61,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) gpu_edges: &'a [()],
     pub(crate) segments: &'a [RuntimeSegment],
     pub(crate) schedule_order: &'a [NodeRef],
-    pub(crate) const_inputs: Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
+    pub(crate) const_inputs: ConstInputStore,
     pub(crate) backpressure: BackpressureStrategy,
     pub(crate) handler: Arc<H>,
     pub(crate) state: StateStore,
@@ -89,6 +89,10 @@ type MaybeGpu = Option<daedalus_gpu::GpuContextHandle>;
 #[cfg(not(feature = "gpu"))]
 type MaybeGpu = Option<()>;
 
+pub type NodeConstInputs = Vec<(String, daedalus_data::model::Value)>;
+pub type ConstInputs = Vec<NodeConstInputs>;
+pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
+
 type EdgeSpec = (NodeRef, String, NodeRef, String, EdgePolicyKind);
 
 impl<'a, H: NodeHandler> Executor<'a, H> {
@@ -109,9 +113,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
                 {
                     panic!(
                         "daedalus-runtime: stable_id collision: id='{}' and id='{}' map to {:x}",
-                        prev,
-                        n.id,
-                        n.stable_id
+                        prev, n.id, n.stable_id
                     );
                 }
             }
@@ -176,6 +178,25 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
+    /// Enable demand-driven execution by selecting a set of sink nodes/ports and computing the
+    /// upstream closure.
+    ///
+    /// This is the core "responsiveness" knob: it prevents unrelated slow branches from dragging
+    /// down outputs the UI is currently watching.
+    pub fn with_demand_sinks(mut self, sinks: Vec<crate::plan::RuntimeSink>) -> Self {
+        match crate::plan::active_nodes_mask_for_sinks(self.nodes.as_ref(), self.edges, &sinks) {
+            Ok(mask) => {
+                self.active_nodes = Some(Arc::new(mask));
+            }
+            Err(err) => {
+                // If the selector can't be resolved, keep the graph running rather than silently
+                // disabling everything. Callers that need strictness can validate up-front.
+                log::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
+            }
+        }
+        self
+    }
+
     /// Execute host output nodes in-graph (more responsive outputs).
     pub fn with_host_outputs_in_graph(mut self, enabled: bool) -> Self {
         self.host_outputs_in_graph = enabled;
@@ -236,8 +257,11 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
     /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
     pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
-        let mut guard = self.const_inputs.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        apply_patch_to_const_inputs(patch, &self.nodes, &mut guard)
+        let mut guard = self
+            .const_inputs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        apply_patch_to_const_inputs(patch, &self.nodes, guard.as_mut_slice())
     }
 
     /// Attach a host bridge manager to enable implicit host I/O nodes.
@@ -426,7 +450,7 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) gpu_edges: Arc<Vec<()>>,
     pub(crate) segments: Arc<Vec<RuntimeSegment>>,
     pub(crate) schedule_order: Arc<Vec<NodeRef>>,
-    pub(crate) const_inputs: Arc<RwLock<Vec<Vec<(String, daedalus_data::model::Value)>>>>,
+    pub(crate) const_inputs: ConstInputStore,
     pub(crate) backpressure: BackpressureStrategy,
     pub(crate) handler: Arc<H>,
     pub(crate) state: StateStore,
@@ -462,9 +486,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                 {
                     panic!(
                         "daedalus-runtime: stable_id collision: id='{}' and id='{}' map to {:x}",
-                        prev,
-                        n.id,
-                        n.stable_id
+                        prev, n.id, n.stable_id
                     );
                 }
             }
@@ -522,6 +544,24 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         debug_assert_eq!(active_nodes.len(), self.nodes.len());
         if active_nodes.len() == self.nodes.len() {
             self.active_nodes = Some(Arc::new(active_nodes));
+        }
+        self
+    }
+
+    /// Enable demand-driven execution by selecting a set of sink nodes/ports and computing the
+    /// upstream closure.
+    pub fn with_demand_sinks(mut self, sinks: Vec<crate::plan::RuntimeSink>) -> Self {
+        match crate::plan::active_nodes_mask_for_sinks(
+            self.nodes.as_ref(),
+            self.edges.as_slice(),
+            &sinks,
+        ) {
+            Ok(mask) => {
+                self.active_nodes = Some(Arc::new(mask));
+            }
+            Err(err) => {
+                log::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
+            }
         }
         self
     }
@@ -678,15 +718,18 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
     pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
-        let mut guard = self.const_inputs.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        apply_patch_to_const_inputs(patch, &self.nodes, &mut guard)
+        let mut guard = self
+            .const_inputs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        apply_patch_to_const_inputs(patch, &self.nodes, guard.as_mut_slice())
     }
 }
 
 fn apply_patch_to_const_inputs(
     patch: &GraphPatch,
     nodes: &[RuntimeNode],
-    const_inputs: &mut Vec<Vec<(String, daedalus_data::model::Value)>>,
+    const_inputs: &mut [NodeConstInputs],
 ) -> PatchReport {
     let mut report = PatchReport::default();
     for op in &patch.ops {

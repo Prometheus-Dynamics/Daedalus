@@ -3,8 +3,8 @@ use std::env;
 #[cfg(feature = "config-env")]
 use serde::{Deserialize, Serialize};
 
-use daedalus_runtime::{BackpressureStrategy, EdgePolicyKind, MetricsLevel};
 use daedalus_runtime::RuntimeSink;
+use daedalus_runtime::{BackpressureStrategy, EdgePolicyKind, MetricsLevel};
 
 /// GPU backend selection; device requires the `gpu` feature.
 ///
@@ -107,7 +107,10 @@ pub struct RuntimeSection {
     /// Active sinks to compute when `demand_driven` is enabled.
     ///
     /// When empty, the engine falls back to full-graph execution.
-    #[cfg_attr(feature = "config-env", serde(default, skip_serializing_if = "Vec::is_empty"))]
+    #[cfg_attr(
+        feature = "config-env",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
     pub demand_sinks: Vec<RuntimeSink>,
     #[cfg_attr(feature = "config-env", serde(default))]
     pub pool_size: Option<usize>,
@@ -259,10 +262,8 @@ impl EngineConfig {
             "DAEDALUS_RUNTIME_HOST_OUTPUTS_IN_GRAPH",
             cfg.runtime.host_outputs_in_graph,
         )?;
-        cfg.runtime.demand_driven = read_bool(
-            "DAEDALUS_RUNTIME_DEMAND_DRIVEN",
-            cfg.runtime.demand_driven,
-        )?;
+        cfg.runtime.demand_driven =
+            read_bool("DAEDALUS_RUNTIME_DEMAND_DRIVEN", cfg.runtime.demand_driven)?;
         if let Ok(raw) = env::var("DAEDALUS_METRICS_LEVEL") {
             cfg.runtime.metrics_level = match raw.to_ascii_lowercase().as_str() {
                 "off" => MetricsLevel::Off,

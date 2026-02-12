@@ -6,16 +6,16 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-use std::time::Instant;
-use std::sync::{OnceLock, RwLock};
 use std::sync::Mutex;
+use std::sync::{OnceLock, RwLock};
+use std::time::Instant;
 
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_data::typing;
 #[cfg(feature = "gpu")]
 use image::{DynamicImage, GrayAlphaImage, GrayImage, RgbImage, RgbaImage};
 
-use crate::executor::queue::{apply_policy, apply_policy_owned, ApplyPolicyOwnedArgs};
+use crate::executor::queue::{ApplyPolicyOwnedArgs, apply_policy, apply_policy_owned};
 use crate::executor::{
     CorrelatedPayload, EdgePayload, EdgeStorage, ExecutionTelemetry, next_correlation_id,
 };
@@ -44,9 +44,7 @@ pub type ConstCoercer = Box<
 pub type ConstCoercerMap = Arc<RwLock<HashMap<&'static str, ConstCoercer>>>;
 
 static GLOBAL_CONST_COERCERS: OnceLock<ConstCoercerMap> = OnceLock::new();
-type OutputMover = Box<
-    dyn Fn(Box<dyn Any + Send + Sync>) -> EdgePayload + Send + Sync + 'static
->;
+type OutputMover = Box<dyn Fn(Box<dyn Any + Send + Sync>) -> EdgePayload + Send + Sync + 'static>;
 pub type OutputMoverMap = Arc<RwLock<HashMap<TypeId, OutputMover>>>;
 static OUTPUT_MOVERS: OnceLock<OutputMoverMap> = OnceLock::new();
 
@@ -71,8 +69,7 @@ pub(crate) fn new_materialization_cache() -> MaterializationCacheHandle {
 ///
 /// Keyed by (source_any_ptr, target_type_id) so a single producer feeding multiple consumers
 /// doesn't redo expensive conversions/materializations N times.
-pub(crate) type AnyConversionCache =
-    HashMap<(usize, TypeId), Arc<dyn Any + Send + Sync>>;
+pub(crate) type AnyConversionCache = HashMap<(usize, TypeId), Arc<dyn Any + Send + Sync>>;
 
 pub(crate) type AnyConversionCacheHandle = Arc<Mutex<AnyConversionCache>>;
 
@@ -149,21 +146,31 @@ fn promote_payload_for_host(payload: EdgePayload) -> EdgePayload {
             }
             if let Some(p) = a.downcast_ref::<Payload<DynamicImage>>() {
                 return match p.clone() {
-                    Payload::Cpu(img) => EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(img)),
-                    Payload::Gpu(g) => EdgePayload::Payload(ErasedPayload::from_gpu::<DynamicImage>(g)),
+                    Payload::Cpu(img) => {
+                        EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(img))
+                    }
+                    Payload::Gpu(g) => {
+                        EdgePayload::Payload(ErasedPayload::from_gpu::<DynamicImage>(g))
+                    }
                 };
             }
             if let Some(p) = a.downcast_ref::<Payload<GrayImage>>() {
                 return match p.clone() {
-                    Payload::Cpu(img) => EdgePayload::Payload(ErasedPayload::from_cpu::<GrayImage>(img)),
-                    Payload::Gpu(g) => EdgePayload::Payload(ErasedPayload::from_gpu::<GrayImage>(g)),
+                    Payload::Cpu(img) => {
+                        EdgePayload::Payload(ErasedPayload::from_cpu::<GrayImage>(img))
+                    }
+                    Payload::Gpu(g) => {
+                        EdgePayload::Payload(ErasedPayload::from_gpu::<GrayImage>(g))
+                    }
                 };
             }
             if let Some(img) = a.downcast_ref::<DynamicImage>() {
                 return EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(img.clone()));
             }
             if let Some(img) = a.downcast_ref::<Arc<DynamicImage>>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>((**img).clone()));
+                return EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(
+                    (**img).clone(),
+                ));
             }
             if let Some(img) = a.downcast_ref::<GrayImage>() {
                 return EdgePayload::Payload(ErasedPayload::from_cpu::<GrayImage>(img.clone()));
@@ -441,8 +448,10 @@ impl<'a> NodeIo<'a> {
                                 #[allow(unused_mut)]
                                 let mut payload = payload;
                                 let now = Instant::now();
-                                telemetry
-                                    .record_edge_wait(*edge_idx, now.saturating_duration_since(payload.enqueued_at));
+                                telemetry.record_edge_wait(
+                                    *edge_idx,
+                                    now.saturating_duration_since(payload.enqueued_at),
+                                );
                                 let payload_bytes = if cfg!(feature = "metrics")
                                     && telemetry.metrics_level.is_detailed()
                                 {
@@ -481,8 +490,10 @@ impl<'a> NodeIo<'a> {
                             #[allow(unused_mut)]
                             let mut payload = payload;
                             let now = Instant::now();
-                            telemetry
-                                .record_edge_wait(*edge_idx, now.saturating_duration_since(payload.enqueued_at));
+                            telemetry.record_edge_wait(
+                                *edge_idx,
+                                now.saturating_duration_since(payload.enqueued_at),
+                            );
                             let payload_bytes = if cfg!(feature = "metrics")
                                 && telemetry.metrics_level.is_detailed()
                             {
@@ -528,10 +539,25 @@ impl<'a> NodeIo<'a> {
                 );
             }
         }
+        if std::env::var_os("DAEDALUS_TRACE_EDGE_IO_STDERR").is_some() {
+            for item in &drained {
+                eprintln!(
+                    "node input drained node={} port={} edge_idx={} payload={}",
+                    node_id,
+                    item.port,
+                    item.edge_idx,
+                    edge_payload_desc(&item.payload.inner)
+                );
+            }
+        }
         if log::log_enabled!(log::Level::Debug) && drained.is_empty() {
             let ports: Vec<String> = incoming_edges
                 .iter()
-                .filter_map(|edge_idx| edges.get(*edge_idx).map(|(_, _, _, to_port, _)| to_port.clone()))
+                .filter_map(|edge_idx| {
+                    edges
+                        .get(*edge_idx)
+                        .map(|(_, _, _, to_port, _)| to_port.clone())
+                })
                 .collect();
             if !ports.is_empty() {
                 log::debug!("node inputs empty node={} ports={:?}", node_id, ports);
@@ -545,22 +571,16 @@ impl<'a> NodeIo<'a> {
             if drained.iter().any(|p| p.port == *port) {
                 continue;
             }
-            let payload = match value {
-                // Prefer scalar carriers for cross-dylib stability; coercion still has access to
-                // the `Value` shape via `coerce_const_any`.
-                daedalus_data::model::Value::Int(v) => EdgePayload::Any(Arc::new(*v)),
-                daedalus_data::model::Value::Float(f) => EdgePayload::Any(Arc::new(*f)),
-                daedalus_data::model::Value::Bool(b) => EdgePayload::Any(Arc::new(*b)),
-                // Keep JSON-authored constants available to coercers (e.g., enum coercion).
-                daedalus_data::model::Value::String(s) => {
-                    EdgePayload::Any(Arc::new(s.to_string()))
-                }
-                other => EdgePayload::Value(other.clone()),
-            };
+            // Keep authored constants as `Value` so plugin/FFI boundaries retain full type
+            // context (notably enum-like config ports such as `mode`).
+            let payload = EdgePayload::Value(value.clone());
             const_payloads.push((port.clone(), CorrelatedPayload::from_edge(payload)));
         }
 
-        let (mut aligned_inputs, leftovers, ready) = align_drained_inputs(drained, &sync_groups);
+        let const_ports: std::collections::HashSet<String> =
+            const_inputs.iter().map(|(port, _)| port.clone()).collect();
+        let (mut aligned_inputs, leftovers, ready) =
+            align_drained_inputs(drained, &sync_groups, &const_ports);
         if log::log_enabled!(log::Level::Debug) && !sync_groups.is_empty() && !ready {
             log::debug!(
                 "node sync groups not ready node={} groups={:?}",
@@ -572,6 +592,16 @@ impl<'a> NodeIo<'a> {
             aligned_inputs.clear();
         } else if has_drained || !has_incoming_edges {
             aligned_inputs.extend(const_payloads);
+        }
+        if std::env::var_os("DAEDALUS_TRACE_EDGE_IO_STDERR").is_some() {
+            for (port, payload) in &aligned_inputs {
+                eprintln!(
+                    "node input aligned node={} port={} payload={}",
+                    node_id,
+                    port,
+                    edge_payload_desc(&payload.inner)
+                );
+            }
         }
         requeue_drained(leftovers, queues, edges);
 
@@ -643,9 +673,7 @@ impl<'a> NodeIo<'a> {
                     let ports: Vec<&str> = self.inputs.iter().map(|(p, _)| p.as_str()).collect();
                     eprintln!(
                         "daedalus-runtime: missing input node={} port={} available_ports={:?}",
-                        self.node_id,
-                        port,
-                        ports
+                        self.node_id, port, ports
                     );
                 }
                 return None;
@@ -711,9 +739,22 @@ impl<'a> NodeIo<'a> {
 
     fn push_correlated(&mut self, port: Option<&str>, correlated: CorrelatedPayload) {
         #[cfg(feature = "gpu")]
-        let mut matches: Vec<(usize, String, EdgePolicyKind, BackpressureStrategy, Option<usize>, bool)> = Vec::new();
+        let mut matches: Vec<(
+            usize,
+            String,
+            EdgePolicyKind,
+            BackpressureStrategy,
+            Option<usize>,
+            bool,
+        )> = Vec::new();
         #[cfg(not(feature = "gpu"))]
-        let mut matches: Vec<(usize, String, EdgePolicyKind, BackpressureStrategy, Option<usize>)> = Vec::new();
+        let mut matches: Vec<(
+            usize,
+            String,
+            EdgePolicyKind,
+            BackpressureStrategy,
+            Option<usize>,
+        )> = Vec::new();
         for edge_idx in &self.outgoing {
             if let Some((_, from_port, _, _, policy)) = self.edges.get(*edge_idx) {
                 if let Some(p) = port
@@ -730,11 +771,24 @@ impl<'a> NodeIo<'a> {
                 #[cfg(feature = "gpu")]
                 {
                     let needs_payload = self.payload_edges.contains(edge_idx);
-                    matches.push((*edge_idx, from_port.clone(), policy.clone(), bp, cap_override, needs_payload));
+                    matches.push((
+                        *edge_idx,
+                        from_port.clone(),
+                        policy.clone(),
+                        bp,
+                        cap_override,
+                        needs_payload,
+                    ));
                 }
                 #[cfg(not(feature = "gpu"))]
                 {
-                    matches.push((*edge_idx, from_port.clone(), policy.clone(), bp, cap_override));
+                    matches.push((
+                        *edge_idx,
+                        from_port.clone(),
+                        policy.clone(),
+                        bp,
+                        cap_override,
+                    ));
                 }
             }
         }
@@ -770,20 +824,21 @@ impl<'a> NodeIo<'a> {
             let correlated = if needs_payload {
                 let mut updated = correlated;
                 updated.inner = match updated.inner {
-                    EdgePayload::Any(a) => promote_any_with_cache(&a, self.materialization_cache.as_ref()),
+                    EdgePayload::Any(a) => {
+                        promote_any_with_cache(&a, self.materialization_cache.as_ref())
+                    }
                     other => promote_payload_for_host(other),
                 };
                 updated
             } else {
                 correlated
             };
-            let payload_bytes = if cfg!(feature = "metrics")
-                && self.telemetry.metrics_level.is_detailed()
-            {
-                crate::executor::payload_size_bytes(&correlated.inner)
-            } else {
-                None
-            };
+            let payload_bytes =
+                if cfg!(feature = "metrics") && self.telemetry.metrics_level.is_detailed() {
+                    crate::executor::payload_size_bytes(&correlated.inner)
+                } else {
+                    None
+                };
             self.telemetry
                 .record_node_payload_out(self.node_idx, payload_bytes);
             apply_policy_owned(ApplyPolicyOwnedArgs {
@@ -825,17 +880,18 @@ impl<'a> NodeIo<'a> {
             let mut payload = correlated.clone();
             if needs_payload {
                 payload.inner = match payload.inner {
-                    EdgePayload::Any(a) => promote_any_with_cache(&a, self.materialization_cache.as_ref()),
+                    EdgePayload::Any(a) => {
+                        promote_any_with_cache(&a, self.materialization_cache.as_ref())
+                    }
                     other => promote_payload_for_host(other),
                 };
             }
-            let payload_bytes = if cfg!(feature = "metrics")
-                && self.telemetry.metrics_level.is_detailed()
-            {
-                crate::executor::payload_size_bytes(&payload.inner)
-            } else {
-                None
-            };
+            let payload_bytes =
+                if cfg!(feature = "metrics") && self.telemetry.metrics_level.is_detailed() {
+                    crate::executor::payload_size_bytes(&payload.inner)
+                } else {
+                    None
+                };
             self.telemetry
                 .record_node_payload_out(self.node_idx, payload_bytes);
             apply_policy(
@@ -872,13 +928,12 @@ impl<'a> NodeIo<'a> {
             if let Some(cap) = cap_override {
                 policy = EdgePolicyKind::Bounded { cap };
             }
-            let payload_bytes = if cfg!(feature = "metrics")
-                && self.telemetry.metrics_level.is_detailed()
-            {
-                crate::executor::payload_size_bytes(&correlated.inner)
-            } else {
-                None
-            };
+            let payload_bytes =
+                if cfg!(feature = "metrics") && self.telemetry.metrics_level.is_detailed() {
+                    crate::executor::payload_size_bytes(&correlated.inner)
+                } else {
+                    None
+                };
             self.telemetry
                 .record_node_payload_out(self.node_idx, payload_bytes);
             apply_policy(
@@ -999,7 +1054,10 @@ impl<'a> NodeIo<'a> {
                     .or_else(|| self.coerce_const_any::<T>(a.as_ref()))
                     // Allow CPU-side conversions between Any payloads (e.g., GrayImage -> DynamicImage)
                     // using the global conversion registry.
-                    .or_else(|| self.convert_any_to_arc_cached::<T>(a).map(|arc| (*arc).clone()))
+                    .or_else(|| {
+                        self.convert_any_to_arc_cached::<T>(a)
+                            .map(|arc| (*arc).clone())
+                    })
             }
             EdgePayload::Value(v) => self.coerce_from_value::<T>(v),
             #[cfg(feature = "gpu")]
@@ -1008,7 +1066,9 @@ impl<'a> NodeIo<'a> {
                     return Some(v);
                 }
                 if want == TypeId::of::<DynamicImage>() {
-                    return ep.clone_cpu::<DynamicImage>().and_then(Self::dynamic_image_to_t::<T>);
+                    return ep
+                        .clone_cpu::<DynamicImage>()
+                        .and_then(Self::dynamic_image_to_t::<T>);
                 }
                 if want == TypeId::of::<GrayImage>()
                     && let Some(gray) = ep.clone_cpu::<GrayImage>()
@@ -1028,29 +1088,31 @@ impl<'a> NodeIo<'a> {
                     let any_ref: &dyn Any = &rgba;
                     return any_ref.downcast_ref::<T>().cloned();
                 }
-                ep.clone_cpu::<DynamicImage>().and_then(|img| {
-                    if want == TypeId::of::<DynamicImage>()
-                        || want == TypeId::of::<GrayImage>()
-                        || want == TypeId::of::<GrayAlphaImage>()
-                        || want == TypeId::of::<RgbImage>()
-                        || want == TypeId::of::<RgbaImage>()
-                    {
-                        return Self::dynamic_image_to_t::<T>(img);
-                    }
-                    None
-                }).or_else(|| {
-                    if log::log_enabled!(log::Level::Debug)
-                        && (want == TypeId::of::<DynamicImage>()
+                ep.clone_cpu::<DynamicImage>()
+                    .and_then(|img| {
+                        if want == TypeId::of::<DynamicImage>()
                             || want == TypeId::of::<GrayImage>()
                             || want == TypeId::of::<GrayAlphaImage>()
                             || want == TypeId::of::<RgbImage>()
-                            || want == TypeId::of::<RgbaImage>())
-                    {
-                        log::debug!("payload type mismatch port={} payload={:?}", port, ep);
-                    }
-                    None
-                })
-            },
+                            || want == TypeId::of::<RgbaImage>()
+                        {
+                            return Self::dynamic_image_to_t::<T>(img);
+                        }
+                        None
+                    })
+                    .or_else(|| {
+                        if log::log_enabled!(log::Level::Debug)
+                            && (want == TypeId::of::<DynamicImage>()
+                                || want == TypeId::of::<GrayImage>()
+                                || want == TypeId::of::<GrayAlphaImage>()
+                                || want == TypeId::of::<RgbImage>()
+                                || want == TypeId::of::<RgbaImage>())
+                        {
+                            log::debug!("payload type mismatch port={} payload={:?}", port, ep);
+                        }
+                        None
+                    })
+            }
             #[cfg(feature = "gpu")]
             EdgePayload::GpuImage(h)
                 if TypeId::of::<T>() == TypeId::of::<daedalus_gpu::GpuImageHandle>() =>
@@ -1130,9 +1192,13 @@ impl<'a> NodeIo<'a> {
         }
 
         if std::env::var_os("DAEDALUS_TRACE_MISSING_INPUTS").is_some() {
-            let desc = self.inputs_for(port).next().map(|payload| {
-                match &payload.inner {
-                    EdgePayload::Any(a) => format!("Any({})", std::any::type_name_of_val(a.as_ref())),
+            let desc = self
+                .inputs_for(port)
+                .next()
+                .map(|payload| match &payload.inner {
+                    EdgePayload::Any(a) => {
+                        format!("Any({})", std::any::type_name_of_val(a.as_ref()))
+                    }
                     #[cfg(feature = "gpu")]
                     EdgePayload::Payload(ep) => format!("Payload({ep:?})"),
                     #[cfg(feature = "gpu")]
@@ -1140,8 +1206,8 @@ impl<'a> NodeIo<'a> {
                     EdgePayload::Value(v) => format!("Value({v:?})"),
                     EdgePayload::Bytes(_) => "Bytes".to_string(),
                     EdgePayload::Unit => "Unit".to_string(),
-                }
-            }).unwrap_or_else(|| "None".to_string());
+                })
+                .unwrap_or_else(|| "None".to_string());
             eprintln!(
                 "daedalus-runtime: input mismatch node={} port={} expected={} payload={}",
                 self.node_id,
@@ -1402,7 +1468,9 @@ impl<'a> NodeIo<'a> {
                             }
                         }
                     }
-                } else if want == TypeId::of::<RgbaImage>() && let Some(ep) = ep_opt.take() {
+                } else if want == TypeId::of::<RgbaImage>()
+                    && let Some(ep) = ep_opt.take()
+                {
                     match ep.take_cpu::<RgbaImage>() {
                         Ok(cpu) => out = downcast_owned(Box::new(cpu)),
                         Err(rest) => {
@@ -1486,23 +1554,24 @@ impl<'a> NodeIo<'a> {
                                             Err(arc) => (*arc).clone(),
                                         };
                                         let any_ref: &dyn Any = &v;
-                                        out = any_ref
-                                            .downcast_ref::<T>()
-                                            .cloned()
-                                            .or_else(|| self.coerce_via_registry::<T>(&Value::String(v.into())));
+                                        out = any_ref.downcast_ref::<T>().cloned().or_else(|| {
+                                            self.coerce_via_registry::<T>(&Value::String(v.into()))
+                                        });
                                     }
-                                    Err(any) => match Arc::downcast::<daedalus_data::model::Value>(any) {
-                                        Ok(arc) => {
-                                            let v = match Arc::try_unwrap(arc) {
-                                                Ok(v) => v,
-                                                Err(arc) => (*arc).clone(),
-                                            };
-                                            out = self.coerce_from_value::<T>(&v);
+                                    Err(any) => {
+                                        match Arc::downcast::<daedalus_data::model::Value>(any) {
+                                            Ok(arc) => {
+                                                let v = match Arc::try_unwrap(arc) {
+                                                    Ok(v) => v,
+                                                    Err(arc) => (*arc).clone(),
+                                                };
+                                                out = self.coerce_from_value::<T>(&v);
+                                            }
+                                            Err(any) => {
+                                                payload.inner = EdgePayload::Any(any);
+                                            }
                                         }
-                                        Err(any) => {
-                                            payload.inner = EdgePayload::Any(any);
-                                        }
-                                    },
+                                    }
                                 },
                             },
                         },
@@ -1521,7 +1590,9 @@ impl<'a> NodeIo<'a> {
         if out.is_none() {
             if std::env::var_os("DAEDALUS_TRACE_MISSING_INPUTS").is_some() {
                 let desc = match &payload.inner {
-                    EdgePayload::Any(a) => format!("Any({})", std::any::type_name_of_val(a.as_ref())),
+                    EdgePayload::Any(a) => {
+                        format!("Any({})", std::any::type_name_of_val(a.as_ref()))
+                    }
                     #[cfg(feature = "gpu")]
                     EdgePayload::Payload(ep) => format!("Payload({ep:?})"),
                     #[cfg(feature = "gpu")]
@@ -1599,7 +1670,10 @@ impl<'a> NodeIo<'a> {
 
     /// Collect typed Any payloads for indexed fan-in ports `{prefix}{N}` ordered by `N`,
     /// preserving the parsed index.
-    pub fn get_any_all_fanin_indexed<T: Any + Clone + Send + Sync>(&self, prefix: &str) -> Vec<(u32, T)> {
+    pub fn get_any_all_fanin_indexed<T: Any + Clone + Send + Sync>(
+        &self,
+        prefix: &str,
+    ) -> Vec<(u32, T)> {
         let mut ports: BTreeMap<u32, String> = BTreeMap::new();
         for (port, _) in &self.inputs {
             if let Some(idx) = parse_indexed_port(prefix, port) {
@@ -1618,26 +1692,17 @@ impl<'a> NodeIo<'a> {
     fn coerce_const_any<T: Any + Clone>(&self, v: &dyn Any) -> Option<T> {
         use daedalus_data::model::Value as V;
 
-        if let Some(i) = v
-            .downcast_ref::<i64>()
-            .copied()
-        {
+        if let Some(i) = v.downcast_ref::<i64>().copied() {
             return Self::coerce_from_i64::<T>(i)
                 .or_else(|| self.coerce_via_registry::<T>(&V::Int(i)));
         }
 
-        if let Some(f) = v
-            .downcast_ref::<f64>()
-            .copied()
-        {
+        if let Some(f) = v.downcast_ref::<f64>().copied() {
             return Self::coerce_from_f64::<T>(f)
                 .or_else(|| self.coerce_via_registry::<T>(&V::Float(f)));
         }
 
-        if let Some(b) = v
-            .downcast_ref::<bool>()
-            .copied()
-        {
+        if let Some(b) = v.downcast_ref::<bool>().copied() {
             let any_ref: &dyn Any = &b;
             return any_ref
                 .downcast_ref::<T>()
@@ -1645,10 +1710,7 @@ impl<'a> NodeIo<'a> {
                 .or_else(|| self.coerce_via_registry::<T>(&V::Bool(b)));
         }
 
-        if let Some(s) = v
-            .downcast_ref::<String>()
-            .cloned()
-        {
+        if let Some(s) = v.downcast_ref::<String>().cloned() {
             let any_ref: &dyn Any = &s;
             return any_ref
                 .downcast_ref::<T>()
@@ -1656,10 +1718,7 @@ impl<'a> NodeIo<'a> {
                 .or_else(|| self.coerce_via_registry::<T>(&V::String(s.into())));
         }
 
-        if let Some(val) = v
-            .downcast_ref::<daedalus_data::model::Value>()
-            .cloned()
-        {
+        if let Some(val) = v.downcast_ref::<daedalus_data::model::Value>().cloned() {
             return self.coerce_from_value::<T>(&val);
         }
 
@@ -1671,9 +1730,67 @@ impl<'a> NodeIo<'a> {
         let global = GLOBAL_CONST_COERCERS.get_or_init(new_const_coercer_map);
         let map = self.const_coercers.as_ref().unwrap_or(global);
         let guard = map.read().ok()?;
-        let coercer = guard.get(key)?;
-        let out = coercer(v)?;
-        out.downcast::<T>().ok().map(|b| (*b).clone())
+        let Some(coercer) = guard.get(key) else {
+            if std::env::var_os("DAEDALUS_TRACE_CONST_COERCERS_STDERR").is_some() {
+                let kind = match v {
+                    daedalus_data::model::Value::Unit => "Unit",
+                    daedalus_data::model::Value::Bool(_) => "Bool",
+                    daedalus_data::model::Value::Int(_) => "Int",
+                    daedalus_data::model::Value::Float(_) => "Float",
+                    daedalus_data::model::Value::String(_) => "String",
+                    daedalus_data::model::Value::Bytes(_) => "Bytes",
+                    daedalus_data::model::Value::List(_) => "List",
+                    daedalus_data::model::Value::Map(_) => "Map",
+                    daedalus_data::model::Value::Tuple(_) => "Tuple",
+                    daedalus_data::model::Value::Struct(_) => "Struct",
+                    daedalus_data::model::Value::Enum(_) => "Enum",
+                };
+                let mut preview = guard.keys().take(24).cloned().collect::<Vec<_>>();
+                preview.sort_unstable();
+                eprintln!(
+                    "daedalus-runtime: missing const coercer key='{}' value_kind='{}' known_keys_sample={:?}",
+                    key,
+                    kind,
+                    preview
+                );
+            }
+            return None;
+        };
+        let Some(out) = coercer(v) else {
+            if std::env::var_os("DAEDALUS_TRACE_CONST_COERCERS_STDERR").is_some() {
+                let kind = match v {
+                    daedalus_data::model::Value::Unit => "Unit",
+                    daedalus_data::model::Value::Bool(_) => "Bool",
+                    daedalus_data::model::Value::Int(_) => "Int",
+                    daedalus_data::model::Value::Float(_) => "Float",
+                    daedalus_data::model::Value::String(_) => "String",
+                    daedalus_data::model::Value::Bytes(_) => "Bytes",
+                    daedalus_data::model::Value::List(_) => "List",
+                    daedalus_data::model::Value::Map(_) => "Map",
+                    daedalus_data::model::Value::Tuple(_) => "Tuple",
+                    daedalus_data::model::Value::Struct(_) => "Struct",
+                    daedalus_data::model::Value::Enum(_) => "Enum",
+                };
+                eprintln!(
+                    "daedalus-runtime: const coercer returned None key='{}' value_kind='{}'",
+                    key, kind
+                );
+            }
+            return None;
+        };
+        match out.downcast::<T>() {
+            Ok(b) => Some((*b).clone()),
+            Err(_) => {
+                if std::env::var_os("DAEDALUS_TRACE_CONST_COERCERS_STDERR").is_some() {
+                    eprintln!(
+                        "daedalus-runtime: const coercer downcast failed key='{}' target_type='{}'",
+                        key,
+                        std::any::type_name::<T>()
+                    );
+                }
+                None
+            }
+        }
     }
 
     fn coerce_from_i64<T: Any + Clone>(v: i64) -> Option<T> {
@@ -1753,7 +1870,9 @@ impl<'a> NodeIo<'a> {
     {
         let want = std::any::TypeId::of::<T>();
         let initial = self.get_any::<T>(port);
-        if log::log_enabled!(log::Level::Debug) && want == std::any::TypeId::of::<image::DynamicImage>() {
+        if log::log_enabled!(log::Level::Debug)
+            && want == std::any::TypeId::of::<image::DynamicImage>()
+        {
             log::debug!(
                 "get_typed dynamic_image port={} has_any={}",
                 port,
@@ -1800,14 +1919,31 @@ impl<'a> NodeIo<'a> {
             }
         }
         if let Some(v) = self.get_any::<daedalus_data::model::Value>(port)
-            && let Some(t) = self.coerce_from_value::<T>(&v) {
-                return Some(t);
-            }
+            && let Some(t) = self.coerce_from_value::<T>(&v)
+        {
+            return Some(t);
+        }
 
         if let Some(v) = self.get_value(port)
-            && let Some(t) = self.coerce_from_value::<T>(v) {
-                return Some(t);
-            }
+            && let Some(t) = self.coerce_from_value::<T>(v)
+        {
+            return Some(t);
+        }
+
+        if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR").is_some() {
+            let payload = self
+                .inputs_for(port)
+                .next()
+                .map(|cp| edge_payload_desc(&cp.inner))
+                .unwrap_or_else(|| "None".to_string());
+            eprintln!(
+                "daedalus-runtime: get_typed miss node={} port={} type={} payload={}",
+                self.node_id,
+                port,
+                std::any::type_name::<T>(),
+                payload
+            );
+        }
 
         None
     }
@@ -1914,6 +2050,11 @@ impl<'a> NodeIo<'a> {
                 daedalus_planner::ComputeAffinity::GpuPreferred
                     | daedalus_planner::ComputeAffinity::GpuRequired
             );
+        let strict_gpu = self.gpu.is_some()
+            && matches!(
+                self.target_compute,
+                daedalus_planner::ComputeAffinity::GpuRequired
+            );
         for p in self.inputs_for(port) {
             match &p.inner {
                 EdgePayload::Payload(ep) => {
@@ -1921,32 +2062,74 @@ impl<'a> NodeIo<'a> {
                         if let Some(g) = ep.clone_gpu::<T>() {
                             return Some(daedalus_gpu::Payload::Gpu(g));
                         }
-                        if let Some(cpu) = ep.clone_cpu::<T>()
-                            && let Some(ctx) = &self.gpu
-                            && let Ok(handle) = cpu.upload(ctx)
-                        {
-                            return Some(daedalus_gpu::Payload::Gpu(handle));
+                        if let Some(ctx) = &self.gpu {
+                            match ep.upload_if_needed(ctx) {
+                                Ok((uploaded, _did_transfer)) => {
+                                    if let Some(g) = uploaded.clone_gpu::<T>() {
+                                        return Some(daedalus_gpu::Payload::Gpu(g));
+                                    }
+                                }
+                                Err(err) => {
+                                    if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR")
+                                        .is_some()
+                                    {
+                                        eprintln!(
+                                            "daedalus-runtime: get_payload upload_if_needed failed node={} port={} type={} err={}",
+                                            self.node_id,
+                                            port,
+                                            std::any::type_name::<T>(),
+                                            err
+                                        );
+                                    }
+                                }
+                            }
+                            // Fallback path for payloads that don't support erased upload.
+                            if let Some(cpu) = ep.clone_cpu::<T>() {
+                                match cpu.upload(ctx) {
+                                    Ok(handle) => return Some(daedalus_gpu::Payload::Gpu(handle)),
+                                    Err(err) => {
+                                        if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR")
+                                            .is_some()
+                                        {
+                                            eprintln!(
+                                                "daedalus-runtime: get_payload cpu.upload failed node={} port={} type={} err={}",
+                                                self.node_id,
+                                                port,
+                                                std::any::type_name::<T>(),
+                                                err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
-                    } else {
+                    }
+                    if !wants_gpu || !strict_gpu {
                         if let Some(cpu) = ep.clone_cpu::<T>() {
                             return Some(daedalus_gpu::Payload::Cpu(cpu));
                         }
-                        if let Some(g) = ep.clone_gpu::<T>()
-                            && let Some(ctx) = &self.gpu
-                            && let Ok(cpu) = T::download(&g, ctx)
-                        {
-                            return Some(daedalus_gpu::Payload::Cpu(cpu));
+                        if let Some(ctx) = &self.gpu {
+                            if let Ok((downloaded, _did_transfer)) = ep.download_if_needed(ctx)
+                                && let Some(cpu) = downloaded.clone_cpu::<T>()
+                            {
+                                return Some(daedalus_gpu::Payload::Cpu(cpu));
+                            }
+                            // Fallback path for payloads that don't support erased download.
+                            if let Some(g) = ep.clone_gpu::<T>()
+                                && let Ok(cpu) = T::download(&g, ctx)
+                            {
+                                return Some(daedalus_gpu::Payload::Cpu(cpu));
+                            }
                         }
                     }
                 }
-            EdgePayload::Any(a) => {
+                EdgePayload::Any(a) => {
                     // Plugins sometimes pass a `Payload<T>` through `Any` (e.g. when a node
                     // signature uses a type alias that the `#[node]` macro can't see through).
                     // Accept that representation here so downstream `Payload<T>` inputs can still
                     // be satisfied.
-                    let payload_any: Option<daedalus_gpu::Payload<T>> = a
-                        .downcast_ref::<daedalus_gpu::Payload<T>>()
-                        .cloned();
+                    let payload_any: Option<daedalus_gpu::Payload<T>> =
+                        a.downcast_ref::<daedalus_gpu::Payload<T>>().cloned();
                     if let Some(payload_any) = payload_any {
                         if wants_gpu {
                             match payload_any {
@@ -1978,9 +2161,7 @@ impl<'a> NodeIo<'a> {
                     }
 
                     if wants_gpu {
-                        let cpu = a
-                            .downcast_ref::<T>()
-                            .cloned();
+                        let cpu = a.downcast_ref::<T>().cloned();
                         if let Some(cpu) = cpu
                             && let Some(ctx) = &self.gpu
                             && let Ok(handle) = cpu.upload(ctx)
@@ -1999,19 +2180,16 @@ impl<'a> NodeIo<'a> {
                         {
                             return Some(daedalus_gpu::Payload::Gpu(g.clone()));
                         }
-                    } else {
-                        let cpu = a
-                            .downcast_ref::<T>()
-                            .cloned();
+                    }
+                    if !wants_gpu || !strict_gpu {
+                        let cpu = a.downcast_ref::<T>().cloned();
                         if let Some(cpu) = cpu {
                             return Some(daedalus_gpu::Payload::Cpu(cpu));
                         }
                         if let Some(converted) = crate::convert::convert_arc::<T>(a) {
                             return Some(daedalus_gpu::Payload::Cpu(converted));
                         }
-                        let g = a
-                            .downcast_ref::<T::GpuRepr>()
-                            .cloned();
+                        let g = a.downcast_ref::<T::GpuRepr>().cloned();
                         if let Some(g) = g
                             && let Some(ctx) = &self.gpu
                             && let Ok(cpu) = T::download(&g, ctx)
@@ -2022,7 +2200,7 @@ impl<'a> NodeIo<'a> {
                             && let Ok(downloaded) = ep.download(self.gpu.as_ref()?)
                             && let Some(cpu) = downloaded.as_cpu::<T>()
                         {
-                            return Some(daedalus_gpu::Payload::Cpu(cpu.clone()));
+                                return Some(daedalus_gpu::Payload::Cpu(cpu.clone()));
                         }
                     }
                 }
@@ -2033,7 +2211,10 @@ impl<'a> NodeIo<'a> {
                             if let Some(repr) = any_ref.downcast_ref::<T::GpuRepr>() {
                                 return Some(daedalus_gpu::Payload::Gpu(repr.clone()));
                             }
-                        } else if let Some(ctx) = &self.gpu {
+                        }
+                        if (!wants_gpu || !strict_gpu)
+                            && let Some(ctx) = &self.gpu
+                        {
                             let any_ref: &dyn Any = h;
                             if let Some(repr) = any_ref.downcast_ref::<T::GpuRepr>()
                                 && let Ok(cpu) = T::download(repr, ctx)
@@ -2045,6 +2226,22 @@ impl<'a> NodeIo<'a> {
                 }
                 _ => {}
             }
+        }
+        if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR").is_some() {
+            let payload = self
+                .inputs_for(port)
+                .next()
+                .map(|cp| edge_payload_desc(&cp.inner))
+                .unwrap_or_else(|| "None".to_string());
+            eprintln!(
+                "daedalus-runtime: get_payload miss node={} port={} type={} wants_gpu={} strict_gpu={} payload={}",
+                self.node_id,
+                port,
+                std::any::type_name::<T>(),
+                wants_gpu,
+                strict_gpu,
+                payload
+            );
         }
         None
     }
@@ -2071,11 +2268,16 @@ impl<'a> NodeIo<'a> {
                     if let Some(ep) = ep_opt.as_ref() {
                         if let Some(g) = ep.clone_gpu::<T>() {
                             out = Some(daedalus_gpu::Payload::Gpu(g));
-                        } else if let Some(cpu) = ep.clone_cpu::<T>()
-                            && let Some(ctx) = &self.gpu
-                            && let Ok(handle) = cpu.upload(ctx)
-                        {
-                            out = Some(daedalus_gpu::Payload::Gpu(handle));
+                        } else if let Some(ctx) = &self.gpu {
+                            if let Ok((uploaded, _did_transfer)) = ep.upload_if_needed(ctx)
+                                && let Some(g) = uploaded.clone_gpu::<T>()
+                            {
+                                out = Some(daedalus_gpu::Payload::Gpu(g));
+                            } else if let Some(cpu) = ep.clone_cpu::<T>()
+                                && let Ok(handle) = cpu.upload(ctx)
+                            {
+                                out = Some(daedalus_gpu::Payload::Gpu(handle));
+                            }
                         }
                     }
                 } else if let Some(ep) = ep_opt.take() {
@@ -2086,11 +2288,17 @@ impl<'a> NodeIo<'a> {
                             if let Some(ep) = ep_opt.as_ref() {
                                 if let Some(cpu) = ep.clone_cpu::<T>() {
                                     out = Some(daedalus_gpu::Payload::Cpu(cpu));
-                                } else if let Some(g) = ep.clone_gpu::<T>()
-                                    && let Some(ctx) = &self.gpu
-                                    && let Ok(cpu) = T::download(&g, ctx)
-                                {
-                                    out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                } else if let Some(ctx) = &self.gpu {
+                                    if let Ok((downloaded, _did_transfer)) =
+                                        ep.download_if_needed(ctx)
+                                        && let Some(cpu) = downloaded.clone_cpu::<T>()
+                                    {
+                                        out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                    } else if let Some(g) = ep.clone_gpu::<T>()
+                                        && let Ok(cpu) = T::download(&g, ctx)
+                                    {
+                                        out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                    }
                                 }
                             }
                         }
@@ -2112,7 +2320,9 @@ impl<'a> NodeIo<'a> {
                         };
                         if wants_gpu {
                             match payload_any {
-                                daedalus_gpu::Payload::Gpu(g) => out = Some(daedalus_gpu::Payload::Gpu(g)),
+                                daedalus_gpu::Payload::Gpu(g) => {
+                                    out = Some(daedalus_gpu::Payload::Gpu(g))
+                                }
                                 daedalus_gpu::Payload::Cpu(cpu) => {
                                     if let Some(ctx) = &self.gpu
                                         && let Ok(handle) = cpu.upload(ctx)
@@ -2123,7 +2333,9 @@ impl<'a> NodeIo<'a> {
                             }
                         } else {
                             match payload_any {
-                                daedalus_gpu::Payload::Cpu(cpu) => out = Some(daedalus_gpu::Payload::Cpu(cpu)),
+                                daedalus_gpu::Payload::Cpu(cpu) => {
+                                    out = Some(daedalus_gpu::Payload::Cpu(cpu))
+                                }
                                 daedalus_gpu::Payload::Gpu(g) => {
                                     if let Some(ctx) = &self.gpu
                                         && let Ok(cpu) = T::download(&g, ctx)
@@ -2178,6 +2390,17 @@ impl<'a> NodeIo<'a> {
         }
 
         if out.is_none() {
+            if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR").is_some() {
+                let desc = edge_payload_desc(&payload.inner);
+                eprintln!(
+                    "daedalus-runtime: get_payload_mut miss node={} port={} type={} wants_gpu={} payload={}",
+                    self.node_id,
+                    port,
+                    std::any::type_name::<T>(),
+                    wants_gpu,
+                    desc
+                );
+            }
             self.restore_input(idx, port, payload);
         }
         out
@@ -2197,13 +2420,17 @@ impl<'a> NodeIo<'a> {
             return payload;
         };
         if entries.contains(&edge_idx) {
-            telemetry.record_edge_gpu_transfer(edge_idx, true);
             payload.inner = match payload.inner {
                 EdgePayload::Any(ref a) => {
                     let promoted = promote_any_with_cache(a, materialization_cache);
                     match promoted {
-                        EdgePayload::Payload(ep) => match ep.upload(ctx) {
-                            Ok(uploaded) => EdgePayload::Payload(uploaded),
+                        EdgePayload::Payload(ep) => match ep.upload_if_needed(ctx) {
+                            Ok((uploaded, did_transfer)) => {
+                                if did_transfer {
+                                    telemetry.record_edge_gpu_transfer(edge_idx, true);
+                                }
+                                EdgePayload::Payload(uploaded)
+                            }
                             Err(_) => EdgePayload::Payload(ep),
                         },
                         EdgePayload::Any(a) => {
@@ -2216,28 +2443,43 @@ impl<'a> NodeIo<'a> {
                         other => other,
                     }
                 }
-                EdgePayload::Payload(ref ep) => ep
-                    .upload(ctx)
-                    .map(EdgePayload::Payload)
-                    .unwrap_or_else(|_| EdgePayload::Payload(ep.clone())),
+                EdgePayload::Payload(ref ep) => match ep.upload_if_needed(ctx) {
+                    Ok((uploaded, did_transfer)) => {
+                        if did_transfer {
+                            telemetry.record_edge_gpu_transfer(edge_idx, true);
+                        }
+                        EdgePayload::Payload(uploaded)
+                    }
+                    Err(_) => EdgePayload::Payload(ep.clone()),
+                },
                 other => other,
             };
         } else if exits.contains(&edge_idx) {
-            telemetry.record_edge_gpu_transfer(edge_idx, false);
             payload.inner = match payload.inner {
                 EdgePayload::Any(ref a) => {
                     if let Some(ep) = a.downcast_ref::<daedalus_gpu::ErasedPayload>() {
-                        ep.download(ctx)
-                            .map(EdgePayload::Payload)
-                            .unwrap_or_else(|_| EdgePayload::Any(a.clone()))
+                        match ep.download_if_needed(ctx) {
+                            Ok((downloaded, did_transfer)) => {
+                                if did_transfer {
+                                    telemetry.record_edge_gpu_transfer(edge_idx, false);
+                                }
+                                EdgePayload::Payload(downloaded)
+                            }
+                            Err(_) => EdgePayload::Any(a.clone()),
+                        }
                     } else {
                         EdgePayload::Any(a.clone())
                     }
                 }
-                EdgePayload::Payload(ref ep) => ep
-                    .download(ctx)
-                    .map(EdgePayload::Payload)
-                    .unwrap_or_else(|_| EdgePayload::Payload(ep.clone())),
+                EdgePayload::Payload(ref ep) => match ep.download_if_needed(ctx) {
+                    Ok((downloaded, did_transfer)) => {
+                        if did_transfer {
+                            telemetry.record_edge_gpu_transfer(edge_idx, false);
+                        }
+                        EdgePayload::Payload(downloaded)
+                    }
+                    Err(_) => EdgePayload::Payload(ep.clone()),
+                },
                 EdgePayload::GpuImage(h) => EdgePayload::GpuImage(h),
                 other => other,
             };
@@ -2310,6 +2552,7 @@ fn edge_payload_desc(payload: &EdgePayload) -> String {
 fn align_drained_inputs(
     drained: Vec<DrainedInput>,
     sync_groups: &[SyncGroup],
+    const_ports: &std::collections::HashSet<String>,
 ) -> (Vec<(String, CorrelatedPayload)>, Vec<DrainedInput>, bool) {
     if sync_groups.is_empty() {
         let inputs = drained
@@ -2325,7 +2568,9 @@ fn align_drained_inputs(
             continue;
         }
         for port in &group.ports {
-            grouped_ports.insert(port.clone());
+            if !const_ports.contains(port) {
+                grouped_ports.insert(port.clone());
+            }
         }
     }
 
@@ -2351,6 +2596,9 @@ fn align_drained_inputs(
             SyncPolicy::Latest => {
                 // Require every port to have at least one payload. Take the newest and drop older.
                 for port in &group.ports {
+                    if const_ports.contains(port) {
+                        continue;
+                    }
                     let Some(q) = per_port.get_mut(port) else {
                         all_groups_ready = false;
                         break;
@@ -2364,6 +2612,9 @@ fn align_drained_inputs(
                     break;
                 }
                 for port in &group.ports {
+                    if const_ports.contains(port) {
+                        continue;
+                    }
                     if let Some(q) = per_port.get_mut(port)
                         && let Some(payload) = q.pop_back()
                     {
@@ -2376,6 +2627,9 @@ fn align_drained_inputs(
                 // Find the oldest correlation id present across all ports, then take one per port.
                 let mut common: Option<std::collections::HashSet<u64>> = None;
                 for port in &group.ports {
+                    if const_ports.contains(port) {
+                        continue;
+                    }
                     let Some(q) = per_port.get(port) else {
                         all_groups_ready = false;
                         break;
@@ -2397,6 +2651,10 @@ fn align_drained_inputs(
                 if !all_groups_ready {
                     break;
                 }
+                if common.is_none() {
+                    // Group satisfied entirely by constant ports.
+                    continue;
+                }
                 let Some(common) = common else {
                     all_groups_ready = false;
                     break;
@@ -2407,6 +2665,9 @@ fn align_drained_inputs(
                 };
 
                 for port in &group.ports {
+                    if const_ports.contains(port) {
+                        continue;
+                    }
                     if let Some(q) = per_port.get_mut(port)
                         && let Some(idx) = q
                             .iter()
@@ -2557,7 +2818,8 @@ mod tests {
             capacity: None,
             ports: vec!["a".into(), "b".into()],
         };
-        let (out, leftovers, ready) = align_drained_inputs(drained, &[group]);
+        let empty_consts = std::collections::HashSet::new();
+        let (out, leftovers, ready) = align_drained_inputs(drained, &[group], &empty_consts);
         assert!(ready);
         let vals: Vec<(String, i32)> = out
             .into_iter()
@@ -2618,7 +2880,8 @@ mod tests {
             capacity: None,
             ports: vec!["a".into(), "b".into()],
         };
-        let (out, leftovers, ready) = align_drained_inputs(drained, &[group]);
+        let empty_consts = std::collections::HashSet::new();
+        let (out, leftovers, ready) = align_drained_inputs(drained, &[group], &empty_consts);
         assert!(ready);
         assert!(leftovers.is_empty());
         let vals: Vec<(String, i32)> = out
@@ -2678,7 +2941,8 @@ mod tests {
                 payload,
             })
             .collect::<Vec<_>>();
-        let (out, leftovers, ready) = align_drained_inputs(drained, &[group]);
+        let empty_consts = std::collections::HashSet::new();
+        let (out, leftovers, ready) = align_drained_inputs(drained, &[group], &empty_consts);
         assert!(ready);
         assert!(!out.is_empty());
         assert!(!leftovers.is_empty());
@@ -2719,7 +2983,8 @@ mod tests {
             capacity: None,
             ports: vec!["a".into(), "b".into()],
         };
-        let (out, leftovers, ready) = align_drained_inputs(drained, &[group]);
+        let empty_consts = std::collections::HashSet::new();
+        let (out, leftovers, ready) = align_drained_inputs(drained, &[group], &empty_consts);
         assert!(!ready);
         assert!(out.is_empty());
         assert_eq!(leftovers.len(), 1);
@@ -2839,7 +3104,8 @@ mod tests {
         let edges: &'static [EdgeInfo] = Box::leak(Box::new(Vec::new()));
         let warnings: &'static Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
             Box::leak(Box::new(Arc::new(std::sync::Mutex::new(HashSet::new()))));
-        let telem: &'static mut ExecutionTelemetry = Box::leak(Box::new(ExecutionTelemetry::default()));
+        let telem: &'static mut ExecutionTelemetry =
+            Box::leak(Box::new(ExecutionTelemetry::default()));
         let gpu_entry_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
         let gpu_exit_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
         let payload_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
@@ -2876,7 +3142,9 @@ mod tests {
     fn get_any_reads_payload_any_type() {
         let payload = CorrelatedPayload {
             correlation_id: 1,
-            inner: EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_cpu::<DummyPayload>(DummyPayload { value: 42 })),
+            inner: EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_cpu::<DummyPayload>(
+                DummyPayload { value: 42 },
+            )),
             enqueued_at: std::time::Instant::now(),
         };
         let io = make_io_with_payload(payload);
@@ -2889,7 +3157,9 @@ mod tests {
     fn get_typed_mut_moves_payload_any_type() {
         let payload = CorrelatedPayload {
             correlation_id: 1,
-            inner: EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_cpu::<DummyPayload>(DummyPayload { value: 7 })),
+            inner: EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_cpu::<DummyPayload>(
+                DummyPayload { value: 7 },
+            )),
             enqueued_at: std::time::Instant::now(),
         };
         let mut io = make_io_with_payload(payload);

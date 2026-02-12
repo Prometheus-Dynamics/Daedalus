@@ -1,8 +1,8 @@
+use crate::handles::{NodeHandleLike, PortHandle};
+use crate::host_bridge::HOST_BRIDGE_META_KEY;
 use daedalus_data::model::Value;
 use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, PortRef};
 use daedalus_registry::{ids::NodeId, store::Registry};
-use crate::handles::{NodeHandleLike, PortHandle};
-use crate::host_bridge::HOST_BRIDGE_META_KEY;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::host_bridge::HOST_BRIDGE_ID;
@@ -211,8 +211,7 @@ impl<'r> GraphBuilder<'r> {
     pub fn graph_metadata(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         let key = key.into();
         let value = value.into();
-        self.graph_metadata
-            .insert(key, Value::String(value.into()));
+        self.graph_metadata.insert(key, Value::String(value.into()));
         self
     }
 
@@ -996,11 +995,20 @@ impl<'r> GraphCtx<'r> {
 
     pub fn build(mut self) -> Graph {
         self.builder = self.builder.host_bridge(self.host_alias.clone());
+        // GraphCtx models a graph-backed node as a subgraph wired through a host-bridge node.
+        //
+        // Internally, "graph inputs" are emitted *from* the host bridge into the subgraph
+        // (host is the edge source), so they must be represented as host-bridge *outputs*.
+        // Conversely, "graph outputs" are delivered *to* the host bridge (host is the edge sink),
+        // so they must be represented as host-bridge *inputs*.
+        //
+        // If these are flipped, the UI and port-map builders can end up unioning inputs/outputs
+        // for embedded graphs, making node-group ports appear on both sides.
         for name in &self.expected_inputs {
-            self.builder = self.builder.ensure_host_bridge_port(false, name);
+            self.builder = self.builder.ensure_host_bridge_port(true, name);
         }
         for name in &self.expected_outputs {
-            self.builder = self.builder.ensure_host_bridge_port(true, name);
+            self.builder = self.builder.ensure_host_bridge_port(false, name);
         }
         self.builder.build()
     }

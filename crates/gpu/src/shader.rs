@@ -32,7 +32,7 @@ pub use pipeline::{
     bind_group_cache_limit, pipeline_cache_limit, set_bind_group_cache_limit,
     set_pipeline_cache_limit,
 };
-pub(crate) use pool::temp_pool;
+pub(crate) use pool::{clear_temp_pool, temp_pool};
 pub use pool::{
     set_temp_pool_buffer_limit, set_temp_pool_texture_limit, temp_pool_buffer_limit,
     temp_pool_texture_limit,

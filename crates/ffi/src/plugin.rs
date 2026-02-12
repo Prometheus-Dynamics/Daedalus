@@ -26,7 +26,7 @@ pub struct StrView {
 }
 
 impl StrView {
-    pub fn from_str(value: &'static str) -> Self {
+    pub fn from_static(value: &'static str) -> Self {
         Self {
             ptr: value.as_ptr(),
             len: value.len(),
@@ -43,6 +43,12 @@ impl StrView {
     }
 }
 
+impl From<&'static str> for StrView {
+    fn from(value: &'static str) -> Self {
+        Self::from_static(value)
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct PluginInfo {
@@ -54,13 +60,17 @@ pub struct PluginInfo {
 }
 
 impl PluginInfo {
-    pub fn new(plugin_name: &'static str, plugin_version: &'static str, daedalus_version: &'static str) -> Self {
+    pub fn new(
+        plugin_name: &'static str,
+        plugin_version: &'static str,
+        daedalus_version: &'static str,
+    ) -> Self {
         Self {
             abi_version: PLUGIN_ABI_VERSION,
-            ffi_version: StrView::from_str(FFI_VERSION),
-            daedalus_version: StrView::from_str(daedalus_version),
-            plugin_name: StrView::from_str(plugin_name),
-            plugin_version: StrView::from_str(plugin_version),
+            ffi_version: StrView::from_static(FFI_VERSION),
+            daedalus_version: StrView::from_static(daedalus_version),
+            plugin_name: StrView::from_static(plugin_name),
+            plugin_version: StrView::from_static(plugin_version),
         }
     }
 }
@@ -256,7 +266,11 @@ macro_rules! export_plugin {
 
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn daedalus_plugin_info() -> $crate::PluginInfo {
-            $crate::PluginInfo::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"), daedalus::version())
+            $crate::PluginInfo::new(
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION"),
+                daedalus::version(),
+            )
         }
 
         #[unsafe(no_mangle)]

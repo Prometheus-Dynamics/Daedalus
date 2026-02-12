@@ -4,8 +4,8 @@ use daedalus::{
     ErasedPayload, PluginLibrary,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     host_bridge::install_host_bridge,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
     runtime::plugins::PluginRegistry,
+    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
 };
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_planner::Graph;
@@ -17,10 +17,10 @@ use std::fs;
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let plugin_path = env::var("DAEDALUS_PLUGIN_PATH")
-        .map_err(|_| "DAEDALUS_PLUGIN_PATH is required")?;
-    let graph_path = env::var("DAEDALUS_GRAPH_PATH")
-        .map_err(|_| "DAEDALUS_GRAPH_PATH is required")?;
+    let plugin_path =
+        env::var("DAEDALUS_PLUGIN_PATH").map_err(|_| "DAEDALUS_PLUGIN_PATH is required")?;
+    let graph_path =
+        env::var("DAEDALUS_GRAPH_PATH").map_err(|_| "DAEDALUS_GRAPH_PATH is required")?;
     let runs: usize = env::var("DAEDALUS_RUNS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -40,8 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .filter(|v| !v.trim().is_empty());
 
-    let host_alias = find_host_alias(&graph, &input_port)
-        .unwrap_or_else(|| "host".to_string());
+    let host_alias = find_host_alias(&graph, &input_port).unwrap_or_else(|| "host".to_string());
 
     let mut plugins = PluginRegistry::new();
     let host_mgr = HostBridgeManager::new();
@@ -75,11 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(800);
 
-    let img = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(
-        width,
-        height,
-        Rgb([7, 8, 9]),
-    ));
+    let img = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(width, height, Rgb([7, 8, 9])));
 
     let handlers = plugins.take_handlers();
     let mut exec = daedalus_runtime::executor::Executor::new(&runtime_plan, handlers)
@@ -95,11 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         });
         let payload = ErasedPayload::from_cpu::<DynamicImage>(img.clone());
-        handle.push(
-            &input_port,
-            EdgePayload::Payload(payload),
-            mode_id,
-        );
+        handle.push(&input_port, EdgePayload::Payload(payload), mode_id);
         let _ = exec.run_in_place()?;
     }
 
@@ -118,11 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         });
         let payload = ErasedPayload::from_cpu::<DynamicImage>(img.clone());
-        handle.push(
-            &input_port,
-            EdgePayload::Payload(payload),
-            mode_id,
-        );
+        handle.push(&input_port, EdgePayload::Payload(payload), mode_id);
         let telem = exec.run_in_place()?;
         graph_total += telem.graph_duration;
         graph_samples += 1;
@@ -137,7 +124,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let metrics = merged.node_metrics.get(&idx);
         let (avg_ms, calls) = if let Some(metrics) = metrics {
             let calls = metrics.calls.max(1) as f64;
-            (metrics.total_duration.as_secs_f64() * 1000.0 / calls, metrics.calls)
+            (
+                metrics.total_duration.as_secs_f64() * 1000.0 / calls,
+                metrics.calls,
+            )
         } else {
             (0.0, 0)
         };
@@ -155,7 +145,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let metrics = merged.edge_metrics.get(&idx);
         let (avg_ms, samples) = if let Some(metrics) = metrics {
             let samples = metrics.samples.max(1) as f64;
-            (metrics.total_wait.as_secs_f64() * 1000.0 / samples, metrics.samples)
+            (
+                metrics.total_wait.as_secs_f64() * 1000.0 / samples,
+                metrics.samples,
+            )
         } else {
             (0.0, 0)
         };
@@ -194,17 +187,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn find_host_alias(graph: &Graph, port: &str) -> Option<String> {
     let target = port.to_ascii_lowercase();
     graph.nodes.iter().find_map(|node| {
-        let is_host = matches!(node.metadata.get("host_bridge"), Some(DaedalusValue::Bool(true)));
+        let is_host = matches!(
+            node.metadata.get("host_bridge"),
+            Some(DaedalusValue::Bool(true))
+        );
         if !is_host {
             return None;
         }
         if !node.outputs.iter().any(|p| p.eq_ignore_ascii_case(&target)) {
             return None;
         }
-        let alias = node
-            .label
-            .clone()
-            .unwrap_or_else(|| node.id.0.to_string());
+        let alias = node.label.clone().unwrap_or_else(|| node.id.0.to_string());
         Some(alias)
     })
 }

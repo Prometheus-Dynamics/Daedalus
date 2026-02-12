@@ -12,8 +12,8 @@ pub mod handler_registry;
 pub mod handles;
 pub mod host_bridge;
 pub mod io;
-mod plan;
 mod perf;
+mod plan;
 #[cfg(feature = "plugins")]
 pub mod plugins;
 mod scheduler;
@@ -92,5 +92,7 @@ pub use host_bridge::{
     HostBridgeSerializedPayload, bridge_handler,
 };
 pub use io::{NodeIo, register_output_mover};
-pub use plan::{BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment, RuntimeSink};
+pub use plan::{
+    BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment, RuntimeSink,
+};
 pub use scheduler::{SchedulerConfig, build_runtime};

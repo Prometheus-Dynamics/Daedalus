@@ -6,8 +6,8 @@ use std::sync::{
 
 // Default pool sizes must be conservative on embedded GPUs; large defaults can cause
 // transient OOM/driver resets when shaders allocate full-frame intermediate textures.
-static TEMP_POOL_BUFFER_LIMIT: AtomicUsize = AtomicUsize::new(32);
-static TEMP_POOL_TEXTURE_LIMIT: AtomicUsize = AtomicUsize::new(16);
+static TEMP_POOL_BUFFER_LIMIT: AtomicUsize = AtomicUsize::new(16);
+static TEMP_POOL_TEXTURE_LIMIT: AtomicUsize = AtomicUsize::new(6);
 
 /// Set the buffer pool limit per device. Returns the previous limit.
 pub fn set_temp_pool_buffer_limit(limit: usize) -> usize {
@@ -81,6 +81,10 @@ impl TempPool {
     ) {
         self.pool_mut(device_key)
             .put_texture(width, height, format, usage, tex);
+    }
+
+    pub fn clear(&mut self) {
+        self.per_device.clear();
     }
 }
 
@@ -159,4 +163,10 @@ static TEMP_POOL: OnceLock<Mutex<TempPool>> = OnceLock::new();
 
 pub fn temp_pool() -> &'static Mutex<TempPool> {
     TEMP_POOL.get_or_init(|| Mutex::new(TempPool::new()))
+}
+
+pub fn clear_temp_pool() {
+    if let Ok(mut pool) = temp_pool().lock() {
+        pool.clear();
+    }
 }

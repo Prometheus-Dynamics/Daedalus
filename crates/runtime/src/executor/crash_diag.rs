@@ -32,7 +32,9 @@ pub fn install_if_enabled(nodes: &[RuntimeNode]) {
             "daedalus-runtime: crash in node idx={idx} id={} label={label}\n",
             n.id
         );
-        let c = CString::new(msg).unwrap_or_else(|_| CString::new("daedalus-runtime: crash in node (invalid utf8)\n").unwrap());
+        let c = CString::new(msg).unwrap_or_else(|_| {
+            CString::new("daedalus-runtime: crash in node (invalid utf8)\n").unwrap()
+        });
         ptrs.push(Box::leak(c.into_boxed_c_str()).as_ptr());
     }
     let boxed: Box<[*const libc::c_char]> = ptrs.into_boxed_slice();
@@ -64,7 +66,11 @@ unsafe fn install_signal_handler(sig: libc::c_int) {
 }
 
 #[cfg(unix)]
-extern "C" fn handler_siginfo(sig: libc::c_int, info: *mut libc::siginfo_t, _uctx: *mut libc::c_void) {
+extern "C" fn handler_siginfo(
+    sig: libc::c_int,
+    info: *mut libc::siginfo_t,
+    _uctx: *mut libc::c_void,
+) {
     unsafe {
         let _ = write_str("daedalus-runtime: fatal signal received\n");
         if sig == libc::SIGSEGV {

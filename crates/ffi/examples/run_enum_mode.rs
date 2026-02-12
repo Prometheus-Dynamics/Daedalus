@@ -2,10 +2,10 @@
 //! enum binding issues.
 
 use daedalus::{
-    engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     NodeHandle, PluginLibrary, PortHandle,
     data::json,
     data::model::{EnumValue, Value},
+    engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     graph_builder::GraphBuilder,
     host_bridge::install_host_bridge,
     runtime::host_bridge::{HostBridgeManager, HostBridgeSerialized},

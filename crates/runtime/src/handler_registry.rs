@@ -77,15 +77,11 @@ impl HandlerRegistry {
             + 'static,
     {
         if std::env::var_os("DAEDALUS_TRACE_HANDLER_REGISTER").is_some() {
-            log::warn!(
-                "daedalus-runtime: register stateful handler id={}",
-                id
-            );
+            log::warn!("daedalus-runtime: register stateful handler id={}", id);
         }
         let key = Self::key_for_id(id);
         self.record_id(key, id);
-        self.stateful
-            .insert(key, Arc::new(Mutex::new(Box::new(f))));
+        self.stateful.insert(key, Arc::new(Mutex::new(Box::new(f))));
     }
 
     pub fn merge(&mut self, other: HandlerRegistry) {
@@ -144,8 +140,7 @@ impl crate::executor::NodeHandler for HandlerRegistry {
         ctx: &ExecutionContext,
         io: &mut NodeIo,
     ) -> Result<(), NodeError> {
-        if std::env::var_os("DAEDALUS_TRACE_HANDLER_RUN").is_some()
-            && node.id == "cv:image:to_gray"
+        if std::env::var_os("DAEDALUS_TRACE_HANDLER_RUN").is_some() && node.id == "cv:image:to_gray"
         {
             let has_stateless = self.stateless.contains_key(&node.stable_id);
             let has_stateful = self.stateful.contains_key(&node.stable_id);
@@ -172,6 +167,12 @@ impl crate::executor::NodeHandler for HandlerRegistry {
                 node.stable_id
             );
         }
+        if std::env::var_os("DAEDALUS_TRACE_MISSING_HANDLERS_STDERR").is_some() {
+            eprintln!(
+                "daedalus-runtime: missing handler for node id={} stable_id={:x}",
+                node.id, node.stable_id
+            );
+        }
         Ok(())
     }
 }
@@ -181,4 +182,3 @@ impl Default for HandlerRegistry {
         Self::new()
     }
 }
-

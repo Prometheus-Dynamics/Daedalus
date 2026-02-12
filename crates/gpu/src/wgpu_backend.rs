@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 
 use crate::handles::{GpuBufferHandle, GpuBufferId, GpuDropToken, GpuImageHandle, GpuImageId};
 use crate::traits::GpuBackend;
@@ -36,7 +36,19 @@ struct WgpuResources {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ResourceKind {
     Buffer(GpuBufferId),
-    Texture(GpuImageId),
+    Texture {
+        id: GpuImageId,
+        recycle: Option<TextureRecycleMeta>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextureRecycleMeta {
+    device_key: usize,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
 }
 
 #[derive(Debug)]
@@ -56,9 +68,21 @@ impl Drop for ResourceDropToken {
                     buffers.remove(&id);
                 }
             }
-            ResourceKind::Texture(id) => {
+            ResourceKind::Texture { id, recycle } => {
                 if let Ok(mut textures) = resources.textures.lock() {
-                    textures.remove(&id);
+                    let texture = textures.remove(&id);
+                    if let (Some(texture), Some(meta)) = (texture, recycle)
+                        && let Ok(mut pool) = crate::shader::temp_pool().lock()
+                    {
+                        pool.put_texture(
+                            meta.device_key,
+                            meta.width,
+                            meta.height,
+                            meta.format,
+                            meta.usage,
+                            texture,
+                        );
+                    }
                 }
             }
         }
@@ -68,13 +92,30 @@ impl Drop for ResourceDropToken {
 impl WgpuBackend {
     pub fn new() -> Result<Self, GpuError> {
         let res = std::panic::catch_unwind(|| {
-            let backends = Backends::from_env().unwrap_or(Backends::all());
+            #[allow(clippy::if_same_then_else)]
+            let preferred_backends = Backends::from_env().unwrap_or_else(|| {
+                #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+                {
+                    // Headless Linux ARM targets (CM5) are significantly more stable with Vulkan.
+                    Backends::VULKAN
+                }
+                #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+                {
+                    Backends::all()
+                }
+            });
             let instance = Instance::new(&InstanceDescriptor {
-                backends,
+                backends: preferred_backends,
                 ..Default::default()
             });
-            // Try to pick an adapter; if none, fall back to defaults.
-            let adapter = match instance.enumerate_adapters(backends).into_iter().next() {
+            let mut adapters: Vec<Adapter> = instance
+                .enumerate_adapters(preferred_backends)
+                .into_iter()
+                .collect();
+            if adapters.is_empty() && preferred_backends != Backends::all() {
+                adapters = instance.enumerate_adapters(Backends::all()).into_iter().collect();
+            }
+            let adapter = match select_best_adapter(adapters) {
                 Some(a) => a,
                 None => return Err(GpuError::AdapterUnavailable),
             };
@@ -94,6 +135,16 @@ impl WgpuBackend {
                 })
                 .block_on()
                 .expect("wgpu device");
+
+            // Defensive reset: if a prior backend/device died and was recreated, pointer-based
+            // keys can alias stale pooled textures. Start each backend with a clean temp pool.
+            crate::shader::clear_temp_pool();
+
+            // Avoid process-level panics on uncaptured backend errors (OOM/validation).
+            // We still surface the error for diagnostics, but keep the runtime alive.
+            device.on_uncaptured_error(std::sync::Arc::new(|err| {
+                eprintln!("daedalus-gpu: uncaptured wgpu error: {err}");
+            }));
 
             Ok(Self {
                 adapter: info,
@@ -117,6 +168,12 @@ impl WgpuBackend {
 
     pub(crate) fn device_queue(&self) -> (&wgpu::Device, &wgpu::Queue) {
         (&self.device, &self.queue)
+    }
+
+    fn stats_guard(&self) -> MutexGuard<'_, TransferStats> {
+        self.stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub(crate) fn get_texture(
@@ -164,11 +221,66 @@ impl WgpuBackend {
             map.insert(handle.id, texture);
         }
         handle.drop_token = Some(Arc::new(ResourceDropToken {
-            kind: ResourceKind::Texture(handle.id),
+            kind: ResourceKind::Texture {
+                id: handle.id,
+                recycle: None,
+            },
             resources: Arc::downgrade(&self.resources),
         }) as Arc<dyn GpuDropToken>);
         handle
     }
+}
+
+fn select_best_adapter(adapters: Vec<Adapter>) -> Option<Adapter> {
+    adapters.into_iter().max_by_key(adapter_score)
+}
+
+fn adapter_score(adapter: &Adapter) -> i64 {
+    let info = adapter.get_info();
+    let mut score: i64 = match info.backend {
+        wgpu::Backend::Vulkan => 500,
+        wgpu::Backend::Metal => 450,
+        wgpu::Backend::Dx12 => 400,
+        wgpu::Backend::Gl => 250,
+        wgpu::Backend::BrowserWebGpu => 150,
+        wgpu::Backend::Noop => 0,
+    };
+
+    score += match info.device_type {
+        wgpu::DeviceType::DiscreteGpu => 120,
+        wgpu::DeviceType::IntegratedGpu => 90,
+        wgpu::DeviceType::VirtualGpu => 40,
+        wgpu::DeviceType::Cpu => -300,
+        wgpu::DeviceType::Other => 0,
+    };
+
+    // Strongly avoid software adapters when possible.
+    let lower_name = info.name.to_ascii_lowercase();
+    if lower_name.contains("llvmpipe") || lower_name.contains("lavapipe") || lower_name.contains("softpipe") {
+        score -= 800;
+    }
+
+    // Prefer adapters that can run our storage-heavy image pipeline.
+    let rgba = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
+    if rgba.allowed_usages.contains(wgpu::TextureUsages::STORAGE_BINDING) {
+        score += 90;
+    } else {
+        score -= 200;
+    }
+    if rgba.allowed_usages.contains(wgpu::TextureUsages::TEXTURE_BINDING) {
+        score += 20;
+    } else {
+        score -= 50;
+    }
+    if rgba.allowed_usages.contains(wgpu::TextureUsages::COPY_SRC)
+        && rgba.allowed_usages.contains(wgpu::TextureUsages::COPY_DST)
+    {
+        score += 20;
+    } else {
+        score -= 120;
+    }
+
+    score
 }
 
 impl GpuBackend for WgpuBackend {
@@ -223,8 +335,10 @@ impl GpuBackend for WgpuBackend {
         {
             return Err(GpuError::AllocationFailed);
         }
-        let mut stats = self.stats.lock().expect("wgpu stats lock");
-        stats.record_upload(req.size_bytes);
+        {
+            let mut stats = self.stats_guard();
+            stats.record_upload(req.size_bytes);
+        }
         let mut handle = GpuBufferHandle::new(req.size_bytes, GpuMemoryLocation::Gpu, req.usage);
         let usage = map_usage(req.usage);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -269,10 +383,12 @@ impl GpuBackend for WgpuBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        let mut stats = self.stats.lock().expect("wgpu stats lock");
         let bpp = crate::format_bytes_per_pixel(req.format).ok_or(GpuError::Unsupported)? as u64;
         let bytes = (req.width as u64) * (req.height as u64) * bpp;
-        stats.record_upload(bytes);
+        {
+            let mut stats = self.stats_guard();
+            stats.record_upload(bytes);
+        }
         let mut usage = map_texture_usage(req.usage);
         // Many example pipelines need to sample from uploaded textures and/or read them back.
         // Add permissive defaults to avoid wgpu validation errors when a texture is later used
@@ -309,22 +425,25 @@ impl GpuBackend for WgpuBackend {
             .expect("textures lock")
             .insert(handle.id, Arc::new(texture));
         handle.drop_token = Some(Arc::new(ResourceDropToken {
-            kind: ResourceKind::Texture(handle.id),
+            kind: ResourceKind::Texture {
+                id: handle.id,
+                recycle: None,
+            },
             resources: Arc::downgrade(&self.resources),
         }) as Arc<dyn GpuDropToken>);
         Ok(handle)
     }
 
     fn stats(&self) -> TransferStats {
-        *self.stats.lock().expect("wgpu stats lock")
+        *self.stats_guard()
     }
 
     fn take_stats(&self) -> TransferStats {
-        self.stats.lock().expect("wgpu stats lock").take()
+        self.stats_guard().take()
     }
 
     fn record_download(&self, bytes: u64) {
-        let mut stats = self.stats.lock().expect("wgpu stats lock");
+        let mut stats = self.stats_guard();
         stats.record_download(bytes);
     }
 
@@ -640,7 +759,10 @@ impl crate::GpuAsyncBackend for WgpuBackend {
             .ok_or(GpuError::Unsupported)?;
         // Staging reuse
         let staging = {
-            let mut pool = self._staging_pool.lock().expect("staging pool");
+            let mut pool = self
+                ._staging_pool
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(list) = pool.get_mut(&handle.size_bytes) {
                 list.pop()
             } else {
@@ -674,7 +796,10 @@ impl crate::GpuAsyncBackend for WgpuBackend {
         self.record_download(data.len() as u64);
         // Return staging to pool
         {
-            let mut pool = self._staging_pool.lock().expect("staging pool");
+            let mut pool = self
+                ._staging_pool
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             pool.entry(handle.size_bytes).or_default().push(staging);
         }
         Ok(data)
@@ -715,16 +840,25 @@ impl CopyLimiter {
     }
 
     fn acquire(&self) -> CopyGuard<'_> {
-        let mut count = self.state.lock().expect("copy limiter lock");
+        let mut count = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         while *count >= self.limit {
-            count = self.cv.wait(count).expect("copy limiter wait");
+            count = self
+                .cv
+                .wait(count)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
         *count += 1;
         CopyGuard { limiter: self }
     }
 
     fn release(&self) {
-        let mut count = self.state.lock().expect("copy limiter lock");
+        let mut count = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *count = count.saturating_sub(1);
         self.cv.notify_one();
     }

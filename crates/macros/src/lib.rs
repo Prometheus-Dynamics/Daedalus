@@ -5,11 +5,13 @@
 )]
 
 mod config_derive;
+mod daedalus_type_derive;
 mod gpu_state_derive;
 mod helpers;
 mod node_fn_impl;
 mod node_handler_impl;
 mod shader_bindings;
+mod to_value_derive;
 
 /// Define a node handler without generating registry metadata.
 ///
@@ -98,4 +100,19 @@ pub fn gpu_bindings(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro_derive(GpuStateful, attributes(gpu_state))]
 pub fn gpu_stateful(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     gpu_state_derive::gpu_stateful(item)
+}
+
+/// Derive `DaedalusTypeExpr` for a struct/enum to define a stable `TypeExpr` schema.
+///
+/// Use `#[daedalus(type_key = \"cv:camera_calibration\")]` to pin a portable key; otherwise
+/// the default key is `rust:<module_path>::<TypeName>`.
+#[proc_macro_derive(DaedalusTypeExpr, attributes(daedalus))]
+pub fn daedalus_type_expr(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    daedalus_type_derive::daedalus_type_expr(item)
+}
+
+/// Derive `ToValue` for a struct/enum to enable JSON-friendly host export.
+#[proc_macro_derive(DaedalusToValue)]
+pub fn daedalus_to_value(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    to_value_derive::daedalus_to_value(item)
 }

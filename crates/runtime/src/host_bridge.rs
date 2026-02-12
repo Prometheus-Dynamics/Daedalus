@@ -1,8 +1,8 @@
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::sync::{OnceLock, RwLock};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::Poll;
 
 use crate::convert::convert_arc;
@@ -11,6 +11,7 @@ use crate::io::NodeIo;
 use crate::plan::EdgePolicyKind;
 use daedalus_data::json;
 use daedalus_data::model::{TypeExpr, Value, ValueType};
+use daedalus_data::named_types::HostExportPolicy;
 use daedalus_data::typing;
 use futures_util::future::poll_fn;
 use futures_util::task::AtomicWaker;
@@ -463,7 +464,12 @@ impl<'a> HostPortOwned<'a> {
             return Ok(None);
         };
         let corr = payload.correlation_id;
-        match T::decode(self.handle, self.name(), self.resolved_type(), payload.clone()) {
+        match T::decode(
+            self.handle,
+            self.name(),
+            self.resolved_type(),
+            payload.clone(),
+        ) {
             Ok(value) => Ok(Some((corr, value))),
             Err(err) => {
                 self.handle.restore_outbound(self.name(), payload);
@@ -477,10 +483,7 @@ impl<'a> HostPortOwned<'a> {
         let payload = self.handle.try_pop(self.name())?;
         let corr = payload.correlation_id;
         match payload.inner {
-            EdgePayload::Any(a) => a
-                .downcast_ref::<T>()
-                .cloned()
-                .map(|v| (corr, v)),
+            EdgePayload::Any(a) => a.downcast_ref::<T>().cloned().map(|v| (corr, v)),
             _ => None,
         }
     }
@@ -543,7 +546,12 @@ impl<'a> HostPort<'a> {
             return Ok(None);
         };
         let corr = payload.correlation_id;
-        match T::decode(self.handle, self.name, self.resolved_type(), payload.clone()) {
+        match T::decode(
+            self.handle,
+            self.name,
+            self.resolved_type(),
+            payload.clone(),
+        ) {
             Ok(value) => Ok(Some((corr, value))),
             Err(err) => {
                 self.handle.restore_outbound(self.name, payload);
@@ -557,10 +565,7 @@ impl<'a> HostPort<'a> {
         let payload = self.handle.try_pop(self.name)?;
         let corr = payload.correlation_id;
         match payload.inner {
-            EdgePayload::Any(a) => a
-                .downcast_ref::<T>()
-                .cloned()
-                .map(|v| (corr, v)),
+            EdgePayload::Any(a) => a.downcast_ref::<T>().cloned().map(|v| (corr, v)),
             _ => None,
         }
     }
@@ -708,10 +713,7 @@ impl HostPollable for DynamicImage {
                     }
 
                     // Accept `ErasedPayload` carrying a CPU/GPU image.
-                    if let Some(ep) = any
-                        .downcast_ref::<daedalus_gpu::ErasedPayload>()
-                        .cloned()
-                    {
+                    if let Some(ep) = any.downcast_ref::<daedalus_gpu::ErasedPayload>().cloned() {
                         if let Some(cpu) = ep.clone_cpu::<DynamicImage>() {
                             return Ok(cpu);
                         }
@@ -730,10 +732,7 @@ impl HostPollable for DynamicImage {
                     }
 
                     // Accept a raw GPU handle sent through `Any`.
-                    if let Some(h) = any
-                        .downcast_ref::<daedalus_gpu::GpuImageHandle>()
-                        .cloned()
-                    {
+                    if let Some(h) = any.downcast_ref::<daedalus_gpu::GpuImageHandle>().cloned() {
                         let ctx = handle.gpu_ctx().ok_or_else(|| {
                             NodeError::InvalidInput(format!(
                                 "host bridge port {port}: gpu output requires a GPU context"
@@ -878,28 +877,16 @@ where
                 )))
             }
             EdgePayload::Any(any) => {
-                if let Some(p) = any
-                    .downcast_ref::<daedalus_gpu::Payload<T>>()
-                    .cloned()
-                {
+                if let Some(p) = any.downcast_ref::<daedalus_gpu::Payload<T>>().cloned() {
                     return Ok(p);
                 }
-                if let Some(cpu) = any
-                    .downcast_ref::<T>()
-                    .cloned()
-                {
+                if let Some(cpu) = any.downcast_ref::<T>().cloned() {
                     return Ok(daedalus_gpu::Payload::Cpu(cpu));
                 }
-                if let Some(g) = any
-                    .downcast_ref::<T::GpuRepr>()
-                    .cloned()
-                {
+                if let Some(g) = any.downcast_ref::<T::GpuRepr>().cloned() {
                     return Ok(daedalus_gpu::Payload::Gpu(g));
                 }
-                if let Some(ep) = any
-                    .downcast_ref::<daedalus_gpu::ErasedPayload>()
-                    .cloned()
-                {
+                if let Some(ep) = any.downcast_ref::<daedalus_gpu::ErasedPayload>().cloned() {
                     if let Some(cpu) = ep.clone_cpu::<T>() {
                         return Ok(daedalus_gpu::Payload::Cpu(cpu));
                     }
@@ -989,6 +976,7 @@ pub struct HostBridgeManager {
 }
 
 static HOST_BRIDGE_OUTBOUND_LOGS: AtomicU64 = AtomicU64::new(0);
+static HOST_BRIDGE_OUTBOUND_DROPS: AtomicU64 = AtomicU64::new(0);
 
 impl HostBridgeManager {
     /// Create an empty manager.
@@ -1141,6 +1129,20 @@ impl HostBridgeManager {
         {
             let key = port.to_ascii_lowercase();
             let q = buf.outbound.entry(key.clone()).or_default();
+            let cap = outbound_cap_for_payload(&payload);
+            if cap > 0 && q.len() >= cap {
+                q.pop_front();
+                let drop_count = HOST_BRIDGE_OUTBOUND_DROPS.fetch_add(1, Ordering::Relaxed) + 1;
+                if drop_count <= 5 || drop_count.is_multiple_of(500) {
+                    log::warn!(
+                        "host-bridge outbound overflow alias={} port={} cap={} dropping-oldest count={}",
+                        alias,
+                        key,
+                        cap,
+                        drop_count
+                    );
+                }
+            }
             q.push_back(payload);
             if host_bridge_trace_enabled() {
                 let count = HOST_BRIDGE_OUTBOUND_LOGS.fetch_add(1, Ordering::Relaxed);
@@ -1239,6 +1241,33 @@ fn host_bridge_trace_enabled() -> bool {
     })
 }
 
+fn host_bridge_outbound_cap() -> usize {
+    static CAP: OnceLock<usize> = OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("DAEDALUS_HOST_BRIDGE_OUTBOUND_CAP")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .unwrap_or(4)
+            .max(1)
+    })
+}
+
+fn outbound_cap_for_payload(_payload: &CorrelatedPayload) -> usize {
+    let base = host_bridge_outbound_cap();
+    #[cfg(feature = "gpu")]
+    {
+        match &_payload.inner {
+            EdgePayload::GpuImage(_) => 1,
+            EdgePayload::Payload(ep) if ep.is_gpu() => 1,
+            _ => base,
+        }
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        base
+    }
+}
+
 fn describe_payload(p: &CorrelatedPayload) -> String {
     match &p.inner {
         EdgePayload::Any(_) => "any".to_string(),
@@ -1248,9 +1277,12 @@ fn describe_payload(p: &CorrelatedPayload) -> String {
         #[cfg(feature = "gpu")]
         EdgePayload::GpuImage(_) => "gpu_image".to_string(),
         #[cfg(feature = "gpu")]
-        EdgePayload::Payload(ep) => {
-            if ep.is_gpu() { "gpu_payload" } else { "cpu_payload" }.to_string()
-        },
+        EdgePayload::Payload(ep) => if ep.is_gpu() {
+            "gpu_payload"
+        } else {
+            "cpu_payload"
+        }
+        .to_string(),
     }
 }
 
@@ -1263,9 +1295,12 @@ fn describe_edge(p: &CorrelatedPayload) -> String {
         #[cfg(feature = "gpu")]
         EdgePayload::GpuImage(_) => "gpu_image".to_string(),
         #[cfg(feature = "gpu")]
-        EdgePayload::Payload(ep) => {
-            if ep.is_gpu() { "gpu_payload" } else { "cpu_payload" }.to_string()
-        },
+        EdgePayload::Payload(ep) => if ep.is_gpu() {
+            "gpu_payload"
+        } else {
+            "cpu_payload"
+        }
+        .to_string(),
     }
 }
 
@@ -1330,6 +1365,10 @@ fn serialize_outbound_payload(
     port_type: Option<&TypeExpr>,
     payload: CorrelatedPayload,
 ) -> Result<HostBridgeSerializedPayload, NodeError> {
+    let export_policy = port_type
+        .map(daedalus_data::named_types::export_policy_for)
+        .unwrap_or(HostExportPolicy::Value);
+
     let serialized = match payload.inner {
         EdgePayload::Unit => {
             HostBridgeSerialized::Json(serialize_value_to_json(port, &Value::Unit)?)
@@ -1339,6 +1378,20 @@ fn serialize_outbound_payload(
             HostBridgeSerialized::Json(serialize_value_to_json(port, &value)?)
         }
         EdgePayload::Any(any) => {
+            if export_policy == HostExportPolicy::None {
+                // Policy says "do not guess": only allow serialization if the payload is already
+                // value-like/bytes-like. This prevents surprising runtime costs and confusing
+                // "why did my image become JSON?" behavior.
+                if any_to_value(any.as_ref()).is_none() && any_to_bytes(any.as_ref()).is_none() {
+                    let ty = std::any::type_name_of_val(any.as_ref());
+                    let schema = port_type
+                        .map(|t| format!("{t:?}"))
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    return Err(NodeError::InvalidInput(format!(
+                        "host bridge port {port}: schema is non-serializable ({schema}); payload type={ty}. Insert an explicit encoder/converter node to `Value` or `Bytes`."
+                    )));
+                }
+            }
             if port_type.is_some_and(is_bytes_type) {
                 if let Some(bytes) = any_to_bytes(any.as_ref()) {
                     HostBridgeSerialized::Bytes(bytes)
@@ -1366,7 +1419,10 @@ fn serialize_outbound_payload(
         }
         #[cfg(feature = "gpu")]
         EdgePayload::Payload(_) | EdgePayload::GpuImage(_) => {
-            log::warn!("host bridge port {}: gpu payloads cannot be serialized", port);
+            log::warn!(
+                "host bridge port {}: gpu payloads cannot be serialized",
+                port
+            );
             return Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: gpu payloads cannot be serialized"
             )));
@@ -1473,44 +1529,32 @@ fn any_to_value(any: &dyn Any) -> Option<Value> {
     if let Some(value) = try_serialize_any_value(any) {
         return Some(value);
     }
-    let value = any
-        .downcast_ref::<Value>()
-        .cloned();
+    let value = any.downcast_ref::<Value>().cloned();
     if let Some(value) = value {
         return Some(value);
     }
 
-    let i = any
-        .downcast_ref::<i64>()
-        .copied();
+    let i = any.downcast_ref::<i64>().copied();
     if let Some(i) = i {
         return Some(Value::Int(i));
     }
 
-    let f = any
-        .downcast_ref::<f64>()
-        .copied();
+    let f = any.downcast_ref::<f64>().copied();
     if let Some(f) = f {
         return Some(Value::Float(f));
     }
 
-    let b = any
-        .downcast_ref::<bool>()
-        .copied();
+    let b = any.downcast_ref::<bool>().copied();
     if let Some(b) = b {
         return Some(Value::Bool(b));
     }
 
-    let s = any
-        .downcast_ref::<String>()
-        .cloned();
+    let s = any.downcast_ref::<String>().cloned();
     if let Some(s) = s {
         return Some(Value::String(s.into()));
     }
 
-    let bytes = any
-        .downcast_ref::<Vec<u8>>()
-        .cloned();
+    let bytes = any.downcast_ref::<Vec<u8>>().cloned();
     bytes.map(|b| Value::Bytes(b.into()))
 }
 

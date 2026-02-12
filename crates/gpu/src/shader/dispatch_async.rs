@@ -1,4 +1,4 @@
-use super::dispatch::{ShaderContext, SingleDispatch};
+use super::dispatch::{ShaderContext, SingleDispatch, track_submission_and_throttle};
 use super::fallback::{cached_spec, ctx_async};
 use super::pipeline::{bind_group, pipeline_entry};
 use super::prepare::prepare_resources;
@@ -105,7 +105,8 @@ pub async fn dispatch_shader_with_options_async<'a>(
     let (readbacks, pool_textures_to_return, texture_handles) =
         enqueue_readbacks(device, &prepared, &mut encoder);
 
-    queue.submit(Some(encoder.finish()));
+    let submission_idx = queue.submit(Some(encoder.finish()));
+    track_submission_and_throttle(device, submission_idx);
 
     let result = resolve_readbacks_async(device, readbacks).await?;
     return_pooled_textures(pool_textures_to_return);

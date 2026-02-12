@@ -42,6 +42,34 @@
   "diagnostics": [
     {
       "code": "PortMissing",
+      "message": "edge references output port `missing` on node a, but the registry descriptor does not provide that port",
+      "span": {
+        "pass": "validate_ports",
+        "node": "a",
+        "port": "missing"
+      },
+      "metadata": {
+        "available_ports": {
+          "type": "List",
+          "value": [
+            {
+              "type": "String",
+              "value": "out"
+            }
+          ]
+        },
+        "missing_port": {
+          "type": "String",
+          "value": "missing"
+        },
+        "missing_port_direction": {
+          "type": "String",
+          "value": "output"
+        }
+      }
+    },
+    {
+      "code": "PortMissing",
       "message": "output port `missing` not found on node a",
       "span": {
         "pass": "typecheck",
