@@ -269,6 +269,15 @@ pub(crate) fn bind_group(
                 owned,
                 ..
             } => {
+                // IMPORTANT: Never cache bind groups that reference textures.
+                //
+                // In streaming graphs, textures are frequently per-frame values (new underlying GPU
+                // allocations each tick). `wgpu::BindGroup` retains the referenced `TextureView`,
+                // which retains the `Texture`. Caching such bind groups therefore pins old frame
+                // textures and can quickly OOM embedded GPUs.
+                //
+                // We still cache pure-buffer bind groups (common for small GPU-state shaders).
+                can_cache_bg = false;
                 spec.binding.hash(&mut bind_hasher);
                 (Arc::as_ptr(texture) as usize).hash(&mut bind_hasher);
                 if *owned {
