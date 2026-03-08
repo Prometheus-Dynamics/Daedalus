@@ -5,7 +5,7 @@ use daedalus_runtime::{
     EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig, build_runtime,
 };
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 
 struct LogHandler {
     order: std::sync::Arc<std::sync::Mutex<Vec<String>>>,

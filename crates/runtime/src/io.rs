@@ -1749,9 +1749,7 @@ impl<'a> NodeIo<'a> {
                 preview.sort_unstable();
                 eprintln!(
                     "daedalus-runtime: missing const coercer key='{}' value_kind='{}' known_keys_sample={:?}",
-                    key,
-                    kind,
-                    preview
+                    key, kind, preview
                 );
             }
             return None;
@@ -2200,7 +2198,7 @@ impl<'a> NodeIo<'a> {
                             && let Ok(downloaded) = ep.download(self.gpu.as_ref()?)
                             && let Some(cpu) = downloaded.as_cpu::<T>()
                         {
-                                return Some(daedalus_gpu::Payload::Cpu(cpu.clone()));
+                            return Some(daedalus_gpu::Payload::Cpu(cpu.clone()));
                         }
                     }
                 }

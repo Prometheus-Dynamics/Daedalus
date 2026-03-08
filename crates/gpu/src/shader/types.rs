@@ -30,7 +30,7 @@ pub struct SamplerDesc {
     pub address_w: wgpu::AddressMode,
     pub mag_filter: wgpu::FilterMode,
     pub min_filter: wgpu::FilterMode,
-    pub mipmap_filter: wgpu::FilterMode,
+    pub mipmap_filter: wgpu::MipmapFilterMode,
 }
 
 impl Default for SamplerDesc {
@@ -41,7 +41,7 @@ impl Default for SamplerDesc {
             address_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
         }
     }
 }
@@ -60,7 +60,7 @@ impl SamplerDesc {
         self
     }
 
-    pub fn with_mipmap_filter(mut self, mip: wgpu::FilterMode) -> Self {
+    pub fn with_mipmap_filter(mut self, mip: wgpu::MipmapFilterMode) -> Self {
         self.mipmap_filter = mip;
         self
     }

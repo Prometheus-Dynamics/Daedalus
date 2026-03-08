@@ -108,12 +108,10 @@ impl WgpuBackend {
                 backends: preferred_backends,
                 ..Default::default()
             });
-            let mut adapters: Vec<Adapter> = instance
-                .enumerate_adapters(preferred_backends)
-                .into_iter()
-                .collect();
+            let mut adapters: Vec<Adapter> =
+                instance.enumerate_adapters(preferred_backends).block_on();
             if adapters.is_empty() && preferred_backends != Backends::all() {
-                adapters = instance.enumerate_adapters(Backends::all()).into_iter().collect();
+                adapters = instance.enumerate_adapters(Backends::all()).block_on();
             }
             let adapter = match select_best_adapter(adapters) {
                 Some(a) => a,
@@ -256,18 +254,27 @@ fn adapter_score(adapter: &Adapter) -> i64 {
 
     // Strongly avoid software adapters when possible.
     let lower_name = info.name.to_ascii_lowercase();
-    if lower_name.contains("llvmpipe") || lower_name.contains("lavapipe") || lower_name.contains("softpipe") {
+    if lower_name.contains("llvmpipe")
+        || lower_name.contains("lavapipe")
+        || lower_name.contains("softpipe")
+    {
         score -= 800;
     }
 
     // Prefer adapters that can run our storage-heavy image pipeline.
     let rgba = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
-    if rgba.allowed_usages.contains(wgpu::TextureUsages::STORAGE_BINDING) {
+    if rgba
+        .allowed_usages
+        .contains(wgpu::TextureUsages::STORAGE_BINDING)
+    {
         score += 90;
     } else {
         score -= 200;
     }
-    if rgba.allowed_usages.contains(wgpu::TextureUsages::TEXTURE_BINDING) {
+    if rgba
+        .allowed_usages
+        .contains(wgpu::TextureUsages::TEXTURE_BINDING)
+    {
         score += 20;
     } else {
         score -= 50;

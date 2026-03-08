@@ -67,8 +67,8 @@ pub fn map_address_mode(mode: &str) -> Option<TokenStream2> {
 
 pub fn map_mipmap_filter(mode: &str) -> Option<TokenStream2> {
     match mode.to_ascii_lowercase().as_str() {
-        "nearest" => Some(quote::quote! { ::wgpu::FilterMode::Nearest }),
-        "linear" => Some(quote::quote! { ::wgpu::FilterMode::Linear }),
+        "nearest" => Some(quote::quote! { ::wgpu::MipmapFilterMode::Nearest }),
+        "linear" => Some(quote::quote! { ::wgpu::MipmapFilterMode::Linear }),
         _ => None,
     }
 }

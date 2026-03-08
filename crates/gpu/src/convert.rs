@@ -221,7 +221,7 @@ impl ErasedPayload {
                         cpu_arc.as_ref(),
                         std::any::type_name::<T>(),
                     )
-                        .cloned()
+                    .cloned()
                 })
                 .ok_or(GpuError::Unsupported)?;
             let handle = cpu.upload(ctx)?;
@@ -247,10 +247,7 @@ impl ErasedPayload {
             let ErasedPayloadInner::Cached(cell) = inner;
             let cpu_arc = cell.cpu.get().ok_or(GpuError::Unsupported)?;
             if cpu_arc.downcast_ref::<T>().is_none()
-                && ErasedPayload::cross_dylib_ref::<T>(
-                    cpu_arc.as_ref(),
-                    std::any::type_name::<T>(),
-                )
+                && ErasedPayload::cross_dylib_ref::<T>(cpu_arc.as_ref(), std::any::type_name::<T>())
                     .is_none()
             {
                 return Err(GpuError::Unsupported);
@@ -327,7 +324,7 @@ impl ErasedPayload {
                         cpu.as_ref(),
                         std::any::type_name::<T>(),
                     )
-                        .is_some())
+                    .is_some())
             {
                 return Ok(ErasedPayload {
                     is_gpu: false,

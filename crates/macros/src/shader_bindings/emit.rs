@@ -369,7 +369,7 @@ pub fn emit_bindings(
                 FieldKind::Sampler { kind_override, address_override, mipmap_override } => {
                     let kind_token = kind_override.as_ref().and_then(|s| map_sampler_kind(s)).unwrap_or(quote! { ::daedalus::gpu::shader::SamplerKind::Filtering });
                     let addr = address_override.as_ref().and_then(|s| map_address_mode(s)).unwrap_or(quote! { ::wgpu::AddressMode::ClampToEdge });
-                    let mip = mipmap_override.as_ref().and_then(|s| map_mipmap_filter(s)).unwrap_or(quote! { ::wgpu::FilterMode::Nearest });
+                    let mip = mipmap_override.as_ref().and_then(|s| map_mipmap_filter(s)).unwrap_or(quote! { ::wgpu::MipmapFilterMode::Nearest });
                     quote! {
                         ::daedalus::gpu::shader::ShaderBinding {
                             binding: #binding,

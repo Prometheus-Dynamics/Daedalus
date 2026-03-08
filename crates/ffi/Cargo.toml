@@ -34,7 +34,7 @@ libloading = "0.9"
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-pyo3 = { version = "0.27", features = ["auto-initialize"], optional = true }
+pyo3 = { version = "0.28", features = ["auto-initialize"], optional = true }
 base64 = "0.22"
 image = { workspace = true }
 

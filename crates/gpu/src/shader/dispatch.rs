@@ -28,7 +28,10 @@ pub struct SingleDispatch<'ctx, 'a, B: GpuBindings<'a>> {
 
 const MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE: usize = 2;
 
-pub(super) fn track_submission_and_throttle(device: &wgpu::Device, submission: wgpu::SubmissionIndex) {
+pub(super) fn track_submission_and_throttle(
+    device: &wgpu::Device,
+    submission: wgpu::SubmissionIndex,
+) {
     static INFLIGHT: OnceLock<Mutex<HashMap<usize, VecDeque<wgpu::SubmissionIndex>>>> =
         OnceLock::new();
     let device_key = device as *const _ as usize;
@@ -38,16 +41,15 @@ pub(super) fn track_submission_and_throttle(device: &wgpu::Device, submission: w
     }
 
     loop {
-        let wait_for = if let Ok(guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock() {
-            guard
-                .get(&device_key)
-                .and_then(|q| {
-                    if q.len() > MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE {
-                        q.front().cloned()
-                    } else {
-                        None
-                    }
-                })
+        let wait_for = if let Ok(guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
+        {
+            guard.get(&device_key).and_then(|q| {
+                if q.len() > MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE {
+                    q.front().cloned()
+                } else {
+                    None
+                }
+            })
         } else {
             None
         };
