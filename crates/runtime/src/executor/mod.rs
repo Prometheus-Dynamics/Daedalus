@@ -283,16 +283,20 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
         for (idx, storage) in self.queues.iter().enumerate() {
             match storage {
-                EdgeStorage::Locked(queue) => {
+                EdgeStorage::Locked { queue, metrics } => {
                     if let Ok(mut q) = queue.lock() {
                         *q = queue::EdgeQueue::default();
                         if let Some((_, _, _, _, policy)) = self.edges.get(idx) {
                             q.ensure_policy(policy);
                         }
+                        metrics.set_current_bytes(0);
                     }
                 }
                 #[cfg(feature = "lockfree-queues")]
-                EdgeStorage::BoundedLf(queue) => while queue.pop().is_some() {},
+                EdgeStorage::BoundedLf { queue, metrics } => {
+                    while queue.pop().is_some() {}
+                    metrics.set_current_bytes(0);
+                }
             }
         }
     }
@@ -630,16 +634,20 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         }
         for (idx, storage) in self.queues.iter().enumerate() {
             match storage {
-                EdgeStorage::Locked(queue) => {
+                EdgeStorage::Locked { queue, metrics } => {
                     if let Ok(mut q) = queue.lock() {
                         *q = queue::EdgeQueue::default();
                         if let Some((_, _, _, _, policy)) = self.edges.get(idx) {
                             q.ensure_policy(policy);
                         }
+                        metrics.set_current_bytes(0);
                     }
                 }
                 #[cfg(feature = "lockfree-queues")]
-                EdgeStorage::BoundedLf(queue) => while queue.pop().is_some() {},
+                EdgeStorage::BoundedLf { queue, metrics } => {
+                    while queue.pop().is_some() {}
+                    metrics.set_current_bytes(0);
+                }
             }
         }
     }

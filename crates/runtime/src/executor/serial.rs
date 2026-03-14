@@ -364,9 +364,11 @@ fn run_segment<H: crate::executor::NodeHandler>(
             let mut sizes: Vec<String> = Vec::new();
             for edge_idx in &incoming_edge_indices {
                 let len = match queues.get(*edge_idx) {
-                    Some(EdgeStorage::Locked(q)) => q.lock().ok().map(|q| q.len()).unwrap_or(0),
+                    Some(EdgeStorage::Locked { queue, .. }) => {
+                        queue.lock().ok().map(|q| q.len()).unwrap_or(0)
+                    }
                     #[cfg(feature = "lockfree-queues")]
-                    Some(EdgeStorage::BoundedLf(q)) => q.len(),
+                    Some(EdgeStorage::BoundedLf { queue, .. }) => queue.len(),
                     None => 0,
                 };
                 sizes.push(format!("#{edge_idx}={len}"));

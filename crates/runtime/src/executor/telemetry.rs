@@ -179,6 +179,16 @@ pub struct EdgeMetrics {
     #[serde(default)]
     pub max_depth: u64,
     #[serde(default)]
+    pub current_depth: u64,
+    #[serde(default)]
+    pub peak_queue_bytes: u64,
+    #[serde(default)]
+    pub current_queue_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<u64>,
+    #[serde(default)]
+    pub drops: u64,
+    #[serde(default)]
     pub payload_bytes: u64,
     #[serde(default)]
     pub payload_count: u64,
@@ -197,6 +207,11 @@ impl EdgeMetrics {
         self.total_wait += other.total_wait;
         self.samples += other.samples;
         self.max_depth = self.max_depth.max(other.max_depth);
+        self.current_depth = self.current_depth.max(other.current_depth);
+        self.peak_queue_bytes = self.peak_queue_bytes.max(other.peak_queue_bytes);
+        self.current_queue_bytes = self.current_queue_bytes.max(other.current_queue_bytes);
+        self.capacity = self.capacity.max(other.capacity);
+        self.drops = self.drops.saturating_add(other.drops);
         self.payload_bytes = self.payload_bytes.saturating_add(other.payload_bytes);
         self.payload_count = self.payload_count.saturating_add(other.payload_count);
         self.gpu_uploads = self.gpu_uploads.saturating_add(other.gpu_uploads);
@@ -376,11 +391,38 @@ impl ExecutionTelemetry {
         }
         let entry = self.edge_metrics.entry(edge_idx).or_default();
         let depth_u64 = depth as u64;
+        entry.current_depth = depth_u64;
         entry.max_depth = entry.max_depth.max(depth_u64);
         entry
             .depth_histogram
             .get_or_insert_with(Histogram::default)
             .record_value(depth_u64);
+    }
+
+    pub fn record_edge_capacity(&mut self, edge_idx: usize, capacity: Option<usize>) {
+        if !cfg!(feature = "metrics") {
+            return;
+        }
+        if !self.metrics_level.is_detailed() {
+            return;
+        }
+        let Some(capacity) = capacity else {
+            return;
+        };
+        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        entry.capacity = Some(entry.capacity.unwrap_or(0).max(capacity as u64));
+    }
+
+    pub fn record_edge_queue_bytes(&mut self, edge_idx: usize, current_bytes: u64) {
+        if !cfg!(feature = "metrics") {
+            return;
+        }
+        if !self.metrics_level.is_detailed() {
+            return;
+        }
+        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        entry.current_queue_bytes = current_bytes;
+        entry.peak_queue_bytes = entry.peak_queue_bytes.max(current_bytes);
     }
 
     pub fn record_edge_payload(&mut self, edge_idx: usize, bytes: Option<u64>) {
@@ -410,6 +452,17 @@ impl ExecutionTelemetry {
         } else {
             entry.gpu_downloads = entry.gpu_downloads.saturating_add(1);
         }
+    }
+
+    pub fn record_edge_drop(&mut self, edge_idx: usize, count: u64) {
+        if !cfg!(feature = "metrics") {
+            return;
+        }
+        if !self.metrics_level.is_detailed() || count == 0 {
+            return;
+        }
+        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        entry.drops = entry.drops.saturating_add(count);
     }
 
     pub fn record_trace_event(&mut self, node_idx: usize, start: Duration, duration: Duration) {

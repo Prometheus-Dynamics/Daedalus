@@ -442,8 +442,8 @@ impl<'a> NodeIo<'a> {
         for edge_idx in &incoming_edges {
             if let Some(storage) = queues.get(*edge_idx) {
                 match storage {
-                    EdgeStorage::Locked(q_arc) => {
-                        if let Ok(mut q) = q_arc.lock() {
+                    EdgeStorage::Locked { queue, metrics } => {
+                        if let Ok(mut q) = queue.lock() {
                             while let Some(payload) = q.pop_front() {
                                 #[allow(unused_mut)]
                                 let mut payload = payload;
@@ -482,11 +482,15 @@ impl<'a> NodeIo<'a> {
                                     payload,
                                 });
                             }
+                            let current_queue_bytes = q.payload_bytes();
+                            metrics.set_current_bytes(current_queue_bytes);
+                            telemetry.record_edge_depth(*edge_idx, q.len());
+                            telemetry.record_edge_queue_bytes(*edge_idx, current_queue_bytes);
                         }
                     }
                     #[cfg(feature = "lockfree-queues")]
-                    EdgeStorage::BoundedLf(q) => {
-                        while let Some(payload) = q.pop() {
+                    EdgeStorage::BoundedLf { queue, metrics } => {
+                        while let Some(payload) = queue.pop() {
                             #[allow(unused_mut)]
                             let mut payload = payload;
                             let now = Instant::now();
@@ -501,6 +505,7 @@ impl<'a> NodeIo<'a> {
                             } else {
                                 None
                             };
+                            metrics.adjust_bytes(0, payload_bytes.unwrap_or(0));
                             telemetry.record_node_payload_in(node_idx, payload_bytes);
                             let port = edges
                                 .get(*edge_idx)
@@ -524,6 +529,9 @@ impl<'a> NodeIo<'a> {
                                 payload,
                             });
                         }
+                        telemetry.record_edge_depth(*edge_idx, queue.len());
+                        let (current_queue_bytes, _) = metrics.snapshot();
+                        telemetry.record_edge_queue_bytes(*edge_idx, current_queue_bytes);
                     }
                 }
             }
@@ -2745,22 +2753,31 @@ fn requeue_drained(
             .cloned()
             .unwrap_or(EdgePolicyKind::Fifo);
         match storage {
-            EdgeStorage::Locked(q_arc) => {
-                if let Ok(mut q) = q_arc.lock() {
+            EdgeStorage::Locked { queue, metrics } => {
+                if let Ok(mut q) = queue.lock() {
                     q.ensure_policy(&policy);
                     for mut payload in payloads {
                         payload.enqueued_at = Instant::now();
                         let _ = q.push(&policy, payload);
                     }
+                    metrics.set_current_bytes(q.payload_bytes());
                 }
             }
             #[cfg(feature = "lockfree-queues")]
-            EdgeStorage::BoundedLf(q) => {
+            EdgeStorage::BoundedLf { queue, metrics } => {
                 for mut payload in payloads {
+                    let payload_bytes =
+                        crate::executor::payload_size_bytes(&payload.inner).unwrap_or(0);
                     payload.enqueued_at = Instant::now();
-                    if q.push(payload.clone()).is_err() {
-                        let _ = q.pop();
-                        let _ = q.push(payload);
+                    if queue.push(payload.clone()).is_err() {
+                        let removed_bytes = queue
+                            .pop()
+                            .and_then(|removed| crate::executor::payload_size_bytes(&removed.inner))
+                            .unwrap_or(0);
+                        let _ = queue.push(payload);
+                        metrics.adjust_bytes(payload_bytes, removed_bytes);
+                    } else {
+                        metrics.adjust_bytes(payload_bytes, 0);
                     }
                 }
             }
@@ -2990,11 +3007,12 @@ mod tests {
 
     #[test]
     fn port_override_applies_backpressure_and_capacity() {
-        let queues = Arc::new(vec![EdgeStorage::Locked(Arc::new(std::sync::Mutex::new(
-            EdgeQueue::Bounded {
+        let queues = Arc::new(vec![EdgeStorage::Locked {
+            queue: Arc::new(std::sync::Mutex::new(EdgeQueue::Bounded {
                 ring: RingBuf::new(5),
-            },
-        )))]);
+            })),
+            metrics: Arc::new(crate::executor::queue::EdgeStorageMetrics::default()),
+        }]);
         let edges = vec![(
             NodeRef(0),
             "out".to_string(),

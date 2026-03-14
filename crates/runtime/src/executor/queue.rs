@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -64,6 +65,17 @@ impl RingBuf {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    pub fn payload_bytes(&self) -> u64 {
+        let mut total = 0u64;
+        for offset in 0..self.len {
+            let idx = (self.head + offset) % self.cap();
+            if let Some(payload) = self.buf[idx].as_ref() {
+                total = total.saturating_add(payload_size_bytes(&payload.inner).unwrap_or(0));
+            }
+        }
+        total
+    }
 }
 
 pub enum EdgeQueue {
@@ -121,10 +133,27 @@ impl EdgeQueue {
         }
     }
 
+    pub fn capacity(&self) -> Option<usize> {
+        match self {
+            EdgeQueue::Deque(_) => None,
+            EdgeQueue::Bounded { ring } => Some(ring.cap()),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         match self {
             EdgeQueue::Deque(d) => d.is_empty(),
             EdgeQueue::Bounded { ring } => ring.is_empty(),
+        }
+    }
+
+    pub fn payload_bytes(&self) -> u64 {
+        match self {
+            EdgeQueue::Deque(d) => d
+                .iter()
+                .map(|payload| payload_size_bytes(&payload.inner).unwrap_or(0))
+                .fold(0u64, u64::saturating_add),
+            EdgeQueue::Bounded { ring } => ring.payload_bytes(),
         }
     }
 
@@ -167,11 +196,60 @@ impl EdgeQueue {
     }
 }
 
+#[derive(Default)]
+pub struct EdgeStorageMetrics {
+    current_queue_bytes: AtomicU64,
+    peak_queue_bytes: AtomicU64,
+}
+
+impl EdgeStorageMetrics {
+    pub(crate) fn set_current_bytes(&self, current_bytes: u64) {
+        self.current_queue_bytes
+            .store(current_bytes, Ordering::Relaxed);
+        self.peak_queue_bytes
+            .fetch_max(current_bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn adjust_bytes(&self, added_bytes: u64, removed_bytes: u64) {
+        let mut current = self.current_queue_bytes.load(Ordering::Relaxed);
+        loop {
+            let next = current
+                .saturating_add(added_bytes)
+                .saturating_sub(removed_bytes);
+            match self.current_queue_bytes.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    self.peak_queue_bytes.fetch_max(next, Ordering::Relaxed);
+                    break;
+                }
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> (u64, u64) {
+        (
+            self.current_queue_bytes.load(Ordering::Relaxed),
+            self.peak_queue_bytes.load(Ordering::Relaxed),
+        )
+    }
+}
+
 /// Storage wrapper per edge; allows swapping queue implementations.
 pub enum EdgeStorage {
-    Locked(Arc<Mutex<EdgeQueue>>),
+    Locked {
+        queue: Arc<Mutex<EdgeQueue>>,
+        metrics: Arc<EdgeStorageMetrics>,
+    },
     #[cfg(feature = "lockfree-queues")]
-    BoundedLf(Arc<ArrayQueue<CorrelatedPayload>>),
+    BoundedLf {
+        queue: Arc<ArrayQueue<CorrelatedPayload>>,
+        metrics: Arc<EdgeStorageMetrics>,
+    },
 }
 
 pub fn build_queues(plan: &crate::plan::RuntimePlan) -> Vec<EdgeStorage> {
@@ -181,24 +259,37 @@ pub fn build_queues(plan: &crate::plan::RuntimePlan) -> Vec<EdgeStorage> {
         .iter()
         .map(|(_, _, _, _, policy)| match policy {
             EdgePolicyKind::Bounded { cap } => {
+                let metrics = Arc::new(EdgeStorageMetrics::default());
                 #[cfg(feature = "lockfree-queues")]
                 {
                     if use_lockfree {
-                        EdgeStorage::BoundedLf(Arc::new(ArrayQueue::new(*cap)))
+                        EdgeStorage::BoundedLf {
+                            queue: Arc::new(ArrayQueue::new(*cap)),
+                            metrics,
+                        }
                     } else {
-                        EdgeStorage::Locked(Arc::new(Mutex::new(EdgeQueue::Bounded {
-                            ring: RingBuf::new(*cap),
-                        })))
+                        EdgeStorage::Locked {
+                            queue: Arc::new(Mutex::new(EdgeQueue::Bounded {
+                                ring: RingBuf::new(*cap),
+                            })),
+                            metrics,
+                        }
                     }
                 }
                 #[cfg(not(feature = "lockfree-queues"))]
                 {
-                    EdgeStorage::Locked(Arc::new(Mutex::new(EdgeQueue::Bounded {
-                        ring: RingBuf::new(*cap),
-                    })))
+                    EdgeStorage::Locked {
+                        queue: Arc::new(Mutex::new(EdgeQueue::Bounded {
+                            ring: RingBuf::new(*cap),
+                        })),
+                        metrics,
+                    }
                 }
             }
-            _ => EdgeStorage::Locked(Arc::new(Mutex::new(EdgeQueue::default()))),
+            _ => EdgeStorage::Locked {
+                queue: Arc::new(Mutex::new(EdgeQueue::default())),
+                metrics: Arc::new(EdgeStorageMetrics::default()),
+            },
         })
         .collect()
 }
@@ -222,9 +313,10 @@ pub fn apply_policy(
         };
         telem.record_edge_payload(edge_idx, payload_bytes);
         match storage {
-            EdgeStorage::Locked(q_arc) => {
-                if let Ok(mut q) = q_arc.lock() {
+            EdgeStorage::Locked { queue, metrics } => {
+                if let Ok(mut q) = queue.lock() {
                     q.ensure_policy(policy);
+                    telem.record_edge_capacity(edge_idx, q.capacity());
                     let dropped = match (policy, backpressure) {
                         (EdgePolicyKind::Bounded { .. }, BackpressureStrategy::BoundedQueues)
                             if q.is_full() =>
@@ -249,29 +341,37 @@ pub fn apply_policy(
                     };
                     if dropped {
                         telem.backpressure_events += 1;
+                        telem.record_edge_drop(edge_idx, 1);
                         let label = warning_label
                             .clone()
                             .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                         record_warning(&label, warnings_seen, telem);
                     }
                     telem.record_edge_depth(edge_idx, q.len());
+                    let current_queue_bytes = q.payload_bytes();
+                    metrics.set_current_bytes(current_queue_bytes);
+                    telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
                 }
             }
             #[cfg(feature = "lockfree-queues")]
-            EdgeStorage::BoundedLf(q) => {
+            EdgeStorage::BoundedLf { queue, metrics } => {
                 let mut dropped = false;
+                telem.record_edge_capacity(edge_idx, Some(queue.capacity()));
+                let added_bytes = payload_bytes.unwrap_or(0);
+                let mut removed_bytes = 0u64;
                 match backpressure {
                     BackpressureStrategy::BoundedQueues => {
-                        if q.is_full() {
+                        if queue.is_full() {
                             dropped = true;
                         } else {
                             let mut payload = payload.clone();
                             payload.enqueued_at = Instant::now();
-                            q.push(payload).unwrap();
+                            queue.push(payload).unwrap();
+                            metrics.adjust_bytes(added_bytes, 0);
                         }
                     }
                     BackpressureStrategy::ErrorOnOverflow => {
-                        if q.is_full() {
+                        if queue.is_full() {
                             telem.backpressure_events += 1;
                             let label = warning_label
                                 .clone()
@@ -281,27 +381,37 @@ pub fn apply_policy(
                         } else {
                             let mut payload = payload.clone();
                             payload.enqueued_at = Instant::now();
-                            q.push(payload).unwrap();
+                            queue.push(payload).unwrap();
+                            metrics.adjust_bytes(added_bytes, 0);
                         }
                     }
                     BackpressureStrategy::None => {
                         let mut payload = payload.clone();
                         payload.enqueued_at = Instant::now();
-                        if q.push(payload.clone()).is_err() {
-                            let _ = q.pop();
-                            let _ = q.push(payload.clone());
+                        if queue.push(payload.clone()).is_err() {
+                            removed_bytes = queue
+                                .pop()
+                                .and_then(|removed| payload_size_bytes(&removed.inner))
+                                .unwrap_or(0);
+                            let _ = queue.push(payload.clone());
                             dropped = true;
+                            metrics.adjust_bytes(added_bytes, removed_bytes);
+                        } else {
+                            metrics.adjust_bytes(added_bytes, 0);
                         }
                     }
                 }
                 if dropped {
                     telem.backpressure_events += 1;
+                    telem.record_edge_drop(edge_idx, 1);
                     let label = warning_label
                         .clone()
                         .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                     record_warning(&label, warnings_seen, telem);
                 }
-                telem.record_edge_depth(edge_idx, q.len());
+                telem.record_edge_depth(edge_idx, queue.len());
+                let (current_queue_bytes, _) = metrics.snapshot();
+                telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
             }
         }
     }
@@ -337,9 +447,10 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
         };
         telem.record_edge_payload(edge_idx, payload_bytes);
         match storage {
-            EdgeStorage::Locked(q_arc) => {
-                if let Ok(mut q) = q_arc.lock() {
+            EdgeStorage::Locked { queue, metrics } => {
+                if let Ok(mut q) = queue.lock() {
                     q.ensure_policy(policy);
+                    telem.record_edge_capacity(edge_idx, q.capacity());
                     let dropped = match (policy, backpressure) {
                         (EdgePolicyKind::Bounded { .. }, BackpressureStrategy::BoundedQueues)
                             if q.is_full() =>
@@ -363,28 +474,36 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
                     };
                     if dropped {
                         telem.backpressure_events += 1;
+                        telem.record_edge_drop(edge_idx, 1);
                         let label = warning_label
                             .clone()
                             .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                         record_warning(&label, warnings_seen, telem);
                     }
                     telem.record_edge_depth(edge_idx, q.len());
+                    let current_queue_bytes = q.payload_bytes();
+                    metrics.set_current_bytes(current_queue_bytes);
+                    telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
                 }
             }
             #[cfg(feature = "lockfree-queues")]
-            EdgeStorage::BoundedLf(q) => {
+            EdgeStorage::BoundedLf { queue, metrics } => {
                 let mut dropped = false;
+                telem.record_edge_capacity(edge_idx, Some(queue.capacity()));
+                let added_bytes = payload_bytes.unwrap_or(0);
+                let mut removed_bytes = 0u64;
                 match backpressure {
                     BackpressureStrategy::BoundedQueues => {
-                        if q.is_full() {
+                        if queue.is_full() {
                             dropped = true;
                         } else {
                             payload.enqueued_at = Instant::now();
-                            q.push(payload).unwrap();
+                            queue.push(payload).unwrap();
+                            metrics.adjust_bytes(added_bytes, 0);
                         }
                     }
                     BackpressureStrategy::ErrorOnOverflow => {
-                        if q.is_full() {
+                        if queue.is_full() {
                             telem.backpressure_events += 1;
                             let label = warning_label
                                 .clone()
@@ -393,24 +512,38 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
                             return;
                         } else {
                             payload.enqueued_at = Instant::now();
-                            q.push(payload).unwrap();
+                            queue.push(payload).unwrap();
+                            metrics.adjust_bytes(added_bytes, 0);
                         }
                     }
                     BackpressureStrategy::None => {
                         payload.enqueued_at = Instant::now();
-                        if q.push(payload).is_err() {
+                        if let Err(payload) = queue.push(payload) {
+                            removed_bytes = queue
+                                .pop()
+                                .and_then(|removed| payload_size_bytes(&removed.inner))
+                                .unwrap_or(0);
+                            let _ = queue.push(payload);
                             dropped = true;
+                        } else {
+                            metrics.adjust_bytes(added_bytes, 0);
+                        }
+                        if dropped {
+                            metrics.adjust_bytes(added_bytes, removed_bytes);
                         }
                     }
                 }
                 if dropped {
                     telem.backpressure_events += 1;
+                    telem.record_edge_drop(edge_idx, 1);
                     let label = warning_label
                         .clone()
                         .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
                     record_warning(&label, warnings_seen, telem);
                 }
-                telem.record_edge_depth(edge_idx, q.len());
+                telem.record_edge_depth(edge_idx, queue.len());
+                let (current_queue_bytes, _) = metrics.snapshot();
+                telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
             }
         }
     }
