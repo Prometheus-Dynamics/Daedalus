@@ -83,7 +83,7 @@ pub use config::*;
 pub use convert::{ConversionRegistry, convert_arc};
 pub use executor::{
     EdgePayload, ExecuteError, ExecutionTelemetry, Executor, MetricsLevel, NodeError, NodeHandler,
-    NodeMetrics,
+    NodeMetrics, register_payload_size_inspector,
 };
 pub use fanin::FanIn;
 pub use handles::{NodeHandle, PortHandle};

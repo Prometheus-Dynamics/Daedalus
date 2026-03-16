@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use super::EdgePayload;
@@ -83,6 +84,12 @@ pub struct PayloadMetrics {
     pub out_bytes: u64,
     pub in_count: u64,
     pub out_count: u64,
+    #[serde(default)]
+    pub peak_input_bytes: u64,
+    #[serde(default)]
+    pub peak_output_bytes: u64,
+    #[serde(default)]
+    pub peak_working_set_bytes: u64,
 }
 
 impl PayloadMetrics {
@@ -91,7 +98,18 @@ impl PayloadMetrics {
         self.out_bytes = self.out_bytes.saturating_add(other.out_bytes);
         self.in_count = self.in_count.saturating_add(other.in_count);
         self.out_count = self.out_count.saturating_add(other.out_count);
+        self.peak_input_bytes = self.peak_input_bytes.max(other.peak_input_bytes);
+        self.peak_output_bytes = self.peak_output_bytes.max(other.peak_output_bytes);
+        self.peak_working_set_bytes = self
+            .peak_working_set_bytes
+            .max(other.peak_working_set_bytes);
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct InFlightNodePayloadMetrics {
+    input_bytes: u64,
+    output_bytes: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -107,6 +125,28 @@ pub struct NodeFailure {
     pub node_id: String,
     pub code: String,
     pub message: String,
+}
+
+pub type PayloadSizeInspector = fn(&(dyn std::any::Any + Send + Sync)) -> Option<u64>;
+
+fn payload_size_inspectors() -> &'static RwLock<Vec<PayloadSizeInspector>> {
+    static INSPECTORS: OnceLock<RwLock<Vec<PayloadSizeInspector>>> = OnceLock::new();
+    INSPECTORS.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+pub fn register_payload_size_inspector(inspector: PayloadSizeInspector) {
+    let lock = payload_size_inspectors();
+    let mut inspectors = lock
+        .write()
+        .expect("payload size inspector registry poisoned");
+    let inspector_addr = inspector as usize;
+    if inspectors
+        .iter()
+        .any(|existing| *existing as usize == inspector_addr)
+    {
+        return;
+    }
+    inspectors.push(inspector);
 }
 
 /// Aggregated timing + diagnostics for a run.
@@ -131,6 +171,8 @@ pub struct ExecutionTelemetry {
     pub edge_metrics: BTreeMap<usize, EdgeMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<Vec<TraceEvent>>,
+    #[serde(skip)]
+    in_flight_node_payload_metrics: BTreeMap<usize, InFlightNodePayloadMetrics>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -305,6 +347,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_basic() {
             return;
         }
+        self.in_flight_node_payload_metrics.remove(&node_idx);
         let entry = self.node_metrics.entry(node_idx).or_default();
         entry.record(duration);
         if self.metrics_level.is_detailed() {
@@ -334,6 +377,17 @@ impl ExecutionTelemetry {
         entry.record_perf(sample);
     }
 
+    pub fn start_node_call(&mut self, node_idx: usize) {
+        if !cfg!(feature = "metrics") {
+            return;
+        }
+        if !self.metrics_level.is_detailed() {
+            return;
+        }
+        self.in_flight_node_payload_metrics
+            .insert(node_idx, InFlightNodePayloadMetrics::default());
+    }
+
     pub fn record_node_payload_in(&mut self, node_idx: usize, bytes: Option<u64>) {
         if !cfg!(feature = "metrics") {
             return;
@@ -346,6 +400,15 @@ impl ExecutionTelemetry {
         payload.in_count = payload.in_count.saturating_add(1);
         if let Some(bytes) = bytes {
             payload.in_bytes = payload.in_bytes.saturating_add(bytes);
+            let in_flight = self
+                .in_flight_node_payload_metrics
+                .entry(node_idx)
+                .or_default();
+            in_flight.input_bytes = in_flight.input_bytes.saturating_add(bytes);
+            payload.peak_input_bytes = payload.peak_input_bytes.max(in_flight.input_bytes);
+            payload.peak_working_set_bytes = payload
+                .peak_working_set_bytes
+                .max(in_flight.input_bytes.saturating_add(in_flight.output_bytes));
         }
     }
 
@@ -361,6 +424,15 @@ impl ExecutionTelemetry {
         payload.out_count = payload.out_count.saturating_add(1);
         if let Some(bytes) = bytes {
             payload.out_bytes = payload.out_bytes.saturating_add(bytes);
+            let in_flight = self
+                .in_flight_node_payload_metrics
+                .entry(node_idx)
+                .or_default();
+            in_flight.output_bytes = in_flight.output_bytes.saturating_add(bytes);
+            payload.peak_output_bytes = payload.peak_output_bytes.max(in_flight.output_bytes);
+            payload.peak_working_set_bytes = payload
+                .peak_working_set_bytes
+                .max(in_flight.input_bytes.saturating_add(in_flight.output_bytes));
         }
     }
 
@@ -522,9 +594,9 @@ pub(crate) fn payload_size_bytes(payload: &EdgePayload) -> Option<u64> {
         EdgePayload::Value(value) => value_size_bytes(value),
         EdgePayload::Any(any) => any_size_bytes(any),
         #[cfg(feature = "gpu")]
-        EdgePayload::Payload(_) => None,
+        EdgePayload::Payload(payload) => erased_payload_size_bytes(payload),
         #[cfg(feature = "gpu")]
-        EdgePayload::GpuImage(_) => None,
+        EdgePayload::GpuImage(handle) => Some(gpu_image_size_bytes(handle)),
     }
 }
 
@@ -536,11 +608,11 @@ fn value_size_bytes(value: &daedalus_data::model::Value) -> Option<u64> {
     }
 }
 
-fn any_size_bytes(any: &std::sync::Arc<dyn std::any::Any + Send + Sync>) -> Option<u64> {
+fn any_size_bytes(any: &Arc<dyn std::any::Any + Send + Sync>) -> Option<u64> {
     if let Some(bytes) = any.downcast_ref::<Vec<u8>>() {
         return Some(bytes.len() as u64);
     }
-    if let Some(bytes) = any.downcast_ref::<std::sync::Arc<[u8]>>() {
+    if let Some(bytes) = any.downcast_ref::<Arc<[u8]>>() {
         return Some(bytes.len() as u64);
     }
     if let Some(img) = any.downcast_ref::<image::DynamicImage>() {
@@ -557,6 +629,13 @@ fn any_size_bytes(any: &std::sync::Arc<dyn std::any::Any + Send + Sync>) -> Opti
     }
     if let Some(img) = any.downcast_ref::<image::RgbaImage>() {
         return Some(img.as_raw().len() as u64);
+    }
+    if let Ok(inspectors) = payload_size_inspectors().read() {
+        for inspector in inspectors.iter() {
+            if let Some(bytes) = inspector(any.as_ref()) {
+                return Some(bytes);
+            }
+        }
     }
     None
 }
@@ -587,4 +666,39 @@ fn dynamic_image_size_bytes(img: &image::DynamicImage) -> u64 {
         }
         _ => 0,
     }
+}
+
+#[cfg(feature = "gpu")]
+fn erased_payload_size_bytes(payload: &daedalus_gpu::ErasedPayload) -> Option<u64> {
+    if payload.is_gpu() {
+        if let Some(handle) = payload.as_gpu::<image::DynamicImage>() {
+            Some(gpu_image_size_bytes(handle))
+        } else if let Some(handle) = payload.as_gpu::<image::GrayImage>() {
+            Some(gpu_image_size_bytes(handle))
+        } else if let Some(handle) = payload.as_gpu::<image::RgbImage>() {
+            Some(gpu_image_size_bytes(handle))
+        } else if let Some(handle) = payload.as_gpu::<image::RgbaImage>() {
+            Some(gpu_image_size_bytes(handle))
+        } else {
+            None
+        }
+    } else {
+        if let Some(img) = payload.as_cpu::<image::DynamicImage>() {
+            Some(dynamic_image_size_bytes(img))
+        } else if let Some(img) = payload.as_cpu::<image::GrayImage>() {
+            Some(img.as_raw().len() as u64)
+        } else if let Some(img) = payload.as_cpu::<image::RgbImage>() {
+            Some(img.as_raw().len() as u64)
+        } else if let Some(img) = payload.as_cpu::<image::RgbaImage>() {
+            Some(img.as_raw().len() as u64)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn gpu_image_size_bytes(handle: &daedalus_gpu::GpuImageHandle) -> u64 {
+    let bpp = daedalus_gpu::format_bytes_per_pixel(handle.format).unwrap_or(4) as u64;
+    handle.width as u64 * handle.height as u64 * bpp
 }

@@ -666,6 +666,7 @@ fn run_host_bridges(
         } else {
             node.sync_groups.clone()
         };
+        telemetry.start_node_call(node_ref.0);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -936,6 +937,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     .get(node_ref.0)
                     .map(|inputs| inputs.as_slice())
                     .unwrap_or(&[]);
+                telem.start_node_call(node_ref.0);
                 #[cfg(feature = "gpu")]
                 let mut io = NodeIo::new(
                     incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -1090,6 +1092,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             .get(node_ref.0)
             .map(|inputs| inputs.as_slice())
             .unwrap_or(&[]);
+        telem.start_node_call(node_ref.0);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),

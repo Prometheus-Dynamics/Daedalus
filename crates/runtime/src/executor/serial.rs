@@ -379,6 +379,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             );
         }
 
+        exec.telemetry.start_node_call(node_ref.0);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming_edge_indices,
@@ -790,6 +791,7 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
         .get(node_ref.0)
         .map(|inputs| inputs.as_slice())
         .unwrap_or(&[]);
+    exec.telemetry.start_node_call(node_ref.0);
     #[cfg(feature = "gpu")]
     let mut io = NodeIo::new(
         incoming.get(node_ref.0).cloned().unwrap_or_default(),
@@ -1034,6 +1036,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
         } else {
             node.sync_groups.clone()
         };
+        exec.telemetry.start_node_call(node_ref.0);
         #[cfg(feature = "gpu")]
         let mut io = NodeIo::new(
             incoming.get(node_ref.0).cloned().unwrap_or_default(),

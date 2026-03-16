@@ -21,7 +21,10 @@ pub use handler::NodeHandler;
 pub use payload::{CorrelatedPayload, EdgePayload, next_correlation_id};
 pub use queue::EdgeStorage;
 pub(crate) use telemetry::payload_size_bytes;
-pub use telemetry::{EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeFailure, NodeMetrics};
+pub use telemetry::{
+    EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeFailure, NodeMetrics,
+    register_payload_size_inspector,
+};
 /// Runtime executor for planner-generated runtime plans.
 ///
 /// ```no_run
@@ -615,6 +618,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     pub fn with_pool_size(mut self, size: Option<usize>) -> Self {
         self.pool_size = size;
+        self
+    }
+
+    pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
+        self.metrics_level = level;
+        self.telemetry.metrics_level = level;
         self
     }
 
