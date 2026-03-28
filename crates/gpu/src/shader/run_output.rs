@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{GpuContextHandle, GpuError, GpuImageHandle, Payload};
+use crate::{Compute, GpuContextHandle, GpuError, GpuImageHandle};
 use image::DynamicImage;
 
 use super::ShaderContext;
@@ -139,32 +139,32 @@ impl ShaderRunOutput {
         self.textures.get(&binding).cloned()
     }
 
-    /// Convert a texture output into a Payload<DynamicImage>, preferring GPU handles and falling back to readback.
+    /// Convert a texture output into a Compute<DynamicImage>, preferring GPU handles and falling back to readback.
     pub fn into_payload(
         &self,
         binding: u32,
         gpu: Option<&GpuContextHandle>,
         width: u32,
         height: u32,
-    ) -> Result<Payload<DynamicImage>, GpuError> {
+    ) -> Result<Compute<DynamicImage>, GpuError> {
         if let Some(handle) = self.texture_handle(binding) {
-            return Ok(Payload::Gpu(handle));
+            return Ok(Compute::Gpu(handle));
         }
         let img = self
             .texture_rgba8(binding, width, height)
             .ok_or_else(|| GpuError::Internal("missing texture output".into()))?;
-        Payload::<DynamicImage>::from_rgba_bytes(gpu, img.into_raw(), width, height)
+        Compute::<DynamicImage>::from_rgba_bytes(gpu, img.into_raw(), width, height)
             .map_err(|e| GpuError::Internal(e.to_string()))
     }
 
-    /// Convert a texture output into a Payload using the shader context for GPU lookup.
+    /// Convert a texture output into a Compute using the shader context for GPU lookup.
     pub fn into_payload_with_ctx(
         &self,
         binding: u32,
         ctx: &ShaderContext,
         width: u32,
         height: u32,
-    ) -> Result<Payload<DynamicImage>, GpuError> {
+    ) -> Result<Compute<DynamicImage>, GpuError> {
         self.into_payload(binding, ctx.gpu.as_ref(), width, height)
     }
 }

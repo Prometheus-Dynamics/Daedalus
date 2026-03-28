@@ -6,7 +6,7 @@ use std::sync::{OnceLock, RwLock};
 use std::task::Poll;
 
 use crate::convert::convert_arc;
-use crate::executor::{CorrelatedPayload, EdgePayload, NodeError, next_correlation_id};
+use crate::executor::{CorrelatedValue, NodeError, RuntimeValue, next_correlation_id};
 use crate::io::NodeIo;
 use crate::plan::EdgePolicyKind;
 use daedalus_data::json;
@@ -31,8 +31,8 @@ pub const HOST_BRIDGE_ID: &str = "io.host_bridge";
 /// outputs are collected into `outbound` for host consumption.
 #[derive(Default)]
 struct HostBridgeBuffers {
-    inbound: HashMap<String, VecDeque<CorrelatedPayload>>,
-    outbound: HashMap<String, VecDeque<CorrelatedPayload>>,
+    inbound: HashMap<String, VecDeque<CorrelatedValue>>,
+    outbound: HashMap<String, VecDeque<CorrelatedValue>>,
     wakers: HashMap<String, Arc<AtomicWaker>>,
 }
 
@@ -80,20 +80,32 @@ fn payload_any_type(any: &dyn Any) -> Option<&'static str> {
     if any.is::<Arc<image::RgbaImage>>() {
         return Some(std::any::type_name::<Arc<image::RgbaImage>>());
     }
-    if any.is::<daedalus_gpu::Payload<DynamicImage>>() {
-        return Some(std::any::type_name::<daedalus_gpu::Payload<DynamicImage>>());
+    if any.is::<daedalus_gpu::Backing<DynamicImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Backing<DynamicImage>>());
     }
-    if any.is::<daedalus_gpu::Payload<image::GrayImage>>() {
-        return Some(std::any::type_name::<daedalus_gpu::Payload<image::GrayImage>>());
+    if any.is::<daedalus_gpu::Backing<image::GrayImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Backing<image::GrayImage>>());
     }
-    if any.is::<daedalus_gpu::Payload<image::RgbImage>>() {
-        return Some(std::any::type_name::<daedalus_gpu::Payload<image::RgbImage>>());
+    if any.is::<daedalus_gpu::Backing<image::RgbImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Backing<image::RgbImage>>());
     }
-    if any.is::<daedalus_gpu::Payload<image::RgbaImage>>() {
-        return Some(std::any::type_name::<daedalus_gpu::Payload<image::RgbaImage>>());
+    if any.is::<daedalus_gpu::Backing<image::RgbaImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Backing<image::RgbaImage>>());
     }
-    if any.is::<daedalus_gpu::ErasedPayload>() {
-        return Some(std::any::type_name::<daedalus_gpu::ErasedPayload>());
+    if any.is::<daedalus_gpu::Compute<DynamicImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Compute<DynamicImage>>());
+    }
+    if any.is::<daedalus_gpu::Compute<image::GrayImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Compute<image::GrayImage>>());
+    }
+    if any.is::<daedalus_gpu::Compute<image::RgbImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Compute<image::RgbImage>>());
+    }
+    if any.is::<daedalus_gpu::Compute<image::RgbaImage>>() {
+        return Some(std::any::type_name::<daedalus_gpu::Compute<image::RgbaImage>>());
+    }
+    if any.is::<daedalus_gpu::DataCell>() {
+        return Some(std::any::type_name::<daedalus_gpu::DataCell>());
     }
     None
 }
@@ -101,6 +113,81 @@ fn payload_any_type(any: &dyn Any) -> Option<&'static str> {
 #[cfg(not(feature = "gpu"))]
 fn payload_any_type(_any: &dyn Any) -> Option<&'static str> {
     None
+}
+
+fn cross_dylib_any_ref<'a, T: 'static>(any: &'a dyn Any) -> Option<&'a T> {
+    let expected = std::any::type_name_of_val(any);
+    let actual = std::any::type_name::<T>();
+    if expected != actual && !expected.ends_with(actual) && !actual.ends_with(expected) {
+        return None;
+    }
+    let size_ok = std::mem::size_of_val(any) == std::mem::size_of::<T>();
+    let align_ok = std::mem::align_of_val(any) == std::mem::align_of::<T>();
+    if !(size_ok && align_ok) {
+        return None;
+    }
+    let (data_ptr, _): (*const (), *const ()) = unsafe { std::mem::transmute(any) };
+    Some(unsafe { &*(data_ptr as *const T) })
+}
+
+fn unwrap_nested_any<'a>(mut any: &'a (dyn Any + 'static)) -> &'a (dyn Any + 'static) {
+    loop {
+        if let Some(inner) = any.downcast_ref::<Arc<dyn Any>>() {
+            any = inner.as_ref();
+            continue;
+        }
+        if let Some(inner) = any.downcast_ref::<Box<dyn Any>>() {
+            any = inner.as_ref();
+            continue;
+        }
+        if let Some(inner) = any.downcast_ref::<Arc<Box<dyn Any>>>() {
+            any = inner.as_ref().as_ref();
+            continue;
+        }
+        if let Some(inner) = any.downcast_ref::<Box<Arc<dyn Any>>>() {
+            any = inner.as_ref().as_ref();
+            continue;
+        }
+        if let Some(inner) = any.downcast_ref::<Arc<dyn Any + Send + Sync>>() {
+            any = inner.as_ref();
+            continue;
+        }
+        if let Some(inner) = any.downcast_ref::<Box<dyn Any + Send + Sync>>() {
+            any = inner.as_ref();
+            continue;
+        }
+        if let Some(inner) = any.downcast_ref::<Arc<Box<dyn Any + Send + Sync>>>() {
+            any = inner.as_ref().as_ref();
+            continue;
+        }
+        if let Some(inner) = any.downcast_ref::<Box<Arc<dyn Any + Send + Sync>>>() {
+            any = inner.as_ref().as_ref();
+            continue;
+        }
+        return any;
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn any_is_gpu_image_handle(any: &(dyn Any + 'static)) -> bool {
+    unwrap_nested_any(any)
+        .downcast_ref::<daedalus_gpu::GpuImageHandle>()
+        .is_some()
+}
+
+fn cross_dylib_arc_downcast_direct<T: Any + Send + Sync + 'static>(
+    arc: Arc<dyn Any + Send + Sync>,
+) -> Option<Arc<T>> {
+    let any = arc.as_ref();
+    // Only reinterpret direct `Arc<T>` allocations. Nested wrappers are handled by the
+    // existing `Arc<Arc<T>>` / nested-`Any` branches below.
+    if std::any::type_name_of_val(any) != std::any::type_name_of_val(unwrap_nested_any(any)) {
+        return None;
+    }
+    cross_dylib_any_ref::<T>(any)?;
+    let raw: *const (dyn Any + Send + Sync) = Arc::into_raw(arc);
+    let (data_ptr, _vtable): (*const (), *const ()) = unsafe { std::mem::transmute(raw) };
+    Some(unsafe { Arc::from_raw(data_ptr as *const T) })
 }
 
 impl HostBridgeHandle {
@@ -127,35 +214,38 @@ impl HostBridgeHandle {
     pub fn push(
         &self,
         port: impl AsRef<str>,
-        payload: EdgePayload,
+        payload: RuntimeValue,
         correlation_id: Option<u64>,
     ) -> u64 {
         let port = port.as_ref().to_ascii_lowercase();
-        if let EdgePayload::Any(any) = &payload
+        if let RuntimeValue::Any(any) = &payload
             && let Some(ty) = payload_any_type(any.as_ref())
         {
-            panic!(
-                "host bridge port {port}: payload type {ty} must be sent as EdgePayload::Payload, not Any"
+            log::debug!(
+                "host bridge port {}: accepting Any payload type {}",
+                port,
+                ty
             );
         }
         let id = correlation_id.unwrap_or_else(next_correlation_id);
         let mut guard = self.shared.lock().expect("host bridge poisoned");
-        guard
-            .inbound
-            .entry(port.clone())
-            .or_default()
-            .push_back(CorrelatedPayload {
-                correlation_id: id,
-                inner: payload,
-                enqueued_at: std::time::Instant::now(),
-            });
+        let q = guard.inbound.entry(port.clone()).or_default();
+        let cap = host_bridge_inbound_cap();
+        if cap > 0 && q.len() >= cap {
+            q.pop_front();
+        }
+        q.push_back(CorrelatedValue {
+            correlation_id: id,
+            inner: payload,
+            enqueued_at: std::time::Instant::now(),
+        });
         if let Some(waker) = guard.wakers.get(&port) {
             waker.wake();
         }
         id
     }
 
-    fn restore_outbound(&self, port: &str, payload: CorrelatedPayload) {
+    fn restore_outbound(&self, port: &str, payload: CorrelatedValue) {
         if let Ok(mut buf) = self.shared.lock() {
             let key = port.to_ascii_lowercase();
             let q = buf.outbound.entry(key.clone()).or_default();
@@ -168,7 +258,7 @@ impl HostBridgeHandle {
 
     /// Push any typed payload (auto-wrapped).
     pub fn push_any<T: Any + Send + Sync + 'static>(&self, port: impl AsRef<str>, value: T) -> u64 {
-        self.push(port, EdgePayload::Any(Arc::new(value)), None)
+        self.push(port, RuntimeValue::Any(Arc::new(value)), None)
     }
 
     /// Push a serialized payload, decoding it into a runtime payload first.
@@ -185,7 +275,7 @@ impl HostBridgeHandle {
     }
 
     /// Async wait for the next payload on a port.
-    pub async fn recv(&self, port: impl AsRef<str>) -> Option<CorrelatedPayload> {
+    pub async fn recv(&self, port: impl AsRef<str>) -> Option<CorrelatedValue> {
         let port = port.as_ref().to_ascii_lowercase();
         poll_fn(|cx| {
             let mut guard = self.shared.lock().expect("host bridge poisoned");
@@ -209,7 +299,7 @@ impl HostBridgeHandle {
     pub async fn recv_serialized(
         &self,
         port: impl AsRef<str>,
-    ) -> Result<Option<HostBridgeSerializedPayload>, NodeError> {
+    ) -> Result<Option<HostBridgeSerializedValue>, NodeError> {
         let port = port.as_ref().to_ascii_lowercase();
         let payload = self.recv(&port).await;
         match payload {
@@ -226,13 +316,18 @@ impl HostBridgeHandle {
         let mut guard = self.shared.lock().ok()?;
         let payload = guard.outbound.get_mut(&port)?.pop_front()?;
         match payload.inner {
-            EdgePayload::Any(a) => a.downcast_ref::<T>().cloned(),
+            RuntimeValue::Any(a) => {
+                let any = unwrap_nested_any(a.as_ref());
+                any.downcast_ref::<T>()
+                    .or_else(|| cross_dylib_any_ref::<T>(any))
+                    .cloned()
+            }
             _ => None,
         }
     }
 
     /// Try to pop a single payload emitted by the graph on the given port.
-    pub fn try_pop(&self, port: impl AsRef<str>) -> Option<CorrelatedPayload> {
+    pub fn try_pop(&self, port: impl AsRef<str>) -> Option<CorrelatedValue> {
         let port = port.as_ref().to_ascii_lowercase();
         let mut guard = self.shared.lock().expect("host bridge poisoned");
         guard.outbound.get_mut(&port).and_then(|q| q.pop_front())
@@ -242,7 +337,7 @@ impl HostBridgeHandle {
     pub fn try_pop_serialized(
         &self,
         port: impl AsRef<str>,
-    ) -> Result<Option<HostBridgeSerializedPayload>, NodeError> {
+    ) -> Result<Option<HostBridgeSerializedValue>, NodeError> {
         let port = port.as_ref().to_ascii_lowercase();
         let payload = self.try_pop(&port);
         match payload {
@@ -254,7 +349,7 @@ impl HostBridgeHandle {
     }
 
     /// Drain all pending payloads for the given port.
-    pub fn drain(&self, port: impl AsRef<str>) -> Vec<CorrelatedPayload> {
+    pub fn drain(&self, port: impl AsRef<str>) -> Vec<CorrelatedValue> {
         let port = port.as_ref().to_ascii_lowercase();
         let mut guard = self.shared.lock().expect("host bridge poisoned");
         guard
@@ -264,11 +359,24 @@ impl HostBridgeHandle {
             .unwrap_or_default()
     }
 
+    /// Clear all pending payloads for the given port without materializing them.
+    pub fn clear(&self, port: impl AsRef<str>) -> usize {
+        let port = port.as_ref().to_ascii_lowercase();
+        let mut guard = self.shared.lock().expect("host bridge poisoned");
+        if let Some(queue) = guard.outbound.get_mut(&port) {
+            let len = queue.len();
+            queue.clear();
+            len
+        } else {
+            0
+        }
+    }
+
     /// Drain and serialize all pending payloads for the given port.
     pub fn drain_serialized(
         &self,
         port: impl AsRef<str>,
-    ) -> Result<Vec<HostBridgeSerializedPayload>, NodeError> {
+    ) -> Result<Vec<HostBridgeSerializedValue>, NodeError> {
         let port = port.as_ref().to_ascii_lowercase();
         let drained = self.drain(&port);
         drained
@@ -361,16 +469,16 @@ impl HostBridgeHandle {
         };
         let corr = payload.correlation_id;
         let value = match payload.inner {
-            EdgePayload::Unit => Value::Unit,
-            EdgePayload::Bytes(bytes) => Value::Bytes(bytes.to_vec().into()),
-            EdgePayload::Value(value) => value,
-            EdgePayload::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
+            RuntimeValue::Unit => Value::Unit,
+            RuntimeValue::Bytes(bytes) => Value::Bytes(bytes.to_vec().into()),
+            RuntimeValue::Value(value) => value,
+            RuntimeValue::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
                 NodeError::InvalidInput(format!(
                     "host bridge port {port}: payload is not value-like"
                 ))
             })?,
             #[cfg(feature = "gpu")]
-            EdgePayload::Payload(_) | EdgePayload::GpuImage(_) => {
+            RuntimeValue::Data(_) => {
                 return Err(NodeError::InvalidInput(format!(
                     "host bridge port {port}: gpu payloads are not value-like"
                 )));
@@ -390,16 +498,16 @@ impl HostBridgeHandle {
             .map(|p| {
                 let corr = p.correlation_id;
                 let value = match p.inner {
-                    EdgePayload::Unit => Value::Unit,
-                    EdgePayload::Bytes(bytes) => Value::Bytes(bytes.to_vec().into()),
-                    EdgePayload::Value(value) => value,
-                    EdgePayload::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
+                    RuntimeValue::Unit => Value::Unit,
+                    RuntimeValue::Bytes(bytes) => Value::Bytes(bytes.to_vec().into()),
+                    RuntimeValue::Value(value) => value,
+                    RuntimeValue::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
                         NodeError::InvalidInput(format!(
                             "host bridge port {port}: payload is not value-like"
                         ))
                     })?,
                     #[cfg(feature = "gpu")]
-                    EdgePayload::Payload(_) | EdgePayload::GpuImage(_) => {
+                    RuntimeValue::Data(_) => {
                         return Err(NodeError::InvalidInput(format!(
                             "host bridge port {port}: gpu payloads are not value-like"
                         )));
@@ -478,13 +586,98 @@ impl<'a> HostPortOwned<'a> {
         }
     }
 
+    /// Pop a raw correlated payload without decoding it.
+    pub fn try_pop_raw(&self) -> Option<CorrelatedValue> {
+        self.handle.try_pop(self.name())
+    }
+
+    /// Restore a raw correlated payload previously popped from this port.
+    pub fn restore_raw(&self, payload: CorrelatedValue) {
+        self.handle.restore_outbound(self.name(), payload);
+    }
+
     /// Pop and attempt to downcast directly from `Any` without going through `Value`.
     pub fn try_pop_any<T: Any + Clone>(&self) -> Option<(u64, T)> {
         let payload = self.handle.try_pop(self.name())?;
         let corr = payload.correlation_id;
-        match payload.inner {
-            EdgePayload::Any(a) => a.downcast_ref::<T>().cloned().map(|v| (corr, v)),
-            _ => None,
+        match &payload.inner {
+            RuntimeValue::Any(a) => {
+                let any = unwrap_nested_any(a.as_ref());
+                let value = a
+                    .downcast_ref::<T>()
+                    .or_else(|| cross_dylib_any_ref::<T>(a.as_ref()))
+                    .or_else(|| any.downcast_ref::<T>())
+                    .or_else(|| cross_dylib_any_ref::<T>(any))
+                    .cloned();
+                #[cfg(feature = "gpu")]
+                let value = value.or_else(|| {
+                    a.downcast_ref::<daedalus_gpu::Backing<T>>()
+                        .map(|backing| backing.clone().into_owned())
+                        .or_else(|| {
+                            any.downcast_ref::<daedalus_gpu::Backing<T>>()
+                                .map(|backing| backing.clone().into_owned())
+                        })
+                });
+                if value.is_none() {
+                    log::warn!(
+                        "host bridge port {}: try_pop_any failed expected={} actual={}",
+                        self.name(),
+                        std::any::type_name::<T>(),
+                        std::any::type_name_of_val(any)
+                    );
+                    self.handle.restore_outbound(self.name(), payload);
+                }
+                value.map(|v| (corr, v))
+            }
+            _ => {
+                self.handle.restore_outbound(self.name(), payload);
+                None
+            }
+        }
+    }
+
+    /// Pop an `Any` payload as a shared `Arc<T>` without cloning the underlying value.
+    pub fn try_pop_any_arc<T: Any + Send + Sync + 'static>(&self) -> Option<(u64, Arc<T>)> {
+        let payload = self.handle.try_pop(self.name())?;
+        let corr = payload.correlation_id;
+        match &payload.inner {
+            RuntimeValue::Any(a) => {
+                let any = unwrap_nested_any(a.as_ref());
+                let value = Arc::downcast::<T>(a.clone())
+                    .ok()
+                    .or_else(|| cross_dylib_arc_downcast_direct::<T>(a.clone()))
+                    .or_else(|| {
+                        Arc::downcast::<Arc<T>>(a.clone())
+                            .ok()
+                            .map(|arc| (*arc).clone())
+                    })
+                    .or_else(|| any.downcast_ref::<Arc<T>>().cloned())
+                    .or_else(|| cross_dylib_any_ref::<Arc<T>>(a.as_ref()).cloned())
+                    .or_else(|| cross_dylib_any_ref::<Arc<T>>(any).cloned());
+                #[cfg(feature = "gpu")]
+                let value = value.or_else(|| {
+                    a.downcast_ref::<daedalus_gpu::Backing<T>>()
+                        .and_then(daedalus_gpu::Backing::shared_arc)
+                        .or_else(|| {
+                            any.downcast_ref::<daedalus_gpu::Backing<T>>()
+                                .and_then(daedalus_gpu::Backing::shared_arc)
+                        })
+                });
+                if value.is_none() {
+                    log::warn!(
+                        "host bridge port {}: try_pop_any_arc failed expected={} actual={}",
+                        self.name(),
+                        std::any::type_name::<Arc<T>>(),
+                        std::any::type_name_of_val(any)
+                    );
+                    self.handle.restore_outbound(self.name(), payload);
+                }
+                value.map(|v| (corr, v))
+            }
+            _ => {
+                self.handle.restore_outbound(self.name(), payload);
+                None
+            }
         }
     }
 }
@@ -560,13 +753,98 @@ impl<'a> HostPort<'a> {
         }
     }
 
+    /// Pop a raw correlated payload without decoding it.
+    pub fn try_pop_raw(&self) -> Option<CorrelatedValue> {
+        self.handle.try_pop(self.name)
+    }
+
+    /// Restore a raw correlated payload previously popped from this port.
+    pub fn restore_raw(&self, payload: CorrelatedValue) {
+        self.handle.restore_outbound(self.name, payload);
+    }
+
     /// Pop and attempt to downcast directly from `Any` without going through `Value`.
     pub fn try_pop_any<T: Any + Clone>(&self) -> Option<(u64, T)> {
         let payload = self.handle.try_pop(self.name)?;
         let corr = payload.correlation_id;
-        match payload.inner {
-            EdgePayload::Any(a) => a.downcast_ref::<T>().cloned().map(|v| (corr, v)),
-            _ => None,
+        match &payload.inner {
+            RuntimeValue::Any(a) => {
+                let any = unwrap_nested_any(a.as_ref());
+                let value = a
+                    .downcast_ref::<T>()
+                    .or_else(|| cross_dylib_any_ref::<T>(a.as_ref()))
+                    .or_else(|| any.downcast_ref::<T>())
+                    .or_else(|| cross_dylib_any_ref::<T>(any))
+                    .cloned();
+                #[cfg(feature = "gpu")]
+                let value = value.or_else(|| {
+                    a.downcast_ref::<daedalus_gpu::Backing<T>>()
+                        .map(|backing| backing.clone().into_owned())
+                        .or_else(|| {
+                            any.downcast_ref::<daedalus_gpu::Backing<T>>()
+                                .map(|backing| backing.clone().into_owned())
+                        })
+                });
+                if value.is_none() {
+                    log::warn!(
+                        "host bridge port {}: try_pop_any failed expected={} actual={}",
+                        self.name,
+                        std::any::type_name::<T>(),
+                        std::any::type_name_of_val(any)
+                    );
+                    self.handle.restore_outbound(self.name, payload);
+                }
+                value.map(|v| (corr, v))
+            }
+            _ => {
+                self.handle.restore_outbound(self.name, payload);
+                None
+            }
+        }
+    }
+
+    /// Pop an `Any` payload as a shared `Arc<T>` without cloning the underlying value.
+    pub fn try_pop_any_arc<T: Any + Send + Sync + 'static>(&self) -> Option<(u64, Arc<T>)> {
+        let payload = self.handle.try_pop(self.name)?;
+        let corr = payload.correlation_id;
+        match &payload.inner {
+            RuntimeValue::Any(a) => {
+                let any = unwrap_nested_any(a.as_ref());
+                let value = Arc::downcast::<T>(a.clone())
+                    .ok()
+                    .or_else(|| cross_dylib_arc_downcast_direct::<T>(a.clone()))
+                    .or_else(|| {
+                        Arc::downcast::<Arc<T>>(a.clone())
+                            .ok()
+                            .map(|arc| (*arc).clone())
+                    })
+                    .or_else(|| any.downcast_ref::<Arc<T>>().cloned())
+                    .or_else(|| cross_dylib_any_ref::<Arc<T>>(a.as_ref()).cloned())
+                    .or_else(|| cross_dylib_any_ref::<Arc<T>>(any).cloned());
+                #[cfg(feature = "gpu")]
+                let value = value.or_else(|| {
+                    a.downcast_ref::<daedalus_gpu::Backing<T>>()
+                        .and_then(daedalus_gpu::Backing::shared_arc)
+                        .or_else(|| {
+                            any.downcast_ref::<daedalus_gpu::Backing<T>>()
+                                .and_then(daedalus_gpu::Backing::shared_arc)
+                        })
+                });
+                if value.is_none() {
+                    log::warn!(
+                        "host bridge port {}: try_pop_any_arc failed expected={} actual={}",
+                        self.name,
+                        std::any::type_name::<Arc<T>>(),
+                        std::any::type_name_of_val(any)
+                    );
+                    self.handle.restore_outbound(self.name, payload);
+                }
+                value.map(|v| (corr, v))
+            }
+            _ => {
+                self.handle.restore_outbound(self.name, payload);
+                None
+            }
         }
     }
 }
@@ -579,7 +857,7 @@ pub trait HostPollable: Sized {
         handle: &HostBridgeHandle,
         port: &str,
         port_type: Option<&TypeExpr>,
-        payload: CorrelatedPayload,
+        payload: CorrelatedValue,
     ) -> Result<Self, NodeError>;
 }
 
@@ -592,13 +870,13 @@ impl HostPollable for Value {
         _handle: &HostBridgeHandle,
         port: &str,
         _port_type: Option<&TypeExpr>,
-        payload: CorrelatedPayload,
+        payload: CorrelatedValue,
     ) -> Result<Self, NodeError> {
         match payload.inner {
-            EdgePayload::Unit => Ok(Value::Unit),
-            EdgePayload::Bytes(bytes) => Ok(Value::Bytes(bytes.to_vec().into())),
-            EdgePayload::Value(value) => Ok(value),
-            EdgePayload::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
+            RuntimeValue::Unit => Ok(Value::Unit),
+            RuntimeValue::Bytes(bytes) => Ok(Value::Bytes(bytes.to_vec().into())),
+            RuntimeValue::Value(value) => Ok(value),
+            RuntimeValue::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
                 let ty = std::any::type_name_of_val(any.as_ref());
                 log::warn!(
                     "host bridge port {}: Any payload not value-like (type={})",
@@ -610,9 +888,9 @@ impl HostPollable for Value {
                 ))
             }),
             #[cfg(feature = "gpu")]
-            EdgePayload::Payload(_) | EdgePayload::GpuImage(_) => Err(NodeError::InvalidInput(
-                format!("host bridge port {port}: gpu payloads are not value-like"),
-            )),
+            RuntimeValue::Data(_) => Err(NodeError::InvalidInput(format!(
+                "host bridge port {port}: gpu payloads are not value-like"
+            ))),
         }
     }
 }
@@ -631,78 +909,135 @@ impl HostPollable for DynamicImage {
         handle: &HostBridgeHandle,
         port: &str,
         _port_type: Option<&TypeExpr>,
-        payload: CorrelatedPayload,
+        payload: CorrelatedValue,
     ) -> Result<Self, NodeError> {
         let _ = handle;
         match payload.inner {
-            EdgePayload::Any(any) => {
-                if let Some(img) = any.downcast_ref::<DynamicImage>().cloned() {
+            RuntimeValue::Any(any) => {
+                // Prefer consuming the owned `Arc<T>` stored in `Any` so image host outputs can
+                // move their buffers through the bridge without cloning full frames per pop.
+                let any = match Arc::downcast::<DynamicImage>(any) {
+                    Ok(img) => return Ok(Arc::unwrap_or_clone(img)),
+                    Err(any) => any,
+                };
+                let any = match Arc::downcast::<image::RgbaImage>(any) {
+                    Ok(img) => return Ok(DynamicImage::ImageRgba8(Arc::unwrap_or_clone(img))),
+                    Err(any) => any,
+                };
+                let any = match Arc::downcast::<image::RgbImage>(any) {
+                    Ok(img) => return Ok(DynamicImage::ImageRgb8(Arc::unwrap_or_clone(img))),
+                    Err(any) => any,
+                };
+                let any = match Arc::downcast::<image::GrayImage>(any) {
+                    Ok(img) => return Ok(DynamicImage::ImageLuma8(Arc::unwrap_or_clone(img))),
+                    Err(any) => any,
+                };
+                let any = match Arc::downcast::<image::GrayAlphaImage>(any) {
+                    Ok(img) => return Ok(DynamicImage::ImageLumaA8(Arc::unwrap_or_clone(img))),
+                    Err(any) => any,
+                };
+                #[cfg(feature = "gpu")]
+                let any = match Arc::downcast::<daedalus_gpu::Backing<DynamicImage>>(any) {
+                    Ok(img) => return Ok(Arc::unwrap_or_clone(img).into_owned()),
+                    Err(any) => any,
+                };
+                #[cfg(feature = "gpu")]
+                let any = match Arc::downcast::<daedalus_gpu::Backing<image::GrayImage>>(any) {
+                    Ok(img) => {
+                        return Ok(DynamicImage::ImageLuma8(
+                            Arc::unwrap_or_clone(img).into_owned(),
+                        ));
+                    }
+                    Err(any) => any,
+                };
+                #[cfg(feature = "gpu")]
+                let any = match Arc::downcast::<daedalus_gpu::Backing<image::RgbImage>>(any) {
+                    Ok(img) => {
+                        return Ok(DynamicImage::ImageRgb8(
+                            Arc::unwrap_or_clone(img).into_owned(),
+                        ));
+                    }
+                    Err(any) => any,
+                };
+                #[cfg(feature = "gpu")]
+                let any = match Arc::downcast::<daedalus_gpu::Backing<image::RgbaImage>>(any) {
+                    Ok(img) => {
+                        return Ok(DynamicImage::ImageRgba8(
+                            Arc::unwrap_or_clone(img).into_owned(),
+                        ));
+                    }
+                    Err(any) => any,
+                };
+
+                let inner_any = unwrap_nested_any(any.as_ref());
+                if let Some(img) = inner_any.downcast_ref::<DynamicImage>().cloned() {
                     return Ok(img);
                 }
-                if let Some(inner) = any.downcast_ref::<Arc<dyn Any + Send + Sync>>() {
-                    let inner_ref = inner.as_ref();
-                    if let Some(img) = inner_ref.downcast_ref::<DynamicImage>().cloned() {
-                        return Ok(img);
-                    }
-                    if let Some(img) = inner_ref.downcast_ref::<image::RgbaImage>() {
-                        return Ok(DynamicImage::ImageRgba8(img.clone()));
-                    }
-                    if let Some(img) = inner_ref.downcast_ref::<image::RgbImage>() {
-                        return Ok(DynamicImage::ImageRgb8(img.clone()));
-                    }
-                    if let Some(img) = inner_ref.downcast_ref::<image::GrayImage>() {
-                        return Ok(DynamicImage::ImageLuma8(img.clone()));
-                    }
-                    if let Some(img) = inner_ref.downcast_ref::<image::GrayAlphaImage>() {
-                        return Ok(DynamicImage::ImageLumaA8(img.clone()));
-                    }
-                    if let Some(converted) = convert_arc::<DynamicImage>(inner) {
-                        return Ok(converted);
-                    }
-                }
-                if let Some(img) = any.downcast_ref::<image::RgbaImage>() {
+                if let Some(img) = inner_any.downcast_ref::<image::RgbaImage>() {
                     return Ok(DynamicImage::ImageRgba8(img.clone()));
                 }
-                if let Some(img) = any.downcast_ref::<image::RgbImage>() {
+                if let Some(img) = inner_any.downcast_ref::<image::RgbImage>() {
                     return Ok(DynamicImage::ImageRgb8(img.clone()));
                 }
-                if let Some(img) = any.downcast_ref::<image::GrayImage>() {
+                if let Some(img) = inner_any.downcast_ref::<image::GrayImage>() {
                     return Ok(DynamicImage::ImageLuma8(img.clone()));
                 }
-                if let Some(img) = any.downcast_ref::<image::GrayAlphaImage>() {
+                if let Some(img) = inner_any.downcast_ref::<image::GrayAlphaImage>() {
                     return Ok(DynamicImage::ImageLumaA8(img.clone()));
                 }
-                if let Some(img) = any.downcast_ref::<Arc<DynamicImage>>() {
+                if let Some(img) = inner_any.downcast_ref::<Arc<DynamicImage>>() {
                     return Ok((**img).clone());
                 }
-                if let Some(img) = any.downcast_ref::<Arc<image::RgbaImage>>() {
+                if let Some(img) = inner_any.downcast_ref::<Arc<image::RgbaImage>>() {
                     return Ok(DynamicImage::ImageRgba8((**img).clone()));
                 }
-                if let Some(img) = any.downcast_ref::<Arc<image::RgbImage>>() {
+                if let Some(img) = inner_any.downcast_ref::<Arc<image::RgbImage>>() {
                     return Ok(DynamicImage::ImageRgb8((**img).clone()));
                 }
-                if let Some(img) = any.downcast_ref::<Arc<image::GrayImage>>() {
+                if let Some(img) = inner_any.downcast_ref::<Arc<image::GrayImage>>() {
                     return Ok(DynamicImage::ImageLuma8((**img).clone()));
                 }
-                if let Some(img) = any.downcast_ref::<Arc<image::GrayAlphaImage>>() {
+                if let Some(img) = inner_any.downcast_ref::<Arc<image::GrayAlphaImage>>() {
                     return Ok(DynamicImage::ImageLumaA8((**img).clone()));
                 }
                 #[cfg(feature = "gpu")]
+                if let Some(img) = inner_any.downcast_ref::<daedalus_gpu::Backing<DynamicImage>>() {
+                    return Ok(img.clone().into_owned());
+                }
+                #[cfg(feature = "gpu")]
+                if let Some(img) =
+                    inner_any.downcast_ref::<daedalus_gpu::Backing<image::GrayImage>>()
                 {
-                    // Accept `Payload<DynamicImage>` sent through `Any`.
-                    if let Some(p) = any
-                        .downcast_ref::<daedalus_gpu::Payload<DynamicImage>>()
+                    return Ok(DynamicImage::ImageLuma8(img.clone().into_owned()));
+                }
+                #[cfg(feature = "gpu")]
+                if let Some(img) =
+                    inner_any.downcast_ref::<daedalus_gpu::Backing<image::RgbImage>>()
+                {
+                    return Ok(DynamicImage::ImageRgb8(img.clone().into_owned()));
+                }
+                #[cfg(feature = "gpu")]
+                if let Some(img) =
+                    inner_any.downcast_ref::<daedalus_gpu::Backing<image::RgbaImage>>()
+                {
+                    return Ok(DynamicImage::ImageRgba8(img.clone().into_owned()));
+                }
+                #[cfg(feature = "gpu")]
+                {
+                    // Accept `Compute<DynamicImage>` sent through `Any`.
+                    if let Some(p) = inner_any
+                        .downcast_ref::<daedalus_gpu::Compute<DynamicImage>>()
                         .cloned()
                     {
                         return match p {
-                            daedalus_gpu::Payload::Cpu(img) => Ok(img),
-                            daedalus_gpu::Payload::Gpu(h) => {
+                            daedalus_gpu::Compute::Cpu(img) => Ok(img),
+                            daedalus_gpu::Compute::Gpu(h) => {
                                 let ctx = handle.gpu_ctx().ok_or_else(|| {
                                     NodeError::InvalidInput(format!(
                                         "host bridge port {port}: gpu output requires a GPU context"
                                     ))
                                 })?;
-                                <DynamicImage as daedalus_gpu::GpuSendable>::download(&h, &ctx)
+                                <DynamicImage as daedalus_gpu::DeviceBridge>::download(&h, &ctx)
                                     .map_err(|e| {
                                         NodeError::InvalidInput(format!(
                                             "host bridge port {port}: failed to download gpu image ({e})"
@@ -712,8 +1047,8 @@ impl HostPollable for DynamicImage {
                         };
                     }
 
-                    // Accept `ErasedPayload` carrying a CPU/GPU image.
-                    if let Some(ep) = any.downcast_ref::<daedalus_gpu::ErasedPayload>().cloned() {
+                    // Accept `DataCell` carrying a CPU/GPU image.
+                    if let Some(ep) = inner_any.downcast_ref::<daedalus_gpu::DataCell>().cloned() {
                         if let Some(cpu) = ep.clone_cpu::<DynamicImage>() {
                             return Ok(cpu);
                         }
@@ -732,13 +1067,16 @@ impl HostPollable for DynamicImage {
                     }
 
                     // Accept a raw GPU handle sent through `Any`.
-                    if let Some(h) = any.downcast_ref::<daedalus_gpu::GpuImageHandle>().cloned() {
+                    if let Some(h) = inner_any
+                        .downcast_ref::<daedalus_gpu::GpuImageHandle>()
+                        .cloned()
+                    {
                         let ctx = handle.gpu_ctx().ok_or_else(|| {
                             NodeError::InvalidInput(format!(
                                 "host bridge port {port}: gpu output requires a GPU context"
                             ))
                         })?;
-                        return <DynamicImage as daedalus_gpu::GpuSendable>::download(&h, &ctx)
+                        return <DynamicImage as daedalus_gpu::DeviceBridge>::download(&h, &ctx)
                             .map_err(|e| {
                                 NodeError::InvalidInput(format!(
                                     "host bridge port {port}: failed to download gpu image ({e})"
@@ -749,28 +1087,32 @@ impl HostPollable for DynamicImage {
                 if let Some(converted) = convert_arc::<DynamicImage>(&any) {
                     return Ok(converted);
                 }
-                let ty = std::any::type_name_of_val(any.as_ref());
+                let ty = std::any::type_name_of_val(inner_any);
                 Err(NodeError::InvalidInput(format!(
                     "host bridge port {port}: Any payload is not a DynamicImage (type={ty})"
                 )))
             }
             #[cfg(feature = "gpu")]
-            EdgePayload::GpuImage(handle_img) => {
-                let ctx = handle.gpu_ctx().ok_or_else(|| {
-                    NodeError::InvalidInput(format!(
-                        "host bridge port {port}: gpu output requires a GPU context"
-                    ))
-                })?;
-                <DynamicImage as daedalus_gpu::GpuSendable>::download(&handle_img, &ctx).map_err(
-                    |e| {
-                        NodeError::InvalidInput(format!(
-                            "host bridge port {port}: failed to download gpu image ({e})"
-                        ))
-                    },
-                )
-            }
-            #[cfg(feature = "gpu")]
-            EdgePayload::Payload(ep) => {
+            RuntimeValue::Data(ep) => {
+                if let Some(cpu) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<DynamicImage>>()
+                {
+                    return Ok(cpu.into_owned());
+                }
+                if let Some(cpu) =
+                    ep.try_downcast_cpu_any::<daedalus_gpu::Backing<image::GrayImage>>()
+                {
+                    return Ok(DynamicImage::ImageLuma8(cpu.into_owned()));
+                }
+                if let Some(cpu) =
+                    ep.try_downcast_cpu_any::<daedalus_gpu::Backing<image::RgbImage>>()
+                {
+                    return Ok(DynamicImage::ImageRgb8(cpu.into_owned()));
+                }
+                if let Some(cpu) =
+                    ep.try_downcast_cpu_any::<daedalus_gpu::Backing<image::RgbaImage>>()
+                {
+                    return Ok(DynamicImage::ImageRgba8(cpu.into_owned()));
+                }
                 if let Some(cpu) = ep.clone_cpu::<DynamicImage>() {
                     return Ok(cpu);
                 }
@@ -780,7 +1122,7 @@ impl HostPollable for DynamicImage {
                             "host bridge port {port}: gpu output requires a GPU context"
                         ))
                     })?;
-                    return <DynamicImage as daedalus_gpu::GpuSendable>::download(&gpu, &ctx)
+                    return <DynamicImage as daedalus_gpu::DeviceBridge>::download(&gpu, &ctx)
                         .map_err(|e| {
                             NodeError::InvalidInput(format!(
                                 "host bridge port {port}: failed to download gpu payload ({e})"
@@ -791,10 +1133,10 @@ impl HostPollable for DynamicImage {
                     "host bridge port {port}: payload does not contain an image"
                 )))
             }
-            EdgePayload::Unit | EdgePayload::Bytes(_) => Err(NodeError::InvalidInput(format!(
+            RuntimeValue::Unit | RuntimeValue::Bytes(_) => Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: payload is not an image"
             ))),
-            EdgePayload::Value(_) => Err(NodeError::InvalidInput(format!(
+            RuntimeValue::Value(_) => Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: payload is not an image"
             ))),
         }
@@ -812,16 +1154,15 @@ impl HostPollable for daedalus_gpu::GpuImageHandle {
         _handle: &HostBridgeHandle,
         port: &str,
         _port_type: Option<&TypeExpr>,
-        payload: CorrelatedPayload,
+        payload: CorrelatedValue,
     ) -> Result<Self, NodeError> {
         match payload.inner {
-            EdgePayload::GpuImage(h) => Ok(h),
-            EdgePayload::Payload(ep) => ep.clone_gpu::<DynamicImage>().ok_or_else(|| {
+            RuntimeValue::Data(ep) => ep.clone_gpu::<DynamicImage>().ok_or_else(|| {
                 NodeError::InvalidInput(format!(
                     "host bridge port {port}: payload does not contain a gpu image handle"
                 ))
             }),
-            EdgePayload::Any(any) => any
+            RuntimeValue::Any(any) => unwrap_nested_any(any.as_ref())
                 .downcast_ref::<daedalus_gpu::GpuImageHandle>()
                 .cloned()
                 .ok_or_else(|| {
@@ -829,10 +1170,10 @@ impl HostPollable for daedalus_gpu::GpuImageHandle {
                         "host bridge port {port}: Any payload is not a gpu image handle"
                     ))
                 }),
-            EdgePayload::Unit | EdgePayload::Bytes(_) => Err(NodeError::InvalidInput(format!(
+            RuntimeValue::Unit | RuntimeValue::Bytes(_) => Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: payload is not a gpu image handle"
             ))),
-            EdgePayload::Value(_) => Err(NodeError::InvalidInput(format!(
+            RuntimeValue::Value(_) => Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: payload is not a gpu image handle"
             ))),
         }
@@ -840,10 +1181,10 @@ impl HostPollable for daedalus_gpu::GpuImageHandle {
 }
 
 #[cfg(feature = "gpu")]
-impl<T> HostPollable for daedalus_gpu::Payload<T>
+impl<T> HostPollable for daedalus_gpu::Compute<T>
 where
-    T: daedalus_gpu::GpuSendable + Clone + Send + Sync + 'static,
-    T::GpuRepr: Clone + Send + Sync + 'static,
+    T: daedalus_gpu::DeviceBridge + Clone + Send + Sync + 'static,
+    T::Device: Clone + Send + Sync + 'static,
 {
     fn can_poll(_port_type: Option<&TypeExpr>) -> bool {
         true
@@ -853,62 +1194,63 @@ where
         handle: &HostBridgeHandle,
         port: &str,
         _port_type: Option<&TypeExpr>,
-        payload: CorrelatedPayload,
+        payload: CorrelatedValue,
     ) -> Result<Self, NodeError> {
         match payload.inner {
-            EdgePayload::Payload(ep) => {
+            RuntimeValue::Data(ep) => {
+                if let Some(cpu) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<T>>() {
+                    return Ok(daedalus_gpu::Compute::Cpu(cpu.into_owned()));
+                }
                 if let Some(cpu) = ep.clone_cpu::<T>() {
-                    return Ok(daedalus_gpu::Payload::Cpu(cpu));
+                    return Ok(daedalus_gpu::Compute::Cpu(cpu));
                 }
                 if let Some(g) = ep.clone_gpu::<T>() {
-                    return Ok(daedalus_gpu::Payload::Gpu(g));
+                    return Ok(daedalus_gpu::Compute::Gpu(g));
                 }
                 Err(NodeError::InvalidInput(format!(
                     "host bridge port {port}: payload does not contain requested type"
                 )))
             }
-            EdgePayload::GpuImage(h) => {
-                let any_ref: &dyn Any = &h;
-                if let Some(repr) = any_ref.downcast_ref::<T::GpuRepr>() {
-                    return Ok(daedalus_gpu::Payload::Gpu(repr.clone()));
-                }
-                Err(NodeError::InvalidInput(format!(
-                    "host bridge port {port}: gpu image handle is not compatible with requested payload type"
-                )))
-            }
-            EdgePayload::Any(any) => {
-                if let Some(p) = any.downcast_ref::<daedalus_gpu::Payload<T>>().cloned() {
+            RuntimeValue::Any(any) => {
+                let inner_any = unwrap_nested_any(any.as_ref());
+                if let Some(p) = inner_any
+                    .downcast_ref::<daedalus_gpu::Compute<T>>()
+                    .cloned()
+                {
                     return Ok(p);
                 }
-                if let Some(cpu) = any.downcast_ref::<T>().cloned() {
-                    return Ok(daedalus_gpu::Payload::Cpu(cpu));
+                if let Some(cpu) = inner_any.downcast_ref::<T>().cloned() {
+                    return Ok(daedalus_gpu::Compute::Cpu(cpu));
                 }
-                if let Some(g) = any.downcast_ref::<T::GpuRepr>().cloned() {
-                    return Ok(daedalus_gpu::Payload::Gpu(g));
+                if let Some(cpu) = inner_any.downcast_ref::<daedalus_gpu::Backing<T>>() {
+                    return Ok(daedalus_gpu::Compute::Cpu(cpu.clone().into_owned()));
                 }
-                if let Some(ep) = any.downcast_ref::<daedalus_gpu::ErasedPayload>().cloned() {
+                if let Some(g) = inner_any.downcast_ref::<T::Device>().cloned() {
+                    return Ok(daedalus_gpu::Compute::Gpu(g));
+                }
+                if let Some(ep) = inner_any.downcast_ref::<daedalus_gpu::DataCell>().cloned() {
                     if let Some(cpu) = ep.clone_cpu::<T>() {
-                        return Ok(daedalus_gpu::Payload::Cpu(cpu));
+                        return Ok(daedalus_gpu::Compute::Cpu(cpu));
                     }
                     if let Some(g) = ep.clone_gpu::<T>() {
-                        return Ok(daedalus_gpu::Payload::Gpu(g));
+                        return Ok(daedalus_gpu::Compute::Gpu(g));
                     }
                     if ep.is_gpu()
                         && let Some(ctx) = handle.gpu_ctx()
                         && let Ok(downloaded) = ep.download(&ctx)
                         && let Some(cpu) = downloaded.as_cpu::<T>()
                     {
-                        return Ok(daedalus_gpu::Payload::Cpu(cpu.clone()));
+                        return Ok(daedalus_gpu::Compute::Cpu(cpu.clone()));
                     }
                 }
                 Err(NodeError::InvalidInput(format!(
                     "host bridge port {port}: Any payload is not compatible with requested payload type"
                 )))
             }
-            EdgePayload::Unit | EdgePayload::Bytes(_) => Err(NodeError::InvalidInput(format!(
+            RuntimeValue::Unit | RuntimeValue::Bytes(_) => Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: payload is not compatible with requested payload type"
             ))),
-            EdgePayload::Value(_) => Err(NodeError::InvalidInput(format!(
+            RuntimeValue::Value(_) => Err(NodeError::InvalidInput(format!(
                 "host bridge port {port}: payload is not compatible with requested payload type"
             ))),
         }
@@ -1122,14 +1464,23 @@ impl HostBridgeManager {
     }
 
     /// Internal helper: record an outbound payload for host consumption.
-    fn push_outbound(&self, alias: &str, port: &str, payload: CorrelatedPayload) {
+    fn push_outbound(&self, alias: &str, port: &str, payload: CorrelatedValue) {
+        let alias = alias.to_ascii_lowercase();
+        let key = port.to_ascii_lowercase();
+        let image_like_port = self
+            .incoming_types
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(&alias).and_then(|ports| ports.get(&key).cloned()))
+            .as_ref()
+            .map(|ty| typeexpr_is_image_payload(Some(ty)))
+            .unwrap_or(false);
         if let Ok(mut guard) = self.inner.lock()
-            && let Some(shared) = guard.get_mut(&alias.to_ascii_lowercase())
+            && let Some(shared) = guard.get_mut(&alias)
             && let Ok(mut buf) = shared.lock()
         {
-            let key = port.to_ascii_lowercase();
             let q = buf.outbound.entry(key.clone()).or_default();
-            let cap = outbound_cap_for_payload(&payload);
+            let cap = outbound_cap_for_value(&payload, image_like_port);
             if cap > 0 && q.len() >= cap {
                 q.pop_front();
                 let drop_count = HOST_BRIDGE_OUTBOUND_DROPS.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1162,15 +1513,26 @@ impl HostBridgeManager {
     }
 
     /// Internal helper: drain inbound payloads enqueued by the host.
-    fn take_inbound(&self, alias: &str) -> Vec<(String, CorrelatedPayload)> {
+    fn take_inbound(&self, alias: &str) -> Vec<(String, CorrelatedValue)> {
         if let Ok(mut guard) = self.inner.lock()
             && let Some(shared) = guard.get_mut(&alias.to_ascii_lowercase())
             && let Ok(mut buf) = shared.lock()
         {
             let mut drained = Vec::new();
             for (port, queue) in buf.inbound.iter_mut() {
-                while let Some(p) = queue.pop_front() {
-                    drained.push((port.clone(), p));
+                let Some(latest) = queue.pop_back() else {
+                    continue;
+                };
+                let dropped = queue.len();
+                queue.clear();
+                drained.push((port.clone(), latest));
+                if host_bridge_trace_enabled() && dropped > 0 {
+                    log::debug!(
+                        "host-bridge inbound coalesced alias={} port={} dropped={}",
+                        alias,
+                        port,
+                        dropped
+                    );
                 }
             }
             return drained;
@@ -1199,7 +1561,7 @@ pub fn bridge_handler(
         if host_bridge_trace_enabled() && !inbound.is_empty() {
             let mut entries = Vec::new();
             for (port, payload) in &inbound {
-                entries.push(format!("{}#{}", port, describe_payload(payload)));
+                entries.push(format!("{}#{}", port, describe_runtime_value(payload)));
             }
             log::debug!(
                 "host-bridge inbound alias={} node={} ports={}",
@@ -1209,7 +1571,7 @@ pub fn bridge_handler(
             );
         }
         for (port, payload) in inbound {
-            io.push_correlated_payload(Some(&port), payload);
+            io.push_correlated_value(Some(&port), payload);
         }
 
         // Graph -> host: collect inputs and stash for host consumption.
@@ -1252,13 +1614,38 @@ fn host_bridge_outbound_cap() -> usize {
     })
 }
 
-fn outbound_cap_for_payload(_payload: &CorrelatedPayload) -> usize {
+fn host_bridge_inbound_cap() -> usize {
+    static CAP: OnceLock<usize> = OnceLock::new();
+    *CAP.get_or_init(|| {
+        std::env::var("DAEDALUS_HOST_BRIDGE_INBOUND_CAP")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .unwrap_or(1)
+            .max(1)
+    })
+}
+
+fn typeexpr_is_image_payload(ty: Option<&TypeExpr>) -> bool {
+    match ty {
+        Some(TypeExpr::Opaque(name)) => {
+            let lower = name.to_ascii_lowercase();
+            lower == "image" || lower.starts_with("image:")
+        }
+        Some(TypeExpr::Optional(inner)) => typeexpr_is_image_payload(Some(inner.as_ref())),
+        _ => false,
+    }
+}
+
+fn outbound_cap_for_value(_payload: &CorrelatedValue, image_like_port: bool) -> usize {
+    if image_like_port {
+        return 1;
+    }
     let base = host_bridge_outbound_cap();
     #[cfg(feature = "gpu")]
     {
         match &_payload.inner {
-            EdgePayload::GpuImage(_) => 1,
-            EdgePayload::Payload(ep) if ep.is_gpu() => 1,
+            RuntimeValue::Data(ep) if ep.is_gpu() => 1,
+            RuntimeValue::Any(any) if any_is_gpu_image_handle(any.as_ref()) => 1,
             _ => base,
         }
     }
@@ -1268,43 +1655,33 @@ fn outbound_cap_for_payload(_payload: &CorrelatedPayload) -> usize {
     }
 }
 
-fn describe_payload(p: &CorrelatedPayload) -> String {
+fn describe_runtime_value(p: &CorrelatedValue) -> String {
     match &p.inner {
-        EdgePayload::Any(_) => "any".to_string(),
-        EdgePayload::Value(v) => format!("value({})", describe_value(v)),
-        EdgePayload::Bytes(b) => format!("bytes({}b)", b.len()),
-        EdgePayload::Unit => "unit".to_string(),
         #[cfg(feature = "gpu")]
-        EdgePayload::GpuImage(_) => "gpu_image".to_string(),
+        RuntimeValue::Any(any) if any_is_gpu_image_handle(any.as_ref()) => "gpu_image".to_string(),
+        RuntimeValue::Any(_) => "any".to_string(),
+        RuntimeValue::Value(v) => format!("value({})", describe_daedalus_value(v)),
+        RuntimeValue::Bytes(b) => format!("bytes({}b)", b.len()),
+        RuntimeValue::Unit => "unit".to_string(),
         #[cfg(feature = "gpu")]
-        EdgePayload::Payload(ep) => if ep.is_gpu() {
-            "gpu_payload"
-        } else {
-            "cpu_payload"
-        }
-        .to_string(),
+        RuntimeValue::Data(ep) => if ep.is_gpu() { "gpu_data" } else { "cpu_data" }.to_string(),
     }
 }
 
-fn describe_edge(p: &CorrelatedPayload) -> String {
+fn describe_edge(p: &CorrelatedValue) -> String {
     match &p.inner {
-        EdgePayload::Any(_) => "any".to_string(),
-        EdgePayload::Value(v) => format!("value({})", describe_value(v)),
-        EdgePayload::Bytes(b) => format!("bytes({}b)", b.len()),
-        EdgePayload::Unit => "unit".to_string(),
         #[cfg(feature = "gpu")]
-        EdgePayload::GpuImage(_) => "gpu_image".to_string(),
+        RuntimeValue::Any(any) if any_is_gpu_image_handle(any.as_ref()) => "gpu_image".to_string(),
+        RuntimeValue::Any(_) => "any".to_string(),
+        RuntimeValue::Value(v) => format!("value({})", describe_daedalus_value(v)),
+        RuntimeValue::Bytes(b) => format!("bytes({}b)", b.len()),
+        RuntimeValue::Unit => "unit".to_string(),
         #[cfg(feature = "gpu")]
-        EdgePayload::Payload(ep) => if ep.is_gpu() {
-            "gpu_payload"
-        } else {
-            "cpu_payload"
-        }
-        .to_string(),
+        RuntimeValue::Data(ep) => if ep.is_gpu() { "gpu_data" } else { "cpu_data" }.to_string(),
     }
 }
 
-fn describe_value(v: &Value) -> String {
+fn describe_daedalus_value(v: &Value) -> String {
     match v {
         Value::Int(i) => format!("int({})", i),
         Value::Float(f) => format!("float({})", f),
@@ -1329,7 +1706,7 @@ pub enum HostBridgeSerialized {
 
 /// Serialized payload with correlation metadata.
 #[derive(Clone, Debug, PartialEq)]
-pub struct HostBridgeSerializedPayload {
+pub struct HostBridgeSerializedValue {
     pub correlation_id: u64,
     pub port_type: Option<TypeExpr>,
     pub payload: HostBridgeSerialized,
@@ -1339,11 +1716,11 @@ fn deserialize_serialized_payload(
     port: &str,
     port_type: Option<&TypeExpr>,
     payload: HostBridgeSerialized,
-) -> Result<EdgePayload, NodeError> {
+) -> Result<RuntimeValue, NodeError> {
     match payload {
         HostBridgeSerialized::Bytes(bytes) => {
             if port_type.is_some_and(is_bytes_type) {
-                return Ok(EdgePayload::Bytes(bytes));
+                return Ok(RuntimeValue::Bytes(bytes));
             }
             let text = std::str::from_utf8(&bytes).map_err(|err| {
                 NodeError::InvalidInput(format!(
@@ -1351,11 +1728,11 @@ fn deserialize_serialized_payload(
                 ))
             })?;
             let value = parse_json_value(port, text)?;
-            Ok(value_payload(value))
+            Ok(json_runtime_value(value))
         }
         HostBridgeSerialized::Json(json) => {
             let value = parse_json_value(port, &json)?;
-            Ok(value_payload(value))
+            Ok(json_runtime_value(value))
         }
     }
 }
@@ -1363,21 +1740,21 @@ fn deserialize_serialized_payload(
 fn serialize_outbound_payload(
     port: &str,
     port_type: Option<&TypeExpr>,
-    payload: CorrelatedPayload,
-) -> Result<HostBridgeSerializedPayload, NodeError> {
+    payload: CorrelatedValue,
+) -> Result<HostBridgeSerializedValue, NodeError> {
     let export_policy = port_type
         .map(daedalus_data::named_types::export_policy_for)
         .unwrap_or(HostExportPolicy::Value);
 
     let serialized = match payload.inner {
-        EdgePayload::Unit => {
+        RuntimeValue::Unit => {
             HostBridgeSerialized::Json(serialize_value_to_json(port, &Value::Unit)?)
         }
-        EdgePayload::Bytes(bytes) => HostBridgeSerialized::Bytes(bytes),
-        EdgePayload::Value(value) => {
+        RuntimeValue::Bytes(bytes) => HostBridgeSerialized::Bytes(bytes),
+        RuntimeValue::Value(value) => {
             HostBridgeSerialized::Json(serialize_value_to_json(port, &value)?)
         }
-        EdgePayload::Any(any) => {
+        RuntimeValue::Any(any) => {
             if export_policy == HostExportPolicy::None {
                 // Policy says "do not guess": only allow serialization if the payload is already
                 // value-like/bytes-like. This prevents surprising runtime costs and confusing
@@ -1418,7 +1795,7 @@ fn serialize_outbound_payload(
             }
         }
         #[cfg(feature = "gpu")]
-        EdgePayload::Payload(_) | EdgePayload::GpuImage(_) => {
+        RuntimeValue::Data(_) => {
             log::warn!(
                 "host bridge port {}: gpu payloads cannot be serialized",
                 port
@@ -1429,7 +1806,7 @@ fn serialize_outbound_payload(
         }
     };
 
-    Ok(HostBridgeSerializedPayload {
+    Ok(HostBridgeSerializedValue {
         correlation_id: payload.correlation_id,
         port_type: port_type.cloned(),
         payload: serialized,
@@ -1456,8 +1833,8 @@ fn serialize_value_to_json(port: &str, value: &Value) -> Result<String, NodeErro
     })
 }
 
-fn value_payload(value: Value) -> EdgePayload {
-    EdgePayload::Value(value)
+fn json_runtime_value(value: Value) -> RuntimeValue {
+    RuntimeValue::Value(value)
 }
 
 pub type ValueSerializer = Box<dyn Fn(&dyn Any) -> Option<Value> + Send + Sync + 'static>;
@@ -1599,7 +1976,7 @@ mod tests {
         assert_eq!(payload.correlation_id, id);
 
         match &payload.inner {
-            EdgePayload::Value(Value::Int(v)) => assert_eq!(*v, 5),
+            RuntimeValue::Value(Value::Int(v)) => assert_eq!(*v, 5),
             other => panic!("unexpected payload {other:?}"),
         }
     }
@@ -1613,7 +1990,7 @@ mod tests {
             Vec::new(),
             vec![("status".into(), TypeExpr::Scalar(ValueType::Int))],
         );
-        let payload = CorrelatedPayload::from_edge(value_payload(Value::Int(7)));
+        let payload = CorrelatedValue::from_edge(json_runtime_value(Value::Int(7)));
         mgr.push_outbound("host", "status", payload);
 
         let handle = mgr.handle("host").expect("host handle");
@@ -1643,7 +2020,7 @@ mod tests {
             vec![("blob".into(), TypeExpr::Scalar(ValueType::Bytes))],
         );
         let bytes: Arc<[u8]> = Arc::from(vec![1_u8, 2, 3, 4]);
-        let payload = CorrelatedPayload::from_edge(EdgePayload::Bytes(bytes.clone()));
+        let payload = CorrelatedValue::from_edge(RuntimeValue::Bytes(bytes.clone()));
         mgr.push_outbound("host", "blob", payload);
 
         let handle = mgr.handle("host").expect("host handle");
@@ -1670,7 +2047,7 @@ mod tests {
         mgr.push_outbound(
             "host",
             "out",
-            CorrelatedPayload::from_edge(EdgePayload::Any(Arc::new(7_i64))),
+            CorrelatedValue::from_edge(RuntimeValue::Any(Arc::new(7_i64))),
         );
 
         let host = mgr.handle("host").expect("host handle");
@@ -1693,7 +2070,7 @@ mod tests {
         mgr.push_outbound(
             "host",
             "out",
-            CorrelatedPayload::from_edge(EdgePayload::Any(Arc::new(NotValue))),
+            CorrelatedValue::from_edge(RuntimeValue::Any(Arc::new(NotValue))),
         );
 
         let host = mgr.handle("host").expect("host handle");
@@ -1716,12 +2093,12 @@ mod tests {
         mgr.push_outbound(
             "host",
             "out",
-            CorrelatedPayload::from_edge(value_payload(Value::Int(1))),
+            CorrelatedValue::from_edge(json_runtime_value(Value::Int(1))),
         );
         mgr.push_outbound(
             "host",
             "out",
-            CorrelatedPayload::from_edge(value_payload(Value::Int(2))),
+            CorrelatedValue::from_edge(json_runtime_value(Value::Int(2))),
         );
 
         let host = mgr.handle("host").expect("host handle");
@@ -1746,7 +2123,7 @@ mod tests {
         mgr.push_outbound(
             "host",
             "a",
-            CorrelatedPayload::from_edge(value_payload(Value::Int(42))),
+            CorrelatedValue::from_edge(json_runtime_value(Value::Int(42))),
         );
 
         let host = mgr.handle("host").expect("host handle");
@@ -1776,7 +2153,7 @@ mod tests {
         mgr.push_outbound(
             "host",
             "a",
-            CorrelatedPayload::from_edge(value_payload(Value::Int(42))),
+            CorrelatedValue::from_edge(json_runtime_value(Value::Int(42))),
         );
 
         let host = mgr.handle("host").expect("host handle");
@@ -1788,6 +2165,96 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].0, "a");
         assert_eq!(got[0].2, Value::Int(42));
+    }
+
+    #[test]
+    fn clear_preserves_outbound_queue_for_reuse() {
+        let mgr = HostBridgeManager::new();
+        mgr.register_bridge("host", empty_policies());
+        mgr.register_port_types(
+            "host",
+            Vec::new(),
+            vec![("tv".into(), TypeExpr::Scalar(ValueType::Int))],
+        );
+        mgr.push_outbound(
+            "host",
+            "tv",
+            CorrelatedValue::from_edge(json_runtime_value(Value::Int(1))),
+        );
+        mgr.push_outbound(
+            "host",
+            "tv",
+            CorrelatedValue::from_edge(json_runtime_value(Value::Int(2))),
+        );
+
+        let host = mgr.handle("host").expect("host handle");
+        assert_eq!(host.clear("tv"), 2);
+
+        {
+            let guard = mgr.inner.lock().expect("host bridge manager");
+            let shared = guard
+                .get("host")
+                .expect("bridge entry")
+                .lock()
+                .expect("bridge shared state");
+            let queue = shared.outbound.get("tv").expect("queue retained");
+            assert!(queue.is_empty());
+        }
+
+        mgr.push_outbound(
+            "host",
+            "tv",
+            CorrelatedValue::from_edge(json_runtime_value(Value::Int(3))),
+        );
+        let (_corr, value) = host.try_pop_value("tv").expect("value").expect("payload");
+        assert_eq!(value, Value::Int(3));
+    }
+
+    #[test]
+    fn image_like_ports_only_retain_latest_outbound_frame() {
+        use image::{DynamicImage, ImageBuffer, Luma};
+
+        let mgr = HostBridgeManager::new();
+        mgr.register_bridge("host", empty_policies());
+        mgr.register_port_types(
+            "host",
+            Vec::new(),
+            vec![("frame".into(), TypeExpr::opaque("image:gray"))],
+        );
+
+        for value in [1u8, 2u8, 3u8] {
+            let img = DynamicImage::ImageLuma8(ImageBuffer::from_pixel(1, 1, Luma([value])));
+            mgr.push_outbound(
+                "host",
+                "frame",
+                CorrelatedValue::from_edge(RuntimeValue::Any(Arc::new(img))),
+            );
+        }
+
+        {
+            let guard = mgr.inner.lock().expect("host bridge manager");
+            let shared = guard
+                .get("host")
+                .expect("bridge entry")
+                .lock()
+                .expect("bridge shared state");
+            let queue = shared.outbound.get("frame").expect("queue retained");
+            assert_eq!(
+                queue.len(),
+                1,
+                "image-like ports should only keep the latest frame"
+            );
+        }
+
+        let host = mgr.handle("host").expect("host handle");
+        let (_corr, img) = host
+            .iter_ports(&["frame".to_string()])
+            .next()
+            .expect("port")
+            .try_pop::<DynamicImage>()
+            .expect("pop")
+            .expect("payload");
+        assert_eq!(img.to_luma8().get_pixel(0, 0).0[0], 3);
     }
 
     #[test]
@@ -1806,7 +2273,7 @@ mod tests {
         mgr.push_outbound(
             "host",
             "frame",
-            CorrelatedPayload::from_edge(EdgePayload::Any(Arc::new(img.clone()))),
+            CorrelatedValue::from_edge(RuntimeValue::Any(Arc::new(img.clone()))),
         );
 
         let host = mgr.handle("host").expect("host handle");

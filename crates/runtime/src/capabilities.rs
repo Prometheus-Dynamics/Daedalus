@@ -1,9 +1,9 @@
-use crate::executor::{EdgePayload, NodeError};
+use crate::executor::{NodeError, RuntimeValue};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
-type CapabilityFn = dyn Fn(&[&dyn Any]) -> Result<EdgePayload, NodeError> + Send + Sync;
+type CapabilityFn = dyn Fn(&[&dyn Any]) -> Result<RuntimeValue, NodeError> + Send + Sync;
 
 pub struct CapabilityEntry {
     pub type_ids: Vec<TypeId>,
@@ -58,7 +58,7 @@ impl CapabilityRegistry {
                     .get(1)
                     .and_then(|v| v.downcast_ref::<T>())
                     .ok_or_else(|| NodeError::InvalidInput("rhs".into()))?;
-                f(a, b).map(|out| EdgePayload::Any(std::sync::Arc::new(out)))
+                f(a, b).map(|out| RuntimeValue::Any(std::sync::Arc::new(out)))
             }),
         );
     }
@@ -85,7 +85,7 @@ impl CapabilityRegistry {
                     .get(2)
                     .and_then(|v| v.downcast_ref::<T>())
                     .ok_or_else(|| NodeError::InvalidInput("hi".into()))?;
-                f(a, b, c).map(|out| EdgePayload::Any(std::sync::Arc::new(out)))
+                f(a, b, c).map(|out| RuntimeValue::Any(std::sync::Arc::new(out)))
             }),
         );
     }

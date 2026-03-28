@@ -39,7 +39,7 @@ pub enum PythonManifestError {
 /// Shared image payload struct used by examples and conversions.
 #[repr(C)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ImagePayload {
+pub struct ImageCompute {
     pub data_b64: String,
     pub width: i64,
     pub height: i64,

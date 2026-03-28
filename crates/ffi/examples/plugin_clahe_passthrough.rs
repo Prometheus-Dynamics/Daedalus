@@ -1,8 +1,8 @@
 #![crate_type = "cdylib"]
-//! Minimal Rust FFI plugin that accepts a `Payload<DynamicImage>` and returns it unchanged.
+//! Minimal Rust FFI plugin that accepts a `Compute<DynamicImage>` and returns it unchanged.
 
 use daedalus::runtime::NodeError;
-use daedalus::{ComputeAffinity, Payload, declare_plugin, ffi::export_plugin, macros::node};
+use daedalus::{Compute, ComputeAffinity, declare_plugin, ffi::export_plugin, macros::node};
 use image::DynamicImage;
 
 declare_plugin!(
@@ -30,11 +30,11 @@ declare_plugin!(
     )
 )]
 fn cv_clahe(
-    mask: Payload<DynamicImage>,
+    mask: Compute<DynamicImage>,
     tile_size: i64,
     clip_limit: f64,
-) -> Result<Payload<DynamicImage>, NodeError> {
-    // Intentionally a no-op pass-through. We only validate payload transport + decoding.
+) -> Result<Compute<DynamicImage>, NodeError> {
+    // Intentionally a no-op pass-through. We only validate runtime-value transport + decoding.
     let _ = (tile_size, clip_limit);
     Ok(mask)
 }

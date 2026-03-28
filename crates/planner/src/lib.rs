@@ -19,13 +19,19 @@ pub use graph::{
     ComputeAffinity, DEFAULT_PLAN_VERSION, Edge, EdgeBufferInfo, ExecutionPlan, GpuSegment, Graph,
     NodeInstance, NodeRef, PortRef, StableHash,
 };
-pub use passes::{PlannerConfig, PlannerInput, PlannerOutput, build_plan};
+pub use passes::{
+    AppliedPlannerLowering, CompatibilityMode, CompatibilityStepExplanation,
+    EdgeResolutionExplanation, EdgeResolutionKind, NodeOverloadResolution, OverloadPortResolution,
+    PlanExplanation, PlannerConfig, PlannerInput, PlannerLoweringContext, PlannerLoweringInfo,
+    PlannerLoweringPhase, PlannerOutput, build_plan, explain_plan, register_planner_lowering,
+    registered_planner_lowerings,
+};
 pub use patch::{GraphMetadataSelector, GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daedalus_data::model::{TypeExpr, ValueType};
+    use daedalus_data::model::{StructFieldValue, TypeExpr, Value, ValueType};
     use daedalus_registry::store::NodeDescriptorBuilder;
     use daedalus_registry::store::Registry;
 
@@ -423,5 +429,268 @@ mod tests {
                 .iter()
                 .any(|d| matches!(d.code, DiagnosticCode::GpuUnsupported))
         );
+    }
+
+    #[test]
+    fn overload_resolution_applies_dynamic_input_types_and_is_explained() {
+        let mut registry = Registry::new();
+        let source = NodeDescriptorBuilder::new("source")
+            .output("out", TypeExpr::Scalar(ValueType::Bool))
+            .build()
+            .unwrap();
+        registry.register_node(source).unwrap();
+
+        let overloads = Value::List(vec![
+            Value::Struct(vec![
+                StructFieldValue {
+                    name: "id".into(),
+                    value: Value::String("bool_in".into()),
+                },
+                StructFieldValue {
+                    name: "label".into(),
+                    value: Value::String("Bool Input".into()),
+                },
+                StructFieldValue {
+                    name: "inputs".into(),
+                    value: Value::Map(vec![(
+                        Value::String("in".into()),
+                        Value::String(
+                            serde_json::to_string(&TypeExpr::Scalar(ValueType::Bool))
+                                .unwrap()
+                                .into(),
+                        ),
+                    )]),
+                },
+            ]),
+            Value::Struct(vec![
+                StructFieldValue {
+                    name: "id".into(),
+                    value: Value::String("int_in".into()),
+                },
+                StructFieldValue {
+                    name: "inputs".into(),
+                    value: Value::Map(vec![(
+                        Value::String("in".into()),
+                        Value::String(
+                            serde_json::to_string(&TypeExpr::Scalar(ValueType::Int))
+                                .unwrap()
+                                .into(),
+                        ),
+                    )]),
+                },
+            ]),
+        ]);
+        let sink = NodeDescriptorBuilder::new("sink")
+            .input("in", TypeExpr::Scalar(ValueType::Int))
+            .metadata("daedalus.overloads", overloads)
+            .build()
+            .unwrap();
+        registry.register_node(sink).unwrap();
+
+        let mut graph = Graph::default();
+        graph.nodes.push(NodeInstance {
+            id: daedalus_registry::ids::NodeId::new("source"),
+            bundle: None,
+            label: None,
+            inputs: vec![],
+            outputs: vec![],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+        graph.nodes.push(NodeInstance {
+            id: daedalus_registry::ids::NodeId::new("sink"),
+            bundle: None,
+            label: None,
+            inputs: vec![],
+            outputs: vec![],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+        graph.edges.push(Edge {
+            from: PortRef {
+                node: NodeRef(0),
+                port: "out".into(),
+            },
+            to: PortRef {
+                node: NodeRef(1),
+                port: "in".into(),
+            },
+            metadata: Default::default(),
+        });
+
+        let out = build_plan(
+            PlannerInput {
+                graph,
+                registry: &registry,
+            },
+            PlannerConfig::default(),
+        );
+
+        assert!(
+            !out.diagnostics
+                .iter()
+                .any(|d| matches!(d.code, DiagnosticCode::ConverterMissing))
+        );
+
+        let explanation = explain_plan(&out.plan.graph);
+        assert_eq!(explanation.overloads.len(), 1);
+        assert_eq!(explanation.overloads[0].overload_id, "bool_in");
+        assert_eq!(
+            explanation.overloads[0].ports[0].resolution_kind,
+            EdgeResolutionKind::Exact
+        );
+        assert_eq!(explanation.edges.len(), 1);
+        assert_eq!(
+            explanation.edges[0].resolution_kind,
+            EdgeResolutionKind::Exact
+        );
+    }
+
+    #[test]
+    fn registered_planner_lowerings_are_applied_and_explained() {
+        super::passes::reset_planner_lowerings_for_tests();
+        register_planner_lowering(
+            "tests.lowering",
+            PlannerLoweringPhase::BeforeTypecheck,
+            |graph, _ctx, _diags| {
+                graph
+                    .metadata
+                    .insert("tests.lowering.flag".into(), Value::Bool(true));
+                vec![AppliedPlannerLowering {
+                    id: String::new(),
+                    phase: PlannerLoweringPhase::AfterConvert,
+                    summary: "set flag".into(),
+                    changed: true,
+                    metadata: std::iter::once(("flag".to_string(), Value::Bool(true))).collect(),
+                }]
+            },
+        );
+
+        let registry = Registry::new();
+        let out = build_plan(
+            PlannerInput {
+                graph: Graph::default(),
+                registry: &registry,
+            },
+            PlannerConfig::default(),
+        );
+
+        let explanation = explain_plan(&out.plan.graph);
+        assert_eq!(explanation.lowerings.len(), 1);
+        assert_eq!(explanation.lowerings[0].id, "tests.lowering");
+        assert_eq!(
+            explanation.lowerings[0].phase,
+            PlannerLoweringPhase::BeforeTypecheck
+        );
+        assert_eq!(
+            out.plan.graph.metadata.get("tests.lowering.flag"),
+            Some(&Value::Bool(true))
+        );
+        super::passes::reset_planner_lowerings_for_tests();
+    }
+
+    #[test]
+    fn explain_plan_reports_converter_steps() {
+        struct IntToBool;
+        impl daedalus_data::convert::Converter for IntToBool {
+            fn id(&self) -> daedalus_data::convert::ConverterId {
+                daedalus_data::convert::ConverterId("int_to_bool".into())
+            }
+            fn input(&self) -> &TypeExpr {
+                static TY: once_cell::sync::Lazy<TypeExpr> =
+                    once_cell::sync::Lazy::new(|| TypeExpr::Scalar(ValueType::Int));
+                &TY
+            }
+            fn output(&self) -> &TypeExpr {
+                static TY: once_cell::sync::Lazy<TypeExpr> =
+                    once_cell::sync::Lazy::new(|| TypeExpr::Scalar(ValueType::Bool));
+                &TY
+            }
+            fn convert(
+                &self,
+                _value: daedalus_data::model::Value,
+            ) -> Result<daedalus_data::model::Value, daedalus_data::errors::DataError> {
+                Ok(daedalus_data::model::Value::Bool(true))
+            }
+            fn cost(&self) -> u64 {
+                1
+            }
+        }
+
+        let mut registry = Registry::new();
+        registry
+            .register_node(
+                NodeDescriptorBuilder::new("a")
+                    .output("out", TypeExpr::Scalar(ValueType::Int))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        registry
+            .register_node(
+                NodeDescriptorBuilder::new("b")
+                    .input("in", TypeExpr::Scalar(ValueType::Bool))
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        registry
+            .register_converter(Box::new(IntToBool))
+            .expect("converter registers");
+
+        let mut graph = Graph::default();
+        graph.nodes.push(NodeInstance {
+            id: daedalus_registry::ids::NodeId::new("a"),
+            bundle: None,
+            label: None,
+            inputs: vec![],
+            outputs: vec![],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+        graph.nodes.push(NodeInstance {
+            id: daedalus_registry::ids::NodeId::new("b"),
+            bundle: None,
+            label: None,
+            inputs: vec![],
+            outputs: vec![],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+        graph.edges.push(Edge {
+            from: PortRef {
+                node: NodeRef(0),
+                port: "out".into(),
+            },
+            to: PortRef {
+                node: NodeRef(1),
+                port: "in".into(),
+            },
+            metadata: Default::default(),
+        });
+
+        let out = build_plan(
+            PlannerInput {
+                graph,
+                registry: &registry,
+            },
+            PlannerConfig::default(),
+        );
+
+        let explanation = explain_plan(&out.plan.graph);
+        assert_eq!(explanation.edges.len(), 1);
+        assert_eq!(
+            explanation.edges[0].resolution_kind,
+            EdgeResolutionKind::Conversion
+        );
+        assert_eq!(explanation.edges[0].converter_steps, vec!["int_to_bool"]);
     }
 }

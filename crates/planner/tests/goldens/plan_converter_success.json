@@ -34,7 +34,23 @@
       }
     ],
     "metadata": {
-      "converter:a->b:out->in": "cost=0;path=int_to_bool;features=none;gpu=false;skipped_gpu=[];skipped_features=[]",
+      "daedalus.plan.edge_explanations": [
+        {
+          "compatibility_mode": "none",
+          "compatibility_steps": [],
+          "converter_steps": [
+            "int_to_bool"
+          ],
+          "from_node": "a",
+          "from_port": "out",
+          "from_type": "{\"Scalar\":\"Int\"}",
+          "resolution_kind": "conversion",
+          "to_node": "b",
+          "to_port": "in",
+          "to_type": "{\"Scalar\":\"Bool\"}",
+          "total_cost": 1
+        }
+      ],
       "schedule_order": "a,b",
       "schedule_priority": "a:2,b:2",
       "topo_order": "a,b"

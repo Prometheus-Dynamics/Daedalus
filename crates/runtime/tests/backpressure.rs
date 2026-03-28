@@ -5,7 +5,7 @@ use daedalus_planner::{
 };
 use daedalus_runtime::{
     BackpressureStrategy, EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig,
-    build_runtime, executor::EdgePayload,
+    build_runtime, executor::RuntimeValue,
 };
 
 struct Harness {
@@ -21,16 +21,16 @@ impl NodeHandler for Harness {
     ) -> Result<(), daedalus_runtime::NodeError> {
         match node.id.as_str() {
             "prod" => {
-                io.push_output(Some("out"), EdgePayload::Bytes(Arc::from(&b"one"[..])));
-                io.push_output(Some("out"), EdgePayload::Bytes(Arc::from(&b"two"[..])));
+                io.push_output(Some("out"), RuntimeValue::Bytes(Arc::from(&b"one"[..])));
+                io.push_output(Some("out"), RuntimeValue::Bytes(Arc::from(&b"two"[..])));
             }
             "cons" => {
                 let mut guard = self.seen.lock().unwrap();
                 for payload in io.inputs_for("in") {
                     match &payload.inner {
-                        EdgePayload::Bytes(b) => guard.push(String::from_utf8_lossy(b).into()),
-                        EdgePayload::Unit => guard.push("unit".into()),
-                        EdgePayload::Value(v) => guard.push(format!("{v:?}")),
+                        RuntimeValue::Bytes(b) => guard.push(String::from_utf8_lossy(b).into()),
+                        RuntimeValue::Unit => guard.push("unit".into()),
+                        RuntimeValue::Value(v) => guard.push(format!("{v:?}")),
                         _ => {}
                     };
                 }

@@ -11,7 +11,7 @@ use crate::bridge::any_to_json;
 use crate::manifest::{
     ManifestShaderAccess, ManifestShaderBindingKind, ManifestShaderStateBackend, NodeManifest,
 };
-use crate::python::ImagePayload;
+use crate::python::ImageCompute;
 
 fn load_wgsl_src(
     manifest_dir: Option<&std::path::Path>,
@@ -738,12 +738,12 @@ fn read_rgba8_image(io: &mut NodeIo, port: &str) -> Result<(u32, u32, Vec<u8>), 
         return Ok((rgba.width(), rgba.height(), rgba.into_raw()));
     }
 
-    if let Some(payload) = io.get_any::<ImagePayload>(port) {
+    if let Some(payload) = io.get_any::<ImageCompute>(port) {
         return decode_payload_rgba(&payload);
     }
 
     if let Some(v) = io.get_any::<serde_json::Value>(port) {
-        let payload: ImagePayload = serde_json::from_value(v)
+        let payload: ImageCompute = serde_json::from_value(v)
             .map_err(|e| NodeError::Handler(format!("invalid image payload: {e}")))?;
         return decode_payload_rgba(&payload);
     }
@@ -753,7 +753,7 @@ fn read_rgba8_image(io: &mut NodeIo, port: &str) -> Result<(u32, u32, Vec<u8>), 
     )))
 }
 
-fn decode_payload_rgba(payload: &ImagePayload) -> Result<(u32, u32, Vec<u8>), NodeError> {
+fn decode_payload_rgba(payload: &ImageCompute) -> Result<(u32, u32, Vec<u8>), NodeError> {
     // Prefer raw RGBA8 bytes (fast path) when available.
     if payload.layout == "HWC" && payload.dtype == "u8" && payload.channels == 4 {
         let bytes = base64::engine::general_purpose::STANDARD

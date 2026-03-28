@@ -3,8 +3,8 @@ use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
 };
 use daedalus_runtime::{
-    BackpressureStrategy, EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig,
-    build_runtime, executor::NodeError,
+    BackpressureStrategy, EdgePolicyKind, Executor, NodeHandler, ResourceLifecycleEvent,
+    RuntimeNode, SchedulerConfig, StateStore, build_runtime, executor::NodeError,
 };
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -145,5 +145,52 @@ fn execution_context_contains_node_metadata() {
     assert_eq!(
         captured.get("bundle"),
         Some(&Value::String("bundle".into()))
+    );
+}
+
+#[test]
+fn executor_resource_lifecycle_controls_shared_state() {
+    let exec = tiny_exec_plan(&[ComputeAffinity::CpuOnly]);
+    let rt = build_runtime(&exec, &SchedulerConfig::default());
+    let state = StateStore::default();
+    state
+        .record_node_resource_usage(
+            "n0",
+            "cache",
+            daedalus_runtime::ResourceClass::WarmCache,
+            8,
+            32,
+        )
+        .unwrap();
+    let handler = LogHandler {
+        log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let executor = Executor::new(&rt, handler).with_state(state.clone());
+
+    executor.on_memory_pressure().unwrap();
+    let compacted = state.snapshot_node_resources("n0").unwrap();
+    assert_eq!(compacted.warm_cache.live_bytes, 8);
+    assert_eq!(compacted.warm_cache.retained_bytes, 8);
+
+    executor
+        .apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
+        .unwrap();
+    let idled = state.snapshot_node_resources("n0").unwrap();
+    assert_eq!(idled.warm_cache.live_bytes, 0);
+    assert_eq!(idled.warm_cache.retained_bytes, 0);
+
+    state
+        .record_node_resource_usage(
+            "n0",
+            "persistent",
+            daedalus_runtime::ResourceClass::PersistentState,
+            3,
+            6,
+        )
+        .unwrap();
+    executor.shutdown_resources().unwrap();
+    assert_eq!(
+        state.snapshot_node_resources("n0").unwrap(),
+        daedalus_runtime::NodeResourceSnapshot::default()
     );
 }

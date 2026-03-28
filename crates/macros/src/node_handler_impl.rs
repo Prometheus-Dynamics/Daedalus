@@ -142,8 +142,8 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
                         #[cfg(feature = "gpu")]
                         {
                             // Special case: accept erased GPU payloads when requested.
-                            if std::any::TypeId::of::<#arg_types>() == std::any::TypeId::of::<#gpu_crate::ErasedPayload>() {
-                                io.get_erased_payload(#arg_names)
+                            if std::any::TypeId::of::<#arg_types>() == std::any::TypeId::of::<#gpu_crate::DataCell>() {
+                                io.get_data_cell(#arg_names)
                                     .cloned()
                                     .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #arg_names)))?
                             } else {

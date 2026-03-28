@@ -36,7 +36,7 @@ where
         #[cfg(feature = "gpu")]
         gpu_exit_set,
         #[cfg(feature = "gpu")]
-        payload_edges,
+        data_edges,
         const_coercers,
         output_movers,
         graph_metadata,
@@ -104,7 +104,7 @@ where
     #[cfg(feature = "gpu")]
     let gpu_exit_set = gpu_exit_set.clone();
     #[cfg(feature = "gpu")]
-    let payload_edges = payload_edges.clone();
+    let data_edges = data_edges.clone();
     #[cfg(feature = "gpu")]
     let materialization_cache = materialization_cache.clone();
     let mut first_err: Option<ExecuteError> = None;
@@ -175,7 +175,7 @@ where
         #[cfg(feature = "gpu")]
         let gpu_exit_set = gpu_exit_set.clone();
         #[cfg(feature = "gpu")]
-        let payload_edges = payload_edges.clone();
+        let data_edges = data_edges.clone();
         #[cfg(feature = "gpu")]
         let materialization_cache = materialization_cache.clone();
         let txc = tx.clone();
@@ -213,7 +213,7 @@ where
                 #[cfg(feature = "gpu")]
                 &gpu_exit_set,
                 #[cfg(feature = "gpu")]
-                &payload_edges,
+                &data_edges,
             );
             let _ = txc.send((seg_id, res));
         });

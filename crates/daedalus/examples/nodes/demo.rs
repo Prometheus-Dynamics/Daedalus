@@ -1,7 +1,7 @@
 use daedalus::data::model::TypeExpr;
 use daedalus::registry::store::{NodeDescriptor, Port, Registry};
 use daedalus::runtime::handler_registry::HandlerRegistry;
-use daedalus::runtime::{EdgePayload, NodeError};
+use daedalus::runtime::{RuntimeValue, NodeError};
 use daedalus::runtime::{ExecutionContext, NodeIo, RuntimeNode};
 use daedalus::ComputeAffinity;
 

@@ -24,7 +24,7 @@ mod wgpu_backend;
 #[cfg(feature = "gpu-async")]
 pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
-pub use convert::{ErasedPayload, GpuSendable, Payload};
+pub use convert::{Backing, Compute, DataCell, DeviceBridge};
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
 #[cfg(feature = "gpu-mock")]
 pub use mock::MockBackend;

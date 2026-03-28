@@ -2,7 +2,7 @@
 //! Minimal Rust FFI plugin that converts a frame to grayscale (CPU path).
 
 use daedalus::runtime::NodeError;
-use daedalus::{ComputeAffinity, Payload, declare_plugin, ffi::export_plugin, macros::node};
+use daedalus::{Compute, ComputeAffinity, declare_plugin, ffi::export_plugin, macros::node};
 use image::DynamicImage;
 
 declare_plugin!(
@@ -32,18 +32,18 @@ declare_plugin!(
     )
 )]
 fn cv_grayscale_arc(
-    frame: Payload<DynamicImage>,
+    frame: Compute<DynamicImage>,
     _mode: i64,
-) -> Result<Payload<DynamicImage>, NodeError> {
+) -> Result<Compute<DynamicImage>, NodeError> {
     match frame {
-        Payload::Cpu(img) => {
+        Compute::Cpu(img) => {
             let out = match img {
                 DynamicImage::ImageLuma8(_) => img,
                 other => DynamicImage::ImageLuma8(other.to_luma8()),
             };
-            Ok(Payload::Cpu(out))
+            Ok(Compute::Cpu(out))
         }
-        Payload::Gpu(_) => Err(NodeError::InvalidInput(
+        Compute::Gpu(_) => Err(NodeError::InvalidInput(
             "grayscale_arc: GPU payload unsupported (insert cpu convert)".into(),
         )),
     }

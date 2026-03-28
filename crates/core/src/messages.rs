@@ -152,7 +152,7 @@ impl Default for MessageMeta {
 
 /// Envelope carrying payload plus token/metadata.
 ///
-/// Payload `T` must be `Send + Sync` to be safely shared in async/concurrent
+/// Compute `T` must be `Send + Sync` to be safely shared in async/concurrent
 /// runtimes.
 ///
 /// ```

@@ -10,7 +10,7 @@ def blur(img):
     # The subprocess bridge passes images as a small struct with base64 bytes.
     # Prefer `encoding=="raw"` (fast, no codec step). PNG is supported only as a fallback.
     #
-    # Payload shape (cross-language):
+    # Compute shape (cross-language):
     #   {
     #     "data_b64": "...",
     #     "width": 640, "height": 480, "channels": 4,

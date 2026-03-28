@@ -40,32 +40,32 @@ Hardening / Follow-ups
 - [x] Parallel executor determinism/perf: honor `schedule_order` when spawning segments; avoid extra node clones where possible (shared handler/state).
 - [x] Error ergonomics: replace `Result<(), String>` in `NodeHandler` with a structured, non_exhaustive error for diagnostics.
 - [x] Telemetry polish: deduplicate warnings.
-- [x] Real data flow: executor uses per-edge payload queues (bounded, newest-wins overwrite, broadcast/fifo append) so policies apply to payloads, not just tokens.
+- [x] Real data flow: executor uses per-edge runtime-value queues (bounded, newest-wins overwrite, broadcast/fifo append) so policies apply to transported values, not just tokens.
 - [x] Threading model: cap parallel executor concurrency to available cores and prefer `schedule_order` when spawning, reducing thread explosion while keeping determinism.
 - [x] Error context: attach node IDs to `ExecuteError::HandlerFailed`.
 - [x] Feature checks: keep feature-matrix script; executor builds with/without `gpu` and gpu-mock test path remains covered.
 - [x] State/telemetry robustness: make StateStore return errors on lock/serde failure (instead of swallowing) and include node/segment ids in telemetry warnings.
-- [x] Queue payload types: replace placeholder payloads with typed `EdgePayload` enum so backpressure applies to real data without JSON allocations.
+- [x] Queue runtime value types: replace placeholder values with typed `RuntimeValue` transport so backpressure applies to real data without JSON allocations.
 - [x] Threading/backend option: add a feature-gated thread pool/rayon backend for the parallel executor to avoid spawning unbounded threads; keep deterministic ordering via rank tie-breaks.
 - [x] Diagnostics polish: include segment ids alongside node ids in `ExecuteError`/telemetry warnings for clearer traces.
 - [x] Performance hygiene: use smallvec for warnings; queues remain lightweight; revisit ring buffers if profiling shows a hotspot.
 - [x] Policy exhaustiveness: make `apply_policy` exhaustively match `EdgePolicyKind` (no silent `_`) and add an explicit unreachable for future variants.
 - [x] StateStore symmetry: make `set` return `Result<(), String>` (like `set_typed`/`dump_json`) so lock errors surface consistently.
-- [x] Payload future-proofing: add an `Any` placeholder variant for future typed payloads to avoid JSON in hot paths.
+- [x] Compute future-proofing: add an `Any` placeholder variant for future typed runtime values to avoid JSON in hot paths.
 - [x] Pool reuse: optionally reuse a rayon pool (feature-gated) to avoid rebuilding per call if runtime hot-paths call `run_parallel_pool` often.
 - [x] Strict StateStore API: add `get_result`/`set_result` (or make `get` return Result) so lock/serde errors are never swallowed; keep `get` as a convenience wrapper if desired.
 - [x] Pool configurability: allow pool size override via env/CLI when `executor-pool` is enabled; default to available parallelism.
-- [x] Payload generalization: add runtime-owned `NodeIo` and replace `EdgePayload` placeholder with a real generic/`Any` carrier; update handlers/tests so policies/backpressure act on real data.
+- [x] Compute generalization: add runtime-owned `NodeIo` and replace the old placeholder transport with a real generic/`Any` runtime value carrier; update handlers/tests so policies/backpressure act on real data.
 - [x] Perf follow-up: add bounded/drop-oldest queue implementation; ring-buffer swap can be introduced if profiling demands further optimization.
-- [x] Refine payload type: decide on a single efficient carrier (`Arc<[u8]>`); remove unused variants to avoid confusion and cloning overhead.
+- [x] Refine transport type: decide on a single efficient carrier (`Arc<[u8]>`); remove unused variants to avoid confusion and cloning overhead.
 - [x] NodeIo per-port API: expose inputs/outputs keyed by port name and ensure push supports per-port selection; add tests that enforce policy behavior per port.
 - [x] Ring buffer optimization: swap bounded queue implementation to a fixed-size ring buffer for better cache behavior.
 - [x] Node/ID borrowing: avoid cloning node IDs in executor paths; store nodes in `Arc<[RuntimeNode]>` and pass `&str` for diagnostics/warnings to reduce allocations.
 - [x] Test matrix run: execute `scripts/check-runtime-features.sh`, `cargo test -p daedalus-runtime`, and `cargo test -p daedalus-runtime --features gpu-mock,executor-pool` to validate gating and new I/O surface.
 - [x] Enforce BackpressureStrategy: executor/NodeIo should honor `RuntimePlan.backpressure` (drop-with-warning vs block/error) so bounded mode is observable; add targeted overflow tests.
-- [x] Drain semantics: let NodeIo expose all pending payloads per port (iter/drain API) instead of just the first item; add port-aware tests to prevent silent drops under bursty producers.
+- [x] Drain semantics: let NodeIo expose all pending runtime values per port (iter/drain API) instead of just the first item; add port-aware tests to prevent silent drops under bursty producers.
 - [x] Parallel invariants: add tests/property checks that serial, scoped, and pooled executors yield identical policy behavior/order (using `schedule_order` as tie-break) to guard regressions.
-- [x] Payload extensibility (feature-gated): allow swapping `EdgePayload` to a typed carrier (e.g., data `ValueRef`) to avoid `Arc<[u8]>` cloning when richer data is available; keep default lean.
+- [x] Compute extensibility (feature-gated): allow swapping `RuntimeValue` data transport to a typed carrier (e.g., data `ValueRef`) to avoid `Arc<[u8]>` cloning when richer data is available; keep default lean.
 - [x] Add error-mode backpressure: introduce `ErrorOnOverflow` to surface bounded-queue overflow explicitly; test coverage in backpressure suite.
 - [x] Executor modularization: split executor into focused modules (mod/errors/handler/payload/queue/telemetry/serial/parallel/pool) to keep files under ~300 lines and isolate concerns.
 - [x] Queue storage options: add optional `lockfree-queues` feature using crossbeam ArrayQueue for bounded edges; default is per-edge mutex storage.

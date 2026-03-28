@@ -34,6 +34,21 @@
       }
     ],
     "metadata": {
+      "daedalus.plan.edge_explanations": [
+        {
+          "compatibility_mode": "exact",
+          "compatibility_steps": [],
+          "converter_steps": [],
+          "from_node": "a",
+          "from_port": "out",
+          "from_type": "{\"Scalar\":\"Int\"}",
+          "resolution_kind": "exact",
+          "to_node": "b",
+          "to_port": "in",
+          "to_type": "{\"Scalar\":\"Int\"}",
+          "total_cost": 0
+        }
+      ],
       "schedule_order": "a,b",
       "schedule_priority": "a:2,b:2",
       "topo_order": "a,b"

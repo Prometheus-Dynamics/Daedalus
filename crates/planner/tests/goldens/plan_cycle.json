@@ -44,6 +44,34 @@
       }
     ],
     "metadata": {
+      "daedalus.plan.edge_explanations": [
+        {
+          "compatibility_mode": "exact",
+          "compatibility_steps": [],
+          "converter_steps": [],
+          "from_node": "n",
+          "from_port": "out",
+          "from_type": "{\"Scalar\":\"Int\"}",
+          "resolution_kind": "exact",
+          "to_node": "n",
+          "to_port": "in",
+          "to_type": "{\"Scalar\":\"Int\"}",
+          "total_cost": 0
+        },
+        {
+          "compatibility_mode": "exact",
+          "compatibility_steps": [],
+          "converter_steps": [],
+          "from_node": "n",
+          "from_port": "out",
+          "from_type": "{\"Scalar\":\"Int\"}",
+          "resolution_kind": "exact",
+          "to_node": "n",
+          "to_port": "in",
+          "to_type": "{\"Scalar\":\"Int\"}",
+          "total_cost": 0
+        }
+      ],
       "schedule_order": "n,n",
       "schedule_priority": "n:2,n:2"
     }

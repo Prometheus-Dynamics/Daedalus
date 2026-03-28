@@ -6,7 +6,7 @@ use daedalus_engine::{Engine, EngineConfig};
 use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, PortRef};
 use daedalus_registry::store::{NodeDescriptor, Port, Registry};
 use daedalus_runtime::RuntimeNode;
-use daedalus_runtime::executor::EdgePayload;
+use daedalus_runtime::executor::RuntimeValue;
 use daedalus_runtime::io::NodeIo;
 use daedalus_runtime::state::ExecutionContext;
 
@@ -114,7 +114,7 @@ fn end_to_end_runs_serial() {
         let seen = Arc::clone(&seen);
         move |node: &RuntimeNode, _ctx: &ExecutionContext, io: &mut NodeIo| {
             if node.id == "producer" {
-                io.push_output(Some("out"), EdgePayload::Unit);
+                io.push_output(Some("out"), RuntimeValue::Unit);
             } else if node.id == "consumer" {
                 for _ in io.inputs_for("in") {
                     seen.lock().unwrap().push("hit");
@@ -145,7 +145,7 @@ fn graph_metadata_is_visible_to_nodes() {
                     _ => 1,
                 };
                 for _ in 0..m {
-                    io.push_output(Some("out"), EdgePayload::Unit);
+                    io.push_output(Some("out"), RuntimeValue::Unit);
                 }
             } else if node.id == "consumer" {
                 for _ in io.inputs_for("in") {

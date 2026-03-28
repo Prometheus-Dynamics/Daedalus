@@ -7,10 +7,11 @@ use daedalus_data::daedalus_type::DaedalusTypeExpr;
 use daedalus_data::model::TypeExpr;
 use daedalus_data::named_types::HostExportPolicy;
 use daedalus_data::to_value::ToValue;
+use daedalus_data::typing::{CompatibilityRule, RegisteredTypeCapabilities, TypeCompatibilityEdge};
 use daedalus_registry::store::Registry;
 use serde::de::DeserializeOwned;
 use std::any::Any;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A plugin is the unit of composition for node bundles.
 pub trait Plugin {
@@ -108,7 +109,8 @@ pub struct PluginRegistry {
     pub const_coercers: crate::io::ConstCoercerMap,
     pub output_movers: crate::io::OutputMoverMap,
     pub value_serializers: crate::host_bridge::ValueSerializerMap,
-    pub type_compatibilities: BTreeSet<(TypeExpr, TypeExpr)>,
+    pub type_compatibilities: BTreeMap<(TypeExpr, TypeExpr), CompatibilityRule>,
+    pub type_capabilities: BTreeMap<TypeExpr, BTreeSet<String>>,
 }
 
 impl Default for PluginRegistry {
@@ -127,7 +129,8 @@ impl PluginRegistry {
             const_coercers: crate::io::new_const_coercer_map(),
             output_movers: crate::io::new_output_mover_map(),
             value_serializers: crate::host_bridge::value_serializer_map(),
-            type_compatibilities: BTreeSet::new(),
+            type_compatibilities: BTreeMap::new(),
+            type_capabilities: BTreeMap::new(),
         }
     }
 
@@ -235,7 +238,7 @@ impl PluginRegistry {
     pub fn register_output_mover<T, F>(&mut self, mover: F)
     where
         T: Any + Send + Sync + 'static,
-        F: Fn(T) -> crate::executor::EdgePayload + Send + Sync + 'static,
+        F: Fn(T) -> crate::executor::RuntimeValue + Send + Sync + 'static,
     {
         crate::io::register_output_mover_in::<T, F>(&self.output_movers, mover);
     }
@@ -244,14 +247,81 @@ impl PluginRegistry {
     ///
     /// Dynamic plugins should use this API so compat data is stored in the host registry.
     pub fn register_type_compatibility(&mut self, from: TypeExpr, to: TypeExpr) {
-        self.type_compatibilities.insert((from, to));
+        self.register_type_compatibility_with_rule(from, to, CompatibilityRule::default());
+    }
+
+    /// Register a type-compatibility edge with semantic metadata for planner/runtime resolution.
+    pub fn register_type_compatibility_with_rule(
+        &mut self,
+        from: TypeExpr,
+        to: TypeExpr,
+        rule: CompatibilityRule,
+    ) {
+        let from = from.normalize();
+        let to = to.normalize();
+        self.type_compatibilities
+            .insert((from.clone(), to.clone()), rule.clone());
+        daedalus_data::typing::register_compatibility_with_rule(from, to, rule);
+    }
+
+    /// Register a semantic capability for a Daedalus-facing type.
+    pub fn register_type_capability(&mut self, ty: TypeExpr, capability: impl Into<String>) {
+        self.register_type_capabilities(ty, [capability]);
+    }
+
+    /// Register semantic capabilities for a Daedalus-facing type.
+    pub fn register_type_capabilities(
+        &mut self,
+        ty: TypeExpr,
+        capabilities: impl IntoIterator<Item = impl Into<String>>,
+    ) {
+        let ty = ty.normalize();
+        let entry = self.type_capabilities.entry(ty.clone()).or_default();
+        let mut normalized = Vec::new();
+        for capability in capabilities {
+            let capability = capability.into();
+            if !capability.trim().is_empty() && entry.insert(capability.clone()) {
+                normalized.push(capability);
+            }
+        }
+        if !normalized.is_empty() {
+            daedalus_data::typing::register_type_capabilities(ty, normalized);
+        }
     }
 
     /// Apply any registered compatibility edges to the host typing registry.
     pub fn apply_type_compatibilities(&self) {
-        for (from, to) in &self.type_compatibilities {
-            daedalus_data::typing::register_compatibility(from.clone(), to.clone());
+        for ((from, to), rule) in &self.type_compatibilities {
+            daedalus_data::typing::register_compatibility_with_rule(
+                from.clone(),
+                to.clone(),
+                rule.clone(),
+            );
         }
+        for (ty, capabilities) in &self.type_capabilities {
+            daedalus_data::typing::register_type_capabilities(ty.clone(), capabilities.clone());
+        }
+    }
+
+    pub fn snapshot_type_compatibilities(&self) -> Vec<TypeCompatibilityEdge> {
+        self.type_compatibilities
+            .iter()
+            .map(|((from, to), rule)| TypeCompatibilityEdge {
+                from: from.clone(),
+                to: to.clone(),
+                rule: rule.clone(),
+            })
+            .collect()
+    }
+
+    pub fn snapshot_type_capabilities(&self) -> Vec<RegisteredTypeCapabilities> {
+        self.type_capabilities
+            .iter()
+            .map(|(ty, capabilities)| RegisteredTypeCapabilities {
+                ty: ty.clone(),
+                capabilities: capabilities.clone(),
+            })
+            .collect()
     }
 
     /// Register an enum type for UI/typing and enable constant binding for it.
@@ -349,4 +419,80 @@ impl PluginRegistry {
 
 pub trait NodeInstall {
     fn register(into: &mut PluginRegistry) -> Result<(), &'static str>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PluginRegistry;
+    use daedalus_data::model::TypeExpr;
+    use daedalus_data::typing::{
+        CompatibilityKind, CompatibilityRule, compatibility_rule, has_type_capability,
+    };
+
+    #[test]
+    fn plugin_registry_registers_semantic_compatibility_rules() {
+        let mut registry = PluginRegistry::new();
+        let from = TypeExpr::Opaque("test:plugin:compat:from".to_string());
+        let to = TypeExpr::Opaque("test:plugin:compat:to".to_string());
+
+        registry.register_type_compatibility_with_rule(
+            from.clone(),
+            to.clone(),
+            CompatibilityRule {
+                kind: CompatibilityKind::View,
+                cost: 0,
+                capabilities: ["view-compatible".to_string()].into_iter().collect(),
+            },
+        );
+
+        let rule = compatibility_rule(&from, &to).expect("compatibility rule should be present");
+        assert_eq!(rule.kind, CompatibilityKind::View);
+        assert_eq!(rule.cost, 0);
+        assert!(rule.capabilities.contains("view-compatible"));
+    }
+
+    #[test]
+    fn plugin_registry_registers_type_capabilities() {
+        let mut registry = PluginRegistry::new();
+        let ty = TypeExpr::Opaque("test:plugin:capabilities".to_string());
+
+        registry.register_type_capabilities(ty.clone(), ["croppable", "luma-readable"]);
+
+        assert!(has_type_capability(&ty, "croppable"));
+        assert!(has_type_capability(&ty, "luma-readable"));
+    }
+
+    #[test]
+    fn plugin_registry_snapshot_helpers_include_registered_semantics() {
+        let mut registry = PluginRegistry::new();
+        let from = TypeExpr::Opaque("test:plugin:snapshot:from".to_string());
+        let to = TypeExpr::Opaque("test:plugin:snapshot:to".to_string());
+
+        registry.register_type_compatibility_with_rule(
+            from.clone(),
+            to.clone(),
+            CompatibilityRule {
+                kind: CompatibilityKind::Materialize,
+                cost: 3,
+                capabilities: ["cpu-materializable".to_string()].into_iter().collect(),
+            },
+        );
+        registry.register_type_capabilities(from.clone(), ["croppable"]);
+
+        let compatibilities = registry.snapshot_type_compatibilities();
+        assert!(compatibilities.iter().any(|edge| {
+            edge.from == from
+                && edge.to == to
+                && edge.rule.kind == CompatibilityKind::Materialize
+                && edge.rule.cost == 3
+                && edge.rule.capabilities.contains("cpu-materializable")
+        }));
+
+        let capabilities = registry.snapshot_type_capabilities();
+        assert!(
+            capabilities
+                .iter()
+                .any(|entry| { entry.ty == from && entry.capabilities.contains("croppable") })
+        );
+    }
 }

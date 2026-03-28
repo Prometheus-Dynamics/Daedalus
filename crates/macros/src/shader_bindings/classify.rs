@@ -415,13 +415,13 @@ pub fn classify_fields(
             binding,
             kind,
             invocation_hint: match &pf.texture_source {
-                Some(TextureSource::PayloadDynamic) => Some(quote! {
+                Some(TextureSource::ComputeDynamic) => Some(quote! {
                     match &self.#inv_ident {
-                        ::daedalus::Payload::Cpu(img) => {
+                        ::daedalus::Compute::Cpu(img) => {
                             let (w, h) = img.dimensions();
                             Some([w, h, 1])
                         }
-                        ::daedalus::Payload::Gpu(handle) => Some([handle.width, handle.height, 1]),
+                        ::daedalus::Compute::Gpu(handle) => Some([handle.width, handle.height, 1]),
                     }
                 }),
                 Some(TextureSource::DynamicImage) => Some(quote! {

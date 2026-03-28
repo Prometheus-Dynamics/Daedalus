@@ -65,7 +65,7 @@ pub struct FieldBinding {
 
 #[derive(Clone)]
 pub enum TextureSource {
-    PayloadDynamic,
+    ComputeDynamic,
     DynamicImage,
     GpuHandle,
     RefGpuHandle,
@@ -98,7 +98,7 @@ pub fn detect_texture_source(ty: &syn::Type) -> syn::Result<Option<TextureSource
         if ident == "DynamicImage" {
             return Ok(Some(TextureSource::DynamicImage));
         }
-        if ident == "Payload" {
+        if ident == "Compute" {
             if let syn::PathArguments::AngleBracketed(ab) = &last.arguments {
                 if let Some(syn::GenericArgument::Type(Type::Path(tp))) = ab.args.first() {
                     if tp
@@ -108,7 +108,7 @@ pub fn detect_texture_source(ty: &syn::Type) -> syn::Result<Option<TextureSource
                         .map(|s| s.ident == "DynamicImage")
                         .unwrap_or(false)
                     {
-                        return Ok(Some(TextureSource::PayloadDynamic));
+                        return Ok(Some(TextureSource::ComputeDynamic));
                     }
                 }
             }
@@ -116,6 +116,6 @@ pub fn detect_texture_source(ty: &syn::Type) -> syn::Result<Option<TextureSource
     }
     Err(syn::Error::new(
         Span::call_site(),
-        "texture2d binding expects Payload<DynamicImage>, DynamicImage, or GpuImageHandle",
+        "texture2d binding expects Compute<DynamicImage>, DynamicImage, or GpuImageHandle",
     ))
 }

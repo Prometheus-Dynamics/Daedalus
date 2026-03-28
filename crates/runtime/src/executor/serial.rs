@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-#[cfg(feature = "gpu")]
-use crate::executor::EdgePayload;
 use crate::executor::NodeError;
+#[cfg(feature = "gpu")]
+use crate::executor::RuntimeValue;
 use crate::executor::crash_diag;
 use crate::executor::{EdgeStorage, ExecuteError, Executor, edge_maps};
 use crate::io::NodeIo;
@@ -52,6 +52,12 @@ fn node_exec_trace_enabled_for(node_id: &str) -> bool {
     }
 }
 
+fn host_bridge_trace_stderr_enabled() -> bool {
+    std::env::var("DAEDALUS_TRACE_HOST_BRIDGE_STDERR")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 fn preflight_inputs(_ctx: &ExecutionContext, _io: &NodeIo) -> Result<(), NodeError> {
     // If the node is running without a GPU context but is receiving GPU-resident payloads,
     // fail fast with an actionable error instead of letting downstream unsafe code crash.
@@ -62,12 +68,12 @@ fn preflight_inputs(_ctx: &ExecutionContext, _io: &NodeIo) -> Result<(), NodeErr
         if ctx.gpu.is_none() {
             for (port, payload) in io.inputs() {
                 match &payload.inner {
-                    EdgePayload::GpuImage(_) => {
+                    RuntimeValue::Any(any) if any.is::<daedalus_gpu::GpuImageHandle>() => {
                         return Err(NodeError::InvalidInput(format!(
                             "port '{port}' contains a GPU image handle but no GPU context is available; configure a GPU backend or insert a CPU download/convert step"
                         )));
                     }
-                    EdgePayload::Payload(ep) if ep.is_gpu() => {
+                    RuntimeValue::Data(ep) if ep.is_gpu() => {
                         return Err(NodeError::InvalidInput(format!(
                             "port '{port}' contains a GPU-resident payload but no GPU context is available; configure a GPU backend or insert a CPU download/convert step"
                         )));
@@ -329,26 +335,17 @@ fn run_segment<H: crate::executor::NodeHandler>(
             }
             continue;
         }
-        let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
-        if let Some(label) = &node.label {
-            metadata
-                .entry("label".to_string())
-                .or_insert_with(|| Value::String(label.clone().into()));
-        }
-        if let Some(bundle) = &node.bundle {
-            metadata
-                .entry("bundle".to_string())
-                .or_insert_with(|| Value::String(bundle.clone().into()));
-        }
-
         #[allow(unused_mut)]
         let mut ctx = ExecutionContext {
             state: exec.state.clone(),
-            metadata,
+            node_id: node.id.clone().into(),
+            metadata: exec.node_metadata[node_ref.0].clone(),
             graph_metadata: exec.graph_metadata.clone(),
             #[cfg(feature = "gpu")]
             gpu: exec.gpu.clone(),
         };
+        let resources = ctx.resources();
+        let _ = resources.before_frame();
         let metrics_level = exec.telemetry.metrics_level;
         let const_inputs_guard = exec
             .const_inputs
@@ -390,10 +387,11 @@ fn run_segment<H: crate::executor::NodeHandler>(
             node.sync_groups.clone(),
             &exec.gpu_entry_set,
             &exec.gpu_exit_set,
-            &exec.payload_edges,
+            &exec.data_edges,
             seg_idx,
             node_ref.0,
             node.id.clone(),
+            active_nodes.as_deref().map(|v| &**v),
             &mut exec.telemetry,
             exec.backpressure.clone(),
             const_inputs,
@@ -415,6 +413,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             seg_idx,
             node_ref.0,
             node.id.clone(),
+            active_nodes.as_deref().map(|v| &**v),
             &mut exec.telemetry,
             exec.backpressure.clone(),
             const_inputs,
@@ -455,22 +454,26 @@ fn run_segment<H: crate::executor::NodeHandler>(
                 .inputs()
                 .iter()
                 .map(|(port, payload)| match &payload.inner {
-                    crate::executor::EdgePayload::Any(any) => format!(
+                    #[cfg(feature = "gpu")]
+                    crate::executor::RuntimeValue::Any(any)
+                        if any.is::<daedalus_gpu::GpuImageHandle>() =>
+                    {
+                        format!("{port}:Any(GpuImageHandle)")
+                    }
+                    crate::executor::RuntimeValue::Any(any) => format!(
                         "{port}:Any({}) is_dynamic_image={}",
                         std::any::type_name_of_val(any.as_ref()),
                         any.is::<image::DynamicImage>()
                     ),
                     #[cfg(feature = "gpu")]
-                    crate::executor::EdgePayload::Payload(ep) => format!("{port}:Payload({ep:?})"),
-                    #[cfg(feature = "gpu")]
-                    crate::executor::EdgePayload::GpuImage(_) => format!("{port}:GpuImage"),
-                    crate::executor::EdgePayload::Bytes(bytes) => {
+                    crate::executor::RuntimeValue::Data(ep) => format!("{port}:Data({ep:?})"),
+                    crate::executor::RuntimeValue::Bytes(bytes) => {
                         format!("{port}:Bytes({}b)", bytes.len())
                     }
-                    crate::executor::EdgePayload::Value(value) => {
+                    crate::executor::RuntimeValue::Value(value) => {
                         format!("{port}:Value({value:?})")
                     }
-                    crate::executor::EdgePayload::Unit => format!("{port}:Unit"),
+                    crate::executor::RuntimeValue::Unit => format!("{port}:Unit"),
                 })
                 .collect();
             let outgoing_desc: Vec<String> = outgoing
@@ -514,20 +517,24 @@ fn run_segment<H: crate::executor::NodeHandler>(
                 .inputs()
                 .iter()
                 .map(|(port, payload)| match &payload.inner {
-                    crate::executor::EdgePayload::Any(any) => {
+                    #[cfg(feature = "gpu")]
+                    crate::executor::RuntimeValue::Any(any)
+                        if any.is::<daedalus_gpu::GpuImageHandle>() =>
+                    {
+                        format!("{port}:Any(GpuImageHandle)")
+                    }
+                    crate::executor::RuntimeValue::Any(any) => {
                         format!("{port}:Any({})", std::any::type_name_of_val(any.as_ref()))
                     }
                     #[cfg(feature = "gpu")]
-                    crate::executor::EdgePayload::Payload(ep) => format!("{port}:Payload({ep:?})"),
-                    #[cfg(feature = "gpu")]
-                    crate::executor::EdgePayload::GpuImage(_) => format!("{port}:GpuImage"),
-                    crate::executor::EdgePayload::Bytes(bytes) => {
+                    crate::executor::RuntimeValue::Data(ep) => format!("{port}:Data({ep:?})"),
+                    crate::executor::RuntimeValue::Bytes(bytes) => {
                         format!("{port}:Bytes({}b)", bytes.len())
                     }
-                    crate::executor::EdgePayload::Value(value) => {
+                    crate::executor::RuntimeValue::Value(value) => {
                         format!("{port}:Value({value:?})")
                     }
-                    crate::executor::EdgePayload::Unit => format!("{port}:Unit"),
+                    crate::executor::RuntimeValue::Unit => format!("{port}:Unit"),
                 })
                 .collect();
             let outgoing_desc: Vec<String> = outgoing
@@ -680,6 +687,15 @@ fn run_segment<H: crate::executor::NodeHandler>(
                     continue;
                 }
             };
+        if node_exec_trace_enabled_for(&node.id) {
+            eprintln!(
+                "daedalus-runtime: exec returned seg={} idx={} id={} ok={}",
+                seg_idx,
+                node_ref.0,
+                node.id,
+                run_result.is_ok()
+            );
+        }
         let elapsed = node_start.elapsed();
         let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
         let flush_error = if run_result.is_ok() {
@@ -688,6 +704,13 @@ fn run_segment<H: crate::executor::NodeHandler>(
             None
         };
         drop(io);
+        let _ = resources.after_frame();
+        if metrics_level.is_detailed()
+            && let Ok(snapshot) = resources.snapshot()
+        {
+            exec.telemetry
+                .record_node_resource_snapshot(node_ref.0, snapshot);
+        }
         if let Some(sample) = perf_sample {
             exec.telemetry.record_node_perf(node_ref.0, sample);
         }
@@ -730,6 +753,12 @@ fn run_segment<H: crate::executor::NodeHandler>(
                 return Err(e);
             }
         }
+        if node_exec_trace_enabled_for(&node.id) {
+            eprintln!(
+                "daedalus-runtime: exec done seg={} idx={} id={}",
+                seg_idx, node_ref.0, node.id
+            );
+        }
         exec.telemetry.nodes_executed += 1;
     }
     Ok(())
@@ -754,6 +783,12 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
     let Some(node) = exec.nodes.get(node_ref.0) else {
         return Ok(());
     };
+    if host_bridge_trace_stderr_enabled() {
+        eprintln!(
+            "daedalus-runtime: host_output_in_graph start seg={} idx={} id={}",
+            seg_idx, node_ref.0, node.id
+        );
+    }
     let has_incoming = incoming
         .get(node_ref.0)
         .is_some_and(|edges| !edges.is_empty());
@@ -763,25 +798,17 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
 
     let mut bridge = bridge_handler(manager);
 
-    let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
-    if let Some(label) = &node.label {
-        metadata
-            .entry("label".to_string())
-            .or_insert_with(|| Value::String(label.clone().into()));
-    }
-    if let Some(bundle) = &node.bundle {
-        metadata
-            .entry("bundle".to_string())
-            .or_insert_with(|| Value::String(bundle.clone().into()));
-    }
     #[allow(unused_mut)]
     let mut ctx = ExecutionContext {
         state: exec.state.clone(),
-        metadata,
+        node_id: node.id.clone().into(),
+        metadata: exec.node_metadata[node_ref.0].clone(),
         graph_metadata: exec.graph_metadata.clone(),
         #[cfg(feature = "gpu")]
         gpu: exec.gpu.clone(),
     };
+    let resources = ctx.resources();
+    let _ = resources.before_frame();
     let metrics_level = exec.telemetry.metrics_level;
     let const_inputs_guard = exec
         .const_inputs
@@ -805,10 +832,11 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
         Vec::new(),
         &exec.gpu_entry_set,
         &exec.gpu_exit_set,
-        &exec.payload_edges,
+        &exec.data_edges,
         seg_idx,
         node_ref.0,
         node.id.clone(),
+        exec.active_nodes.as_deref().map(|v| &**v),
         &mut exec.telemetry,
         exec.backpressure.clone(),
         const_inputs,
@@ -833,6 +861,7 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
         seg_idx,
         node_ref.0,
         node.id.clone(),
+        exec.active_nodes.as_deref().map(|v| &**v),
         &mut exec.telemetry,
         exec.backpressure.clone(),
         const_inputs,
@@ -861,6 +890,15 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
     };
     let node_start = Instant::now();
     let run_result = bridge(node, &ctx, &mut io);
+    if host_bridge_trace_stderr_enabled() {
+        eprintln!(
+            "daedalus-runtime: host_output_in_graph bridge returned seg={} idx={} id={} ok={}",
+            seg_idx,
+            node_ref.0,
+            node.id,
+            run_result.is_ok()
+        );
+    }
     let elapsed = node_start.elapsed();
     let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
     let flush_error = if run_result.is_ok() {
@@ -869,6 +907,13 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
         None
     };
     drop(io);
+    let _ = resources.after_frame();
+    if metrics_level.is_detailed()
+        && let Ok(snapshot) = resources.snapshot()
+    {
+        exec.telemetry
+            .record_node_resource_snapshot(node_ref.0, snapshot);
+    }
     if let Some(sample) = perf_sample {
         exec.telemetry.record_node_perf(node_ref.0, sample);
     }
@@ -908,6 +953,12 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
         if exec.fail_fast {
             return Err(e);
         }
+    }
+    if host_bridge_trace_stderr_enabled() {
+        eprintln!(
+            "daedalus-runtime: host_output_in_graph done seg={} idx={} id={}",
+            seg_idx, node_ref.0, node.id
+        );
     }
     Ok(())
 }
@@ -975,6 +1026,16 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
         let Some(node) = exec.nodes.get(node_ref.0) else {
             continue;
         };
+        if host_bridge_trace_stderr_enabled() {
+            eprintln!(
+                "daedalus-runtime: host_bridge phase={:?} start idx={} id={} has_incoming={} has_outgoing={}",
+                phase,
+                node_ref.0,
+                node.id,
+                has_incoming,
+                has_outgoing
+            );
+        }
 
         // Error isolation: skip host nodes that depend on a failed upstream node unless boundary.
         let is_error_boundary = node
@@ -1000,26 +1061,17 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             }
         }
 
-        let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
-        if let Some(label) = &node.label {
-            metadata
-                .entry("label".to_string())
-                .or_insert_with(|| Value::String(label.clone().into()));
-        }
-        if let Some(bundle) = &node.bundle {
-            metadata
-                .entry("bundle".to_string())
-                .or_insert_with(|| Value::String(bundle.clone().into()));
-        }
-
         #[allow(unused_mut)]
         let mut ctx = ExecutionContext {
             state: exec.state.clone(),
-            metadata,
+            node_id: node.id.clone().into(),
+            metadata: exec.node_metadata[node_ref.0].clone(),
             graph_metadata: exec.graph_metadata.clone(),
             #[cfg(feature = "gpu")]
             gpu: exec.gpu.clone(),
         };
+        let resources = ctx.resources();
+        let _ = resources.before_frame();
         let metrics_level = exec.telemetry.metrics_level;
         let const_inputs_guard = exec
             .const_inputs
@@ -1047,10 +1099,11 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             host_sync_groups.clone(),
             &exec.gpu_entry_set,
             &exec.gpu_exit_set,
-            &exec.payload_edges,
+            &exec.data_edges,
             0,
             node_ref.0,
             node.id.clone(),
+            exec.active_nodes.as_deref().map(|v| &**v),
             &mut exec.telemetry,
             exec.backpressure.clone(),
             const_inputs,
@@ -1072,6 +1125,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             0,
             node_ref.0,
             node.id.clone(),
+            exec.active_nodes.as_deref().map(|v| &**v),
             &mut exec.telemetry,
             exec.backpressure.clone(),
             const_inputs,
@@ -1119,6 +1173,15 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
         };
         let node_start = Instant::now();
         let run_result = bridge(node, &ctx, &mut io);
+        if host_bridge_trace_stderr_enabled() {
+            eprintln!(
+                "daedalus-runtime: host_bridge phase={:?} bridge returned idx={} id={} ok={}",
+                phase,
+                node_ref.0,
+                node.id,
+                run_result.is_ok()
+            );
+        }
         let elapsed = node_start.elapsed();
         let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
         let flush_error = if run_result.is_ok() {
@@ -1127,6 +1190,13 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             None
         };
         drop(io);
+        let _ = resources.after_frame();
+        if metrics_level.is_detailed()
+            && let Ok(snapshot) = resources.snapshot()
+        {
+            exec.telemetry
+                .record_node_resource_snapshot(node_ref.0, snapshot);
+        }
         if let Some(sample) = perf_sample {
             exec.telemetry.record_node_perf(node_ref.0, sample);
         }
@@ -1168,6 +1238,12 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             if exec.fail_fast {
                 return Err(e);
             }
+        }
+        if host_bridge_trace_stderr_enabled() {
+            eprintln!(
+                "daedalus-runtime: host_bridge phase={:?} done idx={} id={}",
+                phase, node_ref.0, node.id
+            );
         }
     }
     Ok(())

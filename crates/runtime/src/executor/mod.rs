@@ -1,5 +1,5 @@
 use crate::plan::{BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment};
-use crate::state::StateStore;
+use crate::state::{ResourceLifecycleEvent, StateStore};
 use daedalus_planner::{GraphNodeSelector, GraphPatch, GraphPatchOp, NodeRef, PatchReport};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
@@ -18,13 +18,14 @@ mod telemetry;
 
 pub use errors::{ExecuteError, NodeError};
 pub use handler::NodeHandler;
-pub use payload::{CorrelatedPayload, EdgePayload, next_correlation_id};
+pub use payload::{CorrelatedValue, RuntimeValue, next_correlation_id};
 pub use queue::EdgeStorage;
-pub(crate) use telemetry::payload_size_bytes;
 pub use telemetry::{
-    EdgeMetrics, ExecutionTelemetry, MetricsLevel, NodeFailure, NodeMetrics,
-    register_payload_size_inspector,
+    EdgeMetrics, ExecutionTelemetry, InternalTransferMetrics, MetricsLevel,
+    NodeAllocationSpikeExplanation, NodeFailure, NodeMetrics, NodeResourceMetrics, ResourceMetrics,
+    register_runtime_data_size_inspector,
 };
+pub(crate) use telemetry::{any_ref_size_bytes, runtime_value_size_bytes};
 /// Runtime executor for planner-generated runtime plans.
 ///
 /// ```no_run
@@ -58,7 +59,7 @@ pub struct Executor<'a, H: NodeHandler> {
     #[cfg(feature = "gpu")]
     pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
-    pub(crate) payload_edges: Arc<HashSet<usize>>,
+    pub(crate) data_edges: Arc<HashSet<usize>>,
     #[cfg(not(feature = "gpu"))]
     #[allow(dead_code)]
     pub(crate) gpu_edges: &'a [()],
@@ -79,6 +80,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
     pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
+    pub(crate) node_metadata: NodeMetadataStore,
     /// Optional execution scope: when set, nodes with `false` are skipped.
     pub(crate) active_nodes: Option<Arc<Vec<bool>>>,
     /// When enabled, `io.host_output` nodes are executed in-graph as soon as their inputs are ready,
@@ -97,6 +99,30 @@ pub type ConstInputs = Vec<NodeConstInputs>;
 pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
 
 type EdgeSpec = (NodeRef, String, NodeRef, String, EdgePolicyKind);
+type NodeMetadataStore = Arc<Vec<Arc<BTreeMap<String, daedalus_data::model::Value>>>>;
+
+fn build_node_execution_metadata(nodes: &[RuntimeNode]) -> NodeMetadataStore {
+    Arc::new(
+        nodes
+            .iter()
+            .map(|node| {
+                let mut metadata: BTreeMap<String, daedalus_data::model::Value> =
+                    node.metadata.clone();
+                if let Some(label) = &node.label {
+                    metadata.entry("label".to_string()).or_insert_with(|| {
+                        daedalus_data::model::Value::String(label.clone().into())
+                    });
+                }
+                if let Some(bundle) = &node.bundle {
+                    metadata.entry("bundle".to_string()).or_insert_with(|| {
+                        daedalus_data::model::Value::String(bundle.clone().into())
+                    });
+                }
+                Arc::new(metadata)
+            })
+            .collect(),
+    )
+}
 
 impl<'a, H: NodeHandler> Executor<'a, H> {
     /// Build an executor from a runtime plan and handler.
@@ -122,9 +148,10 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             }
         }
         let nodes: Arc<[RuntimeNode]> = nodes_vec.into();
+        let node_metadata = build_node_execution_metadata(&nodes);
         let queues = queue::build_queues(plan);
         #[cfg(feature = "gpu")]
-        let payload_edges = Arc::new(collect_payload_edges(&nodes, &plan.edges));
+        let data_edges = Arc::new(collect_data_edges(&nodes, &plan.edges));
         Self {
             nodes,
             edges: &plan.edges,
@@ -139,7 +166,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             #[cfg(feature = "gpu")]
             gpu_exit_set: Arc::new(plan.gpu_exits.iter().cloned().collect()),
             #[cfg(feature = "gpu")]
-            payload_edges,
+            data_edges,
             #[cfg(not(feature = "gpu"))]
             gpu_edges: &[],
             segments: &plan.segments,
@@ -164,6 +191,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             const_coercers: None,
             output_movers: None,
             graph_metadata: Arc::new(plan.graph_metadata.clone()),
+            node_metadata,
             active_nodes: None,
             host_outputs_in_graph: false,
             fail_fast: true,
@@ -178,6 +206,17 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         if active_nodes.len() == self.nodes.len() {
             self.active_nodes = Some(Arc::new(active_nodes));
         }
+        self
+    }
+
+    pub fn with_active_nodes_mask(mut self, active_nodes: Option<Arc<Vec<bool>>>) -> Self {
+        if active_nodes
+            .as_ref()
+            .is_some_and(|mask| mask.len() != self.nodes.len())
+        {
+            return self;
+        }
+        self.active_nodes = active_nodes;
         self
     }
 
@@ -227,6 +266,22 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     pub fn with_state(mut self, state: StateStore) -> Self {
         self.state = state;
         self
+    }
+
+    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) -> Result<(), String> {
+        self.state.apply_resource_lifecycle(event)
+    }
+
+    pub fn on_memory_pressure(&self) -> Result<(), String> {
+        self.apply_resource_lifecycle(ResourceLifecycleEvent::MemoryPressure)
+    }
+
+    pub fn on_idle(&self) -> Result<(), String> {
+        self.apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
+    }
+
+    pub fn shutdown_resources(&self) -> Result<(), String> {
+        self.apply_resource_lifecycle(ResourceLifecycleEvent::Stop)
     }
 
     /// Provide a GPU handle when available.
@@ -279,7 +334,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
     /// Reset per-run state (queues, telemetry, warnings) so this executor can be reused.
     pub fn reset(&mut self) {
-        self.telemetry = ExecutionTelemetry::with_level(self.metrics_level);
+        self.telemetry.reset_for_reuse(self.metrics_level);
         if let Ok(mut warnings) = self.warnings_seen.lock() {
             warnings.clear();
         }
@@ -288,10 +343,10 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             match storage {
                 EdgeStorage::Locked { queue, metrics } => {
                     if let Ok(mut q) = queue.lock() {
-                        *q = queue::EdgeQueue::default();
                         if let Some((_, _, _, _, policy)) = self.edges.get(idx) {
                             q.ensure_policy(policy);
                         }
+                        q.clear();
                         metrics.set_current_bytes(0);
                     }
                 }
@@ -320,7 +375,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             #[cfg(feature = "gpu")]
             gpu_exit_set: self.gpu_exit_set.clone(),
             #[cfg(feature = "gpu")]
-            payload_edges: self.payload_edges.clone(),
+            data_edges: self.data_edges.clone(),
             #[cfg(not(feature = "gpu"))]
             gpu_edges: self.gpu_edges,
             segments: self.segments,
@@ -343,6 +398,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             const_coercers: self.const_coercers.clone(),
             output_movers: self.output_movers.clone(),
             graph_metadata: self.graph_metadata.clone(),
+            node_metadata: self.node_metadata.clone(),
             active_nodes: self.active_nodes.clone(),
             host_outputs_in_graph: self.host_outputs_in_graph,
             fail_fast: self.fail_fast,
@@ -409,7 +465,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 }
 
 #[cfg(feature = "gpu")]
-fn collect_payload_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usize> {
+fn collect_data_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usize> {
     let mut out = HashSet::new();
     for (idx, (_from, _from_port, to, _to_port, _policy)) in edges.iter().enumerate() {
         if let Some(node) = nodes.get(to.0)
@@ -451,7 +507,7 @@ pub struct OwnedExecutor<H: NodeHandler> {
     #[cfg(feature = "gpu")]
     pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
-    pub(crate) payload_edges: Arc<HashSet<usize>>,
+    pub(crate) data_edges: Arc<HashSet<usize>>,
     #[cfg(not(feature = "gpu"))]
     #[allow(dead_code)]
     pub(crate) gpu_edges: Arc<Vec<()>>,
@@ -472,6 +528,7 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
     pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
+    pub(crate) node_metadata: NodeMetadataStore,
     pub(crate) active_nodes: Option<Arc<Vec<bool>>>,
     pub(crate) host_outputs_in_graph: bool,
     pub(crate) fail_fast: bool,
@@ -499,9 +556,10 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             }
         }
         let nodes: Arc<[RuntimeNode]> = nodes_vec.into();
+        let node_metadata = build_node_execution_metadata(&nodes);
         let queues = queue::build_queues(&plan);
         #[cfg(feature = "gpu")]
-        let payload_edges = Arc::new(collect_payload_edges(&nodes, &plan.edges));
+        let data_edges = Arc::new(collect_data_edges(&nodes, &plan.edges));
         Self {
             nodes,
             edges: Arc::new(plan.edges.clone()),
@@ -516,7 +574,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             #[cfg(feature = "gpu")]
             gpu_exit_set: Arc::new(plan.gpu_exits.iter().cloned().collect()),
             #[cfg(feature = "gpu")]
-            payload_edges,
+            data_edges,
             #[cfg(not(feature = "gpu"))]
             gpu_edges: Arc::new(Vec::new()),
             segments: Arc::new(plan.segments.clone()),
@@ -541,6 +599,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             const_coercers: None,
             output_movers: None,
             graph_metadata: Arc::new(plan.graph_metadata.clone()),
+            node_metadata,
             active_nodes: None,
             host_outputs_in_graph: false,
             fail_fast: true,
@@ -552,6 +611,17 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         if active_nodes.len() == self.nodes.len() {
             self.active_nodes = Some(Arc::new(active_nodes));
         }
+        self
+    }
+
+    pub fn with_active_nodes_mask(mut self, active_nodes: Option<Arc<Vec<bool>>>) -> Self {
+        if active_nodes
+            .as_ref()
+            .is_some_and(|mask| mask.len() != self.nodes.len())
+        {
+            return self;
+        }
+        self.active_nodes = active_nodes;
         self
     }
 
@@ -600,6 +670,22 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
+    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) -> Result<(), String> {
+        self.state.apply_resource_lifecycle(event)
+    }
+
+    pub fn on_memory_pressure(&self) -> Result<(), String> {
+        self.apply_resource_lifecycle(ResourceLifecycleEvent::MemoryPressure)
+    }
+
+    pub fn on_idle(&self) -> Result<(), String> {
+        self.apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
+    }
+
+    pub fn shutdown_resources(&self) -> Result<(), String> {
+        self.apply_resource_lifecycle(ResourceLifecycleEvent::Stop)
+    }
+
     #[cfg(feature = "gpu")]
     pub fn with_gpu(mut self, gpu: daedalus_gpu::GpuContextHandle) -> Self {
         self.gpu_available = true;
@@ -637,7 +723,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     }
 
     pub fn reset(&mut self) {
-        self.telemetry = ExecutionTelemetry::with_level(self.metrics_level);
+        self.telemetry.reset_for_reuse(self.metrics_level);
         if let Ok(mut warnings) = self.warnings_seen.lock() {
             warnings.clear();
         }
@@ -645,10 +731,10 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             match storage {
                 EdgeStorage::Locked { queue, metrics } => {
                     if let Ok(mut q) = queue.lock() {
-                        *q = queue::EdgeQueue::default();
                         if let Some((_, _, _, _, policy)) = self.edges.get(idx) {
                             q.ensure_policy(policy);
                         }
+                        q.clear();
                         metrics.set_current_bytes(0);
                     }
                 }
@@ -659,6 +745,16 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                 }
             }
         }
+    }
+
+    pub fn set_active_nodes_mask(&mut self, active_nodes: Option<Arc<Vec<bool>>>) {
+        if active_nodes
+            .as_ref()
+            .is_some_and(|mask| mask.len() != self.nodes.len())
+        {
+            return;
+        }
+        self.active_nodes = active_nodes;
     }
 
     fn snapshot<'a>(&'a self) -> Executor<'a, H> {
@@ -676,7 +772,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             #[cfg(feature = "gpu")]
             gpu_exit_set: self.gpu_exit_set.clone(),
             #[cfg(feature = "gpu")]
-            payload_edges: self.payload_edges.clone(),
+            data_edges: self.data_edges.clone(),
             #[cfg(not(feature = "gpu"))]
             gpu_edges: self.gpu_edges.as_slice(),
             segments: self.segments.as_slice(),
@@ -699,6 +795,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             const_coercers: self.const_coercers.clone(),
             output_movers: self.output_movers.clone(),
             graph_metadata: self.graph_metadata.clone(),
+            node_metadata: self.node_metadata.clone(),
             active_nodes: self.active_nodes.clone(),
             host_outputs_in_graph: self.host_outputs_in_graph,
             fail_fast: self.fail_fast,

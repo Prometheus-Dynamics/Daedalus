@@ -4,7 +4,7 @@ use daedalus_planner::{
 use daedalus_runtime::{
     BackpressureStrategy, EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig,
     build_runtime,
-    executor::{EdgePayload, NodeError},
+    executor::{NodeError, RuntimeValue},
     io::NodeIo,
 };
 
@@ -23,7 +23,7 @@ impl NodeHandler for Handler {
             "prod" => {
                 io.push_output(
                     Some("a"),
-                    EdgePayload::Bytes(std::sync::Arc::from(&b"hello"[..])),
+                    RuntimeValue::Bytes(std::sync::Arc::from(&b"hello"[..])),
                 );
             }
             "cons" => {

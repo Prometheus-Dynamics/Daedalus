@@ -80,19 +80,26 @@ pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
 }
 
 pub use config::*;
-pub use convert::{ConversionRegistry, convert_arc};
+pub use convert::{
+    ConversionRegistry, RuntimeConversionResolution, RuntimeConversionStep, convert_arc,
+};
 pub use executor::{
-    EdgePayload, ExecuteError, ExecutionTelemetry, Executor, MetricsLevel, NodeError, NodeHandler,
-    NodeMetrics, register_payload_size_inspector,
+    ExecuteError, ExecutionTelemetry, Executor, InternalTransferMetrics, MetricsLevel,
+    NodeAllocationSpikeExplanation, NodeError, NodeHandler, NodeMetrics, NodeResourceMetrics,
+    ResourceMetrics, RuntimeValue, register_runtime_data_size_inspector,
 };
 pub use fanin::FanIn;
 pub use handles::{NodeHandle, PortHandle};
 pub use host_bridge::{
     HOST_BRIDGE_META_KEY, HostBridgeHandle, HostBridgeManager, HostBridgeSerialized,
-    HostBridgeSerializedPayload, bridge_handler,
+    HostBridgeSerializedValue, bridge_handler,
 };
-pub use io::{NodeIo, register_output_mover};
+pub use io::{NodeIo, TypedInputResolution, TypedInputResolutionKind, register_output_mover};
 pub use plan::{
     BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment, RuntimeSink,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
+pub use state::{
+    ExecutionContext, ManagedByteBuffer, ManagedResource, NodeResourceSnapshot, ResourceClass,
+    ResourceLifecycleEvent, ResourceUsage, RuntimeResources, StateStore,
+};

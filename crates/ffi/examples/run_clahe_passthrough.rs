@@ -1,9 +1,9 @@
 //! Build + load the `plugin_clahe_passthrough` Rust cdylib and send a CPU DynamicImage payload
-//! into it via the host bridge, verifying the node can decode `Payload<DynamicImage>`.
+//! into it via the host bridge, verifying the node can decode `Compute<DynamicImage>`.
 
-use daedalus::runtime::executor::EdgePayload;
+use daedalus::runtime::executor::RuntimeValue;
 use daedalus::{
-    ErasedPayload, NodeHandle, PluginLibrary, PortHandle,
+    DataCell, NodeHandle, PluginLibrary, PortHandle,
     data::model::Value,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     graph_builder::GraphBuilder,
@@ -69,10 +69,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mgr = HostBridgeManager::from_plan(&runtime_plan);
     let handle = mgr.handle("host").expect("host bridge handle");
 
-    eprintln!("Pushing CPU image as EdgePayload::Payload(ErasedPayload)");
+    eprintln!("Pushing CPU image as RuntimeValue::Data(DataCell)");
     let img = DynamicImage::ImageRgba8(ImageBuffer::from_pixel(2, 2, Rgba([7, 8, 9, 255])));
-    let ep = ErasedPayload::from_cpu::<DynamicImage>(img);
-    handle.push("mask", EdgePayload::Payload(ep), None);
+    let ep = DataCell::from_cpu::<DynamicImage>(img);
+    handle.push("mask", RuntimeValue::Data(ep), None);
 
     let handlers = plugins.take_handlers();
     eprintln!("Executing with host bridge");

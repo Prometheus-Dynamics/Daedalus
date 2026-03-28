@@ -7,7 +7,7 @@
 use bytemuck::{Pod, Zeroable};
 use daedalus::macros::{GpuStateful, node};
 use daedalus::{
-    Payload,
+    Compute,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     gpu::shader::{GpuState, ShaderContext, TextureOut, Uniform},
     graph_builder::GraphBuilder,
@@ -74,7 +74,7 @@ struct MorphParams {
 ))]
 struct BlurBindings<'a> {
     #[gpu(binding = 0, texture2d(format = "rgba8unorm"))]
-    input: &'a Payload<DynamicImage>,
+    input: &'a Compute<DynamicImage>,
     #[gpu(binding = 2, texture2d(format = "rgba8unorm", write))]
     output: TextureOut,
     #[gpu(binding = 3, storage(read))]
@@ -87,7 +87,7 @@ struct BlurBindings<'a> {
 #[gpu(spec(src = "assets/edges.wgsl", entry = "sobel_main", workgroup_size = 256))]
 struct EdgeBindings<'a> {
     #[gpu(binding = 0, texture2d(format = "rgba8unorm"))]
-    input: &'a Payload<DynamicImage>,
+    input: &'a Compute<DynamicImage>,
     #[gpu(binding = 2, texture2d(format = "rgba8unorm", write))]
     output: TextureOut,
     #[gpu(binding = 3, uniform)]
@@ -103,7 +103,7 @@ struct EdgeBindings<'a> {
 ))]
 struct BinaryBindings<'a> {
     #[gpu(binding = 0, texture2d(format = "rgba8unorm"))]
-    input: &'a Payload<DynamicImage>,
+    input: &'a Compute<DynamicImage>,
     #[gpu(binding = 2, texture2d(format = "rgba8unorm", write))]
     output: TextureOut,
     #[gpu(binding = 3, uniform)]
@@ -114,7 +114,7 @@ struct BinaryBindings<'a> {
 #[gpu(spec(src = "assets/morph.wgsl", entry = "morph_main", workgroup_size = 256))]
 struct MorphBindings<'a> {
     #[gpu(binding = 0, texture2d(format = "rgba8unorm"))]
-    input: &'a Payload<DynamicImage>,
+    input: &'a Compute<DynamicImage>,
     #[gpu(binding = 2, texture2d(format = "rgba8unorm", write))]
     output: TextureOut,
     #[gpu(binding = 3, uniform)]
@@ -129,7 +129,7 @@ struct MorphBindings<'a> {
 ))]
 struct TextureSampleBindings<'a> {
     #[gpu(binding = 0, texture2d(format = "rgba8unorm"))]
-    input: &'a Payload<DynamicImage>,
+    input: &'a Compute<DynamicImage>,
     #[gpu(binding = 2, texture2d(format = "rgba8unorm", write))]
     output: TextureOut,
 }
@@ -142,7 +142,7 @@ struct TextureSampleBindings<'a> {
 ))]
 struct BinaryStateBindings<'a> {
     #[gpu(binding = 0, texture2d(format = "rgba8unorm"))]
-    input: &'a Payload<DynamicImage>,
+    input: &'a Compute<DynamicImage>,
     #[gpu(binding = 2, texture2d(format = "rgba8unorm", write))]
     output: TextureOut,
     #[gpu(binding = 3, uniform)]
@@ -152,10 +152,10 @@ struct BinaryStateBindings<'a> {
 }
 
 #[node(id = "example.nodes.load", outputs("img"))]
-fn load_image() -> Result<Payload<DynamicImage>, NodeError> {
+fn load_image() -> Result<Compute<DynamicImage>, NodeError> {
     let path = format!("{}/examples/assets/input.png", env!("CARGO_MANIFEST_DIR"));
     let img = image::open(&path).map_err(|e| NodeError::Handler(e.to_string()))?;
-    Ok(Payload::Cpu(img))
+    Ok(Compute::Cpu(img))
 }
 
 /// Simple texture path that samples with an overridden sampler and writes to a storage texture.
@@ -167,9 +167,9 @@ fn load_image() -> Result<Payload<DynamicImage>, NodeError> {
     shaders(TextureSampleBindings)
 )]
 fn texture_sample_node(
-    img: Payload<DynamicImage>,
+    img: Compute<DynamicImage>,
     ctx: ShaderContext,
-) -> Result<Payload<DynamicImage>, NodeError> {
+) -> Result<Compute<DynamicImage>, NodeError> {
     let (w, h) = img.dimensions();
 
     let bindings = TextureSampleBindings {
@@ -191,9 +191,9 @@ fn texture_sample_node(
     shaders(BlurBindings)
 )]
 fn blur_node(
-    img: Payload<DynamicImage>,
+    img: Compute<DynamicImage>,
     ctx: ShaderContext,
-) -> Result<Payload<DynamicImage>, NodeError> {
+) -> Result<Compute<DynamicImage>, NodeError> {
     let (w, h) = img.dimensions();
     let weights: [f32; 5] = [0.0625, 0.25, 0.375, 0.25, 0.0625];
     let params = BlurParams {
@@ -225,9 +225,9 @@ fn blur_node(
     shaders(EdgeBindings)
 )]
 fn edges_node(
-    img: Payload<DynamicImage>,
+    img: Compute<DynamicImage>,
     ctx: ShaderContext,
-) -> Result<Payload<DynamicImage>, NodeError> {
+) -> Result<Compute<DynamicImage>, NodeError> {
     let (w, h) = img.dimensions();
     let params = EdgeParams {
         width: w,
@@ -256,9 +256,9 @@ fn edges_node(
     shaders(MorphBindings)
 )]
 fn morph_node(
-    img: Payload<DynamicImage>,
+    img: Compute<DynamicImage>,
     ctx: ShaderContext,
-) -> Result<Payload<DynamicImage>, NodeError> {
+) -> Result<Compute<DynamicImage>, NodeError> {
     let (w, h) = img.dimensions();
     let radius = 1u32;
     let norm = 1i32; // Manhattan kernel
@@ -299,10 +299,10 @@ struct BinaryGpuState {
     state(BinaryGpuState)
 )]
 fn adaptive_binary_node(
-    img: Payload<DynamicImage>,
+    img: Compute<DynamicImage>,
     state: &mut BinaryGpuState,
     ctx: ShaderContext,
-) -> Result<Payload<DynamicImage>, NodeError> {
+) -> Result<Compute<DynamicImage>, NodeError> {
     let (w, h) = img.dimensions();
     let gpu = ctx
         .gpu
@@ -351,7 +351,7 @@ fn adaptive_binary_node(
 }
 
 #[node(id = "example.nodes.save", inputs("img"))]
-fn save_image(exec: &ExecutionContext, img: Payload<DynamicImage>) -> Result<(), NodeError> {
+fn save_image(exec: &ExecutionContext, img: Compute<DynamicImage>) -> Result<(), NodeError> {
     let (bytes, w, h) = img
         .to_rgba_bytes(exec.gpu.as_ref())
         .map_err(|e| NodeError::Handler(e.to_string()))?;

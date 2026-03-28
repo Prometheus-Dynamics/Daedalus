@@ -1,13 +1,13 @@
 # daedalus-runtime
 
-Executes planned graphs, routes payloads between nodes, and enforces policies (backpressure, sync groups, capabilities). Integrates plugins and GPU hand-off.
+Executes planned graphs, routes runtime values between nodes, and enforces policies (backpressure, sync groups, capabilities). Integrates plugins and GPU hand-off.
 
 ## Responsibilities
 - **Execution**: runs `RuntimePlan` segments serially or in parallel, with telemetry and error propagation.
 - **Handlers**: `HandlerRegistry` maps node IDs to handler fns; capability handlers enable type-directed operations.
-- **Backpressure/sync**: configurable edge policies (fifo/bounded/latest/zip) and sync groups for aligning correlated payloads.
+- **Backpressure/sync**: configurable edge policies (fifo/bounded/latest/zip) and sync groups for aligning correlated runtime values.
 - **Plugins**: install bundles of nodes/handlers; host bridge support for external processes.
-- **GPU**: optional integration with `daedalus-gpu` (feature-gated); routes GPU payloads and shader contexts.
+- **GPU**: optional integration with `daedalus-gpu` (feature-gated); routes GPU-resident runtime values and shader contexts.
 
 ## Key modules
 - `executor`: serial and parallel executors, queues, telemetry, error types.

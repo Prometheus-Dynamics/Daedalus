@@ -1,11 +1,11 @@
 //! Execute the Helios Aruco mask tuning graph locally with the CV plugin.
 
 use daedalus::{
-    ErasedPayload, PluginLibrary,
+    DataCell, PluginLibrary,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     host_bridge::install_host_bridge,
     runtime::plugins::PluginRegistry,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
+    runtime::{executor::RuntimeValue, host_bridge::HostBridgeManager},
 };
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_planner::{Edge, Graph, NodeRef, PortRef};
@@ -59,8 +59,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(800);
 
     let img = DynamicImage::ImageRgb8(ImageBuffer::from_pixel(width, height, Rgb([7, 8, 9])));
-    let ep = ErasedPayload::from_cpu::<DynamicImage>(img);
-    handle.push("frame", EdgePayload::Payload(ep), None);
+    let ep = DataCell::from_cpu::<DynamicImage>(img);
+    handle.push("frame", RuntimeValue::Data(ep), None);
 
     let handlers = plugins.take_handlers();
     let exec = daedalus_runtime::executor::Executor::new(&runtime_plan, handlers)
@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
             match payload.inner {
-                EdgePayload::Any(any) => {
+                RuntimeValue::Any(any) => {
                     let ty = std::any::type_name_of_val(any.as_ref());
                     let is_dyn = any.is::<DynamicImage>();
                     let is_gray = any.is::<GrayImage>();

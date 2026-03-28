@@ -90,7 +90,7 @@ impl Registry {
             )
             .with_conflict_key(format!("{}@{}", key.0.0, key.1.0))
             .with_conflict_kind(crate::diagnostics::ConflictKind::Value)
-            .with_payload(crate::diagnostics::RegistryErrorPayload::Conflict {
+            .with_payload(crate::diagnostics::RegistryErrorCompute::Conflict {
                 key: format!("{}@{}", key.0.0, key.1.0),
                 kind: crate::diagnostics::ConflictKind::Value,
             }));
@@ -112,7 +112,7 @@ impl Registry {
             )
             .with_conflict_key(id.0.clone())
             .with_conflict_kind(crate::diagnostics::ConflictKind::Converter)
-            .with_payload(crate::diagnostics::RegistryErrorPayload::Conflict {
+            .with_payload(crate::diagnostics::RegistryErrorCompute::Conflict {
                 key: id.0.clone(),
                 kind: crate::diagnostics::ConflictKind::Converter,
             }));
@@ -136,7 +136,7 @@ impl Registry {
             )
             .with_conflict_key(key.0.clone())
             .with_conflict_kind(crate::diagnostics::ConflictKind::Node)
-            .with_payload(crate::diagnostics::RegistryErrorPayload::Conflict {
+            .with_payload(crate::diagnostics::RegistryErrorCompute::Conflict {
                 key: key.0.clone(),
                 kind: crate::diagnostics::ConflictKind::Node,
             }));
@@ -158,7 +158,7 @@ impl Registry {
             )
             .with_conflict_key(key.0.clone())
             .with_conflict_kind(crate::diagnostics::ConflictKind::Group)
-            .with_payload(crate::diagnostics::RegistryErrorPayload::Conflict {
+            .with_payload(crate::diagnostics::RegistryErrorCompute::Conflict {
                 key: key.0.clone(),
                 kind: crate::diagnostics::ConflictKind::Group,
             }));
@@ -736,7 +736,7 @@ mod tests {
         );
         assert!(matches!(
             err.payload(),
-            Some(crate::diagnostics::RegistryErrorPayload::Conflict { .. })
+            Some(crate::diagnostics::RegistryErrorCompute::Conflict { .. })
         ));
     }
 

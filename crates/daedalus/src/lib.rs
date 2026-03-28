@@ -82,7 +82,7 @@
 //!               _ctx: &daedalus::runtime::ExecutionContext,
 //!               io: &mut daedalus::runtime::NodeIo| {
 //!             if node.id == "producer" {
-//!                 io.push_output(Some("out"), daedalus::runtime::EdgePayload::Unit);
+//!                 io.push_output(Some("out"), daedalus::runtime::RuntimeValue::Unit);
 //!             } else if node.id == "consumer" {
 //!                 for _ in io.inputs_for("in") {
 //!                     *hits.lock().unwrap() += 1;
@@ -119,7 +119,8 @@ pub use daedalus_ffi::{FfiPluginError, PluginLibrary, export_plugin};
 pub use daedalus_gpu as gpu;
 #[cfg(feature = "gpu")]
 pub use daedalus_gpu::{
-    ErasedPayload, GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId, GpuSendable, Payload,
+    Backing, Compute, DataCell, DeviceBridge, GpuBufferHandle, GpuBufferId, GpuImageHandle,
+    GpuImageId,
 };
 pub use daedalus_macros as macros;
 pub use daedalus_nodes::declare_plugin;

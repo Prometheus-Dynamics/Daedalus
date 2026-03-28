@@ -34,7 +34,7 @@ pub struct RegistryError {
     message: String,
     conflict_key: Option<String>,
     conflict_kind: Option<ConflictKind>,
-    payload: Option<RegistryErrorPayload>,
+    payload: Option<RegistryErrorCompute>,
 }
 
 /// Structured conflict kinds for diagnostics.
@@ -57,10 +57,10 @@ pub enum ConflictKind {
 /// Optional structured payload for diagnostics.
 ///
 /// ```
-/// use daedalus_registry::diagnostics::{ConflictKind, RegistryErrorPayload};
-/// let payload = RegistryErrorPayload::Conflict { key: "demo".into(), kind: ConflictKind::Node };
+/// use daedalus_registry::diagnostics::{ConflictKind, RegistryErrorCompute};
+/// let payload = RegistryErrorCompute::Conflict { key: "demo".into(), kind: ConflictKind::Node };
 /// match payload {
-///     RegistryErrorPayload::Conflict { key, kind } => {
+///     RegistryErrorCompute::Conflict { key, kind } => {
 ///         assert_eq!(key, "demo");
 ///         assert_eq!(kind, ConflictKind::Node);
 ///     }
@@ -69,7 +69,7 @@ pub enum ConflictKind {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RegistryErrorPayload {
+pub enum RegistryErrorCompute {
     Conflict { key: String, kind: ConflictKind },
     MissingDependency { key: String },
 }
@@ -111,11 +111,11 @@ impl RegistryError {
         self
     }
 
-    pub fn payload(&self) -> Option<&RegistryErrorPayload> {
+    pub fn payload(&self) -> Option<&RegistryErrorCompute> {
         self.payload.as_ref()
     }
 
-    pub fn with_payload(mut self, payload: RegistryErrorPayload) -> Self {
+    pub fn with_payload(mut self, payload: RegistryErrorCompute) -> Self {
         self.payload = Some(payload);
         self
     }

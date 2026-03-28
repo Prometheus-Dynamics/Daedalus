@@ -1,8 +1,10 @@
-use daedalus_data::convert::{ConversionProvenance, ConversionResolution, ConverterId};
-use daedalus_data::model::{TypeExpr, Value, ValueType};
+use daedalus_data::convert::ConverterId;
+use daedalus_data::model::{StructFieldValue, TypeExpr, Value, ValueType};
+use daedalus_data::typing::{self, CompatibilityKind, TypeCompatibilityPath};
 use daedalus_registry::ids::{GroupId, NodeId};
 use daedalus_registry::store::{GroupDescriptor, NodeDescriptor, PortAccessMode};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::NodeInstance;
@@ -15,6 +17,35 @@ const DYNAMIC_OUTPUT_LABELS_KEY: &str = "dynamic_output_labels";
 const EMBEDDED_GRAPH_KEY: &str = "daedalus.embedded_graph";
 const EMBEDDED_HOST_KEY: &str = "daedalus.embedded_host";
 const EMBEDDED_GROUP_KEY: &str = "daedalus.embedded_group";
+
+fn upsert_string_map(meta: &mut BTreeMap<String, Value>, key: &str, port: &str, value: String) {
+    let entry = meta
+        .entry(key.to_string())
+        .or_insert_with(|| Value::Map(Vec::new()));
+    if !matches!(entry, Value::Map(_)) {
+        *entry = Value::Map(Vec::new());
+    }
+    let Value::Map(entries) = entry else { return };
+    let port_lc = port.to_ascii_lowercase();
+    let mut replaced = false;
+    for (k, v) in entries.iter_mut() {
+        if matches!(k, Value::String(s) if s.eq_ignore_ascii_case(&port_lc)) {
+            *v = Value::String(std::borrow::Cow::Owned(value.clone()));
+            replaced = true;
+            break;
+        }
+    }
+    if !replaced {
+        entries.push((
+            Value::String(std::borrow::Cow::Owned(port_lc)),
+            Value::String(std::borrow::Cow::Owned(value)),
+        ));
+    }
+}
+const NODE_OVERLOADS_KEY: &str = "daedalus.overloads";
+const PLAN_APPLIED_LOWERINGS_KEY: &str = "daedalus.plan.applied_lowerings";
+const PLAN_EDGE_EXPLANATIONS_KEY: &str = "daedalus.plan.edge_explanations";
+const PLAN_OVERLOAD_RESOLUTIONS_KEY: &str = "daedalus.plan.overload_resolutions";
 
 /// Static planner config controlling optional passes.
 ///
@@ -64,6 +95,293 @@ pub struct PlannerInput<'a> {
 pub struct PlannerOutput {
     pub plan: ExecutionPlan,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub enum PlannerLoweringPhase {
+    BeforeTypecheck,
+    AfterConvert,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PlannerLoweringInfo {
+    pub id: String,
+    pub phase: PlannerLoweringPhase,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AppliedPlannerLowering {
+    pub id: String,
+    pub phase: PlannerLoweringPhase,
+    pub summary: String,
+    pub changed: bool,
+    pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EdgeResolutionKind {
+    Exact,
+    Conversion,
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CompatibilityMode {
+    None,
+    Exact,
+    View,
+    Materialize,
+    Convert,
+    Mixed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CompatibilityStepExplanation {
+    pub from: TypeExpr,
+    pub to: TypeExpr,
+    pub kind: CompatibilityKind,
+    pub cost: u64,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EdgeResolutionExplanation {
+    pub from_node: String,
+    pub from_port: String,
+    pub to_node: String,
+    pub to_port: String,
+    pub from_type: TypeExpr,
+    pub to_type: TypeExpr,
+    pub resolution_kind: EdgeResolutionKind,
+    pub compatibility_mode: CompatibilityMode,
+    pub total_cost: u64,
+    pub converter_steps: Vec<String>,
+    pub compatibility_steps: Vec<CompatibilityStepExplanation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OverloadPortResolution {
+    pub port: String,
+    pub from_node: String,
+    pub from_port: String,
+    pub from_type: TypeExpr,
+    pub to_type: TypeExpr,
+    pub resolution_kind: EdgeResolutionKind,
+    pub compatibility_mode: CompatibilityMode,
+    pub total_cost: u64,
+    pub converter_steps: Vec<String>,
+    pub compatibility_steps: Vec<CompatibilityStepExplanation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct NodeOverloadResolution {
+    pub node: String,
+    pub overload_id: String,
+    pub overload_label: Option<String>,
+    pub total_cost: u64,
+    pub ports: Vec<OverloadPortResolution>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PlanExplanation {
+    pub lowerings: Vec<AppliedPlannerLowering>,
+    pub overloads: Vec<NodeOverloadResolution>,
+    pub edges: Vec<EdgeResolutionExplanation>,
+}
+
+pub struct PlannerLoweringContext<'a> {
+    pub registry: &'a daedalus_registry::store::Registry,
+    pub config: &'a PlannerConfig,
+}
+
+type PlannerLoweringFn = Arc<
+    dyn for<'a> Fn(
+            &mut Graph,
+            &PlannerLoweringContext<'a>,
+            &mut Vec<Diagnostic>,
+        ) -> Vec<AppliedPlannerLowering>
+        + Send
+        + Sync,
+>;
+
+struct RegisteredPlannerLowering {
+    info: PlannerLoweringInfo,
+    apply: PlannerLoweringFn,
+}
+
+#[derive(Clone, Debug)]
+struct ParsedNodeOverload {
+    id: String,
+    label: Option<String>,
+    inputs: BTreeMap<String, TypeExpr>,
+}
+
+#[derive(Clone, Debug)]
+struct ResolvedEdgeCompatibility {
+    resolution_kind: EdgeResolutionKind,
+    compatibility_mode: CompatibilityMode,
+    total_cost: u64,
+    converter_steps: Vec<String>,
+    compatibility_steps: Vec<CompatibilityStepExplanation>,
+}
+
+fn planner_lowerings() -> &'static RwLock<BTreeMap<String, RegisteredPlannerLowering>> {
+    static LOWERINGS: OnceLock<RwLock<BTreeMap<String, RegisteredPlannerLowering>>> =
+        OnceLock::new();
+    LOWERINGS.get_or_init(|| RwLock::new(BTreeMap::new()))
+}
+
+pub fn register_planner_lowering<F>(id: impl Into<String>, phase: PlannerLoweringPhase, apply: F)
+where
+    F: for<'a> Fn(
+            &mut Graph,
+            &PlannerLoweringContext<'a>,
+            &mut Vec<Diagnostic>,
+        ) -> Vec<AppliedPlannerLowering>
+        + Send
+        + Sync
+        + 'static,
+{
+    let id = id.into();
+    let lowering = RegisteredPlannerLowering {
+        info: PlannerLoweringInfo {
+            id: id.clone(),
+            phase,
+        },
+        apply: Arc::new(apply),
+    };
+    let mut guard = planner_lowerings()
+        .write()
+        .expect("planner lowerings lock poisoned");
+    guard.insert(id, lowering);
+}
+
+pub fn registered_planner_lowerings() -> Vec<PlannerLoweringInfo> {
+    planner_lowerings()
+        .read()
+        .expect("planner lowerings lock poisoned")
+        .values()
+        .map(|entry| entry.info.clone())
+        .collect()
+}
+
+#[cfg(test)]
+#[doc(hidden)]
+pub fn reset_planner_lowerings_for_tests() {
+    if let Ok(mut guard) = planner_lowerings().write() {
+        guard.clear();
+    }
+}
+
+fn owned_string_value(value: impl Into<String>) -> Value {
+    Value::String(std::borrow::Cow::Owned(value.into()))
+}
+
+fn int_value(value: u64) -> Value {
+    Value::Int(i64::try_from(value).unwrap_or(i64::MAX))
+}
+
+fn bool_value(value: bool) -> Value {
+    Value::Bool(value)
+}
+
+fn struct_value(fields: Vec<(&str, Value)>) -> Value {
+    Value::Struct(
+        fields
+            .into_iter()
+            .map(|(name, value)| StructFieldValue {
+                name: name.to_string(),
+                value,
+            })
+            .collect(),
+    )
+}
+
+fn string_keyed_map(entries: BTreeMap<String, Value>) -> Value {
+    Value::Map(
+        entries
+            .into_iter()
+            .map(|(key, value)| (owned_string_value(key), value))
+            .collect(),
+    )
+}
+
+fn struct_field<'a>(fields: &'a [StructFieldValue], name: &str) -> Option<&'a Value> {
+    fields
+        .iter()
+        .find(|field| field.name == name)
+        .map(|field| &field.value)
+}
+
+fn value_to_string_map(value: &Value) -> Option<BTreeMap<String, Value>> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    let mut map = BTreeMap::new();
+    for (key, value) in entries {
+        let Value::String(key) = key else {
+            return None;
+        };
+        map.insert(key.to_string(), value.clone());
+    }
+    Some(map)
+}
+
+fn typeexpr_to_value(ty: &TypeExpr) -> Value {
+    owned_string_value(serde_json::to_string(ty).unwrap_or_default())
+}
+
+fn value_to_typeexpr(value: &Value) -> Option<TypeExpr> {
+    match value {
+        Value::String(json) => serde_json::from_str::<TypeExpr>(json).ok(),
+        _ => None,
+    }
+}
+
+fn compatibility_mode_from_path(path: Option<&TypeCompatibilityPath>) -> CompatibilityMode {
+    let Some(path) = path else {
+        return CompatibilityMode::None;
+    };
+    if path.steps.is_empty() {
+        return CompatibilityMode::Exact;
+    }
+    let mut saw_view = false;
+    let mut saw_materialize = false;
+    let mut saw_convert = false;
+    for step in &path.steps {
+        match step.rule.kind {
+            CompatibilityKind::View => saw_view = true,
+            CompatibilityKind::Materialize => saw_materialize = true,
+            CompatibilityKind::Convert => saw_convert = true,
+        }
+    }
+    match (saw_view, saw_materialize, saw_convert) {
+        (true, false, false) => CompatibilityMode::View,
+        (false, true, false) => CompatibilityMode::Materialize,
+        (false, false, true) => CompatibilityMode::Convert,
+        (false, false, false) => CompatibilityMode::None,
+        _ => CompatibilityMode::Mixed,
+    }
+}
+
+fn compatibility_steps_from_path(
+    path: Option<TypeCompatibilityPath>,
+) -> Vec<CompatibilityStepExplanation> {
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    path.steps
+        .into_iter()
+        .map(|step| CompatibilityStepExplanation {
+            from: step.from,
+            to: step.to,
+            kind: step.rule.kind,
+            cost: u64::from(step.rule.cost),
+            capabilities: step.rule.capabilities.into_iter().collect(),
+        })
+        .collect()
 }
 
 fn is_host_bridge(node: &NodeInstance) -> bool {
@@ -602,6 +920,622 @@ fn apply_descriptor_defaults(graph: &mut Graph, view: &daedalus_registry::store:
     }
 }
 
+fn clear_planner_owned_graph_metadata(graph: &mut Graph) {
+    graph.metadata.retain(|key, _| {
+        !key.starts_with("converter:")
+            && key != PLAN_APPLIED_LOWERINGS_KEY
+            && key != PLAN_EDGE_EXPLANATIONS_KEY
+            && key != PLAN_OVERLOAD_RESOLUTIONS_KEY
+    });
+}
+
+fn collect_structural_conversion_steps(
+    registry: &daedalus_registry::store::Registry,
+    from: &TypeExpr,
+    to: &TypeExpr,
+    active_features: &[String],
+    allow_gpu: bool,
+    steps: &mut BTreeSet<ConverterId>,
+    depth: usize,
+) -> bool {
+    if from == to {
+        return true;
+    }
+    if depth > 64 {
+        return false;
+    }
+    if let Ok(res) = registry.resolve_converter_with_context(from, to, active_features, allow_gpu) {
+        for step in res.provenance.steps {
+            steps.insert(step);
+        }
+        return true;
+    }
+    match (from, to) {
+        (TypeExpr::Scalar(ValueType::I32 | ValueType::U32), TypeExpr::Scalar(ValueType::Int))
+        | (TypeExpr::Scalar(ValueType::Int), TypeExpr::Scalar(ValueType::I32 | ValueType::U32))
+        | (TypeExpr::Scalar(ValueType::F32), TypeExpr::Scalar(ValueType::Float))
+        | (TypeExpr::Scalar(ValueType::Float), TypeExpr::Scalar(ValueType::F32)) => true,
+        (TypeExpr::Optional(a), TypeExpr::Optional(b)) => collect_structural_conversion_steps(
+            registry,
+            a,
+            b,
+            active_features,
+            allow_gpu,
+            steps,
+            depth + 1,
+        ),
+        (TypeExpr::List(a), TypeExpr::List(b)) => collect_structural_conversion_steps(
+            registry,
+            a,
+            b,
+            active_features,
+            allow_gpu,
+            steps,
+            depth + 1,
+        ),
+        (TypeExpr::Map(ak, av), TypeExpr::Map(bk, bv)) => {
+            collect_structural_conversion_steps(
+                registry,
+                ak,
+                bk,
+                active_features,
+                allow_gpu,
+                steps,
+                depth + 1,
+            ) && collect_structural_conversion_steps(
+                registry,
+                av,
+                bv,
+                active_features,
+                allow_gpu,
+                steps,
+                depth + 1,
+            )
+        }
+        (TypeExpr::Tuple(a), TypeExpr::Tuple(b)) => {
+            if a.len() != b.len() {
+                return false;
+            }
+            a.iter().zip(b.iter()).all(|(ai, bi)| {
+                collect_structural_conversion_steps(
+                    registry,
+                    ai,
+                    bi,
+                    active_features,
+                    allow_gpu,
+                    steps,
+                    depth + 1,
+                )
+            })
+        }
+        (TypeExpr::Struct(a_fields), TypeExpr::Struct(b_fields)) => {
+            if a_fields.len() != b_fields.len() {
+                return false;
+            }
+            for bf in b_fields {
+                let Some(af) = a_fields.iter().find(|af| af.name == bf.name) else {
+                    return false;
+                };
+                if !collect_structural_conversion_steps(
+                    registry,
+                    &af.ty,
+                    &bf.ty,
+                    active_features,
+                    allow_gpu,
+                    steps,
+                    depth + 1,
+                ) {
+                    return false;
+                }
+            }
+            true
+        }
+        (TypeExpr::Enum(a_vars), TypeExpr::Enum(b_vars)) => {
+            if a_vars.len() != b_vars.len() {
+                return false;
+            }
+            for bv in b_vars {
+                let Some(av) = a_vars.iter().find(|av| av.name == bv.name) else {
+                    return false;
+                };
+                match (&av.ty, &bv.ty) {
+                    (None, None) => {}
+                    (Some(at), Some(bt)) => {
+                        if !collect_structural_conversion_steps(
+                            registry,
+                            at,
+                            bt,
+                            active_features,
+                            allow_gpu,
+                            steps,
+                            depth + 1,
+                        ) {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn resolve_structural_conversion(
+    registry: &daedalus_registry::store::Registry,
+    from: &TypeExpr,
+    to: &TypeExpr,
+    active_features: &[String],
+    allow_gpu: bool,
+) -> Option<Vec<ConverterId>> {
+    let mut steps = BTreeSet::new();
+    if !collect_structural_conversion_steps(
+        registry,
+        from,
+        to,
+        active_features,
+        allow_gpu,
+        &mut steps,
+        0,
+    ) {
+        return None;
+    }
+    Some(steps.into_iter().collect())
+}
+
+fn resolve_edge_compatibility(
+    registry: &daedalus_registry::store::Registry,
+    from: &TypeExpr,
+    to: &TypeExpr,
+    active_features: &[String],
+    allow_gpu: bool,
+) -> Option<ResolvedEdgeCompatibility> {
+    let compatibility_path = typing::explain_typeexpr_conversion(from, to);
+    if from == to {
+        return Some(ResolvedEdgeCompatibility {
+            resolution_kind: EdgeResolutionKind::Exact,
+            compatibility_mode: CompatibilityMode::Exact,
+            total_cost: 0,
+            converter_steps: Vec::new(),
+            compatibility_steps: compatibility_steps_from_path(compatibility_path),
+        });
+    }
+
+    if let Ok(resolution) =
+        registry.resolve_converter_with_context(from, to, active_features, allow_gpu)
+    {
+        return Some(ResolvedEdgeCompatibility {
+            resolution_kind: EdgeResolutionKind::Conversion,
+            compatibility_mode: compatibility_mode_from_path(compatibility_path.as_ref()),
+            total_cost: resolution.provenance.total_cost,
+            converter_steps: resolution
+                .provenance
+                .steps
+                .into_iter()
+                .map(|step| step.0)
+                .collect(),
+            compatibility_steps: compatibility_steps_from_path(compatibility_path),
+        });
+    }
+
+    let structural = resolve_structural_conversion(registry, from, to, active_features, allow_gpu)?;
+    Some(ResolvedEdgeCompatibility {
+        resolution_kind: EdgeResolutionKind::Conversion,
+        compatibility_mode: compatibility_mode_from_path(compatibility_path.as_ref()),
+        total_cost: 0,
+        converter_steps: structural.into_iter().map(|step| step.0).collect(),
+        compatibility_steps: compatibility_steps_from_path(compatibility_path),
+    })
+}
+
+fn parse_node_overloads(desc: &NodeDescriptor) -> Vec<ParsedNodeOverload> {
+    let Some(Value::List(entries)) = desc.metadata.get(NODE_OVERLOADS_KEY) else {
+        return Vec::new();
+    };
+
+    let mut overloads = Vec::new();
+    for entry in entries {
+        let Value::Struct(fields) = entry else {
+            continue;
+        };
+        let Some(Value::String(id)) = struct_field(fields, "id") else {
+            continue;
+        };
+        let label = struct_field(fields, "label").and_then(|value| match value {
+            Value::String(value) => Some(value.to_string()),
+            _ => None,
+        });
+        let Some(inputs_value) = struct_field(fields, "inputs") else {
+            continue;
+        };
+        let Some(raw_inputs) = value_to_string_map(inputs_value) else {
+            continue;
+        };
+        let mut inputs = BTreeMap::new();
+        let mut valid = true;
+        for (port, raw_ty) in raw_inputs {
+            let Some(ty) = value_to_typeexpr(&raw_ty) else {
+                valid = false;
+                break;
+            };
+            inputs.insert(port, ty);
+        }
+        if !valid {
+            continue;
+        }
+        overloads.push(ParsedNodeOverload {
+            id: id.to_string(),
+            label,
+            inputs,
+        });
+    }
+    overloads.sort_by(|a, b| a.id.cmp(&b.id));
+    overloads
+}
+
+fn apply_planner_lowerings(
+    graph: &mut Graph,
+    registry: &daedalus_registry::store::Registry,
+    config: &PlannerConfig,
+    diags: &mut Vec<Diagnostic>,
+    phase: PlannerLoweringPhase,
+) -> Vec<AppliedPlannerLowering> {
+    let entries = planner_lowerings()
+        .read()
+        .expect("planner lowerings lock poisoned")
+        .values()
+        .filter(|entry| entry.info.phase == phase)
+        .map(|entry| (entry.info.clone(), entry.apply.clone()))
+        .collect::<Vec<_>>();
+
+    let ctx = PlannerLoweringContext { registry, config };
+    let mut applied = Vec::new();
+    for (info, apply) in entries {
+        let mut results = apply(graph, &ctx, diags);
+        for result in &mut results {
+            if result.id.is_empty() {
+                result.id = info.id.clone();
+            }
+            result.phase = info.phase;
+        }
+        applied.extend(results);
+    }
+    applied.sort_by(|a, b| {
+        a.phase
+            .cmp(&b.phase)
+            .then_with(|| a.id.cmp(&b.id))
+            .then_with(|| a.summary.cmp(&b.summary))
+    });
+    applied
+}
+
+fn resolve_node_overloads(
+    graph: &mut Graph,
+    registry: &daedalus_registry::store::Registry,
+    view: &daedalus_registry::store::RegistryView,
+    config: &PlannerConfig,
+    diags: &mut Vec<Diagnostic>,
+) -> Vec<NodeOverloadResolution> {
+    let mut resolutions = Vec::new();
+    let active_features = config.active_features.clone();
+    let allow_gpu = config.enable_gpu;
+
+    for node_idx in 0..graph.nodes.len() {
+        let Some(desc) = latest_node(view, &graph.nodes[node_idx].id) else {
+            continue;
+        };
+        let overloads = parse_node_overloads(desc);
+        if overloads.is_empty() {
+            continue;
+        }
+
+        let node = graph.nodes[node_idx].clone();
+        let incoming_edges = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.to.node.0 == node_idx)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut best: Option<(u64, String, ParsedNodeOverload, Vec<OverloadPortResolution>)> = None;
+        for overload in overloads {
+            let mut total_cost = 0u64;
+            let mut port_resolutions = Vec::new();
+            let mut valid = true;
+
+            for edge in &incoming_edges {
+                let Some(from_node) = graph.nodes.get(edge.from.node.0) else {
+                    valid = false;
+                    break;
+                };
+                let Some(from_desc) = latest_node(view, &from_node.id) else {
+                    valid = false;
+                    break;
+                };
+                let Some(from_ty) = port_type(from_node, from_desc, &edge.from.port, false) else {
+                    valid = false;
+                    break;
+                };
+                let Some(to_ty) = overload
+                    .inputs
+                    .get(&edge.to.port)
+                    .cloned()
+                    .or_else(|| port_type(&node, desc, &edge.to.port, true))
+                else {
+                    valid = false;
+                    break;
+                };
+
+                let Some(resolved) = resolve_edge_compatibility(
+                    registry,
+                    &from_ty,
+                    &to_ty,
+                    &active_features,
+                    allow_gpu,
+                ) else {
+                    valid = false;
+                    break;
+                };
+
+                total_cost = total_cost.saturating_add(resolved.total_cost);
+                port_resolutions.push(OverloadPortResolution {
+                    port: edge.to.port.clone(),
+                    from_node: from_node.id.0.clone(),
+                    from_port: edge.from.port.clone(),
+                    from_type: from_ty,
+                    to_type: to_ty,
+                    resolution_kind: resolved.resolution_kind,
+                    compatibility_mode: resolved.compatibility_mode,
+                    total_cost: resolved.total_cost,
+                    converter_steps: resolved.converter_steps,
+                    compatibility_steps: resolved.compatibility_steps,
+                });
+            }
+
+            if !valid {
+                continue;
+            }
+
+            port_resolutions.sort_by(|a, b| {
+                a.port
+                    .cmp(&b.port)
+                    .then_with(|| a.from_node.cmp(&b.from_node))
+                    .then_with(|| a.from_port.cmp(&b.from_port))
+            });
+            let sort_key = (total_cost, overload.id.clone());
+            match &best {
+                Some((best_cost, best_id, _, _))
+                    if (&sort_key.0, &sort_key.1) >= (best_cost, best_id) => {}
+                _ => best = Some((sort_key.0, sort_key.1.clone(), overload, port_resolutions)),
+            }
+        }
+
+        let Some((total_cost, _, overload, port_resolutions)) = best else {
+            diags.push(
+                Diagnostic::new(
+                    DiagnosticCode::ConverterMissing,
+                    format!(
+                        "no overload on node {} could satisfy the connected input types",
+                        node.id.0
+                    ),
+                )
+                .in_pass("resolve_overloads")
+                .at_node(diagnostic_node_id(&node)),
+            );
+            continue;
+        };
+
+        for (port, ty) in &overload.inputs {
+            if desc.input_ty_for(port).is_none() {
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::PortExtra,
+                        format!(
+                            "overload {} on node {} references unknown input port `{}`",
+                            overload.id, node.id.0, port
+                        ),
+                    )
+                    .in_pass("resolve_overloads")
+                    .at_node(diagnostic_node_id(&node))
+                    .at_port(port.clone()),
+                );
+                continue;
+            }
+            upsert_string_map(
+                &mut graph.nodes[node_idx].metadata,
+                DYNAMIC_INPUT_TYPES_KEY,
+                port,
+                serde_json::to_string(ty).unwrap_or_default(),
+            );
+        }
+        for (port, ty) in &overload.inputs {
+            upsert_string_map(
+                &mut graph.nodes[node_idx].metadata,
+                DYNAMIC_INPUT_LABELS_KEY,
+                port,
+                format!("{ty:?}"),
+            );
+        }
+
+        resolutions.push(NodeOverloadResolution {
+            node: node.id.0.clone(),
+            overload_id: overload.id,
+            overload_label: overload.label,
+            total_cost,
+            ports: port_resolutions,
+        });
+    }
+
+    resolutions.sort_by(|a, b| {
+        a.node
+            .cmp(&b.node)
+            .then_with(|| a.overload_id.cmp(&b.overload_id))
+    });
+    resolutions
+}
+
+fn applied_lowering_to_value(lowering: &AppliedPlannerLowering) -> Value {
+    struct_value(vec![
+        ("id", owned_string_value(lowering.id.clone())),
+        (
+            "phase",
+            owned_string_value(match lowering.phase {
+                PlannerLoweringPhase::BeforeTypecheck => "before_typecheck",
+                PlannerLoweringPhase::AfterConvert => "after_convert",
+            }),
+        ),
+        ("summary", owned_string_value(lowering.summary.clone())),
+        ("changed", bool_value(lowering.changed)),
+        ("metadata", string_keyed_map(lowering.metadata.clone())),
+    ])
+}
+
+fn compatibility_step_to_value(step: CompatibilityStepExplanation) -> Value {
+    struct_value(vec![
+        ("from", typeexpr_to_value(&step.from)),
+        ("to", typeexpr_to_value(&step.to)),
+        (
+            "kind",
+            owned_string_value(match step.kind {
+                CompatibilityKind::View => "view",
+                CompatibilityKind::Materialize => "materialize",
+                CompatibilityKind::Convert => "convert",
+            }),
+        ),
+        ("cost", int_value(step.cost)),
+        (
+            "capabilities",
+            Value::List(
+                step.capabilities
+                    .into_iter()
+                    .map(owned_string_value)
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn edge_resolution_to_value(edge: EdgeResolutionExplanation) -> Value {
+    struct_value(vec![
+        ("from_node", owned_string_value(edge.from_node)),
+        ("from_port", owned_string_value(edge.from_port)),
+        ("to_node", owned_string_value(edge.to_node)),
+        ("to_port", owned_string_value(edge.to_port)),
+        ("from_type", typeexpr_to_value(&edge.from_type)),
+        ("to_type", typeexpr_to_value(&edge.to_type)),
+        (
+            "resolution_kind",
+            owned_string_value(match edge.resolution_kind {
+                EdgeResolutionKind::Exact => "exact",
+                EdgeResolutionKind::Conversion => "conversion",
+                EdgeResolutionKind::Missing => "missing",
+            }),
+        ),
+        (
+            "compatibility_mode",
+            owned_string_value(match edge.compatibility_mode {
+                CompatibilityMode::None => "none",
+                CompatibilityMode::Exact => "exact",
+                CompatibilityMode::View => "view",
+                CompatibilityMode::Materialize => "materialize",
+                CompatibilityMode::Convert => "convert",
+                CompatibilityMode::Mixed => "mixed",
+            }),
+        ),
+        ("total_cost", int_value(edge.total_cost)),
+        (
+            "converter_steps",
+            Value::List(
+                edge.converter_steps
+                    .into_iter()
+                    .map(owned_string_value)
+                    .collect(),
+            ),
+        ),
+        (
+            "compatibility_steps",
+            Value::List(
+                edge.compatibility_steps
+                    .into_iter()
+                    .map(compatibility_step_to_value)
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+fn overload_resolution_to_value(resolution: NodeOverloadResolution) -> Value {
+    struct_value(vec![
+        ("node", owned_string_value(resolution.node)),
+        ("overload_id", owned_string_value(resolution.overload_id)),
+        (
+            "overload_label",
+            resolution
+                .overload_label
+                .map(owned_string_value)
+                .unwrap_or(Value::Unit),
+        ),
+        ("total_cost", int_value(resolution.total_cost)),
+        (
+            "ports",
+            Value::List(
+                resolution
+                    .ports
+                    .into_iter()
+                    .map(|port| {
+                        struct_value(vec![
+                            ("port", owned_string_value(port.port)),
+                            ("from_node", owned_string_value(port.from_node)),
+                            ("from_port", owned_string_value(port.from_port)),
+                            ("from_type", typeexpr_to_value(&port.from_type)),
+                            ("to_type", typeexpr_to_value(&port.to_type)),
+                            (
+                                "resolution_kind",
+                                owned_string_value(match port.resolution_kind {
+                                    EdgeResolutionKind::Exact => "exact",
+                                    EdgeResolutionKind::Conversion => "conversion",
+                                    EdgeResolutionKind::Missing => "missing",
+                                }),
+                            ),
+                            (
+                                "compatibility_mode",
+                                owned_string_value(match port.compatibility_mode {
+                                    CompatibilityMode::None => "none",
+                                    CompatibilityMode::Exact => "exact",
+                                    CompatibilityMode::View => "view",
+                                    CompatibilityMode::Materialize => "materialize",
+                                    CompatibilityMode::Convert => "convert",
+                                    CompatibilityMode::Mixed => "mixed",
+                                }),
+                            ),
+                            ("total_cost", int_value(port.total_cost)),
+                            (
+                                "converter_steps",
+                                Value::List(
+                                    port.converter_steps
+                                        .into_iter()
+                                        .map(owned_string_value)
+                                        .collect(),
+                                ),
+                            ),
+                            (
+                                "compatibility_steps",
+                                Value::List(
+                                    port.compatibility_steps
+                                        .into_iter()
+                                        .map(compatibility_step_to_value)
+                                        .collect(),
+                                ),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
 /// Build an execution plan by running the ordered pass pipeline.
 /// Currently stubs; contracts are enforced via deterministic diagnostics ordering.
 /// Build an execution plan from a graph and registry.
@@ -616,6 +1550,7 @@ fn apply_descriptor_defaults(graph: &mut Graph, view: &daedalus_registry::store:
 pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> PlannerOutput {
     let mut diags = Vec::new();
     let view = input.registry.view();
+    clear_planner_owned_graph_metadata(&mut input.graph);
 
     // Security/integrity: clients can attach arbitrary node metadata in Graph JSON. These keys are
     // planner-owned and must not be accepted as inputs, otherwise a client can "force" types.
@@ -628,9 +1563,16 @@ pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> Planner
         node.metadata.remove("dynamic_outputs");
     }
 
-    // Placeholder passes; extend with real logic per PLAN.md.
+    let mut applied_lowerings = Vec::new();
     expand_embedded_graphs(&mut input, &view, &mut diags);
     apply_descriptor_defaults(&mut input.graph, &view);
+    applied_lowerings.extend(apply_planner_lowerings(
+        &mut input.graph,
+        input.registry,
+        &config,
+        &mut diags,
+        PlannerLoweringPhase::BeforeTypecheck,
+    ));
     hydrate_registry(&input, &view, &mut diags);
     validate_port_declarations(
         &input.graph,
@@ -638,13 +1580,45 @@ pub fn build_plan(mut input: PlannerInput<'_>, config: PlannerConfig) -> Planner
         &mut diags,
         config.strict_port_declarations,
     );
+    let overload_resolutions =
+        resolve_node_overloads(&mut input.graph, input.registry, &view, &config, &mut diags);
     typecheck(&mut input.graph, &view, &mut diags);
     convert(&mut input.graph, input.registry, &view, &mut diags, &config);
+    applied_lowerings.extend(apply_planner_lowerings(
+        &mut input.graph,
+        input.registry,
+        &config,
+        &mut diags,
+        PlannerLoweringPhase::AfterConvert,
+    ));
     align(&mut input.graph, &mut diags);
     gpu(&mut input.graph, &config, &mut diags);
     schedule(&mut input.graph, &mut diags);
     if config.enable_lints {
         lint(&input, &mut diags);
+    }
+
+    if !applied_lowerings.is_empty() {
+        input.graph.metadata.insert(
+            PLAN_APPLIED_LOWERINGS_KEY.to_string(),
+            Value::List(
+                applied_lowerings
+                    .iter()
+                    .map(applied_lowering_to_value)
+                    .collect(),
+            ),
+        );
+    }
+    if !overload_resolutions.is_empty() {
+        input.graph.metadata.insert(
+            PLAN_OVERLOAD_RESOLUTIONS_KEY.to_string(),
+            Value::List(
+                overload_resolutions
+                    .into_iter()
+                    .map(overload_resolution_to_value)
+                    .collect(),
+            ),
+        );
     }
 
     let plan = ExecutionPlan::new(input.graph.clone(), diags.clone());
@@ -1559,170 +2533,7 @@ fn convert(
     diags: &mut Vec<Diagnostic>,
     config: &PlannerConfig,
 ) {
-    fn collect_structural_steps(
-        registry: &daedalus_registry::store::Registry,
-        from: &TypeExpr,
-        to: &TypeExpr,
-        active_features: &[String],
-        allow_gpu: bool,
-        steps: &mut BTreeSet<ConverterId>,
-        depth: usize,
-    ) -> bool {
-        if from == to {
-            return true;
-        }
-        if depth > 64 {
-            return false;
-        }
-        if let Ok(res) =
-            registry.resolve_converter_with_context(from, to, active_features, allow_gpu)
-        {
-            for step in res.provenance.steps {
-                steps.insert(step);
-            }
-            return true;
-        }
-        match (from, to) {
-            (
-                TypeExpr::Scalar(ValueType::I32 | ValueType::U32),
-                TypeExpr::Scalar(ValueType::Int),
-            )
-            | (
-                TypeExpr::Scalar(ValueType::Int),
-                TypeExpr::Scalar(ValueType::I32 | ValueType::U32),
-            )
-            | (TypeExpr::Scalar(ValueType::F32), TypeExpr::Scalar(ValueType::Float))
-            | (TypeExpr::Scalar(ValueType::Float), TypeExpr::Scalar(ValueType::F32)) => true,
-            (TypeExpr::Optional(a), TypeExpr::Optional(b)) => collect_structural_steps(
-                registry,
-                a,
-                b,
-                active_features,
-                allow_gpu,
-                steps,
-                depth + 1,
-            ),
-            (TypeExpr::List(a), TypeExpr::List(b)) => collect_structural_steps(
-                registry,
-                a,
-                b,
-                active_features,
-                allow_gpu,
-                steps,
-                depth + 1,
-            ),
-            (TypeExpr::Map(ak, av), TypeExpr::Map(bk, bv)) => {
-                collect_structural_steps(
-                    registry,
-                    ak,
-                    bk,
-                    active_features,
-                    allow_gpu,
-                    steps,
-                    depth + 1,
-                ) && collect_structural_steps(
-                    registry,
-                    av,
-                    bv,
-                    active_features,
-                    allow_gpu,
-                    steps,
-                    depth + 1,
-                )
-            }
-            (TypeExpr::Tuple(a), TypeExpr::Tuple(b)) => {
-                if a.len() != b.len() {
-                    return false;
-                }
-                a.iter().zip(b.iter()).all(|(ai, bi)| {
-                    collect_structural_steps(
-                        registry,
-                        ai,
-                        bi,
-                        active_features,
-                        allow_gpu,
-                        steps,
-                        depth + 1,
-                    )
-                })
-            }
-            (TypeExpr::Struct(a_fields), TypeExpr::Struct(b_fields)) => {
-                if a_fields.len() != b_fields.len() {
-                    return false;
-                }
-                for bf in b_fields {
-                    let Some(af) = a_fields.iter().find(|af| af.name == bf.name) else {
-                        return false;
-                    };
-                    if !collect_structural_steps(
-                        registry,
-                        &af.ty,
-                        &bf.ty,
-                        active_features,
-                        allow_gpu,
-                        steps,
-                        depth + 1,
-                    ) {
-                        return false;
-                    }
-                }
-                true
-            }
-            (TypeExpr::Enum(a_vars), TypeExpr::Enum(b_vars)) => {
-                if a_vars.len() != b_vars.len() {
-                    return false;
-                }
-                for bv in b_vars {
-                    let Some(av) = a_vars.iter().find(|av| av.name == bv.name) else {
-                        return false;
-                    };
-                    match (&av.ty, &bv.ty) {
-                        (None, None) => {}
-                        (Some(at), Some(bt)) => {
-                            if !collect_structural_steps(
-                                registry,
-                                at,
-                                bt,
-                                active_features,
-                                allow_gpu,
-                                steps,
-                                depth + 1,
-                            ) {
-                                return false;
-                            }
-                        }
-                        _ => return false,
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn resolve_structural(
-        registry: &daedalus_registry::store::Registry,
-        from: &TypeExpr,
-        to: &TypeExpr,
-        active_features: &[String],
-        allow_gpu: bool,
-    ) -> Option<Vec<ConverterId>> {
-        let mut steps = BTreeSet::new();
-        if !collect_structural_steps(
-            registry,
-            from,
-            to,
-            active_features,
-            allow_gpu,
-            &mut steps,
-            0,
-        ) {
-            return None;
-        }
-        Some(steps.into_iter().collect())
-    }
-
-    let mut converter_metadata: Vec<(String, String)> = Vec::new();
+    let mut edge_explanations = Vec::new();
     for edge in &graph.edges {
         let from_node = match graph.nodes.get(edge.from.node.0) {
             Some(n) => n,
@@ -1739,85 +2550,86 @@ fn convert(
         let (Some(out_ty), Some(in_ty)) = (from_ty, to_ty) else {
             continue;
         };
-        if out_ty == in_ty {
-            continue;
-        }
         let allow_gpu = config.enable_gpu;
         let features: Vec<String> = config.active_features.clone();
-        let result: Result<ConversionResolution, ()> =
-            resolve_structural(registry, &out_ty, &in_ty, &features, allow_gpu)
-                .map(|steps| ConversionResolution {
-                    provenance: ConversionProvenance {
-                        steps,
-                        total_cost: 0,
-                        skipped_cycles: vec![],
-                        skipped_gpu: vec![],
-                        skipped_features: vec![],
-                    },
-                })
-                .ok_or(());
-        match result {
-            Ok(res) => {
-                let mut feats = features.clone();
-                feats.sort();
-                let feats_str = if feats.is_empty() {
-                    "none".to_string()
-                } else {
-                    feats.join(",")
-                };
-                let key = format!(
-                    "converter:{}->{}:{}->{}",
-                    from_node.id.0, to_node.id.0, edge.from.port, edge.to.port
-                );
-                let mut path: Vec<String> =
-                    res.provenance.steps.iter().map(|c| c.0.clone()).collect();
-                if path.is_empty() {
-                    path.push("identity".into());
-                }
-                let value = format!(
-                    "cost={};path={};features={};gpu={};skipped_gpu={:?};skipped_features={:?}",
-                    res.provenance.total_cost,
-                    path.join(">"),
-                    feats_str,
-                    allow_gpu,
-                    res.provenance.skipped_gpu,
-                    res.provenance.skipped_features
-                );
-                converter_metadata.push((key, value));
-            }
-            Err(_) => {
-                let mut feats = features.clone();
-                feats.sort();
-                let feats_str = if feats.is_empty() {
-                    "none".to_string()
-                } else {
-                    feats.join(",")
-                };
-                diags.push(
-                    Diagnostic::new(
-                        DiagnosticCode::ConverterMissing,
-                        format!(
-                            "no converter from {:?} to {:?} for edge {}.{} -> {}.{} [features: {}; gpu: {}]",
-                            out_ty,
-                            in_ty,
-                            from_node.id.0,
-                            edge.from.port,
-                            to_node.id.0,
-                            edge.to.port,
-                            feats_str,
-                            allow_gpu
-                        ),
-                    )
-                    .in_pass("convert")
-                    .at_node(diagnostic_node_id(to_node))
-                    .at_port(edge.to.port.clone()),
-                );
-            }
+        let resolved = resolve_edge_compatibility(registry, &out_ty, &in_ty, &features, allow_gpu);
+        if let Some(resolved) = resolved {
+            edge_explanations.push(EdgeResolutionExplanation {
+                from_node: from_node.id.0.clone(),
+                from_port: edge.from.port.clone(),
+                to_node: to_node.id.0.clone(),
+                to_port: edge.to.port.clone(),
+                from_type: out_ty,
+                to_type: in_ty,
+                resolution_kind: resolved.resolution_kind,
+                compatibility_mode: resolved.compatibility_mode,
+                total_cost: resolved.total_cost,
+                converter_steps: resolved.converter_steps,
+                compatibility_steps: resolved.compatibility_steps,
+            });
+            continue;
         }
+
+        let mut feats = features.clone();
+        feats.sort();
+        let feats_str = if feats.is_empty() {
+            "none".to_string()
+        } else {
+            feats.join(",")
+        };
+        diags.push(
+            Diagnostic::new(
+                DiagnosticCode::ConverterMissing,
+                format!(
+                    "no converter from {:?} to {:?} for edge {}.{} -> {}.{} [features: {}; gpu: {}]",
+                    out_ty,
+                    in_ty,
+                    from_node.id.0,
+                    edge.from.port,
+                    to_node.id.0,
+                    edge.to.port,
+                    feats_str,
+                    allow_gpu
+                ),
+            )
+            .in_pass("convert")
+            .at_node(diagnostic_node_id(to_node))
+            .at_port(edge.to.port.clone()),
+        );
+        let compatibility_path = typing::explain_typeexpr_conversion(&out_ty, &in_ty);
+        let compatibility_mode = compatibility_mode_from_path(compatibility_path.as_ref());
+        let compatibility_steps = compatibility_steps_from_path(compatibility_path);
+        edge_explanations.push(EdgeResolutionExplanation {
+            from_node: from_node.id.0.clone(),
+            from_port: edge.from.port.clone(),
+            to_node: to_node.id.0.clone(),
+            to_port: edge.to.port.clone(),
+            from_type: out_ty,
+            to_type: in_ty,
+            resolution_kind: EdgeResolutionKind::Missing,
+            compatibility_mode,
+            total_cost: 0,
+            converter_steps: Vec::new(),
+            compatibility_steps,
+        });
     }
-    converter_metadata.sort_by(|a, b| a.0.cmp(&b.0));
-    for (k, v) in converter_metadata {
-        graph.metadata.insert(k, Value::String(v.into()));
+    edge_explanations.sort_by(|a, b| {
+        a.from_node
+            .cmp(&b.from_node)
+            .then_with(|| a.from_port.cmp(&b.from_port))
+            .then_with(|| a.to_node.cmp(&b.to_node))
+            .then_with(|| a.to_port.cmp(&b.to_port))
+    });
+    if !edge_explanations.is_empty() {
+        graph.metadata.insert(
+            PLAN_EDGE_EXPLANATIONS_KEY.to_string(),
+            Value::List(
+                edge_explanations
+                    .into_iter()
+                    .map(edge_resolution_to_value)
+                    .collect(),
+            ),
+        );
     }
 }
 fn align(graph: &mut Graph, diags: &mut Vec<Diagnostic>) {
@@ -2130,6 +2942,188 @@ fn lint(input: &PlannerInput<'_>, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+fn value_as_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn value_as_u64(value: &Value) -> Option<u64> {
+    match value {
+        Value::Int(value) => (*value).try_into().ok(),
+        _ => None,
+    }
+}
+
+fn value_as_bool(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn parse_edge_resolution_kind(value: &Value) -> Option<EdgeResolutionKind> {
+    match value_as_string(value)?.as_str() {
+        "exact" => Some(EdgeResolutionKind::Exact),
+        "conversion" => Some(EdgeResolutionKind::Conversion),
+        "missing" => Some(EdgeResolutionKind::Missing),
+        _ => None,
+    }
+}
+
+fn parse_compatibility_mode(value: &Value) -> Option<CompatibilityMode> {
+    match value_as_string(value)?.as_str() {
+        "none" => Some(CompatibilityMode::None),
+        "exact" => Some(CompatibilityMode::Exact),
+        "view" => Some(CompatibilityMode::View),
+        "materialize" => Some(CompatibilityMode::Materialize),
+        "convert" => Some(CompatibilityMode::Convert),
+        "mixed" => Some(CompatibilityMode::Mixed),
+        _ => None,
+    }
+}
+
+fn parse_planner_lowering_phase(value: &Value) -> Option<PlannerLoweringPhase> {
+    match value_as_string(value)?.as_str() {
+        "before_typecheck" => Some(PlannerLoweringPhase::BeforeTypecheck),
+        "after_convert" => Some(PlannerLoweringPhase::AfterConvert),
+        _ => None,
+    }
+}
+
+fn parse_compatibility_kind(value: &Value) -> Option<CompatibilityKind> {
+    match value_as_string(value)?.as_str() {
+        "view" => Some(CompatibilityKind::View),
+        "materialize" => Some(CompatibilityKind::Materialize),
+        "convert" => Some(CompatibilityKind::Convert),
+        _ => None,
+    }
+}
+
+fn parse_compatibility_step(value: &Value) -> Option<CompatibilityStepExplanation> {
+    let Value::Struct(fields) = value else {
+        return None;
+    };
+    Some(CompatibilityStepExplanation {
+        from: value_to_typeexpr(struct_field(fields, "from")?)?,
+        to: value_to_typeexpr(struct_field(fields, "to")?)?,
+        kind: parse_compatibility_kind(struct_field(fields, "kind")?)?,
+        cost: value_as_u64(struct_field(fields, "cost")?)?,
+        capabilities: match struct_field(fields, "capabilities")? {
+            Value::List(values) => values.iter().filter_map(value_as_string).collect(),
+            _ => return None,
+        },
+    })
+}
+
+fn parse_applied_lowering(value: &Value) -> Option<AppliedPlannerLowering> {
+    let Value::Struct(fields) = value else {
+        return None;
+    };
+    Some(AppliedPlannerLowering {
+        id: value_as_string(struct_field(fields, "id")?)?,
+        phase: parse_planner_lowering_phase(struct_field(fields, "phase")?)?,
+        summary: value_as_string(struct_field(fields, "summary")?)?,
+        changed: value_as_bool(struct_field(fields, "changed")?)?,
+        metadata: value_to_string_map(struct_field(fields, "metadata")?)?,
+    })
+}
+
+fn parse_edge_explanation(value: &Value) -> Option<EdgeResolutionExplanation> {
+    let Value::Struct(fields) = value else {
+        return None;
+    };
+    Some(EdgeResolutionExplanation {
+        from_node: value_as_string(struct_field(fields, "from_node")?)?,
+        from_port: value_as_string(struct_field(fields, "from_port")?)?,
+        to_node: value_as_string(struct_field(fields, "to_node")?)?,
+        to_port: value_as_string(struct_field(fields, "to_port")?)?,
+        from_type: value_to_typeexpr(struct_field(fields, "from_type")?)?,
+        to_type: value_to_typeexpr(struct_field(fields, "to_type")?)?,
+        resolution_kind: parse_edge_resolution_kind(struct_field(fields, "resolution_kind")?)?,
+        compatibility_mode: parse_compatibility_mode(struct_field(fields, "compatibility_mode")?)?,
+        total_cost: value_as_u64(struct_field(fields, "total_cost")?)?,
+        converter_steps: match struct_field(fields, "converter_steps")? {
+            Value::List(values) => values.iter().filter_map(value_as_string).collect(),
+            _ => return None,
+        },
+        compatibility_steps: match struct_field(fields, "compatibility_steps")? {
+            Value::List(values) => values.iter().filter_map(parse_compatibility_step).collect(),
+            _ => return None,
+        },
+    })
+}
+
+fn parse_overload_port_resolution(value: &Value) -> Option<OverloadPortResolution> {
+    let Value::Struct(fields) = value else {
+        return None;
+    };
+    Some(OverloadPortResolution {
+        port: value_as_string(struct_field(fields, "port")?)?,
+        from_node: value_as_string(struct_field(fields, "from_node")?)?,
+        from_port: value_as_string(struct_field(fields, "from_port")?)?,
+        from_type: value_to_typeexpr(struct_field(fields, "from_type")?)?,
+        to_type: value_to_typeexpr(struct_field(fields, "to_type")?)?,
+        resolution_kind: parse_edge_resolution_kind(struct_field(fields, "resolution_kind")?)?,
+        compatibility_mode: parse_compatibility_mode(struct_field(fields, "compatibility_mode")?)?,
+        total_cost: value_as_u64(struct_field(fields, "total_cost")?)?,
+        converter_steps: match struct_field(fields, "converter_steps")? {
+            Value::List(values) => values.iter().filter_map(value_as_string).collect(),
+            _ => return None,
+        },
+        compatibility_steps: match struct_field(fields, "compatibility_steps")? {
+            Value::List(values) => values.iter().filter_map(parse_compatibility_step).collect(),
+            _ => return None,
+        },
+    })
+}
+
+fn parse_overload_resolution(value: &Value) -> Option<NodeOverloadResolution> {
+    let Value::Struct(fields) = value else {
+        return None;
+    };
+    Some(NodeOverloadResolution {
+        node: value_as_string(struct_field(fields, "node")?)?,
+        overload_id: value_as_string(struct_field(fields, "overload_id")?)?,
+        overload_label: match struct_field(fields, "overload_label")? {
+            Value::Unit => None,
+            value => value_as_string(value),
+        },
+        total_cost: value_as_u64(struct_field(fields, "total_cost")?)?,
+        ports: match struct_field(fields, "ports")? {
+            Value::List(values) => values
+                .iter()
+                .filter_map(parse_overload_port_resolution)
+                .collect(),
+            _ => return None,
+        },
+    })
+}
+
+pub fn explain_plan(graph: &Graph) -> PlanExplanation {
+    let lowerings = match graph.metadata.get(PLAN_APPLIED_LOWERINGS_KEY) {
+        Some(Value::List(values)) => values.iter().filter_map(parse_applied_lowering).collect(),
+        _ => Vec::new(),
+    };
+    let overloads = match graph.metadata.get(PLAN_OVERLOAD_RESOLUTIONS_KEY) {
+        Some(Value::List(values)) => values
+            .iter()
+            .filter_map(parse_overload_resolution)
+            .collect(),
+        _ => Vec::new(),
+    };
+    let edges = match graph.metadata.get(PLAN_EDGE_EXPLANATIONS_KEY) {
+        Some(Value::List(values)) => values.iter().filter_map(parse_edge_explanation).collect(),
+        _ => Vec::new(),
+    };
+    PlanExplanation {
+        lowerings,
+        overloads,
+        edges,
+    }
+}
+
 fn port_type(
     node: &NodeInstance,
     desc: &NodeDescriptor,
@@ -2159,6 +3153,9 @@ fn port_type(
     }
 
     if is_input {
+        if let Some(ty) = resolve_override(&node.metadata, DYNAMIC_INPUT_TYPES_KEY, name) {
+            return Some(ty);
+        }
         if let Some(ty) = desc.input_ty_for(name) {
             if is_generic_marker(ty)
                 && let Some(solved) =
@@ -2168,9 +3165,8 @@ fn port_type(
             }
             return Some(ty.clone());
         }
-        if let Some(ty) = resolve_override(&node.metadata, DYNAMIC_INPUT_TYPES_KEY, name) {
-            return Some(ty);
-        }
+    } else if let Some(ty) = resolve_override(&node.metadata, DYNAMIC_OUTPUT_TYPES_KEY, name) {
+        return Some(ty);
     } else if let Some(port) = desc.outputs.iter().find(|p| p.name == name) {
         if is_generic_marker(&port.ty)
             && let Some(solved) = resolve_override(&node.metadata, DYNAMIC_OUTPUT_TYPES_KEY, name)
@@ -2178,8 +3174,6 @@ fn port_type(
             return Some(solved);
         }
         return Some(port.ty.clone());
-    } else if let Some(ty) = resolve_override(&node.metadata, DYNAMIC_OUTPUT_TYPES_KEY, name) {
-        return Some(ty);
     }
     let key = if is_input {
         "dynamic_inputs"

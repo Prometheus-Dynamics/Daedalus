@@ -1,8 +1,6 @@
 pub use daedalus_data::model::Value;
 #[cfg(feature = "gpu")]
-use daedalus_gpu::ErasedPayload;
-#[cfg(feature = "gpu")]
-use daedalus_gpu::GpuImageHandle;
+use daedalus_gpu::DataCell;
 use std::any::Any;
 use std::sync::Arc;
 use std::time::Instant;
@@ -10,39 +8,37 @@ use std::time::Instant;
 /// Runtime payload carried over edges. Keep minimal and cheap to clone.
 ///
 /// ```
-/// use daedalus_runtime::executor::EdgePayload;
-/// let payload = EdgePayload::Unit;
-/// assert!(matches!(payload, EdgePayload::Unit));
+/// use daedalus_runtime::executor::RuntimeValue;
+/// let payload = RuntimeValue::Unit;
+/// assert!(matches!(payload, RuntimeValue::Unit));
 /// ```
 #[derive(Clone, Debug)]
-pub enum EdgePayload {
+pub enum RuntimeValue {
     Unit,
     Bytes(Arc<[u8]>),
     Value(Value),
     Any(Arc<dyn Any + Send + Sync>),
     #[cfg(feature = "gpu")]
-    Payload(ErasedPayload),
-    #[cfg(feature = "gpu")]
-    GpuImage(GpuImageHandle),
+    Data(DataCell),
 }
 
 /// Correlated payload with a shared emission identifier.
 ///
 /// ```
-/// use daedalus_runtime::executor::{CorrelatedPayload, EdgePayload};
-/// let correlated = CorrelatedPayload::from_edge(EdgePayload::Unit);
+/// use daedalus_runtime::executor::{CorrelatedValue, RuntimeValue};
+/// let correlated = CorrelatedValue::from_edge(RuntimeValue::Unit);
 /// assert!(correlated.correlation_id > 0);
 /// ```
 #[derive(Clone, Debug)]
-pub struct CorrelatedPayload {
+pub struct CorrelatedValue {
     pub correlation_id: u64,
-    pub inner: EdgePayload,
+    pub inner: RuntimeValue,
     pub enqueued_at: Instant,
 }
 
-impl CorrelatedPayload {
+impl CorrelatedValue {
     /// Wrap an edge payload with a new correlation id.
-    pub fn from_edge(inner: EdgePayload) -> Self {
+    pub fn from_edge(inner: RuntimeValue) -> Self {
         Self {
             correlation_id: next_correlation_id(),
             inner,

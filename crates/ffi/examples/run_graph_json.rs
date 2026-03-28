@@ -1,12 +1,12 @@
 //! Execute a graph loaded from JSON with a single host-bridge image input.
 
 use daedalus::{
-    ErasedPayload, PluginLibrary,
+    DataCell, PluginLibrary,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
-    gpu::Payload as GpuPayload,
+    gpu::Compute as GpuCompute,
     host_bridge::install_host_bridge,
     runtime::plugins::PluginRegistry,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
+    runtime::{executor::RuntimeValue, host_bridge::HostBridgeManager},
 };
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_planner::Graph;
@@ -56,8 +56,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("failed to open image {}: {e}", image_path.display()))?
         .to_rgb8();
     let img = DynamicImage::ImageRgb8(img);
-    let ep = ErasedPayload::from_cpu::<DynamicImage>(img);
-    input.push("frame", EdgePayload::Payload(ep), None);
+    let ep = DataCell::from_cpu::<DynamicImage>(img);
+    input.push("frame", RuntimeValue::Data(ep), None);
 
     let handlers = plugins.take_handlers();
     let exec = Executor::new(&runtime_plan, handlers)
@@ -257,9 +257,9 @@ fn resolve_output_prefix() -> String {
     env::var("DAEDALUS_OUTPUT_PREFIX").unwrap_or_else(|_| "stage".to_string())
 }
 
-fn payload_to_image(payload: EdgePayload) -> Option<DynamicImage> {
+fn payload_to_image(payload: RuntimeValue) -> Option<DynamicImage> {
     match payload {
-        EdgePayload::Any(any) => {
+        RuntimeValue::Any(any) => {
             if let Some(inner) = any.downcast_ref::<Arc<dyn std::any::Any + Send + Sync>>() {
                 let inner_ref = inner.as_ref();
                 if let Some(img) = inner_ref.downcast_ref::<DynamicImage>().cloned() {
@@ -274,18 +274,18 @@ fn payload_to_image(payload: EdgePayload) -> Option<DynamicImage> {
                 if let Some(img) = inner_ref.downcast_ref::<RgbaImage>() {
                     return Some(DynamicImage::ImageRgba8(img.clone()));
                 }
-                if let Some(payload) = inner_ref.downcast_ref::<GpuPayload<DynamicImage>>()
+                if let Some(payload) = inner_ref.downcast_ref::<GpuCompute<DynamicImage>>()
                     && let Some(cpu) = payload.as_cpu()
                 {
                     return Some(cpu.clone());
                 }
-                if let Some(payload) = inner_ref.downcast_ref::<ErasedPayload>()
+                if let Some(payload) = inner_ref.downcast_ref::<DataCell>()
                     && let Some(img) = payload.as_cpu::<DynamicImage>()
                 {
                     return Some(img.clone());
                 }
             }
-            if let Some(payload) = any.downcast_ref::<ErasedPayload>() {
+            if let Some(payload) = any.downcast_ref::<DataCell>() {
                 if let Some(img) = payload.as_cpu::<DynamicImage>() {
                     return Some(img.clone());
                 }
@@ -314,14 +314,14 @@ fn payload_to_image(payload: EdgePayload) -> Option<DynamicImage> {
             if let Some(img) = any.downcast_ref::<RgbaImage>() {
                 return Some(DynamicImage::ImageRgba8(img.clone()));
             }
-            if let Some(payload) = any.downcast_ref::<GpuPayload<DynamicImage>>()
+            if let Some(payload) = any.downcast_ref::<GpuCompute<DynamicImage>>()
                 && let Some(cpu) = payload.as_cpu()
             {
                 return Some(cpu.clone());
             }
             None
         }
-        EdgePayload::Payload(payload) => {
+        RuntimeValue::Data(payload) => {
             if let Some(img) = payload.as_cpu::<DynamicImage>() {
                 return Some(img.clone());
             }

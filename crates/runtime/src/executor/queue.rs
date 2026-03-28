@@ -7,12 +7,12 @@ use crossbeam_queue::ArrayQueue;
 
 use crate::plan::{BackpressureStrategy, EdgePolicyKind};
 
-use super::payload_size_bytes;
-use super::{CorrelatedPayload, ExecutionTelemetry};
+use super::runtime_value_size_bytes;
+use super::{CorrelatedValue, ExecutionTelemetry};
 
 /// Simple ring buffer for bounded queues.
 pub struct RingBuf {
-    buf: Vec<Option<CorrelatedPayload>>,
+    buf: Vec<Option<CorrelatedValue>>,
     head: usize,
     len: usize,
 }
@@ -30,7 +30,7 @@ impl RingBuf {
         self.buf.len()
     }
 
-    pub fn pop_front(&mut self) -> Option<CorrelatedPayload> {
+    pub fn pop_front(&mut self) -> Option<CorrelatedValue> {
         if self.len == 0 {
             return None;
         }
@@ -41,7 +41,7 @@ impl RingBuf {
         out
     }
 
-    pub fn push_back(&mut self, payload: CorrelatedPayload) -> bool {
+    pub fn push_back(&mut self, payload: CorrelatedValue) -> bool {
         let mut dropped = false;
         if self.len == self.cap() {
             // drop oldest
@@ -66,12 +66,21 @@ impl RingBuf {
         self.len == 0
     }
 
-    pub fn payload_bytes(&self) -> u64 {
+    pub fn clear(&mut self) {
+        for offset in 0..self.len {
+            let idx = (self.head + offset) % self.cap();
+            let _ = self.buf[idx].take();
+        }
+        self.head = 0;
+        self.len = 0;
+    }
+
+    pub fn transport_bytes(&self) -> u64 {
         let mut total = 0u64;
         for offset in 0..self.len {
             let idx = (self.head + offset) % self.cap();
             if let Some(payload) = self.buf[idx].as_ref() {
-                total = total.saturating_add(payload_size_bytes(&payload.inner).unwrap_or(0));
+                total = total.saturating_add(runtime_value_size_bytes(&payload.inner).unwrap_or(0));
             }
         }
         total
@@ -79,7 +88,7 @@ impl RingBuf {
 }
 
 pub enum EdgeQueue {
-    Deque(std::collections::VecDeque<CorrelatedPayload>),
+    Deque(std::collections::VecDeque<CorrelatedValue>),
     Bounded { ring: RingBuf },
 }
 
@@ -90,7 +99,7 @@ impl Default for EdgeQueue {
 }
 
 impl EdgeQueue {
-    pub(crate) fn pop_front(&mut self) -> Option<CorrelatedPayload> {
+    pub(crate) fn pop_front(&mut self) -> Option<CorrelatedValue> {
         match self {
             EdgeQueue::Deque(d) => d.pop_front(),
             EdgeQueue::Bounded { ring } => ring.pop_front(),
@@ -147,17 +156,24 @@ impl EdgeQueue {
         }
     }
 
-    pub fn payload_bytes(&self) -> u64 {
+    pub fn transport_bytes(&self) -> u64 {
         match self {
             EdgeQueue::Deque(d) => d
                 .iter()
-                .map(|payload| payload_size_bytes(&payload.inner).unwrap_or(0))
+                .map(|payload| runtime_value_size_bytes(&payload.inner).unwrap_or(0))
                 .fold(0u64, u64::saturating_add),
-            EdgeQueue::Bounded { ring } => ring.payload_bytes(),
+            EdgeQueue::Bounded { ring } => ring.transport_bytes(),
         }
     }
 
-    pub fn push(&mut self, policy: &EdgePolicyKind, payload: CorrelatedPayload) -> bool {
+    pub fn clear(&mut self) {
+        match self {
+            EdgeQueue::Deque(d) => d.clear(),
+            EdgeQueue::Bounded { ring } => ring.clear(),
+        }
+    }
+
+    pub fn push(&mut self, policy: &EdgePolicyKind, payload: CorrelatedValue) -> bool {
         match policy {
             EdgePolicyKind::NewestWins => {
                 match self {
@@ -196,6 +212,43 @@ impl EdgeQueue {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{EdgeQueue, RingBuf};
+    use crate::executor::{CorrelatedValue, RuntimeValue};
+    use crate::plan::EdgePolicyKind;
+
+    fn payload(value: u8) -> CorrelatedValue {
+        CorrelatedValue::from_edge(RuntimeValue::Bytes(std::sync::Arc::<[u8]>::from([value])))
+    }
+
+    #[test]
+    fn ringbuf_clear_preserves_capacity() {
+        let mut ring = RingBuf::new(4);
+        ring.push_back(payload(1));
+        ring.push_back(payload(2));
+        ring.clear();
+
+        assert_eq!(ring.cap(), 4);
+        assert_eq!(ring.len(), 0);
+        assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn edge_queue_clear_preserves_bounded_policy_capacity() {
+        let mut queue = EdgeQueue::default();
+        queue.ensure_policy(&EdgePolicyKind::Bounded { cap: 3 });
+        queue.push(&EdgePolicyKind::Bounded { cap: 3 }, payload(1));
+        queue.push(&EdgePolicyKind::Bounded { cap: 3 }, payload(2));
+
+        queue.clear();
+
+        assert_eq!(queue.capacity(), Some(3));
+        assert_eq!(queue.len(), 0);
+        assert!(queue.is_empty());
+    }
+}
+
 #[derive(Default)]
 pub struct EdgeStorageMetrics {
     current_queue_bytes: AtomicU64,
@@ -210,6 +263,7 @@ impl EdgeStorageMetrics {
             .fetch_max(current_bytes, Ordering::Relaxed);
     }
 
+    #[cfg(feature = "lockfree-queues")]
     pub(crate) fn adjust_bytes(&self, added_bytes: u64, removed_bytes: u64) {
         let mut current = self.current_queue_bytes.load(Ordering::Relaxed);
         loop {
@@ -231,6 +285,7 @@ impl EdgeStorageMetrics {
         }
     }
 
+    #[cfg(feature = "lockfree-queues")]
     pub(crate) fn snapshot(&self) -> (u64, u64) {
         (
             self.current_queue_bytes.load(Ordering::Relaxed),
@@ -247,7 +302,7 @@ pub enum EdgeStorage {
     },
     #[cfg(feature = "lockfree-queues")]
     BoundedLf {
-        queue: Arc<ArrayQueue<CorrelatedPayload>>,
+        queue: Arc<ArrayQueue<CorrelatedValue>>,
         metrics: Arc<EdgeStorageMetrics>,
     },
 }
@@ -298,7 +353,7 @@ pub fn build_queues(plan: &crate::plan::RuntimePlan) -> Vec<EdgeStorage> {
 pub fn apply_policy(
     edge_idx: usize,
     policy: &EdgePolicyKind,
-    payload: &CorrelatedPayload,
+    payload: &CorrelatedValue,
     queues: &Arc<Vec<EdgeStorage>>,
     warnings_seen: &Arc<Mutex<std::collections::HashSet<String>>>,
     telem: &mut ExecutionTelemetry,
@@ -306,12 +361,12 @@ pub fn apply_policy(
     backpressure: BackpressureStrategy,
 ) {
     if let Some(storage) = queues.get(edge_idx) {
-        let payload_bytes = if cfg!(feature = "metrics") && telem.metrics_level.is_detailed() {
-            payload_size_bytes(&payload.inner)
+        let transport_bytes = if cfg!(feature = "metrics") && telem.metrics_level.is_detailed() {
+            runtime_value_size_bytes(&payload.inner)
         } else {
             None
         };
-        telem.record_edge_payload(edge_idx, payload_bytes);
+        telem.record_edge_transport(edge_idx, transport_bytes);
         match storage {
             EdgeStorage::Locked { queue, metrics } => {
                 if let Ok(mut q) = queue.lock() {
@@ -348,7 +403,7 @@ pub fn apply_policy(
                         record_warning(&label, warnings_seen, telem);
                     }
                     telem.record_edge_depth(edge_idx, q.len());
-                    let current_queue_bytes = q.payload_bytes();
+                    let current_queue_bytes = q.transport_bytes();
                     metrics.set_current_bytes(current_queue_bytes);
                     telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
                 }
@@ -357,7 +412,7 @@ pub fn apply_policy(
             EdgeStorage::BoundedLf { queue, metrics } => {
                 let mut dropped = false;
                 telem.record_edge_capacity(edge_idx, Some(queue.capacity()));
-                let added_bytes = payload_bytes.unwrap_or(0);
+                let added_bytes = transport_bytes.unwrap_or(0);
                 let mut removed_bytes = 0u64;
                 match backpressure {
                     BackpressureStrategy::BoundedQueues => {
@@ -391,7 +446,7 @@ pub fn apply_policy(
                         if queue.push(payload.clone()).is_err() {
                             removed_bytes = queue
                                 .pop()
-                                .and_then(|removed| payload_size_bytes(&removed.inner))
+                                .and_then(|removed| runtime_value_size_bytes(&removed.inner))
                                 .unwrap_or(0);
                             let _ = queue.push(payload.clone());
                             dropped = true;
@@ -420,7 +475,7 @@ pub fn apply_policy(
 pub struct ApplyPolicyOwnedArgs<'a> {
     pub edge_idx: usize,
     pub policy: &'a EdgePolicyKind,
-    pub payload: CorrelatedPayload,
+    pub payload: CorrelatedValue,
     pub queues: &'a Arc<Vec<EdgeStorage>>,
     pub warnings_seen: &'a Arc<Mutex<std::collections::HashSet<String>>>,
     pub telem: &'a mut ExecutionTelemetry,
@@ -440,12 +495,12 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
         backpressure,
     } = args;
     if let Some(storage) = queues.get(edge_idx) {
-        let payload_bytes = if cfg!(feature = "metrics") && telem.metrics_level.is_detailed() {
-            payload_size_bytes(&payload.inner)
+        let transport_bytes = if cfg!(feature = "metrics") && telem.metrics_level.is_detailed() {
+            runtime_value_size_bytes(&payload.inner)
         } else {
             None
         };
-        telem.record_edge_payload(edge_idx, payload_bytes);
+        telem.record_edge_transport(edge_idx, transport_bytes);
         match storage {
             EdgeStorage::Locked { queue, metrics } => {
                 if let Ok(mut q) = queue.lock() {
@@ -481,7 +536,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
                         record_warning(&label, warnings_seen, telem);
                     }
                     telem.record_edge_depth(edge_idx, q.len());
-                    let current_queue_bytes = q.payload_bytes();
+                    let current_queue_bytes = q.transport_bytes();
                     metrics.set_current_bytes(current_queue_bytes);
                     telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
                 }
@@ -490,7 +545,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
             EdgeStorage::BoundedLf { queue, metrics } => {
                 let mut dropped = false;
                 telem.record_edge_capacity(edge_idx, Some(queue.capacity()));
-                let added_bytes = payload_bytes.unwrap_or(0);
+                let added_bytes = transport_bytes.unwrap_or(0);
                 let mut removed_bytes = 0u64;
                 match backpressure {
                     BackpressureStrategy::BoundedQueues => {
@@ -521,7 +576,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) {
                         if let Err(payload) = queue.push(payload) {
                             removed_bytes = queue
                                 .pop()
-                                .and_then(|removed| payload_size_bytes(&removed.inner))
+                                .and_then(|removed| runtime_value_size_bytes(&removed.inner))
                                 .unwrap_or(0);
                             let _ = queue.push(payload);
                             dropped = true;

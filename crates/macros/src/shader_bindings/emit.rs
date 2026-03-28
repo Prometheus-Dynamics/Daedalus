@@ -232,7 +232,7 @@ pub fn emit_bindings(
                 }
                 FieldKind::Texture { source, write, .. } => {
                     match source {
-                        super::types::TextureSource::PayloadDynamic => quote! {{
+                        super::types::TextureSource::ComputeDynamic => quote! {{
                             let binding = #binding;
                             let write = #write;
                             let kind = if write {
@@ -241,7 +241,7 @@ pub fn emit_bindings(
                                 ::daedalus::gpu::shader::BindingKind::Texture2D
                             };
                             match &self.#ident {
-                                ::daedalus::Payload::Gpu(handle) if !write => {
+                                ::daedalus::Compute::Gpu(handle) if !write => {
                                     ::daedalus::gpu::shader::ShaderBinding {
                                         binding,
                                         kind,

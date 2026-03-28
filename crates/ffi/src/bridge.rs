@@ -13,7 +13,7 @@ use daedalus_runtime::io::NodeIo;
 use image::DynamicImage;
 
 use crate::manifest::{ManifestPort, ManifestSyncGroup, NodeManifest};
-use crate::python::ImagePayload;
+use crate::python::ImageCompute;
 
 pub(crate) fn json_to_value(v: serde_json::Value) -> Result<Value, String> {
     Ok(match v {
@@ -152,7 +152,7 @@ pub(crate) fn any_to_json(v: &dyn Any) -> Option<serde_json::Value> {
     {
         return Some(json);
     }
-    if let Some(img) = v.downcast_ref::<ImagePayload>() {
+    if let Some(img) = v.downcast_ref::<ImageCompute>() {
         return Some(serde_json::json!({
             "data_b64": img.data_b64,
             "width": img.width,
@@ -164,17 +164,17 @@ pub(crate) fn any_to_json(v: &dyn Any) -> Option<serde_json::Value> {
     }
     // Cross-dylib type ids won't match, so also fall back to a name check and raw pointer cast.
     let type_name = std::any::type_name_of_val(v);
-    if type_name == std::any::type_name::<ImagePayload>() || type_name.ends_with("::ImagePayload") {
-        if std::mem::size_of_val(v) != std::mem::size_of::<ImagePayload>()
-            || std::mem::align_of_val(v) != std::mem::align_of::<ImagePayload>()
+    if type_name == std::any::type_name::<ImageCompute>() || type_name.ends_with("::ImageCompute") {
+        if std::mem::size_of_val(v) != std::mem::size_of::<ImageCompute>()
+            || std::mem::align_of_val(v) != std::mem::align_of::<ImageCompute>()
         {
             return None;
         }
-        // SAFETY: ImagePayload is `#[repr(C)]` and contains only `String` + scalar fields; when
+        // SAFETY: ImageCompute is `#[repr(C)]` and contains only `String` + scalar fields; when
         // the dynamic type name matches and the runtime size/alignment match, it's safe to
         // reinterpret across dylibs (even if `TypeId` differs).
         let (data_ptr, _): (*const (), *const ()) = unsafe { std::mem::transmute(v) };
-        let img: &ImagePayload = unsafe { &*(data_ptr as *const ImagePayload) };
+        let img: &ImageCompute = unsafe { &*(data_ptr as *const ImageCompute) };
         return Some(serde_json::json!({
             "data_b64": img.data_b64,
             "width": img.width,

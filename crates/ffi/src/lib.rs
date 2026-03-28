@@ -28,5 +28,5 @@ pub use plugin::{
     PluginInfo, PluginLibrary, REGISTER_SYMBOL, StrView,
 };
 pub use python::{
-    ImagePayload, PythonManifest, PythonManifestError, PythonManifestPlugin, load_python_manifest,
+    ImageCompute, PythonManifest, PythonManifestError, PythonManifestPlugin, load_python_manifest,
 };

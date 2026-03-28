@@ -12,16 +12,34 @@ use image::{
 
 /// Runtime conversion registry for common CPU-side types.
 ///
-/// This mirrors the `GpuSendable` story: users can register additional conversions
+/// This mirrors the `DeviceBridge` story: users can register additional conversions
 /// at runtime if needed, while we ship a set of defaults (numeric widenings, image casts).
 type AnyArc = Arc<dyn Any + Send + Sync>;
 type ConvertFn = Arc<dyn Fn(&AnyArc) -> Option<AnyArc> + Send + Sync>;
 type ProgramKey = (TypeId, TypeId);
-type Program = Arc<[ConvertFn]>;
+type Program = Arc<[ConvertEdge]>;
 type ProgramCache = HashMap<ProgramKey, Option<Program>>;
 
+#[derive(Clone)]
+struct ConvertEdge {
+    convert: ConvertFn,
+    from_rust: &'static str,
+    to_rust: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeConversionStep {
+    pub from_rust: String,
+    pub to_rust: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeConversionResolution {
+    pub steps: Vec<RuntimeConversionStep>,
+}
+
 pub struct ConversionRegistry {
-    inner: HashMap<(TypeId, TypeId), ConvertFn>,
+    inner: HashMap<(TypeId, TypeId), ConvertEdge>,
 }
 
 impl ConversionRegistry {
@@ -38,44 +56,60 @@ impl ConversionRegistry {
         let key = (TypeId::of::<S>(), TypeId::of::<T>());
         self.inner.insert(
             key,
-            Arc::new(move |a: &AnyArc| {
-                a.downcast_ref::<S>().and_then(|s| {
-                    f(s).map(|t| {
-                        let out: AnyArc = Arc::new(t);
-                        out
+            ConvertEdge {
+                convert: Arc::new(move |a: &AnyArc| {
+                    a.downcast_ref::<S>().and_then(|s| {
+                        f(s).map(|t| {
+                            let out: AnyArc = Arc::new(t);
+                            out
+                        })
                     })
-                })
-            }),
+                }),
+                from_rust: std::any::type_name::<S>(),
+                to_rust: std::any::type_name::<T>(),
+            },
         );
         self
     }
 
     fn convert_direct(&self, a: &AnyArc, to: TypeId) -> Option<AnyArc> {
         let from = a.as_ref().type_id();
-        self.inner.get(&(from, to)).and_then(|f| f(a))
+        self.inner
+            .get(&(from, to))
+            .and_then(|edge| (edge.convert)(a))
     }
 
-    fn resolve_program(&self, from: TypeId, to: TypeId) -> Option<Arc<[ConvertFn]>> {
+    fn resolve_program(&self, from: TypeId, to: TypeId) -> Option<Program> {
         // BFS over available conversions (unweighted; good enough for now).
         let mut queue: std::collections::VecDeque<TypeId> = std::collections::VecDeque::new();
         // prev[dst] = (src, converter_used_for_src_to_dst)
-        let mut prev: HashMap<TypeId, (TypeId, ConvertFn)> = HashMap::new();
+        let mut prev: HashMap<TypeId, (TypeId, ConvertEdge)> = HashMap::new();
         queue.push_back(from);
         // Seed with a sentinel; converter unused for the root.
-        prev.insert(from, (from, Arc::new(|_| None)));
+        prev.insert(
+            from,
+            (
+                from,
+                ConvertEdge {
+                    convert: Arc::new(|_| None),
+                    from_rust: "",
+                    to_rust: "",
+                },
+            ),
+        );
 
         while let Some(cur) = queue.pop_front() {
             if cur == to {
                 break;
             }
-            for (&(src, dst), conv) in &self.inner {
+            for (&(src, dst), edge) in &self.inner {
                 if src != cur {
                     continue;
                 }
                 if prev.contains_key(&dst) {
                     continue;
                 }
-                prev.insert(dst, (cur, conv.clone()));
+                prev.insert(dst, (cur, edge.clone()));
                 queue.push_back(dst);
             }
         }
@@ -84,17 +118,16 @@ impl ConversionRegistry {
             return None;
         }
 
-        let mut steps: Vec<ConvertFn> = Vec::new();
+        let mut steps: Vec<ConvertEdge> = Vec::new();
         let mut cur = to;
         while cur != from {
-            let (p, conv) = prev.get(&cur).cloned()?;
-            steps.push(conv);
+            let (p, edge) = prev.get(&cur).cloned()?;
+            steps.push(edge);
             cur = p;
         }
         steps.reverse();
 
-        let program: Arc<[ConvertFn]> = Arc::from(steps);
-        Some(program)
+        Some(Arc::from(steps))
     }
 
     fn convert_arc_any(&self, a: &AnyArc, to: TypeId) -> Option<AnyArc> {
@@ -112,7 +145,7 @@ impl ConversionRegistry {
         let program = self.resolve_program(from, to)?;
         let mut cur: AnyArc = a.clone();
         for step in program.iter() {
-            cur = step(&cur)?;
+            cur = (step.convert)(&cur)?;
         }
         Some(cur)
     }
@@ -219,7 +252,7 @@ fn with_program_cached<R>(from: TypeId, to: TypeId, f: impl FnOnce(&Program) -> 
 
     let reg_guard = state.reg.read().ok()?;
     let resolved: Option<Program> = if from == to {
-        Some(Arc::from([] as [ConvertFn; 0]))
+        Some(Arc::from(Vec::<ConvertEdge>::new()))
     } else {
         reg_guard.resolve_program(from, to)
     };
@@ -228,6 +261,40 @@ fn with_program_cached<R>(from: TypeId, to: TypeId, f: impl FnOnce(&Program) -> 
         guard.insert((from, to), resolved.clone());
     }
     resolved.as_ref().map(|p| f(p))
+}
+
+fn resolution_from_program(program: &Program) -> RuntimeConversionResolution {
+    RuntimeConversionResolution {
+        steps: program
+            .iter()
+            .map(|step| RuntimeConversionStep {
+                from_rust: step.from_rust.to_string(),
+                to_rust: step.to_rust.to_string(),
+            })
+            .collect(),
+    }
+}
+
+#[cfg(feature = "gpu")]
+pub fn explain_conversion_from_types<S, T>() -> Option<RuntimeConversionResolution>
+where
+    S: Any + Send + Sync + 'static,
+    T: Any + Send + Sync + 'static,
+{
+    explain_conversion_by_ids(TypeId::of::<S>(), TypeId::of::<T>())
+}
+
+pub fn explain_conversion_to<T>(
+    a: &Arc<dyn Any + Send + Sync>,
+) -> Option<RuntimeConversionResolution>
+where
+    T: Any + Send + Sync + 'static,
+{
+    explain_conversion_by_ids(a.as_ref().type_id(), TypeId::of::<T>())
+}
+
+pub fn explain_conversion_by_ids(from: TypeId, to: TypeId) -> Option<RuntimeConversionResolution> {
+    with_program_cached(from, to, resolution_from_program)
 }
 
 /// Attempt to convert an `Arc<dyn Any>` into `T` using the default registry.
@@ -242,7 +309,7 @@ pub fn convert_arc<T: Any + Clone + Send + Sync + 'static>(
     with_program_cached(from, to, |program| {
         let mut cur: Arc<dyn Any + Send + Sync> = a.clone();
         for step in program.iter() {
-            cur = step(&cur)?;
+            cur = (step.convert)(&cur)?;
         }
         cur.downcast_ref::<T>().cloned()
     })?
@@ -271,7 +338,7 @@ pub fn convert_any_arc(
     with_program_cached(from, to, |program| {
         let mut cur: Arc<dyn Any + Send + Sync> = a.clone();
         for step in program.iter() {
-            cur = step(&cur)?;
+            cur = (step.convert)(&cur)?;
         }
         Some(cur)
     })?
@@ -323,5 +390,19 @@ mod tests {
         let a: Arc<dyn Any + Send + Sync> = Arc::new(A(7));
         let out: Option<C> = convert_arc::<C>(&a);
         assert_eq!(out, Some(C(7)));
+    }
+
+    #[test]
+    fn explain_conversion_reports_runtime_steps() {
+        register_conversion::<A, B>(|a| Some(B(a.0 as u16)));
+        register_conversion::<B, C>(|b| Some(C(b.0 as u32)));
+
+        let a: Arc<dyn Any + Send + Sync> = Arc::new(A(7));
+        let resolution = explain_conversion_to::<C>(&a).expect("runtime conversion path");
+        assert_eq!(resolution.steps.len(), 2);
+        assert_eq!(resolution.steps[0].from_rust, std::any::type_name::<A>());
+        assert_eq!(resolution.steps[0].to_rust, std::any::type_name::<B>());
+        assert_eq!(resolution.steps[1].from_rust, std::any::type_name::<B>());
+        assert_eq!(resolution.steps[1].to_rust, std::any::type_name::<C>());
     }
 }

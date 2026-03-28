@@ -42,17 +42,17 @@ pub fn register_image_conversions(reg: &mut PluginRegistry) {
 
 #[cfg(feature = "gpu")]
 pub fn register_image_packers(reg: &mut PluginRegistry) {
-    use daedalus::runtime::EdgePayload;
+    use daedalus::runtime::RuntimeValue;
     use std::sync::Arc;
 
-    reg.register_output_mover(|img: DynamicImage| EdgePayload::Any(Arc::new(img)));
-    reg.register_output_mover(|img: GrayImage| EdgePayload::Any(Arc::new(img)));
+    reg.register_output_mover(|img: DynamicImage| RuntimeValue::Any(Arc::new(img)));
+    reg.register_output_mover(|img: GrayImage| RuntimeValue::Any(Arc::new(img)));
     reg.register_output_mover(|img: GrayAlphaImage| {
         let dyn_img = DynamicImage::ImageLumaA8(img);
-        EdgePayload::Any(Arc::new(dyn_img))
+        RuntimeValue::Any(Arc::new(dyn_img))
     });
-    reg.register_output_mover(|img: RgbImage| EdgePayload::Any(Arc::new(img)));
-    reg.register_output_mover(|img: RgbaImage| EdgePayload::Any(Arc::new(img)));
+    reg.register_output_mover(|img: RgbImage| RuntimeValue::Any(Arc::new(img)));
+    reg.register_output_mover(|img: RgbaImage| RuntimeValue::Any(Arc::new(img)));
 }
 
 /// Simple plugin implementation so callers can install via `PluginRegistry::install_plugin`.

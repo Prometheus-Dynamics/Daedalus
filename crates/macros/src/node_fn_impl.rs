@@ -1236,7 +1236,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                 _ => return None,
             };
             let last = tp.path.segments.last()?;
-            if last.ident != "Payload" {
+            if last.ident != "Compute" {
                 return None;
             }
             match &last.arguments {
@@ -1285,7 +1285,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                         .zip(out_idents.iter())
                         .map(|((elem_ty, port), ident)| {
                             if let Some(inner) = payload_inner_type(elem_ty) {
-                                quote! { io.push_payload::<#inner>(Some(#port), #ident); }
+                                quote! { io.push_compute::<#inner>(Some(#port), #ident); }
                             } else {
                                 quote! { io.push_typed(Some(#port), #ident); }
                             }
@@ -1311,7 +1311,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                 let push_stmt = ok_ty
                     .and_then(payload_inner_type)
                     .map(|inner| {
-                        quote! { io.push_payload::<#inner>(Some(#out_port), val); }
+                        quote! { io.push_compute::<#inner>(Some(#out_port), val); }
                     })
                     .unwrap_or_else(|| quote! { io.push_typed(Some(#out_port), val); });
                 quote! {
@@ -1441,7 +1441,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                     && tp.qself.is_none()
                     && let Some(seg) = tp.path.segments.last()
                 {
-                    seg.ident == "Payload"
+                    seg.ident == "Compute"
                 } else {
                     false
                 };
@@ -1485,7 +1485,56 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                 } else if let syn::Type::Path(tp) = ty_core {
                     if let Some(seg) = tp.path.segments.last() {
                         let ident_seg = &seg.ident;
-                        if ident_seg == "Payload" {
+                        if ident_seg == "Arc" {
+                            if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
+                                if let Some(syn::GenericArgument::Type(inner_ty)) = ab.args.first()
+                                {
+                                    match mode {
+                                        "borrowed" => {
+                                            let tmp_ident = syn::Ident::new(
+                                                &format!("__arc_{idx}"),
+                                                Span::call_site(),
+                                            );
+                                            quote! {
+                                                let #tmp_ident = io
+                                                    .get_any_arc::<#inner_ty>(#port)
+                                                    .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
+                                                let #ident = &#tmp_ident;
+                                            }
+                                        }
+                                        "borrowed_mut" => {
+                                            let tmp_ident = syn::Ident::new(
+                                                &format!("__arc_mut_{idx}"),
+                                                Span::call_site(),
+                                            );
+                                            quote! {
+                                                let mut #tmp_ident = io
+                                                    .get_any_arc::<#inner_ty>(#port)
+                                                    .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
+                                                let #ident = &mut #tmp_ident;
+                                            }
+                                        }
+                                        _ => quote! {
+                                            let #ident = io
+                                                .get_any_arc::<#inner_ty>(#port)
+                                                .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
+                                        },
+                                    }
+                                } else {
+                                    quote! {
+                                        let #ident = io
+                                            .get_any::<#ty_core>(#port)
+                                            .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
+                                    }
+                                }
+                            } else {
+                                quote! {
+                                    let #ident = io
+                                        .get_any::<#ty_core>(#port)
+                                        .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
+                                }
+                            }
+                        } else if ident_seg == "Compute" {
                             if let syn::PathArguments::AngleBracketed(ab) = &seg.arguments {
                                 if let Some(syn::GenericArgument::Type(inner_ty)) = ab.args.first()
                                 {
@@ -1497,7 +1546,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                             );
                                             quote! {
                                                 let #tmp_ident = io
-                                                    .get_payload::<#inner_ty>(#port)
+                                                    .get_compute::<#inner_ty>(#port)
                                                     .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                                 let #ident = &#tmp_ident;
                                             }
@@ -1509,19 +1558,19 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                                             );
                                             quote! {
                                                 let mut #tmp_ident = io
-                                                    .get_payload_mut::<#inner_ty>(#port)
+                                                    .get_compute_mut::<#inner_ty>(#port)
                                                     .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                                 let #ident = &mut #tmp_ident;
                                             }
                                         }
                                         "owned_mut" => quote! {
                                             let #ident = io
-                                                .get_payload_mut::<#inner_ty>(#port)
+                                                .get_compute_mut::<#inner_ty>(#port)
                                                 .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                         },
                                         _ => quote! {
                                             let #ident = io
-                                                .get_payload::<#inner_ty>(#port)
+                                                .get_compute::<#inner_ty>(#port)
                                                 .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
                                         },
                                     }

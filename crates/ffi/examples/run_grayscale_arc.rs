@@ -1,12 +1,12 @@
 //! Build + load the `plugin_grayscale_arc` Rust cdylib and send a CPU DynamicImage payload.
 
 use daedalus::{
-    ErasedPayload, NodeHandle, PluginLibrary, PortHandle,
+    DataCell, NodeHandle, PluginLibrary, PortHandle,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     graph_builder::GraphBuilder,
     host_bridge::install_host_bridge,
     runtime::plugins::PluginRegistry,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
+    runtime::{executor::RuntimeValue, host_bridge::HostBridgeManager},
 };
 use image::{DynamicImage, ImageBuffer, Rgba};
 use std::env;
@@ -59,8 +59,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(2);
     let img =
         DynamicImage::ImageRgba8(ImageBuffer::from_pixel(width, height, Rgba([7, 8, 9, 255])));
-    let ep = ErasedPayload::from_cpu::<DynamicImage>(img);
-    handle.push("frame", EdgePayload::Payload(ep), None);
+    let ep = DataCell::from_cpu::<DynamicImage>(img);
+    handle.push("frame", RuntimeValue::Data(ep), None);
 
     let handlers = plugins.take_handlers();
     let telemetry = engine.execute_with_host(runtime_plan, mgr, handlers)?;

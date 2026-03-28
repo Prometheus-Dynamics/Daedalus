@@ -17,7 +17,7 @@ use image::{DynamicImage, GrayAlphaImage, GrayImage, RgbImage, RgbaImage};
 
 use crate::executor::queue::{ApplyPolicyOwnedArgs, apply_policy, apply_policy_owned};
 use crate::executor::{
-    CorrelatedPayload, EdgePayload, EdgeStorage, ExecutionTelemetry, next_correlation_id,
+    CorrelatedValue, EdgeStorage, ExecutionTelemetry, RuntimeValue, next_correlation_id,
 };
 use crate::fanin::parse_indexed_port;
 #[allow(unused_imports)]
@@ -27,11 +27,35 @@ use daedalus_planner::NodeRef;
 
 type EdgeInfo = (NodeRef, String, NodeRef, String, EdgePolicyKind);
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TypedInputResolutionKind {
+    Exact,
+    ConstCoercion,
+    ValueCoercion,
+    RuntimeConversion,
+    ComputeExact,
+    ComputeConversion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TypedInputResolution {
+    pub port: String,
+    pub kind: TypedInputResolutionKind,
+    pub source_value: String,
+    pub source_rust: Option<String>,
+    pub target_rust: String,
+    pub source_typeexpr: Option<TypeExpr>,
+    pub target_typeexpr: Option<TypeExpr>,
+    pub compatibility_path: Option<typing::TypeCompatibilityPath>,
+    pub runtime_conversion: Option<crate::RuntimeConversionResolution>,
+}
+
 #[derive(Clone)]
 struct DrainedInput {
     port: String,
     edge_idx: usize,
-    payload: CorrelatedPayload,
+    payload: CorrelatedValue,
 }
 
 pub type ConstCoercer = Box<
@@ -44,7 +68,7 @@ pub type ConstCoercer = Box<
 pub type ConstCoercerMap = Arc<RwLock<HashMap<&'static str, ConstCoercer>>>;
 
 static GLOBAL_CONST_COERCERS: OnceLock<ConstCoercerMap> = OnceLock::new();
-type OutputMover = Box<dyn Fn(Box<dyn Any + Send + Sync>) -> EdgePayload + Send + Sync + 'static>;
+type OutputMover = Box<dyn Fn(Box<dyn Any + Send + Sync>) -> RuntimeValue + Send + Sync + 'static>;
 pub type OutputMoverMap = Arc<RwLock<HashMap<TypeId, OutputMover>>>;
 static OUTPUT_MOVERS: OnceLock<OutputMoverMap> = OnceLock::new();
 
@@ -53,9 +77,9 @@ fn output_movers() -> &'static OutputMoverMap {
 }
 
 /// Per-execution cache for expensive payload materializations (e.g. wrapping large CPU images into
-/// `ErasedPayload` so uploads/downloads are deduped across fanout).
+/// `DataCell` so uploads/downloads are deduped across fanout).
 #[cfg(feature = "gpu")]
-pub(crate) type MaterializationCache = HashMap<usize, EdgePayload>;
+pub(crate) type MaterializationCache = HashMap<usize, RuntimeValue>;
 
 #[cfg(feature = "gpu")]
 pub(crate) type MaterializationCacheHandle = Arc<Mutex<MaterializationCache>>;
@@ -94,7 +118,7 @@ pub fn new_output_mover_map() -> OutputMoverMap {
 pub fn register_output_mover_in<T, F>(map: &OutputMoverMap, mover: F)
 where
     T: Any + Send + Sync + 'static,
-    F: Fn(T) -> EdgePayload + Send + Sync + 'static,
+    F: Fn(T) -> RuntimeValue + Send + Sync + 'static,
 {
     let mut guard = map.write().expect("OUTPUT_MOVERS lock poisoned");
     guard.insert(
@@ -110,12 +134,12 @@ where
 pub fn register_output_mover<T, F>(mover: F)
 where
     T: Any + Send + Sync + 'static,
-    F: Fn(T) -> EdgePayload + Send + Sync + 'static,
+    F: Fn(T) -> RuntimeValue + Send + Sync + 'static,
 {
     register_output_mover_in(output_movers(), mover);
 }
 
-fn try_move_output<T>(movers: Option<&OutputMoverMap>, value: T) -> Result<EdgePayload, T>
+fn try_move_output<T>(movers: Option<&OutputMoverMap>, value: T) -> Result<RuntimeValue, T>
 where
     T: Any + Send + Sync + 'static,
 {
@@ -136,71 +160,103 @@ where
 }
 
 #[cfg(feature = "gpu")]
-fn promote_payload_for_host(payload: EdgePayload) -> EdgePayload {
-    use daedalus_gpu::{ErasedPayload, Payload};
+fn promote_value_for_host(payload: RuntimeValue) -> (RuntimeValue, bool) {
+    use daedalus_gpu::{Compute, DataCell};
 
     match payload {
-        EdgePayload::Any(a) => {
-            if let Some(ep) = a.downcast_ref::<ErasedPayload>() {
-                return EdgePayload::Payload(ep.clone());
+        RuntimeValue::Any(a) => {
+            if let Some(ep) = a.downcast_ref::<DataCell>() {
+                return (RuntimeValue::Data(ep.clone()), true);
             }
-            if let Some(p) = a.downcast_ref::<Payload<DynamicImage>>() {
-                return match p.clone() {
-                    Payload::Cpu(img) => {
-                        EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(img))
-                    }
-                    Payload::Gpu(g) => {
-                        EdgePayload::Payload(ErasedPayload::from_gpu::<DynamicImage>(g))
-                    }
-                };
+            if let Some(p) = a.downcast_ref::<Compute<DynamicImage>>() {
+                return (
+                    match p.clone() {
+                        Compute::Cpu(img) => {
+                            RuntimeValue::Data(DataCell::from_cpu::<DynamicImage>(img))
+                        }
+                        Compute::Gpu(g) => {
+                            RuntimeValue::Data(DataCell::from_gpu::<DynamicImage>(g))
+                        }
+                    },
+                    true,
+                );
             }
-            if let Some(p) = a.downcast_ref::<Payload<GrayImage>>() {
-                return match p.clone() {
-                    Payload::Cpu(img) => {
-                        EdgePayload::Payload(ErasedPayload::from_cpu::<GrayImage>(img))
-                    }
-                    Payload::Gpu(g) => {
-                        EdgePayload::Payload(ErasedPayload::from_gpu::<GrayImage>(g))
-                    }
-                };
+            if let Some(p) = a.downcast_ref::<Compute<GrayImage>>() {
+                return (
+                    match p.clone() {
+                        Compute::Cpu(img) => {
+                            RuntimeValue::Data(DataCell::from_cpu::<GrayImage>(img))
+                        }
+                        Compute::Gpu(g) => RuntimeValue::Data(DataCell::from_gpu::<GrayImage>(g)),
+                    },
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<DynamicImage>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(img.clone()));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<DynamicImage>(img.clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<Arc<DynamicImage>>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(
-                    (**img).clone(),
-                ));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<DynamicImage>((**img).clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<GrayImage>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<GrayImage>(img.clone()));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<GrayImage>(img.clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<Arc<GrayImage>>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<GrayImage>((**img).clone()));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<GrayImage>((**img).clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<RgbImage>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<RgbImage>(img.clone()));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<RgbImage>(img.clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<Arc<RgbImage>>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<RgbImage>((**img).clone()));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<RgbImage>((**img).clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<RgbaImage>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<RgbaImage>(img.clone()));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<RgbaImage>(img.clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<Arc<RgbaImage>>() {
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<RgbaImage>((**img).clone()));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<RgbaImage>((**img).clone())),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<GrayAlphaImage>() {
                 let dyn_img = DynamicImage::ImageLumaA8(img.clone());
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(dyn_img));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<DynamicImage>(dyn_img)),
+                    true,
+                );
             }
             if let Some(img) = a.downcast_ref::<Arc<GrayAlphaImage>>() {
                 let dyn_img = DynamicImage::ImageLumaA8((**img).clone());
-                return EdgePayload::Payload(ErasedPayload::from_cpu::<DynamicImage>(dyn_img));
+                return (
+                    RuntimeValue::Data(DataCell::from_cpu::<DynamicImage>(dyn_img)),
+                    true,
+                );
             }
-            EdgePayload::Any(a)
+            (RuntimeValue::Any(a), false)
         }
-        other => other,
+        other => (other, false),
     }
 }
 
@@ -208,11 +264,11 @@ fn promote_payload_for_host(payload: EdgePayload) -> EdgePayload {
 fn promote_any_with_cache(
     a: &Arc<dyn Any + Send + Sync>,
     cache: Option<&MaterializationCacheHandle>,
-) -> EdgePayload {
+) -> (RuntimeValue, bool) {
     // This is potentially expensive (cloning large CPU images). Cache it per execution so fanout
     // doesn't duplicate the work.
     let Some(cache) = cache else {
-        return promote_payload_for_host(EdgePayload::Any(a.clone()));
+        return promote_value_for_host(RuntimeValue::Any(a.clone()));
     };
 
     // `Arc::as_ptr` returns a fat pointer for trait objects; cast through `*const ()` to
@@ -222,14 +278,14 @@ fn promote_any_with_cache(
     if let Ok(guard) = cache.lock()
         && let Some(hit) = guard.get(&key)
     {
-        return hit.clone();
+        return (hit.clone(), false);
     }
 
-    let promoted = promote_payload_for_host(EdgePayload::Any(a.clone()));
+    let (promoted, materialized) = promote_value_for_host(RuntimeValue::Any(a.clone()));
     if let Ok(mut guard) = cache.lock() {
         guard.insert(key, promoted.clone());
     }
-    promoted
+    (promoted, materialized)
 }
 
 /// Create a new constant coercer registry.
@@ -279,14 +335,14 @@ where
 ///
 /// ```no_run
 /// use daedalus_runtime::io::NodeIo;
-/// use daedalus_runtime::executor::EdgePayload;
+/// use daedalus_runtime::executor::RuntimeValue;
 ///
 /// fn handler(io: &mut NodeIo) {
-///     io.push_output(Some("out"), EdgePayload::Unit);
+///     io.push_output(Some("out"), RuntimeValue::Unit);
 /// }
 /// ```
 pub struct NodeIo<'a> {
-    inputs: Vec<(String, CorrelatedPayload)>,
+    inputs: Vec<(String, CorrelatedValue)>,
     borrowed_cache: std::cell::UnsafeCell<Vec<Box<dyn Any + Send + Sync>>>,
     sync_groups: Vec<SyncGroup>,
     port_overrides: HashMap<String, (Option<BackpressureStrategy>, Option<usize>)>,
@@ -294,12 +350,14 @@ pub struct NodeIo<'a> {
     outgoing: Vec<usize>,
     has_incoming_edges: bool,
     queues: &'a Arc<Vec<EdgeStorage>>,
-    telemetry: &'a mut ExecutionTelemetry,
+    telemetry_ptr: *mut ExecutionTelemetry,
+    telemetry_lifetime: std::marker::PhantomData<&'a mut ExecutionTelemetry>,
     edges: &'a [EdgeInfo],
     #[allow(dead_code)]
     seg_idx: usize,
     node_idx: usize,
     node_id: String,
+    active_nodes: Option<&'a [bool]>,
     warnings_seen: &'a std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     backpressure: BackpressureStrategy,
     #[cfg(feature = "gpu")]
@@ -307,7 +365,7 @@ pub struct NodeIo<'a> {
     #[cfg(feature = "gpu")]
     target_compute: daedalus_planner::ComputeAffinity,
     #[cfg(feature = "gpu")]
-    payload_edges: &'a HashSet<usize>,
+    data_edges: &'a HashSet<usize>,
     #[cfg(feature = "gpu")]
     materialization_cache: Option<MaterializationCacheHandle>,
     const_coercers: Option<ConstCoercerMap>,
@@ -359,7 +417,419 @@ impl<T: Clone> DerefMut for CowArcMut<T> {
 
 impl<'a> NodeIo<'a> {
     #[cfg(feature = "gpu")]
-    fn dynamic_image_to_t<T: Any + Clone>(img: DynamicImage) -> Option<T> {
+    fn convert_cpu_value_to_t<S, T>(value: S) -> Option<T>
+    where
+        S: Any + Send + Sync + 'static,
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        let any: Arc<dyn Any + Send + Sync> = Arc::new(value);
+        crate::convert::convert_arc::<T>(&any)
+    }
+
+    #[cfg(feature = "gpu")]
+    fn convert_cpu_value_to_arc<S, T>(value: S) -> Option<Arc<T>>
+    where
+        S: Any + Send + Sync + 'static,
+        T: Any + Send + Sync + 'static,
+    {
+        let any: Arc<dyn Any + Send + Sync> = Arc::new(value);
+        crate::convert::convert_to_arc::<T>(&any)
+    }
+
+    #[cfg(feature = "gpu")]
+    fn convert_backing_value_to_t<S, T>(backing: daedalus_gpu::Backing<S>) -> Option<T>
+    where
+        S: Any + Clone + Send + Sync + 'static,
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        Self::convert_cpu_value_to_t::<S, T>(backing.into_owned())
+    }
+
+    #[cfg(feature = "gpu")]
+    fn convert_backing_value_to_arc<S, T>(backing: daedalus_gpu::Backing<S>) -> Option<Arc<T>>
+    where
+        S: Any + Clone + Send + Sync + 'static,
+        T: Any + Send + Sync + 'static,
+    {
+        Self::convert_cpu_value_to_arc::<S, T>(backing.into_owned())
+    }
+
+    #[cfg(feature = "gpu")]
+    fn any_backing_ref<T>(any: &Arc<dyn Any + Send + Sync>) -> Option<&T>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        any.downcast_ref::<daedalus_gpu::Backing<T>>()
+            .map(daedalus_gpu::Backing::as_ref)
+    }
+
+    #[cfg(feature = "gpu")]
+    fn any_backing_owned<T>(any: &Arc<dyn Any + Send + Sync>) -> Option<T>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        any.downcast_ref::<daedalus_gpu::Backing<T>>()
+            .map(|backing| backing.clone().into_owned())
+    }
+
+    #[cfg(feature = "gpu")]
+    fn any_backing_arc<T>(any: &Arc<dyn Any + Send + Sync>) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        any.downcast_ref::<daedalus_gpu::Backing<T>>()
+            .and_then(daedalus_gpu::Backing::shared_arc)
+    }
+
+    fn resolved_type_expr<T: Any>() -> Option<TypeExpr> {
+        typing::override_type_expr::<T>()
+            .or_else(|| typing::lookup_type_by_rust_name(std::any::type_name::<T>()))
+    }
+
+    fn source_type_expr_from_rust_name(rust: &str) -> Option<TypeExpr> {
+        typing::lookup_type_by_rust_name(rust)
+    }
+
+    fn estimate_any_bytes(value: &(dyn Any + Send + Sync)) -> Option<u64> {
+        crate::executor::any_ref_size_bytes(value)
+    }
+
+    fn telemetry_mut(&self) -> &mut ExecutionTelemetry {
+        // SAFETY: `NodeIo` is created with exclusive access to the executor telemetry for a single
+        // node execution. This raw pointer aliases that same exclusive borrow so immutable helper
+        // methods can still record conversion/materialization counters.
+        unsafe { &mut *self.telemetry_ptr }
+    }
+
+    fn record_conversion_bytes(&self, bytes: Option<u64>) {
+        if let Some(bytes) = bytes {
+            self.telemetry_mut()
+                .record_node_conversion(self.node_idx, bytes);
+        }
+    }
+
+    #[cfg(feature = "gpu")]
+    fn record_materialization_bytes(&self, bytes: Option<u64>) {
+        if let Some(bytes) = bytes {
+            self.telemetry_mut()
+                .record_node_materialization(self.node_idx, bytes);
+        }
+    }
+
+    #[cfg(feature = "gpu")]
+    fn record_gpu_transfer_bytes(&self, upload: bool, bytes: Option<u64>) {
+        if let Some(bytes) = bytes {
+            self.telemetry_mut()
+                .record_node_gpu_transfer(self.node_idx, upload, bytes);
+        }
+    }
+
+    fn typed_input_resolution<T>(
+        &self,
+        port: &str,
+        payload: &RuntimeValue,
+        kind: TypedInputResolutionKind,
+        source_rust: Option<String>,
+        runtime_conversion: Option<crate::RuntimeConversionResolution>,
+    ) -> TypedInputResolution
+    where
+        T: Any,
+    {
+        let source_typeexpr = source_rust
+            .as_deref()
+            .and_then(Self::source_type_expr_from_rust_name)
+            .or_else(|| {
+                runtime_conversion.as_ref().and_then(|resolution| {
+                    resolution
+                        .steps
+                        .first()
+                        .and_then(|step| Self::source_type_expr_from_rust_name(&step.from_rust))
+                })
+            });
+        let target_typeexpr = Self::resolved_type_expr::<T>();
+        let compatibility_path = source_typeexpr.as_ref().and_then(|from| {
+            target_typeexpr
+                .as_ref()
+                .and_then(|to| typing::explain_typeexpr_conversion(from, to))
+        });
+
+        TypedInputResolution {
+            port: port.to_string(),
+            kind,
+            source_value: runtime_value_desc(payload),
+            source_rust,
+            target_rust: std::any::type_name::<T>().to_string(),
+            source_typeexpr,
+            target_typeexpr,
+            compatibility_path,
+            runtime_conversion,
+        }
+    }
+
+    fn resolve_typed_from_any<T>(
+        &self,
+        port: &str,
+        any: &Arc<dyn Any + Send + Sync>,
+        payload: &RuntimeValue,
+    ) -> Option<(T, TypedInputResolution)>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        if let Some(value) = any.downcast_ref::<T>().cloned() {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::Exact,
+                Some(std::any::type_name::<T>().to_string()),
+                None,
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(value) = any.downcast_ref::<Arc<T>>().map(|arc| (**arc).clone()) {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::Exact,
+                Some(std::any::type_name::<T>().to_string()),
+                None,
+            );
+            return Some((value, resolution));
+        }
+
+        #[cfg(feature = "gpu")]
+        if let Some(value) = Self::any_backing_owned::<T>(any) {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::Exact,
+                Some(std::any::type_name::<daedalus_gpu::Backing<T>>().to_string()),
+                None,
+            );
+            return Some((value, resolution));
+        }
+
+        let source_any = any.as_ref();
+        let source_rust = if source_any.downcast_ref::<i64>().is_some() {
+            Some(std::any::type_name::<i64>().to_string())
+        } else if source_any.downcast_ref::<f64>().is_some() {
+            Some(std::any::type_name::<f64>().to_string())
+        } else if source_any.downcast_ref::<bool>().is_some() {
+            Some(std::any::type_name::<bool>().to_string())
+        } else if source_any.downcast_ref::<String>().is_some() {
+            Some(std::any::type_name::<String>().to_string())
+        } else if source_any.downcast_ref::<Value>().is_some() {
+            Some(std::any::type_name::<Value>().to_string())
+        } else {
+            None
+        };
+
+        if let Some(value) = self.coerce_const_any::<T>(any.as_ref()) {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ConstCoercion,
+                source_rust.clone(),
+                None,
+            );
+            return Some((value, resolution));
+        }
+
+        let runtime_conversion = crate::convert::explain_conversion_to::<T>(any);
+        let source_rust = runtime_conversion
+            .as_ref()
+            .and_then(|path| path.steps.first().map(|step| step.from_rust.clone()))
+            .or(source_rust)
+            .or_else(|| Some(std::any::type_name_of_val(any.as_ref()).to_string()));
+        if let Some(value) = self
+            .convert_any_to_arc_cached::<T>(any)
+            .map(|arc| (*arc).clone())
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::RuntimeConversion,
+                source_rust,
+                runtime_conversion,
+            );
+            return Some((value, resolution));
+        }
+
+        None
+    }
+
+    #[cfg(feature = "gpu")]
+    fn resolve_typed_from_data_cell<T>(
+        &self,
+        port: &str,
+        ep: &daedalus_gpu::DataCell,
+        payload: &RuntimeValue,
+    ) -> Option<(T, TypedInputResolution)>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        if let Some(value) = ep.try_downcast_cpu_any::<T>() {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeExact,
+                Some(std::any::type_name::<T>().to_string()),
+                None,
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(backing) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<T>>() {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeExact,
+                Some(std::any::type_name::<daedalus_gpu::Backing<T>>().to_string()),
+                None,
+            );
+            return Some((backing.into_owned(), resolution));
+        }
+
+        if let Some(img) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<DynamicImage>>()
+            && let Some(value) = Self::convert_backing_value_to_t::<DynamicImage, T>(img)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<daedalus_gpu::Backing<DynamicImage>>().to_string()),
+                crate::convert::explain_conversion_from_types::<DynamicImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(gray) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<GrayImage>>()
+            && let Some(value) = Self::convert_backing_value_to_t::<GrayImage, T>(gray)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<daedalus_gpu::Backing<GrayImage>>().to_string()),
+                crate::convert::explain_conversion_from_types::<GrayImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(rgb) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<RgbImage>>()
+            && let Some(value) = Self::convert_backing_value_to_t::<RgbImage, T>(rgb)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<daedalus_gpu::Backing<RgbImage>>().to_string()),
+                crate::convert::explain_conversion_from_types::<RgbImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(rgba) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<RgbaImage>>()
+            && let Some(value) = Self::convert_backing_value_to_t::<RgbaImage, T>(rgba)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<daedalus_gpu::Backing<RgbaImage>>().to_string()),
+                crate::convert::explain_conversion_from_types::<RgbaImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(img) = ep.clone_cpu::<DynamicImage>()
+            && let Some(value) = Self::convert_cpu_value_to_t::<DynamicImage, T>(img)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<DynamicImage>().to_string()),
+                crate::convert::explain_conversion_from_types::<DynamicImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(gray) = ep.clone_cpu::<GrayImage>()
+            && let Some(value) = Self::convert_cpu_value_to_t::<GrayImage, T>(gray)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<GrayImage>().to_string()),
+                crate::convert::explain_conversion_from_types::<GrayImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(rgb) = ep.clone_cpu::<RgbImage>()
+            && let Some(value) = Self::convert_cpu_value_to_t::<RgbImage, T>(rgb)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<RgbImage>().to_string()),
+                crate::convert::explain_conversion_from_types::<RgbImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        if let Some(rgba) = ep.clone_cpu::<RgbaImage>()
+            && let Some(value) = Self::convert_cpu_value_to_t::<RgbaImage, T>(rgba)
+        {
+            let resolution = self.typed_input_resolution::<T>(
+                port,
+                payload,
+                TypedInputResolutionKind::ComputeConversion,
+                Some(std::any::type_name::<RgbaImage>().to_string()),
+                crate::convert::explain_conversion_from_types::<RgbaImage, T>(),
+            );
+            return Some((value, resolution));
+        }
+
+        None
+    }
+
+    fn resolve_typed_from_value<T>(
+        &self,
+        port: &str,
+        correlated: &CorrelatedValue,
+    ) -> Option<(T, TypedInputResolution)>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        match &correlated.inner {
+            RuntimeValue::Any(any) => self.resolve_typed_from_any(port, any, &correlated.inner),
+            RuntimeValue::Value(value) => self.coerce_from_value::<T>(value).map(|resolved| {
+                let resolution = self.typed_input_resolution::<T>(
+                    port,
+                    &correlated.inner,
+                    TypedInputResolutionKind::ValueCoercion,
+                    Some(std::any::type_name::<Value>().to_string()),
+                    None,
+                );
+                (resolved, resolution)
+            }),
+            #[cfg(feature = "gpu")]
+            RuntimeValue::Data(ep) => {
+                self.resolve_typed_from_data_cell::<T>(port, ep, &correlated.inner)
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "gpu")]
+    fn dynamic_image_to_t<T: Any + Clone + Send + Sync>(img: DynamicImage) -> Option<T> {
+        if let Some(converted) = Self::convert_cpu_value_to_t::<DynamicImage, T>(img.clone()) {
+            return Some(converted);
+        }
         let want = TypeId::of::<T>();
         if want == TypeId::of::<DynamicImage>() {
             let any_ref: &dyn Any = &img;
@@ -388,6 +858,180 @@ impl<'a> NodeIo<'a> {
         None
     }
 
+    #[cfg(feature = "gpu")]
+    fn data_cell_to_t<T>(&self, ep: &daedalus_gpu::DataCell) -> Option<T>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        if let Some(v) = ep.try_downcast_cpu_any::<T>() {
+            return Some(v);
+        }
+        if let Some(backing) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<T>>() {
+            return Some(backing.into_owned());
+        }
+        if let Some(img) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<DynamicImage>>()
+            && let Some(v) = Self::convert_backing_value_to_t::<DynamicImage, T>(img)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        if let Some(gray) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<GrayImage>>()
+            && let Some(v) = Self::convert_backing_value_to_t::<GrayImage, T>(gray)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        if let Some(rgb) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<RgbImage>>()
+            && let Some(v) = Self::convert_backing_value_to_t::<RgbImage, T>(rgb)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        if let Some(rgba) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<RgbaImage>>()
+            && let Some(v) = Self::convert_backing_value_to_t::<RgbaImage, T>(rgba)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        if let Some(img) = ep.clone_cpu::<DynamicImage>()
+            && let Some(v) = Self::convert_cpu_value_to_t::<DynamicImage, T>(img)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        if let Some(gray) = ep.clone_cpu::<GrayImage>()
+            && let Some(v) = Self::convert_cpu_value_to_t::<GrayImage, T>(gray)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        if let Some(rgb) = ep.clone_cpu::<RgbImage>()
+            && let Some(v) = Self::convert_cpu_value_to_t::<RgbImage, T>(rgb)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        if let Some(rgba) = ep.clone_cpu::<RgbaImage>()
+            && let Some(v) = Self::convert_cpu_value_to_t::<RgbaImage, T>(rgba)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(&v));
+            return Some(v);
+        }
+        None
+    }
+
+    #[cfg(feature = "gpu")]
+    fn data_cell_to_arc<T>(&self, ep: &daedalus_gpu::DataCell) -> Option<Arc<T>>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        if let Some(v) = ep.arc_cpu_any::<T>() {
+            return Some(v);
+        }
+        if let Some(backing) = ep.arc_cpu_any::<daedalus_gpu::Backing<T>>()
+            && let Some(shared) = backing.shared_arc()
+        {
+            return Some(shared);
+        }
+        if let Some(img) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<DynamicImage>>()
+            && let Some(v) = Self::convert_backing_value_to_arc::<DynamicImage, T>(img)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        if let Some(gray) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<GrayImage>>()
+            && let Some(v) = Self::convert_backing_value_to_arc::<GrayImage, T>(gray)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        if let Some(rgb) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<RgbImage>>()
+            && let Some(v) = Self::convert_backing_value_to_arc::<RgbImage, T>(rgb)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        if let Some(rgba) = ep.try_downcast_cpu_any::<daedalus_gpu::Backing<RgbaImage>>()
+            && let Some(v) = Self::convert_backing_value_to_arc::<RgbaImage, T>(rgba)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        if let Some(img) = ep.clone_cpu::<DynamicImage>()
+            && let Some(v) = Self::convert_cpu_value_to_arc::<DynamicImage, T>(img)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        if let Some(gray) = ep.clone_cpu::<GrayImage>()
+            && let Some(v) = Self::convert_cpu_value_to_arc::<GrayImage, T>(gray)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        if let Some(rgb) = ep.clone_cpu::<RgbImage>()
+            && let Some(v) = Self::convert_cpu_value_to_arc::<RgbImage, T>(rgb)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        if let Some(rgba) = ep.clone_cpu::<RgbaImage>()
+            && let Some(v) = Self::convert_cpu_value_to_arc::<RgbaImage, T>(rgba)
+        {
+            self.record_materialization_bytes(crate::executor::runtime_value_size_bytes(
+                &RuntimeValue::Data(ep.clone()),
+            ));
+            self.record_conversion_bytes(Self::estimate_any_bytes(v.as_ref()));
+            return Some(v);
+        }
+        None
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Construct the I/O facade for a node (internal runtime API).
     pub fn new(
@@ -399,10 +1043,11 @@ impl<'a> NodeIo<'a> {
         mut sync_groups: Vec<SyncGroup>,
         #[cfg(feature = "gpu")] gpu_entry_edges: &'a HashSet<usize>,
         #[cfg(feature = "gpu")] gpu_exit_edges: &'a HashSet<usize>,
-        #[cfg(feature = "gpu")] payload_edges: &'a HashSet<usize>,
+        #[cfg(feature = "gpu")] data_edges: &'a HashSet<usize>,
         seg_idx: usize,
         node_idx: usize,
         node_id: String,
+        active_nodes: Option<&'a [bool]>,
         telemetry: &'a mut ExecutionTelemetry,
         backpressure: BackpressureStrategy,
         const_inputs: &[(String, daedalus_data::model::Value)],
@@ -452,14 +1097,14 @@ impl<'a> NodeIo<'a> {
                                     *edge_idx,
                                     now.saturating_duration_since(payload.enqueued_at),
                                 );
-                                let payload_bytes = if cfg!(feature = "metrics")
+                                let transport_bytes = if cfg!(feature = "metrics")
                                     && telemetry.metrics_level.is_detailed()
                                 {
-                                    crate::executor::payload_size_bytes(&payload.inner)
+                                    crate::executor::runtime_value_size_bytes(&payload.inner)
                                 } else {
                                     None
                                 };
-                                telemetry.record_node_payload_in(node_idx, payload_bytes);
+                                telemetry.record_node_transport_in(node_idx, transport_bytes);
                                 let port = edges
                                     .get(*edge_idx)
                                     .map(|(_, _, _, to_port, _)| to_port.clone())
@@ -468,6 +1113,7 @@ impl<'a> NodeIo<'a> {
                                 {
                                     payload = Self::convert_incoming(
                                         payload,
+                                        node_idx,
                                         *edge_idx,
                                         gpu_entry_edges,
                                         gpu_exit_edges,
@@ -482,7 +1128,7 @@ impl<'a> NodeIo<'a> {
                                     payload,
                                 });
                             }
-                            let current_queue_bytes = q.payload_bytes();
+                            let current_queue_bytes = q.transport_bytes();
                             metrics.set_current_bytes(current_queue_bytes);
                             telemetry.record_edge_depth(*edge_idx, q.len());
                             telemetry.record_edge_queue_bytes(*edge_idx, current_queue_bytes);
@@ -498,15 +1144,15 @@ impl<'a> NodeIo<'a> {
                                 *edge_idx,
                                 now.saturating_duration_since(payload.enqueued_at),
                             );
-                            let payload_bytes = if cfg!(feature = "metrics")
+                            let transport_bytes = if cfg!(feature = "metrics")
                                 && telemetry.metrics_level.is_detailed()
                             {
-                                crate::executor::payload_size_bytes(&payload.inner)
+                                crate::executor::runtime_value_size_bytes(&payload.inner)
                             } else {
                                 None
                             };
-                            metrics.adjust_bytes(0, payload_bytes.unwrap_or(0));
-                            telemetry.record_node_payload_in(node_idx, payload_bytes);
+                            metrics.adjust_bytes(0, transport_bytes.unwrap_or(0));
+                            telemetry.record_node_transport_in(node_idx, transport_bytes);
                             let port = edges
                                 .get(*edge_idx)
                                 .map(|(_, _, _, to_port, _)| to_port.clone())
@@ -515,6 +1161,7 @@ impl<'a> NodeIo<'a> {
                             {
                                 payload = Self::convert_incoming(
                                     payload,
+                                    node_idx,
                                     *edge_idx,
                                     gpu_entry_edges,
                                     gpu_exit_edges,
@@ -543,7 +1190,7 @@ impl<'a> NodeIo<'a> {
                     node_id,
                     item.port,
                     item.edge_idx,
-                    edge_payload_desc(&item.payload.inner)
+                    runtime_value_desc(&item.payload.inner)
                 );
             }
         }
@@ -554,7 +1201,7 @@ impl<'a> NodeIo<'a> {
                     node_id,
                     item.port,
                     item.edge_idx,
-                    edge_payload_desc(&item.payload.inner)
+                    runtime_value_desc(&item.payload.inner)
                 );
             }
         }
@@ -573,7 +1220,7 @@ impl<'a> NodeIo<'a> {
         }
 
         let has_drained = !drained.is_empty();
-        let mut const_payloads: Vec<(String, CorrelatedPayload)> = Vec::new();
+        let mut const_payloads: Vec<(String, CorrelatedValue)> = Vec::new();
         // Apply constant defaults only when no incoming payload exists for the port.
         for (port, value) in const_inputs {
             if drained.iter().any(|p| p.port == *port) {
@@ -581,8 +1228,8 @@ impl<'a> NodeIo<'a> {
             }
             // Keep authored constants as `Value` so plugin/FFI boundaries retain full type
             // context (notably enum-like config ports such as `mode`).
-            let payload = EdgePayload::Value(value.clone());
-            const_payloads.push((port.clone(), CorrelatedPayload::from_edge(payload)));
+            let payload = RuntimeValue::Value(value.clone());
+            const_payloads.push((port.clone(), CorrelatedValue::from_edge(payload)));
         }
 
         let const_ports: std::collections::HashSet<String> =
@@ -607,7 +1254,7 @@ impl<'a> NodeIo<'a> {
                     "node input aligned node={} port={} payload={}",
                     node_id,
                     port,
-                    edge_payload_desc(&payload.inner)
+                    runtime_value_desc(&payload.inner)
                 );
             }
         }
@@ -624,6 +1271,7 @@ impl<'a> NodeIo<'a> {
                 port_overrides.insert(port.clone(), (group.backpressure.clone(), group.capacity));
             }
         }
+        let telemetry_ptr = telemetry as *mut ExecutionTelemetry;
 
         Self {
             inputs: aligned_inputs,
@@ -634,11 +1282,13 @@ impl<'a> NodeIo<'a> {
             outgoing: outgoing_edges,
             has_incoming_edges,
             queues,
-            telemetry,
+            telemetry_ptr,
+            telemetry_lifetime: std::marker::PhantomData,
             edges,
             seg_idx,
             node_idx,
             node_id,
+            active_nodes,
             warnings_seen,
             backpressure,
             #[cfg(feature = "gpu")]
@@ -646,7 +1296,7 @@ impl<'a> NodeIo<'a> {
             #[cfg(feature = "gpu")]
             target_compute,
             #[cfg(feature = "gpu")]
-            payload_edges,
+            data_edges,
             #[cfg(feature = "gpu")]
             materialization_cache,
             const_coercers,
@@ -664,7 +1314,7 @@ impl<'a> NodeIo<'a> {
     ///     let _ = io.inputs();
     /// }
     /// ```
-    pub fn inputs(&self) -> &[(String, CorrelatedPayload)] {
+    pub fn inputs(&self) -> &[(String, CorrelatedValue)] {
         &self.inputs
     }
 
@@ -673,7 +1323,7 @@ impl<'a> NodeIo<'a> {
         self.has_incoming_edges
     }
 
-    fn take_input(&mut self, port: &str) -> Option<(usize, CorrelatedPayload)> {
+    fn take_input(&mut self, port: &str) -> Option<(usize, CorrelatedValue)> {
         let idx = match self.inputs.iter().position(|(p, _)| p == port) {
             Some(idx) => idx,
             None => {
@@ -691,7 +1341,7 @@ impl<'a> NodeIo<'a> {
         Some((idx, payload))
     }
 
-    fn restore_input(&mut self, idx: usize, port: &str, payload: CorrelatedPayload) {
+    fn restore_input(&mut self, idx: usize, port: &str, payload: CorrelatedValue) {
         if idx <= self.inputs.len() {
             self.inputs.insert(idx, (port.to_string(), payload));
         } else {
@@ -726,13 +1376,13 @@ impl<'a> NodeIo<'a> {
     ///
     /// ```no_run
     /// use daedalus_runtime::io::NodeIo;
-    /// use daedalus_runtime::executor::EdgePayload;
+    /// use daedalus_runtime::executor::RuntimeValue;
     /// fn handler(io: &mut NodeIo) {
-    ///     io.push_output(Some("out"), EdgePayload::Unit);
+    ///     io.push_output(Some("out"), RuntimeValue::Unit);
     /// }
     /// ```
-    pub fn push_output(&mut self, port: Option<&str>, payload: EdgePayload) {
-        let correlated = CorrelatedPayload {
+    pub fn push_output(&mut self, port: Option<&str>, payload: RuntimeValue) {
+        let correlated = CorrelatedValue {
             correlation_id: self.current_corr_id,
             inner: payload,
             enqueued_at: Instant::now(),
@@ -741,11 +1391,11 @@ impl<'a> NodeIo<'a> {
     }
 
     /// Push a pre-correlated payload (used by host-bridge style nodes).
-    pub fn push_correlated_payload(&mut self, port: Option<&str>, correlated: CorrelatedPayload) {
+    pub fn push_correlated_value(&mut self, port: Option<&str>, correlated: CorrelatedValue) {
         self.push_correlated(port, correlated);
     }
 
-    fn push_correlated(&mut self, port: Option<&str>, correlated: CorrelatedPayload) {
+    fn push_correlated(&mut self, port: Option<&str>, correlated: CorrelatedValue) {
         #[cfg(feature = "gpu")]
         let mut matches: Vec<(
             usize,
@@ -764,7 +1414,12 @@ impl<'a> NodeIo<'a> {
             Option<usize>,
         )> = Vec::new();
         for edge_idx in &self.outgoing {
-            if let Some((_, from_port, _, _, policy)) = self.edges.get(*edge_idx) {
+            if let Some((_, from_port, to, _, policy)) = self.edges.get(*edge_idx) {
+                if let Some(active_nodes) = self.active_nodes
+                    && !active_nodes.get(to.0).copied().unwrap_or(true)
+                {
+                    continue;
+                }
                 if let Some(p) = port
                     && !p.eq_ignore_ascii_case(from_port)
                 {
@@ -778,14 +1433,14 @@ impl<'a> NodeIo<'a> {
                 let bp = bp_override.unwrap_or(self.backpressure.clone());
                 #[cfg(feature = "gpu")]
                 {
-                    let needs_payload = self.payload_edges.contains(edge_idx);
+                    let needs_data = self.data_edges.contains(edge_idx);
                     matches.push((
                         *edge_idx,
                         from_port.clone(),
                         policy.clone(),
                         bp,
                         cap_override,
-                        needs_payload,
+                        needs_data,
                     ));
                 }
                 #[cfg(not(feature = "gpu"))]
@@ -803,7 +1458,7 @@ impl<'a> NodeIo<'a> {
 
         if matches.len() == 1 {
             #[cfg(feature = "gpu")]
-            let (edge_idx, from_port, policy, bp, cap_override, needs_payload) = matches.remove(0);
+            let (edge_idx, from_port, policy, bp, cap_override, needs_data) = matches.remove(0);
             #[cfg(not(feature = "gpu"))]
             let (edge_idx, from_port, policy, bp, cap_override) = matches.remove(0);
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO").is_some() {
@@ -812,7 +1467,7 @@ impl<'a> NodeIo<'a> {
                     self.node_id,
                     from_port,
                     edge_idx,
-                    edge_payload_desc(&correlated.inner)
+                    runtime_value_desc(&correlated.inner)
                 );
             }
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO_STDERR").is_some() {
@@ -821,7 +1476,7 @@ impl<'a> NodeIo<'a> {
                     self.node_id,
                     from_port,
                     edge_idx,
-                    edge_payload_desc(&correlated.inner)
+                    runtime_value_desc(&correlated.inner)
                 );
             }
             let mut effective_policy = policy;
@@ -829,33 +1484,43 @@ impl<'a> NodeIo<'a> {
                 effective_policy = EdgePolicyKind::Bounded { cap };
             }
             #[cfg(feature = "gpu")]
-            let correlated = if needs_payload {
+            let mut materialized_bytes = None;
+            #[cfg(feature = "gpu")]
+            let correlated = if needs_data {
                 let mut updated = correlated;
-                updated.inner = match updated.inner {
-                    EdgePayload::Any(a) => {
+                let (promoted, materialized) = match updated.inner {
+                    RuntimeValue::Any(a) => {
                         promote_any_with_cache(&a, self.materialization_cache.as_ref())
                     }
-                    other => promote_payload_for_host(other),
+                    other => promote_value_for_host(other),
                 };
+                if materialized {
+                    materialized_bytes = crate::executor::runtime_value_size_bytes(&promoted);
+                }
+                updated.inner = promoted;
                 updated
             } else {
                 correlated
             };
-            let payload_bytes =
-                if cfg!(feature = "metrics") && self.telemetry.metrics_level.is_detailed() {
-                    crate::executor::payload_size_bytes(&correlated.inner)
+            #[cfg(not(feature = "gpu"))]
+            let correlated = correlated;
+            #[cfg(feature = "gpu")]
+            self.record_materialization_bytes(materialized_bytes);
+            let transport_bytes =
+                if cfg!(feature = "metrics") && self.telemetry_mut().metrics_level.is_detailed() {
+                    crate::executor::runtime_value_size_bytes(&correlated.inner)
                 } else {
                     None
                 };
-            self.telemetry
-                .record_node_payload_out(self.node_idx, payload_bytes);
+            self.telemetry_mut()
+                .record_node_transport_out(self.node_idx, transport_bytes);
             apply_policy_owned(ApplyPolicyOwnedArgs {
                 edge_idx,
                 policy: &effective_policy,
                 payload: correlated,
                 queues: self.queues,
                 warnings_seen: self.warnings_seen,
-                telem: self.telemetry,
+                telem: self.telemetry_mut(),
                 warning_label: Some(format!("edge_{}_{}", self.node_id, from_port)),
                 backpressure: bp,
             });
@@ -863,14 +1528,14 @@ impl<'a> NodeIo<'a> {
         }
 
         #[cfg(feature = "gpu")]
-        for (edge_idx, from_port, mut policy, bp, cap_override, needs_payload) in matches {
+        for (edge_idx, from_port, mut policy, bp, cap_override, needs_data) in matches {
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO").is_some() {
                 log::warn!(
                     "node output enqueue node={} port={} edge_idx={} payload={}",
                     self.node_id,
                     from_port,
                     edge_idx,
-                    edge_payload_desc(&correlated.inner)
+                    runtime_value_desc(&correlated.inner)
                 );
             }
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO_STDERR").is_some() {
@@ -879,36 +1544,42 @@ impl<'a> NodeIo<'a> {
                     self.node_id,
                     from_port,
                     edge_idx,
-                    edge_payload_desc(&correlated.inner)
+                    runtime_value_desc(&correlated.inner)
                 );
             }
+            let mut materialized_bytes = None;
             if let Some(cap) = cap_override {
                 policy = EdgePolicyKind::Bounded { cap };
             }
             let mut payload = correlated.clone();
-            if needs_payload {
-                payload.inner = match payload.inner {
-                    EdgePayload::Any(a) => {
+            if needs_data {
+                let (promoted, materialized) = match payload.inner {
+                    RuntimeValue::Any(a) => {
                         promote_any_with_cache(&a, self.materialization_cache.as_ref())
                     }
-                    other => promote_payload_for_host(other),
+                    other => promote_value_for_host(other),
                 };
+                if materialized {
+                    materialized_bytes = crate::executor::runtime_value_size_bytes(&promoted);
+                }
+                payload.inner = promoted;
             }
-            let payload_bytes =
-                if cfg!(feature = "metrics") && self.telemetry.metrics_level.is_detailed() {
-                    crate::executor::payload_size_bytes(&payload.inner)
+            self.record_materialization_bytes(materialized_bytes);
+            let transport_bytes =
+                if cfg!(feature = "metrics") && self.telemetry_mut().metrics_level.is_detailed() {
+                    crate::executor::runtime_value_size_bytes(&payload.inner)
                 } else {
                     None
                 };
-            self.telemetry
-                .record_node_payload_out(self.node_idx, payload_bytes);
+            self.telemetry_mut()
+                .record_node_transport_out(self.node_idx, transport_bytes);
             apply_policy(
                 edge_idx,
                 &policy,
                 &payload,
                 self.queues,
                 self.warnings_seen,
-                self.telemetry,
+                self.telemetry_mut(),
                 Some(format!("edge_{}_{}", self.node_id, from_port)),
                 bp,
             );
@@ -921,7 +1592,7 @@ impl<'a> NodeIo<'a> {
                     self.node_id,
                     from_port,
                     edge_idx,
-                    edge_payload_desc(&correlated.inner)
+                    runtime_value_desc(&correlated.inner)
                 );
             }
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO_STDERR").is_some() {
@@ -930,27 +1601,27 @@ impl<'a> NodeIo<'a> {
                     self.node_id,
                     from_port,
                     edge_idx,
-                    edge_payload_desc(&correlated.inner)
+                    runtime_value_desc(&correlated.inner)
                 );
             }
             if let Some(cap) = cap_override {
                 policy = EdgePolicyKind::Bounded { cap };
             }
-            let payload_bytes =
-                if cfg!(feature = "metrics") && self.telemetry.metrics_level.is_detailed() {
-                    crate::executor::payload_size_bytes(&correlated.inner)
+            let transport_bytes =
+                if cfg!(feature = "metrics") && self.telemetry_mut().metrics_level.is_detailed() {
+                    crate::executor::runtime_value_size_bytes(&correlated.inner)
                 } else {
                     None
                 };
-            self.telemetry
-                .record_node_payload_out(self.node_idx, payload_bytes);
+            self.telemetry_mut()
+                .record_node_transport_out(self.node_idx, transport_bytes);
             apply_policy(
                 edge_idx,
                 &policy,
                 &correlated,
                 self.queues,
                 self.warnings_seen,
-                self.telemetry,
+                self.telemetry_mut(),
                 Some(format!("edge_{}_{}", self.node_id, from_port)),
                 bp,
             );
@@ -958,25 +1629,25 @@ impl<'a> NodeIo<'a> {
     }
 
     #[cfg(feature = "gpu")]
-    pub fn push_payload<T>(&mut self, port: Option<&str>, value: daedalus_gpu::Payload<T>)
+    pub fn push_compute<T>(&mut self, port: Option<&str>, value: daedalus_gpu::Compute<T>)
     where
-        T: daedalus_gpu::GpuSendable + Clone + Send + Sync + 'static,
-        T::GpuRepr: Clone + Send + Sync + 'static,
+        T: daedalus_gpu::DeviceBridge + Clone + Send + Sync + 'static,
+        T::Device: Clone + Send + Sync + 'static,
     {
         match value {
-            daedalus_gpu::Payload::Cpu(v) => {
-                let payload = EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_cpu::<T>(v));
+            daedalus_gpu::Compute::Cpu(v) => {
+                let payload = RuntimeValue::Data(daedalus_gpu::DataCell::from_cpu::<T>(v));
                 self.push_output(port, payload);
             }
-            daedalus_gpu::Payload::Gpu(g) => {
-                let payload = EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_gpu::<T>(g));
+            daedalus_gpu::Compute::Gpu(g) => {
+                let payload = RuntimeValue::Data(daedalus_gpu::DataCell::from_gpu::<T>(g));
                 self.push_output(port, payload);
             }
         }
     }
 
     pub fn push_any<T: Any + Send + Sync + 'static>(&mut self, port: Option<&str>, value: T) {
-        self.push_output(port, EdgePayload::Any(Arc::new(value)));
+        self.push_output(port, RuntimeValue::Any(Arc::new(value)));
     }
 
     /// Push an `Arc<T>` as an `Any` payload without re-wrapping/allocating.
@@ -989,7 +1660,7 @@ impl<'a> NodeIo<'a> {
         value: Arc<T>,
     ) {
         let any: Arc<dyn Any + Send + Sync> = value;
-        self.push_output(port, EdgePayload::Any(any));
+        self.push_output(port, RuntimeValue::Any(any));
     }
 
     pub fn push_typed<T>(&mut self, port: Option<&str>, value: T)
@@ -1032,7 +1703,7 @@ impl<'a> NodeIo<'a> {
     /// }
     /// ```
     pub fn push_value(&mut self, port: Option<&str>, value: daedalus_data::model::Value) {
-        self.push_output(port, EdgePayload::Value(value));
+        self.push_output(port, RuntimeValue::Value(value));
     }
 
     /// Iterate all inputs for a given port name.
@@ -1044,7 +1715,7 @@ impl<'a> NodeIo<'a> {
     ///     for _payload in io.inputs_for("in") {}
     /// }
     /// ```
-    pub fn inputs_for<'b>(&'b self, port: &str) -> impl Iterator<Item = &'b CorrelatedPayload> {
+    pub fn inputs_for<'b>(&'b self, port: &str) -> impl Iterator<Item = &'b CorrelatedValue> {
         self.inputs
             .iter()
             .filter(move |(p, _)| p == port)
@@ -1053,12 +1724,21 @@ impl<'a> NodeIo<'a> {
 
     /// Typed accessor for Any payloads.
     pub fn get_any<T: Any + Clone + Send + Sync>(&self, port: &str) -> Option<T> {
-        #[cfg(feature = "gpu")]
-        let want = TypeId::of::<T>();
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Any(a) => {
+            RuntimeValue::Any(a) => {
                 a.downcast_ref::<T>()
                     .cloned()
+                    .or_else(|| a.downcast_ref::<Arc<T>>().map(|arc| (**arc).clone()))
+                    .or_else(|| {
+                        #[cfg(feature = "gpu")]
+                        {
+                            Self::any_backing_owned::<T>(a)
+                        }
+                        #[cfg(not(feature = "gpu"))]
+                        {
+                            None
+                        }
+                    })
                     .or_else(|| self.coerce_const_any::<T>(a.as_ref()))
                     // Allow CPU-side conversions between Any payloads (e.g., GrayImage -> DynamicImage)
                     // using the global conversion registry.
@@ -1067,67 +1747,9 @@ impl<'a> NodeIo<'a> {
                             .map(|arc| (*arc).clone())
                     })
             }
-            EdgePayload::Value(v) => self.coerce_from_value::<T>(v),
+            RuntimeValue::Value(v) => self.coerce_from_value::<T>(v),
             #[cfg(feature = "gpu")]
-            EdgePayload::Payload(ep) => {
-                if let Some(v) = ep.try_downcast_cpu_any::<T>() {
-                    return Some(v);
-                }
-                if want == TypeId::of::<DynamicImage>() {
-                    return ep
-                        .clone_cpu::<DynamicImage>()
-                        .and_then(Self::dynamic_image_to_t::<T>);
-                }
-                if want == TypeId::of::<GrayImage>()
-                    && let Some(gray) = ep.clone_cpu::<GrayImage>()
-                {
-                    let any_ref: &dyn Any = &gray;
-                    return any_ref.downcast_ref::<T>().cloned();
-                }
-                if want == TypeId::of::<RgbImage>()
-                    && let Some(rgb) = ep.clone_cpu::<RgbImage>()
-                {
-                    let any_ref: &dyn Any = &rgb;
-                    return any_ref.downcast_ref::<T>().cloned();
-                }
-                if want == TypeId::of::<RgbaImage>()
-                    && let Some(rgba) = ep.clone_cpu::<RgbaImage>()
-                {
-                    let any_ref: &dyn Any = &rgba;
-                    return any_ref.downcast_ref::<T>().cloned();
-                }
-                ep.clone_cpu::<DynamicImage>()
-                    .and_then(|img| {
-                        if want == TypeId::of::<DynamicImage>()
-                            || want == TypeId::of::<GrayImage>()
-                            || want == TypeId::of::<GrayAlphaImage>()
-                            || want == TypeId::of::<RgbImage>()
-                            || want == TypeId::of::<RgbaImage>()
-                        {
-                            return Self::dynamic_image_to_t::<T>(img);
-                        }
-                        None
-                    })
-                    .or_else(|| {
-                        if log::log_enabled!(log::Level::Debug)
-                            && (want == TypeId::of::<DynamicImage>()
-                                || want == TypeId::of::<GrayImage>()
-                                || want == TypeId::of::<GrayAlphaImage>()
-                                || want == TypeId::of::<RgbImage>()
-                                || want == TypeId::of::<RgbaImage>())
-                        {
-                            log::debug!("payload type mismatch port={} payload={:?}", port, ep);
-                        }
-                        None
-                    })
-            }
-            #[cfg(feature = "gpu")]
-            EdgePayload::GpuImage(h)
-                if TypeId::of::<T>() == TypeId::of::<daedalus_gpu::GpuImageHandle>() =>
-            {
-                let any_ref: &dyn Any = h;
-                any_ref.downcast_ref::<T>().cloned()
-            }
+            RuntimeValue::Data(ep) => self.data_cell_to_t::<T>(ep),
             _ => None,
         })
     }
@@ -1135,14 +1757,24 @@ impl<'a> NodeIo<'a> {
     /// Borrow a typed Any payload without cloning.
     pub fn get_any_ref<T: Any + Send + Sync>(&self, port: &str) -> Option<&T> {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Any(a) => a.downcast_ref::<T>(),
+            RuntimeValue::Any(a) => a
+                .downcast_ref::<T>()
+                .or_else(|| a.downcast_ref::<Arc<T>>().map(Arc::as_ref))
+                .or_else(|| {
+                    #[cfg(feature = "gpu")]
+                    {
+                        Self::any_backing_ref::<T>(a)
+                    }
+                    #[cfg(not(feature = "gpu"))]
+                    {
+                        None
+                    }
+                }),
             #[cfg(feature = "gpu")]
-            EdgePayload::GpuImage(h)
-                if TypeId::of::<T>() == TypeId::of::<daedalus_gpu::GpuImageHandle>() =>
-            {
-                let any_ref: &dyn Any = h;
-                any_ref.downcast_ref::<T>()
-            }
+            RuntimeValue::Data(ep) => ep.as_cpu_any::<T>().or_else(|| {
+                ep.as_cpu_any::<daedalus_gpu::Backing<T>>()
+                    .map(daedalus_gpu::Backing::as_ref)
+            }),
             _ => None,
         })
     }
@@ -1155,48 +1787,8 @@ impl<'a> NodeIo<'a> {
         if let Some(v) = self.get_any_ref::<T>(port) {
             return Some(v);
         }
-        if let Some(v) = self.get_any::<T>(port) {
-            return Some(self.cache_borrowed(v));
-        }
-
-        if let Some(v) = self.get_any_ref::<i64>(port) {
-            if let Some(t) = Self::coerce_from_i64::<T>(*v) {
-                return Some(self.cache_borrowed(t));
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::Int(*v)) {
-                return Some(self.cache_borrowed(t));
-            }
-        }
-        if let Some(v) = self.get_any_ref::<f64>(port) {
-            if let Some(t) = Self::coerce_from_f64::<T>(*v) {
-                return Some(self.cache_borrowed(t));
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::Float(*v)) {
-                return Some(self.cache_borrowed(t));
-            }
-        }
-        if let Some(v) = self.get_any_ref::<bool>(port) {
-            let any_ref: &dyn Any = v;
-            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
-                return Some(self.cache_borrowed(t));
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::Bool(*v)) {
-                return Some(self.cache_borrowed(t));
-            }
-        }
-        if let Some(v) = self.get_any_ref::<String>(port) {
-            let any_ref: &dyn Any = v;
-            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
-                return Some(self.cache_borrowed(t));
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::String(v.clone().into())) {
-                return Some(self.cache_borrowed(t));
-            }
-        }
-        if let Some(v) = self.get_value(port)
-            && let Some(t) = self.coerce_from_value::<T>(v)
-        {
-            return Some(self.cache_borrowed(t));
+        if let Some((value, _)) = self.get_typed_with_resolution::<T>(port) {
+            return Some(self.cache_borrowed(value));
         }
 
         if std::env::var_os("DAEDALUS_TRACE_MISSING_INPUTS").is_some() {
@@ -1204,16 +1796,14 @@ impl<'a> NodeIo<'a> {
                 .inputs_for(port)
                 .next()
                 .map(|payload| match &payload.inner {
-                    EdgePayload::Any(a) => {
+                    RuntimeValue::Any(a) => {
                         format!("Any({})", std::any::type_name_of_val(a.as_ref()))
                     }
                     #[cfg(feature = "gpu")]
-                    EdgePayload::Payload(ep) => format!("Payload({ep:?})"),
-                    #[cfg(feature = "gpu")]
-                    EdgePayload::GpuImage(_) => "GpuImage".to_string(),
-                    EdgePayload::Value(v) => format!("Value({v:?})"),
-                    EdgePayload::Bytes(_) => "Bytes".to_string(),
-                    EdgePayload::Unit => "Unit".to_string(),
+                    RuntimeValue::Data(ep) => format!("Data({ep:?})"),
+                    RuntimeValue::Value(v) => format!("Value({v:?})"),
+                    RuntimeValue::Bytes(_) => "Bytes".to_string(),
+                    RuntimeValue::Unit => "Unit".to_string(),
                 })
                 .unwrap_or_else(|| "None".to_string());
             eprintln!(
@@ -1249,6 +1839,10 @@ impl<'a> NodeIo<'a> {
         }
 
         let converted = crate::convert::convert_to_arc::<T>(a)?;
+        self.record_conversion_bytes(
+            Self::estimate_any_bytes(converted.as_ref())
+                .or_else(|| Self::estimate_any_bytes(a.as_ref())),
+        );
         if let Ok(mut guard) = self.any_conversion_cache.lock() {
             let as_any: Arc<dyn Any + Send + Sync> = converted.clone();
             guard.insert(key, as_any);
@@ -1262,33 +1856,50 @@ impl<'a> NodeIo<'a> {
         T: Any + Send + Sync + 'static,
     {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Any(a) => self.convert_any_to_arc_cached::<T>(a),
+            RuntimeValue::Any(a) => a
+                .downcast_ref::<Arc<T>>()
+                .cloned()
+                .or_else(|| {
+                    #[cfg(feature = "gpu")]
+                    {
+                        Self::any_backing_arc::<T>(a)
+                    }
+                    #[cfg(not(feature = "gpu"))]
+                    {
+                        None
+                    }
+                })
+                .or_else(|| self.convert_any_to_arc_cached::<T>(a)),
             #[cfg(feature = "gpu")]
-            EdgePayload::Payload(ep) => ep.arc_cpu_any::<T>(),
+            RuntimeValue::Data(ep) => self.data_cell_to_arc::<T>(ep),
             _ => None,
         })
     }
 
     /// Borrow a typed CPU payload by reference (no clone).
     #[cfg(feature = "gpu")]
-    pub fn get_payload_ref<T>(&self, port: &str) -> Option<&T>
+    pub fn get_compute_ref<T>(&self, port: &str) -> Option<&T>
     where
-        T: daedalus_gpu::GpuSendable + 'static,
+        T: daedalus_gpu::DeviceBridge + Clone + Send + Sync + 'static,
+        T::Device: Clone + Send + Sync + 'static,
     {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Payload(ep) => ep.as_cpu::<T>(),
+            RuntimeValue::Data(ep) => ep.as_cpu::<T>().or_else(|| {
+                ep.as_cpu::<daedalus_gpu::Backing<T>>()
+                    .map(daedalus_gpu::Backing::as_ref)
+            }),
             _ => None,
         })
     }
 
     /// Borrow a typed CPU payload as an `Arc<T>` (no clone) when possible.
     #[cfg(feature = "gpu")]
-    pub fn get_payload_arc<T>(&self, port: &str) -> Option<Arc<T>>
+    pub fn get_compute_arc<T>(&self, port: &str) -> Option<Arc<T>>
     where
         T: Send + Sync + 'static,
     {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Payload(ep) => ep.arc_cpu_any::<T>(),
+            RuntimeValue::Data(ep) => self.data_cell_to_arc::<T>(ep),
             _ => None,
         })
     }
@@ -1298,14 +1909,14 @@ impl<'a> NodeIo<'a> {
     /// This is a true move at the graph level: if the value is shared elsewhere it remains
     /// valid (because the underlying allocation is reference-counted).
     #[cfg(feature = "gpu")]
-    pub fn take_payload_arc<T>(&mut self, port: &str) -> Option<Arc<T>>
+    pub fn take_compute_arc<T>(&mut self, port: &str) -> Option<Arc<T>>
     where
         T: Send + Sync + 'static,
     {
         let (idx, mut payload) = self.take_input(port)?;
         let mut out: Option<Arc<T>> = None;
-        match std::mem::replace(&mut payload.inner, EdgePayload::Unit) {
-            EdgePayload::Payload(ep) => {
+        match std::mem::replace(&mut payload.inner, RuntimeValue::Unit) {
+            RuntimeValue::Data(ep) => {
                 out = ep.arc_cpu_any::<T>();
             }
             other => {
@@ -1320,11 +1931,11 @@ impl<'a> NodeIo<'a> {
 
     /// Take a typed CPU payload and return a COW-mutable wrapper.
     #[cfg(feature = "gpu")]
-    pub fn take_payload_cow_mut<T>(&mut self, port: &str) -> Option<CowArcMut<T>>
+    pub fn take_compute_cow_mut<T>(&mut self, port: &str) -> Option<CowArcMut<T>>
     where
         T: Clone + Send + Sync + 'static,
     {
-        self.take_payload_arc::<T>(port).map(CowArcMut::new)
+        self.take_compute_arc::<T>(port).map(CowArcMut::new)
     }
 
     /// Move a typed Any payload, cloning only when shared.
@@ -1335,17 +1946,22 @@ impl<'a> NodeIo<'a> {
         let (idx, payload) = self.take_input(port)?;
         let mut handled = None;
         let mut payload = payload;
-        match std::mem::replace(&mut payload.inner, EdgePayload::Unit) {
-            EdgePayload::Any(a) => match Arc::downcast::<T>(a) {
+        match std::mem::replace(&mut payload.inner, RuntimeValue::Unit) {
+            RuntimeValue::Any(a) => match Arc::downcast::<T>(a) {
                 Ok(arc) => {
                     handled = Some(match Arc::try_unwrap(arc) {
                         Ok(v) => v,
                         Err(arc) => (*arc).clone(),
                     });
                 }
-                Err(a) => {
-                    payload.inner = EdgePayload::Any(a);
-                }
+                Err(a) => match Arc::downcast::<Arc<T>>(a) {
+                    Ok(arc) => {
+                        handled = Some((**arc).clone());
+                    }
+                    Err(a) => {
+                        payload.inner = RuntimeValue::Any(a);
+                    }
+                },
             },
             other => {
                 payload.inner = other;
@@ -1368,14 +1984,19 @@ impl<'a> NodeIo<'a> {
     {
         let (idx, mut payload) = self.take_input(port)?;
         let mut out: Option<Arc<T>> = None;
-        match std::mem::replace(&mut payload.inner, EdgePayload::Unit) {
-            EdgePayload::Any(a) => match Arc::downcast::<T>(a) {
+        match std::mem::replace(&mut payload.inner, RuntimeValue::Unit) {
+            RuntimeValue::Any(a) => match Arc::downcast::<T>(a) {
                 Ok(arc) => {
                     out = Some(arc);
                 }
-                Err(a) => {
-                    payload.inner = EdgePayload::Any(a);
-                }
+                Err(a) => match Arc::downcast::<Arc<T>>(a) {
+                    Ok(arc) => {
+                        out = Some((*arc).clone());
+                    }
+                    Err(a) => {
+                        payload.inner = RuntimeValue::Any(a);
+                    }
+                },
             },
             other => {
                 payload.inner = other;
@@ -1408,9 +2029,9 @@ impl<'a> NodeIo<'a> {
         let want = TypeId::of::<T>();
         let (idx, mut payload) = self.take_input(port)?;
         let mut out: Option<T> = None;
-        match std::mem::replace(&mut payload.inner, EdgePayload::Unit) {
+        match std::mem::replace(&mut payload.inner, RuntimeValue::Unit) {
             #[cfg(feature = "gpu")]
-            EdgePayload::Payload(ep) => {
+            RuntimeValue::Data(ep) => {
                 let mut ep_opt = Some(ep);
                 let downcast_owned = |value: Box<dyn Any + Send + Sync>| {
                     value.downcast::<T>().ok().map(|boxed| *boxed)
@@ -1513,10 +2134,10 @@ impl<'a> NodeIo<'a> {
                 if out.is_none()
                     && let Some(ep) = ep_opt
                 {
-                    payload.inner = EdgePayload::Payload(ep);
+                    payload.inner = RuntimeValue::Data(ep);
                 }
             }
-            EdgePayload::Any(a) => {
+            RuntimeValue::Any(a) => {
                 let any = a;
                 match Arc::downcast::<T>(any) {
                     Ok(arc) => {
@@ -1576,7 +2197,7 @@ impl<'a> NodeIo<'a> {
                                                 out = self.coerce_from_value::<T>(&v);
                                             }
                                             Err(any) => {
-                                                payload.inner = EdgePayload::Any(any);
+                                                payload.inner = RuntimeValue::Any(any);
                                             }
                                         }
                                     }
@@ -1586,9 +2207,9 @@ impl<'a> NodeIo<'a> {
                     },
                 }
             }
-            EdgePayload::Value(v) => {
+            RuntimeValue::Value(v) => {
                 out = self.coerce_from_value::<T>(&v);
-                payload.inner = EdgePayload::Value(v);
+                payload.inner = RuntimeValue::Value(v);
             }
             other => {
                 payload.inner = other;
@@ -1598,16 +2219,14 @@ impl<'a> NodeIo<'a> {
         if out.is_none() {
             if std::env::var_os("DAEDALUS_TRACE_MISSING_INPUTS").is_some() {
                 let desc = match &payload.inner {
-                    EdgePayload::Any(a) => {
+                    RuntimeValue::Any(a) => {
                         format!("Any({})", std::any::type_name_of_val(a.as_ref()))
                     }
                     #[cfg(feature = "gpu")]
-                    EdgePayload::Payload(ep) => format!("Payload({ep:?})"),
-                    #[cfg(feature = "gpu")]
-                    EdgePayload::GpuImage(_) => "GpuImage".to_string(),
-                    EdgePayload::Value(v) => format!("Value({v:?})"),
-                    EdgePayload::Bytes(_) => "Bytes".to_string(),
-                    EdgePayload::Unit => "Unit".to_string(),
+                    RuntimeValue::Data(ep) => format!("Data({ep:?})"),
+                    RuntimeValue::Value(v) => format!("Value({v:?})"),
+                    RuntimeValue::Bytes(_) => "Bytes".to_string(),
+                    RuntimeValue::Unit => "Unit".to_string(),
                 };
                 eprintln!(
                     "daedalus-runtime: input mismatch node={} port={} expected={} payload={}",
@@ -1629,7 +2248,7 @@ impl<'a> NodeIo<'a> {
         let mut out: Vec<T> = Vec::new();
         for p in self.inputs_for(port) {
             match &p.inner {
-                EdgePayload::Any(a) => {
+                RuntimeValue::Any(a) => {
                     if let Some(v) = a
                         .downcast_ref::<T>()
                         .cloned()
@@ -1639,7 +2258,7 @@ impl<'a> NodeIo<'a> {
                     }
                 }
                 #[cfg(feature = "gpu")]
-                EdgePayload::Payload(ep) => {
+                RuntimeValue::Data(ep) => {
                     if let Some(img) = ep.clone_cpu::<DynamicImage>()
                         && (want == TypeId::of::<DynamicImage>()
                             || want == TypeId::of::<GrayImage>()
@@ -1648,15 +2267,6 @@ impl<'a> NodeIo<'a> {
                             || want == TypeId::of::<RgbaImage>())
                         && let Some(v) = Self::dynamic_image_to_t::<T>(img)
                     {
-                        out.push(v);
-                    }
-                }
-                #[cfg(feature = "gpu")]
-                EdgePayload::GpuImage(h)
-                    if TypeId::of::<T>() == TypeId::of::<daedalus_gpu::GpuImageHandle>() =>
-                {
-                    let any_ref: &dyn Any = h;
-                    if let Some(v) = any_ref.downcast_ref::<T>().cloned() {
                         out.push(v);
                     }
                 }
@@ -1874,73 +2484,36 @@ impl<'a> NodeIo<'a> {
     where
         T: Any + Clone + Send + Sync,
     {
+        self.get_typed_with_resolution(port).map(|(value, _)| value)
+    }
+
+    pub fn get_typed_with_resolution<T>(&self, port: &str) -> Option<(T, TypedInputResolution)>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        #[cfg(feature = "gpu")]
         let want = std::any::TypeId::of::<T>();
-        let initial = self.get_any::<T>(port);
+
+        let resolved = self
+            .inputs_for(port)
+            .find_map(|payload| self.resolve_typed_from_value::<T>(port, payload));
+
+        #[cfg(feature = "gpu")]
         if log::log_enabled!(log::Level::Debug)
             && want == std::any::TypeId::of::<image::DynamicImage>()
         {
             log::debug!(
-                "get_typed dynamic_image port={} has_any={}",
+                "get_typed dynamic_image port={} resolved={}",
                 port,
-                initial.is_some()
+                resolved.is_some()
             );
         }
-        if let Some(v) = initial {
-            return Some(v);
-        }
 
-        // Common scalar carriers produced by const injection.
-        if let Some(v) = self.get_any::<i64>(port) {
-            if let Some(t) = Self::coerce_from_i64::<T>(v) {
-                return Some(t);
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::Int(v)) {
-                return Some(t);
-            }
-        }
-        if let Some(v) = self.get_any::<f64>(port) {
-            if let Some(t) = Self::coerce_from_f64::<T>(v) {
-                return Some(t);
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::Float(v)) {
-                return Some(t);
-            }
-        }
-        if let Some(v) = self.get_any::<bool>(port) {
-            let any_ref: &dyn Any = &v;
-            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
-                return Some(t);
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::Bool(v)) {
-                return Some(t);
-            }
-        }
-        if let Some(v) = self.get_any::<String>(port) {
-            let any_ref: &dyn Any = &v;
-            if let Some(t) = any_ref.downcast_ref::<T>().cloned() {
-                return Some(t);
-            }
-            if let Some(t) = self.coerce_via_registry::<T>(&Value::String(v.into())) {
-                return Some(t);
-            }
-        }
-        if let Some(v) = self.get_any::<daedalus_data::model::Value>(port)
-            && let Some(t) = self.coerce_from_value::<T>(&v)
-        {
-            return Some(t);
-        }
-
-        if let Some(v) = self.get_value(port)
-            && let Some(t) = self.coerce_from_value::<T>(v)
-        {
-            return Some(t);
-        }
-
-        if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR").is_some() {
+        if resolved.is_none() && std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR").is_some() {
             let payload = self
                 .inputs_for(port)
                 .next()
-                .map(|cp| edge_payload_desc(&cp.inner))
+                .map(|cp| runtime_value_desc(&cp.inner))
                 .unwrap_or_else(|| "None".to_string());
             eprintln!(
                 "daedalus-runtime: get_typed miss node={} port={} type={} payload={}",
@@ -1951,7 +2524,15 @@ impl<'a> NodeIo<'a> {
             );
         }
 
-        None
+        resolved
+    }
+
+    pub fn explain_typed_input<T>(&self, port: &str) -> Option<TypedInputResolution>
+    where
+        T: Any + Clone + Send + Sync + 'static,
+    {
+        self.get_typed_with_resolution::<T>(port)
+            .map(|(_, resolution)| resolution)
     }
 
     fn coerce_from_value<T: Any + Clone>(&self, v: &daedalus_data::model::Value) -> Option<T> {
@@ -2025,24 +2606,24 @@ impl<'a> NodeIo<'a> {
     /// Get a raw `Any` reference for capability-based dispatch.
     pub fn get_any_raw(&self, port: &str) -> Option<&dyn Any> {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Any(a) => Some(a.as_ref() as &dyn Any),
+            RuntimeValue::Any(a) => Some(a.as_ref() as &dyn Any),
             _ => None,
         })
     }
 
     #[cfg(feature = "gpu")]
-    pub fn get_erased_payload(&self, port: &str) -> Option<&daedalus_gpu::ErasedPayload> {
+    pub fn get_data_cell(&self, port: &str) -> Option<&daedalus_gpu::DataCell> {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Payload(ep) => Some(ep),
+            RuntimeValue::Data(ep) => Some(ep),
             _ => None,
         })
     }
 
     #[cfg(feature = "gpu")]
-    pub fn get_payload<T>(&self, port: &str) -> Option<daedalus_gpu::Payload<T>>
+    pub fn get_compute<T>(&self, port: &str) -> Option<daedalus_gpu::Compute<T>>
     where
-        T: daedalus_gpu::GpuSendable + Clone + Send + Sync + 'static,
-        T::GpuRepr: Clone + Send + Sync + 'static,
+        T: daedalus_gpu::DeviceBridge + Clone + Send + Sync + 'static,
+        T::Device: Clone + Send + Sync + 'static,
     {
         // Prefer GPU only when:
         // - the node declares a GPU affinity, AND
@@ -2063,16 +2644,24 @@ impl<'a> NodeIo<'a> {
             );
         for p in self.inputs_for(port) {
             match &p.inner {
-                EdgePayload::Payload(ep) => {
+                RuntimeValue::Data(ep) => {
                     if wants_gpu {
                         if let Some(g) = ep.clone_gpu::<T>() {
-                            return Some(daedalus_gpu::Payload::Gpu(g));
+                            return Some(daedalus_gpu::Compute::Gpu(g));
                         }
                         if let Some(ctx) = &self.gpu {
                             match ep.upload_if_needed(ctx) {
                                 Ok((uploaded, _did_transfer)) => {
+                                    if _did_transfer {
+                                        self.record_gpu_transfer_bytes(
+                                            true,
+                                            crate::executor::runtime_value_size_bytes(
+                                                &RuntimeValue::Data(uploaded.clone()),
+                                            ),
+                                        );
+                                    }
                                     if let Some(g) = uploaded.clone_gpu::<T>() {
-                                        return Some(daedalus_gpu::Payload::Gpu(g));
+                                        return Some(daedalus_gpu::Compute::Gpu(g));
                                     }
                                 }
                                 Err(err) => {
@@ -2080,7 +2669,7 @@ impl<'a> NodeIo<'a> {
                                         .is_some()
                                     {
                                         eprintln!(
-                                            "daedalus-runtime: get_payload upload_if_needed failed node={} port={} type={} err={}",
+                                            "daedalus-runtime: get_compute upload_if_needed failed node={} port={} type={} err={}",
                                             self.node_id,
                                             port,
                                             std::any::type_name::<T>(),
@@ -2090,15 +2679,19 @@ impl<'a> NodeIo<'a> {
                                 }
                             }
                             // Fallback path for payloads that don't support erased upload.
-                            if let Some(cpu) = ep.clone_cpu::<T>() {
+                            if let Some(cpu) = self.data_cell_to_t::<T>(ep) {
+                                let cpu_bytes = Self::estimate_any_bytes(&cpu);
                                 match cpu.upload(ctx) {
-                                    Ok(handle) => return Some(daedalus_gpu::Payload::Gpu(handle)),
+                                    Ok(handle) => {
+                                        self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                        return Some(daedalus_gpu::Compute::Gpu(handle));
+                                    }
                                     Err(err) => {
                                         if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR")
                                             .is_some()
                                         {
                                             eprintln!(
-                                                "daedalus-runtime: get_payload cpu.upload failed node={} port={} type={} err={}",
+                                                "daedalus-runtime: get_compute cpu.upload failed node={} port={} type={} err={}",
                                                 self.node_id,
                                                 port,
                                                 std::any::type_name::<T>(),
@@ -2111,55 +2704,71 @@ impl<'a> NodeIo<'a> {
                         }
                     }
                     if !wants_gpu || !strict_gpu {
-                        if let Some(cpu) = ep.clone_cpu::<T>() {
-                            return Some(daedalus_gpu::Payload::Cpu(cpu));
+                        if let Some(cpu) = self.data_cell_to_t::<T>(ep) {
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
                         }
                         if let Some(ctx) = &self.gpu {
-                            if let Ok((downloaded, _did_transfer)) = ep.download_if_needed(ctx)
-                                && let Some(cpu) = downloaded.clone_cpu::<T>()
+                            if let Ok((downloaded, did_transfer)) = ep.download_if_needed(ctx)
+                                && let Some(cpu) = self.data_cell_to_t::<T>(&downloaded)
                             {
-                                return Some(daedalus_gpu::Payload::Cpu(cpu));
+                                if did_transfer {
+                                    self.record_gpu_transfer_bytes(
+                                        false,
+                                        Self::estimate_any_bytes(&cpu),
+                                    );
+                                }
+                                return Some(daedalus_gpu::Compute::Cpu(cpu));
                             }
                             // Fallback path for payloads that don't support erased download.
                             if let Some(g) = ep.clone_gpu::<T>()
                                 && let Ok(cpu) = T::download(&g, ctx)
                             {
-                                return Some(daedalus_gpu::Payload::Cpu(cpu));
+                                self.record_gpu_transfer_bytes(
+                                    false,
+                                    Self::estimate_any_bytes(&cpu),
+                                );
+                                return Some(daedalus_gpu::Compute::Cpu(cpu));
                             }
                         }
                     }
                 }
-                EdgePayload::Any(a) => {
-                    // Plugins sometimes pass a `Payload<T>` through `Any` (e.g. when a node
+                RuntimeValue::Any(a) => {
+                    // Plugins sometimes pass a `Compute<T>` through `Any` (e.g. when a node
                     // signature uses a type alias that the `#[node]` macro can't see through).
-                    // Accept that representation here so downstream `Payload<T>` inputs can still
+                    // Accept that representation here so downstream `Compute<T>` inputs can still
                     // be satisfied.
-                    let payload_any: Option<daedalus_gpu::Payload<T>> =
-                        a.downcast_ref::<daedalus_gpu::Payload<T>>().cloned();
+                    let payload_any: Option<daedalus_gpu::Compute<T>> =
+                        a.downcast_ref::<daedalus_gpu::Compute<T>>().cloned();
                     if let Some(payload_any) = payload_any {
                         if wants_gpu {
                             match payload_any {
-                                daedalus_gpu::Payload::Gpu(g) => {
-                                    return Some(daedalus_gpu::Payload::Gpu(g));
+                                daedalus_gpu::Compute::Gpu(g) => {
+                                    return Some(daedalus_gpu::Compute::Gpu(g));
                                 }
-                                daedalus_gpu::Payload::Cpu(cpu) => {
-                                    if let Some(ctx) = &self.gpu
-                                        && let Ok(handle) = cpu.upload(ctx)
-                                    {
-                                        return Some(daedalus_gpu::Payload::Gpu(handle));
+                                daedalus_gpu::Compute::Cpu(cpu) => {
+                                    if let Some(ctx) = &self.gpu {
+                                        let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                                        if let Ok(handle) = cpu.upload(ctx) {
+                                            self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                            return Some(daedalus_gpu::Compute::Gpu(handle));
+                                        }
                                     }
                                 }
                             }
                         } else {
                             match payload_any {
-                                daedalus_gpu::Payload::Cpu(cpu) => {
-                                    return Some(daedalus_gpu::Payload::Cpu(cpu));
+                                daedalus_gpu::Compute::Cpu(cpu) => {
+                                    return Some(daedalus_gpu::Compute::Cpu(cpu));
                                 }
-                                daedalus_gpu::Payload::Gpu(g) => {
+                                daedalus_gpu::Compute::Gpu(g) => {
                                     if let Some(ctx) = &self.gpu
                                         && let Ok(cpu) = T::download(&g, ctx)
                                     {
-                                        return Some(daedalus_gpu::Payload::Cpu(cpu));
+                                        self.record_gpu_transfer_bytes(
+                                            false,
+                                            Self::estimate_any_bytes(&cpu),
+                                        );
+                                        return Some(daedalus_gpu::Compute::Cpu(cpu));
                                     }
                                 }
                             }
@@ -2167,66 +2776,178 @@ impl<'a> NodeIo<'a> {
                     }
 
                     if wants_gpu {
+                        if let Some(cpu) = Self::any_backing_owned::<T>(a) {
+                            if let Some(ctx) = &self.gpu {
+                                let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                                if let Ok(handle) = cpu.upload(ctx) {
+                                    self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                    return Some(daedalus_gpu::Compute::Gpu(handle));
+                                }
+                            }
+                        }
+                        if let Some(backing) =
+                            a.downcast_ref::<daedalus_gpu::Backing<DynamicImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<DynamicImage, T>(backing.clone())
+                            && let Some(ctx) = &self.gpu
+                        {
+                            let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                            if let Ok(handle) = cpu.upload(ctx) {
+                                self.record_conversion_bytes(
+                                    cpu_bytes.or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                                );
+                                self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                return Some(daedalus_gpu::Compute::Gpu(handle));
+                            }
+                        }
+                        if let Some(backing) = a.downcast_ref::<daedalus_gpu::Backing<GrayImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<GrayImage, T>(backing.clone())
+                            && let Some(ctx) = &self.gpu
+                        {
+                            let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                            if let Ok(handle) = cpu.upload(ctx) {
+                                self.record_conversion_bytes(
+                                    cpu_bytes.or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                                );
+                                self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                return Some(daedalus_gpu::Compute::Gpu(handle));
+                            }
+                        }
+                        if let Some(backing) = a.downcast_ref::<daedalus_gpu::Backing<RgbImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<RgbImage, T>(backing.clone())
+                            && let Some(ctx) = &self.gpu
+                        {
+                            let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                            if let Ok(handle) = cpu.upload(ctx) {
+                                self.record_conversion_bytes(
+                                    cpu_bytes.or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                                );
+                                self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                return Some(daedalus_gpu::Compute::Gpu(handle));
+                            }
+                        }
+                        if let Some(backing) = a.downcast_ref::<daedalus_gpu::Backing<RgbaImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<RgbaImage, T>(backing.clone())
+                            && let Some(ctx) = &self.gpu
+                        {
+                            let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                            if let Ok(handle) = cpu.upload(ctx) {
+                                self.record_conversion_bytes(
+                                    cpu_bytes.or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                                );
+                                self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                return Some(daedalus_gpu::Compute::Gpu(handle));
+                            }
+                        }
                         let cpu = a.downcast_ref::<T>().cloned();
                         if let Some(cpu) = cpu
                             && let Some(ctx) = &self.gpu
-                            && let Ok(handle) = cpu.upload(ctx)
                         {
-                            return Some(daedalus_gpu::Payload::Gpu(handle));
+                            let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                            if let Ok(handle) = cpu.upload(ctx) {
+                                self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                return Some(daedalus_gpu::Compute::Gpu(handle));
+                            }
                         }
                         if let Some(converted) = crate::convert::convert_arc::<T>(a)
                             && let Some(ctx) = &self.gpu
-                            && let Ok(handle) = converted.upload(ctx)
                         {
-                            return Some(daedalus_gpu::Payload::Gpu(handle));
+                            let converted_bytes = Self::estimate_any_bytes(&converted);
+                            if let Ok(handle) = converted.upload(ctx) {
+                                self.record_conversion_bytes(
+                                    converted_bytes
+                                        .or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                                );
+                                self.record_gpu_transfer_bytes(true, converted_bytes);
+                                return Some(daedalus_gpu::Compute::Gpu(handle));
+                            }
                         }
-                        if let Some(ep) = a.downcast_ref::<daedalus_gpu::ErasedPayload>()
+                        if let Some(ep) = a.downcast_ref::<daedalus_gpu::DataCell>()
                             && let Ok(uploaded) = ep.upload(self.gpu.as_ref()?)
                             && let Some(g) = uploaded.as_gpu::<T>()
                         {
-                            return Some(daedalus_gpu::Payload::Gpu(g.clone()));
+                            self.record_gpu_transfer_bytes(
+                                true,
+                                crate::executor::runtime_value_size_bytes(&RuntimeValue::Data(
+                                    uploaded.clone(),
+                                )),
+                            );
+                            return Some(daedalus_gpu::Compute::Gpu(g.clone()));
                         }
                     }
                     if !wants_gpu || !strict_gpu {
+                        if let Some(cpu) = Self::any_backing_owned::<T>(a) {
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
+                        }
+                        if let Some(backing) =
+                            a.downcast_ref::<daedalus_gpu::Backing<DynamicImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<DynamicImage, T>(backing.clone())
+                        {
+                            self.record_conversion_bytes(
+                                Self::estimate_any_bytes(&cpu)
+                                    .or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                            );
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
+                        }
+                        if let Some(backing) = a.downcast_ref::<daedalus_gpu::Backing<GrayImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<GrayImage, T>(backing.clone())
+                        {
+                            self.record_conversion_bytes(
+                                Self::estimate_any_bytes(&cpu)
+                                    .or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                            );
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
+                        }
+                        if let Some(backing) = a.downcast_ref::<daedalus_gpu::Backing<RgbImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<RgbImage, T>(backing.clone())
+                        {
+                            self.record_conversion_bytes(
+                                Self::estimate_any_bytes(&cpu)
+                                    .or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                            );
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
+                        }
+                        if let Some(backing) = a.downcast_ref::<daedalus_gpu::Backing<RgbaImage>>()
+                            && let Some(cpu) =
+                                Self::convert_backing_value_to_t::<RgbaImage, T>(backing.clone())
+                        {
+                            self.record_conversion_bytes(
+                                Self::estimate_any_bytes(&cpu)
+                                    .or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                            );
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
+                        }
                         let cpu = a.downcast_ref::<T>().cloned();
                         if let Some(cpu) = cpu {
-                            return Some(daedalus_gpu::Payload::Cpu(cpu));
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
                         }
                         if let Some(converted) = crate::convert::convert_arc::<T>(a) {
-                            return Some(daedalus_gpu::Payload::Cpu(converted));
+                            self.record_conversion_bytes(
+                                Self::estimate_any_bytes(&converted)
+                                    .or_else(|| Self::estimate_any_bytes(a.as_ref())),
+                            );
+                            return Some(daedalus_gpu::Compute::Cpu(converted));
                         }
-                        let g = a.downcast_ref::<T::GpuRepr>().cloned();
+                        let g = a.downcast_ref::<T::Device>().cloned();
                         if let Some(g) = g
                             && let Some(ctx) = &self.gpu
                             && let Ok(cpu) = T::download(&g, ctx)
                         {
-                            return Some(daedalus_gpu::Payload::Cpu(cpu));
+                            self.record_gpu_transfer_bytes(false, Self::estimate_any_bytes(&cpu));
+                            return Some(daedalus_gpu::Compute::Cpu(cpu));
                         }
-                        if let Some(ep) = a.downcast_ref::<daedalus_gpu::ErasedPayload>()
+                        if let Some(ep) = a.downcast_ref::<daedalus_gpu::DataCell>()
                             && let Ok(downloaded) = ep.download(self.gpu.as_ref()?)
                             && let Some(cpu) = downloaded.as_cpu::<T>()
                         {
-                            return Some(daedalus_gpu::Payload::Cpu(cpu.clone()));
-                        }
-                    }
-                }
-                EdgePayload::GpuImage(h) => {
-                    if TypeId::of::<T::GpuRepr>() == TypeId::of::<daedalus_gpu::GpuImageHandle>() {
-                        if wants_gpu {
-                            let any_ref: &dyn Any = h;
-                            if let Some(repr) = any_ref.downcast_ref::<T::GpuRepr>() {
-                                return Some(daedalus_gpu::Payload::Gpu(repr.clone()));
-                            }
-                        }
-                        if (!wants_gpu || !strict_gpu)
-                            && let Some(ctx) = &self.gpu
-                        {
-                            let any_ref: &dyn Any = h;
-                            if let Some(repr) = any_ref.downcast_ref::<T::GpuRepr>()
-                                && let Ok(cpu) = T::download(repr, ctx)
-                            {
-                                return Some(daedalus_gpu::Payload::Cpu(cpu));
-                            }
+                            self.record_gpu_transfer_bytes(false, Self::estimate_any_bytes(cpu));
+                            return Some(daedalus_gpu::Compute::Cpu(cpu.clone()));
                         }
                     }
                 }
@@ -2237,10 +2958,10 @@ impl<'a> NodeIo<'a> {
             let payload = self
                 .inputs_for(port)
                 .next()
-                .map(|cp| edge_payload_desc(&cp.inner))
+                .map(|cp| runtime_value_desc(&cp.inner))
                 .unwrap_or_else(|| "None".to_string());
             eprintln!(
-                "daedalus-runtime: get_payload miss node={} port={} type={} wants_gpu={} strict_gpu={} payload={}",
+                "daedalus-runtime: get_compute miss node={} port={} type={} wants_gpu={} strict_gpu={} payload={}",
                 self.node_id,
                 port,
                 std::any::type_name::<T>(),
@@ -2253,10 +2974,10 @@ impl<'a> NodeIo<'a> {
     }
 
     #[cfg(feature = "gpu")]
-    pub fn get_payload_mut<T>(&mut self, port: &str) -> Option<daedalus_gpu::Payload<T>>
+    pub fn get_compute_mut<T>(&mut self, port: &str) -> Option<daedalus_gpu::Compute<T>>
     where
-        T: daedalus_gpu::GpuSendable + Clone + Send + Sync + 'static,
-        T::GpuRepr: Clone + Send + Sync + 'static,
+        T: daedalus_gpu::DeviceBridge + Clone + Send + Sync + 'static,
+        T::Device: Clone + Send + Sync + 'static,
     {
         let wants_gpu = self.gpu.is_some()
             && matches!(
@@ -2266,44 +2987,77 @@ impl<'a> NodeIo<'a> {
             );
         let (idx, mut payload) = self.take_input(port)?;
 
-        let mut out: Option<daedalus_gpu::Payload<T>> = None;
-        match std::mem::replace(&mut payload.inner, EdgePayload::Unit) {
-            EdgePayload::Payload(ep) => {
+        let mut out: Option<daedalus_gpu::Compute<T>> = None;
+        match std::mem::replace(&mut payload.inner, RuntimeValue::Unit) {
+            RuntimeValue::Data(ep) => {
                 let mut ep_opt = Some(ep);
                 if wants_gpu {
                     if let Some(ep) = ep_opt.as_ref() {
                         if let Some(g) = ep.clone_gpu::<T>() {
-                            out = Some(daedalus_gpu::Payload::Gpu(g));
+                            out = Some(daedalus_gpu::Compute::Gpu(g));
                         } else if let Some(ctx) = &self.gpu {
-                            if let Ok((uploaded, _did_transfer)) = ep.upload_if_needed(ctx)
+                            if let Ok((uploaded, did_transfer)) = ep.upload_if_needed(ctx)
                                 && let Some(g) = uploaded.clone_gpu::<T>()
                             {
-                                out = Some(daedalus_gpu::Payload::Gpu(g));
-                            } else if let Some(cpu) = ep.clone_cpu::<T>()
-                                && let Ok(handle) = cpu.upload(ctx)
+                                if did_transfer {
+                                    self.record_gpu_transfer_bytes(
+                                        true,
+                                        crate::executor::runtime_value_size_bytes(
+                                            &RuntimeValue::Data(uploaded.clone()),
+                                        ),
+                                    );
+                                }
+                                out = Some(daedalus_gpu::Compute::Gpu(g));
+                            } else if let Some(backing) =
+                                ep.try_downcast_cpu_any::<daedalus_gpu::Backing<T>>()
                             {
-                                out = Some(daedalus_gpu::Payload::Gpu(handle));
+                                let cpu = backing.into_owned();
+                                let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                                if let Ok(handle) = cpu.upload(ctx) {
+                                    self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                    out = Some(daedalus_gpu::Compute::Gpu(handle));
+                                }
+                            } else if let Some(cpu) = ep.clone_cpu::<T>() {
+                                let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                                if let Ok(handle) = cpu.upload(ctx) {
+                                    self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                    out = Some(daedalus_gpu::Compute::Gpu(handle));
+                                }
                             }
                         }
                     }
                 } else if let Some(ep) = ep_opt.take() {
                     match ep.take_cpu::<T>() {
-                        Ok(cpu) => out = Some(daedalus_gpu::Payload::Cpu(cpu)),
+                        Ok(cpu) => out = Some(daedalus_gpu::Compute::Cpu(cpu)),
                         Err(rest) => {
                             ep_opt = Some(rest);
                             if let Some(ep) = ep_opt.as_ref() {
-                                if let Some(cpu) = ep.clone_cpu::<T>() {
-                                    out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                if let Some(backing) =
+                                    ep.try_downcast_cpu_any::<daedalus_gpu::Backing<T>>()
+                                {
+                                    out = Some(daedalus_gpu::Compute::Cpu(backing.into_owned()));
+                                } else if let Some(cpu) = ep.clone_cpu::<T>() {
+                                    out = Some(daedalus_gpu::Compute::Cpu(cpu));
                                 } else if let Some(ctx) = &self.gpu {
-                                    if let Ok((downloaded, _did_transfer)) =
+                                    if let Ok((downloaded, did_transfer)) =
                                         ep.download_if_needed(ctx)
                                         && let Some(cpu) = downloaded.clone_cpu::<T>()
                                     {
-                                        out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                        if did_transfer {
+                                            self.record_gpu_transfer_bytes(
+                                                false,
+                                                Self::estimate_any_bytes(&cpu),
+                                            );
+                                        }
+                                        out = Some(daedalus_gpu::Compute::Cpu(cpu));
                                     } else if let Some(g) = ep.clone_gpu::<T>()
                                         && let Ok(cpu) = T::download(&g, ctx)
                                     {
-                                        out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                        self.record_gpu_transfer_bytes(
+                                            false,
+                                            Self::estimate_any_bytes(&cpu),
+                                        );
+                                        out = Some(daedalus_gpu::Compute::Cpu(cpu));
                                     }
                                 }
                             }
@@ -2313,12 +3067,12 @@ impl<'a> NodeIo<'a> {
                 if out.is_none()
                     && let Some(ep) = ep_opt
                 {
-                    payload.inner = EdgePayload::Payload(ep);
+                    payload.inner = RuntimeValue::Data(ep);
                 }
             }
-            EdgePayload::Any(a) => {
+            RuntimeValue::Any(a) => {
                 let any = a;
-                match Arc::downcast::<daedalus_gpu::Payload<T>>(any) {
+                match Arc::downcast::<daedalus_gpu::Compute<T>>(any) {
                     Ok(arc) => {
                         let payload_any = match Arc::try_unwrap(arc) {
                             Ok(v) => v,
@@ -2326,27 +3080,33 @@ impl<'a> NodeIo<'a> {
                         };
                         if wants_gpu {
                             match payload_any {
-                                daedalus_gpu::Payload::Gpu(g) => {
-                                    out = Some(daedalus_gpu::Payload::Gpu(g))
+                                daedalus_gpu::Compute::Gpu(g) => {
+                                    out = Some(daedalus_gpu::Compute::Gpu(g))
                                 }
-                                daedalus_gpu::Payload::Cpu(cpu) => {
-                                    if let Some(ctx) = &self.gpu
-                                        && let Ok(handle) = cpu.upload(ctx)
-                                    {
-                                        out = Some(daedalus_gpu::Payload::Gpu(handle));
+                                daedalus_gpu::Compute::Cpu(cpu) => {
+                                    if let Some(ctx) = &self.gpu {
+                                        let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                                        if let Ok(handle) = cpu.upload(ctx) {
+                                            self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                            out = Some(daedalus_gpu::Compute::Gpu(handle));
+                                        }
                                     }
                                 }
                             }
                         } else {
                             match payload_any {
-                                daedalus_gpu::Payload::Cpu(cpu) => {
-                                    out = Some(daedalus_gpu::Payload::Cpu(cpu))
+                                daedalus_gpu::Compute::Cpu(cpu) => {
+                                    out = Some(daedalus_gpu::Compute::Cpu(cpu))
                                 }
-                                daedalus_gpu::Payload::Gpu(g) => {
+                                daedalus_gpu::Compute::Gpu(g) => {
                                     if let Some(ctx) = &self.gpu
                                         && let Ok(cpu) = T::download(&g, ctx)
                                     {
-                                        out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                        self.record_gpu_transfer_bytes(
+                                            false,
+                                            Self::estimate_any_bytes(&cpu),
+                                        );
+                                        out = Some(daedalus_gpu::Compute::Cpu(cpu));
                                     }
                                 }
                             }
@@ -2360,15 +3120,41 @@ impl<'a> NodeIo<'a> {
                                         Ok(v) => v,
                                         Err(arc) => (*arc).clone(),
                                     };
-                                    if let Some(ctx) = &self.gpu
-                                        && let Ok(handle) = cpu.upload(ctx)
-                                    {
-                                        out = Some(daedalus_gpu::Payload::Gpu(handle));
+                                    if let Some(ctx) = &self.gpu {
+                                        let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                                        if let Ok(handle) = cpu.upload(ctx) {
+                                            self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                            out = Some(daedalus_gpu::Compute::Gpu(handle));
+                                        }
                                     }
                                 }
-                                Err(any) => {
-                                    payload.inner = EdgePayload::Any(any);
-                                }
+                                Err(any) => match Arc::downcast::<daedalus_gpu::Backing<T>>(any) {
+                                    Ok(arc) => {
+                                        let cpu = match Arc::try_unwrap(arc) {
+                                            Ok(v) => v.into_owned(),
+                                            Err(arc) => (*arc).clone().into_owned(),
+                                        };
+                                        if let Some(ctx) = &self.gpu {
+                                            let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                                            if let Ok(handle) = cpu.upload(ctx) {
+                                                self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                                out = Some(daedalus_gpu::Compute::Gpu(handle));
+                                            }
+                                        }
+                                    }
+                                    Err(any) => match Arc::downcast::<T::Device>(any) {
+                                        Ok(arc) => {
+                                            let gpu = match Arc::try_unwrap(arc) {
+                                                Ok(v) => v,
+                                                Err(arc) => (*arc).clone(),
+                                            };
+                                            out = Some(daedalus_gpu::Compute::Gpu(gpu));
+                                        }
+                                        Err(any) => {
+                                            payload.inner = RuntimeValue::Any(any);
+                                        }
+                                    },
+                                },
                             }
                         } else {
                             match Arc::downcast::<T>(any) {
@@ -2377,18 +3163,43 @@ impl<'a> NodeIo<'a> {
                                         Ok(v) => v,
                                         Err(arc) => (*arc).clone(),
                                     };
-                                    out = Some(daedalus_gpu::Payload::Cpu(cpu));
+                                    out = Some(daedalus_gpu::Compute::Cpu(cpu));
                                 }
-                                Err(any) => {
-                                    payload.inner = EdgePayload::Any(any);
-                                }
+                                Err(any) => match Arc::downcast::<daedalus_gpu::Backing<T>>(any) {
+                                    Ok(arc) => {
+                                        let cpu = match Arc::try_unwrap(arc) {
+                                            Ok(v) => v.into_owned(),
+                                            Err(arc) => (*arc).clone().into_owned(),
+                                        };
+                                        out = Some(daedalus_gpu::Compute::Cpu(cpu));
+                                    }
+                                    Err(any) => match Arc::downcast::<T::Device>(any) {
+                                        Ok(arc) => {
+                                            let gpu = match Arc::try_unwrap(arc) {
+                                                Ok(v) => v,
+                                                Err(arc) => (*arc).clone(),
+                                            };
+                                            if let Some(ctx) = &self.gpu
+                                                && let Ok(cpu) = T::download(&gpu, ctx)
+                                            {
+                                                self.record_gpu_transfer_bytes(
+                                                    false,
+                                                    Self::estimate_any_bytes(&cpu),
+                                                );
+                                                out = Some(daedalus_gpu::Compute::Cpu(cpu));
+                                            } else {
+                                                payload.inner = RuntimeValue::Any(Arc::new(gpu));
+                                            }
+                                        }
+                                        Err(any) => {
+                                            payload.inner = RuntimeValue::Any(any);
+                                        }
+                                    },
+                                },
                             }
                         }
                     }
                 }
-            }
-            EdgePayload::GpuImage(h) => {
-                payload.inner = EdgePayload::GpuImage(h);
             }
             other => {
                 payload.inner = other;
@@ -2397,9 +3208,9 @@ impl<'a> NodeIo<'a> {
 
         if out.is_none() {
             if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_GET_STDERR").is_some() {
-                let desc = edge_payload_desc(&payload.inner);
+                let desc = runtime_value_desc(&payload.inner);
                 eprintln!(
-                    "daedalus-runtime: get_payload_mut miss node={} port={} type={} wants_gpu={} payload={}",
+                    "daedalus-runtime: get_compute_mut miss node={} port={} type={} wants_gpu={} payload={}",
                     self.node_id,
                     port,
                     std::any::type_name::<T>(),
@@ -2414,79 +3225,111 @@ impl<'a> NodeIo<'a> {
 
     #[cfg(feature = "gpu")]
     fn convert_incoming(
-        mut payload: CorrelatedPayload,
+        mut payload: CorrelatedValue,
+        node_idx: usize,
         edge_idx: usize,
         entries: &HashSet<usize>,
         exits: &HashSet<usize>,
         materialization_cache: Option<&MaterializationCacheHandle>,
         gpu: Option<&daedalus_gpu::GpuContextHandle>,
         telemetry: &mut ExecutionTelemetry,
-    ) -> CorrelatedPayload {
+    ) -> CorrelatedValue {
         let Some(ctx) = gpu else {
             return payload;
         };
         if entries.contains(&edge_idx) {
             payload.inner = match payload.inner {
-                EdgePayload::Any(ref a) => {
-                    let promoted = promote_any_with_cache(a, materialization_cache);
+                RuntimeValue::Any(ref a) => {
+                    let (promoted, materialized) = promote_any_with_cache(a, materialization_cache);
+                    if materialized {
+                        telemetry.record_node_materialization(
+                            node_idx,
+                            crate::executor::runtime_value_size_bytes(&promoted).unwrap_or(0),
+                        );
+                    }
                     match promoted {
-                        EdgePayload::Payload(ep) => match ep.upload_if_needed(ctx) {
+                        RuntimeValue::Data(ep) => match ep.upload_if_needed(ctx) {
                             Ok((uploaded, did_transfer)) => {
                                 if did_transfer {
                                     telemetry.record_edge_gpu_transfer(edge_idx, true);
+                                    telemetry.record_node_gpu_transfer(
+                                        node_idx,
+                                        true,
+                                        crate::executor::runtime_value_size_bytes(
+                                            &RuntimeValue::Data(uploaded.clone()),
+                                        )
+                                        .unwrap_or(0),
+                                    );
                                 }
-                                EdgePayload::Payload(uploaded)
+                                RuntimeValue::Data(uploaded)
                             }
-                            Err(_) => EdgePayload::Payload(ep),
+                            Err(_) => RuntimeValue::Data(ep),
                         },
-                        EdgePayload::Any(a) => {
-                            if let Some(img) = a.downcast_ref::<daedalus_gpu::GpuImageHandle>() {
-                                EdgePayload::GpuImage(img.clone())
-                            } else {
-                                EdgePayload::Any(a)
-                            }
-                        }
+                        RuntimeValue::Any(a) => RuntimeValue::Any(a),
                         other => other,
                     }
                 }
-                EdgePayload::Payload(ref ep) => match ep.upload_if_needed(ctx) {
+                RuntimeValue::Data(ref ep) => match ep.upload_if_needed(ctx) {
                     Ok((uploaded, did_transfer)) => {
                         if did_transfer {
                             telemetry.record_edge_gpu_transfer(edge_idx, true);
+                            telemetry.record_node_gpu_transfer(
+                                node_idx,
+                                true,
+                                crate::executor::runtime_value_size_bytes(&RuntimeValue::Data(
+                                    uploaded.clone(),
+                                ))
+                                .unwrap_or(0),
+                            );
                         }
-                        EdgePayload::Payload(uploaded)
+                        RuntimeValue::Data(uploaded)
                     }
-                    Err(_) => EdgePayload::Payload(ep.clone()),
+                    Err(_) => RuntimeValue::Data(ep.clone()),
                 },
                 other => other,
             };
         } else if exits.contains(&edge_idx) {
             payload.inner = match payload.inner {
-                EdgePayload::Any(ref a) => {
-                    if let Some(ep) = a.downcast_ref::<daedalus_gpu::ErasedPayload>() {
+                RuntimeValue::Any(ref a) => {
+                    if let Some(ep) = a.downcast_ref::<daedalus_gpu::DataCell>() {
                         match ep.download_if_needed(ctx) {
                             Ok((downloaded, did_transfer)) => {
                                 if did_transfer {
                                     telemetry.record_edge_gpu_transfer(edge_idx, false);
+                                    telemetry.record_node_gpu_transfer(
+                                        node_idx,
+                                        false,
+                                        crate::executor::runtime_value_size_bytes(
+                                            &RuntimeValue::Data(downloaded.clone()),
+                                        )
+                                        .unwrap_or(0),
+                                    );
                                 }
-                                EdgePayload::Payload(downloaded)
+                                RuntimeValue::Data(downloaded)
                             }
-                            Err(_) => EdgePayload::Any(a.clone()),
+                            Err(_) => RuntimeValue::Any(a.clone()),
                         }
                     } else {
-                        EdgePayload::Any(a.clone())
+                        RuntimeValue::Any(a.clone())
                     }
                 }
-                EdgePayload::Payload(ref ep) => match ep.download_if_needed(ctx) {
+                RuntimeValue::Data(ref ep) => match ep.download_if_needed(ctx) {
                     Ok((downloaded, did_transfer)) => {
                         if did_transfer {
                             telemetry.record_edge_gpu_transfer(edge_idx, false);
+                            telemetry.record_node_gpu_transfer(
+                                node_idx,
+                                false,
+                                crate::executor::runtime_value_size_bytes(&RuntimeValue::Data(
+                                    downloaded.clone(),
+                                ))
+                                .unwrap_or(0),
+                            );
                         }
-                        EdgePayload::Payload(downloaded)
+                        RuntimeValue::Data(downloaded)
                     }
-                    Err(_) => EdgePayload::Payload(ep.clone()),
+                    Err(_) => RuntimeValue::Data(ep.clone()),
                 },
-                EdgePayload::GpuImage(h) => EdgePayload::GpuImage(h),
                 other => other,
             };
         }
@@ -2504,7 +3347,7 @@ impl<'a> NodeIo<'a> {
     /// ```
     pub fn get_value(&self, port: &str) -> Option<&Value> {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            EdgePayload::Value(v) => Some(v),
+            RuntimeValue::Value(v) => Some(v),
             _ => None,
         })
     }
@@ -2524,8 +3367,8 @@ impl<'a> NodeIo<'a> {
     }
 
     /// Group inputs by port name (preserves encounter order per port).
-    pub fn inputs_grouped(&self) -> Vec<(String, Vec<&CorrelatedPayload>)> {
-        let mut groups: Vec<(String, Vec<&CorrelatedPayload>)> = Vec::new();
+    pub fn inputs_grouped(&self) -> Vec<(String, Vec<&CorrelatedValue>)> {
+        let mut groups: Vec<(String, Vec<&CorrelatedValue>)> = Vec::new();
         for (port, payload) in &self.inputs {
             if let Some((_, vec)) = groups.iter_mut().find(|(p, _)| p == port) {
                 vec.push(payload);
@@ -2542,16 +3385,20 @@ impl<'a> NodeIo<'a> {
     }
 }
 
-fn edge_payload_desc(payload: &EdgePayload) -> String {
+fn runtime_value_desc(payload: &RuntimeValue) -> String {
     match payload {
-        EdgePayload::Any(a) => format!("Any({})", std::any::type_name_of_val(a.as_ref())),
+        RuntimeValue::Any(a) => {
+            #[cfg(feature = "gpu")]
+            if a.is::<daedalus_gpu::GpuImageHandle>() {
+                return "Any(GpuImageHandle)".to_string();
+            }
+            format!("Any({})", std::any::type_name_of_val(a.as_ref()))
+        }
         #[cfg(feature = "gpu")]
-        EdgePayload::Payload(ep) => format!("Payload({ep:?})"),
-        #[cfg(feature = "gpu")]
-        EdgePayload::GpuImage(_) => "GpuImage".to_string(),
-        EdgePayload::Value(v) => format!("Value({v:?})"),
-        EdgePayload::Bytes(_) => "Bytes".to_string(),
-        EdgePayload::Unit => "Unit".to_string(),
+        RuntimeValue::Data(ep) => format!("Data({ep:?})"),
+        RuntimeValue::Value(v) => format!("Value({v:?})"),
+        RuntimeValue::Bytes(_) => "Bytes".to_string(),
+        RuntimeValue::Unit => "Unit".to_string(),
     }
 }
 
@@ -2559,7 +3406,7 @@ fn align_drained_inputs(
     drained: Vec<DrainedInput>,
     sync_groups: &[SyncGroup],
     const_ports: &std::collections::HashSet<String>,
-) -> (Vec<(String, CorrelatedPayload)>, Vec<DrainedInput>, bool) {
+) -> (Vec<(String, CorrelatedValue)>, Vec<DrainedInput>, bool) {
     if sync_groups.is_empty() {
         let inputs = drained
             .into_iter()
@@ -2706,7 +3553,7 @@ fn align_drained_inputs(
     }
 
     // Fire: emit selected group payloads + any ungrouped payloads.
-    let mut inputs: Vec<(String, CorrelatedPayload)> =
+    let mut inputs: Vec<(String, CorrelatedValue)> =
         selected.into_iter().map(|d| (d.port, d.payload)).collect();
 
     // Preserve original per-port order for ungrouped payloads.
@@ -2735,7 +3582,7 @@ fn requeue_drained(
         return;
     }
 
-    let mut per_edge: HashMap<usize, Vec<CorrelatedPayload>> = HashMap::new();
+    let mut per_edge: HashMap<usize, Vec<CorrelatedValue>> = HashMap::new();
     for item in leftovers {
         per_edge
             .entry(item.edge_idx)
@@ -2760,24 +3607,26 @@ fn requeue_drained(
                         payload.enqueued_at = Instant::now();
                         let _ = q.push(&policy, payload);
                     }
-                    metrics.set_current_bytes(q.payload_bytes());
+                    metrics.set_current_bytes(q.transport_bytes());
                 }
             }
             #[cfg(feature = "lockfree-queues")]
             EdgeStorage::BoundedLf { queue, metrics } => {
                 for mut payload in payloads {
-                    let payload_bytes =
-                        crate::executor::payload_size_bytes(&payload.inner).unwrap_or(0);
+                    let transport_bytes =
+                        crate::executor::runtime_value_size_bytes(&payload.inner).unwrap_or(0);
                     payload.enqueued_at = Instant::now();
                     if queue.push(payload.clone()).is_err() {
                         let removed_bytes = queue
                             .pop()
-                            .and_then(|removed| crate::executor::payload_size_bytes(&removed.inner))
+                            .and_then(|removed| {
+                                crate::executor::runtime_value_size_bytes(&removed.inner)
+                            })
                             .unwrap_or(0);
                         let _ = queue.push(payload);
-                        metrics.adjust_bytes(payload_bytes, removed_bytes);
+                        metrics.adjust_bytes(transport_bytes, removed_bytes);
                     } else {
-                        metrics.adjust_bytes(payload_bytes, 0);
+                        metrics.adjust_bytes(transport_bytes, 0);
                     }
                 }
             }
@@ -2792,12 +3641,12 @@ mod tests {
     use crate::executor::queue::{EdgeQueue, EdgeStorage, RingBuf};
     use daedalus_planner::NodeRef;
     use serde::Deserialize;
-    use std::collections::HashSet;
+    use std::collections::{BTreeSet, HashSet};
 
-    fn payload(v: i32, corr: u64) -> CorrelatedPayload {
-        CorrelatedPayload {
+    fn payload(v: i32, corr: u64) -> CorrelatedValue {
+        CorrelatedValue {
             correlation_id: corr,
-            inner: EdgePayload::Any(Arc::new(v)),
+            inner: RuntimeValue::Any(Arc::new(v)),
             enqueued_at: std::time::Instant::now(),
         }
     }
@@ -2842,7 +3691,7 @@ mod tests {
                 (
                     p,
                     match pl.inner {
-                        EdgePayload::Any(ref a) => *a.downcast_ref::<i32>().unwrap(),
+                        RuntimeValue::Any(ref a) => *a.downcast_ref::<i32>().unwrap(),
                         _ => panic!("expected Any"),
                     },
                 )
@@ -2854,7 +3703,7 @@ mod tests {
             .into_iter()
             .map(|d| {
                 let v = match d.payload.inner {
-                    EdgePayload::Any(ref a) => *a.downcast_ref::<i32>().unwrap(),
+                    RuntimeValue::Any(ref a) => *a.downcast_ref::<i32>().unwrap(),
                     _ => panic!("expected Any"),
                 };
                 (d.port, v)
@@ -2905,7 +3754,7 @@ mod tests {
                 (
                     p,
                     match pl.inner {
-                        EdgePayload::Any(ref a) => *a.downcast_ref::<i32>().unwrap(),
+                        RuntimeValue::Any(ref a) => *a.downcast_ref::<i32>().unwrap(),
                         _ => panic!("expected Any"),
                     },
                 )
@@ -2928,9 +3777,9 @@ mod tests {
                     value: Value::Int(i64::from(v)),
                 },
             ];
-            CorrelatedPayload {
+            CorrelatedValue {
                 correlation_id: corr,
-                inner: EdgePayload::Value(Value::Struct(fields)),
+                inner: RuntimeValue::Value(Value::Struct(fields)),
                 enqueued_at: std::time::Instant::now(),
             }
         };
@@ -2967,7 +3816,7 @@ mod tests {
                 chunk
                     .iter()
                     .map(|(_, p)| match &p.inner {
-                        EdgePayload::Value(Value::Struct(fields)) => fields
+                        RuntimeValue::Value(Value::Struct(fields)) => fields
                             .iter()
                             .find(|f| f.name == "tag")
                             .and_then(|f| match &f.value {
@@ -3035,7 +3884,7 @@ mod tests {
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
-        let payload_edges: HashSet<usize> = HashSet::new();
+        let data_edges: HashSet<usize> = HashSet::new();
 
         let mut io = NodeIo::new(
             vec![],
@@ -3049,10 +3898,11 @@ mod tests {
             #[cfg(feature = "gpu")]
             &gpu_exit_edges,
             #[cfg(feature = "gpu")]
-            &payload_edges,
+            &data_edges,
             0,
             0,
             "node".into(),
+            None,
             &mut telem,
             BackpressureStrategy::None,
             &[],
@@ -3103,19 +3953,87 @@ mod tests {
         });
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RuntimeSource(u8);
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RuntimeMid(u16);
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct RuntimeTarget(u32);
+
+    fn register_runtime_resolution_types() {
+        daedalus_data::typing::register_type::<RuntimeSource>(TypeExpr::Opaque(
+            "test:runtime:source".to_string(),
+        ));
+        daedalus_data::typing::register_type::<RuntimeMid>(TypeExpr::Opaque(
+            "test:runtime:mid".to_string(),
+        ));
+        daedalus_data::typing::register_type::<RuntimeTarget>(TypeExpr::Opaque(
+            "test:runtime:target".to_string(),
+        ));
+        daedalus_data::typing::register_compatibility_with_rule(
+            TypeExpr::Opaque("test:runtime:source".to_string()),
+            TypeExpr::Opaque("test:runtime:mid".to_string()),
+            typing::CompatibilityRule {
+                kind: typing::CompatibilityKind::View,
+                cost: 1,
+                capabilities: ["view-compatible".to_string()].into_iter().collect(),
+            },
+        );
+        daedalus_data::typing::register_compatibility_with_rule(
+            TypeExpr::Opaque("test:runtime:mid".to_string()),
+            TypeExpr::Opaque("test:runtime:target".to_string()),
+            typing::CompatibilityRule {
+                kind: typing::CompatibilityKind::Convert,
+                cost: 2,
+                capabilities: BTreeSet::new(),
+            },
+        );
+        crate::convert::register_conversion::<RuntimeSource, RuntimeMid>(|v| {
+            Some(RuntimeMid(v.0 as u16))
+        });
+        crate::convert::register_conversion::<RuntimeMid, RuntimeTarget>(|v| {
+            Some(RuntimeTarget(v.0 as u32))
+        });
+    }
+
     #[cfg(feature = "gpu")]
     #[derive(Clone, Debug, PartialEq)]
-    struct DummyPayload {
+    struct DummyCompute {
         value: i32,
     }
 
     #[cfg(feature = "gpu")]
-    impl daedalus_gpu::GpuSendable for DummyPayload {
-        type GpuRepr = ();
+    static DUMMY_PAYLOAD_CLONES: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    #[cfg(feature = "gpu")]
+    #[derive(Debug, PartialEq)]
+    struct CountedCompute {
+        value: i32,
     }
 
     #[cfg(feature = "gpu")]
-    fn make_io_with_payload(payload: CorrelatedPayload) -> NodeIo<'static> {
+    impl Clone for CountedCompute {
+        fn clone(&self) -> Self {
+            DUMMY_PAYLOAD_CLONES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Self { value: self.value }
+        }
+    }
+
+    #[cfg(feature = "gpu")]
+    impl daedalus_gpu::DeviceBridge for DummyCompute {
+        type Device = ();
+    }
+
+    #[cfg(feature = "gpu")]
+    impl daedalus_gpu::DeviceBridge for CountedCompute {
+        type Device = ();
+    }
+
+    #[cfg(feature = "gpu")]
+    fn make_io_with_value(payload: CorrelatedValue) -> NodeIo<'static> {
         let queues: &'static Arc<Vec<EdgeStorage>> = Box::leak(Box::new(Arc::new(vec![])));
         let edges: &'static [EdgeInfo] = Box::leak(Box::new(Vec::new()));
         let warnings: &'static Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
@@ -3124,7 +4042,7 @@ mod tests {
             Box::leak(Box::new(ExecutionTelemetry::default()));
         let gpu_entry_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
         let gpu_exit_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
-        let payload_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
+        let data_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
 
         let mut io = NodeIo::new(
             vec![],
@@ -3135,10 +4053,11 @@ mod tests {
             vec![],
             gpu_entry_edges,
             gpu_exit_edges,
-            payload_edges,
+            data_edges,
             0,
             0,
             "node".into(),
+            None,
             telem,
             BackpressureStrategy::None,
             &[],
@@ -3153,34 +4072,202 @@ mod tests {
         io
     }
 
+    fn make_io_with_any_value(payload: CorrelatedValue) -> NodeIo<'static> {
+        let queues: &'static Arc<Vec<EdgeStorage>> = Box::leak(Box::new(Arc::new(vec![])));
+        let edges: &'static [EdgeInfo] = Box::leak(Box::new(Vec::new()));
+        let warnings: &'static Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
+            Box::leak(Box::new(Arc::new(std::sync::Mutex::new(HashSet::new()))));
+        let telem: &'static mut ExecutionTelemetry =
+            Box::leak(Box::new(ExecutionTelemetry::default()));
+        #[cfg(feature = "gpu")]
+        let gpu_entry_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
+        #[cfg(feature = "gpu")]
+        let gpu_exit_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
+        #[cfg(feature = "gpu")]
+        let data_edges: &'static HashSet<usize> = Box::leak(Box::new(HashSet::new()));
+
+        let mut io = NodeIo::new(
+            vec![],
+            vec![],
+            queues,
+            warnings,
+            edges,
+            vec![],
+            #[cfg(feature = "gpu")]
+            gpu_entry_edges,
+            #[cfg(feature = "gpu")]
+            gpu_exit_edges,
+            #[cfg(feature = "gpu")]
+            data_edges,
+            0,
+            0,
+            "node".into(),
+            None,
+            telem,
+            BackpressureStrategy::None,
+            &[],
+            None,
+            None,
+            new_any_conversion_cache(),
+            #[cfg(feature = "gpu")]
+            Some(new_materialization_cache()),
+            #[cfg(feature = "gpu")]
+            None,
+            #[cfg(feature = "gpu")]
+            daedalus_planner::ComputeAffinity::CpuOnly,
+        );
+        io.inputs = vec![("in".to_string(), payload)];
+        io
+    }
+
     #[cfg(feature = "gpu")]
     #[test]
     fn get_any_reads_payload_any_type() {
-        let payload = CorrelatedPayload {
+        let payload = CorrelatedValue {
             correlation_id: 1,
-            inner: EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_cpu::<DummyPayload>(
-                DummyPayload { value: 42 },
+            inner: RuntimeValue::Data(daedalus_gpu::DataCell::from_cpu::<DummyCompute>(
+                DummyCompute { value: 42 },
             )),
             enqueued_at: std::time::Instant::now(),
         };
-        let io = make_io_with_payload(payload);
-        let got = io.get_any::<DummyPayload>("in");
-        assert_eq!(got, Some(DummyPayload { value: 42 }));
+        let io = make_io_with_value(payload);
+        let got = io.get_any::<DummyCompute>("in");
+        assert_eq!(got, Some(DummyCompute { value: 42 }));
+    }
+
+    #[cfg(feature = "gpu")]
+    #[test]
+    fn get_typed_ref_borrows_payload_any_type_without_clone() {
+        DUMMY_PAYLOAD_CLONES.store(0, std::sync::atomic::Ordering::SeqCst);
+        let payload = CorrelatedValue {
+            correlation_id: 1,
+            inner: RuntimeValue::Data(daedalus_gpu::DataCell::from_cpu::<CountedCompute>(
+                CountedCompute { value: 42 },
+            )),
+            enqueued_at: std::time::Instant::now(),
+        };
+        let io = make_io_with_value(payload);
+        let got = io.get_typed_ref::<CountedCompute>("in");
+        assert_eq!(got, Some(&CountedCompute { value: 42 }));
+        assert_eq!(
+            DUMMY_PAYLOAD_CLONES.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[test]
+    fn get_typed_reads_any_arc_carrier() {
+        let payload = CorrelatedValue {
+            correlation_id: 1,
+            inner: RuntimeValue::Any(Arc::new(Arc::new(String::from("frame")))),
+            enqueued_at: std::time::Instant::now(),
+        };
+        let io = make_io_with_any_value(payload);
+        assert_eq!(io.get_typed::<String>("in"), Some(String::from("frame")));
+        assert_eq!(
+            io.get_typed_ref::<String>("in").map(String::as_str),
+            Some("frame")
+        );
+        assert_eq!(
+            io.get_any_arc::<String>("in")
+                .as_deref()
+                .map(String::as_str),
+            Some("frame")
+        );
+    }
+
+    #[test]
+    fn get_typed_with_resolution_reports_runtime_conversion_path() {
+        register_runtime_resolution_types();
+
+        let payload = CorrelatedValue {
+            correlation_id: 1,
+            inner: RuntimeValue::Any(Arc::new(RuntimeSource(7))),
+            enqueued_at: std::time::Instant::now(),
+        };
+        let io = make_io_with_any_value(payload);
+        let (got, resolution) = io
+            .get_typed_with_resolution::<RuntimeTarget>("in")
+            .expect("typed runtime conversion");
+
+        assert_eq!(got, RuntimeTarget(7));
+        assert_eq!(resolution.kind, TypedInputResolutionKind::RuntimeConversion);
+        assert_eq!(
+            resolution
+                .runtime_conversion
+                .as_ref()
+                .map(|path| path.steps.len()),
+            Some(2)
+        );
+        assert_eq!(
+            resolution
+                .compatibility_path
+                .as_ref()
+                .map(|path| path.total_cost),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn explain_typed_input_reports_const_coercion() {
+        let payload = CorrelatedValue {
+            correlation_id: 1,
+            inner: RuntimeValue::Any(Arc::new(5_i64)),
+            enqueued_at: std::time::Instant::now(),
+        };
+        let io = make_io_with_any_value(payload);
+        let resolution = io
+            .explain_typed_input::<u32>("in")
+            .expect("typed const coercion");
+
+        assert_eq!(resolution.kind, TypedInputResolutionKind::ConstCoercion);
+        assert_eq!(
+            resolution.source_rust.as_deref(),
+            Some(std::any::type_name::<i64>())
+        );
+        assert_eq!(io.get_typed::<u32>("in"), Some(5_u32));
+    }
+
+    #[test]
+    fn get_typed_reads_any_arc_dynamic_image_carrier() {
+        let image = image::DynamicImage::new_rgba8(4, 4);
+        let payload = CorrelatedValue {
+            correlation_id: 1,
+            inner: RuntimeValue::Any(Arc::new(Arc::new(image.clone()))),
+            enqueued_at: std::time::Instant::now(),
+        };
+        let io = make_io_with_any_value(payload);
+        let got = io.get_typed::<image::DynamicImage>("in");
+        assert_eq!(
+            got.as_ref().map(|img| (img.width(), img.height())),
+            Some((4, 4))
+        );
+        assert_eq!(
+            io.get_typed_ref::<image::DynamicImage>("in")
+                .map(|img| (img.width(), img.height())),
+            Some((4, 4))
+        );
+        assert_eq!(
+            io.get_any_arc::<image::DynamicImage>("in")
+                .as_deref()
+                .map(|img| (img.width(), img.height())),
+            Some((4, 4))
+        );
     }
 
     #[cfg(feature = "gpu")]
     #[test]
     fn get_typed_mut_moves_payload_any_type() {
-        let payload = CorrelatedPayload {
+        let payload = CorrelatedValue {
             correlation_id: 1,
-            inner: EdgePayload::Payload(daedalus_gpu::ErasedPayload::from_cpu::<DummyPayload>(
-                DummyPayload { value: 7 },
+            inner: RuntimeValue::Data(daedalus_gpu::DataCell::from_cpu::<DummyCompute>(
+                DummyCompute { value: 7 },
             )),
             enqueued_at: std::time::Instant::now(),
         };
-        let mut io = make_io_with_payload(payload);
-        let got = io.get_typed_mut::<DummyPayload>("in");
-        assert_eq!(got, Some(DummyPayload { value: 7 }));
+        let mut io = make_io_with_value(payload);
+        let got = io.get_typed_mut::<DummyCompute>("in");
+        assert_eq!(got, Some(DummyCompute { value: 7 }));
         assert!(io.inputs.is_empty());
     }
 
@@ -3198,7 +4285,7 @@ mod tests {
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
-        let payload_edges: HashSet<usize> = HashSet::new();
+        let data_edges: HashSet<usize> = HashSet::new();
 
         assert_eq!(
             NodeIo::enum_name_from_index::<TestEnum>(&Value::Int(2)),
@@ -3217,10 +4304,11 @@ mod tests {
             #[cfg(feature = "gpu")]
             &gpu_exit_edges,
             #[cfg(feature = "gpu")]
-            &payload_edges,
+            &data_edges,
             0,
             0,
             "node".into(),
+            None,
             &mut telem,
             BackpressureStrategy::None,
             &[(
@@ -3258,7 +4346,7 @@ mod tests {
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
-        let payload_edges: HashSet<usize> = HashSet::new();
+        let data_edges: HashSet<usize> = HashSet::new();
 
         let io = NodeIo::new(
             vec![],
@@ -3272,10 +4360,11 @@ mod tests {
             #[cfg(feature = "gpu")]
             &gpu_exit_edges,
             #[cfg(feature = "gpu")]
-            &payload_edges,
+            &data_edges,
             0,
             0,
             "node".into(),
+            None,
             &mut telem,
             BackpressureStrategy::None,
             &[("mode".to_string(), Value::String("cpu".into()))],
@@ -3308,7 +4397,7 @@ mod tests {
         #[cfg(feature = "gpu")]
         let gpu_exit_edges = HashSet::new();
         #[cfg(feature = "gpu")]
-        let payload_edges: HashSet<usize> = HashSet::new();
+        let data_edges: HashSet<usize> = HashSet::new();
 
         // ExecMode variants are registered in order [Auto, Cpu, Gpu]; index 2 => Gpu.
         let io = NodeIo::new(
@@ -3323,10 +4412,11 @@ mod tests {
             #[cfg(feature = "gpu")]
             &gpu_exit_edges,
             #[cfg(feature = "gpu")]
-            &payload_edges,
+            &data_edges,
             0,
             0,
             "node".into(),
+            None,
             &mut telem,
             BackpressureStrategy::None,
             &[("mode".to_string(), Value::Int(2))],

@@ -4,7 +4,7 @@
 
 #[cfg(all(feature = "engine", feature = "plugins", feature = "gpu"))]
 use daedalus::{
-    ComputeAffinity, GpuSendable, Payload,
+    Compute, ComputeAffinity, DeviceBridge,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     gpu::shader::ShaderContext,
     graph_builder::GraphBuilder,
@@ -17,10 +17,10 @@ use image::{DynamicImage, ImageBuffer};
 
 #[cfg(all(feature = "engine", feature = "plugins", feature = "gpu"))]
 #[node(id = "example.image_load", outputs("img"))]
-fn load_image() -> Result<Payload<DynamicImage>, NodeError> {
+fn load_image() -> Result<Compute<DynamicImage>, NodeError> {
     let path = format!("{}/examples/assets/input.png", env!("CARGO_MANIFEST_DIR"));
     image::open(&path)
-        .map(Payload::Cpu)
+        .map(Compute::Cpu)
         .map_err(|e| NodeError::Handler(e.to_string()))
 }
 
@@ -33,16 +33,16 @@ fn load_image() -> Result<Payload<DynamicImage>, NodeError> {
     shaders("assets/brighten.wgsl")
 )]
 fn shader_wgpu(
-    img: Payload<DynamicImage>,
+    img: Compute<DynamicImage>,
     _ctx: ShaderContext,
-) -> Result<Payload<DynamicImage>, NodeError> {
+) -> Result<Compute<DynamicImage>, NodeError> {
     match img {
-        Payload::Gpu(handle) => Ok(Payload::Gpu(handle)),
-        Payload::Cpu(cpu) => {
+        Compute::Gpu(handle) => Ok(Compute::Gpu(handle)),
+        Compute::Cpu(cpu) => {
             // CPU fallback if GPU not available.
             let mut cpu = cpu;
             cpu.invert();
-            Ok(Payload::Cpu(cpu))
+            Ok(Compute::Cpu(cpu))
         }
     }
 }
@@ -50,12 +50,12 @@ fn shader_wgpu(
 #[cfg(all(feature = "engine", feature = "plugins", feature = "gpu"))]
 #[node(id = "example.image_sink_gpu", inputs("img"))]
 fn sink_noop(
-    img: Payload<DynamicImage>,
+    img: Compute<DynamicImage>,
     ctx: &daedalus_runtime::state::ExecutionContext,
 ) -> Result<(), NodeError> {
     let cpu_img = match img {
-        Payload::Cpu(img) => img,
-        Payload::Gpu(handle) => {
+        Compute::Cpu(img) => img,
+        Compute::Gpu(handle) => {
             let Some(gpu) = ctx.gpu.as_ref() else {
                 return Err(NodeError::Handler(
                     "missing GPU context for readback".into(),

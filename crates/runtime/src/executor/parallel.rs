@@ -10,7 +10,7 @@ use daedalus_planner::{ComputeAffinity, NodeRef};
 use crate::HOST_BRIDGE_META_KEY;
 use crate::NodeError;
 #[cfg(feature = "gpu")]
-use crate::executor::EdgePayload;
+use crate::executor::RuntimeValue;
 use crate::executor::crash_diag;
 use crate::io::NodeIo;
 use crate::perf;
@@ -36,12 +36,12 @@ fn preflight_inputs(_ctx: &ExecutionContext, _io: &NodeIo) -> Result<(), NodeErr
         if ctx.gpu.is_none() {
             for (port, payload) in io.inputs() {
                 match &payload.inner {
-                    EdgePayload::GpuImage(_) => {
+                    RuntimeValue::Any(any) if any.is::<daedalus_gpu::GpuImageHandle>() => {
                         return Err(NodeError::InvalidInput(format!(
                             "port '{port}' contains a GPU image handle but no GPU context is available; configure a GPU backend or insert a CPU download/convert step"
                         )));
                     }
-                    EdgePayload::Payload(ep) if ep.is_gpu() => {
+                    RuntimeValue::Data(ep) if ep.is_gpu() => {
                         return Err(NodeError::InvalidInput(format!(
                             "port '{port}' contains a GPU-resident payload but no GPU context is available; configure a GPU backend or insert a CPU download/convert step"
                         )));
@@ -88,7 +88,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         _gpu_exits: _,
         gpu_entry_set,
         gpu_exit_set,
-        payload_edges,
+        data_edges,
         segments,
         schedule_order,
         const_inputs,
@@ -250,6 +250,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
     let gpu_clone = gpu;
     run_host_bridges(
         &nodes,
+        &exec.node_metadata,
         &host_nodes,
         &segment_of,
         &incoming,
@@ -261,6 +262,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         const_coercers.clone(),
         output_movers.clone(),
         any_conversion_cache.clone(),
+        active_nodes.clone(),
         #[cfg(feature = "gpu")]
         materialization_cache.clone(),
         &mut telemetry,
@@ -271,7 +273,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         #[cfg(feature = "gpu")]
         &gpu_exit_set,
         #[cfg(feature = "gpu")]
-        &payload_edges,
+        &data_edges,
         gpu_clone,
         host_bridges.clone(),
         state.clone(),
@@ -338,12 +340,13 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                 #[cfg(feature = "gpu")]
                 let materialization_cache = materialization_cache.clone();
                 let graph_metadata = graph_metadata.clone();
+                let node_metadata = exec.node_metadata.clone();
                 #[cfg(feature = "gpu")]
                 let gpu_entry_set = gpu_entry_set.clone();
                 #[cfg(feature = "gpu")]
                 let gpu_exit_set = gpu_exit_set.clone();
                 #[cfg(feature = "gpu")]
-                let payload_edges = payload_edges.clone();
+                let data_edges = data_edges.clone();
                 let txc = tx.clone();
                 let active_nodes = active_nodes_mask.clone();
                 let host_outputs_in_graph = host_outputs_in_graph_flag;
@@ -352,6 +355,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                 scope.spawn(move || {
                     let res = run_segment_external(
                         &nodes,
+                        node_metadata,
                         segment,
                         handler,
                         state,
@@ -383,7 +387,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
                         #[cfg(feature = "gpu")]
                         &gpu_exit_set,
                         #[cfg(feature = "gpu")]
-                        &payload_edges,
+                        &data_edges,
                     );
                     let _ = txc.send((seg_id, res));
                 });
@@ -474,6 +478,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
     // post-pass guarantees late-produced payloads are drained to host outputs.
     run_host_bridges(
         &nodes,
+        &exec.node_metadata,
         &host_nodes,
         &segment_of,
         &incoming,
@@ -485,6 +490,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         const_coercers,
         output_movers,
         any_conversion_cache.clone(),
+        active_nodes.clone(),
         #[cfg(feature = "gpu")]
         materialization_cache.clone(),
         &mut telemetry,
@@ -495,7 +501,7 @@ pub fn run<H: crate::executor::NodeHandler + Send + Sync + 'static>(
         #[cfg(feature = "gpu")]
         &gpu_exit_set,
         #[cfg(feature = "gpu")]
-        &payload_edges,
+        &data_edges,
         gpu,
         host_bridges,
         state,
@@ -530,6 +536,7 @@ static HOST_BRIDGE_DIAG_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(feature = "executor-pool"))]
 fn run_host_bridges(
     nodes: &[crate::plan::RuntimeNode],
+    node_metadata: &Arc<Vec<Arc<BTreeMap<String, Value>>>>,
     host_nodes: &[NodeRef],
     segment_of: &[usize],
     incoming: &[Vec<usize>],
@@ -541,13 +548,14 @@ fn run_host_bridges(
     const_coercers: Option<crate::io::ConstCoercerMap>,
     output_movers: Option<crate::io::OutputMoverMap>,
     any_conversion_cache: crate::io::AnyConversionCacheHandle,
+    active_nodes: Option<Arc<Vec<bool>>>,
     #[cfg(feature = "gpu")] materialization_cache: crate::io::MaterializationCacheHandle,
     telemetry: &mut ExecutionTelemetry,
     backpressure: crate::plan::BackpressureStrategy,
     graph_start: &Instant,
     #[cfg(feature = "gpu")] gpu_entry_set: &Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")] gpu_exit_set: &Arc<HashSet<usize>>,
-    #[cfg(feature = "gpu")] payload_edges: &Arc<HashSet<usize>>,
+    #[cfg(feature = "gpu")] data_edges: &Arc<HashSet<usize>>,
     gpu: MaybeGpu,
     host_mgr: Option<crate::HostBridgeManager>,
     state: crate::state::StateStore,
@@ -631,26 +639,17 @@ fn run_host_bridges(
                 continue;
             }
         }
-        let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
-        if let Some(label) = &node.label {
-            metadata
-                .entry("label".to_string())
-                .or_insert_with(|| Value::String(label.clone().into()));
-        }
-        if let Some(bundle) = &node.bundle {
-            metadata
-                .entry("bundle".to_string())
-                .or_insert_with(|| Value::String(bundle.clone().into()));
-        }
-
         #[allow(unused_mut)]
         let mut ctx = ExecutionContext {
             state: state.clone(),
-            metadata,
+            node_id: node.id.clone().into(),
+            metadata: node_metadata[node_ref.0].clone(),
             graph_metadata: graph_metadata.clone(),
             #[cfg(feature = "gpu")]
             gpu: gpu.clone(),
         };
+        let resources = ctx.resources();
+        let _ = resources.before_frame();
         let metrics_level = telemetry.metrics_level;
         let const_inputs_guard = const_inputs
             .read()
@@ -677,10 +676,11 @@ fn run_host_bridges(
             host_sync_groups.clone(),
             gpu_entry_set,
             gpu_exit_set,
-            payload_edges,
+            data_edges,
             segment_of.get(node_ref.0).copied().unwrap_or(0),
             node_ref.0,
             node.id.clone(),
+            active_nodes.as_deref().map(|v| &**v),
             telemetry,
             backpressure.clone(),
             const_inputs_slice,
@@ -702,6 +702,7 @@ fn run_host_bridges(
             segment_of.get(node_ref.0).copied().unwrap_or(0),
             node_ref.0,
             node.id.clone(),
+            active_nodes.as_deref().map(|v| &**v),
             telemetry,
             backpressure.clone(),
             const_inputs_slice,
@@ -757,6 +758,12 @@ fn run_host_bridges(
             None
         };
         drop(io);
+        let _ = resources.after_frame();
+        if metrics_level.is_detailed()
+            && let Ok(snapshot) = resources.snapshot()
+        {
+            telemetry.record_node_resource_snapshot(node_ref.0, snapshot);
+        }
         if let Some(sample) = perf_sample {
             telemetry.record_node_perf(node_ref.0, sample);
         }
@@ -809,6 +816,7 @@ fn run_host_bridges(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
     nodes: &[crate::plan::RuntimeNode],
+    node_metadata: Arc<Vec<Arc<BTreeMap<String, Value>>>>,
     segment: RuntimeSegment,
     handler: Arc<H>,
     state: crate::state::StateStore,
@@ -836,7 +844,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
     metrics_level: crate::executor::MetricsLevel,
     #[cfg(feature = "gpu")] gpu_entry_set: &Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")] gpu_exit_set: &Arc<HashSet<usize>>,
-    #[cfg(feature = "gpu")] payload_edges: &Arc<HashSet<usize>>,
+    #[cfg(feature = "gpu")] data_edges: &Arc<HashSet<usize>>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
     #[cfg(not(feature = "gpu"))]
     let _ = &gpu;
@@ -909,26 +917,17 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                 && let Some(manager) = host_bridges.clone()
             {
                 let mut bridge = bridge_handler(manager);
-                let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
-                if let Some(label) = &node.label {
-                    metadata
-                        .entry("label".to_string())
-                        .or_insert_with(|| Value::String(label.clone().into()));
-                }
-                if let Some(bundle) = &node.bundle {
-                    metadata
-                        .entry("bundle".to_string())
-                        .or_insert_with(|| Value::String(bundle.clone().into()));
-                }
-
                 #[allow(unused_mut)]
                 let mut ctx = ExecutionContext {
                     state: state.clone(),
-                    metadata,
+                    node_id: node.id.clone().into(),
+                    metadata: node_metadata[node_ref.0].clone(),
                     graph_metadata: graph_metadata.clone(),
                     #[cfg(feature = "gpu")]
                     gpu: gpu.clone(),
                 };
+                let resources = ctx.resources();
+                let _ = resources.before_frame();
 
                 let const_inputs_guard = const_inputs
                     .read()
@@ -950,10 +949,11 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     Vec::new(),
                     gpu_entry_set,
                     gpu_exit_set,
-                    payload_edges,
+                    data_edges,
                     seg_idx,
                     node_ref.0,
                     node.id.clone(),
+                    active_nodes.as_deref().map(|v| &**v),
                     &mut telem,
                     backpressure.clone(),
                     const_inputs_slice,
@@ -977,6 +977,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     seg_idx,
                     node_ref.0,
                     node.id.clone(),
+                    active_nodes.as_deref().map(|v| &**v),
                     &mut telem,
                     backpressure.clone(),
                     const_inputs_slice,
@@ -1012,6 +1013,12 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                     None
                 };
                 drop(io);
+                let _ = resources.after_frame();
+                if metrics_level.is_detailed()
+                    && let Ok(snapshot) = resources.snapshot()
+                {
+                    telem.record_node_resource_snapshot(node_ref.0, snapshot);
+                }
 
                 if let Some(sample) = perf_sample {
                     telem.record_node_perf(node_ref.0, sample);
@@ -1064,26 +1071,17 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             }
         }
 
-        let mut metadata: BTreeMap<String, Value> = node.metadata.clone();
-        if let Some(label) = &node.label {
-            metadata
-                .entry("label".to_string())
-                .or_insert_with(|| Value::String(label.clone().into()));
-        }
-        if let Some(bundle) = &node.bundle {
-            metadata
-                .entry("bundle".to_string())
-                .or_insert_with(|| Value::String(bundle.clone().into()));
-        }
-
         #[allow(unused_mut)]
         let mut ctx = ExecutionContext {
             state: state.clone(),
-            metadata,
+            node_id: node.id.clone().into(),
+            metadata: node_metadata[node_ref.0].clone(),
             graph_metadata: graph_metadata.clone(),
             #[cfg(feature = "gpu")]
             gpu: gpu.clone(),
         };
+        let resources = ctx.resources();
+        let _ = resources.before_frame();
         let detailed = metrics_level.is_detailed();
         let const_inputs_guard = const_inputs
             .read()
@@ -1103,10 +1101,11 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             node.sync_groups.clone(),
             gpu_entry_set,
             gpu_exit_set,
-            payload_edges,
+            data_edges,
             seg_idx,
             node_ref.0,
             node.id.clone(),
+            active_nodes.as_deref().map(|v| &**v),
             &mut telem,
             backpressure.clone(),
             const_inputs_slice,
@@ -1128,6 +1127,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             seg_idx,
             node_ref.0,
             node.id.clone(),
+            active_nodes.as_deref().map(|v| &**v),
             &mut telem,
             backpressure.clone(),
             const_inputs_slice,
@@ -1230,6 +1230,10 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
             None
         };
         drop(io);
+        let _ = resources.after_frame();
+        if detailed && let Ok(snapshot) = resources.snapshot() {
+            telem.record_node_resource_snapshot(node_ref.0, snapshot);
+        }
         if let Some(sample) = perf_sample {
             telem.record_node_perf(node_ref.0, sample);
         }

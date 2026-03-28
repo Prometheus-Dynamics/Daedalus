@@ -1,7 +1,7 @@
 use crate::plan::RuntimeNode;
 use std::ffi::CString;
+use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 static INSTALLED: OnceLock<()> = OnceLock::new();
 
@@ -9,6 +9,7 @@ static CURRENT_MSG: AtomicPtr<libc::c_char> = AtomicPtr::new(std::ptr::null_mut(
 static CURRENT_IDX: AtomicUsize = AtomicUsize::new(usize::MAX);
 static MSG_TABLE_PTR: AtomicPtr<*const libc::c_char> = AtomicPtr::new(std::ptr::null_mut());
 static MSG_TABLE_LEN: AtomicUsize = AtomicUsize::new(0);
+static MSG_TABLE_PLAN_HASH: AtomicU64 = AtomicU64::new(0);
 
 /// Install a SIGSEGV/SIGABRT handler (best-effort) that prints the last node being executed.
 ///
@@ -22,6 +23,17 @@ pub fn install_if_enabled(nodes: &[RuntimeNode]) {
             install_signal_handler(libc::SIGABRT);
         }
     });
+
+    // The executor calls this on every run. Rebuilding the same table every frame creates a real
+    // leak because the signal handler needs stable pointers and the previous implementation
+    // intentionally leaked each published table. Cache by plan fingerprint so steady-state graph
+    // execution only publishes once per distinct plan.
+    let plan_hash = plan_fingerprint(nodes);
+    let published_hash = MSG_TABLE_PLAN_HASH.load(Ordering::Relaxed);
+    let published_len = MSG_TABLE_LEN.load(Ordering::Relaxed);
+    if published_hash == plan_hash && published_len == nodes.len() {
+        return;
+    }
 
     // Build a message table for this plan and publish it for the signal handler.
     // This is debug-only; we intentionally leak allocations.
@@ -42,6 +54,7 @@ pub fn install_if_enabled(nodes: &[RuntimeNode]) {
     let base = Box::leak(boxed).as_ptr();
     MSG_TABLE_PTR.store(base as *mut *const libc::c_char, Ordering::Relaxed);
     MSG_TABLE_LEN.store(len, Ordering::Relaxed);
+    MSG_TABLE_PLAN_HASH.store(plan_hash, Ordering::Relaxed);
 }
 
 pub fn set_current_node(idx: usize) {
@@ -121,6 +134,31 @@ unsafe fn c_strlen(mut s: *const libc::c_char) -> usize {
         s = unsafe { s.add(1) };
     }
     n
+}
+
+fn plan_fingerprint(nodes: &[RuntimeNode]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    fn write_bytes(hash: &mut u64, bytes: &[u8]) {
+        for &byte in bytes {
+            *hash ^= byte as u64;
+            *hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        *hash ^= 0xff;
+        *hash = hash.wrapping_mul(FNV_PRIME);
+    }
+
+    let mut hash = FNV_OFFSET;
+    for node in nodes {
+        write_bytes(&mut hash, node.id.as_bytes());
+        if let Some(label) = node.label.as_deref() {
+            write_bytes(&mut hash, label.as_bytes());
+        } else {
+            write_bytes(&mut hash, b"-");
+        }
+    }
+    hash
 }
 
 #[cfg(unix)]

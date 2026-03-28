@@ -9,7 +9,7 @@ use daedalus_registry::store::{NodeDescriptor, Port, Registry};
 #[cfg(feature = "gpu-mock")]
 use daedalus_runtime::RuntimeNode;
 #[cfg(feature = "gpu-mock")]
-use daedalus_runtime::executor::EdgePayload;
+use daedalus_runtime::executor::RuntimeValue;
 #[cfg(feature = "gpu-mock")]
 use daedalus_runtime::io::NodeIo;
 #[cfg(feature = "gpu-mock")]
@@ -128,7 +128,7 @@ fn runs_with_gpu_mock() {
         let hits = Arc::clone(&hits);
         move |node: &RuntimeNode, _ctx: &ExecutionContext, io: &mut NodeIo| {
             if node.id == "producer" {
-                io.push_output(Some("out"), EdgePayload::Unit);
+                io.push_output(Some("out"), RuntimeValue::Unit);
             } else if node.id == "consumer" {
                 for _ in io.inputs_for("in") {
                     *hits.lock().unwrap() += 1;

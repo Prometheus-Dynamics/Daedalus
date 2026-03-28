@@ -1,11 +1,11 @@
 //! Benchmark a graph loaded from JSON with a synthetic host-bridge image input.
 
 use daedalus::{
-    ErasedPayload, PluginLibrary,
+    DataCell, PluginLibrary,
     engine::{Engine, EngineConfig, GpuBackend, RuntimeMode},
     host_bridge::install_host_bridge,
     runtime::plugins::PluginRegistry,
-    runtime::{executor::EdgePayload, host_bridge::HostBridgeManager},
+    runtime::{executor::RuntimeValue, host_bridge::HostBridgeManager},
 };
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_planner::Graph;
@@ -85,12 +85,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mode_id = mode_port.as_deref().map(|port| {
             handle.push(
                 port,
-                EdgePayload::Value(daedalus_data::model::Value::String("auto".into())),
+                RuntimeValue::Value(daedalus_data::model::Value::String("auto".into())),
                 None,
             )
         });
-        let payload = ErasedPayload::from_cpu::<DynamicImage>(img.clone());
-        handle.push(&input_port, EdgePayload::Payload(payload), mode_id);
+        let payload = DataCell::from_cpu::<DynamicImage>(img.clone());
+        handle.push(&input_port, RuntimeValue::Data(payload), mode_id);
         let _ = exec.run_in_place()?;
     }
 
@@ -104,12 +104,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mode_id = mode_port.as_deref().map(|port| {
             handle.push(
                 port,
-                EdgePayload::Value(daedalus_data::model::Value::String("auto".into())),
+                RuntimeValue::Value(daedalus_data::model::Value::String("auto".into())),
                 None,
             )
         });
-        let payload = ErasedPayload::from_cpu::<DynamicImage>(img.clone());
-        handle.push(&input_port, EdgePayload::Payload(payload), mode_id);
+        let payload = DataCell::from_cpu::<DynamicImage>(img.clone());
+        handle.push(&input_port, RuntimeValue::Data(payload), mode_id);
         let telem = exec.run_in_place()?;
         graph_total += telem.graph_duration;
         graph_samples += 1;
