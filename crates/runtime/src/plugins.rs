@@ -8,6 +8,7 @@ use daedalus_data::model::TypeExpr;
 use daedalus_data::named_types::HostExportPolicy;
 use daedalus_data::to_value::ToValue;
 use daedalus_data::typing::{CompatibilityRule, RegisteredTypeCapabilities, TypeCompatibilityEdge};
+use daedalus_registry::convert::ConverterBuilder;
 use daedalus_registry::store::Registry;
 use serde::de::DeserializeOwned;
 use std::any::Any;
@@ -186,6 +187,135 @@ impl PluginRegistry {
     {
         self.register_daedalus_type::<T>(HostExportPolicy::Value)?;
         self.register_value_serializer::<T, _>(|v| v.to_value());
+        Ok(())
+    }
+
+    /// Register the standard image family used by CV plugins.
+    ///
+    /// This installs stable opaque `image:*` identities, CPU-side runtime conversions,
+    /// planner-visible compatibility edges, and output movers so plugins do not need to
+    /// hand-roll image converter nodes or manual payload shims.
+    pub fn register_standard_image_support(&mut self) -> Result<(), &'static str> {
+        let img_gray = TypeExpr::opaque("image:gray8");
+        let img_graya = TypeExpr::opaque("image:graya8");
+        let img_rgb = TypeExpr::opaque("image:rgb8");
+        let img_rgba = TypeExpr::opaque("image:rgba8");
+        let img_dynamic = TypeExpr::opaque("image:dynamic");
+        let img_gray_opt = TypeExpr::Optional(Box::new(img_gray.clone()));
+        let img_dynamic_opt = TypeExpr::Optional(Box::new(img_dynamic.clone()));
+
+        daedalus_data::typing::register_type::<image::GrayImage>(img_gray);
+        daedalus_data::typing::register_type::<image::GrayAlphaImage>(img_graya);
+        daedalus_data::typing::register_type::<image::RgbImage>(img_rgb);
+        daedalus_data::typing::register_type::<image::RgbaImage>(img_rgba);
+        daedalus_data::typing::register_type::<image::DynamicImage>(img_dynamic);
+        daedalus_data::typing::register_type::<Option<image::GrayImage>>(img_gray_opt);
+        daedalus_data::typing::register_type::<Option<image::DynamicImage>>(img_dynamic_opt);
+
+        #[cfg(feature = "gpu")]
+        {
+            daedalus_data::typing::register_type::<daedalus_gpu::Compute<image::DynamicImage>>(
+                TypeExpr::opaque("image:dynamic"),
+            );
+            daedalus_data::typing::register_type::<daedalus_gpu::Compute<image::GrayImage>>(
+                TypeExpr::opaque("image:gray8"),
+            );
+        }
+
+        self.register_conversion::<image::DynamicImage, image::GrayImage>(|img| {
+            Some(img.to_luma8())
+        });
+        self.register_conversion::<image::DynamicImage, image::GrayAlphaImage>(|img| {
+            Some(img.to_luma_alpha8())
+        });
+        self.register_conversion::<image::DynamicImage, image::RgbImage>(|img| {
+            Some(img.to_rgb8())
+        });
+        self.register_conversion::<image::DynamicImage, image::RgbaImage>(|img| {
+            Some(img.to_rgba8())
+        });
+        self.register_conversion::<image::DynamicImage, Option<image::DynamicImage>>(|img| {
+            Some(Some(img.clone()))
+        });
+        self.register_conversion::<image::GrayImage, image::DynamicImage>(|img| {
+            Some(image::DynamicImage::ImageLuma8(img.clone()))
+        });
+        self.register_conversion::<image::GrayImage, Option<image::GrayImage>>(|img| {
+            Some(Some(img.clone()))
+        });
+        self.register_conversion::<image::GrayAlphaImage, image::DynamicImage>(|img| {
+            Some(image::DynamicImage::ImageLumaA8(img.clone()))
+        });
+        self.register_conversion::<image::RgbImage, image::DynamicImage>(|img| {
+            Some(image::DynamicImage::ImageRgb8(img.clone()))
+        });
+        self.register_conversion::<image::RgbaImage, image::DynamicImage>(|img| {
+            Some(image::DynamicImage::ImageRgba8(img.clone()))
+        });
+
+        for (id, from, to) in [
+            (
+                "image_gray8_to_dynamic",
+                TypeExpr::opaque("image:gray8"),
+                TypeExpr::opaque("image:dynamic"),
+            ),
+            (
+                "image_graya8_to_dynamic",
+                TypeExpr::opaque("image:graya8"),
+                TypeExpr::opaque("image:dynamic"),
+            ),
+            (
+                "image_rgb8_to_dynamic",
+                TypeExpr::opaque("image:rgb8"),
+                TypeExpr::opaque("image:dynamic"),
+            ),
+            (
+                "image_rgba8_to_dynamic",
+                TypeExpr::opaque("image:rgba8"),
+                TypeExpr::opaque("image:dynamic"),
+            ),
+            (
+                "image_dynamic_to_gray8",
+                TypeExpr::opaque("image:dynamic"),
+                TypeExpr::opaque("image:gray8"),
+            ),
+            (
+                "image_dynamic_to_graya8",
+                TypeExpr::opaque("image:dynamic"),
+                TypeExpr::opaque("image:graya8"),
+            ),
+            (
+                "image_dynamic_to_rgb8",
+                TypeExpr::opaque("image:dynamic"),
+                TypeExpr::opaque("image:rgb8"),
+            ),
+            (
+                "image_dynamic_to_rgba8",
+                TypeExpr::opaque("image:dynamic"),
+                TypeExpr::opaque("image:rgba8"),
+            ),
+        ] {
+            self.registry
+                .register_converter(ConverterBuilder::new(id, from, to, Ok).build_boxed())
+                .map_err(|_| "failed to register standard image planner converter")?;
+        }
+
+        self.register_output_mover::<image::DynamicImage, _>(|img| {
+            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
+        });
+        self.register_output_mover::<image::GrayImage, _>(|img| {
+            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
+        });
+        self.register_output_mover::<image::GrayAlphaImage, _>(|img| {
+            let dyn_img = image::DynamicImage::ImageLumaA8(img);
+            crate::executor::RuntimeValue::Any(std::sync::Arc::new(dyn_img))
+        });
+        self.register_output_mover::<image::RgbImage, _>(|img| {
+            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
+        });
+        self.register_output_mover::<image::RgbaImage, _>(|img| {
+            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
+        });
         Ok(())
     }
 
@@ -494,5 +624,32 @@ mod tests {
                 .iter()
                 .any(|entry| { entry.ty == from && entry.capabilities.contains("croppable") })
         );
+    }
+
+    #[test]
+    fn plugin_registry_registers_standard_image_support() {
+        let mut registry = PluginRegistry::new();
+        registry
+            .register_standard_image_support()
+            .expect("register standard image support");
+
+        let gray = TypeExpr::opaque("image:gray8");
+        let dynamic = TypeExpr::opaque("image:dynamic");
+        let gray_opt = TypeExpr::optional(gray.clone());
+
+        assert_eq!(daedalus_data::typing::type_expr::<image::GrayImage>(), gray);
+        assert_eq!(daedalus_data::typing::type_expr::<image::DynamicImage>(), dynamic);
+
+        let gray_to_dynamic =
+            compatibility_rule(&gray, &dynamic).expect("gray->dynamic compatibility");
+        assert_eq!(gray_to_dynamic.kind, CompatibilityKind::Convert);
+
+        let dynamic_to_gray =
+            compatibility_rule(&dynamic, &gray).expect("dynamic->gray compatibility");
+        assert_eq!(dynamic_to_gray.kind, CompatibilityKind::Convert);
+
+        let gray_to_optional =
+            compatibility_rule(&gray, &gray_opt).expect("gray->optional gray compatibility");
+        assert_eq!(gray_to_optional.kind, CompatibilityKind::Convert);
     }
 }

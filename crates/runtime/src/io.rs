@@ -1414,7 +1414,7 @@ impl<'a> NodeIo<'a> {
             Option<usize>,
         )> = Vec::new();
         for edge_idx in &self.outgoing {
-            if let Some((_, from_port, to, _, policy)) = self.edges.get(*edge_idx) {
+            if let Some((_, from_port, to, _to_port, policy)) = self.edges.get(*edge_idx) {
                 if let Some(active_nodes) = self.active_nodes
                     && !active_nodes.get(to.0).copied().unwrap_or(true)
                 {
@@ -4253,6 +4253,34 @@ mod tests {
                 .map(|img| (img.width(), img.height())),
             Some((4, 4))
         );
+    }
+
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn get_typed_converts_dynamic_image_to_gray_image_with_standard_image_support() {
+        let mut registry = crate::plugins::PluginRegistry::new();
+        registry
+            .register_standard_image_support()
+            .expect("register standard image support");
+
+        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            3,
+            2,
+            image::Rgba([255, 255, 255, 255]),
+        ));
+        let payload = CorrelatedValue {
+            correlation_id: 1,
+            inner: RuntimeValue::Any(Arc::new(image)),
+            enqueued_at: std::time::Instant::now(),
+        };
+        let io = make_io_with_any_value(payload);
+        let (gray, resolution) = io
+            .get_typed_with_resolution::<image::GrayImage>("in")
+            .expect("dynamic image should convert to gray");
+
+        assert_eq!(gray.dimensions(), (3, 2));
+        assert_eq!(gray.get_pixel(0, 0)[0], 255);
+        assert_eq!(resolution.kind, TypedInputResolutionKind::RuntimeConversion);
     }
 
     #[cfg(feature = "gpu")]
