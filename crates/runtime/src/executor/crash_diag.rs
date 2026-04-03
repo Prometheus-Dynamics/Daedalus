@@ -1,7 +1,7 @@
 use crate::plan::RuntimeNode;
 use std::ffi::CString;
-use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 
 static INSTALLED: OnceLock<()> = OnceLock::new();
 

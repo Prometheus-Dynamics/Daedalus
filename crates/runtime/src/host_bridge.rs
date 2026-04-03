@@ -1313,6 +1313,7 @@ pub struct HostBridgeManager {
     outgoing: Arc<Mutex<HashMap<String, HashMap<String, EdgePolicyKind>>>>,
     outgoing_types: Arc<Mutex<HashMap<String, HashMap<String, TypeExpr>>>>,
     incoming_types: Arc<Mutex<HashMap<String, HashMap<String, TypeExpr>>>>,
+    outbound_filters: Arc<Mutex<HashMap<String, Option<std::collections::BTreeSet<String>>>>>,
     #[cfg(feature = "gpu")]
     gpu: Arc<Mutex<Option<GpuContextHandle>>>,
 }
@@ -1378,6 +1379,33 @@ impl HostBridgeManager {
         for (port, ty) in incoming {
             in_map.insert(port.to_ascii_lowercase(), ty);
         }
+    }
+
+    /// Restrict graph -> host publication for a bridge alias to a specific set of inbound ports.
+    ///
+    /// Passing `None` clears the filter and allows all inbound ports through.
+    pub fn set_outbound_port_filter(
+        &self,
+        alias: impl Into<String>,
+        ports: Option<std::collections::BTreeSet<String>>,
+    ) {
+        let alias = alias.into().to_ascii_lowercase();
+        {
+            let mut guard = self.inner.lock().expect("host bridge map poisoned");
+            guard.entry(alias.clone()).or_default();
+        }
+        let normalized = ports.map(|ports| {
+            ports
+                .into_iter()
+                .map(|port| port.trim().to_ascii_lowercase())
+                .filter(|port| !port.is_empty())
+                .collect::<std::collections::BTreeSet<_>>()
+        });
+        let mut guard = self
+            .outbound_filters
+            .lock()
+            .expect("host bridge filter map poisoned");
+        guard.insert(alias, normalized);
     }
 
     /// Build a manager from a runtime plan by detecting nodes tagged as host bridges.
@@ -1467,6 +1495,15 @@ impl HostBridgeManager {
     fn push_outbound(&self, alias: &str, port: &str, payload: CorrelatedValue) {
         let alias = alias.to_ascii_lowercase();
         let key = port.to_ascii_lowercase();
+        let allowed = self
+            .outbound_filters
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(&alias).cloned())
+            .flatten();
+        if allowed.as_ref().is_some_and(|ports| !ports.contains(&key)) {
+            return;
+        }
         let image_like_port = self
             .incoming_types
             .lock()
@@ -2106,6 +2143,39 @@ mod tests {
         assert_eq!(vals.len(), 2);
         assert_eq!(vals[0].1, Value::Int(1));
         assert_eq!(vals[1].1, Value::Int(2));
+    }
+
+    #[test]
+    fn outbound_port_filter_drops_unselected_ports() {
+        let mgr = HostBridgeManager::new();
+        mgr.register_bridge("host", empty_policies());
+        mgr.register_port_types(
+            "host",
+            Vec::new(),
+            vec![
+                ("overlay".into(), TypeExpr::opaque("image:gray8")),
+                ("clahe".into(), TypeExpr::opaque("image:gray8")),
+            ],
+        );
+        mgr.set_outbound_port_filter(
+            "host",
+            Some(std::collections::BTreeSet::from(["overlay".to_string()])),
+        );
+
+        mgr.push_outbound(
+            "host",
+            "overlay",
+            CorrelatedValue::from_edge(RuntimeValue::Unit),
+        );
+        mgr.push_outbound(
+            "host",
+            "clahe",
+            CorrelatedValue::from_edge(RuntimeValue::Unit),
+        );
+
+        let host = mgr.handle("host").expect("host handle");
+        assert!(host.try_pop("overlay").is_some());
+        assert!(host.try_pop("clahe").is_none());
     }
 
     #[test]

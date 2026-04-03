@@ -97,7 +97,6 @@ type MaybeGpu = Option<()>;
 pub type NodeConstInputs = Vec<(String, daedalus_data::model::Value)>;
 pub type ConstInputs = Vec<NodeConstInputs>;
 pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
-
 type EdgeSpec = (NodeRef, String, NodeRef, String, EdgePolicyKind);
 type NodeMetadataStore = Arc<Vec<Arc<BTreeMap<String, daedalus_data::model::Value>>>>;
 
@@ -466,15 +465,12 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
 #[cfg(feature = "gpu")]
 fn collect_data_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usize> {
-    let mut out = HashSet::new();
-    for (idx, (_from, _from_port, to, _to_port, _policy)) in edges.iter().enumerate() {
-        if let Some(node) = nodes.get(to.0)
-            && node.id.ends_with("io.host_output")
-        {
-            out.insert(idx);
-        }
-    }
-    out
+    let _ = nodes;
+    let _ = edges;
+    // `io.host_output` can transport `Any`, `Compute<T>`, and `DataCell` payloads directly.
+    // Forcing every host-output edge through `DataCell` eagerly clones CPU images on
+    // GPU-enabled builds, which turns host publication into a hidden hot-path tax.
+    HashSet::new()
 }
 
 pub(crate) fn thread_cpu_time() -> Option<Duration> {
@@ -969,4 +965,37 @@ pub(crate) fn edge_maps(
         incoming[t].push(idx);
     }
     (incoming, outgoing)
+}
+
+#[cfg(all(test, feature = "gpu"))]
+mod tests {
+    use super::*;
+    use daedalus_data::model::Value;
+    use daedalus_planner::ComputeAffinity;
+
+    fn test_node(id: &str) -> RuntimeNode {
+        RuntimeNode {
+            id: id.to_string(),
+            stable_id: 0,
+            bundle: None,
+            label: None,
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: Vec::new(),
+            sync_groups: Vec::new(),
+            metadata: std::collections::BTreeMap::<String, Value>::new(),
+        }
+    }
+
+    #[test]
+    fn collect_data_edges_skips_host_output_edges() {
+        let nodes = vec![test_node("cv:test"), test_node("io.host_output")];
+        let edges = vec![(
+            NodeRef(0),
+            "out".to_string(),
+            NodeRef(1),
+            "overlay".to_string(),
+            EdgePolicyKind::NewestWins,
+        )];
+        assert!(collect_data_edges(&nodes, &edges).is_empty());
+    }
 }

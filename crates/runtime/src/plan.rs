@@ -445,8 +445,15 @@ pub fn active_nodes_mask_for_sinks(
     }
 
     let mut active = vec![false; nodes.len()];
-    // Only apply the port filter at the sink node (initial cut).
-    let mut edge_port_filter: std::collections::HashMap<usize, String> =
+    // Only apply the port filter at the sink node (initial cut). A sink node may be selected
+    // through multiple input ports (for example `io.host_output` with `overlay` plus `tx/ty`),
+    // so we need to preserve the union of requested ports instead of letting later entries
+    // overwrite earlier ones.
+    enum SinkPortFilter {
+        Any,
+        Ports(BTreeSet<String>),
+    }
+    let mut edge_port_filter: std::collections::HashMap<usize, SinkPortFilter> =
         std::collections::HashMap::new();
     let mut q: VecDeque<usize> = VecDeque::new();
 
@@ -457,7 +464,26 @@ pub fn active_nodes_mask_for_sinks(
         }
         for idx in indices {
             if let Some(port) = sink.port.as_ref() {
-                edge_port_filter.insert(idx, port.clone());
+                let trimmed = port.trim();
+                if !trimmed.is_empty() {
+                    match edge_port_filter.entry(idx) {
+                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                            match entry.get_mut() {
+                                SinkPortFilter::Any => {}
+                                SinkPortFilter::Ports(ports) => {
+                                    ports.insert(trimmed.to_string());
+                                }
+                            }
+                        }
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            let mut ports = BTreeSet::new();
+                            ports.insert(trimmed.to_string());
+                            entry.insert(SinkPortFilter::Ports(ports));
+                        }
+                    }
+                }
+            } else {
+                edge_port_filter.insert(idx, SinkPortFilter::Any);
             }
             if !active[idx] {
                 active[idx] = true;
@@ -467,20 +493,20 @@ pub fn active_nodes_mask_for_sinks(
     }
 
     while let Some(node_idx) = q.pop_front() {
-        let filter_port = edge_port_filter
-            .get(&node_idx)
-            .map(|s| s.trim().to_string());
+        let filter_ports = edge_port_filter.get(&node_idx);
         for &eidx in incoming_edges
             .get(node_idx)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
         {
             let (from, _from_port, _to, to_port, _policy) = &edges[eidx];
-            if let Some(ref filter_port) = filter_port
-                && !filter_port.is_empty()
-                && !to_port.eq_ignore_ascii_case(filter_port)
-            {
-                continue;
+            if let Some(SinkPortFilter::Ports(filter_ports)) = filter_ports {
+                if !filter_ports
+                    .iter()
+                    .any(|port| to_port.eq_ignore_ascii_case(port))
+                {
+                    continue;
+                }
             }
             let src = from.0;
             if src < active.len() && !active[src] {
@@ -491,4 +517,68 @@ pub fn active_nodes_mask_for_sinks(
     }
 
     Ok(active)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_node(id: &str) -> RuntimeNode {
+        RuntimeNode {
+            id: id.to_string(),
+            stable_id: 0,
+            bundle: None,
+            label: None,
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        }
+    }
+
+    #[test]
+    fn active_nodes_mask_keeps_multiple_sink_ports_on_same_node() {
+        let nodes = vec![
+            test_node("overlay_src"),
+            test_node("value_src"),
+            test_node("io.host_output"),
+        ];
+        let edges = vec![
+            (
+                NodeRef(0),
+                "frame".to_string(),
+                NodeRef(2),
+                "overlay".to_string(),
+                EdgePolicyKind::Fifo,
+            ),
+            (
+                NodeRef(1),
+                "value".to_string(),
+                NodeRef(2),
+                "tx".to_string(),
+                EdgePolicyKind::Fifo,
+            ),
+        ];
+        let sinks = vec![
+            RuntimeSink {
+                node: GraphNodeSelector {
+                    index: Some(2),
+                    id: None,
+                    metadata: None,
+                },
+                port: Some("overlay".to_string()),
+            },
+            RuntimeSink {
+                node: GraphNodeSelector {
+                    index: Some(2),
+                    id: None,
+                    metadata: None,
+                },
+                port: Some("tx".to_string()),
+            },
+        ];
+
+        let active = active_nodes_mask_for_sinks(&nodes, &edges, &sinks).expect("active mask");
+        assert_eq!(active, vec![true, true, true]);
+    }
 }

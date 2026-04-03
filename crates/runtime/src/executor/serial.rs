@@ -1029,11 +1029,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
         if host_bridge_trace_stderr_enabled() {
             eprintln!(
                 "daedalus-runtime: host_bridge phase={:?} start idx={} id={} has_incoming={} has_outgoing={}",
-                phase,
-                node_ref.0,
-                node.id,
-                has_incoming,
-                has_outgoing
+                phase, node_ref.0, node.id, has_incoming, has_outgoing
             );
         }
 
