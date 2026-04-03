@@ -32,6 +32,8 @@ pub use noop::NoopBackend;
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu_backend::WgpuBackend;
+#[cfg(feature = "gpu-wgpu")]
+pub use wgpu;
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};

@@ -74,7 +74,7 @@ pub fn emit_bindings(
                     let fmt = format_override
                         .as_ref()
                         .and_then(|s| map_texture_format(s))
-                        .unwrap_or(quote! { Some(::wgpu::TextureFormat::Rgba8Unorm) });
+                        .unwrap_or(quote! { Some(::daedalus::gpu::wgpu::TextureFormat::Rgba8Unorm) });
                     let sample = if *write {
                         quote! { None }
                     } else {
@@ -86,7 +86,7 @@ pub fn emit_bindings(
                     let view = view_override
                         .as_ref()
                         .and_then(|s| map_view_dimension(s))
-                        .unwrap_or(quote! { Some(::wgpu::TextureViewDimension::D2) });
+                        .unwrap_or(quote! { Some(::daedalus::gpu::wgpu::TextureViewDimension::D2) });
                     (fmt, sample, view, quote! { None })
                 }
                 FieldKind::Sampler { kind_override, .. } => {
@@ -368,8 +368,8 @@ pub fn emit_bindings(
                 }
                 FieldKind::Sampler { kind_override, address_override, mipmap_override } => {
                     let kind_token = kind_override.as_ref().and_then(|s| map_sampler_kind(s)).unwrap_or(quote! { ::daedalus::gpu::shader::SamplerKind::Filtering });
-                    let addr = address_override.as_ref().and_then(|s| map_address_mode(s)).unwrap_or(quote! { ::wgpu::AddressMode::ClampToEdge });
-                    let mip = mipmap_override.as_ref().and_then(|s| map_mipmap_filter(s)).unwrap_or(quote! { ::wgpu::MipmapFilterMode::Nearest });
+                    let addr = address_override.as_ref().and_then(|s| map_address_mode(s)).unwrap_or(quote! { ::daedalus::gpu::wgpu::AddressMode::ClampToEdge });
+                    let mip = mipmap_override.as_ref().and_then(|s| map_mipmap_filter(s)).unwrap_or(quote! { ::daedalus::gpu::wgpu::MipmapFilterMode::Nearest });
                     quote! {
                         ::daedalus::gpu::shader::ShaderBinding {
                             binding: #binding,
@@ -379,8 +379,8 @@ pub fn emit_bindings(
                                 address_u: #addr,
                                 address_v: #addr,
                                 address_w: #addr,
-                                mag_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::wgpu::FilterMode::Linear } else { ::wgpu::FilterMode::Nearest },
-                                min_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::wgpu::FilterMode::Linear } else { ::wgpu::FilterMode::Nearest },
+                                mag_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::daedalus::gpu::wgpu::FilterMode::Linear } else { ::daedalus::gpu::wgpu::FilterMode::Nearest },
+                                min_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::daedalus::gpu::wgpu::FilterMode::Linear } else { ::daedalus::gpu::wgpu::FilterMode::Nearest },
                                 mipmap_filter: #mip,
                             }),
                             readback: false,
@@ -409,8 +409,8 @@ pub fn emit_bindings(
                     address_u: #addr,
                     address_v: #addr,
                     address_w: #addr,
-                    mag_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::wgpu::FilterMode::Linear } else { ::wgpu::FilterMode::Nearest },
-                    min_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::wgpu::FilterMode::Linear } else { ::wgpu::FilterMode::Nearest },
+                    mag_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::daedalus::gpu::wgpu::FilterMode::Linear } else { ::daedalus::gpu::wgpu::FilterMode::Nearest },
+                    min_filter: if matches!(#kind_token, ::daedalus::gpu::shader::SamplerKind::Filtering) { ::daedalus::gpu::wgpu::FilterMode::Linear } else { ::daedalus::gpu::wgpu::FilterMode::Nearest },
                     mipmap_filter: #mip,
                 }),
                 readback: false,
