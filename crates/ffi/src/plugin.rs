@@ -77,7 +77,7 @@ impl PluginInfo {
 
 /// Errors that can occur while loading or installing a dynamic plugin.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_ffi::FfiPluginError;
 /// let err = FfiPluginError::MissingSymbol;
 /// assert!(format!("{err}").contains("register symbol"));

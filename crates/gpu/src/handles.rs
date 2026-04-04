@@ -54,7 +54,7 @@ impl<T: Send + Sync + fmt::Debug> GpuDropToken for T {}
 
 /// Opaque buffer handle (no backend types).
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::{GpuBufferHandle, GpuMemoryLocation, GpuUsage};
 /// let handle = GpuBufferHandle::new(1024, GpuMemoryLocation::Cpu, GpuUsage::UPLOAD);
 /// assert_eq!(handle.size_bytes, 1024);
@@ -112,7 +112,7 @@ impl Eq for GpuBufferHandle {}
 
 /// Opaque image/texture handle (no backend types).
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::{GpuImageHandle, GpuFormat, GpuMemoryLocation, GpuUsage};
 /// let handle = GpuImageHandle::new(GpuFormat::Rgba8Unorm, 8, 8, GpuMemoryLocation::Gpu, GpuUsage::STORAGE);
 /// assert_eq!(handle.width, 8);

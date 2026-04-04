@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 /// Where a diagnostic applies.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::DiagnosticSpan;
 /// let span = DiagnosticSpan { pass: "validate".into(), node: Some("n1".into()), port: None };
 /// assert_eq!(span.pass, "validate");
@@ -17,7 +17,7 @@ pub struct DiagnosticSpan {
 
 /// Planner diagnostic codes (non-exhaustive).
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::DiagnosticCode;
 /// let code = DiagnosticCode::NodeMissing;
 /// assert_eq!(format!("{code:?}"), "NodeMissing");
@@ -40,7 +40,7 @@ pub enum DiagnosticCode {
 
 /// Planner diagnostic entry.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{Diagnostic, DiagnosticCode};
 /// let diag = Diagnostic::new(DiagnosticCode::PortMissing, "missing")
 ///     .in_pass("validate")

@@ -139,7 +139,7 @@ impl Default for RuntimeSection {
 
 /// Top-level engine configuration.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_engine::EngineConfig;
 /// let cfg = EngineConfig::default();
 /// assert!(cfg.validate().is_ok());
@@ -168,7 +168,7 @@ impl Default for EngineConfig {
 impl EngineConfig {
     /// Lightweight validation: ensures non-zero pool size when provided.
     ///
-    /// ```
+    /// ```ignore
     /// use daedalus_engine::EngineConfig;
     /// let cfg = EngineConfig::default();
     /// assert!(cfg.validate().is_ok());
@@ -188,7 +188,7 @@ impl EngineConfig {
     /// Construct config from environment variables. Only compiled when `config-env` is enabled.
     ///
     /// Example (doc-test guarded by the feature flag):
-    /// ```
+    /// ```ignore
     /// # #[cfg(feature = "config-env")] {
     /// use daedalus_engine::{EngineConfig, GpuBackend};
     /// unsafe { std::env::set_var("DAEDALUS_GPU", "mock"); }

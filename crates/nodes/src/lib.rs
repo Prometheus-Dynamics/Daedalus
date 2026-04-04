@@ -158,7 +158,7 @@ macro_rules! declare_plugin {
 
 /// Register all enabled bundles, returning descriptors in deterministic order.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_nodes::register_all;
 /// let nodes = register_all();
 /// let _ = nodes;

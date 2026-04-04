@@ -413,7 +413,6 @@ pub fn apply_policy(
                 let mut dropped = false;
                 telem.record_edge_capacity(edge_idx, Some(queue.capacity()));
                 let added_bytes = transport_bytes.unwrap_or(0);
-                let mut removed_bytes = 0u64;
                 match backpressure {
                     BackpressureStrategy::BoundedQueues => {
                         if queue.is_full() {
@@ -444,7 +443,7 @@ pub fn apply_policy(
                         let mut payload = payload.clone();
                         payload.enqueued_at = Instant::now();
                         if queue.push(payload.clone()).is_err() {
-                            removed_bytes = queue
+                            let removed_bytes = queue
                                 .pop()
                                 .and_then(|removed| runtime_value_size_bytes(&removed.inner))
                                 .unwrap_or(0);

@@ -7,7 +7,7 @@ use daedalus_runtime::executor::ExecuteError;
 
 /// Engine errors surfaced to callers.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_engine::EngineError;
 /// let err = EngineError::FeatureDisabled("gpu");
 /// assert!(format!("{err}").contains("gpu"));

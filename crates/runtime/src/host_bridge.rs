@@ -115,7 +115,7 @@ fn payload_any_type(_any: &dyn Any) -> Option<&'static str> {
     None
 }
 
-fn cross_dylib_any_ref<'a, T: 'static>(any: &'a dyn Any) -> Option<&'a T> {
+fn cross_dylib_any_ref<T: 'static>(any: &dyn Any) -> Option<&T> {
     let expected = std::any::type_name_of_val(any);
     let actual = std::any::type_name::<T>();
     if expected != actual && !expected.ends_with(actual) && !actual.ends_with(expected) {

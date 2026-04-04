@@ -221,17 +221,12 @@ impl<T: ManagedResource> ManagedResourceBox for T {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 enum ManagedByteBufferPolicy {
+    #[default]
     FrameScratch,
     WarmCache,
     PersistentState,
-}
-
-impl Default for ManagedByteBufferPolicy {
-    fn default() -> Self {
-        Self::FrameScratch
-    }
 }
 
 /// Runtime-managed reusable byte buffer for scratch, cache, or persistent byte state.
@@ -304,6 +299,10 @@ impl ManagedByteBuffer {
 
     pub fn len(&self) -> usize {
         self.live_len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.live_len == 0
     }
 
     pub fn clear_live(&mut self) {

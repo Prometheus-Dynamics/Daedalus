@@ -247,7 +247,7 @@ fn with_program_cached<R>(from: TypeId, to: TypeId, f: impl FnOnce(&Program) -> 
     if let Ok(guard) = state.programs.read()
         && let Some(hit) = guard.get(&(from, to))
     {
-        return hit.as_ref().map(|p| f(p));
+        return hit.as_ref().map(f);
     }
 
     let reg_guard = state.reg.read().ok()?;
@@ -260,7 +260,7 @@ fn with_program_cached<R>(from: TypeId, to: TypeId, f: impl FnOnce(&Program) -> 
     if let Ok(mut guard) = state.programs.write() {
         guard.insert((from, to), resolved.clone());
     }
-    resolved.as_ref().map(|p| f(p))
+    resolved.as_ref().map(f)
 }
 
 fn resolution_from_program(program: &Program) -> RuntimeConversionResolution {

@@ -74,7 +74,9 @@ pub fn emit_bindings(
                     let fmt = format_override
                         .as_ref()
                         .and_then(|s| map_texture_format(s))
-                        .unwrap_or(quote! { Some(::daedalus::gpu::wgpu::TextureFormat::Rgba8Unorm) });
+                        .unwrap_or(
+                            quote! { Some(::daedalus::gpu::wgpu::TextureFormat::Rgba8Unorm) },
+                        );
                     let sample = if *write {
                         quote! { None }
                     } else {
@@ -86,7 +88,9 @@ pub fn emit_bindings(
                     let view = view_override
                         .as_ref()
                         .and_then(|s| map_view_dimension(s))
-                        .unwrap_or(quote! { Some(::daedalus::gpu::wgpu::TextureViewDimension::D2) });
+                        .unwrap_or(
+                            quote! { Some(::daedalus::gpu::wgpu::TextureViewDimension::D2) },
+                        );
                     (fmt, sample, view, quote! { None })
                 }
                 FieldKind::Sampler { kind_override, .. } => {

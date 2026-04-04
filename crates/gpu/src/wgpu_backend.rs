@@ -104,10 +104,9 @@ impl WgpuBackend {
                     Backends::all()
                 }
             });
-            let instance = Instance::new(&InstanceDescriptor {
-                backends: preferred_backends,
-                ..Default::default()
-            });
+            let mut instance_desc = InstanceDescriptor::new_without_display_handle();
+            instance_desc.backends = preferred_backends;
+            let instance = Instance::new(instance_desc);
             let mut adapters: Vec<Adapter> =
                 instance.enumerate_adapters(preferred_backends).block_on();
             if adapters.is_empty() && preferred_backends != Backends::all() {

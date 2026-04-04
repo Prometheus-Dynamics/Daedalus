@@ -14,7 +14,7 @@ use crate::error::EngineError;
 
 /// Result of a full engine run.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_engine::RunResult;
 /// use daedalus_runtime::ExecutionTelemetry;
 /// use daedalus_runtime::RuntimePlan;

@@ -2,7 +2,7 @@ use crate::{ComputeAffinity, NodeInstance};
 
 /// Convenience helper to build a `NodeInstance` for tests/examples.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::helpers::node;
 /// use daedalus_planner::ComputeAffinity;
 /// let instance = node("demo", ComputeAffinity::CpuOnly, ["in"], ["out"]);

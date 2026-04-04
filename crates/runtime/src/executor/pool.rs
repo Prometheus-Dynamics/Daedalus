@@ -40,6 +40,7 @@ where
         const_coercers,
         output_movers,
         graph_metadata,
+        node_metadata,
         active_nodes,
         host_outputs_in_graph,
         host_bridges,
@@ -95,6 +96,7 @@ where
     let const_inputs = const_inputs.clone();
     let output_movers = output_movers.clone();
     let graph_metadata = graph_metadata.clone();
+    let node_metadata = node_metadata.clone();
     let any_conversion_cache = any_conversion_cache.clone();
     let active_nodes = active_nodes.clone();
     let host_bridges = host_bridges.clone();
@@ -165,6 +167,7 @@ where
         let const_inputs = const_inputs.clone();
         let const_coercers = const_coercers.clone();
         let graph_metadata = graph_metadata.clone();
+        let node_metadata = node_metadata.clone();
         let output_movers = output_movers.clone();
         let any_conversion_cache = any_conversion_cache.clone();
         let active_nodes = active_nodes.clone();
@@ -182,6 +185,7 @@ where
         pool.spawn(move || {
             let res = run_segment_external(
                 &nodes,
+                node_metadata,
                 segment,
                 handler,
                 state,

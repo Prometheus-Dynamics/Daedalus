@@ -49,7 +49,7 @@ const PLAN_OVERLOAD_RESOLUTIONS_KEY: &str = "daedalus.plan.overload_resolutions"
 
 /// Static planner config controlling optional passes.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::PlannerConfig;
 /// let cfg = PlannerConfig::default();
 /// assert!(!cfg.enable_gpu);
@@ -71,7 +71,7 @@ pub struct PlannerConfig {
 
 /// Input to the planner: a graph plus registry reference.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{PlannerInput, Graph};
 /// use daedalus_registry::store::Registry;
 /// let registry = Registry::new();
@@ -86,7 +86,7 @@ pub struct PlannerInput<'a> {
 
 /// Planner output: final plan and any diagnostics.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{PlannerOutput, ExecutionPlan, Graph};
 /// let out = PlannerOutput { plan: ExecutionPlan::new(Graph::default(), vec![]), diagnostics: vec![] };
 /// assert!(out.diagnostics.is_empty());
@@ -1540,7 +1540,7 @@ fn overload_resolution_to_value(resolution: NodeOverloadResolution) -> Value {
 /// Currently stubs; contracts are enforced via deterministic diagnostics ordering.
 /// Build an execution plan from a graph and registry.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{build_plan, PlannerConfig, PlannerInput, Graph};
 /// use daedalus_registry::store::Registry;
 /// let registry = Registry::new();

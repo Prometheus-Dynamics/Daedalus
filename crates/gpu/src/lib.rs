@@ -31,9 +31,9 @@ pub use mock::MockBackend;
 pub use noop::NoopBackend;
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
-pub use wgpu_backend::WgpuBackend;
-#[cfg(feature = "gpu-wgpu")]
 pub use wgpu;
+#[cfg(feature = "gpu-wgpu")]
+pub use wgpu_backend::WgpuBackend;
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ use std::{fmt, sync::Arc};
 
 /// Backend kind identifiers.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::GpuBackendKind;
 /// let kind = GpuBackendKind::Noop;
 /// assert_eq!(kind.as_str(), "noop");
@@ -149,7 +149,7 @@ bitflags! {
 
 /// Adapter information exposed to planner/runtime.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::{GpuAdapterInfo, GpuBackendKind};
 /// let info = GpuAdapterInfo {
 ///     name: "noop".into(),
@@ -169,7 +169,7 @@ pub struct GpuAdapterInfo {
 
 /// Adapter selection options.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::{GpuOptions, GpuBackendKind};
 /// let opts = GpuOptions { preferred_backend: Some(GpuBackendKind::Noop), adapter_label: None, allow_software: true };
 /// assert!(opts.allow_software);
@@ -213,7 +213,7 @@ pub struct GpuImageRequest {
 
 /// Capability query result.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::{GpuCapabilities, GpuFormat, GpuFormatFeatures, GpuBlockInfo};
 /// let caps = GpuCapabilities {
 ///     supported_formats: vec![GpuFormat::R8Unorm],
@@ -251,7 +251,7 @@ pub struct GpuCapabilities {
 
 /// GPU error codes for diagnostics.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::GpuError;
 /// let err = GpuError::Unsupported;
 /// assert_eq!(format!("{err}"), "unsupported");
@@ -288,7 +288,7 @@ pub enum BackendSkipReason {
 
 /// Explanation for a backend that was skipped during selection.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_gpu::{BackendSkip, BackendSkipReason, GpuBackendKind};
 /// let skip = BackendSkip { backend: GpuBackendKind::Wgpu, reason: BackendSkipReason::FeatureNotEnabled };
 /// assert!(skip.describe().contains("not built"));

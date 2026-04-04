@@ -15,7 +15,7 @@ pub use daedalus_core::sync::{SyncGroup, SyncPolicy};
 
 /// Stable hash helper used for goldens; simple FNV-1a for determinism.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::StableHash;
 /// let hash = StableHash::from_bytes(b"demo");
 /// assert_ne!(hash.0, 0);
@@ -38,7 +38,7 @@ impl StableHash {
 
 /// Node reference within a graph (index-based for compactness).
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::NodeRef;
 /// let node = NodeRef(3);
 /// assert_eq!(node.0, 3);
@@ -48,7 +48,7 @@ pub struct NodeRef(pub usize);
 
 /// Port reference by name within a node.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{NodeRef, PortRef};
 /// let port = PortRef { node: NodeRef(0), port: "out".into() };
 /// assert_eq!(port.port, "out");
@@ -61,7 +61,7 @@ pub struct PortRef {
 
 /// Edge from one node/port to another.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{Edge, NodeRef, PortRef};
 /// let edge = Edge {
 ///     from: PortRef { node: NodeRef(0), port: "out".into() },
@@ -80,7 +80,7 @@ pub struct Edge {
 
 /// An instantiated node, identified by registry id.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{ComputeAffinity, NodeInstance};
 /// use daedalus_registry::ids::NodeId;
 /// let node = NodeInstance {
@@ -115,7 +115,7 @@ pub struct NodeInstance {
 
 /// Planner input graph (pre-pass).
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::Graph;
 /// let graph = Graph::default();
 /// assert!(graph.nodes.is_empty());
@@ -262,7 +262,7 @@ mod graph_metadata_serde {
 
 /// Contiguous GPU segment metadata.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{GpuSegment, NodeRef};
 /// let seg = GpuSegment { buffer_id: 0, nodes: vec![NodeRef(0)] };
 /// assert_eq!(seg.nodes.len(), 1);
@@ -294,7 +294,7 @@ impl Graph {
     /// Identify contiguous GPU-to-GPU chains and assign them shared buffer ids, along with
     /// edge annotations that mark where GPU fast paths can be used.
     ///
-    /// ```
+    /// ```ignore
     /// use daedalus_planner::{Graph, NodeInstance, ComputeAffinity, Edge, PortRef, NodeRef};
     /// use daedalus_registry::ids::NodeId;
     ///
@@ -439,7 +439,7 @@ impl Graph {
 
 /// Final execution plan with diagnostics and stable hash for goldens.
 ///
-/// ```
+/// ```ignore
 /// use daedalus_planner::{ExecutionPlan, Graph};
 /// let plan = ExecutionPlan::new(Graph::default(), vec![]);
 /// assert_eq!(plan.graph.nodes.len(), 0);

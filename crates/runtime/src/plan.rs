@@ -500,13 +500,12 @@ pub fn active_nodes_mask_for_sinks(
             .unwrap_or(&[])
         {
             let (from, _from_port, _to, to_port, _policy) = &edges[eidx];
-            if let Some(SinkPortFilter::Ports(filter_ports)) = filter_ports {
-                if !filter_ports
+            if let Some(SinkPortFilter::Ports(filter_ports)) = filter_ports
+                && !filter_ports
                     .iter()
                     .any(|port| to_port.eq_ignore_ascii_case(port))
-                {
-                    continue;
-                }
+            {
+                continue;
             }
             let src = from.0;
             if src < active.len() && !active[src] {

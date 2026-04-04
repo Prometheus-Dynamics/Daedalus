@@ -228,9 +228,7 @@ impl PluginRegistry {
         self.register_conversion::<image::DynamicImage, image::GrayAlphaImage>(|img| {
             Some(img.to_luma_alpha8())
         });
-        self.register_conversion::<image::DynamicImage, image::RgbImage>(|img| {
-            Some(img.to_rgb8())
-        });
+        self.register_conversion::<image::DynamicImage, image::RgbImage>(|img| Some(img.to_rgb8()));
         self.register_conversion::<image::DynamicImage, image::RgbaImage>(|img| {
             Some(img.to_rgba8())
         });
@@ -638,7 +636,10 @@ mod tests {
         let gray_opt = TypeExpr::optional(gray.clone());
 
         assert_eq!(daedalus_data::typing::type_expr::<image::GrayImage>(), gray);
-        assert_eq!(daedalus_data::typing::type_expr::<image::DynamicImage>(), dynamic);
+        assert_eq!(
+            daedalus_data::typing::type_expr::<image::DynamicImage>(),
+            dynamic
+        );
 
         let gray_to_dynamic =
             compatibility_rule(&gray, &dynamic).expect("gray->dynamic compatibility");

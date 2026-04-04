@@ -82,7 +82,7 @@ impl<T> Backing<T> {
         }
     }
 
-    pub fn as_ref(&self) -> &T {
+    fn value_ref(&self) -> &T {
         match self.inner.as_ref() {
             BackingInner::Owned(value) => value,
             BackingInner::Shared(value) => value.as_ref(),
@@ -156,7 +156,13 @@ impl<T> Deref for Backing<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.as_ref()
+        self.value_ref()
+    }
+}
+
+impl<T> AsRef<T> for Backing<T> {
+    fn as_ref(&self) -> &T {
+        self.value_ref()
     }
 }
 

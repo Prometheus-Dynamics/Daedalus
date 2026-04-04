@@ -875,6 +875,128 @@ impl ExecutionTelemetry {
     }
 }
 
+pub(crate) fn runtime_value_size_bytes(payload: &RuntimeValue) -> Option<u64> {
+    match payload {
+        RuntimeValue::Unit => Some(0),
+        RuntimeValue::Bytes(bytes) => Some(bytes.len() as u64),
+        RuntimeValue::Value(value) => value_size_bytes(value),
+        RuntimeValue::Any(any) => any_size_bytes(any),
+        #[cfg(feature = "gpu")]
+        RuntimeValue::Data(payload) => data_cell_size_bytes(payload),
+    }
+}
+
+fn value_size_bytes(value: &daedalus_data::model::Value) -> Option<u64> {
+    match value {
+        daedalus_data::model::Value::String(s) => Some(s.len() as u64),
+        daedalus_data::model::Value::Bytes(b) => Some(b.len() as u64),
+        _ => None,
+    }
+}
+
+pub(crate) fn any_ref_size_bytes(any: &(dyn std::any::Any + Send + Sync)) -> Option<u64> {
+    if let Some(bytes) = any.downcast_ref::<Vec<u8>>() {
+        return Some(bytes.len() as u64);
+    }
+    if let Some(bytes) = any.downcast_ref::<Arc<[u8]>>() {
+        return Some(bytes.len() as u64);
+    }
+    if let Some(img) = any.downcast_ref::<image::DynamicImage>() {
+        return Some(dynamic_image_size_bytes(img));
+    }
+    if let Some(img) = any.downcast_ref::<image::GrayImage>() {
+        return Some(img.as_raw().len() as u64);
+    }
+    if let Some(img) = any.downcast_ref::<image::GrayAlphaImage>() {
+        return Some(img.as_raw().len() as u64);
+    }
+    if let Some(img) = any.downcast_ref::<image::RgbImage>() {
+        return Some(img.as_raw().len() as u64);
+    }
+    if let Some(img) = any.downcast_ref::<image::RgbaImage>() {
+        return Some(img.as_raw().len() as u64);
+    }
+    #[cfg(feature = "gpu")]
+    if let Some(handle) = any.downcast_ref::<daedalus_gpu::GpuImageHandle>() {
+        return Some(gpu_image_size_bytes(handle));
+    }
+    if let Ok(inspectors) = runtime_data_size_inspectors().read() {
+        for inspector in inspectors.iter() {
+            if let Some(bytes) = inspector(any) {
+                return Some(bytes);
+            }
+        }
+    }
+    None
+}
+
+fn any_size_bytes(any: &Arc<dyn std::any::Any + Send + Sync>) -> Option<u64> {
+    any_ref_size_bytes(any.as_ref())
+}
+
+fn dynamic_image_size_bytes(img: &image::DynamicImage) -> u64 {
+    match img {
+        image::DynamicImage::ImageLuma8(i) => i.as_raw().len() as u64,
+        image::DynamicImage::ImageLumaA8(i) => i.as_raw().len() as u64,
+        image::DynamicImage::ImageRgb8(i) => i.as_raw().len() as u64,
+        image::DynamicImage::ImageRgba8(i) => i.as_raw().len() as u64,
+        image::DynamicImage::ImageLuma16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageLumaA16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageRgb16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageRgba16(i) => {
+            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
+        }
+        image::DynamicImage::ImageRgb32F(i) => {
+            (i.as_raw().len() * std::mem::size_of::<f32>()) as u64
+        }
+        image::DynamicImage::ImageRgba32F(i) => {
+            (i.as_raw().len() * std::mem::size_of::<f32>()) as u64
+        }
+        _ => 0,
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn data_cell_size_bytes(payload: &daedalus_gpu::DataCell) -> Option<u64> {
+    if payload.is_gpu() {
+        if let Some(handle) = payload.as_gpu::<image::DynamicImage>() {
+            Some(gpu_image_size_bytes(handle))
+        } else if let Some(handle) = payload.as_gpu::<image::GrayImage>() {
+            Some(gpu_image_size_bytes(handle))
+        } else if let Some(handle) = payload.as_gpu::<image::RgbImage>() {
+            Some(gpu_image_size_bytes(handle))
+        } else {
+            payload
+                .as_gpu::<image::RgbaImage>()
+                .map(gpu_image_size_bytes)
+        }
+    } else {
+        if let Some(img) = payload.as_cpu::<image::DynamicImage>() {
+            Some(dynamic_image_size_bytes(img))
+        } else if let Some(img) = payload.as_cpu::<image::GrayImage>() {
+            Some(img.as_raw().len() as u64)
+        } else if let Some(img) = payload.as_cpu::<image::RgbImage>() {
+            Some(img.as_raw().len() as u64)
+        } else {
+            payload
+                .as_cpu::<image::RgbaImage>()
+                .map(|img| img.as_raw().len() as u64)
+        }
+    }
+}
+
+#[cfg(feature = "gpu")]
+fn gpu_image_size_bytes(handle: &daedalus_gpu::GpuImageHandle) -> u64 {
+    let bpp = daedalus_gpu::format_bytes_per_pixel(handle.format).unwrap_or(4) as u64;
+    handle.width as u64 * handle.height as u64 * bpp
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ExecutionTelemetry, MetricsLevel};
@@ -1032,126 +1154,4 @@ mod tests {
         assert!(telemetry.trace.as_ref().is_none_or(Vec::is_empty));
         assert!(telemetry.in_flight_node_transport_metrics.is_empty());
     }
-}
-
-pub(crate) fn runtime_value_size_bytes(payload: &RuntimeValue) -> Option<u64> {
-    match payload {
-        RuntimeValue::Unit => Some(0),
-        RuntimeValue::Bytes(bytes) => Some(bytes.len() as u64),
-        RuntimeValue::Value(value) => value_size_bytes(value),
-        RuntimeValue::Any(any) => any_size_bytes(any),
-        #[cfg(feature = "gpu")]
-        RuntimeValue::Data(payload) => data_cell_size_bytes(payload),
-    }
-}
-
-fn value_size_bytes(value: &daedalus_data::model::Value) -> Option<u64> {
-    match value {
-        daedalus_data::model::Value::String(s) => Some(s.len() as u64),
-        daedalus_data::model::Value::Bytes(b) => Some(b.len() as u64),
-        _ => None,
-    }
-}
-
-pub(crate) fn any_ref_size_bytes(any: &(dyn std::any::Any + Send + Sync)) -> Option<u64> {
-    if let Some(bytes) = any.downcast_ref::<Vec<u8>>() {
-        return Some(bytes.len() as u64);
-    }
-    if let Some(bytes) = any.downcast_ref::<Arc<[u8]>>() {
-        return Some(bytes.len() as u64);
-    }
-    if let Some(img) = any.downcast_ref::<image::DynamicImage>() {
-        return Some(dynamic_image_size_bytes(img));
-    }
-    if let Some(img) = any.downcast_ref::<image::GrayImage>() {
-        return Some(img.as_raw().len() as u64);
-    }
-    if let Some(img) = any.downcast_ref::<image::GrayAlphaImage>() {
-        return Some(img.as_raw().len() as u64);
-    }
-    if let Some(img) = any.downcast_ref::<image::RgbImage>() {
-        return Some(img.as_raw().len() as u64);
-    }
-    if let Some(img) = any.downcast_ref::<image::RgbaImage>() {
-        return Some(img.as_raw().len() as u64);
-    }
-    #[cfg(feature = "gpu")]
-    if let Some(handle) = any.downcast_ref::<daedalus_gpu::GpuImageHandle>() {
-        return Some(gpu_image_size_bytes(handle));
-    }
-    if let Ok(inspectors) = runtime_data_size_inspectors().read() {
-        for inspector in inspectors.iter() {
-            if let Some(bytes) = inspector(any) {
-                return Some(bytes);
-            }
-        }
-    }
-    None
-}
-
-fn any_size_bytes(any: &Arc<dyn std::any::Any + Send + Sync>) -> Option<u64> {
-    any_ref_size_bytes(any.as_ref())
-}
-
-fn dynamic_image_size_bytes(img: &image::DynamicImage) -> u64 {
-    match img {
-        image::DynamicImage::ImageLuma8(i) => i.as_raw().len() as u64,
-        image::DynamicImage::ImageLumaA8(i) => i.as_raw().len() as u64,
-        image::DynamicImage::ImageRgb8(i) => i.as_raw().len() as u64,
-        image::DynamicImage::ImageRgba8(i) => i.as_raw().len() as u64,
-        image::DynamicImage::ImageLuma16(i) => {
-            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
-        }
-        image::DynamicImage::ImageLumaA16(i) => {
-            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
-        }
-        image::DynamicImage::ImageRgb16(i) => {
-            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
-        }
-        image::DynamicImage::ImageRgba16(i) => {
-            (i.as_raw().len() * std::mem::size_of::<u16>()) as u64
-        }
-        image::DynamicImage::ImageRgb32F(i) => {
-            (i.as_raw().len() * std::mem::size_of::<f32>()) as u64
-        }
-        image::DynamicImage::ImageRgba32F(i) => {
-            (i.as_raw().len() * std::mem::size_of::<f32>()) as u64
-        }
-        _ => 0,
-    }
-}
-
-#[cfg(feature = "gpu")]
-fn data_cell_size_bytes(payload: &daedalus_gpu::DataCell) -> Option<u64> {
-    if payload.is_gpu() {
-        if let Some(handle) = payload.as_gpu::<image::DynamicImage>() {
-            Some(gpu_image_size_bytes(handle))
-        } else if let Some(handle) = payload.as_gpu::<image::GrayImage>() {
-            Some(gpu_image_size_bytes(handle))
-        } else if let Some(handle) = payload.as_gpu::<image::RgbImage>() {
-            Some(gpu_image_size_bytes(handle))
-        } else if let Some(handle) = payload.as_gpu::<image::RgbaImage>() {
-            Some(gpu_image_size_bytes(handle))
-        } else {
-            None
-        }
-    } else {
-        if let Some(img) = payload.as_cpu::<image::DynamicImage>() {
-            Some(dynamic_image_size_bytes(img))
-        } else if let Some(img) = payload.as_cpu::<image::GrayImage>() {
-            Some(img.as_raw().len() as u64)
-        } else if let Some(img) = payload.as_cpu::<image::RgbImage>() {
-            Some(img.as_raw().len() as u64)
-        } else if let Some(img) = payload.as_cpu::<image::RgbaImage>() {
-            Some(img.as_raw().len() as u64)
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(feature = "gpu")]
-fn gpu_image_size_bytes(handle: &daedalus_gpu::GpuImageHandle) -> u64 {
-    let bpp = daedalus_gpu::format_bytes_per_pixel(handle.format).unwrap_or(4) as u64;
-    handle.width as u64 * handle.height as u64 * bpp
 }

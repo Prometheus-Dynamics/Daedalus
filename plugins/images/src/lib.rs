@@ -2,6 +2,8 @@
 //! doesn't depend on `image`.
 
 use daedalus::{Plugin, PluginRegistry};
+#[cfg(feature = "gpu")]
+use image::GrayAlphaImage;
 use image::{DynamicImage, GrayImage, RgbImage, RgbaImage};
 
 /// Register common image conversions into the global conversion registry.

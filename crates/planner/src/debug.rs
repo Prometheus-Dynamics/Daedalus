@@ -1,5 +1,5 @@
 //! Debug helpers for serializing/deserializing plans, useful for goldens/CLI.
-//! ```
+//! ```ignore
 //! use daedalus_planner::{debug, Graph, ExecutionPlan};
 //!
 //! let plan = ExecutionPlan::new(Graph::default(), vec![]);

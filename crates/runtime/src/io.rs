@@ -58,6 +58,17 @@ struct DrainedInput {
     payload: CorrelatedValue,
 }
 
+#[cfg(feature = "gpu")]
+struct ConvertIncomingContext<'a> {
+    node_idx: usize,
+    edge_idx: usize,
+    entries: &'a HashSet<usize>,
+    exits: &'a HashSet<usize>,
+    materialization_cache: Option<&'a MaterializationCacheHandle>,
+    gpu: Option<&'a daedalus_gpu::GpuContextHandle>,
+    telemetry: &'a mut ExecutionTelemetry,
+}
+
 pub type ConstCoercer = Box<
     dyn Fn(&daedalus_data::model::Value) -> Option<Box<dyn Any + Send + Sync>>
         + Send
@@ -460,7 +471,7 @@ impl<'a> NodeIo<'a> {
         T: Any + Send + Sync + 'static,
     {
         any.downcast_ref::<daedalus_gpu::Backing<T>>()
-            .map(daedalus_gpu::Backing::as_ref)
+            .map(AsRef::as_ref)
     }
 
     #[cfg(feature = "gpu")]
@@ -494,33 +505,34 @@ impl<'a> NodeIo<'a> {
         crate::executor::any_ref_size_bytes(value)
     }
 
-    fn telemetry_mut(&self) -> &mut ExecutionTelemetry {
+    fn with_telemetry<R>(&self, f: impl FnOnce(&mut ExecutionTelemetry) -> R) -> R {
         // SAFETY: `NodeIo` is created with exclusive access to the executor telemetry for a single
         // node execution. This raw pointer aliases that same exclusive borrow so immutable helper
         // methods can still record conversion/materialization counters.
-        unsafe { &mut *self.telemetry_ptr }
+        unsafe { f(&mut *self.telemetry_ptr) }
     }
 
     fn record_conversion_bytes(&self, bytes: Option<u64>) {
         if let Some(bytes) = bytes {
-            self.telemetry_mut()
-                .record_node_conversion(self.node_idx, bytes);
+            self.with_telemetry(|telemetry| telemetry.record_node_conversion(self.node_idx, bytes));
         }
     }
 
     #[cfg(feature = "gpu")]
     fn record_materialization_bytes(&self, bytes: Option<u64>) {
         if let Some(bytes) = bytes {
-            self.telemetry_mut()
-                .record_node_materialization(self.node_idx, bytes);
+            self.with_telemetry(|telemetry| {
+                telemetry.record_node_materialization(self.node_idx, bytes)
+            });
         }
     }
 
     #[cfg(feature = "gpu")]
     fn record_gpu_transfer_bytes(&self, upload: bool, bytes: Option<u64>) {
         if let Some(bytes) = bytes {
-            self.telemetry_mut()
-                .record_node_gpu_transfer(self.node_idx, upload, bytes);
+            self.with_telemetry(|telemetry| {
+                telemetry.record_node_gpu_transfer(self.node_idx, upload, bytes)
+            });
         }
     }
 
@@ -1113,13 +1125,15 @@ impl<'a> NodeIo<'a> {
                                 {
                                     payload = Self::convert_incoming(
                                         payload,
-                                        node_idx,
-                                        *edge_idx,
-                                        gpu_entry_edges,
-                                        gpu_exit_edges,
-                                        materialization_cache.as_ref(),
-                                        gpu.as_ref(),
-                                        telemetry,
+                                        ConvertIncomingContext {
+                                            node_idx,
+                                            edge_idx: *edge_idx,
+                                            entries: gpu_entry_edges,
+                                            exits: gpu_exit_edges,
+                                            materialization_cache: materialization_cache.as_ref(),
+                                            gpu: gpu.as_ref(),
+                                            telemetry,
+                                        },
                                     );
                                 }
                                 drained.push(DrainedInput {
@@ -1161,13 +1175,15 @@ impl<'a> NodeIo<'a> {
                             {
                                 payload = Self::convert_incoming(
                                     payload,
-                                    node_idx,
-                                    *edge_idx,
-                                    gpu_entry_edges,
-                                    gpu_exit_edges,
-                                    materialization_cache.as_ref(),
-                                    gpu.as_ref(),
-                                    telemetry,
+                                    ConvertIncomingContext {
+                                        node_idx,
+                                        edge_idx: *edge_idx,
+                                        entries: gpu_entry_edges,
+                                        exits: gpu_exit_edges,
+                                        materialization_cache: materialization_cache.as_ref(),
+                                        gpu: gpu.as_ref(),
+                                        telemetry,
+                                    },
                                 );
                             }
                             drained.push(DrainedInput {
@@ -1506,23 +1522,25 @@ impl<'a> NodeIo<'a> {
             let correlated = correlated;
             #[cfg(feature = "gpu")]
             self.record_materialization_bytes(materialized_bytes);
-            let transport_bytes =
-                if cfg!(feature = "metrics") && self.telemetry_mut().metrics_level.is_detailed() {
-                    crate::executor::runtime_value_size_bytes(&correlated.inner)
-                } else {
-                    None
-                };
-            self.telemetry_mut()
-                .record_node_transport_out(self.node_idx, transport_bytes);
-            apply_policy_owned(ApplyPolicyOwnedArgs {
-                edge_idx,
-                policy: &effective_policy,
-                payload: correlated,
-                queues: self.queues,
-                warnings_seen: self.warnings_seen,
-                telem: self.telemetry_mut(),
-                warning_label: Some(format!("edge_{}_{}", self.node_id, from_port)),
-                backpressure: bp,
+            let transport_bytes = if cfg!(feature = "metrics")
+                && self.with_telemetry(|telemetry| telemetry.metrics_level.is_detailed())
+            {
+                crate::executor::runtime_value_size_bytes(&correlated.inner)
+            } else {
+                None
+            };
+            self.with_telemetry(|telemetry| {
+                telemetry.record_node_transport_out(self.node_idx, transport_bytes);
+                apply_policy_owned(ApplyPolicyOwnedArgs {
+                    edge_idx,
+                    policy: &effective_policy,
+                    payload: correlated,
+                    queues: self.queues,
+                    warnings_seen: self.warnings_seen,
+                    telem: telemetry,
+                    warning_label: Some(format!("edge_{}_{}", self.node_id, from_port)),
+                    backpressure: bp,
+                });
             });
             return;
         }
@@ -1565,24 +1583,26 @@ impl<'a> NodeIo<'a> {
                 payload.inner = promoted;
             }
             self.record_materialization_bytes(materialized_bytes);
-            let transport_bytes =
-                if cfg!(feature = "metrics") && self.telemetry_mut().metrics_level.is_detailed() {
-                    crate::executor::runtime_value_size_bytes(&payload.inner)
-                } else {
-                    None
-                };
-            self.telemetry_mut()
-                .record_node_transport_out(self.node_idx, transport_bytes);
-            apply_policy(
-                edge_idx,
-                &policy,
-                &payload,
-                self.queues,
-                self.warnings_seen,
-                self.telemetry_mut(),
-                Some(format!("edge_{}_{}", self.node_id, from_port)),
-                bp,
-            );
+            let transport_bytes = if cfg!(feature = "metrics")
+                && self.with_telemetry(|telemetry| telemetry.metrics_level.is_detailed())
+            {
+                crate::executor::runtime_value_size_bytes(&payload.inner)
+            } else {
+                None
+            };
+            self.with_telemetry(|telemetry| {
+                telemetry.record_node_transport_out(self.node_idx, transport_bytes);
+                apply_policy(
+                    edge_idx,
+                    &policy,
+                    &payload,
+                    self.queues,
+                    self.warnings_seen,
+                    telemetry,
+                    Some(format!("edge_{}_{}", self.node_id, from_port)),
+                    bp,
+                );
+            });
         }
         #[cfg(not(feature = "gpu"))]
         for (edge_idx, from_port, mut policy, bp, cap_override) in matches {
@@ -1607,24 +1627,26 @@ impl<'a> NodeIo<'a> {
             if let Some(cap) = cap_override {
                 policy = EdgePolicyKind::Bounded { cap };
             }
-            let transport_bytes =
-                if cfg!(feature = "metrics") && self.telemetry_mut().metrics_level.is_detailed() {
-                    crate::executor::runtime_value_size_bytes(&correlated.inner)
-                } else {
-                    None
-                };
-            self.telemetry_mut()
-                .record_node_transport_out(self.node_idx, transport_bytes);
-            apply_policy(
-                edge_idx,
-                &policy,
-                &correlated,
-                self.queues,
-                self.warnings_seen,
-                self.telemetry_mut(),
-                Some(format!("edge_{}_{}", self.node_id, from_port)),
-                bp,
-            );
+            let transport_bytes = if cfg!(feature = "metrics")
+                && self.with_telemetry(|telemetry| telemetry.metrics_level.is_detailed())
+            {
+                crate::executor::runtime_value_size_bytes(&correlated.inner)
+            } else {
+                None
+            };
+            self.with_telemetry(|telemetry| {
+                telemetry.record_node_transport_out(self.node_idx, transport_bytes);
+                apply_policy(
+                    edge_idx,
+                    &policy,
+                    &correlated,
+                    self.queues,
+                    self.warnings_seen,
+                    telemetry,
+                    Some(format!("edge_{}_{}", self.node_id, from_port)),
+                    bp,
+                );
+            });
         }
     }
 
@@ -1760,7 +1782,7 @@ impl<'a> NodeIo<'a> {
             RuntimeValue::Any(a) => a
                 .downcast_ref::<T>()
                 .or_else(|| a.downcast_ref::<Arc<T>>().map(Arc::as_ref))
-                .or_else(|| {
+                .or({
                     #[cfg(feature = "gpu")]
                     {
                         Self::any_backing_ref::<T>(a)
@@ -1773,7 +1795,7 @@ impl<'a> NodeIo<'a> {
             #[cfg(feature = "gpu")]
             RuntimeValue::Data(ep) => ep.as_cpu_any::<T>().or_else(|| {
                 ep.as_cpu_any::<daedalus_gpu::Backing<T>>()
-                    .map(daedalus_gpu::Backing::as_ref)
+                    .map(AsRef::as_ref)
             }),
             _ => None,
         })
@@ -1884,10 +1906,9 @@ impl<'a> NodeIo<'a> {
         T::Device: Clone + Send + Sync + 'static,
     {
         self.inputs_for(port).find_map(|p| match &p.inner {
-            RuntimeValue::Data(ep) => ep.as_cpu::<T>().or_else(|| {
-                ep.as_cpu::<daedalus_gpu::Backing<T>>()
-                    .map(daedalus_gpu::Backing::as_ref)
-            }),
+            RuntimeValue::Data(ep) => ep
+                .as_cpu::<T>()
+                .or_else(|| ep.as_cpu::<daedalus_gpu::Backing<T>>().map(AsRef::as_ref)),
             _ => None,
         })
     }
@@ -2776,13 +2797,13 @@ impl<'a> NodeIo<'a> {
                     }
 
                     if wants_gpu {
-                        if let Some(cpu) = Self::any_backing_owned::<T>(a) {
-                            if let Some(ctx) = &self.gpu {
-                                let cpu_bytes = Self::estimate_any_bytes(&cpu);
-                                if let Ok(handle) = cpu.upload(ctx) {
-                                    self.record_gpu_transfer_bytes(true, cpu_bytes);
-                                    return Some(daedalus_gpu::Compute::Gpu(handle));
-                                }
+                        if let Some(cpu) = Self::any_backing_owned::<T>(a)
+                            && let Some(ctx) = &self.gpu
+                        {
+                            let cpu_bytes = Self::estimate_any_bytes(&cpu);
+                            if let Ok(handle) = cpu.upload(ctx) {
+                                self.record_gpu_transfer_bytes(true, cpu_bytes);
+                                return Some(daedalus_gpu::Compute::Gpu(handle));
                             }
                         }
                         if let Some(backing) =
@@ -3226,14 +3247,17 @@ impl<'a> NodeIo<'a> {
     #[cfg(feature = "gpu")]
     fn convert_incoming(
         mut payload: CorrelatedValue,
-        node_idx: usize,
-        edge_idx: usize,
-        entries: &HashSet<usize>,
-        exits: &HashSet<usize>,
-        materialization_cache: Option<&MaterializationCacheHandle>,
-        gpu: Option<&daedalus_gpu::GpuContextHandle>,
-        telemetry: &mut ExecutionTelemetry,
+        ctx: ConvertIncomingContext<'_>,
     ) -> CorrelatedValue {
+        let ConvertIncomingContext {
+            node_idx,
+            edge_idx,
+            entries,
+            exits,
+            materialization_cache,
+            gpu,
+            telemetry,
+        } = ctx;
         let Some(ctx) = gpu else {
             return payload;
         };
