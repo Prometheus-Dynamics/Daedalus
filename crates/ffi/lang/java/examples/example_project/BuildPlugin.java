@@ -15,7 +15,7 @@ public final class BuildPlugin {
     Files.createDirectories(out.getParent());
 
     Plugin plugin = new Plugin("example_java");
-    plugin.version = "0.1.1";
+    plugin.version = "1.0.0";
     plugin.description = "Java example project";
 
     AnnotationEmitter.registerAnnotated(plugin, ".", ExampleNodes.class);

@@ -20,7 +20,7 @@ public final class BuildPluginOpenCvDemo {
     Files.createDirectories(out.getParent());
 
     Plugin plugin = new Plugin("demo_java_opencv");
-    plugin.version = "0.1.1";
+    plugin.version = "1.0.0";
     plugin.description = "OpenCV image demo";
 
     AnnotationEmitter.registerAnnotated(plugin, ".", JavaOpenCvDemoNodes.class);

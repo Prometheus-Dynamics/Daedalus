@@ -575,7 +575,7 @@ fn run_host_bridges(
         let has_outgoing = outgoing
             .get(node_ref.0)
             .is_some_and(|edges| !edges.is_empty());
-        if log::log_enabled!(log::Level::Debug) {
+        if tracing::enabled!(tracing::Level::DEBUG) {
             let outgoing_desc: Vec<String> = outgoing
                 .get(node_ref.0)
                 .into_iter()
@@ -598,7 +598,7 @@ fn run_host_bridges(
                     Some(format!("{from_label}:{from_port} -> {to_port}"))
                 })
                 .collect();
-            log::debug!(
+            tracing::debug!(
                 "host bridge edges node_id={} outgoing={:?} incoming={:?}",
                 node_ref.0,
                 outgoing_desc,
@@ -721,7 +721,7 @@ fn run_host_bridges(
             let count = HOST_BRIDGE_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
             if count < 5 {
                 let ports: Vec<_> = io.inputs().iter().map(|(p, _)| p.as_str()).collect();
-                log::debug!(
+                tracing::debug!(
                     "host bridge post-pass inputs alias={} node_id={} ports={:?}",
                     node.label.as_deref().unwrap_or(&node.id),
                     node.id,
@@ -740,7 +740,7 @@ fn run_host_bridges(
                 Ok(guard) => Some(guard),
                 Err(err) => {
                     if perf::disable_node_perf() {
-                        log::warn!("node perf counters disabled: {err}");
+                        tracing::warn!("node perf counters disabled: {err}");
                     }
                     None
                 }
@@ -995,7 +995,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                         Ok(guard) => Some(guard),
                         Err(err) => {
                             if perf::disable_node_perf() {
-                                log::warn!("node perf counters disabled: {err}");
+                                tracing::warn!("node perf counters disabled: {err}");
                             }
                             None
                         }
@@ -1150,7 +1150,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
                 Ok(guard) => Some(guard),
                 Err(err) => {
                     if perf::disable_node_perf() {
-                        log::warn!("node perf counters disabled: {err}");
+                        tracing::warn!("node perf counters disabled: {err}");
                     }
                     None
                 }
@@ -1162,7 +1162,7 @@ pub(crate) fn run_segment_external<H: crate::executor::NodeHandler>(
         if node_trace_enabled() {
             let count = NODE_TRACE_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
             if count < 50 {
-                log::debug!(
+                tracing::debug!(
                     "daedalus-runtime: exec node seg={} idx={} id={} label={:?} inputs={:?}",
                     seg_idx,
                     node_ref.0,

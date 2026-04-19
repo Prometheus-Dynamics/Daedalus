@@ -29,7 +29,7 @@ export const add = node({
 
 const plugin = new Plugin({
   name: "demo_node",
-  version: "0.1.1",
+  version: "1.0.0",
   description: "Demo Node nodes",
   metadata: { author: "example" },
 });

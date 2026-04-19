@@ -13,7 +13,7 @@ const out = process.argv[2]
   : path.join(os.tmpdir(), "example_node.so");
 fs.mkdirSync(path.dirname(out), { recursive: true });
 
-const plugin = new Plugin({ name: "example_node", version: "0.1.1", description: "Node example project" });
+const plugin = new Plugin({ name: "example_node", version: "1.0.0", description: "Node example project" });
 
 // Point to the local nodes module sitting next to this script.
 const nodesPath = path.join(path.dirname(new URL(import.meta.url).pathname), "nodes.mjs");

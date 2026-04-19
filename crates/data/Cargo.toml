@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-data"
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 description = "Type/value model and serialization helpers for Daedalus node ports."
 license.workspace = true
@@ -27,7 +27,7 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true, optional = true }
-daedalus-gpu = { version = "0.1.1", path = "../gpu", optional = true }
+daedalus-gpu = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

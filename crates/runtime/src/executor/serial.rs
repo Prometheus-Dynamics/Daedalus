@@ -280,7 +280,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
                     .map(|node| format!("{}:{}", node_ref.0, node.id))
             })
             .collect();
-        log::warn!("segment order seg={} nodes={:?}", seg_idx, order);
+        tracing::warn!("segment order seg={} nodes={:?}", seg_idx, order);
     }
     for node_ref in &segment.nodes {
         if let Some(active) = active_nodes.as_deref()
@@ -448,7 +448,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
             );
         }
 
-        if log::log_enabled!(log::Level::Debug) && node.id == "cv:image:to_gray" {
+        if tracing::enabled!(tracing::Level::DEBUG) && node.id == "cv:image:to_gray" {
             let has_image = io.get_any::<image::DynamicImage>("frame").is_some();
             let inputs: Vec<String> = io
                 .inputs()
@@ -504,7 +504,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
                     Some(format!("#{edge_idx} {from_label}:{from_port} -> {to_port}"))
                 })
                 .collect();
-            log::debug!(
+            tracing::debug!(
                 "to_gray inputs={:?} get_any={} incoming={:?} outgoing={:?}",
                 inputs,
                 has_image,
@@ -512,7 +512,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
                 outgoing_desc
             );
         }
-        if log::log_enabled!(log::Level::Debug) && node.id == "cv:aruco:mask_downscale_gray" {
+        if tracing::enabled!(tracing::Level::DEBUG) && node.id == "cv:aruco:mask_downscale_gray" {
             let inputs: Vec<String> = io
                 .inputs()
                 .iter()
@@ -565,7 +565,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
                     Some(format!("#{edge_idx} {from_label}:{from_port} -> {to_port}"))
                 })
                 .collect();
-            log::debug!(
+            tracing::debug!(
                 "mask_downscale inputs={:?} incoming={:?} outgoing={:?}",
                 inputs,
                 incoming_desc,
@@ -593,7 +593,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
                 Ok(guard) => Some(guard),
                 Err(err) => {
                     if perf::disable_node_perf() {
-                        log::warn!("node perf counters disabled: {err}");
+                        tracing::warn!("node perf counters disabled: {err}");
                     }
                     None
                 }
@@ -646,7 +646,7 @@ fn run_segment<H: crate::executor::NodeHandler>(
         if node_trace_enabled() {
             let count = NODE_TRACE_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
             if count < 50 {
-                log::debug!(
+                tracing::debug!(
                     "daedalus-runtime: exec node seg={} idx={} id={} label={:?} inputs={:?}",
                     seg_idx,
                     node_ref.0,
@@ -880,7 +880,7 @@ fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
             Ok(guard) => Some(guard),
             Err(err) => {
                 if perf::disable_node_perf() {
-                    log::warn!("node perf counters disabled: {err}");
+                    tracing::warn!("node perf counters disabled: {err}");
                 }
                 None
             }
@@ -988,7 +988,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
         let has_outgoing = outgoing
             .get(node_ref.0)
             .is_some_and(|edges| !edges.is_empty());
-        if log::log_enabled!(log::Level::Debug) {
+        if tracing::enabled!(tracing::Level::DEBUG) {
             let outgoing_desc: Vec<String> = outgoing
                 .get(node_ref.0)
                 .into_iter()
@@ -1011,7 +1011,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
                     Some(format!("{from_label}:{from_port} -> {to_port}"))
                 })
                 .collect();
-            log::debug!(
+            tracing::debug!(
                 "host bridge edges node_id={} outgoing={:?} incoming={:?}",
                 node_ref.0,
                 outgoing_desc,
@@ -1140,7 +1140,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
             let count = HOST_BRIDGE_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
             if count < 5 {
                 let ports: Vec<_> = io.inputs().iter().map(|(p, _)| p.as_str()).collect();
-                log::debug!(
+                tracing::debug!(
                     "host bridge post-pass inputs alias={} node_id={} ports={:?}",
                     node.label.as_deref().unwrap_or(&node.id),
                     node.id,
@@ -1159,7 +1159,7 @@ fn run_host_bridges<H: crate::executor::NodeHandler>(
                 Ok(guard) => Some(guard),
                 Err(err) => {
                     if perf::disable_node_perf() {
-                        log::warn!("node perf counters disabled: {err}");
+                        tracing::warn!("node perf counters disabled: {err}");
                     }
                     None
                 }

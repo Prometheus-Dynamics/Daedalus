@@ -4,7 +4,7 @@ from pathlib import Path
 
 from daedalus_py import CvImage, Plugin, node_rs as node
 
-plugin = Plugin(name="demo_py_opencv", version="0.1.1", description="OpenCV image demo")
+plugin = Plugin(name="demo_py_opencv", version="1.0.0", description="OpenCV image demo")
 
 RUNTIME_PATH = Path(__file__).with_name("rt.py").resolve().as_posix()
 

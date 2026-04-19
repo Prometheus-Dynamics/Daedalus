@@ -63,7 +63,7 @@ impl HandlerRegistry {
             + 'static,
     {
         if std::env::var_os("DAEDALUS_TRACE_HANDLER_REGISTER").is_some() {
-            log::warn!("daedalus-runtime: register handler id={}", id);
+            tracing::warn!("daedalus-runtime: register handler id={}", id);
         }
         let key = Self::key_for_id(id);
         self.record_id(key, id);
@@ -77,7 +77,7 @@ impl HandlerRegistry {
             + 'static,
     {
         if std::env::var_os("DAEDALUS_TRACE_HANDLER_REGISTER").is_some() {
-            log::warn!("daedalus-runtime: register stateful handler id={}", id);
+            tracing::warn!("daedalus-runtime: register stateful handler id={}", id);
         }
         let key = Self::key_for_id(id);
         self.record_id(key, id);
@@ -144,7 +144,7 @@ impl crate::executor::NodeHandler for HandlerRegistry {
         {
             let has_stateless = self.stateless.contains_key(&node.stable_id);
             let has_stateful = self.stateful.contains_key(&node.stable_id);
-            log::warn!(
+            tracing::warn!(
                 "daedalus-runtime: handler run node={} stable_id={:x} stateless={} stateful={}",
                 node.id,
                 node.stable_id,
@@ -161,7 +161,7 @@ impl crate::executor::NodeHandler for HandlerRegistry {
         }
 
         if std::env::var_os("DAEDALUS_TRACE_MISSING_HANDLERS").is_some() {
-            log::warn!(
+            tracing::warn!(
                 "daedalus-runtime: missing handler for node id={} stable_id={:x}",
                 node.id,
                 node.stable_id

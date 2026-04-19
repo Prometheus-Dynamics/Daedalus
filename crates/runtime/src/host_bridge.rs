@@ -221,7 +221,7 @@ impl HostBridgeHandle {
         if let RuntimeValue::Any(any) = &payload
             && let Some(ty) = payload_any_type(any.as_ref())
         {
-            log::debug!(
+            tracing::debug!(
                 "host bridge port {}: accepting Any payload type {}",
                 port,
                 ty
@@ -619,7 +619,7 @@ impl<'a> HostPortOwned<'a> {
                         })
                 });
                 if value.is_none() {
-                    log::warn!(
+                    tracing::warn!(
                         "host bridge port {}: try_pop_any failed expected={} actual={}",
                         self.name(),
                         std::any::type_name::<T>(),
@@ -664,7 +664,7 @@ impl<'a> HostPortOwned<'a> {
                         })
                 });
                 if value.is_none() {
-                    log::warn!(
+                    tracing::warn!(
                         "host bridge port {}: try_pop_any_arc failed expected={} actual={}",
                         self.name(),
                         std::any::type_name::<Arc<T>>(),
@@ -786,7 +786,7 @@ impl<'a> HostPort<'a> {
                         })
                 });
                 if value.is_none() {
-                    log::warn!(
+                    tracing::warn!(
                         "host bridge port {}: try_pop_any failed expected={} actual={}",
                         self.name,
                         std::any::type_name::<T>(),
@@ -831,7 +831,7 @@ impl<'a> HostPort<'a> {
                         })
                 });
                 if value.is_none() {
-                    log::warn!(
+                    tracing::warn!(
                         "host bridge port {}: try_pop_any_arc failed expected={} actual={}",
                         self.name,
                         std::any::type_name::<Arc<T>>(),
@@ -878,7 +878,7 @@ impl HostPollable for Value {
             RuntimeValue::Value(value) => Ok(value),
             RuntimeValue::Any(any) => any_to_value(any.as_ref()).ok_or_else(|| {
                 let ty = std::any::type_name_of_val(any.as_ref());
-                log::warn!(
+                tracing::warn!(
                     "host bridge port {}: Any payload not value-like (type={})",
                     port,
                     ty
@@ -1522,7 +1522,7 @@ impl HostBridgeManager {
                 q.pop_front();
                 let drop_count = HOST_BRIDGE_OUTBOUND_DROPS.fetch_add(1, Ordering::Relaxed) + 1;
                 if drop_count <= 5 || drop_count.is_multiple_of(500) {
-                    log::warn!(
+                    tracing::warn!(
                         "host-bridge outbound overflow alias={} port={} cap={} dropping-oldest count={}",
                         alias,
                         key,
@@ -1535,7 +1535,7 @@ impl HostBridgeManager {
             if host_bridge_trace_enabled() {
                 let count = HOST_BRIDGE_OUTBOUND_LOGS.fetch_add(1, Ordering::Relaxed);
                 if count < 5 || count.is_multiple_of(500) {
-                    log::debug!(
+                    tracing::debug!(
                         "host-bridge outbound queued alias={} port={} len={}",
                         alias,
                         key,
@@ -1564,7 +1564,7 @@ impl HostBridgeManager {
                 queue.clear();
                 drained.push((port.clone(), latest));
                 if host_bridge_trace_enabled() && dropped > 0 {
-                    log::debug!(
+                    tracing::debug!(
                         "host-bridge inbound coalesced alias={} port={} dropped={}",
                         alias,
                         port,
@@ -1600,7 +1600,7 @@ pub fn bridge_handler(
             for (port, payload) in &inbound {
                 entries.push(format!("{}#{}", port, describe_runtime_value(payload)));
             }
-            log::debug!(
+            tracing::debug!(
                 "host-bridge inbound alias={} node={} ports={}",
                 alias,
                 node.id,
@@ -1617,7 +1617,7 @@ pub fn bridge_handler(
             for (port, payload) in io.inputs() {
                 entries.push(format!("{}#{}", port, describe_edge(payload)));
             }
-            log::debug!(
+            tracing::debug!(
                 "host-bridge outbound alias={} node={} ports={}",
                 alias,
                 node.id,
@@ -1812,7 +1812,7 @@ fn serialize_outbound_payload(
                 } else if let Some(value) = any_to_value(any.as_ref()) {
                     HostBridgeSerialized::Json(serialize_value_to_json(port, &value)?)
                 } else {
-                    log::warn!(
+                    tracing::warn!(
                         "host bridge port {}: unsupported Any payload for bytes output",
                         port
                     );
@@ -1825,7 +1825,7 @@ fn serialize_outbound_payload(
             } else if let Some(bytes) = any_to_bytes(any.as_ref()) {
                 HostBridgeSerialized::Bytes(bytes)
             } else {
-                log::warn!("host bridge port {}: unsupported Any payload", port);
+                tracing::warn!("host bridge port {}: unsupported Any payload", port);
                 return Err(NodeError::InvalidInput(format!(
                     "host bridge port {port}: unsupported Any payload"
                 )));
@@ -1833,7 +1833,7 @@ fn serialize_outbound_payload(
         }
         #[cfg(feature = "gpu")]
         RuntimeValue::Data(_) => {
-            log::warn!(
+            tracing::warn!(
                 "host bridge port {}: gpu payloads cannot be serialized",
                 port
             );

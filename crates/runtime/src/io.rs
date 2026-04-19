@@ -1201,7 +1201,7 @@ impl<'a> NodeIo<'a> {
         }
         if std::env::var_os("DAEDALUS_TRACE_EDGE_IO").is_some() {
             for item in &drained {
-                log::debug!(
+                tracing::debug!(
                     "node input drained node={} port={} edge_idx={} payload={}",
                     node_id,
                     item.port,
@@ -1221,7 +1221,7 @@ impl<'a> NodeIo<'a> {
                 );
             }
         }
-        if log::log_enabled!(log::Level::Debug) && drained.is_empty() {
+        if tracing::enabled!(tracing::Level::DEBUG) && drained.is_empty() {
             let ports: Vec<String> = incoming_edges
                 .iter()
                 .filter_map(|edge_idx| {
@@ -1231,7 +1231,7 @@ impl<'a> NodeIo<'a> {
                 })
                 .collect();
             if !ports.is_empty() {
-                log::debug!("node inputs empty node={} ports={:?}", node_id, ports);
+                tracing::debug!("node inputs empty node={} ports={:?}", node_id, ports);
             }
         }
 
@@ -1252,8 +1252,8 @@ impl<'a> NodeIo<'a> {
             const_inputs.iter().map(|(port, _)| port.clone()).collect();
         let (mut aligned_inputs, leftovers, ready) =
             align_drained_inputs(drained, &sync_groups, &const_ports);
-        if log::log_enabled!(log::Level::Debug) && !sync_groups.is_empty() && !ready {
-            log::debug!(
+        if tracing::enabled!(tracing::Level::DEBUG) && !sync_groups.is_empty() && !ready {
+            tracing::debug!(
                 "node sync groups not ready node={} groups={:?}",
                 node_id,
                 sync_groups
@@ -1478,7 +1478,7 @@ impl<'a> NodeIo<'a> {
             #[cfg(not(feature = "gpu"))]
             let (edge_idx, from_port, policy, bp, cap_override) = matches.remove(0);
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO").is_some() {
-                log::warn!(
+                tracing::warn!(
                     "node output enqueue node={} port={} edge_idx={} payload={}",
                     self.node_id,
                     from_port,
@@ -1548,7 +1548,7 @@ impl<'a> NodeIo<'a> {
         #[cfg(feature = "gpu")]
         for (edge_idx, from_port, mut policy, bp, cap_override, needs_data) in matches {
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO").is_some() {
-                log::warn!(
+                tracing::warn!(
                     "node output enqueue node={} port={} edge_idx={} payload={}",
                     self.node_id,
                     from_port,
@@ -1607,7 +1607,7 @@ impl<'a> NodeIo<'a> {
         #[cfg(not(feature = "gpu"))]
         for (edge_idx, from_port, mut policy, bp, cap_override) in matches {
             if std::env::var_os("DAEDALUS_TRACE_EDGE_IO").is_some() {
-                log::warn!(
+                tracing::warn!(
                     "node output enqueue node={} port={} edge_idx={} payload={}",
                     self.node_id,
                     from_port,
@@ -1691,7 +1691,7 @@ impl<'a> NodeIo<'a> {
     {
         if std::env::var_os("DAEDALUS_TRACE_EDGE_IO").is_some() {
             let port_name = port.unwrap_or("<all>");
-            log::warn!(
+            tracing::warn!(
                 "node output prepare node={} port={} type={}",
                 self.node_id,
                 port_name,
@@ -2520,10 +2520,10 @@ impl<'a> NodeIo<'a> {
             .find_map(|payload| self.resolve_typed_from_value::<T>(port, payload));
 
         #[cfg(feature = "gpu")]
-        if log::log_enabled!(log::Level::Debug)
+        if tracing::enabled!(tracing::Level::DEBUG)
             && want == std::any::TypeId::of::<image::DynamicImage>()
         {
-            log::debug!(
+            tracing::debug!(
                 "get_typed dynamic_image port={} resolved={}",
                 port,
                 resolved.is_some()

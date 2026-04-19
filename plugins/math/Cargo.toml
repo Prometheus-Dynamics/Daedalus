@@ -13,5 +13,5 @@ gpu = ["daedalus/gpu"]
 plugins = []
 
 [dependencies]
-daedalus = { version = "0.1.1", path = "../../crates/daedalus", package = "daedalus-rs", features = ["plugins"] }
+daedalus = { workspace = true, features = ["plugins"] }
 paste = { workspace = true }

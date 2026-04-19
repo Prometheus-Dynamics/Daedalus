@@ -4,7 +4,7 @@ from pathlib import Path
 
 from daedalus_py import Plugin, node_rs as node
 
-plugin = Plugin(name="demo_py_rt", version="0.1.1", description="Roundtrip demo")
+plugin = Plugin(name="demo_py_rt", version="1.0.0", description="Roundtrip demo")
 
 # This example keeps “definitions” (this file) separate from “runtime” (`rt.py`).
 # The subprocess bridge only needs the runtime file when executing nodes.

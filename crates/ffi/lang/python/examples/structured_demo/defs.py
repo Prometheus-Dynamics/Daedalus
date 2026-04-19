@@ -7,7 +7,7 @@ from typing import Dict, List
 
 from daedalus_py import Plugin, node_rs as node
 
-plugin = Plugin(name="demo_py_struct", version="0.1.1", description="Structured demo")
+plugin = Plugin(name="demo_py_struct", version="1.0.0", description="Structured demo")
 
 # This example keeps “definitions” (this file) separate from “runtime” (`rt.py`).
 # The subprocess bridge only needs the runtime file when executing nodes.

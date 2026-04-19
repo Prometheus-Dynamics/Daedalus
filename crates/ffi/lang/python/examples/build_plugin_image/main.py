@@ -14,7 +14,7 @@ from daedalus_py import Plugin, CvImage, node  # noqa: E402
 
 plugin = Plugin(
     name="demo_py_image",
-    version="0.1.1",
+    version="1.0.0",
     description="Image roundtrip via OpenCV",
     metadata={"author": "example"},
 )

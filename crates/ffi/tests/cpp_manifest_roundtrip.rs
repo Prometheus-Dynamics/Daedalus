@@ -131,7 +131,7 @@ DAEDALUS_REGISTER_SHADER_NODE_T({node_prefix}_shader_write_u32,
                                 std::tuple<uint32_t>{{}},
                                 daedalus::shader().file("dummy.wgsl").shader_name("write_u32").invocations(1,1,1).storage_u32_rw(0, "out", 4, true))
 
-DAEDALUS_PLUGIN("{plugin_name}", "0.1.1", "cpp test plugin")
+DAEDALUS_PLUGIN("{plugin_name}", "1.0.0", "cpp test plugin")
 "#
     );
 
@@ -178,7 +178,7 @@ DAEDALUS_NODE_WITH("auto_cpp:add", add_i32, DAEDALUS_PORTS(a,b), DAEDALUS_PORTS(
   def.set_metadata_json("{{\\\"category\\\":\\\"math\\\"}}");
 }})
 
-DAEDALUS_PLUGIN("{plugin_name}", "0.1.1", "cpp auto-symbol test plugin")
+DAEDALUS_PLUGIN("{plugin_name}", "1.0.0", "cpp auto-symbol test plugin")
 "#
     );
 
@@ -221,7 +221,7 @@ fn write_manifest(out_dir: &Path, lib_path: &Path, prefix: &str) -> PathBuf {
     let doc = serde_json::json!({
       "manifest_version": "1",
       "language": "c_cpp",
-      "plugin": { "name": prefix, "version": "0.1.1", "description": "cpp test", "metadata": {} },
+      "plugin": { "name": prefix, "version": "1.0.0", "description": "cpp test", "metadata": {} },
       "nodes": [
         {
           "id": format!("{prefix}:add"),

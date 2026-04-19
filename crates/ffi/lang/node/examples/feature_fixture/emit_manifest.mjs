@@ -42,7 +42,7 @@ for (const name of ["invert.wgsl", "write_u32.wgsl", "counter.wgsl", "write_one.
 
 const plugin = new Plugin({
   name: "demo_node_feat",
-  version: "0.1.1",
+  version: "1.0.0",
   description: "Node feature fixture",
   metadata: { category: "tests" },
 });

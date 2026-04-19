@@ -39,7 +39,7 @@ def main() -> None:
 
     copy_shaders(out_dir)
 
-    plugin = Plugin(name="example_py", version="0.1.1", description="Python example project")
+    plugin = Plugin(name="example_py", version="1.0.0", description="Python example project")
     register_all(plugin)
 
     # Point nodes at a stable module file (no codegen step).

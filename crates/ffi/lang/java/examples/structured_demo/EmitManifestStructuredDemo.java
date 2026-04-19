@@ -22,7 +22,7 @@ public final class EmitManifestStructuredDemo {
     Files.createDirectories(out.getParent());
 
     Plugin plugin = new Plugin("demo_java_struct");
-    plugin.version = "0.1.1";
+    plugin.version = "1.0.0";
     plugin.description = "Structured demo";
 
     AnnotationEmitter.registerAnnotated(plugin, ".", JavaStructuredDemoNodes.class);

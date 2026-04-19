@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-runtime"
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 description = "Runtime executor for Daedalus plans with backpressure and plugins."
 license.workspace = true
@@ -26,12 +26,12 @@ ffi = []
 plugins = []
 
 [dependencies]
-daedalus-planner = { version = "0.1.1", path = "../planner" }
-daedalus-registry = { version = "0.1.1", path = "../registry" }
-daedalus-gpu = { version = "0.1.1", path = "../gpu", optional = true }
-daedalus-data = { version = "0.1.1", path = "../data" }
-daedalus-core = { version = "0.1.1", path = "../core" }
-libc = "0.2"
+daedalus-planner = { workspace = true }
+daedalus-registry = { workspace = true }
+daedalus-gpu = { workspace = true, optional = true }
+daedalus-data = { workspace = true }
+daedalus-core = { workspace = true }
+libc = { workspace = true }
 crossbeam-queue = { workspace = true, optional = true }
 serde = { workspace = true }
 rayon = { workspace = true, optional = true }
@@ -39,10 +39,10 @@ smallvec = { workspace = true }
 serde_json = { workspace = true }
 rand = { workspace = true, optional = true }
 futures-util = { workspace = true, default-features = false, features = ["std"] }
-log = { workspace = true }
+tracing = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-daedalus-registry = { version = "0.1.1", path = "../registry" }
+daedalus-registry = { workspace = true }
 rand = { workspace = true }

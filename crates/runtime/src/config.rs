@@ -139,7 +139,7 @@ pub trait NodeConfig: Sized {
 /// ```
 pub fn log_config_changes(node_id: &str, changes: &[ConfigChange]) {
     for change in changes {
-        log::warn!(
+        tracing::warn!(
             "node={} port={} policy={:?} previous={:?} next={:?}",
             node_id,
             change.port,

@@ -65,7 +65,7 @@ export const list_sum = node({
 
 const plugin = new Plugin({
   name: "demo_node_struct",
-  version: "0.1.1",
+  version: "1.0.0",
   description: "Structured demo",
 });
 plugin.register(translate_point.__daedalus_node__);

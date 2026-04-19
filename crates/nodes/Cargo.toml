@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-nodes"
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 description = "Demo node implementations and fixtures for Daedalus."
 license.workspace = true
@@ -24,17 +24,17 @@ bundle-utils = []
 plugins = []
 
 [dependencies]
-daedalus-macros = { version = "0.1.1", path = "../macros" }
-daedalus-registry = { version = "0.1.1", path = "../registry" }
-daedalus-planner = { version = "0.1.1", path = "../planner" }
-daedalus-runtime = { version = "0.1.1", path = "../runtime", features = ["plugins"] }
-daedalus-data = { version = "0.1.1", path = "../data" }
-daedalus-core = { version = "0.1.1", path = "../core" }
+daedalus-macros = { workspace = true }
+daedalus-registry = { workspace = true }
+daedalus-planner = { workspace = true }
+daedalus-runtime = { workspace = true, features = ["plugins"] }
+daedalus-data = { workspace = true }
+daedalus-core = { workspace = true }
 paste = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 trybuild = { workspace = true }
-daedalus-data = { version = "0.1.1", path = "../data" }
-daedalus-planner = { version = "0.1.1", path = "../planner" }
-daedalus-runtime = { version = "0.1.1", path = "../runtime" }
+daedalus-data = { workspace = true }
+daedalus-planner = { workspace = true }
+daedalus-runtime = { workspace = true }

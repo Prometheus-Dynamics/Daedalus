@@ -90,7 +90,7 @@ import {{ Plugin }} from "{index_url}";
 
 process.chdir({workspace:?});
 
-const plugin = new Plugin({{ name: "demo_ts", version: "0.1.1" }});
+const plugin = new Plugin({{ name: "demo_ts", version: "1.0.0" }});
 plugin.packTs({{
   project: {project:?},
   emit_dir: {emit_dir:?},

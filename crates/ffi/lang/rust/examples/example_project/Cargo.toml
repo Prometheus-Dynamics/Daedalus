@@ -1,6 +1,6 @@
 [package]
 name = "daedalus_rust_ffi_example"
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 
 [lib]
@@ -12,5 +12,5 @@ default = []
 gpu-wgpu = ["daedalus/gpu-wgpu"]
 
 [dependencies]
-daedalus = { version = "0.1.1", path = "../../../daedalus", package = "daedalus-rs", features = ["plugins"] }
+daedalus = { version = "1.0.0", path = "../../../daedalus", package = "daedalus-rs", features = ["plugins"] }
 bytemuck = { version = "1", features = ["derive"] }

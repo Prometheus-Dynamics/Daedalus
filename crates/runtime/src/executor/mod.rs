@@ -232,7 +232,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             Err(err) => {
                 // If the selector can't be resolved, keep the graph running rather than silently
                 // disabling everything. Callers that need strictness can validate up-front.
-                log::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
+                tracing::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
             }
         }
         self
@@ -633,7 +633,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                 self.active_nodes = Some(Arc::new(mask));
             }
             Err(err) => {
-                log::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
+                tracing::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
             }
         }
         self

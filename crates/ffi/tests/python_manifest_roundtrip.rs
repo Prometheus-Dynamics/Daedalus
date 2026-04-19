@@ -8,7 +8,7 @@ fn manifest_roundtrip_struct_enum() {
     {
         "manifest_version": "1",
         "language": "python",
-        "plugin": {"name":"demo_py","version":"0.1.1"},
+        "plugin": {"name":"demo_py","version":"1.0.0"},
         "nodes": [{
             "id":"demo_py:enum_struct",
             "py_module":"dummy",

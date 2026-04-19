@@ -23,23 +23,23 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-daedalus-runtime = { version = "0.1.1", path = "../runtime", features = ["plugins", "gpu"] }
-daedalus-registry = { version = "0.1.1", path = "../registry" }
-daedalus-planner = { version = "0.1.1", path = "../planner" }
-daedalus-core = { version = "0.1.1", path = "../core" }
-daedalus-data = { version = "0.1.1", path = "../data" }
-daedalus-gpu = { version = "0.1.1", path = "../gpu", optional = true }
+daedalus-runtime = { workspace = true, features = ["plugins", "gpu"] }
+daedalus-registry = { workspace = true }
+daedalus-planner = { workspace = true }
+daedalus-core = { workspace = true }
+daedalus-data = { workspace = true }
+daedalus-gpu = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
-libloading = "0.9"
+libloading = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-pyo3 = { version = "0.28", features = ["auto-initialize"], optional = true }
+pyo3 = { workspace = true, optional = true }
 base64 = "0.22"
 image = { workspace = true }
 
 [dev-dependencies]
-daedalus = { version = "0.1.1", path = "../daedalus", package = "daedalus-rs", features = ["engine", "plugins", "ffi", "gpu"] }
+daedalus = { workspace = true, features = ["engine", "plugins", "ffi", "gpu"] }
 paste = { workspace = true }
 
 [[example]]

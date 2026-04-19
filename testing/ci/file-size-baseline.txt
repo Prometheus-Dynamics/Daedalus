@@ -1,0 +1,19 @@
+# Existing oversized Rust files to reduce over time.
+crates/runtime/src/io.rs
+crates/planner/src/passes/mod.rs
+crates/macros/src/node_fn_impl.rs
+crates/runtime/src/host_bridge.rs
+crates/runtime/src/executor/parallel.rs
+crates/runtime/src/executor/serial.rs
+crates/runtime/src/state.rs
+crates/runtime/src/graph_builder.rs
+crates/runtime/src/executor/telemetry.rs
+crates/runtime/src/executor/mod.rs
+crates/data/src/convert.rs
+crates/ffi/tests/cpp_manifest_roundtrip.rs
+crates/gpu/src/wgpu_backend.rs
+crates/gpu/src/convert.rs
+crates/ffi/src/java.rs
+crates/registry/src/store.rs
+crates/ffi/src/shader_manifest.rs
+crates/macros/src/config_derive.rs

@@ -488,7 +488,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "daedalus-core"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "crossbeam-queue",
  "proptest",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-data"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "base64",
  "criterion",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-engine"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "daedalus-data",
  "daedalus-gpu",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-ffi"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "base64",
  "daedalus-core",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-gpu"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-macros"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "daedalus-runtime",
  "daedalus-wgsl-infer",
@@ -578,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-nodes"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "daedalus-core",
  "daedalus-data",
@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-planner"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "daedalus-core",
  "daedalus-data",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-plugins-example-project"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "daedalus-rs",
  "paste",
@@ -614,7 +614,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-plugins-images"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "daedalus-rs",
  "image",
@@ -622,7 +622,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-plugins-math"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "daedalus-rs",
  "paste",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-registry"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "daedalus-core",
@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-rs"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "bytemuck",
  "daedalus-core",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-runtime"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "crossbeam-queue",
  "daedalus-core",
@@ -677,17 +677,17 @@ dependencies = [
  "futures-util",
  "image",
  "libc",
- "log",
  "rand 0.10.0",
  "rayon",
  "serde",
  "serde_json",
  "smallvec",
+ "tracing",
 ]
 
 [[package]]
 name = "daedalus-wgsl-infer"
-version = "0.1.1"
+version = "1.0.0"
 
 [[package]]
 name = "dispatch2"
@@ -2237,9 +2237,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.51.0"
+version = "1.52.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bd1c4c0fc4a7ab90fc15ef6daaa3ec3b893f004f915f2392557ed23237820cd"
+checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
 dependencies = [
  "pin-project-lite",
  "tokio-macros",
@@ -2306,6 +2306,37 @@ name = "toml_writer"
 version = "1.0.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab16f14aed21ee8bfd8ec22513f7287cd4a91aa92e44edfe2c17ddd004e92607"
+
+[[package]]
+name = "tracing"
+version = "0.1.44"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
+dependencies = [
+ "pin-project-lite",
+ "tracing-attributes",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "tracing-core"
+version = "0.1.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a"
+dependencies = [
+ "once_cell",
+]
 
 [[package]]
 name = "trybuild"

@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-engine"
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 description = "High-level engine facade for planning and running Daedalus graphs."
 license.workspace = true
@@ -25,14 +25,14 @@ metrics = ["daedalus-runtime/metrics"]
 snapshots = ["daedalus-runtime/snapshots"]
 
 [dependencies]
-daedalus-runtime = { version = "0.1.1", path = "../runtime", default-features = false }
-daedalus-planner = { version = "0.1.1", path = "../planner", default-features = false }
-daedalus-registry = { version = "0.1.1", path = "../registry", default-features = false }
-daedalus-gpu = { version = "0.1.1", path = "../gpu", optional = true }
+daedalus-runtime = { version = "1.0.0", path = "../runtime", default-features = false }
+daedalus-planner = { version = "1.0.0", path = "../planner", default-features = false }
+daedalus-registry = { version = "1.0.0", path = "../registry", default-features = false }
+daedalus-gpu = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-daedalus-data = { version = "0.1.1", path = "../data" }
+daedalus-data = { workspace = true }

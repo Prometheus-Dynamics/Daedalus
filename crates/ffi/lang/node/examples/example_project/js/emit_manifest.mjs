@@ -24,7 +24,7 @@ const out = process.argv[2]
 fs.mkdirSync(path.dirname(out), { recursive: true });
 copyShaders(path.dirname(out));
 
-const plugin = new Plugin({ name: "example_node", version: "0.1.1", description: "Node example project" });
+const plugin = new Plugin({ name: "example_node", version: "1.0.0", description: "Node example project" });
 
 // Point to the local nodes module sitting next to this emitter.
 const nodesPath = path.join(path.dirname(new URL(import.meta.url).pathname), "nodes.mjs");
