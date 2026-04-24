@@ -1,3 +1,4 @@
+#[cfg(feature = "config-env")]
 use std::env;
 
 #[cfg(feature = "config-env")]

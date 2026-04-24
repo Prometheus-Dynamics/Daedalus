@@ -1,7 +1,7 @@
 #[cfg_attr(not(feature = "gpu"), allow(unused_imports))]
 use std::sync::Arc;
 
-use daedalus_planner::{Graph, PlannerConfig, PlannerInput, build_plan};
+use daedalus_planner::{Graph, GraphPatch, PlannerConfig, PlannerInput, build_plan};
 use daedalus_registry::store::Registry;
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{Executor, NodeHandler};
@@ -9,6 +9,9 @@ use daedalus_runtime::{
     HostBridgeManager, RuntimePlan, RuntimeSink, SchedulerConfig, build_runtime,
 };
 
+use crate::cache::{
+    CacheStatus, EngineCacheMetrics, EngineCaches, planner_cache_key, runtime_plan_cache_key,
+};
 use crate::config::{EngineConfig, GpuBackend, RuntimeMode};
 use crate::error::EngineError;
 
@@ -31,6 +34,74 @@ use crate::error::EngineError;
 pub struct RunResult {
     pub runtime_plan: RuntimePlan,
     pub telemetry: ExecutionTelemetry,
+    pub planner_cache: CacheStatus,
+    pub runtime_plan_cache: CacheStatus,
+    pub cache_metrics: EngineCacheMetrics,
+}
+
+pub struct PreparedPlan {
+    output: daedalus_planner::PlannerOutput,
+    cache_status: CacheStatus,
+    scheduler: SchedulerConfig,
+    caches: Arc<EngineCaches>,
+}
+
+impl PreparedPlan {
+    pub fn cache_status(&self) -> CacheStatus {
+        self.cache_status
+    }
+
+    pub fn is_cached(&self) -> bool {
+        self.cache_status.is_cached()
+    }
+
+    pub fn plan(&self) -> &daedalus_planner::ExecutionPlan {
+        &self.output.plan
+    }
+
+    pub fn planner_output(&self) -> &daedalus_planner::PlannerOutput {
+        &self.output
+    }
+
+    pub fn build(&self) -> Result<PreparedRuntimePlan, EngineError> {
+        let cache_key = runtime_plan_cache_key(&self.output.plan, &self.scheduler);
+        if let Some(runtime_plan) = self.caches.runtime_get(&cache_key) {
+            return Ok(PreparedRuntimePlan {
+                runtime_plan,
+                cache_status: CacheStatus::Hit,
+            });
+        }
+
+        let runtime_plan = build_runtime(&self.output.plan, &self.scheduler);
+        self.caches.runtime_insert(cache_key, runtime_plan.clone());
+        Ok(PreparedRuntimePlan {
+            runtime_plan,
+            cache_status: CacheStatus::Miss,
+        })
+    }
+}
+
+pub struct PreparedRuntimePlan {
+    runtime_plan: RuntimePlan,
+    cache_status: CacheStatus,
+}
+
+impl PreparedRuntimePlan {
+    pub fn cache_status(&self) -> CacheStatus {
+        self.cache_status
+    }
+
+    pub fn is_cached(&self) -> bool {
+        self.cache_status.is_cached()
+    }
+
+    pub fn runtime_plan(&self) -> &RuntimePlan {
+        &self.runtime_plan
+    }
+
+    pub fn into_runtime_plan(self) -> RuntimePlan {
+        self.runtime_plan
+    }
 }
 
 /// High-level engine facade for planning and execution.
@@ -42,6 +113,7 @@ pub struct RunResult {
 /// ```
 pub struct Engine {
     config: EngineConfig,
+    caches: Arc<EngineCaches>,
     #[cfg(feature = "gpu")]
     gpu_handle: std::sync::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
 }
@@ -58,6 +130,7 @@ impl Engine {
         }
         Ok(Self {
             config,
+            caches: crate::cache::new_caches(),
             #[cfg(feature = "gpu")]
             gpu_handle: std::sync::Mutex::new(None),
         })
@@ -66,6 +139,14 @@ impl Engine {
     /// Return a reference to the engine config.
     pub fn config(&self) -> &EngineConfig {
         &self.config
+    }
+
+    pub fn cache_metrics(&self) -> EngineCacheMetrics {
+        self.caches.metrics()
+    }
+
+    pub fn clear_caches(&self) -> EngineCacheMetrics {
+        self.caches.clear()
     }
 
     /// Run planner on the provided graph + registry.
@@ -95,6 +176,29 @@ impl Engine {
         Ok(output)
     }
 
+    /// Run planner through the engine's cache layer and return a prepared plan.
+    pub fn prepare_plan(
+        &self,
+        registry: &Registry,
+        graph: Graph,
+    ) -> Result<PreparedPlan, EngineError> {
+        let planner_cfg = self.planner_config()?;
+        let cache_key = planner_cache_key(&graph, &planner_cfg, registry);
+        let output = if let Some(cached) = self.caches.planner_get(&cache_key) {
+            (cached, CacheStatus::Hit)
+        } else {
+            let output = self.plan(registry, graph)?;
+            self.caches.planner_insert(cache_key, output.clone());
+            (output, CacheStatus::Miss)
+        };
+        Ok(PreparedPlan {
+            output: output.0,
+            cache_status: output.1,
+            scheduler: self.scheduler_config(),
+            caches: Arc::clone(&self.caches),
+        })
+    }
+
     /// Construct a runtime plan from a planner plan using configured policies.
     ///
     /// ```no_run
@@ -108,11 +212,7 @@ impl Engine {
         &self,
         plan: &daedalus_planner::ExecutionPlan,
     ) -> Result<RuntimePlan, EngineError> {
-        let sched = SchedulerConfig {
-            default_policy: self.config.runtime.default_policy.clone(),
-            backpressure: self.config.runtime.backpressure.clone(),
-            lockfree_queues: self.config.runtime.lockfree_queues,
-        };
+        let sched = self.scheduler_config();
         Ok(build_runtime(plan, &sched))
     }
 
@@ -332,13 +432,76 @@ impl Engine {
         graph: Graph,
         handler: H,
     ) -> Result<RunResult, EngineError> {
-        let planner_output = self.plan(registry, graph)?;
-        let runtime_plan = self.build_runtime_plan(&planner_output.plan)?;
+        let prepared = self.prepare_plan(registry, graph)?;
+        let planner_cache = prepared.cache_status();
+        let prepared_runtime = prepared.build()?;
+        let runtime_plan_cache = prepared_runtime.cache_status();
+        let runtime_plan = prepared_runtime.into_runtime_plan();
         let telemetry = self.execute(runtime_plan.clone(), handler)?;
         Ok(RunResult {
             runtime_plan,
             telemetry,
+            planner_cache,
+            runtime_plan_cache,
+            cache_metrics: self.cache_metrics(),
         })
+    }
+
+    /// Apply a patch and rerun only the affected branch when the patch impact is narrow enough.
+    ///
+    /// V1 incremental behavior stays conservative:
+    /// - `SetNodeConst` and `ReplaceNodeId` can use sink-scoped reruns
+    /// - topology-changing patches such as `DeleteNodes` fall back to a full rerun
+    pub fn run_with_patch<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        registry: &Registry,
+        base_graph: &Graph,
+        patch: &GraphPatch,
+        handler: H,
+    ) -> Result<RunResult, EngineError> {
+        let impact = patch.analyze(base_graph);
+        let mut graph = base_graph.clone();
+        patch.apply_to_graph(&mut graph);
+
+        let prepared = self.prepare_plan(registry, graph)?;
+        let planner_cache = prepared.cache_status();
+        let prepared_runtime = prepared.build()?;
+        let runtime_plan_cache = prepared_runtime.cache_status();
+        let runtime_plan = prepared_runtime.into_runtime_plan();
+
+        let telemetry = if !impact.requires_full_rerun && !impact.sink_nodes.is_empty() {
+            let sinks: Vec<RuntimeSink> = impact
+                .sink_nodes
+                .iter()
+                .copied()
+                .map(|idx| RuntimeSink {
+                    node: daedalus_planner::GraphNodeSelector {
+                        index: Some(idx),
+                        ..Default::default()
+                    },
+                    port: None,
+                })
+                .collect();
+            self.execute_scoped(runtime_plan.clone(), &sinks, handler)?
+        } else {
+            self.execute(runtime_plan.clone(), handler)?
+        };
+
+        Ok(RunResult {
+            runtime_plan,
+            telemetry,
+            planner_cache,
+            runtime_plan_cache,
+            cache_metrics: self.cache_metrics(),
+        })
+    }
+
+    fn scheduler_config(&self) -> SchedulerConfig {
+        SchedulerConfig {
+            default_policy: self.config.runtime.default_policy.clone(),
+            backpressure: self.config.runtime.backpressure.clone(),
+            lockfree_queues: self.config.runtime.lockfree_queues,
+        }
     }
 
     fn planner_config(&self) -> Result<PlannerConfig, EngineError> {

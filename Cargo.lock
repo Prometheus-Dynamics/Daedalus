@@ -499,6 +499,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-daemon"
+version = "1.0.0"
+dependencies = [
+ "daedalus-data",
+ "daedalus-engine",
+ "daedalus-planner",
+ "daedalus-registry",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "daedalus-data"
 version = "1.0.0"
 dependencies = [
@@ -516,6 +528,7 @@ dependencies = [
 name = "daedalus-engine"
 version = "1.0.0"
 dependencies = [
+ "criterion",
  "daedalus-data",
  "daedalus-gpu",
  "daedalus-planner",

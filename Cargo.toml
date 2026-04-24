@@ -11,6 +11,7 @@ members = [
     "crates/macros",
     "crates/nodes",
     "crates/engine",
+    "crates/daemon",
     "crates/ffi",
     "plugins/images",
     "plugins/math",
@@ -39,6 +40,7 @@ daedalus-runtime = { path = "crates/runtime", version = "1.0.0" }
 daedalus-macros = { path = "crates/macros", version = "1.0.0" }
 daedalus-nodes = { path = "crates/nodes", version = "1.0.0" }
 daedalus-engine = { path = "crates/engine", version = "1.0.0" }
+daedalus-daemon = { path = "crates/daemon", version = "1.0.0" }
 daedalus-ffi = { path = "crates/ffi", version = "1.0.0" }
 async-trait = "0.1.89"
 base64 = "0.22.1"

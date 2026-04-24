@@ -14,6 +14,14 @@ categories = ["concurrency"]
 [lib]
 path = "src/lib.rs"
 
+[[bench]]
+name = "plan_cache"
+harness = false
+
+[[bench]]
+name = "warm_engine"
+harness = false
+
 [features]
 default = ["config-env", "metrics"]
 config-env = ["serde", "serde_json"]
@@ -36,3 +44,5 @@ thiserror = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 daedalus-data = { workspace = true }
+serde_json = { workspace = true }
+criterion = { workspace = true }

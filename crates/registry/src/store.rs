@@ -80,6 +80,36 @@ impl Registry {
         }
     }
 
+    /// Rebuild a registry from a serialized view.
+    ///
+    /// Converter entries are restored as planning-time stubs so graph resolution remains
+    /// deterministic even when the original converter implementation is unavailable.
+    pub fn from_view(view: RegistryView) -> RegistryResult<Self> {
+        let mut registry = Registry::new();
+        for (_, value) in view.values {
+            registry.register_value(value)?;
+        }
+        for (_, node) in view.nodes {
+            registry.register_node(node)?;
+        }
+        for (_, group) in view.groups {
+            registry.register_group(group)?;
+        }
+        for (id, (input, output)) in view.converters {
+            registry.register_converter(
+                daedalus_data::convert::ConverterBuilder::new(id.0.clone(), input, output, |_| {
+                    Err(daedalus_data::errors::DataError::new(
+                        daedalus_data::errors::DataErrorCode::UnsupportedFeature,
+                        "converter restored from RegistryView is planning-only",
+                    ))
+                })
+                .cost(1)
+                .build_boxed(),
+            )?;
+        }
+        Ok(registry)
+    }
+
     /// Register a value descriptor.
     pub fn register_value(&mut self, desc: DataDescriptor) -> RegistryResult<()> {
         let key = (desc.id.clone(), desc.version.clone());
@@ -852,5 +882,30 @@ mod tests {
         let snap = reg.snapshot();
         assert_eq!(snap.values, vec!["a@1.0".to_string(), "b@1.0".to_string()]);
         assert_eq!(snap.nodes, vec!["n2: inputs=0 outputs=0".to_string()]);
+    }
+
+    #[test]
+    fn registry_round_trips_from_view() {
+        let mut reg = Registry::new();
+        let node = NodeDescriptorBuilder::new("demo.node")
+            .input("in", TypeExpr::Scalar(ValueType::Int))
+            .output("out", TypeExpr::Scalar(ValueType::Int))
+            .build()
+            .unwrap();
+        reg.register_node(node).unwrap();
+        reg.register_converter(
+            daedalus_data::convert::ConverterBuilder::new(
+                "bool_to_int",
+                TypeExpr::Scalar(ValueType::Bool),
+                TypeExpr::Scalar(ValueType::Int),
+                Ok,
+            )
+            .cost(1)
+            .build_boxed(),
+        )
+        .unwrap();
+
+        let rebuilt = Registry::from_view(reg.view()).unwrap();
+        assert_eq!(reg.snapshot(), rebuilt.snapshot());
     }
 }
