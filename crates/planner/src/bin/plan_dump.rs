@@ -5,7 +5,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -18,12 +18,12 @@ fn main() {
             fs::read_to_string(path).expect("read file")
         }
     } else {
-        eprintln!("usage: plan_dump <path|->");
+        let _ = writeln!(io::stderr(), "usage: plan_dump <path|->");
         std::process::exit(1);
     };
 
     let plan: daedalus_planner::ExecutionPlan =
         serde_json::from_str(&input).expect("parse ExecutionPlan JSON");
     let pretty = daedalus_planner::debug::to_pretty_json(&plan);
-    println!("{}", pretty);
+    let _ = writeln!(io::stdout(), "{pretty}");
 }

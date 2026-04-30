@@ -43,6 +43,7 @@ pub mod compute;
 pub mod errors;
 pub mod ids;
 pub mod messages;
+pub mod metadata;
 pub mod policy;
 pub mod stable_id;
 pub mod sync;

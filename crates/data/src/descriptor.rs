@@ -65,7 +65,7 @@ pub struct DataDescriptor {
 }
 
 impl DataDescriptor {
-    /// Validate the descriptor, including type/default compatibility.
+    /// Validate the descriptor, including type/default shape checks.
     ///
     /// ```
     /// use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
@@ -88,13 +88,13 @@ impl DataDescriptor {
         self.id.validate()?;
         self.version.validate()?;
         if let Some(default) = &self.default {
-            if self.type_expr.is_none() {
+            let Some(type_expr) = self.type_expr.as_ref() else {
                 return Err(DataError::new(
                     DataErrorCode::InvalidDescriptor,
                     "type_expr is required when default is present",
                 ));
-            }
-            validate_default(self.type_expr.as_ref().unwrap(), default)?;
+            };
+            validate_default(type_expr, default)?;
         }
         Ok(())
     }

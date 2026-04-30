@@ -1,0 +1,22 @@
+[package]
+name = "daedalus-transport"
+version = "2.0.0"
+edition = "2024"
+description = "Generic payload transport primitives for Daedalus."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-transport"
+readme = "README.md"
+keywords = ["dataflow", "transport", "payload"]
+categories = ["data-structures"]
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }

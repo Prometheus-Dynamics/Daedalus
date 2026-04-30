@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::task::yield_now;
+use tokio::sync::Notify;
 
 use super::bounded::{BoundedReceiver, BoundedSender, bounded, bounded_with_behavior};
 use super::broadcast::{BroadcastReceiver, BroadcastSender, broadcast, broadcast_with_behavior};
@@ -9,8 +9,8 @@ use super::unbounded::{UnboundedReceiver, UnboundedSender, unbounded, unbounded_
 use super::{Backpressure, ChannelRecv, ChannelSend, CloseBehavior, RecvOutcome};
 
 /// Async wrappers around the sync channels. These are thin convenience layers
-/// that poll in a loop with cooperative yields; they keep the underlying fast
-/// sync paths intact.
+/// around the sync channels; they keep the underlying fast sync paths intact
+/// while using notifications instead of spin polling for waits.
 pub struct AsyncSender<T, S> {
     inner: Arc<S>,
     send_fn: fn(&S, T) -> Backpressure,
@@ -32,6 +32,35 @@ fn channel_send<T, S: ChannelSend<T>>(sender: &S, value: T) -> Backpressure {
 
 fn channel_recv<T, R: ChannelRecv<T>>(receiver: &R) -> RecvOutcome<T> {
     receiver.try_recv()
+}
+
+#[doc(hidden)]
+pub trait AsyncRecvNotify {
+    fn recv_notify(&self) -> Arc<Notify>;
+}
+
+impl<T> AsyncRecvNotify for BoundedReceiver<T> {
+    fn recv_notify(&self) -> Arc<Notify> {
+        self.async_notify()
+    }
+}
+
+impl<T> AsyncRecvNotify for UnboundedReceiver<T> {
+    fn recv_notify(&self) -> Arc<Notify> {
+        self.async_notify()
+    }
+}
+
+impl<T: Send + Sync> AsyncRecvNotify for BroadcastReceiver<T> {
+    fn recv_notify(&self) -> Arc<Notify> {
+        self.async_notify()
+    }
+}
+
+impl<T: Send + Sync> AsyncRecvNotify for NewestReceiver<T> {
+    fn recv_notify(&self) -> Arc<Notify> {
+        self.async_notify()
+    }
 }
 
 impl<T: Send + Sync + 'static> AsyncSender<T, BoundedSender<T>> {
@@ -71,15 +100,20 @@ impl<T: Send + Sync + 'static> AsyncSender<Arc<T>, NewestSender<T>> {
     }
 }
 
-impl<T: Send + Sync + 'static, R> AsyncReceiver<T, R> {
+impl<T: Send + Sync + 'static, R: AsyncRecvNotify> AsyncReceiver<T, R> {
     pub async fn recv(&self) -> RecvOutcome<T> {
         loop {
             match (self.recv_fn)(&self.inner) {
                 RecvOutcome::Data(v) => return RecvOutcome::Data(v),
                 RecvOutcome::Closed => return RecvOutcome::Closed,
                 RecvOutcome::Empty => {
-                    yield_now().await;
-                    continue;
+                    let notify = self.inner.recv_notify();
+                    let notified = notify.notified();
+                    match (self.recv_fn)(&self.inner) {
+                        RecvOutcome::Data(v) => return RecvOutcome::Data(v),
+                        RecvOutcome::Closed => return RecvOutcome::Closed,
+                        RecvOutcome::Empty => notified.await,
+                    }
                 }
             }
         }
@@ -238,4 +272,49 @@ pub fn newest_async_with_behavior<T: Send + Sync>(
             recv_fn: channel_recv::<Arc<T>, NewestReceiver<T>>,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn bounded_recv_wakes_on_send() {
+        let (tx, rx) = bounded_async(1);
+        let recv = tokio::time::timeout(Duration::from_millis(100), rx.recv());
+        tx.send(7_u32).await;
+        assert_eq!(recv.await.expect("recv timeout"), RecvOutcome::Data(7));
+    }
+
+    #[tokio::test]
+    async fn unbounded_recv_wakes_on_close() {
+        let (tx, rx) = unbounded_async::<u32>();
+        let recv = tokio::time::timeout(Duration::from_millis(100), rx.recv());
+        drop(tx);
+        assert_eq!(recv.await.expect("recv timeout"), RecvOutcome::Closed);
+    }
+
+    #[tokio::test]
+    async fn newest_recv_wakes_on_send() {
+        let (tx, rx) = newest_async();
+        let recv = tokio::time::timeout(Duration::from_millis(100), rx.recv());
+        tx.send(Arc::new(9_u32)).await;
+        assert_eq!(
+            recv.await.expect("recv timeout"),
+            RecvOutcome::Data(Arc::new(9))
+        );
+    }
+
+    #[tokio::test]
+    async fn broadcast_recv_wakes_on_send() {
+        let (tx, rx) = broadcast_async(1);
+        let recv = tokio::time::timeout(Duration::from_millis(100), rx.recv());
+        tx.send(Arc::new(11_u32)).await;
+        assert_eq!(
+            recv.await.expect("recv timeout"),
+            RecvOutcome::Data(Arc::new(11))
+        );
+    }
 }

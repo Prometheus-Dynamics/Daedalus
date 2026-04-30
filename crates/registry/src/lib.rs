@@ -1,34 +1,50 @@
-//! Unified node/value registry. See `PLAN.md` for roadmap and layering rules.
-//! Deterministic ordering is required; no backend/GPU types appear here.
+//! Transport capability registry.
+//! Deterministic ordering is required; backend execution state does not appear here.
 //!
 //! # Feature Matrix
-//! - `default`: core registry (nodes/values/converters).
-//! - `bundle`: bundle loader APIs.
-//! - `plugin`: plugin adapters (alias `plugins` available).
+//! - `default`: transport capabilities.
+//! - `plugin`: plugin adapters.
 //! - `ffi`: FFI adapters.
-//! - `gpu`: only to forward feature flags to converter graph; no GPU backend types leak.
-//!
-//! Concurrency: wrap `Registry` in `Arc<RwLock<_>>` if shared; internal structures are deterministic and `Send + Sync`.
+//! - `gpu`: no GPU backend types leak.
 
-pub mod convert;
+pub mod capability;
 pub mod diagnostics;
 pub mod ids;
-pub mod store;
 
-#[cfg(feature = "bundle")]
-pub mod bundle;
 #[cfg(feature = "ffi")]
 pub mod ffi;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
+/// Convert a Daedalus type expression into the stable transport identity used by
+/// manifests, adapters, and runtime payloads.
+///
+/// Opaque expressions are already transport identities. Structured expressions
+/// are normalized and serialized as JSON so the key is stable across crates and
+/// does not depend on Rust `Debug` formatting.
+pub fn typeexpr_transport_key(ty: &daedalus_data::model::TypeExpr) -> daedalus_transport::TypeKey {
+    match ty {
+        daedalus_data::model::TypeExpr::Opaque(name) => {
+            daedalus_transport::TypeKey::new(name.clone())
+        }
+        other => {
+            let normalized = other.clone().normalize();
+            let encoded = serde_json::to_string(&normalized)
+                .expect("normalized TypeExpr serialization should not fail");
+            daedalus_transport::TypeKey::new(format!("typeexpr:{encoded}"))
+        }
+    }
+}
+
 pub mod prelude {
-    pub use crate::diagnostics::{RegistryError, RegistryErrorCode, RegistryResult};
-    pub use crate::ids::{GroupId, NodeId};
-    pub use crate::store::{
-        GroupDescriptor, GroupDescriptorBuilder, NodeDescriptor, Registry, RegistryView,
+    pub use crate::capability::{
+        AdapterDecl, AdapterRegistry, CapabilityRegistry, CapabilityRegistrySnapshot, DeviceDecl,
+        DeviceRegistry, ExportPolicy, FanInDecl, NODE_EXECUTION_KIND_META_KEY, NodeDecl,
+        NodeExecutionKind, NodeRegistry, PluginManifest, PluginRegistry, PortDecl, SerializerDecl,
+        SerializerRegistry, TypeDecl, TypeRegistry,
     };
-    pub use daedalus_data::convert::{ConversionResolution, ConverterId};
+    pub use crate::diagnostics::{RegistryError, RegistryErrorCode, RegistryResult};
+    pub use crate::ids::{GroupId, IdValidationError, NodeId};
+    pub use crate::typeexpr_transport_key;
     pub use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
-    pub use daedalus_data::model::TypeExpr;
 }

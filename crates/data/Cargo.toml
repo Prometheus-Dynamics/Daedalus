@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-data"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 description = "Type/value model and serialization helpers for Daedalus node ports."
 license.workspace = true
@@ -11,21 +11,24 @@ readme = "README.md"
 keywords = ["dataflow", "serialization", "schema"]
 categories = ["encoding", "data-structures"]
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/lib.rs"
 
 [features]
 default = ["json"]
-schema = []
+schema = ["dep:serde_json"]
 proto = []
 gpu = ["daedalus-gpu"]
 async = []
-json = ["base64"]
+json = ["base64", "dep:serde_json"]
 
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 daedalus-gpu = { workspace = true, optional = true }
 
@@ -33,3 +36,8 @@ daedalus-gpu = { workspace = true, optional = true }
 proptest = { workspace = true }
 criterion = { workspace = true }
 once_cell = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "resolver"
+harness = false

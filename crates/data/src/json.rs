@@ -48,10 +48,13 @@ pub fn encode_value(value: &Value) -> DataResult<JsonValue> {
                 ));
             }
             obj.insert("type".into(), JsonValue::String("float".into()));
-            obj.insert(
-                "value".into(),
-                JsonValue::Number(serde_json::Number::from_f64(*f).unwrap()),
-            );
+            let number = serde_json::Number::from_f64(*f).ok_or_else(|| {
+                DataError::new(
+                    DataErrorCode::Serialization,
+                    "float could not be represented as a JSON number",
+                )
+            })?;
+            obj.insert("value".into(), JsonValue::Number(number));
         }
         Value::String(s) => {
             obj.insert("type".into(), JsonValue::String("string".into()));

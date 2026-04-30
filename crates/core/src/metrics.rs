@@ -30,19 +30,19 @@ pub struct InMemoryMetrics {
 
 impl MetricsSink for InMemoryMetrics {
     fn increment(&self, key: &'static str, value: u64) {
-        let mut guard = self.counters.lock().expect("metrics lock poisoned");
+        let mut guard = self.counters.lock().unwrap_or_else(|err| err.into_inner());
         *guard.entry(key).or_insert(0) += value;
     }
 
     fn observe_nanos(&self, key: &'static str, nanos: u64) {
-        let mut guard = self.counters.lock().expect("metrics lock poisoned");
+        let mut guard = self.counters.lock().unwrap_or_else(|err| err.into_inner());
         *guard.entry(key).or_insert(0) += nanos;
     }
 }
 
 impl InMemoryMetrics {
     pub fn counter(&self, key: &'static str) -> u64 {
-        let guard = self.counters.lock().expect("metrics lock poisoned");
+        let guard = self.counters.lock().unwrap_or_else(|err| err.into_inner());
         guard.get(key).copied().unwrap_or(0)
     }
 

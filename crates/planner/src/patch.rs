@@ -315,7 +315,7 @@ mod tests {
             metadata: Default::default(),
         };
         node.metadata.insert(
-            "helios.ui.node_id".to_string(),
+            daedalus_core::metadata::UI_NODE_ID_KEY.to_string(),
             DaedalusValue::String("node-1".into()),
         );
         graph.nodes.push(node);
@@ -325,7 +325,7 @@ mod tests {
             ops: vec![GraphPatchOp::SetNodeConst {
                 node: GraphNodeSelector {
                     metadata: Some(GraphMetadataSelector {
-                        key: "helios.ui.node_id".to_string(),
+                        key: daedalus_core::metadata::UI_NODE_ID_KEY.to_string(),
                         value: DaedalusValue::String("node-1".into()),
                     }),
                     ..Default::default()

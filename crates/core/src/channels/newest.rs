@@ -6,6 +6,8 @@ use crate::messages::Sequence;
 
 #[cfg(feature = "metrics")]
 use crate::metrics::MetricsSink;
+#[cfg(feature = "async-channels")]
+use tokio::sync::Notify;
 
 struct NewestInner<T> {
     slot: Mutex<Option<(Sequence, Arc<T>)>>,
@@ -17,6 +19,8 @@ struct NewestInner<T> {
     dropped: AtomicU64,
     drained: AtomicU64,
     close_behavior: CloseBehavior,
+    #[cfg(feature = "async-channels")]
+    notify: Arc<Notify>,
     #[cfg(feature = "metrics")]
     metrics: Option<Arc<dyn MetricsSink>>,
 }
@@ -33,6 +37,8 @@ impl<T> NewestInner<T> {
             dropped: AtomicU64::new(0),
             drained: AtomicU64::new(0),
             close_behavior,
+            #[cfg(feature = "async-channels")]
+            notify: Arc::new(Notify::new()),
             #[cfg(feature = "metrics")]
             metrics: None,
         }
@@ -50,12 +56,16 @@ impl<T> NewestInner<T> {
             dropped: AtomicU64::new(0),
             drained: AtomicU64::new(0),
             close_behavior,
+            #[cfg(feature = "async-channels")]
+            notify: Arc::new(Notify::new()),
             metrics: Some(metrics),
         }
     }
 
     fn mark_closed(&self) {
         self.closed.store(true, Ordering::Release);
+        #[cfg(feature = "async-channels")]
+        self.notify.notify_waiters();
     }
 
     fn try_close(&self) {
@@ -203,7 +213,11 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for NewestSender<T> {
             return Backpressure::Closed;
         }
         let seq = Sequence::new(self.inner.next_seq.fetch_add(1, Ordering::Relaxed));
-        let mut guard = self.inner.slot.lock().expect("newest slot lock poisoned");
+        let mut guard = self
+            .inner
+            .slot
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let dropped = guard.replace((seq, value)).is_some();
         if dropped {
             self.inner.dropped.fetch_add(1, Ordering::Relaxed);
@@ -211,17 +225,20 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for NewestSender<T> {
             self.inner.inc("channel.newest.dropped");
         }
         self.inner.enqueued.fetch_add(1, Ordering::Relaxed);
+        #[cfg(feature = "async-channels")]
+        self.inner.notify.notify_waiters();
         Backpressure::Ok
     }
 }
 
 impl<T: Send + Sync> ChannelRecv<Arc<T>> for NewestReceiver<T> {
     fn try_recv(&self) -> RecvOutcome<Arc<T>> {
-        let mut last_seen = self
-            .last_seen
+        let mut last_seen = self.last_seen.lock().unwrap_or_else(|err| err.into_inner());
+        let guard = self
+            .inner
+            .slot
             .lock()
-            .expect("newest receiver lock poisoned");
-        let guard = self.inner.slot.lock().expect("newest slot lock poisoned");
+            .unwrap_or_else(|err| err.into_inner());
         let Some((seq, value)) = guard.as_ref() else {
             return if self.inner.closed.load(Ordering::Acquire) {
                 RecvOutcome::Closed
@@ -251,6 +268,11 @@ impl<T> NewestReceiver<T> {
             depth: 0,
             closed: self.inner.closed.load(Ordering::Relaxed),
         }
+    }
+
+    #[cfg(feature = "async-channels")]
+    pub(crate) fn async_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.inner.notify)
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-core"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 description = "Core types and shared utilities for the Daedalus dataflow stack."
 license.workspace = true
@@ -10,6 +10,9 @@ documentation = "https://docs.rs/daedalus-core"
 readme = "README.md"
 keywords = ["dataflow", "graph", "core"]
 categories = ["concurrency", "data-structures"]
+
+[lints]
+workspace = true
 
 [features]
 default = []
@@ -28,3 +31,4 @@ tokio = { workspace = true, optional = true }
 [dev-dependencies]
 serde_json = { workspace = true }
 proptest = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }

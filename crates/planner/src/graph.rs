@@ -10,8 +10,7 @@ pub const DEFAULT_PLAN_VERSION: &str = "0.1";
 /// Compute affinity hint for scheduling/GPU pass.
 pub use daedalus_core::compute::ComputeAffinity;
 /// Sync grouping metadata.
-#[allow(unused_imports)]
-pub use daedalus_core::sync::{SyncGroup, SyncPolicy};
+pub use daedalus_core::sync::SyncGroup;
 
 /// Stable hash helper used for goldens; simple FNV-1a for determinism.
 ///
@@ -34,6 +33,20 @@ impl StableHash {
         }
         StableHash(hash)
     }
+}
+
+pub(crate) fn stable_hash_serialized<T: Serialize + ?Sized>(domain: &str, value: &T) -> StableHash {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(domain.as_bytes());
+    bytes.push(0);
+    match serde_json::to_vec(value) {
+        Ok(serialized) => bytes.extend_from_slice(&serialized),
+        Err(error) => {
+            bytes.extend_from_slice(b"serde_error");
+            bytes.extend_from_slice(error.to_string().as_bytes());
+        }
+    }
+    StableHash::from_bytes(&bytes)
 }
 
 /// Node reference within a graph (index-based for compactness).
@@ -291,6 +304,10 @@ pub struct EdgeBufferInfo {
 }
 
 impl Graph {
+    pub fn stable_hash(&self) -> StableHash {
+        stable_hash_serialized("daedalus_planner::Graph", self)
+    }
+
     /// Identify contiguous GPU-to-GPU chains and assign them shared buffer ids, along with
     /// edge annotations that mark where GPU fast paths can be used.
     ///

@@ -107,7 +107,7 @@ impl<'a> ValueRef<'a> {
 /// let ty = ValueType::String;
 /// assert_eq!(ty, ValueType::String);
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum ValueType {
     Unit,
     Bool,

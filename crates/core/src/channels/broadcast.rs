@@ -6,9 +6,13 @@ use super::{Backpressure, ChannelRecv, ChannelSend, ChannelStats, CloseBehavior,
 
 #[cfg(feature = "metrics")]
 use crate::metrics::MetricsSink;
+#[cfg(feature = "async-channels")]
+use tokio::sync::Notify;
 
 struct Subscriber<T> {
     buffer: Mutex<VecDeque<Arc<T>>>,
+    #[cfg(feature = "async-channels")]
+    notify: Arc<Notify>,
 }
 
 struct BroadcastInner<T> {
@@ -64,6 +68,17 @@ impl<T> BroadcastInner<T> {
 
     fn mark_closed(&self) {
         self.closed.store(true, Ordering::Release);
+        #[cfg(feature = "async-channels")]
+        self.notify_subscribers();
+    }
+
+    #[cfg(feature = "async-channels")]
+    fn notify_subscribers(&self) {
+        if let Ok(subs) = self.subscribers.lock() {
+            for sub in subs.iter().filter_map(Weak::upgrade) {
+                sub.notify.notify_waiters();
+            }
+        }
     }
 
     fn try_close(&self) {
@@ -200,12 +215,14 @@ pub fn broadcast_with_metrics_and_behavior<T: Send + Sync>(
 fn subscribe_inner<T: Send + Sync>(inner: &Arc<BroadcastInner<T>>) -> BroadcastReceiver<T> {
     let subscriber = Arc::new(Subscriber {
         buffer: Mutex::new(VecDeque::with_capacity(inner.capacity)),
+        #[cfg(feature = "async-channels")]
+        notify: Arc::new(Notify::new()),
     });
     {
         let mut subs = inner
             .subscribers
             .lock()
-            .expect("broadcast subscriber list poisoned");
+            .unwrap_or_else(|err| err.into_inner());
         subs.push(Arc::downgrade(&subscriber));
     }
     BroadcastReceiver {
@@ -236,7 +253,7 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for BroadcastSender<T> {
                 .inner
                 .subscribers
                 .lock()
-                .expect("broadcast subscriber list poisoned");
+                .unwrap_or_else(|err| err.into_inner());
             subs.retain(|weak_sub| {
                 if let Some(sub) = weak_sub.upgrade() {
                     upgraded.push(sub);
@@ -249,7 +266,7 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for BroadcastSender<T> {
 
         for sub in upgraded {
             live += 1;
-            let mut buf = sub.buffer.lock().expect("broadcast buffer poisoned");
+            let mut buf = sub.buffer.lock().unwrap_or_else(|err| err.into_inner());
             if buf.len() >= self.inner.capacity {
                 buf.pop_front();
                 #[cfg(feature = "metrics")]
@@ -258,6 +275,8 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for BroadcastSender<T> {
             }
             buf.push_back(Arc::clone(&value));
             self.inner.enqueued.fetch_add(1, Ordering::Relaxed);
+            #[cfg(feature = "async-channels")]
+            sub.notify.notify_one();
         }
 
         if live == 0 {
@@ -277,7 +296,7 @@ impl<T: Send + Sync> ChannelRecv<Arc<T>> for BroadcastReceiver<T> {
             .subscriber
             .buffer
             .lock()
-            .expect("broadcast buffer poisoned");
+            .unwrap_or_else(|err| err.into_inner());
         match buf.pop_front() {
             Some(v) => {
                 self.inner.drained.fetch_add(1, Ordering::Relaxed);
@@ -298,6 +317,11 @@ impl<T: Send + Sync> BroadcastReceiver<T> {
             depth: self.subscriber.buffer.lock().map(|b| b.len()).unwrap_or(0),
             closed: self.inner.closed.load(Ordering::Relaxed),
         }
+    }
+
+    #[cfg(feature = "async-channels")]
+    pub(crate) fn async_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.subscriber.notify)
     }
 }
 

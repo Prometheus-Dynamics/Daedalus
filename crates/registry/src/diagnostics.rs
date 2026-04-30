@@ -16,6 +16,7 @@ pub enum RegistryErrorCode {
     MissingDependency,
     FeatureBlocked,
     ConverterError,
+    AdapterError,
     BundleError,
     Internal,
 }
@@ -52,6 +53,11 @@ pub enum ConflictKind {
     Node,
     Group,
     Converter,
+    Type,
+    Adapter,
+    Plugin,
+    Serializer,
+    Device,
 }
 
 /// Optional structured payload for diagnostics.
