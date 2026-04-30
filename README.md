@@ -17,7 +17,7 @@ The repository is split into focused crates so applications, plugins, GPU backen
 - `crates/engine`: higher-level facade wiring registry, planner, and runtime
 - `crates/ffi`: language bindings and plugin interoperability
 - `crates/nodes`: demo nodes and fixtures used by examples and tests
-- `plugins/*`: optional plugin crates
+- `examples/plugins/*`: standalone example plugin crates
 
 Additional repository notes live under [docs/README.md](docs/README.md).
 
@@ -27,33 +27,38 @@ Add the facade crate:
 
 ```toml
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "1.0.0" }
+daedalus = { package = "daedalus-rs", version = "2.0.0" }
 ```
 
 Core feature sets:
 
 - `engine`: enable the high-level engine facade and end-to-end examples
 - `plugins`: enable plugin registry and plugin-oriented examples
+- `gpu-types`: expose GPU facade types without planner/runtime/engine GPU wiring
+- `gpu-runtime`: enable GPU-aware registry, planner, and runtime wiring
+- `gpu-engine`: enable GPU-aware engine wiring
 - `gpu-wgpu`: enable the real GPU backend
+- `gpu-async`: enable async GPU shader dispatch/readback helpers for the real backend
 - `gpu-mock`: enable the deterministic mock GPU backend for tests
 
 Example:
 
 ```toml
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "1.0.0", features = ["engine", "plugins"] }
+daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine", "plugins"] }
 ```
 
 ## Examples
 
-The facade crate includes CPU and GPU examples:
+The workspace includes CPU, streaming, plugin, metrics, and GPU examples in the
+`daedalus-examples` package:
 
-- `cargo run -p daedalus-rs --features "engine,plugins" --example cpu_image`
-- `cargo run -p daedalus-rs --features "engine,plugins" --example cpu_text`
-- `cargo run -p daedalus-rs --features "engine,plugins" --example cpu_branch`
-- `cargo run -p daedalus-rs --features "engine,plugins" --example typed_any`
-- `cargo run -p daedalus-rs --features "engine,plugins,gpu-wgpu" --example gpu_image`
-- `cargo run -p daedalus-rs --features "engine,plugins,gpu-wgpu" --example gpu_shader_nodes`
+- `cargo run -p daedalus-examples --bin quickstart_typed_cpu_graph`
+- `cargo run -p daedalus-examples --bin quickstart_bounded_streaming_io`
+- `cargo run -p daedalus-examples --bin typed_handle_graph`
+- `cargo run -p daedalus-examples --bin adapter_path`
+- `cargo run -p daedalus-examples --bin observability`
+- `cargo run -p daedalus-examples --features gpu-wgpu --bin gpu_node`
 
 ## Development
 
@@ -81,7 +86,7 @@ Targeted helper scripts and CI assets live under `scripts/` and `testing/`.
 - [docs/testing.md](docs/testing.md): test surfaces, example expectations, and CI notes
 - [CHANGELOG.md](CHANGELOG.md): release history and notable workspace changes
 - [testing/README.md](testing/README.md): local and CI validation entry points
-- [plugins/README.md](plugins/README.md): plugin crate conventions and usage
+- [examples/plugins/README.md](examples/plugins/README.md): standalone plugin crate examples
 - [scripts/ci.sh](scripts/ci.sh): shared local CI entry point
 - [scripts/repo-clean.sh](scripts/repo-clean.sh): pre-commit cleanup and verification entry point
 - [crates/daedalus/README.md](crates/daedalus/README.md): facade API notes

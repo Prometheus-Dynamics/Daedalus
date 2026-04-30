@@ -2,6 +2,7 @@
 members = [
     "crates/daedalus",
     "crates/core",
+    "crates/transport",
     "crates/data",
     "crates/wgsl-infer",
     "crates/gpu",
@@ -13,35 +14,39 @@ members = [
     "crates/engine",
     "crates/daemon",
     "crates/ffi",
-    "plugins/images",
-    "plugins/math",
-    "plugins/example_project",
+    "crates/ffi/lang/rust/examples/example_project",
+    "examples",
+    "examples/plugins/math",
+    "examples/plugins/example_project",
+    "examples/plugins/framelease",
 ]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "1.0.0"
+version = "2.0.0"
 authors = ["Mathias Petersen"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Prometheus-Dynamics/Daedalus"
 homepage = "https://github.com/Prometheus-Dynamics/Daedalus"
-rust-version = "1.94"
+rust-version = "1.90"
 
 [workspace.dependencies]
-daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "1.0.0" }
-daedalus-core = { path = "crates/core", version = "1.0.0" }
-daedalus-data = { path = "crates/data", version = "1.0.0" }
-daedalus-wgsl-infer = { path = "crates/wgsl-infer", version = "1.0.0" }
-daedalus-gpu = { path = "crates/gpu", version = "1.0.0" }
-daedalus-registry = { path = "crates/registry", version = "1.0.0" }
-daedalus-planner = { path = "crates/planner", version = "1.0.0" }
-daedalus-runtime = { path = "crates/runtime", version = "1.0.0" }
-daedalus-macros = { path = "crates/macros", version = "1.0.0" }
-daedalus-nodes = { path = "crates/nodes", version = "1.0.0" }
-daedalus-engine = { path = "crates/engine", version = "1.0.0" }
-daedalus-daemon = { path = "crates/daemon", version = "1.0.0" }
-daedalus-ffi = { path = "crates/ffi", version = "1.0.0" }
+daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "2.0.0" }
+daedalus-core = { path = "crates/core", version = "2.0.0" }
+daedalus-transport = { path = "crates/transport", version = "2.0.0" }
+daedalus-data = { path = "crates/data", version = "2.0.0" }
+daedalus-wgsl-infer = { path = "crates/wgsl-infer", version = "2.0.0" }
+daedalus-gpu = { path = "crates/gpu", version = "2.0.0" }
+daedalus-registry = { path = "crates/registry", version = "2.0.0" }
+daedalus-planner = { path = "crates/planner", version = "2.0.0" }
+daedalus-runtime = { path = "crates/runtime", version = "2.0.0" }
+daedalus-macros = { path = "crates/macros", version = "2.0.0" }
+daedalus-nodes = { path = "crates/nodes", version = "2.0.0" }
+daedalus-engine = { path = "crates/engine", version = "2.0.0" }
+daedalus-daemon = { path = "crates/daemon", version = "2.0.0" }
+daedalus-ffi = { path = "crates/ffi", version = "2.0.0" }
+daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "2.0.0" }
 async-trait = "0.1.89"
 base64 = "0.22.1"
 bitflags = { version = "2.11.1", features = ["serde"] }
@@ -51,20 +56,21 @@ crossbeam-queue = "0.3.12"
 glob = "0.3.3"
 half = "2"
 libc = "0.2"
-libloading = "0.9"
+libloading = "0.8.9"
 once_cell = "1.21.4"
 paste = "1.0.15"
 pollster = "0.4.0"
 proc-macro-crate = "3.5.0"
 proc-macro2 = "1.0.106"
 proptest = "1.11.0"
-pyo3 = { version = "0.28", features = ["auto-initialize"] }
+pyo3 = "0.28"
 quote = "1.0.45"
 rand = "0.10.1"
 rayon = "1.12.0"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.149"
 serde_path_to_error = "0.1.20"
+parking_lot = "0.12.5"
 smallvec = { version = "1.15.1", features = ["serde"] }
 syn = { version = "2.0.117", features = ["full"] }
 tempfile = "3.27.0"
@@ -73,8 +79,10 @@ tokio = { version = "1.52.1", features = ["rt", "macros", "sync"] }
 trybuild = "1.0.116"
 wgpu = { version = "29.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
 futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
-image = "0.25.10"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "std"] }
+styx = { git = "https://github.com/Prometheus-Dynamics/Styx.git", rev = "f826c3bc4aa6b8f5e941bddec643060f9b0d45b1", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
