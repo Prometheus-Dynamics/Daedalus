@@ -6,42 +6,9 @@ use syn::{Data, DeriveInput, Fields, Lit, LitStr, Meta, MetaNameValue, parse_mac
 
 use crate::helpers::{NestedMeta, compile_error, lit_from_expr, parse_nested};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum NumberKind {
-    Int,
-    Float,
-}
+mod model;
 
-fn number_kind(ty: &syn::Type) -> Option<NumberKind> {
-    match ty {
-        syn::Type::Path(p) if p.qself.is_none() => {
-            let ident = p.path.segments.last()?.ident.to_string();
-            match ident.as_str() {
-                "f32" | "f64" => Some(NumberKind::Float),
-                "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-                | "u128" | "usize" => Some(NumberKind::Int),
-                _ => None,
-            }
-        }
-        syn::Type::Reference(r) => number_kind(&r.elem),
-        _ => None,
-    }
-}
-
-struct PortSpec {
-    field_ident: syn::Ident,
-    field_ty: syn::Type,
-    name: LitStr,
-    source: Option<LitStr>,
-    description: Option<LitStr>,
-    default_value: Option<Lit>,
-    min_value: Option<Lit>,
-    max_value: Option<Lit>,
-    odd: bool,
-    policy: Option<LitStr>,
-    ty_override: Option<proc_macro2::TokenStream>,
-    meta: Vec<(LitStr, Lit)>,
-}
+use model::{NumberKind, PortSpec, number_kind};
 
 pub fn node_config(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -99,26 +66,26 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                 ));
             };
             for item in items {
-                if let NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) = item {
-                    if path.is_ident("fn") {
-                        if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                            match syn::parse_str::<syn::Path>(&s.value()) {
-                                Ok(p) => validate_fn = Some(p),
-                                Err(_) => {
-                                    return TokenStream::from(compile_error(
-                                        "validate fn must be a valid path".into(),
-                                    ));
-                                }
-                            }
-                            continue;
-                        }
-                        match syn::parse2::<syn::Path>(value.to_token_stream()) {
+                if let NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) = item
+                    && path.is_ident("fn")
+                {
+                    if let Some(Lit::Str(s)) = lit_from_expr(&value) {
+                        match syn::parse_str::<syn::Path>(&s.value()) {
                             Ok(p) => validate_fn = Some(p),
                             Err(_) => {
                                 return TokenStream::from(compile_error(
                                     "validate fn must be a valid path".into(),
                                 ));
                             }
+                        }
+                        continue;
+                    }
+                    match syn::parse2::<syn::Path>(value.to_token_stream()) {
+                        Ok(p) => validate_fn = Some(p),
+                        Err(_) => {
+                            return TokenStream::from(compile_error(
+                                "validate fn must be a valid path".into(),
+                            ));
                         }
                     }
                 }
@@ -179,17 +146,17 @@ pub fn node_config(item: TokenStream) -> TokenStream {
             for item in items {
                 match item {
                     NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) => {
-                        if path.is_ident("name") {
-                            if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                                name = s;
-                                continue;
-                            }
+                        if path.is_ident("name")
+                            && let Some(Lit::Str(s)) = lit_from_expr(&value)
+                        {
+                            name = s;
+                            continue;
                         }
-                        if path.is_ident("source") {
-                            if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                                source = Some(s);
-                                continue;
-                            }
+                        if path.is_ident("source")
+                            && let Some(Lit::Str(s)) = lit_from_expr(&value)
+                        {
+                            source = Some(s);
+                            continue;
                         }
                         if path.is_ident("description") {
                             if let Some(Lit::Str(s)) = lit_from_expr(&value) {
@@ -200,29 +167,29 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                                 "port description must be a string literal".into(),
                             ));
                         }
-                        if path.is_ident("default") {
-                            if let Some(lit) = lit_from_expr(&value) {
-                                default_value = Some(lit);
-                                continue;
-                            }
+                        if path.is_ident("default")
+                            && let Some(lit) = lit_from_expr(&value)
+                        {
+                            default_value = Some(lit);
+                            continue;
                         }
-                        if path.is_ident("min") {
-                            if let Some(lit) = lit_from_expr(&value) {
-                                min_value = Some(lit);
-                                continue;
-                            }
+                        if path.is_ident("min")
+                            && let Some(lit) = lit_from_expr(&value)
+                        {
+                            min_value = Some(lit);
+                            continue;
                         }
-                        if path.is_ident("max") {
-                            if let Some(lit) = lit_from_expr(&value) {
-                                max_value = Some(lit);
-                                continue;
-                            }
+                        if path.is_ident("max")
+                            && let Some(lit) = lit_from_expr(&value)
+                        {
+                            max_value = Some(lit);
+                            continue;
                         }
-                        if path.is_ident("odd") {
-                            if let Some(Lit::Bool(b)) = lit_from_expr(&value) {
-                                odd = b.value;
-                                continue;
-                            }
+                        if path.is_ident("odd")
+                            && let Some(Lit::Bool(b)) = lit_from_expr(&value)
+                        {
+                            odd = b.value;
+                            continue;
                         }
                         if path.is_ident("policy") {
                             if let Some(Lit::Str(s)) = lit_from_expr(&value) {
@@ -344,8 +311,8 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                             _ => None,
                         })
                         .and_then(|arg| {
-                            if let syn::GenericArgument::Type(inner) = arg {
-                                if let Some(inner_ty) = type_expr_for(inner, generic_type_params, data_crate) {
+                            if let syn::GenericArgument::Type(inner) = arg
+                                && let Some(inner_ty) = type_expr_for(inner, generic_type_params, data_crate) {
                                     return Some(
                                         quote! {
                                             if let Some(explicit) = #data_crate::typing::override_type_expr::<#ty>() {
@@ -356,7 +323,6 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                                         },
                                     );
                                 }
-                            }
                             None
                         }),
                     "Option" => p
@@ -368,8 +334,8 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                             _ => None,
                         })
                         .and_then(|arg| {
-                            if let syn::GenericArgument::Type(inner) = arg {
-                                if let Some(inner_ty) = type_expr_for(inner, generic_type_params, data_crate) {
+                            if let syn::GenericArgument::Type(inner) = arg
+                                && let Some(inner_ty) = type_expr_for(inner, generic_type_params, data_crate) {
                                     return Some(
                                         quote! {
                                             if let Some(explicit) = #data_crate::typing::override_type_expr::<#ty>() {
@@ -380,7 +346,6 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                                         },
                                     );
                                 }
-                            }
                             None
                         }),
                     _ => Some(quote! { #data_crate::typing::type_expr::<#ty>() }),
@@ -444,12 +409,12 @@ pub fn node_config(item: TokenStream) -> TokenStream {
         if let Some(Lit::Bool(_)) = spec.max_value {
             errors.push(compile_error("max must be an int/float literal".into()));
         }
-        if let Some(policy) = &spec.policy {
-            if !matches!(policy.value().as_str(), "clamp" | "error") {
-                errors.push(compile_error(
-                    "policy must be \"clamp\" or \"error\"".into(),
-                ));
-            }
+        if let Some(policy) = &spec.policy
+            && !matches!(policy.value().as_str(), "clamp" | "error")
+        {
+            errors.push(compile_error(
+                "policy must be \"clamp\" or \"error\"".into(),
+            ));
         }
     }
     if !errors.is_empty() {
@@ -463,8 +428,8 @@ pub fn node_config(item: TokenStream) -> TokenStream {
             let source = spec
                 .source
                 .as_ref()
-                .map(|s| quote! { Some(#s.into()) })
-                .unwrap_or_else(|| quote! { None });
+                .map(|s| quote! { ::core::option::Option::Some(::std::string::String::from(#s)) })
+                .unwrap_or_else(|| quote! { ::core::option::Option::<::std::string::String>::None });
             let ty_expr = if let Some(ty) = &spec.ty_override {
                 quote! { (#ty) }
             } else if let Some(ts) =
@@ -490,15 +455,22 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                     let v = b.value;
                     quote! { Some(#data_crate::model::Value::Bool(#v)) }
                 }
-                _ => quote! { None },
-            }).unwrap_or_else(|| quote! { None });
+                _ => quote! { ::core::option::Option::<#data_crate::model::Value>::None },
+            }).unwrap_or_else(|| quote! { ::core::option::Option::<#data_crate::model::Value>::None });
             quote! {
-                #registry_crate::store::Port {
-                    name: #name.into(),
-                    ty: #ty_expr,
-                    access: ::core::default::Default::default(),
-                    source: #source,
-                    const_value: #default_value,
+                {
+                    let __ty = #ty_expr;
+                    let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
+                        .expect("NodeConfig port type must have a transport key");
+                    let mut __port = #registry_crate::capability::PortDecl::new(#name, __key)
+                        .schema(__ty);
+                    if let Some(__source) = #source {
+                        __port = __port.source(__source.as_str());
+                    }
+                    if let Some(__default) = #default_value {
+                        __port = __port.const_value(__default);
+                    }
+                    __port
                 }
             }
         })
@@ -771,7 +743,7 @@ pub fn node_config(item: TokenStream) -> TokenStream {
 
     TokenStream::from(quote! {
         impl #impl_generics #runtime_crate::config::NodeConfig for #struct_ident #ty_generics #where_clause {
-            fn ports() -> Vec<#registry_crate::store::Port> {
+            fn ports() -> Vec<#registry_crate::capability::PortDecl> {
                 vec![#(#ports_tokens),*]
             }
 

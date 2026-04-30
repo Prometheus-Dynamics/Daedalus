@@ -137,7 +137,10 @@ impl GpuBackend for MockBackend {
         let handle = self
             .pool
             .alloc(req.size_bytes, req.usage, GpuMemoryLocation::Gpu)?;
-        let mut stats = self.stats.lock().expect("mock stats lock");
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_upload(req.size_bytes);
         Ok(handle)
     }
@@ -171,7 +174,10 @@ impl GpuBackend for MockBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        let mut stats = self.stats.lock().expect("mock stats lock");
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let bytes = (req.width as u64) * (req.height as u64) * 4;
         stats.record_upload(bytes);
         Ok(GpuImageHandle::new(
@@ -184,15 +190,24 @@ impl GpuBackend for MockBackend {
     }
 
     fn stats(&self) -> TransferStats {
-        *self.stats.lock().expect("mock stats lock")
+        *self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn take_stats(&self) -> TransferStats {
-        self.stats.lock().expect("mock stats lock").take()
+        self.stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
     }
 
     fn record_download(&self, bytes: u64) {
-        let mut stats = self.stats.lock().expect("mock stats lock");
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_download(bytes);
     }
 
@@ -202,7 +217,10 @@ impl GpuBackend for MockBackend {
         data: &[u8],
     ) -> Result<GpuImageHandle, GpuError> {
         let handle = self.create_image(req)?;
-        let mut stats = self.stats.lock().expect("mock stats lock");
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_upload(data.len() as u64);
         Ok(handle)
     }

@@ -52,7 +52,6 @@ pub struct ParsedField {
     pub sampler_kind: Option<String>,
     pub sampler_address: Option<String>,
     pub sampler_mipmap: Option<String>,
-    pub _is_buffer_out: bool,
     pub is_state: bool,
 }
 
@@ -98,20 +97,17 @@ pub fn detect_texture_source(ty: &syn::Type) -> syn::Result<Option<TextureSource
         if ident == "DynamicImage" {
             return Ok(Some(TextureSource::DynamicImage));
         }
-        if ident == "Compute" {
-            if let syn::PathArguments::AngleBracketed(ab) = &last.arguments {
-                if let Some(syn::GenericArgument::Type(Type::Path(tp))) = ab.args.first() {
-                    if tp
-                        .path
-                        .segments
-                        .last()
-                        .map(|s| s.ident == "DynamicImage")
-                        .unwrap_or(false)
-                    {
-                        return Ok(Some(TextureSource::ComputeDynamic));
-                    }
-                }
-            }
+        if ident == "Compute"
+            && let syn::PathArguments::AngleBracketed(ab) = &last.arguments
+            && let Some(syn::GenericArgument::Type(Type::Path(tp))) = ab.args.first()
+            && tp
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident == "DynamicImage")
+                .unwrap_or(false)
+        {
+            return Ok(Some(TextureSource::ComputeDynamic));
         }
     }
     Err(syn::Error::new(

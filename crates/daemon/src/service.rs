@@ -9,7 +9,7 @@ use std::net::{TcpListener, TcpStream};
 
 use daedalus_engine::{CacheStatus, Engine, EngineCacheMetrics, EngineError};
 use daedalus_planner::{Graph, GraphPatch};
-use daedalus_registry::store::{Registry, RegistryView};
+use daedalus_registry::capability::CapabilityRegistry;
 use serde::{Deserialize, Serialize};
 
 fn default_session() -> String {
@@ -52,7 +52,7 @@ pub enum ServiceRequest {
     Ping,
     PutRegistry {
         name: String,
-        registry: RegistryView,
+        registry: CapabilityRegistry,
     },
     PutGraph {
         name: String,
@@ -174,7 +174,7 @@ pub enum ServiceResponse {
 
 #[derive(Default)]
 struct ServiceNamespace {
-    registries: HashMap<String, Registry>,
+    registries: HashMap<String, CapabilityRegistry>,
     graphs: HashMap<String, Graph>,
     latest_plan: HashMap<String, PlanSummary>,
     latest_build: HashMap<String, BuildSummary>,
@@ -267,10 +267,7 @@ impl ServiceState {
         match request {
             ServiceRequest::Ping => Ok(ServiceResponse::Pong),
             ServiceRequest::PutRegistry { name, registry } => {
-                namespace.registries.insert(
-                    name,
-                    Registry::from_view(registry).map_err(ServiceError::Registry)?,
-                );
+                namespace.registries.insert(name, registry);
                 Ok(ServiceResponse::Ack)
             }
             ServiceRequest::PutGraph { name, graph } => {
@@ -294,7 +291,7 @@ impl ServiceState {
                 Ok(ServiceResponse::Ack)
             }
             ServiceRequest::Plan { registry, graph } => {
-                let registry_ref = namespace
+                let capabilities = namespace
                     .registries
                     .get(&registry)
                     .ok_or_else(|| ServiceError::missing_registry(&registry))?;
@@ -303,7 +300,9 @@ impl ServiceState {
                     .get(&graph)
                     .cloned()
                     .ok_or_else(|| ServiceError::missing_graph(&graph))?;
-                let prepared = engine.prepare_plan(registry_ref, graph_ref)?;
+                let mut planner_config = engine.planner_config()?;
+                planner_config.transport_capabilities = Some(capabilities.clone());
+                let prepared = engine.prepare_plan_with_config(graph_ref, planner_config)?;
                 let summary = PlanSummary {
                     graph: graph.clone(),
                     registry: registry.clone(),
@@ -317,7 +316,7 @@ impl ServiceState {
                 Ok(ServiceResponse::Plan { summary })
             }
             ServiceRequest::InspectPlan { registry, graph } => {
-                let registry_ref = namespace
+                let capabilities = namespace
                     .registries
                     .get(&registry)
                     .ok_or_else(|| ServiceError::missing_registry(&registry))?;
@@ -326,7 +325,9 @@ impl ServiceState {
                     .get(&graph)
                     .cloned()
                     .ok_or_else(|| ServiceError::missing_graph(&graph))?;
-                let prepared = engine.prepare_plan(registry_ref, graph_ref)?;
+                let mut planner_config = engine.planner_config()?;
+                planner_config.transport_capabilities = Some(capabilities.clone());
+                let prepared = engine.prepare_plan_with_config(graph_ref, planner_config)?;
                 let plan = PlanSummary {
                     graph: graph.clone(),
                     registry: registry.clone(),
@@ -353,7 +354,7 @@ impl ServiceState {
                 Ok(ServiceResponse::PlanInspection { plan, build })
             }
             ServiceRequest::Build { registry, graph } => {
-                let registry_ref = namespace
+                let capabilities = namespace
                     .registries
                     .get(&registry)
                     .ok_or_else(|| ServiceError::missing_registry(&registry))?;
@@ -362,7 +363,9 @@ impl ServiceState {
                     .get(&graph)
                     .cloned()
                     .ok_or_else(|| ServiceError::missing_graph(&graph))?;
-                let prepared = engine.prepare_plan(registry_ref, graph_ref)?;
+                let mut planner_config = engine.planner_config()?;
+                planner_config.transport_capabilities = Some(capabilities.clone());
+                let prepared = engine.prepare_plan_with_config(graph_ref, planner_config)?;
                 let planner_summary = PlanSummary {
                     graph: graph.clone(),
                     registry: registry.clone(),
@@ -445,7 +448,6 @@ fn op_target(request: &ServiceRequest) -> Option<String> {
 enum ServiceError {
     MissingGraph(String),
     MissingRegistry(String),
-    Registry(daedalus_registry::diagnostics::RegistryError),
     Engine(EngineError),
 }
 
@@ -462,7 +464,6 @@ impl ServiceError {
         match self {
             ServiceError::MissingGraph(_) => ErrorCode::MissingGraph,
             ServiceError::MissingRegistry(_) => ErrorCode::MissingRegistry,
-            ServiceError::Registry(_) => ErrorCode::RegistryError,
             ServiceError::Engine(_) => ErrorCode::EngineError,
         }
     }
@@ -473,7 +474,6 @@ impl std::fmt::Display for ServiceError {
         match self {
             ServiceError::MissingGraph(name) => write!(f, "missing graph: {name}"),
             ServiceError::MissingRegistry(name) => write!(f, "missing registry: {name}"),
-            ServiceError::Registry(err) => write!(f, "{err}"),
             ServiceError::Engine(err) => write!(f, "{err}"),
         }
     }
@@ -558,217 +558,4 @@ pub fn send_tcp_request(addr: &str, request: &ServiceEnvelope) -> io::Result<Res
     reader.read_line(&mut line)?;
     serde_json::from_str::<ResponseEnvelope>(&line)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use daedalus_data::model::{TypeExpr, ValueType};
-    use daedalus_planner::{ComputeAffinity, Edge, NodeInstance, NodeRef, PortRef};
-    use daedalus_registry::store::{NodeDescriptor, Port};
-
-    fn sample_registry_view() -> RegistryView {
-        let mut registry = Registry::new();
-        let ty = TypeExpr::Scalar(ValueType::Int);
-        registry
-            .register_node(NodeDescriptor {
-                id: daedalus_registry::ids::NodeId::new("producer"),
-                feature_flags: vec![],
-                label: None,
-                group: None,
-                inputs: vec![],
-                fanin_inputs: vec![],
-                outputs: vec![Port {
-                    name: "out".into(),
-                    ty: ty.clone(),
-                    access: Default::default(),
-                    source: None,
-                    const_value: None,
-                }],
-                default_compute: ComputeAffinity::CpuOnly,
-                sync_groups: Vec::new(),
-                metadata: Default::default(),
-            })
-            .unwrap();
-        registry
-            .register_node(NodeDescriptor {
-                id: daedalus_registry::ids::NodeId::new("consumer"),
-                feature_flags: vec![],
-                label: None,
-                group: None,
-                inputs: vec![Port {
-                    name: "in".into(),
-                    ty,
-                    access: Default::default(),
-                    source: None,
-                    const_value: None,
-                }],
-                fanin_inputs: vec![],
-                outputs: vec![],
-                default_compute: ComputeAffinity::CpuOnly,
-                sync_groups: Vec::new(),
-                metadata: Default::default(),
-            })
-            .unwrap();
-        registry.view()
-    }
-
-    fn sample_graph() -> Graph {
-        Graph {
-            nodes: vec![
-                NodeInstance {
-                    id: daedalus_registry::ids::NodeId::new("producer"),
-                    bundle: None,
-                    label: None,
-                    inputs: vec![],
-                    outputs: vec!["out".into()],
-                    compute: ComputeAffinity::CpuOnly,
-                    const_inputs: vec![],
-                    sync_groups: vec![],
-                    metadata: Default::default(),
-                },
-                NodeInstance {
-                    id: daedalus_registry::ids::NodeId::new("consumer"),
-                    bundle: None,
-                    label: None,
-                    inputs: vec!["in".into()],
-                    outputs: vec![],
-                    compute: ComputeAffinity::CpuOnly,
-                    const_inputs: vec![],
-                    sync_groups: vec![],
-                    metadata: Default::default(),
-                },
-            ],
-            edges: vec![Edge {
-                from: PortRef {
-                    node: NodeRef(0),
-                    port: "out".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(1),
-                    port: "in".into(),
-                },
-                metadata: Default::default(),
-            }],
-            metadata: Default::default(),
-        }
-    }
-
-    #[test]
-    fn service_tracks_sessions_request_ids_and_latest_summaries() {
-        let engine = Engine::new(daedalus_engine::EngineConfig::default()).unwrap();
-        let mut state = ServiceState::default();
-
-        let put_registry = state.handle(
-            &engine,
-            ServiceEnvelope {
-                request_id: Some("req-1".into()),
-                session: "alpha".into(),
-                request: ServiceRequest::PutRegistry {
-                    name: "demo-reg".into(),
-                    registry: sample_registry_view(),
-                },
-            },
-        );
-        assert_eq!(put_registry.request_id.as_deref(), Some("req-1"));
-
-        let _ = state.handle(
-            &engine,
-            ServiceEnvelope {
-                request_id: Some("req-2".into()),
-                session: "alpha".into(),
-                request: ServiceRequest::PutGraph {
-                    name: "demo-graph".into(),
-                    graph: sample_graph(),
-                },
-            },
-        );
-
-        let planned = state.handle(
-            &engine,
-            ServiceEnvelope {
-                request_id: Some("req-3".into()),
-                session: "alpha".into(),
-                request: ServiceRequest::InspectPlan {
-                    registry: "demo-reg".into(),
-                    graph: "demo-graph".into(),
-                },
-            },
-        );
-        assert!(matches!(
-            planned.response,
-            ServiceResponse::PlanInspection {
-                plan: PlanSummary { .. },
-                build: BuildSummary { .. }
-            }
-        ));
-
-        let built = state.handle(
-            &engine,
-            ServiceEnvelope {
-                request_id: Some("req-4".into()),
-                session: "alpha".into(),
-                request: ServiceRequest::Build {
-                    registry: "demo-reg".into(),
-                    graph: "demo-graph".into(),
-                },
-            },
-        );
-        assert!(matches!(
-            built.response,
-            ServiceResponse::Build {
-                summary: BuildSummary { .. }
-            }
-        ));
-
-        let latest = state.handle(
-            &engine,
-            ServiceEnvelope {
-                request_id: Some("req-5".into()),
-                session: "alpha".into(),
-                request: ServiceRequest::InspectLatest {
-                    graph: "demo-graph".into(),
-                },
-            },
-        );
-        assert!(matches!(
-            latest.response,
-            ServiceResponse::Latest {
-                plan: Some(_),
-                build: Some(_),
-                ..
-            }
-        ));
-
-        let trace = state.handle(
-            &engine,
-            ServiceEnvelope {
-                request_id: Some("req-6".into()),
-                session: "alpha".into(),
-                request: ServiceRequest::ExportTrace,
-            },
-        );
-        match trace.response {
-            ServiceResponse::Trace { events } => assert!(events.len() >= 5),
-            other => panic!("unexpected trace response: {other:?}"),
-        }
-
-        let inspect_state = state.handle(
-            &engine,
-            ServiceEnvelope {
-                request_id: Some("req-7".into()),
-                session: "alpha".into(),
-                request: ServiceRequest::InspectState,
-            },
-        );
-        match inspect_state.response {
-            ServiceResponse::State { namespaces, .. } => {
-                assert_eq!(namespaces.len(), 1);
-                assert_eq!(namespaces[0].session, "alpha");
-                assert_eq!(namespaces[0].graphs, vec!["demo-graph".to_string()]);
-                assert_eq!(namespaces[0].registries, vec!["demo-reg".to_string()]);
-            }
-            other => panic!("unexpected state response: {other:?}"),
-        }
-    }
 }

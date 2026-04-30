@@ -4,7 +4,8 @@
 //! - `gpu-mock`: deterministic mock backend for tests/CI.
 //! - `gpu-wgpu`: real wgpu backend (types remain internal), placeholder for now.
 //!   Concurrency: backends are `Send + Sync`; clone the handle (cheap `Arc`) to share across tasks.
-//!   Planner/runtime expectation: call `select_backend` once, inspect skipped reasons (for “why not GPU?”),
+//!   Planner/runtime expectation: call `select_backend` once, or `select_backend_async` from
+//!   async applications, inspect skipped reasons (for “why not GPU?”),
 //!   then use the returned handle to allocate buffers/images without depending on any concrete GPU type.
 
 #[cfg(feature = "gpu-async")]
@@ -15,6 +16,7 @@ mod handles;
 #[cfg(feature = "gpu-mock")]
 mod mock;
 mod noop;
+mod selection;
 #[cfg(feature = "gpu-wgpu")]
 pub mod shader;
 mod traits;
@@ -24,16 +26,19 @@ mod wgpu_backend;
 #[cfg(feature = "gpu-async")]
 pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
-pub use convert::{Backing, Compute, DataCell, DeviceBridge};
+pub use convert::{Backing, Compute, DeviceBridge};
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
 #[cfg(feature = "gpu-mock")]
 pub use mock::MockBackend;
 pub use noop::NoopBackend;
+pub use selection::select_backend;
+#[cfg(feature = "gpu-async")]
+pub use selection::select_backend_async;
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu;
 #[cfg(feature = "gpu-wgpu")]
-pub use wgpu_backend::WgpuBackend;
+pub use wgpu_backend::{WgpuBackend, WgpuStagingPoolConfig, WgpuStagingPoolStats};
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
@@ -379,6 +384,66 @@ impl GpuContextHandle {
         self.backend.read_texture(handle)
     }
 
+    #[cfg(feature = "gpu-async")]
+    pub async fn read_texture_async(&self, handle: GpuImageHandle) -> Result<Vec<u8>, GpuError> {
+        use std::future::poll_fn;
+        use std::sync::{Arc, Mutex};
+        use std::task::Poll;
+
+        struct ReadState {
+            result: Option<Result<Vec<u8>, GpuError>>,
+            waker: Option<std::task::Waker>,
+        }
+
+        let state = Arc::new(Mutex::new(ReadState {
+            result: None,
+            waker: None,
+        }));
+        let worker_state = Arc::clone(&state);
+        let ctx = self.clone();
+        let _worker = std::thread::spawn(move || {
+            tracing::debug!(
+                target: "daedalus_gpu::texture",
+                texture_id = %handle.id,
+                width = handle.width,
+                height = handle.height,
+                "async texture readback worker started"
+            );
+            let result = ctx.read_texture(&handle);
+            let ok = result.is_ok();
+            let waker = {
+                let mut state = worker_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                state.result = Some(result);
+                state.waker.take()
+            };
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+            tracing::debug!(
+                target: "daedalus_gpu::texture",
+                texture_id = %handle.id,
+                width = handle.width,
+                height = handle.height,
+                ok,
+                "async texture readback worker completed"
+            );
+        });
+
+        poll_fn(|cx| {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(result) = state.result.take() {
+                return Poll::Ready(result);
+            }
+            state.waker = Some(cx.waker().clone());
+            Poll::Pending
+        })
+        .await
+    }
+
     pub fn create_buffer(&self, req: &GpuRequest) -> Result<GpuBufferHandle, GpuError> {
         self.backend.create_buffer(req)
     }
@@ -488,90 +553,6 @@ pub fn validate_texture_bytes(
     Ok(())
 }
 
-/// Select the best available backend given build-time features and runtime options.
-/// Order: preferred backend (if set), then wgpu, mock, noop.
-pub fn select_backend(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
-    let mut skipped = Vec::new();
-    let mut order = Vec::new();
-    if let Some(pref) = opts.preferred_backend
-        && !order.contains(&pref)
-    {
-        order.push(pref);
-    }
-    for fallback in [
-        GpuBackendKind::Wgpu,
-        GpuBackendKind::Mock,
-        GpuBackendKind::Noop,
-    ] {
-        if !order.contains(&fallback) {
-            order.push(fallback);
-        }
-    }
-
-    for kind in order {
-        match try_build_backend(kind, opts) {
-            Ok((backend, adapter)) => {
-                return Ok(GpuContextHandle {
-                    chosen: kind,
-                    adapter,
-                    skipped,
-                    backend,
-                });
-            }
-            Err(reason) => skipped.push(BackendSkip {
-                backend: kind,
-                reason,
-            }),
-        }
-    }
-
-    Err(GpuError::AdapterUnavailable)
-}
-
-fn try_build_backend(
-    kind: GpuBackendKind,
-    opts: &GpuOptions,
-) -> Result<(Arc<dyn GpuBackend>, GpuAdapterInfo), BackendSkipReason> {
-    match kind {
-        GpuBackendKind::Wgpu => {
-            #[cfg(feature = "gpu-wgpu")]
-            {
-                let backend =
-                    WgpuBackend::new().map_err(|e| BackendSkipReason::Error(e.to_string()))?;
-                let adapter = backend
-                    .select_adapter(opts)
-                    .map_err(|_| BackendSkipReason::AdapterUnavailable)?;
-                Ok((Arc::new(backend), adapter))
-            }
-            #[cfg(not(feature = "gpu-wgpu"))]
-            {
-                Err(BackendSkipReason::FeatureNotEnabled)
-            }
-        }
-        GpuBackendKind::Mock => {
-            #[cfg(feature = "gpu-mock")]
-            {
-                let backend = MockBackend::default();
-                let adapter = backend
-                    .select_adapter(opts)
-                    .map_err(|_| BackendSkipReason::AdapterUnavailable)?;
-                Ok((Arc::new(backend), adapter))
-            }
-            #[cfg(not(feature = "gpu-mock"))]
-            {
-                Err(BackendSkipReason::FeatureNotEnabled)
-            }
-        }
-        GpuBackendKind::Noop => {
-            let backend = NoopBackend::default();
-            let adapter = backend
-                .select_adapter(opts)
-                .map_err(|_| BackendSkipReason::AdapterUnavailable)?;
-            Ok((Arc::new(backend), adapter))
-        }
-    }
-}
-
 impl GpuContext for GpuContextHandle {
     fn backend(&self) -> GpuBackendKind {
         self.backend_kind()
@@ -627,8 +608,12 @@ mod tests {
 
     #[cfg(feature = "gpu-mock")]
     #[test]
-    fn prefers_mock_when_available() {
-        let ctx = select_backend(&GpuOptions::default()).unwrap();
+    fn honors_mock_preference_when_available() {
+        let ctx = select_backend(&GpuOptions {
+            preferred_backend: Some(GpuBackendKind::Mock),
+            ..Default::default()
+        })
+        .unwrap();
         assert_eq!(ctx.backend_kind(), GpuBackendKind::Mock);
         assert_eq!(ctx.adapter_info().backend, GpuBackendKind::Mock);
     }
@@ -645,6 +630,17 @@ mod tests {
             ctx.backend_kind(),
             GpuBackendKind::Wgpu | GpuBackendKind::Mock | GpuBackendKind::Noop
         ));
+    }
+
+    #[cfg(all(feature = "gpu-async", feature = "gpu-wgpu"))]
+    #[test]
+    fn async_select_backend_honors_nonblocking_noop_path() {
+        let opts = GpuOptions {
+            preferred_backend: Some(GpuBackendKind::Noop),
+            ..Default::default()
+        };
+        let ctx = pollster::block_on(select_backend_async(&opts)).unwrap();
+        assert_eq!(ctx.backend_kind(), GpuBackendKind::Noop);
     }
 
     #[test]

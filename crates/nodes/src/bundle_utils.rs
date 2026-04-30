@@ -1,6 +1,6 @@
 use daedalus_runtime::NodeError;
 
-use crate::NodeDescriptor;
+use crate::NodeDecl;
 use crate::node;
 
 #[node(
@@ -18,6 +18,9 @@ fn add(a: i32, b: i32) -> Result<i32, NodeError> {
     Ok(a + b)
 }
 
-pub fn nodes() -> Vec<NodeDescriptor> {
-    vec![identity::descriptor(), add::descriptor()]
+pub fn nodes() -> Vec<NodeDecl> {
+    vec![
+        IdentityNode::node_decl().expect("utils.identity node declaration"),
+        AddNode::node_decl().expect("utils.add node declaration"),
+    ]
 }

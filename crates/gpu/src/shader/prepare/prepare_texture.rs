@@ -12,16 +12,19 @@ fn should_register_texture_handle(binding: &ShaderBinding, layout: &BindingSpec)
     matches!(layout.access, Access::WriteOnly | Access::ReadWrite)
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(super) struct TexturePrepareContext<'a> {
+    pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
+    pub backend: Option<&'a dyn GpuBackend>,
+    pub gpu_ctx: Option<&'a GpuContextHandle>,
+    pub device_key: usize,
+    pub is_storage_tex: bool,
+}
+
 pub(super) fn prepare_texture_binding(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    backend: Option<&dyn GpuBackend>,
+    ctx: TexturePrepareContext<'_>,
     binding: &ShaderBinding,
     layout: &BindingSpec,
-    gpu_ctx: Option<&GpuContextHandle>,
-    device_key: usize,
-    is_storage_tex: bool,
 ) -> Result<Prepared, GpuError> {
     match &binding.data {
         BindingData::TextureRgba8 {
@@ -41,19 +44,19 @@ pub(super) fn prepare_texture_binding(
             } else {
                 wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
             };
-            if is_storage_tex {
+            if ctx.is_storage_tex {
                 usage |= wgpu::TextureUsages::STORAGE_BINDING;
             }
             let texture = if let Ok(mut p) = temp_pool().lock() {
                 p.take_texture(
-                    device_key,
+                    ctx.device_key,
                     size.width,
                     size.height,
                     wgpu::TextureFormat::Rgba8Unorm,
                     usage,
                 )
                 .unwrap_or_else(|| {
-                    Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+                    Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("texture-binding"),
                         size,
                         mip_level_count: 1,
@@ -65,7 +68,7 @@ pub(super) fn prepare_texture_binding(
                     }))
                 })
             } else {
-                Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+                Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("texture-binding"),
                     size,
                     mip_level_count: 1,
@@ -77,7 +80,7 @@ pub(super) fn prepare_texture_binding(
                 }))
             };
             let tex_handle = if should_register_texture_handle(binding, layout) {
-                backend.and_then(|b| {
+                ctx.backend.and_then(|b| {
                     b.wgpu_register_texture(
                         texture.clone(),
                         wgpu::TextureFormat::Rgba8Unorm,
@@ -99,7 +102,7 @@ pub(super) fn prepare_texture_binding(
                 padded[dst_start..dst_start + bytes_per_row]
                     .copy_from_slice(&bytes[src_start..src_start + bytes_per_row]);
             }
-            queue.write_texture(
+            ctx.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: texture.as_ref(),
                     mip_level: 0,
@@ -145,9 +148,9 @@ pub(super) fn prepare_texture_binding(
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::TEXTURE_BINDING;
             let texture = if let Ok(mut p) = temp_pool().lock() {
-                p.take_texture(device_key, size.width, size.height, format, usage)
+                p.take_texture(ctx.device_key, size.width, size.height, format, usage)
                     .unwrap_or_else(|| {
-                        Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+                        Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
                             label: Some("storage-texture"),
                             size,
                             mip_level_count: 1,
@@ -159,7 +162,7 @@ pub(super) fn prepare_texture_binding(
                         }))
                     })
             } else {
-                Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+                Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("storage-texture"),
                     size,
                     mip_level_count: 1,
@@ -171,7 +174,7 @@ pub(super) fn prepare_texture_binding(
                 }))
             };
             let tex_handle = if should_register_texture_handle(binding, layout) {
-                backend.and_then(|b| {
+                ctx.backend.and_then(|b| {
                     b.wgpu_register_texture(texture.clone(), format, *width, *height, usage)
                 })
             } else {
@@ -191,7 +194,7 @@ pub(super) fn prepare_texture_binding(
             })
         }
         BindingData::TextureHandle { handle } => {
-            if let Some(backend) = backend
+            if let Some(backend) = ctx.backend
                 && let Some(tex) = backend.wgpu_get_texture(handle)
             {
                 let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -207,8 +210,8 @@ pub(super) fn prepare_texture_binding(
                     handle: Some(handle.clone()),
                 });
             }
-            let ctx = gpu_ctx.ok_or(GpuError::Unsupported)?;
-            let bytes = ctx.read_texture(handle)?;
+            let gpu_ctx = ctx.gpu_ctx.ok_or(GpuError::Unsupported)?;
+            let bytes = gpu_ctx.read_texture(handle)?;
             let size = wgpu::Extent3d {
                 width: handle.width,
                 height: handle.height,
@@ -221,19 +224,19 @@ pub(super) fn prepare_texture_binding(
             } else {
                 wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
             };
-            if is_storage_tex {
+            if ctx.is_storage_tex {
                 usage |= wgpu::TextureUsages::STORAGE_BINDING;
             }
             let texture = if let Ok(mut p) = temp_pool().lock() {
                 p.take_texture(
-                    device_key,
+                    ctx.device_key,
                     size.width,
                     size.height,
                     wgpu::TextureFormat::Rgba8Unorm,
                     usage,
                 )
                 .unwrap_or_else(|| {
-                    Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+                    Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("texture-binding"),
                         size,
                         mip_level_count: 1,
@@ -245,7 +248,7 @@ pub(super) fn prepare_texture_binding(
                     }))
                 })
             } else {
-                Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+                Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("texture-binding"),
                     size,
                     mip_level_count: 1,
@@ -257,7 +260,7 @@ pub(super) fn prepare_texture_binding(
                 }))
             };
             let tex_handle = if should_register_texture_handle(binding, layout) {
-                backend.and_then(|b| {
+                ctx.backend.and_then(|b| {
                     b.wgpu_register_texture(
                         texture.clone(),
                         wgpu::TextureFormat::Rgba8Unorm,
@@ -279,7 +282,7 @@ pub(super) fn prepare_texture_binding(
                 padded[dst_start..dst_start + bytes_per_row]
                     .copy_from_slice(&bytes[src_start..src_start + bytes_per_row]);
             }
-            queue.write_texture(
+            ctx.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: texture.as_ref(),
                     mip_level: 0,

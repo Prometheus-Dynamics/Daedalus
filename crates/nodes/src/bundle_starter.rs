@@ -1,7 +1,6 @@
-use daedalus_core::compute::ComputeAffinity;
 use daedalus_runtime::NodeError;
 
-use crate::NodeDescriptor;
+use crate::NodeDecl;
 use crate::node;
 
 #[node(id = "starter.print", bundle = "starter")]
@@ -19,6 +18,9 @@ fn starter_gpu_copy() -> Result<(), NodeError> {
 }
 
 /// Starter bundle: minimal set of nodes used in examples/tests.
-pub fn nodes() -> Vec<NodeDescriptor> {
-    vec![starter_print::descriptor(), starter_gpu_copy::descriptor()]
+pub fn nodes() -> Vec<NodeDecl> {
+    vec![
+        StarterPrintNode::node_decl().expect("starter.print node declaration"),
+        StarterGpuCopyNode::node_decl().expect("starter.gpu_copy node declaration"),
+    ]
 }

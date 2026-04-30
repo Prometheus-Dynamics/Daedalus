@@ -21,10 +21,22 @@ Lightweight GPU facade and shader helpers built on wgpu. Provides opaque handles
 - `handles`: opaque buffer/image IDs and allocation helpers.
 
 ## Typical use
-- Select a backend: `GpuContextHandle::select_backend`.
+- Select a backend: `select_backend_async` from async applications, or `select_backend` from sync callers.
 - Derive bindings: annotate a struct with `#[derive(GpuBindings)]` and `#[gpu(spec(...))]`.
-- Dispatch: create `ShaderContext`, call `ctx.dispatch_bindings`/`dispatch_auto`.
+- Dispatch: create `ShaderContext`, call `ctx.dispatch_bindings_async`/`dispatch_auto_async` from async applications, or `ctx.dispatch_bindings`/`dispatch_auto` from sync callers.
 - Readback: use `ShaderRunOutput` helpers to interpret buffers/textures or get `GpuImageHandle`.
+
+## Sync vs async GPU paths
+- `select_backend` and `WgpuBackend::new` are synchronous compatibility APIs. They block the current thread while wgpu enumerates adapters and requests a device.
+- Prefer `select_backend_async` or `WgpuBackend::new_async` from async applications so backend creation does not park an executor worker thread.
+- Synchronous shader dispatch and readback wait for GPU submission/readback completion on the current thread. Use the `gpu-async` feature and the `*_async` shader helpers for async runtimes; async dispatch submits without the synchronous hard-throttle wait and async readback polls cooperatively.
+- When no `GpuContextHandle` is supplied, sync shader helpers create the fallback wgpu context with a blocking path; async helpers use the non-blocking fallback path.
+- Shader dispatch throttles queued GPU submissions per device to avoid unbounded in-flight work. Use `daedalus_gpu::shader::set_max_inflight_submissions_per_device` at startup to tune that limit for the process; `max_inflight_submissions_per_device` reports the current effective value.
+- Async wgpu readback reuses staging buffers through `WgpuStagingPoolConfig`. Use
+  `WgpuBackend::new_with_staging_pool_config[_async]` for explicit limits, or set
+  `DAEDALUS_WGPU_STAGING_MAX_SIZE_CLASSES`, `DAEDALUS_WGPU_STAGING_MAX_BUFFERS_PER_SIZE`, and
+  `DAEDALUS_WGPU_STAGING_MAX_BYTES` before constructing the backend. `staging_pool_stats()` reports
+  the active limits and current pool usage.
 
 ## Testing
 - No-GPU path works everywhere; mock backend available with `gpu-mock`.

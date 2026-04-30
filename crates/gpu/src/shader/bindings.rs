@@ -3,6 +3,7 @@ use crate::{GpuContextHandle, GpuError};
 use super::{Access, BindingKind, BufferOut, SamplerDesc, ShaderSpec, Uniform, UniformBytes};
 
 /// Runtime-provided buffer contents for a binding.
+#[derive(Clone)]
 pub enum BufferInit<'a> {
     /// Allocate a buffer of this size, zero-filled.
     Empty(u64),
@@ -13,6 +14,7 @@ pub enum BufferInit<'a> {
 }
 
 /// Binding payload for buffers/textures/samplers.
+#[derive(Clone)]
 pub enum BindingData<'a> {
     Buffer(BufferInit<'a>),
     BufferDevice {
@@ -36,6 +38,7 @@ pub enum BindingData<'a> {
 }
 
 /// Full binding description for a single dispatch, including data and readback request.
+#[derive(Clone)]
 pub struct ShaderBinding<'a> {
     pub binding: u32,
     pub kind: BindingKind,

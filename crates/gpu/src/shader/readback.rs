@@ -45,7 +45,7 @@ pub(crate) fn enqueue_readbacks(
     let mut readbacks: Vec<ReadbackRequest> = Vec::new();
     let mut pool_textures_to_return: Vec<PoolReturn> = Vec::new();
     let mut texture_handles: HashMap<u32, GpuImageHandle> = HashMap::new();
-    let device_key = device as *const _ as usize;
+    let device_key = super::device_key(device);
 
     for p in prepared {
         match p {
@@ -204,7 +204,10 @@ pub(crate) fn resolve_readbacks(
     device: &wgpu::Device,
     readbacks: Vec<ReadbackRequest>,
 ) -> Result<HashMap<u32, Vec<u8>>, GpuError> {
-    let device_key = device as *const _ as usize;
+    // This is the synchronous compatibility readback path. It waits for each map operation on the
+    // current thread; async callers should use `resolve_readbacks_async` through the async dispatch
+    // helpers so executor worker threads are not blocked by GPU completion.
+    let device_key = super::device_key(device);
     let mut result = HashMap::new();
     for ReadbackRequest {
         binding,

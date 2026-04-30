@@ -7,12 +7,15 @@ use image::DynamicImage;
 use wgsl_infer::InferredAccess;
 
 mod bindings;
+mod device_cache;
 mod dispatch;
 #[cfg(feature = "gpu-async")]
 mod dispatch_async;
 mod fallback;
 mod gpu_state;
 mod pipeline;
+#[cfg(feature = "gpu-async")]
+mod poll_driver;
 mod pool;
 mod prepare;
 mod readback;
@@ -23,20 +26,30 @@ mod types;
 mod workgroups;
 
 pub use bindings::*;
+pub(crate) use device_cache::{device_key, register_device, unregister_device};
 pub use dispatch::*;
 #[cfg(feature = "gpu-async")]
 pub use dispatch_async::*;
+pub(crate) use gpu_state::clear_gpu_state_pool_for_device;
 pub use gpu_state::*;
 pub use gpu_state::{gpu_state_pool_limit, set_gpu_state_pool_limit};
+pub(crate) use pipeline::clear_pipeline_caches_for_device;
 pub use pipeline::{
     bind_group_cache_limit, pipeline_cache_limit, set_bind_group_cache_limit,
     set_pipeline_cache_limit,
 };
-pub(crate) use pool::{clear_temp_pool, temp_pool};
+#[cfg(feature = "gpu-async")]
+pub use poll_driver::{
+    active_async_poll_overflow_threads, async_poll_overflow_thread_limit, async_poll_worker_limit,
+    set_async_poll_overflow_thread_limit, set_async_poll_worker_limit,
+};
+pub(crate) use pool::{clear_temp_pool_for_device, temp_pool};
 pub use pool::{
     set_temp_pool_buffer_limit, set_temp_pool_texture_limit, temp_pool_buffer_limit,
     temp_pool_texture_limit,
 };
+#[cfg(feature = "gpu-async")]
+pub(crate) use readback_async::map_read_async;
 pub use run_output::*;
 pub use types::*;
 

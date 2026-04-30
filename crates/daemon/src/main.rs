@@ -1,8 +1,9 @@
 use daedalus_daemon::service;
+use std::io::Write;
 
 fn main() {
     if let Err(err) = run() {
-        eprintln!("{err}");
+        let _ = writeln!(std::io::stderr(), "{err}");
         std::process::exit(1);
     }
 }
@@ -74,7 +75,7 @@ fn run() -> Result<(), String> {
             let request_id = take_flag(&mut args, "--request-id");
             let name = take_flag(&mut args, "--name").ok_or("--name is required")?;
             let file = take_flag(&mut args, "--file").ok_or("--file is required")?;
-            let registry: daedalus_registry::store::RegistryView =
+            let registry: daedalus_registry::capability::CapabilityRegistry =
                 serde_json::from_reader(std::fs::File::open(file).map_err(|e| e.to_string())?)
                     .map_err(|e| e.to_string())?;
             send_request(
@@ -149,7 +150,7 @@ fn send_request(addr: &str, request: service::ServiceEnvelope) -> Result<(), Str
         let response = service::send_tcp_request(addr, &request).map_err(|e| e.to_string())?;
         serde_json::to_writer_pretty(std::io::stdout().lock(), &response)
             .map_err(|e| e.to_string())?;
-        println!();
+        writeln!(std::io::stdout()).map_err(|e| e.to_string())?;
         Ok(())
     }
     #[cfg(not(feature = "tcp"))]
@@ -179,20 +180,57 @@ fn default_session() -> String {
 }
 
 fn print_usage() {
-    eprintln!("daedalus-daemon");
-    eprintln!("  daedalus-daemon stdio");
+    let mut stderr = std::io::stderr();
+    let _ = writeln!(stderr, "daedalus-daemon");
+    let _ = writeln!(stderr, "  daedalus-daemon stdio");
     #[cfg(feature = "tcp")]
-    eprintln!("  daedalus-daemon serve [addr]");
-    eprintln!("  daedalus-daemon ping [--addr A] [--session S] [--request-id ID]");
-    eprintln!("  daedalus-daemon inspect-state [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon inspect-cache [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon clear-cache [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon export-trace [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon put-graph --name N --file F [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon put-registry --name N --file F [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon patch-graph --name N --file F [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon plan --registry R --graph G [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon build --registry R --graph G [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon inspect-plan --registry R --graph G [--addr A] [--session S]");
-    eprintln!("  daedalus-daemon inspect-latest --graph G [--addr A] [--session S]");
+    let _ = writeln!(stderr, "  daedalus-daemon serve [addr]");
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon ping [--addr A] [--session S] [--request-id ID]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon inspect-state [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon inspect-cache [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon clear-cache [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon export-trace [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon put-graph --name N --file F [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon put-registry --name N --file F [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon patch-graph --name N --file F [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon plan --registry R --graph G [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon build --registry R --graph G [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon inspect-plan --registry R --graph G [--addr A] [--session S]"
+    );
+    let _ = writeln!(
+        stderr,
+        "  daedalus-daemon inspect-latest --graph G [--addr A] [--session S]"
+    );
 }

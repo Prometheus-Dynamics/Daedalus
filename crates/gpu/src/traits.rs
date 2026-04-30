@@ -1,3 +1,5 @@
+#[cfg(feature = "gpu-wgpu")]
+use crate::shader::SubmissionTracker;
 use crate::{
     GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError, GpuImageHandle, GpuImageRequest,
     GpuOptions, GpuRequest, buffer::TransferStats, handles::GpuBufferHandle,
@@ -47,6 +49,11 @@ pub trait GpuBackend: Send + Sync {
     /// relying on `Any` downcasts, which are not reliable across dynamic library boundaries.
     #[cfg(feature = "gpu-wgpu")]
     fn wgpu_device_queue(&self) -> Option<(&wgpu::Device, &wgpu::Queue)> {
+        None
+    }
+
+    #[cfg(feature = "gpu-wgpu")]
+    fn wgpu_submission_tracker(&self) -> Option<&SubmissionTracker> {
         None
     }
 

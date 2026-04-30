@@ -1,0 +1,12 @@
+error: device upload functions must take `&Cpu`
+  --> tests/ui/transport/fail_device_mut_input.rs:10:1
+   |
+10 | / #[device(
+11 | |     id = "test.bad_device",
+12 | |     cpu = "test:i32",
+13 | |     device = "test:i32@gpu",
+14 | |     download = download
+15 | | )]
+   | |__^
+   |
+   = note: this error originates in the attribute macro `device` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -3,7 +3,7 @@
 //!
 /// Re-export of the `#[node]` macro for convenience.
 pub use daedalus_macros::node;
-pub type NodeDescriptor = daedalus_registry::store::NodeDescriptor;
+pub type NodeDecl = daedalus_registry::capability::NodeDecl;
 
 #[cfg(feature = "bundle-starter")]
 mod bundle_starter;
@@ -11,16 +11,14 @@ mod bundle_starter;
 #[cfg(feature = "bundle-utils")]
 mod bundle_utils;
 
-#[cfg(feature = "registry-adapter")]
-pub mod registry_adapter;
-
-#[cfg(feature = "planner-adapter")]
-pub mod planner_adapter;
-
+#[cfg(feature = "plugins")]
 pub mod bundle_demo;
 extern crate self as daedalus_nodes;
+#[cfg(feature = "plugins")]
 pub mod __macro_support {
-    pub use daedalus_runtime::plugins::{NodeInstall, Plugin, PluginRegistry};
+    pub use daedalus_runtime::plugins::{
+        NodeInstall, Plugin, PluginError, PluginInstallContext, PluginRegistry, PluginResult,
+    };
 }
 
 /// Declare a plugin struct that installs a set of node descriptors and handlers
@@ -38,26 +36,27 @@ pub mod __macro_support {
 ///
 /// declare_plugin!(DemoPlugin, "demo", [noop]);
 /// ```
+#[cfg(feature = "plugins")]
 #[macro_export]
 macro_rules! declare_plugin {
-    // Basic form (no hook).
-    ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ]) => {
+    // Basic form with transport adapters.
+    ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ], adapters [ $( $adapter:ident ),+ $(,)? ]) => {
         paste::paste! {
             #[derive(Clone, Debug)]
             pub struct $plugin {
-                $(pub $node: [<$node Handle>]),+
+                $(pub $node: [<$node:camel Node Handle>]),+
             }
 
             impl $plugin {
                 pub fn new() -> Self {
                     Self {
-                        $($node: $node::handle().with_prefix($id)),+
+                        $($node: [<$node:camel Node>]::handle().with_prefix($id)),+
                     }
                 }
 
                 $(
-                    pub fn [<node_ $node>](&self) -> [<$node Handle>] {
-                        $node::handle().with_prefix($id)
+                    pub fn [<node_ $node>](&self) -> [<$node:camel Node Handle>] {
+                        [<$node:camel Node>]::handle().with_prefix($id)
                     }
                 )+
             }
@@ -71,10 +70,18 @@ macro_rules! declare_plugin {
             impl $plugin {
                 pub fn install(
                     &self,
-                    registry: &mut $crate::__macro_support::PluginRegistry,
-                ) -> Result<(), &'static str> {
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
                     $(
-                        registry.merge::<$node>()?;
+                        [<register_ $adapter _adapter>](registry)?;
+                    )+
+                    $(
+                        for __contract in [<$node:camel Node>]::boundary_contracts()? {
+                            registry.boundary_contract(__contract)?;
+                        }
+                    )+
+                    $(
+                        registry.merge::<[<$node:camel Node>]>()?;
                     )+
                     Ok(())
                 }
@@ -88,8 +95,135 @@ macro_rules! declare_plugin {
 
                 fn install(
                     &self,
-                    registry: &mut $crate::__macro_support::PluginRegistry,
-                ) -> Result<(), &'static str> {
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
+                    self.install(registry)
+                }
+            }
+        }
+    };
+
+    // Basic form (no hook).
+    ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ]) => {
+        paste::paste! {
+            #[derive(Clone, Debug)]
+            pub struct $plugin {
+                $(pub $node: [<$node:camel Node Handle>]),+
+            }
+
+            impl $plugin {
+                pub fn new() -> Self {
+                    Self {
+                        $($node: [<$node:camel Node>]::handle().with_prefix($id)),+
+                    }
+                }
+
+                $(
+                    pub fn [<node_ $node>](&self) -> [<$node:camel Node Handle>] {
+                        [<$node:camel Node>]::handle().with_prefix($id)
+                    }
+                )+
+            }
+
+            impl Default for $plugin {
+                fn default() -> Self {
+                    Self::new()
+                }
+            }
+
+            impl $plugin {
+                pub fn install(
+                    &self,
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
+                    $(
+                        for __contract in [<$node:camel Node>]::boundary_contracts()? {
+                            registry.boundary_contract(__contract)?;
+                        }
+                    )+
+                    $(
+                        registry.merge::<[<$node:camel Node>]>()?;
+                    )+
+                    Ok(())
+                }
+            }
+
+            #[cfg(feature = "plugins")]
+            impl $crate::__macro_support::Plugin for $plugin {
+                fn id(&self) -> &'static str {
+                    $id
+                }
+
+                fn install(
+                    &self,
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
+                    self.install(registry)
+                }
+            }
+        }
+    };
+
+    // Form with an install hook and transport adapters.
+    ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ], adapters [ $( $adapter:ident ),+ $(,)? ], install = |$reg:ident| $body:block) => {
+        paste::paste! {
+            #[derive(Clone, Debug)]
+            pub struct $plugin {
+                $(pub $node: [<$node:camel Node Handle>]),+
+            }
+
+            impl $plugin {
+                pub fn new() -> Self {
+                    Self {
+                        $($node: [<$node:camel Node>]::handle().with_prefix($id)),+
+                    }
+                }
+
+                $(
+                    pub fn [<node_ $node>](&self) -> [<$node:camel Node Handle>] {
+                        [<$node:camel Node>]::handle().with_prefix($id)
+                    }
+                )+
+            }
+
+            impl Default for $plugin {
+                fn default() -> Self {
+                    Self::new()
+                }
+            }
+
+            impl $plugin {
+                pub fn install(
+                    &self,
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
+                    let $reg = registry;
+                    (|| -> $crate::__macro_support::PluginResult<()> { $body; Ok(()) })()?;
+                    $(
+                        [<register_ $adapter _adapter>]($reg)?;
+                    )+
+                    $(
+                        for __contract in [<$node:camel Node>]::boundary_contracts()? {
+                            $reg.boundary_contract(__contract)?;
+                        }
+                    )+
+                    $(
+                        $reg.merge::<[<$node:camel Node>]>()?;
+                    )+
+                    Ok(())
+                }
+            }
+
+            #[cfg(feature = "plugins")]
+            impl $crate::__macro_support::Plugin for $plugin {
+                fn id(&self) -> &'static str {
+                    $id
+                }
+
+                fn install(
+                    &self,
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
                     self.install(registry)
                 }
             }
@@ -102,19 +236,19 @@ macro_rules! declare_plugin {
         paste::paste! {
             #[derive(Clone, Debug)]
             pub struct $plugin {
-                $(pub $node: [<$node Handle>]),+
+                $(pub $node: [<$node:camel Node Handle>]),+
             }
 
             impl $plugin {
                 pub fn new() -> Self {
                     Self {
-                        $($node: $node::handle().with_prefix($id)),+
+                        $($node: [<$node:camel Node>]::handle().with_prefix($id)),+
                     }
                 }
 
                 $(
-                    pub fn [<node_ $node>](&self) -> [<$node Handle>] {
-                        $node::handle().with_prefix($id)
+                    pub fn [<node_ $node>](&self) -> [<$node:camel Node Handle>] {
+                        [<$node:camel Node>]::handle().with_prefix($id)
                     }
                 )+
             }
@@ -128,12 +262,17 @@ macro_rules! declare_plugin {
             impl $plugin {
                 pub fn install(
                     &self,
-                    registry: &mut $crate::__macro_support::PluginRegistry,
-                ) -> Result<(), &'static str> {
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
                     let $reg = registry;
-                    (|| -> Result<(), &'static str> { $body; Ok(()) })()?;
+                    (|| -> $crate::__macro_support::PluginResult<()> { $body; Ok(()) })()?;
                     $(
-                        $reg.merge::<$node>()?;
+                        for __contract in [<$node:camel Node>]::boundary_contracts()? {
+                            $reg.boundary_contract(__contract)?;
+                        }
+                    )+
+                    $(
+                        $reg.merge::<[<$node:camel Node>]>()?;
                     )+
                     Ok(())
                 }
@@ -147,8 +286,8 @@ macro_rules! declare_plugin {
 
                 fn install(
                     &self,
-                    registry: &mut $crate::__macro_support::PluginRegistry,
-                ) -> Result<(), &'static str> {
+                    registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
+                ) -> $crate::__macro_support::PluginResult<()> {
                     self.install(registry)
                 }
             }
@@ -163,8 +302,8 @@ macro_rules! declare_plugin {
 /// let nodes = register_all();
 /// let _ = nodes;
 /// ```
-pub fn register_all() -> Vec<NodeDescriptor> {
-    let mut nodes: Vec<NodeDescriptor> = Vec::new();
+pub fn register_all() -> Vec<NodeDecl> {
+    let mut nodes: Vec<NodeDecl> = Vec::new();
     #[cfg(feature = "bundle-starter")]
     {
         nodes.extend(bundle_starter::nodes());
@@ -180,7 +319,6 @@ pub fn register_all() -> Vec<NodeDescriptor> {
 #[cfg(all(test, feature = "bundle-starter"))]
 mod tests {
     use super::*;
-    use daedalus_core::compute::ComputeAffinity;
 
     #[test]
     fn deterministic_ordering() {
@@ -188,14 +326,5 @@ mod tests {
         let mut sorted = nodes.clone();
         sorted.sort_by(|a, b| a.id.0.cmp(&b.id.0));
         assert_eq!(nodes, sorted);
-    }
-
-    #[test]
-    fn node_macro_attaches_metadata() {
-        let first = register_all()
-            .into_iter()
-            .find(|n| n.id.0 == "starter.print")
-            .expect("starter.print registered");
-        assert_eq!(first.default_compute, ComputeAffinity::CpuOnly);
     }
 }

@@ -1,7 +1,7 @@
 use crate::{Compute, GpuContextHandle};
 use image::DynamicImage;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BindingKind {
     Storage,
     Uniform,
@@ -10,14 +10,14 @@ pub enum BindingKind {
     Sampler,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Access {
     ReadOnly,
     WriteOnly,
     ReadWrite,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SamplerKind {
     Filtering,
     Comparison,
@@ -66,7 +66,7 @@ impl SamplerDesc {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BindingSpec {
     pub binding: u32,
     pub kind: BindingKind,

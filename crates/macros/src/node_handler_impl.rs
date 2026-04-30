@@ -45,7 +45,6 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
         quote! { ::#ident }
     };
     let runtime_crate = crate_path("daedalus-runtime", "daedalus_runtime", Some("runtime"));
-    let gpu_crate = crate_path("daedalus", "daedalus", Some("gpu"));
 
     for arg in args {
         match arg {
@@ -123,7 +122,7 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
                 let result = #call;
                 match result {
                     Ok(val) => {
-                        io.push_any(Some(#out_port), val);
+                        io.push(Some(#out_port), val);
                         Ok(())
                     }
                     Err(e) => Err(e),
@@ -139,23 +138,8 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
                 let mut reg = #runtime_crate::handler_registry::HandlerRegistry::new();
                 reg.on(#id, |_, _, io| {
                     #(let #arg_idents = {
-                        #[cfg(feature = "gpu")]
-                        {
-                            // Special case: accept erased GPU payloads when requested.
-                            if std::any::TypeId::of::<#arg_types>() == std::any::TypeId::of::<#gpu_crate::DataCell>() {
-                                io.get_data_cell(#arg_names)
-                                    .cloned()
-                                    .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #arg_names)))?
-                            } else {
-                                io.get_any::<#arg_types>(#arg_names)
-                                    .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #arg_names)))?
-                            }
-                        }
-                        #[cfg(not(feature = "gpu"))]
-                        {
-                            io.get_any::<#arg_types>(#arg_names)
-                                .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #arg_names)))?
-                        }
+                        io.take_owned::<#arg_types>(#arg_names)
+                            .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #arg_names)))?
                     }; )*
                     #ret_handling
                 });

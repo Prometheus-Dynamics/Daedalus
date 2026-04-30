@@ -75,7 +75,6 @@ pub fn parse_fields(data: &syn::DataStruct) -> syn::Result<Vec<ParsedField>> {
         let mut sampler_kind = None;
         let mut sampler_address = None;
         let mut sampler_mipmap = None;
-        let mut is_buffer_out = false;
         for attr in &field.attrs {
             if !attr.path().is_ident("gpu") {
                 continue;
@@ -170,17 +169,6 @@ pub fn parse_fields(data: &syn::DataStruct) -> syn::Result<Vec<ParsedField>> {
         } else {
             false
         };
-        if let syn::Type::Path(tp) = &field.ty {
-            if tp
-                .path
-                .segments
-                .last()
-                .map(|s| s.ident == "BufferOut")
-                .unwrap_or(false)
-            {
-                is_buffer_out = true;
-            }
-        }
         parsed_fields.push(ParsedField {
             ident,
             binding: binding_idx,
@@ -199,7 +187,6 @@ pub fn parse_fields(data: &syn::DataStruct) -> syn::Result<Vec<ParsedField>> {
             sampler_kind,
             sampler_address,
             sampler_mipmap,
-            _is_buffer_out: is_buffer_out,
             is_state,
         });
     }
