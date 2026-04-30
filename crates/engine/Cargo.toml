@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-engine"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 description = "High-level engine facade for planning and running Daedalus graphs."
 license.workspace = true
@@ -11,19 +11,14 @@ readme = "README.md"
 keywords = ["dataflow", "engine", "runtime"]
 categories = ["concurrency"]
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/lib.rs"
 
-[[bench]]
-name = "plan_cache"
-harness = false
-
-[[bench]]
-name = "warm_engine"
-harness = false
-
 [features]
-default = ["config-env", "metrics"]
+default = ["config-env", "executor-pool", "metrics"]
 config-env = ["serde", "serde_json"]
 gpu = ["daedalus-runtime/gpu", "daedalus-planner/gpu", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-runtime/gpu-mock", "daedalus-gpu/gpu-mock"]
@@ -31,18 +26,22 @@ lockfree-queues = ["daedalus-runtime/lockfree-queues"]
 executor-pool = ["daedalus-runtime/executor-pool"]
 metrics = ["daedalus-runtime/metrics"]
 snapshots = ["daedalus-runtime/snapshots"]
+plugins = ["daedalus-runtime/plugins"]
 
 [dependencies]
-daedalus-runtime = { version = "1.0.0", path = "../runtime", default-features = false }
-daedalus-planner = { version = "1.0.0", path = "../planner", default-features = false }
-daedalus-registry = { version = "1.0.0", path = "../registry", default-features = false }
+daedalus-runtime = { version = "2.0.0", path = "../runtime", default-features = false }
+daedalus-data = { workspace = true }
+daedalus-planner = { version = "2.0.0", path = "../planner", default-features = false }
+daedalus-registry = { version = "2.0.0", path = "../registry", default-features = false }
+daedalus-transport = { workspace = true }
 daedalus-gpu = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-daedalus-data = { workspace = true }
+daedalus-transport = { workspace = true }
 serde_json = { workspace = true }
 criterion = { workspace = true }

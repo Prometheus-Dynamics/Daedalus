@@ -1,399 +1,110 @@
+mod context;
+mod resources;
+
+pub use context::{ExecutionContext, RuntimeResources};
+pub use resources::{
+    ManagedByteBuffer, ManagedResource, NodeResourceSnapshot, ResourceClass,
+    ResourceLifecycleEvent, ResourceUsage,
+};
+
+pub use crate::StateError;
+use resources::{ResourceEntry, ResourceStorage, SharedNodeResources};
 use std::any::Any;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::sync::{Arc, RwLock};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourceClass {
-    #[default]
-    FrameScratch,
-    WarmCache,
-    PersistentState,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResourceLifecycleEvent {
-    #[default]
-    BeforeFrame,
-    AfterFrame,
-    MemoryPressure,
-    Idle,
-    Stop,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ResourceUsage {
-    pub live_bytes: u64,
-    pub retained_bytes: u64,
-    #[serde(default)]
-    pub touched_bytes: u64,
-    #[serde(default)]
-    pub allocation_events: u64,
-}
-
-impl ResourceUsage {
-    fn new(live_bytes: u64, retained_bytes: u64) -> Self {
-        Self {
-            live_bytes,
-            retained_bytes: retained_bytes.max(live_bytes),
-            touched_bytes: live_bytes,
-            allocation_events: 0,
-        }
-    }
-
-    fn with_details(
-        live_bytes: u64,
-        retained_bytes: u64,
-        touched_bytes: u64,
-        allocation_events: u64,
-    ) -> Self {
-        Self {
-            live_bytes,
-            retained_bytes: retained_bytes.max(live_bytes),
-            touched_bytes,
-            allocation_events,
-        }
-    }
-
-    fn clear_live(&mut self) {
-        self.live_bytes = 0;
-        self.touched_bytes = 0;
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct NodeResourceSnapshot {
-    pub frame_scratch: ResourceUsage,
-    pub warm_cache: ResourceUsage,
-    pub persistent_state: ResourceUsage,
-}
-
-impl NodeResourceSnapshot {
-    fn add_usage(&mut self, class: ResourceClass, usage: ResourceUsage) {
-        let target = match class {
-            ResourceClass::FrameScratch => &mut self.frame_scratch,
-            ResourceClass::WarmCache => &mut self.warm_cache,
-            ResourceClass::PersistentState => &mut self.persistent_state,
-        };
-        target.live_bytes = target.live_bytes.saturating_add(usage.live_bytes);
-        target.retained_bytes = target.retained_bytes.saturating_add(usage.retained_bytes);
-        target.touched_bytes = target.touched_bytes.saturating_add(usage.touched_bytes);
-        target.allocation_events = target
-            .allocation_events
-            .saturating_add(usage.allocation_events);
-    }
-}
-
-struct ResourceEntry {
-    class: ResourceClass,
-    storage: ResourceStorage,
-}
-
-impl ResourceEntry {
-    fn usage(&self) -> ResourceUsage {
-        match &self.storage {
-            ResourceStorage::Usage(usage) => *usage,
-            ResourceStorage::Managed(managed) => managed.usage(),
-        }
-    }
-
-    fn apply_lifecycle(&mut self, event: ResourceLifecycleEvent) {
-        match &mut self.storage {
-            ResourceStorage::Usage(usage) => match event {
-                ResourceLifecycleEvent::BeforeFrame => {
-                    if self.class == ResourceClass::FrameScratch {
-                        usage.clear_live();
-                    }
-                }
-                ResourceLifecycleEvent::AfterFrame => {}
-                ResourceLifecycleEvent::MemoryPressure => match self.class {
-                    ResourceClass::FrameScratch => {
-                        *usage = ResourceUsage::default();
-                    }
-                    ResourceClass::WarmCache => {
-                        usage.retained_bytes = usage.live_bytes;
-                    }
-                    ResourceClass::PersistentState => {
-                        usage.retained_bytes = usage.retained_bytes.max(usage.live_bytes);
-                    }
-                },
-                ResourceLifecycleEvent::Idle => match self.class {
-                    ResourceClass::FrameScratch => {
-                        *usage = ResourceUsage::default();
-                    }
-                    ResourceClass::WarmCache => {
-                        usage.live_bytes = 0;
-                        usage.retained_bytes = 0;
-                    }
-                    ResourceClass::PersistentState => {
-                        usage.live_bytes = 0;
-                    }
-                },
-                ResourceLifecycleEvent::Stop => {}
-            },
-            ResourceStorage::Managed(managed) => match event {
-                ResourceLifecycleEvent::BeforeFrame => managed.before_frame(),
-                ResourceLifecycleEvent::AfterFrame => managed.after_frame(),
-                ResourceLifecycleEvent::MemoryPressure => managed.on_memory_pressure(),
-                ResourceLifecycleEvent::Idle => managed.on_idle(),
-                ResourceLifecycleEvent::Stop => managed.on_stop(),
-            },
-        }
-    }
-}
-
-enum ResourceStorage {
-    Usage(ResourceUsage),
-    Managed(Box<dyn ManagedResourceBox>),
-}
-
-pub trait ManagedResource: Send + Sync + 'static {
-    fn live_bytes(&self) -> u64 {
-        0
-    }
-
-    fn retained_bytes(&self) -> u64 {
-        self.live_bytes()
-    }
-
-    fn touched_bytes(&self) -> u64 {
-        self.live_bytes()
-    }
-
-    fn allocation_events(&self) -> u64 {
-        0
-    }
-
-    fn before_frame(&mut self) {}
-
-    fn after_frame(&mut self) {}
-
-    fn on_memory_pressure(&mut self) {}
-
-    fn on_idle(&mut self) {}
-
-    fn on_stop(&mut self) {}
-}
-
-trait ManagedResourceBox: Send + Sync {
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn usage(&self) -> ResourceUsage;
-    fn before_frame(&mut self);
-    fn after_frame(&mut self);
-    fn on_memory_pressure(&mut self);
-    fn on_idle(&mut self);
-    fn on_stop(&mut self);
-}
-
-impl<T: ManagedResource> ManagedResourceBox for T {
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn usage(&self) -> ResourceUsage {
-        ResourceUsage::with_details(
-            self.live_bytes(),
-            self.retained_bytes(),
-            self.touched_bytes(),
-            self.allocation_events(),
-        )
-    }
-
-    fn before_frame(&mut self) {
-        ManagedResource::before_frame(self);
-    }
-
-    fn after_frame(&mut self) {
-        ManagedResource::after_frame(self);
-    }
-
-    fn on_memory_pressure(&mut self) {
-        ManagedResource::on_memory_pressure(self);
-    }
-
-    fn on_idle(&mut self) {
-        ManagedResource::on_idle(self);
-    }
-
-    fn on_stop(&mut self) {
-        ManagedResource::on_stop(self);
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-enum ManagedByteBufferPolicy {
-    #[default]
-    FrameScratch,
-    WarmCache,
-    PersistentState,
-}
-
-/// Runtime-managed reusable byte buffer for scratch, cache, or persistent byte state.
-#[derive(Clone, Debug, Default)]
-pub struct ManagedByteBuffer {
-    bytes: Vec<u8>,
-    live_len: usize,
-    touched_bytes: u64,
-    allocation_events: u64,
-    policy: ManagedByteBufferPolicy,
-}
-
-impl ManagedByteBuffer {
-    pub fn frame_scratch() -> Self {
-        Self {
-            policy: ManagedByteBufferPolicy::FrameScratch,
-            ..Default::default()
-        }
-    }
-
-    pub fn warm_cache() -> Self {
-        Self {
-            policy: ManagedByteBufferPolicy::WarmCache,
-            ..Default::default()
-        }
-    }
-
-    pub fn persistent_state() -> Self {
-        Self {
-            policy: ManagedByteBufferPolicy::PersistentState,
-            ..Default::default()
-        }
-    }
-
-    pub fn prepare(&mut self, len: usize) -> &mut [u8] {
-        if self.bytes.capacity() < len {
-            self.allocation_events = self.allocation_events.saturating_add(1);
-        }
-        if self.bytes.len() < len {
-            self.bytes.resize(len, 0);
-        } else {
-            self.bytes[..len].fill(0);
-            self.bytes.truncate(len);
-        }
-        self.live_len = len;
-        self.touched_bytes = self.touched_bytes.saturating_add(len as u64);
-        &mut self.bytes[..len]
-    }
-
-    pub fn reserve_exact(&mut self, capacity: usize) {
-        if self.bytes.capacity() < capacity {
-            self.bytes
-                .reserve_exact(capacity.saturating_sub(self.bytes.capacity()));
-            self.allocation_events = self.allocation_events.saturating_add(1);
-        }
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        &self.bytes[..self.live_len]
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.touched_bytes = self.touched_bytes.saturating_add(self.live_len as u64);
-        &mut self.bytes[..self.live_len]
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.bytes.capacity()
-    }
-
-    pub fn len(&self) -> usize {
-        self.live_len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.live_len == 0
-    }
-
-    pub fn clear_live(&mut self) {
-        self.live_len = 0;
-        self.bytes.clear();
-    }
-}
-
-impl ManagedResource for ManagedByteBuffer {
-    fn live_bytes(&self) -> u64 {
-        self.live_len as u64
-    }
-
-    fn retained_bytes(&self) -> u64 {
-        self.bytes.capacity() as u64
-    }
-
-    fn touched_bytes(&self) -> u64 {
-        self.touched_bytes
-    }
-
-    fn allocation_events(&self) -> u64 {
-        self.allocation_events
-    }
-
-    fn before_frame(&mut self) {
-        if self.policy == ManagedByteBufferPolicy::FrameScratch {
-            self.clear_live();
-            self.touched_bytes = 0;
-        }
-    }
-
-    fn after_frame(&mut self) {
-        if self.policy == ManagedByteBufferPolicy::FrameScratch {
-            self.touched_bytes = 0;
-        }
-    }
-
-    fn on_memory_pressure(&mut self) {
-        match self.policy {
-            ManagedByteBufferPolicy::FrameScratch => {
-                self.clear_live();
-                self.bytes.shrink_to_fit();
-            }
-            ManagedByteBufferPolicy::WarmCache => {
-                self.bytes.shrink_to(self.live_len);
-            }
-            ManagedByteBufferPolicy::PersistentState => {}
-        }
-        self.touched_bytes = 0;
-    }
-
-    fn on_idle(&mut self) {
-        match self.policy {
-            ManagedByteBufferPolicy::FrameScratch | ManagedByteBufferPolicy::WarmCache => {
-                self.clear_live();
-                self.bytes.shrink_to_fit();
-            }
-            ManagedByteBufferPolicy::PersistentState => {
-                self.live_len = 0;
-            }
-        }
-        self.touched_bytes = 0;
-    }
-
-    fn on_stop(&mut self) {
-        self.clear_live();
-        self.bytes.shrink_to_fit();
-        self.touched_bytes = 0;
-    }
-}
 
 /// Shared runtime state store keyed by node id.
 #[derive(Default, Clone)]
 pub struct StateStore {
     inner: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     native: Arc<RwLock<HashMap<String, Box<dyn Any + Send + Sync>>>>,
-    resources: Arc<RwLock<HashMap<String, HashMap<String, ResourceEntry>>>>,
+    resources: Arc<RwLock<HashMap<String, SharedNodeResources>>>,
+    custom_metrics:
+        Arc<RwLock<HashMap<String, BTreeMap<String, crate::executor::CustomMetricValue>>>>,
+}
+
+struct ManagedResourceRestore {
+    node_resources: SharedNodeResources,
+    node_id: String,
+    name: String,
+    class: ResourceClass,
+    managed: Option<Box<dyn resources::ManagedResourceBox>>,
+}
+
+impl ManagedResourceRestore {
+    fn new(
+        node_resources: SharedNodeResources,
+        node_id: String,
+        name: String,
+        class: ResourceClass,
+        managed: Box<dyn resources::ManagedResourceBox>,
+    ) -> Self {
+        Self {
+            node_resources,
+            node_id,
+            name,
+            class,
+            managed: Some(managed),
+        }
+    }
+
+    fn managed_mut(&mut self) -> Option<&mut Box<dyn resources::ManagedResourceBox>> {
+        self.managed.as_mut()
+    }
+
+    fn restore(mut self) -> Result<(), StateError> {
+        self.restore_inner()
+    }
+
+    fn restore_inner(&mut self) -> Result<(), StateError> {
+        let Some(managed) = self.managed.take() else {
+            return Ok(());
+        };
+        let mut node_resources = self
+            .node_resources
+            .lock()
+            .map_err(|_| StateError::lock("state node resource"))?;
+        let entry = node_resources
+            .entry(self.name.clone())
+            .or_insert(ResourceEntry {
+                class: self.class,
+                storage: ResourceStorage::InUse(ResourceUsage::default()),
+            });
+        entry.storage = ResourceStorage::Managed(managed);
+        if entry.class != self.class {
+            return Err(StateError::resource_class_mismatch(
+                &self.node_id,
+                &self.name,
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ManagedResourceRestore {
+    fn drop(&mut self) {
+        let _ = self.restore_inner();
+    }
 }
 
 impl StateStore {
     pub fn get(&self, key: &str) -> Option<serde_json::Value> {
-        self.inner.read().ok().and_then(|m| m.get(key).cloned())
+        match self.inner.read() {
+            Ok(m) => m.get(key).cloned(),
+            Err(_) => {
+                tracing::warn!(
+                    target: "daedalus_runtime::state",
+                    key,
+                    "state read lock poisoned"
+                );
+                None
+            }
+        }
     }
 
     /// Fallible getter for raw values.
-    pub fn get_result(&self, key: &str) -> Result<Option<serde_json::Value>, String> {
-        let guard = self
-            .inner
-            .read()
-            .map_err(|_| "state lock poisoned".to_string())?;
+    pub fn get_result(&self, key: &str) -> Result<Option<serde_json::Value>, StateError> {
+        let guard = self.inner.read().map_err(|_| StateError::lock("state"))?;
         Ok(guard.get(key).cloned())
     }
 
@@ -401,15 +112,12 @@ impl StateStore {
     pub fn get_checked<T: serde::de::DeserializeOwned>(
         &self,
         key: &str,
-    ) -> Result<Option<T>, String> {
-        let guard = self
-            .inner
-            .read()
-            .map_err(|_| "state lock poisoned".to_string())?;
+    ) -> Result<Option<T>, StateError> {
+        let guard = self.inner.read().map_err(|_| StateError::lock("state"))?;
         if let Some(val) = guard.get(key) {
             serde_json::from_value(val.clone())
                 .map(Some)
-                .map_err(|e| format!("serde error: {e}"))
+                .map_err(Into::into)
         } else {
             Ok(None)
         }
@@ -423,11 +131,11 @@ impl StateStore {
     pub fn get_native<T: Clone + Send + Sync + 'static>(
         &self,
         key: &str,
-    ) -> Result<Option<T>, String> {
+    ) -> Result<Option<T>, StateError> {
         let guard = self
             .native
             .read()
-            .map_err(|_| "state native lock poisoned".to_string())?;
+            .map_err(|_| StateError::lock("state native"))?;
         let Some(value) = guard.get(key) else {
             return Ok(None);
         };
@@ -435,15 +143,18 @@ impl StateStore {
             .downcast_ref::<T>()
             .cloned()
             .map(Some)
-            .ok_or_else(|| format!("state type mismatch for key '{key}'"))
+            .ok_or_else(|| StateError::state_type_mismatch(key))
     }
 
     /// Fallible getter that moves a native typed value out of the store without cloning it.
-    pub fn take_native<T: Send + Sync + 'static>(&self, key: &str) -> Result<Option<T>, String> {
+    pub fn take_native<T: Send + Sync + 'static>(
+        &self,
+        key: &str,
+    ) -> Result<Option<T>, StateError> {
         let mut guard = self
             .native
             .write()
-            .map_err(|_| "state native lock poisoned".to_string())?;
+            .map_err(|_| StateError::lock("state native"))?;
         let Some(value) = guard.remove(key) else {
             return Ok(None);
         };
@@ -451,39 +162,58 @@ impl StateStore {
             Ok(value) => Ok(Some(*value)),
             Err(value) => {
                 guard.insert(key.to_string(), value);
-                Err(format!("state type mismatch for key '{key}'"))
+                Err(StateError::state_type_mismatch(key))
             }
         }
     }
 
-    pub fn set(&self, key: &str, value: serde_json::Value) -> Result<(), String> {
-        let mut m = self
-            .inner
-            .write()
-            .map_err(|_| "state lock poisoned".to_string())?;
+    pub fn set(&self, key: &str, value: serde_json::Value) -> Result<(), StateError> {
+        let mut m = self.inner.write().map_err(|_| StateError::lock("state"))?;
         m.insert(key.to_string(), value);
         drop(m);
-        if let Ok(mut native) = self.native.write() {
-            native.remove(key);
+        match self.native.write() {
+            Ok(mut native) => {
+                native.remove(key);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "daedalus_runtime::state",
+                    key,
+                    "state native lock poisoned while clearing stale native value"
+                );
+            }
         }
         Ok(())
     }
 
-    pub fn set_typed<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), String> {
-        let json = serde_json::to_value(value).map_err(|e| format!("serde error: {e}"))?;
+    pub fn set_typed<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), StateError> {
+        let json = serde_json::to_value(value)?;
         self.set(key, json)
     }
 
     /// Store a native typed value without serializing it through `serde_json`.
-    pub fn set_native<T: Send + Sync + 'static>(&self, key: &str, value: T) -> Result<(), String> {
+    pub fn set_native<T: Send + Sync + 'static>(
+        &self,
+        key: &str,
+        value: T,
+    ) -> Result<(), StateError> {
         let mut native = self
             .native
             .write()
-            .map_err(|_| "state native lock poisoned".to_string())?;
+            .map_err(|_| StateError::lock("state native"))?;
         native.insert(key.to_string(), Box::new(value));
         drop(native);
-        if let Ok(mut json) = self.inner.write() {
-            json.remove(key);
+        match self.inner.write() {
+            Ok(mut json) => {
+                json.remove(key);
+            }
+            Err(_) => {
+                tracing::warn!(
+                    target: "daedalus_runtime::state",
+                    key,
+                    "state lock poisoned while clearing stale json value"
+                );
+            }
         }
         Ok(())
     }
@@ -495,12 +225,11 @@ impl StateStore {
         class: ResourceClass,
         live_bytes: u64,
         retained_bytes: u64,
-    ) -> Result<(), String> {
-        let mut resources = self
-            .resources
-            .write()
-            .map_err(|_| "state resource lock poisoned".to_string())?;
-        let node_resources = resources.entry(node_id.to_string()).or_default();
+    ) -> Result<(), StateError> {
+        let node_resources = self.node_resources(node_id)?;
+        let mut node_resources = node_resources
+            .lock()
+            .map_err(|_| StateError::lock("state node resource"))?;
         node_resources.insert(
             name.to_string(),
             ResourceEntry {
@@ -511,6 +240,44 @@ impl StateStore {
         Ok(())
     }
 
+    pub fn record_node_custom_metric(
+        &self,
+        node_id: &str,
+        name: impl Into<String>,
+        value: crate::executor::CustomMetricValue,
+    ) -> Result<(), StateError> {
+        let mut metrics = self
+            .custom_metrics
+            .write()
+            .map_err(|_| StateError::lock("state custom metrics"))?;
+        let entry = metrics.entry(node_id.to_string()).or_default();
+        entry
+            .entry(name.into())
+            .and_modify(|existing| existing.merge(value.clone()))
+            .or_insert(value);
+        Ok(())
+    }
+
+    pub(crate) fn clear_node_custom_metrics(&self, node_id: &str) -> Result<(), StateError> {
+        let mut metrics = self
+            .custom_metrics
+            .write()
+            .map_err(|_| StateError::lock("state custom metrics"))?;
+        metrics.remove(node_id);
+        Ok(())
+    }
+
+    pub(crate) fn drain_node_custom_metrics(
+        &self,
+        node_id: &str,
+    ) -> Result<BTreeMap<String, crate::executor::CustomMetricValue>, StateError> {
+        let mut metrics = self
+            .custom_metrics
+            .write()
+            .map_err(|_| StateError::lock("state custom metrics"))?;
+        Ok(metrics.remove(node_id).unwrap_or_default())
+    }
+
     pub fn with_node_resource<T, R, Init, F>(
         &self,
         node_id: &str,
@@ -518,56 +285,105 @@ impl StateStore {
         class: ResourceClass,
         init: Init,
         f: F,
-    ) -> Result<R, String>
+    ) -> Result<R, StateError>
     where
         T: ManagedResource,
         Init: FnOnce() -> T,
         F: FnOnce(&mut T) -> R,
     {
+        let node_resources = self.node_resources(node_id)?;
+        let managed = {
+            let mut node_resources = node_resources
+                .lock()
+                .map_err(|_| StateError::lock("state node resource"))?;
+            let entry = match node_resources.entry(name.to_string()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(ResourceEntry {
+                    class,
+                    storage: ResourceStorage::Managed(Box::new(init())),
+                }),
+            };
+            if entry.class != class {
+                return Err(StateError::resource_class_mismatch(node_id, name));
+            }
+            match std::mem::replace(
+                &mut entry.storage,
+                ResourceStorage::InUse(ResourceUsage::default()),
+            ) {
+                ResourceStorage::Managed(managed) => {
+                    let usage = managed.usage();
+                    entry.storage = ResourceStorage::InUse(usage);
+                    managed
+                }
+                ResourceStorage::Usage(usage) => {
+                    entry.storage = ResourceStorage::Usage(usage);
+                    return Err(StateError::resource_usage_only(node_id, name));
+                }
+                ResourceStorage::InUse(usage) => {
+                    entry.storage = ResourceStorage::InUse(usage);
+                    return Err(StateError::resource_already_borrowed(node_id, name));
+                }
+            }
+        };
+
+        let mut restore = ManagedResourceRestore::new(
+            Arc::clone(&node_resources),
+            node_id.to_string(),
+            name.to_string(),
+            class,
+            managed,
+        );
+
+        let result = if let Some(typed) = restore
+            .managed_mut()
+            .and_then(|managed| managed.as_any_mut().downcast_mut::<T>())
+        {
+            f(typed)
+        } else {
+            restore.restore()?;
+            return Err(StateError::resource_type_mismatch(node_id, name));
+        };
+
+        restore.restore()?;
+        Ok(result)
+    }
+
+    fn node_resources(&self, node_id: &str) -> Result<SharedNodeResources, StateError> {
+        {
+            let resources = self
+                .resources
+                .read()
+                .map_err(|_| StateError::lock("state resource"))?;
+            if let Some(node_resources) = resources.get(node_id) {
+                return Ok(Arc::clone(node_resources));
+            }
+        }
+
         let mut resources = self
             .resources
             .write()
-            .map_err(|_| "state resource lock poisoned".to_string())?;
-        let node_resources = resources.entry(node_id.to_string()).or_default();
-        let mut init = Some(init);
-        let entry = node_resources
-            .entry(name.to_string())
-            .or_insert_with(|| ResourceEntry {
-                class,
-                storage: ResourceStorage::Managed(Box::new(init
-                    .take()
-                    .expect("resource initializer should exist for insertion")(
-                ))),
-            });
-        if entry.class != class {
-            return Err(format!(
-                "resource class mismatch for node '{node_id}' resource '{name}'"
-            ));
-        }
-        let managed = match &mut entry.storage {
-            ResourceStorage::Managed(managed) => managed,
-            ResourceStorage::Usage(_) => {
-                return Err(format!(
-                    "resource '{name}' on node '{node_id}' is tracked as usage-only"
-                ));
-            }
-        };
-        let typed = managed.as_any_mut().downcast_mut::<T>().ok_or_else(|| {
-            format!("resource type mismatch for node '{node_id}' resource '{name}'")
-        })?;
-        Ok(f(typed))
+            .map_err(|_| StateError::lock("state resource"))?;
+        Ok(Arc::clone(
+            resources
+                .entry(node_id.to_string())
+                .or_insert_with(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
+        ))
     }
 
-    pub fn begin_node_resource_frame(&self, node_id: &str) -> Result<(), String> {
+    pub fn begin_node_resource_frame(&self, node_id: &str) -> Result<(), StateError> {
         self.apply_node_resource_lifecycle(node_id, ResourceLifecycleEvent::BeforeFrame)
     }
 
-    pub fn release_node_resources(&self, node_id: &str) -> Result<(), String> {
-        let mut resources = self
+    pub fn release_node_resources(&self, node_id: &str) -> Result<(), StateError> {
+        let node_resources = self
             .resources
             .write()
-            .map_err(|_| "state resource lock poisoned".to_string())?;
-        if let Some(mut node_resources) = resources.remove(node_id) {
+            .map_err(|_| StateError::lock("state resource"))?
+            .remove(node_id);
+        if let Some(node_resources) = node_resources {
+            let mut node_resources = node_resources
+                .lock()
+                .map_err(|_| StateError::lock("state node resource"))?;
             for entry in node_resources.values_mut() {
                 entry.apply_lifecycle(ResourceLifecycleEvent::Stop);
             }
@@ -579,77 +395,116 @@ impl StateStore {
         &self,
         node_id: &str,
         event: ResourceLifecycleEvent,
-    ) -> Result<(), String> {
+    ) -> Result<(), StateError> {
         if matches!(event, ResourceLifecycleEvent::Stop) {
             return self.release_node_resources(node_id);
         }
-        let mut resources = self
-            .resources
-            .write()
-            .map_err(|_| "state resource lock poisoned".to_string())?;
-        let mut remove_node = false;
-        if let Some(node_resources) = resources.get_mut(node_id) {
-            for entry in node_resources.values_mut() {
-                entry.apply_lifecycle(event);
-            }
-            if !remove_node {
-                node_resources.retain(|_, entry| {
-                    entry.usage() != ResourceUsage::default()
-                        || matches!(&entry.storage, ResourceStorage::Managed(_))
-                });
-                remove_node = node_resources.is_empty();
-            }
-        }
-        if remove_node {
-            resources.remove(node_id);
-        }
-        Ok(())
-    }
-
-    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) -> Result<(), String> {
-        if matches!(event, ResourceLifecycleEvent::Stop) {
-            let mut resources = self
+        let Some(node_resources) = ({
+            let resources = self
                 .resources
-                .write()
-                .map_err(|_| "state resource lock poisoned".to_string())?;
-            for node_resources in resources.values_mut() {
-                for entry in node_resources.values_mut() {
-                    entry.apply_lifecycle(ResourceLifecycleEvent::Stop);
-                }
-            }
-            resources.clear();
+                .read()
+                .map_err(|_| StateError::lock("state resource"))?;
+            resources.get(node_id).cloned()
+        }) else {
             return Ok(());
-        }
-        let mut resources = self
-            .resources
-            .write()
-            .map_err(|_| "state resource lock poisoned".to_string())?;
-        let mut empty_nodes = Vec::new();
-        for (node_id, node_resources) in resources.iter_mut() {
+        };
+
+        let remove_node = {
+            let mut node_resources = node_resources
+                .lock()
+                .map_err(|_| StateError::lock("state node resource"))?;
             for entry in node_resources.values_mut() {
                 entry.apply_lifecycle(event);
             }
             node_resources.retain(|_, entry| {
                 entry.usage() != ResourceUsage::default()
-                    || matches!(&entry.storage, ResourceStorage::Managed(_))
+                    || matches!(
+                        &entry.storage,
+                        ResourceStorage::Managed(_) | ResourceStorage::InUse(_)
+                    )
             });
-            if node_resources.is_empty() {
-                empty_nodes.push(node_id.clone());
-            }
-        }
-        for node_id in empty_nodes {
-            resources.remove(&node_id);
+            node_resources.is_empty()
+        };
+        if remove_node {
+            self.remove_node_resources_if_current(node_id, &node_resources)?;
         }
         Ok(())
     }
 
-    pub fn snapshot_node_resources(&self, node_id: &str) -> Result<NodeResourceSnapshot, String> {
-        let resources = self
-            .resources
-            .read()
-            .map_err(|_| "state resource lock poisoned".to_string())?;
+    pub fn apply_resource_lifecycle(
+        &self,
+        event: ResourceLifecycleEvent,
+    ) -> Result<(), StateError> {
+        if matches!(event, ResourceLifecycleEvent::Stop) {
+            let node_resources = self
+                .resources
+                .write()
+                .map_err(|_| StateError::lock("state resource"))?
+                .drain()
+                .map(|(_, node_resources)| node_resources)
+                .collect::<Vec<_>>();
+            for node_resources in node_resources {
+                let mut node_resources = node_resources
+                    .lock()
+                    .map_err(|_| StateError::lock("state node resource"))?;
+                for entry in node_resources.values_mut() {
+                    entry.apply_lifecycle(ResourceLifecycleEvent::Stop);
+                }
+            }
+            return Ok(());
+        }
+
+        let node_resource_sets = {
+            let resources = self
+                .resources
+                .read()
+                .map_err(|_| StateError::lock("state resource"))?;
+            resources
+                .iter()
+                .map(|(node_id, node_resources)| (node_id.clone(), Arc::clone(node_resources)))
+                .collect::<Vec<_>>()
+        };
+        let mut empty_nodes = Vec::new();
+        for (node_id, node_resources) in node_resource_sets {
+            let mut node_resources_guard = node_resources
+                .lock()
+                .map_err(|_| StateError::lock("state node resource"))?;
+            for entry in node_resources_guard.values_mut() {
+                entry.apply_lifecycle(event);
+            }
+            node_resources_guard.retain(|_, entry| {
+                entry.usage() != ResourceUsage::default()
+                    || matches!(
+                        &entry.storage,
+                        ResourceStorage::Managed(_) | ResourceStorage::InUse(_)
+                    )
+            });
+            if node_resources_guard.is_empty() {
+                empty_nodes.push((node_id, Arc::clone(&node_resources)));
+            }
+        }
+        for (node_id, node_resources) in empty_nodes {
+            self.remove_node_resources_if_current(&node_id, &node_resources)?;
+        }
+        Ok(())
+    }
+
+    pub fn snapshot_node_resources(
+        &self,
+        node_id: &str,
+    ) -> Result<NodeResourceSnapshot, StateError> {
+        let node_resources = {
+            let resources = self
+                .resources
+                .read()
+                .map_err(|_| StateError::lock("state resource"))?;
+            resources.get(node_id).cloned()
+        };
         let mut snapshot = NodeResourceSnapshot::default();
-        if let Some(node_resources) = resources.get(node_id) {
+        if let Some(node_resources) = node_resources {
+            let node_resources = node_resources
+                .lock()
+                .map_err(|_| StateError::lock("state node resource"))?;
             for entry in node_resources.values() {
                 snapshot.add_usage(entry.class, entry.usage());
             }
@@ -657,21 +512,32 @@ impl StateStore {
         Ok(snapshot)
     }
 
-    pub fn dump_json(&self) -> Result<String, String> {
-        let m = self
-            .inner
-            .read()
-            .map_err(|_| "state lock poisoned".to_string())?;
-        serde_json::to_string(&*m).map_err(|e| format!("serde error: {e}"))
+    fn remove_node_resources_if_current(
+        &self,
+        node_id: &str,
+        expected: &SharedNodeResources,
+    ) -> Result<(), StateError> {
+        let mut resources = self
+            .resources
+            .write()
+            .map_err(|_| StateError::lock("state resource"))?;
+        if resources
+            .get(node_id)
+            .is_some_and(|current| Arc::ptr_eq(current, expected))
+        {
+            resources.remove(node_id);
+        }
+        Ok(())
     }
 
-    pub fn load_json(&self, json: &str) -> Result<(), String> {
-        let map = serde_json::from_str::<HashMap<String, serde_json::Value>>(json)
-            .map_err(|e| format!("serde error: {e}"))?;
-        let mut guard = self
-            .inner
-            .write()
-            .map_err(|_| "state lock poisoned".to_string())?;
+    pub fn dump_json(&self) -> Result<String, StateError> {
+        let m = self.inner.read().map_err(|_| StateError::lock("state"))?;
+        serde_json::to_string(&*m).map_err(Into::into)
+    }
+
+    pub fn load_json(&self, json: &str) -> Result<(), StateError> {
+        let map = serde_json::from_str::<HashMap<String, serde_json::Value>>(json)?;
+        let mut guard = self.inner.write().map_err(|_| StateError::lock("state"))?;
         *guard = map;
         drop(guard);
         if let Ok(mut native) = self.native.write() {
@@ -684,544 +550,6 @@ impl StateStore {
     }
 }
 
-/// Execution context passed to nodes.
-pub struct ExecutionContext {
-    pub state: StateStore,
-    pub node_id: Arc<str>,
-    pub metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
-    /// Graph-level metadata (typed values) shared by all nodes in the graph.
-    pub graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
-    #[cfg(feature = "gpu")]
-    pub gpu: Option<GpuContextHandle>,
-}
-
-#[cfg(feature = "gpu")]
-pub type GpuContextHandle = daedalus_gpu::GpuContextHandle;
-
-pub struct RuntimeResources<'a> {
-    state: &'a StateStore,
-    node_id: &'a str,
-}
-
-impl<'a> RuntimeResources<'a> {
-    pub fn node_id(&self) -> &str {
-        self.node_id
-    }
-
-    pub fn before_frame(&self) -> Result<(), String> {
-        self.state
-            .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::BeforeFrame)
-    }
-
-    pub fn after_frame(&self) -> Result<(), String> {
-        self.state
-            .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::AfterFrame)
-    }
-
-    pub fn on_memory_pressure(&self) -> Result<(), String> {
-        self.state
-            .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::MemoryPressure)
-    }
-
-    pub fn on_idle(&self) -> Result<(), String> {
-        self.state
-            .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::Idle)
-    }
-
-    pub fn on_stop(&self) -> Result<(), String> {
-        self.state.release_node_resources(self.node_id)
-    }
-
-    pub fn snapshot(&self) -> Result<NodeResourceSnapshot, String> {
-        self.state.snapshot_node_resources(self.node_id)
-    }
-
-    pub fn record_frame_scratch_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), String> {
-        self.state.record_node_resource_usage(
-            self.node_id,
-            name,
-            ResourceClass::FrameScratch,
-            live_bytes,
-            retained_bytes,
-        )
-    }
-
-    pub fn record_warm_cache_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), String> {
-        self.state.record_node_resource_usage(
-            self.node_id,
-            name,
-            ResourceClass::WarmCache,
-            live_bytes,
-            retained_bytes,
-        )
-    }
-
-    pub fn record_persistent_state_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), String> {
-        self.state.record_node_resource_usage(
-            self.node_id,
-            name,
-            ResourceClass::PersistentState,
-            live_bytes,
-            retained_bytes,
-        )
-    }
-
-    pub fn with_frame_scratch<T, R, Init, F>(
-        &self,
-        name: &str,
-        init: Init,
-        f: F,
-    ) -> Result<R, String>
-    where
-        T: ManagedResource,
-        Init: FnOnce() -> T,
-        F: FnOnce(&mut T) -> R,
-    {
-        self.state
-            .with_node_resource(self.node_id, name, ResourceClass::FrameScratch, init, f)
-    }
-
-    pub fn with_warm_cache<T, R, Init, F>(&self, name: &str, init: Init, f: F) -> Result<R, String>
-    where
-        T: ManagedResource,
-        Init: FnOnce() -> T,
-        F: FnOnce(&mut T) -> R,
-    {
-        self.state
-            .with_node_resource(self.node_id, name, ResourceClass::WarmCache, init, f)
-    }
-
-    pub fn with_persistent_state<T, R, Init, F>(
-        &self,
-        name: &str,
-        init: Init,
-        f: F,
-    ) -> Result<R, String>
-    where
-        T: ManagedResource,
-        Init: FnOnce() -> T,
-        F: FnOnce(&mut T) -> R,
-    {
-        self.state
-            .with_node_resource(self.node_id, name, ResourceClass::PersistentState, init, f)
-    }
-
-    pub fn with_frame_scratch_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        self.with_frame_scratch(name, ManagedByteBuffer::frame_scratch, |buffer| {
-            let bytes = buffer.prepare(len);
-            f(bytes)
-        })
-    }
-
-    pub fn with_warm_cache_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        self.with_warm_cache(name, ManagedByteBuffer::warm_cache, |buffer| {
-            let bytes = buffer.prepare(len);
-            f(bytes)
-        })
-    }
-
-    pub fn with_persistent_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        self.with_persistent_state(name, ManagedByteBuffer::persistent_state, |buffer| {
-            let bytes = buffer.prepare(len);
-            f(bytes)
-        })
-    }
-}
-
-impl ExecutionContext {
-    pub fn resources(&self) -> RuntimeResources<'_> {
-        RuntimeResources {
-            state: &self.state,
-            node_id: &self.node_id,
-        }
-    }
-
-    pub fn begin_resource_frame(&self) -> Result<(), String> {
-        self.resources().before_frame()
-    }
-
-    pub fn snapshot_resources(&self) -> Result<NodeResourceSnapshot, String> {
-        self.resources().snapshot()
-    }
-
-    pub fn end_resource_frame(&self) -> Result<(), String> {
-        self.resources().after_frame()
-    }
-
-    pub fn apply_memory_pressure(&self) -> Result<(), String> {
-        self.resources().on_memory_pressure()
-    }
-
-    pub fn notify_idle(&self) -> Result<(), String> {
-        self.resources().on_idle()
-    }
-
-    pub fn release_resources(&self) -> Result<(), String> {
-        self.resources().on_stop()
-    }
-
-    pub fn record_frame_scratch_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), String> {
-        self.resources()
-            .record_frame_scratch_bytes(name, live_bytes, retained_bytes)
-    }
-
-    pub fn record_warm_cache_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), String> {
-        self.resources()
-            .record_warm_cache_bytes(name, live_bytes, retained_bytes)
-    }
-
-    pub fn record_persistent_state_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), String> {
-        self.resources()
-            .record_persistent_state_bytes(name, live_bytes, retained_bytes)
-    }
-
-    pub fn with_frame_scratch<T, R, Init, F>(
-        &self,
-        name: &str,
-        init: Init,
-        f: F,
-    ) -> Result<R, String>
-    where
-        T: ManagedResource,
-        Init: FnOnce() -> T,
-        F: FnOnce(&mut T) -> R,
-    {
-        self.resources().with_frame_scratch(name, init, f)
-    }
-
-    pub fn with_warm_cache<T, R, Init, F>(&self, name: &str, init: Init, f: F) -> Result<R, String>
-    where
-        T: ManagedResource,
-        Init: FnOnce() -> T,
-        F: FnOnce(&mut T) -> R,
-    {
-        self.resources().with_warm_cache(name, init, f)
-    }
-
-    pub fn with_persistent_state<T, R, Init, F>(
-        &self,
-        name: &str,
-        init: Init,
-        f: F,
-    ) -> Result<R, String>
-    where
-        T: ManagedResource,
-        Init: FnOnce() -> T,
-        F: FnOnce(&mut T) -> R,
-    {
-        self.resources().with_persistent_state(name, init, f)
-    }
-
-    pub fn with_frame_scratch_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        self.resources().with_frame_scratch_bytes(name, len, f)
-    }
-
-    pub fn with_warm_cache_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        self.resources().with_warm_cache_bytes(name, len, f)
-    }
-
-    pub fn with_persistent_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, String>
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        self.resources().with_persistent_bytes(name, len, f)
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-
-    use super::{
-        ExecutionContext, ManagedResource, NodeResourceSnapshot, ResourceClass,
-        ResourceLifecycleEvent, StateStore,
-    };
-
-    #[test]
-    fn begin_resource_frame_clears_only_frame_scratch_live_bytes() {
-        let state = StateStore::default();
-        state
-            .record_node_resource_usage("node", "scratch", ResourceClass::FrameScratch, 64, 128)
-            .unwrap();
-        state
-            .record_node_resource_usage("node", "cache", ResourceClass::WarmCache, 32, 96)
-            .unwrap();
-
-        state.begin_node_resource_frame("node").unwrap();
-
-        let snapshot = state.snapshot_node_resources("node").unwrap();
-        assert_eq!(
-            snapshot,
-            NodeResourceSnapshot {
-                frame_scratch: super::ResourceUsage {
-                    live_bytes: 0,
-                    retained_bytes: 128,
-                    touched_bytes: 0,
-                    allocation_events: 0,
-                },
-                warm_cache: super::ResourceUsage {
-                    live_bytes: 32,
-                    retained_bytes: 96,
-                    touched_bytes: 32,
-                    allocation_events: 0,
-                },
-                persistent_state: super::ResourceUsage::default(),
-            }
-        );
-    }
-
-    #[test]
-    fn snapshot_node_resources_aggregates_by_class() {
-        let state = StateStore::default();
-        state
-            .record_node_resource_usage("node", "scratch-a", ResourceClass::FrameScratch, 10, 20)
-            .unwrap();
-        state
-            .record_node_resource_usage("node", "scratch-b", ResourceClass::FrameScratch, 5, 12)
-            .unwrap();
-        state
-            .record_node_resource_usage("node", "persistent", ResourceClass::PersistentState, 7, 9)
-            .unwrap();
-
-        let snapshot = state.snapshot_node_resources("node").unwrap();
-        assert_eq!(snapshot.frame_scratch.live_bytes, 15);
-        assert_eq!(snapshot.frame_scratch.retained_bytes, 32);
-        assert_eq!(snapshot.persistent_state.live_bytes, 7);
-        assert_eq!(snapshot.persistent_state.retained_bytes, 9);
-    }
-
-    #[test]
-    fn memory_pressure_compacts_caches_and_drops_frame_scratch() {
-        let state = StateStore::default();
-        state
-            .record_node_resource_usage("node", "scratch", ResourceClass::FrameScratch, 10, 20)
-            .unwrap();
-        state
-            .record_node_resource_usage("node", "cache", ResourceClass::WarmCache, 8, 30)
-            .unwrap();
-
-        state
-            .apply_node_resource_lifecycle("node", ResourceLifecycleEvent::MemoryPressure)
-            .unwrap();
-
-        let snapshot = state.snapshot_node_resources("node").unwrap();
-        assert_eq!(snapshot.frame_scratch.live_bytes, 0);
-        assert_eq!(snapshot.frame_scratch.retained_bytes, 0);
-        assert_eq!(snapshot.warm_cache.live_bytes, 8);
-        assert_eq!(snapshot.warm_cache.retained_bytes, 8);
-    }
-
-    #[test]
-    fn stop_lifecycle_removes_node_resources() {
-        let state = StateStore::default();
-        state
-            .record_node_resource_usage("node", "persistent", ResourceClass::PersistentState, 5, 9)
-            .unwrap();
-
-        state
-            .apply_node_resource_lifecycle("node", ResourceLifecycleEvent::Stop)
-            .unwrap();
-
-        assert_eq!(
-            state.snapshot_node_resources("node").unwrap(),
-            NodeResourceSnapshot::default()
-        );
-    }
-
-    struct TestManagedResource {
-        live: u64,
-        retained: u64,
-        before_frame_runs: Arc<AtomicUsize>,
-        after_frame_runs: Arc<AtomicUsize>,
-        memory_pressure_runs: Arc<AtomicUsize>,
-        idle_runs: Arc<AtomicUsize>,
-        stop_runs: Arc<AtomicUsize>,
-    }
-
-    impl ManagedResource for TestManagedResource {
-        fn live_bytes(&self) -> u64 {
-            self.live
-        }
-
-        fn retained_bytes(&self) -> u64 {
-            self.retained
-        }
-
-        fn before_frame(&mut self) {
-            self.live = 0;
-            self.before_frame_runs.fetch_add(1, Ordering::SeqCst);
-        }
-
-        fn after_frame(&mut self) {
-            self.after_frame_runs.fetch_add(1, Ordering::SeqCst);
-        }
-
-        fn on_memory_pressure(&mut self) {
-            self.retained = self.live;
-            self.memory_pressure_runs.fetch_add(1, Ordering::SeqCst);
-        }
-
-        fn on_idle(&mut self) {
-            self.live = 0;
-            self.idle_runs.fetch_add(1, Ordering::SeqCst);
-        }
-
-        fn on_stop(&mut self) {
-            self.stop_runs.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    fn test_context(state: StateStore) -> ExecutionContext {
-        ExecutionContext {
-            state,
-            node_id: Arc::<str>::from("node"),
-            metadata: Arc::new(BTreeMap::new()),
-            graph_metadata: Arc::new(BTreeMap::new()),
-            #[cfg(feature = "gpu")]
-            gpu: None,
-        }
-    }
-
-    #[test]
-    fn managed_resources_are_reused_and_snapshotted() {
-        let state = StateStore::default();
-        let ctx = test_context(state);
-        let before = Arc::new(AtomicUsize::new(0));
-        let after = Arc::new(AtomicUsize::new(0));
-        let pressure = Arc::new(AtomicUsize::new(0));
-        let idle = Arc::new(AtomicUsize::new(0));
-        let stop = Arc::new(AtomicUsize::new(0));
-
-        ctx.with_warm_cache(
-            "cache",
-            || TestManagedResource {
-                live: 10,
-                retained: 20,
-                before_frame_runs: before.clone(),
-                after_frame_runs: after.clone(),
-                memory_pressure_runs: pressure.clone(),
-                idle_runs: idle.clone(),
-                stop_runs: stop.clone(),
-            },
-            |resource| {
-                resource.live = 18;
-                resource.retained = 30;
-            },
-        )
-        .unwrap();
-
-        ctx.with_warm_cache::<TestManagedResource, _, _, _>(
-            "cache",
-            || unreachable!("managed resource should already exist"),
-            |resource| {
-                resource.live = 22;
-            },
-        )
-        .unwrap();
-
-        let snapshot = ctx.snapshot_resources().unwrap();
-        assert_eq!(snapshot.warm_cache.live_bytes, 22);
-        assert_eq!(snapshot.warm_cache.retained_bytes, 30);
-
-        ctx.begin_resource_frame().unwrap();
-        ctx.end_resource_frame().unwrap();
-        ctx.apply_memory_pressure().unwrap();
-        ctx.notify_idle().unwrap();
-        ctx.release_resources().unwrap();
-
-        assert_eq!(before.load(Ordering::SeqCst), 1);
-        assert_eq!(after.load(Ordering::SeqCst), 1);
-        assert_eq!(pressure.load(Ordering::SeqCst), 1);
-        assert_eq!(idle.load(Ordering::SeqCst), 1);
-        assert_eq!(stop.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            ctx.snapshot_resources().unwrap(),
-            NodeResourceSnapshot::default()
-        );
-    }
-
-    #[test]
-    fn managed_byte_buffer_helpers_track_touch_and_reuse_capacity() {
-        let state = StateStore::default();
-        let ctx = test_context(state);
-
-        ctx.with_frame_scratch_bytes("scratch", 16, |bytes| {
-            bytes[0] = 7;
-            bytes[15] = 9;
-        })
-        .unwrap();
-
-        let first = ctx.snapshot_resources().unwrap();
-        let first_retained = first.frame_scratch.retained_bytes;
-        assert_eq!(first.frame_scratch.live_bytes, 16);
-        assert_eq!(first.frame_scratch.touched_bytes, 16);
-        assert_eq!(first.frame_scratch.allocation_events, 1);
-        assert!(first_retained >= 16);
-
-        ctx.begin_resource_frame().unwrap();
-
-        let reset = ctx.snapshot_resources().unwrap();
-        assert_eq!(reset.frame_scratch.live_bytes, 0);
-        assert_eq!(reset.frame_scratch.touched_bytes, 0);
-        assert_eq!(reset.frame_scratch.retained_bytes, first_retained);
-        assert_eq!(reset.frame_scratch.allocation_events, 1);
-
-        ctx.with_frame_scratch_bytes("scratch", 8, |bytes| bytes.fill(0xAB))
-            .unwrap();
-
-        let second = ctx.snapshot_resources().unwrap();
-        assert_eq!(second.frame_scratch.live_bytes, 8);
-        assert_eq!(second.frame_scratch.touched_bytes, 8);
-        assert_eq!(second.frame_scratch.retained_bytes, first_retained);
-        assert_eq!(second.frame_scratch.allocation_events, 1);
-    }
-}
+#[path = "state_tests.rs"]
+mod tests;

@@ -1,31 +1,80 @@
-use crate::plan::{BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment};
-use crate::state::{ResourceLifecycleEvent, StateStore};
-use daedalus_planner::{GraphNodeSelector, GraphPatch, GraphPatchOp, NodeRef, PatchReport};
+use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
+use crate::state::{ExecutionContext, ResourceLifecycleEvent, StateError, StateStore};
+use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex, RwLock};
+#[cfg(feature = "executor-pool")]
+use std::sync::OnceLock;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-mod crash_diag;
+mod config;
+mod core;
+mod direct_slot;
 mod errors;
 mod handler;
+mod init;
+mod owned;
+mod owned_direct_host;
+#[cfg(not(feature = "executor-pool"))]
 mod parallel;
+mod patching;
 mod payload;
 #[cfg(feature = "executor-pool")]
 mod pool;
 pub mod queue;
+mod schedule;
+mod schedule_compile;
 mod serial;
+mod serial_direct_slot;
 mod telemetry;
+mod telemetry_size;
 
-pub use errors::{ExecuteError, NodeError};
-pub use handler::NodeHandler;
-pub use payload::{CorrelatedValue, RuntimeValue, next_correlation_id};
+pub(crate) use config::ExecutorRunConfig;
+pub(crate) use core::ExecutorCore;
+pub(crate) use direct_slot::{DirectSlot, DirectSlotAccess};
+pub use errors::{ExecuteError, ExecutorBuildError, ExecutorMaskError, NodeError};
+pub use handler::{DirectPayloadFn, NodeHandler};
+pub(crate) use init::{ExecutorInit, build_executor_init};
+pub use owned::OwnedExecutor;
+pub(crate) use patching::apply_patch_to_const_inputs;
+pub use payload::{CorrelatedPayload, next_correlation_id};
 pub use queue::EdgeStorage;
+pub(crate) use schedule_compile::{
+    CompiledSchedule, CompiledSegmentGraph, build_compiled_schedule, build_node_execution_metadata,
+    direct_edge_set, direct_slots, is_host_bridge_node,
+};
+#[cfg(feature = "executor-pool")]
+pub(crate) use schedule_compile::{compiled_worker_pool, resolve_pool_workers};
 pub use telemetry::{
-    EdgeMetrics, ExecutionTelemetry, InternalTransferMetrics, MetricsLevel,
-    NodeAllocationSpikeExplanation, NodeFailure, NodeMetrics, NodeResourceMetrics, ResourceMetrics,
+    AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
+    DataLifecycleStage, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, ExecutionTelemetry,
+    InternalTransferMetrics, MetricsLevel, NodeAllocationSpikeExplanation, NodeFailure,
+    NodeMetrics, NodeResourceMetrics, OwnershipReport, ProfileLevel, Profiler, ResourceMetrics,
+    TelemetryReport, TelemetryReportFilter,
+};
+pub use telemetry_size::{
+    RuntimeDataSizeInspector, RuntimeDataSizeInspectors, estimate_payload_bytes,
     register_runtime_data_size_inspector,
 };
-pub(crate) use telemetry::{any_ref_size_bytes, runtime_value_size_bytes};
+
+#[derive(Clone)]
+pub struct DirectHostRoute {
+    input_edge: usize,
+    output_edge: usize,
+    active_direct_edges: Arc<Vec<bool>>,
+    single_node: Option<DirectHostSingleNodeRoute>,
+}
+
+#[derive(Clone)]
+struct DirectHostSingleNodeRoute {
+    node: RuntimeNode,
+    node_idx: usize,
+    ctx: ExecutionContext,
+    input_port: String,
+    output_port: String,
+    direct_payload: Option<DirectPayloadFn>,
+}
+
 /// Runtime executor for planner-generated runtime plans.
 ///
 /// ```no_run
@@ -47,46 +96,61 @@ pub(crate) use telemetry::{any_ref_size_bytes, runtime_value_size_bytes};
 pub struct Executor<'a, H: NodeHandler> {
     pub(crate) nodes: Arc<[RuntimeNode]>,
     pub(crate) edges: &'a [EdgeSpec],
+    pub(crate) edge_transports: &'a [Option<crate::plan::RuntimeEdgeTransport>],
+    pub(crate) incoming_edges: Arc<Vec<Vec<usize>>>,
+    pub(crate) outgoing_edges: Arc<Vec<Vec<usize>>>,
+    pub(crate) schedule: Arc<CompiledSchedule>,
     #[cfg(feature = "gpu")]
-    #[allow(dead_code)]
-    pub(crate) gpu_edges: &'a [daedalus_planner::EdgeBufferInfo],
+    pub(crate) gpu_entries: &'a [usize],
     #[cfg(feature = "gpu")]
-    pub(crate) _gpu_entries: &'a [usize],
-    #[cfg(feature = "gpu")]
-    pub(crate) _gpu_exits: &'a [usize],
+    pub(crate) gpu_exits: &'a [usize],
     #[cfg(feature = "gpu")]
     pub(crate) gpu_entry_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) data_edges: Arc<HashSet<usize>>,
-    #[cfg(not(feature = "gpu"))]
-    #[allow(dead_code)]
-    pub(crate) gpu_edges: &'a [()],
     pub(crate) segments: &'a [RuntimeSegment],
     pub(crate) schedule_order: &'a [NodeRef],
     pub(crate) const_inputs: ConstInputStore,
     pub(crate) backpressure: BackpressureStrategy,
     pub(crate) handler: Arc<H>,
-    pub(crate) state: StateStore,
-    pub(crate) gpu_available: bool,
-    pub(crate) gpu: MaybeGpu,
-    pub(crate) queues: Arc<Vec<EdgeStorage>>,
-    pub(crate) warnings_seen: Arc<Mutex<HashSet<String>>>,
-    pub(crate) telemetry: ExecutionTelemetry,
-    pub(crate) metrics_level: MetricsLevel,
-    pub(crate) pool_size: Option<usize>,
-    pub(crate) host_bridges: Option<crate::host_bridge::HostBridgeManager>,
-    pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
-    pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
-    pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
-    pub(crate) node_metadata: NodeMetadataStore,
+    pub(crate) core: ExecutorCore,
     /// Optional execution scope: when set, nodes with `false` are skipped.
-    pub(crate) active_nodes: Option<Arc<Vec<bool>>>,
-    /// When enabled, `io.host_output` nodes are executed in-graph as soon as their inputs are ready,
-    /// instead of being deferred to the end-of-run host-bridge post pass.
-    pub(crate) host_outputs_in_graph: bool,
-    pub(crate) fail_fast: bool,
+    pub(crate) direct_slot_access: DirectSlotAccess,
+}
+
+pub(crate) fn segment_failure(segment_idx: usize, error: &ExecuteError) -> NodeFailure {
+    match error {
+        ExecuteError::HandlerFailed { node, error } => NodeFailure {
+            node_idx: usize::MAX,
+            node_id: format!("segment_{segment_idx}:{node}"),
+            code: error.code().to_string(),
+            message: error.to_string(),
+        },
+        ExecuteError::HandlerPanicked { node, message } => NodeFailure {
+            node_idx: usize::MAX,
+            node_id: format!("segment_{segment_idx}:{node}"),
+            code: error.code().to_string(),
+            message: message.clone(),
+        },
+        ExecuteError::GpuUnavailable { segment } => NodeFailure {
+            node_idx: usize::MAX,
+            node_id: format!("segment_{segment_idx}"),
+            code: error.code().to_string(),
+            message: format!("gpu unavailable for segment {segment:?}"),
+        },
+    }
+}
+
+pub(crate) fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "handler panicked with non-string payload".to_string()
+    }
 }
 
 #[cfg(feature = "gpu")]
@@ -97,77 +161,107 @@ type MaybeGpu = Option<()>;
 pub type NodeConstInputs = Vec<(String, daedalus_data::model::Value)>;
 pub type ConstInputs = Vec<NodeConstInputs>;
 pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
-type EdgeSpec = (NodeRef, String, NodeRef, String, EdgePolicyKind);
+type EdgeSpec = RuntimeEdge;
 type NodeMetadataStore = Arc<Vec<Arc<BTreeMap<String, daedalus_data::model::Value>>>>;
 
-fn build_node_execution_metadata(nodes: &[RuntimeNode]) -> NodeMetadataStore {
-    Arc::new(
-        nodes
-            .iter()
-            .map(|node| {
-                let mut metadata: BTreeMap<String, daedalus_data::model::Value> =
-                    node.metadata.clone();
-                if let Some(label) = &node.label {
-                    metadata.entry("label".to_string()).or_insert_with(|| {
-                        daedalus_data::model::Value::String(label.clone().into())
-                    });
+pub(crate) fn reset_run_storage(
+    edges: &[RuntimeEdge],
+    queues: &[EdgeStorage],
+    direct_slots: &[DirectSlot],
+    active_edges: Option<&[bool]>,
+) {
+    for (idx, storage) in queues.iter().enumerate() {
+        if active_edges
+            .and_then(|mask| mask.get(idx).copied())
+            .is_some_and(|active| !active)
+        {
+            continue;
+        }
+        match storage {
+            EdgeStorage::Locked { queue, metrics } => {
+                if let Ok(mut q) = queue.lock() {
+                    if let Some(edge) = edges.get(idx) {
+                        q.ensure_policy(edge.policy());
+                    }
+                    q.clear();
+                    metrics.set_current_bytes(0);
                 }
-                if let Some(bundle) = &node.bundle {
-                    metadata.entry("bundle".to_string()).or_insert_with(|| {
-                        daedalus_data::model::Value::String(bundle.clone().into())
-                    });
-                }
-                Arc::new(metadata)
-            })
-            .collect(),
-    )
+            }
+            #[cfg(feature = "lockfree-queues")]
+            EdgeStorage::BoundedLf { queue, metrics } => {
+                while queue.pop().is_some() {}
+                metrics.set_current_bytes(0);
+            }
+        }
+    }
+    for (idx, slot) in direct_slots.iter().enumerate() {
+        if active_edges
+            .and_then(|mask| mask.get(idx).copied())
+            .is_some_and(|active| !active)
+        {
+            continue;
+        }
+        slot.clear();
+    }
+}
+
+pub(crate) fn normalize_runtime_nodes(
+    nodes: &[RuntimeNode],
+) -> Result<Vec<RuntimeNode>, ExecutorBuildError> {
+    let mut nodes_vec = nodes.to_vec();
+    for node in &mut nodes_vec {
+        if node.stable_id == 0 {
+            node.stable_id = daedalus_core::stable_id::stable_id128("node", &node.id);
+        }
+    }
+
+    let mut seen: std::collections::HashMap<u128, &str> = std::collections::HashMap::new();
+    for node in &nodes_vec {
+        if let Some(previous) = seen.insert(node.stable_id, node.id.as_str())
+            && previous != node.id
+        {
+            return Err(ExecutorBuildError::StableIdCollision {
+                previous: previous.to_string(),
+                current: node.id.clone(),
+                stable_id: node.stable_id,
+            });
+        }
+    }
+    Ok(nodes_vec)
 }
 
 impl<'a, H: NodeHandler> Executor<'a, H> {
     /// Build an executor from a runtime plan and handler.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the runtime plan has colliding stable node ids. Use
+    /// [`Self::try_new`] to receive a typed build error instead.
     pub fn new(plan: &'a RuntimePlan, handler: H) -> Self {
-        let mut nodes_vec = plan.nodes.clone();
-        for n in &mut nodes_vec {
-            if n.stable_id == 0 {
-                n.stable_id = daedalus_core::stable_id::stable_id128("node", &n.id);
-            }
-        }
-        // Collision check (defensive): refuse to run if two ids map to the same stable key.
-        {
-            let mut seen: std::collections::HashMap<u128, &str> = std::collections::HashMap::new();
-            for n in &nodes_vec {
-                if let Some(prev) = seen.insert(n.stable_id, n.id.as_str())
-                    && prev != n.id
-                {
-                    panic!(
-                        "daedalus-runtime: stable_id collision: id='{}' and id='{}' map to {:x}",
-                        prev, n.id, n.stable_id
-                    );
-                }
-            }
-        }
-        let nodes: Arc<[RuntimeNode]> = nodes_vec.into();
-        let node_metadata = build_node_execution_metadata(&nodes);
-        let queues = queue::build_queues(plan);
-        #[cfg(feature = "gpu")]
-        let data_edges = Arc::new(collect_data_edges(&nodes, &plan.edges));
-        Self {
-            nodes,
+        Self::try_new(plan, handler).unwrap_or_else(|err| panic!("daedalus-runtime: {err}"))
+    }
+
+    /// Build an executor and report invalid runtime-plan state without panicking.
+    pub fn try_new(plan: &'a RuntimePlan, handler: H) -> Result<Self, ExecutorBuildError> {
+        let init = build_executor_init(plan)?;
+        let core = ExecutorCore::from_init(&init, &plan.graph_metadata);
+        Ok(Self {
+            nodes: init.nodes,
             edges: &plan.edges,
+            edge_transports: &plan.edge_transports,
+            incoming_edges: init.incoming_edges,
+            outgoing_edges: init.outgoing_edges,
+            schedule: init.schedule,
             #[cfg(feature = "gpu")]
-            gpu_edges: &plan.gpu_edges,
+            gpu_entries: &plan.gpu_entries,
             #[cfg(feature = "gpu")]
-            _gpu_entries: &plan.gpu_entries,
-            #[cfg(feature = "gpu")]
-            _gpu_exits: &plan.gpu_exits,
+            gpu_exits: &plan.gpu_exits,
             #[cfg(feature = "gpu")]
             gpu_entry_set: Arc::new(plan.gpu_entries.iter().cloned().collect()),
             #[cfg(feature = "gpu")]
             gpu_exit_set: Arc::new(plan.gpu_exits.iter().cloned().collect()),
             #[cfg(feature = "gpu")]
-            data_edges,
-            #[cfg(not(feature = "gpu"))]
-            gpu_edges: &[],
+            data_edges: init.data_edges,
             segments: &plan.segments,
             schedule_order: &plan.schedule_order,
             const_inputs: Arc::new(RwLock::new(
@@ -175,47 +269,105 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
-            state: StateStore::default(),
-            gpu_available: false,
-            #[cfg(feature = "gpu")]
-            gpu: None,
-            #[cfg(not(feature = "gpu"))]
-            gpu: None,
-            queues: Arc::new(queues),
-            warnings_seen: Arc::new(Mutex::new(HashSet::new())),
-            telemetry: ExecutionTelemetry::with_level(MetricsLevel::default()),
-            metrics_level: MetricsLevel::default(),
-            pool_size: None,
-            host_bridges: None,
-            const_coercers: None,
-            output_movers: None,
-            graph_metadata: Arc::new(plan.graph_metadata.clone()),
-            node_metadata,
-            active_nodes: None,
-            host_outputs_in_graph: false,
-            fail_fast: true,
-        }
+            core,
+            direct_slot_access: DirectSlotAccess::Shared,
+        })
     }
 
     /// Restrict execution to a subset of nodes (by index).
     ///
     /// `active_nodes.len()` must equal `plan.nodes.len()`.
     pub fn with_active_nodes(mut self, active_nodes: Vec<bool>) -> Self {
-        debug_assert_eq!(active_nodes.len(), self.nodes.len());
-        if active_nodes.len() == self.nodes.len() {
-            self.active_nodes = Some(Arc::new(active_nodes));
-        }
+        self.try_set_active_nodes_mask(Some(Arc::new(active_nodes)))
+            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
         self
     }
 
     pub fn with_active_nodes_mask(mut self, active_nodes: Option<Arc<Vec<bool>>>) -> Self {
-        if active_nodes
-            .as_ref()
-            .is_some_and(|mask| mask.len() != self.nodes.len())
-        {
-            return self;
-        }
-        self.active_nodes = active_nodes;
+        self.try_set_active_nodes_mask(active_nodes)
+            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
+        self
+    }
+
+    pub fn with_active_edges_mask(mut self, active_edges: Option<Arc<Vec<bool>>>) -> Self {
+        self.try_set_active_edges_mask(active_edges)
+            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
+        self
+    }
+
+    pub fn with_active_direct_edges_mask(
+        mut self,
+        active_direct_edges: Option<Arc<Vec<bool>>>,
+    ) -> Self {
+        self.try_set_active_direct_edges_mask(active_direct_edges)
+            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
+        self
+    }
+
+    pub fn try_with_active_nodes(
+        mut self,
+        active_nodes: Vec<bool>,
+    ) -> Result<Self, ExecutorMaskError> {
+        self.try_set_active_nodes_mask(Some(Arc::new(active_nodes)))?;
+        Ok(self)
+    }
+
+    pub fn try_with_active_nodes_mask(
+        mut self,
+        active_nodes: Option<Arc<Vec<bool>>>,
+    ) -> Result<Self, ExecutorMaskError> {
+        self.try_set_active_nodes_mask(active_nodes)?;
+        Ok(self)
+    }
+
+    pub fn try_with_active_edges_mask(
+        mut self,
+        active_edges: Option<Arc<Vec<bool>>>,
+    ) -> Result<Self, ExecutorMaskError> {
+        self.try_set_active_edges_mask(active_edges)?;
+        Ok(self)
+    }
+
+    pub fn try_with_active_direct_edges_mask(
+        mut self,
+        active_direct_edges: Option<Arc<Vec<bool>>>,
+    ) -> Result<Self, ExecutorMaskError> {
+        self.try_set_active_direct_edges_mask(active_direct_edges)?;
+        Ok(self)
+    }
+
+    pub fn try_set_active_nodes_mask(
+        &mut self,
+        active_nodes: Option<Arc<Vec<bool>>>,
+    ) -> Result<(), ExecutorMaskError> {
+        let expected = self.nodes.len();
+        self.core
+            .run_config
+            .set_active_nodes_mask(active_nodes, expected)
+    }
+
+    pub fn try_set_active_edges_mask(
+        &mut self,
+        active_edges: Option<Arc<Vec<bool>>>,
+    ) -> Result<(), ExecutorMaskError> {
+        let expected = self.edges.len();
+        self.core
+            .run_config
+            .set_active_edges_mask(active_edges, expected)
+    }
+
+    pub fn try_set_active_direct_edges_mask(
+        &mut self,
+        active_direct_edges: Option<Arc<Vec<bool>>>,
+    ) -> Result<(), ExecutorMaskError> {
+        let expected = self.edges.len();
+        self.core
+            .run_config
+            .set_active_direct_edges_mask(active_direct_edges, expected)
+    }
+
+    pub fn with_selected_host_output_ports(mut self, ports: Option<Arc<HashSet<String>>>) -> Self {
+        self.core.run_config.set_selected_host_output_ports(ports);
         self
     }
 
@@ -227,7 +379,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     pub fn with_demand_sinks(mut self, sinks: Vec<crate::plan::RuntimeSink>) -> Self {
         match crate::plan::active_nodes_mask_for_sinks(self.nodes.as_ref(), self.edges, &sinks) {
             Ok(mask) => {
-                self.active_nodes = Some(Arc::new(mask));
+                self.core.run_config.active_nodes = Some(Arc::new(mask));
             }
             Err(err) => {
                 // If the selector can't be resolved, keep the graph running rather than silently
@@ -238,78 +390,106 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
-    /// Execute host output nodes in-graph (more responsive outputs).
-    pub fn with_host_outputs_in_graph(mut self, enabled: bool) -> Self {
-        self.host_outputs_in_graph = enabled;
-        self
-    }
-
+    /// Control how executor errors affect the current run.
+    ///
+    /// When enabled, serial execution returns the first node error immediately. Parallel execution
+    /// stops scheduling additional ready segments after the first segment error, then waits for
+    /// already-running scoped segments to return before propagating that error. When disabled, the
+    /// executor records segment errors in telemetry and continues scheduling remaining ready work.
     pub fn with_fail_fast(mut self, enabled: bool) -> Self {
-        self.fail_fast = enabled;
+        self.core.run_config.set_fail_fast(enabled);
         self
     }
 
     /// Provide a shared constant coercer registry (used by dynamic plugins).
     pub fn with_const_coercers(mut self, coercers: crate::io::ConstCoercerMap) -> Self {
-        self.const_coercers = Some(coercers);
+        self.core.const_coercers = Some(coercers);
         self
     }
 
-    /// Provide a shared output mover registry (used by dynamic plugins).
-    pub fn with_output_movers(mut self, movers: crate::io::OutputMoverMap) -> Self {
-        self.output_movers = Some(movers);
+    pub fn with_data_size_inspectors(mut self, inspectors: RuntimeDataSizeInspectors) -> Self {
+        self.core.data_size_inspectors = inspectors;
+        self
+    }
+
+    pub fn with_runtime_transport(mut self, transport: crate::transport::RuntimeTransport) -> Self {
+        self.core.runtime_transport = Some(Arc::new(transport));
+        self
+    }
+
+    pub fn with_capabilities(
+        mut self,
+        capabilities: crate::capabilities::CapabilityRegistry,
+    ) -> Self {
+        self.core.capabilities = Arc::new(capabilities);
         self
     }
 
     /// Inject shared state store (optional).
     pub fn with_state(mut self, state: StateStore) -> Self {
-        self.state = state;
+        self.core.state = state;
         self
     }
 
-    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) -> Result<(), String> {
-        self.state.apply_resource_lifecycle(event)
+    pub fn apply_resource_lifecycle(
+        &self,
+        event: ResourceLifecycleEvent,
+    ) -> Result<(), StateError> {
+        self.core.state.apply_resource_lifecycle(event)
     }
 
-    pub fn on_memory_pressure(&self) -> Result<(), String> {
+    pub fn on_memory_pressure(&self) -> Result<(), StateError> {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::MemoryPressure)
     }
 
-    pub fn on_idle(&self) -> Result<(), String> {
+    pub fn on_idle(&self) -> Result<(), StateError> {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
     }
 
-    pub fn shutdown_resources(&self) -> Result<(), String> {
+    pub fn shutdown_resources(&self) -> Result<(), StateError> {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::Stop)
     }
 
     /// Provide a GPU handle when available.
     #[cfg(feature = "gpu")]
     pub fn with_gpu(mut self, gpu: daedalus_gpu::GpuContextHandle) -> Self {
-        self.gpu_available = true;
-        self.gpu = Some(gpu.clone());
-        if let Some(ref mgr) = self.host_bridges {
-            mgr.attach_gpu(gpu);
-        }
+        self.core.gpu_available = true;
+        self.core.gpu = Some(gpu);
         self
     }
 
     #[cfg(not(feature = "gpu"))]
     pub fn without_gpu(mut self) -> Self {
-        self.gpu_available = false;
+        self.core.gpu_available = false;
         self
     }
 
     /// Override pool size when using the pool-based parallel executor.
     pub fn with_pool_size(mut self, size: Option<usize>) -> Self {
-        self.pool_size = size;
+        self.core.run_config.set_pool_size(size);
+        #[cfg(feature = "executor-pool")]
+        {
+            self.core.pool_workers = resolve_pool_workers(size, self.segments.len());
+            self.core.worker_pool = Arc::new(OnceLock::new());
+        }
         self
     }
 
+    #[cfg(feature = "executor-pool")]
+    pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
+        let _ = compiled_worker_pool(&self.core.worker_pool, self.core.pool_workers)?;
+        Ok(())
+    }
+
     pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
-        self.metrics_level = level;
-        self.telemetry.metrics_level = level;
+        self.core.run_config.metrics_level = level;
+        self.core.telemetry.metrics_level = level;
         self
+    }
+
+    pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
+        let pool_size = self.core.run_config.set_runtime_debug_config(config);
+        self.with_pool_size(pool_size)
     }
 
     /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
@@ -323,85 +503,71 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
     /// Attach a host bridge manager to enable implicit host I/O nodes.
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        #[cfg(feature = "gpu")]
-        if let Some(gpu) = self.gpu.clone() {
-            mgr.attach_gpu(gpu);
-        }
-        self.host_bridges = Some(mgr);
+        self.core.host_bridges = Some(mgr);
         self
     }
 
     /// Reset per-run state (queues, telemetry, warnings) so this executor can be reused.
     pub fn reset(&mut self) {
-        self.telemetry.reset_for_reuse(self.metrics_level);
-        if let Ok(mut warnings) = self.warnings_seen.lock() {
+        let metrics_level = self.core.run_config.metrics_level;
+        self.core.telemetry.reset_for_reuse(metrics_level);
+        if let Ok(mut warnings) = self.core.warnings_seen.lock() {
             warnings.clear();
         }
 
-        for (idx, storage) in self.queues.iter().enumerate() {
-            match storage {
-                EdgeStorage::Locked { queue, metrics } => {
-                    if let Ok(mut q) = queue.lock() {
-                        if let Some((_, _, _, _, policy)) = self.edges.get(idx) {
-                            q.ensure_policy(policy);
-                        }
-                        q.clear();
-                        metrics.set_current_bytes(0);
-                    }
-                }
-                #[cfg(feature = "lockfree-queues")]
-                EdgeStorage::BoundedLf { queue, metrics } => {
-                    while queue.pop().is_some() {}
-                    metrics.set_current_bytes(0);
-                }
-            }
-        }
+        reset_run_storage(
+            self.edges,
+            &self.core.queues,
+            &self.core.direct_slots,
+            self.core
+                .run_config
+                .active_edges
+                .as_deref()
+                .map(Vec::as_slice),
+        );
     }
 
     /// Build a lightweight snapshot for a single run without re-planning.
     fn snapshot(&self) -> Self {
+        self.snapshot_with_direct_slot_access(self.direct_slot_access)
+    }
+
+    fn snapshot_with_direct_slot_access(&self, direct_slot_access: DirectSlotAccess) -> Self {
         Self {
             nodes: self.nodes.clone(),
             edges: self.edges,
+            edge_transports: self.edge_transports,
+            incoming_edges: self.incoming_edges.clone(),
+            outgoing_edges: self.outgoing_edges.clone(),
+            schedule: self.schedule.clone(),
             #[cfg(feature = "gpu")]
-            gpu_edges: self.gpu_edges,
+            gpu_entries: self.gpu_entries,
             #[cfg(feature = "gpu")]
-            _gpu_entries: self._gpu_entries,
-            #[cfg(feature = "gpu")]
-            _gpu_exits: self._gpu_exits,
+            gpu_exits: self.gpu_exits,
             #[cfg(feature = "gpu")]
             gpu_entry_set: self.gpu_entry_set.clone(),
             #[cfg(feature = "gpu")]
             gpu_exit_set: self.gpu_exit_set.clone(),
             #[cfg(feature = "gpu")]
             data_edges: self.data_edges.clone(),
-            #[cfg(not(feature = "gpu"))]
-            gpu_edges: self.gpu_edges,
             segments: self.segments,
             schedule_order: self.schedule_order,
             const_inputs: self.const_inputs.clone(),
             backpressure: self.backpressure.clone(),
             handler: self.handler.clone(),
-            state: self.state.clone(),
-            gpu_available: self.gpu_available,
-            #[cfg(feature = "gpu")]
-            gpu: self.gpu.clone(),
-            #[cfg(not(feature = "gpu"))]
-            gpu: self.gpu,
-            queues: self.queues.clone(),
-            warnings_seen: self.warnings_seen.clone(),
-            telemetry: ExecutionTelemetry::with_level(self.metrics_level),
-            metrics_level: self.metrics_level,
-            pool_size: self.pool_size,
-            host_bridges: self.host_bridges.clone(),
-            const_coercers: self.const_coercers.clone(),
-            output_movers: self.output_movers.clone(),
-            graph_metadata: self.graph_metadata.clone(),
-            node_metadata: self.node_metadata.clone(),
-            active_nodes: self.active_nodes.clone(),
-            host_outputs_in_graph: self.host_outputs_in_graph,
-            fail_fast: self.fail_fast,
+            core: self.core.snapshot(),
+            direct_slot_access,
         }
+    }
+
+    pub(crate) fn segment_snapshot(&self, segment_idx: usize) -> (Self, Vec<NodeRef>) {
+        let order = self
+            .segments
+            .get(segment_idx)
+            .map(|segment| segment.nodes.clone())
+            .unwrap_or_default();
+        let exec = self.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
+        (exec, order)
     }
 
     /// Execute the runtime plan serially in segment order.
@@ -414,15 +580,25 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self.reset();
         let exec = self.snapshot();
         let result = serial::run(exec);
-        self.reset();
+        serial::drain_host_outputs(self);
+        if result.is_err() {
+            self.reset();
+        }
         result
     }
 
     /// Execute the runtime plan allowing independent segments to run in parallel.
+    ///
+    /// With fail-fast enabled, this stops scheduling new ready segments after the first segment
+    /// error. Scoped threads or Rayon tasks already running are still allowed to finish before the
+    /// error is returned.
     pub fn run_parallel(self) -> Result<ExecutionTelemetry, ExecuteError>
     where
         H: Send + Sync + 'static,
     {
+        if self.schedule.linear_segment_flow {
+            return serial::run_fused_linear(self);
+        }
         #[cfg(feature = "executor-pool")]
         {
             pool::run(self)
@@ -434,6 +610,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     }
 
     /// Execute the runtime plan in parallel without rebuilding the executor.
+    ///
+    /// Fail-fast semantics match [`Self::run_parallel`].
     pub fn run_parallel_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError>
     where
         H: Send + Sync + 'static,
@@ -441,7 +619,10 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self.reset();
         let exec = self.snapshot();
         let result = self.run_parallel_from_snapshot(exec);
-        self.reset();
+        serial::drain_host_outputs(self);
+        if result.is_err() {
+            self.reset();
+        }
         result
     }
 
@@ -452,6 +633,9 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     where
         H: Send + Sync + 'static,
     {
+        if exec.schedule.linear_segment_flow {
+            return serial::run_fused_linear(exec);
+        }
         #[cfg(feature = "executor-pool")]
         {
             pool::run(exec)
@@ -467,9 +651,9 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 fn collect_data_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usize> {
     let _ = nodes;
     let _ = edges;
-    // `io.host_output` can transport `Any`, `Compute<T>`, and `DataCell` payloads directly.
-    // Forcing every host-output edge through `DataCell` eagerly clones CPU images on
-    // GPU-enabled builds, which turns host publication into a hidden hot-path tax.
+    // `io.host_output` carries typed transport payloads directly. Forcing host-output edges
+    // through device materialization eagerly clones CPU images on GPU-enabled builds, which turns
+    // host publication into a hidden hot-path tax.
     HashSet::new()
 }
 
@@ -487,468 +671,8 @@ pub(crate) fn thread_cpu_time() -> Option<Duration> {
     None
 }
 
-/// Owned executor that can be reused across runs without leaking the plan.
-pub struct OwnedExecutor<H: NodeHandler> {
-    pub(crate) nodes: Arc<[RuntimeNode]>,
-    pub(crate) edges: Arc<Vec<EdgeSpec>>,
-    #[cfg(feature = "gpu")]
-    #[allow(dead_code)]
-    pub(crate) gpu_edges: Arc<Vec<daedalus_planner::EdgeBufferInfo>>,
-    #[cfg(feature = "gpu")]
-    pub(crate) _gpu_entries: Arc<Vec<usize>>,
-    #[cfg(feature = "gpu")]
-    pub(crate) _gpu_exits: Arc<Vec<usize>>,
-    #[cfg(feature = "gpu")]
-    pub(crate) gpu_entry_set: Arc<HashSet<usize>>,
-    #[cfg(feature = "gpu")]
-    pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
-    #[cfg(feature = "gpu")]
-    pub(crate) data_edges: Arc<HashSet<usize>>,
-    #[cfg(not(feature = "gpu"))]
-    #[allow(dead_code)]
-    pub(crate) gpu_edges: Arc<Vec<()>>,
-    pub(crate) segments: Arc<Vec<RuntimeSegment>>,
-    pub(crate) schedule_order: Arc<Vec<NodeRef>>,
-    pub(crate) const_inputs: ConstInputStore,
-    pub(crate) backpressure: BackpressureStrategy,
-    pub(crate) handler: Arc<H>,
-    pub(crate) state: StateStore,
-    pub(crate) gpu_available: bool,
-    pub(crate) gpu: MaybeGpu,
-    pub(crate) queues: Arc<Vec<EdgeStorage>>,
-    pub(crate) warnings_seen: Arc<Mutex<HashSet<String>>>,
-    pub(crate) telemetry: ExecutionTelemetry,
-    pub(crate) metrics_level: MetricsLevel,
-    pub(crate) pool_size: Option<usize>,
-    pub(crate) host_bridges: Option<crate::host_bridge::HostBridgeManager>,
-    pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
-    pub(crate) output_movers: Option<crate::io::OutputMoverMap>,
-    pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
-    pub(crate) node_metadata: NodeMetadataStore,
-    pub(crate) active_nodes: Option<Arc<Vec<bool>>>,
-    pub(crate) host_outputs_in_graph: bool,
-    pub(crate) fail_fast: bool,
-}
-
-impl<H: NodeHandler> OwnedExecutor<H> {
-    pub fn new(plan: Arc<RuntimePlan>, handler: H) -> Self {
-        let mut nodes_vec = plan.nodes.clone();
-        for n in &mut nodes_vec {
-            if n.stable_id == 0 {
-                n.stable_id = daedalus_core::stable_id::stable_id128("node", &n.id);
-            }
-        }
-        {
-            let mut seen: std::collections::HashMap<u128, &str> = std::collections::HashMap::new();
-            for n in &nodes_vec {
-                if let Some(prev) = seen.insert(n.stable_id, n.id.as_str())
-                    && prev != n.id
-                {
-                    panic!(
-                        "daedalus-runtime: stable_id collision: id='{}' and id='{}' map to {:x}",
-                        prev, n.id, n.stable_id
-                    );
-                }
-            }
-        }
-        let nodes: Arc<[RuntimeNode]> = nodes_vec.into();
-        let node_metadata = build_node_execution_metadata(&nodes);
-        let queues = queue::build_queues(&plan);
-        #[cfg(feature = "gpu")]
-        let data_edges = Arc::new(collect_data_edges(&nodes, &plan.edges));
-        Self {
-            nodes,
-            edges: Arc::new(plan.edges.clone()),
-            #[cfg(feature = "gpu")]
-            gpu_edges: Arc::new(plan.gpu_edges.clone()),
-            #[cfg(feature = "gpu")]
-            _gpu_entries: Arc::new(plan.gpu_entries.clone()),
-            #[cfg(feature = "gpu")]
-            _gpu_exits: Arc::new(plan.gpu_exits.clone()),
-            #[cfg(feature = "gpu")]
-            gpu_entry_set: Arc::new(plan.gpu_entries.iter().cloned().collect()),
-            #[cfg(feature = "gpu")]
-            gpu_exit_set: Arc::new(plan.gpu_exits.iter().cloned().collect()),
-            #[cfg(feature = "gpu")]
-            data_edges,
-            #[cfg(not(feature = "gpu"))]
-            gpu_edges: Arc::new(Vec::new()),
-            segments: Arc::new(plan.segments.clone()),
-            schedule_order: Arc::new(plan.schedule_order.clone()),
-            const_inputs: Arc::new(RwLock::new(
-                plan.nodes.iter().map(|n| n.const_inputs.clone()).collect(),
-            )),
-            backpressure: plan.backpressure.clone(),
-            handler: Arc::new(handler),
-            state: StateStore::default(),
-            gpu_available: false,
-            #[cfg(feature = "gpu")]
-            gpu: None,
-            #[cfg(not(feature = "gpu"))]
-            gpu: None,
-            queues: Arc::new(queues),
-            warnings_seen: Arc::new(Mutex::new(HashSet::new())),
-            telemetry: ExecutionTelemetry::with_level(MetricsLevel::default()),
-            metrics_level: MetricsLevel::default(),
-            pool_size: None,
-            host_bridges: None,
-            const_coercers: None,
-            output_movers: None,
-            graph_metadata: Arc::new(plan.graph_metadata.clone()),
-            node_metadata,
-            active_nodes: None,
-            host_outputs_in_graph: false,
-            fail_fast: true,
-        }
-    }
-
-    pub fn with_active_nodes(mut self, active_nodes: Vec<bool>) -> Self {
-        debug_assert_eq!(active_nodes.len(), self.nodes.len());
-        if active_nodes.len() == self.nodes.len() {
-            self.active_nodes = Some(Arc::new(active_nodes));
-        }
-        self
-    }
-
-    pub fn with_active_nodes_mask(mut self, active_nodes: Option<Arc<Vec<bool>>>) -> Self {
-        if active_nodes
-            .as_ref()
-            .is_some_and(|mask| mask.len() != self.nodes.len())
-        {
-            return self;
-        }
-        self.active_nodes = active_nodes;
-        self
-    }
-
-    /// Enable demand-driven execution by selecting a set of sink nodes/ports and computing the
-    /// upstream closure.
-    pub fn with_demand_sinks(mut self, sinks: Vec<crate::plan::RuntimeSink>) -> Self {
-        match crate::plan::active_nodes_mask_for_sinks(
-            self.nodes.as_ref(),
-            self.edges.as_slice(),
-            &sinks,
-        ) {
-            Ok(mask) => {
-                self.active_nodes = Some(Arc::new(mask));
-            }
-            Err(err) => {
-                tracing::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
-            }
-        }
-        self
-    }
-
-    pub fn with_host_outputs_in_graph(mut self, enabled: bool) -> Self {
-        self.host_outputs_in_graph = enabled;
-        self
-    }
-
-    pub fn with_fail_fast(mut self, enabled: bool) -> Self {
-        self.fail_fast = enabled;
-        self
-    }
-
-    /// Provide a shared constant coercer registry (used by dynamic plugins).
-    pub fn with_const_coercers(mut self, coercers: crate::io::ConstCoercerMap) -> Self {
-        self.const_coercers = Some(coercers);
-        self
-    }
-
-    /// Provide a shared output mover registry (used by dynamic plugins).
-    pub fn with_output_movers(mut self, movers: crate::io::OutputMoverMap) -> Self {
-        self.output_movers = Some(movers);
-        self
-    }
-
-    pub fn with_state(mut self, state: StateStore) -> Self {
-        self.state = state;
-        self
-    }
-
-    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) -> Result<(), String> {
-        self.state.apply_resource_lifecycle(event)
-    }
-
-    pub fn on_memory_pressure(&self) -> Result<(), String> {
-        self.apply_resource_lifecycle(ResourceLifecycleEvent::MemoryPressure)
-    }
-
-    pub fn on_idle(&self) -> Result<(), String> {
-        self.apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
-    }
-
-    pub fn shutdown_resources(&self) -> Result<(), String> {
-        self.apply_resource_lifecycle(ResourceLifecycleEvent::Stop)
-    }
-
-    #[cfg(feature = "gpu")]
-    pub fn with_gpu(mut self, gpu: daedalus_gpu::GpuContextHandle) -> Self {
-        self.gpu_available = true;
-        self.gpu = Some(gpu.clone());
-        if let Some(ref mgr) = self.host_bridges {
-            mgr.attach_gpu(gpu);
-        }
-        self
-    }
-
-    #[cfg(not(feature = "gpu"))]
-    pub fn without_gpu(mut self) -> Self {
-        self.gpu_available = false;
-        self
-    }
-
-    pub fn with_pool_size(mut self, size: Option<usize>) -> Self {
-        self.pool_size = size;
-        self
-    }
-
-    pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
-        self.metrics_level = level;
-        self.telemetry.metrics_level = level;
-        self
-    }
-
-    pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        #[cfg(feature = "gpu")]
-        if let Some(gpu) = self.gpu.clone() {
-            mgr.attach_gpu(gpu);
-        }
-        self.host_bridges = Some(mgr);
-        self
-    }
-
-    pub fn reset(&mut self) {
-        self.telemetry.reset_for_reuse(self.metrics_level);
-        if let Ok(mut warnings) = self.warnings_seen.lock() {
-            warnings.clear();
-        }
-        for (idx, storage) in self.queues.iter().enumerate() {
-            match storage {
-                EdgeStorage::Locked { queue, metrics } => {
-                    if let Ok(mut q) = queue.lock() {
-                        if let Some((_, _, _, _, policy)) = self.edges.get(idx) {
-                            q.ensure_policy(policy);
-                        }
-                        q.clear();
-                        metrics.set_current_bytes(0);
-                    }
-                }
-                #[cfg(feature = "lockfree-queues")]
-                EdgeStorage::BoundedLf { queue, metrics } => {
-                    while queue.pop().is_some() {}
-                    metrics.set_current_bytes(0);
-                }
-            }
-        }
-    }
-
-    pub fn set_active_nodes_mask(&mut self, active_nodes: Option<Arc<Vec<bool>>>) {
-        if active_nodes
-            .as_ref()
-            .is_some_and(|mask| mask.len() != self.nodes.len())
-        {
-            return;
-        }
-        self.active_nodes = active_nodes;
-    }
-
-    fn snapshot<'a>(&'a self) -> Executor<'a, H> {
-        Executor {
-            nodes: self.nodes.clone(),
-            edges: self.edges.as_slice(),
-            #[cfg(feature = "gpu")]
-            gpu_edges: self.gpu_edges.as_slice(),
-            #[cfg(feature = "gpu")]
-            _gpu_entries: self._gpu_entries.as_slice(),
-            #[cfg(feature = "gpu")]
-            _gpu_exits: self._gpu_exits.as_slice(),
-            #[cfg(feature = "gpu")]
-            gpu_entry_set: self.gpu_entry_set.clone(),
-            #[cfg(feature = "gpu")]
-            gpu_exit_set: self.gpu_exit_set.clone(),
-            #[cfg(feature = "gpu")]
-            data_edges: self.data_edges.clone(),
-            #[cfg(not(feature = "gpu"))]
-            gpu_edges: self.gpu_edges.as_slice(),
-            segments: self.segments.as_slice(),
-            schedule_order: self.schedule_order.as_slice(),
-            const_inputs: self.const_inputs.clone(),
-            backpressure: self.backpressure.clone(),
-            handler: self.handler.clone(),
-            state: self.state.clone(),
-            gpu_available: self.gpu_available,
-            #[cfg(feature = "gpu")]
-            gpu: self.gpu.clone(),
-            #[cfg(not(feature = "gpu"))]
-            gpu: self.gpu,
-            queues: self.queues.clone(),
-            warnings_seen: self.warnings_seen.clone(),
-            telemetry: ExecutionTelemetry::with_level(self.metrics_level),
-            metrics_level: self.metrics_level,
-            pool_size: self.pool_size,
-            host_bridges: self.host_bridges.clone(),
-            const_coercers: self.const_coercers.clone(),
-            output_movers: self.output_movers.clone(),
-            graph_metadata: self.graph_metadata.clone(),
-            node_metadata: self.node_metadata.clone(),
-            active_nodes: self.active_nodes.clone(),
-            host_outputs_in_graph: self.host_outputs_in_graph,
-            fail_fast: self.fail_fast,
-        }
-    }
-
-    pub fn run_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError> {
-        self.reset();
-        let exec = self.snapshot();
-        let res = serial::run(exec);
-        self.reset();
-        res
-    }
-
-    pub fn run_parallel_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError>
-    where
-        H: Send + Sync + 'static,
-    {
-        self.reset();
-        let exec = self.snapshot();
-        let res = {
-            #[cfg(feature = "executor-pool")]
-            {
-                pool::run(exec)
-            }
-            #[cfg(not(feature = "executor-pool"))]
-            {
-                parallel::run(exec)
-            }
-        };
-        self.reset();
-        res
-    }
-
-    /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
-    pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
-        let mut guard = self
-            .const_inputs
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        apply_patch_to_const_inputs(patch, &self.nodes, guard.as_mut_slice())
-    }
-}
-
-fn apply_patch_to_const_inputs(
-    patch: &GraphPatch,
-    nodes: &[RuntimeNode],
-    const_inputs: &mut [NodeConstInputs],
-) -> PatchReport {
-    let mut report = PatchReport::default();
-    for op in &patch.ops {
-        match op {
-            GraphPatchOp::SetNodeConst { node, port, value } => {
-                let indices = resolve_runtime_indices(nodes, node);
-                if indices.is_empty() {
-                    report.skipped_ops += 1;
-                    continue;
-                }
-                let normalized_port = normalize_port(port);
-                for idx in indices {
-                    if let Some(entry) = const_inputs.get_mut(idx) {
-                        apply_const_override(entry, &normalized_port, port, value);
-                        report.matched_nodes += 1;
-                    }
-                }
-                report.applied_ops += 1;
-            }
-            GraphPatchOp::ReplaceNodeId { .. } => {
-                report.skipped_ops += 1;
-            }
-            GraphPatchOp::DeleteNodes { .. } => {
-                report.skipped_ops += 1;
-            }
-        }
-    }
-    report
-}
-
-fn resolve_runtime_indices(nodes: &[RuntimeNode], selector: &GraphNodeSelector) -> Vec<usize> {
-    if let Some(index) = selector.index {
-        if index < nodes.len() {
-            return vec![index];
-        }
-        return Vec::new();
-    }
-
-    if let Some(meta) = selector.metadata.as_ref() {
-        let key = meta.key.trim();
-        if !key.is_empty() {
-            return nodes
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, node)| {
-                    node.metadata
-                        .get(key)
-                        .filter(|value| *value == &meta.value)
-                        .map(|_| idx)
-                })
-                .collect();
-        }
-    }
-
-    if let Some(id) = selector.id.as_ref() {
-        let trimmed = id.trim();
-        if !trimmed.is_empty() {
-            return nodes
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, node)| (node.id == trimmed).then_some(idx))
-                .collect();
-        }
-    }
-
-    Vec::new()
-}
-
-fn normalize_port(port: &str) -> String {
-    port.trim().to_ascii_lowercase()
-}
-
-fn apply_const_override(
-    const_inputs: &mut Vec<(String, daedalus_data::model::Value)>,
-    normalized_port: &str,
-    port: &str,
-    value: &Option<daedalus_data::model::Value>,
-) {
-    let mut matched = None;
-    for (idx, (name, _)) in const_inputs.iter().enumerate() {
-        if normalize_port(name) == normalized_port {
-            matched = Some(idx);
-            break;
-        }
-    }
-
-    match (matched, value) {
-        (Some(idx), Some(next)) => {
-            const_inputs[idx] = (const_inputs[idx].0.clone(), next.clone());
-        }
-        (Some(idx), None) => {
-            const_inputs.remove(idx);
-        }
-        (None, Some(next)) => {
-            let key = if port.trim().is_empty() {
-                normalized_port.to_string()
-            } else {
-                port.trim().to_string()
-            };
-            const_inputs.push((key, next.clone()));
-        }
-        (None, None) => {}
-    }
-}
-
 /// Build adjacency maps of incoming/outgoing edge indices per node.
-pub(crate) fn edge_maps(
-    edges: &[(NodeRef, String, NodeRef, String, EdgePolicyKind)],
-) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
+pub(crate) fn edge_maps(edges: &[EdgeSpec]) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
     let mut incoming: Vec<Vec<usize>> = Vec::new();
     let mut outgoing: Vec<Vec<usize>> = Vec::new();
     let grow = |v: &mut Vec<Vec<usize>>, idx: usize| {
@@ -956,9 +680,9 @@ pub(crate) fn edge_maps(
             v.push(Vec::new());
         }
     };
-    for (idx, (from, _, to, _, _)) in edges.iter().enumerate() {
-        let f = from.0;
-        let t = to.0;
+    for (idx, edge) in edges.iter().enumerate() {
+        let f = edge.from().0;
+        let t = edge.to().0;
         grow(&mut incoming, f.max(t));
         grow(&mut outgoing, f.max(t));
         outgoing[f].push(idx);
@@ -967,35 +691,5 @@ pub(crate) fn edge_maps(
     (incoming, outgoing)
 }
 
-#[cfg(all(test, feature = "gpu"))]
-mod tests {
-    use super::*;
-    use daedalus_data::model::Value;
-    use daedalus_planner::ComputeAffinity;
-
-    fn test_node(id: &str) -> RuntimeNode {
-        RuntimeNode {
-            id: id.to_string(),
-            stable_id: 0,
-            bundle: None,
-            label: None,
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: Vec::new(),
-            sync_groups: Vec::new(),
-            metadata: std::collections::BTreeMap::<String, Value>::new(),
-        }
-    }
-
-    #[test]
-    fn collect_data_edges_skips_host_output_edges() {
-        let nodes = vec![test_node("cv:test"), test_node("io.host_output")];
-        let edges = vec![(
-            NodeRef(0),
-            "out".to_string(),
-            NodeRef(1),
-            "overlay".to_string(),
-            EdgePolicyKind::NewestWins,
-        )];
-        assert!(collect_data_edges(&nodes, &edges).is_empty());
-    }
-}
+#[cfg(test)]
+mod tests;

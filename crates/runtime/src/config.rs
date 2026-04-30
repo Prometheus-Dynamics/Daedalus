@@ -1,6 +1,11 @@
 use crate::NodeError;
 use crate::io::NodeIo;
 use daedalus_data::model::Value;
+use std::sync::OnceLock;
+
+pub const ENV_NODE_PERF_COUNTERS: &str = "DAEDALUS_NODE_PERF_COUNTERS";
+pub const ENV_NODE_CPU_TIME: &str = "DAEDALUS_NODE_CPU_TIME";
+pub const ENV_RUNTIME_POOL_SIZE: &str = "DAEDALUS_RUNTIME_POOL_SIZE";
 
 /// Policy for invalid configuration values.
 ///
@@ -13,6 +18,49 @@ use daedalus_data::model::Value;
 pub enum ConfigPolicy {
     Clamp,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeDebugConfig {
+    pub node_perf_counters: bool,
+    pub node_cpu_time: bool,
+    pub pool_size: Option<usize>,
+}
+
+impl RuntimeDebugConfig {
+    pub fn from_env() -> Self {
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    pub fn from_lookup(mut get: impl FnMut(&str) -> Option<String>) -> Self {
+        Self {
+            node_perf_counters: env_bool(&mut get, ENV_NODE_PERF_COUNTERS),
+            node_cpu_time: env_bool(&mut get, ENV_NODE_CPU_TIME),
+            pool_size: env_usize(&mut get, ENV_RUNTIME_POOL_SIZE),
+        }
+    }
+}
+
+pub fn runtime_debug_config() -> &'static RuntimeDebugConfig {
+    static CONFIG: OnceLock<RuntimeDebugConfig> = OnceLock::new();
+    CONFIG.get_or_init(RuntimeDebugConfig::from_env)
+}
+
+fn env_bool(get: &mut impl FnMut(&str) -> Option<String>, name: &str) -> bool {
+    get(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn env_usize(get: &mut impl FnMut(&str) -> Option<String>, name: &str) -> Option<usize> {
+    get(name)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
 }
 
 /// Record of a configuration value change after sanitization.
@@ -105,7 +153,7 @@ impl std::error::Error for ConfigError {}
 /// }
 ///
 /// impl NodeConfig for DemoConfig {
-///     fn ports() -> Vec<daedalus_registry::store::Port> { vec![] }
+///     fn ports() -> Vec<daedalus_registry::capability::PortDecl> { vec![] }
 ///     fn from_io(_io: &NodeIo) -> Result<Self, NodeError> { Ok(DemoConfig::default()) }
 ///     fn sanitize(self) -> Result<Sanitized<Self>, ConfigError> { Ok(Sanitized { value: self, changes: vec![] }) }
 ///     fn validate(&self) -> Result<(), ConfigError> { Ok(()) }
@@ -115,7 +163,7 @@ impl std::error::Error for ConfigError {}
 /// cfg.validate().unwrap();
 /// ```
 pub trait NodeConfig: Sized {
-    fn ports() -> Vec<daedalus_registry::store::Port>;
+    fn ports() -> Vec<daedalus_registry::capability::PortDecl>;
     fn metadata() -> std::collections::BTreeMap<String, Value> {
         std::collections::BTreeMap::new()
     }
@@ -147,5 +195,41 @@ pub fn log_config_changes(node_id: &str, changes: &[ConfigChange]) {
             change.previous,
             change.next
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn runtime_debug_config_parses_known_env_keys() {
+        let values = BTreeMap::from([
+            (ENV_NODE_PERF_COUNTERS.to_string(), "true".to_string()),
+            (ENV_NODE_CPU_TIME.to_string(), "1".to_string()),
+            (ENV_RUNTIME_POOL_SIZE.to_string(), "8".to_string()),
+        ]);
+
+        let config = RuntimeDebugConfig::from_lookup(|name| values.get(name).cloned());
+
+        assert!(config.node_perf_counters);
+        assert!(config.node_cpu_time);
+        assert_eq!(config.pool_size, Some(8));
+    }
+
+    #[test]
+    fn runtime_debug_config_keeps_invalid_values_disabled() {
+        let values = BTreeMap::from([
+            (ENV_NODE_PERF_COUNTERS.to_string(), "no".to_string()),
+            (ENV_NODE_CPU_TIME.to_string(), "definitely".to_string()),
+            (ENV_RUNTIME_POOL_SIZE.to_string(), "0".to_string()),
+        ]);
+
+        let config = RuntimeDebugConfig::from_lookup(|name| values.get(name).cloned());
+
+        assert!(!config.node_perf_counters);
+        assert!(!config.node_cpu_time);
+        assert_eq!(config.pool_size, None);
     }
 }

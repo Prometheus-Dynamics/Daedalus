@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use daedalus_planner::{ExecutionPlan, Graph, PlannerConfig, PlannerOutput, StableHash};
-use daedalus_registry::store::Registry;
+use daedalus_planner::{ExecutionPlan, Graph, PlannerConfig, PlannerOutput};
 use daedalus_runtime::{RuntimePlan, SchedulerConfig};
+
+use crate::config::DEFAULT_CACHE_ENTRIES;
 
 #[cfg(feature = "config-env")]
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,9 @@ pub struct CacheCounters {
     pub hits: u64,
     pub misses: u64,
     pub invalidations: u64,
+    pub evictions: u64,
+    pub entries: usize,
+    pub max_entries: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -44,7 +48,6 @@ pub struct EngineCacheMetrics {
 pub(crate) struct PlannerCacheKey {
     graph_fingerprint: u64,
     planner_fingerprint: u64,
-    registry_fingerprint: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -53,21 +56,58 @@ pub(crate) struct RuntimePlanCacheKey {
     scheduler_fingerprint: u64,
 }
 
-#[derive(Default)]
+struct CacheShard<K, V> {
+    entries: HashMap<K, V>,
+    order: VecDeque<K>,
+}
+
+impl<K, V> Default for CacheShard<K, V> {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+}
+
 pub(crate) struct EngineCaches {
-    planner: Mutex<HashMap<PlannerCacheKey, PlannerOutput>>,
-    runtime: Mutex<HashMap<RuntimePlanCacheKey, RuntimePlan>>,
+    planner: Mutex<CacheShard<PlannerCacheKey, PlannerOutput>>,
+    runtime: Mutex<CacheShard<RuntimePlanCacheKey, RuntimePlan>>,
+    planner_max_entries: usize,
+    runtime_max_entries: usize,
     planner_hits: AtomicU64,
     planner_misses: AtomicU64,
     planner_invalidations: AtomicU64,
+    planner_evictions: AtomicU64,
     runtime_hits: AtomicU64,
     runtime_misses: AtomicU64,
     runtime_invalidations: AtomicU64,
+    runtime_evictions: AtomicU64,
 }
 
 impl EngineCaches {
+    pub(crate) fn with_limits(planner_max_entries: usize, runtime_max_entries: usize) -> Self {
+        Self {
+            planner: Mutex::new(CacheShard::default()),
+            runtime: Mutex::new(CacheShard::default()),
+            planner_max_entries: planner_max_entries.max(1),
+            runtime_max_entries: runtime_max_entries.max(1),
+            planner_hits: AtomicU64::new(0),
+            planner_misses: AtomicU64::new(0),
+            planner_invalidations: AtomicU64::new(0),
+            planner_evictions: AtomicU64::new(0),
+            runtime_hits: AtomicU64::new(0),
+            runtime_misses: AtomicU64::new(0),
+            runtime_invalidations: AtomicU64::new(0),
+            runtime_evictions: AtomicU64::new(0),
+        }
+    }
+
     pub(crate) fn planner_get(&self, key: &PlannerCacheKey) -> Option<PlannerOutput> {
-        let value = self.planner.lock().ok()?.get(key).cloned();
+        let value = lock_cache_shard("planner", &self.planner)
+            .entries
+            .get(key)
+            .cloned();
         match value {
             Some(_) => {
                 self.planner_hits.fetch_add(1, Ordering::Relaxed);
@@ -81,13 +121,24 @@ impl EngineCaches {
     }
 
     pub(crate) fn planner_insert(&self, key: PlannerCacheKey, value: PlannerOutput) {
-        if let Ok(mut guard) = self.planner.lock() {
-            guard.insert(key, value);
+        let mut shard = lock_cache_shard("planner", &self.planner);
+        let is_new = !shard.entries.contains_key(&key);
+        shard.entries.insert(key.clone(), value);
+        if is_new {
+            shard.order.push_back(key);
         }
+        evict_fifo(
+            &mut shard,
+            self.planner_max_entries,
+            &self.planner_evictions,
+        );
     }
 
     pub(crate) fn runtime_get(&self, key: &RuntimePlanCacheKey) -> Option<RuntimePlan> {
-        let value = self.runtime.lock().ok()?.get(key).cloned();
+        let value = lock_cache_shard("runtime_plan", &self.runtime)
+            .entries
+            .get(key)
+            .cloned();
         match value {
             Some(_) => {
                 self.runtime_hits.fetch_add(1, Ordering::Relaxed);
@@ -101,40 +152,58 @@ impl EngineCaches {
     }
 
     pub(crate) fn runtime_insert(&self, key: RuntimePlanCacheKey, value: RuntimePlan) {
-        if let Ok(mut guard) = self.runtime.lock() {
-            guard.insert(key, value);
+        let mut shard = lock_cache_shard("runtime_plan", &self.runtime);
+        let is_new = !shard.entries.contains_key(&key);
+        shard.entries.insert(key.clone(), value);
+        if is_new {
+            shard.order.push_back(key);
         }
+        evict_fifo(
+            &mut shard,
+            self.runtime_max_entries,
+            &self.runtime_evictions,
+        );
     }
 
     pub(crate) fn metrics(&self) -> EngineCacheMetrics {
+        let planner_entries = lock_cache_shard("planner", &self.planner).entries.len();
+        let runtime_entries = lock_cache_shard("runtime_plan", &self.runtime)
+            .entries
+            .len();
         EngineCacheMetrics {
             planner: CacheCounters {
                 hits: self.planner_hits.load(Ordering::Relaxed),
                 misses: self.planner_misses.load(Ordering::Relaxed),
                 invalidations: self.planner_invalidations.load(Ordering::Relaxed),
+                evictions: self.planner_evictions.load(Ordering::Relaxed),
+                entries: planner_entries,
+                max_entries: self.planner_max_entries,
             },
             runtime_plan: CacheCounters {
                 hits: self.runtime_hits.load(Ordering::Relaxed),
                 misses: self.runtime_misses.load(Ordering::Relaxed),
                 invalidations: self.runtime_invalidations.load(Ordering::Relaxed),
+                evictions: self.runtime_evictions.load(Ordering::Relaxed),
+                entries: runtime_entries,
+                max_entries: self.runtime_max_entries,
             },
         }
     }
 
     pub(crate) fn clear(&self) -> EngineCacheMetrics {
-        let planner_invalidated = if let Ok(mut guard) = self.planner.lock() {
-            let len = guard.len() as u64;
-            guard.clear();
+        let planner_invalidated = {
+            let mut shard = lock_cache_shard("planner", &self.planner);
+            let len = shard.entries.len() as u64;
+            shard.entries.clear();
+            shard.order.clear();
             len
-        } else {
-            0
         };
-        let runtime_invalidated = if let Ok(mut guard) = self.runtime.lock() {
-            let len = guard.len() as u64;
-            guard.clear();
+        let runtime_invalidated = {
+            let mut shard = lock_cache_shard("runtime_plan", &self.runtime);
+            let len = shard.entries.len() as u64;
+            shard.entries.clear();
+            shard.order.clear();
             len
-        } else {
-            0
         };
         self.planner_invalidations
             .fetch_add(planner_invalidated, Ordering::Relaxed);
@@ -144,19 +213,54 @@ impl EngineCaches {
     }
 }
 
-pub(crate) fn new_caches() -> Arc<EngineCaches> {
-    Arc::new(EngineCaches::default())
+impl Default for EngineCaches {
+    fn default() -> Self {
+        Self::with_limits(DEFAULT_CACHE_ENTRIES, DEFAULT_CACHE_ENTRIES)
+    }
 }
 
-pub(crate) fn planner_cache_key(
-    graph: &Graph,
-    planner_config: &PlannerConfig,
-    registry: &Registry,
-) -> PlannerCacheKey {
+fn lock_cache_shard<'a, K, V>(
+    name: &'static str,
+    shard: &'a Mutex<CacheShard<K, V>>,
+) -> MutexGuard<'a, CacheShard<K, V>> {
+    shard.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!(
+            target: "daedalus_engine::cache",
+            cache = name,
+            "cache lock poisoned; recovering cached state"
+        );
+        poisoned.into_inner()
+    })
+}
+
+fn evict_fifo<K, V>(shard: &mut CacheShard<K, V>, max_entries: usize, evictions: &AtomicU64)
+where
+    K: Clone + Eq + std::hash::Hash,
+{
+    while shard.entries.len() > max_entries {
+        let Some(oldest) = shard.order.pop_front() else {
+            break;
+        };
+        if shard.entries.remove(&oldest).is_some() {
+            evictions.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+pub(crate) fn new_caches(
+    planner_max_entries: usize,
+    runtime_max_entries: usize,
+) -> Arc<EngineCaches> {
+    Arc::new(EngineCaches::with_limits(
+        planner_max_entries,
+        runtime_max_entries,
+    ))
+}
+
+pub(crate) fn planner_cache_key(graph: &Graph, planner_config: &PlannerConfig) -> PlannerCacheKey {
     PlannerCacheKey {
-        graph_fingerprint: stable_hash_debug(graph).0,
-        planner_fingerprint: stable_hash_debug(planner_config).0,
-        registry_fingerprint: stable_hash_debug(&registry.snapshot()).0,
+        graph_fingerprint: graph.stable_hash().0,
+        planner_fingerprint: planner_config.stable_hash().0,
     }
 }
 
@@ -166,10 +270,70 @@ pub(crate) fn runtime_plan_cache_key(
 ) -> RuntimePlanCacheKey {
     RuntimePlanCacheKey {
         plan_hash: plan.hash.0,
-        scheduler_fingerprint: stable_hash_debug(scheduler_config).0,
+        scheduler_fingerprint: scheduler_config.stable_hash().0,
     }
 }
 
-fn stable_hash_debug(value: &impl std::fmt::Debug) -> StableHash {
-    StableHash::from_bytes(format!("{value:?}").as_bytes())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use daedalus_planner::ExecutionPlan;
+
+    fn planner_key(value: u64) -> PlannerCacheKey {
+        PlannerCacheKey {
+            graph_fingerprint: value,
+            planner_fingerprint: 0,
+        }
+    }
+
+    fn runtime_key(value: u64) -> RuntimePlanCacheKey {
+        RuntimePlanCacheKey {
+            plan_hash: value,
+            scheduler_fingerprint: 0,
+        }
+    }
+
+    fn planner_output() -> PlannerOutput {
+        PlannerOutput {
+            plan: ExecutionPlan::new(Graph::default(), vec![]),
+            diagnostics: vec![],
+        }
+    }
+
+    fn runtime_plan() -> RuntimePlan {
+        let plan = ExecutionPlan::new(Graph::default(), vec![]);
+        daedalus_runtime::build_runtime(&plan, &SchedulerConfig::default())
+    }
+
+    #[test]
+    fn bounded_caches_evict_and_report_metrics() {
+        let caches = EngineCaches::with_limits(1, 1);
+
+        caches.planner_insert(planner_key(1), planner_output());
+        caches.runtime_insert(runtime_key(1), runtime_plan());
+        assert!(caches.planner_get(&planner_key(1)).is_some());
+        assert!(caches.runtime_get(&runtime_key(1)).is_some());
+
+        caches.planner_insert(planner_key(2), planner_output());
+        caches.runtime_insert(runtime_key(2), runtime_plan());
+
+        assert!(caches.planner_get(&planner_key(1)).is_none());
+        assert!(caches.runtime_get(&runtime_key(1)).is_none());
+        assert!(caches.planner_get(&planner_key(2)).is_some());
+        assert!(caches.runtime_get(&runtime_key(2)).is_some());
+
+        let metrics = caches.metrics();
+        assert_eq!(metrics.planner.entries, 1);
+        assert_eq!(metrics.planner.max_entries, 1);
+        assert_eq!(metrics.planner.evictions, 1);
+        assert_eq!(metrics.runtime_plan.entries, 1);
+        assert_eq!(metrics.runtime_plan.max_entries, 1);
+        assert_eq!(metrics.runtime_plan.evictions, 1);
+
+        let metrics = caches.clear();
+        assert_eq!(metrics.planner.entries, 0);
+        assert_eq!(metrics.runtime_plan.entries, 0);
+        assert_eq!(metrics.planner.invalidations, 1);
+        assert_eq!(metrics.runtime_plan.invalidations, 1);
+    }
 }

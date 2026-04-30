@@ -1,45 +1,22 @@
-#![allow(unsafe_code)]
-
 use std::io;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PerfSample {
+    pub cpu_cycles: u64,
+    pub instructions: u64,
     pub cache_misses: u64,
+    pub cache_references: u64,
     pub branch_instructions: u64,
     pub branch_misses: u64,
+    pub context_switches: u64,
+    pub thread_cpu_time_ns: u64,
 }
 
-static NODE_PERF_ENABLED: OnceLock<bool> = OnceLock::new();
-static NODE_PERF_AVAILABLE: AtomicBool = AtomicBool::new(true);
-
-pub fn node_perf_enabled() -> bool {
+pub fn node_perf_enabled(config: crate::config::RuntimeDebugConfig) -> bool {
     if !cfg!(target_os = "linux") {
         return false;
     }
-    if !NODE_PERF_AVAILABLE.load(Ordering::Relaxed) {
-        return false;
-    }
-    *NODE_PERF_ENABLED.get_or_init(|| {
-        env_flag("HELIOS_NODE_PERF_COUNTERS") || env_flag("DAEDALUS_NODE_PERF_COUNTERS")
-    })
-}
-
-pub fn disable_node_perf() -> bool {
-    NODE_PERF_AVAILABLE.swap(false, Ordering::Relaxed)
-}
-
-fn env_flag(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    config.node_perf_counters
 }
 
 #[cfg(target_os = "linux")]
@@ -88,6 +65,7 @@ impl PerfCounterGuard {
             cache_misses,
             branch_instructions,
             branch_misses,
+            ..Default::default()
         })
     }
 }

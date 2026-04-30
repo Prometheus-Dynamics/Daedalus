@@ -5,6 +5,8 @@ use daedalus_planner::Diagnostic;
 use daedalus_registry::diagnostics::RegistryError;
 use daedalus_runtime::executor::ExecuteError;
 
+use crate::config::EngineConfigError;
+
 /// Engine errors surfaced to callers.
 ///
 /// ```ignore
@@ -15,6 +17,8 @@ use daedalus_runtime::executor::ExecuteError;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EngineError {
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(#[from] EngineConfigError),
     #[error("invalid configuration: {0}")]
     Config(String),
     #[error("I/O error at {path}: {source}")]

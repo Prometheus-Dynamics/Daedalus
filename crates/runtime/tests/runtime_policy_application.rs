@@ -1,5 +1,5 @@
 use daedalus_planner::{ComputeAffinity, ExecutionPlan, Graph, NodeInstance};
-use daedalus_runtime::{EdgePolicyKind, SchedulerConfig, build_runtime};
+use daedalus_runtime::{RuntimeEdgePolicy, SchedulerConfig, build_runtime};
 
 #[test]
 fn default_policy_applied_to_edges() {
@@ -20,13 +20,12 @@ fn default_policy_applied_to_edges() {
     let rt = build_runtime(
         &exec,
         &SchedulerConfig {
-            default_policy: EdgePolicyKind::NewestWins,
+            default_policy: RuntimeEdgePolicy::latest_only(),
             backpressure: daedalus_runtime::BackpressureStrategy::BoundedQueues,
-            lockfree_queues: false,
         },
     );
     assert!(rt.edges.is_empty());
-    assert!(matches!(rt.default_policy, EdgePolicyKind::NewestWins));
+    assert_eq!(rt.default_policy, RuntimeEdgePolicy::latest_only());
     assert!(matches!(
         rt.backpressure,
         daedalus_runtime::BackpressureStrategy::BoundedQueues

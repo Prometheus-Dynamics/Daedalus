@@ -1,14 +1,20 @@
 {
   "backpressure": "None",
-  "default_policy": "Fifo",
+  "default_policy": {
+    "freshness": "preserve_all",
+    "pressure": "buffer_all"
+  },
   "edges": [
-    [
-      0,
-      "out",
-      1,
-      "in",
-      "Fifo"
-    ]
+    {
+      "from": 0,
+      "policy": {
+        "freshness": "preserve_all",
+        "pressure": "buffer_all"
+      },
+      "source_port": "out",
+      "target_port": "in",
+      "to": 1
+    }
   ],
   "gpu_edges": [
     {

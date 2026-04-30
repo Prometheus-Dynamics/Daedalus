@@ -1,1258 +1,779 @@
-use std::collections::HashSet;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::executor::NodeError;
-#[cfg(feature = "gpu")]
-use crate::executor::RuntimeValue;
-use crate::executor::crash_diag;
-use crate::executor::{EdgeStorage, ExecuteError, Executor, edge_maps};
-use crate::io::NodeIo;
-use crate::perf;
-use crate::state::ExecutionContext;
-use crate::{HOST_BRIDGE_META_KEY, bridge_handler};
-use daedalus_data::model::Value;
-use daedalus_planner::ComputeAffinity;
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use daedalus_planner::{ComputeAffinity, NodeRef};
+use daedalus_transport::{AdaptRequest, Payload};
+use smallvec::SmallVec;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum HostBridgePhase {
-    Pre,
-    Post,
+use crate::handles::PortId;
+use crate::io::NodeIo;
+use crate::plan::RuntimeEdgePolicy;
+use crate::state::ExecutionContext;
+
+use super::queue::{ApplyPolicyOwnedArgs, apply_policy_owned, pop_edge};
+use super::serial_direct_slot::{pop_direct_edge, push_direct_edge};
+use super::{
+    CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, ExecuteError, ExecutionTelemetry,
+    Executor, NodeFailure, NodeHandler,
+};
+
+pub fn run<H: NodeHandler>(exec: Executor<'_, H>) -> Result<ExecutionTelemetry, ExecuteError> {
+    let order = exec.schedule_order.to_vec();
+    run_with_boundaries(exec, &order)
 }
 
-static HOST_BRIDGE_DIAG_COUNT: AtomicUsize = AtomicUsize::new(0);
-static NODE_TRACE_DIAG_COUNT: AtomicUsize = AtomicUsize::new(0);
-static NODE_TRACE_ENABLED: OnceLock<bool> = OnceLock::new();
-
-fn node_trace_enabled() -> bool {
-    *NODE_TRACE_ENABLED.get_or_init(|| {
-        std::env::var("DAEDALUS_TRACE_NODES")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
+pub(crate) fn run_with_boundaries<H: NodeHandler>(
+    mut exec: Executor<'_, H>,
+    order: &[daedalus_planner::NodeRef],
+) -> Result<ExecutionTelemetry, ExecuteError> {
+    inject_host_inputs(&mut exec)?;
+    let result = run_order(exec, order);
+    result.map(|mut telemetry| {
+        telemetry.recompute_unattributed_runtime_duration();
+        telemetry
     })
 }
 
-fn node_exec_trace_filter() -> Option<String> {
-    std::env::var("DAEDALUS_TRACE_NODE_EXEC_FILTER")
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-}
-
-fn node_exec_trace_enabled_for(node_id: &str) -> bool {
-    if std::env::var_os("DAEDALUS_TRACE_NODE_EXEC_STDERR").is_none() {
-        return false;
-    }
-    match node_exec_trace_filter() {
-        None => true,
-        Some(filter) => node_id.contains(&filter),
-    }
-}
-
-fn host_bridge_trace_stderr_enabled() -> bool {
-    std::env::var("DAEDALUS_TRACE_HOST_BRIDGE_STDERR")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
-fn preflight_inputs(_ctx: &ExecutionContext, _io: &NodeIo) -> Result<(), NodeError> {
-    // If the node is running without a GPU context but is receiving GPU-resident payloads,
-    // fail fast with an actionable error instead of letting downstream unsafe code crash.
-    #[cfg(feature = "gpu")]
-    {
-        let ctx = _ctx;
-        let io = _io;
-        if ctx.gpu.is_none() {
-            for (port, payload) in io.inputs() {
-                match &payload.inner {
-                    RuntimeValue::Any(any) if any.is::<daedalus_gpu::GpuImageHandle>() => {
-                        return Err(NodeError::InvalidInput(format!(
-                            "port '{port}' contains a GPU image handle but no GPU context is available; configure a GPU backend or insert a CPU download/convert step"
-                        )));
-                    }
-                    RuntimeValue::Data(ep) if ep.is_gpu() => {
-                        return Err(NodeError::InvalidInput(format!(
-                            "port '{port}' contains a GPU-resident payload but no GPU context is available; configure a GPU backend or insert a CPU download/convert step"
-                        )));
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn run<H: crate::executor::NodeHandler>(
+pub(crate) fn run_order<H: NodeHandler>(
     mut exec: Executor<'_, H>,
-) -> Result<crate::executor::ExecutionTelemetry, ExecuteError> {
-    crash_diag::install_if_enabled(&exec.nodes);
-    let (incoming, outgoing) = edge_maps(exec.edges);
-    let queues = exec.queues.clone();
-    let warnings_seen = exec.warnings_seen.clone();
-    let any_conversion_cache = crate::io::new_any_conversion_cache();
-    #[cfg(feature = "gpu")]
-    let materialization_cache = crate::io::new_materialization_cache();
-    let active_nodes = exec.active_nodes.clone();
-    let node_is_active = |idx: usize| {
-        active_nodes
-            .as_deref()
-            .and_then(|v| v.get(idx).copied())
-            .unwrap_or(true)
-    };
+    order: &[daedalus_planner::NodeRef],
+) -> Result<ExecutionTelemetry, ExecuteError> {
+    let graph_span = tracing::debug_span!(
+        target: "daedalus_runtime::executor",
+        "runtime_graph_run",
+        nodes = order.len(),
+        fail_fast = exec.core.run_config.fail_fast,
+        metrics_level = ?exec.core.run_config.metrics_level,
+    );
+    let _graph_span = graph_span.enter();
+    let collect_basic_metrics =
+        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_basic();
+    let collect_detailed_metrics =
+        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
+    let collect_trace = cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_trace();
+    let graph_start = (collect_basic_metrics || collect_trace).then(Instant::now);
+    let mut first_error = None;
 
-    let host_nodes: Vec<daedalus_planner::NodeRef> = exec
-        .nodes
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, n)| {
-            if !node_is_active(idx) {
-                return None;
-            }
-            n.metadata
-                .get(HOST_BRIDGE_META_KEY)
-                .map(|v| matches!(v, Value::Bool(true)))
-                .unwrap_or(false)
-                .then_some(daedalus_planner::NodeRef(idx))
-        })
-        .collect();
-    let graph_start = Instant::now();
-    let mut failed_nodes = vec![false; exec.nodes.len()];
+    for node_ref in order.iter().copied() {
+        let node_idx = node_ref.0;
+        if !node_is_active(&exec, node_idx) {
+            continue;
+        }
+        let Some(node) = exec.nodes.get(node_idx).cloned() else {
+            continue;
+        };
+        let node_span = tracing::debug_span!(
+            target: "daedalus_runtime::executor",
+            "runtime_node_run",
+            node_index = node_idx,
+            node_id = %node.id,
+            compute = ?node.compute,
+        );
+        let _node_span = node_span.enter();
 
-    // Pre-pass: let host bridges inject inputs before other nodes run.
-    run_host_bridges(
-        &mut exec,
-        &host_nodes,
-        &mut failed_nodes,
-        &incoming,
-        &outgoing,
-        &queues,
-        &warnings_seen,
-        &any_conversion_cache,
-        #[cfg(feature = "gpu")]
-        &materialization_cache,
-        &graph_start,
-        HostBridgePhase::Pre,
-    )?;
-
-    for (seg_idx, segment) in exec.segments.iter().enumerate() {
-        match segment.compute {
+        match node.compute {
             ComputeAffinity::CpuOnly => {
-                exec.telemetry.cpu_segments += 1;
-                run_segment(
-                    &mut exec,
-                    seg_idx,
-                    segment,
-                    &host_nodes,
-                    &active_nodes,
-                    &mut failed_nodes,
-                    &incoming,
-                    &outgoing,
-                    &queues,
-                    &warnings_seen,
-                    &any_conversion_cache,
-                    #[cfg(feature = "gpu")]
-                    &materialization_cache,
-                    &graph_start,
-                )?;
+                exec.core.telemetry.cpu_segments =
+                    exec.core.telemetry.cpu_segments.saturating_add(1);
             }
             ComputeAffinity::GpuPreferred => {
-                if exec.gpu_available {
-                    exec.telemetry.gpu_segments += 1;
-                    run_segment(
-                        &mut exec,
-                        seg_idx,
-                        segment,
-                        &host_nodes,
-                        &active_nodes,
-                        &mut failed_nodes,
-                        &incoming,
-                        &outgoing,
-                        &queues,
-                        &warnings_seen,
-                        &any_conversion_cache,
-                        #[cfg(feature = "gpu")]
-                        &materialization_cache,
-                        &graph_start,
-                    )?;
+                if exec.core.gpu_available {
+                    exec.core.telemetry.gpu_segments =
+                        exec.core.telemetry.gpu_segments.saturating_add(1);
                 } else {
-                    exec.telemetry.gpu_fallbacks += 1;
-                    record_warning(
-                        &format!("gpu_preferred_fallback_cpu_seg_{seg_idx}"),
-                        &warnings_seen,
-                        &mut exec.telemetry,
-                    );
-                    run_segment(
-                        &mut exec,
-                        seg_idx,
-                        segment,
-                        &host_nodes,
-                        &active_nodes,
-                        &mut failed_nodes,
-                        &incoming,
-                        &outgoing,
-                        &queues,
-                        &warnings_seen,
-                        &any_conversion_cache,
-                        #[cfg(feature = "gpu")]
-                        &materialization_cache,
-                        &graph_start,
-                    )?;
+                    exec.core.telemetry.gpu_fallbacks =
+                        exec.core.telemetry.gpu_fallbacks.saturating_add(1);
+                    exec.core.telemetry.warnings.push(format!(
+                        "gpu_preferred node {} executed on CPU because no GPU handle is available",
+                        node.id
+                    ));
+                    exec.core.telemetry.cpu_segments =
+                        exec.core.telemetry.cpu_segments.saturating_add(1);
                 }
             }
             ComputeAffinity::GpuRequired => {
-                if !exec.gpu_available {
+                if exec.core.gpu_available {
+                    exec.core.telemetry.gpu_segments =
+                        exec.core.telemetry.gpu_segments.saturating_add(1);
+                } else {
                     return Err(ExecuteError::GpuUnavailable {
-                        segment: segment.nodes.clone(),
+                        segment: vec![NodeRef(node_idx)],
                     });
                 }
-                exec.telemetry.gpu_segments += 1;
-                run_segment(
-                    &mut exec,
-                    seg_idx,
-                    segment,
-                    &host_nodes,
-                    &active_nodes,
-                    &mut failed_nodes,
-                    &incoming,
-                    &outgoing,
-                    &queues,
-                    &warnings_seen,
-                    &any_conversion_cache,
-                    #[cfg(feature = "gpu")]
-                    &materialization_cache,
-                    &graph_start,
-                )?;
             }
         }
-    }
 
-    // Post-pass: always capture outputs destined for host bridges.
-    //
-    // Even when `host_outputs_in_graph` is enabled, schedule ordering can execute
-    // `io.host_output` before its producers in demand-driven graphs. Running a final
-    // post-pass guarantees late-produced payloads are drained to host outputs.
-    run_host_bridges(
-        &mut exec,
-        &host_nodes,
-        &mut failed_nodes,
-        &incoming,
-        &outgoing,
-        &queues,
-        &warnings_seen,
-        &any_conversion_cache,
-        #[cfg(feature = "gpu")]
-        &materialization_cache,
-        &graph_start,
-        HostBridgePhase::Post,
-    )?;
-    exec.telemetry.graph_duration = graph_start.elapsed();
-    exec.telemetry.aggregate_groups(&exec.nodes);
-    Ok(exec.telemetry)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_segment<H: crate::executor::NodeHandler>(
-    exec: &mut Executor<'_, H>,
-    seg_idx: usize,
-    segment: &crate::plan::RuntimeSegment,
-    host_nodes: &[daedalus_planner::NodeRef],
-    active_nodes: &Option<Arc<Vec<bool>>>,
-    failed_nodes: &mut [bool],
-    incoming: &[Vec<usize>],
-    outgoing: &[Vec<usize>],
-    queues: &Arc<Vec<EdgeStorage>>,
-    warnings_seen: &Arc<Mutex<HashSet<String>>>,
-    any_conversion_cache: &crate::io::AnyConversionCacheHandle,
-    #[cfg(feature = "gpu")] materialization_cache: &crate::io::MaterializationCacheHandle,
-    graph_start: &Instant,
-) -> Result<(), ExecuteError> {
-    if std::env::var_os("DAEDALUS_TRACE_SCHEDULE").is_some() {
-        let order: Vec<String> = segment
-            .nodes
-            .iter()
-            .filter_map(|node_ref| {
-                exec.nodes
-                    .get(node_ref.0)
-                    .map(|node| format!("{}:{}", node_ref.0, node.id))
-            })
-            .collect();
-        tracing::warn!("segment order seg={} nodes={:?}", seg_idx, order);
-    }
-    for node_ref in &segment.nodes {
-        if let Some(active) = active_nodes.as_deref()
-            && !active.get(node_ref.0).copied().unwrap_or(false)
-        {
-            continue;
+        if collect_detailed_metrics {
+            exec.core.telemetry.start_node_call(node_idx);
         }
-        let Some(node) = exec.nodes.get(node_ref.0) else {
-            continue;
+        let node_start = (collect_basic_metrics || collect_trace).then(Instant::now);
+        let cpu_start = exec
+            .core
+            .run_config
+            .debug_config
+            .node_cpu_time
+            .then(super::thread_cpu_time)
+            .flatten();
+        let perf_guard = if crate::perf::node_perf_enabled(exec.core.run_config.debug_config) {
+            crate::perf::PerfCounterGuard::start().ok()
+        } else {
+            None
         };
-        // Error isolation: skip nodes that depend on a failed upstream node unless boundary.
-        let is_error_boundary = node
-            .metadata
-            .get("daedalus.error_boundary")
-            .map(|v| matches!(v, Value::Bool(true)))
-            .unwrap_or(false);
-        if !is_error_boundary {
-            let has_failed_dep = incoming
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|v| v.iter())
-                .any(|edge_idx| {
-                    exec.edges
-                        .get(*edge_idx)
-                        .map(|(from, _, _, _, _)| {
-                            failed_nodes.get(from.0).copied().unwrap_or(false)
-                        })
-                        .unwrap_or(false)
-                });
-            if has_failed_dep {
-                failed_nodes[node_ref.0] = true;
-                continue;
-            }
-        }
-        if host_nodes.contains(node_ref) {
-            // Optional responsiveness mode: execute `io.host_output` nodes in-graph (so fast outputs
-            // can be published without waiting for unrelated slow branches).
-            if exec.host_outputs_in_graph && node.id.ends_with("io.host_output") {
-                run_host_output_in_graph(
-                    exec,
-                    *node_ref,
-                    seg_idx,
-                    incoming,
-                    outgoing,
-                    queues,
-                    warnings_seen,
-                    any_conversion_cache,
-                    #[cfg(feature = "gpu")]
-                    materialization_cache,
-                    graph_start,
-                )?;
-            }
-            continue;
-        }
-        #[allow(unused_mut)]
-        let mut ctx = ExecutionContext {
-            state: exec.state.clone(),
+        let inputs = collect_inputs(&mut exec, node_idx)?;
+        let mut io =
+            NodeIo::from_inputs(inputs).with_const_coercers(exec.core.const_coercers.clone());
+        let ctx = ExecutionContext {
+            state: exec.core.state.clone(),
             node_id: node.id.clone().into(),
-            metadata: exec.node_metadata[node_ref.0].clone(),
-            graph_metadata: exec.graph_metadata.clone(),
+            metadata: exec.core.node_metadata[node_idx].clone(),
+            graph_metadata: exec.core.graph_metadata.clone(),
+            capabilities: exec.core.capabilities.clone(),
             #[cfg(feature = "gpu")]
-            gpu: exec.gpu.clone(),
+            gpu: exec.core.gpu.clone(),
         };
-        let resources = ctx.resources();
-        let _ = resources.before_frame();
-        let metrics_level = exec.telemetry.metrics_level;
-        let const_inputs_guard = exec
-            .const_inputs
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let const_inputs = const_inputs_guard
-            .get(node_ref.0)
-            .map(|inputs| inputs.as_slice())
-            .unwrap_or(&[]);
-
-        let incoming_edge_indices = incoming.get(node_ref.0).cloned().unwrap_or_default();
-        if node_exec_trace_enabled_for(&node.id) {
-            let mut sizes: Vec<String> = Vec::new();
-            for edge_idx in &incoming_edge_indices {
-                let len = match queues.get(*edge_idx) {
-                    Some(EdgeStorage::Locked { queue, .. }) => {
-                        queue.lock().ok().map(|q| q.len()).unwrap_or(0)
-                    }
-                    #[cfg(feature = "lockfree-queues")]
-                    Some(EdgeStorage::BoundedLf { queue, .. }) => queue.len(),
-                    None => 0,
-                };
-                sizes.push(format!("#{edge_idx}={len}"));
-            }
-            eprintln!(
-                "daedalus-runtime: exec incoming queue sizes idx={} id={} sizes={:?}",
-                node_ref.0, node.id, sizes
-            );
+        if collect_basic_metrics {
+            let _ = exec.core.state.clear_node_custom_metrics(&node.id);
         }
 
-        exec.telemetry.start_node_call(node_ref.0);
-        #[cfg(feature = "gpu")]
-        let mut io = NodeIo::new(
-            incoming_edge_indices,
-            outgoing.get(node_ref.0).cloned().unwrap_or_default(),
-            queues,
-            warnings_seen,
-            exec.edges,
-            node.sync_groups.clone(),
-            &exec.gpu_entry_set,
-            &exec.gpu_exit_set,
-            &exec.data_edges,
-            seg_idx,
-            node_ref.0,
-            node.id.clone(),
-            active_nodes.as_deref().map(|v| &**v),
-            &mut exec.telemetry,
-            exec.backpressure.clone(),
-            const_inputs,
-            exec.const_coercers.clone(),
-            exec.output_movers.clone(),
-            any_conversion_cache.clone(),
-            Some(materialization_cache.clone()),
-            ctx.gpu.clone(),
-            node.compute,
+        let handler_start = collect_detailed_metrics.then(Instant::now);
+        let handler_span = tracing::debug_span!(
+            target: "daedalus_runtime::executor",
+            "runtime_handler_call",
+            node_index = node_idx,
+            node_id = %node.id,
         );
-        #[cfg(not(feature = "gpu"))]
-        let mut io = NodeIo::new(
-            incoming_edge_indices,
-            outgoing.get(node_ref.0).cloned().unwrap_or_default(),
-            queues,
-            warnings_seen,
-            exec.edges,
-            node.sync_groups.clone(),
-            seg_idx,
-            node_ref.0,
-            node.id.clone(),
-            active_nodes.as_deref().map(|v| &**v),
-            &mut exec.telemetry,
-            exec.backpressure.clone(),
-            const_inputs,
-            exec.const_coercers.clone(),
-            exec.output_movers.clone(),
-            any_conversion_cache.clone(),
-        );
-
-        if node_exec_trace_enabled_for(&node.id) {
-            let in_edges = incoming.get(node_ref.0).map(|v| v.len()).unwrap_or(0);
-            let out_edges = outgoing.get(node_ref.0).map(|v| v.len()).unwrap_or(0);
-            let ports: Vec<&str> = io.inputs().iter().map(|(p, _)| p.as_str()).collect();
-            let incoming_desc: Vec<String> = incoming
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|edges| {
-                    edges.iter().filter_map(|edge_idx| {
-                        exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
-                    })
-                })
-                .filter_map(|(edge_idx, (from, from_port, _, to_port, _))| {
-                    let from_node = exec.nodes.get(from.0)?;
-                    Some(format!(
-                        "#{edge_idx} {}:{} -> {to_port}",
-                        from_node.id, from_port
-                    ))
-                })
-                .collect();
-            eprintln!(
-                "daedalus-runtime: exec candidate seg={} idx={} id={} in_edges={} out_edges={} drained_inputs={:?} incoming={:?}",
-                seg_idx, node_ref.0, node.id, in_edges, out_edges, ports, incoming_desc
-            );
+        let run_result = {
+            let _handler_span = handler_span.enter();
+            exec.handler.run(&node, &ctx, &mut io)
+        };
+        if let Some(handler_start) = handler_start {
+            exec.core
+                .telemetry
+                .record_node_handler_duration(node_idx, handler_start.elapsed());
         }
-
-        if tracing::enabled!(tracing::Level::DEBUG) && node.id == "cv:image:to_gray" {
-            let has_image = io.get_any::<image::DynamicImage>("frame").is_some();
-            let inputs: Vec<String> = io
-                .inputs()
-                .iter()
-                .map(|(port, payload)| match &payload.inner {
-                    #[cfg(feature = "gpu")]
-                    crate::executor::RuntimeValue::Any(any)
-                        if any.is::<daedalus_gpu::GpuImageHandle>() =>
-                    {
-                        format!("{port}:Any(GpuImageHandle)")
-                    }
-                    crate::executor::RuntimeValue::Any(any) => format!(
-                        "{port}:Any({}) is_dynamic_image={}",
-                        std::any::type_name_of_val(any.as_ref()),
-                        any.is::<image::DynamicImage>()
-                    ),
-                    #[cfg(feature = "gpu")]
-                    crate::executor::RuntimeValue::Data(ep) => format!("{port}:Data({ep:?})"),
-                    crate::executor::RuntimeValue::Bytes(bytes) => {
-                        format!("{port}:Bytes({}b)", bytes.len())
-                    }
-                    crate::executor::RuntimeValue::Value(value) => {
-                        format!("{port}:Value({value:?})")
-                    }
-                    crate::executor::RuntimeValue::Unit => format!("{port}:Unit"),
-                })
-                .collect();
-            let outgoing_desc: Vec<String> = outgoing
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|edges| {
-                    edges.iter().filter_map(|edge_idx| {
-                        exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
-                    })
-                })
-                .filter_map(|(edge_idx, (_, from_port, to, to_port, _))| {
-                    let to_node = exec.nodes.get(to.0)?;
-                    let to_label = to_node.label.as_deref().unwrap_or(&to_node.id);
-                    Some(format!("#{edge_idx} {from_port} -> {to_label}:{to_port}"))
-                })
-                .collect();
-            let incoming_desc: Vec<String> = incoming
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|edges| {
-                    edges.iter().filter_map(|edge_idx| {
-                        exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
-                    })
-                })
-                .filter_map(|(edge_idx, (from, from_port, _, to_port, _))| {
-                    let from_node = exec.nodes.get(from.0)?;
-                    let from_label = from_node.label.as_deref().unwrap_or(&from_node.id);
-                    Some(format!("#{edge_idx} {from_label}:{from_port} -> {to_port}"))
-                })
-                .collect();
-            tracing::debug!(
-                "to_gray inputs={:?} get_any={} incoming={:?} outgoing={:?}",
-                inputs,
-                has_image,
-                incoming_desc,
-                outgoing_desc
-            );
-        }
-        if tracing::enabled!(tracing::Level::DEBUG) && node.id == "cv:aruco:mask_downscale_gray" {
-            let inputs: Vec<String> = io
-                .inputs()
-                .iter()
-                .map(|(port, payload)| match &payload.inner {
-                    #[cfg(feature = "gpu")]
-                    crate::executor::RuntimeValue::Any(any)
-                        if any.is::<daedalus_gpu::GpuImageHandle>() =>
-                    {
-                        format!("{port}:Any(GpuImageHandle)")
-                    }
-                    crate::executor::RuntimeValue::Any(any) => {
-                        format!("{port}:Any({})", std::any::type_name_of_val(any.as_ref()))
-                    }
-                    #[cfg(feature = "gpu")]
-                    crate::executor::RuntimeValue::Data(ep) => format!("{port}:Data({ep:?})"),
-                    crate::executor::RuntimeValue::Bytes(bytes) => {
-                        format!("{port}:Bytes({}b)", bytes.len())
-                    }
-                    crate::executor::RuntimeValue::Value(value) => {
-                        format!("{port}:Value({value:?})")
-                    }
-                    crate::executor::RuntimeValue::Unit => format!("{port}:Unit"),
-                })
-                .collect();
-            let outgoing_desc: Vec<String> = outgoing
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|edges| {
-                    edges.iter().filter_map(|edge_idx| {
-                        exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
-                    })
-                })
-                .filter_map(|(edge_idx, (_, from_port, to, to_port, _))| {
-                    let to_node = exec.nodes.get(to.0)?;
-                    let to_label = to_node.label.as_deref().unwrap_or(&to_node.id);
-                    Some(format!("#{edge_idx} {from_port} -> {to_label}:{to_port}"))
-                })
-                .collect();
-            let incoming_desc: Vec<String> = incoming
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|edges| {
-                    edges.iter().filter_map(|edge_idx| {
-                        exec.edges.get(*edge_idx).map(|edge| (*edge_idx, edge))
-                    })
-                })
-                .filter_map(|(edge_idx, (from, from_port, _, to_port, _))| {
-                    let from_node = exec.nodes.get(from.0)?;
-                    let from_label = from_node.label.as_deref().unwrap_or(&from_node.id);
-                    Some(format!("#{edge_idx} {from_label}:{from_port} -> {to_port}"))
-                })
-                .collect();
-            tracing::debug!(
-                "mask_downscale inputs={:?} incoming={:?} outgoing={:?}",
-                inputs,
-                incoming_desc,
-                outgoing_desc
-            );
-        }
-
-        if !io.sync_groups().is_empty() && io.inputs().is_empty() {
-            if node_exec_trace_enabled_for(&node.id) {
-                eprintln!(
-                    "daedalus-runtime: exec skip (sync_groups + no inputs) seg={} idx={} id={}",
-                    seg_idx, node_ref.0, node.id
-                );
-            }
-            continue;
-        }
-
-        let cpu_start = if metrics_level.is_detailed() {
-            crate::executor::thread_cpu_time()
+        let flush_result = if run_result.is_ok() {
+            io.flush().err()
         } else {
             None
         };
-        let perf_guard = if perf::node_perf_enabled() {
-            match perf::PerfCounterGuard::start() {
-                Ok(guard) => Some(guard),
-                Err(err) => {
-                    if perf::disable_node_perf() {
-                        tracing::warn!("node perf counters disabled: {err}");
-                    }
-                    None
-                }
-            }
-        } else {
-            None
-        };
-        // Error isolation: skip nodes with a failed upstream dependency unless explicitly marked.
-        let is_error_boundary = node
-            .metadata
-            .get("daedalus.error_boundary")
-            .map(|v| matches!(v, Value::Bool(true)))
-            .unwrap_or(false);
-        if !is_error_boundary {
-            let has_failed_dep = incoming
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|v| v.iter())
-                .any(|edge_idx| {
-                    exec.edges
-                        .get(*edge_idx)
-                        .map(|(from, _, _, _, _)| {
-                            failed_nodes.get(from.0).copied().unwrap_or(false)
-                        })
-                        .unwrap_or(false)
-                });
-            if has_failed_dep {
-                continue;
-            }
-        }
+        let outputs = io.take_outputs();
 
-        let node_start = Instant::now();
-        crash_diag::set_current_node(node_ref.0);
-        if let Err(error) = preflight_inputs(&ctx, &io) {
-            failed_nodes[node_ref.0] = true;
-            exec.telemetry.errors.push(crate::executor::NodeFailure {
-                node_idx: node_ref.0,
-                node_id: node.id.clone(),
-                code: error.code().to_string(),
-                message: error.to_string(),
-            });
-            if exec.fail_fast {
+        if let Err(error) = run_result {
+            record_failure(&mut exec.core.telemetry, node_idx, &node.id, &error);
+            if exec.core.run_config.fail_fast {
                 return Err(ExecuteError::HandlerFailed {
                     node: node.id.clone(),
                     error,
                 });
             }
-            continue;
-        }
-        if node_trace_enabled() {
-            let count = NODE_TRACE_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
-            if count < 50 {
-                tracing::debug!(
-                    "daedalus-runtime: exec node seg={} idx={} id={} label={:?} inputs={:?}",
-                    seg_idx,
-                    node_ref.0,
-                    node.id,
-                    node.label,
-                    io.inputs()
-                        .iter()
-                        .map(|(p, _)| p.as_str())
-                        .collect::<Vec<_>>(),
-                );
-            }
-        }
-        let run_result =
-            match catch_unwind(AssertUnwindSafe(|| exec.handler.run(node, &ctx, &mut io))) {
-                Ok(r) => r,
-                Err(p) => {
-                    let msg = if let Some(s) = p.downcast_ref::<&str>() {
-                        (*s).to_string()
-                    } else if let Some(s) = p.downcast_ref::<String>() {
-                        s.clone()
-                    } else {
-                        "non-string panic payload".to_string()
-                    };
-                    failed_nodes[node_ref.0] = true;
-                    exec.telemetry.errors.push(crate::executor::NodeFailure {
-                        node_idx: node_ref.0,
-                        node_id: node.id.clone(),
-                        code: "handler_panicked".to_string(),
-                        message: msg.clone(),
-                    });
-                    if exec.fail_fast {
-                        return Err(ExecuteError::HandlerPanicked {
-                            node: node.id.clone(),
-                            message: msg,
-                        });
-                    }
-                    // Skip downstream work for this node on this tick.
-                    continue;
-                }
-            };
-        if node_exec_trace_enabled_for(&node.id) {
-            eprintln!(
-                "daedalus-runtime: exec returned seg={} idx={} id={} ok={}",
-                seg_idx,
-                node_ref.0,
-                node.id,
-                run_result.is_ok()
-            );
-        }
-        let elapsed = node_start.elapsed();
-        let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
-        let flush_error = if run_result.is_ok() {
-            io.flush().err()
-        } else {
-            None
-        };
-        drop(io);
-        let _ = resources.after_frame();
-        if metrics_level.is_detailed()
-            && let Ok(snapshot) = resources.snapshot()
-        {
-            exec.telemetry
-                .record_node_resource_snapshot(node_ref.0, snapshot);
-        }
-        if let Some(sample) = perf_sample {
-            exec.telemetry.record_node_perf(node_ref.0, sample);
-        }
-        if let Some(cpu_start) = cpu_start
-            && let Some(cpu_end) = crate::executor::thread_cpu_time()
-        {
-            exec.telemetry
-                .record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
-        }
-        exec.telemetry.record_node_duration(node_ref.0, elapsed);
-        exec.telemetry.record_trace_event(
-            node_ref.0,
-            node_start.saturating_duration_since(*graph_start),
-            elapsed,
-        );
-        if let Err(e) = run_result {
-            failed_nodes[node_ref.0] = true;
-            exec.telemetry.errors.push(crate::executor::NodeFailure {
-                node_idx: node_ref.0,
-                node_id: node.id.clone(),
-                code: e.code().to_string(),
-                message: e.to_string(),
+            first_error.get_or_insert_with(|| ExecuteError::HandlerFailed {
+                node: node.id.clone(),
+                error,
             });
-            if exec.fail_fast {
+        } else if let Some(error) = flush_result {
+            record_failure(&mut exec.core.telemetry, node_idx, &node.id, &error);
+            if exec.core.run_config.fail_fast {
                 return Err(ExecuteError::HandlerFailed {
                     node: node.id.clone(),
-                    error: e,
+                    error,
+                });
+            }
+            first_error.get_or_insert_with(|| ExecuteError::HandlerFailed {
+                node: node.id.clone(),
+                error,
+            });
+        } else {
+            if let Err(error) = publish_outputs(&mut exec, node_idx, outputs) {
+                record_failure(&mut exec.core.telemetry, node_idx, &node.id, &error);
+                if exec.core.run_config.fail_fast {
+                    return Err(ExecuteError::HandlerFailed {
+                        node: node.id.clone(),
+                        error,
+                    });
+                }
+                first_error.get_or_insert_with(|| ExecuteError::HandlerFailed {
+                    node: node.id.clone(),
+                    error,
                 });
             }
         }
-        if let Some(e) = flush_error {
-            failed_nodes[node_ref.0] = true;
-            exec.telemetry.errors.push(crate::executor::NodeFailure {
-                node_idx: node_ref.0,
-                node_id: node.id.clone(),
-                code: e.code().to_string(),
-                message: e.to_string(),
-            });
-            if exec.fail_fast {
-                return Err(e);
-            }
+
+        let elapsed = node_start
+            .as_ref()
+            .map(Instant::elapsed)
+            .unwrap_or_default();
+        if let Some(cpu_start) = cpu_start
+            && let Some(cpu_end) = super::thread_cpu_time()
+        {
+            exec.core
+                .telemetry
+                .record_node_cpu_duration(node_idx, cpu_end.saturating_sub(cpu_start));
         }
-        if node_exec_trace_enabled_for(&node.id) {
-            eprintln!(
-                "daedalus-runtime: exec done seg={} idx={} id={}",
-                seg_idx, node_ref.0, node.id
+        if let Some(perf_guard) = perf_guard
+            && let Ok(sample) = perf_guard.finish()
+        {
+            exec.core.telemetry.record_node_perf(node_idx, sample);
+        }
+        if collect_basic_metrics {
+            match exec.core.state.drain_node_custom_metrics(&node.id) {
+                Ok(metrics) => exec
+                    .core
+                    .telemetry
+                    .record_node_custom_metrics(node_idx, metrics),
+                Err(error) => exec.core.telemetry.warnings.push(format!(
+                    "custom metrics unavailable for node {}: {error}",
+                    node.id
+                )),
+            }
+            exec.core.telemetry.record_node_duration(node_idx, elapsed);
+        }
+        if collect_trace
+            && let (Some(graph_start), Some(node_start)) =
+                (graph_start.as_ref(), node_start.as_ref())
+        {
+            exec.core.telemetry.record_trace_event(
+                node_idx,
+                node_start.saturating_duration_since(*graph_start),
+                elapsed,
             );
         }
-        exec.telemetry.nodes_executed += 1;
+        exec.core.telemetry.nodes_executed = exec.core.telemetry.nodes_executed.saturating_add(1);
     }
-    Ok(())
+
+    if let Some(graph_start) = graph_start {
+        exec.core.telemetry.graph_duration = graph_start.elapsed();
+    }
+    exec.core
+        .telemetry
+        .recompute_unattributed_runtime_duration();
+    let nodes = exec.nodes.clone();
+    exec.core.telemetry.aggregate_groups(&nodes);
+
+    if exec.core.run_config.fail_fast
+        && let Some(error) = first_error
+    {
+        return Err(error);
+    }
+    Ok(std::mem::take(&mut exec.core.telemetry))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_host_output_in_graph<H: crate::executor::NodeHandler>(
-    exec: &mut Executor<'_, H>,
-    node_ref: daedalus_planner::NodeRef,
-    seg_idx: usize,
-    incoming: &[Vec<usize>],
-    outgoing: &[Vec<usize>],
-    queues: &Arc<Vec<EdgeStorage>>,
-    warnings_seen: &Arc<Mutex<HashSet<String>>>,
-    any_conversion_cache: &crate::io::AnyConversionCacheHandle,
-    #[cfg(feature = "gpu")] materialization_cache: &crate::io::MaterializationCacheHandle,
-    graph_start: &Instant,
-) -> Result<(), ExecuteError> {
-    let Some(manager) = exec.host_bridges.clone() else {
-        return Ok(());
-    };
-    let Some(node) = exec.nodes.get(node_ref.0) else {
-        return Ok(());
-    };
-    if host_bridge_trace_stderr_enabled() {
-        eprintln!(
-            "daedalus-runtime: host_output_in_graph start seg={} idx={} id={}",
-            seg_idx, node_ref.0, node.id
-        );
-    }
-    let has_incoming = incoming
-        .get(node_ref.0)
-        .is_some_and(|edges| !edges.is_empty());
-    if !has_incoming {
-        return Ok(());
-    }
-
-    let mut bridge = bridge_handler(manager);
-
-    #[allow(unused_mut)]
-    let mut ctx = ExecutionContext {
-        state: exec.state.clone(),
-        node_id: node.id.clone().into(),
-        metadata: exec.node_metadata[node_ref.0].clone(),
-        graph_metadata: exec.graph_metadata.clone(),
-        #[cfg(feature = "gpu")]
-        gpu: exec.gpu.clone(),
-    };
-    let resources = ctx.resources();
-    let _ = resources.before_frame();
-    let metrics_level = exec.telemetry.metrics_level;
-    let const_inputs_guard = exec
-        .const_inputs
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let const_inputs = const_inputs_guard
-        .get(node_ref.0)
-        .map(|inputs| inputs.as_slice())
-        .unwrap_or(&[]);
-    exec.telemetry.start_node_call(node_ref.0);
-    #[cfg(feature = "gpu")]
-    let mut io = NodeIo::new(
-        incoming.get(node_ref.0).cloned().unwrap_or_default(),
-        outgoing.get(node_ref.0).cloned().unwrap_or_default(),
-        queues,
-        warnings_seen,
-        exec.edges,
-        // Host output nodes are "best effort" sinks: drain/forward whatever is available,
-        // without sync-group alignment across ports. Sync-groups here can deadlock outputs
-        // when branches produce at different rates.
-        Vec::new(),
-        &exec.gpu_entry_set,
-        &exec.gpu_exit_set,
-        &exec.data_edges,
-        seg_idx,
-        node_ref.0,
-        node.id.clone(),
-        exec.active_nodes.as_deref().map(|v| &**v),
-        &mut exec.telemetry,
-        exec.backpressure.clone(),
-        const_inputs,
-        exec.const_coercers.clone(),
-        exec.output_movers.clone(),
-        any_conversion_cache.clone(),
-        Some(materialization_cache.clone()),
-        ctx.gpu.clone(),
-        node.compute,
-    );
-    #[cfg(not(feature = "gpu"))]
-    let mut io = NodeIo::new(
-        incoming.get(node_ref.0).cloned().unwrap_or_default(),
-        outgoing.get(node_ref.0).cloned().unwrap_or_default(),
-        queues,
-        warnings_seen,
-        exec.edges,
-        // Host output nodes are "best effort" sinks: drain/forward whatever is available,
-        // without sync-group alignment across ports. Sync-groups here can deadlock outputs
-        // when branches produce at different rates.
-        Vec::new(),
-        seg_idx,
-        node_ref.0,
-        node.id.clone(),
-        exec.active_nodes.as_deref().map(|v| &**v),
-        &mut exec.telemetry,
-        exec.backpressure.clone(),
-        const_inputs,
-        exec.const_coercers.clone(),
-        exec.output_movers.clone(),
-        any_conversion_cache.clone(),
-    );
-
-    let cpu_start = if metrics_level.is_detailed() {
-        crate::executor::thread_cpu_time()
-    } else {
-        None
-    };
-    let perf_guard = if perf::node_perf_enabled() {
-        match perf::PerfCounterGuard::start() {
-            Ok(guard) => Some(guard),
-            Err(err) => {
-                if perf::disable_node_perf() {
-                    tracing::warn!("node perf counters disabled: {err}");
-                }
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let node_start = Instant::now();
-    let run_result = bridge(node, &ctx, &mut io);
-    if host_bridge_trace_stderr_enabled() {
-        eprintln!(
-            "daedalus-runtime: host_output_in_graph bridge returned seg={} idx={} id={} ok={}",
-            seg_idx,
-            node_ref.0,
-            node.id,
-            run_result.is_ok()
-        );
-    }
-    let elapsed = node_start.elapsed();
-    let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
-    let flush_error = if run_result.is_ok() {
-        io.flush().err()
-    } else {
-        None
-    };
-    drop(io);
-    let _ = resources.after_frame();
-    if metrics_level.is_detailed()
-        && let Ok(snapshot) = resources.snapshot()
-    {
-        exec.telemetry
-            .record_node_resource_snapshot(node_ref.0, snapshot);
-    }
-    if let Some(sample) = perf_sample {
-        exec.telemetry.record_node_perf(node_ref.0, sample);
-    }
-    if let Some(cpu_start) = cpu_start
-        && let Some(cpu_end) = crate::executor::thread_cpu_time()
-    {
-        exec.telemetry
-            .record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
-    }
-    exec.telemetry.record_node_duration(node_ref.0, elapsed);
-    exec.telemetry.record_trace_event(
-        node_ref.0,
-        node_start.saturating_duration_since(*graph_start),
-        elapsed,
-    );
-    if let Err(e) = run_result {
-        exec.telemetry.errors.push(crate::executor::NodeFailure {
-            node_idx: node_ref.0,
-            node_id: node.id.clone(),
-            code: e.code().to_string(),
-            message: e.to_string(),
-        });
-        if exec.fail_fast {
-            return Err(ExecuteError::HandlerFailed {
-                node: node.id.clone(),
-                error: e,
-            });
-        }
-    }
-    if let Some(e) = flush_error {
-        exec.telemetry.errors.push(crate::executor::NodeFailure {
-            node_idx: node_ref.0,
-            node_id: node.id.clone(),
-            code: e.code().to_string(),
-            message: e.to_string(),
-        });
-        if exec.fail_fast {
-            return Err(e);
-        }
-    }
-    if host_bridge_trace_stderr_enabled() {
-        eprintln!(
-            "daedalus-runtime: host_output_in_graph done seg={} idx={} id={}",
-            seg_idx, node_ref.0, node.id
-        );
-    }
-    Ok(())
+pub(crate) fn run_fused_linear<H: NodeHandler>(
+    exec: Executor<'_, H>,
+) -> Result<ExecutionTelemetry, ExecuteError> {
+    run(exec)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_host_bridges<H: crate::executor::NodeHandler>(
+fn node_is_active<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize) -> bool {
+    if exec
+        .nodes
+        .get(node_idx)
+        .is_some_and(super::is_host_bridge_node)
+    {
+        return false;
+    }
+    exec.core
+        .run_config
+        .active_nodes
+        .as_deref()
+        .and_then(|mask| mask.get(node_idx).copied())
+        .unwrap_or(true)
+}
+
+fn edge_is_active<H: NodeHandler>(exec: &Executor<'_, H>, edge_idx: usize) -> bool {
+    exec.core
+        .run_config
+        .active_edges
+        .as_deref()
+        .and_then(|mask| mask.get(edge_idx).copied())
+        .unwrap_or(true)
+}
+
+fn edge_uses_direct_slot<H: NodeHandler>(exec: &Executor<'_, H>, edge_idx: usize) -> bool {
+    exec.core
+        .run_config
+        .active_direct_edges
+        .as_deref()
+        .and_then(|mask| mask.get(edge_idx).copied())
+        .unwrap_or_else(|| exec.core.direct_edges.contains(&edge_idx))
+}
+
+pub(crate) fn inject_host_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
-    host_nodes: &[daedalus_planner::NodeRef],
-    failed_nodes: &mut [bool],
-    incoming: &[Vec<usize>],
-    outgoing: &[Vec<usize>],
-    queues: &Arc<Vec<EdgeStorage>>,
-    warnings_seen: &Arc<Mutex<HashSet<String>>>,
-    any_conversion_cache: &crate::io::AnyConversionCacheHandle,
-    #[cfg(feature = "gpu")] materialization_cache: &crate::io::MaterializationCacheHandle,
-    graph_start: &Instant,
-    phase: HostBridgePhase,
 ) -> Result<(), ExecuteError> {
-    let Some(manager) = exec.host_bridges.clone() else {
+    let Some(bridges) = exec.core.host_bridges.clone() else {
         return Ok(());
     };
-    let mut bridge = bridge_handler(manager);
+    let host_nodes: Vec<_> = exec.schedule.host_nodes.iter().copied().collect();
     for node_ref in host_nodes {
-        let has_incoming = incoming
-            .get(node_ref.0)
-            .is_some_and(|edges| !edges.is_empty());
-        let has_outgoing = outgoing
-            .get(node_ref.0)
-            .is_some_and(|edges| !edges.is_empty());
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            let outgoing_desc: Vec<String> = outgoing
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|edges| edges.iter())
-                .filter_map(|edge_idx| exec.edges.get(*edge_idx))
-                .filter_map(|(_, from_port, to, to_port, _)| {
-                    let to_node = exec.nodes.get(to.0)?;
-                    let to_label = to_node.label.as_deref().unwrap_or(&to_node.id);
-                    Some(format!("{from_port} -> {to_label}:{to_port}"))
-                })
-                .collect();
-            let incoming_desc: Vec<String> = incoming
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|edges| edges.iter())
-                .filter_map(|edge_idx| exec.edges.get(*edge_idx))
-                .filter_map(|(from, from_port, _, to_port, _)| {
-                    let from_node = exec.nodes.get(from.0)?;
-                    let from_label = from_node.label.as_deref().unwrap_or(&from_node.id);
-                    Some(format!("{from_label}:{from_port} -> {to_port}"))
-                })
-                .collect();
-            tracing::debug!(
-                "host bridge edges node_id={} outgoing={:?} incoming={:?}",
-                node_ref.0,
-                outgoing_desc,
-                incoming_desc
-            );
-        }
-        match phase {
-            HostBridgePhase::Pre if !has_outgoing => continue,
-            HostBridgePhase::Post if !has_incoming => continue,
-            _ => {}
-        }
         let Some(node) = exec.nodes.get(node_ref.0) else {
             continue;
         };
-        if host_bridge_trace_stderr_enabled() {
-            eprintln!(
-                "daedalus-runtime: host_bridge phase={:?} start idx={} id={} has_incoming={} has_outgoing={}",
-                phase, node_ref.0, node.id, has_incoming, has_outgoing
-            );
-        }
-
-        // Error isolation: skip host nodes that depend on a failed upstream node unless boundary.
-        let is_error_boundary = node
-            .metadata
-            .get("daedalus.error_boundary")
-            .map(|v| matches!(v, Value::Bool(true)))
-            .unwrap_or(false);
-        if !is_error_boundary {
-            let has_failed_dep = incoming
-                .get(node_ref.0)
-                .into_iter()
-                .flat_map(|v| v.iter())
-                .any(|edge_idx| {
-                    exec.edges
-                        .get(*edge_idx)
-                        .map(|(from, _, _, _, _)| {
-                            failed_nodes.get(from.0).copied().unwrap_or(false)
-                        })
-                        .unwrap_or(false)
-                });
-            if has_failed_dep {
-                continue;
-            }
-        }
-
-        #[allow(unused_mut)]
-        let mut ctx = ExecutionContext {
-            state: exec.state.clone(),
-            node_id: node.id.clone().into(),
-            metadata: exec.node_metadata[node_ref.0].clone(),
-            graph_metadata: exec.graph_metadata.clone(),
-            #[cfg(feature = "gpu")]
-            gpu: exec.gpu.clone(),
-        };
-        let resources = ctx.resources();
-        let _ = resources.before_frame();
-        let metrics_level = exec.telemetry.metrics_level;
-        let const_inputs_guard = exec
-            .const_inputs
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let const_inputs = const_inputs_guard
-            .get(node_ref.0)
-            .map(|inputs| inputs.as_slice())
-            .unwrap_or(&[]);
-        let use_best_effort_host_output_sync =
-            matches!(phase, HostBridgePhase::Post) && node.id.ends_with("io.host_output");
-        let host_sync_groups = if use_best_effort_host_output_sync {
-            Vec::new()
-        } else {
-            node.sync_groups.clone()
-        };
-        exec.telemetry.start_node_call(node_ref.0);
-        #[cfg(feature = "gpu")]
-        let mut io = NodeIo::new(
-            incoming.get(node_ref.0).cloned().unwrap_or_default(),
-            outgoing.get(node_ref.0).cloned().unwrap_or_default(),
-            queues,
-            warnings_seen,
-            exec.edges,
-            host_sync_groups.clone(),
-            &exec.gpu_entry_set,
-            &exec.gpu_exit_set,
-            &exec.data_edges,
-            0,
-            node_ref.0,
-            node.id.clone(),
-            exec.active_nodes.as_deref().map(|v| &**v),
-            &mut exec.telemetry,
-            exec.backpressure.clone(),
-            const_inputs,
-            exec.const_coercers.clone(),
-            exec.output_movers.clone(),
-            any_conversion_cache.clone(),
-            Some(materialization_cache.clone()),
-            ctx.gpu.clone(),
-            node.compute,
-        );
-        #[cfg(not(feature = "gpu"))]
-        let mut io = NodeIo::new(
-            incoming.get(node_ref.0).cloned().unwrap_or_default(),
-            outgoing.get(node_ref.0).cloned().unwrap_or_default(),
-            queues,
-            warnings_seen,
-            exec.edges,
-            host_sync_groups,
-            0,
-            node_ref.0,
-            node.id.clone(),
-            exec.active_nodes.as_deref().map(|v| &**v),
-            &mut exec.telemetry,
-            exec.backpressure.clone(),
-            const_inputs,
-            exec.const_coercers.clone(),
-            exec.output_movers.clone(),
-            any_conversion_cache.clone(),
-        );
-
-        if matches!(phase, HostBridgePhase::Post)
-            && !io.sync_groups().is_empty()
-            && io.inputs().is_empty()
-        {
+        let node_id = node.id.clone();
+        let alias = node.label.as_deref().unwrap_or(&node.id);
+        let Some(handle) = bridges.handle(alias) else {
             continue;
-        }
-        if matches!(phase, HostBridgePhase::Post) && has_incoming {
-            let count = HOST_BRIDGE_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
-            if count < 5 {
-                let ports: Vec<_> = io.inputs().iter().map(|(p, _)| p.as_str()).collect();
-                tracing::debug!(
-                    "host bridge post-pass inputs alias={} node_id={} ports={:?}",
-                    node.label.as_deref().unwrap_or(&node.id),
-                    node.id,
-                    ports
-                );
-            }
-        }
-
-        let cpu_start = if metrics_level.is_detailed() {
-            crate::executor::thread_cpu_time()
-        } else {
-            None
         };
-        let perf_guard = if perf::node_perf_enabled() {
-            match perf::PerfCounterGuard::start() {
-                Ok(guard) => Some(guard),
-                Err(err) => {
-                    if perf::disable_node_perf() {
-                        tracing::warn!("node perf counters disabled: {err}");
-                    }
-                    None
+        let outgoing: SmallVec<[usize; 4]> = exec
+            .outgoing_edges
+            .get(node_ref.0)
+            .map(|edges| edges.iter().copied().collect())
+            .unwrap_or_default();
+        let active_ports = outgoing.iter().filter_map(|edge_idx| {
+            let edge = exec.edges.get(*edge_idx)?;
+            (edge_is_active(exec, *edge_idx) && node_is_active(exec, edge.to().0))
+                .then(|| PortId::from(edge.source_port()))
+        });
+        let active_ports = active_ports.fold(SmallVec::<[PortId; 4]>::new(), |mut ports, port| {
+            if !ports.iter().any(|seen| seen == &port) {
+                ports.push(port);
+            }
+            ports
+        });
+        for inbound in handle.take_inbound_for_ports_small(&active_ports) {
+            let matching_edges: SmallVec<[(usize, RuntimeEdgePolicy); 4]> = outgoing
+                .iter()
+                .copied()
+                .filter_map(|edge_idx| {
+                    let edge = exec.edges.get(edge_idx)?;
+                    (edge.source_port() == inbound.port.as_str()
+                        && edge_is_active(exec, edge_idx)
+                        && node_is_active(exec, edge.to().0))
+                    .then(|| (edge_idx, edge.policy().clone()))
+                })
+                .collect();
+            let last_edge = matching_edges.len().saturating_sub(1);
+            let mut payload_slot = Some(CorrelatedPayload::from_edge(inbound.payload));
+            for (idx, (edge_idx, policy)) in matching_edges.into_iter().enumerate() {
+                let cloned_payload = idx != last_edge;
+                let payload = if cloned_payload {
+                    let Some(payload) = payload_slot.as_ref() else {
+                        tracing::error!(
+                            edge_idx,
+                            "host payload slot unexpectedly empty before clone"
+                        );
+                        continue;
+                    };
+                    payload.clone()
+                } else {
+                    let Some(payload) = payload_slot.take() else {
+                        tracing::error!(
+                            edge_idx,
+                            "host payload slot unexpectedly empty before handoff"
+                        );
+                        continue;
+                    };
+                    payload
+                };
+                if exec.core.run_config.metrics_level.is_detailed() {
+                    exec.core.telemetry.record_edge_handoff(
+                        edge_idx,
+                        payload.inner.is_storage_unique(),
+                        cloned_payload,
+                        0,
+                    );
                 }
+                if edge_uses_direct_slot(exec, edge_idx) {
+                    push_direct_edge(exec, edge_idx, payload);
+                    continue;
+                }
+                let queues = exec.core.queues.clone();
+                let warnings_seen = exec.core.warnings_seen.clone();
+                let data_size_inspectors = exec.core.data_size_inspectors.clone();
+                let backpressure = exec.backpressure.clone();
+                apply_policy_owned(ApplyPolicyOwnedArgs {
+                    edge_idx,
+                    policy: &policy,
+                    payload,
+                    queues: &queues,
+                    warnings_seen: &warnings_seen,
+                    telem: &mut exec.core.telemetry,
+                    warning_label: None,
+                    backpressure,
+                    data_size_inspectors: &data_size_inspectors,
+                })
+                .map_err(|error| ExecuteError::HandlerFailed {
+                    node: node_id.clone(),
+                    error,
+                })?;
             }
-        } else {
-            None
-        };
-        let node_start = Instant::now();
-        let run_result = bridge(node, &ctx, &mut io);
-        if host_bridge_trace_stderr_enabled() {
-            eprintln!(
-                "daedalus-runtime: host_bridge phase={:?} bridge returned idx={} id={} ok={}",
-                phase,
-                node_ref.0,
-                node.id,
-                run_result.is_ok()
-            );
-        }
-        let elapsed = node_start.elapsed();
-        let perf_sample = perf_guard.and_then(|guard| guard.finish().ok());
-        let flush_error = if run_result.is_ok() {
-            io.flush().err()
-        } else {
-            None
-        };
-        drop(io);
-        let _ = resources.after_frame();
-        if metrics_level.is_detailed()
-            && let Ok(snapshot) = resources.snapshot()
-        {
-            exec.telemetry
-                .record_node_resource_snapshot(node_ref.0, snapshot);
-        }
-        if let Some(sample) = perf_sample {
-            exec.telemetry.record_node_perf(node_ref.0, sample);
-        }
-        if let Some(cpu_start) = cpu_start
-            && let Some(cpu_end) = crate::executor::thread_cpu_time()
-        {
-            exec.telemetry
-                .record_node_cpu_duration(node_ref.0, cpu_end.saturating_sub(cpu_start));
-        }
-        exec.telemetry.record_node_duration(node_ref.0, elapsed);
-        exec.telemetry.record_trace_event(
-            node_ref.0,
-            node_start.saturating_duration_since(*graph_start),
-            elapsed,
-        );
-        if let Err(e) = run_result {
-            failed_nodes[node_ref.0] = true;
-            exec.telemetry.errors.push(crate::executor::NodeFailure {
-                node_idx: node_ref.0,
-                node_id: node.id.clone(),
-                code: e.code().to_string(),
-                message: e.to_string(),
-            });
-            if exec.fail_fast {
-                return Err(ExecuteError::HandlerFailed {
-                    node: node.id.clone(),
-                    error: e,
-                });
-            }
-        }
-        if let Some(e) = flush_error {
-            failed_nodes[node_ref.0] = true;
-            exec.telemetry.errors.push(crate::executor::NodeFailure {
-                node_idx: node_ref.0,
-                node_id: node.id.clone(),
-                code: e.code().to_string(),
-                message: e.to_string(),
-            });
-            if exec.fail_fast {
-                return Err(e);
-            }
-        }
-        if host_bridge_trace_stderr_enabled() {
-            eprintln!(
-                "daedalus-runtime: host_bridge phase={:?} done idx={} id={}",
-                phase, node_ref.0, node.id
-            );
         }
     }
     Ok(())
 }
 
-pub(crate) fn record_warning(
-    label: &str,
-    seen: &Arc<Mutex<HashSet<String>>>,
-    telem: &mut crate::executor::ExecutionTelemetry,
-) {
-    if let Ok(mut s) = seen.lock()
-        && s.insert(label.to_string())
-    {
-        telem.warnings.push(label.to_string());
+pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
+    let Some(bridges) = exec.core.host_bridges.clone() else {
+        return;
+    };
+    let host_nodes: Vec<_> = exec.schedule.host_nodes.iter().copied().collect();
+    for node_ref in host_nodes {
+        let Some(node) = exec.nodes.get(node_ref.0) else {
+            continue;
+        };
+        let alias = node.label.as_deref().unwrap_or(&node.id);
+        let Some(handle) = bridges.handle(alias) else {
+            continue;
+        };
+        let incoming: SmallVec<[usize; 4]> = exec
+            .incoming_edges
+            .get(node_ref.0)
+            .map(|edges| edges.iter().copied().collect())
+            .unwrap_or_default();
+        for edge_idx in incoming {
+            let Some(edge) = exec.edges.get(edge_idx) else {
+                continue;
+            };
+            let to_port = edge.target_port();
+            if !edge_is_active(exec, edge_idx) {
+                continue;
+            }
+            if exec
+                .core
+                .run_config
+                .selected_host_output_ports
+                .as_ref()
+                .is_some_and(|ports| !ports.contains(to_port))
+            {
+                continue;
+            }
+            if edge_uses_direct_slot(exec, edge_idx) {
+                while let Some(payload) = pop_direct_edge(exec, edge_idx) {
+                    handle.push_outbound_ref(to_port, payload.inner);
+                }
+                continue;
+            }
+            while let Some(payload) =
+                pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors)
+            {
+                handle.push_outbound_ref(to_port, payload.inner);
+            }
+        }
     }
+}
+
+fn collect_inputs<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    node_idx: usize,
+) -> Result<Vec<(String, CorrelatedPayload)>, ExecuteError> {
+    let collect_detailed_metrics =
+        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
+    let collect_lifecycle = cfg!(feature = "metrics")
+        && (exec.core.run_config.metrics_level.is_profile()
+            || exec.core.run_config.metrics_level.is_trace());
+    let mut inputs = Vec::new();
+    let incoming: SmallVec<[usize; 4]> = exec
+        .incoming_edges
+        .get(node_idx)
+        .map(|edges| edges.iter().copied().collect())
+        .unwrap_or_default();
+    for edge_idx in incoming {
+        let Some(edge) = exec.edges.get(edge_idx) else {
+            continue;
+        };
+        let to_port = edge.target_port().to_string();
+        if !edge_is_active(exec, edge_idx) {
+            continue;
+        }
+        if edge_uses_direct_slot(exec, edge_idx) {
+            while let Some(payload) = pop_direct_edge(exec, edge_idx) {
+                if collect_lifecycle {
+                    let mut lifecycle = DataLifecycleRecord::new(
+                        payload.correlation_id,
+                        DataLifecycleStage::EdgeDequeued,
+                    );
+                    lifecycle.node_idx = Some(node_idx);
+                    lifecycle.edge_idx = Some(edge_idx);
+                    lifecycle.port = Some(to_port.clone());
+                    lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+                    exec.core.telemetry.record_data_lifecycle(lifecycle);
+                }
+                if collect_detailed_metrics {
+                    let bytes = exec
+                        .core
+                        .data_size_inspectors
+                        .estimate_payload_bytes(&payload.inner);
+                    exec.core
+                        .telemetry
+                        .record_node_transport_in(node_idx, bytes);
+                }
+                inputs.push((to_port.clone(), payload));
+            }
+            continue;
+        }
+        while let Some(mut payload) =
+            pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors)
+        {
+            if collect_lifecycle {
+                let mut lifecycle = DataLifecycleRecord::new(
+                    payload.correlation_id,
+                    DataLifecycleStage::EdgeDequeued,
+                );
+                lifecycle.node_idx = Some(node_idx);
+                lifecycle.edge_idx = Some(edge_idx);
+                lifecycle.port = Some(to_port.clone());
+                lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+                exec.core.telemetry.record_data_lifecycle(lifecycle);
+            }
+            if collect_detailed_metrics {
+                let bytes = exec
+                    .core
+                    .data_size_inspectors
+                    .estimate_payload_bytes(&payload.inner);
+                exec.core
+                    .telemetry
+                    .record_node_transport_in(node_idx, bytes);
+            }
+            payload = adapt_edge_payload(exec, edge_idx, payload, node_idx, &to_port)?;
+            inputs.push((to_port.clone(), payload));
+        }
+    }
+
+    let const_inputs = exec
+        .const_inputs
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(node_idx)
+        .cloned()
+        .unwrap_or_default();
+    for (port, value) in const_inputs {
+        inputs.push((
+            port,
+            CorrelatedPayload::from_edge(Payload::owned("value", value)),
+        ));
+    }
+    Ok(inputs)
+}
+
+fn adapt_edge_payload<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    edge_idx: usize,
+    mut payload: CorrelatedPayload,
+    node_idx: usize,
+    port: &str,
+) -> Result<CorrelatedPayload, ExecuteError> {
+    let Some(edge_transport) = exec.edge_transports.get(edge_idx).and_then(Option::as_ref) else {
+        return Ok(payload);
+    };
+    if edge_transport.adapter_steps.is_empty() {
+        return Ok(payload);
+    }
+    let Some(runtime_transport) = exec.core.runtime_transport.clone() else {
+        return Ok(payload);
+    };
+
+    let mut request = AdaptRequest::new(
+        edge_transport
+            .target_transport
+            .clone()
+            .or_else(|| edge_transport.transport_target.clone())
+            .unwrap_or_else(|| payload.inner.type_key().clone()),
+    );
+    request.access = edge_transport.target_access;
+    request.exclusive = edge_transport.target_exclusive;
+    request.residency = edge_transport.target_residency;
+
+    let steps: Vec<String> = edge_transport
+        .adapter_steps
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let adapter_detail = adapter_path_detail(edge_transport);
+    let mut lifecycle =
+        DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::AdapterStart);
+    lifecycle.node_idx = Some(node_idx);
+    lifecycle.edge_idx = Some(edge_idx);
+    lifecycle.port = Some(port.to_string());
+    lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+    lifecycle.adapter_steps = steps.clone();
+    lifecycle.detail = adapter_detail.clone();
+    exec.core.telemetry.record_data_lifecycle(lifecycle);
+
+    tracing::debug!(
+        target: "daedalus_runtime::transport",
+        edge_index = edge_idx,
+        node_index = node_idx,
+        port,
+        source_type = %payload.inner.type_key(),
+        target_type = %request.target,
+        target_residency = ?request.residency,
+        target_access = ?request.access,
+        target_exclusive = request.exclusive,
+        adapter_steps = ?steps,
+        detail = adapter_detail.as_deref(),
+        "adapter path started"
+    );
+    let adapter_start = Instant::now();
+    match runtime_transport.execute_adapter_path(
+        payload.inner.clone(),
+        &edge_transport.adapter_steps,
+        &request,
+    ) {
+        Ok(adapted) => {
+            exec.core
+                .telemetry
+                .record_edge_adapter_duration(edge_idx, adapter_start.elapsed());
+            payload.inner = adapted;
+            let mut lifecycle =
+                DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::AdapterEnd);
+            let elapsed = adapter_start.elapsed();
+            lifecycle.node_idx = Some(node_idx);
+            lifecycle.edge_idx = Some(edge_idx);
+            lifecycle.port = Some(port.to_string());
+            lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+            lifecycle.adapter_steps = steps;
+            lifecycle.detail = adapter_detail;
+            exec.core.telemetry.record_data_lifecycle(lifecycle);
+            tracing::debug!(
+                target: "daedalus_runtime::transport",
+                edge_index = edge_idx,
+                node_index = node_idx,
+                port,
+                output_type = %payload.inner.type_key(),
+                elapsed_nanos = elapsed.as_nanos() as u64,
+                "adapter path finished"
+            );
+            Ok(payload)
+        }
+        Err(error) => {
+            exec.core.telemetry.record_edge_adapter_error(edge_idx);
+            tracing::warn!(
+                target: "daedalus_runtime::transport",
+                edge_index = edge_idx,
+                node_index = node_idx,
+                port,
+                error = %error,
+                "adapter path failed"
+            );
+            let mut lifecycle =
+                DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::AdapterError);
+            lifecycle.node_idx = Some(node_idx);
+            lifecycle.edge_idx = Some(edge_idx);
+            lifecycle.port = Some(port.to_string());
+            lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+            lifecycle.adapter_steps = steps;
+            lifecycle.detail = Some(error.to_string());
+            exec.core.telemetry.record_data_lifecycle(lifecycle);
+            Err(ExecuteError::HandlerFailed {
+                node: exec
+                    .nodes
+                    .get(node_idx)
+                    .map(|node| node.id.clone())
+                    .unwrap_or_else(|| format!("node_{node_idx}")),
+                error: super::NodeError::InvalidInput(error.to_string()),
+            })
+        }
+    }
+}
+
+fn adapter_path_detail(edge_transport: &crate::plan::RuntimeEdgeTransport) -> Option<String> {
+    if edge_transport.adapter_path.is_empty() && edge_transport.expected_adapter_cost.is_none() {
+        return None;
+    }
+    let steps = edge_transport
+        .adapter_path
+        .iter()
+        .map(|step| format!("{}:{:?}", step.adapter, step.kind))
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    Some(format!(
+        "adapter_path=[{}]; expected_cost={}",
+        steps,
+        edge_transport
+            .expected_adapter_cost
+            .map(|cost| cost.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ))
+}
+
+fn publish_outputs<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    node_idx: usize,
+    outputs: Vec<(String, CorrelatedPayload)>,
+) -> Result<(), super::NodeError> {
+    let collect_detailed_metrics =
+        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
+    let outgoing: SmallVec<[usize; 4]> = exec
+        .outgoing_edges
+        .get(node_idx)
+        .map(|edges| edges.iter().copied().collect())
+        .unwrap_or_default();
+    for (port, payload) in outputs {
+        if collect_detailed_metrics {
+            let bytes = exec
+                .core
+                .data_size_inspectors
+                .estimate_payload_bytes(&payload.inner);
+            exec.core
+                .telemetry
+                .record_node_transport_out(node_idx, bytes);
+        }
+        let matching_edges: SmallVec<[(usize, RuntimeEdgePolicy); 4]> = outgoing
+            .iter()
+            .copied()
+            .filter_map(|edge_idx| {
+                let edge = exec.edges.get(edge_idx)?;
+                (edge.source_port() == port.as_str() && edge_is_active(exec, edge_idx))
+                    .then(|| (edge_idx, edge.policy().clone()))
+            })
+            .collect();
+        let last_edge = matching_edges.len().saturating_sub(1);
+        let mut payload_slot = Some(payload);
+        for (idx, (edge_idx, policy)) in matching_edges.into_iter().enumerate() {
+            let cloned_payload = idx != last_edge;
+            let payload = if cloned_payload {
+                let Some(payload) = payload_slot.as_ref() else {
+                    tracing::error!(edge_idx, "payload slot unexpectedly empty before clone");
+                    continue;
+                };
+                payload.clone()
+            } else {
+                let Some(payload) = payload_slot.take() else {
+                    tracing::error!(edge_idx, "payload slot unexpectedly empty before handoff");
+                    continue;
+                };
+                payload
+            };
+            if collect_detailed_metrics {
+                exec.core.telemetry.record_edge_handoff(
+                    edge_idx,
+                    payload.inner.is_storage_unique(),
+                    cloned_payload,
+                    0,
+                );
+            }
+            if edge_uses_direct_slot(exec, edge_idx) {
+                push_direct_edge(exec, edge_idx, payload);
+                continue;
+            }
+            let queues = exec.core.queues.clone();
+            let warnings_seen = exec.core.warnings_seen.clone();
+            let data_size_inspectors = exec.core.data_size_inspectors.clone();
+            let backpressure = exec.backpressure.clone();
+            apply_policy_owned(ApplyPolicyOwnedArgs {
+                edge_idx,
+                policy: &policy,
+                payload,
+                queues: &queues,
+                warnings_seen: &warnings_seen,
+                telem: &mut exec.core.telemetry,
+                warning_label: None,
+                backpressure,
+                data_size_inspectors: &data_size_inspectors,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn record_failure(
+    telemetry: &mut ExecutionTelemetry,
+    node_idx: usize,
+    node_id: &str,
+    error: &super::NodeError,
+) {
+    telemetry.errors.push(NodeFailure {
+        node_idx,
+        node_id: node_id.to_string(),
+        code: error.code().to_string(),
+        message: error.to_string(),
+    });
 }

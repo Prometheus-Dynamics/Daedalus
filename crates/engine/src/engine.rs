@@ -1,107 +1,83 @@
-#[cfg_attr(not(feature = "gpu"), allow(unused_imports))]
 use std::sync::Arc;
 
-use daedalus_planner::{Graph, GraphPatch, PlannerConfig, PlannerInput, build_plan};
-use daedalus_registry::store::Registry;
-use daedalus_runtime::ExecutionTelemetry;
-use daedalus_runtime::executor::{Executor, NodeHandler};
-use daedalus_runtime::{
-    HostBridgeManager, RuntimePlan, RuntimeSink, SchedulerConfig, build_runtime,
-};
+use daedalus_planner::{Graph, PlannerConfig, PlannerInput, build_plan};
+use daedalus_runtime::executor::{NodeHandler, OwnedExecutor};
+#[cfg(feature = "plugins")]
+use daedalus_runtime::handler_registry::HandlerRegistry;
+#[cfg(feature = "plugins")]
+use daedalus_runtime::plugins::PluginRegistry;
+use daedalus_runtime::{HostBridgeManager, RuntimePlan, RuntimeTransport, SchedulerConfig};
+#[cfg(feature = "plugins")]
+use daedalus_transport::{AccessMode, BoundaryCapabilities};
 
-use crate::cache::{
-    CacheStatus, EngineCacheMetrics, EngineCaches, planner_cache_key, runtime_plan_cache_key,
-};
+use crate::cache::{CacheStatus, EngineCacheMetrics, EngineCaches, planner_cache_key};
+use crate::compiled_run::CompiledRun;
 use crate::config::{EngineConfig, GpuBackend, RuntimeMode};
 use crate::error::EngineError;
+use crate::host_graph::HostGraph;
+use crate::prepared_plan::PreparedPlan;
 
-/// Result of a full engine run.
-///
-/// ```ignore
-/// use daedalus_engine::RunResult;
-/// use daedalus_runtime::ExecutionTelemetry;
-/// use daedalus_runtime::RuntimePlan;
-///
-/// let result = RunResult {
-///     runtime_plan: RuntimePlan::from_execution(&daedalus_planner::ExecutionPlan::new(
-///         daedalus_planner::Graph::default(),
-///         vec![],
-///     )),
-///     telemetry: ExecutionTelemetry::default(),
-/// };
-/// assert!(result.runtime_plan.nodes.is_empty());
-/// ```
-pub struct RunResult {
-    pub runtime_plan: RuntimePlan,
-    pub telemetry: ExecutionTelemetry,
-    pub planner_cache: CacheStatus,
-    pub runtime_plan_cache: CacheStatus,
-    pub cache_metrics: EngineCacheMetrics,
-}
-
-pub struct PreparedPlan {
-    output: daedalus_planner::PlannerOutput,
-    cache_status: CacheStatus,
-    scheduler: SchedulerConfig,
-    caches: Arc<EngineCaches>,
-}
-
-impl PreparedPlan {
-    pub fn cache_status(&self) -> CacheStatus {
-        self.cache_status
-    }
-
-    pub fn is_cached(&self) -> bool {
-        self.cache_status.is_cached()
-    }
-
-    pub fn plan(&self) -> &daedalus_planner::ExecutionPlan {
-        &self.output.plan
-    }
-
-    pub fn planner_output(&self) -> &daedalus_planner::PlannerOutput {
-        &self.output
-    }
-
-    pub fn build(&self) -> Result<PreparedRuntimePlan, EngineError> {
-        let cache_key = runtime_plan_cache_key(&self.output.plan, &self.scheduler);
-        if let Some(runtime_plan) = self.caches.runtime_get(&cache_key) {
-            return Ok(PreparedRuntimePlan {
-                runtime_plan,
-                cache_status: CacheStatus::Hit,
-            });
+#[cfg(feature = "plugins")]
+pub(crate) fn validate_boundary_contracts(
+    plugins: &PluginRegistry,
+    graph: &Graph,
+) -> Result<(), EngineError> {
+    fn required_capabilities(access: AccessMode, is_output: bool) -> BoundaryCapabilities {
+        let mut required = BoundaryCapabilities::default();
+        if is_output {
+            required.owned_move = true;
+            return required;
         }
-
-        let runtime_plan = build_runtime(&self.output.plan, &self.scheduler);
-        self.caches.runtime_insert(cache_key, runtime_plan.clone());
-        Ok(PreparedRuntimePlan {
-            runtime_plan,
-            cache_status: CacheStatus::Miss,
-        })
-    }
-}
-
-pub struct PreparedRuntimePlan {
-    runtime_plan: RuntimePlan,
-    cache_status: CacheStatus,
-}
-
-impl PreparedRuntimePlan {
-    pub fn cache_status(&self) -> CacheStatus {
-        self.cache_status
+        match access {
+            AccessMode::Read | AccessMode::View => required.borrow_ref = true,
+            AccessMode::Move => required.owned_move = true,
+            AccessMode::Modify => required.borrow_mut = true,
+        }
+        required
     }
 
-    pub fn is_cached(&self) -> bool {
-        self.cache_status.is_cached()
+    for instance in &graph.nodes {
+        let Some(decl) = plugins.transport_capabilities.node_decl(&instance.id) else {
+            continue;
+        };
+        for port in &decl.inputs {
+            let Some(contract) = plugins.boundary_contract(&port.type_key) else {
+                continue;
+            };
+            let required = daedalus_transport::BoundaryTypeContract {
+                type_key: port.type_key.clone(),
+                rust_type_name: contract.rust_type_name.clone(),
+                abi_version: daedalus_transport::BoundaryTypeContract::ABI_VERSION,
+                layout_hash: contract.layout_hash.clone(),
+                capabilities: required_capabilities(port.access, false),
+            };
+            contract.compatible_with(&required).map_err(|err| {
+                EngineError::Config(format!(
+                    "boundary contract for node `{}` input `{}` is incompatible: {err}",
+                    instance.id, port.name
+                ))
+            })?;
+        }
+        for port in &decl.outputs {
+            let Some(contract) = plugins.boundary_contract(&port.type_key) else {
+                continue;
+            };
+            let required = daedalus_transport::BoundaryTypeContract {
+                type_key: port.type_key.clone(),
+                rust_type_name: contract.rust_type_name.clone(),
+                abi_version: daedalus_transport::BoundaryTypeContract::ABI_VERSION,
+                layout_hash: contract.layout_hash.clone(),
+                capabilities: required_capabilities(port.access, true),
+            };
+            contract.compatible_with(&required).map_err(|err| {
+                EngineError::Config(format!(
+                    "boundary contract for node `{}` output `{}` is incompatible: {err}",
+                    instance.id, port.name
+                ))
+            })?;
+        }
     }
-
-    pub fn runtime_plan(&self) -> &RuntimePlan {
-        &self.runtime_plan
-    }
-
-    pub fn into_runtime_plan(self) -> RuntimePlan {
-        self.runtime_plan
-    }
+    Ok(())
 }
 
 /// High-level engine facade for planning and execution.
@@ -112,7 +88,7 @@ impl PreparedRuntimePlan {
 /// let _ = engine.config();
 /// ```
 pub struct Engine {
-    config: EngineConfig,
+    pub(crate) config: EngineConfig,
     caches: Arc<EngineCaches>,
     #[cfg(feature = "gpu")]
     gpu_handle: std::sync::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
@@ -120,17 +96,18 @@ pub struct Engine {
 
 impl Engine {
     /// Create a new engine from configuration.
-    pub fn new(config: EngineConfig) -> Result<Self, EngineError> {
-        config.validate().map_err(EngineError::Config)?;
+    pub fn new(config: impl Into<EngineConfig>) -> Result<Self, EngineError> {
+        let config = config.into();
+        config.validate()?;
         if matches!(config.gpu, GpuBackend::Device | GpuBackend::Mock) && !cfg!(feature = "gpu") {
             return Err(EngineError::FeatureDisabled("gpu"));
         }
-        if config.runtime.lockfree_queues && !cfg!(feature = "lockfree-queues") {
-            return Err(EngineError::FeatureDisabled("lockfree-queues"));
-        }
         Ok(Self {
+            caches: crate::cache::new_caches(
+                config.cache.planner_max_entries,
+                config.cache.runtime_plan_max_entries,
+            ),
             config,
-            caches: crate::cache::new_caches(),
             #[cfg(feature = "gpu")]
             gpu_handle: std::sync::Mutex::new(None),
         })
@@ -141,6 +118,85 @@ impl Engine {
         &self.config
     }
 
+    fn configure_owned_executor<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        mut exec: OwnedExecutor<H>,
+    ) -> Result<OwnedExecutor<H>, EngineError> {
+        exec = exec
+            .with_fail_fast(self.config.runtime.fail_fast)
+            .with_metrics_level(self.config.runtime.metrics_level)
+            .with_runtime_debug_config(self.config.runtime.debug_config);
+        if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
+            exec = exec.with_demand_sinks(self.config.runtime.demand_sinks.clone());
+        }
+        if matches!(
+            self.config.runtime.mode,
+            RuntimeMode::Parallel | RuntimeMode::Adaptive
+        ) {
+            exec = exec.with_pool_size(self.config.runtime.pool_size);
+            #[cfg(feature = "executor-pool")]
+            exec.prewarm_worker_pool()?;
+        }
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(gpu) = self.get_gpu_handle()? {
+                exec = exec.with_gpu((*gpu).clone());
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            if !matches!(self.config.gpu, GpuBackend::Cpu) {
+                return Err(EngineError::FeatureDisabled("gpu"));
+            }
+        }
+        Ok(exec)
+    }
+
+    fn configure_host_bridges(&self, bridges: &HostBridgeManager) -> Result<(), EngineError> {
+        bridges
+            .apply_config(&self.config.runtime.host_bridge_config())
+            .map_err(|err| EngineError::Config(err.to_string()))?;
+        Ok(())
+    }
+
+    pub fn compile_runtime_plan<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        runtime_plan: RuntimePlan,
+        handler: H,
+    ) -> Result<CompiledRun<H>, EngineError> {
+        let runtime_plan = Arc::new(runtime_plan);
+        let executor =
+            self.configure_owned_executor(OwnedExecutor::new(runtime_plan.clone(), handler))?;
+        Ok(CompiledRun {
+            runtime_plan,
+            executor,
+            runtime_mode: self.config.runtime.mode.clone(),
+            planner_cache: CacheStatus::Miss,
+            runtime_plan_cache: CacheStatus::Miss,
+            caches: self.caches.clone(),
+        })
+    }
+
+    pub fn compile_runtime_plan_with_transport<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        runtime_plan: RuntimePlan,
+        handler: H,
+        transport: RuntimeTransport,
+    ) -> Result<CompiledRun<H>, EngineError> {
+        let runtime_plan = Arc::new(runtime_plan);
+        let executor =
+            OwnedExecutor::new(runtime_plan.clone(), handler).with_runtime_transport(transport);
+        let executor = self.configure_owned_executor(executor)?;
+        Ok(CompiledRun {
+            runtime_plan,
+            executor,
+            runtime_mode: self.config.runtime.mode.clone(),
+            planner_cache: CacheStatus::Miss,
+            runtime_plan_cache: CacheStatus::Miss,
+            caches: self.caches.clone(),
+        })
+    }
+
     pub fn cache_metrics(&self) -> EngineCacheMetrics {
         self.caches.metrics()
     }
@@ -149,23 +205,38 @@ impl Engine {
         self.caches.clear()
     }
 
-    /// Run planner on the provided graph + registry.
+    /// Run planner on the provided graph.
     ///
     /// ```no_run
     /// use daedalus_engine::{Engine, EngineConfig};
-    /// use daedalus_registry::store::Registry;
     /// use daedalus_planner::Graph;
     /// let engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let registry = Registry::new();
-    /// let _ = engine.plan(&registry, Graph::default());
+    /// let _ = engine.plan(Graph::default());
     /// ```
-    pub fn plan(
+    pub fn plan(&self, graph: Graph) -> Result<daedalus_planner::PlannerOutput, EngineError> {
+        let planner_cfg = self.planner_config()?;
+        self.plan_with_config(graph, planner_cfg)
+    }
+
+    /// Plan using a plugin registry's native transport capabilities.
+    #[cfg(feature = "plugins")]
+    pub fn plan_plugin_registry(
         &self,
-        registry: &Registry,
+        plugins: &PluginRegistry,
         graph: Graph,
     ) -> Result<daedalus_planner::PlannerOutput, EngineError> {
-        let planner_cfg = self.planner_config()?;
-        let output = build_plan(PlannerInput { graph, registry }, planner_cfg);
+        let planner_cfg = plugins
+            .planner_config_with_transport(self.planner_config()?)
+            .map_err(|err| EngineError::Config(err.to_string()))?;
+        self.plan_with_config(graph, planner_cfg)
+    }
+
+    pub fn plan_with_config(
+        &self,
+        graph: Graph,
+        planner_cfg: PlannerConfig,
+    ) -> Result<daedalus_planner::PlannerOutput, EngineError> {
+        let output = build_plan(PlannerInput { graph }, planner_cfg);
         let has_errors = output
             .diagnostics
             .iter()
@@ -177,17 +248,34 @@ impl Engine {
     }
 
     /// Run planner through the engine's cache layer and return a prepared plan.
-    pub fn prepare_plan(
+    pub fn prepare_plan(&self, graph: Graph) -> Result<PreparedPlan, EngineError> {
+        let planner_cfg = self.planner_config()?;
+        self.prepare_plan_with_config(graph, planner_cfg)
+    }
+
+    /// Prepare a plan using a plugin registry's native transport capabilities.
+    #[cfg(feature = "plugins")]
+    pub fn prepare_plugin_registry(
         &self,
-        registry: &Registry,
+        plugins: &PluginRegistry,
         graph: Graph,
     ) -> Result<PreparedPlan, EngineError> {
-        let planner_cfg = self.planner_config()?;
-        let cache_key = planner_cache_key(&graph, &planner_cfg, registry);
+        let planner_cfg = plugins
+            .planner_config_with_transport(self.planner_config()?)
+            .map_err(|err| EngineError::Config(err.to_string()))?;
+        self.prepare_plan_with_config(graph, planner_cfg)
+    }
+
+    pub fn prepare_plan_with_config(
+        &self,
+        graph: Graph,
+        planner_cfg: PlannerConfig,
+    ) -> Result<PreparedPlan, EngineError> {
+        let cache_key = planner_cache_key(&graph, &planner_cfg);
         let output = if let Some(cached) = self.caches.planner_get(&cache_key) {
             (cached, CacheStatus::Hit)
         } else {
-            let output = self.plan(registry, graph)?;
+            let output = self.plan_with_config(graph, planner_cfg)?;
             self.caches.planner_insert(cache_key, output.clone());
             (output, CacheStatus::Miss)
         };
@@ -199,326 +287,237 @@ impl Engine {
         })
     }
 
-    /// Construct a runtime plan from a planner plan using configured policies.
-    ///
-    /// ```no_run
-    /// use daedalus_engine::{Engine, EngineConfig};
-    /// use daedalus_planner::{ExecutionPlan, Graph};
-    /// let engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let plan = ExecutionPlan::new(Graph::default(), vec![]);
-    /// let _ = engine.build_runtime_plan(&plan);
-    /// ```
-    pub fn build_runtime_plan(
+    /// Compile a graph into a stream-capable retained runtime graph.
+    pub fn compile<H: NodeHandler + Send + Sync + 'static>(
         &self,
-        plan: &daedalus_planner::ExecutionPlan,
-    ) -> Result<RuntimePlan, EngineError> {
-        let sched = self.scheduler_config();
-        Ok(build_runtime(plan, &sched))
-    }
-
-    /// Execute a runtime plan using the provided handler.
-    ///
-    /// ```no_run
-    /// use daedalus_engine::{Engine, EngineConfig};
-    /// use daedalus_runtime::{RuntimePlan, RuntimeNode};
-    /// use daedalus_runtime::executor::NodeError;
-    /// use daedalus_planner::{ExecutionPlan, Graph};
-    ///
-    /// let engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let plan = RuntimePlan::from_execution(&ExecutionPlan::new(Graph::default(), vec![]));
-    /// let handler = |_node: &RuntimeNode,
-    ///               _ctx: &daedalus_runtime::state::ExecutionContext,
-    ///               _io: &mut daedalus_runtime::io::NodeIo|
-    ///        -> Result<(), NodeError> { Ok(()) };
-    /// let _ = engine.execute(plan, handler);
-    /// ```
-    pub fn execute<H: NodeHandler + Send + Sync + 'static>(
-        &self,
-        runtime_plan: RuntimePlan,
-        handler: H,
-    ) -> Result<ExecutionTelemetry, EngineError> {
-        if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
-            return self.execute_scoped(runtime_plan, &self.config.runtime.demand_sinks, handler);
-        }
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level);
-        exec = exec.with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-
-        if matches!(self.config.runtime.mode, RuntimeMode::Parallel) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
-    }
-
-    /// Execute a runtime plan, computing only the subgraph needed for the requested sinks.
-    ///
-    /// This is the demand-driven execution mode: it skips unrelated branches so slow previews
-    /// don't tax unrelated outputs.
-    pub fn execute_scoped<H: NodeHandler + Send + Sync + 'static>(
-        &self,
-        runtime_plan: RuntimePlan,
-        sinks: &[RuntimeSink],
-        handler: H,
-    ) -> Result<ExecutionTelemetry, EngineError> {
-        let active = runtime_plan
-            .active_nodes_for_sinks(sinks)
-            .map_err(EngineError::Config)?;
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_active_nodes(active)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph)
-            .with_metrics_level(self.config.runtime.metrics_level);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-        if matches!(self.config.runtime.mode, RuntimeMode::Parallel) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
-    }
-
-    /// Execute a runtime plan with host bridge support.
-    ///
-    /// ```no_run
-    /// use daedalus_engine::{Engine, EngineConfig};
-    /// use daedalus_runtime::{HostBridgeManager, RuntimePlan, RuntimeNode};
-    /// use daedalus_runtime::executor::NodeError;
-    /// use daedalus_planner::{ExecutionPlan, Graph};
-    ///
-    /// let engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let plan = RuntimePlan::from_execution(&ExecutionPlan::new(Graph::default(), vec![]));
-    /// let host = HostBridgeManager::new();
-    /// let handler = |_node: &RuntimeNode,
-    ///               _ctx: &daedalus_runtime::state::ExecutionContext,
-    ///               _io: &mut daedalus_runtime::io::NodeIo|
-    ///        -> Result<(), NodeError> { Ok(()) };
-    /// let _ = engine.execute_with_host(plan, host, handler);
-    /// ```
-    pub fn execute_with_host<H: NodeHandler + Send + Sync + 'static>(
-        &self,
-        runtime_plan: RuntimePlan,
-        host: HostBridgeManager,
-        handler: H,
-    ) -> Result<ExecutionTelemetry, EngineError> {
-        if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
-            return self.execute_with_host_scoped(
-                runtime_plan,
-                host,
-                &self.config.runtime.demand_sinks,
-                handler,
-            );
-        }
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_host_bridges(host)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level);
-        exec = exec.with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-
-        if matches!(self.config.runtime.mode, RuntimeMode::Parallel) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
-    }
-
-    pub fn execute_with_host_scoped<H: NodeHandler + Send + Sync + 'static>(
-        &self,
-        runtime_plan: RuntimePlan,
-        host: HostBridgeManager,
-        sinks: &[RuntimeSink],
-        handler: H,
-    ) -> Result<ExecutionTelemetry, EngineError> {
-        let active = runtime_plan
-            .active_nodes_for_sinks(sinks)
-            .map_err(EngineError::Config)?;
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_active_nodes(active)
-            .with_host_bridges(host)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_host_outputs_in_graph(self.config.runtime.host_outputs_in_graph)
-            .with_metrics_level(self.config.runtime.metrics_level);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-        if matches!(self.config.runtime.mode, RuntimeMode::Parallel) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
-    }
-
-    /// Full run: load registry (if not provided), plan, and execute.
-    ///
-    /// ```no_run
-    /// use daedalus_engine::{Engine, EngineConfig};
-    /// use daedalus_registry::store::Registry;
-    /// use daedalus_planner::Graph;
-    /// use daedalus_runtime::executor::NodeError;
-    ///
-    /// let engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let registry = Registry::new();
-    /// let handler = |_node: &daedalus_runtime::RuntimeNode,
-    ///               _ctx: &daedalus_runtime::state::ExecutionContext,
-    ///               _io: &mut daedalus_runtime::io::NodeIo|
-    ///        -> Result<(), NodeError> { Ok(()) };
-    /// let _ = engine.run(&registry, Graph::default(), handler);
-    /// ```
-    pub fn run<H: NodeHandler + Send + Sync + 'static>(
-        &self,
-        registry: &Registry,
         graph: Graph,
         handler: H,
-    ) -> Result<RunResult, EngineError> {
-        let prepared = self.prepare_plan(registry, graph)?;
-        let planner_cache = prepared.cache_status();
-        let prepared_runtime = prepared.build()?;
-        let runtime_plan_cache = prepared_runtime.cache_status();
-        let runtime_plan = prepared_runtime.into_runtime_plan();
-        let telemetry = self.execute(runtime_plan.clone(), handler)?;
-        Ok(RunResult {
-            runtime_plan,
-            telemetry,
-            planner_cache,
-            runtime_plan_cache,
-            cache_metrics: self.cache_metrics(),
-        })
+    ) -> Result<HostGraph<H>, EngineError> {
+        self.compile_host_graph(graph, handler, "host")
     }
 
-    /// Apply a patch and rerun only the affected branch when the patch impact is narrow enough.
-    ///
-    /// V1 incremental behavior stays conservative:
-    /// - `SetNodeConst` and `ReplaceNodeId` can use sink-scoped reruns
-    /// - topology-changing patches such as `DeleteNodes` fall back to a full rerun
-    pub fn run_with_patch<H: NodeHandler + Send + Sync + 'static>(
+    /// Compile a graph into a stream-capable retained runtime graph with an explicit host alias.
+    pub fn compile_host_graph<H: NodeHandler + Send + Sync + 'static>(
         &self,
-        registry: &Registry,
-        base_graph: &Graph,
-        patch: &GraphPatch,
+        graph: Graph,
         handler: H,
-    ) -> Result<RunResult, EngineError> {
-        let impact = patch.analyze(base_graph);
-        let mut graph = base_graph.clone();
-        patch.apply_to_graph(&mut graph);
-
-        let prepared = self.prepare_plan(registry, graph)?;
+        host_alias: impl Into<String>,
+    ) -> Result<HostGraph<H>, EngineError> {
+        let host_alias = host_alias.into();
+        let prepared = self.prepare_plan(graph)?;
         let planner_cache = prepared.cache_status();
         let prepared_runtime = prepared.build()?;
         let runtime_plan_cache = prepared_runtime.cache_status();
-        let runtime_plan = prepared_runtime.into_runtime_plan();
-
-        let telemetry = if !impact.requires_full_rerun && !impact.sink_nodes.is_empty() {
-            let sinks: Vec<RuntimeSink> = impact
-                .sink_nodes
+        let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
+        let bridges = HostBridgeManager::new();
+        self.configure_host_bridges(&bridges)?;
+        bridges.populate_from_plan(runtime_plan.as_ref());
+        let host = bridges.ensure_handle(host_alias);
+        let executor =
+            OwnedExecutor::new(runtime_plan.clone(), handler).with_host_bridges(bridges.clone());
+        let executor = self.configure_owned_executor(executor)?;
+        let node_labels = Arc::from(
+            runtime_plan
+                .nodes
                 .iter()
-                .copied()
-                .map(|idx| RuntimeSink {
-                    node: daedalus_planner::GraphNodeSelector {
-                        index: Some(idx),
-                        ..Default::default()
-                    },
-                    port: None,
-                })
-                .collect();
-            self.execute_scoped(runtime_plan.clone(), &sinks, handler)?
-        } else {
-            self.execute(runtime_plan.clone(), handler)?
-        };
-
-        Ok(RunResult {
-            runtime_plan,
-            telemetry,
-            planner_cache,
-            runtime_plan_cache,
-            cache_metrics: self.cache_metrics(),
+                .map(|node| node.label.clone().unwrap_or_else(|| node.id.clone()))
+                .collect::<Vec<_>>(),
+        );
+        Ok(HostGraph {
+            runner: CompiledRun {
+                runtime_plan,
+                executor,
+                runtime_mode: self.config.runtime.mode.clone(),
+                planner_cache,
+                runtime_plan_cache,
+                caches: self.caches.clone(),
+            },
+            bridges,
+            host,
+            node_labels,
         })
     }
 
-    fn scheduler_config(&self) -> SchedulerConfig {
+    /// Compile a graph into the lower-level executor runner.
+    pub fn compile_runner<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        graph: Graph,
+        handler: H,
+    ) -> Result<CompiledRun<H>, EngineError> {
+        let prepared = self.prepare_plan(graph)?;
+        let planner_cache = prepared.cache_status();
+        let prepared_runtime = prepared.build()?;
+        let runtime_plan_cache = prepared_runtime.cache_status();
+        let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
+        let executor =
+            self.configure_owned_executor(OwnedExecutor::new(runtime_plan.clone(), handler))?;
+        Ok(CompiledRun {
+            runtime_plan,
+            executor,
+            runtime_mode: self.config.runtime.mode.clone(),
+            planner_cache,
+            runtime_plan_cache,
+            caches: self.caches.clone(),
+        })
+    }
+
+    /// Compile a graph and transport table into a reusable hot runner.
+    pub fn compile_with_transport<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        graph: Graph,
+        handler: H,
+        transport: RuntimeTransport,
+    ) -> Result<CompiledRun<H>, EngineError> {
+        let prepared = self.prepare_plan(graph)?;
+        let planner_cache = prepared.cache_status();
+        let prepared_runtime = prepared.build()?;
+        let runtime_plan_cache = prepared_runtime.cache_status();
+        let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
+        let executor =
+            OwnedExecutor::new(runtime_plan.clone(), handler).with_runtime_transport(transport);
+        let executor = self.configure_owned_executor(executor)?;
+        Ok(CompiledRun {
+            runtime_plan,
+            executor,
+            runtime_mode: self.config.runtime.mode.clone(),
+            planner_cache,
+            runtime_plan_cache,
+            caches: self.caches.clone(),
+        })
+    }
+
+    /// Compile a plugin-registry graph into a reusable hot runner.
+    #[cfg(feature = "plugins")]
+    pub fn compile_plugin_registry<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        plugins: &PluginRegistry,
+        graph: Graph,
+        handler: H,
+    ) -> Result<CompiledRun<H>, EngineError> {
+        validate_boundary_contracts(plugins, &graph)?;
+        let planner_cfg = plugins
+            .planner_config_with_transport(self.planner_config()?)
+            .map_err(|err| EngineError::Config(err.to_string()))?;
+        let prepared = self.prepare_plan_with_config(graph, planner_cfg)?;
+        let planner_cache = prepared.cache_status();
+        let prepared_runtime = prepared.build()?;
+        let runtime_plan_cache = prepared_runtime.cache_status();
+        let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
+        let executor = OwnedExecutor::new(runtime_plan.clone(), handler)
+            .with_runtime_transport(plugins.runtime_transport.clone())
+            .with_capabilities(plugins.capabilities.clone());
+        let executor = self.configure_owned_executor(executor)?;
+        Ok(CompiledRun {
+            runtime_plan,
+            executor,
+            runtime_mode: self.config.runtime.mode.clone(),
+            planner_cache,
+            runtime_plan_cache,
+            caches: self.caches.clone(),
+        })
+    }
+
+    /// Compile a plugin-registry graph into a retained host-fed runner.
+    ///
+    /// The returned graph is meant for stream-style usage:
+    /// push one or more payloads into host ports, call `tick`, then drain host outputs.
+    #[cfg(feature = "plugins")]
+    pub fn compile_host_graph_plugin_registry<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        plugins: &PluginRegistry,
+        graph: Graph,
+        handler: H,
+        bridges: HostBridgeManager,
+        host_alias: impl Into<String>,
+    ) -> Result<HostGraph<H>, EngineError> {
+        let host_alias = host_alias.into();
+        validate_boundary_contracts(plugins, &graph)?;
+        let planner_cfg = plugins
+            .planner_config_with_transport(self.planner_config()?)
+            .map_err(|err| EngineError::Config(err.to_string()))?;
+        let prepared = self.prepare_plan_with_config(graph, planner_cfg)?;
+        let planner_cache = prepared.cache_status();
+        let prepared_runtime = prepared.build()?;
+        let runtime_plan_cache = prepared_runtime.cache_status();
+        let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
+        self.configure_host_bridges(&bridges)?;
+        bridges.populate_from_plan(runtime_plan.as_ref());
+        let host = bridges.ensure_handle(host_alias);
+        let executor = OwnedExecutor::new(runtime_plan.clone(), handler)
+            .with_runtime_transport(plugins.runtime_transport.clone())
+            .with_capabilities(plugins.capabilities.clone())
+            .with_host_bridges(bridges.clone());
+        let executor = self.configure_owned_executor(executor)?;
+        let node_labels = Arc::from(
+            runtime_plan
+                .nodes
+                .iter()
+                .map(|node| node.label.clone().unwrap_or_else(|| node.id.clone()))
+                .collect::<Vec<_>>(),
+        );
+        Ok(HostGraph {
+            runner: CompiledRun {
+                runtime_plan,
+                executor,
+                runtime_mode: self.config.runtime.mode.clone(),
+                planner_cache,
+                runtime_plan_cache,
+                caches: self.caches.clone(),
+            },
+            bridges,
+            host,
+            node_labels,
+        })
+    }
+
+    /// Compile a plugin-registry graph into the default host-fed streaming runtime.
+    #[cfg(feature = "plugins")]
+    pub fn compile_registry(
+        &self,
+        plugins: &PluginRegistry,
+        graph: Graph,
+    ) -> Result<HostGraph<HandlerRegistry>, EngineError> {
+        self.compile_host_graph_plugin_registry(
+            plugins,
+            graph,
+            plugins.handlers(),
+            HostBridgeManager::new(),
+            "host",
+        )
+    }
+
+    pub(crate) fn scheduler_config(&self) -> SchedulerConfig {
         SchedulerConfig {
             default_policy: self.config.runtime.default_policy.clone(),
             backpressure: self.config.runtime.backpressure.clone(),
-            lockfree_queues: self.config.runtime.lockfree_queues,
         }
     }
 
-    fn planner_config(&self) -> Result<PlannerConfig, EngineError> {
+    pub fn planner_config(&self) -> Result<PlannerConfig, EngineError> {
         if self.config.planner.enable_gpu
             && !cfg!(feature = "gpu")
             && matches!(self.config.gpu, GpuBackend::Device | GpuBackend::Mock)
         {
             return Err(EngineError::FeatureDisabled("gpu"));
         }
-        #[allow(unused_mut)]
+        #[cfg(feature = "gpu")]
         let mut cfg = PlannerConfig {
             enable_gpu: self.config.planner.enable_gpu,
             enable_lints: self.config.planner.enable_lints,
             active_features: self.config.planner.active_features.clone(),
+            transport_capabilities: None,
+            lowerings: Default::default(),
             strict_port_declarations: false,
-            #[cfg(feature = "gpu")]
             gpu_caps: None,
+        };
+        #[cfg(not(feature = "gpu"))]
+        let cfg = PlannerConfig {
+            enable_gpu: self.config.planner.enable_gpu,
+            enable_lints: self.config.planner.enable_lints,
+            active_features: self.config.planner.active_features.clone(),
+            transport_capabilities: None,
+            lowerings: Default::default(),
+            strict_port_declarations: false,
         };
         #[cfg(feature = "gpu")]
         {
@@ -535,12 +534,17 @@ impl Engine {
     }
 
     #[cfg(feature = "gpu")]
-    fn get_gpu_handle(&self) -> Result<Option<Arc<daedalus_gpu::GpuContextHandle>>, EngineError> {
+    pub(crate) fn get_gpu_handle(
+        &self,
+    ) -> Result<Option<Arc<daedalus_gpu::GpuContextHandle>>, EngineError> {
         use daedalus_gpu::{GpuBackendKind, GpuOptions, select_backend};
         if matches!(self.config.gpu, GpuBackend::Cpu) {
             return Ok(None);
         }
-        let mut guard = self.gpu_handle.lock().unwrap();
+        let mut guard = self
+            .gpu_handle
+            .lock()
+            .map_err(|_| EngineError::Config("gpu handle lock poisoned".into()))?;
         if let Some(handle) = guard.as_ref() {
             return Ok(Some(handle.clone()));
         }
@@ -560,5 +564,122 @@ impl Engine {
         let handle = Arc::new(select_backend(&opts)?);
         *guard = Some(handle.clone());
         Ok(Some(handle))
+    }
+}
+
+#[cfg(all(test, feature = "plugins"))]
+mod boundary_tests {
+    use super::*;
+    use daedalus_planner::{ComputeAffinity, NodeInstance};
+    use daedalus_registry::capability::{NodeDecl, PortDecl};
+    use daedalus_registry::ids::NodeId;
+    use daedalus_transport::{BoundaryTypeContract, LayoutHash, TypeKey};
+    use std::collections::BTreeMap;
+
+    fn graph_with_node(id: &str) -> Graph {
+        Graph {
+            nodes: vec![NodeInstance {
+                id: NodeId::new(id),
+                bundle: None,
+                label: None,
+                inputs: vec![],
+                outputs: vec![],
+                compute: ComputeAffinity::CpuOnly,
+                const_inputs: vec![],
+                sync_groups: vec![],
+                metadata: BTreeMap::new(),
+            }],
+            edges: vec![],
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn boundary_compile_validation_accepts_compatible_contract() {
+        let mut plugins = PluginRegistry::bare();
+        let key = TypeKey::new("test:frame");
+        plugins
+            .register_boundary_contract(BoundaryTypeContract::new(
+                key.clone(),
+                LayoutHash::new("same-layout"),
+                BoundaryCapabilities::rust_value(),
+            ))
+            .unwrap();
+        plugins
+            .register_node_decl(
+                NodeDecl::new("test.node")
+                    .input(PortDecl::new("frame", key.clone()).access(AccessMode::Read))
+                    .output(PortDecl::new("out", key).access(AccessMode::Read)),
+            )
+            .unwrap();
+
+        validate_boundary_contracts(&plugins, &graph_with_node("test.node")).unwrap();
+    }
+
+    #[test]
+    fn boundary_compile_validation_rejects_missing_capability() {
+        let mut plugins = PluginRegistry::bare();
+        let key = TypeKey::new("test:owned-only");
+        plugins
+            .register_boundary_contract(BoundaryTypeContract::new(
+                key.clone(),
+                LayoutHash::new("same-layout"),
+                BoundaryCapabilities::owned(),
+            ))
+            .unwrap();
+        plugins
+            .register_node_decl(
+                NodeDecl::new("test.node")
+                    .input(PortDecl::new("frame", key).access(AccessMode::Read)),
+            )
+            .unwrap();
+
+        let err = validate_boundary_contracts(&plugins, &graph_with_node("test.node"))
+            .expect_err("read input should require borrow_ref");
+        assert!(err.to_string().contains("boundary capabilities mismatch"));
+    }
+
+    #[test]
+    fn boundary_registry_rejects_incompatible_layout() {
+        let mut plugins = PluginRegistry::bare();
+        let key = TypeKey::new("test:layout");
+        plugins
+            .register_boundary_contract(BoundaryTypeContract::new(
+                key.clone(),
+                LayoutHash::new("layout-a"),
+                BoundaryCapabilities::rust_value(),
+            ))
+            .unwrap();
+        let err = plugins
+            .register_boundary_contract(BoundaryTypeContract::new(
+                key,
+                LayoutHash::new("layout-b"),
+                BoundaryCapabilities::rust_value(),
+            ))
+            .expect_err("same type key with different layout should fail");
+        assert!(err.to_string().contains("boundary layout mismatch"));
+    }
+
+    #[test]
+    fn boundary_registry_accepts_compatible_contracts_without_feature_identity() {
+        let mut plugins = PluginRegistry::bare();
+        let key = TypeKey::new("styx:framelease");
+        let mut host_contract = BoundaryTypeContract::new(
+            key.clone(),
+            LayoutHash::new("framelease-layout-v1"),
+            BoundaryCapabilities::frame_like(),
+        );
+        host_contract.rust_type_name = Some("host_build::FrameLease".to_string());
+        let mut plugin_contract = BoundaryTypeContract::new(
+            key,
+            LayoutHash::new("framelease-layout-v1"),
+            BoundaryCapabilities::frame_like(),
+        );
+        plugin_contract.rust_type_name = Some("plugin_build::FrameLease".to_string());
+
+        plugins.register_boundary_contract(host_contract).unwrap();
+        plugins
+            .register_boundary_contract(plugin_contract)
+            .expect("layout/capability-compatible contracts should not require identical cargo feature identity");
     }
 }
