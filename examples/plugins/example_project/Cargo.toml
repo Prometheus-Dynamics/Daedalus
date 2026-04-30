@@ -1,0 +1,21 @@
+[package]
+name = "daedalus-plugins-example-project"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+doctest = false
+
+[features]
+default = ["plugins"]
+plugins = []
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins", "ffi"] }
+paste = { workspace = true }

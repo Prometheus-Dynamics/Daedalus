@@ -1,0 +1,175 @@
+[package]
+name = "daedalus-examples"
+version = "2.0.0"
+edition.workspace = true
+publish = false
+
+[features]
+default = ["plugins"]
+plugins = []
+styx-camera-example = ["daedalus/styx-camera-example", "dep:styx"]
+gpu-wgpu = ["daedalus/gpu-wgpu"]
+gpu-styx = ["gpu-wgpu", "styx-camera-example"]
+
+[dependencies]
+daedalus = { workspace = true, features = ["engine", "plugins"] }
+paste = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
+tracing-subscriber = { workspace = true }
+styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
+
+[[bin]]
+name = "quickstart_typed_cpu_graph"
+path = "00_quickstart/typed_cpu_graph.rs"
+
+[[bin]]
+name = "quickstart_direct_host_lane"
+path = "00_quickstart/direct_host_lane.rs"
+
+[[bin]]
+name = "quickstart_bounded_streaming_io"
+path = "00_quickstart/bounded_streaming_io.rs"
+
+[[bin]]
+name = "quickstart_runtime_config"
+path = "00_quickstart/runtime_config.rs"
+
+[[bin]]
+name = "quickstart_gpu_fallback"
+path = "00_quickstart/gpu_fallback.rs"
+
+[[bin]]
+name = "quickstart_strict_builder_roundtrip"
+path = "00_quickstart/strict_builder_roundtrip.rs"
+
+[[bin]]
+name = "hello_graph"
+path = "01_basics/hello_graph.rs"
+
+[[bin]]
+name = "typed_ports"
+path = "01_basics/typed_ports.rs"
+
+[[bin]]
+name = "typed_handle_graph"
+path = "01_basics/typed_handle_graph.rs"
+
+[[bin]]
+name = "mutable_payload"
+path = "01_basics/mutable_payload.rs"
+
+[[bin]]
+name = "fanout"
+path = "01_basics/fanout.rs"
+
+[[bin]]
+name = "runtime_modes"
+path = "02_engine_config/runtime_modes.rs"
+
+[[bin]]
+name = "metrics_levels"
+path = "02_engine_config/metrics_levels.rs"
+
+[[bin]]
+name = "edge_policies"
+path = "02_engine_config/edge_policies.rs"
+
+[[bin]]
+name = "fail_fast"
+path = "02_engine_config/fail_fast.rs"
+
+[[bin]]
+name = "pool_size"
+path = "02_engine_config/pool_size.rs"
+
+[[bin]]
+name = "backpressure"
+path = "02_engine_config/backpressure.rs"
+
+[[bin]]
+name = "demand_driven"
+path = "02_engine_config/demand_driven.rs"
+
+[[bin]]
+name = "gpu_backend"
+path = "02_engine_config/gpu_backend.rs"
+
+[[bin]]
+name = "zero_copy_chain"
+path = "03_transport/zero_copy_chain.rs"
+
+[[bin]]
+name = "shared_fanout"
+path = "03_transport/shared_fanout.rs"
+
+[[bin]]
+name = "adapter_path"
+path = "03_transport/adapter_path.rs"
+
+[[bin]]
+name = "payload_residency"
+path = "03_transport/payload_residency.rs"
+
+[[bin]]
+name = "plan_explain"
+path = "03_transport/plan_explain.rs"
+
+[[bin]]
+name = "async_event_driven"
+path = "04_async/async_event_driven.rs"
+
+[[bin]]
+name = "async_demand_select"
+path = "04_async/async_demand_select.rs"
+
+[[bin]]
+name = "styx_camera_graph"
+path = "04_async/styx_camera_graph.rs"
+
+[[bin]]
+name = "runtime_metrics"
+path = "06_metrics_debugging/runtime_metrics.rs"
+
+[[bin]]
+name = "transport_metrics"
+path = "06_metrics_debugging/transport_metrics.rs"
+
+[[bin]]
+name = "ownership_metrics"
+path = "06_metrics_debugging/ownership_metrics.rs"
+
+[[bin]]
+name = "lifecycle_trace"
+path = "06_metrics_debugging/lifecycle_trace.rs"
+
+[[bin]]
+name = "observability"
+path = "06_metrics_debugging/observability.rs"
+
+[[bin]]
+name = "backpressure_diagnostics"
+path = "06_metrics_debugging/backpressure_diagnostics.rs"
+
+[[bin]]
+name = "plan_debug"
+path = "06_metrics_debugging/plan_debug.rs"
+
+[[bin]]
+name = "overhead_floor"
+path = "06_metrics_debugging/overhead_floor.rs"
+
+[[bin]]
+name = "gpu_node"
+path = "07_gpu/gpu_node.rs"
+
+[[bin]]
+name = "upload_download"
+path = "07_gpu/upload_download.rs"
+
+[[bin]]
+name = "mixed_cpu_gpu"
+path = "07_gpu/mixed_cpu_gpu.rs"
+
+[[bin]]
+name = "gpu_fallback"
+path = "07_gpu/gpu_fallback.rs"

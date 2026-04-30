@@ -1,0 +1,23 @@
+[package]
+name = "daedalus-plugins-framelease"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+doctest = false
+
+[features]
+default = []
+plugins = []
+styx-framelease = ["plugins", "dep:styx"]
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins", "ffi"] }
+paste = { workspace = true }
+styx = { workspace = true, optional = true }
