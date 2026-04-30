@@ -4,15 +4,12 @@
 //! # Feature Matrix
 //! - `default`: transport capabilities.
 //! - `plugin`: plugin adapters.
-//! - `ffi`: FFI adapters.
 //! - `gpu`: no GPU backend types leak.
 
 pub mod capability;
 pub mod diagnostics;
 pub mod ids;
 
-#[cfg(feature = "ffi")]
-pub mod ffi;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 

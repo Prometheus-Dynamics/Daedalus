@@ -1,0 +1,21 @@
+[package]
+name = "daedalus-ffi-cpp"
+version.workspace = true
+edition.workspace = true
+description = "C and C++ FFI ABI and packaging integration for Daedalus plugins."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-ffi-cpp"
+readme = "README.md"
+keywords = ["ffi", "plugins", "cpp"]
+categories = ["api-bindings"]
+
+[lints]
+workspace = true
+
+[dependencies]
+daedalus-ffi-core = { workspace = true }
+
+[dev-dependencies]
+daedalus-data = { workspace = true }

@@ -85,5 +85,3 @@ declare_plugin!(
         register_capabilities(registry);
     }
 );
-
-daedalus::export_plugin!(ExampleProjectPlugin);

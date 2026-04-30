@@ -1,0 +1,21 @@
+[package]
+name = "daedalus-ffi-python"
+version.workspace = true
+edition.workspace = true
+description = "Python FFI worker and packaging integration for Daedalus plugins."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-ffi-python"
+readme = "README.md"
+keywords = ["ffi", "plugins", "python"]
+categories = ["api-bindings"]
+
+[lints]
+workspace = true
+
+[dependencies]
+daedalus-ffi-core = { workspace = true }
+
+[dev-dependencies]
+daedalus-data = { workspace = true }

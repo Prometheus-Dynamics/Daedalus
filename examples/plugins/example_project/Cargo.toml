@@ -9,7 +9,6 @@ workspace = true
 
 [lib]
 path = "src/lib.rs"
-crate-type = ["rlib", "cdylib"]
 doctest = false
 
 [features]
@@ -17,5 +16,5 @@ default = ["plugins"]
 plugins = []
 
 [dependencies]
-daedalus = { workspace = true, features = ["plugins", "ffi"] }
+daedalus = { workspace = true, features = ["plugins"] }
 paste = { workspace = true }

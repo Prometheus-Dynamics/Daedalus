@@ -21,7 +21,6 @@ path = "src/lib.rs"
 default = []
 bundle = []
 plugin = []
-ffi = []
 gpu = ["daedalus-gpu"]
 
 [dependencies]

@@ -1,70 +1,107 @@
-# Daedalus FFI
+# Daedalus FFI Workspace
 
-Language-specific FFI surfaces are split by subdirectory.
+This directory contains the FFI/plugin crates. The old manifest crate has been removed; new work
+targets the split schema, backend, package, and worker surfaces directly.
 
-- `lang/rust/` — Rust-authored plugins built as `cdylib` and loaded via `PluginLibrary`.
-- `lang/python/` — Python-side manifest emitter (`daedalus_py`) plus sample plugin.
-  - Manifest loader example: `crates/ffi/examples/load_python_manifest.rs` (uses the language-dispatching loader)
-- `lang/node/` — Node.js-side manifest emitter (`daedalus_node`) plus sample plugin.
-  - Manifest loader example: `crates/ffi/examples/load_python_manifest.rs` (uses the language-dispatching loader)
-- `lang/java/` — Java-side manifest emitter + subprocess bridge.
-- `lang/c_cpp/` — C/C++ manifest emitter + shared-library bridge.
+## Architecture
 
-## Rewrite Contract
+The surface is built around three artifacts:
 
-The current crate is still manifest-first, but the rewrite now has an explicit contract surface in
-`crates/ffi/src/contracts.rs`.
+- `PluginSchema`
+  Schema-only plugin metadata: plugin identity, nodes, ports, type keys, feature flags, boundary
+  contracts, and required host capabilities.
+- `BackendConfig`
+  Runtime-only backend metadata: backend kind, runtime model, entry module/class/symbol, executable,
+  args, classpath, native library paths, working directory, environment, and backend options.
+- `PluginPackage`
+  Physical package metadata: schema, backend configs, bundled artifacts, dependency metadata,
+  lockfile, manifest hash, signature, and integrity hashes.
 
-### Layers
+Host/backend traffic uses `InvokeRequest`, `InvokeResponse`, `InvokeEvent`, and `WireValue`. The
+baseline worker protocol is JSON-lines `WorkerMessage`; persistent workers should implement that
+before adding an optimized binary transport.
 
-- `package_discovery`
-  Finds plugin artifacts and package metadata.
-- `schema`
-  Describes plugin identity, node shape, and port types.
-- `host_core`
-  Owns install/request/response/state handling on the Rust side.
-- `backend_runtime`
-  Executes a backend-specific entrypoint.
-- `transport`
-  Carries typed values between the host core and backend runtime.
+## Crates
 
-Each layer has one job. Runtime process details and transport behavior are no longer part of the
-core schema boundary.
+- `core/`
+  Contract crate. Owns schema/backend/package descriptors, worker protocol types, wire values,
+  lockfiles, package integrity, and deterministic bundle path rewriting.
+- `host/`
+  Shared host installer and runner orchestration. Owns schema-to-registry declaration generation,
+  package install planning, runner pools, response decoding, state sync, persistent worker process
+  handling, and entrypoint validation.
+- `python/`
+  Python worker and SDK integration.
+- `node/`
+  Node.js worker and SDK integration.
+- `java/`
+  Java worker and packaging helpers, including classpath, jar/classes directory, Maven/Gradle
+  metadata, native library packaging metadata, and Java worker launch arguments.
+- `cpp/`
+  C/C++ ABI and package helpers.
 
-### Runtime Models
-
-The rewrite only treats these runtime models as first-class:
+## Runtime Models
 
 - `in_process_abi`
+  Rust dynamic plugins and C/C++ shared libraries. These run in process and should not go through
+  the persistent worker pool.
 - `persistent_worker`
+  Python, Node, Java, and future out-of-process languages. Workers load code once, negotiate the
+  worker protocol, advertise supported nodes, and handle repeated invocations.
 
-Spawn-per-call subprocess execution is not a target model for the rewrite.
+Use `in_process_abi` when the plugin is trusted native code that benefits from direct calls and
+shared process memory. Use `persistent_worker` for language runtimes, isolated execution, stateful
+nodes, classpath/module loading, crash isolation, and deterministic startup negotiation.
 
-### Typed Wire Contract
+## Package Flow
 
-The rewrite target for host/backend payloads is the `WireValue` contract exported by the crate:
+Package APIs build `PluginSchema + BackendConfig + PluginPackage`, rewrite artifacts into
+deterministic `_bundle/...` paths, stamp integrity hashes, and write package lockfiles. Backends
+must refer to bundled paths after rewriting.
 
-- `unit`
-- `bool`
-- `int`
-- `float`
-- `string`
-- `bytes`
-- `image`
-- `list`
-- `record`
-- `enum`
+Normal package generation writes wrapper sources and bundles under
+`target/ffi-generated/<language>/<out-name>/`. Repo examples are demos only, not the source of truth
+for generated plugin wrappers.
 
-Request/response traffic is expressed as:
+## Registry Schema Export
 
-- `InvokeRequest`
-- `InvokeResponse`
-- `InvokeEvent`
+`ffi-host` can export schema JSON from installed registry metadata with
+`export_registry_plugin_schema_json`. This uses `PluginManifest` and `NodeDecl` as the source of
+truth, preserving node ports, type keys, feature flags, boundary contracts, required host
+capabilities, and registry metadata. The split language crates expose validation helpers so Python,
+Node, Java, and C/C++ package builders can check their emitted `PluginSchema + BackendConfig`
+against the same core contract.
 
-The important boundary change is that schema and backend config are separate:
+## Troubleshooting
 
-- `PluginSchema` / `NodeSchema`
-- `BackendConfig`
+- Worker startup fails:
+  Check `BackendConfig.executable`, `args`, `working_dir`, and `env`. For persistent workers, verify
+  that the worker emits `WorkerHello` and supports the host protocol version.
+- Node id is rejected before invoke:
+  The runner advertised `supported_nodes`, and the package requested a node not in that list. Fix the
+  package schema/backend mapping or worker startup registration.
+- Java class cannot be found:
+  Ensure all jars/classes directories are listed in `BackendConfig.classpath` after bundle rewriting
+  and that `java_worker_launch` receives the rewritten `_bundle/java/...` paths.
+- Java native library fails to load:
+  Ensure native libraries are recorded as package artifacts under `_bundle/native/<platform>/` and
+  are present in `BackendConfig.native_library_paths`.
+- Python or Node module cannot be imported:
+  Ensure source or bundled runtime artifacts are present under `_bundle/src/` and that
+  `entry_module` refers to the bundled path/module expected by the worker.
+- Malformed response:
+  Validate `InvokeResponse.protocol_version`, correlation id, output names, and `WireValue` shapes.
+  Use `ffi-host` response decoding helpers so all languages report conversion failures the same way.
 
-That split is deliberate. Plugin/node shape belongs to the schema layer; process/runtime details
-belong to the backend runtime layer.
+## Feature Shape
+
+GPU shader and image payload support stay feature-gated inside the appropriate host/core or language
+crates until they prove they need standalone crates. `pyo3`, broad image codecs, WGPU integration,
+Java bridge compilation, and Node bridge generation should stay behind explicit features in the
+crates that actually need them.
+
+## Tooling Direction
+
+Package and SDK library APIs come before CLI workflows. CLI commands such as `plugin new`, `plugin
+check`, `plugin build`, and `plugin run` are useful later, but the first stable surface should be the
+Rust and language SDK APIs that generate, validate, package, and run the artifacts.

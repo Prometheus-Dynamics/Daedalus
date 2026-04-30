@@ -40,7 +40,6 @@ gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
 schema = ["daedalus-data/schema", "daedalus-planner/schema"]
 proto = ["daedalus-data/proto", "daedalus-planner/proto"]
 plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nodes/plugins"]
-ffi = ["daedalus-registry/ffi", "daedalus-runtime/ffi", "dep:daedalus-ffi"]
 examples = []
 styx-camera-example = ["engine", "plugins", "dep:styx"]
 engine = [
@@ -60,7 +59,6 @@ daedalus-runtime = { workspace = true }
 daedalus-macros = { workspace = true }
 daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
-daedalus-ffi = { workspace = true, optional = true }
 styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
 paste = { workspace = true }
 

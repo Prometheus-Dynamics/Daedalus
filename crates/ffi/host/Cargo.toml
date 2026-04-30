@@ -1,0 +1,36 @@
+[package]
+name = "daedalus-ffi-host"
+version.workspace = true
+edition.workspace = true
+description = "Host-side FFI plugin installation and runner orchestration for Daedalus."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-ffi-host"
+readme = "README.md"
+keywords = ["ffi", "plugins", "dataflow"]
+categories = ["api-bindings"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+image-payload = ["daedalus-ffi-core/image-payload"]
+
+[dependencies]
+daedalus-ffi-core = { workspace = true }
+daedalus-data = { workspace = true }
+daedalus-registry = { workspace = true }
+daedalus-transport = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = { workspace = true }
+
+[[bench]]
+name = "ffi_overhead"
+harness = false

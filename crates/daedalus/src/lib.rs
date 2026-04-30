@@ -15,10 +15,6 @@ pub use daedalus_core::sync::{SyncGroup, SyncPolicy};
 pub use daedalus_data as data;
 #[cfg(feature = "engine")]
 pub use daedalus_engine as engine;
-#[cfg(feature = "ffi")]
-pub use daedalus_ffi as ffi;
-#[cfg(feature = "ffi")]
-pub use daedalus_ffi::{FfiPluginError, PluginLibrary, export_plugin};
 #[cfg(feature = "gpu-types")]
 pub use daedalus_gpu as gpu;
 #[cfg(feature = "gpu-types")]

@@ -24,6 +24,4 @@ mod framelease_plugin {
         "framelease_dynamic",
         [mark_timestamp, touch_first_byte]
     );
-
-    daedalus::export_plugin!(FrameLeaseDynamicPlugin);
 }

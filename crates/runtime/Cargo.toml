@@ -25,7 +25,6 @@ executor-pool = ["rayon"]
 lockfree-queues = ["crossbeam-queue"]
 metrics = []
 snapshots = []
-ffi = []
 plugins = []
 
 [dependencies]
