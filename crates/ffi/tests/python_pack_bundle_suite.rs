@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -26,16 +27,20 @@ fn has_cmd(cmd: &str, arg: &str) -> bool {
     Command::new(cmd).arg(arg).output().is_ok()
 }
 
+fn note_skip(message: &str) {
+    let _ = writeln!(std::io::stderr(), "{message}");
+}
+
 #[test]
 fn python_pack_bundle_embeds_py_path() {
     if std::env::var_os("DAEDALUS_TEST_PY_BUNDLE").is_none() {
-        eprintln!("DAEDALUS_TEST_PY_BUNDLE not set; skipping");
+        note_skip("DAEDALUS_TEST_PY_BUNDLE not set; skipping");
         return;
     }
 
     let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".to_string());
     if !has_cmd(&python, "--version") {
-        eprintln!("skipping: python interpreter not found");
+        note_skip("skipping: python interpreter not found");
         return;
     }
 

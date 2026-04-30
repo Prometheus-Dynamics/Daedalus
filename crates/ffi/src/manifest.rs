@@ -121,14 +121,6 @@ fn default_shader_entry() -> String {
     "main".to_string()
 }
 
-fn default_shader_input_binding() -> u32 {
-    0
-}
-
-fn default_shader_output_binding() -> u32 {
-    1
-}
-
 fn default_shader_entry_name() -> String {
     default_shader_entry()
 }
@@ -162,15 +154,7 @@ pub struct ManifestShader {
     /// Optional node input port containing the shader name to dispatch.
     #[serde(default)]
     pub dispatch_from_port: Option<String>,
-    /// Binding slot for the input `texture_2d<f32>` (defaults to 0).
-    #[serde(default = "default_shader_input_binding")]
-    pub input_binding: u32,
-    /// Binding slot for the output `texture_storage_2d<rgba8unorm, write>` (defaults to 1).
-    #[serde(default = "default_shader_output_binding")]
-    pub output_binding: u32,
-    /// Optional explicit bindings for a single dispatch (a higher-level mirror of `ShaderBinding`).
-    ///
-    /// If present and non-empty, `input_binding`/`output_binding` are ignored.
+    /// Explicit bindings for a single dispatch.
     #[serde(default)]
     pub bindings: Vec<ManifestShaderBinding>,
     /// Optional override for dispatch invocation count (defaults to `[width,height,1]`).
@@ -232,9 +216,6 @@ pub enum ManifestShaderAccess {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum ManifestSyncGroup {
-    /// Backward-compatible shorthand: `["a","b"]` implies an auto-named group with
-    /// `policy=AllReady` and default capacity/backpressure.
-    Ports(Vec<String>),
     /// Full spec matching `daedalus_core::sync::SyncGroup` fields.
     Group(ManifestSyncGroupSpec),
 }

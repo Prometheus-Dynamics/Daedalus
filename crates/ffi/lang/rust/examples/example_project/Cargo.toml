@@ -1,16 +1,18 @@
 [package]
 name = "daedalus_rust_ffi_example"
-version = "1.0.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [features]
-default = []
-gpu-wgpu = ["daedalus/gpu-wgpu"]
+default = ["plugins"]
+plugins = []
+gpu-wgpu = ["plugins", "daedalus/gpu-wgpu"]
 
 [dependencies]
-daedalus = { version = "1.0.0", path = "../../../daedalus", package = "daedalus-rs", features = ["plugins"] }
-bytemuck = { version = "1", features = ["derive"] }
+daedalus = { workspace = true, features = ["plugins", "ffi"] }
+bytemuck = { workspace = true }
+paste = { workspace = true }

@@ -191,7 +191,7 @@ pub fn pack_cpp_library_plugin(opts: CppPackOptions) -> Result<PathBuf, CppPackE
         r#"#![crate_type = "cdylib"]
 use daedalus_ffi::export_plugin;
 use daedalus_ffi::load_cpp_library_plugin;
-use daedalus_runtime::plugins::{{Plugin, PluginRegistry}};
+use daedalus_runtime::plugins::{{Plugin, PluginInstallContext, PluginRegistry}};
 
 fn extract_bundle() -> std::path::PathBuf {{
     let nanos = std::time::SystemTime::now()
@@ -232,7 +232,7 @@ impl Plugin for GeneratedCppPlugin {{
         self.inner.id()
     }}
 
-    fn install(&self, registry: &mut PluginRegistry) -> Result<(), &'static str> {{
+    fn install(&self, registry: &mut PluginInstallContext<'_>) -> Result<(), &'static str> {{
         self.inner.install(registry)
     }}
 }}

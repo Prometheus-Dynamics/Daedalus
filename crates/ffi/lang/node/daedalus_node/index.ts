@@ -142,9 +142,7 @@ export type ShaderImage = {
   }>;
   dispatch?: string;
   dispatch_from_port?: string;
-  input_binding: number;
-  output_binding: number;
-  bindings?: Array<{
+  bindings: Array<{
     binding: number;
     kind: "texture2d_rgba8" | "storage_texture2d_rgba8" | "uniform_buffer" | "storage_buffer";
     access: "read_only" | "write_only" | "read_write";
@@ -162,24 +160,24 @@ export type ShaderImage = {
 export function shaderImage(
   srcOrPath: string,
   {
+    bindings,
     entry = "main",
     name = null,
     workgroup_size = null,
-    input_binding = 0,
-    output_binding = 1,
   }: {
+    bindings: ShaderImage["bindings"];
     entry?: string;
     name?: string | null;
     workgroup_size?: [number, number, number] | null;
-    input_binding?: number;
-    output_binding?: number;
-  } = {},
+  },
 ): ShaderImage {
+  if (!Array.isArray(bindings) || bindings.length === 0) {
+    throw new TypeError("shaderImage() requires non-empty bindings");
+  }
   const s: ShaderImage = {
     src: wgsl(srcOrPath),
     entry,
-    input_binding: Number(input_binding),
-    output_binding: Number(output_binding),
+    bindings,
   };
   if (name != null) s.name = name;
   if (workgroup_size != null) s.workgroup_size = workgroup_size;
@@ -189,24 +187,24 @@ export function shaderImage(
 export function shaderImagePath(
   srcPath: string,
   {
+    bindings,
     entry = "main",
     name = null,
     workgroup_size = null,
-    input_binding = 0,
-    output_binding = 1,
   }: {
+    bindings: ShaderImage["bindings"];
     entry?: string;
     name?: string | null;
     workgroup_size?: [number, number, number] | null;
-    input_binding?: number;
-    output_binding?: number;
-  } = {},
+  },
 ): ShaderImage {
+  if (!Array.isArray(bindings) || bindings.length === 0) {
+    throw new TypeError("shaderImagePath() requires non-empty bindings");
+  }
   const s: ShaderImage = {
     src_path: srcPath,
     entry,
-    input_binding: Number(input_binding),
-    output_binding: Number(output_binding),
+    bindings,
   };
   if (name != null) s.name = name;
   if (workgroup_size != null) s.workgroup_size = workgroup_size;

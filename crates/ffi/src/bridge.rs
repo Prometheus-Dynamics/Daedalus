@@ -3,16 +3,17 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+#[cfg(feature = "image-payload")]
 use base64::Engine;
-use daedalus_core::sync::{SyncGroup, SyncPolicy};
 use daedalus_data::model::{TypeExpr, Value};
-use daedalus_registry::ids::NodeId;
-use daedalus_registry::store::{NodeDescriptor, Port};
+use daedalus_registry::capability::{NodeDecl, PortDecl};
 use daedalus_runtime::NodeError;
 use daedalus_runtime::io::NodeIo;
+use daedalus_transport::Residency;
+#[cfg(feature = "image-payload")]
 use image::DynamicImage;
 
-use crate::manifest::{ManifestPort, ManifestSyncGroup, NodeManifest};
+use crate::manifest::{ManifestPort, NodeManifest};
 use crate::python::ImageCompute;
 
 pub(crate) fn json_to_value(v: serde_json::Value) -> Result<Value, String> {
@@ -127,30 +128,33 @@ pub(crate) fn any_to_json(v: &dyn Any) -> Option<serde_json::Value> {
     if let Some(val) = v.downcast_ref::<Value>() {
         return Some(value_to_plain_json(val));
     }
-    if let Some(img) = v.downcast_ref::<DynamicImage>() {
-        // Fast path: ship raw RGBA8 bytes (no PNG encoding).
-        let rgba = img.to_rgba8();
-        let bytes = rgba.into_raw();
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        return Some(serde_json::json!({
-            "data_b64": b64,
-            "width": img.width() as i64,
-            "height": img.height() as i64,
-            "channels": 4,
-            "dtype": "u8",
-            "layout": "HWC",
-            "encoding": "raw",
-        }));
-    }
-    if v.type_id() == std::any::TypeId::of::<DynamicImage>() {
-        // SAFETY: v really is a DynamicImage; we've checked its TypeId.
-        let img: &DynamicImage = unsafe { &*(v as *const _ as *const DynamicImage) };
-        return any_to_json(img);
-    }
-    if let Some(img_arc) = v.downcast_ref::<Arc<DynamicImage>>()
-        && let Some(json) = any_to_json(img_arc.as_ref())
+    #[cfg(feature = "image-payload")]
     {
-        return Some(json);
+        if let Some(img) = v.downcast_ref::<DynamicImage>() {
+            // Fast path: ship raw RGBA8 bytes (no PNG encoding).
+            let rgba = img.to_rgba8();
+            let bytes = rgba.into_raw();
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            return Some(serde_json::json!({
+                "data_b64": b64,
+                "width": img.width() as i64,
+                "height": img.height() as i64,
+                "channels": 4,
+                "dtype": "u8",
+                "layout": "HWC",
+                "encoding": "raw",
+            }));
+        }
+        if v.type_id() == std::any::TypeId::of::<DynamicImage>() {
+            // SAFETY: v really is a DynamicImage; we've checked its TypeId.
+            let img: &DynamicImage = unsafe { &*(v as *const _ as *const DynamicImage) };
+            return any_to_json(img);
+        }
+        if let Some(img_arc) = v.downcast_ref::<Arc<DynamicImage>>()
+            && let Some(json) = any_to_json(img_arc.as_ref())
+        {
+            return Some(json);
+        }
     }
     if let Some(img) = v.downcast_ref::<ImageCompute>() {
         return Some(serde_json::json!({
@@ -229,7 +233,10 @@ pub(crate) fn inputs_to_json(
 ) -> Result<Vec<serde_json::Value>, NodeError> {
     let mut out = Vec::with_capacity(inputs.len());
     for port in inputs {
-        match io.get_any_raw(&port.name) {
+        match io
+            .get_payload(&port.name)
+            .and_then(|payload| payload.value_any())
+        {
             Some(any) => {
                 if let Some(v) = any_to_json(any) {
                     out.push(v);
@@ -241,7 +248,7 @@ pub(crate) fn inputs_to_json(
                 }
             }
             None => {
-                if let Some(value) = io.get_value(&port.name) {
+                if let Some(value) = io.get_typed_ref::<daedalus_data::model::Value>(&port.name) {
                     out.push(value_to_plain_json(value));
                     continue;
                 }
@@ -360,83 +367,68 @@ pub(crate) fn push_output(io: &mut NodeIo, port: &str, val: OutputVal) {
     }
 }
 
-pub(crate) fn manifest_node_to_descriptor(node: &NodeManifest) -> Result<NodeDescriptor, String> {
-    let mut inputs: Vec<Port> = Vec::with_capacity(node.inputs.len());
+pub(crate) fn manifest_node_to_decl(node: &NodeManifest) -> Result<NodeDecl, String> {
+    let shader_residency = node.shader.is_some().then_some(Residency::Gpu);
+    let mut inputs: Vec<PortDecl> = Vec::with_capacity(node.inputs.len());
     for p in &node.inputs {
-        let const_value = match &p.const_value {
-            Some(v) => Some(json_to_value(v.clone())?),
-            None => None,
-        };
-        inputs.push(Port {
-            name: p.name.clone(),
-            ty: p.ty.clone(),
-            access: Default::default(),
-            source: p.source.clone(),
-            const_value,
-        });
+        let mut port = PortDecl::new(
+            p.name.clone(),
+            daedalus_runtime::transport::typeexpr_transport_key(&p.ty)
+                .map_err(|e| e.to_string())?,
+        )
+        .schema(p.ty.clone());
+        if let Some(residency) = shader_residency {
+            port = port.residency(residency);
+        }
+        if let Some(source) = &p.source {
+            port = port.source(source.clone());
+        }
+        if let Some(value) = &p.const_value {
+            port = port.const_value(json_to_value(value.clone())?);
+        }
+        inputs.push(port);
     }
 
-    let mut outputs: Vec<Port> = node
+    let mut outputs: Vec<PortDecl> = node
         .outputs
         .iter()
-        .map(|p| Port {
-            name: p.name.clone(),
-            ty: p.ty.clone(),
-            access: Default::default(),
-            source: p.source.clone(),
-            const_value: None,
+        .map(|p| {
+            let mut port = PortDecl::new(
+                p.name.clone(),
+                daedalus_runtime::transport::typeexpr_transport_key(&p.ty)
+                    .map_err(|e| e.to_string())?,
+            )
+            .schema(p.ty.clone());
+            if let Some(residency) = shader_residency {
+                port = port.residency(residency);
+            }
+            if let Some(source) = &p.source {
+                port = port.source(source.clone());
+            }
+            Ok(port)
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
 
     inputs.sort_by(|a, b| a.name.cmp(&b.name));
     outputs.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let sync_groups: Vec<SyncGroup> = node
-        .sync_groups
-        .iter()
-        .enumerate()
-        .map(|(idx, group)| match group {
-            ManifestSyncGroup::Ports(ports) => SyncGroup {
-                name: format!("group{idx}"),
-                policy: SyncPolicy::AllReady,
-                backpressure: None,
-                capacity: None,
-                ports: ports.clone(),
-            },
-            ManifestSyncGroup::Group(spec) => SyncGroup {
-                name: spec.name.clone().unwrap_or_else(|| format!("group{idx}")),
-                policy: spec.policy,
-                backpressure: spec.backpressure.clone(),
-                capacity: spec.capacity,
-                ports: spec.ports.clone(),
-            },
-        })
-        .collect();
-
     let metadata = json_map_to_values(&node.metadata)?;
 
-    let default_compute = if node.shader.is_some()
-        && matches!(
-            node.default_compute,
-            daedalus_core::compute::ComputeAffinity::CpuOnly
-        ) {
-        daedalus_core::compute::ComputeAffinity::GpuRequired
-    } else {
-        node.default_compute
-    };
-
-    let desc = NodeDescriptor {
-        id: NodeId::new(node.id.clone()),
-        feature_flags: node.feature_flags.clone(),
-        label: node.label.clone(),
-        group: None,
-        inputs,
-        fanin_inputs: Vec::new(),
-        outputs,
-        default_compute,
-        sync_groups,
-        metadata,
-    };
-    desc.validate().map_err(|e| e.to_string())?;
-    Ok(desc)
+    let mut decl = NodeDecl::new(node.id.clone());
+    if let Some(label) = &node.label {
+        decl = decl.label(label.clone());
+    }
+    for flag in &node.feature_flags {
+        decl = decl.feature_flag(flag.clone());
+    }
+    for port in inputs {
+        decl = decl.input(port);
+    }
+    for port in outputs {
+        decl = decl.output(port);
+    }
+    for (key, value) in metadata {
+        decl = decl.metadata(key, value);
+    }
+    Ok(decl)
 }

@@ -1,9 +1,7 @@
-#[allow(unused_imports)]
-use daedalus_runtime::plugins::{PluginRegistry, RegistryPluginExt};
+use daedalus_runtime::plugins::PluginRegistry;
 use libloading::Library;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 
 /// Symbol name exported by dynamic plugins.
@@ -15,7 +13,8 @@ use thiserror::Error;
 pub const REGISTER_SYMBOL: &str = "daedalus_plugin_register";
 pub const PLUGIN_INFO_SYMBOL: &str = "daedalus_plugin_info";
 pub const PLUGIN_ABI_SYMBOL: &str = "daedalus_plugin_abi_version";
-pub const PLUGIN_ABI_VERSION: u32 = 2;
+pub const BOUNDARY_CONTRACTS_SYMBOL: &str = "daedalus_plugin_register_boundary_contracts";
+pub const PLUGIN_ABI_VERSION: u32 = 3;
 pub const FFI_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[repr(C)]
@@ -88,6 +87,10 @@ pub enum FfiPluginError {
     Load(#[from] libloading::Error),
     #[error("register symbol `{REGISTER_SYMBOL}` missing")]
     MissingSymbol,
+    #[error("ABI symbol `{PLUGIN_ABI_SYMBOL}` missing")]
+    MissingAbiSymbol,
+    #[error("plugin ABI mismatch: expected {expected}, found {found}")]
+    AbiMismatch { expected: u32, found: u32 },
     #[error("plugin registration failed")]
     RegisterReturnedError,
 }
@@ -95,6 +98,7 @@ pub enum FfiPluginError {
 type RegisterFn = unsafe extern "C" fn(*mut PluginRegistry) -> bool;
 type InfoFn = unsafe extern "C" fn() -> PluginInfo;
 type AbiFn = unsafe extern "C" fn() -> u32;
+type BoundaryContractsFn = unsafe extern "C" fn(*mut PluginRegistry) -> bool;
 
 /// Loaded plugin library that can install itself into a registry.
 ///
@@ -107,16 +111,10 @@ type AbiFn = unsafe extern "C" fn() -> u32;
 /// # }
 /// ```
 pub struct PluginLibrary {
-    /// Keep the dynamic library loaded for the lifetime of the process.
-    ///
-    /// This is intentional: node handlers registered by a plugin can contain function pointers
-    /// into the dylib. Unloading the library while those handlers remain reachable is undefined
-    /// behavior and can segfault.
-    #[allow(dead_code)]
-    lib: &'static Library,
     register: RegisterFn,
     info: Option<InfoFn>,
     abi_version: Option<AbiFn>,
+    boundary_contracts: Option<BoundaryContractsFn>,
     _path: PathBuf,
 }
 
@@ -144,12 +142,23 @@ impl PluginLibrary {
             .ok();
         let abi_version = unsafe { lib.get::<AbiFn>(PLUGIN_ABI_SYMBOL.as_bytes()) }
             .map(|f| *f)
-            .ok();
+            .map_err(|_| FfiPluginError::MissingAbiSymbol)?;
+        let found_abi = unsafe { abi_version() };
+        if found_abi != PLUGIN_ABI_VERSION {
+            return Err(FfiPluginError::AbiMismatch {
+                expected: PLUGIN_ABI_VERSION,
+                found: found_abi,
+            });
+        }
+        let boundary_contracts =
+            unsafe { lib.get::<BoundaryContractsFn>(BOUNDARY_CONTRACTS_SYMBOL.as_bytes()) }
+                .map(|f| *f)
+                .ok();
         Ok(Self {
-            lib,
             register,
             info,
-            abi_version,
+            abi_version: Some(abi_version),
+            boundary_contracts,
             _path: path,
         })
     }
@@ -157,16 +166,21 @@ impl PluginLibrary {
     /// Install the plugin into the provided registry.
     ///
     /// ```no_run
-    /// use daedalus_ffi::PluginLibrary;
-    /// use daedalus_runtime::plugins::PluginRegistry;
+    /// use daedalus_ffi::{PluginLibrary, RuntimePluginRegistry};
     ///
     /// # unsafe {
     /// let lib = PluginLibrary::load("libdemo_plugin.so").unwrap();
-    /// let mut registry = PluginRegistry::default();
+    /// let mut registry = RuntimePluginRegistry::default();
     /// let _ = lib.install_into(&mut registry);
     /// # }
     /// ```
     pub fn install_into(&self, registry: &mut PluginRegistry) -> Result<(), FfiPluginError> {
+        if let Some(register_boundary_contracts) = self.boundary_contracts {
+            let ok = unsafe { register_boundary_contracts(registry as *mut PluginRegistry) };
+            if !ok {
+                return Err(FfiPluginError::RegisterReturnedError);
+            }
+        }
         let ok = unsafe { (self.register)(registry as *mut PluginRegistry) };
         if ok {
             Ok(())
@@ -184,66 +198,6 @@ impl PluginLibrary {
     }
 }
 
-/// A plugin library that can be explicitly unloaded.
-///
-/// This type never unloads on `Drop` (so you cannot accidentally segfault by letting it go out of
-/// scope). If you truly need unloading, call `unload(self)` explicitly.
-#[allow(dead_code)]
-pub struct ScopedPluginLibrary {
-    lib: std::mem::ManuallyDrop<Library>,
-    register: RegisterFn,
-    path: PathBuf,
-    installed: AtomicBool,
-}
-
-#[allow(dead_code)]
-impl ScopedPluginLibrary {
-    /// Load a plugin library that can be explicitly unloaded via `unload(self)`.
-    ///
-    /// Prefer `PluginLibrary::load` unless you have a strong need to unload plugins.
-    ///
-    /// # Safety
-    /// The dylib must be trusted and match the expected ABI.
-    pub unsafe fn load(path: impl AsRef<Path>) -> Result<Self, FfiPluginError> {
-        let path = path.as_ref().to_path_buf();
-        let lib = unsafe { Library::new(&path)? };
-        let register = unsafe { lib.get::<RegisterFn>(REGISTER_SYMBOL.as_bytes()) }
-            .map(|f| *f)
-            .map_err(|_| FfiPluginError::MissingSymbol)?;
-        Ok(Self {
-            lib: std::mem::ManuallyDrop::new(lib),
-            register,
-            path,
-            installed: AtomicBool::new(false),
-        })
-    }
-
-    pub fn install_into(&self, registry: &mut PluginRegistry) -> Result<(), FfiPluginError> {
-        let ok = unsafe { (self.register)(registry as *mut PluginRegistry) };
-        if ok {
-            self.installed.store(true, Ordering::Relaxed);
-            Ok(())
-        } else {
-            Err(FfiPluginError::RegisterReturnedError)
-        }
-    }
-
-    /// Explicitly unload the library.
-    ///
-    /// # Safety
-    /// If any plugin-registered handlers (function pointers) are still reachable and invoked
-    /// after unload, the process may crash (undefined behavior).
-    pub unsafe fn unload(mut self) {
-        if self.installed.load(Ordering::Relaxed) {
-            eprintln!(
-                "warning: unloading plugin library '{}' after install; calling any handlers registered by this plugin after unload is undefined behavior",
-                self.path.display()
-            );
-        }
-        unsafe { std::mem::ManuallyDrop::drop(&mut self.lib) };
-    }
-}
-
 /// Export a `daedalus::runtime::plugins::Plugin` implementor for dynamic loading.
 ///
 /// This generates the `daedalus_plugin_register` symbol that hosts expect.
@@ -258,6 +212,51 @@ impl ScopedPluginLibrary {
 /// ```
 #[macro_export]
 macro_rules! export_plugin {
+    ($ty:ty, boundary_contracts [ $( $contract:expr ),* $(,)? ]) => {
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_abi_version() -> u32 {
+            $crate::PLUGIN_ABI_VERSION
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_info() -> $crate::PluginInfo {
+            $crate::PluginInfo::new(
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION"),
+                daedalus::version(),
+            )
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_register_boundary_contracts(
+            registry: *mut daedalus::runtime::plugins::PluginRegistry,
+        ) -> bool {
+            if registry.is_null() {
+                return false;
+            }
+            let reg = unsafe { &mut *registry };
+            $(
+                daedalus::transport::register_boundary_contract($contract.clone());
+                if reg.register_boundary_contract($contract).is_err() {
+                    return false;
+                }
+            )*
+            true
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_register(
+            registry: *mut daedalus::runtime::plugins::PluginRegistry,
+        ) -> bool {
+            if registry.is_null() {
+                return false;
+            }
+            let plugin: $ty = <$ty as Default>::default();
+            let reg = unsafe { &mut *registry };
+            daedalus::runtime::plugins::RegistryPluginExt::install_plugin(reg, &plugin).is_ok()
+        }
+    };
+
     ($ty:ty) => {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn daedalus_plugin_abi_version() -> u32 {
@@ -271,6 +270,13 @@ macro_rules! export_plugin {
                 env!("CARGO_PKG_VERSION"),
                 daedalus::version(),
             )
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn daedalus_plugin_register_boundary_contracts(
+            _registry: *mut daedalus::runtime::plugins::PluginRegistry,
+        ) -> bool {
+            true
         }
 
         #[unsafe(no_mangle)]

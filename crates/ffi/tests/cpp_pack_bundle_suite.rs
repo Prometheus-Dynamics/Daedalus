@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -38,10 +39,14 @@ fn dylib_ext() -> &'static str {
     }
 }
 
+fn note_skip(message: &str) {
+    let _ = writeln!(std::io::stderr(), "{message}");
+}
+
 fn compile_cpp_lib_with_shader(out_dir: &Path, lib_stem: &str, plugin_name: &str) -> PathBuf {
     let cxx = std::env::var("CXX").unwrap_or_else(|_| "c++".to_string());
     if !has_cmd(&cxx, "--version") {
-        eprintln!("skipping: C++ compiler not found (set CXX or install c++)");
+        note_skip("skipping: C++ compiler not found (set CXX or install c++)");
         return PathBuf::new();
     }
 
@@ -98,7 +103,7 @@ DAEDALUS_PLUGIN("{plugin_name}", "1.0.0", "cpp pack/bundle test plugin")
 #[test]
 fn cpp_pack_bundle_produces_self_contained_bundle() {
     if std::env::var_os("DAEDALUS_TEST_CPP_BUNDLE").is_none() {
-        eprintln!("DAEDALUS_TEST_CPP_BUNDLE not set; skipping");
+        note_skip("DAEDALUS_TEST_CPP_BUNDLE not set; skipping");
         return;
     }
 

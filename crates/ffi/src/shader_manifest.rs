@@ -99,30 +99,17 @@ pub(crate) fn install_shader_node(
     let instances: &'static [ShaderInstance] = Box::leak(instances_vec.into_boxed_slice());
 
     let bindings_spec = shader.bindings.clone();
-    let has_explicit_bindings = !bindings_spec.is_empty();
-    let legacy_input_binding = shader.input_binding;
-    let legacy_output_binding = shader.output_binding;
     let invocations_override = shader.invocations;
     let dispatch_default = shader.dispatch.clone();
     let dispatch_from_port = shader.dispatch_from_port.clone();
-    let legacy_inputs_len = node.inputs.len();
-    let legacy_outputs_len = node.outputs.len();
-    let legacy_input_port = node
-        .inputs
-        .first()
-        .map(|p| p.name.clone())
-        .unwrap_or_default();
-    let legacy_output_port = node
-        .outputs
-        .first()
-        .map(|p| p.name.clone())
-        .unwrap_or_default();
+    if bindings_spec.is_empty() {
+        return Err("shader nodes require shader.bindings".into());
+    }
     // If bindings reference from_state/to_state, this node is implicitly stateful even if the
     // manifest didn't set `stateful=true` explicitly.
-    let uses_state = has_explicit_bindings
-        && bindings_spec
-            .iter()
-            .any(|b| b.from_state.is_some() || b.to_state.is_some());
+    let uses_state = bindings_spec
+        .iter()
+        .any(|b| b.from_state.is_some() || b.to_state.is_some());
     let is_stateful = node.stateful || node.state.is_some() || uses_state;
 
     type StateBytes = Arc<Mutex<HashMap<String, Vec<u8>>>>;
@@ -132,58 +119,51 @@ pub(crate) fn install_shader_node(
         None
     };
 
-    if has_explicit_bindings {
-        let _uses_gpu_state = bindings_spec.iter().any(|b| {
-            matches!(b.state_backend, Some(ManifestShaderStateBackend::Gpu))
-                && (b.from_state.is_some() || b.to_state.is_some())
-        });
-        #[cfg(not(feature = "gpu-wgpu"))]
-        if _uses_gpu_state {
-            return Err(
-                "shader bindings with state_backend=gpu require --features gpu-wgpu".into(),
-            );
-        }
+    let _uses_gpu_state = bindings_spec.iter().any(|b| {
+        matches!(b.state_backend, Some(ManifestShaderStateBackend::Gpu))
+            && (b.from_state.is_some() || b.to_state.is_some())
+    });
+    #[cfg(not(feature = "gpu-wgpu"))]
+    if _uses_gpu_state {
+        return Err("shader bindings with state_backend=gpu require --features gpu-wgpu".into());
+    }
 
-        for b in &bindings_spec {
-            let has_from = b.from_port.is_some() || b.from_state.is_some();
-            match b.kind {
-                ManifestShaderBindingKind::Texture2dRgba8 => {
-                    if b.from_port.is_none() {
-                        return Err("texture2d_rgba8 binding requires from_port".into());
-                    }
-                }
-                ManifestShaderBindingKind::StorageTexture2dRgba8 => {}
-                ManifestShaderBindingKind::UniformBuffer => {
-                    if !matches!(b.access, ManifestShaderAccess::ReadOnly) {
-                        return Err("uniform_buffer binding requires access=read_only".into());
-                    }
-                    if !has_from {
-                        return Err(
-                            "uniform_buffer binding requires from_port or from_state".into()
-                        );
-                    }
-                }
-                ManifestShaderBindingKind::StorageBuffer => {
-                    if !has_from && b.size_bytes.is_none() {
-                        return Err(
-                            "storage_buffer binding requires from_port/from_state or size_bytes"
-                                .into(),
-                        );
-                    }
+    for b in &bindings_spec {
+        let has_from = b.from_port.is_some() || b.from_state.is_some();
+        match b.kind {
+            ManifestShaderBindingKind::Texture2dRgba8 => {
+                if b.from_port.is_none() {
+                    return Err("texture2d_rgba8 binding requires from_port".into());
                 }
             }
-            if b.readback && b.to_port.is_none() && b.to_state.is_none() {
-                return Err("readback binding requires to_port or to_state".into());
+            ManifestShaderBindingKind::StorageTexture2dRgba8 => {}
+            ManifestShaderBindingKind::UniformBuffer => {
+                if !matches!(b.access, ManifestShaderAccess::ReadOnly) {
+                    return Err("uniform_buffer binding requires access=read_only".into());
+                }
+                if !has_from {
+                    return Err("uniform_buffer binding requires from_port or from_state".into());
+                }
             }
-            if (b.from_state.is_some() || b.to_state.is_some()) && state_bytes.is_none() {
-                return Err("from_state/to_state requires stateful shader node".into());
+            ManifestShaderBindingKind::StorageBuffer => {
+                if !has_from && b.size_bytes.is_none() {
+                    return Err(
+                        "storage_buffer binding requires from_port/from_state or size_bytes".into(),
+                    );
+                }
             }
-            if matches!(b.state_backend, Some(ManifestShaderStateBackend::Gpu))
-                && b.from_state.is_none()
-                && b.to_state.is_none()
-            {
-                return Err("state_backend=gpu requires from_state or to_state".into());
-            }
+        }
+        if b.readback && b.to_port.is_none() && b.to_state.is_none() {
+            return Err("readback binding requires to_port or to_state".into());
+        }
+        if (b.from_state.is_some() || b.to_state.is_some()) && state_bytes.is_none() {
+            return Err("from_state/to_state requires stateful shader node".into());
+        }
+        if matches!(b.state_backend, Some(ManifestShaderStateBackend::Gpu))
+            && b.from_state.is_none()
+            && b.to_state.is_none()
+        {
+            return Err("state_backend=gpu requires from_state or to_state".into());
         }
     }
 
@@ -212,37 +192,24 @@ pub(crate) fn install_shader_node(
         let mut height: u32 = 1;
         let mut image_bytes: Vec<u8> = Vec::new();
         let mut owned_bytes: Vec<Box<[u8]>> = Vec::new();
-        if has_explicit_bindings {
-            if let Some(from) = bindings_spec.iter().find_map(|b| {
-                if matches!(b.kind, ManifestShaderBindingKind::Texture2dRgba8) {
-                    b.from_port.clone()
-                } else {
-                    None
-                }
-            }) {
-                let (w, h, bytes) = read_rgba8_image(io, &from)?;
-                width = w;
-                height = h;
-                image_bytes = bytes;
-            } else if invocations_override.is_none() {
-                return Err(NodeError::Handler(
-                    "shader.invocations required when no texture2d input is provided".into(),
-                ));
+        if let Some(from) = bindings_spec.iter().find_map(|b| {
+            if matches!(b.kind, ManifestShaderBindingKind::Texture2dRgba8) {
+                b.from_port.clone()
+            } else {
+                None
             }
-        } else {
-            // Legacy single-input/single-output mode: require exactly 1 input and 1 output.
-            if legacy_inputs_len != 1 || legacy_outputs_len != 1 {
-                return Err(NodeError::Handler(
-                    "legacy shader node requires exactly 1 input and 1 output (or use shader.bindings)".into(),
-                ));
-            }
-            let (w, h, bytes) = read_rgba8_image(io, &legacy_input_port)?;
+        }) {
+            let (w, h, bytes) = read_rgba8_image(io, &from)?;
             width = w;
             height = h;
             image_bytes = bytes;
+        } else if invocations_override.is_none() {
+            return Err(NodeError::Handler(
+                "shader.invocations required when no texture2d input is provided".into(),
+            ));
         }
 
-        let bindings: Vec<ShaderBinding<'_>> = if has_explicit_bindings {
+        let bindings: Vec<ShaderBinding<'_>> = {
             #[cfg(feature = "gpu-wgpu")]
             let mut wgpu_device_queue: Option<(&wgpu::Device, &wgpu::Queue, usize)> = None;
 
@@ -626,27 +593,6 @@ pub(crate) fn install_shader_node(
             }
 
             out_bindings
-        } else {
-            vec![
-                ShaderBinding {
-                    binding: legacy_input_binding,
-                    kind: BindingKind::Texture2D,
-                    access: Access::ReadOnly,
-                    data: BindingData::TextureRgba8 {
-                        width,
-                        height,
-                        bytes: std::borrow::Cow::Borrowed(&image_bytes),
-                    },
-                    readback: false,
-                },
-                ShaderBinding {
-                    binding: legacy_output_binding,
-                    kind: BindingKind::StorageTexture2D,
-                    access: Access::WriteOnly,
-                    data: BindingData::TextureAlloc { width, height },
-                    readback: true,
-                },
-            ]
         };
 
         let shader_ctx = ShaderContext {
@@ -670,61 +616,44 @@ pub(crate) fn install_shader_node(
                 .map_err(|e| NodeError::Handler(e.to_string()))?
         };
 
-        if has_explicit_bindings {
-            for b in &bindings_spec {
-                if !b.readback {
-                    continue;
-                }
-                match b.kind {
-                    ManifestShaderBindingKind::StorageTexture2dRgba8 => {
-                        let out_img = out
-                            .storage_rgba8_image(b.binding, width, height)
-                            .ok_or_else(|| {
-                                NodeError::Handler("missing shader output texture readback".into())
-                            })?;
-                        let json = any_to_json(&out_img).ok_or_else(|| {
-                            NodeError::Handler("failed to convert shader output image".into())
-                        })?;
-                        if let Some(to_port) = b.to_port.as_deref() {
-                            io.push_any(Some(to_port), json);
-                        }
-                    }
-                    ManifestShaderBindingKind::StorageBuffer
-                    | ManifestShaderBindingKind::UniformBuffer => {
-                        let bytes = out
-                            .buffers
-                            .get(&b.binding)
-                            .cloned()
-                            .ok_or_else(|| {
-                                NodeError::Handler(format!(
-                                    "missing shader output buffer readback binding {}",
-                                    b.binding
-                                ))
-                            })?;
-                        if let Some(to_port) = b.to_port.as_deref() {
-                            io.push_any(Some(to_port), bytes.clone());
-                        }
-                        if let Some(key) = b.to_state.as_deref() {
-                            let map = state_bytes
-                                .as_ref()
-                                .ok_or_else(|| NodeError::Handler("to_state requires stateful shader node".into()))?;
-                            if let Ok(mut m) = map.lock() {
-                                m.insert(key.to_string(), bytes);
-                            }
-                        }
-                    }
-                    ManifestShaderBindingKind::Texture2dRgba8 => {}
-                }
+        for b in &bindings_spec {
+            if !b.readback {
+                continue;
             }
-        } else {
-            let out_img = out
-                .storage_rgba8_image(legacy_output_binding, width, height)
-                .ok_or_else(|| {
-                    NodeError::Handler("missing shader output texture readback".into())
-                })?;
-            let json = any_to_json(&out_img)
-                .ok_or_else(|| NodeError::Handler("failed to convert shader output image".into()))?;
-            io.push_any(Some(&legacy_output_port), json);
+            match b.kind {
+                ManifestShaderBindingKind::StorageTexture2dRgba8 => {
+                    let out_img = out.storage_rgba8_image(b.binding, width, height).ok_or_else(
+                        || NodeError::Handler("missing shader output texture readback".into()),
+                    )?;
+                    let json = any_to_json(&out_img).ok_or_else(|| {
+                        NodeError::Handler("failed to convert shader output image".into())
+                    })?;
+                    if let Some(to_port) = b.to_port.as_deref() {
+                        io.push_any(Some(to_port), json);
+                    }
+                }
+                ManifestShaderBindingKind::StorageBuffer
+                | ManifestShaderBindingKind::UniformBuffer => {
+                    let bytes = out.buffers.get(&b.binding).cloned().ok_or_else(|| {
+                        NodeError::Handler(format!(
+                            "missing shader output buffer readback binding {}",
+                            b.binding
+                        ))
+                    })?;
+                    if let Some(to_port) = b.to_port.as_deref() {
+                        io.push_any(Some(to_port), bytes.clone());
+                    }
+                    if let Some(key) = b.to_state.as_deref() {
+                        let map = state_bytes.as_ref().ok_or_else(|| {
+                            NodeError::Handler("to_state requires stateful shader node".into())
+                        })?;
+                        if let Ok(mut m) = map.lock() {
+                            m.insert(key.to_string(), bytes);
+                        }
+                    }
+                }
+                ManifestShaderBindingKind::Texture2dRgba8 => {}
+            }
         }
         Ok(())
     });
@@ -733,17 +662,17 @@ pub(crate) fn install_shader_node(
 }
 
 fn read_rgba8_image(io: &mut NodeIo, port: &str) -> Result<(u32, u32, Vec<u8>), NodeError> {
-    if let Some(img) = io.get_any::<image::DynamicImage>(port) {
+    if let Some(img) = io.get_typed_ref::<image::DynamicImage>(port) {
         let rgba = img.to_rgba8();
         return Ok((rgba.width(), rgba.height(), rgba.into_raw()));
     }
 
-    if let Some(payload) = io.get_any::<ImageCompute>(port) {
-        return decode_payload_rgba(&payload);
+    if let Some(payload) = io.get_typed_ref::<ImageCompute>(port) {
+        return decode_payload_rgba(payload);
     }
 
-    if let Some(v) = io.get_any::<serde_json::Value>(port) {
-        let payload: ImageCompute = serde_json::from_value(v)
+    if let Some(v) = io.get_typed_ref::<serde_json::Value>(port) {
+        let payload: ImageCompute = serde_json::from_value(v.clone())
             .map_err(|e| NodeError::Handler(format!("invalid image payload: {e}")))?;
         return decode_payload_rgba(&payload);
     }
@@ -769,21 +698,22 @@ fn decode_payload_rgba(payload: &ImageCompute) -> Result<(u32, u32, Vec<u8>), No
         }
     }
 
-    // Legacy fallback: `data_b64` is a PNG.
-    let png = base64::engine::general_purpose::STANDARD
-        .decode(payload.data_b64.as_bytes())
-        .map_err(|e| NodeError::Handler(format!("invalid image base64: {e}")))?;
-    let img = image::load_from_memory(&png)
-        .map_err(|e| NodeError::Handler(format!("invalid image bytes: {e}")))?;
-    let rgba = img.to_rgba8();
-    Ok((rgba.width(), rgba.height(), rgba.into_raw()))
+    let expected = payload
+        .width
+        .checked_mul(payload.height)
+        .and_then(|px| px.checked_mul(4))
+        .unwrap_or(0) as usize;
+    Err(NodeError::InvalidInput(format!(
+        "invalid raw RGBA8 image payload: expected {expected} bytes for {}x{}x4 HWC u8 data",
+        payload.width, payload.height
+    )))
 }
 
 fn read_bytes(io: &mut NodeIo, port: &str) -> Result<Vec<u8>, NodeError> {
-    if let Some(bytes) = io.get_any::<Vec<u8>>(port) {
+    if let Some(bytes) = io.get_typed_ref::<Vec<u8>>(port) {
         return Ok(bytes.clone());
     }
-    if let Some(v) = io.get_any::<serde_json::Value>(port) {
+    if let Some(v) = io.get_typed_ref::<serde_json::Value>(port) {
         if let Some(arr) = v.as_array() {
             let mut out = Vec::with_capacity(arr.len());
             for item in arr {
@@ -804,10 +734,10 @@ fn read_bytes(io: &mut NodeIo, port: &str) -> Result<Vec<u8>, NodeError> {
 }
 
 fn read_string(io: &mut NodeIo, port: &str) -> Result<String, NodeError> {
-    if let Some(s) = io.get_any::<String>(port) {
+    if let Some(s) = io.get_typed_ref::<String>(port) {
         return Ok(s.clone());
     }
-    if let Some(v) = io.get_any::<serde_json::Value>(port)
+    if let Some(v) = io.get_typed_ref::<serde_json::Value>(port)
         && let Some(s) = v.as_str()
     {
         return Ok(s.to_string());

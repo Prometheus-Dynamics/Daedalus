@@ -57,27 +57,31 @@ export function wgsl(srcOrPath) {
   return srcOrPath;
 }
 
-export function shaderImage(srcOrPath, { entry = "main", name = null, workgroup_size = null, input_binding = 0, output_binding = 1 } = {}) {
+export function shaderImage(srcOrPath, { bindings, entry = "main", name = null, workgroup_size = null } = {}) {
+  if (!Array.isArray(bindings) || bindings.length === 0) {
+    throw new TypeError("shaderImage() requires non-empty bindings");
+  }
   const s = {
     src: wgsl(srcOrPath),
     entry,
-    input_binding: Number(input_binding),
-    output_binding: Number(output_binding),
+    bindings,
   };
   if (name != null) s.name = name;
   if (workgroup_size != null) s.workgroup_size = workgroup_size;
   return s;
 }
 
-export function shaderImagePath(srcPath, { entry = "main", name = null, workgroup_size = null, input_binding = 0, output_binding = 1 } = {}) {
+export function shaderImagePath(srcPath, { bindings, entry = "main", name = null, workgroup_size = null } = {}) {
   if (typeof srcPath !== "string") {
     throw new TypeError("shaderImagePath() expects a string path");
+  }
+  if (!Array.isArray(bindings) || bindings.length === 0) {
+    throw new TypeError("shaderImagePath() requires non-empty bindings");
   }
   const s = {
     src_path: srcPath,
     entry,
-    input_binding: Number(input_binding),
-    output_binding: Number(output_binding),
+    bindings,
   };
   if (name != null) s.name = name;
   if (workgroup_size != null) s.workgroup_size = workgroup_size;

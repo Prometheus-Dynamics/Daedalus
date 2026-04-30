@@ -1,35 +1,25 @@
 //! Daedalus Rust FFI example plugin (cdylib).
 //!
 //! This is the “native” baseline:
-//! - Use `#[node(...)]` for ID/ports/defaults/metadata/config/state.
+//! - Use `#[node(...)]` for ID/ports/defaults/config/state.
 //! - Use `declare_plugin!` to define a plugin that installs node descriptors + handlers.
 //! - Use `export_plugin!` to expose the plugin as a dynamic library for the host loader.
 
 #![crate_type = "cdylib"]
 
 use daedalus::ffi::export_plugin;
-use daedalus::macros::{node, NodeConfig};
+use daedalus::macros::{NodeConfig, node};
 use daedalus::runtime::NodeError;
-use daedalus::{declare_plugin, PluginRegistry};
+use daedalus::{PluginRegistry, declare_plugin};
 
 // --- Typed stateless nodes --------------------------------------------------
 
-#[node(
-    id = "example_rust:add",
-    inputs("a", "b"),
-    outputs("out"),
-    metadata(lang = "rust", kind = "stateless")
-)]
+#[node(id = "example_rust:add", inputs("a", "b"), outputs("out"))]
 fn add(a: i32, b: i32) -> Result<i32, NodeError> {
     Ok(a + b)
 }
 
-#[node(
-    id = "example_rust:split",
-    inputs("value"),
-    outputs("out0", "out1"),
-    metadata(lang = "rust", kind = "multi_output")
-)]
+#[node(id = "example_rust:split", inputs("value"), outputs("out0", "out1"))]
 fn split(value: i32) -> Result<(i32, i32), NodeError> {
     Ok((value, -value))
 }
@@ -45,8 +35,7 @@ struct ScaleCfg {
 #[node(
     id = "example_rust:scale_cfg",
     inputs("value", config = ScaleCfg),
-    outputs("out"),
-    metadata(lang = "rust", kind = "config")
+    outputs("out")
 )]
 fn scale_cfg(value: i32, cfg: ScaleCfg) -> Result<i32, NodeError> {
     Ok(value * cfg.factor)
@@ -63,8 +52,7 @@ struct CounterState {
     id = "example_rust:counter",
     inputs("inc"),
     outputs("out"),
-    state(CounterState),
-    metadata(lang = "rust", kind = "stateful")
+    state(CounterState)
 )]
 fn counter(inc: i32, state: &mut CounterState) -> Result<i32, NodeError> {
     state.v += inc;
@@ -77,8 +65,7 @@ fn counter(inc: i32, state: &mut CounterState) -> Result<i32, NodeError> {
     id = "example_rust:cap_add",
     capability = "Add",
     inputs("a", "b"),
-    outputs("out"),
-    metadata(lang = "rust", kind = "capability")
+    outputs("out")
 )]
 fn cap_add<T>(a: T, b: T) -> Result<T, NodeError>
 where
@@ -88,7 +75,7 @@ where
 }
 
 fn register_capabilities(registry: &mut PluginRegistry) {
-    registry.register_capability_typed::<i32, _>("Add", |a, b| Ok(a.clone() + b.clone()));
+    registry.register_capability_typed::<i32, _>("Add", |a, b| Ok(*a + *b));
 }
 
 // --- GPU shader example (feature-gated) ------------------------------------
@@ -97,14 +84,14 @@ fn register_capabilities(registry: &mut PluginRegistry) {
 //   cargo build -p daedalus_rust_ffi_example --features gpu-wgpu
 //
 // This shows the native Rust shader path (no manifest JSON needed):
-// - `shaders("assets/write_u32.wgsl")` embeds WGSL via include_str! at compile time
+// - `shaders("../assets/write_u32.wgsl")` embeds WGSL via include_str! at compile time
 // - `ShaderContext` gives you GPU access and readback helpers
 #[cfg(feature = "gpu-wgpu")]
 #[node(
     id = "example_rust:write_u32_gpu",
     outputs("out"),
     compute(::daedalus::ComputeAffinity::GpuPreferred),
-    shaders("assets/write_u32.wgsl")
+    shaders("../assets/write_u32.wgsl")
 )]
 fn write_u32_gpu(ctx: daedalus::gpu::shader::ShaderContext) -> Result<u32, NodeError> {
     use daedalus::gpu::shader::{Access, BindingData, BindingKind, BufferInit, ShaderBinding};

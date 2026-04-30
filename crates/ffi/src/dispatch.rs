@@ -9,7 +9,7 @@ use crate::java::{JavaManifestError, JavaManifestPlugin};
 use crate::manifest::Manifest;
 use crate::node::{NodeManifestError, NodeManifestPlugin};
 use crate::python::{PythonManifestError, PythonManifestPlugin};
-use daedalus_runtime::plugins::{Plugin, PluginRegistry};
+use daedalus_runtime::plugins::{Plugin, PluginInstallContext, PluginResult};
 
 #[derive(Debug, Error)]
 pub enum ManifestDispatchError {
@@ -90,7 +90,7 @@ impl Plugin for ManifestPlugin {
         }
     }
 
-    fn install(&self, registry: &mut PluginRegistry) -> Result<(), &'static str> {
+    fn install(&self, registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
         match self {
             ManifestPlugin::Python(p) => p.install(registry),
             ManifestPlugin::Java(j) => j.install(registry),

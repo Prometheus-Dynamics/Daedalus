@@ -27,13 +27,6 @@ GPU build (adds `example_rust:write_u32_gpu`):
 cargo build -p daedalus_rust_ffi_example --features gpu-wgpu
 ```
 
-3) Load it with the host runner example:
-
-```bash
-cargo run -p daedalus-ffi --example run_rust_plugin -- path/to/target/debug/libdaedalus_rust_ffi_example.{so|dylib|dll}
-```
-
 ## References in this repo
 
-- Minimal plugin/host examples: `crates/ffi/examples/plugin_lib.rs`, `crates/ffi/examples/run_rust_plugin.rs`
-- Signature matrix (many Rust `#[node]` shapes): `crates/ffi/examples/ffi_signature_matrix.rs`
+- Copyable Rust plugin template: `crates/ffi/lang/rust/examples/example_project`

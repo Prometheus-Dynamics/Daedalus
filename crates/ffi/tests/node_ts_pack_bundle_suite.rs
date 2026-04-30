@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -26,15 +27,19 @@ fn has_cmd(cmd: &str, arg: &str) -> bool {
     Command::new(cmd).arg(arg).output().is_ok()
 }
 
+fn note_skip(message: &str) {
+    let _ = writeln!(std::io::stderr(), "{message}");
+}
+
 fn ensure_node_tools() {
     let node = std::env::var("NODE").unwrap_or_else(|_| "node".to_string());
     if !has_cmd(&node, "--version") {
-        eprintln!("skipping: node interpreter not found");
+        note_skip("skipping: node interpreter not found");
         return;
     }
     let npm = std::env::var("NPM").unwrap_or_else(|_| "npm".to_string());
     if !has_cmd(&npm, "--version") {
-        eprintln!("skipping: npm not found");
+        note_skip("skipping: npm not found");
         return;
     }
 
@@ -57,13 +62,13 @@ fn ensure_node_tools() {
 #[test]
 fn node_ts_pack_bundle_produces_self_contained_bundle() {
     if std::env::var_os("DAEDALUS_TEST_NODE_TSC_BUNDLE").is_none() {
-        eprintln!("DAEDALUS_TEST_NODE_TSC_BUNDLE not set; skipping");
+        note_skip("DAEDALUS_TEST_NODE_TSC_BUNDLE not set; skipping");
         return;
     }
 
     let node = std::env::var("NODE").unwrap_or_else(|_| "node".to_string());
     if !has_cmd(&node, "--version") {
-        eprintln!("skipping: node interpreter not found");
+        note_skip("skipping: node interpreter not found");
         return;
     }
     ensure_node_tools();

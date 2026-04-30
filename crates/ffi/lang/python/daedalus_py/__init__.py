@@ -134,17 +134,17 @@ def wgsl(src_or_path: Union[str, Path]) -> str:
 def shader_image(
     src_or_path: Union[str, Path],
     *,
+    bindings: List[Dict[str, Any]],
     entry: str = "main",
     name: Optional[str] = None,
     workgroup_size: Optional[Tuple[int, int, int]] = None,
-    input_binding: int = 0,
-    output_binding: int = 1,
 ) -> Dict[str, Any]:
+    if not bindings:
+        raise ValueError("shader_image() requires non-empty bindings")
     p = Path(src_or_path)
     d: Dict[str, Any] = {
         "entry": entry,
-        "input_binding": int(input_binding),
-        "output_binding": int(output_binding),
+        "bindings": bindings,
     }
     if p.exists():
         d["src_path"] = str(p)
@@ -160,18 +160,18 @@ def shader_image(
 def shader_image_path(
     path: Union[str, Path],
     *,
+    bindings: List[Dict[str, Any]],
     entry: str = "main",
     name: Optional[str] = None,
     workgroup_size: Optional[Tuple[int, int, int]] = None,
-    input_binding: int = 0,
-    output_binding: int = 1,
 ) -> Dict[str, Any]:
+    if not bindings:
+        raise ValueError("shader_image_path() requires non-empty bindings")
     p = Path(path)
     d: Dict[str, Any] = {
         "src_path": str(p),
         "entry": entry,
-        "input_binding": int(input_binding),
-        "output_binding": int(output_binding),
+        "bindings": bindings,
     }
     if name is not None:
         d["name"] = name

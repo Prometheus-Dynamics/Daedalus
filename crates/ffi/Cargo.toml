@@ -11,77 +11,45 @@ readme = "README.md"
 keywords = ["ffi", "plugins", "dataflow"]
 categories = ["api-bindings"]
 
+[lints]
+workspace = true
+
 [features]
 default = ["plugins"]
 plugins = []
+image-payload = ["dep:image"]
 inline_py = ["pyo3"]
-gpu = []
-gpu-wgpu = ["dep:daedalus-gpu", "daedalus-gpu/gpu-wgpu", "dep:wgpu"]
+gpu = ["daedalus-runtime/gpu"]
+gpu-wgpu = [
+    "gpu",
+    "image-payload",
+    "dep:daedalus-gpu",
+    "daedalus-gpu/gpu-wgpu",
+    "dep:wgpu",
+]
 
 [lib]
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-daedalus-runtime = { workspace = true, features = ["plugins", "gpu"] }
+daedalus-runtime = { workspace = true, features = ["plugins"] }
 daedalus-registry = { workspace = true }
 daedalus-planner = { workspace = true }
 daedalus-core = { workspace = true }
 daedalus-data = { workspace = true }
+daedalus-transport = { workspace = true }
 daedalus-gpu = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
 libloading = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-pyo3 = { workspace = true, optional = true }
-base64 = "0.22"
-image = { workspace = true }
+pyo3 = { workspace = true, optional = true, features = ["auto-initialize"] }
+base64 = { workspace = true }
+image = { workspace = true, optional = true }
 
 [dev-dependencies]
 daedalus = { workspace = true, features = ["engine", "plugins", "ffi", "gpu"] }
+daedalus-plugins-example-project = { workspace = true }
 paste = { workspace = true }
-
-[[example]]
-name = "plugin_lib"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "generated_py_plugin"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "generated_py_image_plugin"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "plugin_nested"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "ffi_signature_matrix"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "plugin_clahe_passthrough"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "plugin_enum_mode"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "plugin_grayscale_arc"
-crate-type = ["cdylib"]
-
-[[example]]
-name = "run_enum_mode"
-crate-type = ["bin"]
-
-[[example]]
-name = "run_grayscale_arc"
-crate-type = ["bin"]
-
-[[example]]
-name = "run_graph_json"
-crate-type = ["bin"]

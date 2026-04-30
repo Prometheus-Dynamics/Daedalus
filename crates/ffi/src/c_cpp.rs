@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use daedalus_runtime::io::NodeIo;
 use daedalus_runtime::{
     NodeError,
-    plugins::{Plugin, PluginRegistry},
+    plugins::{Plugin, PluginError, PluginInstallContext, PluginResult},
 };
 use libloading::Library;
 use thiserror::Error;
 
-use crate::bridge::{inputs_to_json, json_to_output, manifest_node_to_descriptor, push_output};
+use crate::bridge::{inputs_to_json, json_to_output, manifest_node_to_decl, push_output};
 use crate::manifest::Manifest;
 #[cfg(feature = "gpu-wgpu")]
 use crate::shader_manifest::install_shader_node;
@@ -98,19 +98,24 @@ impl CppManifestPlugin {
         }
     }
 
-    fn install_inner(&self, registry: &mut PluginRegistry) -> Result<(), CppManifestError> {
+    fn install_inner(
+        &self,
+        registry: &mut PluginInstallContext<'_>,
+    ) -> Result<(), CppManifestError> {
         use std::collections::HashMap;
 
         // Load each dylib path at most once and leak it for the lifetime of the process.
         let mut libs: HashMap<PathBuf, &'static Library> = HashMap::new();
 
         for node in &self.manifest.nodes {
-            let desc = manifest_node_to_descriptor(node).map_err(|e| {
-                CppManifestError::Registry(format!("invalid descriptor for {}: {}", node.id, e))
+            let desc = manifest_node_to_decl(node).map_err(|e| {
+                CppManifestError::Registry(format!(
+                    "invalid node declaration for {}: {}",
+                    node.id, e
+                ))
             })?;
             registry
-                .registry
-                .register_node(desc)
+                .register_node_decl(desc)
                 .map_err(|e| CppManifestError::Registry(e.to_string()))?;
 
             if node.shader.is_some() {
@@ -133,39 +138,36 @@ impl CppManifestPlugin {
                     )));
                 }
                 let out_port = outputs[0].name.clone();
-                registry
-                    .handlers
-                    .on(&node.id, move |_node_rt, _ctx_rt, io| {
-                        let mut args_any: Vec<&dyn std::any::Any> =
-                            Vec::with_capacity(inputs.len());
-                        for p in &inputs {
-                            let a = io.get_any_raw(&p.name).ok_or_else(|| {
+                registry.handlers.on(&node.id, move |_node_rt, ctx_rt, io| {
+                    let mut args_any: Vec<&dyn std::any::Any> = Vec::with_capacity(inputs.len());
+                    for p in &inputs {
+                        let a = io
+                            .get_payload(&p.name)
+                            .and_then(|payload| payload.value_any())
+                            .ok_or_else(|| {
                                 NodeError::InvalidInput(format!("missing {}", p.name))
                             })?;
-                            args_any.push(a);
+                        args_any.push(a);
+                    }
+                    let entries = ctx_rt.capabilities.get(&cap).ok_or_else(|| {
+                        NodeError::InvalidInput("missing capability entries".into())
+                    })?;
+                    for entry in entries {
+                        if args_any.len() == entry.type_ids.len()
+                            && args_any
+                                .iter()
+                                .zip(entry.type_ids.iter())
+                                .all(|(a, tid)| a.type_id() == *tid)
+                        {
+                            let out = (entry.func)(&args_any)?;
+                            io.push_output(Some(&out_port), out);
+                            return Ok(());
                         }
-                        let cap_read = daedalus_runtime::capabilities::global()
-                            .read()
-                            .map_err(|_| NodeError::Handler("capability lock poisoned".into()))?;
-                        let entries = cap_read.get(&cap).ok_or_else(|| {
-                            NodeError::InvalidInput("missing capability entries".into())
-                        })?;
-                        for entry in entries {
-                            if args_any.len() == entry.type_ids.len()
-                                && args_any
-                                    .iter()
-                                    .zip(entry.type_ids.iter())
-                                    .all(|(a, tid)| a.type_id() == *tid)
-                            {
-                                let out = (entry.func)(&args_any)?;
-                                io.push_output(Some(&out_port), out);
-                                return Ok(());
-                            }
-                        }
-                        Err(NodeError::InvalidInput(
-                            "unsupported capability type".into(),
-                        ))
-                    });
+                    }
+                    Err(NodeError::InvalidInput(
+                        "unsupported capability type".into(),
+                    ))
+                });
                 continue;
             }
 
@@ -498,8 +500,10 @@ impl Plugin for CppManifestPlugin {
         self.id
     }
 
-    fn install(&self, registry: &mut PluginRegistry) -> Result<(), &'static str> {
+    fn install(&self, registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
         self.install_inner(registry)
-            .map_err(|_| "cpp manifest install failed")
+            .map_err(|error| PluginError::Install {
+                message: error.to_string(),
+            })
     }
 }

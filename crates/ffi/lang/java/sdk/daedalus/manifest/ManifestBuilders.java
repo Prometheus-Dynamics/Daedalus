@@ -46,14 +46,4 @@ public final class ManifestBuilders {
     return g;
   }
 
-  public static Map<String, Object> shaderImagePath(String srcPath, String name) {
-    Map<String, Object> s = new LinkedHashMap<>();
-    s.put("src_path", srcPath);
-    s.put("entry", "main");
-    s.put("input_binding", 0);
-    s.put("output_binding", 1);
-    if (name != null) s.put("name", name);
-    return s;
-  }
 }
-

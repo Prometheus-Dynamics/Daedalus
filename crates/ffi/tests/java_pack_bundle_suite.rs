@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -26,6 +27,10 @@ fn has_cmd(cmd: &str, arg: &str) -> bool {
     Command::new(cmd).arg(arg).output().is_ok()
 }
 
+fn note_skip(message: &str) {
+    let _ = writeln!(std::io::stderr(), "{message}");
+}
+
 fn collect_java_sources(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -48,14 +53,14 @@ fn collect_java_sources(dir: &Path) -> Vec<PathBuf> {
 #[test]
 fn java_pack_bundle_produces_self_contained_bundle() {
     if std::env::var_os("DAEDALUS_TEST_JAVA_BUNDLE").is_none() {
-        eprintln!("DAEDALUS_TEST_JAVA_BUNDLE not set; skipping");
+        note_skip("DAEDALUS_TEST_JAVA_BUNDLE not set; skipping");
         return;
     }
 
     let javac = std::env::var("JAVAC").unwrap_or_else(|_| "javac".to_string());
     let java = std::env::var("JAVA").unwrap_or_else(|_| "java".to_string());
     if !has_cmd(&javac, "--version") || !has_cmd(&java, "-version") {
-        eprintln!("skipping: java/javac not found");
+        note_skip("skipping: java/javac not found");
         return;
     }
 

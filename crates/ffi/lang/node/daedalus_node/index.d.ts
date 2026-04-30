@@ -85,9 +85,7 @@ export type ShaderImage = {
   }>;
   dispatch?: string;
   dispatch_from_port?: string;
-  input_binding: number;
-  output_binding: number;
-  bindings?: Array<{
+  bindings: Array<{
     binding: number;
     kind: "texture2d_rgba8" | "storage_texture2d_rgba8" | "uniform_buffer" | "storage_buffer";
     access: "read_only" | "write_only" | "read_write";
@@ -105,22 +103,20 @@ export type ShaderImage = {
 export function shaderImage(
   srcOrPath: string,
   opts?: {
+    bindings: ShaderImage["bindings"];
     entry?: string;
     name?: string | null;
     workgroup_size?: [number, number, number] | null;
-    input_binding?: number;
-    output_binding?: number;
   },
 ): ShaderImage;
 
 export function shaderImagePath(
   path: string,
   opts?: {
+    bindings: ShaderImage["bindings"];
     entry?: string;
     name?: string | null;
     workgroup_size?: [number, number, number] | null;
-    input_binding?: number;
-    output_binding?: number;
   },
 ): ShaderImage;
 

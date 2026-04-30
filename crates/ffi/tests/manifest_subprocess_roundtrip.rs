@@ -1,9 +1,9 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
 use daedalus::{
     engine::{Engine, EngineConfig},
-    graph_builder::GraphBuilder,
     runtime::{handles::NodeHandle, plugins::RegistryPluginExt},
 };
 use daedalus_ffi::load_manifest_plugin;
@@ -27,11 +27,15 @@ fn temp_dir(prefix: &str) -> PathBuf {
     dir
 }
 
+fn note_skip(message: &str) {
+    let _ = writeln!(std::io::stderr(), "{message}");
+}
+
 #[test]
 fn python_manifest_roundtrip_executes() {
     let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".to_string());
     if Command::new(&python).arg("--version").output().is_err() {
-        eprintln!("skipping: python interpreter not found");
+        note_skip("skipping: python interpreter not found");
         return;
     }
 
@@ -50,10 +54,16 @@ fn python_manifest_roundtrip_executes() {
     plugins.install_plugin(&plugin).expect("install plugin");
 
     let add = NodeHandle::new("demo_py_rt:add").alias("add");
-    let graph = GraphBuilder::new(&plugins.registry).node(&add).build();
+    let graph = plugins
+        .graph_builder()
+        .expect("graph builder")
+        .node(&add)
+        .build();
     let handlers = plugins.take_handlers();
     let engine = Engine::new(EngineConfig::default()).expect("engine");
-    let result = engine.run(&plugins.registry, graph, handlers).expect("run");
+    let result = engine
+        .run_plugin_registry(&plugins, graph, handlers)
+        .expect("run");
     assert_eq!(result.telemetry.nodes_executed, 1);
 }
 
@@ -61,7 +71,7 @@ fn python_manifest_roundtrip_executes() {
 fn node_manifest_roundtrip_executes() {
     let node = std::env::var("NODE").unwrap_or_else(|_| "node".to_string());
     if Command::new(&node).arg("--version").output().is_err() {
-        eprintln!("skipping: node interpreter not found");
+        note_skip("skipping: node interpreter not found");
         return;
     }
 
@@ -80,10 +90,16 @@ fn node_manifest_roundtrip_executes() {
     plugins.install_plugin(&plugin).expect("install plugin");
 
     let add = NodeHandle::new("demo_node:add").alias("add");
-    let graph = GraphBuilder::new(&plugins.registry).node(&add).build();
+    let graph = plugins
+        .graph_builder()
+        .expect("graph builder")
+        .node(&add)
+        .build();
     let handlers = plugins.take_handlers();
     let engine = Engine::new(EngineConfig::default()).expect("engine");
-    let result = engine.run(&plugins.registry, graph, handlers).expect("run");
+    let result = engine
+        .run_plugin_registry(&plugins, graph, handlers)
+        .expect("run");
     assert_eq!(result.telemetry.nodes_executed, 1);
 }
 
@@ -94,7 +110,7 @@ fn java_manifest_roundtrip_executes() {
     if Command::new(&javac).arg("--version").output().is_err()
         || Command::new(&java).arg("-version").output().is_err()
     {
-        eprintln!("skipping: java/javac not found");
+        note_skip("skipping: java/javac not found");
         return;
     }
 
@@ -149,9 +165,15 @@ fn java_manifest_roundtrip_executes() {
     plugins.install_plugin(&plugin).expect("install plugin");
 
     let add = NodeHandle::new("demo_java_rt:add").alias("add");
-    let graph = GraphBuilder::new(&plugins.registry).node(&add).build();
+    let graph = plugins
+        .graph_builder()
+        .expect("graph builder")
+        .node(&add)
+        .build();
     let handlers = plugins.take_handlers();
     let engine = Engine::new(EngineConfig::default()).expect("engine");
-    let result = engine.run(&plugins.registry, graph, handlers).expect("run");
+    let result = engine
+        .run_plugin_registry(&plugins, graph, handlers)
+        .expect("run");
     assert_eq!(result.telemetry.nodes_executed, 1);
 }
