@@ -183,7 +183,7 @@ impl PersistentWorkerRunner {
             RunnerPoolError::Runner(format!("failed to read worker message: {err}"))
         })?;
         if bytes == 0 {
-            if matches!(process.child.try_wait(), Ok(Some(_))) {
+            if wait_child_exit(&mut process.child, Duration::from_millis(50)) {
                 process.stderr.finish();
             }
             let stderr = process.stderr.snapshot();
@@ -289,6 +289,22 @@ impl PersistentWorkerRunner {
         }
         if !payloads.is_empty() {
             telemetry.record_payloads(payloads);
+        }
+    }
+}
+
+fn wait_child_exit(child: &mut Child, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(_) => return false,
         }
     }
 }
