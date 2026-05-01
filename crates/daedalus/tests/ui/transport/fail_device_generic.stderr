@@ -1,0 +1,12 @@
+error: device upload functions cannot be generic yet
+  --> tests/ui/transport/fail_device_generic.rs:9:1
+   |
+ 9 | / #[device(
+10 | |     id = "test.generic_device",
+11 | |     cpu = "test:i32",
+12 | |     device = "test:i32@gpu",
+13 | |     download = download
+14 | | )]
+   | |__^
+   |
+   = note: this error originates in the attribute macro `device` (in Nightly builds, run with -Z macro-backtrace for more info)

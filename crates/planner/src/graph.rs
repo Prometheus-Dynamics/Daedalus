@@ -10,16 +10,10 @@ pub const DEFAULT_PLAN_VERSION: &str = "0.1";
 /// Compute affinity hint for scheduling/GPU pass.
 pub use daedalus_core::compute::ComputeAffinity;
 /// Sync grouping metadata.
-#[allow(unused_imports)]
-pub use daedalus_core::sync::{SyncGroup, SyncPolicy};
+pub use daedalus_core::sync::SyncGroup;
 
 /// Stable hash helper used for goldens; simple FNV-1a for determinism.
 ///
-/// ```ignore
-/// use daedalus_planner::StableHash;
-/// let hash = StableHash::from_bytes(b"demo");
-/// assert_ne!(hash.0, 0);
-/// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StableHash(pub u64);
 
@@ -36,23 +30,27 @@ impl StableHash {
     }
 }
 
+pub(crate) fn stable_hash_serialized<T: Serialize + ?Sized>(domain: &str, value: &T) -> StableHash {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(domain.as_bytes());
+    bytes.push(0);
+    match serde_json::to_vec(value) {
+        Ok(serialized) => bytes.extend_from_slice(&serialized),
+        Err(error) => {
+            bytes.extend_from_slice(b"serde_error");
+            bytes.extend_from_slice(error.to_string().as_bytes());
+        }
+    }
+    StableHash::from_bytes(&bytes)
+}
+
 /// Node reference within a graph (index-based for compactness).
 ///
-/// ```ignore
-/// use daedalus_planner::NodeRef;
-/// let node = NodeRef(3);
-/// assert_eq!(node.0, 3);
-/// ```
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NodeRef(pub usize);
 
 /// Port reference by name within a node.
 ///
-/// ```ignore
-/// use daedalus_planner::{NodeRef, PortRef};
-/// let port = PortRef { node: NodeRef(0), port: "out".into() };
-/// assert_eq!(port.port, "out");
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PortRef {
     pub node: NodeRef,
@@ -61,15 +59,6 @@ pub struct PortRef {
 
 /// Edge from one node/port to another.
 ///
-/// ```ignore
-/// use daedalus_planner::{Edge, NodeRef, PortRef};
-/// let edge = Edge {
-///     from: PortRef { node: NodeRef(0), port: "out".into() },
-///     to: PortRef { node: NodeRef(1), port: "in".into() },
-///     metadata: Default::default(),
-/// };
-/// assert_eq!(edge.from.port, "out");
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Edge {
     pub from: PortRef,
@@ -80,22 +69,6 @@ pub struct Edge {
 
 /// An instantiated node, identified by registry id.
 ///
-/// ```ignore
-/// use daedalus_planner::{ComputeAffinity, NodeInstance};
-/// use daedalus_registry::ids::NodeId;
-/// let node = NodeInstance {
-///     id: NodeId::new("demo.node"),
-///     bundle: None,
-///     label: None,
-///     inputs: vec![],
-///     outputs: vec![],
-///     compute: ComputeAffinity::CpuOnly,
-///     const_inputs: vec![],
-///     sync_groups: vec![],
-///     metadata: Default::default(),
-/// };
-/// assert_eq!(node.id.0, "demo.node");
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NodeInstance {
     pub id: daedalus_registry::ids::NodeId,
@@ -115,11 +88,6 @@ pub struct NodeInstance {
 
 /// Planner input graph (pre-pass).
 ///
-/// ```ignore
-/// use daedalus_planner::Graph;
-/// let graph = Graph::default();
-/// assert!(graph.nodes.is_empty());
-/// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Graph {
     pub nodes: Vec<NodeInstance>,
@@ -262,11 +230,6 @@ mod graph_metadata_serde {
 
 /// Contiguous GPU segment metadata.
 ///
-/// ```ignore
-/// use daedalus_planner::{GpuSegment, NodeRef};
-/// let seg = GpuSegment { buffer_id: 0, nodes: vec![NodeRef(0)] };
-/// assert_eq!(seg.nodes.len(), 1);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuSegment {
     pub buffer_id: usize,
@@ -275,11 +238,6 @@ pub struct GpuSegment {
 
 /// Edge buffer hints used by the GPU pass.
 ///
-/// ```
-/// use daedalus_planner::EdgeBufferInfo;
-/// let info = EdgeBufferInfo { edge_index: 0, gpu_fast_path: false, buffer_id: None };
-/// assert_eq!(info.edge_index, 0);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EdgeBufferInfo {
     /// Index into `Graph::edges`.
@@ -291,45 +249,13 @@ pub struct EdgeBufferInfo {
 }
 
 impl Graph {
+    pub fn stable_hash(&self) -> StableHash {
+        stable_hash_serialized("daedalus_planner::Graph", self)
+    }
+
     /// Identify contiguous GPU-to-GPU chains and assign them shared buffer ids, along with
     /// edge annotations that mark where GPU fast paths can be used.
     ///
-    /// ```ignore
-    /// use daedalus_planner::{Graph, NodeInstance, ComputeAffinity, Edge, PortRef, NodeRef};
-    /// use daedalus_registry::ids::NodeId;
-    ///
-    /// let mut graph = Graph::default();
-    /// graph.nodes.push(NodeInstance {
-    ///     id: NodeId::new("a"),
-    ///     bundle: None,
-    ///     label: None,
-    ///     inputs: vec![],
-    ///     outputs: vec!["out".into()],
-    ///     compute: ComputeAffinity::GpuPreferred,
-    ///     const_inputs: vec![],
-    ///     sync_groups: vec![],
-    ///     metadata: Default::default(),
-    /// });
-    /// graph.nodes.push(NodeInstance {
-    ///     id: NodeId::new("b"),
-    ///     bundle: None,
-    ///     label: None,
-    ///     inputs: vec!["in".into()],
-    ///     outputs: vec![],
-    ///     compute: ComputeAffinity::GpuPreferred,
-    ///     const_inputs: vec![],
-    ///     sync_groups: vec![],
-    ///     metadata: Default::default(),
-    /// });
-    /// graph.edges.push(Edge {
-    ///     from: PortRef { node: NodeRef(0), port: "out".into() },
-    ///     to: PortRef { node: NodeRef(1), port: "in".into() },
-    ///     metadata: Default::default(),
-    /// });
-    /// let (segments, edges) = graph.gpu_buffers();
-    /// assert_eq!(edges.len(), 1);
-    /// assert_eq!(segments.len(), 1);
-    /// ```
     pub fn gpu_buffers(&self) -> (Vec<GpuSegment>, Vec<EdgeBufferInfo>) {
         #[derive(Clone)]
         struct Dsu {
@@ -439,11 +365,6 @@ impl Graph {
 
 /// Final execution plan with diagnostics and stable hash for goldens.
 ///
-/// ```ignore
-/// use daedalus_planner::{ExecutionPlan, Graph};
-/// let plan = ExecutionPlan::new(Graph::default(), vec![]);
-/// assert_eq!(plan.graph.nodes.len(), 0);
-/// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionPlan {
     pub version: String,
@@ -452,29 +373,27 @@ pub struct ExecutionPlan {
     pub hash: StableHash,
 }
 
+#[derive(Serialize)]
+struct ExecutionPlanHashInput<'a> {
+    version: &'a str,
+    graph: &'a Graph,
+    diagnostics: &'a [Diagnostic],
+}
+
 impl ExecutionPlan {
     /// Build a plan and compute its stable hash.
     pub fn new(graph: Graph, diagnostics: Vec<Diagnostic>) -> Self {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&(graph.nodes.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(&(graph.edges.len() as u64).to_le_bytes());
-        for n in &graph.nodes {
-            bytes.extend_from_slice(n.id.0.as_bytes());
-            bytes.push(match n.compute {
-                ComputeAffinity::CpuOnly => 0,
-                ComputeAffinity::GpuPreferred => 1,
-                ComputeAffinity::GpuRequired => 2,
-            });
-        }
-        for e in &graph.edges {
-            bytes.extend_from_slice(&(e.from.node.0 as u64).to_le_bytes());
-            bytes.extend_from_slice(&(e.to.node.0 as u64).to_le_bytes());
-            bytes.extend_from_slice(e.from.port.as_bytes());
-            bytes.extend_from_slice(e.to.port.as_bytes());
-        }
-        let hash = StableHash::from_bytes(&bytes);
+        let version = DEFAULT_PLAN_VERSION.to_string();
+        let hash = stable_hash_serialized(
+            "daedalus_planner::ExecutionPlan",
+            &ExecutionPlanHashInput {
+                version: &version,
+                graph: &graph,
+                diagnostics: &diagnostics,
+            },
+        );
         Self {
-            version: DEFAULT_PLAN_VERSION.to_string(),
+            version,
             graph,
             diagnostics,
             hash,

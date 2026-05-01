@@ -1,97 +1,90 @@
 # Daedalus
 
-Daedalus is a Rust workspace for building typed dataflow graphs that can run on CPU or GPU.
+Daedalus is a Rust workspace for typed dataflow graphs. The current codebase is organized around a layered pipeline:
 
-The repository is split into focused crates so applications, plugins, GPU backends, FFI layers, and test helpers can evolve independently.
+1. describe node and payload types,
+2. register capabilities and plugin-provided nodes,
+3. plan a graph into a deterministic runtime plan,
+4. execute that plan on CPU and, when enabled, GPU backends,
+5. expose host and FFI boundaries for applications and language SDKs.
 
-## Workspace Layout
+The facade crate is published as `daedalus-rs` and imported as `daedalus`.
 
-- `crates/daedalus`: consumer-facing facade and public API re-exports
-- `crates/core`: shared identifiers, metrics, and low-level utility types
-- `crates/data`: type/value model and serialization helpers
-- `crates/registry`: node descriptor store and plugin loading support
-- `crates/planner`: graph validation, scheduling, and runtime-plan generation
-- `crates/runtime`: executor, host bridge, backpressure, and telemetry
-- `crates/gpu`: optional GPU backends and WGSL dispatch helpers
-- `crates/macros`: proc macros for nodes and GPU binding helpers
-- `crates/engine`: higher-level facade wiring registry, planner, and runtime
-- `crates/ffi`: language bindings and plugin interoperability
-- `crates/nodes`: demo nodes and fixtures used by examples and tests
-- `plugins/*`: optional plugin crates
+## Workspace
 
-Additional repository notes live under [docs/README.md](docs/README.md).
+- `crates/daedalus`: facade crate and public re-exports.
+- `crates/core`: ids, clocks, channel traits, sync policy, backpressure names, errors, and metrics hooks.
+- `crates/transport`: stable payload identity, access, residency, adapter, and lifecycle primitives.
+- `crates/data`: portable value/type model, descriptors, conversion, schema/proto/json helpers, and type metadata.
+- `crates/registry`: capability, type, adapter, serializer, device, and node declaration registry.
+- `crates/planner`: graph model, validation, adapter resolution, scheduling, and runtime-plan inputs.
+- `crates/runtime`: executor, host bridge, stream workers, runtime plans, telemetry, state, and resources.
+- `crates/engine`: high-level registry to planner to runtime facade for application hosts.
+- `crates/gpu`: GPU handle types, backend selection, mock/noop/wgpu backends, and shader dispatch helpers.
+- `crates/macros`: node, config, transport, type-key, value, and GPU derive macros.
+- `crates/ffi`: shared FFI contract, host runner, and Python/Node/Java/C++ SDK targets.
+- `examples`: runnable graph, runtime, GPU, metrics, and FFI examples.
+- `testing`: local and CI validation notes.
+
+## Features
+
+The facade starts with no default feature set. Enable only the layers your application needs.
+
+- `engine`: high-level engine facade.
+- `plugins`: plugin registry and macro-generated plugin installation.
+- `gpu-types`: GPU handles and type surface only.
+- `gpu-runtime`: GPU-aware registry, planner, and runtime wiring.
+- `gpu-engine`: GPU-aware engine wiring.
+- `gpu-wgpu`: real `wgpu` backend.
+- `gpu-async`: async shader dispatch/readback helpers for `gpu-wgpu`.
+- `gpu-mock`: deterministic mock GPU backend for tests.
+- `schema` and `proto`: optional data/planner export surfaces.
 
 ## Getting Started
 
-Add the facade crate:
-
 ```toml
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "1.0.0" }
+daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine", "plugins"] }
 ```
 
-Core feature sets:
+Useful examples:
 
-- `engine`: enable the high-level engine facade and end-to-end examples
-- `plugins`: enable plugin registry and plugin-oriented examples
-- `gpu-wgpu`: enable the real GPU backend
-- `gpu-mock`: enable the deterministic mock GPU backend for tests
-
-Example:
-
-```toml
-[dependencies]
-daedalus = { package = "daedalus-rs", version = "1.0.0", features = ["engine", "plugins"] }
+```bash
+cargo run -p daedalus-examples --bin quickstart_typed_cpu_graph
+cargo run -p daedalus-examples --bin quickstart_bounded_streaming_io
+cargo run -p daedalus-examples --bin typed_handle_graph
+cargo run -p daedalus-examples --bin adapter_path
+cargo run -p daedalus-examples --bin observability
+cargo run -p daedalus-examples --features gpu-wgpu --bin gpu_node
 ```
 
-## Examples
-
-The facade crate includes CPU and GPU examples:
-
-- `cargo run -p daedalus-rs --features "engine,plugins" --example cpu_image`
-- `cargo run -p daedalus-rs --features "engine,plugins" --example cpu_text`
-- `cargo run -p daedalus-rs --features "engine,plugins" --example cpu_branch`
-- `cargo run -p daedalus-rs --features "engine,plugins" --example typed_any`
-- `cargo run -p daedalus-rs --features "engine,plugins,gpu-wgpu" --example gpu_image`
-- `cargo run -p daedalus-rs --features "engine,plugins,gpu-wgpu" --example gpu_shader_nodes`
-
-## Development
-
-Common workspace commands:
+## Validation
 
 ```bash
 ./scripts/repo-clean.sh
 cargo fmt --all -- --check
 ./scripts/check-file-sizes.sh
+./scripts/check-workspace-deps.sh
+./scripts/check-gpu-async-blocking.sh
 cargo test --workspace --all-targets --features "engine,plugins"
 cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
 cargo doc --workspace --no-deps
 ```
 
-Optional Docker-backed example validation:
+Docker-backed example validation:
 
-- `cargo test -p daedalus-rs --test docker_examples -- --ignored --nocapture`
+```bash
+cargo test -p daedalus-rs --test docker_examples -- --ignored --nocapture
+```
 
-Targeted helper scripts and CI assets live under `scripts/` and `testing/`.
+## Documentation
 
-## Documentation Index
-
-- [docs/README.md](docs/README.md): repository documentation index
-- [docs/development.md](docs/development.md): repo layout, validation commands, and shared conventions
-- [docs/testing.md](docs/testing.md): test surfaces, example expectations, and CI notes
-- [CHANGELOG.md](CHANGELOG.md): release history and notable workspace changes
-- [testing/README.md](testing/README.md): local and CI validation entry points
-- [plugins/README.md](plugins/README.md): plugin crate conventions and usage
-- [scripts/ci.sh](scripts/ci.sh): shared local CI entry point
-- [scripts/repo-clean.sh](scripts/repo-clean.sh): pre-commit cleanup and verification entry point
-- [crates/daedalus/README.md](crates/daedalus/README.md): facade API notes
-- [crates/runtime/README.md](crates/runtime/README.md): executor and runtime behavior
-- [crates/planner/README.md](crates/planner/README.md): planner model and graph validation
-- [crates/gpu/README.md](crates/gpu/README.md): GPU backend and WGSL notes
+- [docs/README.md](docs/README.md): documentation map.
+- [docs/development.md](docs/development.md): development rules, features, observability, and production API guidance.
+- [docs/testing.md](docs/testing.md): supported validation surface.
+- [crates/ffi/README.md](crates/ffi/README.md): FFI contract, package, worker, and SDK direction.
+- [testing/README.md](testing/README.md): quick local testing reference.
 
 ## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 (`LICENSE-APACHE`)
-- MIT license (`LICENSE-MIT`)
+Licensed under either `LICENSE-APACHE` or `LICENSE-MIT`.

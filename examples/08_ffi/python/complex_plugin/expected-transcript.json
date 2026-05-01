@@ -1,0 +1,22 @@
+[
+  {"node_id":"scalar_add","args":{"a":2,"b":40},"outputs":{"out":42}},
+  {"node_id":"split_sign","args":{"value":7},"outputs":{"positive":7,"negative":-7}},
+  {"node_id":"scale","args":{"value":6,"factor":3},"outputs":{"out":18}},
+  {"node_id":"accumulate","args":{"value":5},"state":{"sum":5},"outputs":{"sum":5}},
+  {"node_id":"bytes_len","args":{"payload":"01020304"},"outputs":{"len":4}},
+  {"node_id":"image_boost","args":{"rgba8":{"width":1,"height":1,"data":[1,2,3,255]}},"outputs":{"rgba8":{"width":1,"height":1,"data":[9,2,3,255]}}},
+  {"node_id":"shape_summary","outputs":{"summary":"fast:1.0,2.0:9:3:1:4"}},
+  {"node_id":"emit_event","args":{"message":"loaded"},"outputs":{"ok":true},"events":[{"level":"info","message":"loaded"}]},
+  {"node_id":"capability_add","args":{"a":20,"b":22},"outputs":{"out":42}},
+  {"node_id":"checked_divide","args":{"a":4,"b":0},"error":{"code":"division_by_zero"}},
+  {"node_id":"array_dynamic_sum","args":{"values":[1,2,3,4]},"outputs":{"sum":10}},
+  {"node_id":"node_io_complex","args":{"point":{"x":1.0,"y":2.0},"weights":[0.5,1.5],"metadata":{"label":"weighted"}},"outputs":{"score":5.0,"label":"weighted","point":{"x":1.0,"y":2.0}}},
+  {"node_id":"gpu_tint","args":{"rgba8":{"width":1,"height":1,"data":[1,2,3,255]}},"outputs":{"rgba8":{"width":1,"height":1,"data":[1,2,3,255]}}},
+  {"node_id":"internal_adapter_consume","args":{"count":41},"outputs":{"out":42}},
+  {"node_id":"external_adapter_consume","args":{"count":21},"outputs":{"out":42}},
+  {"node_id":"zero_copy_len","args":{"frame":"01020304"},"outputs":{"len":4}},
+  {"node_id":"shared_ref_len","args":{"frame":"01020304"},"outputs":{"len":4}},
+  {"node_id":"cow_append_marker","args":{"frame":"010203"},"outputs":{"frame":"010203ff"}},
+  {"node_id":"mutable_brighten","args":{"rgba8":{"width":1,"height":1,"data":[1,2,3,255]}},"outputs":{"rgba8":{"width":1,"height":1,"data":[2,2,3,255]}}},
+  {"node_id":"owned_bytes_len","args":{"blob":"01020304"},"outputs":{"len":4}}
+]

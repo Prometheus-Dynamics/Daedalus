@@ -1,11 +1,10 @@
+use daedalus_data::model::Value;
 use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
 };
 use daedalus_runtime::{
-    BackpressureStrategy, EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig,
-    build_runtime,
-    executor::{NodeError, RuntimeValue},
-    io::NodeIo,
+    BackpressureStrategy, DEFAULT_OUTPUT_PORT, Executor, NodeHandler, RuntimeEdgePolicy,
+    RuntimeNode, SchedulerConfig, build_runtime, executor::NodeError, io::NodeIo,
 };
 
 struct Handler {
@@ -21,9 +20,9 @@ impl NodeHandler for Handler {
     ) -> Result<(), NodeError> {
         match node.id.as_str() {
             "prod" => {
-                io.push_output(
-                    Some("a"),
-                    RuntimeValue::Bytes(std::sync::Arc::from(&b"hello"[..])),
+                io.push_payload(
+                    "a",
+                    daedalus_transport::Payload::bytes((&b"hello"[..]).into()),
                 );
             }
             "cons" => {
@@ -79,9 +78,8 @@ fn node_io_respects_ports_and_policies() {
     let rt = build_runtime(
         &exec,
         &SchedulerConfig {
-            default_policy: EdgePolicyKind::Fifo,
+            default_policy: RuntimeEdgePolicy::default(),
             backpressure: BackpressureStrategy::None,
-            lockfree_queues: false,
         },
     );
 
@@ -93,4 +91,35 @@ fn node_io_respects_ports_and_policies() {
     assert_eq!(telemetry.nodes_executed, 2);
     let ports = seen.lock().unwrap().clone();
     assert_eq!(ports, vec!["in".to_string()]);
+}
+
+#[test]
+fn node_io_default_output_helpers_use_default_port() {
+    let mut io = NodeIo::empty();
+    io.push_default(7_i64);
+    io.push_value_default(Value::Bool(true));
+
+    let outputs = io.take_outputs();
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(outputs[0].0, DEFAULT_OUTPUT_PORT);
+    assert_eq!(outputs[1].0, DEFAULT_OUTPUT_PORT);
+    assert_eq!(outputs[0].1.inner.get_ref::<i64>(), Some(&7_i64));
+    assert_eq!(
+        outputs[1].1.inner.get_ref::<Value>(),
+        Some(&Value::Bool(true))
+    );
+}
+
+#[test]
+fn node_io_explicit_output_helpers_preserve_ports() {
+    let mut io = NodeIo::empty();
+    io.push_to("custom", 9_i64);
+    io.push_value_to("value", Value::Int(11));
+
+    let outputs = io.take_outputs();
+    assert_eq!(outputs.len(), 2);
+    assert_eq!(outputs[0].0, "custom");
+    assert_eq!(outputs[1].0, "value");
+    assert_eq!(outputs[0].1.inner.get_ref::<i64>(), Some(&9_i64));
+    assert_eq!(outputs[1].1.inner.get_ref::<Value>(), Some(&Value::Int(11)));
 }

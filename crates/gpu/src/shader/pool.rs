@@ -83,8 +83,8 @@ impl TempPool {
             .put_texture(width, height, format, usage, tex);
     }
 
-    pub fn clear(&mut self) {
-        self.per_device.clear();
+    pub fn clear_device(&mut self, device_key: usize) {
+        self.per_device.remove(&device_key);
     }
 }
 
@@ -165,8 +165,8 @@ pub fn temp_pool() -> &'static Mutex<TempPool> {
     TEMP_POOL.get_or_init(|| Mutex::new(TempPool::new()))
 }
 
-pub fn clear_temp_pool() {
+pub(crate) fn clear_temp_pool_for_device(device_key: usize) {
     if let Ok(mut pool) = temp_pool().lock() {
-        pool.clear();
+        pool.clear_device(device_key);
     }
 }

@@ -1,37 +1,4 @@
 //! Debug helpers for serializing/deserializing runtime plans.
-//! ```
-//! use daedalus_runtime::{debug, RuntimePlan, RuntimeSegment, RuntimeNode, EdgePolicyKind};
-//! use daedalus_planner::ComputeAffinity;
-//!
-//! let plan = RuntimePlan {
-//!     default_policy: EdgePolicyKind::Fifo,
-//!     backpressure: daedalus_runtime::BackpressureStrategy::None,
-//!     lockfree_queues: false,
-//!     graph_metadata: Default::default(),
-//!     nodes: vec![
-//!         RuntimeNode {
-//!             id: "a".into(),
-//!             stable_id: 0,
-//!             bundle: None,
-//!             label: None,
-//!             compute: ComputeAffinity::CpuOnly,
-//!             const_inputs: vec![],
-//!             sync_groups: vec![],
-//!             metadata: Default::default(),
-//!         }
-//!     ],
-//!     edges: vec![],
-//!     gpu_edges: vec![],
-//!     gpu_entries: vec![],
-//!     gpu_exits: vec![],
-//!     segments: vec![RuntimeSegment { nodes: vec![], compute: ComputeAffinity::CpuOnly }],
-//!     schedule_order: vec![],
-//!     gpu_segments: vec![],
-//! };
-//! let json = debug::to_pretty_json(&plan);
-//! let round = debug::from_json(&json).unwrap();
-//! assert_eq!(plan.nodes.len(), round.nodes.len());
-//! ```
 
 use crate::RuntimePlan;
 

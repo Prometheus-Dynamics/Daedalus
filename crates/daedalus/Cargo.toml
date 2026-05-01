@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-rs"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 description = "Facade crate for the Daedalus dataflow runtime (CPU/GPU node graphs)."
 license.workspace = true
@@ -11,39 +11,55 @@ readme = "README.md"
 keywords = ["dataflow", "graph", "gpu", "wgpu", "pipeline"]
 categories = ["concurrency", "graphics"]
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/lib.rs"
 name = "daedalus"
+doctest = false
 
 [features]
 default = []
-gpu = [
-    "daedalus-gpu",
+gpu-types = ["dep:daedalus-gpu"]
+gpu-runtime = [
+    "gpu-types",
     "daedalus-registry/gpu",
     "daedalus-planner/gpu",
     "daedalus-runtime/gpu",
+]
+gpu-engine = [
+    "gpu-runtime",
+    "engine",
     "daedalus-engine/gpu",
 ]
-gpu-wgpu = ["gpu", "daedalus-gpu/gpu-wgpu"]
-gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
+gpu = ["gpu-engine"]
+gpu-wgpu = ["gpu-engine", "daedalus-gpu/gpu-wgpu"]
+gpu-async = ["gpu-wgpu", "daedalus-gpu/gpu-async"]
+gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
 schema = ["daedalus-data/schema", "daedalus-planner/schema"]
 proto = ["daedalus-data/proto", "daedalus-planner/proto"]
-plugins = ["daedalus-registry/plugins", "daedalus-runtime/plugins"]
-ffi = ["daedalus-registry/ffi", "daedalus-runtime/ffi", "dep:daedalus-ffi"]
+plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nodes/plugins"]
 examples = []
-engine = ["dep:daedalus-engine"]
+styx-camera-example = ["engine", "plugins", "dep:styx"]
+engine = [
+    "dep:daedalus-engine",
+    "daedalus-engine/executor-pool",
+    "daedalus-engine/plugins",
+]
 
 [dependencies]
 daedalus-core = { workspace = true }
+daedalus-transport = { workspace = true }
 daedalus-data = { workspace = true }
 daedalus-gpu = { workspace = true, optional = true }
 daedalus-registry = { workspace = true }
 daedalus-planner = { workspace = true }
-daedalus-runtime = { workspace = true, features = ["plugins"] }
+daedalus-runtime = { workspace = true }
 daedalus-macros = { workspace = true }
 daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
-daedalus-ffi = { workspace = true, optional = true }
+styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
 paste = { workspace = true }
 
 [dev-dependencies]
@@ -52,87 +68,24 @@ pollster = { workspace = true }
 bytemuck = { workspace = true }
 image = { workspace = true }
 serde_json = { workspace = true }
+trybuild = { workspace = true }
 
-[[example]]
-name = "cpu_branch"
+[[test]]
+name = "adapt_macro"
+path = "tests/adapt_macro.rs"
+required-features = ["plugins"]
+
+[[test]]
+name = "fanin_inputs_macro"
+path = "tests/fanin_inputs_macro.rs"
+required-features = ["plugins"]
+
+[[test]]
+name = "stateful_node_isolation"
+path = "tests/stateful_node_isolation.rs"
 required-features = ["engine", "plugins"]
 
-[[example]]
-name = "cpu_image"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "cpu_pipeline"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "cpu_stateful"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "cpu_text"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "gpu_image"
-required-features = ["engine", "plugins", "gpu-wgpu"]
-
-[[example]]
-name = "gpu_segments"
-required-features = ["engine", "plugins", "gpu"]
-
-[[example]]
-name = "blur_node"
-required-features = ["engine", "plugins", "gpu-wgpu"]
-
-[[example]]
-name = "gpu_shader_nodes"
-required-features = ["engine", "plugins", "gpu-wgpu"]
-
-[[example]]
-name = "metadata_defaults"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "metadata_source"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "generic_add"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "typed_any"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "sync_policies"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "graph_json"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "math_ops"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "graph_patch"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "fanin_merge"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "fanin_mixed"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "fanin_multi"
-required-features = ["engine", "plugins"]
-
-[[example]]
-name = "graph_node"
-required-features = ["engine", "plugins"]
+[[test]]
+name = "transport_macro_ui"
+path = "tests/transport_macro_ui.rs"
+required-features = ["plugins"]

@@ -1,0 +1,7 @@
+error: type_key currently supports structs and enums
+ --> tests/ui/transport/fail_type_key_on_fn.rs:3:1
+  |
+3 | #[type_key("test:not_a_type")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `type_key` (in Nightly builds, run with -Z macro-backtrace for more info)

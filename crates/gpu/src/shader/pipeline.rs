@@ -10,6 +10,10 @@ use super::{Access, BindingKind, BindingSpec};
 
 static PIPE_CACHE_PER_DEVICE_LIMIT: AtomicUsize = AtomicUsize::new(128);
 static BIND_GROUP_CACHE_PER_DEVICE_LIMIT: AtomicUsize = AtomicUsize::new(256);
+static PIPE_CACHE: OnceLock<Mutex<HashMap<usize, DeviceCache<Arc<PipelineEntry>>>>> =
+    OnceLock::new();
+static BIND_GROUP_CACHE: OnceLock<Mutex<HashMap<usize, DeviceCache<wgpu::BindGroup>>>> =
+    OnceLock::new();
 
 /// Small per-device cache that tracks insertion/usage order for eviction.
 struct DeviceCache<T> {
@@ -91,10 +95,7 @@ pub(crate) fn pipeline_entry(
     spec: &super::ShaderSpec,
     layout_bindings: &[BindingSpec],
 ) -> Arc<PipelineEntry> {
-    static PIPE_CACHE: OnceLock<Mutex<HashMap<usize, DeviceCache<Arc<PipelineEntry>>>>> =
-        OnceLock::new();
-
-    let device_key = device as *const _ as usize;
+    let device_key = super::device_key(device);
     let cache = PIPE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut hasher = DefaultHasher::new();
     spec.name.hash(&mut hasher);
@@ -232,9 +233,7 @@ pub(crate) fn bind_group(
     prepared: &[super::prepare::Prepared],
     pipeline_key: u64,
 ) -> wgpu::BindGroup {
-    static BIND_GROUP_CACHE: OnceLock<Mutex<HashMap<usize, DeviceCache<wgpu::BindGroup>>>> =
-        OnceLock::new();
-    let device_key = device as *const _ as usize;
+    let device_key = super::device_key(device);
 
     let entries: Vec<wgpu::BindGroupEntry> = prepared
         .iter()
@@ -318,4 +317,17 @@ pub(crate) fn bind_group(
         cache.insert_with_limit(k, bg.clone(), bind_group_cache_limit());
     }
     bg
+}
+
+pub(crate) fn clear_pipeline_caches_for_device(device_key: usize) {
+    if let Some(cache) = PIPE_CACHE.get()
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.remove(&device_key);
+    }
+    if let Some(cache) = BIND_GROUP_CACHE.get()
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.remove(&device_key);
+    }
 }

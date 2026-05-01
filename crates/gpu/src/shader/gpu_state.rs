@@ -114,7 +114,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
             .get_or_init(|| std::sync::Mutex::new(StatePool::new()))
             .lock()
             .ok()
-            .and_then(|mut p| p.take(device as *const _ as usize, size, usage))
+            .and_then(|mut p| p.take(super::device_key(device), size, usage))
         {
             queue.write_buffer(buf.as_ref(), 0, bytemuck::bytes_of(&initial));
             buf
@@ -133,7 +133,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
             size,
             device: device.clone(),
             queue: queue.clone(),
-            device_key: device as *const _ as usize,
+            device_key: super::device_key(device),
             _marker: std::marker::PhantomData,
         })
     }
@@ -192,6 +192,14 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
             },
             readback,
         }
+    }
+}
+
+pub(crate) fn clear_gpu_state_pool_for_device(device_key: usize) {
+    if let Some(pool) = STATE_POOL.get()
+        && let Ok(mut pool) = pool.lock()
+    {
+        pool.per_device.remove(&device_key);
     }
 }
 

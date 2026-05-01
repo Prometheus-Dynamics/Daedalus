@@ -1,11 +1,11 @@
 # daedalus-wgsl-infer
 
-Small helpers for inferring WGSL bindings and workgroup sizes from shader source.
+Small WGSL metadata inference helper.
 
-## What it does
-- Parses `@binding` declarations to infer resource access kinds.
-- Detects `@workgroup_size(...)` annotations for dispatch configuration.
+## Owns
 
-## Typical usage
-- Used by the Daedalus GPU macro tooling to validate shader bindings.
-- Can be reused to preflight WGSL snippets before compilation.
+- `@workgroup_size(...)` extraction,
+- `@binding(...)` resource access inference,
+- a lightweight inferred spec model for macro and GPU tooling.
+
+This crate is intentionally narrow. It is a preflight helper, not a complete WGSL parser or shader compiler.

@@ -4,7 +4,7 @@ use crate::declare_plugin;
 use daedalus_macros::node;
 use daedalus_runtime::NodeError;
 use daedalus_runtime::handler_registry::HandlerRegistry;
-use daedalus_runtime::plugins::PluginRegistry;
+use daedalus_runtime::plugins::{PluginRegistry, PluginResult};
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct Frame {
@@ -19,10 +19,10 @@ pub struct Detection {
 declare_plugin!(DemoPlugin, "demo", [frame_src, decode, sink]);
 
 /// Convenience for non-plugin consumers: install and get handlers in one shot.
-pub fn install_bundle(registry: &mut PluginRegistry) -> Result<HandlerRegistry, &'static str> {
-    registry.merge::<frame_src>()?;
-    registry.merge::<decode>()?;
-    registry.merge::<sink>()?;
+pub fn install_bundle(registry: &mut PluginRegistry) -> PluginResult<HandlerRegistry> {
+    registry.merge::<FrameSrcNode>()?;
+    registry.merge::<DecodeNode>()?;
+    registry.merge::<SinkNode>()?;
     Ok(registry.take_handlers())
 }
 
@@ -47,6 +47,6 @@ fn decode(frame: Frame) -> Result<Vec<Detection>, NodeError> {
 
 #[node(id = "demo:sink", bundle = "demo", inputs("detections"))]
 fn sink(detections: Vec<Detection>) -> Result<(), NodeError> {
-    println!("demo detections: {:?}", detections);
+    tracing::info!(target: "daedalus_nodes::demo", ?detections, "demo detections");
     Ok(())
 }

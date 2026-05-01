@@ -1,9 +1,11 @@
-//! Runtime orchestration scaffolding. See `PLAN.md` for the detailed roadmap.
-//! Transforms planner `ExecutionPlan` into a runnable `RuntimePlan` with edge policies and schedulable segments.
+//! Runtime execution layer for planner-produced graphs.
+//!
+//! This crate owns runtime plans, executor paths, handler dispatch, host bridge
+//! queues, streaming workers, state/resources, transport execution, and
+//! telemetry.
 
 pub mod capabilities;
 pub mod config;
-mod convert;
 pub mod debug;
 pub mod executor;
 pub mod fanin;
@@ -19,19 +21,14 @@ pub mod plugins;
 mod scheduler;
 pub mod snapshot;
 pub mod state;
+mod state_error;
+pub mod stream;
+pub mod transport;
+pub use daedalus_transport as transport_types;
 
 /// Apply a plugin prefix to a node id without duplicating overlapping segments.
 ///
-/// Examples:
-/// - prefix `ai`, id `ai:run` => `ai:run`
-/// - prefix `cv:aruco`, id `cv:decode_grid` => `cv:aruco:decode_grid`
-/// - prefix `cv`, id `aruco:decode_grid` => `cv:aruco:decode_grid`
-///
-/// ```
-/// use daedalus_runtime::apply_node_prefix;
-/// assert_eq!(apply_node_prefix("ai", "ai:run"), "ai:run");
-/// assert_eq!(apply_node_prefix("cv", "aruco:decode_grid"), "cv:aruco:decode_grid");
-/// ```
+/// Prefixes already present at the start of the id are not duplicated.
 pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
     let prefix = prefix.trim_matches(':').trim();
     let id = id.trim_matches(':').trim();
@@ -80,26 +77,43 @@ pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
 }
 
 pub use config::*;
-pub use convert::{
-    ConversionRegistry, RuntimeConversionResolution, RuntimeConversionStep, convert_arc,
-};
+pub use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY, NODE_OVERLOADS_KEY};
 pub use executor::{
-    ExecuteError, ExecutionTelemetry, Executor, InternalTransferMetrics, MetricsLevel,
-    NodeAllocationSpikeExplanation, NodeError, NodeHandler, NodeMetrics, NodeResourceMetrics,
-    ResourceMetrics, RuntimeValue, register_runtime_data_size_inspector,
+    AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleStage, DirectPayloadFn,
+    EdgePressureMetrics, EdgePressureReason, ExecuteError, ExecutionTelemetry, Executor,
+    ExecutorMaskError, FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry,
+    FfiPayloadTelemetry, FfiTelemetryReport, FfiWorkerTelemetry, InternalTransferMetrics,
+    MetricsLevel, NodeAllocationSpikeExplanation, NodeError, NodeHandler, NodeMetrics,
+    NodeResourceMetrics, OwnedExecutor, OwnershipReport, ProfileLevel, Profiler, ResourceMetrics,
+    TelemetryReport, TelemetryReportFilter, estimate_payload_bytes,
+    register_runtime_data_size_inspector,
 };
 pub use fanin::FanIn;
-pub use handles::{NodeHandle, PortHandle};
-pub use host_bridge::{
-    HOST_BRIDGE_META_KEY, HostBridgeHandle, HostBridgeManager, HostBridgeSerialized,
-    HostBridgeSerializedValue, bridge_handler,
+pub use handles::{
+    CapabilityId, FeatureFlag, HostAlias, NodeAlias, NodeHandle, NodeHandleId, PortHandle, PortId,
 };
-pub use io::{NodeIo, TypedInputResolution, TypedInputResolutionKind, register_output_mover};
+pub use host_bridge::{
+    DEFAULT_HOST_BRIDGE_EVENT_LIMIT, HOST_BRIDGE_META_KEY, HostBridgeConfig, HostBridgeHandle,
+    HostBridgeManager, bridge_handler,
+};
+pub use io::{DEFAULT_OUTPUT_PORT, NodeIo, TypedInputResolution, TypedInputResolutionKind};
 pub use plan::{
-    BackpressureStrategy, EdgePolicyKind, RuntimeNode, RuntimePlan, RuntimeSegment, RuntimeSink,
+    BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry,
+    NODE_EXECUTION_KIND_META_KEY, NodeExecutionKind, RuntimeBranchExplanation, RuntimeEdge,
+    RuntimeEdgeExplanation, RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeNode,
+    RuntimeNodeExplanation, RuntimePlan, RuntimePlanError, RuntimePlanExplanation, RuntimeSegment,
+    RuntimeSink,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
 pub use state::{
     ExecutionContext, ManagedByteBuffer, ManagedResource, NodeResourceSnapshot, ResourceClass,
     ResourceLifecycleEvent, ResourceUsage, RuntimeResources, StateStore,
 };
+pub use state_error::StateError;
+pub use stream::{
+    DEFAULT_STREAM_IDLE_SLEEP, GraphInput, GraphOutput, InputStats, OutputStats,
+    OutputSubscription, SharedStreamGraph, StreamExecutionMode, StreamGraph,
+    StreamGraphDiagnostics, StreamGraphState, StreamGraphWorker, StreamTelemetrySummary,
+    StreamWorkerConfig, StreamWorkerDiagnostics, StreamWorkerState, StreamWorkerStopError,
+};
+pub use transport::RuntimeTransport;

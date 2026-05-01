@@ -1,5 +1,7 @@
-use crate::plan::{BackpressureStrategy, EdgePolicyKind, RuntimePlan};
-use daedalus_planner::ExecutionPlan;
+use crate::plan::{BackpressureStrategy, RuntimeEdgePolicy, RuntimePlan};
+use daedalus_core::metadata::PLAN_SCHEDULE_ORDER_KEY;
+use daedalus_data::model::Value;
+use daedalus_planner::{ExecutionPlan, StableHash};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -7,20 +9,41 @@ use std::collections::BinaryHeap;
 #[derive(Clone, Debug)]
 pub struct SchedulerConfig {
     /// Default policy applied to all edges unless overridden.
-    pub default_policy: EdgePolicyKind,
+    pub default_policy: RuntimeEdgePolicy,
     /// Backpressure strategy for edge queues.
     pub backpressure: BackpressureStrategy,
-    /// Prefer lock-free bounded edge queues when available.
-    pub lockfree_queues: bool,
 }
 
 impl Default for SchedulerConfig {
     fn default() -> Self {
         Self {
-            default_policy: EdgePolicyKind::Fifo,
+            default_policy: RuntimeEdgePolicy::default(),
             backpressure: BackpressureStrategy::None,
-            lockfree_queues: false,
         }
+    }
+}
+
+impl SchedulerConfig {
+    pub fn stable_hash(&self) -> StableHash {
+        #[derive(serde::Serialize)]
+        struct SchedulerConfigFingerprint<'a> {
+            default_policy: &'a RuntimeEdgePolicy,
+            backpressure: &'a BackpressureStrategy,
+        }
+
+        let fingerprint = SchedulerConfigFingerprint {
+            default_policy: &self.default_policy,
+            backpressure: &self.backpressure,
+        };
+        let mut bytes = b"daedalus_runtime::SchedulerConfig\0".to_vec();
+        match serde_json::to_vec(&fingerprint) {
+            Ok(serialized) => bytes.extend_from_slice(&serialized),
+            Err(error) => {
+                bytes.extend_from_slice(b"serde_error");
+                bytes.extend_from_slice(error.to_string().as_bytes());
+            }
+        }
+        StableHash::from_bytes(&bytes)
     }
 }
 
@@ -29,30 +52,25 @@ pub fn build_runtime(plan: &ExecutionPlan, config: &SchedulerConfig) -> RuntimeP
     let mut runtime = RuntimePlan::from_execution(plan);
     runtime.default_policy = config.default_policy.clone();
     runtime.backpressure = config.backpressure.clone();
-    runtime.lockfree_queues = config.lockfree_queues;
 
     // Assign configured default policy to all edges for now.
     runtime
         .edges
         .iter_mut()
-        .for_each(|edge| edge.4 = config.default_policy.clone());
+        .for_each(|edge| *edge.policy_mut() = config.default_policy.clone());
 
-    if let Some(order) = plan
-        .graph
-        .metadata
-        .get("schedule_order")
-        .and_then(|value| match value {
-            daedalus_data::model::Value::String(s) => Some(s.to_string()),
-            _ => None,
-        })
-    {
-        let mut id_to_ref = std::collections::HashMap::new();
-        for (idx, node) in runtime.nodes.iter().enumerate() {
-            id_to_ref.insert(node.id.as_str(), daedalus_planner::NodeRef(idx));
-        }
+    if let Some(order) = metadata_string_list(plan.graph.metadata.get(PLAN_SCHEDULE_ORDER_KEY)) {
+        let mut used = vec![false; runtime.nodes.len()];
         let schedule: Vec<daedalus_planner::NodeRef> = order
-            .split(',')
-            .filter_map(|id| id_to_ref.get(id.trim()).copied())
+            .iter()
+            .filter_map(|id| {
+                let idx = runtime.nodes.iter().enumerate().position(|(idx, node)| {
+                    !used[idx]
+                        && (node.label.as_deref() == Some(id.as_str()) || node.id.as_str() == id)
+                })?;
+                used[idx] = true;
+                Some(daedalus_planner::NodeRef(idx))
+            })
             .collect();
         if !schedule.is_empty() {
             runtime.schedule_order = schedule;
@@ -88,6 +106,21 @@ pub fn build_runtime(plan: &ExecutionPlan, config: &SchedulerConfig) -> RuntimeP
     runtime
 }
 
+fn metadata_string_list(value: Option<&Value>) -> Option<Vec<String>> {
+    let Value::List(items) = value? else {
+        return None;
+    };
+    Some(
+        items
+            .iter()
+            .filter_map(|item| match item {
+                Value::String(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
 fn topo_order(runtime: &RuntimePlan) -> Option<Vec<daedalus_planner::NodeRef>> {
     let node_count = runtime.nodes.len();
     if node_count == 0 {
@@ -95,9 +128,9 @@ fn topo_order(runtime: &RuntimePlan) -> Option<Vec<daedalus_planner::NodeRef>> {
     }
     let mut indegree = vec![0usize; node_count];
     let mut adj = vec![Vec::new(); node_count];
-    for (from, _, to, _, _) in &runtime.edges {
-        let from_idx = from.0;
-        let to_idx = to.0;
+    for edge in &runtime.edges {
+        let from_idx = edge.from().0;
+        let to_idx = edge.to().0;
         adj[from_idx].push(to_idx);
         indegree[to_idx] += 1;
     }

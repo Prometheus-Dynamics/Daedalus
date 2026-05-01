@@ -1,28 +1,40 @@
 {
   "backpressure": "None",
-  "default_policy": "Fifo",
+  "default_policy": {
+    "freshness": "preserve_all",
+    "pressure": "buffer_all"
+  },
   "edges": [
-    [
-      0,
-      "out",
-      1,
-      "in",
-      "Fifo"
-    ],
-    [
-      1,
-      "out",
-      2,
-      "in",
-      "Fifo"
-    ],
-    [
-      2,
-      "out",
-      3,
-      "in",
-      "Fifo"
-    ]
+    {
+      "from": 0,
+      "policy": {
+        "freshness": "preserve_all",
+        "pressure": "buffer_all"
+      },
+      "source_port": "out",
+      "target_port": "in",
+      "to": 1
+    },
+    {
+      "from": 1,
+      "policy": {
+        "freshness": "preserve_all",
+        "pressure": "buffer_all"
+      },
+      "source_port": "out",
+      "target_port": "in",
+      "to": 2
+    },
+    {
+      "from": 2,
+      "policy": {
+        "freshness": "preserve_all",
+        "pressure": "buffer_all"
+      },
+      "source_port": "out",
+      "target_port": "in",
+      "to": 3
+    }
   ],
   "gpu_edges": [
     {

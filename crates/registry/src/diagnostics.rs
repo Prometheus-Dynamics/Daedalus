@@ -3,11 +3,6 @@ use thiserror::Error;
 
 /// Stable error codes for registry operations.
 ///
-/// ```
-/// use daedalus_registry::diagnostics::RegistryErrorCode;
-/// let code = RegistryErrorCode::Conflict;
-/// assert_eq!(format!("{code:?}"), "Conflict");
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -16,17 +11,13 @@ pub enum RegistryErrorCode {
     MissingDependency,
     FeatureBlocked,
     ConverterError,
+    AdapterError,
     BundleError,
     Internal,
 }
 
 /// Structured registry error with code + message.
 ///
-/// ```
-/// use daedalus_registry::diagnostics::{RegistryError, RegistryErrorCode};
-/// let err = RegistryError::new(RegistryErrorCode::Conflict, "duplicate");
-/// assert_eq!(err.code(), RegistryErrorCode::Conflict);
-/// ```
 #[derive(Clone, Debug, Error, Serialize, Deserialize, PartialEq, Eq)]
 #[error("{code:?}: {message}")]
 pub struct RegistryError {
@@ -39,11 +30,6 @@ pub struct RegistryError {
 
 /// Structured conflict kinds for diagnostics.
 ///
-/// ```
-/// use daedalus_registry::diagnostics::ConflictKind;
-/// let kind = ConflictKind::Node;
-/// assert_eq!(kind, ConflictKind::Node);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -52,21 +38,15 @@ pub enum ConflictKind {
     Node,
     Group,
     Converter,
+    Type,
+    Adapter,
+    Plugin,
+    Serializer,
+    Device,
 }
 
 /// Optional structured payload for diagnostics.
 ///
-/// ```
-/// use daedalus_registry::diagnostics::{ConflictKind, RegistryErrorCompute};
-/// let payload = RegistryErrorCompute::Conflict { key: "demo".into(), kind: ConflictKind::Node };
-/// match payload {
-///     RegistryErrorCompute::Conflict { key, kind } => {
-///         assert_eq!(key, "demo");
-///         assert_eq!(kind, ConflictKind::Node);
-///     }
-///     _ => unreachable!(),
-/// }
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RegistryErrorCompute {

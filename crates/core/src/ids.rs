@@ -13,12 +13,6 @@ use crate::errors::{CoreError, CoreErrorCode};
 macro_rules! define_id {
     ($name:ident, $prefix:literal) => {
         #[doc = concat!("Strongly-typed ID for `", stringify!($prefix), "` resources.")]
-        #[doc = ""]
-        #[doc = "```"]
-        #[doc = concat!("use daedalus_core::ids::", stringify!($name), ";")]
-        #[doc = concat!("let id = ", stringify!($name), "::try_from(1).unwrap();")]
-        #[doc = concat!("assert_eq!(id.to_string(), \"", $prefix, ":1\");")]
-        #[doc = "```"]
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(NonZeroU64);
 

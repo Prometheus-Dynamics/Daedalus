@@ -1,7 +1,7 @@
 use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
 };
-use daedalus_runtime::{EdgePolicyKind, SchedulerConfig, build_runtime, debug};
+use daedalus_runtime::{RuntimeEdgePolicy, SchedulerConfig, build_runtime, debug};
 use serde_json::Value;
 
 #[test]
@@ -45,7 +45,7 @@ fn runtime_plan_cpu_golden() {
     let exec = ExecutionPlan::new(graph, vec![]);
     let runtime = build_runtime(&exec, &SchedulerConfig::default());
     // sanity
-    assert!(matches!(runtime.edges[0].4, EdgePolicyKind::Fifo));
+    assert_eq!(runtime.edges[0].policy(), &RuntimeEdgePolicy::default());
     assert_eq!(runtime.schedule_order, vec![NodeRef(0), NodeRef(1)]);
 
     let actual: Value = serde_json::from_str(&debug::to_pretty_json(&runtime)).unwrap();

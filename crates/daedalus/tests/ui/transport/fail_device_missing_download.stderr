@@ -1,0 +1,7 @@
+error: missing device download function
+ --> tests/ui/transport/fail_device_missing_download.rs:5:1
+  |
+5 | #[device(id = "test.missing_download", cpu = "test:i32", device = "test:i32@gpu")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `device` (in Nightly builds, run with -Z macro-backtrace for more info)

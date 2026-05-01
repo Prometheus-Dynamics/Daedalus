@@ -1,0 +1,7 @@
+error: type_key structs cannot be generic yet
+ --> tests/ui/transport/fail_type_key_generic.rs:3:1
+  |
+3 | #[type_key("test:generic")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `type_key` (in Nightly builds, run with -Z macro-backtrace for more info)

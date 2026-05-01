@@ -2,13 +2,51 @@ use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
 };
 use daedalus_runtime::{
-    EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig, build_runtime,
+    Executor, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
 };
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
+use std::borrow::Cow;
 
 struct LogHandler {
     order: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[test]
+fn schedule_order_preserves_duplicate_node_ids_by_alias() {
+    let mut graph = Graph::default();
+    for alias in ["a,one", "b:two", "c|three"] {
+        graph.nodes.push(NodeInstance {
+            id: daedalus_registry::ids::NodeId::new("same.node"),
+            bundle: None,
+            label: Some(alias.to_string()),
+            inputs: vec![],
+            outputs: vec![],
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: vec![],
+            sync_groups: vec![],
+            metadata: Default::default(),
+        });
+    }
+    graph.metadata.insert(
+        "schedule_order".into(),
+        daedalus_data::model::Value::List(
+            ["a,one", "b:two", "c|three"]
+                .into_iter()
+                .map(|id| daedalus_data::model::Value::String(Cow::Borrowed(id)))
+                .collect(),
+        ),
+    );
+
+    let rt = build_runtime(
+        &ExecutionPlan::new(graph, vec![]),
+        &SchedulerConfig {
+            default_policy: RuntimeEdgePolicy::default(),
+            backpressure: daedalus_runtime::BackpressureStrategy::None,
+        },
+    );
+
+    assert_eq!(rt.schedule_order, vec![NodeRef(0), NodeRef(1), NodeRef(2)]);
 }
 
 impl NodeHandler for LogHandler {
@@ -79,9 +117,8 @@ fn serial_vs_parallel_order_matches() {
         let rt = build_runtime(
             &exec,
             &SchedulerConfig {
-                default_policy: EdgePolicyKind::Fifo,
+                default_policy: RuntimeEdgePolicy::default(),
                 backpressure: daedalus_runtime::BackpressureStrategy::None,
-                lockfree_queues: false,
             },
         );
         let order1 = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

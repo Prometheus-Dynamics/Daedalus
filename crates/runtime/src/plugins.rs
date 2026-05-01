@@ -1,46 +1,352 @@
 //! Plugin abstraction: a self-contained bundle that installs descriptors into the
 //! registry and returns handlers that the runtime can execute.
-use crate::capabilities::CapabilityRegistry;
-use crate::convert;
+use crate::capabilities::CapabilityRegistry as RuntimeCapabilityRegistry;
+use crate::graph_builder::GraphBuilder;
 use crate::handler_registry::HandlerRegistry;
+use crate::transport::RuntimeTransport;
 use daedalus_data::daedalus_type::DaedalusTypeExpr;
-use daedalus_data::model::TypeExpr;
-use daedalus_data::named_types::HostExportPolicy;
+use daedalus_data::model::{TypeExpr, ValueType};
+use daedalus_data::named_types::{HostExportPolicy, NamedTypeRegistry};
 use daedalus_data::to_value::ToValue;
-use daedalus_data::typing::{CompatibilityRule, RegisteredTypeCapabilities, TypeCompatibilityEdge};
-use daedalus_registry::convert::ConverterBuilder;
-use daedalus_registry::store::Registry;
+use daedalus_data::typing::TypeRegistry;
+use daedalus_registry::capability::{
+    AdapterDecl, CapabilityRegistry as TransportCapabilityRegistry, CapabilityRegistrySnapshot,
+    DeviceDecl, ExportPolicy, NodeDecl, NodeExecutionKind, PluginManifest, SerializerDecl,
+    TypeDecl,
+};
+use daedalus_registry::diagnostics::RegistryError;
+use daedalus_registry::ids::NodeId;
+use daedalus_transport::{
+    AccessMode, AdaptCost, AdaptKind, AdaptRequest, AdapterId, BoundaryContractError,
+    BoundaryTypeContract, BranchKind, BranchPayload, Layout, Payload, Residency, TransferFrom,
+    TransferTo, TransportError, TypeKey,
+};
 use serde::de::DeserializeOwned;
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::{Deref, DerefMut};
+use thiserror::Error;
+
+mod builtins;
+mod registry_admin;
+mod registry_transport;
+
+pub const BUILTIN_PRIMITIVE_TYPES_ID: &str = "daedalus.builtin.primitive_types";
+pub const BUILTIN_PRIMITIVE_SERIALIZERS_ID: &str = "daedalus.builtin.primitive_serializers";
+pub const BUILTIN_STD_BRANCH_ID: &str = "daedalus.builtin.std_branch";
+pub const BUILTIN_HOST_BOUNDARY_ID: &str = "daedalus.builtin.host_boundary";
+
+pub type PluginResult<T> = Result<T, PluginError>;
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum PluginError {
+    #[error("plugin registry is frozen")]
+    RegistryFrozen,
+    #[error("capability provider is not installed")]
+    CapabilityProviderNotInstalled,
+    #[error("{operation}: {source}")]
+    Registry {
+        operation: &'static str,
+        source: RegistryError,
+    },
+    #[error("transport adapter register failed: {source}")]
+    TransportAdapterRegister { source: TransportError },
+    #[error("boundary contract register failed: {source}")]
+    BoundaryContract { source: BoundaryContractError },
+    #[error("named type register failed: {message}")]
+    NamedType { message: String },
+    #[error("plugin install failed: {message}")]
+    Install { message: String },
+    #[error("{0}")]
+    Message(&'static str),
+}
+
+impl PluginError {
+    pub const fn registry(operation: &'static str, source: RegistryError) -> Self {
+        Self::Registry { operation, source }
+    }
+}
+
+impl From<&'static str> for PluginError {
+    fn from(message: &'static str) -> Self {
+        match message {
+            "plugin registry is frozen" => Self::RegistryFrozen,
+            "capability provider is not installed" => Self::CapabilityProviderNotInstalled,
+            other => Self::Message(other),
+        }
+    }
+}
+
+impl From<RegistryError> for PluginError {
+    fn from(source: RegistryError) -> Self {
+        Self::Registry {
+            operation: "capability registry operation failed",
+            source,
+        }
+    }
+}
+
+impl From<BoundaryContractError> for PluginError {
+    fn from(source: BoundaryContractError) -> Self {
+        Self::BoundaryContract { source }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BuiltinCapability {
+    PrimitiveTypes,
+    PrimitiveSerializers,
+    StdBranch,
+    HostBoundary,
+}
+
+impl BuiltinCapability {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::PrimitiveTypes => BUILTIN_PRIMITIVE_TYPES_ID,
+            Self::PrimitiveSerializers => BUILTIN_PRIMITIVE_SERIALIZERS_ID,
+            Self::StdBranch => BUILTIN_STD_BRANCH_ID,
+            Self::HostBoundary => BUILTIN_HOST_BOUNDARY_ID,
+        }
+    }
+}
+
+pub trait CapabilityProviderRef {
+    fn provider_id(&self) -> &str;
+}
+
+impl CapabilityProviderRef for BuiltinCapability {
+    fn provider_id(&self) -> &str {
+        self.id()
+    }
+}
+
+impl CapabilityProviderRef for str {
+    fn provider_id(&self) -> &str {
+        self
+    }
+}
+
+impl CapabilityProviderRef for &str {
+    fn provider_id(&self) -> &str {
+        self
+    }
+}
+
+impl CapabilityProviderRef for String {
+    fn provider_id(&self) -> &str {
+        self.as_str()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapabilitySourceKind {
+    BuiltIn,
+    UserPlugin,
+    PluginGroup,
+    Manual,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilitySource {
+    pub capability_kind: &'static str,
+    pub capability_id: String,
+    pub source_kind: CapabilitySourceKind,
+    pub provider_id: Option<String>,
+}
 
 /// A plugin is the unit of composition for node bundles.
 pub trait Plugin {
     /// Stable identifier for the plugin (e.g., bundle name).
     fn id(&self) -> &'static str;
 
-    /// Install node descriptors and handlers into a plugin registry.
-    fn install(&self, registry: &mut PluginRegistry) -> Result<(), &'static str>;
+    /// Declared plugin manifest. The install context augments this with concrete capabilities
+    /// registered during installation.
+    fn manifest(&self) -> PluginManifest {
+        PluginManifest::new(self.id())
+    }
+
+    /// Install node descriptors, handlers, adapters, and device ops into an isolated install
+    /// context. The context owns the mutable phase; consumers should use the frozen registry after
+    /// all installs are complete.
+    fn install(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()>;
+}
+
+/// Installable slice of a larger plugin.
+pub trait PluginPart {
+    fn install_part(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()>;
+}
+
+impl<F> PluginPart for F
+where
+    F: Fn(&mut PluginInstallContext<'_>) -> PluginResult<()>,
+{
+    fn install_part(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()> {
+        self(ctx)
+    }
+}
+
+/// Installable plugin family.
+pub struct PluginGroup<'a> {
+    id: &'static str,
+    plugins: Vec<&'a dyn Plugin>,
+}
+
+impl<'a> PluginGroup<'a> {
+    pub fn new(id: &'static str) -> Self {
+        Self {
+            id,
+            plugins: Vec::new(),
+        }
+    }
+
+    pub fn plugin(mut self, plugin: &'a dyn Plugin) -> Self {
+        self.plugins.push(plugin);
+        self
+    }
+}
+
+/// Unified install target for plugins and plugin groups.
+pub trait PluginInstallable {
+    fn install_into(&self, registry: &mut PluginRegistry) -> PluginResult<()>;
+}
+
+impl<T: Plugin> PluginInstallable for T {
+    fn install_into(&self, registry: &mut PluginRegistry) -> PluginResult<()> {
+        registry.install_plugin(self)
+    }
+}
+
+impl PluginInstallable for PluginGroup<'_> {
+    fn install_into(&self, registry: &mut PluginRegistry) -> PluginResult<()> {
+        registry.ensure_open()?;
+        for plugin in &self.plugins {
+            registry.install_plugin(*plugin)?;
+        }
+        let mut manifest = PluginManifest::new(self.id);
+        for plugin in &self.plugins {
+            manifest.dependencies.push(plugin.id().to_string());
+        }
+        let manifest = normalize_plugin_manifest(manifest);
+        registry
+            .transport_capabilities
+            .register_plugin(manifest.clone())
+            .map_err(|source| {
+                PluginError::registry("plugin group manifest register failed", source)
+            })?;
+        registry
+            .plugin_manifests
+            .insert(self.id.to_string(), manifest);
+        registry
+            .provider_source_kinds
+            .insert(self.id.to_string(), CapabilitySourceKind::PluginGroup);
+        Ok(())
+    }
+}
+
+pub struct PluginInstallContext<'a> {
+    registry: &'a mut PluginRegistry,
+    manifest: PluginManifest,
+}
+
+impl<'a> PluginInstallContext<'a> {
+    fn new(registry: &'a mut PluginRegistry, manifest: PluginManifest) -> Self {
+        Self { registry, manifest }
+    }
+
+    pub fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    pub fn manifest_mut(&mut self) -> &mut PluginManifest {
+        &mut self.manifest
+    }
+
+    pub fn dependency(&mut self, id: impl Into<String>) -> &mut Self {
+        self.manifest.dependencies.push(id.into());
+        self
+    }
+
+    pub fn required_host_capability(&mut self, capability: impl Into<String>) -> &mut Self {
+        self.manifest
+            .required_host_capabilities
+            .push(capability.into());
+        self
+    }
+
+    pub fn feature_flag(&mut self, flag: impl Into<String>) -> &mut Self {
+        self.manifest.feature_flags.push(flag.into());
+        self
+    }
+
+    pub fn boundary_contract(&mut self, contract: BoundaryTypeContract) -> PluginResult<&mut Self> {
+        self.registry.register_boundary_contract(contract.clone())?;
+        self.manifest.boundary_contracts.push(contract);
+        Ok(self)
+    }
+
+    fn into_manifest(self) -> PluginManifest {
+        self.manifest
+    }
+}
+
+impl Deref for PluginInstallContext<'_> {
+    type Target = PluginRegistry;
+
+    fn deref(&self) -> &Self::Target {
+        self.registry
+    }
+}
+
+impl DerefMut for PluginInstallContext<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.registry
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TypedDeviceTransport {
+    pub device_id: String,
+    pub cpu: TypeExpr,
+    pub device: TypeExpr,
+    pub upload_id: String,
+    pub download_id: String,
+}
+
+impl TypedDeviceTransport {
+    pub fn new(
+        device_id: impl Into<String>,
+        cpu: TypeExpr,
+        device: TypeExpr,
+        upload_id: impl Into<String>,
+        download_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            device_id: device_id.into(),
+            cpu,
+            device,
+            upload_id: upload_id.into(),
+            download_id: download_id.into(),
+        }
+    }
 }
 
 /// Extension trait so callers can say `registry.install_plugin(&plugin)` rather
 /// than invoking the plugin directly.
 pub trait RegistryPluginExt {
-    fn install_plugin<P: Plugin>(&mut self, plugin: &P) -> Result<(), &'static str>;
+    fn install_plugin<P: Plugin + ?Sized>(&mut self, plugin: &P) -> PluginResult<()>;
 }
 
 /// Register a set of `DaedalusTypeExpr + ToValue` types as host-exportable values.
 ///
 /// This is a convenience macro to reduce boilerplate in plugin `install()` functions.
 ///
-/// ```ignore
-/// register_daedalus_values!(registry, MyType, OtherType)?;
-/// ```
 #[macro_export]
 macro_rules! register_daedalus_values {
     ($registry:expr, $( $ty:ty ),+ $(,)?) => {{
         $( $registry.register_daedalus_value::<$ty>()?; )+
-        Ok::<(), &'static str>(())
+        Ok::<(), $crate::plugins::PluginError>(())
     }};
 }
 
@@ -49,23 +355,16 @@ macro_rules! register_daedalus_values {
 /// Useful for non-host-serialized types (e.g. large binary payloads) where you still want a
 /// stable `TypeExpr::Opaque(<key>)` identity for UI typing and graph validation.
 ///
-/// ```ignore
-/// use daedalus_data::named_types::HostExportPolicy;
-/// register_daedalus_types!(registry, HostExportPolicy::None, MyOpaqueType)?;
-/// ```
 #[macro_export]
 macro_rules! register_daedalus_types {
     ($registry:expr, $export:expr, $( $ty:ty ),+ $(,)?) => {{
         $( $registry.register_daedalus_type::<$ty>($export)?; )+
-        Ok::<(), &'static str>(())
+        Ok::<(), $crate::plugins::PluginError>(())
     }};
 }
 
 /// Register `ToValue` serializers for container/derived types that do not have stable type keys.
 ///
-/// ```ignore
-/// register_to_value_serializers!(registry, Vec<MyType>, Arc<Vec<MyType>>);
-/// ```
 #[macro_export]
 macro_rules! register_to_value_serializers {
     ($registry:expr, $( $ty:ty ),+ $(,)?) => {{
@@ -74,17 +373,128 @@ macro_rules! register_to_value_serializers {
 }
 
 impl RegistryPluginExt for PluginRegistry {
-    fn install_plugin<P: Plugin>(&mut self, plugin: &P) -> Result<(), &'static str> {
+    fn install_plugin<P: Plugin + ?Sized>(&mut self, plugin: &P) -> PluginResult<()> {
+        self.ensure_open()?;
         let prev = self.current_prefix.take();
         let combined_prefix = if let Some(parent) = &prev {
             crate::apply_node_prefix(parent, plugin.id())
         } else {
             plugin.id().to_string()
         };
+        let before = InstalledCapabilityKeys::from_registry(self);
+        let before_overrides = self.overridden_capabilities.clone();
         self.current_prefix = Some(combined_prefix);
-        let res = plugin.install(self);
-        self.current_prefix = prev;
+        let mut ctx = PluginInstallContext::new(self, plugin.manifest());
+        let res = plugin.install(&mut ctx);
+        let mut declared_manifest = ctx.into_manifest();
+        let registry = self;
+        registry.current_prefix = prev;
+        if res.is_ok() {
+            let after = InstalledCapabilityKeys::from_registry(registry);
+            let mut discovered = after.diff_manifest(plugin.id(), &before);
+            let override_diff = registry
+                .overridden_capabilities
+                .diff_manifest(plugin.id(), &before_overrides);
+            discovered = merge_plugin_manifests(discovered, override_diff);
+            declared_manifest = merge_plugin_manifests(declared_manifest, discovered);
+            registry.plugin_manifests.insert(
+                plugin.id().to_string(),
+                normalize_plugin_manifest(declared_manifest),
+            );
+            registry
+                .provider_source_kinds
+                .insert(plugin.id().to_string(), CapabilitySourceKind::UserPlugin);
+        }
         res
+    }
+}
+
+fn merge_plugin_manifests(mut base: PluginManifest, discovered: PluginManifest) -> PluginManifest {
+    base.provided_types.extend(discovered.provided_types);
+    base.provided_nodes.extend(discovered.provided_nodes);
+    base.provided_adapters.extend(discovered.provided_adapters);
+    base.provided_serializers
+        .extend(discovered.provided_serializers);
+    base.provided_devices.extend(discovered.provided_devices);
+    base.boundary_contracts
+        .extend(discovered.boundary_contracts);
+    base.feature_flags.extend(discovered.feature_flags);
+    normalize_plugin_manifest(base)
+}
+
+fn normalize_plugin_manifest(mut manifest: PluginManifest) -> PluginManifest {
+    manifest.dependencies.sort();
+    manifest.dependencies.dedup();
+    manifest.provided_types.sort();
+    manifest.provided_types.dedup();
+    manifest.provided_nodes.sort();
+    manifest.provided_nodes.dedup();
+    manifest.provided_adapters.sort();
+    manifest.provided_adapters.dedup();
+    manifest.provided_serializers.sort();
+    manifest.provided_serializers.dedup();
+    manifest.provided_devices.sort();
+    manifest.provided_devices.dedup();
+    manifest
+        .boundary_contracts
+        .sort_by(|a, b| a.type_key.cmp(&b.type_key));
+    manifest
+        .boundary_contracts
+        .dedup_by(|a, b| a.type_key == b.type_key);
+    manifest.required_host_capabilities.sort();
+    manifest.required_host_capabilities.dedup();
+    manifest.feature_flags.sort();
+    manifest.feature_flags.dedup();
+    manifest
+}
+
+#[derive(Clone, Default)]
+struct InstalledCapabilityKeys {
+    types: BTreeSet<TypeKey>,
+    nodes: BTreeSet<NodeId>,
+    adapters: BTreeSet<AdapterId>,
+    serializers: BTreeSet<String>,
+    devices: BTreeSet<String>,
+}
+
+impl InstalledCapabilityKeys {
+    fn from_registry(registry: &PluginRegistry) -> Self {
+        let mut keys = Self::default();
+        keys.extend(registry.transport_capabilities.snapshot());
+        keys
+    }
+
+    fn extend(&mut self, snapshot: CapabilityRegistrySnapshot) {
+        self.types
+            .extend(snapshot.types.into_iter().map(|decl| decl.key));
+        self.nodes
+            .extend(snapshot.nodes.into_iter().map(|decl| decl.id));
+        self.adapters
+            .extend(snapshot.adapters.into_iter().map(|decl| decl.id));
+        self.serializers
+            .extend(snapshot.serializers.into_iter().map(|decl| decl.id));
+        self.devices
+            .extend(snapshot.devices.into_iter().map(|decl| decl.id));
+    }
+
+    fn diff_manifest(&self, id: &str, before: &Self) -> PluginManifest {
+        let mut manifest = PluginManifest::new(id);
+        for key in self.types.difference(&before.types) {
+            manifest = manifest.provided_type(key.clone());
+        }
+        for node in self.nodes.difference(&before.nodes) {
+            manifest = manifest.provided_node(node.0.clone());
+        }
+        for adapter in self.adapters.difference(&before.adapters) {
+            manifest = manifest.provided_adapter(adapter.as_str());
+        }
+        for serializer in self.serializers.difference(&before.serializers) {
+            manifest = manifest.provided_serializer(serializer.clone());
+        }
+        for device in self.devices.difference(&before.devices) {
+            manifest = manifest.provided_device(device.clone());
+        }
+        manifest
     }
 }
 
@@ -92,10 +502,11 @@ impl RegistryPluginExt for PluginRegistry {
 pub fn install_all<P: Plugin>(
     registry: &mut PluginRegistry,
     plugins: impl IntoIterator<Item = P>,
-) -> Result<HandlerRegistry, &'static str> {
+) -> PluginResult<HandlerRegistry> {
     for plugin in plugins {
         registry.install_plugin(&plugin)?;
     }
+    registry.freeze()?;
     let mut handlers = HandlerRegistry::new();
     handlers.merge(std::mem::take(&mut registry.handlers));
     Ok(handlers)
@@ -103,554 +514,270 @@ pub fn install_all<P: Plugin>(
 
 /// Container for descriptors + handlers. All nodes are installed via plugins.
 pub struct PluginRegistry {
-    pub registry: Registry,
     pub handlers: HandlerRegistry,
+    pub runtime_transport: RuntimeTransport,
+    pub transport_capabilities: TransportCapabilityRegistry,
+    pub type_registry: TypeRegistry,
+    pub named_type_registry: NamedTypeRegistry,
+    pub plugin_manifests: BTreeMap<String, PluginManifest>,
+    pub boundary_contracts: BTreeMap<TypeKey, BoundaryTypeContract>,
     pub current_prefix: Option<String>,
-    pub capabilities: CapabilityRegistry,
+    pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,
-    pub output_movers: crate::io::OutputMoverMap,
     pub value_serializers: crate::host_bridge::ValueSerializerMap,
-    pub type_compatibilities: BTreeMap<(TypeExpr, TypeExpr), CompatibilityRule>,
-    pub type_capabilities: BTreeMap<TypeExpr, BTreeSet<String>>,
+    provider_source_kinds: BTreeMap<String, CapabilitySourceKind>,
+    overridden_capabilities: InstalledCapabilityKeys,
+    frozen: bool,
 }
 
-impl Default for PluginRegistry {
+/// Planner and capability metadata for a registered transport adapter.
+#[derive(Clone, Debug)]
+pub struct TransportAdapterOptions {
+    pub cost: AdaptCost,
+    pub access: AccessMode,
+    pub requires_gpu: bool,
+    pub residency: Option<Residency>,
+    pub layout: Option<Layout>,
+    pub feature_flags: Vec<String>,
+}
+
+impl Default for TransportAdapterOptions {
     fn default() -> Self {
-        Self::new()
+        Self {
+            cost: AdaptCost::materialize(),
+            access: AccessMode::Read,
+            requires_gpu: false,
+            residency: None,
+            layout: None,
+            feature_flags: Vec::new(),
+        }
     }
 }
 
-impl PluginRegistry {
-    pub fn new() -> Self {
-        Self {
-            registry: Registry::new(),
-            handlers: HandlerRegistry::new(),
-            current_prefix: None,
-            capabilities: CapabilityRegistry::new(),
-            const_coercers: crate::io::new_const_coercer_map(),
-            output_movers: crate::io::new_output_mover_map(),
-            value_serializers: crate::host_bridge::value_serializer_map(),
-            type_compatibilities: BTreeMap::new(),
-            type_capabilities: BTreeMap::new(),
+impl TransportAdapterOptions {
+    pub fn kind(mut self, kind: AdaptKind) -> Self {
+        self.cost.kind = kind;
+        self
+    }
+
+    pub fn cost(mut self, cost: AdaptCost) -> Self {
+        self.cost = cost;
+        self
+    }
+
+    pub fn access(mut self, access: AccessMode) -> Self {
+        self.access = access;
+        self
+    }
+
+    pub fn requires_gpu(mut self, requires_gpu: bool) -> Self {
+        self.requires_gpu = requires_gpu;
+        self
+    }
+
+    pub fn residency(mut self, residency: Residency) -> Self {
+        self.residency = Some(residency);
+        self
+    }
+
+    pub fn layout(mut self, layout: impl Into<Layout>) -> Self {
+        self.layout = Some(layout.into());
+        self
+    }
+
+    pub fn feature_flag(mut self, flag: impl Into<String>) -> Self {
+        self.feature_flags.push(flag.into());
+        self
+    }
+
+    fn normalized(mut self) -> Self {
+        self.feature_flags.sort();
+        self.feature_flags.dedup();
+        self
+    }
+}
+
+/// Declared complex adapter surface for plugins.
+///
+/// A smart adapter is still just a payload-to-payload runtime function, but it also carries the
+/// compile-time facts the planner needs to decide where it can be inserted. This keeps adapter
+/// selection declared and deterministic instead of probing payloads at runtime.
+pub trait SmartAdapter: Send + Sync + 'static {
+    const ID: &'static str;
+    const FROM: &'static str;
+    const TO: &'static str;
+
+    fn kind() -> AdaptKind {
+        AdaptKind::Materialize
+    }
+
+    fn access() -> AccessMode {
+        AccessMode::Read
+    }
+
+    fn cost() -> AdaptCost {
+        AdaptCost::new(Self::kind())
+    }
+
+    fn requires_gpu() -> bool {
+        false
+    }
+
+    fn residency() -> Option<Residency> {
+        None
+    }
+
+    fn layout() -> Option<Layout> {
+        None
+    }
+
+    fn feature_flags() -> &'static [&'static str] {
+        &[]
+    }
+
+    fn adapt(payload: Payload, request: &AdaptRequest) -> Result<Payload, TransportError>;
+
+    fn options() -> TransportAdapterOptions {
+        let mut options = TransportAdapterOptions::default()
+            .cost(Self::cost())
+            .access(Self::access())
+            .requires_gpu(Self::requires_gpu());
+        if let Some(residency) = Self::residency() {
+            options = options.residency(residency);
         }
-    }
-
-    pub fn merge<N: NodeInstall>(&mut self) -> Result<(), &'static str> {
-        N::register(self)
-    }
-
-    pub fn take_handlers(&mut self) -> HandlerRegistry {
-        std::mem::take(&mut self.handlers)
-    }
-
-    /// Register an application-specific CPU-side conversion (available to all nodes).
-    pub fn register_conversion<S, T>(&mut self, f: fn(&S) -> Option<T>)
-    where
-        S: 'static + Send + Sync + std::any::Any,
-        T: 'static + Send + Sync + std::any::Any,
-    {
-        convert::register_conversion(f);
-        // Also register a schema-level compatibility edge so the planner/typed host polling can
-        // treat these types as coercible without needing separate manual wiring.
-        let from = daedalus_data::typing::type_expr::<S>();
-        let to = daedalus_data::typing::type_expr::<T>();
-        self.register_type_compatibility(from, to);
-    }
-
-    /// Register a named schema keyed by a stable `TypeExpr::Opaque(<key>)` string.
-    pub fn register_named_type(
-        &mut self,
-        key: impl Into<String>,
-        expr: TypeExpr,
-        export: HostExportPolicy,
-    ) -> Result<(), &'static str> {
-        daedalus_data::named_types::register_named_type(key, expr, export)
-            .map_err(|_| "named type register failed")
-    }
-
-    /// Register a stable, Daedalus-facing schema identity for a Rust type.
-    ///
-    /// This links the Rust runtime type `T` to `TypeExpr::Opaque(T::TYPE_KEY)` for port typing,
-    /// and registers the richer schema (`T::type_expr()`) for UI/tooling.
-    pub fn register_daedalus_type<T: DaedalusTypeExpr>(
-        &mut self,
-        export: HostExportPolicy,
-    ) -> Result<(), &'static str> {
-        daedalus_data::typing::register_type::<T>(TypeExpr::opaque(T::TYPE_KEY));
-        self.register_named_type(T::TYPE_KEY, T::type_expr(), export)
-    }
-
-    /// Register a stable schema identity *and* a `ToValue` serializer for host-visible transport.
-    pub fn register_daedalus_value<T>(&mut self) -> Result<(), &'static str>
-    where
-        T: DaedalusTypeExpr + ToValue + Clone + Send + Sync + 'static,
-    {
-        self.register_daedalus_type::<T>(HostExportPolicy::Value)?;
-        self.register_value_serializer::<T, _>(|v| v.to_value());
-        Ok(())
-    }
-
-    /// Register the standard image family used by CV plugins.
-    ///
-    /// This installs stable opaque `image:*` identities, CPU-side runtime conversions,
-    /// planner-visible compatibility edges, and output movers so plugins do not need to
-    /// hand-roll image converter nodes or manual payload shims.
-    pub fn register_standard_image_support(&mut self) -> Result<(), &'static str> {
-        let img_gray = TypeExpr::opaque("image:gray8");
-        let img_graya = TypeExpr::opaque("image:graya8");
-        let img_rgb = TypeExpr::opaque("image:rgb8");
-        let img_rgba = TypeExpr::opaque("image:rgba8");
-        let img_dynamic = TypeExpr::opaque("image:dynamic");
-        let img_gray_opt = TypeExpr::Optional(Box::new(img_gray.clone()));
-        let img_dynamic_opt = TypeExpr::Optional(Box::new(img_dynamic.clone()));
-
-        daedalus_data::typing::register_type::<image::GrayImage>(img_gray);
-        daedalus_data::typing::register_type::<image::GrayAlphaImage>(img_graya);
-        daedalus_data::typing::register_type::<image::RgbImage>(img_rgb);
-        daedalus_data::typing::register_type::<image::RgbaImage>(img_rgba);
-        daedalus_data::typing::register_type::<image::DynamicImage>(img_dynamic);
-        daedalus_data::typing::register_type::<Option<image::GrayImage>>(img_gray_opt);
-        daedalus_data::typing::register_type::<Option<image::DynamicImage>>(img_dynamic_opt);
-
-        #[cfg(feature = "gpu")]
-        {
-            daedalus_data::typing::register_type::<daedalus_gpu::Compute<image::DynamicImage>>(
-                TypeExpr::opaque("image:dynamic"),
-            );
-            daedalus_data::typing::register_type::<daedalus_gpu::Compute<image::GrayImage>>(
-                TypeExpr::opaque("image:gray8"),
-            );
+        if let Some(layout) = Self::layout() {
+            options = options.layout(layout);
         }
-
-        self.register_conversion::<image::DynamicImage, image::GrayImage>(|img| {
-            Some(img.to_luma8())
-        });
-        self.register_conversion::<image::DynamicImage, image::GrayAlphaImage>(|img| {
-            Some(img.to_luma_alpha8())
-        });
-        self.register_conversion::<image::DynamicImage, image::RgbImage>(|img| Some(img.to_rgb8()));
-        self.register_conversion::<image::DynamicImage, image::RgbaImage>(|img| {
-            Some(img.to_rgba8())
-        });
-        self.register_conversion::<image::DynamicImage, Option<image::DynamicImage>>(|img| {
-            Some(Some(img.clone()))
-        });
-        self.register_conversion::<image::GrayImage, image::DynamicImage>(|img| {
-            Some(image::DynamicImage::ImageLuma8(img.clone()))
-        });
-        self.register_conversion::<image::GrayImage, Option<image::GrayImage>>(|img| {
-            Some(Some(img.clone()))
-        });
-        self.register_conversion::<image::GrayAlphaImage, image::DynamicImage>(|img| {
-            Some(image::DynamicImage::ImageLumaA8(img.clone()))
-        });
-        self.register_conversion::<image::RgbImage, image::DynamicImage>(|img| {
-            Some(image::DynamicImage::ImageRgb8(img.clone()))
-        });
-        self.register_conversion::<image::RgbaImage, image::DynamicImage>(|img| {
-            Some(image::DynamicImage::ImageRgba8(img.clone()))
-        });
-
-        for (id, from, to) in [
-            (
-                "image_gray8_to_dynamic",
-                TypeExpr::opaque("image:gray8"),
-                TypeExpr::opaque("image:dynamic"),
-            ),
-            (
-                "image_graya8_to_dynamic",
-                TypeExpr::opaque("image:graya8"),
-                TypeExpr::opaque("image:dynamic"),
-            ),
-            (
-                "image_rgb8_to_dynamic",
-                TypeExpr::opaque("image:rgb8"),
-                TypeExpr::opaque("image:dynamic"),
-            ),
-            (
-                "image_rgba8_to_dynamic",
-                TypeExpr::opaque("image:rgba8"),
-                TypeExpr::opaque("image:dynamic"),
-            ),
-            (
-                "image_dynamic_to_gray8",
-                TypeExpr::opaque("image:dynamic"),
-                TypeExpr::opaque("image:gray8"),
-            ),
-            (
-                "image_dynamic_to_graya8",
-                TypeExpr::opaque("image:dynamic"),
-                TypeExpr::opaque("image:graya8"),
-            ),
-            (
-                "image_dynamic_to_rgb8",
-                TypeExpr::opaque("image:dynamic"),
-                TypeExpr::opaque("image:rgb8"),
-            ),
-            (
-                "image_dynamic_to_rgba8",
-                TypeExpr::opaque("image:dynamic"),
-                TypeExpr::opaque("image:rgba8"),
-            ),
-        ] {
-            self.registry
-                .register_converter(ConverterBuilder::new(id, from, to, Ok).build_boxed())
-                .map_err(|_| "failed to register standard image planner converter")?;
+        for flag in Self::feature_flags() {
+            options = options.feature_flag(*flag);
         }
-
-        self.register_output_mover::<image::DynamicImage, _>(|img| {
-            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
-        });
-        self.register_output_mover::<image::GrayImage, _>(|img| {
-            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
-        });
-        self.register_output_mover::<image::GrayAlphaImage, _>(|img| {
-            let dyn_img = image::DynamicImage::ImageLumaA8(img);
-            crate::executor::RuntimeValue::Any(std::sync::Arc::new(dyn_img))
-        });
-        self.register_output_mover::<image::RgbImage, _>(|img| {
-            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
-        });
-        self.register_output_mover::<image::RgbaImage, _>(|img| {
-            crate::executor::RuntimeValue::Any(std::sync::Arc::new(img))
-        });
-        Ok(())
-    }
-
-    /// Register a host-bridge value serializer for `T` using `ToValue`.
-    ///
-    /// Useful for container types like `Vec<T>` where you don't want a separate named type key.
-    pub fn register_to_value_serializer<T>(&mut self)
-    where
-        T: ToValue + Clone + Send + Sync + 'static,
-    {
-        self.register_value_serializer::<T, _>(|v| v.to_value());
-    }
-
-    /// Register a conversion for constant default values.
-    ///
-    /// This is the preferred API for dynamic plugins so the host and plugin share a single
-    /// coercer map stored in the host-owned `PluginRegistry`.
-    pub fn register_const_coercer<T, F>(&mut self, coercer: F)
-    where
-        T: Any + Send + Sync + 'static,
-        F: Fn(&daedalus_data::model::Value) -> Option<T> + Send + Sync + 'static,
-    {
-        let key = std::any::type_name::<T>();
-        let mut guard = self
-            .const_coercers
-            .write()
-            .expect("PluginRegistry.const_coercers lock poisoned");
-        guard.insert(
-            key,
-            Box::new(move |v| coercer(v).map(|t| Box::new(t) as Box<dyn Any + Send + Sync>)),
-        );
-    }
-
-    /// Register a serializer for outbound host-bridge values.
-    ///
-    /// This enables host-bridge serialization for plugin-defined structured payload types by
-    /// converting them into `daedalus_data::model::Value`.
-    pub fn register_value_serializer<T, F>(&mut self, serializer: F)
-    where
-        T: Any + Clone + Send + Sync + 'static,
-        F: Fn(&T) -> daedalus_data::model::Value + Send + Sync + 'static,
-    {
-        crate::host_bridge::register_value_serializer_in::<T, F>(
-            &self.value_serializers,
-            serializer,
-        );
-    }
-
-    /// Register an output mover to emit a typed output payload by value.
-    pub fn register_output_mover<T, F>(&mut self, mover: F)
-    where
-        T: Any + Send + Sync + 'static,
-        F: Fn(T) -> crate::executor::RuntimeValue + Send + Sync + 'static,
-    {
-        crate::io::register_output_mover_in::<T, F>(&self.output_movers, mover);
-    }
-
-    /// Register a type-compatibility edge to support dynamic port polling.
-    ///
-    /// Dynamic plugins should use this API so compat data is stored in the host registry.
-    pub fn register_type_compatibility(&mut self, from: TypeExpr, to: TypeExpr) {
-        self.register_type_compatibility_with_rule(from, to, CompatibilityRule::default());
-    }
-
-    /// Register a type-compatibility edge with semantic metadata for planner/runtime resolution.
-    pub fn register_type_compatibility_with_rule(
-        &mut self,
-        from: TypeExpr,
-        to: TypeExpr,
-        rule: CompatibilityRule,
-    ) {
-        let from = from.normalize();
-        let to = to.normalize();
-        self.type_compatibilities
-            .insert((from.clone(), to.clone()), rule.clone());
-        daedalus_data::typing::register_compatibility_with_rule(from, to, rule);
-    }
-
-    /// Register a semantic capability for a Daedalus-facing type.
-    pub fn register_type_capability(&mut self, ty: TypeExpr, capability: impl Into<String>) {
-        self.register_type_capabilities(ty, [capability]);
-    }
-
-    /// Register semantic capabilities for a Daedalus-facing type.
-    pub fn register_type_capabilities(
-        &mut self,
-        ty: TypeExpr,
-        capabilities: impl IntoIterator<Item = impl Into<String>>,
-    ) {
-        let ty = ty.normalize();
-        let entry = self.type_capabilities.entry(ty.clone()).or_default();
-        let mut normalized = Vec::new();
-        for capability in capabilities {
-            let capability = capability.into();
-            if !capability.trim().is_empty() && entry.insert(capability.clone()) {
-                normalized.push(capability);
-            }
-        }
-        if !normalized.is_empty() {
-            daedalus_data::typing::register_type_capabilities(ty, normalized);
-        }
-    }
-
-    /// Apply any registered compatibility edges to the host typing registry.
-    pub fn apply_type_compatibilities(&self) {
-        for ((from, to), rule) in &self.type_compatibilities {
-            daedalus_data::typing::register_compatibility_with_rule(
-                from.clone(),
-                to.clone(),
-                rule.clone(),
-            );
-        }
-        for (ty, capabilities) in &self.type_capabilities {
-            daedalus_data::typing::register_type_capabilities(ty.clone(), capabilities.clone());
-        }
-    }
-
-    pub fn snapshot_type_compatibilities(&self) -> Vec<TypeCompatibilityEdge> {
-        self.type_compatibilities
-            .iter()
-            .map(|((from, to), rule)| TypeCompatibilityEdge {
-                from: from.clone(),
-                to: to.clone(),
-                rule: rule.clone(),
-            })
-            .collect()
-    }
-
-    pub fn snapshot_type_capabilities(&self) -> Vec<RegisteredTypeCapabilities> {
-        self.type_capabilities
-            .iter()
-            .map(|(ty, capabilities)| RegisteredTypeCapabilities {
-                ty: ty.clone(),
-                capabilities: capabilities.clone(),
-            })
-            .collect()
-    }
-
-    /// Register an enum type for UI/typing and enable constant binding for it.
-    ///
-    /// This lets node function signatures take a strongly-typed enum (e.g. `mode: ExecMode`)
-    /// while allowing JSON-authored graphs to provide the value as either:
-    /// - `Value::Int(2)` (index into the registered variant list)
-    /// - `Value::String("cpu")` (variant name)
-    /// - `Value::Enum { name: "cpu", .. }` (variant name)
-    ///
-    /// The enum `T` must be `DeserializeOwned` so we can construct it from the variant name.
-    pub fn register_enum<T>(&mut self, variants: impl IntoIterator<Item = impl Into<String>>)
-    where
-        T: Any + Send + Sync + 'static + DeserializeOwned,
-    {
-        daedalus_data::typing::register_enum::<T>(variants);
-
-        fn resolve_enum_name<T: Any>(raw: &str) -> Option<String> {
-            let trimmed = raw.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            daedalus_data::typing::lookup_type::<T>().and_then(|te| match te {
-                daedalus_data::model::TypeExpr::Enum(vars) => vars
-                    .iter()
-                    .find(|ev| ev.name.eq_ignore_ascii_case(trimmed))
-                    .map(|ev| ev.name.clone()),
-                _ => None,
-            })
-        }
-
-        fn resolve_enum_name_from_index<T: Any>(idx: i64) -> Option<String> {
-            if idx < 0 {
-                return None;
-            }
-            daedalus_data::typing::lookup_type::<T>().and_then(|te| match te {
-                daedalus_data::model::TypeExpr::Enum(vars) => {
-                    vars.get(idx as usize).map(|ev| ev.name.clone())
-                }
-                _ => None,
-            })
-        }
-
-        self.register_const_coercer::<T, _>(|v| {
-            let name = match v {
-                daedalus_data::model::Value::Int(i) => resolve_enum_name_from_index::<T>(*i),
-                daedalus_data::model::Value::String(s) => resolve_enum_name::<T>(s.as_ref()),
-                daedalus_data::model::Value::Enum(ev) => resolve_enum_name::<T>(&ev.name),
-                _ => None,
-            }?;
-            serde_json::from_value::<T>(serde_json::Value::String(name)).ok()
-        });
-
-        // Optional enum inputs are common in node signatures (e.g. `mode: Option<ExecMode>`).
-        // Register a dedicated coercer so const/default values can bind directly without each
-        // plugin having to duplicate Option<T> registration glue.
-        self.register_const_coercer::<Option<T>, _>(|v| {
-            let name = match v {
-                daedalus_data::model::Value::Int(i) => resolve_enum_name_from_index::<T>(*i),
-                daedalus_data::model::Value::String(s) => resolve_enum_name::<T>(s.as_ref()),
-                daedalus_data::model::Value::Enum(ev) => resolve_enum_name::<T>(&ev.name),
-                _ => None,
-            }?;
-            serde_json::from_value::<T>(serde_json::Value::String(name))
-                .ok()
-                .map(Some)
-        });
-    }
-
-    /// Register a typed capability entry keyed by a string. The provided function operates
-    /// on typed references; downcasting is handled internally.
-    pub fn register_capability_typed<T, F>(&mut self, key: impl Into<String>, f: F)
-    where
-        T: Send + Sync + 'static,
-        F: Fn(&T, &T) -> Result<T, crate::executor::NodeError> + Send + Sync + 'static,
-    {
-        let key_str = key.into();
-        if let Ok(mut global) = crate::capabilities::global().write() {
-            global.register_typed::<T, F>(key_str.clone(), f);
-        }
-    }
-
-    /// Register a typed capability entry that takes three operands of the same type.
-    pub fn register_capability_typed3<T, F>(&mut self, key: impl Into<String>, f: F)
-    where
-        T: Send + Sync + 'static,
-        F: Fn(&T, &T, &T) -> Result<T, crate::executor::NodeError> + Send + Sync + 'static,
-    {
-        let key_str = key.into();
-        if let Ok(mut global) = crate::capabilities::global().write() {
-            global.register_typed3::<T, F>(key_str.clone(), f);
-        }
+        options
     }
 }
 
 pub trait NodeInstall {
-    fn register(into: &mut PluginRegistry) -> Result<(), &'static str>;
+    fn register(into: &mut PluginRegistry) -> PluginResult<()>;
+}
+
+fn typeexpr_transport_key(ty: &TypeExpr) -> TypeKey {
+    daedalus_registry::typeexpr_transport_key(ty)
+}
+
+fn primitive_type_decls() -> impl IntoIterator<Item = ValueType> {
+    daedalus_data::typing::BUILTIN_VALUE_TYPES.iter().copied()
+}
+
+fn host_export_policy_to_transport(policy: HostExportPolicy) -> ExportPolicy {
+    match policy {
+        HostExportPolicy::Value => ExportPolicy::Value,
+        HostExportPolicy::Bytes => ExportPolicy::Bytes,
+        HostExportPolicy::None => ExportPolicy::None,
+        _ => ExportPolicy::None,
+    }
+}
+
+fn remove_item<T, Q>(items: &mut Vec<T>, item: &Q) -> bool
+where
+    T: std::borrow::Borrow<Q>,
+    Q: PartialEq + ?Sized,
+{
+    let len = items.len();
+    items.retain(|entry| entry.borrow() != item);
+    len != items.len()
+}
+
+fn manual_capability_source(
+    capability_kind: &'static str,
+    capability_id: String,
+) -> CapabilitySource {
+    CapabilitySource {
+        capability_kind,
+        capability_id,
+        source_kind: CapabilitySourceKind::Manual,
+        provider_id: None,
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::PluginRegistry;
-    use daedalus_data::model::TypeExpr;
-    use daedalus_data::typing::{
-        CompatibilityKind, CompatibilityRule, compatibility_rule, has_type_capability,
-    };
+    use super::*;
+    use daedalus_data::model::Value;
 
     #[test]
-    fn plugin_registry_registers_semantic_compatibility_rules() {
-        let mut registry = PluginRegistry::new();
-        let from = TypeExpr::Opaque("test:plugin:compat:from".to_string());
-        let to = TypeExpr::Opaque("test:plugin:compat:to".to_string());
+    fn plugin_registry_type_registries_are_isolated() {
+        struct LocalType;
 
-        registry.register_type_compatibility_with_rule(
-            from.clone(),
-            to.clone(),
-            CompatibilityRule {
-                kind: CompatibilityKind::View,
-                cost: 0,
-                capabilities: ["view-compatible".to_string()].into_iter().collect(),
-            },
-        );
+        let mut left = PluginRegistry::bare();
+        let right = PluginRegistry::bare();
+        left.type_registry
+            .register_type::<LocalType>(TypeExpr::Scalar(ValueType::Bool));
 
-        let rule = compatibility_rule(&from, &to).expect("compatibility rule should be present");
-        assert_eq!(rule.kind, CompatibilityKind::View);
-        assert_eq!(rule.cost, 0);
-        assert!(rule.capabilities.contains("view-compatible"));
-    }
-
-    #[test]
-    fn plugin_registry_registers_type_capabilities() {
-        let mut registry = PluginRegistry::new();
-        let ty = TypeExpr::Opaque("test:plugin:capabilities".to_string());
-
-        registry.register_type_capabilities(ty.clone(), ["croppable", "luma-readable"]);
-
-        assert!(has_type_capability(&ty, "croppable"));
-        assert!(has_type_capability(&ty, "luma-readable"));
-    }
-
-    #[test]
-    fn plugin_registry_snapshot_helpers_include_registered_semantics() {
-        let mut registry = PluginRegistry::new();
-        let from = TypeExpr::Opaque("test:plugin:snapshot:from".to_string());
-        let to = TypeExpr::Opaque("test:plugin:snapshot:to".to_string());
-
-        registry.register_type_compatibility_with_rule(
-            from.clone(),
-            to.clone(),
-            CompatibilityRule {
-                kind: CompatibilityKind::Materialize,
-                cost: 3,
-                capabilities: ["cpu-materializable".to_string()].into_iter().collect(),
-            },
-        );
-        registry.register_type_capabilities(from.clone(), ["croppable"]);
-
-        let compatibilities = registry.snapshot_type_compatibilities();
-        assert!(compatibilities.iter().any(|edge| {
-            edge.from == from
-                && edge.to == to
-                && edge.rule.kind == CompatibilityKind::Materialize
-                && edge.rule.cost == 3
-                && edge.rule.capabilities.contains("cpu-materializable")
-        }));
-
-        let capabilities = registry.snapshot_type_capabilities();
-        assert!(
-            capabilities
-                .iter()
-                .any(|entry| { entry.ty == from && entry.capabilities.contains("croppable") })
-        );
-    }
-
-    #[test]
-    fn plugin_registry_registers_standard_image_support() {
-        let mut registry = PluginRegistry::new();
-        registry
-            .register_standard_image_support()
-            .expect("register standard image support");
-
-        let gray = TypeExpr::opaque("image:gray8");
-        let dynamic = TypeExpr::opaque("image:dynamic");
-        let gray_opt = TypeExpr::optional(gray.clone());
-
-        assert_eq!(daedalus_data::typing::type_expr::<image::GrayImage>(), gray);
         assert_eq!(
-            daedalus_data::typing::type_expr::<image::DynamicImage>(),
-            dynamic
+            left.type_registry.lookup_type::<LocalType>(),
+            Some(TypeExpr::Scalar(ValueType::Bool))
         );
+        assert_eq!(right.type_registry.lookup_type::<LocalType>(), None);
+    }
 
-        let gray_to_dynamic =
-            compatibility_rule(&gray, &dynamic).expect("gray->dynamic compatibility");
-        assert_eq!(gray_to_dynamic.kind, CompatibilityKind::Convert);
+    #[test]
+    fn plugin_registry_named_type_registries_are_isolated() {
+        let mut left = PluginRegistry::bare();
+        let right = PluginRegistry::bare();
 
-        let dynamic_to_gray =
-            compatibility_rule(&dynamic, &gray).expect("dynamic->gray compatibility");
-        assert_eq!(dynamic_to_gray.kind, CompatibilityKind::Convert);
+        left.register_named_type(
+            "test:registry:named",
+            TypeExpr::Scalar(ValueType::Bool),
+            HostExportPolicy::Value,
+        )
+        .expect("register named type");
 
-        let gray_to_optional =
-            compatibility_rule(&gray, &gray_opt).expect("gray->optional gray compatibility");
-        assert_eq!(gray_to_optional.kind, CompatibilityKind::Convert);
+        assert!(
+            left.named_type_registry
+                .lookup("test:registry:named")
+                .is_some()
+        );
+        assert!(
+            right
+                .named_type_registry
+                .lookup("test:registry:named")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn plugin_registry_value_serializers_are_isolated() {
+        #[derive(Clone)]
+        struct LocalType(bool);
+
+        let mut left = PluginRegistry::bare();
+        let right = PluginRegistry::bare();
+        left.register_value_serializer::<LocalType, _>(|value| Value::Bool(value.0));
+
+        assert!(
+            left.value_serializers
+                .read()
+                .expect("serializer lock")
+                .contains_key(&std::any::TypeId::of::<LocalType>())
+        );
+        assert!(
+            !right
+                .value_serializers
+                .read()
+                .expect("serializer lock")
+                .contains_key(&std::any::TypeId::of::<LocalType>())
+        );
+    }
+
+    #[test]
+    fn plugin_registry_transport_capabilities_are_isolated() {
+        let mut left = PluginRegistry::bare();
+        let right = PluginRegistry::bare();
+        let key = TypeKey::new("test:isolated:type");
+
+        left.register_transport_type_decl(key.clone(), TypeExpr::Scalar(ValueType::Bool))
+            .expect("register transport type");
+
+        assert!(left.transport_capabilities.type_decl(&key).is_some());
+        assert!(right.transport_capabilities.type_decl(&key).is_none());
     }
 }

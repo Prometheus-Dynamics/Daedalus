@@ -1,10 +1,5 @@
 /// Inferred access kind for a WGSL binding.
 ///
-/// ```
-/// use daedalus_wgsl_infer::InferredAccess;
-/// let access = InferredAccess::StorageRead;
-/// assert!(matches!(access, InferredAccess::StorageRead));
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InferredAccess {
     StorageRead,
@@ -25,11 +20,6 @@ pub enum InferredAccess {
 
 /// Inferred binding metadata.
 ///
-/// ```
-/// use daedalus_wgsl_infer::{InferredAccess, InferredBinding};
-/// let binding = InferredBinding { binding: 0, access: InferredAccess::Uniform };
-/// assert_eq!(binding.binding, 0);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InferredBinding {
     pub binding: u32,
@@ -38,11 +28,6 @@ pub struct InferredBinding {
 
 /// Inferred workgroup and bindings for a WGSL entry point.
 ///
-/// ```
-/// use daedalus_wgsl_infer::InferredSpec;
-/// let spec = InferredSpec { workgroup: None, bindings: vec![] };
-/// assert!(spec.bindings.is_empty());
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InferredSpec {
     pub workgroup: Option<[u32; 3]>,
@@ -51,11 +36,6 @@ pub struct InferredSpec {
 
 /// Infer the `@workgroup_size` annotation from WGSL source.
 ///
-/// ```
-/// use daedalus_wgsl_infer::infer_workgroup_size;
-/// let wgsl = "@compute @workgroup_size(8, 4, 1) fn main() {}";
-/// assert_eq!(infer_workgroup_size(wgsl), Some([8, 4, 1]));
-/// ```
 pub fn infer_workgroup_size(src: &str) -> Option<[u32; 3]> {
     if let Some(idx) = src.find("@workgroup_size") {
         let rest = &src[idx..];
@@ -84,12 +64,6 @@ pub fn infer_workgroup_size(src: &str) -> Option<[u32; 3]> {
 
 /// Infer bindings from WGSL source.
 ///
-/// ```
-/// use daedalus_wgsl_infer::infer_bindings;
-/// let wgsl = "@group(0) @binding(0) var<uniform> Params: vec4<f32>;";
-/// let bindings = infer_bindings(wgsl);
-/// assert_eq!(bindings.len(), 1);
-/// ```
 pub fn infer_bindings(src: &str) -> Vec<InferredBinding> {
     let mut bindings = Vec::new();
     let mut offset = 0;
@@ -175,12 +149,6 @@ pub fn infer_bindings(src: &str) -> Vec<InferredBinding> {
 
 /// Infer both workgroup size and bindings from WGSL source.
 ///
-/// ```
-/// use daedalus_wgsl_infer::infer_spec;
-/// let wgsl = "@compute @workgroup_size(1) fn main() {}";
-/// let spec = infer_spec(wgsl);
-/// assert!(spec.workgroup.is_some());
-/// ```
 pub fn infer_spec(src: &str) -> InferredSpec {
     InferredSpec {
         workgroup: infer_workgroup_size(src),

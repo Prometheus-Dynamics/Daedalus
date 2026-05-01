@@ -29,8 +29,20 @@ jobs:
       - name: Run file-size lint
         run: ./scripts/check-file-sizes.sh
 
+      - name: Run workspace dependency centralization lint
+        run: ./scripts/check-workspace-deps.sh
+
+      - name: Run GPU async blocking lint
+        run: ./scripts/check-gpu-async-blocking.sh
+
       - name: Run workspace tests
         run: cargo test --workspace --all-targets --features "engine,plugins"
+
+      - name: Check all features
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Check minimal facade surface
+        run: cargo check -p daedalus-rs --no-default-features
 
       - name: Build examples
         run: cargo check -p daedalus-rs --features "engine,plugins" --examples

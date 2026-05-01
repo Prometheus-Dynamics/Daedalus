@@ -1,0 +1,12 @@
+error: unknown adapt kind `teleport`; expected identity, reinterpret, view, shared_view, cow, cow_view, metadata_only, branch, mutate_in_place, materialize, device_transfer, device_upload, device_download, serialize, deserialize, or custom
+ --> tests/ui/transport/fail_adapt_unknown_kind.rs:3:1
+  |
+3 | / #[adapt(
+4 | |     id = "test.bad_kind",
+5 | |     from = "test:i32",
+6 | |     to = "test:string",
+7 | |     kind = "teleport"
+8 | | )]
+  | |__^
+  |
+  = note: this error originates in the attribute macro `adapt` (in Nightly builds, run with -Z macro-backtrace for more info)

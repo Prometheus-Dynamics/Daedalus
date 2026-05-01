@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-runtime"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 description = "Runtime executor for Daedalus plans with backpressure and plugins."
 license.workspace = true
@@ -11,38 +11,43 @@ readme = "README.md"
 keywords = ["runtime", "dataflow", "graph"]
 categories = ["concurrency"]
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/lib.rs"
 
 [features]
-default = ["metrics"]
+default = []
 gpu = ["daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
 executor-pool = ["rayon"]
 lockfree-queues = ["crossbeam-queue"]
 metrics = []
 snapshots = []
-ffi = []
 plugins = []
 
 [dependencies]
 daedalus-planner = { workspace = true }
 daedalus-registry = { workspace = true }
+daedalus-transport = { workspace = true }
 daedalus-gpu = { workspace = true, optional = true }
 daedalus-data = { workspace = true }
 daedalus-core = { workspace = true }
 libc = { workspace = true }
 crossbeam-queue = { workspace = true, optional = true }
 serde = { workspace = true }
+thiserror = { workspace = true }
 rayon = { workspace = true, optional = true }
 smallvec = { workspace = true }
+parking_lot = { workspace = true }
 serde_json = { workspace = true }
-rand = { workspace = true, optional = true }
-futures-util = { workspace = true, default-features = false, features = ["std"] }
 tracing = { workspace = true }
-image = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
-daedalus-registry = { workspace = true }
 rand = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "executor_snapshot"
+harness = false

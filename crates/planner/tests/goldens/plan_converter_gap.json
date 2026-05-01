@@ -43,6 +43,7 @@
           "from_port": "out",
           "from_type": "{\"Scalar\":\"Int\"}",
           "resolution_kind": "missing",
+          "target_access": "read",
           "to_node": "b",
           "to_port": "in",
           "to_type": "{\"Scalar\":\"Bool\"}",

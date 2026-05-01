@@ -1,0 +1,21 @@
+[package]
+name = "daedalus-plugins-math"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[features]
+default = ["plugins"]
+gpu = ["daedalus/gpu"]
+plugins = []
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins"] }
+paste = { workspace = true }

@@ -68,6 +68,8 @@ impl<T> BoundedInner<T> {
 
     fn mark_closed(&self) {
         self.closed.store(true, Ordering::Release);
+        #[cfg(feature = "async-channels")]
+        self.notify.notify_waiters();
     }
 
     fn try_close(&self) {
@@ -237,6 +239,8 @@ impl<T> BoundedSender<T> {
             Ok(()) => {
                 self.inner.enqueued.fetch_add(1, Ordering::Relaxed);
                 self.inner.depth.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "async-channels")]
+                self.inner.notify.notify_one();
                 Ok(())
             }
             Err(v) => Err((Backpressure::Full, v)),
@@ -269,6 +273,11 @@ impl<T> BoundedReceiver<T> {
             depth: self.inner.depth.load(Ordering::Relaxed),
             closed: self.inner.closed.load(Ordering::Relaxed),
         }
+    }
+
+    #[cfg(feature = "async-channels")]
+    pub(crate) fn async_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.inner.notify)
     }
 }
 

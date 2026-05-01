@@ -4,8 +4,8 @@ use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
 };
 use daedalus_runtime::{
-    BackpressureStrategy, EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig,
-    build_runtime, executor::RuntimeValue,
+    BackpressureStrategy, ExecuteError, Executor, NodeHandler, RuntimeEdgePolicy, RuntimeNode,
+    SchedulerConfig, build_runtime,
 };
 
 struct Harness {
@@ -21,18 +21,21 @@ impl NodeHandler for Harness {
     ) -> Result<(), daedalus_runtime::NodeError> {
         match node.id.as_str() {
             "prod" => {
-                io.push_output(Some("out"), RuntimeValue::Bytes(Arc::from(&b"one"[..])));
-                io.push_output(Some("out"), RuntimeValue::Bytes(Arc::from(&b"two"[..])));
+                io.push_payload(
+                    "out",
+                    daedalus_transport::Payload::bytes(Arc::from(&b"one"[..])),
+                );
+                io.push_payload(
+                    "out",
+                    daedalus_transport::Payload::bytes(Arc::from(&b"two"[..])),
+                );
             }
             "cons" => {
                 let mut guard = self.seen.lock().unwrap();
                 for payload in io.inputs_for("in") {
-                    match &payload.inner {
-                        RuntimeValue::Bytes(b) => guard.push(String::from_utf8_lossy(b).into()),
-                        RuntimeValue::Unit => guard.push("unit".into()),
-                        RuntimeValue::Value(v) => guard.push(format!("{v:?}")),
-                        _ => {}
-                    };
+                    if let Some(bytes) = payload.inner.get_bytes() {
+                        guard.push(String::from_utf8_lossy(&bytes).into());
+                    }
                 }
             }
             _ => {}
@@ -85,9 +88,8 @@ fn fifo_drains_all_inputs() {
     let rt = build_runtime(
         &exec,
         &SchedulerConfig {
-            default_policy: EdgePolicyKind::Fifo,
+            default_policy: RuntimeEdgePolicy::default(),
             backpressure: BackpressureStrategy::None,
-            lockfree_queues: false,
         },
     );
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -106,9 +108,8 @@ fn bounded_backpressure_warns_and_preserves_queue() {
     let rt = build_runtime(
         &exec,
         &SchedulerConfig {
-            default_policy: EdgePolicyKind::Bounded { cap: 1 },
+            default_policy: RuntimeEdgePolicy::bounded(1),
             backpressure: BackpressureStrategy::BoundedQueues,
-            lockfree_queues: false,
         },
     );
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -126,16 +127,21 @@ fn bounded_backpressure_error_fails_fast() {
     let rt = build_runtime(
         &exec,
         &SchedulerConfig {
-            default_policy: EdgePolicyKind::Bounded { cap: 1 },
+            default_policy: RuntimeEdgePolicy::bounded(1),
             backpressure: BackpressureStrategy::ErrorOnOverflow,
-            lockfree_queues: false,
         },
     );
     let seen = Arc::new(Mutex::new(Vec::new()));
     let handler = Harness { seen: seen.clone() };
-    let telemetry = Executor::new(&rt, handler).run().expect("run");
-    // First payload accepted, second rejected with error strategy counts a backpressure event.
-    assert_eq!(telemetry.backpressure_events, 1);
-    assert_eq!(seen.lock().unwrap().clone(), vec!["one".to_string()]);
-    assert_eq!(telemetry.warnings.len(), 1);
+    let err = Executor::new(&rt, handler)
+        .run()
+        .expect_err("overflow fails");
+    assert!(matches!(
+        err,
+        ExecuteError::HandlerFailed {
+            error: daedalus_runtime::NodeError::BackpressureDrop(_),
+            ..
+        }
+    ));
+    assert!(seen.lock().unwrap().is_empty());
 }

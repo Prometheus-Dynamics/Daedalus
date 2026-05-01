@@ -4,7 +4,7 @@ use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
 };
 use daedalus_runtime::{
-    BackpressureStrategy, EdgePolicyKind, Executor, NodeHandler, RuntimeNode, SchedulerConfig,
+    BackpressureStrategy, Executor, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig,
     build_runtime, executor::NodeError,
 };
 
@@ -112,9 +112,8 @@ fn gpu_segments_execute_with_mock_backend() {
     let rt = build_runtime(
         &exec,
         &SchedulerConfig {
-            default_policy: EdgePolicyKind::Fifo,
+            default_policy: RuntimeEdgePolicy::default(),
             backpressure: BackpressureStrategy::None,
-            lockfree_queues: false,
         },
     );
     // Ensure GPU entry/exit sets are computed (cpu0->gpu_req entry, gpu_pref->cpu1 exit).
@@ -136,7 +135,7 @@ fn gpu_segments_execute_with_mock_backend() {
         .run()
         .expect("exec ok");
 
-    assert_eq!(telemetry.gpu_segments, 1);
+    assert_eq!(telemetry.gpu_segments, 2);
     assert_eq!(telemetry.gpu_fallbacks, 0);
     assert_eq!(telemetry.nodes_executed, 4);
     let log = log.lock().unwrap().clone();

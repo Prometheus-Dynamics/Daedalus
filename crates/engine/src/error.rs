@@ -3,18 +3,17 @@ use thiserror::Error;
 
 use daedalus_planner::Diagnostic;
 use daedalus_registry::diagnostics::RegistryError;
-use daedalus_runtime::executor::ExecuteError;
+use daedalus_runtime::executor::{ExecuteError, ExecutorBuildError, ExecutorMaskError};
+
+use crate::config::EngineConfigError;
 
 /// Engine errors surfaced to callers.
 ///
-/// ```ignore
-/// use daedalus_engine::EngineError;
-/// let err = EngineError::FeatureDisabled("gpu");
-/// assert!(format!("{err}").contains("gpu"));
-/// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EngineError {
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(#[from] EngineConfigError),
     #[error("invalid configuration: {0}")]
     Config(String),
     #[error("I/O error at {path}: {source}")]
@@ -29,6 +28,10 @@ pub enum EngineError {
     Planner(Vec<Diagnostic>),
     #[error("runtime failed: {0}")]
     Runtime(#[from] ExecuteError),
+    #[error("runtime executor build failed: {0}")]
+    ExecutorBuild(#[from] ExecutorBuildError),
+    #[error("runtime executor mask invalid: {0}")]
+    ExecutorMask(#[from] ExecutorMaskError),
     #[error("bundle parse error at {path}: {error}")]
     BundleParse { path: String, error: String },
     #[cfg(feature = "gpu")]

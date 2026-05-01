@@ -1,5 +1,14 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, OnceLock};
+#[cfg(feature = "gpu-async")]
+use std::future::poll_fn;
+#[cfg(feature = "gpu-async")]
+use std::sync::Arc;
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicUsize, Ordering},
+};
+#[cfg(feature = "gpu-async")]
+use std::task::Poll;
 
 use super::fallback::{cached_spec, ctx};
 use super::pipeline::{bind_group, pipeline_entry};
@@ -26,85 +35,253 @@ pub struct SingleDispatch<'ctx, 'a, B: GpuBindings<'a>> {
     pub(super) bindings: &'a B,
 }
 
-const MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE: usize = 2;
+static MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE: AtomicUsize = AtomicUsize::new(2);
 
-pub(super) fn track_submission_and_throttle(
+/// Tracks in-flight queue submissions for a single wgpu device.
+///
+/// The tracker is owned by the backend or fallback GPU context so tracked submissions have the
+/// same lifetime as the device instead of living in a process-global map keyed by pointer address.
+#[derive(Debug, Default)]
+pub struct SubmissionTracker {
+    in_flight: Mutex<VecDeque<wgpu::SubmissionIndex>>,
+}
+
+#[cfg(feature = "gpu-async")]
+struct SubmissionWaitState {
+    result: Option<Result<(), GpuError>>,
+    waker: Option<std::task::Waker>,
+}
+
+#[cfg(feature = "gpu-async")]
+async fn wait_for_submission_async(
     device: &wgpu::Device,
     submission: wgpu::SubmissionIndex,
-) {
-    static INFLIGHT: OnceLock<Mutex<HashMap<usize, VecDeque<wgpu::SubmissionIndex>>>> =
-        OnceLock::new();
-    let device_key = device as *const _ as usize;
-    if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock() {
-        let q = guard.entry(device_key).or_default();
-        q.push_back(submission);
+) -> Result<(), GpuError> {
+    let state = Arc::new(Mutex::new(SubmissionWaitState {
+        result: None,
+        waker: None,
+    }));
+    let wait_state = Arc::clone(&state);
+    let device = device.clone();
+    if let Err(error) = super::poll_driver::submit_poll_job("submission_wait", move || {
+        let result = device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: None,
+            })
+            .map(|_| ())
+            .map_err(|error| GpuError::Internal(format!("submission poll failed: {error:?}")));
+        let waker = {
+            let mut state = wait_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.result = Some(result);
+            state.waker.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }) {
+        let mut state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.result = Some(Err(GpuError::Internal(error.to_string())));
+        if let Some(waker) = state.waker.take() {
+            waker.wake();
+        }
     }
 
-    loop {
-        let wait_for = if let Ok(guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
+    poll_fn(|cx| {
+        let mut state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(result) = state.result.take() {
+            return Poll::Ready(result);
+        }
+        state.waker = Some(cx.waker().clone());
+        Poll::Pending
+    })
+    .await
+}
+
+impl SubmissionTracker {
+    fn lock_in_flight(&self) -> std::sync::MutexGuard<'_, VecDeque<wgpu::SubmissionIndex>> {
+        self.in_flight.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "daedalus_gpu::dispatch",
+                "gpu submission tracker lock poisoned; recovering tracked submissions"
+            );
+            poisoned.into_inner()
+        })
+    }
+
+    pub(crate) fn track_and_throttle(
+        &self,
+        device: &wgpu::Device,
+        submission: wgpu::SubmissionIndex,
+    ) {
         {
-            guard.get(&device_key).and_then(|q| {
-                if q.len() > MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE {
-                    q.front().cloned()
+            let mut in_flight = self.lock_in_flight();
+            in_flight.push_back(submission.clone());
+            tracing::debug!(
+                target: "daedalus_gpu::dispatch",
+                submission = ?submission,
+                in_flight = in_flight.len(),
+                limit = max_inflight_submissions_per_device(),
+                "gpu submission tracked"
+            );
+        }
+
+        loop {
+            let wait_for = {
+                let in_flight = self.lock_in_flight();
+                if in_flight.len() > max_inflight_submissions_per_device() {
+                    in_flight.front().cloned()
                 } else {
                     None
                 }
-            })
-        } else {
-            None
-        };
+            };
 
-        let Some(wait_for) = wait_for else {
-            // Keep retirements moving even when we don't need to block.
-            let _ = device.poll(wgpu::PollType::Poll);
-            break;
-        };
+            let Some(wait_for) = wait_for else {
+                // Keep retirements moving even when we don't need to block.
+                let _ = device.poll(wgpu::PollType::Poll);
+                break;
+            };
 
-        let poll_result = device.poll(wgpu::PollType::Wait {
-            submission_index: Some(wait_for.clone()),
-            // Use a short timeout first to avoid blocking indefinitely in normal operation.
-            timeout: Some(std::time::Duration::from_millis(5)),
-        });
+            let poll_result = device.poll(wgpu::PollType::Wait {
+                submission_index: Some(wait_for.clone()),
+                // Use a short timeout first to avoid blocking indefinitely in normal operation.
+                timeout: Some(std::time::Duration::from_millis(5)),
+            });
 
-        match poll_result {
-            Ok(status) if status.wait_finished() => {
-                if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
-                    && let Some(q) = guard.get_mut(&device_key)
-                {
-                    q.pop_front();
+            match poll_result {
+                Ok(status) if status.wait_finished() => {
+                    tracing::debug!(
+                        target: "daedalus_gpu::dispatch",
+                        submission = ?wait_for,
+                        "gpu submission retired after throttle poll"
+                    );
+                    self.lock_in_flight().pop_front();
                 }
-            }
-            Err(wgpu::PollError::Timeout) => {
-                // Hard backpressure path: block until this submission completes so we do not allow
-                // unbounded in-flight GPU work (which can trigger OOM on embedded GPUs).
-                let _ = device.poll(wgpu::PollType::Wait {
-                    submission_index: Some(wait_for),
-                    timeout: None,
-                });
-                if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
-                    && let Some(q) = guard.get_mut(&device_key)
-                {
-                    q.pop_front();
+                Err(wgpu::PollError::Timeout) => {
+                    // Hard backpressure path: block until this submission completes so we do not allow
+                    // unbounded in-flight GPU work (which can trigger OOM on embedded GPUs).
+                    tracing::warn!(
+                        target: "daedalus_gpu::dispatch",
+                        submission = ?wait_for,
+                        limit = max_inflight_submissions_per_device(),
+                        "gpu submission throttle timed out; waiting for completion"
+                    );
+                    let _ = device.poll(wgpu::PollType::Wait {
+                        submission_index: Some(wait_for),
+                        timeout: None,
+                    });
+                    self.lock_in_flight().pop_front();
                 }
-            }
-            Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
-                if let Ok(mut guard) = INFLIGHT.get_or_init(|| Mutex::new(HashMap::new())).lock()
-                    && let Some(q) = guard.get_mut(&device_key)
-                {
-                    q.clear();
+                Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
+                    tracing::warn!(
+                        target: "daedalus_gpu::dispatch",
+                        "gpu submission index was no longer valid; clearing tracked submissions"
+                    );
+                    self.lock_in_flight().clear();
                 }
+                _ => {}
             }
-            _ => {}
         }
+    }
+
+    #[cfg(feature = "gpu-async")]
+    pub(crate) async fn track_and_throttle_async(
+        &self,
+        device: &wgpu::Device,
+        submission: wgpu::SubmissionIndex,
+    ) {
+        {
+            let mut in_flight = self.lock_in_flight();
+            in_flight.push_back(submission.clone());
+            tracing::debug!(
+                target: "daedalus_gpu::dispatch",
+                submission = ?submission,
+                in_flight = in_flight.len(),
+                limit = max_inflight_submissions_per_device(),
+                "gpu submission tracked for async throttling"
+            );
+        }
+
+        loop {
+            let wait_for = {
+                let in_flight = self.lock_in_flight();
+                if in_flight.len() > max_inflight_submissions_per_device() {
+                    in_flight.front().cloned()
+                } else {
+                    None
+                }
+            };
+
+            let Some(wait_for) = wait_for else {
+                let _ = device.poll(wgpu::PollType::Poll);
+                break;
+            };
+
+            tracing::debug!(
+                target: "daedalus_gpu::dispatch",
+                submission = ?wait_for,
+                limit = max_inflight_submissions_per_device(),
+                "async gpu submission throttle waiting"
+            );
+            match wait_for_submission_async(device, wait_for.clone()).await {
+                Ok(()) => {
+                    tracing::debug!(
+                        target: "daedalus_gpu::dispatch",
+                        submission = ?wait_for,
+                        "async gpu submission retired"
+                    );
+                    self.lock_in_flight().pop_front();
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "daedalus_gpu::dispatch",
+                        error = %error,
+                        submission = ?wait_for,
+                        "async gpu submission throttle poll failed"
+                    );
+                    self.lock_in_flight().pop_front();
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn tracked_len_for_test(&self) -> usize {
+        self.lock_in_flight().len()
     }
 }
 
+/// Set the maximum tracked in-flight submissions per device before dispatch throttles.
+/// Returns the previous limit.
+pub fn set_max_inflight_submissions_per_device(limit: usize) -> usize {
+    MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE.swap(limit.max(1), Ordering::Relaxed)
+}
+
+/// Current maximum tracked in-flight submissions per device.
+pub fn max_inflight_submissions_per_device() -> usize {
+    MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE
+        .load(Ordering::Relaxed)
+        .max(1)
+}
+
 impl<'ctx, 'a, B: GpuBindings<'a>> SingleDispatch<'ctx, 'a, B> {
+    /// Dispatch synchronously.
+    ///
+    /// This is a blocking compatibility helper: it may wait for GPU submission throttling or
+    /// readback on the current thread. Async runtimes should use the `*_async` shader APIs.
     pub fn dispatch(self, gpu: Option<&GpuContextHandle>) -> Result<ShaderRunOutput, GpuError> {
         self.ctx.dispatch_bindings(self.bindings, gpu, None, None)
     }
 
-    /// Dispatch using inferred workgroup counts and the context GPU (if available).
+    /// Dispatch synchronously using inferred workgroup counts and the context GPU, if available.
+    ///
+    /// This may block the current thread. Async runtimes should use `dispatch_auto_async`.
     pub fn dispatch_auto(self) -> Result<ShaderRunOutput, GpuError> {
         self.ctx.dispatch_bindings(self.bindings, None, None, None)
     }
@@ -250,13 +427,23 @@ pub fn dispatch_shader_with_options(
     gpu_ctx: Option<&GpuContextHandle>,
     opts: &DispatchOptions,
 ) -> Result<ShaderRunOutput, GpuError> {
-    let (device, queue, backend_handle) = if let Some(gpu_ctx) = gpu_ctx {
+    let (device, queue, backend_handle, submission_tracker) = if let Some(gpu_ctx) = gpu_ctx {
         let backend = gpu_ctx.backend_ref();
         let (device, queue) = backend.wgpu_device_queue().ok_or(GpuError::Unsupported)?;
-        (device, queue, Some(backend))
+        (
+            device,
+            queue,
+            Some(backend),
+            backend.wgpu_submission_tracker(),
+        )
     } else {
         let ctx = ctx()?;
-        (ctx.device.as_ref(), ctx.queue.as_ref(), None)
+        (
+            ctx.device.as_ref(),
+            ctx.queue.as_ref(),
+            None,
+            Some(ctx.submission_tracker.as_ref()),
+        )
     };
 
     let cached = cached_spec(spec)?;
@@ -321,7 +508,15 @@ pub fn dispatch_shader_with_options(
         enqueue_readbacks(device, &prepared, &mut encoder);
 
     let submission_idx = queue.submit(Some(encoder.finish()));
-    track_submission_and_throttle(device, submission_idx);
+    if let Some(tracker) = submission_tracker {
+        tracker.track_and_throttle(device, submission_idx);
+    } else {
+        tracing::warn!(
+            target: "daedalus_gpu::dispatch",
+            "wgpu backend did not expose a submission tracker; falling back to untracked polling"
+        );
+        let _ = device.poll(wgpu::PollType::Poll);
+    }
 
     let result = resolve_readbacks(device, readbacks)?;
     return_pooled_textures(pool_textures_to_return);
@@ -330,4 +525,27 @@ pub fn dispatch_shader_with_options(
         buffers: result,
         textures: texture_handles,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inflight_submission_limit_is_configurable() {
+        let previous = set_max_inflight_submissions_per_device(3);
+        assert_eq!(max_inflight_submissions_per_device(), 3);
+        assert_eq!(set_max_inflight_submissions_per_device(0), 3);
+        assert_eq!(max_inflight_submissions_per_device(), 1);
+        set_max_inflight_submissions_per_device(previous);
+    }
+
+    #[test]
+    fn submission_trackers_are_per_context() {
+        let first = SubmissionTracker::default();
+        let second = SubmissionTracker::default();
+
+        assert_eq!(first.tracked_len_for_test(), 0);
+        assert_eq!(second.tracked_len_for_test(), 0);
+    }
 }

@@ -1,3 +1,5 @@
+#[cfg(feature = "gpu-wgpu")]
+use crate::shader::SubmissionTracker;
 use crate::{
     GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError, GpuImageHandle, GpuImageRequest,
     GpuOptions, GpuRequest, buffer::TransferStats, handles::GpuBufferHandle,
@@ -8,13 +10,6 @@ use std::sync::Arc;
 
 /// GPU backend trait; no backend-specific types exposed.
 ///
-/// ```no_run
-/// use daedalus_gpu::{GpuBackend, GpuBackendKind};
-/// fn uses_backend(backend: &dyn GpuBackend) -> GpuBackendKind {
-///     backend.kind()
-/// }
-/// let _ = uses_backend;
-/// ```
 pub trait GpuBackend: Send + Sync {
     fn kind(&self) -> GpuBackendKind;
     fn adapter_info(&self) -> GpuAdapterInfo;
@@ -51,6 +46,11 @@ pub trait GpuBackend: Send + Sync {
     }
 
     #[cfg(feature = "gpu-wgpu")]
+    fn wgpu_submission_tracker(&self) -> Option<&SubmissionTracker> {
+        None
+    }
+
+    #[cfg(feature = "gpu-wgpu")]
     fn wgpu_get_texture(&self, _handle: &GpuImageHandle) -> Option<Arc<wgpu::Texture>> {
         None
     }
@@ -70,13 +70,6 @@ pub trait GpuBackend: Send + Sync {
 
 /// Optional context trait if backends need per-thread context.
 ///
-/// ```no_run
-/// use daedalus_gpu::{GpuContext, GpuBackendKind};
-/// fn kind(ctx: &dyn GpuContext) -> GpuBackendKind {
-///     ctx.backend()
-/// }
-/// let _ = kind;
-/// ```
 pub trait GpuContext: Send + Sync {
     fn backend(&self) -> GpuBackendKind;
     fn adapter_info(&self) -> GpuAdapterInfo;

@@ -1,4 +1,3 @@
-#![allow(clippy::doc_overindented_list_items)]
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use syn::parse::{Parse, ParseStream};
@@ -12,7 +11,10 @@ pub fn compile_error(message: String) -> proc_macro2::TokenStream {
 }
 
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "proc-macro parse nodes are short-lived and keeping direct syn patterns avoids boxing churn"
+)]
 pub enum NestedMeta {
     Meta(syn::Meta),
     Lit(Lit),
@@ -43,20 +45,6 @@ pub fn parse_nested(list: &syn::MetaList) -> Result<Vec<NestedMeta>, proc_macro2
     list.parse_args_with(AttributeArgs::parse_terminated)
         .map(|items| items.into_iter().collect())
         .map_err(|err| compile_error(err.to_string()))
-}
-
-#[allow(dead_code)]
-pub fn collect_list(
-    list: &syn::MetaList,
-    target: &mut Vec<LitStr>,
-) -> Result<(), proc_macro2::TokenStream> {
-    for nested in parse_nested(list)? {
-        match nested {
-            NestedMeta::Lit(Lit::Str(s)) => target.push(s),
-            _ => return Err(compile_error("list entries must be string literals".into())),
-        }
-    }
-    Ok(())
 }
 
 pub fn litstr_from_ident(id: &syn::Ident) -> LitStr {

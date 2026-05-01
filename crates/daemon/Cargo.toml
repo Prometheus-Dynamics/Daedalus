@@ -1,0 +1,32 @@
+[package]
+name = "daedalus-daemon"
+version = "2.0.0"
+edition = "2024"
+description = "Optional long-lived daemon and CLI for warm Daedalus engine workflows."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-daemon"
+readme = "README.md"
+keywords = ["dataflow", "daemon", "engine"]
+categories = ["concurrency"]
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+tcp = []
+
+[dependencies]
+daedalus-engine = { workspace = true }
+daedalus-planner = { workspace = true }
+daedalus-registry = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+daedalus-data = { workspace = true }

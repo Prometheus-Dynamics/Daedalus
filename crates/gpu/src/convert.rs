@@ -1,9 +1,10 @@
-use crate::{GpuContextHandle, GpuError, GpuImageHandle, upload_rgba8_texture};
+use crate::{GpuContextHandle, GpuError};
+#[cfg(feature = "image")]
+use crate::{GpuImageHandle, upload_rgba8_texture};
+#[cfg(feature = "image")]
 use image::{DynamicImage, GenericImageView, GrayImage, RgbImage, RgbaImage};
-use std::any::Any;
 use std::ops::Deref;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 /// Opt-in bridge to allow CPU types to participate in GPU segments.
 /// Users implement this for their own types to describe how to upload/download.
@@ -230,6 +231,7 @@ impl<T: DeviceBridge> Compute<T> {
     }
 }
 
+#[cfg(feature = "image")]
 impl Compute<DynamicImage> {
     /// Return image dimensions without forcing the caller to pattern match.
     pub fn dimensions(&self) -> (u32, u32) {
@@ -253,516 +255,7 @@ impl Compute<DynamicImage> {
     }
 }
 
-#[derive(Clone)]
-enum DataCellInner {
-    // Shared storage so CPU<->GPU transfers can be memoized across clones/fanout.
-    Cached(Arc<DataCellCache>),
-}
-
-struct DataCellCache {
-    cpu: OnceLock<Arc<dyn Any + Send + Sync>>,
-    gpu: OnceLock<Arc<dyn Any + Send + Sync>>,
-}
-
-impl DataCellCache {
-    fn new() -> Self {
-        Self {
-            cpu: OnceLock::new(),
-            gpu: OnceLock::new(),
-        }
-    }
-}
-
-/// Type-erased payload wrapper so runtimes can carry GPU-capable data without monomorphizing.
-#[derive(Clone)]
-pub struct DataCell {
-    is_gpu: bool,
-    inner: DataCellInner,
-    cpu_type_name: &'static str,
-    upload: fn(&DataCellInner, &GpuContextHandle) -> Result<DataCell, GpuError>,
-    download: fn(&DataCellInner, &GpuContextHandle) -> Result<DataCell, GpuError>,
-}
-
-impl DataCell {
-    #[inline]
-    fn cached_has_gpu(&self) -> bool {
-        match &self.inner {
-            DataCellInner::Cached(cell) => cell.gpu.get().is_some(),
-        }
-    }
-
-    #[inline]
-    fn cached_has_cpu(&self) -> bool {
-        match &self.inner {
-            DataCellInner::Cached(cell) => cell.cpu.get().is_some(),
-        }
-    }
-
-    /// Upload to GPU only if this payload is not already GPU-resident.
-    ///
-    /// Returns `(payload, did_transfer)`. `did_transfer` is `true` only when this call performed
-    /// a real CPU->GPU materialization (i.e. the cache did not already contain a GPU repr).
-    ///
-    /// This is intended for runtimes that want to dedupe transfer accounting across fanout.
-    pub fn upload_if_needed(&self, ctx: &GpuContextHandle) -> Result<(DataCell, bool), GpuError> {
-        if self.is_gpu {
-            return Ok((self.clone(), false));
-        }
-        // If another edge already uploaded this cached payload, avoid doing the work again.
-        if self.cached_has_gpu() {
-            let uploaded = (self.upload)(&self.inner, ctx)?;
-            return Ok((uploaded, false));
-        }
-        let uploaded = (self.upload)(&self.inner, ctx)?;
-        Ok((uploaded, true))
-    }
-
-    /// Download to CPU only if this payload is not already CPU-resident.
-    ///
-    /// Returns `(payload, did_transfer)`. `did_transfer` is `true` only when this call performed
-    /// a real GPU->CPU materialization (i.e. the cache did not already contain a CPU repr).
-    pub fn download_if_needed(&self, ctx: &GpuContextHandle) -> Result<(DataCell, bool), GpuError> {
-        if !self.is_gpu {
-            return Ok((self.clone(), false));
-        }
-        if self.cached_has_cpu() {
-            let downloaded = (self.download)(&self.inner, ctx)?;
-            return Ok((downloaded, false));
-        }
-        let downloaded = (self.download)(&self.inner, ctx)?;
-        Ok((downloaded, true))
-    }
-}
-
-impl DataCell {
-    fn cross_dylib_ref<'a, T: 'static>(any: &'a dyn Any, expected: &str) -> Option<&'a T> {
-        let actual = std::any::type_name::<T>();
-        if expected != actual && !expected.ends_with(actual) && !actual.ends_with(expected) {
-            return None;
-        }
-        let size_ok = std::mem::size_of_val(any) == std::mem::size_of::<T>();
-        let align_ok = std::mem::align_of_val(any) == std::mem::align_of::<T>();
-        if !(size_ok && align_ok) {
-            if std::env::var_os("DAEDALUS_TRACE_PAYLOAD_CROSS_DYLIB").is_some() {
-                eprintln!(
-                    "daedalus-gpu: cross_dylib_ref size/align mismatch expected={} actual={} size_any={} size_t={} align_any={} align_t={}",
-                    expected,
-                    actual,
-                    std::mem::size_of_val(any),
-                    std::mem::size_of::<T>(),
-                    std::mem::align_of_val(any),
-                    std::mem::align_of::<T>(),
-                );
-            }
-            return None;
-        }
-        let (data_ptr, _): (*const (), *const ()) = unsafe { std::mem::transmute(any) };
-        Some(unsafe { &*(data_ptr as *const T) })
-    }
-
-    pub fn from_cpu<T>(val: T) -> Self
-    where
-        T: DeviceBridge + Clone + Send + Sync + 'static,
-        T::Device: Clone + Send + Sync + 'static,
-    {
-        fn upload<T>(inner: &DataCellInner, ctx: &GpuContextHandle) -> Result<DataCell, GpuError>
-        where
-            T: DeviceBridge + Clone + Send + Sync + 'static,
-            T::Device: Clone + Send + Sync + 'static,
-        {
-            let DataCellInner::Cached(cell) = inner;
-            if cell.gpu.get().is_some() {
-                return Ok(DataCell {
-                    is_gpu: true,
-                    inner: inner.clone(),
-                    cpu_type_name: std::any::type_name::<T>(),
-                    upload: upload::<T>,
-                    download: download::<T>,
-                });
-            }
-            let cpu_arc = cell.cpu.get().ok_or(GpuError::Unsupported)?;
-            let cpu = cpu_arc
-                .downcast_ref::<T>()
-                .cloned()
-                .or_else(|| {
-                    DataCell::cross_dylib_ref::<T>(cpu_arc.as_ref(), std::any::type_name::<T>())
-                        .cloned()
-                })
-                .ok_or(GpuError::Unsupported)?;
-            let handle = cpu.upload(ctx)?;
-            let _ = cell.gpu.set(Arc::new(handle.clone()));
-            Ok(DataCell {
-                is_gpu: true,
-                inner: inner.clone(),
-                cpu_type_name: std::any::type_name::<T>(),
-                upload: upload::<T>,
-                download: download::<T>,
-            })
-        }
-
-        fn download<T>(inner: &DataCellInner, _ctx: &GpuContextHandle) -> Result<DataCell, GpuError>
-        where
-            T: DeviceBridge + Clone + Send + Sync + 'static,
-            T::Device: Clone + Send + Sync + 'static,
-        {
-            // CPU input: downloading is a no-op.
-            let DataCellInner::Cached(cell) = inner;
-            let cpu_arc = cell.cpu.get().ok_or(GpuError::Unsupported)?;
-            if cpu_arc.downcast_ref::<T>().is_none()
-                && DataCell::cross_dylib_ref::<T>(cpu_arc.as_ref(), std::any::type_name::<T>())
-                    .is_none()
-            {
-                return Err(GpuError::Unsupported);
-            }
-            Ok(DataCell {
-                is_gpu: false,
-                inner: inner.clone(),
-                cpu_type_name: std::any::type_name::<T>(),
-                upload: upload::<T>,
-                download: download::<T>,
-            })
-        }
-
-        Self {
-            is_gpu: false,
-            inner: DataCellInner::Cached({
-                let cache = DataCellCache::new();
-                let _ = cache.cpu.set(Arc::new(val));
-                Arc::new(cache)
-            }),
-            cpu_type_name: std::any::type_name::<T>(),
-            upload: upload::<T>,
-            download: download::<T>,
-        }
-    }
-
-    pub fn from_gpu<T>(val: T::Device) -> Self
-    where
-        T: DeviceBridge + Clone + Send + Sync + 'static,
-        T::Device: Clone + Send + Sync + 'static,
-    {
-        fn upload<T>(inner: &DataCellInner, _ctx: &GpuContextHandle) -> Result<DataCell, GpuError>
-        where
-            T: DeviceBridge + Clone + Send + Sync + 'static,
-            T::Device: Clone + Send + Sync + 'static,
-        {
-            // GPU input: uploading is a no-op.
-            let DataCellInner::Cached(cell) = inner;
-            let gpu_arc = cell.gpu.get().ok_or(GpuError::Unsupported)?;
-            if gpu_arc.downcast_ref::<T::Device>().is_none()
-                && DataCell::cross_dylib_ref::<T::Device>(
-                    gpu_arc.as_ref(),
-                    std::any::type_name::<T::Device>(),
-                )
-                .is_none()
-            {
-                return Err(GpuError::Unsupported);
-            }
-            Ok(DataCell {
-                is_gpu: true,
-                inner: inner.clone(),
-                cpu_type_name: std::any::type_name::<T>(),
-                upload: upload::<T>,
-                download: download::<T>,
-            })
-        }
-
-        fn download<T>(inner: &DataCellInner, ctx: &GpuContextHandle) -> Result<DataCell, GpuError>
-        where
-            T: DeviceBridge + Clone + Send + Sync + 'static,
-            T::Device: Clone + Send + Sync + 'static,
-        {
-            let DataCellInner::Cached(cell) = inner;
-            // Fast path: already downloaded by another clone.
-            if let Some(cpu) = cell.cpu.get()
-                && (cpu.downcast_ref::<T>().is_some()
-                    || DataCell::cross_dylib_ref::<T>(cpu.as_ref(), std::any::type_name::<T>())
-                        .is_some())
-            {
-                return Ok(DataCell {
-                    is_gpu: false,
-                    inner: inner.clone(),
-                    cpu_type_name: std::any::type_name::<T>(),
-                    upload: upload::<T>,
-                    download: download::<T>,
-                });
-            }
-
-            let gpu_arc = cell.gpu.get().ok_or(GpuError::Unsupported)?;
-            let g = gpu_arc
-                .downcast_ref::<T::Device>()
-                .or_else(|| {
-                    DataCell::cross_dylib_ref::<T::Device>(
-                        gpu_arc.as_ref(),
-                        std::any::type_name::<T::Device>(),
-                    )
-                })
-                .ok_or(GpuError::Unsupported)?;
-            let cpu = T::download(g, ctx)?;
-            let _ = cell.cpu.set(Arc::new(cpu));
-            Ok(DataCell {
-                is_gpu: false,
-                inner: inner.clone(),
-                cpu_type_name: std::any::type_name::<T>(),
-                upload: upload::<T>,
-                download: download::<T>,
-            })
-        }
-
-        Self {
-            is_gpu: true,
-            inner: DataCellInner::Cached({
-                let cache = DataCellCache::new();
-                let _ = cache.gpu.set(Arc::new(val));
-                Arc::new(cache)
-            }),
-            cpu_type_name: std::any::type_name::<T>(),
-            upload: upload::<T>,
-            download: download::<T>,
-        }
-    }
-
-    pub fn is_gpu(&self) -> bool {
-        self.is_gpu
-    }
-
-    pub fn upload(&self, ctx: &GpuContextHandle) -> Result<DataCell, GpuError> {
-        (self.upload)(&self.inner, ctx)
-    }
-
-    pub fn download(&self, ctx: &GpuContextHandle) -> Result<DataCell, GpuError> {
-        (self.download)(&self.inner, ctx)
-    }
-
-    pub fn as_cpu<T>(&self) -> Option<&T>
-    where
-        T: DeviceBridge + 'static,
-    {
-        if self.is_gpu {
-            None
-        } else {
-            match &self.inner {
-                DataCellInner::Cached(cell) => {
-                    let inner = cell.cpu.get()?;
-                    inner
-                        .downcast_ref::<T>()
-                        .or_else(|| Self::cross_dylib_ref::<T>(inner.as_ref(), self.cpu_type_name))
-                }
-            }
-        }
-    }
-
-    /// Borrow the CPU-side backing allocation as an `Arc<T>` when possible.
-    ///
-    /// This is a fast path for same-crate / same-TypeId consumers. Across dynamic plugin
-    /// boundaries, `TypeId` may not match; use `as_cpu` to borrow without cloning.
-    pub fn arc_cpu_any<T>(&self) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        if self.is_gpu {
-            return None;
-        }
-        let DataCellInner::Cached(cell) = &self.inner;
-        let cpu = cell.cpu.get()?.clone();
-        Arc::downcast::<T>(cpu).ok()
-    }
-
-    /// Borrow the GPU-side backing allocation as an `Arc<T>` when possible.
-    pub fn arc_gpu_any<T>(&self) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        if !self.is_gpu {
-            return None;
-        }
-        let DataCellInner::Cached(cell) = &self.inner;
-        let gpu = cell.gpu.get()?.clone();
-        Arc::downcast::<T>(gpu).ok()
-    }
-
-    pub fn as_gpu<T>(&self) -> Option<&T::Device>
-    where
-        T: DeviceBridge + 'static,
-        T::Device: 'static,
-    {
-        if self.is_gpu {
-            match &self.inner {
-                DataCellInner::Cached(cell) => {
-                    let inner = cell.gpu.get()?;
-                    inner.downcast_ref::<T::Device>()
-                }
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn try_downcast_cpu_any<T>(&self) -> Option<T>
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        if self.is_gpu {
-            return None;
-        }
-        let DataCellInner::Cached(cell) = &self.inner;
-        let inner = cell.cpu.get()?;
-        if let Some(v) = inner.downcast_ref::<T>() {
-            return Some(v.clone());
-        }
-        Self::cross_dylib_ref::<T>(inner.as_ref(), self.cpu_type_name).cloned()
-    }
-
-    pub fn as_cpu_any<T>(&self) -> Option<&T>
-    where
-        T: Send + Sync + 'static,
-    {
-        if self.is_gpu {
-            return None;
-        }
-        let DataCellInner::Cached(cell) = &self.inner;
-        let inner = cell.cpu.get()?;
-        inner
-            .downcast_ref::<T>()
-            .or_else(|| Self::cross_dylib_ref::<T>(inner.as_ref(), self.cpu_type_name))
-    }
-
-    pub fn clone_cpu<T>(&self) -> Option<T>
-    where
-        T: DeviceBridge + Clone + 'static,
-    {
-        if self.is_gpu {
-            return None;
-        }
-        let DataCellInner::Cached(cell) = &self.inner;
-        let inner = cell.cpu.get()?;
-        if let Some(v) = inner.downcast_ref::<T>().cloned() {
-            return Some(v);
-        }
-        if self.cpu_type_name != std::any::type_name::<T>() {
-            return None;
-        }
-        Self::cross_dylib_ref::<T>(inner.as_ref(), self.cpu_type_name).cloned()
-    }
-
-    pub fn take_cpu<T>(self) -> Result<T, Self>
-    where
-        T: DeviceBridge + Clone + Send + Sync + 'static,
-    {
-        if self.is_gpu {
-            return Err(self);
-        }
-
-        let DataCell {
-            is_gpu,
-            inner,
-            cpu_type_name,
-            upload,
-            download,
-        } = self;
-        let restore = |inner| DataCell {
-            is_gpu,
-            inner,
-            cpu_type_name,
-            upload,
-            download,
-        };
-
-        match inner {
-            DataCellInner::Cached(cell) => {
-                // Conservatively clone; `take_cpu` is an optimization path and should remain correct
-                // under sharing/fanout.
-                let cpu = cell
-                    .cpu
-                    .get()
-                    .ok_or_else(|| restore(DataCellInner::Cached(cell.clone())))?;
-                if let Some(v) = cpu.downcast_ref::<T>().cloned() {
-                    return Ok(v);
-                }
-                if cpu_type_name == std::any::type_name::<T>()
-                    && let Some(v) = Self::cross_dylib_ref::<T>(cpu.as_ref(), cpu_type_name)
-                {
-                    return Ok(v.clone());
-                }
-                Err(restore(DataCellInner::Cached(cell.clone())))
-            }
-        }
-    }
-
-    pub fn take_cpu_any<T>(self) -> Result<T, Self>
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        if self.is_gpu {
-            return Err(self);
-        }
-
-        let DataCell {
-            is_gpu,
-            inner,
-            cpu_type_name,
-            upload,
-            download,
-        } = self;
-        let restore = |inner| DataCell {
-            is_gpu,
-            inner,
-            cpu_type_name,
-            upload,
-            download,
-        };
-
-        match inner {
-            DataCellInner::Cached(cell) => {
-                let cpu = cell
-                    .cpu
-                    .get()
-                    .ok_or_else(|| restore(DataCellInner::Cached(cell.clone())))?;
-                if let Some(v) = cpu.downcast_ref::<T>().cloned() {
-                    return Ok(v);
-                }
-                if let Some(v) = Self::cross_dylib_ref::<T>(cpu.as_ref(), cpu_type_name) {
-                    return Ok(v.clone());
-                }
-                Err(restore(DataCellInner::Cached(cell.clone())))
-            }
-        }
-    }
-
-    pub fn clone_gpu<T>(&self) -> Option<T::Device>
-    where
-        T: DeviceBridge + 'static,
-        T::Device: Clone + 'static,
-    {
-        if !self.is_gpu {
-            return None;
-        }
-        let DataCellInner::Cached(cell) = &self.inner;
-        let inner = cell.gpu.get()?;
-        if let Some(v) = inner.downcast_ref::<T::Device>().cloned() {
-            return Some(v);
-        }
-        if let Some(v) =
-            Self::cross_dylib_ref::<T::Device>(inner.as_ref(), std::any::type_name::<T::Device>())
-        {
-            return Some(v.clone());
-        }
-        if self.cpu_type_name != std::any::type_name::<T>() {
-            return None;
-        }
-        None
-    }
-}
-
-impl std::fmt::Debug for DataCell {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DataCell")
-            .field("is_gpu", &self.is_gpu)
-            .field("cpu_type_name", &self.cpu_type_name)
-            .finish()
-    }
-}
-
+#[cfg(feature = "image")]
 impl DeviceBridge for DynamicImage {
     type Device = GpuImageHandle;
 
@@ -780,6 +273,7 @@ impl DeviceBridge for DynamicImage {
     }
 }
 
+#[cfg(feature = "image")]
 impl DeviceBridge for RgbaImage {
     type Device = GpuImageHandle;
 
@@ -795,6 +289,7 @@ impl DeviceBridge for RgbaImage {
     }
 }
 
+#[cfg(feature = "image")]
 impl DeviceBridge for RgbImage {
     type Device = GpuImageHandle;
 
@@ -822,6 +317,7 @@ impl DeviceBridge for RgbImage {
     }
 }
 
+#[cfg(feature = "image")]
 impl DeviceBridge for GrayImage {
     type Device = GpuImageHandle;
 
@@ -867,6 +363,7 @@ impl DeviceBridge for GrayImage {
     }
 }
 
+#[cfg(feature = "image")]
 impl Compute<DynamicImage> {
     /// Get RGBA8 bytes + dimensions, downloading from GPU if needed.
     pub fn to_rgba_bytes(

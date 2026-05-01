@@ -1,9 +1,9 @@
 use crate::model::TypeExpr;
 use std::collections::BTreeMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
-/// Policy for whether a port typed as a given schema should be considered exportable via
-/// "serialized" host boundaries (JSON/bytes), e.g. `HostBridgeHandle::{try_pop_serialized,recv_serialized}`.
+/// Policy for whether a port typed as a given schema should be considered exportable through
+/// callers that explicitly encode host boundary payloads as JSON or bytes.
 ///
 /// This is intentionally small and conservative:
 /// - `Value`: can be represented as `daedalus_data::model::Value` (JSON-friendly)
@@ -25,9 +25,79 @@ pub struct NamedType {
     pub export: HostExportPolicy,
 }
 
-fn registry() -> &'static RwLock<BTreeMap<String, NamedType>> {
-    static REG: OnceLock<RwLock<BTreeMap<String, NamedType>>> = OnceLock::new();
-    REG.get_or_init(|| RwLock::new(BTreeMap::new()))
+#[derive(Clone, Debug, Default)]
+pub struct NamedTypeRegistry {
+    types: Arc<RwLock<BTreeMap<String, NamedType>>>,
+}
+
+impl NamedTypeRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn global() -> Self {
+        static REG: OnceLock<NamedTypeRegistry> = OnceLock::new();
+        REG.get_or_init(Self::new).clone()
+    }
+
+    pub fn register(
+        &self,
+        key: impl Into<String>,
+        expr: TypeExpr,
+        export: HostExportPolicy,
+    ) -> Result<(), String> {
+        let key = key.into();
+        let expr = expr.normalize();
+        let mut guard = self
+            .types
+            .write()
+            .map_err(|_| "daedalus_data::named_types registry lock poisoned".to_string())?;
+
+        if let Some(prev) = guard.get(&key) {
+            if prev.expr != expr || prev.export != export {
+                return Err(format!(
+                    "named type conflict for key '{key}': existing expr/export differ"
+                ));
+            }
+            return Ok(());
+        }
+
+        guard.insert(key.clone(), NamedType { key, expr, export });
+        Ok(())
+    }
+
+    pub fn lookup(&self, key: &str) -> Option<NamedType> {
+        let guard = self.types.read().ok()?;
+        guard.get(key).cloned()
+    }
+
+    pub fn resolve_opaque(&self, expr: &TypeExpr) -> Option<TypeExpr> {
+        if let TypeExpr::Opaque(key) = expr {
+            return self.lookup(key).map(|t| t.expr);
+        }
+        None
+    }
+
+    pub fn export_policy_for(&self, expr: &TypeExpr) -> HostExportPolicy {
+        use crate::model::{TypeExpr as TE, ValueType};
+
+        match expr {
+            TE::Scalar(ValueType::Bytes) => HostExportPolicy::Bytes,
+            TE::Opaque(key) => self
+                .lookup(key)
+                .map(|t| t.export)
+                .unwrap_or(HostExportPolicy::None),
+            _ => HostExportPolicy::Value,
+        }
+    }
+
+    pub fn snapshot(&self) -> Vec<NamedType> {
+        let guard = match self.types.read() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+        guard.values().cloned().collect()
+    }
 }
 
 /// Register a named type schema keyed by a stable string.
@@ -39,28 +109,11 @@ pub fn register_named_type(
     expr: TypeExpr,
     export: HostExportPolicy,
 ) -> Result<(), String> {
-    let key = key.into();
-    let expr = expr.normalize();
-    let mut guard = registry()
-        .write()
-        .map_err(|_| "daedalus_data::named_types registry lock poisoned".to_string())?;
-
-    if let Some(prev) = guard.get(&key) {
-        if prev.expr != expr || prev.export != export {
-            return Err(format!(
-                "named type conflict for key '{key}': existing expr/export differ"
-            ));
-        }
-        return Ok(());
-    }
-
-    guard.insert(key.clone(), NamedType { key, expr, export });
-    Ok(())
+    NamedTypeRegistry::global().register(key, expr, export)
 }
 
 pub fn lookup_named_type(key: &str) -> Option<NamedType> {
-    let guard = registry().read().ok()?;
-    guard.get(key).cloned()
+    NamedTypeRegistry::global().lookup(key)
 }
 
 /// Resolve an opaque type key into its registered (normalized) schema, if present.
@@ -91,9 +144,35 @@ pub fn export_policy_for(expr: &TypeExpr) -> HostExportPolicy {
 
 /// Snapshot the current named-type registry for UI/tooling.
 pub fn snapshot() -> Vec<NamedType> {
-    let guard = match registry().read() {
-        Ok(guard) => guard,
-        Err(_) => return Vec::new(),
-    };
-    guard.values().cloned().collect()
+    NamedTypeRegistry::global().snapshot()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HostExportPolicy, NamedTypeRegistry};
+    use crate::model::{TypeExpr, ValueType};
+
+    #[test]
+    fn owned_named_type_registries_do_not_leak_entries() {
+        let left = NamedTypeRegistry::new();
+        let right = NamedTypeRegistry::new();
+
+        left.register(
+            "test:named:type",
+            TypeExpr::Scalar(ValueType::Bool),
+            HostExportPolicy::Value,
+        )
+        .expect("register named type");
+
+        assert!(left.lookup("test:named:type").is_some());
+        assert!(right.lookup("test:named:type").is_none());
+        assert_eq!(
+            left.export_policy_for(&TypeExpr::Opaque("test:named:type".into())),
+            HostExportPolicy::Value
+        );
+        assert_eq!(
+            right.export_policy_for(&TypeExpr::Opaque("test:named:type".into())),
+            HostExportPolicy::None
+        );
+    }
 }

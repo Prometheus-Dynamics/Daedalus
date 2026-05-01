@@ -8,6 +8,9 @@ use crate::EngineError;
 /// Render an `EngineError` into a machine-readable JSON value.
 pub fn render_error(err: &EngineError) -> Value {
     match err {
+        EngineError::InvalidConfig(err) => {
+            json!({ "code": "config", "message": err.to_string() })
+        }
         EngineError::Config(msg) => json!({ "code": "config", "message": msg }),
         EngineError::Io { path, source } => json!({
             "code": "io",
@@ -25,6 +28,14 @@ pub fn render_error(err: &EngineError) -> Value {
         }),
         EngineError::Runtime(e) => json!({
             "code": "runtime",
+            "message": e.to_string(),
+        }),
+        EngineError::ExecutorBuild(e) => json!({
+            "code": "executor_build",
+            "message": e.to_string(),
+        }),
+        EngineError::ExecutorMask(e) => json!({
+            "code": "executor_mask",
             "message": e.to_string(),
         }),
         EngineError::BundleParse { path, error } => json!({

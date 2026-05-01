@@ -1,12 +1,13 @@
-use super::dispatch::{ShaderContext, SingleDispatch, track_submission_and_throttle};
+use super::dispatch::{ShaderContext, SingleDispatch};
 use super::fallback::{cached_spec, ctx_async};
 use super::pipeline::{bind_group, pipeline_entry};
-use super::prepare::prepare_resources;
+use super::prepare::prepare_resources_async;
 use super::readback::{enqueue_readbacks, resolve_readbacks_async, return_pooled_textures};
 use super::workgroups::derive_workgroups;
 use super::{DispatchOptions, GpuBindings, ShaderBinding, ShaderRunOutput, ShaderSpec};
 use crate::{GpuContextHandle, GpuError};
 
+/// Dispatch a shader without blocking the current thread for fallback context creation or readback.
 pub async fn dispatch_shader_with_bindings_async<'a>(
     spec: &ShaderSpec,
     shader_src: &str,
@@ -35,13 +36,23 @@ pub async fn dispatch_shader_with_options_async<'a>(
     gpu_ctx: Option<&GpuContextHandle>,
     opts: &DispatchOptions,
 ) -> Result<ShaderRunOutput, GpuError> {
-    let (device, queue, backend_handle) = if let Some(gpu_ctx) = gpu_ctx {
+    let (device, queue, backend_handle, submission_tracker) = if let Some(gpu_ctx) = gpu_ctx {
         let backend = gpu_ctx.backend_ref();
         let (device, queue) = backend.wgpu_device_queue().ok_or(GpuError::Unsupported)?;
-        (device, queue, Some(backend))
+        (
+            device,
+            queue,
+            Some(backend),
+            backend.wgpu_submission_tracker(),
+        )
     } else {
         let ctx = ctx_async().await?;
-        (ctx.device.as_ref(), ctx.queue.as_ref(), None)
+        (
+            ctx.device.as_ref(),
+            ctx.queue.as_ref(),
+            None,
+            Some(ctx.submission_tracker.as_ref()),
+        )
     };
 
     let cached = cached_spec(spec)?;
@@ -56,14 +67,15 @@ pub async fn dispatch_shader_with_options_async<'a>(
         return Err(GpuError::Internal("workgroup_size must be > 0".into()));
     }
 
-    let prepared = prepare_resources(
+    let prepared = prepare_resources_async(
         device,
         queue,
         backend_handle,
         bindings,
         layout_bindings.as_ref(),
         gpu_ctx,
-    )?;
+    )
+    .await?;
 
     let entry = pipeline_entry(device, shader_src, spec, layout_bindings.as_ref());
     let (bind_group_layout, pipeline) = (&entry.bind_group_layout, &entry.pipeline);
@@ -106,7 +118,17 @@ pub async fn dispatch_shader_with_options_async<'a>(
         enqueue_readbacks(device, &prepared, &mut encoder);
 
     let submission_idx = queue.submit(Some(encoder.finish()));
-    track_submission_and_throttle(device, submission_idx);
+    if let Some(tracker) = submission_tracker {
+        tracker
+            .track_and_throttle_async(device, submission_idx)
+            .await;
+    } else {
+        tracing::warn!(
+            target: "daedalus_gpu::dispatch",
+            "wgpu backend did not expose a submission tracker; falling back to untracked polling"
+        );
+        let _ = device.poll(wgpu::PollType::Poll);
+    }
 
     let result = resolve_readbacks_async(device, readbacks).await?;
     return_pooled_textures(pool_textures_to_return);

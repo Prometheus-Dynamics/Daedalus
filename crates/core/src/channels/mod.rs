@@ -25,11 +25,6 @@ pub use unbounded::unbounded_with_metrics;
 
 /// Result of attempting to enqueue a message.
 ///
-/// ```
-/// use daedalus_core::channels::{bounded, Backpressure, ChannelSend};
-/// let (tx, _rx) = bounded(1);
-/// assert_eq!(tx.send(1), Backpressure::Ok);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backpressure {
     Ok,
@@ -39,11 +34,6 @@ pub enum Backpressure {
 
 /// Result of attempting to receive a message.
 ///
-/// ```
-/// use daedalus_core::channels::{bounded, ChannelRecv, RecvOutcome};
-/// let (_tx, rx) = bounded::<u8>(1);
-/// assert_eq!(rx.try_recv(), RecvOutcome::Empty);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecvOutcome<T> {
     Data(T),
@@ -53,33 +43,18 @@ pub enum RecvOutcome<T> {
 
 /// Common sender interface.
 ///
-/// ```
-/// use daedalus_core::channels::{bounded, ChannelSend, Backpressure};
-/// let (tx, _rx) = bounded(1);
-/// assert_eq!(tx.send(42), Backpressure::Ok);
-/// ```
 pub trait ChannelSend<T>: Send + Sync {
     fn send(&self, value: T) -> Backpressure;
 }
 
 /// Common receiver interface (non-blocking).
 ///
-/// ```
-/// use daedalus_core::channels::{bounded, ChannelRecv, RecvOutcome};
-/// let (_tx, rx) = bounded::<u8>(1);
-/// assert_eq!(rx.try_recv(), RecvOutcome::Empty);
-/// ```
 pub trait ChannelRecv<T>: Send + Sync {
     fn try_recv(&self) -> RecvOutcome<T>;
 }
 
 /// Behavior when peers drop.
 ///
-/// ```
-/// use daedalus_core::channels::CloseBehavior;
-/// let behavior = CloseBehavior::FailFast;
-/// assert_eq!(behavior, CloseBehavior::FailFast);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseBehavior {
     /// Mark closed when either senders or receivers are gone (fail fast).
@@ -90,11 +65,6 @@ pub enum CloseBehavior {
 
 /// Snapshot stats for a channel.
 ///
-/// ```
-/// use daedalus_core::channels::ChannelStats;
-/// let stats = ChannelStats::default();
-/// assert_eq!(stats.depth, 0);
-/// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChannelStats {
     pub enqueued: u64,

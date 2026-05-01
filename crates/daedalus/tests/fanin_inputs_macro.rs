@@ -1,5 +1,5 @@
 use daedalus::data::model::{TypeExpr, ValueType};
-use daedalus::{FanIn, macros::node, runtime::NodeError};
+use daedalus::{FanIn, PluginRegistry, macros::node, runtime::NodeError};
 
 #[node(id = "test.fanin_full", inputs("items", "scale"), outputs("out"))]
 fn fanin_full(ins: FanIn<i64>, scale: i64) -> Result<i64, NodeError> {
@@ -29,46 +29,56 @@ fn fanin_ty_override<T: std::any::Any + Clone + Send + Sync + 'static>(
     Ok(items.into_vec().len() as i64 * scale)
 }
 
+#[node(
+    id = "test.generic_passthrough",
+    generics(T),
+    inputs("value"),
+    outputs("out")
+)]
+fn generic_passthrough<T: Clone + Send + Sync + 'static>(value: T) -> Result<T, NodeError> {
+    Ok(value)
+}
+
 #[test]
 fn fanin_prefix_can_come_from_inputs_list() {
-    let desc = fanin_full::descriptor();
+    let decl = FaninFullNode::node_decl().expect("node decl");
     assert_eq!(
-        desc.inputs
+        decl.inputs
             .iter()
             .map(|p| p.name.as_str())
             .collect::<Vec<_>>(),
         vec!["scale"]
     );
-    assert_eq!(desc.fanin_inputs.len(), 1);
-    assert_eq!(desc.fanin_inputs[0].prefix, "items");
+    assert_eq!(decl.fanin_inputs.len(), 1);
+    assert_eq!(decl.fanin_inputs[0].prefix, "items");
     assert!(matches!(
-        desc.input_ty_for("items0"),
+        decl.fanin_inputs[0].schema.as_ref(),
         Some(TypeExpr::Scalar(ValueType::Int))
     ));
 }
 
 #[test]
 fn fanin_prefix_defaults_to_param_name_when_inputs_unspecified() {
-    let desc = fanin_default::descriptor();
+    let decl = FaninDefaultNode::node_decl().expect("node decl");
     assert_eq!(
-        desc.inputs
+        decl.inputs
             .iter()
             .map(|p| p.name.as_str())
             .collect::<Vec<_>>(),
         vec!["scale"]
     );
-    assert_eq!(desc.fanin_inputs.len(), 1);
-    assert_eq!(desc.fanin_inputs[0].prefix, "ins");
+    assert_eq!(decl.fanin_inputs.len(), 1);
+    assert_eq!(decl.fanin_inputs[0].prefix, "ins");
     assert!(matches!(
-        desc.input_ty_for("ins2"),
+        decl.fanin_inputs[0].schema.as_ref(),
         Some(TypeExpr::Scalar(ValueType::Int))
     ));
 }
 
 #[test]
 fn multiple_fanin_groups_are_described() {
-    let desc = fanin_multi::descriptor();
-    let mut prefixes = desc
+    let decl = FaninMultiNode::node_decl().expect("node decl");
+    let mut prefixes = decl
         .fanin_inputs
         .iter()
         .map(|p| p.prefix.as_str())
@@ -79,11 +89,27 @@ fn multiple_fanin_groups_are_described() {
 
 #[test]
 fn fanin_port_can_override_type_expr_for_generics() {
-    let desc = fanin_ty_override::descriptor_for::<i64>("test.fanin_ty_override");
-    assert_eq!(desc.fanin_inputs.len(), 1);
-    assert_eq!(desc.fanin_inputs[0].prefix, "items");
+    let decl =
+        FaninTyOverrideNode::node_decl_for::<i64>("test.fanin_ty_override").expect("node decl");
+    assert_eq!(decl.fanin_inputs.len(), 1);
+    assert_eq!(decl.fanin_inputs[0].prefix, "items");
     assert!(matches!(
-        desc.input_ty_for("items0"),
+        decl.fanin_inputs[0].schema.as_ref(),
         Some(TypeExpr::Scalar(ValueType::Int))
     ));
+}
+
+#[test]
+fn generic_node_register_for_installs_concrete_boundary_contracts() {
+    let mut registry = PluginRegistry::bare();
+    GenericPassthroughNode::register_for::<i64>(&mut registry, "test.generic_i64")
+        .expect("generic node register");
+
+    assert!(
+        registry
+            .boundary_contracts
+            .contains_key(&daedalus_registry::typeexpr_transport_key(
+                &TypeExpr::Scalar(ValueType::Int)
+            ))
+    );
 }

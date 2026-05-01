@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 
 use super::{Access, BindingData, BindingKind, BindingSpec, BufferInit, ShaderBinding, temp_pool};
 mod prepare_texture;
-use prepare_texture::prepare_texture_binding;
+use prepare_texture::{TexturePrepareContext, prepare_texture_binding};
 
 pub(crate) enum Prepared {
     Buffer {
@@ -45,7 +45,7 @@ pub(crate) fn prepare_resources(
     for b in layout_bindings {
         binding_map.insert(b.binding, *b);
     }
-    let device_key = device as *const _ as usize;
+    let device_key = super::device_key(device);
 
     let mut prepared: Vec<Prepared> = Vec::new();
     for binding in bindings {
@@ -159,14 +159,16 @@ pub(crate) fn prepare_resources(
             | BindingData::TextureAlloc { .. }
             | BindingData::TextureHandle { .. } => {
                 prepared.push(prepare_texture_binding(
-                    device,
-                    queue,
-                    backend,
+                    TexturePrepareContext {
+                        device,
+                        queue,
+                        backend,
+                        gpu_ctx,
+                        device_key,
+                        is_storage_tex,
+                    },
                     binding,
                     layout,
-                    gpu_ctx,
-                    device_key,
-                    is_storage_tex,
                 )?);
             }
             BindingData::Sampler(desc) => {
@@ -202,4 +204,50 @@ pub(crate) fn prepare_resources(
     }
 
     Ok(prepared)
+}
+
+#[cfg(feature = "gpu-async")]
+pub(crate) async fn prepare_resources_async<'a>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    backend: Option<&dyn GpuBackend>,
+    bindings: &'a [ShaderBinding<'a>],
+    layout_bindings: &[BindingSpec],
+    gpu_ctx: Option<&GpuContextHandle>,
+) -> Result<Vec<Prepared>, GpuError> {
+    let mut materialized = Vec::with_capacity(bindings.len());
+    for binding in bindings {
+        let mut binding = binding.clone();
+        if let BindingData::TextureHandle { handle } = &binding.data {
+            let can_use_native_texture = backend
+                .and_then(|backend| backend.wgpu_get_texture(handle))
+                .is_some();
+            if !can_use_native_texture {
+                let gpu_ctx = gpu_ctx.ok_or(GpuError::Unsupported)?;
+                tracing::debug!(
+                    target: "daedalus_gpu::prepare",
+                    texture_id = %handle.id,
+                    width = handle.width,
+                    height = handle.height,
+                    "materializing texture handle for async shader binding"
+                );
+                let bytes = gpu_ctx.read_texture_async(handle.clone()).await?;
+                binding.data = BindingData::TextureRgba8 {
+                    width: handle.width,
+                    height: handle.height,
+                    bytes: std::borrow::Cow::Owned(bytes),
+                };
+            }
+        }
+        materialized.push(binding);
+    }
+
+    prepare_resources(
+        device,
+        queue,
+        backend,
+        &materialized,
+        layout_bindings,
+        gpu_ctx,
+    )
 }

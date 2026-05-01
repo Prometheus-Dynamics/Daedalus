@@ -6,6 +6,8 @@ use super::{Backpressure, ChannelRecv, ChannelSend, ChannelStats, CloseBehavior,
 
 #[cfg(feature = "metrics")]
 use crate::metrics::MetricsSink;
+#[cfg(feature = "async-channels")]
+use tokio::sync::Notify;
 
 struct UnboundedInner<T> {
     queue: SegQueue<T>,
@@ -17,6 +19,8 @@ struct UnboundedInner<T> {
     drained: AtomicU64,
     depth: AtomicUsize,
     close_behavior: CloseBehavior,
+    #[cfg(feature = "async-channels")]
+    notify: Arc<Notify>,
     #[cfg(feature = "metrics")]
     metrics: Option<Arc<dyn MetricsSink>>,
 }
@@ -33,6 +37,8 @@ impl<T> UnboundedInner<T> {
             drained: AtomicU64::new(0),
             depth: AtomicUsize::new(0),
             close_behavior,
+            #[cfg(feature = "async-channels")]
+            notify: Arc::new(Notify::new()),
             #[cfg(feature = "metrics")]
             metrics: None,
         }
@@ -50,12 +56,16 @@ impl<T> UnboundedInner<T> {
             drained: AtomicU64::new(0),
             depth: AtomicUsize::new(0),
             close_behavior,
+            #[cfg(feature = "async-channels")]
+            notify: Arc::new(Notify::new()),
             metrics: Some(metrics),
         }
     }
 
     fn mark_closed(&self) {
         self.closed.store(true, Ordering::Release);
+        #[cfg(feature = "async-channels")]
+        self.notify.notify_waiters();
     }
 
     fn try_close(&self) {
@@ -191,6 +201,8 @@ impl<T: Send> ChannelSend<T> for UnboundedSender<T> {
         self.inner.queue.push(value);
         self.inner.enqueued.fetch_add(1, Ordering::Relaxed);
         self.inner.depth.fetch_add(1, Ordering::Relaxed);
+        #[cfg(feature = "async-channels")]
+        self.inner.notify.notify_one();
         Backpressure::Ok
     }
 }
@@ -218,6 +230,11 @@ impl<T> UnboundedReceiver<T> {
             depth: self.inner.depth.load(Ordering::Relaxed),
             closed: self.inner.closed.load(Ordering::Relaxed),
         }
+    }
+
+    #[cfg(feature = "async-channels")]
+    pub(crate) fn async_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.inner.notify)
     }
 }
 

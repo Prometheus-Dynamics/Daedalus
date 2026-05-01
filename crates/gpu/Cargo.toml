@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-gpu"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 description = "GPU backends and WGSL dispatch helpers for the Daedalus runtime."
 license.workspace = true
@@ -11,6 +11,9 @@ readme = "README.md"
 keywords = ["gpu", "wgsl", "wgpu", "compute"]
 categories = ["graphics"]
 
+[lints]
+workspace = true
+
 [lib]
 path = "src/lib.rs"
 
@@ -18,8 +21,9 @@ path = "src/lib.rs"
 default = ["gpu-noop"]
 gpu-noop = []
 gpu-mock = []
-gpu-wgpu = ["wgpu", "pollster", "bytemuck", "half", "daedalus-wgsl-infer"]
+gpu-wgpu = ["wgpu", "pollster", "bytemuck", "half", "daedalus-wgsl-infer", "image"]
 gpu-async = ["async-trait"]
+image = ["dep:image"]
 
 [dependencies]
 serde = { workspace = true }
@@ -28,6 +32,15 @@ bitflags = { workspace = true }
 wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
 bytemuck = { workspace = true, optional = true }
-image = { workspace = true }
+image = { workspace = true, optional = true }
 half = { workspace = true, optional = true }
 daedalus-wgsl-infer = { workspace = true, optional = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+bytemuck = { workspace = true }
+
+[[bench]]
+name = "dispatch_readback"
+harness = false
+required-features = ["gpu-wgpu", "gpu-async"]

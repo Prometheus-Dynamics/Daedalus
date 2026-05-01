@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-nodes"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 description = "Demo node implementations and fixtures for Daedalus."
 license.workspace = true
@@ -10,6 +10,9 @@ documentation = "https://docs.rs/daedalus-nodes"
 readme = "README.md"
 keywords = ["dataflow", "nodes", "fixtures"]
 categories = ["development-tools::testing"]
+
+[lints]
+workspace = true
 
 [lib]
 path = "src/lib.rs"
@@ -21,20 +24,18 @@ bundle-starter = []
 registry-adapter = []
 planner-adapter = []
 bundle-utils = []
-plugins = []
+plugins = ["daedalus-runtime/plugins"]
 
 [dependencies]
 daedalus-macros = { workspace = true }
 daedalus-registry = { workspace = true }
 daedalus-planner = { workspace = true }
-daedalus-runtime = { workspace = true, features = ["plugins"] }
+daedalus-runtime = { workspace = true }
 daedalus-data = { workspace = true }
 daedalus-core = { workspace = true }
 paste = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 trybuild = { workspace = true }
-daedalus-data = { workspace = true }
-daedalus-planner = { workspace = true }
-daedalus-runtime = { workspace = true }

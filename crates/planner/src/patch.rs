@@ -2,6 +2,7 @@ use crate::graph::Graph;
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_registry::ids::NodeId;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, VecDeque};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -60,7 +61,73 @@ pub struct PatchReport {
     pub matched_nodes: usize,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PatchImpact {
+    #[serde(default)]
+    pub directly_affected_nodes: Vec<usize>,
+    #[serde(default)]
+    pub downstream_nodes: Vec<usize>,
+    #[serde(default)]
+    pub sink_nodes: Vec<usize>,
+    #[serde(default)]
+    pub requires_full_rerun: bool,
+}
+
 impl GraphPatch {
+    pub fn analyze(&self, graph: &Graph) -> PatchImpact {
+        let mut directly_affected: BTreeSet<usize> = BTreeSet::new();
+        let mut requires_full_rerun = false;
+
+        for op in &self.ops {
+            match op {
+                GraphPatchOp::SetNodeConst { node, .. }
+                | GraphPatchOp::ReplaceNodeId { node, .. } => {
+                    directly_affected.extend(resolve_graph_indices(graph, node));
+                }
+                GraphPatchOp::DeleteNodes { node } => {
+                    directly_affected.extend(resolve_graph_indices(graph, node));
+                    requires_full_rerun = true;
+                }
+            }
+        }
+
+        let mut outgoing: Vec<Vec<usize>> = vec![Vec::new(); graph.nodes.len()];
+        for edge in &graph.edges {
+            if edge.from.node.0 < outgoing.len() && edge.to.node.0 < outgoing.len() {
+                outgoing[edge.from.node.0].push(edge.to.node.0);
+            }
+        }
+
+        let mut downstream = directly_affected.clone();
+        let mut queue: VecDeque<usize> = directly_affected.iter().copied().collect();
+        while let Some(idx) = queue.pop_front() {
+            for next in outgoing.get(idx).into_iter().flatten() {
+                if downstream.insert(*next) {
+                    queue.push_back(*next);
+                }
+            }
+        }
+
+        let sink_nodes: Vec<usize> = downstream
+            .iter()
+            .copied()
+            .filter(|idx| {
+                outgoing
+                    .get(*idx)
+                    .map(|edges| edges.is_empty())
+                    .unwrap_or(true)
+            })
+            .collect();
+
+        PatchImpact {
+            directly_affected_nodes: directly_affected.into_iter().collect(),
+            downstream_nodes: downstream.into_iter().collect(),
+            sink_nodes,
+            requires_full_rerun,
+        }
+    }
+
     pub fn apply_to_graph(&self, graph: &mut Graph) -> PatchReport {
         let mut report = PatchReport::default();
         for op in &self.ops {
@@ -248,7 +315,7 @@ mod tests {
             metadata: Default::default(),
         };
         node.metadata.insert(
-            "helios.ui.node_id".to_string(),
+            daedalus_core::metadata::UI_NODE_ID_KEY.to_string(),
             DaedalusValue::String("node-1".into()),
         );
         graph.nodes.push(node);
@@ -258,7 +325,7 @@ mod tests {
             ops: vec![GraphPatchOp::SetNodeConst {
                 node: GraphNodeSelector {
                     metadata: Some(GraphMetadataSelector {
-                        key: "helios.ui.node_id".to_string(),
+                        key: daedalus_core::metadata::UI_NODE_ID_KEY.to_string(),
                         value: DaedalusValue::String("node-1".into()),
                     }),
                     ..Default::default()
@@ -359,5 +426,74 @@ mod tests {
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.nodes[0].id.0, "b");
         assert_eq!(graph.edges.len(), 0);
+    }
+
+    #[test]
+    fn analyze_tracks_downstream_and_sink_nodes() {
+        let mut graph = Graph::default();
+        for id in ["a", "b", "c", "d"] {
+            graph.nodes.push(NodeInstance {
+                id: NodeId::new(id),
+                bundle: None,
+                label: None,
+                inputs: vec![],
+                outputs: vec![],
+                compute: ComputeAffinity::CpuOnly,
+                const_inputs: vec![],
+                sync_groups: vec![],
+                metadata: Default::default(),
+            });
+        }
+        graph.edges.push(crate::graph::Edge {
+            from: crate::graph::PortRef {
+                node: crate::graph::NodeRef(0),
+                port: "out".into(),
+            },
+            to: crate::graph::PortRef {
+                node: crate::graph::NodeRef(1),
+                port: "in".into(),
+            },
+            metadata: Default::default(),
+        });
+        graph.edges.push(crate::graph::Edge {
+            from: crate::graph::PortRef {
+                node: crate::graph::NodeRef(1),
+                port: "out".into(),
+            },
+            to: crate::graph::PortRef {
+                node: crate::graph::NodeRef(2),
+                port: "in".into(),
+            },
+            metadata: Default::default(),
+        });
+        graph.edges.push(crate::graph::Edge {
+            from: crate::graph::PortRef {
+                node: crate::graph::NodeRef(0),
+                port: "out".into(),
+            },
+            to: crate::graph::PortRef {
+                node: crate::graph::NodeRef(3),
+                port: "in".into(),
+            },
+            metadata: Default::default(),
+        });
+
+        let patch = GraphPatch {
+            version: 1,
+            ops: vec![GraphPatchOp::SetNodeConst {
+                node: GraphNodeSelector {
+                    id: Some("b".into()),
+                    ..Default::default()
+                },
+                port: "threshold".into(),
+                value: Some(DaedalusValue::Int(3)),
+            }],
+        };
+
+        let impact = patch.analyze(&graph);
+        assert_eq!(impact.directly_affected_nodes, vec![1]);
+        assert_eq!(impact.downstream_nodes, vec![1, 2]);
+        assert_eq!(impact.sink_nodes, vec![2]);
+        assert!(!impact.requires_full_rerun);
     }
 }

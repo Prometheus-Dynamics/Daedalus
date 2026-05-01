@@ -229,40 +229,40 @@ pub fn classify_fields(
                 }
             }
             let final_format = format_override;
-            if let Some(fmt) = &final_format {
-                if map_texture_format(fmt).is_none() {
-                    return Err(syn::Error::new(
-                        pf.ident.span(),
-                        format!(
-                            "field `{}` (binding {}) texture format `{}` is not supported",
-                            field_name, binding, fmt
-                        ),
-                    ));
-                }
+            if let Some(fmt) = &final_format
+                && map_texture_format(fmt).is_none()
+            {
+                return Err(syn::Error::new(
+                    pf.ident.span(),
+                    format!(
+                        "field `{}` (binding {}) texture format `{}` is not supported",
+                        field_name, binding, fmt
+                    ),
+                ));
             }
             let final_sample = sample_override;
-            if let Some(sty) = &final_sample {
-                if map_sample_type(sty).is_none() {
-                    return Err(syn::Error::new(
-                        pf.ident.span(),
-                        format!(
-                            "field `{}` (binding {}) texture sample_type `{}` is not supported",
-                            field_name, binding, sty
-                        ),
-                    ));
-                }
+            if let Some(sty) = &final_sample
+                && map_sample_type(sty).is_none()
+            {
+                return Err(syn::Error::new(
+                    pf.ident.span(),
+                    format!(
+                        "field `{}` (binding {}) texture sample_type `{}` is not supported",
+                        field_name, binding, sty
+                    ),
+                ));
             }
             let final_view = view_override;
-            if let Some(v) = &final_view {
-                if map_view_dimension(v).is_none() {
-                    return Err(syn::Error::new(
-                        pf.ident.span(),
-                        format!(
-                            "field `{}` (binding {}) texture view `{}` is not supported",
-                            field_name, binding, v
-                        ),
-                    ));
-                }
+            if let Some(v) = &final_view
+                && map_view_dimension(v).is_none()
+            {
+                return Err(syn::Error::new(
+                    pf.ident.span(),
+                    format!(
+                        "field `{}` (binding {}) texture view `{}` is not supported",
+                        field_name, binding, v
+                    ),
+                ));
             }
             if !pf.storage_rw {
                 auto_sampler_binding = auto_sampler_binding.or_else(|| {
@@ -312,38 +312,38 @@ pub fn classify_fields(
                     ),
                 ));
             }
-            if let Some(k) = &kind_override {
-                if map_sampler_kind(k).is_none() {
-                    return Err(syn::Error::new(
-                        pf.ident.span(),
-                        format!(
-                            "field `{}` (binding {}) sampler kind `{}` is not supported",
-                            field_name, binding, k
-                        ),
-                    ));
-                }
+            if let Some(k) = &kind_override
+                && map_sampler_kind(k).is_none()
+            {
+                return Err(syn::Error::new(
+                    pf.ident.span(),
+                    format!(
+                        "field `{}` (binding {}) sampler kind `{}` is not supported",
+                        field_name, binding, k
+                    ),
+                ));
             }
-            if let Some(addr) = &pf.sampler_address {
-                if map_address_mode(addr).is_none() {
-                    return Err(syn::Error::new(
-                        pf.ident.span(),
-                        format!(
-                            "field `{}` (binding {}) sampler address `{}` is not supported",
-                            field_name, binding, addr
-                        ),
-                    ));
-                }
+            if let Some(addr) = &pf.sampler_address
+                && map_address_mode(addr).is_none()
+            {
+                return Err(syn::Error::new(
+                    pf.ident.span(),
+                    format!(
+                        "field `{}` (binding {}) sampler address `{}` is not supported",
+                        field_name, binding, addr
+                    ),
+                ));
             }
-            if let Some(mip) = &pf.sampler_mipmap {
-                if map_mipmap_filter(mip).is_none() {
-                    return Err(syn::Error::new(
-                        pf.ident.span(),
-                        format!(
-                            "field `{}` (binding {}) sampler mipmap `{}` is not supported",
-                            field_name, binding, mip
-                        ),
-                    ));
-                }
+            if let Some(mip) = &pf.sampler_mipmap
+                && map_mipmap_filter(mip).is_none()
+            {
+                return Err(syn::Error::new(
+                    pf.ident.span(),
+                    format!(
+                        "field `{}` (binding {}) sampler mipmap `{}` is not supported",
+                        field_name, binding, mip
+                    ),
+                ));
             }
             FieldKind::Sampler {
                 kind_override,

@@ -1,17 +1,30 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::handles::{GpuBufferHandle, GpuBufferId, GpuDropToken, GpuImageHandle, GpuImageId};
+use crate::handles::{GpuBufferHandle, GpuDropToken, GpuImageHandle};
+use crate::shader::SubmissionTracker;
 use crate::traits::GpuBackend;
 use crate::{
-    GpuAdapterInfo, GpuBackendKind, GpuBlockInfo, GpuCapabilities, GpuError, GpuFormat,
-    GpuFormatFeatures, GpuImageRequest, GpuMemoryLocation, GpuOptions, GpuRequest, GpuUsage,
-    buffer::TransferStats, format_bytes_per_pixel, validate_texture_bytes,
+    GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError, GpuFormat, GpuImageRequest,
+    GpuMemoryLocation, GpuOptions, GpuRequest, GpuUsage, buffer::TransferStats,
+    format_bytes_per_pixel, validate_texture_bytes,
 };
 #[cfg(all(feature = "gpu-async", feature = "gpu-wgpu"))]
 use async_trait::async_trait;
 use pollster::FutureExt;
 use wgpu::{Adapter, Backends, Features, Instance, InstanceDescriptor, Limits};
+
+mod adapter_select;
+mod capabilities;
+mod copy_limiter;
+mod resources;
+mod staging;
+
+use adapter_select::{preferred_backends, select_best_adapter};
+use capabilities::{build_info_from_adapter, caps_from_adapter};
+use copy_limiter::CopyLimiter;
+use resources::{ResourceDropToken, ResourceKind, WgpuResources};
+use staging::StagingPool;
+pub use staging::{WgpuStagingPoolConfig, WgpuStagingPoolStats};
 
 /// Minimal wgpu backend placeholder to satisfy trait; queries adapter limits when available.
 pub struct WgpuBackend {
@@ -23,138 +36,34 @@ pub struct WgpuBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     resources: Arc<WgpuResources>,
-    _staging_pool: Mutex<HashMap<u64, Vec<wgpu::Buffer>>>,
+    staging_pool: Mutex<StagingPool>,
     copy_limiter: CopyLimiter,
-}
-
-#[derive(Debug, Default)]
-struct WgpuResources {
-    buffers: Mutex<HashMap<GpuBufferId, wgpu::Buffer>>,
-    textures: Mutex<HashMap<GpuImageId, Arc<wgpu::Texture>>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResourceKind {
-    Buffer(GpuBufferId),
-    Texture {
-        id: GpuImageId,
-        recycle: Option<TextureRecycleMeta>,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TextureRecycleMeta {
+    submission_tracker: SubmissionTracker,
     device_key: usize,
-    width: u32,
-    height: u32,
-    format: wgpu::TextureFormat,
-    usage: wgpu::TextureUsages,
-}
-
-#[derive(Debug)]
-struct ResourceDropToken {
-    kind: ResourceKind,
-    resources: Weak<WgpuResources>,
-}
-
-impl Drop for ResourceDropToken {
-    fn drop(&mut self) {
-        let Some(resources) = self.resources.upgrade() else {
-            return;
-        };
-        match self.kind {
-            ResourceKind::Buffer(id) => {
-                if let Ok(mut buffers) = resources.buffers.lock() {
-                    buffers.remove(&id);
-                }
-            }
-            ResourceKind::Texture { id, recycle } => {
-                if let Ok(mut textures) = resources.textures.lock() {
-                    let texture = textures.remove(&id);
-                    if let (Some(texture), Some(meta)) = (texture, recycle)
-                        && let Ok(mut pool) = crate::shader::temp_pool().lock()
-                    {
-                        pool.put_texture(
-                            meta.device_key,
-                            meta.width,
-                            meta.height,
-                            meta.format,
-                            meta.usage,
-                            texture,
-                        );
-                    }
-                }
-            }
-        }
-    }
 }
 
 impl WgpuBackend {
+    /// Create a wgpu backend using the synchronous compatibility path.
+    ///
+    /// This blocks while wgpu enumerates adapters and requests a device. Async callers should use
+    /// [`WgpuBackend::new_async`] to avoid blocking executor threads.
     pub fn new() -> Result<Self, GpuError> {
+        let res = std::panic::catch_unwind(|| Self::new_async().block_on());
+
+        match res {
+            Ok(ok) => ok,
+            Err(_) => Err(GpuError::AdapterUnavailable),
+        }
+    }
+
+    /// Create a wgpu backend with explicit staging-pool config using the synchronous compatibility
+    /// path.
+    ///
+    /// This blocks while wgpu enumerates adapters and requests a device. Async callers should use
+    /// [`WgpuBackend::new_with_staging_pool_config_async`] to avoid blocking executor threads.
+    pub fn new_with_staging_pool_config(config: WgpuStagingPoolConfig) -> Result<Self, GpuError> {
         let res = std::panic::catch_unwind(|| {
-            #[allow(clippy::if_same_then_else)]
-            let preferred_backends = Backends::from_env().unwrap_or_else(|| {
-                #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-                {
-                    // Headless Linux ARM targets (CM5) are significantly more stable with Vulkan.
-                    Backends::VULKAN
-                }
-                #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
-                {
-                    Backends::all()
-                }
-            });
-            let mut instance_desc = InstanceDescriptor::new_without_display_handle();
-            instance_desc.backends = preferred_backends;
-            let instance = Instance::new(instance_desc);
-            let mut adapters: Vec<Adapter> =
-                instance.enumerate_adapters(preferred_backends).block_on();
-            if adapters.is_empty() && preferred_backends != Backends::all() {
-                adapters = instance.enumerate_adapters(Backends::all()).block_on();
-            }
-            let adapter = match select_best_adapter(adapters) {
-                Some(a) => a,
-                None => return Err(GpuError::AdapterUnavailable),
-            };
-
-            let (info, features, limits) = build_info_from_adapter(&adapter);
-
-            let caps = caps_from_adapter(Some(&adapter), &limits);
-
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    label: Some("wgpu-backend"),
-                    required_features: Features::empty(),
-                    required_limits: adapter.limits(),
-                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                    memory_hints: wgpu::MemoryHints::default(),
-                    trace: wgpu::Trace::default(),
-                })
-                .block_on()
-                .expect("wgpu device");
-
-            // Defensive reset: if a prior backend/device died and was recreated, pointer-based
-            // keys can alias stale pooled textures. Start each backend with a clean temp pool.
-            crate::shader::clear_temp_pool();
-
-            // Avoid process-level panics on uncaptured backend errors (OOM/validation).
-            // We still surface the error for diagnostics, but keep the runtime alive.
-            device.on_uncaptured_error(std::sync::Arc::new(|err| {
-                eprintln!("daedalus-gpu: uncaptured wgpu error: {err}");
-            }));
-
-            Ok(Self {
-                adapter: info,
-                caps: caps.clone(),
-                stats: Mutex::new(TransferStats::default()),
-                _features: features,
-                _limits: limits,
-                device,
-                queue,
-                resources: Arc::new(WgpuResources::default()),
-                _staging_pool: Mutex::new(HashMap::new()),
-                copy_limiter: CopyLimiter::new(caps.max_inflight_copies.max(1)),
-            })
+            Self::new_with_staging_pool_config_async(config).block_on()
         });
 
         match res {
@@ -163,8 +72,77 @@ impl WgpuBackend {
         }
     }
 
+    /// Create a wgpu backend without blocking the current thread on async wgpu operations.
+    pub async fn new_async() -> Result<Self, GpuError> {
+        let staging_config = WgpuStagingPoolConfig::from_env().map_err(GpuError::Internal)?;
+        Self::new_with_staging_pool_config_async(staging_config).await
+    }
+
+    pub async fn new_with_staging_pool_config_async(
+        staging_config: WgpuStagingPoolConfig,
+    ) -> Result<Self, GpuError> {
+        let preferred_backends = preferred_backends();
+        let mut instance_desc = InstanceDescriptor::new_without_display_handle();
+        instance_desc.backends = preferred_backends;
+        let instance = Instance::new(instance_desc);
+        let mut adapters: Vec<Adapter> = instance.enumerate_adapters(preferred_backends).await;
+        if adapters.is_empty() && preferred_backends != Backends::all() {
+            adapters = instance.enumerate_adapters(Backends::all()).await;
+        }
+        let adapter = select_best_adapter(adapters).ok_or(GpuError::AdapterUnavailable)?;
+
+        let (info, features, limits) = build_info_from_adapter(&adapter);
+        let caps = caps_from_adapter(Some(&adapter), &limits);
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("wgpu-backend"),
+                required_features: Features::empty(),
+                required_limits: adapter.limits(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::default(),
+            })
+            .await
+            .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
+
+        let device_key = crate::shader::register_device(&device);
+
+        // Avoid process-level panics on uncaptured backend errors (OOM/validation).
+        // We still surface the error for diagnostics, but keep the runtime alive.
+        device.on_uncaptured_error(std::sync::Arc::new(|err| {
+            tracing::error!(
+                target: "daedalus_gpu::wgpu",
+                error = %err,
+                "uncaptured wgpu error"
+            );
+        }));
+
+        Ok(Self {
+            adapter: info,
+            caps: caps.clone(),
+            stats: Mutex::new(TransferStats::default()),
+            _features: features,
+            _limits: limits,
+            device,
+            queue,
+            resources: Arc::new(WgpuResources::default()),
+            staging_pool: Mutex::new(StagingPool::with_config(staging_config)),
+            copy_limiter: CopyLimiter::new(caps.max_inflight_copies.max(1)),
+            submission_tracker: SubmissionTracker::default(),
+            device_key,
+        })
+    }
+
     pub(crate) fn device_queue(&self) -> (&wgpu::Device, &wgpu::Queue) {
         (&self.device, &self.queue)
+    }
+
+    pub fn staging_pool_stats(&self) -> WgpuStagingPoolStats {
+        self.staging_pool
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .stats()
     }
 
     fn stats_guard(&self) -> MutexGuard<'_, TransferStats> {
@@ -177,12 +155,17 @@ impl WgpuBackend {
         &self,
         handle: &GpuImageHandle,
     ) -> Option<std::sync::Arc<wgpu::Texture>> {
-        self.resources
-            .textures
-            .lock()
-            .ok()?
-            .get(&handle.id)
-            .cloned()
+        match self.resources.textures.lock() {
+            Ok(textures) => textures.get(&handle.id).cloned(),
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "daedalus_gpu::wgpu",
+                    texture_id = %handle.id,
+                    "wgpu texture registry lock poisoned while looking up texture"
+                );
+                poisoned.into_inner().get(&handle.id).cloned()
+            }
+        }
     }
 
     pub(crate) fn register_texture(
@@ -214,8 +197,18 @@ impl WgpuBackend {
         }
         let mut handle =
             GpuImageHandle::new(gpu_format, width, height, GpuMemoryLocation::Gpu, gpu_usage);
-        if let Ok(mut map) = self.resources.textures.lock() {
-            map.insert(handle.id, texture);
+        match self.resources.textures.lock() {
+            Ok(mut map) => {
+                map.insert(handle.id, texture);
+            }
+            Err(poisoned) => {
+                tracing::warn!(
+                    target: "daedalus_gpu::wgpu",
+                    texture_id = %handle.id,
+                    "wgpu texture registry lock poisoned while registering texture"
+                );
+                poisoned.into_inner().insert(handle.id, texture);
+            }
         }
         handle.drop_token = Some(Arc::new(ResourceDropToken {
             kind: ResourceKind::Texture {
@@ -228,65 +221,13 @@ impl WgpuBackend {
     }
 }
 
-fn select_best_adapter(adapters: Vec<Adapter>) -> Option<Adapter> {
-    adapters.into_iter().max_by_key(adapter_score)
-}
-
-fn adapter_score(adapter: &Adapter) -> i64 {
-    let info = adapter.get_info();
-    let mut score: i64 = match info.backend {
-        wgpu::Backend::Vulkan => 500,
-        wgpu::Backend::Metal => 450,
-        wgpu::Backend::Dx12 => 400,
-        wgpu::Backend::Gl => 250,
-        wgpu::Backend::BrowserWebGpu => 150,
-        wgpu::Backend::Noop => 0,
-    };
-
-    score += match info.device_type {
-        wgpu::DeviceType::DiscreteGpu => 120,
-        wgpu::DeviceType::IntegratedGpu => 90,
-        wgpu::DeviceType::VirtualGpu => 40,
-        wgpu::DeviceType::Cpu => -300,
-        wgpu::DeviceType::Other => 0,
-    };
-
-    // Strongly avoid software adapters when possible.
-    let lower_name = info.name.to_ascii_lowercase();
-    if lower_name.contains("llvmpipe")
-        || lower_name.contains("lavapipe")
-        || lower_name.contains("softpipe")
-    {
-        score -= 800;
+impl Drop for WgpuBackend {
+    fn drop(&mut self) {
+        crate::shader::clear_pipeline_caches_for_device(self.device_key);
+        crate::shader::clear_temp_pool_for_device(self.device_key);
+        crate::shader::clear_gpu_state_pool_for_device(self.device_key);
+        crate::shader::unregister_device(&self.device, self.device_key);
     }
-
-    // Prefer adapters that can run our storage-heavy image pipeline.
-    let rgba = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
-    if rgba
-        .allowed_usages
-        .contains(wgpu::TextureUsages::STORAGE_BINDING)
-    {
-        score += 90;
-    } else {
-        score -= 200;
-    }
-    if rgba
-        .allowed_usages
-        .contains(wgpu::TextureUsages::TEXTURE_BINDING)
-    {
-        score += 20;
-    } else {
-        score -= 50;
-    }
-    if rgba.allowed_usages.contains(wgpu::TextureUsages::COPY_SRC)
-        && rgba.allowed_usages.contains(wgpu::TextureUsages::COPY_DST)
-    {
-        score += 20;
-    } else {
-        score -= 120;
-    }
-
-    score
 }
 
 impl GpuBackend for WgpuBackend {
@@ -314,6 +255,10 @@ impl GpuBackend for WgpuBackend {
         Some((&self.device, &self.queue))
     }
 
+    fn wgpu_submission_tracker(&self) -> Option<&SubmissionTracker> {
+        Some(&self.submission_tracker)
+    }
+
     fn wgpu_get_texture(&self, handle: &GpuImageHandle) -> Option<std::sync::Arc<wgpu::Texture>> {
         self.get_texture(handle)
     }
@@ -336,11 +281,6 @@ impl GpuBackend for WgpuBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        if self.caps.staging_alignment > 0
-            && !req.size_bytes.is_multiple_of(self.caps.staging_alignment)
-        {
-            return Err(GpuError::AllocationFailed);
-        }
         {
             let mut stats = self.stats_guard();
             stats.record_upload(req.size_bytes);
@@ -356,7 +296,7 @@ impl GpuBackend for WgpuBackend {
         self.resources
             .buffers
             .lock()
-            .expect("buffers lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(handle.id, buffer);
         handle.drop_token = Some(Arc::new(ResourceDropToken {
             kind: ResourceKind::Buffer(handle.id),
@@ -428,7 +368,7 @@ impl GpuBackend for WgpuBackend {
         self.resources
             .textures
             .lock()
-            .expect("textures lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(handle.id, Arc::new(texture));
         handle.drop_token = Some(Arc::new(ResourceDropToken {
             kind: ResourceKind::Texture {
@@ -464,7 +404,7 @@ impl GpuBackend for WgpuBackend {
             .resources
             .textures
             .lock()
-            .expect("textures lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&handle.id)
             .cloned()
         {
@@ -523,7 +463,7 @@ impl GpuBackend for WgpuBackend {
             .resources
             .textures
             .lock()
-            .expect("textures lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&handle.id)
             .cloned()
             .ok_or(GpuError::Unsupported)?;
@@ -567,11 +507,20 @@ impl GpuBackend for WgpuBackend {
         );
         self.queue.submit(Some(encoder.finish()));
         let slice = staging.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
+        // Synchronous texture readback is a compatibility API and may block the
+        // current thread. Async runtimes should use `GpuAsyncBackend` readback
+        // methods with the `gpu-async` feature instead.
         let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
+        rx.recv()
+            .map_err(|err| GpuError::Internal(format!("texture map canceled: {err}")))?
+            .map_err(|err| GpuError::Internal(format!("texture map failed: {err:?}")))?;
         let raw = slice.get_mapped_range().to_vec();
         staging.unmap();
         let data = if padded_bpr == bytes_per_row {
@@ -590,95 +539,6 @@ impl GpuBackend for WgpuBackend {
         };
         self.record_download(data.len() as u64);
         Ok(data)
-    }
-}
-
-fn caps_from_adapter(adapter: Option<&Adapter>, limits: &Limits) -> GpuCapabilities {
-    let formats = [
-        GpuFormat::R8Unorm,
-        GpuFormat::Rgba8Unorm,
-        GpuFormat::Rgba16Float,
-        GpuFormat::Depth24Stencil8,
-    ];
-    let mut format_features = Vec::new();
-    for format in formats {
-        let (sampleable, renderable, storage, max_samples) = if let Some(adapter) = adapter {
-            let tf = match format {
-                GpuFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
-                GpuFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
-                GpuFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
-                GpuFormat::Depth24Stencil8 => wgpu::TextureFormat::Depth24PlusStencil8,
-            };
-            let features = adapter.get_texture_format_features(tf);
-            let allowed = features.allowed_usages;
-            let flags = features.flags;
-            let max_samples = if flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8) {
-                8
-            } else if flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4) {
-                4
-            } else if flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X2) {
-                2
-            } else {
-                1
-            };
-            (
-                allowed.contains(wgpu::TextureUsages::TEXTURE_BINDING),
-                allowed.contains(wgpu::TextureUsages::RENDER_ATTACHMENT),
-                allowed.contains(wgpu::TextureUsages::STORAGE_BINDING),
-                max_samples,
-            )
-        } else {
-            (true, true, format != GpuFormat::Depth24Stencil8, 8)
-        };
-        format_features.push(GpuFormatFeatures {
-            format,
-            sampleable,
-            renderable,
-            storage,
-            max_samples,
-        });
-    }
-
-    GpuCapabilities {
-        supported_formats: formats.to_vec(),
-        format_features,
-        format_blocks: vec![
-            GpuBlockInfo {
-                format: GpuFormat::R8Unorm,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 1,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Rgba8Unorm,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 4,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Rgba16Float,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 8,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Depth24Stencil8,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 4,
-            },
-        ],
-        max_buffer_size: limits.max_buffer_size,
-        max_texture_dimension: limits.max_texture_dimension_2d,
-        max_texture_samples: limits.max_texture_dimension_2d.min(8),
-        staging_alignment: limits.min_storage_buffer_offset_alignment as u64,
-        max_inflight_copies: 8,
-        queue_count: 1,
-        min_buffer_copy_offset_alignment: wgpu::COPY_BUFFER_ALIGNMENT,
-        bytes_per_row_alignment: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
-        rows_per_image_alignment: 1,
-        // wgpu uses a unified queue that supports transfer+compute.
-        has_transfer_queue: true,
     }
 }
 
@@ -739,13 +599,13 @@ impl crate::GpuAsyncBackend for WgpuBackend {
         req: &GpuRequest,
         data: &[u8],
     ) -> Result<GpuBufferHandle, GpuError> {
-        let _guard = self.copy_limiter.acquire();
+        let _guard = self.copy_limiter.acquire_async().await;
         let handle = self.create_buffer(req)?;
         if let Some(buf) = self
             .resources
             .buffers
             .lock()
-            .expect("buffers lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&handle.id)
             .cloned()
         {
@@ -759,22 +619,17 @@ impl crate::GpuAsyncBackend for WgpuBackend {
             .resources
             .buffers
             .lock()
-            .expect("buffers lock")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&handle.id)
             .cloned()
             .ok_or(GpuError::Unsupported)?;
         // Staging reuse
         let staging = {
             let mut pool = self
-                ._staging_pool
+                .staging_pool
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(list) = pool.get_mut(&handle.size_bytes) {
-                list.pop()
-            } else {
-                None
-            }
-            .unwrap_or_else(|| {
+            pool.take(handle.size_bytes).unwrap_or_else(|| {
                 self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("readback"),
                     size: handle.size_bytes,
@@ -783,7 +638,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
                 })
             })
         };
-        let _guard = self.copy_limiter.acquire();
+        let _guard = self.copy_limiter.acquire_async().await;
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -792,118 +647,24 @@ impl crate::GpuAsyncBackend for WgpuBackend {
         encoder.copy_buffer_to_buffer(&buf, 0, &staging, 0, handle.size_bytes);
         self.queue.submit(Some(encoder.finish()));
         let buffer_slice = staging.slice(..);
-        buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
-        let _ = self.device.poll(wgpu::PollType::Wait {
-            submission_index: None,
-            timeout: None,
-        });
+        crate::shader::map_read_async(&self.device, buffer_slice)
+            .await
+            .map_err(|err| GpuError::Internal(format!("map failed: {err}")))?;
         let data = buffer_slice.get_mapped_range().to_vec();
         staging.unmap();
         self.record_download(data.len() as u64);
         // Return staging to pool
         {
             let mut pool = self
-                ._staging_pool
+                .staging_pool
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            pool.entry(handle.size_bytes).or_default().push(staging);
+            pool.put(handle.size_bytes, staging);
         }
         Ok(data)
     }
 }
 
-fn build_info_from_adapter(adapter: &Adapter) -> (GpuAdapterInfo, Features, Limits) {
-    let info = adapter.get_info();
-    let features = adapter.features();
-    let limits = adapter.limits();
-    let name = format!("{} ({:?})", info.name, info.backend);
-    (
-        GpuAdapterInfo {
-            name,
-            backend: GpuBackendKind::Wgpu,
-            device_id: Some(format!("{:x}", info.device)),
-            vendor_id: Some(info.vendor.to_string()),
-        },
-        features,
-        limits,
-    )
-}
-
-/// Simple semaphore to cap inflight copy operations.
-struct CopyLimiter {
-    limit: u32,
-    state: Mutex<u32>,
-    cv: Condvar,
-}
-
-impl CopyLimiter {
-    fn new(limit: u32) -> Self {
-        Self {
-            limit,
-            state: Mutex::new(0),
-            cv: Condvar::new(),
-        }
-    }
-
-    fn acquire(&self) -> CopyGuard<'_> {
-        let mut count = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while *count >= self.limit {
-            count = self
-                .cv
-                .wait(count)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
-        *count += 1;
-        CopyGuard { limiter: self }
-    }
-
-    fn release(&self) {
-        let mut count = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *count = count.saturating_sub(1);
-        self.cv.notify_one();
-    }
-}
-
-struct CopyGuard<'a> {
-    limiter: &'a CopyLimiter,
-}
-
-impl Drop for CopyGuard<'_> {
-    fn drop(&mut self) {
-        self.limiter.release();
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wgpu_backend_creates_resources() {
-        let backend = WgpuBackend::new().unwrap();
-        let buf = backend
-            .create_buffer(&GpuRequest {
-                usage: GpuUsage::UPLOAD,
-                format: None,
-                size_bytes: 1024,
-            })
-            .unwrap();
-        assert_eq!(buf.size_bytes, 1024);
-        let img = backend
-            .create_image(&GpuImageRequest {
-                format: GpuFormat::Rgba8Unorm,
-                width: 256,
-                height: 256,
-                samples: 1,
-                usage: GpuUsage::RENDER_TARGET,
-            })
-            .unwrap();
-        assert_eq!(img.width, 256);
-    }
-}
+#[path = "wgpu_backend/tests.rs"]
+mod tests;
