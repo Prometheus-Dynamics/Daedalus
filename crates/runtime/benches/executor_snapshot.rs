@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use daedalus_planner::{
@@ -14,9 +14,9 @@ use daedalus_runtime::host_bridge::HOST_BRIDGE_ID;
 use daedalus_runtime::io::NodeIo;
 use daedalus_runtime::state::ExecutionContext;
 use daedalus_runtime::{
-    BackpressureStrategy, DEFAULT_STREAM_IDLE_SLEEP, ExecutionTelemetry, HOST_BRIDGE_META_KEY,
-    ManagedByteBuffer, MetricsLevel, NodeError, NodeHandler, RuntimeEdgePolicy, RuntimeNode,
-    SchedulerConfig, StreamGraph, build_runtime,
+    BackpressureStrategy, DEFAULT_STREAM_IDLE_SLEEP, ExecutionTelemetry, GraphOutput,
+    HOST_BRIDGE_META_KEY, ManagedByteBuffer, MetricsLevel, NodeError, NodeHandler,
+    RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, StreamGraph, build_runtime,
 };
 use daedalus_transport::{FreshnessPolicy, Payload, PressurePolicy};
 
@@ -203,6 +203,25 @@ fn stream_graph() -> StreamGraph<BenchHandler> {
     StreamGraph::new(runtime_from_graph(graph), BenchHandler)
 }
 
+fn recv_stream_i64(output: &GraphOutput, timeout: Duration) -> i64 {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(payload) = output
+            .recv_timeout(Duration::from_millis(1))
+            .expect("stream receive")
+        {
+            return payload
+                .try_into_owned::<i64>()
+                .map_err(|_| "stream output type mismatch")
+                .expect("typed stream output");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "stream output payload within benchmark timeout"
+        );
+    }
+}
+
 fn executor_snapshot_overhead(c: &mut Criterion) {
     let mut group = c.benchmark_group("executor_snapshot_overhead");
 
@@ -324,13 +343,7 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
                 .feed(Payload::owned(TYPE_KEY, black_box(value)))
                 .expect("stream feed");
             graph.drain().expect("stream drain");
-            let output = output
-                .recv_timeout(Duration::from_millis(1))
-                .expect("stream receive")
-                .expect("stream output payload")
-                .try_into_owned::<i64>()
-                .map_err(|_| "stream output type mismatch")
-                .expect("typed stream output");
+            let output = recv_stream_i64(&output, Duration::from_millis(10));
             value = value.wrapping_add(1);
             black_box(output);
         });
@@ -355,13 +368,7 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
                 input
                     .feed(Payload::owned(TYPE_KEY, black_box(value)))
                     .expect("stream feed");
-                let output = output
-                    .recv_timeout(Duration::from_millis(10))
-                    .expect("stream receive")
-                    .expect("stream output payload")
-                    .try_into_owned::<i64>()
-                    .map_err(|_| "stream output type mismatch")
-                    .expect("typed stream output");
+                let output = recv_stream_i64(&output, Duration::from_millis(100));
                 value = value.wrapping_add(1);
                 black_box(output);
             });
@@ -431,13 +438,7 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
                         .expect("stream feed");
                     value = value.wrapping_add(1);
                 }
-                let output = output
-                    .recv_timeout(Duration::from_millis(10))
-                    .expect("stream receive")
-                    .expect("stream output payload")
-                    .try_into_owned::<i64>()
-                    .map_err(|_| "stream output type mismatch")
-                    .expect("typed stream output");
+                let output = recv_stream_i64(&output, Duration::from_millis(100));
                 black_box(output);
             });
             graph

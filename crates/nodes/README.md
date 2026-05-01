@@ -1,13 +1,12 @@
 # daedalus-nodes
 
-Demonstration and bundle nodes built with the `#[node]` macro. Used as fixtures for planner/runtime tests and as examples for downstream authors.
+Built-in and demo node bundles used by examples, tests, and plugin fixtures.
 
-## What’s inside
-- Example nodes covering CPU and GPU paths, branching, metadata handling, and sync policies.
-- UI tests (`tests/ui`) that validate macro diagnostics for common authoring mistakes.
-- Helpers for bundling and registering node sets.
+## Owns
 
-## Usage
-- Treat these nodes as references when authoring your own `#[node]` functions.
-- Tests in other crates depend on these descriptors/handlers; keep changes backward-compatible within the workspace.
-- Feature-gated bundles in `Cargo.toml` control which node sets are exposed.
+- convenience re-export of the `node` macro,
+- `declare_plugin!` helper for macro-generated plugin structs,
+- feature-gated starter, utility, and demo bundles,
+- fixtures that exercise registry/runtime/plugin integration.
+
+Production applications can use these as references, but should keep domain-specific node libraries in their own crates.

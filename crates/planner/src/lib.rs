@@ -1,8 +1,8 @@
-//! Planner passes and execution plan model scaffolding. See `PLAN.md` for staged tasks.
-//! Exposes a deterministic pass pipeline from registry-sourced graphs to an `ExecutionPlan`.
+//! Deterministic graph planning for Daedalus.
 //!
-//! Pass order (stubs today, contract documented):
-//! hydrate_registry -> typecheck -> convert -> align -> gpu -> schedule -> lint.
+//! This crate validates graph structure, hydrates registry declarations, resolves
+//! type and transport requirements, annotates GPU segments, schedules execution,
+//! and emits planner diagnostics plus runtime-plan input data.
 
 pub mod debug;
 mod diagnostics;

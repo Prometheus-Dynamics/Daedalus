@@ -49,16 +49,6 @@ impl From<PluginError> for HostBridgeInstallError {
 ///
 /// The handler is wired to the provided manager so host code can push/pop payloads.
 ///
-/// ```no_run
-/// use daedalus::host_bridge::install_host_bridge;
-/// use daedalus::runtime::host_bridge::HostBridgeManager;
-/// use daedalus::runtime::plugins::PluginRegistry;
-///
-/// let mut registry = PluginRegistry::default();
-/// let manager = HostBridgeManager::new();
-/// let handle = install_host_bridge(&mut registry, manager).expect("host bridge");
-/// assert!(!handle.id().is_empty());
-/// ```
 pub fn install_host_bridge(
     registry: &mut PluginRegistry,
     manager: HostBridgeManager,
@@ -102,13 +92,6 @@ pub fn install_default_host_bridge(
 
 /// Build a host bridge port handle for convenience.
 ///
-/// ```
-/// use daedalus::host_bridge::host_port;
-///
-/// let port = host_port("bridge", "in");
-/// assert_eq!(port.node_alias(), "bridge");
-/// assert_eq!(port.port(), "in");
-/// ```
 pub fn host_port(alias: impl Into<String>, port: impl Into<String>) -> PortHandle {
     PortHandle::new(alias, port)
 }

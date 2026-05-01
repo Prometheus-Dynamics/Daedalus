@@ -35,4 +35,3 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 once_cell = { workspace = true }
-daedalus-data = { workspace = true }

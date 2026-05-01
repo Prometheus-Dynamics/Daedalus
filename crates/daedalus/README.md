@@ -1,25 +1,21 @@
-# daedalus (facade)
+# daedalus
 
-Crates.io package name: `daedalus-rs` (crate name `daedalus`).
+Facade crate for application users. The package is published as `daedalus-rs`; the Rust crate name is `daedalus`.
 
-Add to your Cargo.toml:
-`daedalus = { package = "daedalus-rs", version = "2.0.0" }`
+## Purpose
 
-User-facing crate that re-exports the primary APIs from the workspace: registry, planner, runtime, optional GPU helpers, macros, and engine.
+Use this crate when an application wants the public Daedalus API from one dependency instead of depending on each internal crate directly. It re-exports core, data, transport, registry, planner, runtime, macros, optional engine, optional GPU, and plugin helpers.
 
-## What it includes
-- Re-exports from `daedalus-core`, `daedalus-data`, `daedalus-registry`, `daedalus-planner`, `daedalus-runtime`, `daedalus-macros`, optional `daedalus-gpu`, and optional `daedalus-engine`.
-- Feature flags mirror the underlying crates: `engine`, `plugins`, `gpu-types`, `gpu-runtime`, `gpu-engine`, `gpu`, `gpu-wgpu`, `gpu-async`, `gpu-mock`, `schema`, `proto`, `examples`.
+## Feature Selection
 
-## Typical use
-- Depend on `daedalus` to get the combined API.
-- Enable `engine`/`plugins` for the full runtime + convenience facade.
-- Enable `gpu-types` when code only needs GPU handles/options, `gpu-runtime` for planner/runtime GPU wiring, or `gpu-engine` for high-level engine GPU wiring.
-- Enable `gpu-wgpu` to allow GPU-preferred/required nodes to execute on a real device.
-- Enable `gpu-async` for async shader dispatch/readback paths on the real backend.
-- Use the workspace `examples` package as templates for building graphs and nodes.
+- `engine`: high-level execution facade.
+- `plugins`: plugin registry and plugin macro installation.
+- `gpu-types`: GPU handles and type surface.
+- `gpu-runtime`: registry/planner/runtime GPU wiring.
+- `gpu-engine`: engine GPU wiring.
+- `gpu-wgpu`: real `wgpu` backend.
+- `gpu-async`: async `wgpu` shader dispatch/readback helpers.
+- `gpu-mock`: deterministic mock GPU backend.
+- `schema` and `proto`: optional export surfaces.
 
-## Examples
-- Quickstart: `quickstart_typed_cpu_graph`, `quickstart_bounded_streaming_io`.
-- Basics: `hello_graph`, `typed_ports`, `typed_handle_graph`.
-- GPU: `gpu_node`, `upload_download`, `mixed_cpu_gpu`, `gpu_fallback`.
+For most host applications, start with `engine,plugins`. Add GPU features only when the host actually needs GPU planning or execution.

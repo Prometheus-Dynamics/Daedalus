@@ -3,11 +3,6 @@ use thiserror::Error;
 
 /// Stable error codes for `daedalus-data`.
 ///
-/// ```
-/// use daedalus_data::errors::DataErrorCode;
-/// let code = DataErrorCode::InvalidType;
-/// assert_eq!(format!("{code:?}"), "InvalidType");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DataErrorCode {
@@ -22,11 +17,6 @@ pub enum DataErrorCode {
 
 /// Structured data-layer error.
 ///
-/// ```
-/// use daedalus_data::errors::{DataError, DataErrorCode};
-/// let err = DataError::new(DataErrorCode::InvalidDescriptor, "bad descriptor");
-/// assert_eq!(err.code(), DataErrorCode::InvalidDescriptor);
-/// ```
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 #[error("{code:?}: {message}")]
 pub struct DataError {

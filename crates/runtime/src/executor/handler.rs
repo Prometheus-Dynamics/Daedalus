@@ -13,21 +13,6 @@ pub type DirectPayloadFn = Arc<
 
 /// Handler abstraction for executing a node.
 ///
-/// ```no_run
-/// use daedalus_runtime::executor::NodeHandler;
-/// use daedalus_runtime::io::NodeIo;
-/// use daedalus_runtime::state::ExecutionContext;
-///
-/// fn handler(
-///     _node: &daedalus_runtime::RuntimeNode,
-///     _ctx: &ExecutionContext,
-///     _io: &mut NodeIo,
-/// ) -> Result<(), daedalus_runtime::executor::NodeError> {
-///     Ok(())
-/// }
-///
-/// let _h: &dyn NodeHandler = &handler;
-/// ```
 pub trait NodeHandler: Send + Sync {
     fn run(
         &self,

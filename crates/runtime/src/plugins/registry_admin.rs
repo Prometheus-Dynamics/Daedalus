@@ -21,6 +21,7 @@ impl PluginRegistry {
             runtime_transport: RuntimeTransport::new(),
             transport_capabilities: TransportCapabilityRegistry::new(),
             type_registry: TypeRegistry::new(),
+            named_type_registry: NamedTypeRegistry::new(),
             plugin_manifests: BTreeMap::new(),
             boundary_contracts: BTreeMap::new(),
             current_prefix: None,

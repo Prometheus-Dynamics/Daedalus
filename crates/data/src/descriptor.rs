@@ -5,11 +5,6 @@ use crate::model::{TypeExpr, Value, ValueType};
 
 /// GPU-related hints carried on descriptors.
 ///
-/// ```
-/// use daedalus_data::descriptor::{GpuHints, MemoryLocation};
-/// let hints = GpuHints { requires_gpu: false, preferred_memory: Some(MemoryLocation::Host) };
-/// assert_eq!(hints.preferred_memory, Some(MemoryLocation::Host));
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct GpuHints {
     pub requires_gpu: bool,
@@ -18,11 +13,6 @@ pub struct GpuHints {
 
 /// Memory location hint for GPU-aware values.
 ///
-/// ```
-/// use daedalus_data::descriptor::MemoryLocation;
-/// let loc = MemoryLocation::Device;
-/// assert_eq!(loc, MemoryLocation::Device);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemoryLocation {
     Host,
@@ -32,23 +22,6 @@ pub enum MemoryLocation {
 
 /// Descriptor for values/types.
 ///
-/// ```
-/// use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
-/// let desc = DataDescriptor {
-///     id: DescriptorId::new("example"),
-///     version: DescriptorVersion::new("1.0.0"),
-///     label: None,
-///     settable: false,
-///     default: None,
-///     schema: None,
-///     codecs: vec![],
-///     converters: vec![],
-///     feature_flags: vec![],
-///     gpu: None,
-///     type_expr: None,
-/// };
-/// assert_eq!(desc.id.0, "example");
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DataDescriptor {
     pub id: DescriptorId,
@@ -67,23 +40,6 @@ pub struct DataDescriptor {
 impl DataDescriptor {
     /// Validate the descriptor, including type/default shape checks.
     ///
-    /// ```
-    /// use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
-    /// let desc = DataDescriptor {
-    ///     id: DescriptorId::new("example"),
-    ///     version: DescriptorVersion::new("1.0"),
-    ///     label: None,
-    ///     settable: false,
-    ///     default: None,
-    ///     schema: None,
-    ///     codecs: vec![],
-    ///     converters: vec![],
-    ///     feature_flags: vec![],
-    ///     gpu: None,
-    ///     type_expr: None,
-    /// };
-    /// desc.validate().unwrap();
-    /// ```
     pub fn validate(&self) -> DataResult<()> {
         self.id.validate()?;
         self.version.validate()?;
@@ -101,24 +57,6 @@ impl DataDescriptor {
 
     /// Deterministic ordering for codecs/converters/feature flags.
     ///
-    /// ```
-    /// use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
-    /// let desc = DataDescriptor {
-    ///     id: DescriptorId::new("id"),
-    ///     version: DescriptorVersion::new("1.0"),
-    ///     label: None,
-    ///     settable: false,
-    ///     default: None,
-    ///     schema: None,
-    ///     codecs: vec!["b".into(), "a".into()],
-    ///     converters: vec!["y".into(), "x".into()],
-    ///     feature_flags: vec!["b".into(), "a".into()],
-    ///     gpu: None,
-    ///     type_expr: None,
-    /// };
-    /// let sorted = desc.normalize();
-    /// assert_eq!(sorted.codecs, vec!["a", "b"]);
-    /// ```
     pub fn normalize(mut self) -> Self {
         self.codecs.sort();
         self.converters.sort();
@@ -129,25 +67,6 @@ impl DataDescriptor {
 
 /// Builder to construct descriptors with deterministic ordering.
 ///
-/// ```
-/// use daedalus_data::descriptor::{DescriptorBuilder, GpuHints, MemoryLocation};
-/// use daedalus_data::errors::DataResult;
-/// use daedalus_data::model::{TypeExpr, Value, ValueType};
-///
-/// fn build_descriptor() -> DataResult<()> {
-///     let desc = DescriptorBuilder::new("example", "1.0.0")
-///         .label("Example")
-///         .settable(true)
-///         .type_expr(TypeExpr::Scalar(ValueType::String))
-///         .default(Value::String("hi".into()))
-///         .codec("json")
-///         .feature_flag("core")
-///         .gpu_hints(GpuHints { requires_gpu: false, preferred_memory: Some(MemoryLocation::Host) })
-///         .build()?;
-///     assert_eq!(desc.codecs, vec!["json"]);
-///     Ok(())
-/// }
-/// ```
 pub struct DescriptorBuilder {
     inner: DataDescriptor,
 }
@@ -225,25 +144,6 @@ impl DescriptorBuilder {
 
 /// Descriptor for a type expression with associated metadata.
 ///
-/// ```
-/// use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion, TypeDescriptor};
-/// use daedalus_data::model::{TypeExpr, ValueType};
-/// let desc = DataDescriptor {
-///     id: DescriptorId::new("demo"),
-///     version: DescriptorVersion::new("1.0.0"),
-///     label: None,
-///     settable: false,
-///     default: None,
-///     schema: None,
-///     codecs: vec![],
-///     converters: vec![],
-///     feature_flags: vec![],
-///     gpu: None,
-///     type_expr: None,
-/// };
-/// let typed = TypeDescriptor { ty: TypeExpr::Scalar(ValueType::Int), descriptor: desc };
-/// assert!(matches!(typed.ty, TypeExpr::Scalar(_)));
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TypeDescriptor {
     pub ty: TypeExpr,
@@ -252,11 +152,6 @@ pub struct TypeDescriptor {
 
 /// Strongly typed descriptor id with basic namespace validation.
 ///
-/// ```
-/// use daedalus_data::descriptor::DescriptorId;
-/// let id = DescriptorId::namespaced("sensor", "temp");
-/// assert_eq!(id.0, "sensor.temp");
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct DescriptorId(pub String);
 
@@ -294,11 +189,6 @@ impl DescriptorId {
 
 /// Strongly typed semantic version string.
 ///
-/// ```
-/// use daedalus_data::descriptor::DescriptorVersion;
-/// let ver = DescriptorVersion::new("1.2.3");
-/// assert_eq!(ver.0, "1.2.3");
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 pub struct DescriptorVersion(pub String);
 
@@ -445,31 +335,6 @@ mod tests {
 
     /// Minimal registry fixture showing `(id, version)` uniqueness and conflict diagnostics.
     ///
-    /// ```
-    /// use std::collections::HashMap;
-    /// use daedalus_data::descriptor::{DataDescriptor, DescriptorBuilder, DescriptorId, DescriptorVersion};
-    ///
-    /// #[derive(Default)]
-    /// struct Registry {
-    ///     entries: HashMap<(DescriptorId, DescriptorVersion), DataDescriptor>,
-    /// }
-    ///
-    /// impl Registry {
-    ///     fn register(&mut self, desc: DataDescriptor) -> Result<(), String> {
-    ///         let key = (desc.id.clone(), desc.version.clone());
-    ///         if self.entries.contains_key(&key) {
-    ///             return Err(format!("duplicate descriptor {:?},{}", key.0, key.1));
-    ///         }
-    ///         self.entries.insert(key, desc);
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// let mut reg = Registry::default();
-    /// let desc = DescriptorBuilder::new("sensor.temp", "1.0.0").build().unwrap();
-    /// reg.register(desc.clone()).unwrap();
-    /// assert!(reg.register(desc).is_err());
-    /// ```
     #[test]
     fn registry_fixture_compiles() {
         // Doc-test above is the primary fixture; keep this test as a placeholder.

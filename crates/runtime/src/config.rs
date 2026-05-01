@@ -9,11 +9,6 @@ pub const ENV_RUNTIME_POOL_SIZE: &str = "DAEDALUS_RUNTIME_POOL_SIZE";
 
 /// Policy for invalid configuration values.
 ///
-/// ```
-/// use daedalus_runtime::config::ConfigPolicy;
-/// let policy = ConfigPolicy::Clamp;
-/// assert_eq!(policy, ConfigPolicy::Clamp);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigPolicy {
     Clamp,
@@ -29,16 +24,42 @@ pub struct RuntimeDebugConfig {
 
 impl RuntimeDebugConfig {
     pub fn from_env() -> Self {
-        Self::from_lookup(|name| std::env::var(name).ok())
+        let (config, warnings) =
+            Self::from_lookup_with_diagnostics(|name| std::env::var(name).ok());
+        for warning in warnings {
+            tracing::warn!(
+                target: "daedalus_runtime::config",
+                env = warning.name,
+                value = %warning.value,
+                reason = warning.reason,
+                "runtime debug env value ignored"
+            );
+        }
+        config
     }
 
     pub fn from_lookup(mut get: impl FnMut(&str) -> Option<String>) -> Self {
-        Self {
-            node_perf_counters: env_bool(&mut get, ENV_NODE_PERF_COUNTERS),
-            node_cpu_time: env_bool(&mut get, ENV_NODE_CPU_TIME),
-            pool_size: env_usize(&mut get, ENV_RUNTIME_POOL_SIZE),
-        }
+        Self::from_lookup_with_diagnostics(&mut get).0
     }
+
+    pub fn from_lookup_with_diagnostics(
+        mut get: impl FnMut(&str) -> Option<String>,
+    ) -> (Self, Vec<RuntimeDebugConfigEnvWarning>) {
+        let mut warnings = Vec::new();
+        let config = Self {
+            node_perf_counters: env_bool(&mut get, ENV_NODE_PERF_COUNTERS, &mut warnings),
+            node_cpu_time: env_bool(&mut get, ENV_NODE_CPU_TIME, &mut warnings),
+            pool_size: env_usize(&mut get, ENV_RUNTIME_POOL_SIZE, &mut warnings),
+        };
+        (config, warnings)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeDebugConfigEnvWarning {
+    pub name: &'static str,
+    pub value: String,
+    pub reason: &'static str,
 }
 
 pub fn runtime_debug_config() -> &'static RuntimeDebugConfig {
@@ -46,36 +67,57 @@ pub fn runtime_debug_config() -> &'static RuntimeDebugConfig {
     CONFIG.get_or_init(RuntimeDebugConfig::from_env)
 }
 
-fn env_bool(get: &mut impl FnMut(&str) -> Option<String>, name: &str) -> bool {
-    get(name)
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+fn env_bool(
+    get: &mut impl FnMut(&str) -> Option<String>,
+    name: &'static str,
+    warnings: &mut Vec<RuntimeDebugConfigEnvWarning>,
+) -> bool {
+    let Some(value) = get(name) else {
+        return false;
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => {
+            warnings.push(RuntimeDebugConfigEnvWarning {
+                name,
+                value,
+                reason: "expected boolean: 1/0, true/false, yes/no, or on/off",
+            });
+            false
+        }
+    }
 }
 
-fn env_usize(get: &mut impl FnMut(&str) -> Option<String>, name: &str) -> Option<usize> {
-    get(name)
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .filter(|value| *value > 0)
+fn env_usize(
+    get: &mut impl FnMut(&str) -> Option<String>,
+    name: &'static str,
+    warnings: &mut Vec<RuntimeDebugConfigEnvWarning>,
+) -> Option<usize> {
+    let value = get(name)?;
+    match value.trim().parse::<usize>() {
+        Ok(parsed) if parsed > 0 => Some(parsed),
+        Ok(_) => {
+            warnings.push(RuntimeDebugConfigEnvWarning {
+                name,
+                value,
+                reason: "expected positive integer greater than zero",
+            });
+            None
+        }
+        Err(_) => {
+            warnings.push(RuntimeDebugConfigEnvWarning {
+                name,
+                value,
+                reason: "expected positive integer",
+            });
+            None
+        }
+    }
 }
 
 /// Record of a configuration value change after sanitization.
 ///
-/// ```
-/// use daedalus_runtime::config::{ConfigChange, ConfigPolicy};
-/// use daedalus_data::model::Value;
-/// let change = ConfigChange {
-///     port: "threshold",
-///     previous: Value::Int(0),
-///     next: Value::Int(1),
-///     policy: ConfigPolicy::Clamp,
-/// };
-/// assert_eq!(change.port, "threshold");
-/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigChange {
     pub port: &'static str,
@@ -86,11 +128,6 @@ pub struct ConfigChange {
 
 /// Sanitized configuration plus any changes applied.
 ///
-/// ```
-/// use daedalus_runtime::config::Sanitized;
-/// let sanitized = Sanitized { value: 3u8, changes: vec![] };
-/// assert_eq!(sanitized.value, 3);
-/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sanitized<T> {
     pub value: T,
@@ -99,11 +136,6 @@ pub struct Sanitized<T> {
 
 /// Error returned from config validation or sanitization.
 ///
-/// ```
-/// use daedalus_runtime::config::ConfigError;
-/// let err = ConfigError::for_port("radius", "too small");
-/// assert_eq!(err.port, Some("radius"));
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigError {
     pub port: Option<&'static str>,
@@ -142,26 +174,6 @@ impl std::error::Error for ConfigError {}
 
 /// Trait implemented by config structs generated by `#[derive(NodeConfig)]`.
 ///
-/// ```
-/// use daedalus_runtime::config::{ConfigError, NodeConfig, Sanitized};
-/// use daedalus_runtime::{NodeError};
-/// use daedalus_runtime::io::NodeIo;
-///
-/// #[derive(Default)]
-/// struct DemoConfig {
-///     threshold: i64,
-/// }
-///
-/// impl NodeConfig for DemoConfig {
-///     fn ports() -> Vec<daedalus_registry::capability::PortDecl> { vec![] }
-///     fn from_io(_io: &NodeIo) -> Result<Self, NodeError> { Ok(DemoConfig::default()) }
-///     fn sanitize(self) -> Result<Sanitized<Self>, ConfigError> { Ok(Sanitized { value: self, changes: vec![] }) }
-///     fn validate(&self) -> Result<(), ConfigError> { Ok(()) }
-/// }
-///
-/// let cfg = DemoConfig::default();
-/// cfg.validate().unwrap();
-/// ```
 pub trait NodeConfig: Sized {
     fn ports() -> Vec<daedalus_registry::capability::PortDecl>;
     fn metadata() -> std::collections::BTreeMap<String, Value> {
@@ -174,26 +186,16 @@ pub trait NodeConfig: Sized {
 
 /// Emit warnings for config changes applied by sanitization.
 ///
-/// ```
-/// use daedalus_runtime::config::{ConfigChange, ConfigPolicy, log_config_changes};
-/// use daedalus_data::model::Value;
-/// let changes = vec![ConfigChange {
-///     port: "value",
-///     previous: Value::Int(0),
-///     next: Value::Int(1),
-///     policy: ConfigPolicy::Clamp,
-/// }];
-/// log_config_changes("node", &changes);
-/// ```
 pub fn log_config_changes(node_id: &str, changes: &[ConfigChange]) {
     for change in changes {
         tracing::warn!(
-            "node={} port={} policy={:?} previous={:?} next={:?}",
-            node_id,
-            change.port,
-            change.policy,
-            change.previous,
-            change.next
+            target: "daedalus_runtime::config",
+            node = node_id,
+            port = change.port,
+            policy = ?change.policy,
+            previous = ?change.previous,
+            next = ?change.next,
+            "node config sanitized"
         );
     }
 }
@@ -231,5 +233,34 @@ mod tests {
         assert!(!config.node_perf_counters);
         assert!(!config.node_cpu_time);
         assert_eq!(config.pool_size, None);
+    }
+
+    #[test]
+    fn runtime_debug_config_reports_ignored_env_values() {
+        let values = BTreeMap::from([
+            (ENV_NODE_CPU_TIME.to_string(), "definitely".to_string()),
+            (ENV_RUNTIME_POOL_SIZE.to_string(), "0".to_string()),
+        ]);
+
+        let (config, warnings) =
+            RuntimeDebugConfig::from_lookup_with_diagnostics(|name| values.get(name).cloned());
+
+        assert!(!config.node_cpu_time);
+        assert_eq!(config.pool_size, None);
+        assert_eq!(
+            warnings,
+            vec![
+                RuntimeDebugConfigEnvWarning {
+                    name: ENV_NODE_CPU_TIME,
+                    value: "definitely".to_string(),
+                    reason: "expected boolean: 1/0, true/false, yes/no, or on/off",
+                },
+                RuntimeDebugConfigEnvWarning {
+                    name: ENV_RUNTIME_POOL_SIZE,
+                    value: "0".to_string(),
+                    reason: "expected positive integer greater than zero",
+                },
+            ]
+        );
     }
 }

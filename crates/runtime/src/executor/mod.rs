@@ -2,12 +2,11 @@ use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, R
 use crate::state::{ExecutionContext, ResourceLifecycleEvent, StateError, StateStore};
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
 use std::collections::{BTreeMap, HashSet};
-#[cfg(feature = "executor-pool")]
-use std::sync::OnceLock;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 mod config;
+mod config_target;
 mod core;
 mod direct_slot;
 mod errors;
@@ -30,6 +29,7 @@ mod telemetry;
 mod telemetry_size;
 
 pub(crate) use config::ExecutorRunConfig;
+pub(crate) use config_target::ExecutorConfigTarget;
 pub(crate) use core::ExecutorCore;
 pub(crate) use direct_slot::{DirectSlot, DirectSlotAccess};
 pub use errors::{ExecuteError, ExecutorBuildError, ExecutorMaskError, NodeError};
@@ -48,9 +48,10 @@ pub(crate) use schedule_compile::{compiled_worker_pool, resolve_pool_workers};
 pub use telemetry::{
     AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
     DataLifecycleStage, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, ExecutionTelemetry,
-    InternalTransferMetrics, MetricsLevel, NodeAllocationSpikeExplanation, NodeFailure,
-    NodeMetrics, NodeResourceMetrics, OwnershipReport, ProfileLevel, Profiler, ResourceMetrics,
-    TelemetryReport, TelemetryReportFilter,
+    FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry,
+    FfiTelemetryReport, FfiWorkerTelemetry, InternalTransferMetrics, MetricsLevel,
+    NodeAllocationSpikeExplanation, NodeFailure, NodeMetrics, NodeResourceMetrics, OwnershipReport,
+    ProfileLevel, Profiler, ResourceMetrics, TelemetryReport, TelemetryReportFilter,
 };
 pub use telemetry_size::{
     RuntimeDataSizeInspector, RuntimeDataSizeInspectors, estimate_payload_bytes,
@@ -77,22 +78,6 @@ struct DirectHostSingleNodeRoute {
 
 /// Runtime executor for planner-generated runtime plans.
 ///
-/// ```no_run
-/// use daedalus_runtime::executor::Executor;
-/// use daedalus_planner::{ExecutionPlan, Graph};
-/// use daedalus_runtime::RuntimePlan;
-///
-/// fn handler(
-///     _node: &daedalus_runtime::RuntimeNode,
-///     _ctx: &daedalus_runtime::state::ExecutionContext,
-///     _io: &mut daedalus_runtime::io::NodeIo,
-/// ) -> Result<(), daedalus_runtime::executor::NodeError> {
-///     Ok(())
-/// }
-///
-/// let plan = RuntimePlan::from_execution(&ExecutionPlan::new(Graph::default(), vec![]));
-/// let _exec = Executor::new(&plan, handler);
-/// ```
 pub struct Executor<'a, H: NodeHandler> {
     pub(crate) nodes: Arc<[RuntimeNode]>,
     pub(crate) edges: &'a [EdgeSpec],
@@ -340,34 +325,25 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         &mut self,
         active_nodes: Option<Arc<Vec<bool>>>,
     ) -> Result<(), ExecutorMaskError> {
-        let expected = self.nodes.len();
-        self.core
-            .run_config
-            .set_active_nodes_mask(active_nodes, expected)
+        self.apply_active_nodes_mask(active_nodes)
     }
 
     pub fn try_set_active_edges_mask(
         &mut self,
         active_edges: Option<Arc<Vec<bool>>>,
     ) -> Result<(), ExecutorMaskError> {
-        let expected = self.edges.len();
-        self.core
-            .run_config
-            .set_active_edges_mask(active_edges, expected)
+        self.apply_active_edges_mask(active_edges)
     }
 
     pub fn try_set_active_direct_edges_mask(
         &mut self,
         active_direct_edges: Option<Arc<Vec<bool>>>,
     ) -> Result<(), ExecutorMaskError> {
-        let expected = self.edges.len();
-        self.core
-            .run_config
-            .set_active_direct_edges_mask(active_direct_edges, expected)
+        self.apply_active_direct_edges_mask(active_direct_edges)
     }
 
     pub fn with_selected_host_output_ports(mut self, ports: Option<Arc<HashSet<String>>>) -> Self {
-        self.core.run_config.set_selected_host_output_ports(ports);
+        self.apply_selected_host_output_ports(ports);
         self
     }
 
@@ -384,7 +360,11 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             Err(err) => {
                 // If the selector can't be resolved, keep the graph running rather than silently
                 // disabling everything. Callers that need strictness can validate up-front.
-                tracing::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
+                tracing::warn!(
+                    target: "daedalus_runtime::executor",
+                    error = %err,
+                    "demand-driven sink selection failed"
+                );
             }
         }
         self
@@ -397,23 +377,23 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     /// already-running scoped segments to return before propagating that error. When disabled, the
     /// executor records segment errors in telemetry and continues scheduling remaining ready work.
     pub fn with_fail_fast(mut self, enabled: bool) -> Self {
-        self.core.run_config.set_fail_fast(enabled);
+        self.apply_fail_fast(enabled);
         self
     }
 
     /// Provide a shared constant coercer registry (used by dynamic plugins).
     pub fn with_const_coercers(mut self, coercers: crate::io::ConstCoercerMap) -> Self {
-        self.core.const_coercers = Some(coercers);
+        self.apply_const_coercers(coercers);
         self
     }
 
     pub fn with_data_size_inspectors(mut self, inspectors: RuntimeDataSizeInspectors) -> Self {
-        self.core.data_size_inspectors = inspectors;
+        self.apply_data_size_inspectors(inspectors);
         self
     }
 
     pub fn with_runtime_transport(mut self, transport: crate::transport::RuntimeTransport) -> Self {
-        self.core.runtime_transport = Some(Arc::new(transport));
+        self.apply_runtime_transport(transport);
         self
     }
 
@@ -421,13 +401,13 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         mut self,
         capabilities: crate::capabilities::CapabilityRegistry,
     ) -> Self {
-        self.core.capabilities = Arc::new(capabilities);
+        self.apply_capabilities(capabilities);
         self
     }
 
     /// Inject shared state store (optional).
     pub fn with_state(mut self, state: StateStore) -> Self {
-        self.core.state = state;
+        self.apply_state(state);
         self
     }
 
@@ -453,25 +433,19 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     /// Provide a GPU handle when available.
     #[cfg(feature = "gpu")]
     pub fn with_gpu(mut self, gpu: daedalus_gpu::GpuContextHandle) -> Self {
-        self.core.gpu_available = true;
-        self.core.gpu = Some(gpu);
+        self.apply_gpu(gpu);
         self
     }
 
     #[cfg(not(feature = "gpu"))]
     pub fn without_gpu(mut self) -> Self {
-        self.core.gpu_available = false;
+        self.clear_gpu();
         self
     }
 
     /// Override pool size when using the pool-based parallel executor.
     pub fn with_pool_size(mut self, size: Option<usize>) -> Self {
-        self.core.run_config.set_pool_size(size);
-        #[cfg(feature = "executor-pool")]
-        {
-            self.core.pool_workers = resolve_pool_workers(size, self.segments.len());
-            self.core.worker_pool = Arc::new(OnceLock::new());
-        }
+        self.apply_pool_size(size);
         self
     }
 
@@ -482,14 +456,13 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     }
 
     pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
-        self.core.run_config.metrics_level = level;
-        self.core.telemetry.metrics_level = level;
+        self.apply_metrics_level(level);
         self
     }
 
     pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
-        let pool_size = self.core.run_config.set_runtime_debug_config(config);
-        self.with_pool_size(pool_size)
+        self.apply_runtime_debug_config(config);
+        self
     }
 
     /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
@@ -503,7 +476,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
     /// Attach a host bridge manager to enable implicit host I/O nodes.
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        self.core.host_bridges = Some(mgr);
+        self.apply_host_bridges(mgr);
         self
     }
 
@@ -609,6 +582,22 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         }
     }
 
+    /// Execute with a conservative adaptive policy.
+    ///
+    /// Linear segment flows stay on the serial path to avoid thread-pool overhead. Plans with
+    /// multiple initially-ready segments or fan-out in the host-deferred segment graph use the
+    /// parallel executor.
+    pub fn run_adaptive(self) -> Result<ExecutionTelemetry, ExecuteError>
+    where
+        H: Send + Sync + 'static,
+    {
+        if should_run_parallel_adaptive(&self.schedule) {
+            self.run_parallel()
+        } else {
+            serial::run(self)
+        }
+    }
+
     /// Execute the runtime plan in parallel without rebuilding the executor.
     ///
     /// Fail-fast semantics match [`Self::run_parallel`].
@@ -619,6 +608,25 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self.reset();
         let exec = self.snapshot();
         let result = self.run_parallel_from_snapshot(exec);
+        serial::drain_host_outputs(self);
+        if result.is_err() {
+            self.reset();
+        }
+        result
+    }
+
+    /// Execute the runtime plan with adaptive serial/parallel selection without rebuilding.
+    pub fn run_adaptive_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError>
+    where
+        H: Send + Sync + 'static,
+    {
+        self.reset();
+        let exec = self.snapshot();
+        let result = if should_run_parallel_adaptive(&exec.schedule) {
+            self.run_parallel_from_snapshot(exec)
+        } else {
+            serial::run(exec)
+        };
         serial::drain_host_outputs(self);
         if result.is_err() {
             self.reset();
@@ -645,6 +653,16 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             parallel::run(exec)
         }
     }
+}
+
+pub(crate) fn should_run_parallel_adaptive(schedule: &CompiledSchedule) -> bool {
+    !schedule.linear_segment_flow
+        && (schedule.host_deferred_graph.ready_segments.len() > 1
+            || schedule
+                .host_deferred_graph
+                .adjacency
+                .iter()
+                .any(|next| next.len() > 1))
 }
 
 #[cfg(feature = "gpu")]

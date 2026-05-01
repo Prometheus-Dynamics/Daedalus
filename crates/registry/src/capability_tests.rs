@@ -64,6 +64,15 @@ fn rejects_duplicate_type_keys() {
 }
 
 #[test]
+fn rejects_invalid_node_ids_on_registration() {
+    let mut reg = CapabilityRegistry::new();
+
+    let err = reg.register_node(NodeDecl::new("Demo.Node")).unwrap_err();
+    assert_eq!(err.code(), RegistryErrorCode::Internal);
+    assert!(err.message().contains("lowercase"));
+}
+
+#[test]
 fn node_ports_sort_deterministically() {
     let mut reg = CapabilityRegistry::new();
     reg.register_node(

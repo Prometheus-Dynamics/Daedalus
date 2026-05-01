@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use daedalus_planner::{Graph, PlannerConfig, PlannerInput, build_plan};
-use daedalus_runtime::executor::{NodeHandler, OwnedExecutor};
+use daedalus_runtime::executor::{ExecutionTelemetry, Executor, NodeHandler, OwnedExecutor};
 #[cfg(feature = "plugins")]
 use daedalus_runtime::handler_registry::HandlerRegistry;
 #[cfg(feature = "plugins")]
@@ -82,11 +82,6 @@ pub(crate) fn validate_boundary_contracts(
 
 /// High-level engine facade for planning and execution.
 ///
-/// ```no_run
-/// use daedalus_engine::{Engine, EngineConfig};
-/// let engine = Engine::new(EngineConfig::default()).unwrap();
-/// let _ = engine.config();
-/// ```
 pub struct Engine {
     pub(crate) config: EngineConfig,
     caches: Arc<EngineCaches>,
@@ -152,6 +147,51 @@ impl Engine {
         Ok(exec)
     }
 
+    pub(crate) fn configure_executor<'a, H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        mut exec: Executor<'a, H>,
+    ) -> Result<Executor<'a, H>, EngineError> {
+        exec = exec
+            .with_fail_fast(self.config.runtime.fail_fast)
+            .with_metrics_level(self.config.runtime.metrics_level)
+            .with_runtime_debug_config(self.config.runtime.debug_config);
+        if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
+            exec = exec.with_demand_sinks(self.config.runtime.demand_sinks.clone());
+        }
+        if matches!(
+            self.config.runtime.mode,
+            RuntimeMode::Parallel | RuntimeMode::Adaptive
+        ) {
+            exec = exec.with_pool_size(self.config.runtime.pool_size);
+            #[cfg(feature = "executor-pool")]
+            exec.prewarm_worker_pool()?;
+        }
+        #[cfg(feature = "gpu")]
+        {
+            if let Some(gpu) = self.get_gpu_handle()? {
+                exec = exec.with_gpu((*gpu).clone());
+            }
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            if !matches!(self.config.gpu, GpuBackend::Cpu) {
+                return Err(EngineError::FeatureDisabled("gpu"));
+            }
+        }
+        Ok(exec)
+    }
+
+    pub(crate) fn run_configured_executor<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        exec: Executor<'_, H>,
+    ) -> Result<ExecutionTelemetry, EngineError> {
+        Ok(match self.config.runtime.mode {
+            RuntimeMode::Serial => exec.run(),
+            RuntimeMode::Parallel => exec.run_parallel(),
+            RuntimeMode::Adaptive => exec.run_adaptive(),
+        }?)
+    }
+
     fn configure_host_bridges(&self, bridges: &HostBridgeManager) -> Result<(), EngineError> {
         bridges
             .apply_config(&self.config.runtime.host_bridge_config())
@@ -166,7 +206,7 @@ impl Engine {
     ) -> Result<CompiledRun<H>, EngineError> {
         let runtime_plan = Arc::new(runtime_plan);
         let executor =
-            self.configure_owned_executor(OwnedExecutor::new(runtime_plan.clone(), handler))?;
+            self.configure_owned_executor(OwnedExecutor::try_new(runtime_plan.clone(), handler)?)?;
         Ok(CompiledRun {
             runtime_plan,
             executor,
@@ -184,8 +224,8 @@ impl Engine {
         transport: RuntimeTransport,
     ) -> Result<CompiledRun<H>, EngineError> {
         let runtime_plan = Arc::new(runtime_plan);
-        let executor =
-            OwnedExecutor::new(runtime_plan.clone(), handler).with_runtime_transport(transport);
+        let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
+            .with_runtime_transport(transport);
         let executor = self.configure_owned_executor(executor)?;
         Ok(CompiledRun {
             runtime_plan,
@@ -207,12 +247,6 @@ impl Engine {
 
     /// Run planner on the provided graph.
     ///
-    /// ```no_run
-    /// use daedalus_engine::{Engine, EngineConfig};
-    /// use daedalus_planner::Graph;
-    /// let engine = Engine::new(EngineConfig::default()).unwrap();
-    /// let _ = engine.plan(Graph::default());
-    /// ```
     pub fn plan(&self, graph: Graph) -> Result<daedalus_planner::PlannerOutput, EngineError> {
         let planner_cfg = self.planner_config()?;
         self.plan_with_config(graph, planner_cfg)
@@ -313,8 +347,8 @@ impl Engine {
         self.configure_host_bridges(&bridges)?;
         bridges.populate_from_plan(runtime_plan.as_ref());
         let host = bridges.ensure_handle(host_alias);
-        let executor =
-            OwnedExecutor::new(runtime_plan.clone(), handler).with_host_bridges(bridges.clone());
+        let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
+            .with_host_bridges(bridges.clone());
         let executor = self.configure_owned_executor(executor)?;
         let node_labels = Arc::from(
             runtime_plan
@@ -350,7 +384,7 @@ impl Engine {
         let runtime_plan_cache = prepared_runtime.cache_status();
         let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
         let executor =
-            self.configure_owned_executor(OwnedExecutor::new(runtime_plan.clone(), handler))?;
+            self.configure_owned_executor(OwnedExecutor::try_new(runtime_plan.clone(), handler)?)?;
         Ok(CompiledRun {
             runtime_plan,
             executor,
@@ -373,8 +407,8 @@ impl Engine {
         let prepared_runtime = prepared.build()?;
         let runtime_plan_cache = prepared_runtime.cache_status();
         let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
-        let executor =
-            OwnedExecutor::new(runtime_plan.clone(), handler).with_runtime_transport(transport);
+        let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
+            .with_runtime_transport(transport);
         let executor = self.configure_owned_executor(executor)?;
         Ok(CompiledRun {
             runtime_plan,
@@ -403,7 +437,7 @@ impl Engine {
         let prepared_runtime = prepared.build()?;
         let runtime_plan_cache = prepared_runtime.cache_status();
         let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
-        let executor = OwnedExecutor::new(runtime_plan.clone(), handler)
+        let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
             .with_capabilities(plugins.capabilities.clone());
         let executor = self.configure_owned_executor(executor)?;
@@ -443,7 +477,7 @@ impl Engine {
         self.configure_host_bridges(&bridges)?;
         bridges.populate_from_plan(runtime_plan.as_ref());
         let host = bridges.ensure_handle(host_alias);
-        let executor = OwnedExecutor::new(runtime_plan.clone(), handler)
+        let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
             .with_capabilities(plugins.capabilities.clone())
             .with_host_bridges(bridges.clone());

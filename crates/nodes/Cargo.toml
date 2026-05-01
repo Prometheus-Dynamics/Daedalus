@@ -39,6 +39,3 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 trybuild = { workspace = true }
-daedalus-data = { workspace = true }
-daedalus-planner = { workspace = true }
-daedalus-runtime = { workspace = true }

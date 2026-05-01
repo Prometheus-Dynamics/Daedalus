@@ -1,3 +1,4 @@
+use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY};
 use daedalus_data::model::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -9,9 +10,6 @@ use super::{
     PlannerCatalog, PlannerInput, diagnostic_node_id, is_host_bridge, latest_node,
     node_metadata_value,
 };
-
-const EMBEDDED_GRAPH_KEY: &str = "daedalus.embedded_graph";
-const EMBEDDED_HOST_KEY: &str = "daedalus.embedded_host";
 
 pub(super) fn expand_embedded_graphs(
     input: &mut PlannerInput,
@@ -232,7 +230,7 @@ pub(super) fn expand_embedded_graphs(
             in_keys.sort();
             out_keys.sort();
             tracing::debug!(
-                target: "daedalus_planner::embedded",
+                target: "daedalus_planner::passes",
                 node_idx = idx,
                 node_id = %node.id.0,
                 group_label = %group_label,
@@ -311,7 +309,7 @@ pub(super) fn expand_embedded_graphs(
                     if trace {
                         let keys: Vec<&String> = to.inputs.keys().collect();
                         tracing::debug!(
-                            target: "daedalus_planner::embedded",
+                            target: "daedalus_planner::passes",
                             to_node_idx = edge.to.node.0,
                             to_port = %edge.to.port,
                             available_inputs = ?keys,
@@ -362,7 +360,7 @@ pub(super) fn expand_embedded_graphs(
                     if trace {
                         let keys: Vec<&String> = from.outputs.keys().collect();
                         tracing::debug!(
-                            target: "daedalus_planner::embedded",
+                            target: "daedalus_planner::passes",
                             from_node_idx = edge.from.node.0,
                             from_port = %edge.from.port,
                             available_outputs = ?keys,
@@ -388,7 +386,7 @@ pub(super) fn expand_embedded_graphs(
                     let out_keys: Vec<&String> = from.outputs.keys().collect();
                     let in_keys: Vec<&String> = to.inputs.keys().collect();
                     tracing::debug!(
-                        target: "daedalus_planner::embedded",
+                        target: "daedalus_planner::passes",
                         from_node_idx = edge.from.node.0,
                         from_port = %edge.from.port,
                         available_outputs = ?out_keys,

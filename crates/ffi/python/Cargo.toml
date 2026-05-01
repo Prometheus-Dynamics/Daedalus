@@ -16,6 +16,8 @@ workspace = true
 
 [dependencies]
 daedalus-ffi-core = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 daedalus-data = { workspace = true }

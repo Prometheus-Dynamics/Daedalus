@@ -5,15 +5,13 @@ use daedalus_planner::{
 };
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::{
-    BackpressureStrategy, CustomMetricValue, ExecuteError, Executor, MetricsLevel, NodeHandler,
-    ResourceLifecycleEvent, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, StateStore,
-    build_runtime,
+    BackpressureStrategy, ExecuteError, Executor, NodeHandler, ResourceLifecycleEvent,
+    RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, StateStore, build_runtime,
     executor::{NodeError, OwnedExecutor},
 };
 use daedalus_transport::Payload;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 struct LogHandler {
     log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -94,8 +92,10 @@ impl NodeHandler for EchoHandler {
     }
 }
 
+#[cfg(feature = "metrics")]
 struct CustomMetricsHandler;
 
+#[cfg(feature = "metrics")]
 impl NodeHandler for CustomMetricsHandler {
     fn run(
         &self,
@@ -109,7 +109,7 @@ impl NodeHandler for CustomMetricsHandler {
             .map_err(|err| NodeError::Handler(err.to_string()))?;
         ctx.gauge_metric("confidence", 0.875)
             .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.duration_metric("model_time", Duration::from_millis(7))
+        ctx.duration_metric("model_time", std::time::Duration::from_millis(7))
             .map_err(|err| NodeError::Handler(err.to_string()))?;
         ctx.bytes_metric("scratch_bytes", 4096)
             .map_err(|err| NodeError::Handler(err.to_string()))?;
@@ -585,41 +585,47 @@ fn node_can_publish_custom_metrics_into_telemetry() {
     let exec = tiny_exec_plan(&[ComputeAffinity::CpuOnly]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
     let telemetry = Executor::new(&rt, CustomMetricsHandler)
-        .with_metrics_level(MetricsLevel::Detailed)
+        .with_metrics_level(daedalus_runtime::MetricsLevel::Detailed)
         .run()
         .expect("exec ok");
     let node = telemetry.node_metrics.get(&0).expect("node metrics");
 
     assert_eq!(
         node.custom.get("detections"),
-        Some(&CustomMetricValue::Counter(5))
+        Some(&daedalus_runtime::CustomMetricValue::Counter(5))
     );
     assert_eq!(
         node.custom.get("confidence"),
-        Some(&CustomMetricValue::Gauge(0.875))
+        Some(&daedalus_runtime::CustomMetricValue::Gauge(0.875))
     );
     assert_eq!(
         node.custom.get("model_time"),
-        Some(&CustomMetricValue::Duration(Duration::from_millis(7)))
+        Some(&daedalus_runtime::CustomMetricValue::Duration(
+            std::time::Duration::from_millis(7)
+        ))
     );
     assert_eq!(
         node.custom.get("scratch_bytes"),
-        Some(&CustomMetricValue::Bytes(4096))
+        Some(&daedalus_runtime::CustomMetricValue::Bytes(4096))
     );
     assert_eq!(
         node.custom.get("model"),
-        Some(&CustomMetricValue::Text("yolo-lite".to_string()))
+        Some(&daedalus_runtime::CustomMetricValue::Text(
+            "yolo-lite".to_string()
+        ))
     );
     assert_eq!(
         node.custom.get("saturated"),
-        Some(&CustomMetricValue::Bool(false))
+        Some(&daedalus_runtime::CustomMetricValue::Bool(false))
     );
     assert_eq!(
         node.custom.get("classes"),
-        Some(&CustomMetricValue::Json(serde_json::json!({
-            "person": 3,
-            "car": 2,
-        })))
+        Some(&daedalus_runtime::CustomMetricValue::Json(
+            serde_json::json!({
+                "person": 3,
+                "car": 2,
+            })
+        ))
     );
 
     let table = telemetry.report().to_table();

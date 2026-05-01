@@ -151,6 +151,10 @@ name = "backpressure_diagnostics"
 path = "06_metrics_debugging/backpressure_diagnostics.rs"
 
 [[bin]]
+name = "stream_diagnostics"
+path = "06_metrics_debugging/stream_diagnostics.rs"
+
+[[bin]]
 name = "plan_debug"
 path = "06_metrics_debugging/plan_debug.rs"
 

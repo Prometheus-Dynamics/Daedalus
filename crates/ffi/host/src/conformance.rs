@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use daedalus_ffi_core::{
     BackendRuntimeModel, FixtureLanguage, GeneratedLanguageFixture, InvokeRequest, InvokeResponse,
-    WireValue, generate_scalar_add_fixtures,
+    WireValue, generate_canonical_fixtures, generate_scalar_add_fixtures,
 };
 use thiserror::Error;
 
@@ -52,11 +52,18 @@ pub fn run_scalar_add_generated_fixture_harness()
     run_generated_fixture_harness(generate_scalar_add_fixtures()?)
 }
 
+pub fn run_canonical_generated_fixture_harness() -> Result<FixtureHarnessReport, FixtureHarnessError>
+{
+    run_generated_fixture_harness(generate_canonical_fixtures()?)
+}
+
 pub fn run_generated_fixture_harness(
     fixtures: Vec<GeneratedLanguageFixture>,
 ) -> Result<FixtureHarnessReport, FixtureHarnessError> {
     let mut invoked_languages = Vec::with_capacity(fixtures.len());
-    let mut baseline_outputs: Option<BTreeMap<String, WireValue>> = None;
+    let mut first_outputs: Option<BTreeMap<String, WireValue>> = None;
+    let mut baseline_outputs_by_node: BTreeMap<String, BTreeMap<String, WireValue>> =
+        BTreeMap::new();
     let mut start_count = 0;
     let mut reuse_count = 0;
 
@@ -113,7 +120,7 @@ pub fn run_generated_fixture_harness(
                 found: outputs,
             });
         }
-        if let Some(baseline) = &baseline_outputs {
+        if let Some(baseline) = baseline_outputs_by_node.get(&node.id) {
             if baseline != &outputs {
                 return Err(FixtureHarnessError::OutputMismatch {
                     language: fixture.language,
@@ -122,7 +129,10 @@ pub fn run_generated_fixture_harness(
                 });
             }
         } else {
-            baseline_outputs = Some(outputs);
+            if first_outputs.is_none() {
+                first_outputs = Some(outputs.clone());
+            }
+            baseline_outputs_by_node.insert(node.id.clone(), outputs);
         }
         invoked_languages.push(fixture.language);
         let telemetry = pool.telemetry();
@@ -135,7 +145,7 @@ pub fn run_generated_fixture_harness(
 
     Ok(FixtureHarnessReport {
         invoked_languages,
-        normalized_outputs: baseline_outputs.unwrap_or_default(),
+        normalized_outputs: first_outputs.unwrap_or_default(),
         runner_start_count: start_count,
         runner_reuse_count: reuse_count,
     })
@@ -155,16 +165,18 @@ impl FixtureRunnerFactory {
 impl BackendRunnerFactory for FixtureRunnerFactory {
     fn build_runner(
         &self,
-        _node_id: &str,
+        node_id: &str,
         _backend: &daedalus_ffi_core::BackendConfig,
     ) -> Result<Arc<dyn BackendRunner>, RunnerPoolError> {
         Ok(Arc::new(FixtureRunner {
+            node_id: node_id.into(),
             response: self.response.clone(),
         }))
     }
 }
 
 struct FixtureRunner {
+    node_id: String,
     response: InvokeResponse,
 }
 
@@ -174,7 +186,7 @@ impl BackendRunner for FixtureRunner {
     }
 
     fn supported_nodes(&self) -> Option<Vec<String>> {
-        Some(vec!["ffi.conformance.scalar_add:add".into()])
+        Some(vec![self.node_id.clone()])
     }
 
     fn invoke(&self, request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
@@ -213,6 +225,28 @@ mod tests {
     }
 
     #[test]
+    fn runs_canonical_fixtures_through_one_host_harness() {
+        let report = run_canonical_generated_fixture_harness().expect("harness");
+
+        assert_eq!(
+            report.invoked_languages,
+            vec![
+                FixtureLanguage::Rust,
+                FixtureLanguage::Python,
+                FixtureLanguage::Node,
+                FixtureLanguage::Java,
+                FixtureLanguage::CCpp,
+            ]
+        );
+        assert_eq!(
+            report.normalized_outputs.get("out"),
+            Some(&WireValue::Int(42))
+        );
+        assert!(report.runner_start_count >= 3);
+        assert!(report.runner_reuse_count >= 6);
+    }
+
+    #[test]
     fn harness_reports_normalized_output_mismatches() {
         let mut fixtures = generate_scalar_add_fixtures().expect("fixtures");
         let fixture = fixtures
@@ -235,29 +269,45 @@ mod tests {
 
     #[test]
     fn failure_fixtures_cover_worker_crash_and_malformed_response() {
-        let fixture = generate_scalar_add_fixtures()
+        let fixtures = generate_scalar_add_fixtures()
             .expect("fixtures")
             .into_iter()
-            .find(|fixture| fixture.schema.nodes[0].backend == BackendKind::Python)
-            .expect("worker-backed fixture");
-        let plan = HostInstallPlan::from_schema_and_backends(&fixture.schema, &fixture.backends)
-            .expect("plan");
-        let node = &fixture.schema.nodes[0];
-        let backend = fixture.backends.get(&node.id).expect("backend");
+            .filter(|fixture| fixture.schema.nodes[0].backend != BackendKind::Rust)
+            .filter(|fixture| fixture.schema.nodes[0].backend != BackendKind::CCpp)
+            .collect::<Vec<_>>();
+        assert_eq!(fixtures.len(), 3);
 
-        let mut crashing_pool = RunnerPool::new();
-        install_plan_runners(&mut crashing_pool, &plan, &CrashingFactory).expect("install crash");
-        assert!(matches!(
-            crashing_pool.invoke(backend, fixture.request.clone()),
-            Err(RunnerPoolError::Runner(message)) if message == "worker crashed"
-        ));
+        for fixture in fixtures {
+            let plan =
+                HostInstallPlan::from_schema_and_backends(&fixture.schema, &fixture.backends)
+                    .expect("plan");
+            let node = &fixture.schema.nodes[0];
+            let backend = fixture.backends.get(&node.id).expect("backend");
 
-        let mut malformed_pool = RunnerPool::new();
-        install_plan_runners(&mut malformed_pool, &plan, &MalformedFactory).expect("install bad");
-        let response = malformed_pool
-            .invoke(backend, fixture.request.clone())
-            .expect("malformed response");
-        assert!(decode_response(response, fixture.request.correlation_id.as_deref()).is_err());
+            let mut crashing_pool = RunnerPool::new();
+            install_plan_runners(&mut crashing_pool, &plan, &CrashingFactory)
+                .expect("install crash");
+            assert!(
+                matches!(
+                    crashing_pool.invoke(backend, fixture.request.clone()),
+                    Err(RunnerPoolError::Runner(message)) if message == "worker crashed"
+                ),
+                "crash should be reported for {:?}",
+                fixture.language
+            );
+
+            let mut malformed_pool = RunnerPool::new();
+            install_plan_runners(&mut malformed_pool, &plan, &MalformedFactory)
+                .expect("install bad");
+            let response = malformed_pool
+                .invoke(backend, fixture.request.clone())
+                .expect("malformed response");
+            assert!(
+                decode_response(response, fixture.request.correlation_id.as_deref()).is_err(),
+                "malformed response should fail for {:?}",
+                fixture.language
+            );
+        }
     }
 
     struct CrashingFactory;

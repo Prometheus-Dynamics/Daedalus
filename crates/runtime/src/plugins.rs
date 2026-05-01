@@ -6,7 +6,7 @@ use crate::handler_registry::HandlerRegistry;
 use crate::transport::RuntimeTransport;
 use daedalus_data::daedalus_type::DaedalusTypeExpr;
 use daedalus_data::model::{TypeExpr, ValueType};
-use daedalus_data::named_types::HostExportPolicy;
+use daedalus_data::named_types::{HostExportPolicy, NamedTypeRegistry};
 use daedalus_data::to_value::ToValue;
 use daedalus_data::typing::TypeRegistry;
 use daedalus_registry::capability::{
@@ -342,9 +342,6 @@ pub trait RegistryPluginExt {
 ///
 /// This is a convenience macro to reduce boilerplate in plugin `install()` functions.
 ///
-/// ```ignore
-/// register_daedalus_values!(registry, MyType, OtherType)?;
-/// ```
 #[macro_export]
 macro_rules! register_daedalus_values {
     ($registry:expr, $( $ty:ty ),+ $(,)?) => {{
@@ -358,10 +355,6 @@ macro_rules! register_daedalus_values {
 /// Useful for non-host-serialized types (e.g. large binary payloads) where you still want a
 /// stable `TypeExpr::Opaque(<key>)` identity for UI typing and graph validation.
 ///
-/// ```ignore
-/// use daedalus_data::named_types::HostExportPolicy;
-/// register_daedalus_types!(registry, HostExportPolicy::None, MyOpaqueType)?;
-/// ```
 #[macro_export]
 macro_rules! register_daedalus_types {
     ($registry:expr, $export:expr, $( $ty:ty ),+ $(,)?) => {{
@@ -372,9 +365,6 @@ macro_rules! register_daedalus_types {
 
 /// Register `ToValue` serializers for container/derived types that do not have stable type keys.
 ///
-/// ```ignore
-/// register_to_value_serializers!(registry, Vec<MyType>, Arc<Vec<MyType>>);
-/// ```
 #[macro_export]
 macro_rules! register_to_value_serializers {
     ($registry:expr, $( $ty:ty ),+ $(,)?) => {{
@@ -528,6 +518,7 @@ pub struct PluginRegistry {
     pub runtime_transport: RuntimeTransport,
     pub transport_capabilities: TransportCapabilityRegistry,
     pub type_registry: TypeRegistry,
+    pub named_type_registry: NamedTypeRegistry,
     pub plugin_manifests: BTreeMap<String, PluginManifest>,
     pub boundary_contracts: BTreeMap<TypeKey, BoundaryTypeContract>,
     pub current_prefix: Option<String>,
@@ -726,6 +717,31 @@ mod tests {
             Some(TypeExpr::Scalar(ValueType::Bool))
         );
         assert_eq!(right.type_registry.lookup_type::<LocalType>(), None);
+    }
+
+    #[test]
+    fn plugin_registry_named_type_registries_are_isolated() {
+        let mut left = PluginRegistry::bare();
+        let right = PluginRegistry::bare();
+
+        left.register_named_type(
+            "test:registry:named",
+            TypeExpr::Scalar(ValueType::Bool),
+            HostExportPolicy::Value,
+        )
+        .expect("register named type");
+
+        assert!(
+            left.named_type_registry
+                .lookup("test:registry:named")
+                .is_some()
+        );
+        assert!(
+            right
+                .named_type_registry
+                .lookup("test:registry:named")
+                .is_none()
+        );
     }
 
     #[test]

@@ -70,14 +70,14 @@ impl PlannerLoweringRegistry {
         let mut guard = self
             .lowerings
             .write()
-            .expect("planner lowerings lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.insert(id, lowering);
     }
 
     pub fn registered(&self) -> Vec<PlannerLoweringInfo> {
         self.lowerings
             .read()
-            .expect("planner lowerings lock poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .values()
             .map(|entry| entry.info.clone())
             .collect()
@@ -89,7 +89,7 @@ impl PlannerLoweringRegistry {
     ) -> Vec<(PlannerLoweringInfo, PlannerLoweringFn)> {
         self.lowerings
             .read()
-            .expect("planner lowerings lock poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .values()
             .filter(|entry| entry.info.phase == phase)
             .map(|entry| (entry.info.clone(), entry.apply.clone()))

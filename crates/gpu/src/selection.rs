@@ -31,7 +31,7 @@ fn backend_order(opts: &GpuOptions) -> Vec<GpuBackendKind> {
 
 /// This synchronous compatibility selector can block when the real wgpu backend is enabled because
 /// it calls the synchronous wgpu constructor. Async applications should use
-/// [`select_backend_async`] with the `gpu-async` feature.
+/// `select_backend_async` with the `gpu-async` feature.
 /// Order: preferred backend (if set), then wgpu, mock, noop.
 pub fn select_backend(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
     let mut skipped = Vec::new();

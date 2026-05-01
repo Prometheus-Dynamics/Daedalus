@@ -104,7 +104,12 @@ impl<'a> ParallelDagScheduler<'a> {
         if self.completed < self.total_segments {
             let completed = self.completed;
             let total_segments = self.total_segments;
-            tracing::debug!("{message}: completed {completed}/{total_segments} segments");
+            tracing::debug!(
+                target: "daedalus_runtime::executor",
+                completed,
+                total_segments,
+                "{message}: incomplete schedule"
+            );
         }
     }
 }

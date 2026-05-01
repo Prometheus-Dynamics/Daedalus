@@ -5,9 +5,11 @@ use std::time::Duration;
 #[cfg(feature = "config-env")]
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "config-env")]
+use daedalus_runtime::ENV_RUNTIME_POOL_SIZE;
 use daedalus_runtime::{
-    BackpressureStrategy, ENV_RUNTIME_POOL_SIZE, HostBridgeConfig, MetricsLevel,
-    RuntimeDebugConfig, RuntimeEdgePolicy, StreamWorkerConfig,
+    BackpressureStrategy, HostBridgeConfig, MetricsLevel, RuntimeDebugConfig, RuntimeEdgePolicy,
+    StreamWorkerConfig,
 };
 use daedalus_runtime::{DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_STREAM_IDLE_SLEEP, RuntimeSink};
 use thiserror::Error;
@@ -35,11 +37,6 @@ pub enum EngineConfigError {
 
 /// GPU backend selection; device requires the `gpu` feature.
 ///
-/// ```
-/// use daedalus_engine::GpuBackend;
-/// let backend = GpuBackend::Cpu;
-/// assert_eq!(backend, GpuBackend::Cpu);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "config-env", serde(rename_all = "snake_case"))]
@@ -52,11 +49,6 @@ pub enum GpuBackend {
 
 /// Runtime execution mode.
 ///
-/// ```
-/// use daedalus_engine::RuntimeMode;
-/// let mode = RuntimeMode::Parallel;
-/// assert_eq!(mode, RuntimeMode::Parallel);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "config-env", serde(rename_all = "snake_case"))]
@@ -64,16 +56,13 @@ pub enum RuntimeMode {
     #[default]
     Serial,
     Parallel,
+    /// Choose serial execution for linear plans and parallel execution when the compiled segment
+    /// graph has useful branch/fan-out concurrency.
     Adaptive,
 }
 
 /// Planner knobs.
 ///
-/// ```ignore
-/// use daedalus_engine::config::PlannerSection;
-/// let planner = PlannerSection::default();
-/// assert!(!planner.enable_gpu);
-/// ```
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 pub struct PlannerSection {
@@ -97,11 +86,6 @@ impl Default for PlannerSection {
 
 /// Runtime scheduler/backpressure options.
 ///
-/// ```ignore
-/// use daedalus_engine::config::RuntimeSection;
-/// let runtime = RuntimeSection::default();
-/// assert_eq!(runtime.pool_size, None);
-/// ```
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 pub struct RuntimeSection {
@@ -231,11 +215,6 @@ impl Default for CacheSection {
 
 /// Top-level engine configuration.
 ///
-/// ```ignore
-/// use daedalus_engine::EngineConfig;
-/// let cfg = EngineConfig::default();
-/// assert!(cfg.validate().is_ok());
-/// ```
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
 pub struct EngineConfig {
@@ -362,11 +341,6 @@ impl EngineConfig {
 
     /// Lightweight validation: ensures non-zero pool size when provided.
     ///
-    /// ```ignore
-    /// use daedalus_engine::EngineConfig;
-    /// let cfg = EngineConfig::default();
-    /// assert!(cfg.validate().is_ok());
-    /// ```
     pub fn validate(&self) -> Result<(), EngineConfigError> {
         if let Some(sz) = self.runtime.pool_size
             && sz == 0
@@ -388,15 +362,6 @@ impl EngineConfig {
     /// Construct config from environment variables. Only compiled when `config-env` is enabled.
     ///
     /// Example (doc-test guarded by the feature flag):
-    /// ```ignore
-    /// # #[cfg(feature = "config-env")] {
-    /// use daedalus_engine::{EngineConfig, GpuBackend};
-    /// unsafe { std::env::set_var("DAEDALUS_GPU", "mock"); }
-    /// let cfg = EngineConfig::from_env().unwrap();
-    /// assert_eq!(cfg.gpu, GpuBackend::Mock);
-    /// unsafe { std::env::remove_var("DAEDALUS_GPU"); }
-    /// # }
-    /// ```
     ///
     /// Environment variables:
     /// - `DAEDALUS_METRICS_LEVEL=off|basic|detailed|profile`

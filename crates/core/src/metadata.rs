@@ -17,6 +17,14 @@ pub const EMBEDDED_GROUP_KEY: &str = "daedalus.embedded_group";
 pub const GROUP_ID_KEY: &str = "daedalus.group_id";
 pub const GROUP_LABEL_KEY: &str = "daedalus.group_label";
 
+/// Registry descriptor metadata key containing a serialized embedded graph definition.
+pub const EMBEDDED_GRAPH_KEY: &str = "daedalus.embedded_graph";
+/// Registry descriptor metadata key selecting the host bridge label inside an embedded graph.
+pub const EMBEDDED_HOST_KEY: &str = "daedalus.embedded_host";
+
+/// Registry descriptor metadata key containing node overload alternatives.
+pub const NODE_OVERLOADS_KEY: &str = "daedalus.overloads";
+
 /// UI-provided node id used only as a human-readable diagnostic fallback.
 pub const UI_NODE_ID_KEY: &str = "helios.ui.node_id";
 

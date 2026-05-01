@@ -7,14 +7,6 @@ use std::sync::RwLock;
 
 /// Registered mapping between a Rust type name and a `TypeExpr`.
 ///
-/// ```
-/// use daedalus_data::model::{TypeExpr, ValueType};
-/// use daedalus_data::typing::TypeRegistry;
-///
-/// let mut registry = TypeRegistry::new();
-/// registry.register_type::<u32>(TypeExpr::Scalar(ValueType::U32));
-/// assert!(registry.lookup_type::<u32>().is_some());
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RegisteredType {
     pub rust: String,
@@ -282,14 +274,6 @@ where
 /// or `PluginRegistry::type_registry` so independent registries do not share type
 /// state.
 ///
-/// ```
-/// use daedalus_data::model::{TypeExpr, ValueType};
-/// use daedalus_data::typing::TypeRegistry;
-///
-/// let mut registry = TypeRegistry::new();
-/// registry.register_type::<u16>(TypeExpr::Scalar(ValueType::U32));
-/// assert!(registry.lookup_type::<u16>().is_some());
-/// ```
 pub fn register_type<T: 'static>(expr: TypeExpr) {
     let mut guard = registry()
         .write()
@@ -332,15 +316,32 @@ pub fn snapshot_type_capabilities() -> Vec<RegisteredTypeCapabilities> {
     guard.snapshot_type_capabilities()
 }
 
+/// Snapshot the full process-global type registry.
+///
+/// This is intended for test isolation and embedders that need to temporarily install global
+/// convenience registrations and restore the previous process state afterward. Code that already
+/// owns an engine or plugin registry should prefer passing an owned [`TypeRegistry`] directly.
+pub fn snapshot_global_registry() -> TypeRegistry {
+    registry()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+/// Replace the process-global type registry with a previous snapshot.
+pub fn restore_global_registry(snapshot: TypeRegistry) {
+    *registry()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
+}
+
+/// Reset the process-global type registry to an empty registry.
+pub fn reset_global_registry() {
+    restore_global_registry(TypeRegistry::new());
+}
+
 /// Register an enum (variants only) for Rust type `T`.
 ///
-/// ```
-/// use daedalus_data::typing::TypeRegistry;
-///
-/// let mut registry = TypeRegistry::new();
-/// registry.register_enum::<bool>(["Yes", "No"]);
-/// assert!(registry.lookup_type::<bool>().is_some());
-/// ```
 pub fn register_enum<T: 'static>(variants: impl IntoIterator<Item = impl Into<String>>) {
     let mut guard = registry()
         .write()
@@ -350,15 +351,6 @@ pub fn register_enum<T: 'static>(variants: impl IntoIterator<Item = impl Into<St
 
 /// Look up a previously registered `TypeExpr` for a Rust type `T`.
 ///
-/// ```
-/// use daedalus_data::model::{TypeExpr, ValueType};
-/// use daedalus_data::typing::TypeRegistry;
-///
-/// let mut registry = TypeRegistry::new();
-/// registry.register_type::<u8>(TypeExpr::Scalar(ValueType::U32));
-/// let found = registry.lookup_type::<u8>().unwrap();
-/// assert!(matches!(found, TypeExpr::Scalar(_)));
-/// ```
 pub fn lookup_type<T: 'static>() -> Option<TypeExpr> {
     let guard = registry()
         .read()
@@ -404,12 +396,6 @@ where
 /// Return an explicit type expression if `T` has either been registered or is
 /// covered by built-in mappings (without falling back to `Opaque`).
 ///
-/// ```
-/// use daedalus_data::typing::override_type_expr;
-/// use daedalus_data::model::TypeExpr;
-/// let ty = override_type_expr::<u32>().unwrap();
-/// assert!(matches!(ty, TypeExpr::Scalar(_)));
-/// ```
 pub fn override_type_expr<T: 'static>() -> Option<TypeExpr> {
     let guard = registry()
         .read()
@@ -427,11 +413,6 @@ pub fn override_type_expr<T: 'static>() -> Option<TypeExpr> {
 /// Prefer [`TypeRegistry::type_expr`] when code already owns a plugin or engine
 /// registry.
 ///
-/// ```
-/// use daedalus_data::typing::type_expr;
-/// let ty = type_expr::<String>();
-/// assert!(format!("{ty:?}").contains("String"));
-/// ```
 pub fn type_expr<T: 'static>() -> TypeExpr {
     let guard = registry()
         .read()

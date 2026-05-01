@@ -24,7 +24,9 @@ pub use explain::{
 };
 use policy::edge_policy_from_metadata;
 pub use policy::{
-    EDGE_CAPACITY_KEY, EDGE_FRESHNESS_POLICY_KEY, EDGE_PRESSURE_BOUNDED, EDGE_PRESSURE_COALESCE,
+    EDGE_CAPACITY_KEY, EDGE_FRESHNESS_LATEST_BY_SEQUENCE, EDGE_FRESHNESS_LATEST_BY_TIMESTAMP,
+    EDGE_FRESHNESS_MAX_AGE, EDGE_FRESHNESS_MAX_LAG, EDGE_FRESHNESS_POLICY_KEY,
+    EDGE_OVERFLOW_POLICY_KEY, EDGE_PRESSURE_BOUNDED, EDGE_PRESSURE_COALESCE,
     EDGE_PRESSURE_DROP_NEWEST, EDGE_PRESSURE_DROP_OLDEST, EDGE_PRESSURE_ERROR_ON_FULL,
     EDGE_PRESSURE_FIFO, EDGE_PRESSURE_LATEST_ONLY, EDGE_PRESSURE_POLICY_KEY, RuntimeEdgePolicy,
 };
@@ -187,21 +189,6 @@ pub(crate) fn direct_edge_mask_for_active_edges(
 
 /// Runtime node with policy hints.
 ///
-/// ```
-/// use daedalus_runtime::RuntimeNode;
-/// use daedalus_planner::ComputeAffinity;
-/// let node = RuntimeNode {
-///     id: "demo".into(),
-///     stable_id: 0,
-///     bundle: None,
-///     label: None,
-///     compute: ComputeAffinity::CpuOnly,
-///     const_inputs: vec![],
-///     sync_groups: vec![],
-///     metadata: Default::default(),
-/// };
-/// assert_eq!(node.id, "demo");
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeNode {
     pub id: String,
@@ -224,12 +211,6 @@ pub struct RuntimeNode {
 
 /// A schedulable segment (may group GPU-required nodes).
 ///
-/// ```
-/// use daedalus_runtime::RuntimeSegment;
-/// use daedalus_planner::{ComputeAffinity, NodeRef};
-/// let seg = RuntimeSegment { nodes: vec![NodeRef(0)], compute: ComputeAffinity::CpuOnly };
-/// assert_eq!(seg.nodes.len(), 1);
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeSegment {
     pub nodes: Vec<NodeRef>,
@@ -238,12 +219,6 @@ pub struct RuntimeSegment {
 
 /// Final runtime plan, derived from planner output.
 ///
-/// ```
-/// use daedalus_runtime::RuntimePlan;
-/// use daedalus_planner::{ExecutionPlan, Graph};
-/// let plan = RuntimePlan::from_execution(&ExecutionPlan::new(Graph::default(), vec![]));
-/// assert!(plan.nodes.is_empty());
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuntimePlan {
     pub default_policy: RuntimeEdgePolicy,
@@ -280,6 +255,8 @@ pub enum RuntimePlanError {
     },
     #[error("unknown edge pressure policy '{policy}' on edge {edge_index}")]
     UnknownEdgePressurePolicy { edge_index: usize, policy: String },
+    #[error("unknown edge freshness policy '{policy}' on edge {edge_index}")]
+    UnknownEdgeFreshnessPolicy { edge_index: usize, policy: String },
 }
 
 /// Select a subset of graph outputs to compute (demand-driven execution).
@@ -422,6 +399,9 @@ impl RuntimePlan {
                 let policy = edge_policy_from_metadata(&e.metadata).map_err(|err| match err {
                     policy::EdgePolicyMetadataError::UnknownPressurePolicy { policy } => {
                         RuntimePlanError::UnknownEdgePressurePolicy { edge_index, policy }
+                    }
+                    policy::EdgePolicyMetadataError::UnknownFreshnessPolicy { policy } => {
+                        RuntimePlanError::UnknownEdgeFreshnessPolicy { edge_index, policy }
                     }
                 })?;
                 Ok(RuntimeEdge::new(

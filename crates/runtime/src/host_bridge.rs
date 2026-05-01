@@ -104,11 +104,8 @@ pub struct HostBridgeHandle {
 }
 
 impl HostBridgeHandle {
-    pub(super) fn new(alias: String, shared: Arc<HostBridgeShared>) -> Self {
-        Self {
-            alias: HostAlias::new(alias),
-            shared,
-        }
+    pub(super) fn new(alias: HostAlias, shared: Arc<HostBridgeShared>) -> Self {
+        Self { alias, shared }
     }
 
     pub fn alias(&self) -> &str {
@@ -714,8 +711,8 @@ pub(super) fn lock_host_buffers(shared: &HostBridgeShared) -> MutexGuard<'_, Hos
 }
 
 pub(super) fn lock_host_map(
-    inner: &Mutex<HashMap<String, Arc<HostBridgeShared>>>,
-) -> MutexGuard<'_, HashMap<String, Arc<HostBridgeShared>>> {
+    inner: &Mutex<HashMap<HostAlias, Arc<HostBridgeShared>>>,
+) -> MutexGuard<'_, HashMap<HostAlias, Arc<HostBridgeShared>>> {
     inner
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())

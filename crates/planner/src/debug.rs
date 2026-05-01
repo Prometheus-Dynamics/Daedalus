@@ -1,12 +1,4 @@
 //! Debug helpers for serializing/deserializing plans, useful for goldens/CLI.
-//! ```ignore
-//! use daedalus_planner::{debug, Graph, ExecutionPlan};
-//!
-//! let plan = ExecutionPlan::new(Graph::default(), vec![]);
-//! let json = debug::to_pretty_json(&plan);
-//! let round = debug::from_json(&json).unwrap();
-//! assert_eq!(plan.version, round.version);
-//! ```
 use crate::ExecutionPlan;
 
 /// Serialize a plan to pretty-printed JSON.

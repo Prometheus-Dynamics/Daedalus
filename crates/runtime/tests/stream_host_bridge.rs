@@ -3,6 +3,7 @@ use std::thread;
 use std::time::Duration;
 
 use daedalus_runtime::RuntimeEdgePolicy;
+use daedalus_runtime::handles::{HostAlias, PortId};
 use daedalus_runtime::host_bridge::{HostBridgeConfig, HostBridgeManager};
 use daedalus_transport::{
     DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, Payload, PayloadLineage,
@@ -61,6 +62,25 @@ fn host_bridge_latest_only_replaces_inbound_payloads() {
             .and_then(|event| event.reason.clone()),
         Some(DropReason::LatestOnlyReplace)
     );
+}
+
+#[test]
+fn host_bridge_accepts_typed_aliases_and_ports() {
+    let manager = HostBridgeManager::new();
+    let alias = HostAlias::new("typed-host");
+    let input = PortId::new("typed-input");
+    let handle = manager.ensure_handle(alias.clone());
+
+    let payload = Payload::owned("demo:u32", 7u32);
+    assert!(matches!(
+        handle.feed_payload(input.clone(), payload),
+        FeedOutcome::Accepted { .. }
+    ));
+
+    let inbound = manager.take_inbound(alias.as_str());
+    assert_eq!(inbound.len(), 1);
+    assert_eq!(inbound[0].port, input);
+    assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&7));
 }
 
 #[test]
@@ -235,6 +255,27 @@ fn host_bridge_multi_producer_input_stress_stays_bounded() {
     assert_eq!(handle.pending_inbound(), 1);
     assert_eq!(handle.events().len(), 64);
     assert_eq!(manager.take_inbound("host").len(), 1);
+}
+
+#[test]
+fn host_bridge_outbound_push_wakes_waiting_receiver() {
+    let manager = HostBridgeManager::new();
+    let handle = manager.ensure_handle("host");
+    let receiver = handle.clone();
+
+    let waiter = thread::spawn(move || {
+        receiver
+            .recv_payload_timeout("output", Duration::from_secs(1))
+            .and_then(|payload| payload.get_ref::<u32>().copied())
+    });
+
+    thread::sleep(Duration::from_millis(20));
+    manager.push_outbound("host", "output", Payload::owned("demo:u32", 99_u32));
+
+    assert_eq!(
+        waiter.join().expect("receiver thread should not panic"),
+        Some(99)
+    );
 }
 
 #[test]

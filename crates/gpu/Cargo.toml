@@ -38,10 +38,9 @@ daedalus-wgsl-infer = { workspace = true, optional = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-criterion = { workspace = true }
 bytemuck = { workspace = true }
 
 [[bench]]
 name = "dispatch_readback"
 harness = false
-required-features = ["gpu-wgpu"]
+required-features = ["gpu-wgpu", "gpu-async"]

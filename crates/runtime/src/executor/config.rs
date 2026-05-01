@@ -16,7 +16,7 @@ pub(crate) struct ExecutorRunConfig {
 
 impl Default for ExecutorRunConfig {
     fn default() -> Self {
-        let debug_config = *crate::config::runtime_debug_config();
+        let debug_config = crate::config::RuntimeDebugConfig::default();
         Self {
             active_nodes: None,
             active_edges: None,

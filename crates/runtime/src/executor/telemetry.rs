@@ -17,8 +17,9 @@ pub use lifecycle::{
     DataLifecycleEvent, DataLifecycleRecord, DataLifecycleStage, NodeFailure, TraceEvent,
 };
 pub use metrics::{
-    CustomMetricValue, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, NodeMetrics,
-    TransportMetrics,
+    CustomMetricValue, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, FfiAdapterTelemetry,
+    FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry, FfiTelemetryReport,
+    FfiWorkerTelemetry, NodeMetrics, TransportMetrics,
 };
 pub use report::{AdapterPathReport, OwnershipReport, TelemetryReport, TelemetryReportFilter};
 pub use resources::{
@@ -63,6 +64,8 @@ pub struct ExecutionTelemetry {
         skip_serializing_if = "crate::plan::DemandTelemetry::is_empty"
     )]
     pub demand: crate::plan::DemandTelemetry,
+    #[serde(default, skip_serializing_if = "FfiTelemetryReport::is_empty")]
+    pub ffi: FfiTelemetryReport,
     #[serde(skip)]
     lifecycle_origin: Option<Instant>,
     #[serde(skip)]
@@ -151,6 +154,7 @@ impl ExecutionTelemetry {
             fallbacks,
             skipped_nodes,
             hardware_counters,
+            ffi: self.ffi.clone(),
         }
     }
 
@@ -179,6 +183,7 @@ impl ExecutionTelemetry {
         }
         self.data_lifecycle.clear();
         self.demand = crate::plan::DemandTelemetry::default();
+        self.ffi = FfiTelemetryReport::default();
         self.in_flight_node_transport_metrics.clear();
     }
 
@@ -209,6 +214,17 @@ impl ExecutionTelemetry {
             trace.extend(other_trace);
         }
         self.data_lifecycle.extend(other.data_lifecycle);
+        self.ffi.merge(other.ffi);
+    }
+
+    pub fn record_ffi(&mut self, ffi: FfiTelemetryReport) {
+        if !cfg!(feature = "metrics") {
+            return;
+        }
+        if !self.metrics_level.is_basic() {
+            return;
+        }
+        self.ffi.merge(ffi);
     }
 
     pub fn record_node_duration(&mut self, node_idx: usize, duration: Duration) {

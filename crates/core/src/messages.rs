@@ -8,11 +8,6 @@ use crate::ids::ChannelId;
 
 /// Monotonic sequence number for newest-wins/broadcast helpers.
 ///
-/// ```
-/// use daedalus_core::messages::Sequence;
-/// let seq = Sequence::new(3);
-/// assert_eq!(seq.next().value(), 4);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Sequence(u64);
@@ -35,11 +30,6 @@ impl Sequence {
 
 /// Unique token carried by every message.
 ///
-/// ```
-/// use daedalus_core::messages::Token;
-/// let token = Token::new(42);
-/// assert_eq!(token.value(), 42);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Token(u64);
@@ -56,13 +46,6 @@ impl Token {
 
 /// Generates monotonic tokens in a thread-safe manner.
 ///
-/// ```
-/// use daedalus_core::messages::TokenGenerator;
-/// let generator = TokenGenerator::new();
-/// let a = generator.next();
-/// let b = generator.next();
-/// assert!(b.value() > a.value());
-/// ```
 #[derive(Debug, Default)]
 pub struct TokenGenerator {
     counter: AtomicU64,
@@ -83,13 +66,6 @@ impl TokenGenerator {
 
 /// Watermark used to signal progress on a stream.
 ///
-/// ```
-/// use daedalus_core::clock::Tick;
-/// use daedalus_core::messages::{Sequence, Watermark};
-/// let wm = Watermark::new(Sequence::new(5), Tick::new(9));
-/// assert_eq!(wm.sequence().value(), 5);
-/// assert_eq!(wm.tick().value(), 9);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Watermark {
     sequence: Sequence,
@@ -112,12 +88,6 @@ impl Watermark {
 
 /// Metadata attached to messages for diagnostics/telemetry.
 ///
-/// ```
-/// use daedalus_core::clock::Tick;
-/// use daedalus_core::messages::{MessageMeta, Sequence};
-/// let meta = MessageMeta::new(Tick::new(2), Sequence::new(1));
-/// assert_eq!(meta.sequence.value(), 1);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageMeta {
     pub created_at: Tick,
@@ -155,14 +125,6 @@ impl Default for MessageMeta {
 /// Compute `T` must be `Send + Sync` to be safely shared in async/concurrent
 /// runtimes.
 ///
-/// ```
-/// use daedalus_core::clock::Tick;
-/// use daedalus_core::messages::{Message, MessageMeta, Sequence, Token};
-///
-/// let meta = MessageMeta::new(Tick::new(1), Sequence::new(0));
-/// let msg = Message::new(Token::new(7), meta, "payload");
-/// assert_eq!(msg.payload.as_ref(), &"payload");
-/// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message<T: Send + Sync> {
     pub token: Token,

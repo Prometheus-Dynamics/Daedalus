@@ -1,8 +1,4 @@
-use daedalus::{
-    engine::{Engine, EngineConfig},
-    macros::{node, plugin},
-    runtime::{NodeError, plugins::PluginRegistry},
-};
+use daedalus::prelude::*;
 
 #[node(id = "quickstart.increment", inputs("value"), outputs("value"))]
 fn increment(value: i64) -> Result<i64, NodeError> {
@@ -18,13 +14,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     registry.install(&plugin)?;
 
     let increment = plugin.increment.alias("increment");
-    let builder = registry.graph_builder()?;
-    let input = builder.input("in");
-    let output = builder.output("out");
-    let graph = builder
-        .try_node_handle_like(&increment)?
-        .try_connect(&input, &increment.inputs.value)?
-        .try_connect(&increment.outputs.value, &output)?
+    let graph = registry
+        .graph_builder()?
+        .try_single_node_roundtrip(
+            increment.clone(),
+            "in",
+            &increment.inputs.value,
+            &increment.outputs.value,
+            "out",
+        )?
         .build();
 
     let engine = Engine::new(EngineConfig::default())?;

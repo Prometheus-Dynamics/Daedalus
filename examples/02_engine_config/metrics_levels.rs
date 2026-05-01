@@ -56,7 +56,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for level in [
         MetricsLevel::Off,
         MetricsLevel::Basic,
+        MetricsLevel::Timing,
         MetricsLevel::Detailed,
+        MetricsLevel::Hardware,
         MetricsLevel::Profile,
         MetricsLevel::Trace,
     ] {

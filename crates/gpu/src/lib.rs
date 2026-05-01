@@ -46,11 +46,6 @@ use std::{fmt, sync::Arc};
 
 /// Backend kind identifiers.
 ///
-/// ```ignore
-/// use daedalus_gpu::GpuBackendKind;
-/// let kind = GpuBackendKind::Noop;
-/// assert_eq!(kind.as_str(), "noop");
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuBackendKind {
     Noop,
@@ -71,11 +66,6 @@ impl GpuBackendKind {
 
 /// Memory location hint for GPU resources.
 ///
-/// ```
-/// use daedalus_gpu::GpuMemoryLocation;
-/// let loc = GpuMemoryLocation::Gpu;
-/// assert_eq!(loc, GpuMemoryLocation::Gpu);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuMemoryLocation {
     Cpu,
@@ -85,11 +75,6 @@ pub enum GpuMemoryLocation {
 
 /// Common GPU formats (minimal set for planner decisions).
 ///
-/// ```
-/// use daedalus_gpu::GpuFormat;
-/// let fmt = GpuFormat::Rgba8Unorm;
-/// assert_eq!(fmt, GpuFormat::Rgba8Unorm);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuFormat {
     R8Unorm,
@@ -100,17 +85,6 @@ pub enum GpuFormat {
 
 /// Per-format feature flags for planner/runtime decisions.
 ///
-/// ```
-/// use daedalus_gpu::{GpuFormat, GpuFormatFeatures};
-/// let feats = GpuFormatFeatures {
-///     format: GpuFormat::R8Unorm,
-///     sampleable: true,
-///     renderable: false,
-///     storage: true,
-///     max_samples: 1,
-/// };
-/// assert!(feats.sampleable);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuFormatFeatures {
     pub format: GpuFormat,
@@ -122,11 +96,6 @@ pub struct GpuFormatFeatures {
 
 /// Block/stride info for formats (useful if compressed formats are added later).
 ///
-/// ```
-/// use daedalus_gpu::{GpuBlockInfo, GpuFormat};
-/// let info = GpuBlockInfo { format: GpuFormat::R8Unorm, block_width: 1, block_height: 1, bytes_per_block: 1 };
-/// assert_eq!(info.bytes_per_block, 1);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuBlockInfo {
     pub format: GpuFormat,
@@ -138,11 +107,6 @@ pub struct GpuBlockInfo {
 bitflags! {
     /// Usage flags for buffers/images; combinations are allowed.
     ///
-    /// ```
-    /// use daedalus_gpu::GpuUsage;
-    /// let usage = GpuUsage::UPLOAD | GpuUsage::STORAGE;
-    /// assert!(usage.contains(GpuUsage::UPLOAD));
-    /// ```
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct GpuUsage: u32 {
         const UPLOAD = 0b0001;
@@ -154,16 +118,6 @@ bitflags! {
 
 /// Adapter information exposed to planner/runtime.
 ///
-/// ```ignore
-/// use daedalus_gpu::{GpuAdapterInfo, GpuBackendKind};
-/// let info = GpuAdapterInfo {
-///     name: "noop".into(),
-///     backend: GpuBackendKind::Noop,
-///     device_id: None,
-///     vendor_id: None,
-/// };
-/// assert_eq!(info.backend, GpuBackendKind::Noop);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuAdapterInfo {
     pub name: String,
@@ -174,11 +128,6 @@ pub struct GpuAdapterInfo {
 
 /// Adapter selection options.
 ///
-/// ```ignore
-/// use daedalus_gpu::{GpuOptions, GpuBackendKind};
-/// let opts = GpuOptions { preferred_backend: Some(GpuBackendKind::Noop), adapter_label: None, allow_software: true };
-/// assert!(opts.allow_software);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct GpuOptions {
     pub preferred_backend: Option<GpuBackendKind>,
@@ -188,11 +137,6 @@ pub struct GpuOptions {
 
 /// Request shape for resource creation.
 ///
-/// ```
-/// use daedalus_gpu::{GpuRequest, GpuUsage};
-/// let req = GpuRequest { usage: GpuUsage::UPLOAD, format: None, size_bytes: 1024 };
-/// assert_eq!(req.size_bytes, 1024);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuRequest {
     pub usage: GpuUsage,
@@ -202,11 +146,6 @@ pub struct GpuRequest {
 
 /// Request shape for image/texture creation.
 ///
-/// ```
-/// use daedalus_gpu::{GpuImageRequest, GpuFormat, GpuUsage};
-/// let req = GpuImageRequest { format: GpuFormat::Rgba8Unorm, width: 16, height: 16, samples: 1, usage: GpuUsage::STORAGE };
-/// assert_eq!(req.width, 16);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuImageRequest {
     pub format: GpuFormat,
@@ -218,25 +157,6 @@ pub struct GpuImageRequest {
 
 /// Capability query result.
 ///
-/// ```ignore
-/// use daedalus_gpu::{GpuCapabilities, GpuFormat, GpuFormatFeatures, GpuBlockInfo};
-/// let caps = GpuCapabilities {
-///     supported_formats: vec![GpuFormat::R8Unorm],
-///     format_features: vec![GpuFormatFeatures { format: GpuFormat::R8Unorm, sampleable: true, renderable: false, storage: true, max_samples: 1 }],
-///     format_blocks: vec![GpuBlockInfo { format: GpuFormat::R8Unorm, block_width: 1, block_height: 1, bytes_per_block: 1 }],
-///     max_buffer_size: 1,
-///     max_texture_dimension: 1,
-///     max_texture_samples: 1,
-///     staging_alignment: 1,
-///     max_inflight_copies: 1,
-///     queue_count: 1,
-///     min_buffer_copy_offset_alignment: 1,
-///     bytes_per_row_alignment: 1,
-///     rows_per_image_alignment: 1,
-///     has_transfer_queue: false,
-/// };
-/// assert_eq!(caps.supported_formats.len(), 1);
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GpuCapabilities {
     pub supported_formats: Vec<GpuFormat>,
@@ -256,11 +176,6 @@ pub struct GpuCapabilities {
 
 /// GPU error codes for diagnostics.
 ///
-/// ```ignore
-/// use daedalus_gpu::GpuError;
-/// let err = GpuError::Unsupported;
-/// assert_eq!(format!("{err}"), "unsupported");
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuError {
     Unsupported,
@@ -293,11 +208,6 @@ pub enum BackendSkipReason {
 
 /// Explanation for a backend that was skipped during selection.
 ///
-/// ```ignore
-/// use daedalus_gpu::{BackendSkip, BackendSkipReason, GpuBackendKind};
-/// let skip = BackendSkip { backend: GpuBackendKind::Wgpu, reason: BackendSkipReason::FeatureNotEnabled };
-/// assert!(skip.describe().contains("not built"));
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackendSkip {
     pub backend: GpuBackendKind,

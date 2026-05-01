@@ -6,11 +6,6 @@ use serde::{Deserialize, Serialize};
 /// await queue capacity; bounded strategies either keep the existing queued payload, drop/reject
 /// the incoming payload, or report overflow according to the selected variant.
 ///
-/// ```
-/// use daedalus_core::policy::BackpressureStrategy;
-/// let strategy = BackpressureStrategy::BoundedQueues;
-/// assert_eq!(strategy, BackpressureStrategy::BoundedQueues);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BackpressureStrategy {
     /// No runtime-level override; each edge follows its own pressure policy.

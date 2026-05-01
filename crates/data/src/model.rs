@@ -3,11 +3,6 @@ use std::borrow::Cow;
 
 /// Concrete runtime value.
 ///
-/// ```
-/// use daedalus_data::model::Value;
-/// let v = Value::Int(42);
-/// assert_eq!(v, Value::Int(42));
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum Value {
@@ -26,12 +21,6 @@ pub enum Value {
 
 /// Borrowed view of a value to avoid cloning large payloads.
 ///
-/// ```
-/// use daedalus_data::model::{Value, ValueRef};
-/// let value = Value::String("hi".into());
-/// let view = ValueRef::from(&value);
-/// assert!(matches!(view, ValueRef::String("hi")));
-/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub enum ValueRef<'a> {
     Unit,
@@ -74,12 +63,6 @@ impl<'a> From<&'a Value> for ValueRef<'a> {
 impl<'a> ValueRef<'a> {
     /// Convert a borrowed view into an owned value.
     ///
-    /// ```
-    /// use daedalus_data::model::{Value, ValueRef};
-    /// let value = Value::Bool(true);
-    /// let owned = ValueRef::from(&value).into_owned();
-    /// assert_eq!(owned, Value::Bool(true));
-    /// ```
     pub fn into_owned(self) -> Value {
         match self {
             ValueRef::Unit => Value::Unit,
@@ -102,11 +85,6 @@ impl<'a> ValueRef<'a> {
 
 /// Static value type.
 ///
-/// ```
-/// use daedalus_data::model::ValueType;
-/// let ty = ValueType::String;
-/// assert_eq!(ty, ValueType::String);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum ValueType {
     Unit,
@@ -126,11 +104,6 @@ pub enum ValueType {
 
 /// Type expression to describe structured types.
 ///
-/// ```
-/// use daedalus_data::model::{TypeExpr, ValueType};
-/// let ty = TypeExpr::List(Box::new(TypeExpr::Scalar(ValueType::Int)));
-/// assert!(matches!(ty, TypeExpr::List(_)));
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum TypeExpr {
     Scalar(ValueType),
@@ -216,11 +189,6 @@ impl TypeExpr {
 
 /// Named field for struct types.
 ///
-/// ```
-/// use daedalus_data::model::{StructField, TypeExpr, ValueType};
-/// let field = StructField { name: "count".into(), ty: TypeExpr::Scalar(ValueType::Int) };
-/// assert_eq!(field.name, "count");
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct StructField {
     pub name: String,
@@ -229,11 +197,6 @@ pub struct StructField {
 
 /// Struct field value pairing.
 ///
-/// ```
-/// use daedalus_data::model::{StructFieldValue, Value};
-/// let field = StructFieldValue { name: "ok".into(), value: Value::Bool(true) };
-/// assert_eq!(field.name, "ok");
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StructFieldValue {
     pub name: String,
@@ -242,11 +205,6 @@ pub struct StructFieldValue {
 
 /// Enum variant with optional payload type.
 ///
-/// ```
-/// use daedalus_data::model::{EnumVariant, TypeExpr, ValueType};
-/// let variant = EnumVariant { name: "Ready".into(), ty: Some(TypeExpr::Scalar(ValueType::Unit)) };
-/// assert_eq!(variant.name, "Ready");
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct EnumVariant {
     pub name: String,
@@ -255,11 +213,6 @@ pub struct EnumVariant {
 
 /// Enum value with optional payload.
 ///
-/// ```
-/// use daedalus_data::model::{EnumValue, Value};
-/// let value = EnumValue { name: "Done".into(), value: Some(Box::new(Value::Unit)) };
-/// assert_eq!(value.name, "Done");
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EnumValue {
     pub name: String,

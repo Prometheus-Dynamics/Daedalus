@@ -426,7 +426,8 @@ impl PluginRegistry {
     ) -> PluginResult<()> {
         self.ensure_open()?;
         let key = key.into();
-        daedalus_data::named_types::register_named_type(key.clone(), expr.clone(), export)
+        self.named_type_registry
+            .register(key.clone(), expr.clone(), export)
             .map_err(|message| PluginError::NamedType { message })?;
         self.register_explicit_transport_type_decl(
             TypeKey::new(key),
@@ -463,6 +464,9 @@ impl PluginRegistry {
     ) -> PluginResult<()> {
         let expr = TypeExpr::Opaque(T::TYPE_KEY.to_string());
         self.type_registry.register_type::<T>(expr.clone());
+        // Keep the process-global type helper populated for macro-generated descriptor and handler
+        // paths that resolve type keys at registration time. Plugin-owned code should use
+        // `PluginRegistry::type_registry` directly when isolation matters.
         daedalus_data::typing::register_type::<T>(expr);
         self.register_named_type(T::TYPE_KEY, T::type_expr(), export)
     }

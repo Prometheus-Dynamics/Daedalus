@@ -376,8 +376,9 @@ fn boundary_contract_push(
             let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
                 .map_err(|_| #error)?;
             __contracts.push(
-                #runtime_crate::transport_types::BoundaryTypeContract::for_type::<#contract_ty>(
+                #runtime_crate::transport_types::BoundaryTypeContract::for_schema::<#contract_ty>(
                     __key,
+                    format!("{:?}", __ty),
                     #runtime_crate::transport_types::BoundaryCapabilities::rust_value(),
                 )
             );

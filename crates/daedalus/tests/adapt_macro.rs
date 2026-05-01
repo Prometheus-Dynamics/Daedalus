@@ -706,7 +706,9 @@ fn type_key_macro_registers_opaque_type() {
         daedalus::data::model::TypeExpr::opaque("test:frame")
     );
     assert_eq!(
-        daedalus::data::named_types::lookup_named_type("test:frame")
+        registry
+            .named_type_registry
+            .lookup("test:frame")
             .expect("named type")
             .expr,
         daedalus::data::model::TypeExpr::opaque("test:frame")

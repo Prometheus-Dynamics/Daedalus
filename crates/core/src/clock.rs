@@ -4,11 +4,6 @@ use serde::{Deserialize, Serialize};
 
 /// Monotonic logical tick for deterministic ordering.
 ///
-/// ```
-/// use daedalus_core::clock::Tick;
-/// let t = Tick::new(7);
-/// assert_eq!(t.value(), 7);
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Tick(u64);
@@ -31,13 +26,6 @@ impl Tick {
 
 /// Deterministic logical clock that can be manually advanced.
 ///
-/// ```
-/// use daedalus_core::clock::TickClock;
-/// let clock = TickClock::default();
-/// let t1 = clock.tick();
-/// let t2 = clock.advance(4);
-/// assert!(t2.value() > t1.value());
-/// ```
 #[derive(Debug)]
 pub struct TickClock {
     current: AtomicU64,

@@ -1,5 +1,8 @@
-//! Runtime orchestration scaffolding. See `PLAN.md` for the detailed roadmap.
-//! Transforms planner `ExecutionPlan` into a runnable `RuntimePlan` with edge policies and schedulable segments.
+//! Runtime execution layer for planner-produced graphs.
+//!
+//! This crate owns runtime plans, executor paths, handler dispatch, host bridge
+//! queues, streaming workers, state/resources, transport execution, and
+//! telemetry.
 
 pub mod capabilities;
 pub mod config;
@@ -25,16 +28,7 @@ pub use daedalus_transport as transport_types;
 
 /// Apply a plugin prefix to a node id without duplicating overlapping segments.
 ///
-/// Examples:
-/// - prefix `ai`, id `ai:run` => `ai:run`
-/// - prefix `cv:aruco`, id `cv:decode_grid` => `cv:aruco:decode_grid`
-/// - prefix `cv`, id `aruco:decode_grid` => `cv:aruco:decode_grid`
-///
-/// ```
-/// use daedalus_runtime::apply_node_prefix;
-/// assert_eq!(apply_node_prefix("ai", "ai:run"), "ai:run");
-/// assert_eq!(apply_node_prefix("cv", "aruco:decode_grid"), "cv:aruco:decode_grid");
-/// ```
+/// Prefixes already present at the start of the id are not duplicated.
 pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
     let prefix = prefix.trim_matches(':').trim();
     let id = id.trim_matches(':').trim();
@@ -83,12 +77,15 @@ pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
 }
 
 pub use config::*;
+pub use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY, NODE_OVERLOADS_KEY};
 pub use executor::{
     AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleStage, DirectPayloadFn,
     EdgePressureMetrics, EdgePressureReason, ExecuteError, ExecutionTelemetry, Executor,
-    ExecutorMaskError, InternalTransferMetrics, MetricsLevel, NodeAllocationSpikeExplanation,
-    NodeError, NodeHandler, NodeMetrics, NodeResourceMetrics, OwnershipReport, ProfileLevel,
-    Profiler, ResourceMetrics, TelemetryReport, TelemetryReportFilter, estimate_payload_bytes,
+    ExecutorMaskError, FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry,
+    FfiPayloadTelemetry, FfiTelemetryReport, FfiWorkerTelemetry, InternalTransferMetrics,
+    MetricsLevel, NodeAllocationSpikeExplanation, NodeError, NodeHandler, NodeMetrics,
+    NodeResourceMetrics, OwnedExecutor, OwnershipReport, ProfileLevel, Profiler, ResourceMetrics,
+    TelemetryReport, TelemetryReportFilter, estimate_payload_bytes,
     register_runtime_data_size_inspector,
 };
 pub use fanin::FanIn;
@@ -115,8 +112,8 @@ pub use state::{
 pub use state_error::StateError;
 pub use stream::{
     DEFAULT_STREAM_IDLE_SLEEP, GraphInput, GraphOutput, InputStats, OutputStats,
-    OutputSubscription, SharedStreamGraph, StreamGraph, StreamGraphDiagnostics, StreamGraphState,
-    StreamTelemetrySummary, StreamWorkerConfig, StreamWorkerDiagnostics, StreamWorkerState,
-    StreamWorkerStopError,
+    OutputSubscription, SharedStreamGraph, StreamExecutionMode, StreamGraph,
+    StreamGraphDiagnostics, StreamGraphState, StreamGraphWorker, StreamTelemetrySummary,
+    StreamWorkerConfig, StreamWorkerDiagnostics, StreamWorkerState, StreamWorkerStopError,
 };
 pub use transport::RuntimeTransport;

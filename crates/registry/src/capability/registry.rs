@@ -184,6 +184,7 @@ impl NodeRegistry {
     pub fn register(&mut self, decl: NodeDecl) -> RegistryResult<()> {
         let decl = decl.normalize();
         let key = decl.id.clone();
+        key.validate()?;
         if self.entries.contains_key(&key) {
             return Err(duplicate_error(ConflictKind::Node, key.0.clone()));
         }

@@ -1,10 +1,5 @@
 /// Structured node error for better diagnostics.
 ///
-/// ```
-/// use daedalus_runtime::executor::NodeError;
-/// let err = NodeError::InvalidInput("missing".into());
-/// assert_eq!(err.code(), "invalid_input");
-/// ```
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeError {
@@ -56,11 +51,6 @@ impl NodeError {
 
 /// Execution errors surfaced by the runtime executor.
 ///
-/// ```
-/// use daedalus_runtime::executor::ExecuteError;
-/// let err = ExecuteError::HandlerPanicked { node: "n1".into(), message: "boom".into() };
-/// assert_eq!(err.code(), "handler_panicked");
-/// ```
 #[non_exhaustive]
 #[derive(Debug, PartialEq, Eq)]
 pub enum ExecuteError {

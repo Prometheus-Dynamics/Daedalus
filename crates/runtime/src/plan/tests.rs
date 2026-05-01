@@ -39,6 +39,45 @@ fn try_from_execution_builds_empty_plan() {
 
 #[test]
 fn try_from_execution_reports_unknown_edge_pressure_policy() {
+    let mut graph = graph_with_single_edge();
+    graph.edges[0].metadata = BTreeMap::from([(
+        EDGE_PRESSURE_POLICY_KEY.to_string(),
+        Value::String("latest-typo".into()),
+    )]);
+
+    let err = RuntimePlan::try_from_execution(&ExecutionPlan::new(graph, vec![]))
+        .expect_err("unknown edge pressure policy should fail");
+
+    assert_eq!(
+        err,
+        RuntimePlanError::UnknownEdgePressurePolicy {
+            edge_index: 0,
+            policy: "latest-typo".into(),
+        }
+    );
+}
+
+#[test]
+fn try_from_execution_reports_unknown_edge_freshness_policy() {
+    let mut graph = graph_with_single_edge();
+    graph.edges[0].metadata = BTreeMap::from([(
+        EDGE_FRESHNESS_POLICY_KEY.to_string(),
+        Value::String("latest-by-spelling-error".into()),
+    )]);
+
+    let err = RuntimePlan::try_from_execution(&ExecutionPlan::new(graph, vec![]))
+        .expect_err("unknown edge freshness policy should fail");
+
+    assert_eq!(
+        err,
+        RuntimePlanError::UnknownEdgeFreshnessPolicy {
+            edge_index: 0,
+            policy: "latest-by-spelling-error".into(),
+        }
+    );
+}
+
+fn graph_with_single_edge() -> Graph {
     let mut graph = Graph::default();
     graph.nodes.push(NodeInstance {
         id: daedalus_registry::ids::NodeId::new("src"),
@@ -72,19 +111,9 @@ fn try_from_execution_reports_unknown_edge_pressure_policy() {
             port: "in".into(),
         },
         metadata: BTreeMap::from([(
-            EDGE_PRESSURE_POLICY_KEY.to_string(),
-            Value::String("latest-typo".into()),
+            EDGE_FRESHNESS_POLICY_KEY.to_string(),
+            Value::String(EDGE_FRESHNESS_LATEST_BY_SEQUENCE.into()),
         )]),
     });
-
-    let err = RuntimePlan::try_from_execution(&ExecutionPlan::new(graph, vec![]))
-        .expect_err("unknown edge pressure policy should fail");
-
-    assert_eq!(
-        err,
-        RuntimePlanError::UnknownEdgePressurePolicy {
-            edge_index: 0,
-            policy: "latest-typo".into(),
-        }
-    );
+    graph
 }

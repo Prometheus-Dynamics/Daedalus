@@ -1,0 +1,12 @@
+{
+  "name": "@daedalus/ffi-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Node/TypeScript SDK helpers for Daedalus FFI plugins",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

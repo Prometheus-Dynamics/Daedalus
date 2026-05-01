@@ -1,3 +1,4 @@
+use daedalus_core::metadata::NODE_OVERLOADS_KEY;
 use daedalus_data::model::{StructFieldValue, TypeExpr, Value};
 use daedalus_registry::capability::NodeDecl;
 use std::collections::BTreeMap;
@@ -11,8 +12,6 @@ use super::{
     adapt_request_for_input, diagnostic_node_id, input_access_for, input_ty_for, latest_node,
     port_type, resolve_edge_adapter_request,
 };
-
-const NODE_OVERLOADS_KEY: &str = "daedalus.overloads";
 
 #[derive(Clone, Debug)]
 struct ParsedNodeOverload {

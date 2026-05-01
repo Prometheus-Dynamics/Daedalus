@@ -277,7 +277,10 @@ pub(crate) fn runtime_plan_cache_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daedalus_planner::ExecutionPlan;
+    use daedalus_data::model::Value;
+    use daedalus_planner::{Edge, ExecutionPlan, NodeInstance, NodeRef, PortRef};
+    use daedalus_registry::ids::NodeId;
+    use std::collections::BTreeMap;
 
     fn planner_key(value: u64) -> PlannerCacheKey {
         PlannerCacheKey {
@@ -303,6 +306,49 @@ mod tests {
     fn runtime_plan() -> RuntimePlan {
         let plan = ExecutionPlan::new(Graph::default(), vec![]);
         daedalus_runtime::build_runtime(&plan, &SchedulerConfig::default())
+    }
+
+    fn graph_with_node_metadata(value: i64) -> Graph {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("runtime_value".to_string(), Value::Int(value));
+        Graph {
+            nodes: vec![
+                NodeInstance {
+                    id: NodeId::new("demo.source"),
+                    bundle: None,
+                    label: None,
+                    inputs: vec![],
+                    outputs: vec!["out".to_string()],
+                    compute: daedalus_planner::ComputeAffinity::CpuOnly,
+                    const_inputs: vec![],
+                    sync_groups: vec![],
+                    metadata,
+                },
+                NodeInstance {
+                    id: NodeId::new("demo.sink"),
+                    bundle: None,
+                    label: None,
+                    inputs: vec!["in".to_string()],
+                    outputs: vec![],
+                    compute: daedalus_planner::ComputeAffinity::CpuOnly,
+                    const_inputs: vec![],
+                    sync_groups: vec![],
+                    metadata: BTreeMap::new(),
+                },
+            ],
+            edges: vec![Edge {
+                from: PortRef {
+                    node: NodeRef(0),
+                    port: "out".to_string(),
+                },
+                to: PortRef {
+                    node: NodeRef(1),
+                    port: "in".to_string(),
+                },
+                metadata: BTreeMap::new(),
+            }],
+            metadata: BTreeMap::new(),
+        }
     }
 
     #[test]
@@ -335,5 +381,18 @@ mod tests {
         assert_eq!(metrics.runtime_plan.entries, 0);
         assert_eq!(metrics.planner.invalidations, 1);
         assert_eq!(metrics.runtime_plan.invalidations, 1);
+    }
+
+    #[test]
+    fn runtime_cache_key_changes_for_runtime_relevant_plan_fields() {
+        let scheduler = SchedulerConfig::default();
+        let first = ExecutionPlan::new(graph_with_node_metadata(1), vec![]);
+        let second = ExecutionPlan::new(graph_with_node_metadata(2), vec![]);
+
+        assert_ne!(first.hash, second.hash);
+        assert_ne!(
+            runtime_plan_cache_key(&first, &scheduler),
+            runtime_plan_cache_key(&second, &scheduler)
+        );
     }
 }
