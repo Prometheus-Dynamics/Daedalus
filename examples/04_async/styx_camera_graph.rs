@@ -8,6 +8,8 @@ use daedalus::{
     runtime::{NodeError, plugins::PluginRegistry},
 };
 #[cfg(feature = "styx-camera-example")]
+use styx::extras::preview_window::PreviewWindow;
+#[cfg(feature = "styx-camera-example")]
 use styx::prelude::*;
 
 #[cfg(feature = "styx-camera-example")]

@@ -8,6 +8,7 @@ mod real_gpu {
         macros::{node, plugin},
         runtime::{NodeError, plugins::PluginRegistry},
     };
+    use styx::extras::preview_window::PreviewWindow;
     use styx::prelude::*;
 
     #[node(
