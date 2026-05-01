@@ -32,6 +32,21 @@ fn graph_scope_try_node_helpers_report_missing_node_id() {
 }
 
 #[test]
+fn graph_scope_try_node_helpers_report_invalid_node_id() {
+    let capabilities = caps([NodeDecl::new("demo.known")]);
+
+    let err = match GraphBuilder::new(capabilities).try_nodes(|scope| {
+        scope.try_add_node("bad", "Demo.Node")?;
+        Ok(())
+    }) {
+        Ok(_) => panic!("invalid scoped node should fail"),
+        Err(err) => err,
+    };
+
+    assert!(matches!(err, GraphBuildError::InvalidNodeId { id, .. } if id == "Demo.Node"));
+}
+
+#[test]
 fn graph_scope_fallible_sections_build_without_panic_helpers() {
     let capabilities = caps([
         NodeDecl::new("demo.src").output(

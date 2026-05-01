@@ -49,8 +49,8 @@ use schedule::{gpu, schedule};
 use setup::{apply_descriptor_defaults, clear_planner_owned_graph_metadata};
 use suggest::suggest_nodes;
 use type_utils::{
-    adapt_request_for_input, input_access_for, input_ty_for, port_type, target_residency_for_node,
-    typeexpr_transport_key,
+    adapt_request_for_input, input_access_for, input_ty_for, is_generic_marker, port_type,
+    target_residency_for_node, typeexpr_transport_key,
 };
 pub use types::{
     AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,
@@ -87,11 +87,6 @@ pub(super) fn diagnostic_node_id(node: &NodeInstance) -> String {
 /// Currently stubs; contracts are enforced via deterministic diagnostics ordering.
 /// Build an execution plan from a graph and registry.
 ///
-/// ```ignore
-/// use daedalus_planner::{build_plan, PlannerConfig, PlannerInput, Graph};
-/// let out = build_plan(PlannerInput { graph: Graph::default() }, PlannerConfig::default());
-/// assert_eq!(out.plan.graph.nodes.len(), 0);
-/// ```
 pub fn build_plan(mut input: PlannerInput, config: PlannerConfig) -> PlannerOutput {
     let mut diags = Vec::new();
     let catalog = PlannerCatalog::from_config(&config);
@@ -255,10 +250,6 @@ fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut Vec<Diagno
             let r = self.find(var);
             self.binding[r].clone()
         }
-    }
-
-    fn is_generic_marker(ty: &TypeExpr) -> bool {
-        matches!(ty, TypeExpr::Opaque(value) if value.eq_ignore_ascii_case("generic"))
     }
 
     fn display_label_for_type(ty: &TypeExpr, lookup: &BTreeMap<TypeExpr, String>) -> String {

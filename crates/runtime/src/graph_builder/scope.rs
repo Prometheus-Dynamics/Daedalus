@@ -181,13 +181,17 @@ impl GraphScope {
     {
         let id = handle.id().to_string();
         let alias = handle.alias().to_string();
+        let node_id = NodeId::try_new(&id).map_err(|source| GraphBuildError::InvalidNodeId {
+            id: id.clone(),
+            source,
+        })?;
         if !self
             .builder
             .as_ref()
             .expect("graph scope builder should be present")
             .capabilities
             .nodes()
-            .contains_key(&NodeId::new(&id))
+            .contains_key(&node_id)
         {
             return Err(GraphBuildError::MissingNodeId { id });
         }

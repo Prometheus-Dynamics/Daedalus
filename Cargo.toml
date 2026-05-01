@@ -92,7 +92,7 @@ futures-util = { version = "0.3.32", default-features = false, features = ["std"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "std"] }
-styx = { git = "https://github.com/Prometheus-Dynamics/Styx.git", rev = "f826c3bc4aa6b8f5e941bddec643060f9b0d45b1", default-features = false }
+styx = { version = "2.0.0", git = "https://github.com/Prometheus-Dynamics/Styx.git", branch = "main", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

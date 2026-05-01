@@ -54,18 +54,45 @@ impl LayoutHash {
         Self(hash.into().into())
     }
 
+    /// Runtime-local fallback layout identity for plain Rust values.
+    ///
+    /// This is intentionally tied to the concrete Rust type name plus basic ABI facts. Dynamic
+    /// plugin boundaries that already have schema/field metadata should prefer
+    /// [`Self::for_schema`] so same-name, same-size layout changes are still rejected.
     pub fn for_type<T: 'static>() -> Self {
         Self::new(format!(
-            "{}:{}:{}",
+            "rust-type-v1:{}:{}:{}",
             std::any::type_name::<T>(),
             std::mem::size_of::<T>(),
             std::mem::align_of::<T>()
         ))
     }
 
+    /// Stable schema-derived layout identity for boundary-crossing payload contracts.
+    pub fn for_schema<T: 'static>(schema: impl fmt::Display) -> Self {
+        Self::new(format!(
+            "rust-schema-v1:{}:{}:{}:{:016x}",
+            std::any::type_name::<T>(),
+            std::mem::size_of::<T>(),
+            std::mem::align_of::<T>(),
+            stable_hash64(schema.to_string().as_bytes())
+        ))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+fn stable_hash64(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }
 
 impl fmt::Display for LayoutHash {

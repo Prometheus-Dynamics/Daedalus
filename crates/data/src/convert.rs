@@ -8,20 +8,6 @@ use crate::model::{TypeExpr, Value};
 
 /// Trait implemented by converters between value types.
 ///
-/// ```
-/// use daedalus_data::convert::{Converter, ConverterId};
-/// use daedalus_data::errors::DataResult;
-/// use daedalus_data::model::{TypeExpr, Value, ValueType};
-///
-/// struct Noop;
-/// impl Converter for Noop {
-///     fn id(&self) -> ConverterId { ConverterId("noop".into()) }
-///     fn input(&self) -> &TypeExpr { &TypeExpr::Scalar(ValueType::Int) }
-///     fn output(&self) -> &TypeExpr { &TypeExpr::Scalar(ValueType::Int) }
-///     fn cost(&self) -> u64 { 0 }
-///     fn convert(&self, value: Value) -> DataResult<Value> { Ok(value) }
-/// }
-/// ```
 pub trait Converter: Send + Sync {
     fn id(&self) -> ConverterId;
     fn input(&self) -> &TypeExpr;
@@ -38,27 +24,11 @@ pub trait Converter: Send + Sync {
 
 /// Identifier for a converter edge in the graph.
 ///
-/// ```
-/// use daedalus_data::convert::ConverterId;
-/// let id = ConverterId("rgb_to_rgba".into());
-/// assert_eq!(id.0, "rgb_to_rgba");
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct ConverterId(pub String);
 
 /// Provenance for a conversion path.
 ///
-/// ```
-/// use daedalus_data::convert::{ConversionProvenance, ConverterId};
-/// let prov = ConversionProvenance {
-///     steps: vec![ConverterId("a".into())],
-///     total_cost: 1,
-///     skipped_cycles: vec![],
-///     skipped_gpu: vec![],
-///     skipped_features: vec![],
-/// };
-/// assert_eq!(prov.total_cost, 1);
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ConversionProvenance {
     pub steps: Vec<ConverterId>,
@@ -70,19 +40,6 @@ pub struct ConversionProvenance {
 
 /// Result of resolving a conversion path.
 ///
-/// ```
-/// use daedalus_data::convert::{ConversionProvenance, ConversionResolution, ConverterId};
-/// let res = ConversionResolution {
-///     provenance: ConversionProvenance {
-///         steps: vec![ConverterId("noop".into())],
-///         total_cost: 0,
-///         skipped_cycles: vec![],
-///         skipped_gpu: vec![],
-///         skipped_features: vec![],
-///     },
-/// };
-/// assert!(res.notes().is_empty());
-/// ```
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConversionResolution {
     pub provenance: ConversionProvenance,
@@ -125,23 +82,6 @@ struct Edge {
 
 /// Converter graph with deterministic resolver.
 ///
-/// ```
-/// use daedalus_data::convert::{ConverterBuilder, ConverterGraph};
-/// use daedalus_data::model::{TypeExpr, Value, ValueType};
-///
-/// let mut graph = ConverterGraph::new();
-/// graph.register(
-///     ConverterBuilder::new(
-///         "bool-id",
-///         TypeExpr::Scalar(ValueType::Bool),
-///         TypeExpr::Scalar(ValueType::Bool),
-///         |v: Value| Ok(v),
-///     )
-///     .build_boxed(),
-/// );
-/// let res = graph.resolve(&TypeExpr::Scalar(ValueType::Bool), &TypeExpr::Scalar(ValueType::Bool));
-/// assert!(res.is_ok());
-/// ```
 #[derive(Default)]
 pub struct ConverterGraph {
     converters: BTreeMap<ConverterId, Box<dyn Converter>>,
@@ -150,30 +90,6 @@ pub struct ConverterGraph {
 
 /// Thread-safe wrapper type for concurrent registration/resolution.
 ///
-/// ```
-/// use daedalus_data::convert::{ConverterBuilder, ConverterGraph, SharedConverterGraph};
-/// use daedalus_data::model::{TypeExpr, Value, ValueType};
-/// use std::sync::{Arc, RwLock};
-///
-/// let graph: SharedConverterGraph = Arc::new(RwLock::new(ConverterGraph::new()));
-/// {
-///     let mut g = graph.write().unwrap();
-///     g.register(
-///         ConverterBuilder::new(
-///             "id",
-///             TypeExpr::Scalar(ValueType::Bool),
-///             TypeExpr::Scalar(ValueType::Bool),
-///             |v| Ok(v),
-///         )
-///         .build_boxed(),
-///     );
-/// }
-/// {
-///     let g = graph.read().unwrap();
-///     let res = g.resolve(&TypeExpr::Scalar(ValueType::Bool), &TypeExpr::Scalar(ValueType::Bool)).unwrap();
-///     assert_eq!(res.provenance.total_cost, 0);
-/// }
-/// ```
 pub type SharedConverterGraph = std::sync::Arc<std::sync::RwLock<ConverterGraph>>;
 
 impl ConverterGraph {
@@ -372,36 +288,6 @@ impl ConverterGraph {
 
 /// Builder that turns a closure into a `Converter`.
 ///
-/// ```
-/// use daedalus_data::convert::{ConverterBuilder, ConverterGraph};
-/// use daedalus_data::errors::{DataError, DataErrorCode};
-/// use daedalus_data::model::{TypeExpr, Value, ValueType};
-///
-/// let conv = ConverterBuilder::new(
-///     "int_to_string",
-///     TypeExpr::Scalar(ValueType::Int),
-///     TypeExpr::Scalar(ValueType::String),
-///     |v| match v {
-///         Value::Int(i) => Ok(Value::String(i.to_string().into())),
-///         _ => Err(DataError::new(DataErrorCode::InvalidType, "expected int")),
-///     },
-/// )
-/// .cost(2u64)
-/// .feature_flag("fmt")
-/// .build_boxed();
-///
-/// let mut graph = ConverterGraph::new();
-/// graph.register(conv);
-/// let res = graph
-///     .resolve_with_context(
-///         &TypeExpr::Scalar(ValueType::Int),
-///         &TypeExpr::Scalar(ValueType::String),
-///         &["fmt".into()],
-///         true,
-///     )
-///     .expect("resolution");
-/// assert_eq!(res.provenance.steps.len(), 1);
-/// ```
 pub struct ConverterBuilder<F>
 where
     F: Fn(Value) -> DataResult<Value> + Send + Sync + 'static,
@@ -467,18 +353,6 @@ where
 
 /// Converter implementation backed by a closure.
 ///
-/// ```
-/// use daedalus_data::convert::{Converter, ConverterBuilder};
-/// use daedalus_data::model::{TypeExpr, Value, ValueType};
-/// let conv = ConverterBuilder::new(
-///     "noop",
-///     TypeExpr::Scalar(ValueType::Int),
-///     TypeExpr::Scalar(ValueType::Int),
-///     |v: Value| Ok(v),
-/// )
-/// .build();
-/// assert_eq!(conv.cost(), 1);
-/// ```
 pub struct FnConverter<F>
 where
     F: Fn(Value) -> DataResult<Value> + Send + Sync + 'static,

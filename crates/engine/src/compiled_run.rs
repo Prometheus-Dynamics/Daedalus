@@ -9,20 +9,6 @@ use crate::error::EngineError;
 
 /// Result of a full engine run.
 ///
-/// ```ignore
-/// use daedalus_engine::RunResult;
-/// use daedalus_runtime::ExecutionTelemetry;
-/// use daedalus_runtime::RuntimePlan;
-///
-/// let result = RunResult {
-///     runtime_plan: RuntimePlan::from_execution(&daedalus_planner::ExecutionPlan::new(
-///         daedalus_planner::Graph::default(),
-///         vec![],
-///     )),
-///     telemetry: ExecutionTelemetry::default(),
-/// };
-/// assert!(result.runtime_plan.nodes.is_empty());
-/// ```
 pub struct RunResult {
     pub runtime_plan: RuntimePlan,
     pub telemetry: ExecutionTelemetry,
@@ -48,7 +34,8 @@ impl<H: NodeHandler + Send + Sync + 'static> CompiledRun<H> {
     pub fn run(&mut self) -> Result<RunResult, EngineError> {
         let telemetry = match self.runtime_mode {
             RuntimeMode::Serial => self.executor.run_in_place(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => self.executor.run_parallel_in_place(),
+            RuntimeMode::Parallel => self.executor.run_parallel_in_place(),
+            RuntimeMode::Adaptive => self.executor.run_adaptive_in_place(),
         }?;
         Ok(RunResult {
             runtime_plan: self.runtime_plan.as_ref().clone(),
@@ -62,7 +49,8 @@ impl<H: NodeHandler + Send + Sync + 'static> CompiledRun<H> {
     pub fn run_telemetry(&mut self) -> Result<ExecutionTelemetry, EngineError> {
         Ok(match self.runtime_mode {
             RuntimeMode::Serial => self.executor.run_in_place(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => self.executor.run_parallel_in_place(),
+            RuntimeMode::Parallel => self.executor.run_parallel_in_place(),
+            RuntimeMode::Adaptive => self.executor.run_adaptive_in_place(),
         }?)
     }
 }

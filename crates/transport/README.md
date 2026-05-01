@@ -1,5 +1,13 @@
 # daedalus-transport
 
-Generic payload transport primitives for Daedalus.
+Low-level payload transport contracts shared by registry, planner, runtime, GPU, FFI, and plugin code.
 
-This crate owns the low-level vocabulary for the new transport model: stable type keys, access modes, residency/layout metadata, adapter costs, and type-erased payload storage. It intentionally does not depend on runtime, registry, GPU, FFI, or data crates.
+## Owns
+
+- stable `TypeKey` and layout identity,
+- payload access modes and residency classes,
+- adapter declarations, costs, requirements, and executable adapter tables,
+- boundary contracts for dynamic plugin payloads,
+- payload envelopes, lifecycle lineage, branch policy, release hooks, and stream pressure policy.
+
+This crate intentionally does not depend on the runtime, registry, GPU, FFI, or data crates. It defines vocabulary and contracts; higher layers decide when and how to execute them.

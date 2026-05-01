@@ -85,4 +85,4 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Validate package surface
-        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-ffi --exclude daedalus-plugins-images --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --allow-dirty --no-verify
+        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --allow-dirty --no-verify

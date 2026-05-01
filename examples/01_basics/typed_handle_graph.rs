@@ -23,8 +23,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output = builder.output("out");
     let graph = builder
         .node_handle_like(&inc)
-        .connect(&input, &inc.inputs.value)
-        .connect(&inc.outputs.value, &output)
+        .try_connect(&input, &inc.inputs.value)?
+        .try_connect(&inc.outputs.value, &output)?
         .build();
 
     let engine = Engine::new(EngineConfig::default())?;

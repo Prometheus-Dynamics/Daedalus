@@ -11,11 +11,6 @@ use super::lowerings::PlannerLoweringRegistry;
 
 /// Static planner config controlling optional passes.
 ///
-/// ```ignore
-/// use daedalus_planner::PlannerConfig;
-/// let cfg = PlannerConfig::default();
-/// assert!(!cfg.enable_gpu);
-/// ```
 #[derive(Clone, Debug, Default)]
 pub struct PlannerConfig {
     pub enable_gpu: bool,
@@ -72,11 +67,6 @@ impl PlannerConfig {
 
 /// Input to the planner.
 ///
-/// ```ignore
-/// use daedalus_planner::{PlannerInput, Graph};
-/// let input = PlannerInput { graph: Graph::default() };
-/// assert_eq!(input.graph.nodes.len(), 0);
-/// ```
 #[derive(Clone, Debug)]
 pub struct PlannerInput {
     pub graph: Graph,
@@ -84,11 +74,6 @@ pub struct PlannerInput {
 
 /// Planner output: final plan and any diagnostics.
 ///
-/// ```ignore
-/// use daedalus_planner::{PlannerOutput, ExecutionPlan, Graph};
-/// let out = PlannerOutput { plan: ExecutionPlan::new(Graph::default(), vec![]), diagnostics: vec![] };
-/// assert!(out.diagnostics.is_empty());
-/// ```
 #[derive(Clone, Debug)]
 pub struct PlannerOutput {
     pub plan: ExecutionPlan,
@@ -141,15 +126,30 @@ impl fmt::Display for EdgeResolutionKind {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseEdgeResolutionKindError {
+    pub value: String,
+}
+
+impl fmt::Display for ParseEdgeResolutionKindError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown edge resolution kind '{}'", self.value)
+    }
+}
+
+impl std::error::Error for ParseEdgeResolutionKindError {}
+
 impl FromStr for EdgeResolutionKind {
-    type Err = ();
+    type Err = ParseEdgeResolutionKindError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "exact" => Ok(EdgeResolutionKind::Exact),
             "conversion" => Ok(EdgeResolutionKind::Conversion),
             "missing" => Ok(EdgeResolutionKind::Missing),
-            _ => Err(()),
+            _ => Err(ParseEdgeResolutionKindError {
+                value: value.to_string(),
+            }),
         }
     }
 }
@@ -183,8 +183,21 @@ impl fmt::Display for AdapterResolutionMode {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseAdapterResolutionModeError {
+    pub value: String,
+}
+
+impl fmt::Display for ParseAdapterResolutionModeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown adapter resolution mode '{}'", self.value)
+    }
+}
+
+impl std::error::Error for ParseAdapterResolutionModeError {}
+
 impl FromStr for AdapterResolutionMode {
-    type Err = ();
+    type Err = ParseAdapterResolutionModeError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
@@ -194,7 +207,9 @@ impl FromStr for AdapterResolutionMode {
             "materialize" => Ok(AdapterResolutionMode::Materialize),
             "convert" => Ok(AdapterResolutionMode::Convert),
             "mixed" => Ok(AdapterResolutionMode::Mixed),
-            _ => Err(()),
+            _ => Err(ParseAdapterResolutionModeError {
+                value: value.to_string(),
+            }),
         }
     }
 }
@@ -246,4 +261,26 @@ pub struct PlanExplanation {
     pub lowerings: Vec<AppliedPlannerLowering>,
     pub overloads: Vec<NodeOverloadResolution>,
     pub edges: Vec<EdgeResolutionExplanation>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AdapterResolutionMode, EdgeResolutionKind};
+    use std::str::FromStr;
+
+    #[test]
+    fn edge_resolution_kind_parse_error_keeps_value() {
+        let err = EdgeResolutionKind::from_str("typo").expect_err("unknown kind should fail");
+
+        assert_eq!(err.value, "typo");
+        assert_eq!(err.to_string(), "unknown edge resolution kind 'typo'");
+    }
+
+    #[test]
+    fn adapter_resolution_mode_parse_error_keeps_value() {
+        let err = AdapterResolutionMode::from_str("typo").expect_err("unknown mode should fail");
+
+        assert_eq!(err.value, "typo");
+        assert_eq!(err.to_string(), "unknown adapter resolution mode 'typo'");
+    }
 }

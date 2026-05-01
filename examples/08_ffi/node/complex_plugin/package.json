@@ -1,0 +1,9 @@
+{
+  "name": "ffi-showcase-node",
+  "type": "module",
+  "scripts": {
+    "build:plugin": "node src/build-package.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

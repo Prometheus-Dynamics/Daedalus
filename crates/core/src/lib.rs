@@ -1,41 +1,10 @@
-//! Base plumbing for the Daedalus pipeline stack.
+//! Shared low-level types for the Daedalus workspace.
 //!
-//! This crate is intentionally small and feature-light: it owns IDs, errors,
-//! clocks/ticks, message envelopes, channel primitives, and (optionally) a tiny
-//! metrics facade. Higher layers (`daedalus-data`, `daedalus-registry`,
-//! planner/runtime crates) depend on these building blocks and must not inject
-//! new global state or cfg mazes here.
-//!
-//! IDs serialize deterministically as `"prefix:n"` strings (e.g., `"node:1"`,
-//! `"edge:7"`) to keep planner/runtime diagnostics and golden outputs stable.
-//! Message payloads are generic; callers are expected to uphold any `Send`/`Sync`
-//! guarantees required by their runtime context.
-//!
-//! # Examples
-//! Send/recv on a bounded channel:
-//! ```
-//! use daedalus_core::channels::{bounded, ChannelRecv, ChannelSend, RecvOutcome};
-//!
-//! let (tx, rx) = bounded(2);
-//! assert_eq!(tx.send(1), daedalus_core::channels::Backpressure::Ok);
-//! assert_eq!(tx.send(2), daedalus_core::channels::Backpressure::Ok);
-//! assert_eq!(rx.try_recv(), RecvOutcome::Data(1));
-//! assert_eq!(rx.try_recv(), RecvOutcome::Data(2));
-//! ```
-//!
-//! Manual tick clock:
-//! ```
-//! use daedalus_core::clock::TickClock;
-//! let clock = TickClock::default();
-//! let t1 = clock.tick();
-//! let t2 = clock.advance(5);
-//! assert!(t2.value() > t1.value());
-//! ```
-//!
-//! **Concurrency/typing notes:** channel factories enforce `Send` on payloads;
-//! if your runtime requires `Sync` as well, enforce it at your boundary (e.g.,
-//! `ChannelSend<Arc<T>>` with `T: Send + Sync`). IDs serialize as `"prefix:n"`
-//! strings for stable planner/runtime diagnostics and goldens.
+//! This crate owns deterministic ids, logical clocks, message envelopes, channel
+//! traits, backpressure policy names, sync metadata, and the optional metrics
+//! facade. It intentionally stays dependency-light so registry, planner,
+//! runtime, engine, FFI, and transport crates can depend on it without pulling
+//! in higher-level execution concerns.
 
 pub mod channels;
 pub mod clock;

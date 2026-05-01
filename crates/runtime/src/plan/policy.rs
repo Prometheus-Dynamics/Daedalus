@@ -14,14 +14,14 @@ pub const EDGE_PRESSURE_DROP_NEWEST: &str = "drop_newest";
 pub const EDGE_PRESSURE_DROP_OLDEST: &str = "drop_oldest";
 pub const EDGE_PRESSURE_ERROR_ON_FULL: &str = "error_on_full";
 pub const EDGE_PRESSURE_COALESCE: &str = "coalesce";
+pub const EDGE_OVERFLOW_POLICY_KEY: &str = "daedalus.edge.overflow";
+pub const EDGE_FRESHNESS_LATEST_BY_SEQUENCE: &str = "latest_by_sequence";
+pub const EDGE_FRESHNESS_LATEST_BY_TIMESTAMP: &str = "latest_by_timestamp";
+pub const EDGE_FRESHNESS_MAX_AGE: &str = "max_age";
+pub const EDGE_FRESHNESS_MAX_LAG: &str = "max_lag";
 
 /// Runtime policy for one internal edge.
 ///
-/// ```
-/// use daedalus_runtime::RuntimeEdgePolicy;
-/// let policy = RuntimeEdgePolicy::latest_only();
-/// assert!(policy.is_latest_only());
-/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeEdgePolicy {
     #[serde(default)]
@@ -76,6 +76,7 @@ impl Default for RuntimeEdgePolicy {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EdgePolicyMetadataError {
     UnknownPressurePolicy { policy: String },
+    UnknownFreshnessPolicy { policy: String },
 }
 
 pub(crate) fn edge_policy_from_metadata(
@@ -122,10 +123,15 @@ pub(crate) fn edge_policy_from_metadata(
             _ => None,
         })
         .map(|policy| match policy {
-            "latest_by_sequence" => FreshnessPolicy::LatestBySequence,
-            "latest_by_timestamp" => FreshnessPolicy::LatestByTimestamp,
-            _ => FreshnessPolicy::PreserveAll,
+            EDGE_FRESHNESS_LATEST_BY_SEQUENCE => Ok(FreshnessPolicy::LatestBySequence),
+            EDGE_FRESHNESS_LATEST_BY_TIMESTAMP => Ok(FreshnessPolicy::LatestByTimestamp),
+            EDGE_FRESHNESS_MAX_AGE => Ok(FreshnessPolicy::MaxAge(std::time::Duration::ZERO)),
+            EDGE_FRESHNESS_MAX_LAG => Ok(FreshnessPolicy::MaxLag { frames: 0 }),
+            unknown => Err(EdgePolicyMetadataError::UnknownFreshnessPolicy {
+                policy: unknown.to_string(),
+            }),
         })
+        .transpose()?
         .unwrap_or(FreshnessPolicy::PreserveAll);
     Ok(RuntimeEdgePolicy {
         pressure,

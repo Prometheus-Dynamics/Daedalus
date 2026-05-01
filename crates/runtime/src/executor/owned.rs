@@ -1,19 +1,18 @@
+use super::ExecutorConfigTarget;
 #[cfg(not(feature = "executor-pool"))]
 use super::parallel;
 use super::{
     CompiledSchedule, ConstInputStore, DirectSlotAccess, ExecuteError, ExecutionTelemetry,
     Executor, ExecutorBuildError, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler,
     RuntimeDataSizeInspectors, apply_patch_to_const_inputs, build_executor_init, reset_run_storage,
-    serial,
+    serial, should_run_parallel_adaptive,
 };
 #[cfg(feature = "executor-pool")]
-use super::{compiled_worker_pool, pool, resolve_pool_workers};
+use super::{compiled_worker_pool, pool};
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
 use crate::state::{ResourceLifecycleEvent, StateError, StateStore};
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
 use std::collections::HashSet;
-#[cfg(feature = "executor-pool")]
-use std::sync::OnceLock;
 use std::sync::{Arc, RwLock};
 
 /// Owned executor that can be reused across runs without leaking the plan.
@@ -41,6 +40,25 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) handler: Arc<H>,
     pub(crate) core: ExecutorCore,
     pub(super) storage_needs_reset: bool,
+}
+
+impl<H: NodeHandler> ExecutorConfigTarget for OwnedExecutor<H> {
+    fn core_mut(&mut self) -> &mut ExecutorCore {
+        &mut self.core
+    }
+
+    fn nodes_len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    fn edges_len(&self) -> usize {
+        self.edges.len()
+    }
+
+    #[cfg(feature = "executor-pool")]
+    fn segments_len(&self) -> usize {
+        self.segments.len()
+    }
 }
 
 impl<H: NodeHandler> OwnedExecutor<H> {
@@ -147,7 +165,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     }
 
     pub fn with_selected_host_output_ports(mut self, ports: Option<Arc<HashSet<String>>>) -> Self {
-        self.core.run_config.set_selected_host_output_ports(ports);
+        self.apply_selected_host_output_ports(ports);
         self
     }
 
@@ -163,7 +181,11 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                 self.core.run_config.active_nodes = Some(Arc::new(mask));
             }
             Err(err) => {
-                tracing::warn!("daedalus-runtime: demand-driven sink selection failed: {err}");
+                tracing::warn!(
+                    target: "daedalus_runtime::executor",
+                    error = %err,
+                    "demand-driven sink selection failed"
+                );
             }
         }
         self
@@ -176,23 +198,23 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     /// already-running scoped segments to return before propagating that error. When disabled, the
     /// executor records segment errors in telemetry and continues scheduling remaining ready work.
     pub fn with_fail_fast(mut self, enabled: bool) -> Self {
-        self.core.run_config.set_fail_fast(enabled);
+        self.apply_fail_fast(enabled);
         self
     }
 
     /// Provide a shared constant coercer registry (used by dynamic plugins).
     pub fn with_const_coercers(mut self, coercers: crate::io::ConstCoercerMap) -> Self {
-        self.core.const_coercers = Some(coercers);
+        self.apply_const_coercers(coercers);
         self
     }
 
     pub fn with_data_size_inspectors(mut self, inspectors: RuntimeDataSizeInspectors) -> Self {
-        self.core.data_size_inspectors = inspectors;
+        self.apply_data_size_inspectors(inspectors);
         self
     }
 
     pub fn with_runtime_transport(mut self, transport: crate::transport::RuntimeTransport) -> Self {
-        self.core.runtime_transport = Some(Arc::new(transport));
+        self.apply_runtime_transport(transport);
         self
     }
 
@@ -200,12 +222,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         mut self,
         capabilities: crate::capabilities::CapabilityRegistry,
     ) -> Self {
-        self.core.capabilities = Arc::new(capabilities);
+        self.apply_capabilities(capabilities);
         self
     }
 
     pub fn with_state(mut self, state: StateStore) -> Self {
-        self.core.state = state;
+        self.apply_state(state);
         self
     }
 
@@ -230,24 +252,18 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     #[cfg(feature = "gpu")]
     pub fn with_gpu(mut self, gpu: daedalus_gpu::GpuContextHandle) -> Self {
-        self.core.gpu_available = true;
-        self.core.gpu = Some(gpu);
+        self.apply_gpu(gpu);
         self
     }
 
     #[cfg(not(feature = "gpu"))]
     pub fn without_gpu(mut self) -> Self {
-        self.core.gpu_available = false;
+        self.clear_gpu();
         self
     }
 
     pub fn with_pool_size(mut self, size: Option<usize>) -> Self {
-        self.core.run_config.set_pool_size(size);
-        #[cfg(feature = "executor-pool")]
-        {
-            self.core.pool_workers = resolve_pool_workers(size, self.segments.len());
-            self.core.worker_pool = Arc::new(OnceLock::new());
-        }
+        self.apply_pool_size(size);
         self
     }
 
@@ -258,18 +274,17 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     }
 
     pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
-        self.core.run_config.metrics_level = level;
-        self.core.telemetry.metrics_level = level;
+        self.apply_metrics_level(level);
         self
     }
 
     pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
-        let pool_size = self.core.run_config.set_runtime_debug_config(config);
-        self.with_pool_size(pool_size)
+        self.apply_runtime_debug_config(config);
+        self
     }
 
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        self.core.host_bridges = Some(mgr);
+        self.apply_host_bridges(mgr);
         self
     }
 
@@ -327,34 +342,25 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         &mut self,
         active_nodes: Option<Arc<Vec<bool>>>,
     ) -> Result<(), ExecutorMaskError> {
-        let expected = self.nodes.len();
-        self.core
-            .run_config
-            .set_active_nodes_mask(active_nodes, expected)
+        self.apply_active_nodes_mask(active_nodes)
     }
 
     pub fn try_set_active_edges_mask(
         &mut self,
         active_edges: Option<Arc<Vec<bool>>>,
     ) -> Result<(), ExecutorMaskError> {
-        let expected = self.edges.len();
-        self.core
-            .run_config
-            .set_active_edges_mask(active_edges, expected)
+        self.apply_active_edges_mask(active_edges)
     }
 
     pub fn try_set_active_direct_edges_mask(
         &mut self,
         active_direct_edges: Option<Arc<Vec<bool>>>,
     ) -> Result<(), ExecutorMaskError> {
-        let expected = self.edges.len();
-        self.core
-            .run_config
-            .set_active_direct_edges_mask(active_direct_edges, expected)
+        self.apply_active_direct_edges_mask(active_direct_edges)
     }
 
     pub fn set_selected_host_output_ports(&mut self, ports: Option<Arc<HashSet<String>>>) {
-        self.core.run_config.set_selected_host_output_ports(ports);
+        self.apply_selected_host_output_ports(ports);
     }
 
     pub(super) fn snapshot<'a>(&'a self, direct_slot_access: DirectSlotAccess) -> Executor<'a, H> {
@@ -421,6 +427,33 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                     parallel::run(exec)
                 }
             }
+        };
+        let mut drain_exec = self.snapshot(DirectSlotAccess::Shared);
+        serial::drain_host_outputs(&mut drain_exec);
+        if res.is_err() {
+            self.storage_needs_reset = true;
+        }
+        res
+    }
+
+    /// Execute the runtime plan with adaptive serial/parallel selection without rebuilding.
+    pub fn run_adaptive_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError>
+    where
+        H: Send + Sync + 'static,
+    {
+        self.reset_for_run();
+        let exec = self.snapshot(DirectSlotAccess::Shared);
+        let res = if should_run_parallel_adaptive(&exec.schedule) {
+            #[cfg(feature = "executor-pool")]
+            {
+                pool::run(exec)
+            }
+            #[cfg(not(feature = "executor-pool"))]
+            {
+                parallel::run(exec)
+            }
+        } else {
+            serial::run(exec)
         };
         let mut drain_exec = self.snapshot(DirectSlotAccess::Shared);
         serial::drain_host_outputs(&mut drain_exec);

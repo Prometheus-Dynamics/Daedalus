@@ -366,6 +366,11 @@ fn host_graph_ticks_payloads_through_bridge() {
     let out = graph.drain_payloads("out");
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].get_ref::<Value>(), Some(&Value::Int(42)));
+
+    let latest = graph
+        .run_once_latest::<_, Value>(("in", int_key, Value::Int(100)), "out")
+        .unwrap();
+    assert_eq!(latest, Some(Value::Int(101)));
 }
 
 #[test]

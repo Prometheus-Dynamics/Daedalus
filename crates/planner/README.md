@@ -1,27 +1,32 @@
 # daedalus-planner
 
-Plans logical graphs into executable runtime plans. Validates node connections, enforces compute affinities, sync policies, and emits segments suitable for the runtime.
+Graph validation and runtime-plan input generation.
 
-## Responsibilities
-- Validate graphs against the registry (node IDs, ports, metadata).
-- Compute segment boundaries, sync groups, and ordering constraints.
-- Enforce compute affinity (CPU/GPU required/preferred) and emit GPU requirements.
-- Produce diagnostic information (missing nodes/ports, cycles, capability gaps).
+## Owns
 
-## Key modules
-- `graph`: graph representation used during planning.
-- `passes`: validation and shaping passes that produce a `RuntimePlan`.
-- `diagnostics`: structured errors/warnings for consumers.
-- `helpers`: helpers for building/inspecting graphs in tests.
+- graph, node, edge, and port references,
+- diagnostics and golden-friendly error payloads,
+- registry hydration,
+- type validation,
+- adapter path resolution,
+- embedded group lowering,
+- GPU segment annotation,
+- scheduling metadata,
+- plan explanation and patch helpers.
 
-## Features
-- `gpu`: include GPU capabilities in plans.
-- `schema` / `proto`: optional export formats for plans/graphs.
+The planner is deterministic by design. Runtime execution state, handler dispatch, queues, and host bridge behavior live in `daedalus-runtime`.
 
-## Usage
-- Build or load a `Graph` (via registry helpers or manual construction).
-- Call `planner::plan(&registry, graph, config)` to get a `RuntimePlan` and diagnostics.
-- Feed the plan into `daedalus-runtime` or the `engine` facade.
+## Scoped Lowerings
 
-## Testing
-- Golden tests under `crates/planner/tests` cover success/failure cases and GPU capability handling.
+Use an owned `PlannerLoweringRegistry` when lowerings must be isolated by host, plugin set, tenant, or test:
+
+```rust
+use daedalus_planner::{PlannerConfig, PlannerLoweringRegistry};
+
+let config = PlannerConfig {
+    lowerings: PlannerLoweringRegistry::new(),
+    ..PlannerConfig::default()
+};
+```
+
+`register_planner_lowering` and `PlannerLoweringRegistry::global()` are convenience paths for simple binaries and examples. Release-facing planning should prefer `PlannerConfig { lowerings, .. }` so custom lowerings do not leak across independent runs.

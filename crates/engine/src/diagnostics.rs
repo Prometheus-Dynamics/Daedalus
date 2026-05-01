@@ -30,6 +30,14 @@ pub fn render_error(err: &EngineError) -> Value {
             "code": "runtime",
             "message": e.to_string(),
         }),
+        EngineError::ExecutorBuild(e) => json!({
+            "code": "executor_build",
+            "message": e.to_string(),
+        }),
+        EngineError::ExecutorMask(e) => json!({
+            "code": "executor_mask",
+            "message": e.to_string(),
+        }),
         EngineError::BundleParse { path, error } => json!({
             "code": "bundle_parse",
             "path": path,

@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{ItemFn, LitStr, parse_macro_input};
+use syn::{ItemFn, LitStr, parse_macro_input, parse_quote};
 
 use crate::helpers::{AttributeArgs, compile_error};
 
@@ -67,6 +67,9 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
 
     // Move the user function body into an inner helper to keep the external API clean.
     input.sig.ident = inner_fn_ident.clone();
+    input.attrs.push(parse_quote! {
+        #[allow(dead_code)]
+    });
     let sig_for_ports = input.sig.clone();
 
     // Detect low-level vs typed signature (same heuristic as node_handler).

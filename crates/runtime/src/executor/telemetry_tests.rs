@@ -227,3 +227,238 @@ fn report_filter_uses_typed_transport_ids_without_changing_json_shape() {
     assert!(json.contains("\"type_key\":\"example:image\""));
     assert!(json.contains("\"adapter_id\":\"example.image.upload\""));
 }
+
+#[test]
+#[cfg(feature = "metrics")]
+fn report_exposes_ffi_telemetry() {
+    let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Detailed);
+    let mut ffi = super::FfiTelemetryReport::default();
+    ffi.backends.insert(
+        "backend-1".to_string(),
+        super::FfiBackendTelemetry {
+            backend_key: "backend-1".to_string(),
+            backend_kind: Some("python".to_string()),
+            language: Some("python".to_string()),
+            runner_starts: 1,
+            runner_reuses: 2,
+            invokes: 3,
+            invoke_duration: Duration::from_micros(25),
+            abi_call_duration: Duration::from_micros(7),
+            bytes_sent: 128,
+            bytes_received: 64,
+            pointer_length_payload_calls: 1,
+            ..Default::default()
+        },
+    );
+    ffi.adapters.insert(
+        "demo.adapter".to_string(),
+        super::FfiAdapterTelemetry {
+            adapter_id: "demo.adapter".to_string(),
+            source_type_key: Some("external:image".to_string()),
+            target_type_key: Some("daedalus:image".to_string()),
+            origin: Some("external_plugin".to_string()),
+            calls: 2,
+            duration: Duration::from_micros(9),
+            ..Default::default()
+        },
+    );
+    ffi.payloads.handles_created = 1;
+    ffi.payloads.handles_resolved = 2;
+    ffi.payloads.releases = 1;
+    ffi.payloads.active_leases = 1;
+
+    telemetry.record_ffi(ffi);
+
+    let report = telemetry.report();
+    let backend = report.ffi.backends.get("backend-1").unwrap();
+    assert_eq!(backend.backend_kind.as_deref(), Some("python"));
+    assert_eq!(backend.invokes, 3);
+    assert_eq!(backend.runner_reuses, 2);
+    assert_eq!(backend.pointer_length_payload_calls, 1);
+    assert_eq!(report.ffi.adapters["demo.adapter"].calls, 2);
+    assert_eq!(report.ffi.payloads.handles_created, 1);
+    assert_eq!(report.ffi.payloads.handles_resolved, 2);
+
+    let table = report.to_table();
+    assert!(table.contains("ffi_backend\tbackend-1\tinvokes\t3"));
+    assert!(table.contains("ffi_backend\tbackend-1\tpointer_length_payload_calls\t1"));
+    assert!(table.contains("ffi_adapter\tdemo.adapter\tcalls\t2"));
+    assert!(table.contains("ffi_payload\tall\thandles_created\t1"));
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn ffi_telemetry_report_json_keeps_stable_sections() {
+    let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Detailed);
+    let mut ffi = super::FfiTelemetryReport::default();
+    ffi.packages.insert(
+        "demo.plugin".to_string(),
+        super::FfiPackageTelemetry {
+            package_id: "demo.plugin".to_string(),
+            backend_resolutions: 1,
+            artifact_checks: 2,
+            ..Default::default()
+        },
+    );
+    ffi.backends.insert(
+        "backend-1".to_string(),
+        super::FfiBackendTelemetry {
+            backend_key: "backend-1".to_string(),
+            backend_kind: Some("c_cpp".to_string()),
+            dynamic_library_load_duration: Duration::from_micros(11),
+            symbol_lookup_duration: Duration::from_micros(3),
+            abi_call_duration: Duration::from_micros(5),
+            pointer_length_payload_calls: 1,
+            abi_error_codes: 1,
+            panic_boundary_errors: 1,
+            ..Default::default()
+        },
+    );
+    ffi.workers.insert(
+        "worker-1".to_string(),
+        super::FfiWorkerTelemetry {
+            worker_id: "worker-1".to_string(),
+            request_bytes: 32,
+            response_bytes: 64,
+            ..Default::default()
+        },
+    );
+    ffi.adapters.insert(
+        "adapter-1".to_string(),
+        super::FfiAdapterTelemetry {
+            adapter_id: "adapter-1".to_string(),
+            source_type_key: Some("external".to_string()),
+            target_type_key: Some("internal".to_string()),
+            calls: 1,
+            ..Default::default()
+        },
+    );
+    telemetry.record_ffi(ffi);
+
+    let json = telemetry.report().to_json().expect("serialize telemetry");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("parse telemetry json");
+
+    assert_eq!(
+        value.get("ffi").expect("ffi section"),
+        &serde_json::json!({
+            "packages": {
+                "demo.plugin": {
+                    "package_id": "demo.plugin",
+                    "validation_duration": { "secs": 0, "nanos": 0 },
+                    "load_duration": { "secs": 0, "nanos": 0 },
+                    "artifact_checks": 2,
+                    "backend_resolutions": 1,
+                    "bundle_path_resolutions": 0,
+                    "install_failures": 0
+                }
+            },
+            "backends": {
+                "backend-1": {
+                    "backend_key": "backend-1",
+                    "backend_kind": "c_cpp",
+                    "runner_starts": 0,
+                    "runner_reuses": 0,
+                    "runner_restarts": 0,
+                    "runner_failures": 0,
+                    "runner_not_ready": 0,
+                    "runner_shutdowns": 0,
+                    "runner_pruned": 0,
+                    "invokes": 0,
+                    "invoke_duration": { "secs": 0, "nanos": 0 },
+                    "checkout_wait_duration": { "secs": 0, "nanos": 0 },
+                    "symbol_lookup_duration": { "secs": 0, "nanos": 3000 },
+                    "dynamic_library_load_duration": { "secs": 0, "nanos": 11000 },
+                    "abi_call_duration": { "secs": 0, "nanos": 5000 },
+                    "bytes_sent": 0,
+                    "bytes_received": 0,
+                    "pointer_length_payload_calls": 1,
+                    "abi_error_codes": 1,
+                    "panic_boundary_errors": 1,
+                    "idle_runners": 0
+                }
+            },
+            "workers": {
+                "worker-1": {
+                    "worker_id": "worker-1",
+                    "handshakes": 0,
+                    "handshake_duration": { "secs": 0, "nanos": 0 },
+                    "request_bytes": 32,
+                    "response_bytes": 64,
+                    "encode_duration": { "secs": 0, "nanos": 0 },
+                    "decode_duration": { "secs": 0, "nanos": 0 },
+                    "malformed_responses": 0,
+                    "stderr_events": 0,
+                    "typed_errors": 0,
+                    "raw_io_events": 0,
+                    "health_checks": 0,
+                    "shutdowns": 0,
+                    "unsupported_limit_errors": 0,
+                    "timeout_failures": 0
+                }
+            },
+            "payloads": {
+                "handles_created": 0,
+                "handles_resolved": 0,
+                "borrows": 0,
+                "releases": 0,
+                "active_leases": 0,
+                "expired_leases": 0,
+                "zero_copy_hits": 0,
+                "shared_reference_hits": 0,
+                "cow_materializations": 0,
+                "mutable_in_place_hits": 0,
+                "owned_moves": 0,
+                "copied_bytes_estimate": 0
+            },
+            "adapters": {
+                "adapter-1": {
+                    "adapter_id": "adapter-1",
+                    "source_type_key": "external",
+                    "target_type_key": "internal",
+                    "calls": 1,
+                    "duration": { "secs": 0, "nanos": 0 },
+                    "failures": 0
+                }
+            }
+        })
+    );
+}
+
+#[test]
+#[cfg(feature = "metrics")]
+fn merge_combines_ffi_telemetry() {
+    let mut left = ExecutionTelemetry::with_level(MetricsLevel::Detailed);
+    let mut left_ffi = super::FfiTelemetryReport::default();
+    left_ffi.backends.insert(
+        "backend-1".to_string(),
+        super::FfiBackendTelemetry {
+            backend_key: "backend-1".to_string(),
+            invokes: 1,
+            bytes_sent: 10,
+            ..Default::default()
+        },
+    );
+    left.record_ffi(left_ffi);
+
+    let mut right = ExecutionTelemetry::with_level(MetricsLevel::Detailed);
+    let mut right_ffi = super::FfiTelemetryReport::default();
+    right_ffi.backends.insert(
+        "backend-1".to_string(),
+        super::FfiBackendTelemetry {
+            backend_key: "backend-1".to_string(),
+            invokes: 2,
+            bytes_sent: 20,
+            ..Default::default()
+        },
+    );
+    right_ffi.payloads.handles_created = 1;
+    right.record_ffi(right_ffi);
+
+    left.merge(right);
+
+    let report = left.report();
+    let backend = report.ffi.backends.get("backend-1").unwrap();
+    assert_eq!(backend.invokes, 3);
+    assert_eq!(backend.bytes_sent, 30);
+    assert_eq!(report.ffi.payloads.handles_created, 1);
+}

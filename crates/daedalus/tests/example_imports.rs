@@ -22,11 +22,17 @@ fn examples_use_only_facade() {
     let mut violations = Vec::new();
 
     for path in examples {
+        let is_ffi_example = path
+            .components()
+            .any(|component| component.as_os_str().to_str() == Some("08_ffi"));
         let content = fs::read_to_string(&path).expect("read example");
         for (idx, line) in content.lines().enumerate() {
             let l = line.trim();
             // Forbid importing internal crates directly; allow the facade `daedalus` only.
-            if l.starts_with("use daedalus_") {
+            //
+            // FFI examples intentionally exercise the split FFI crates and package builders rather
+            // than the end-user graph facade.
+            if l.starts_with("use daedalus_") && !is_ffi_example {
                 violations.push(format!(
                     "{}:{}: forbidden internal import: {}",
                     path.display(),
@@ -34,7 +40,7 @@ fn examples_use_only_facade() {
                     l
                 ));
             }
-            if l.contains("crate::") {
+            if l.contains("crate::") && !is_ffi_example {
                 violations.push(format!(
                     "{}:{}: forbidden crate-relative import: {}",
                     path.display(),

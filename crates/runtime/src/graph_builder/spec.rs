@@ -1,4 +1,5 @@
 use crate::handles::PortHandle;
+use daedalus_registry::ids::IdValidationError;
 
 /// Convenience wrapper so callers can pre-prefix ids (e.g. via a plugin helper)
 /// and pass them into `GraphBuilder::node_spec`.
@@ -54,6 +55,11 @@ pub enum GraphBuildError {
     MissingHostBridge,
     #[error("nested graph missing host bridge alias '{alias}'")]
     MissingHostBridgeAlias { alias: String },
+    #[error("invalid node id '{id}': {source}")]
+    InvalidNodeId {
+        id: String,
+        source: IdValidationError,
+    },
 }
 
 /// Conversion into a graph port reference.

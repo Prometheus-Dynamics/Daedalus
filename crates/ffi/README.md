@@ -1,7 +1,7 @@
 # Daedalus FFI Workspace
 
-This directory contains the FFI/plugin crates. The old manifest crate has been removed; new work
-targets the split schema, backend, package, and worker surfaces directly.
+This directory contains the FFI/plugin crates. The active design uses separate schema, backend,
+package, host-runner, and language SDK surfaces.
 
 ## Architecture
 
@@ -105,3 +105,6 @@ crates that actually need them.
 Package and SDK library APIs come before CLI workflows. CLI commands such as `plugin new`, `plugin
 check`, `plugin build`, and `plugin run` are useful later, but the first stable surface should be the
 Rust and language SDK APIs that generate, validate, package, and run the artifacts.
+
+The target SDK authoring shape is tracked in [`sdk-authoring.md`](sdk-authoring.md), and feature
+propagation across languages is tracked in [`feature-matrix.md`](feature-matrix.md).

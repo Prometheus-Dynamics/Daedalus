@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{DirectHostRoute, NodeHandler};
+use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::{HostBridgeHandle, HostBridgeManager};
-use daedalus_runtime::transport::typeexpr_transport_key;
 use daedalus_runtime::{RuntimePlan, RuntimePlanExplanation, RuntimeSink};
 use daedalus_transport::{
     FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, TypeKey,
@@ -15,6 +15,14 @@ use daedalus_transport::{
 
 use crate::compiled_run::{CompiledRun, RunResult};
 use crate::error::EngineError;
+
+mod bindings;
+
+use bindings::type_key_for;
+pub use bindings::{
+    HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
+    HostGraphRunInput, HostGraphSubscription,
+};
 
 /// In-process graph runner for host-driven applications.
 ///
@@ -31,157 +39,6 @@ pub struct HostGraph<H: NodeHandler> {
     pub(crate) bridges: HostBridgeManager,
     pub(crate) host: HostBridgeHandle,
     pub(crate) node_labels: Arc<[String]>,
-}
-
-pub struct HostGraphSubscription {
-    host: HostBridgeHandle,
-    port: String,
-}
-
-pub struct HostGraphInput<T> {
-    host: HostBridgeHandle,
-    port: String,
-    type_key: TypeKey,
-    _ty: PhantomData<T>,
-}
-
-impl<T> HostGraphInput<T>
-where
-    T: Send + Sync + 'static,
-{
-    pub fn push(&self, value: T) -> FeedOutcome {
-        self.host
-            .feed_payload_ref(&self.port, Payload::owned(self.type_key.clone(), value))
-    }
-
-    pub fn port(&self) -> &str {
-        &self.port
-    }
-}
-
-pub struct HostGraphPayloadInput {
-    host: HostBridgeHandle,
-    port: String,
-}
-
-impl HostGraphPayloadInput {
-    pub fn push(&self, payload: Payload) -> FeedOutcome {
-        self.host.feed_payload_ref(&self.port, payload)
-    }
-
-    pub fn port(&self) -> &str {
-        &self.port
-    }
-}
-
-pub struct HostGraphOutput<T> {
-    host: HostBridgeHandle,
-    port: String,
-    _ty: PhantomData<T>,
-}
-
-impl<T> HostGraphOutput<T>
-where
-    T: Send + Sync + 'static,
-{
-    pub fn try_take(&self) -> Result<Option<T>, Box<Payload>> {
-        self.host.try_pop_owned::<T>(&self.port)
-    }
-
-    pub fn port(&self) -> &str {
-        &self.port
-    }
-}
-
-pub struct HostGraphPayloadOutput {
-    host: HostBridgeHandle,
-    port: String,
-}
-
-impl HostGraphPayloadOutput {
-    pub fn try_take(&self) -> Option<Payload> {
-        self.host.try_pop_payload(&self.port)
-    }
-
-    pub fn port(&self) -> &str {
-        &self.port
-    }
-}
-
-pub struct HostGraphLane<I> {
-    route: DirectHostRoute,
-    type_key: TypeKey,
-    _input: PhantomData<I>,
-}
-
-impl HostGraphSubscription {
-    pub fn try_recv_payload(&self) -> Option<Payload> {
-        self.host.try_pop_payload(&self.port)
-    }
-
-    pub fn try_recv<T>(&self) -> Option<T>
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        self.host.try_pop(&self.port)
-    }
-}
-
-pub trait HostGraphRunInput {
-    type Value;
-
-    fn into_parts(self) -> (String, TypeKey, Self::Value);
-}
-
-impl<I> HostGraphRunInput for (&str, I)
-where
-    I: Send + Sync + 'static,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (String, TypeKey, Self::Value) {
-        (self.0.to_string(), type_key_for::<I>(), self.1)
-    }
-}
-
-impl<I> HostGraphRunInput for (String, I)
-where
-    I: Send + Sync + 'static,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (String, TypeKey, Self::Value) {
-        (self.0, type_key_for::<I>(), self.1)
-    }
-}
-
-impl<I, K> HostGraphRunInput for (&str, K, I)
-where
-    I: Send + Sync + 'static,
-    K: Into<TypeKey>,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (String, TypeKey, Self::Value) {
-        (self.0.to_string(), self.1.into(), self.2)
-    }
-}
-
-impl<I, K> HostGraphRunInput for (String, K, I)
-where
-    I: Send + Sync + 'static,
-    K: Into<TypeKey>,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (String, TypeKey, Self::Value) {
-        (self.0, self.1.into(), self.2)
-    }
-}
-
-fn type_key_for<T: 'static>() -> TypeKey {
-    typeexpr_transport_key(&daedalus_data::typing::type_expr::<T>())
-        .unwrap_or_else(|_| TypeKey::new(std::any::type_name::<T>()))
 }
 
 pub struct HostGraphStep<T> {
@@ -360,7 +217,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     }
 
     /// Bind a typed host input once and reuse it across ticks.
-    pub fn bind_input<T>(&self, port: impl Into<String>) -> HostGraphInput<T>
+    pub fn bind_input<T>(&self, port: impl Into<PortId>) -> HostGraphInput<T>
     where
         T: Send + Sync + 'static,
     {
@@ -373,7 +230,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     }
 
     /// Bind a raw payload input for dynamic or plugin-driven payloads.
-    pub fn bind_payload_input(&self, port: impl Into<String>) -> HostGraphPayloadInput {
+    pub fn bind_payload_input(&self, port: impl Into<PortId>) -> HostGraphPayloadInput {
         HostGraphPayloadInput {
             host: self.host.clone(),
             port: port.into(),
@@ -381,7 +238,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     }
 
     /// Bind a typed host output once and reuse it across ticks.
-    pub fn bind_output<T>(&self, port: impl Into<String>) -> HostGraphOutput<T>
+    pub fn bind_output<T>(&self, port: impl Into<PortId>) -> HostGraphOutput<T>
     where
         T: Send + Sync + 'static,
     {
@@ -393,7 +250,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     }
 
     /// Bind a raw payload output for dynamic or plugin-driven payloads.
-    pub fn bind_payload_output(&self, port: impl Into<String>) -> HostGraphPayloadOutput {
+    pub fn bind_payload_output(&self, port: impl Into<PortId>) -> HostGraphPayloadOutput {
         HostGraphPayloadOutput {
             host: self.host.clone(),
             port: port.into(),
@@ -621,13 +478,13 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         let demand = self.runtime_plan().demand_summary_for_slice(&sinks, &slice);
         self.runner
             .executor
-            .set_active_nodes_mask(Some(Arc::new(slice.active_nodes.clone())));
+            .try_set_active_nodes_mask(Some(Arc::new(slice.active_nodes.clone())))?;
         self.runner
             .executor
-            .set_active_edges_mask(Some(Arc::new(slice.active_edges.clone())));
+            .try_set_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))?;
         self.runner
             .executor
-            .set_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())));
+            .try_set_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))?;
         self.runner
             .executor
             .set_selected_host_output_ports(Some(Arc::new(
@@ -641,9 +498,11 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
             telemetry.demand = demand;
             telemetry
         });
-        self.runner.executor.set_active_nodes_mask(None);
-        self.runner.executor.set_active_edges_mask(None);
-        self.runner.executor.set_active_direct_edges_mask(None);
+        self.runner.executor.try_set_active_nodes_mask(None)?;
+        self.runner.executor.try_set_active_edges_mask(None)?;
+        self.runner
+            .executor
+            .try_set_active_direct_edges_mask(None)?;
         self.runner.executor.set_selected_host_output_ports(None);
         result
     }
@@ -704,6 +563,23 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.drain_owned(output_port)
     }
 
+    /// Feed one typed input, run until idle, and return the latest typed output.
+    pub fn run_once_latest<I, O>(
+        &mut self,
+        input: I,
+        output_port: impl AsRef<str>,
+    ) -> Result<Option<O>, EngineError>
+    where
+        I: HostGraphRunInput,
+        I::Value: Send + Sync + 'static,
+        O: Send + Sync + 'static,
+    {
+        Ok(self
+            .run_once::<I, O>(input, output_port)?
+            .into_iter()
+            .last())
+    }
+
     pub fn take_payload(&self, port: impl AsRef<str>) -> Option<Payload> {
         self.host.try_pop_payload(port)
     }
@@ -735,7 +611,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.drain(port).into_iter().last()
     }
 
-    pub fn subscribe(&self, port: impl Into<String>) -> HostGraphSubscription {
+    pub fn subscribe(&self, port: impl Into<PortId>) -> HostGraphSubscription {
         HostGraphSubscription {
             host: self.host.clone(),
             port: port.into(),

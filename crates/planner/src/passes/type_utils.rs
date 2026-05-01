@@ -6,16 +6,16 @@ use crate::metadata::DynamicPortMetadata;
 
 use super::PlannerConfig;
 
+pub(super) fn is_generic_marker(ty: &TypeExpr) -> bool {
+    matches!(ty, TypeExpr::Opaque(value) if value.eq_ignore_ascii_case("generic"))
+}
+
 pub(super) fn port_type(
     node: &NodeInstance,
     desc: &NodeDecl,
     name: &str,
     is_input: bool,
 ) -> Option<TypeExpr> {
-    fn is_generic_marker(ty: &TypeExpr) -> bool {
-        matches!(ty, TypeExpr::Opaque(value) if value.eq_ignore_ascii_case("generic"))
-    }
-
     let dynamic_metadata = DynamicPortMetadata::from_node_metadata(&node.metadata);
 
     if is_input {
@@ -102,5 +102,20 @@ pub(super) fn target_residency_for_node(
             Some(daedalus_transport::Residency::Gpu)
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_marker_is_case_insensitive_opaque_generic() {
+        assert!(is_generic_marker(&TypeExpr::Opaque("generic".to_string())));
+        assert!(is_generic_marker(&TypeExpr::Opaque("Generic".to_string())));
+        assert!(!is_generic_marker(&TypeExpr::Opaque("frame".to_string())));
+        assert!(!is_generic_marker(&TypeExpr::Scalar(
+            daedalus_data::model::ValueType::String
+        )));
     }
 }

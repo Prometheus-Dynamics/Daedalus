@@ -7,6 +7,7 @@ use daedalus_transport::{
 };
 
 use crate::executor::{CorrelatedPayload, NodeError};
+use crate::handles::HostAlias;
 use crate::io::NodeIo;
 
 use super::{
@@ -17,7 +18,7 @@ use super::{
 
 #[derive(Clone, Default)]
 pub struct HostBridgeManager {
-    inner: Arc<Mutex<HashMap<String, Arc<HostBridgeShared>>>>,
+    inner: Arc<Mutex<HashMap<HostAlias, Arc<HostBridgeShared>>>>,
     defaults: Arc<Mutex<HostBridgeDefaults>>,
 }
 
@@ -50,13 +51,13 @@ impl HostBridgeManager {
     }
 
     pub fn handle(&self, alias: impl AsRef<str>) -> Option<HostBridgeHandle> {
-        let alias = alias.as_ref().to_string();
-        let shared = lock_host_map(&self.inner).get(&alias)?.clone();
+        let alias = HostAlias::from(alias.as_ref());
+        let shared = lock_host_map(&self.inner).get(alias.as_str())?.clone();
         Some(HostBridgeHandle::new(alias, shared))
     }
 
     pub fn ensure_handle(&self, alias: impl Into<String>) -> HostBridgeHandle {
-        let alias = alias.into();
+        let alias = HostAlias::new(alias);
         let mut guard = lock_host_map(&self.inner);
         let shared = guard
             .entry(alias.clone())
@@ -185,7 +186,7 @@ impl HostBridgeManager {
             .cloned()
             .collect::<Vec<_>>();
         for shared in handles {
-            HostBridgeHandle::new(String::new(), shared).apply_config(config)?;
+            HostBridgeHandle::new(HostAlias::new(""), shared).apply_config(config)?;
         }
         Ok(())
     }

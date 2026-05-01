@@ -4,14 +4,121 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use core::{
-    BackendConfig, BackendKind, BackendRuntimeModel, FfiContractError, PackageArtifact,
-    PackageArtifactKind, PackagePlatform, bundled_artifact_path, validate_language_backends,
+    BackendConfig, BackendKind, BackendRuntimeModel, FfiContractError, NodeSchema, PackageArtifact,
+    PackageArtifactKind, PackagePlatform, PluginPackage, PluginSchema, PluginSchemaInfo,
+    SCHEMA_VERSION, WirePayloadHandle, WirePort, bundled_artifact_path, validate_language_backends,
 };
 use thiserror::Error;
 
 pub use daedalus_ffi_core as core;
 
 const JAVA_BUNDLE_DIR: &str = "_bundle/java";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JavaPayloadTransport {
+    pub direct_byte_buffer: bool,
+    pub mmap: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JavaCompletePackageInput {
+    pub schema: PluginSchema,
+    pub backends: BTreeMap<String, BackendConfig>,
+    pub package: JavaPackageInput,
+    pub lockfile: Option<String>,
+    pub metadata: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JavaResolvedPayload {
+    pub id: String,
+    pub type_key: String,
+    pub access: String,
+    pub view: JavaPayloadView,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JavaPayloadView {
+    DirectByteBuffer { bytes_estimate: u64 },
+    Mmap { path: String, offset: u64, len: u64 },
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum JavaPayloadResolveError {
+    #[error("java payload transport supports neither direct ByteBuffer nor mmap")]
+    UnsupportedTransport,
+    #[error("payload handle `{0}` is missing `{1}` metadata")]
+    MissingMetadata(String, &'static str),
+}
+
+impl JavaPayloadTransport {
+    pub fn direct_byte_buffer_and_mmap() -> Self {
+        Self {
+            direct_byte_buffer: true,
+            mmap: true,
+        }
+    }
+
+    pub fn backend_options(&self) -> BTreeMap<String, serde_json::Value> {
+        BTreeMap::from([(
+            "payload_transport".into(),
+            serde_json::json!({
+                "direct_byte_buffer": self.direct_byte_buffer,
+                "mmap": self.mmap,
+            }),
+        )])
+    }
+}
+
+pub fn resolve_java_payload_handle(
+    handle: &WirePayloadHandle,
+    transport: &JavaPayloadTransport,
+) -> Result<JavaResolvedPayload, JavaPayloadResolveError> {
+    let view = if transport.mmap {
+        if let Some(path) = metadata_string(handle, "mmap_path") {
+            Some(JavaPayloadView::Mmap {
+                path,
+                offset: metadata_u64(handle, "mmap_offset").unwrap_or(0),
+                len: metadata_u64(handle, "mmap_len")
+                    .or_else(|| metadata_u64(handle, "bytes_estimate"))
+                    .ok_or_else(|| {
+                        JavaPayloadResolveError::MissingMetadata(handle.id.clone(), "mmap_len")
+                    })?,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let view = match view {
+        Some(view) => view,
+        None if transport.direct_byte_buffer => JavaPayloadView::DirectByteBuffer {
+            bytes_estimate: metadata_u64(handle, "bytes_estimate").ok_or_else(|| {
+                JavaPayloadResolveError::MissingMetadata(handle.id.clone(), "bytes_estimate")
+            })?,
+        },
+        None => return Err(JavaPayloadResolveError::UnsupportedTransport),
+    };
+    Ok(JavaResolvedPayload {
+        id: handle.id.clone(),
+        type_key: handle.type_key.to_string(),
+        access: handle.access.to_string(),
+        view,
+    })
+}
+
+fn metadata_string(handle: &WirePayloadHandle, key: &'static str) -> Option<String> {
+    handle
+        .metadata
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn metadata_u64(handle: &WirePayloadHandle, key: &'static str) -> Option<u64> {
+    handle.metadata.get(key).and_then(serde_json::Value::as_u64)
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JavaPackageInput {
@@ -138,6 +245,106 @@ pub fn validate_java_schema(
     validate_language_backends(schema, backends, BackendKind::Java)
 }
 
+pub fn java_node_schema(
+    node_id: impl Into<String>,
+    method_name: impl Into<String>,
+    inputs: Vec<WirePort>,
+    outputs: Vec<WirePort>,
+) -> NodeSchema {
+    NodeSchema {
+        id: node_id.into(),
+        backend: BackendKind::Java,
+        entrypoint: method_name.into(),
+        label: None,
+        stateful: false,
+        feature_flags: Vec::new(),
+        inputs,
+        outputs,
+        metadata: BTreeMap::new(),
+    }
+}
+
+pub fn java_plugin_schema(
+    plugin_name: impl Into<String>,
+    version: Option<String>,
+    nodes: Vec<NodeSchema>,
+) -> Result<PluginSchema, FfiContractError> {
+    let mut schema = PluginSchema {
+        schema_version: SCHEMA_VERSION,
+        plugin: PluginSchemaInfo {
+            name: plugin_name.into(),
+            version,
+            description: None,
+            metadata: BTreeMap::new(),
+        },
+        dependencies: Vec::new(),
+        required_host_capabilities: Vec::new(),
+        feature_flags: Vec::new(),
+        boundary_contracts: Vec::new(),
+        nodes,
+    };
+    schema.nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    schema.validate_backend_kind(BackendKind::Java)?;
+    Ok(schema)
+}
+
+pub fn java_plugin_package(
+    schema: PluginSchema,
+    backends: BTreeMap<String, BackendConfig>,
+    input: &JavaPackageInput,
+) -> Result<PluginPackage, JavaPackageError> {
+    JavaCompletePackageInput {
+        schema,
+        backends,
+        package: input.clone(),
+        lockfile: None,
+        metadata: BTreeMap::new(),
+    }
+    .build()
+}
+
+impl JavaCompletePackageInput {
+    pub fn build(self) -> Result<PluginPackage, JavaPackageError> {
+        validate_language_backends(&self.schema, &self.backends, BackendKind::Java)?;
+        let mut metadata = java_metadata_options(&self.package);
+        metadata.extend(self.metadata);
+        metadata.insert("language".into(), serde_json::json!("java"));
+        metadata.insert(
+            "package_builder".into(),
+            serde_json::json!("daedalus-ffi-java"),
+        );
+
+        let mut package = PluginPackage {
+            schema_version: SCHEMA_VERSION,
+            schema: Some(self.schema),
+            backends: self.backends,
+            artifacts: self.package.package_artifacts()?,
+            lockfile: self.lockfile.or_else(|| Some("plugin.lock.json".into())),
+            manifest_hash: None,
+            signature: None,
+            metadata,
+        };
+        package.validate()?;
+        package.manifest_hash = Some(package.compute_manifest_hash()?);
+        Ok(package)
+    }
+}
+
+pub fn java_complete_plugin_package(
+    schema: PluginSchema,
+    backends: BTreeMap<String, BackendConfig>,
+    input: JavaPackageInput,
+) -> Result<PluginPackage, JavaPackageError> {
+    JavaCompletePackageInput {
+        schema,
+        backends,
+        package: input,
+        lockfile: Some("plugin.lock.json".into()),
+        metadata: BTreeMap::new(),
+    }
+    .build()
+}
+
 impl JavaClasspathEntry {
     pub fn jar(path: impl Into<String>) -> Self {
         Self::Jar(path.into())
@@ -182,6 +389,15 @@ pub fn java_worker_launch(
         executable: backend.executable.clone().unwrap_or_else(|| "java".into()),
         args,
     }
+}
+
+pub fn java_backend_config_with_transport(
+    input: &JavaPackageInput,
+    transport: JavaPayloadTransport,
+) -> Result<BackendConfig, JavaPackageError> {
+    let mut backend = input.backend_config()?;
+    backend.options.extend(transport.backend_options());
+    Ok(backend)
 }
 
 pub fn bundled_java_path(path: &str) -> Result<String, JavaPackageError> {
@@ -309,6 +525,7 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use daedalus_ffi_core::{FixtureLanguage, generate_language_fixture, scalar_add_fixture_spec};
 
     fn input() -> JavaPackageInput {
         JavaPackageInput {
@@ -478,5 +695,149 @@ mod tests {
                 message: "process failed".into(),
             }
         );
+    }
+
+    #[test]
+    fn sdk_builders_match_rust_baseline_schema_surface() {
+        let spec = scalar_add_fixture_spec();
+        let rust = generate_language_fixture(&spec, FixtureLanguage::Rust).expect("rust fixture");
+        let java_fixture =
+            generate_language_fixture(&spec, FixtureLanguage::Java).expect("java fixture");
+        let baseline = &rust.schema.nodes[0];
+
+        let node = java_node_schema(
+            baseline.id.clone(),
+            java_fixture.schema.nodes[0].entrypoint.clone(),
+            baseline.inputs.clone(),
+            baseline.outputs.clone(),
+        );
+        let schema = java_plugin_schema(
+            "ffi.conformance.java.scalar_add",
+            Some("1.0.0".into()),
+            vec![node],
+        )
+        .expect("schema");
+        let input = JavaPackageInput {
+            entry_class: "ffi.conformance.ScalarAdd".into(),
+            entry_method: "add".into(),
+            classpath: vec![JavaClasspathEntry::classes_dir("classes")],
+            ..Default::default()
+        };
+        let backend = input.backend_config().expect("backend config");
+        let backends = BTreeMap::from([(baseline.id.clone(), backend.clone())]);
+        let package =
+            java_plugin_package(schema.clone(), backends.clone(), &input).expect("package");
+
+        assert_eq!(schema.nodes[0].id, baseline.id);
+        assert_eq!(schema.nodes[0].inputs, baseline.inputs);
+        assert_eq!(schema.nodes[0].outputs, baseline.outputs);
+        assert_eq!(schema.nodes[0].stateful, baseline.stateful);
+        assert_eq!(backend, java_fixture.backends[&baseline.id]);
+        assert_eq!(package.schema.as_ref(), Some(&schema));
+        assert_eq!(package.backends, backends);
+        assert_eq!(package.artifacts[0].path, "_bundle/java/classes");
+        assert_eq!(package.lockfile.as_deref(), Some("plugin.lock.json"));
+        assert!(package.manifest_hash.is_some());
+        validate_java_schema(&schema, &package.backends).expect("valid package schema");
+    }
+
+    #[test]
+    fn java_transport_options_enable_direct_byte_buffer_and_mmap() {
+        let backend = java_backend_config_with_transport(
+            &input(),
+            JavaPayloadTransport::direct_byte_buffer_and_mmap(),
+        )
+        .expect("backend config");
+        assert_eq!(
+            backend.options.get("payload_transport"),
+            Some(&serde_json::json!({"direct_byte_buffer": true, "mmap": true}))
+        );
+    }
+
+    #[test]
+    fn java_resolves_payload_handles_to_mmap_or_direct_byte_buffer_views() {
+        let mmap_handle: WirePayloadHandle = serde_json::from_value(serde_json::json!({
+            "id": "lease-1",
+            "type_key": "bytes",
+            "access": "read",
+            "metadata": {
+                "mmap_path": "/tmp/daedalus-payload",
+                "mmap_offset": 12,
+                "mmap_len": 96,
+                "bytes_estimate": 96
+            }
+        }))
+        .expect("handle");
+        let resolved = resolve_java_payload_handle(
+            &mmap_handle,
+            &JavaPayloadTransport::direct_byte_buffer_and_mmap(),
+        )
+        .expect("resolve");
+        assert_eq!(
+            resolved.view,
+            JavaPayloadView::Mmap {
+                path: "/tmp/daedalus-payload".into(),
+                offset: 12,
+                len: 96
+            }
+        );
+
+        let direct_handle: WirePayloadHandle = serde_json::from_value(serde_json::json!({
+            "id": "lease-2",
+            "type_key": "bytes",
+            "access": "view",
+            "metadata": {"bytes_estimate": 48}
+        }))
+        .expect("handle");
+        let resolved = resolve_java_payload_handle(
+            &direct_handle,
+            &JavaPayloadTransport {
+                direct_byte_buffer: true,
+                mmap: false,
+            },
+        )
+        .expect("resolve");
+        assert_eq!(
+            resolved.view,
+            JavaPayloadView::DirectByteBuffer { bytes_estimate: 48 }
+        );
+        assert_eq!(resolved.access, "view");
+    }
+
+    #[test]
+    fn complete_java_package_emits_lockfile_hash_and_language_metadata() {
+        let spec = scalar_add_fixture_spec();
+        let fixture =
+            generate_language_fixture(&spec, FixtureLanguage::Java).expect("java fixture");
+        let input = JavaPackageInput {
+            entry_class: "ffi.conformance.ScalarAdd".into(),
+            entry_method: "add".into(),
+            classpath: vec![
+                JavaClasspathEntry::classes_dir("build/classes/java/main"),
+                JavaClasspathEntry::jar("build/libs/ffi-showcase.jar"),
+            ],
+            native_libraries: vec![JavaNativeLibrary {
+                path: "build/native/libffi_showcase_jni.so".into(),
+                platform: None,
+            }],
+            ..Default::default()
+        };
+        let package =
+            java_complete_plugin_package(fixture.schema.clone(), fixture.backends.clone(), input)
+                .expect("complete package");
+        let lock = package.generate_lockfile();
+
+        assert_eq!(package.lockfile.as_deref(), Some("plugin.lock.json"));
+        assert!(package.manifest_hash.is_some());
+        assert_eq!(
+            package.metadata.get("package_builder"),
+            Some(&serde_json::json!("daedalus-ffi-java"))
+        );
+        assert_eq!(package.artifacts.len(), 3);
+        assert_eq!(
+            lock.plugin_name.as_deref(),
+            Some("ffi.conformance.java.scalar_add")
+        );
+        assert_eq!(lock.artifacts.len(), 3);
     }
 }

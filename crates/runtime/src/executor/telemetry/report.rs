@@ -5,7 +5,8 @@ use crate::handles::PortId;
 use daedalus_transport::{AdapterId, TypeKey};
 
 use super::{
-    DataLifecycleEvent, EdgeMetrics, MetricsLevel, NodeFailure, NodeMetrics, NodePerfMetrics,
+    DataLifecycleEvent, EdgeMetrics, FfiTelemetryReport, MetricsLevel, NodeFailure, NodeMetrics,
+    NodePerfMetrics,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -45,6 +46,8 @@ pub struct TelemetryReport {
     pub fallbacks: Vec<String>,
     pub skipped_nodes: Vec<usize>,
     pub hardware_counters: BTreeMap<usize, NodePerfMetrics>,
+    #[serde(default, skip_serializing_if = "FfiTelemetryReport::is_empty")]
+    pub ffi: FfiTelemetryReport,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -165,6 +168,73 @@ impl TelemetryReport {
             out.push_str(&format!(
                 "failure\t{}\t{}\t{}\n",
                 failure.node_idx, failure.code, failure.message
+            ));
+        }
+        for (key, backend) in &self.ffi.backends {
+            out.push_str(&format!(
+                "ffi_backend\t{key}\tinvokes\t{}\n",
+                backend.invokes
+            ));
+            out.push_str(&format!(
+                "ffi_backend\t{key}\tinvoke_ns\t{}\n",
+                backend.invoke_duration.as_nanos()
+            ));
+            out.push_str(&format!(
+                "ffi_backend\t{key}\trunner_starts\t{}\n",
+                backend.runner_starts
+            ));
+            out.push_str(&format!(
+                "ffi_backend\t{key}\trunner_reuses\t{}\n",
+                backend.runner_reuses
+            ));
+            out.push_str(&format!(
+                "ffi_backend\t{key}\tbytes_sent\t{}\n",
+                backend.bytes_sent
+            ));
+            out.push_str(&format!(
+                "ffi_backend\t{key}\tbytes_received\t{}\n",
+                backend.bytes_received
+            ));
+            if backend.abi_call_duration > Duration::ZERO {
+                out.push_str(&format!(
+                    "ffi_backend\t{key}\tabi_call_ns\t{}\n",
+                    backend.abi_call_duration.as_nanos()
+                ));
+            }
+            if backend.pointer_length_payload_calls > 0 {
+                out.push_str(&format!(
+                    "ffi_backend\t{key}\tpointer_length_payload_calls\t{}\n",
+                    backend.pointer_length_payload_calls
+                ));
+            }
+        }
+        for (key, adapter) in &self.ffi.adapters {
+            out.push_str(&format!("ffi_adapter\t{key}\tcalls\t{}\n", adapter.calls));
+            out.push_str(&format!(
+                "ffi_adapter\t{key}\tduration_ns\t{}\n",
+                adapter.duration.as_nanos()
+            ));
+            out.push_str(&format!(
+                "ffi_adapter\t{key}\tfailures\t{}\n",
+                adapter.failures
+            ));
+        }
+        if !self.ffi.payloads.is_empty() {
+            out.push_str(&format!(
+                "ffi_payload\tall\thandles_created\t{}\n",
+                self.ffi.payloads.handles_created
+            ));
+            out.push_str(&format!(
+                "ffi_payload\tall\thandles_resolved\t{}\n",
+                self.ffi.payloads.handles_resolved
+            ));
+            out.push_str(&format!(
+                "ffi_payload\tall\treleases\t{}\n",
+                self.ffi.payloads.releases
+            ));
+            out.push_str(&format!(
+                "ffi_payload\tall\tactive_leases\t{}\n",
+                self.ffi.payloads.active_leases
             ));
         }
         out

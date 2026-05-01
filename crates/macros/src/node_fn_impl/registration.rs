@@ -244,11 +244,11 @@ pub(super) fn graph_register_tokens(inputs: GraphRegisterInputs<'_>) -> TokenStr
         let __graph_json = #runtime_crate::graph_builder::graph_to_json(&__graph)
             .map_err(|_| "graph serialization failed")?;
         decl = decl.metadata(
-            ::std::string::String::from("daedalus.embedded_graph"),
+            #runtime_crate::EMBEDDED_GRAPH_KEY,
             #data_crate::model::Value::String(::std::borrow::Cow::Owned(__graph_json)),
         );
         decl = decl.metadata(
-            ::std::string::String::from("daedalus.embedded_host"),
+            #runtime_crate::EMBEDDED_HOST_KEY,
             #data_crate::model::Value::String(::std::borrow::Cow::from("host")),
         );
     }

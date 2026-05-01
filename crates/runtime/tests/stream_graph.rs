@@ -11,8 +11,9 @@ use daedalus_runtime::HostBridgeManager;
 use daedalus_runtime::executor::OwnedExecutor;
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY};
 use daedalus_runtime::{
-    NodeError, NodeHandler, RuntimeNode, SchedulerConfig, SharedStreamGraph, StreamGraph,
-    StreamGraphState, StreamWorkerState, StreamWorkerStopError, build_runtime,
+    HostBridgeConfig, NodeError, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig,
+    SharedStreamGraph, StreamExecutionMode, StreamGraph, StreamGraphState, StreamWorkerState,
+    StreamWorkerStopError, build_runtime,
 };
 use daedalus_transport::{FeedOutcome, FreshnessPolicy, Payload, PressurePolicy};
 
@@ -224,6 +225,38 @@ fn graph_input_close_is_scoped_to_that_input_port() {
 
     graph.drain().expect("drain");
     assert_eq!(recv_u32(&output), 22);
+}
+
+#[test]
+fn stream_graph_diagnostics_report_retained_serial_execution() {
+    let runtime = Arc::new(build_runtime(
+        &stream_echo_plan(),
+        &SchedulerConfig::default(),
+    ));
+    let graph = StreamGraph::new(runtime, EchoHandler);
+
+    assert_eq!(
+        graph.diagnostics().execution_mode,
+        StreamExecutionMode::RetainedSerial
+    );
+}
+
+#[test]
+fn stream_graph_diagnostics_include_applied_host_config() {
+    let runtime = Arc::new(build_runtime(
+        &stream_echo_plan(),
+        &SchedulerConfig::default(),
+    ));
+    let graph = StreamGraph::new(runtime, EchoHandler);
+    let config = HostBridgeConfig::default()
+        .with_default_input_policy(RuntimeEdgePolicy::bounded(4))
+        .with_default_output_policy(RuntimeEdgePolicy::bounded(8))
+        .with_event_recording(false)
+        .with_event_limit(Some(3));
+
+    graph.apply_host_config(&config).expect("host config");
+
+    assert_eq!(graph.diagnostics().host_config, config);
 }
 
 #[test]

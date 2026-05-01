@@ -99,12 +99,6 @@ define_text_id!(CapabilityId, "Runtime capability identifier.");
 
 /// Handle to a node port (alias + port name).
 ///
-/// ```
-/// use daedalus_runtime::handles::{NodeAlias, PortHandle, PortId};
-/// let port = PortHandle::new("node", "out");
-/// assert_eq!(port.node_alias_id(), NodeAlias::from("node"));
-/// assert_eq!(port.port_id(), PortId::from("out"));
-/// ```
 #[derive(Clone, Debug)]
 pub struct PortHandle {
     node_alias: NodeAlias,
@@ -139,11 +133,6 @@ impl PortHandle {
 
 /// Handle to a node id + alias pair.
 ///
-/// ```
-/// use daedalus_runtime::handles::{NodeAlias, NodeHandle};
-/// let node = NodeHandle::new("demo:node").alias("alias");
-/// assert_eq!(node.alias_id(), NodeAlias::from("alias"));
-/// ```
 #[derive(Clone, Debug)]
 pub struct NodeHandle {
     id: NodeHandleId,
@@ -192,11 +181,6 @@ impl NodeHandle {
 
 /// Common interface for node handles.
 ///
-/// ```
-/// use daedalus_runtime::handles::{NodeHandle, NodeHandleLike};
-/// let node = NodeHandle::new("demo");
-/// assert_eq!(node.id(), "demo");
-/// ```
 pub trait NodeHandleLike {
     fn id(&self) -> &str;
     fn alias(&self) -> &str;

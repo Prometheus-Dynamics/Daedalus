@@ -44,6 +44,12 @@ impl GraphCtx {
         self.try_node_as(id, id)
     }
 
+    /// Add a node by id and alias.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the node id is not present in the capability registry. Use
+    /// [`Self::try_node_as`] for user-provided graph definitions.
     pub fn node_as(&mut self, id: &str, alias: &str) -> crate::handles::NodeHandle {
         self.try_node_as(id, alias)
             .unwrap_or_else(|err| panic!("{err}"))
@@ -54,12 +60,11 @@ impl GraphCtx {
         id: &str,
         alias: &str,
     ) -> Result<crate::handles::NodeHandle, GraphBuildError> {
-        if !self
-            .builder
-            .capabilities
-            .nodes()
-            .contains_key(&NodeId::new(id))
-        {
+        let node_id = NodeId::try_new(id).map_err(|source| GraphBuildError::InvalidNodeId {
+            id: id.to_string(),
+            source,
+        })?;
+        if !self.builder.capabilities.nodes().contains_key(&node_id) {
             return Err(GraphBuildError::MissingNodeId { id: id.to_string() });
         }
         let builder = self.take_builder();
@@ -67,6 +72,12 @@ impl GraphCtx {
         Ok(crate::handles::NodeHandle::new(id).alias(alias))
     }
 
+    /// Connect two ports in the graph context.
+    ///
+    /// # Panics
+    ///
+    /// Panics when either port cannot be resolved or the connection is invalid. Use
+    /// [`Self::try_connect`] for user-provided graph definitions.
     pub fn connect(&mut self, from: &PortHandle, to: &PortHandle) {
         self.try_connect(from, to)
             .unwrap_or_else(|err| panic!("{err}"));
@@ -81,6 +92,12 @@ impl GraphCtx {
         Ok(())
     }
 
+    /// Set a constant input for a node port.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the target node or input port cannot be resolved. Use
+    /// [`Self::try_const_input`] for user-provided graph definitions.
     pub fn const_input(&mut self, port: &PortHandle, value: Value) {
         self.try_const_input(port, value)
             .unwrap_or_else(|err| panic!("{err}"));
@@ -105,6 +122,12 @@ impl GraphCtx {
         PortHandle::new(self.host_alias.clone(), name)
     }
 
+    /// Bind a subgraph output to a host output port.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the source port cannot be resolved or the output binding is invalid. Use
+    /// [`Self::try_bind_output`] for user-provided graph definitions.
     pub fn bind_output(&mut self, name: &str, from: &PortHandle) {
         self.try_bind_output(name, from)
             .unwrap_or_else(|err| panic!("{err}"));
@@ -120,6 +143,12 @@ impl GraphCtx {
         Ok(())
     }
 
+    /// Build the graph-backed node graph.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the graph context contains invalid wiring. Use [`Self::try_build`] for
+    /// user-provided graph definitions.
     pub fn build(self) -> Graph {
         self.try_build().unwrap_or_else(|err| panic!("{err}"))
     }

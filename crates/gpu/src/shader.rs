@@ -40,6 +40,7 @@ pub use pipeline::{
 };
 #[cfg(feature = "gpu-async")]
 pub use poll_driver::{
+    DEFAULT_ASYNC_POLL_OVERFLOW_THREAD_LIMIT, DEFAULT_ASYNC_POLL_WORKER_LIMIT,
     active_async_poll_overflow_threads, async_poll_overflow_thread_limit, async_poll_worker_limit,
     set_async_poll_overflow_thread_limit, set_async_poll_worker_limit,
 };
@@ -50,6 +51,11 @@ pub use pool::{
 };
 #[cfg(feature = "gpu-async")]
 pub(crate) use readback_async::map_read_async;
+#[cfg(feature = "gpu-async")]
+pub use readback_async::{
+    async_readback_poll_interval, async_readback_timeout, set_async_readback_poll_interval,
+    set_async_readback_timeout,
+};
 pub use run_output::*;
 pub use types::*;
 

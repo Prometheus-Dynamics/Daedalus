@@ -1,8 +1,4 @@
-use daedalus::{
-    engine::{Engine, EngineConfig},
-    macros::{node, plugin},
-    runtime::{NodeError, plugins::PluginRegistry},
-};
+use daedalus::prelude::*;
 
 #[node(id = "quickstart.double", inputs("value"), outputs("value"))]
 fn double(value: i64) -> Result<i64, NodeError> {
@@ -18,13 +14,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     registry.install(&plugin)?;
 
     let double = plugin.double.alias("double");
-    let builder = registry.graph_builder()?;
-    let input = builder.input("in");
-    let output = builder.output("out");
-    let graph = builder
-        .try_node_handle_like(&double)?
-        .try_connect(&input, &double.inputs.value)?
-        .try_connect(&double.outputs.value, &output)?
+    let graph = registry
+        .graph_builder()?
+        .try_single_node_roundtrip(
+            double.clone(),
+            "in",
+            &double.inputs.value,
+            &double.outputs.value,
+            "out",
+        )?
         .build();
 
     let engine = Engine::new(EngineConfig::default())?;

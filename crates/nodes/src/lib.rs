@@ -1,5 +1,6 @@
-//! Built-in nodes and bundles. See `PLAN.md` for staged work.
-//! Bundles are feature-gated; registration order is deterministic.
+//! Built-in and demo node bundles.
+//!
+//! Bundles are feature-gated and installed in deterministic registration order.
 //!
 /// Re-export of the `#[node]` macro for convenience.
 pub use daedalus_macros::node;
@@ -25,17 +26,6 @@ pub mod __macro_support {
 /// in one shot. Each entry should correspond to a `#[node]`-annotated
 /// function name in scope so `<name>_descriptor` and `<name>_handler` exist.
 ///
-/// ```ignore
-/// use daedalus_nodes::declare_plugin;
-/// use daedalus_macros::node;
-///
-/// #[node(id = "demo:noop", inputs("in"), outputs("out"))]
-/// fn noop(value: i64) -> Result<i64, daedalus_runtime::NodeError> {
-///     Ok(value)
-/// }
-///
-/// declare_plugin!(DemoPlugin, "demo", [noop]);
-/// ```
 #[cfg(feature = "plugins")]
 #[macro_export]
 macro_rules! declare_plugin {
@@ -297,11 +287,6 @@ macro_rules! declare_plugin {
 
 /// Register all enabled bundles, returning descriptors in deterministic order.
 ///
-/// ```ignore
-/// use daedalus_nodes::register_all;
-/// let nodes = register_all();
-/// let _ = nodes;
-/// ```
 pub fn register_all() -> Vec<NodeDecl> {
     let mut nodes: Vec<NodeDecl> = Vec::new();
     #[cfg(feature = "bundle-starter")]

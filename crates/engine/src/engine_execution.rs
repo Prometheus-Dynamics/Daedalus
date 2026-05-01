@@ -11,9 +11,6 @@ use daedalus_runtime::{
 };
 
 use crate::compiled_run::RunResult;
-#[cfg(not(feature = "gpu"))]
-use crate::config::GpuBackend;
-use crate::config::RuntimeMode;
 use crate::engine::Engine;
 use crate::error::EngineError;
 
@@ -34,36 +31,8 @@ impl Engine {
         if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
             return self.execute_scoped(runtime_plan, &self.config.runtime.demand_sinks, handler);
         }
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
+        let exec = self.configure_executor(Executor::try_new(&runtime_plan, handler)?)?;
+        self.run_configured_executor(exec)
     }
 
     pub fn execute_with_transport<H: NodeHandler + Send + Sync + 'static>(
@@ -80,37 +49,10 @@ impl Engine {
                 transport,
             );
         }
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_runtime_transport(transport)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
+        let exec = self.configure_executor(
+            Executor::try_new(&runtime_plan, handler)?.with_runtime_transport(transport),
+        )?;
+        self.run_configured_executor(exec)
     }
 
     #[cfg(feature = "plugins")]
@@ -128,38 +70,11 @@ impl Engine {
                 plugins,
             );
         }
-        let mut exec = Executor::new(&runtime_plan, handler)
+        let exec = Executor::try_new(&runtime_plan, handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
-            .with_capabilities(plugins.capabilities.clone())
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
+            .with_capabilities(plugins.capabilities.clone());
+        let exec = self.configure_executor(exec)?;
+        self.run_configured_executor(exec)
     }
 
     pub fn execute_scoped<H: NodeHandler + Send + Sync + 'static>(
@@ -172,36 +87,12 @@ impl Engine {
             .demand_slice_for_sinks(sinks)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         let demand = runtime_plan.demand_summary_for_slice(sinks, &slice);
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_active_nodes(slice.active_nodes.clone())
-            .with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))
-            .with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-        let mut telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
+        let exec = Executor::try_new(&runtime_plan, handler)?
+            .try_with_active_nodes(slice.active_nodes.clone())?
+            .try_with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))?
+            .try_with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))?;
+        let exec = self.configure_executor(exec)?;
+        let mut telemetry = self.run_configured_executor(exec)?;
         telemetry.demand = demand;
         Ok(telemetry)
     }
@@ -217,37 +108,13 @@ impl Engine {
             .demand_slice_for_sinks(sinks)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         let demand = runtime_plan.demand_summary_for_slice(sinks, &slice);
-        let mut exec = Executor::new(&runtime_plan, handler)
+        let exec = Executor::try_new(&runtime_plan, handler)?
             .with_runtime_transport(transport)
-            .with_active_nodes(slice.active_nodes.clone())
-            .with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))
-            .with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-        let mut telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
+            .try_with_active_nodes(slice.active_nodes.clone())?
+            .try_with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))?
+            .try_with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))?;
+        let exec = self.configure_executor(exec)?;
+        let mut telemetry = self.run_configured_executor(exec)?;
         telemetry.demand = demand;
         Ok(telemetry)
     }
@@ -264,38 +131,14 @@ impl Engine {
             .demand_slice_for_sinks(sinks)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         let demand = runtime_plan.demand_summary_for_slice(sinks, &slice);
-        let mut exec = Executor::new(&runtime_plan, handler)
+        let exec = Executor::try_new(&runtime_plan, handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
             .with_capabilities(plugins.capabilities.clone())
-            .with_active_nodes(slice.active_nodes.clone())
-            .with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))
-            .with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-        let mut telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
+            .try_with_active_nodes(slice.active_nodes.clone())?
+            .try_with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))?
+            .try_with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))?;
+        let exec = self.configure_executor(exec)?;
+        let mut telemetry = self.run_configured_executor(exec)?;
         telemetry.demand = demand;
         Ok(telemetry)
     }
@@ -314,37 +157,10 @@ impl Engine {
                 handler,
             );
         }
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_host_bridges(host)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-
-        let telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
-        Ok(telemetry)
+        let exec = self.configure_executor(
+            Executor::try_new(&runtime_plan, handler)?.with_host_bridges(host),
+        )?;
+        self.run_configured_executor(exec)
     }
 
     pub fn execute_with_host_scoped<H: NodeHandler + Send + Sync + 'static>(
@@ -358,10 +174,10 @@ impl Engine {
             .demand_slice_for_sinks(sinks)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         let demand = runtime_plan.demand_summary_for_slice(sinks, &slice);
-        let mut exec = Executor::new(&runtime_plan, handler)
-            .with_active_nodes(slice.active_nodes.clone())
-            .with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))
-            .with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))
+        let exec = Executor::try_new(&runtime_plan, handler)?
+            .try_with_active_nodes(slice.active_nodes.clone())?
+            .try_with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))?
+            .try_with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))?
             .with_selected_host_output_ports(Some(Arc::new(
                 slice
                     .host_output_ports
@@ -369,33 +185,9 @@ impl Engine {
                     .cloned()
                     .collect::<HashSet<_>>(),
             )))
-            .with_host_bridges(host)
-            .with_fail_fast(self.config.runtime.fail_fast)
-            .with_metrics_level(self.config.runtime.metrics_level)
-            .with_runtime_debug_config(self.config.runtime.debug_config);
-        #[cfg(feature = "gpu")]
-        {
-            if let Some(gpu) = self.get_gpu_handle()? {
-                exec = exec.with_gpu((*gpu).clone());
-            }
-        }
-        #[cfg(not(feature = "gpu"))]
-        {
-            if !matches!(self.config.gpu, GpuBackend::Cpu) {
-                return Err(EngineError::FeatureDisabled("gpu"));
-            }
-            let _ = exec;
-        }
-        if matches!(
-            self.config.runtime.mode,
-            RuntimeMode::Parallel | RuntimeMode::Adaptive
-        ) {
-            exec = exec.with_pool_size(self.config.runtime.pool_size);
-        }
-        let mut telemetry = match self.config.runtime.mode {
-            RuntimeMode::Serial => exec.run(),
-            RuntimeMode::Parallel | RuntimeMode::Adaptive => exec.run_parallel(),
-        }?;
+            .with_host_bridges(host);
+        let exec = self.configure_executor(exec)?;
+        let mut telemetry = self.run_configured_executor(exec)?;
         telemetry.demand = demand;
         Ok(telemetry)
     }

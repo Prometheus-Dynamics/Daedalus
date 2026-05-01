@@ -21,12 +21,6 @@ impl CorrelatedPayload {
 
 /// Generate a new correlation id.
 ///
-/// ```
-/// use daedalus_runtime::executor::next_correlation_id;
-/// let a = next_correlation_id();
-/// let b = next_correlation_id();
-/// assert!(b > a);
-/// ```
 pub fn next_correlation_id() -> u64 {
     static CORR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     CORR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

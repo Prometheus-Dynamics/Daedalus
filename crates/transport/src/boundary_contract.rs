@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -107,6 +107,16 @@ impl BoundaryTypeContract {
         contract
     }
 
+    pub fn for_schema<T: 'static>(
+        type_key: impl Into<TypeKey>,
+        schema: impl std::fmt::Display,
+        capabilities: BoundaryCapabilities,
+    ) -> Self {
+        let mut contract = Self::new(type_key, LayoutHash::for_schema::<T>(schema), capabilities);
+        contract.rust_type_name = Some(std::any::type_name::<T>().to_string());
+        contract
+    }
+
     pub fn compatible_with(&self, required: &Self) -> Result<(), BoundaryContractError> {
         if self.type_key != required.type_key {
             return Err(BoundaryContractError::TypeKey {
@@ -136,25 +146,63 @@ impl BoundaryTypeContract {
     }
 }
 
-static BOUNDARY_CONTRACTS_BY_RUST_TYPE: OnceLock<Mutex<BTreeMap<String, BoundaryTypeContract>>> =
-    OnceLock::new();
+/// Explicit registry for boundary contracts keyed by Rust type name.
+///
+/// Use an owned registry when tests or plugin/runtime state need isolation. The global
+/// registration helpers remain as compatibility wrappers for process-wide type registration.
+#[derive(Clone, Debug, Default)]
+pub struct BoundaryContractRegistry {
+    contracts_by_rust_type: Arc<Mutex<BTreeMap<String, BoundaryTypeContract>>>,
+}
 
-pub fn register_boundary_contract(contract: BoundaryTypeContract) {
-    if let Some(rust_type_name) = contract.rust_type_name.clone()
-        && let Ok(mut contracts) = BOUNDARY_CONTRACTS_BY_RUST_TYPE
-            .get_or_init(|| Mutex::new(BTreeMap::new()))
+impl BoundaryContractRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&self, contract: BoundaryTypeContract) {
+        if let Some(rust_type_name) = contract.rust_type_name.clone()
+            && let Ok(mut contracts) = self.contracts_by_rust_type.lock()
+        {
+            contracts.insert(rust_type_name, contract);
+        }
+    }
+
+    pub fn contract_for_type<T: 'static>(&self) -> Option<BoundaryTypeContract> {
+        self.contracts_by_rust_type
             .lock()
-    {
-        contracts.insert(rust_type_name, contract);
+            .ok()
+            .and_then(|contracts| contracts.get(std::any::type_name::<T>()).cloned())
     }
 }
 
+static GLOBAL_BOUNDARY_CONTRACTS: OnceLock<BoundaryContractRegistry> = OnceLock::new();
+
+pub fn global_boundary_contract_registry() -> BoundaryContractRegistry {
+    GLOBAL_BOUNDARY_CONTRACTS
+        .get_or_init(BoundaryContractRegistry::new)
+        .clone()
+}
+
+pub fn register_boundary_contract_in(
+    registry: &BoundaryContractRegistry,
+    contract: BoundaryTypeContract,
+) {
+    registry.register(contract);
+}
+
+pub fn boundary_contract_for_type_in<T: 'static>(
+    registry: &BoundaryContractRegistry,
+) -> Option<BoundaryTypeContract> {
+    registry.contract_for_type::<T>()
+}
+
+pub fn register_boundary_contract(contract: BoundaryTypeContract) {
+    global_boundary_contract_registry().register(contract);
+}
+
 pub fn boundary_contract_for_type<T: 'static>() -> Option<BoundaryTypeContract> {
-    BOUNDARY_CONTRACTS_BY_RUST_TYPE
-        .get_or_init(|| Mutex::new(BTreeMap::new()))
-        .lock()
-        .ok()
-        .and_then(|contracts| contracts.get(std::any::type_name::<T>()).cloned())
+    global_boundary_contract_registry().contract_for_type::<T>()
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -173,4 +221,76 @@ pub enum BoundaryContractError {
         expected: BoundaryCapabilities,
         found: BoundaryCapabilities,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[repr(C)]
+    struct Left {
+        a: u32,
+        b: u32,
+    }
+
+    #[repr(C)]
+    struct Right {
+        a: u32,
+        b: u32,
+    }
+
+    #[test]
+    fn schema_layout_hash_rejects_same_size_alignment_shape_changes() {
+        assert_eq!(std::mem::size_of::<Left>(), std::mem::size_of::<Right>());
+        assert_eq!(std::mem::align_of::<Left>(), std::mem::align_of::<Right>());
+
+        let producer = BoundaryTypeContract::for_schema::<Left>(
+            "example:frame",
+            "struct Frame { width: u32, height: u32 }",
+            BoundaryCapabilities::rust_value(),
+        );
+        let consumer = BoundaryTypeContract::for_schema::<Right>(
+            "example:frame",
+            "struct Frame { height: u32, width: u32 }",
+            BoundaryCapabilities::rust_value(),
+        );
+
+        assert!(matches!(
+            producer.compatible_with(&consumer),
+            Err(BoundaryContractError::Layout { .. })
+        ));
+    }
+
+    #[test]
+    fn schema_layout_hash_accepts_matching_schema() {
+        let producer = BoundaryTypeContract::for_schema::<Left>(
+            "example:frame",
+            "struct Frame { width: u32, height: u32 }",
+            BoundaryCapabilities::rust_value(),
+        );
+        let consumer = BoundaryTypeContract::for_schema::<Left>(
+            "example:frame",
+            "struct Frame { width: u32, height: u32 }",
+            BoundaryCapabilities::owned(),
+        );
+
+        assert!(producer.compatible_with(&consumer).is_ok());
+    }
+
+    #[test]
+    fn owned_boundary_contract_registries_are_isolated() {
+        let left = BoundaryContractRegistry::new();
+        let right = BoundaryContractRegistry::new();
+        left.register(BoundaryTypeContract::for_type::<Left>(
+            "example:left",
+            BoundaryCapabilities::rust_value(),
+        ));
+
+        assert_eq!(
+            left.contract_for_type::<Left>()
+                .map(|contract| contract.type_key),
+            Some(TypeKey::from("example:left"))
+        );
+        assert!(right.contract_for_type::<Left>().is_none());
+    }
 }

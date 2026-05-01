@@ -13,7 +13,6 @@ pub(super) fn record_host_event(
     outcome: Option<FeedOutcome>,
     reason: Option<DropReason>,
 ) {
-    let target = "daedalus_runtime::host_bridge";
     if matches!(
         kind,
         HostBridgeEventKind::SourceDrop
@@ -22,7 +21,7 @@ pub(super) fn record_host_event(
     ) || reason.is_some()
     {
         tracing::warn!(
-            target,
+            target: "daedalus_runtime::host_bridge",
             alias,
             port,
             kind = ?kind,
@@ -34,7 +33,7 @@ pub(super) fn record_host_event(
         );
     } else {
         tracing::trace!(
-            target,
+            target: "daedalus_runtime::host_bridge",
             alias,
             port,
             kind = ?kind,

@@ -721,13 +721,21 @@ fn publish_outputs<H: NodeHandler>(
             let cloned_payload = idx != last_edge;
             let payload = if cloned_payload {
                 let Some(payload) = payload_slot.as_ref() else {
-                    tracing::error!(edge_idx, "payload slot unexpectedly empty before clone");
+                    tracing::error!(
+                        target: "daedalus_runtime::executor",
+                        edge_idx,
+                        "payload slot unexpectedly empty before clone"
+                    );
                     continue;
                 };
                 payload.clone()
             } else {
                 let Some(payload) = payload_slot.take() else {
-                    tracing::error!(edge_idx, "payload slot unexpectedly empty before handoff");
+                    tracing::error!(
+                        target: "daedalus_runtime::executor",
+                        edge_idx,
+                        "payload slot unexpectedly empty before handoff"
+                    );
                     continue;
                 };
                 payload

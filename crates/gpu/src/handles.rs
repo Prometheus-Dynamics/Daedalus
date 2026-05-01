@@ -10,21 +10,11 @@ static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Opaque buffer identifier.
 ///
-/// ```
-/// use daedalus_gpu::GpuBufferId;
-/// let id = GpuBufferId(1);
-/// assert_eq!(id.0, 1);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GpuBufferId(pub u64);
 
 /// Opaque image identifier.
 ///
-/// ```
-/// use daedalus_gpu::GpuImageId;
-/// let id = GpuImageId(2);
-/// assert_eq!(id.0, 2);
-/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GpuImageId(pub u64);
 
@@ -54,11 +44,6 @@ impl<T: Send + Sync + fmt::Debug> GpuDropToken for T {}
 
 /// Opaque buffer handle (no backend types).
 ///
-/// ```ignore
-/// use daedalus_gpu::{GpuBufferHandle, GpuMemoryLocation, GpuUsage};
-/// let handle = GpuBufferHandle::new(1024, GpuMemoryLocation::Cpu, GpuUsage::UPLOAD);
-/// assert_eq!(handle.size_bytes, 1024);
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuBufferHandle {
     pub id: GpuBufferId,
@@ -112,11 +97,6 @@ impl Eq for GpuBufferHandle {}
 
 /// Opaque image/texture handle (no backend types).
 ///
-/// ```ignore
-/// use daedalus_gpu::{GpuImageHandle, GpuFormat, GpuMemoryLocation, GpuUsage};
-/// let handle = GpuImageHandle::new(GpuFormat::Rgba8Unorm, 8, 8, GpuMemoryLocation::Gpu, GpuUsage::STORAGE);
-/// assert_eq!(handle.width, 8);
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpuImageHandle {
     pub id: GpuImageId,

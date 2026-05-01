@@ -1,10 +1,16 @@
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 
 type PollJob = Box<dyn FnOnce() + Send + 'static>;
 
-static POLL_WORKER_LIMIT: AtomicUsize = AtomicUsize::new(2);
-static POLL_OVERFLOW_THREAD_LIMIT: AtomicUsize = AtomicUsize::new(2);
+pub const DEFAULT_ASYNC_POLL_WORKER_LIMIT: usize = 2;
+pub const DEFAULT_ASYNC_POLL_OVERFLOW_THREAD_LIMIT: usize = 2;
+const ASYNC_POLL_QUEUE_DEPTH_PER_WORKER: usize = 64;
+
+static POLL_WORKER_LIMIT: AtomicUsize = AtomicUsize::new(DEFAULT_ASYNC_POLL_WORKER_LIMIT);
+static POLL_OVERFLOW_THREAD_LIMIT: AtomicUsize =
+    AtomicUsize::new(DEFAULT_ASYNC_POLL_OVERFLOW_THREAD_LIMIT);
 static ACTIVE_POLL_OVERFLOW_THREADS: AtomicUsize = AtomicUsize::new(0);
 static POLL_POOL: OnceLock<BlockingPollPool> = OnceLock::new();
 
@@ -30,7 +36,8 @@ pub(crate) enum PollJobSubmitError {
 impl BlockingPollPool {
     fn new(worker_limit: usize) -> Self {
         let worker_limit = worker_limit.max(1);
-        let (sender, receiver) = mpsc::sync_channel::<PollJob>(worker_limit * 64);
+        let (sender, receiver) =
+            mpsc::sync_channel::<PollJob>(worker_limit * ASYNC_POLL_QUEUE_DEPTH_PER_WORKER);
         let receiver = Arc::new(Mutex::new(receiver));
         for worker_idx in 0..worker_limit {
             let receiver = Arc::clone(&receiver);
@@ -64,7 +71,21 @@ fn worker_loop(receiver: Arc<Mutex<mpsc::Receiver<PollJob>>>) {
         let Ok(job) = job else {
             break;
         };
-        job();
+        run_poll_job("shared_worker", job);
+    }
+}
+
+fn run_poll_job(job_name: &'static str, job: PollJob) -> bool {
+    match panic::catch_unwind(AssertUnwindSafe(job)) {
+        Ok(()) => true,
+        Err(_) => {
+            tracing::error!(
+                target: "daedalus_gpu::poll_driver",
+                job_name,
+                "async gpu poll job panicked"
+            );
+            false
+        }
     }
 }
 
@@ -102,8 +123,8 @@ pub(crate) fn submit_poll_job(
             let builder = std::thread::Builder::new()
                 .name(format!("daedalus-gpu-async-poll-overflow-{job_name}"));
             match builder.spawn(move || {
-                job();
-                release_overflow_thread_slot();
+                let _slot = OverflowThreadSlotGuard;
+                run_poll_job(job_name, job);
             }) {
                 Ok(_) => Ok(()),
                 Err(error) => {
@@ -211,14 +232,29 @@ fn release_overflow_thread_slot() {
     ACTIVE_POLL_OVERFLOW_THREADS.fetch_sub(1, Ordering::AcqRel);
 }
 
+struct OverflowThreadSlotGuard;
+
+impl Drop for OverflowThreadSlotGuard {
+    fn drop(&mut self) {
+        release_overflow_thread_slot();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::sync::OnceLock;
     use std::time::Duration;
+
+    fn test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn shared_poll_pool_bounds_workers_under_fanout() {
+        let _guard = test_lock().lock().expect("poll driver test lock");
         let limit = async_poll_worker_limit().max(1);
         let jobs = limit * 32;
         let (tx, rx) = mpsc::channel();
@@ -247,6 +283,7 @@ mod tests {
 
     #[test]
     fn overflow_slots_are_bounded_and_released() {
+        let _guard = test_lock().lock().expect("poll driver test lock");
         let previous_limit = set_async_poll_overflow_thread_limit(2);
         while try_acquire_overflow_thread_slot() {}
         while active_async_poll_overflow_threads() > 0 {
@@ -264,6 +301,52 @@ mod tests {
 
         release_overflow_thread_slot();
         release_overflow_thread_slot();
+        assert_eq!(active_async_poll_overflow_threads(), 0);
+        set_async_poll_overflow_thread_limit(previous_limit);
+    }
+
+    #[test]
+    fn shared_worker_survives_panicking_job() {
+        let _guard = test_lock().lock().expect("poll driver test lock");
+        let (sender, receiver) = mpsc::sync_channel::<PollJob>(2);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let (done_tx, done_rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || worker_loop(receiver));
+
+        sender
+            .send(Box::new(|| panic!("poll job panic for regression test")))
+            .expect("panic job send");
+        sender
+            .send(Box::new(move || {
+                done_tx.send(()).expect("done receiver should be open");
+            }))
+            .expect("follow-up job send");
+        drop(sender);
+
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker should continue after a panicking job");
+        handle
+            .join()
+            .expect("worker should exit after sender closes");
+    }
+
+    #[test]
+    fn overflow_slot_guard_releases_after_panic() {
+        let _guard = test_lock().lock().expect("poll driver test lock");
+        let previous_limit = set_async_poll_overflow_thread_limit(1);
+        while active_async_poll_overflow_threads() > 0 {
+            release_overflow_thread_slot();
+        }
+        assert!(try_acquire_overflow_thread_slot());
+        assert_eq!(active_async_poll_overflow_threads(), 1);
+
+        let result = panic::catch_unwind(|| {
+            let _slot = OverflowThreadSlotGuard;
+            panic!("overflow poll job panic for regression test");
+        });
+
+        assert!(result.is_err());
         assert_eq!(active_async_poll_overflow_threads(), 0);
         set_async_poll_overflow_thread_limit(previous_limit);
     }

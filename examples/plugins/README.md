@@ -1,16 +1,15 @@
-# Standalone Plugin Examples
+# Plugin Examples
 
-These are standalone plugin crates. They are kept under `examples/plugins` because they are
-copyable project examples, not core workspace packages.
+Standalone plugin-style crates used as copyable examples and integration fixtures.
 
-## Included
+## Crates
 
-- `example_project`: native Rust plugin fixture used by dynamic loading and FFI tests.
-- `math`: capability-driven arithmetic and utility nodes.
-- `framelease`: optional Styx `FrameLease` dynamic plugin example.
+- `example_project`: native Rust plugin fixture used by plugin and FFI tests.
+- `math`: capability-backed arithmetic node examples.
+- `framelease`: optional Styx frame lease plugin example.
 
-Build one with:
+Build one directly with Cargo, for example:
 
-```sh
+```bash
 cargo build -p daedalus-plugins-example-project
 ```

@@ -153,7 +153,11 @@ impl GraphBuilder {
 
     /// Add a node by id and report a typed error when the capability registry does not know it.
     pub fn try_node_id(self, id: &str, alias: &str) -> Result<Self, GraphBuildError> {
-        if self.capabilities.nodes().contains_key(&NodeId::new(id)) {
+        let node_id = NodeId::try_new(id).map_err(|source| GraphBuildError::InvalidNodeId {
+            id: id.to_string(),
+            source,
+        })?;
+        if self.capabilities.nodes().contains_key(&node_id) {
             Ok(self.node_id(id, alias))
         } else {
             Err(GraphBuildError::MissingNodeId { id: id.to_string() })

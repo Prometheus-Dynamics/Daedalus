@@ -5,7 +5,9 @@ use daedalus_registry::capability::{NodeDecl, PortDecl};
 use daedalus_transport::{FreshnessPolicy, OverflowPolicy, PressurePolicy};
 
 use crate::plan::{
-    EDGE_CAPACITY_KEY, EDGE_FRESHNESS_POLICY_KEY, EDGE_PRESSURE_BOUNDED, EDGE_PRESSURE_COALESCE,
+    EDGE_CAPACITY_KEY, EDGE_FRESHNESS_LATEST_BY_SEQUENCE, EDGE_FRESHNESS_LATEST_BY_TIMESTAMP,
+    EDGE_FRESHNESS_MAX_AGE, EDGE_FRESHNESS_MAX_LAG, EDGE_FRESHNESS_POLICY_KEY,
+    EDGE_OVERFLOW_POLICY_KEY, EDGE_PRESSURE_BOUNDED, EDGE_PRESSURE_COALESCE,
     EDGE_PRESSURE_DROP_NEWEST, EDGE_PRESSURE_DROP_OLDEST, EDGE_PRESSURE_ERROR_ON_FULL,
     EDGE_PRESSURE_FIFO, EDGE_PRESSURE_LATEST_ONLY, EDGE_PRESSURE_POLICY_KEY, RuntimeEdgePolicy,
 };
@@ -53,7 +55,7 @@ pub(super) fn write_edge_policy_metadata(
             );
             if !matches!(overflow, OverflowPolicy::DropOldest) {
                 metadata.insert(
-                    "daedalus.edge.overflow".to_string(),
+                    EDGE_OVERFLOW_POLICY_KEY.to_string(),
                     Value::String(format!("{overflow:?}").into()),
                 );
             }
@@ -99,13 +101,13 @@ pub(super) fn write_edge_policy_metadata(
         FreshnessPolicy::LatestBySequence => {
             metadata.insert(
                 EDGE_FRESHNESS_POLICY_KEY.to_string(),
-                Value::String("latest_by_sequence".into()),
+                Value::String(EDGE_FRESHNESS_LATEST_BY_SEQUENCE.into()),
             );
         }
         FreshnessPolicy::LatestByTimestamp => {
             metadata.insert(
                 EDGE_FRESHNESS_POLICY_KEY.to_string(),
-                Value::String("latest_by_timestamp".into()),
+                Value::String(EDGE_FRESHNESS_LATEST_BY_TIMESTAMP.into()),
             );
         }
         FreshnessPolicy::PreserveAll => {
@@ -114,13 +116,13 @@ pub(super) fn write_edge_policy_metadata(
         FreshnessPolicy::MaxAge(_) => {
             metadata.insert(
                 EDGE_FRESHNESS_POLICY_KEY.to_string(),
-                Value::String("max_age".into()),
+                Value::String(EDGE_FRESHNESS_MAX_AGE.into()),
             );
         }
         FreshnessPolicy::MaxLag { .. } => {
             metadata.insert(
                 EDGE_FRESHNESS_POLICY_KEY.to_string(),
-                Value::String("max_lag".into()),
+                Value::String(EDGE_FRESHNESS_MAX_LAG.into()),
             );
         }
     }
