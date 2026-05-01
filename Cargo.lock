@@ -1207,15 +1207,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
-name = "jpeg-decoder"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
-dependencies = [
- "rayon",
-]
-
-[[package]]
 name = "js-sys"
 version = "0.3.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2224,13 +2215,13 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "styx"
-version = "1.0.0"
-source = "git+https://github.com/Prometheus-Dynamics/Styx.git?rev=f826c3bc4aa6b8f5e941bddec643060f9b0d45b1#f826c3bc4aa6b8f5e941bddec643060f9b0d45b1"
+version = "2.0.0"
+source = "git+https://github.com/Prometheus-Dynamics/Styx.git?branch=main#a770a82e620814438098721fcb341346de503e07"
 dependencies = [
  "libc",
  "libcamera",
  "minifb",
- "once_cell",
+ "parking_lot",
  "smallvec",
  "styx-capture",
  "styx-codec",
@@ -2244,8 +2235,8 @@ dependencies = [
 
 [[package]]
 name = "styx-capture"
-version = "1.0.0"
-source = "git+https://github.com/Prometheus-Dynamics/Styx.git?rev=f826c3bc4aa6b8f5e941bddec643060f9b0d45b1#f826c3bc4aa6b8f5e941bddec643060f9b0d45b1"
+version = "2.0.0"
+source = "git+https://github.com/Prometheus-Dynamics/Styx.git?branch=main#a770a82e620814438098721fcb341346de503e07"
 dependencies = [
  "smallvec",
  "styx-core-rs",
@@ -2253,11 +2244,10 @@ dependencies = [
 
 [[package]]
 name = "styx-codec"
-version = "1.0.0"
-source = "git+https://github.com/Prometheus-Dynamics/Styx.git?rev=f826c3bc4aa6b8f5e941bddec643060f9b0d45b1#f826c3bc4aa6b8f5e941bddec643060f9b0d45b1"
+version = "2.0.0"
+source = "git+https://github.com/Prometheus-Dynamics/Styx.git?branch=main#a770a82e620814438098721fcb341346de503e07"
 dependencies = [
- "jpeg-decoder",
- "libc",
+ "parking_lot",
  "rayon",
  "smallvec",
  "styx-capture",
@@ -2268,8 +2258,8 @@ dependencies = [
 
 [[package]]
 name = "styx-core-rs"
-version = "1.0.0"
-source = "git+https://github.com/Prometheus-Dynamics/Styx.git?rev=f826c3bc4aa6b8f5e941bddec643060f9b0d45b1#f826c3bc4aa6b8f5e941bddec643060f9b0d45b1"
+version = "2.0.0"
+source = "git+https://github.com/Prometheus-Dynamics/Styx.git?branch=main#a770a82e620814438098721fcb341346de503e07"
 dependencies = [
  "crossbeam-queue",
  "libc",
@@ -2281,20 +2271,21 @@ dependencies = [
 
 [[package]]
 name = "styx-libcamera"
-version = "1.0.0"
-source = "git+https://github.com/Prometheus-Dynamics/Styx.git?rev=f826c3bc4aa6b8f5e941bddec643060f9b0d45b1#f826c3bc4aa6b8f5e941bddec643060f9b0d45b1"
+version = "2.0.0"
+source = "git+https://github.com/Prometheus-Dynamics/Styx.git?branch=main#a770a82e620814438098721fcb341346de503e07"
 dependencies = [
  "libcamera",
  "libcamera-sys",
  "smallvec",
  "styx-capture",
  "styx-core-rs",
+ "tracing",
 ]
 
 [[package]]
 name = "styx-v4l2"
-version = "1.0.0"
-source = "git+https://github.com/Prometheus-Dynamics/Styx.git?rev=f826c3bc4aa6b8f5e941bddec643060f9b0d45b1#f826c3bc4aa6b8f5e941bddec643060f9b0d45b1"
+version = "2.0.0"
+source = "git+https://github.com/Prometheus-Dynamics/Styx.git?branch=main#a770a82e620814438098721fcb341346de503e07"
 dependencies = [
  "smallvec",
  "styx-capture",
@@ -2326,7 +2317,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
