@@ -1,7 +1,5 @@
 use daedalus_data::model::Value;
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::{
     BackpressureStrategy, DEFAULT_OUTPUT_PORT, Executor, NodeHandler, RuntimeEdgePolicy,
     RuntimeNode, SchedulerConfig, build_runtime, executor::NodeError, io::NodeIo,
@@ -40,39 +38,13 @@ impl NodeHandler for Handler {
 fn node_io_respects_ports_and_policies() {
     // Graph: producer has two outputs (a -> consumer, b -> unused)
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("prod"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec!["a".into(), "b".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("cons"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "a".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("prod").with_outputs(["a", "b"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("cons").with_inputs(["in"]));
+    graph.edges.push(Edge::new(0, "a", 1, "in"));
 
     let exec = ExecutionPlan::new(graph, vec![]);
     let rt = build_runtime(

@@ -1,13 +1,10 @@
 use parking_lot::Mutex;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use daedalus_data::model::Value;
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::HostBridgeManager;
 use daedalus_runtime::executor::OwnedExecutor;
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY};
@@ -68,121 +65,57 @@ impl NodeHandler for SlowHandler {
 
 fn stream_echo_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".into()),
-        inputs: vec!["out".into()],
-        outputs: vec!["in".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::from([
-            (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-            (
-                "dynamic_inputs".to_string(),
+    graph.nodes.push(
+        NodeInstance::new(HOST_BRIDGE_ID)
+            .with_label("host")
+            .with_inputs(["out"])
+            .with_outputs(["in"])
+            .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
+            .with_metadata(
+                "dynamic_inputs",
+                Value::String(std::borrow::Cow::Borrowed("generic")),
+            )
+            .with_metadata(
+                "dynamic_outputs",
                 Value::String(std::borrow::Cow::Borrowed("generic")),
             ),
-            (
-                "dynamic_outputs".to_string(),
-                Value::String(std::borrow::Cow::Borrowed("generic")),
-            ),
-        ]),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("echo"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "in".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
+    );
+    graph.nodes.push(
+        NodeInstance::new("echo")
+            .with_inputs(["in"])
+            .with_outputs(["out"]),
+    );
+    graph.edges.push(Edge::new(0, "in", 1, "in"));
+    graph.edges.push(Edge::new(1, "out", 0, "out"));
     ExecutionPlan::new(graph, vec![])
 }
 
 fn two_input_stream_echo_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".into()),
-        inputs: vec!["out".into()],
-        outputs: vec!["left".into(), "right".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::from([
-            (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-            (
-                "dynamic_inputs".to_string(),
+    graph.nodes.push(
+        NodeInstance::new(HOST_BRIDGE_ID)
+            .with_label("host")
+            .with_inputs(["out"])
+            .with_outputs(["left", "right"])
+            .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
+            .with_metadata(
+                "dynamic_inputs",
+                Value::String(std::borrow::Cow::Borrowed("generic")),
+            )
+            .with_metadata(
+                "dynamic_outputs",
                 Value::String(std::borrow::Cow::Borrowed("generic")),
             ),
-            (
-                "dynamic_outputs".to_string(),
-                Value::String(std::borrow::Cow::Borrowed("generic")),
-            ),
-        ]),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("echo"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::new(),
-    });
+    );
+    graph.nodes.push(
+        NodeInstance::new("echo")
+            .with_inputs(["in"])
+            .with_outputs(["out"]),
+    );
     for port in ["left", "right"] {
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(0),
-                port: port.into(),
-            },
-            to: PortRef {
-                node: NodeRef(1),
-                port: "in".into(),
-            },
-            metadata: BTreeMap::new(),
-        });
+        graph.edges.push(Edge::new(0, port, 1, "in"));
     }
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
+    graph.edges.push(Edge::new(1, "out", 0, "out"));
     ExecutionPlan::new(graph, vec![])
 }
 

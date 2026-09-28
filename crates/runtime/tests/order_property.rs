@@ -1,6 +1,4 @@
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance, NodeRef};
 use daedalus_runtime::{
     Executor, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
 };
@@ -16,17 +14,9 @@ struct LogHandler {
 fn schedule_order_preserves_duplicate_node_ids_by_alias() {
     let mut graph = Graph::default();
     for alias in ["a,one", "b:two", "c|three"] {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new("same.node"),
-            bundle: None,
-            label: Some(alias.to_string()),
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph
+            .nodes
+            .push(NodeInstance::new("same.node").with_label(alias));
     }
     graph.metadata.insert(
         "schedule_order".into(),
@@ -65,47 +55,23 @@ fn random_plan(seed: u64, nodes: usize, edges: usize) -> ExecutionPlan {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut graph = Graph::default();
     for i in 0..nodes {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{i}")),
-            bundle: None,
-            label: None,
-            inputs: vec!["in".into()],
-            outputs: vec!["out".into()],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(
+            NodeInstance::new(format!("n{i}"))
+                .with_inputs(["in"])
+                .with_outputs(["out"]),
+        );
     }
     // Backbone chain to ensure a single entry and exit node for deterministic ordering.
     let backbone = nodes.saturating_sub(1);
     for i in 0..backbone {
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(i),
-                port: "out".into(),
-            },
-            to: PortRef {
-                node: NodeRef(i + 1),
-                port: "in".into(),
-            },
-            metadata: Default::default(),
-        });
+        graph.edges.push(Edge::new(i, "out", i + 1, "in"));
     }
     for _ in 0..edges.saturating_sub(backbone) {
         let a = rng.random_range(0..nodes.saturating_sub(1));
         let b = rng.random_range((a + 1)..nodes.max(a + 2));
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(a),
-                port: "out".into(),
-            },
-            to: PortRef {
-                node: NodeRef(b.min(nodes - 1)),
-                port: "in".into(),
-            },
-            metadata: Default::default(),
-        });
+        graph
+            .edges
+            .push(Edge::new(a, "out", NodeRef(b.min(nodes - 1)), "in"));
     }
     ExecutionPlan::new(graph, vec![])
 }

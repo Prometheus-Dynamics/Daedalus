@@ -2,9 +2,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use daedalus::{
-    ComputeAffinity,
-    planner::{Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef},
-    registry::ids::NodeId,
+    planner::{Edge, ExecutionPlan, Graph, NodeInstance},
     runtime::{
         BackpressureStrategy, Executor, MetricsLevel, NodeError, NodeHandler, RuntimeEdgePolicy,
         RuntimeNode, SchedulerConfig, build_runtime,
@@ -53,39 +51,13 @@ fn init_tracing() {
 
 fn burst_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("producer"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("consumer"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("producer").with_outputs(["out"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("consumer").with_inputs(["in"]));
+    graph.edges.push(Edge::new(0, "out", 1, "in"));
     ExecutionPlan::new(graph, vec![])
 }
 

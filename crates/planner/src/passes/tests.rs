@@ -18,15 +18,8 @@ fn build_plan_strips_planner_owned_dynamic_metadata() {
 
     let graph = Graph {
         nodes: vec![NodeInstance {
-            id: NodeId::new("demo.node"),
-            bundle: None,
-            label: None,
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            compute: crate::graph::ComputeAffinity::CpuOnly,
-            const_inputs: Vec::new(),
-            sync_groups: Vec::new(),
             metadata,
+            ..NodeInstance::new("demo.node")
         }],
         ..Graph::default()
     };

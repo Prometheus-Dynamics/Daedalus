@@ -349,15 +349,8 @@ impl GraphBuilder {
         }
         self.host_bridge_added = true;
         self.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-            bundle: None,
-            label: Some(alias),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: Vec::new(),
-            sync_groups: Vec::new(),
             metadata: daedalus_planner::host_bridge_metadata(),
+            ..NodeInstance::new(HOST_BRIDGE_ID).with_label(alias)
         });
         self
     }

@@ -298,22 +298,12 @@ fn apply_const_override(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{ComputeAffinity, NodeInstance};
+    use crate::graph::NodeInstance;
 
     #[test]
     fn apply_patch_sets_const_by_metadata() {
         let mut graph = Graph::default();
-        let mut node = NodeInstance {
-            id: NodeId::new("demo.node"),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        };
+        let mut node = NodeInstance::new("demo.node");
         node.metadata.insert(
             daedalus_core::metadata::UI_NODE_ID_KEY.to_string(),
             DaedalusValue::String("node-1".into()),
@@ -345,17 +335,7 @@ mod tests {
     #[test]
     fn apply_patch_replaces_node_id() {
         let mut graph = Graph::default();
-        graph.nodes.push(NodeInstance {
-            id: NodeId::new("demo.old"),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new("demo.old"));
 
         let patch = GraphPatch {
             version: 1,
@@ -376,28 +356,10 @@ mod tests {
     #[test]
     fn apply_patch_deletes_nodes_and_remaps_edges() {
         let mut graph = Graph::default();
-        graph.nodes.push(NodeInstance {
-            id: NodeId::new("a"),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec!["out".into()],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
-        graph.nodes.push(NodeInstance {
-            id: NodeId::new("b"),
-            bundle: None,
-            label: None,
-            inputs: vec!["in".into()],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph
+            .nodes
+            .push(NodeInstance::new("a").with_outputs(["out"]));
+        graph.nodes.push(NodeInstance::new("b").with_inputs(["in"]));
         graph.edges.push(crate::graph::Edge {
             from: crate::graph::PortRef {
                 node: crate::graph::NodeRef(0),
@@ -432,17 +394,7 @@ mod tests {
     fn analyze_tracks_downstream_and_sink_nodes() {
         let mut graph = Graph::default();
         for id in ["a", "b", "c", "d"] {
-            graph.nodes.push(NodeInstance {
-                id: NodeId::new(id),
-                bundle: None,
-                label: None,
-                inputs: vec![],
-                outputs: vec![],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            });
+            graph.nodes.push(NodeInstance::new(id));
         }
         graph.edges.push(crate::graph::Edge {
             from: crate::graph::PortRef {

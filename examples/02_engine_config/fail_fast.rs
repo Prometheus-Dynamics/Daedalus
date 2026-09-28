@@ -2,10 +2,8 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use daedalus::{
-    ComputeAffinity,
     engine::{Engine, EngineConfig, MetricsLevel},
     planner::{ExecutionPlan, Graph, NodeInstance},
-    registry::ids::NodeId,
     runtime::{
         NodeError, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
     },
@@ -33,28 +31,8 @@ impl NodeHandler for Harness {
 
 fn plan() -> daedalus::runtime::RuntimePlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("fail"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("independent"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
+    graph.nodes.push(NodeInstance::new("fail"));
+    graph.nodes.push(NodeInstance::new("independent"));
     build_runtime(
         &ExecutionPlan::new(graph, vec![]),
         &SchedulerConfig {

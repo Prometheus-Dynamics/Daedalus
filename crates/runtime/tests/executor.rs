@@ -1,7 +1,7 @@
 use daedalus_data::model::Value;
 use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, GraphNodeSelector, GraphPatch, GraphPatchOp,
-    NodeInstance, NodeRef, PortRef,
+    NodeInstance, NodeRef,
 };
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::{
@@ -122,30 +122,12 @@ impl NodeHandler for CustomMetricsHandler {
 fn tiny_exec_plan(compute: &[ComputeAffinity]) -> ExecutionPlan {
     let mut graph = Graph::default();
     for (idx, c) in compute.iter().enumerate() {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{idx}")),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: *c,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph
+            .nodes
+            .push(NodeInstance::new(format!("n{idx}")).with_compute(*c));
     }
     for i in 0..compute.len().saturating_sub(1) {
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(i),
-                port: "out".into(),
-            },
-            to: PortRef {
-                node: NodeRef(i + 1),
-                port: "in".into(),
-            },
-            metadata: Default::default(),
-        });
+        graph.edges.push(Edge::new(i, "out", i + 1, "in"));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -153,17 +135,7 @@ fn tiny_exec_plan(compute: &[ComputeAffinity]) -> ExecutionPlan {
 fn independent_exec_plan(count: usize) -> ExecutionPlan {
     let mut graph = Graph::default();
     for idx in 0..count {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{idx}")),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(format!("n{idx}")));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -171,77 +143,33 @@ fn independent_exec_plan(count: usize) -> ExecutionPlan {
 fn const_exec_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
     for (idx, mode) in ["cold", "warm"].into_iter().enumerate() {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{idx}")),
-            bundle: None,
-            label: None,
-            inputs: vec!["mode".into()],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![("mode".into(), Value::String(mode.into()))],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(
+            NodeInstance::new(format!("n{idx}"))
+                .with_inputs(["mode"])
+                .with_const_input("mode", Value::String(mode.into())),
+        );
     }
     ExecutionPlan::new(graph, vec![])
 }
 
 fn host_echo_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".into()),
-        inputs: vec!["out".into()],
-        outputs: vec!["in".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::from([
-            (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-            (
-                "dynamic_inputs".to_string(),
-                Value::String("generic".into()),
-            ),
-            (
-                "dynamic_outputs".to_string(),
-                Value::String("generic".into()),
-            ),
-        ]),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("echo"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "in".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
+    graph.nodes.push(
+        NodeInstance::new(HOST_BRIDGE_ID)
+            .with_label("host")
+            .with_inputs(["out"])
+            .with_outputs(["in"])
+            .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
+            .with_metadata("dynamic_inputs", Value::String("generic".into()))
+            .with_metadata("dynamic_outputs", Value::String("generic".into())),
+    );
+    graph.nodes.push(
+        NodeInstance::new("echo")
+            .with_inputs(["in"])
+            .with_outputs(["out"]),
+    );
+    graph.edges.push(Edge::new(0, "in", 1, "in"));
+    graph.edges.push(Edge::new(1, "out", 0, "out"));
     ExecutionPlan::new(graph, vec![])
 }
 
@@ -480,15 +408,10 @@ fn execution_context_contains_node_metadata() {
     let mut metadata = BTreeMap::new();
     metadata.insert("pos".into(), Value::Int(7));
     graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("n0"),
-        bundle: Some("bundle".into()),
-        label: Some("alias".into()),
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
         metadata,
+        ..NodeInstance::new("n0")
+            .with_bundle("bundle")
+            .with_label("alias")
     });
     let plan = ExecutionPlan::new(graph, vec![]);
     let rt = build_runtime(&plan, &SchedulerConfig::default());

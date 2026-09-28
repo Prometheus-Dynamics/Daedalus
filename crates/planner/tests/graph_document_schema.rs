@@ -8,7 +8,6 @@ use daedalus_planner::{
     Edge, GRAPH_DOCUMENT_FORMAT, GRAPH_DOCUMENT_SCHEMA_VERSION, Graph, GraphDocument, NodeInstance,
     NodeRef, PluginRequirement, PortRef,
 };
-use daedalus_registry::ids::NodeId;
 
 const CHECKED_IN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -58,15 +57,14 @@ fn schema_declares_every_serialized_field() {
     let meta = BTreeMap::from([("k".to_string(), Value::Bool(true))]);
     let mut graph = Graph::default();
     graph.nodes.push(NodeInstance {
-        id: NodeId::new("demo:node"),
-        bundle: Some("b".into()),
-        label: Some("l".into()),
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: Default::default(),
-        const_inputs: vec![("in".into(), Value::Int(1))],
-        sync_groups: vec![SyncGroup::default()],
         metadata: meta.clone(),
+        ..NodeInstance::new("demo:node")
+            .with_bundle("b")
+            .with_label("l")
+            .with_inputs(["in"])
+            .with_outputs(["out"])
+            .with_const_input("in", Value::Int(1))
+            .with_sync_group(SyncGroup::default())
     });
     graph.edges.push(Edge {
         from: port(0, "out"),

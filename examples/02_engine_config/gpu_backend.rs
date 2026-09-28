@@ -2,7 +2,6 @@ use daedalus::{
     ComputeAffinity,
     engine::{Engine, EngineConfig, GpuBackend, MetricsLevel},
     planner::{ExecutionPlan, Graph, NodeInstance},
-    registry::ids::NodeId,
     runtime::{
         NodeError, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
     },
@@ -24,17 +23,9 @@ impl NodeHandler for GpuMarkedHandler {
 
 fn gpu_marked_plan(compute: ComputeAffinity) -> daedalus::runtime::RuntimePlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("gpu_marked_node"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("gpu_marked_node").with_compute(compute));
     let plan = ExecutionPlan::new(graph, vec![]);
     build_runtime(
         &plan,

@@ -1,6 +1,4 @@
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef};
 use daedalus_runtime::{RuntimeEdgePolicy, SchedulerConfig, build_runtime, debug};
 use serde_json::Value;
 
@@ -8,39 +6,9 @@ use serde_json::Value;
 fn runtime_plan_cpu_golden() {
     // Planner graph: a(out) -> b(in), both CPU
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("a"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("b"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph.nodes.push(NodeInstance::new("a"));
+    graph.nodes.push(NodeInstance::new("b"));
+    graph.edges.push(Edge::new(0, "out", 1, "in"));
 
     let exec = ExecutionPlan::new(graph, vec![]);
     let runtime = build_runtime(&exec, &SchedulerConfig::default());
@@ -58,84 +26,18 @@ fn runtime_plan_cpu_golden() {
 fn runtime_plan_gpu_segment_golden() {
     // Planner graph: cpu -> gpu1 -> gpu2 -> cpu
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("cpu0"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("gpu1"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::GpuRequired,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("gpu2"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::GpuPreferred,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("cpu1"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
+    graph.nodes.push(NodeInstance::new("cpu0"));
+    graph
+        .nodes
+        .push(NodeInstance::new("gpu1").with_compute(ComputeAffinity::GpuRequired));
+    graph
+        .nodes
+        .push(NodeInstance::new("gpu2").with_compute(ComputeAffinity::GpuPreferred));
+    graph.nodes.push(NodeInstance::new("cpu1"));
 
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(2),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(2),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(3),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph.edges.push(Edge::new(0, "out", 1, "in"));
+    graph.edges.push(Edge::new(1, "out", 2, "in"));
+    graph.edges.push(Edge::new(2, "out", 3, "in"));
 
     let exec = ExecutionPlan::new(graph, vec![]);
     let runtime = build_runtime(&exec, &SchedulerConfig::default());

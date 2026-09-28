@@ -1,9 +1,7 @@
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::{
     BackpressureStrategy, ExecuteError, Executor, NodeError, NodeHandler, RuntimeEdgePolicy,
     RuntimeNode, SchedulerConfig, build_runtime,
@@ -188,39 +186,13 @@ impl NodeHandler for PanicParallelHandler {
 
 fn chain_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("n0"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("n1"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("n0").with_outputs(["out"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("n1").with_inputs(["in"]));
+    graph.edges.push(Edge::new(0, "out", 1, "in"));
     ExecutionPlan::new(graph, vec![])
 }
 
@@ -232,17 +204,11 @@ fn branch_plan() -> ExecutionPlan {
         ("right", vec!["in"], vec!["out"]),
         ("sink", vec!["left", "right"], vec![]),
     ] {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: inputs.into_iter().map(str::to_string).collect(),
-            outputs: outputs.into_iter().map(str::to_string).collect(),
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(
+            NodeInstance::new(id)
+                .with_inputs(inputs.into_iter())
+                .with_outputs(outputs.into_iter()),
+        );
     }
     for (from, from_port, to, to_port) in [
         (0, "out", 1, "in"),
@@ -250,17 +216,7 @@ fn branch_plan() -> ExecutionPlan {
         (1, "out", 3, "left"),
         (2, "out", 3, "right"),
     ] {
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(from),
-                port: from_port.into(),
-            },
-            to: PortRef {
-                node: NodeRef(to),
-                port: to_port.into(),
-            },
-            metadata: Default::default(),
-        });
+        graph.edges.push(Edge::new(from, from_port, to, to_port));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -272,30 +228,14 @@ fn bounded_fanout_plan() -> ExecutionPlan {
         ("bounded_sink", vec!["in"], vec![]),
         ("side_sink", vec!["in"], vec![]),
     ] {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: inputs.into_iter().map(str::to_string).collect(),
-            outputs: outputs.into_iter().map(str::to_string).collect(),
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(
+            NodeInstance::new(id)
+                .with_inputs(inputs.into_iter())
+                .with_outputs(outputs.into_iter()),
+        );
     }
     for (from_port, to, to_port) in [("bounded", 1, "in"), ("side", 2, "in")] {
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(0),
-                port: from_port.into(),
-            },
-            to: PortRef {
-                node: NodeRef(to),
-                port: to_port.into(),
-            },
-            metadata: Default::default(),
-        });
+        graph.edges.push(Edge::new(0, from_port, to, to_port));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -303,17 +243,7 @@ fn bounded_fanout_plan() -> ExecutionPlan {
 fn independent_failure_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
     for id in ["good", "bad"] {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(id));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -321,17 +251,7 @@ fn independent_failure_plan() -> ExecutionPlan {
 fn fail_first_independent_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
     for id in ["bad", "good"] {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(id));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -339,17 +259,7 @@ fn fail_first_independent_plan() -> ExecutionPlan {
 fn independent_multi_failure_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
     for id in ["good", "bad_one", "bad_two"] {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(id));
     }
     ExecutionPlan::new(graph, vec![])
 }

@@ -8,7 +8,6 @@ pub mod debug;
 mod diagnostics;
 mod document;
 mod graph;
-pub mod helpers;
 mod metadata;
 mod passes;
 mod patch;

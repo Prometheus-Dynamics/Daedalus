@@ -2,11 +2,9 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 use daedalus::{
-    ComputeAffinity,
     engine::{Engine, EngineConfig, GpuBackend, MetricsLevel, RuntimeMode},
     macros::{node, plugin},
     planner::{ExecutionPlan, Graph, NodeInstance},
-    registry::ids::NodeId,
     runtime::{
         NodeError, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
         plugins::PluginRegistry,
@@ -103,17 +101,7 @@ fn host_graph_observability() -> Result<(), Box<dyn std::error::Error>> {
 fn failing_plan() -> daedalus::runtime::RuntimePlan {
     let mut graph = Graph::default();
     for id in ["fail.left", "fail.right", "ok.after"] {
-        graph.nodes.push(NodeInstance {
-            id: NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(id));
     }
     build_runtime(
         &ExecutionPlan::new(graph, vec![]),

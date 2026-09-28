@@ -9,9 +9,8 @@ use std::time::Duration;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use daedalus_data::model::{TypeExpr, Value, ValueType};
 use daedalus_engine::{Engine, EngineConfig, HostGraph};
-use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, PortRef};
+use daedalus_planner::{Edge, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
-use daedalus_registry::ids::NodeId;
 use daedalus_runtime::RuntimeNode;
 use daedalus_runtime::executor::{MetricsLevel, NodeError, NodeHandler};
 use daedalus_runtime::handles::PortId;
@@ -45,31 +44,10 @@ impl NodeHandler for IncrementHandler {
 }
 
 fn node(id: &str, label: &str, inputs: &[&str], outputs: &[&str]) -> NodeInstance {
-    NodeInstance {
-        id: NodeId::new(id),
-        bundle: None,
-        label: Some(label.to_string()),
-        inputs: inputs.iter().map(|port| port.to_string()).collect(),
-        outputs: outputs.iter().map(|port| port.to_string()).collect(),
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    }
-}
-
-fn edge(from: usize, from_port: &str, to: usize, to_port: &str) -> Edge {
-    Edge {
-        from: PortRef {
-            node: NodeRef(from),
-            port: from_port.into(),
-        },
-        to: PortRef {
-            node: NodeRef(to),
-            port: to_port.into(),
-        },
-        metadata: Default::default(),
-    }
+    NodeInstance::new(id)
+        .with_label(label)
+        .with_inputs(inputs.iter().copied())
+        .with_outputs(outputs.iter().copied())
 }
 
 /// `host.in -> inc -> host.out`, one compute node.
@@ -97,7 +75,7 @@ fn compile_graph(config: EngineConfig) -> (PluginRegistry, HostGraph<IncrementHa
         .insert(HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true));
     let graph = Graph {
         nodes: vec![host, node("inc", "adder", &["in"], &["out"])],
-        edges: vec![edge(0, "in", 1, "in"), edge(1, "out", 0, "out")],
+        edges: vec![Edge::new(0, "in", 1, "in"), Edge::new(1, "out", 0, "out")],
         metadata: Default::default(),
     };
 

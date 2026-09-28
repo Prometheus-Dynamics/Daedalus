@@ -243,20 +243,9 @@ pub(super) fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
 mod tests {
     use super::*;
     use crate::graph::NodeInstance;
-    use daedalus_registry::ids::NodeId;
 
     fn node(id: &str, compute: ComputeAffinity) -> NodeInstance {
-        NodeInstance {
-            id: NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        }
+        NodeInstance::new(id).with_compute(compute)
     }
 
     #[test]

@@ -603,25 +603,14 @@ impl Engine {
 #[cfg(all(test, feature = "plugins"))]
 mod boundary_tests {
     use super::*;
-    use daedalus_planner::{ComputeAffinity, NodeInstance};
+    use daedalus_planner::NodeInstance;
     use daedalus_registry::capability::{NodeDecl, PortDecl};
-    use daedalus_registry::ids::NodeId;
     use daedalus_transport::{BoundaryTypeContract, LayoutHash, TypeKey};
     use std::collections::BTreeMap;
 
     fn graph_with_node(id: &str) -> Graph {
         Graph {
-            nodes: vec![NodeInstance {
-                id: NodeId::new(id),
-                bundle: None,
-                label: None,
-                inputs: vec![],
-                outputs: vec![],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: BTreeMap::new(),
-            }],
+            nodes: vec![NodeInstance::new(id)],
             edges: vec![],
             metadata: BTreeMap::new(),
         }

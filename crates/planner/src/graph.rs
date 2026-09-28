@@ -42,6 +42,12 @@ pub(crate) fn stable_hash_serialized<T: Serialize + ?Sized>(domain: &str, value:
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NodeRef(pub usize);
 
+impl From<usize> for NodeRef {
+    fn from(index: usize) -> Self {
+        Self(index)
+    }
+}
+
 /// Port reference by name within a node.
 ///
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -80,6 +86,102 @@ pub struct NodeInstance {
     pub sync_groups: Vec<SyncGroup>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, daedalus_data::model::Value>,
+}
+
+impl Edge {
+    /// An edge from `from`'s `from_port` to `to`'s `to_port`, without metadata.
+    pub fn new(
+        from: impl Into<NodeRef>,
+        from_port: impl Into<String>,
+        to: impl Into<NodeRef>,
+        to_port: impl Into<String>,
+    ) -> Self {
+        Self {
+            from: PortRef {
+                node: from.into(),
+                port: from_port.into(),
+            },
+            to: PortRef {
+                node: to.into(),
+                port: to_port.into(),
+            },
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: daedalus_data::model::Value,
+    ) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+}
+
+impl NodeInstance {
+    /// A CPU-only instance of registry node `id` with no ports, label, or metadata.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: daedalus_registry::ids::NodeId::new(id),
+            bundle: None,
+            label: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            compute: ComputeAffinity::default(),
+            const_inputs: Vec::new(),
+            sync_groups: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_bundle(mut self, bundle: impl Into<String>) -> Self {
+        self.bundle = Some(bundle.into());
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn with_inputs(mut self, ports: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.inputs.extend(ports.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_outputs(mut self, ports: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.outputs.extend(ports.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_compute(mut self, compute: ComputeAffinity) -> Self {
+        self.compute = compute;
+        self
+    }
+
+    pub fn with_const_input(
+        mut self,
+        port: impl Into<String>,
+        value: daedalus_data::model::Value,
+    ) -> Self {
+        self.const_inputs.push((port.into(), value));
+        self
+    }
+
+    pub fn with_sync_group(mut self, group: SyncGroup) -> Self {
+        self.sync_groups.push(group);
+        self
+    }
+
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: daedalus_data::model::Value,
+    ) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
 }
 
 /// Planner input graph (pre-pass).
