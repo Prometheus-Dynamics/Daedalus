@@ -36,7 +36,7 @@ pub use response::{DecodedInvokeResponse, ResponseDecodeError, decode_response};
 pub use runner_pool::{
     BackendRunner, FfiHostTelemetry, PayloadLease, PayloadLeaseScope, PayloadLeaseTable,
     RunnerHealth, RunnerKey, RunnerLimits, RunnerPool, RunnerPoolError, RunnerPoolOptions,
-    RunnerPoolTelemetry, RunnerRestartPolicy,
+    RunnerPoolTelemetry, RunnerRestartPolicy, RunnerShutdownError, RunnerShutdownFailure,
 };
 pub use schema_export::{
     SchemaExportError, export_registry_plugin_schema, export_registry_plugin_schema_json,

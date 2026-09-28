@@ -80,7 +80,8 @@ host.shutdown()?;
 
 Packages installed into one `FfiHost` share its `RunnerPool` and `FfiHostTelemetry`. Use
 `FfiHost::builder()` to share an existing telemetry collector, set pool options, or defer runner
-startup until `start_runners`. `in_process_abi` nodes are registered but not started by the host.
+startup until `start_runners(&mut registry, &factory)`, which rolls back a package whose runners
+fail to start. `in_process_abi` nodes are registered but not started by the host.
 The low-level `install_package_with_ffi_telemetry` + `install_plan_runners` + `RunnerPool::invoke`
 path remains available for custom lifecycle control.
 
