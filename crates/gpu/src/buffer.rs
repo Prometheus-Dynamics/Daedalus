@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 
 use crate::{GpuError, GpuMemoryLocation, GpuUsage, handles::GpuBufferHandle};
 
@@ -44,10 +44,7 @@ impl BufferPool for SimpleBufferPool {
             return Err(GpuError::Unsupported);
         }
         let bucket_idx = bucket_for(size_bytes);
-        let mut buckets = self
-            .buckets
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut buckets = self.buckets.lock();
         if let Some(bucket) = buckets.get_mut(bucket_idx)
             && let Some((idx, _)) = bucket
                 .iter()
@@ -62,10 +59,7 @@ impl BufferPool for SimpleBufferPool {
 
     fn free(&self, handle: GpuBufferHandle) {
         let idx = bucket_for(handle.size_bytes);
-        let mut buckets = self
-            .buckets
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut buckets = self.buckets.lock();
         if let Some(bucket) = buckets.get_mut(idx) {
             bucket.push(handle);
         }

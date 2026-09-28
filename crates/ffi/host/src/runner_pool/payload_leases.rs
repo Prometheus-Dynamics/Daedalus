@@ -39,18 +39,12 @@ impl PayloadLeaseTable {
             created_at: Instant::now(),
             last_used: Instant::now(),
         };
-        self.leases
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?
-            .insert(id, lease);
+        self.leases.lock().insert(id, lease);
         Ok(handle)
     }
 
     pub fn resolve(&self, handle: &WirePayloadHandle) -> Result<Payload, RunnerPoolError> {
-        let mut leases = self
-            .leases
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?;
+        let mut leases = self.leases.lock();
         let lease = leases
             .get_mut(&handle.id)
             .ok_or_else(|| RunnerPoolError::MissingPayloadLease(handle.id.clone()))?;
@@ -61,24 +55,20 @@ impl PayloadLeaseTable {
     pub fn release(&self, lease_id: &str) -> Result<Payload, RunnerPoolError> {
         self.leases
             .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?
             .remove(lease_id)
             .map(|lease| lease.payload)
             .ok_or_else(|| RunnerPoolError::MissingPayloadLease(lease_id.into()))
     }
 
     pub fn release_scope(&self, scope: PayloadLeaseScope) -> Result<usize, RunnerPoolError> {
-        let mut leases = self
-            .leases
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?;
+        let mut leases = self.leases.lock();
         let before = leases.len();
         leases.retain(|_, lease| lease.scope != scope);
         Ok(before - leases.len())
     }
 
     pub fn len(&self) -> usize {
-        self.leases.lock().map(|leases| leases.len()).unwrap_or(0)
+        self.leases.lock().len()
     }
 
     pub fn is_empty(&self) -> bool {

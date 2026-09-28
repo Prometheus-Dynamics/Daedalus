@@ -28,6 +28,7 @@ gpu-dmabuf = ["gpu-wgpu", "dep:ash"]
 image = ["dep:image"]
 
 [dependencies]
+parking_lot = { workspace = true }
 serde = { workspace = true }
 async-trait = { workspace = true, optional = true }
 bitflags = { workspace = true }

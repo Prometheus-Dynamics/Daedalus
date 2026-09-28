@@ -513,9 +513,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         let ret_handling = if state_binding.is_some() {
             quote! {
                 let __state_result = { #ret_handling };
-                ctx.state
-                    .set_native(&__state_key, __state_value)
-                    .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                ctx.state.set_native(&__state_key, __state_value);
                 __state_result
             }
         } else {

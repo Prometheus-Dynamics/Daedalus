@@ -1,5 +1,6 @@
+use parking_lot::{Condvar, Mutex};
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 
 use daedalus_planner::is_host_bridge_metadata;
 use daedalus_transport::{
@@ -14,8 +15,7 @@ use super::events::EventLog;
 use super::ports::PortDirection;
 use super::{
     DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING, HostBridgeBuffers,
-    HostBridgeConfig, HostBridgeHandle, HostBridgePayload, HostBridgeShared, lock_host_buffers,
-    lock_host_defaults, lock_host_map,
+    HostBridgeConfig, HostBridgeHandle, HostBridgePayload, HostBridgeShared,
 };
 
 #[derive(Clone, Default)]
@@ -54,7 +54,7 @@ impl HostBridgeManager {
 
     /// Look up an existing bridge without allocating.
     pub fn handle(&self, alias: impl AsRef<str>) -> Option<HostBridgeHandle> {
-        let guard = lock_host_map(&self.inner);
+        let guard = self.inner.lock();
         let (alias, shared) = guard.get_key_value(alias.as_ref())?;
         Some(HostBridgeHandle::new(alias.clone(), shared.clone()))
     }
@@ -62,12 +62,12 @@ impl HostBridgeManager {
     /// Get or create a bridge. Existing bridges are looked up without allocating.
     pub fn ensure_handle(&self, alias: impl AsRef<str>) -> HostBridgeHandle {
         let alias = alias.as_ref();
-        let mut guard = lock_host_map(&self.inner);
+        let mut guard = self.inner.lock();
         if let Some((alias, shared)) = guard.get_key_value(alias) {
             return HostBridgeHandle::new(alias.clone(), shared.clone());
         }
         let alias = HostAlias::new(alias);
-        let defaults = lock_host_defaults(&self.defaults).clone();
+        let defaults = self.defaults.lock().clone();
         let buffers = HostBridgeBuffers {
             inbound: PortDirection::with_defaults(
                 defaults.input_pressure,
@@ -90,29 +90,23 @@ impl HostBridgeManager {
 
     pub fn set_event_recording(&self, enabled: bool) {
         {
-            let mut defaults = lock_host_defaults(&self.defaults);
+            let mut defaults = self.defaults.lock();
             defaults.events_enabled = enabled;
         }
-        let handles = lock_host_map(&self.inner)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
         for shared in handles {
-            lock_host_buffers(&shared).events.set_enabled(enabled);
+            shared.buffers.lock().events.set_enabled(enabled);
         }
     }
 
     pub fn set_event_limit(&self, limit: Option<usize>) {
         {
-            let mut defaults = lock_host_defaults(&self.defaults);
+            let mut defaults = self.defaults.lock();
             defaults.event_limit = limit;
         }
-        let handles = lock_host_map(&self.inner)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
         for shared in handles {
-            lock_host_buffers(&shared).events.set_limit(limit);
+            shared.buffers.lock().events.set_limit(limit);
         }
     }
 
@@ -123,16 +117,15 @@ impl HostBridgeManager {
     ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
         {
-            let mut defaults = lock_host_defaults(&self.defaults);
+            let mut defaults = self.defaults.lock();
             defaults.input_pressure = pressure.clone();
             defaults.input_freshness = freshness.clone();
         }
-        let handles = lock_host_map(&self.inner)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
         for shared in handles {
-            lock_host_buffers(&shared)
+            shared
+                .buffers
+                .lock()
                 .inbound
                 .set_defaults(pressure.clone(), freshness.clone());
         }
@@ -146,16 +139,15 @@ impl HostBridgeManager {
     ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
         {
-            let mut defaults = lock_host_defaults(&self.defaults);
+            let mut defaults = self.defaults.lock();
             defaults.output_pressure = pressure.clone();
             defaults.output_freshness = freshness.clone();
         }
-        let handles = lock_host_map(&self.inner)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
         for shared in handles {
-            lock_host_buffers(&shared)
+            shared
+                .buffers
+                .lock()
                 .outbound
                 .set_defaults(pressure.clone(), freshness.clone());
         }
@@ -173,7 +165,7 @@ impl HostBridgeManager {
         )?;
 
         {
-            let mut defaults = lock_host_defaults(&self.defaults);
+            let mut defaults = self.defaults.lock();
             defaults.input_pressure = config.default_input_policy.pressure.clone();
             defaults.input_freshness = config.default_input_policy.freshness.clone();
             defaults.output_pressure = config.default_output_policy.pressure.clone();
@@ -182,10 +174,7 @@ impl HostBridgeManager {
             defaults.event_limit = config.event_limit;
         }
 
-        let handles = lock_host_map(&self.inner)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
         for shared in handles {
             HostBridgeHandle::new(HostAlias::new(""), shared).apply_config(config)?;
         }

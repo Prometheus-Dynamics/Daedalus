@@ -1,7 +1,8 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use daedalus_ffi_core::{
@@ -40,10 +41,7 @@ impl BackendRunner for EchoRunner {
             response.outputs.insert("out".into(), value.clone());
         }
         if let Some(value) = request.state {
-            *self
-                .state
-                .lock()
-                .map_err(|_| RunnerPoolError::LockPoisoned)? = Some(value.clone());
+            *self.state.lock() = Some(value.clone());
             response.state = Some(value);
         }
         Ok(response)

@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
     ComputeAffinity,
@@ -39,10 +40,7 @@ impl NodeHandler for ResidencyHandler {
                 io.push_payload("frame", gpu);
             }
             "inspector" => {
-                let mut seen = self
-                    .seen
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut seen = self.seen.lock();
                 for payload in io.inputs_for("frame") {
                     let gpu_frame = payload
                         .inner
@@ -112,10 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry = Executor::new(&runtime, ResidencyHandler { seen: seen.clone() })
         .with_metrics_level(MetricsLevel::Detailed)
         .run()?;
-    println!(
-        "inspector: {:?}",
-        seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    );
+    println!("inspector: {:?}", seen.lock());
     println!("{}", telemetry.compact_snapshot());
     Ok(())
 }

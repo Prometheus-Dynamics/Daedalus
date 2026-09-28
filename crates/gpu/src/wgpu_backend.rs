@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use parking_lot::{Mutex, MutexGuard};
+use std::sync::Arc;
 
 use crate::handles::{GpuBufferHandle, GpuDropToken, GpuImageHandle};
 use crate::shader::SubmissionTracker;
@@ -145,33 +146,18 @@ impl WgpuBackend {
     }
 
     pub fn staging_pool_stats(&self) -> WgpuStagingPoolStats {
-        self.staging_pool
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .stats()
+        self.staging_pool.lock().stats()
     }
 
     fn stats_guard(&self) -> MutexGuard<'_, TransferStats> {
-        self.stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.stats.lock()
     }
 
     pub(crate) fn get_texture(
         &self,
         handle: &GpuImageHandle,
     ) -> Option<std::sync::Arc<wgpu::Texture>> {
-        match self.resources.textures.lock() {
-            Ok(textures) => textures.get(&handle.id).cloned(),
-            Err(poisoned) => {
-                tracing::warn!(
-                    target: "daedalus_gpu::wgpu",
-                    texture_id = %handle.id,
-                    "wgpu texture registry lock poisoned while looking up texture"
-                );
-                poisoned.into_inner().get(&handle.id).cloned()
-            }
-        }
+        self.resources.textures.lock().get(&handle.id).cloned()
     }
 
     pub(crate) fn register_texture(
@@ -206,19 +192,7 @@ impl WgpuBackend {
         }
         let mut handle =
             GpuImageHandle::new(gpu_format, width, height, GpuMemoryLocation::Gpu, gpu_usage);
-        match self.resources.textures.lock() {
-            Ok(mut map) => {
-                map.insert(handle.id, texture);
-            }
-            Err(poisoned) => {
-                tracing::warn!(
-                    target: "daedalus_gpu::wgpu",
-                    texture_id = %handle.id,
-                    "wgpu texture registry lock poisoned while registering texture"
-                );
-                poisoned.into_inner().insert(handle.id, texture);
-            }
-        }
+        self.resources.textures.lock().insert(handle.id, texture);
         handle.drop_token = Some(Arc::new(ResourceDropToken {
             kind: ResourceKind::Texture {
                 id: handle.id,
@@ -319,11 +293,7 @@ impl GpuBackend for WgpuBackend {
             usage,
             mapped_at_creation: false,
         });
-        self.resources
-            .buffers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(handle.id, buffer);
+        self.resources.buffers.lock().insert(handle.id, buffer);
         handle.drop_token = Some(Arc::new(ResourceDropToken {
             kind: ResourceKind::Buffer(handle.id),
             resources: Arc::downgrade(&self.resources),
@@ -394,7 +364,6 @@ impl GpuBackend for WgpuBackend {
         self.resources
             .textures
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(handle.id, Arc::new(texture));
         handle.drop_token = Some(Arc::new(ResourceDropToken {
             kind: ResourceKind::Texture {
@@ -426,14 +395,7 @@ impl GpuBackend for WgpuBackend {
     ) -> Result<GpuImageHandle, GpuError> {
         validate_texture_bytes(req, &self.caps)?;
         let handle = self.create_image(req)?;
-        if let Some(tex) = self
-            .resources
-            .textures
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&handle.id)
-            .cloned()
-        {
+        if let Some(tex) = self.resources.textures.lock().get(&handle.id).cloned() {
             let bpp = format_bytes_per_pixel(req.format).ok_or(GpuError::Unsupported)? as u32;
             let bytes_per_row = req.width.saturating_mul(bpp);
             let expected = (bytes_per_row as usize).saturating_mul(req.height as usize);
@@ -489,7 +451,6 @@ impl GpuBackend for WgpuBackend {
             .resources
             .textures
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&handle.id)
             .cloned()
             .ok_or(GpuError::Unsupported)?;
@@ -630,14 +591,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
     ) -> Result<GpuBufferHandle, GpuError> {
         let _guard = self.copy_limiter.acquire_async().await;
         let handle = self.create_buffer(req)?;
-        if let Some(buf) = self
-            .resources
-            .buffers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&handle.id)
-            .cloned()
-        {
+        if let Some(buf) = self.resources.buffers.lock().get(&handle.id).cloned() {
             self.queue.write_buffer(&buf, 0, data);
         }
         Ok(handle)
@@ -648,16 +602,12 @@ impl crate::GpuAsyncBackend for WgpuBackend {
             .resources
             .buffers
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&handle.id)
             .cloned()
             .ok_or(GpuError::Unsupported)?;
         // Staging reuse
         let staging = {
-            let mut pool = self
-                .staging_pool
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut pool = self.staging_pool.lock();
             pool.take(handle.size_bytes).unwrap_or_else(|| {
                 self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("readback"),
@@ -684,10 +634,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
         self.record_download(data.len() as u64);
         // Return staging to pool
         {
-            let mut pool = self
-                .staging_pool
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut pool = self.staging_pool.lock();
             pool.put(handle.size_bytes, staging);
         }
         Ok(data)

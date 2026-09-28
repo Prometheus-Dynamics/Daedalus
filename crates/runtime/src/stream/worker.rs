@@ -1,5 +1,6 @@
+use parking_lot::{Condvar, Mutex};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -92,33 +93,17 @@ struct WorkerDone {
 
 impl WorkerDone {
     fn signal_finished(&self) {
-        let mut finished = self
-            .finished
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut finished = self.finished.lock();
         *finished = true;
         self.ready.notify_all();
     }
 
     fn wait_timeout(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
-        let mut finished = self
-            .finished
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut finished = self.finished.lock();
         while !*finished {
-            let now = Instant::now();
-            if now >= deadline {
-                return false;
-            }
-            let remaining = deadline.saturating_duration_since(now);
-            let (next_finished, wait) = self
-                .ready
-                .wait_timeout(finished, remaining)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            finished = next_finished;
-            if wait.timed_out() && !*finished {
-                return false;
+            if self.ready.wait_until(&mut finished, deadline).timed_out() {
+                return *finished;
             }
         }
         true
@@ -138,10 +123,7 @@ impl Drop for WorkerDoneGuard {
 impl StreamGraphWorker {
     fn request_stop(&self) {
         self.stop.store(true, Ordering::Release);
-        let mut requested_at = self
-            .stop_requested_at
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut requested_at = self.stop_requested_at.lock();
         requested_at.get_or_insert_with(Instant::now);
         self.wake.notify_waiters();
     }
@@ -194,10 +176,7 @@ impl StreamGraphWorker {
     }
 
     pub fn last_error(&self) -> Option<String> {
-        self.last_error
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        self.last_error.lock().clone()
     }
 
     pub fn diagnostics(&self) -> StreamWorkerDiagnostics {
@@ -209,7 +188,6 @@ impl StreamGraphWorker {
         let stop_requested_elapsed = self
             .stop_requested_at
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .map(|requested_at| requested_at.elapsed());
         StreamWorkerDiagnostics {
             stop_requested,
@@ -237,7 +215,6 @@ impl Drop for StreamGraphWorker {
                 stop_requested_elapsed = ?self
                     .stop_requested_at
                     .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .map(|requested_at| requested_at.elapsed()),
                 "dropping stream worker before thread finished; call stop or stop_timeout to observe shutdown completion"
             );
@@ -274,9 +251,7 @@ where
         let done = Arc::new(WorkerDone::default());
         let worker_done = done.clone();
         let wake = {
-            let guard = graph
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let guard = graph.lock();
             guard.bridges.ensure_handle(guard.host_alias.clone())
         };
         let handle = thread::spawn(move || {
@@ -285,9 +260,7 @@ where
                 let mut should_sleep = true;
                 let mut pending_before = 0usize;
                 let executor = {
-                    let mut guard = graph
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut guard = graph.lock();
                     match guard.state {
                         StreamGraphState::Closed => break,
                         StreamGraphState::Running => {
@@ -306,9 +279,7 @@ where
                 if let Some(mut executor) = executor {
                     let result = executor.run_in_place();
                     let finished_at = Instant::now();
-                    let mut guard = graph
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut guard = graph.lock();
                     if let Some(started) = guard.current_execution_started_at.take() {
                         guard.last_execution_duration = Some(finished_at.duration_since(started));
                     }
@@ -321,10 +292,7 @@ where
                             host_alias = %guard.host_alias,
                             "stream worker stopped after executor ownership violation"
                         );
-                        *worker_error
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                            Some(message.into());
+                        *worker_error.lock() = Some(message.into());
                         guard.last_error = Some(message.into());
                         break;
                     }
@@ -360,10 +328,7 @@ where
                                 error = %error,
                                 "continuous stream tick failed"
                             );
-                            *worker_error
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                                Some(error.clone());
+                            *worker_error.lock() = Some(error.clone());
                             guard.last_error = Some(error);
                             break;
                         }
@@ -371,9 +336,7 @@ where
                 }
                 if should_sleep {
                     let handle = {
-                        let guard = graph
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        let guard = graph.lock();
                         if guard.state == StreamGraphState::Closed {
                             break;
                         }

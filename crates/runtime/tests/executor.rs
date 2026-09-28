@@ -10,11 +10,12 @@ use daedalus_runtime::{
     executor::{NodeError, OwnedExecutor},
 };
 use daedalus_transport::Payload;
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 struct LogHandler {
-    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    log: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for LogHandler {
@@ -24,7 +25,7 @@ impl NodeHandler for LogHandler {
         _ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
-        self.log.lock().unwrap().push(node.id.clone());
+        self.log.lock().push(node.id.clone());
         Ok(())
     }
 }
@@ -44,10 +45,7 @@ impl NodeHandler for ConstLogHandler {
             .inputs_for("mode")
             .find_map(|payload| payload.inner.get_ref::<Value>().cloned())
             .unwrap_or(Value::String("missing".into()));
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("{}:{mode:?}", node.id));
+        self.log.lock().push(format!("{}:{mode:?}", node.id));
         Ok(())
     }
 }
@@ -103,28 +101,20 @@ impl NodeHandler for CustomMetricsHandler {
         ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
-        ctx.increment_metric("detections", 2)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.increment_metric("detections", 3)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.gauge_metric("confidence", 0.875)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.duration_metric("model_time", std::time::Duration::from_millis(7))
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.bytes_metric("scratch_bytes", 4096)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.text_metric("model", "yolo-lite")
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.bool_metric("saturated", false)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
+        ctx.increment_metric("detections", 2);
+        ctx.increment_metric("detections", 3);
+        ctx.gauge_metric("confidence", 0.875);
+        ctx.duration_metric("model_time", std::time::Duration::from_millis(7));
+        ctx.bytes_metric("scratch_bytes", 4096);
+        ctx.text_metric("model", "yolo-lite");
+        ctx.bool_metric("saturated", false);
         ctx.json_metric(
             "classes",
             serde_json::json!({
                 "person": 3,
                 "car": 2,
             }),
-        )
-        .map_err(|err| NodeError::Handler(err.to_string()))?;
+        );
         Ok(())
     }
 }
@@ -278,13 +268,10 @@ fn cpu_only_executes_in_order() {
             backpressure: BackpressureStrategy::None,
         },
     );
-    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = LogHandler { log: log.clone() };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
-    assert_eq!(
-        log.lock().unwrap().clone(),
-        vec!["n0".to_string(), "n1".to_string()]
-    );
+    assert_eq!(log.lock().clone(), vec!["n0".to_string(), "n1".to_string()]);
     assert_eq!(telemetry.nodes_executed, 2);
     assert_eq!(telemetry.cpu_segments, 2);
 }
@@ -293,7 +280,7 @@ fn cpu_only_executes_in_order() {
 fn gpu_preferred_falls_back_without_handle() {
     let exec = tiny_exec_plan(&[ComputeAffinity::GpuPreferred]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
-    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = LogHandler { log };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
     assert_eq!(telemetry.gpu_fallbacks, 1);
@@ -309,7 +296,7 @@ fn gpu_preferred_falls_back_without_handle() {
 fn gpu_required_errors_without_handle() {
     let exec = tiny_exec_plan(&[ComputeAffinity::GpuRequired]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
-    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = LogHandler { log };
     let err = Executor::new(&rt, handler).run().unwrap_err();
     match err {
@@ -347,10 +334,7 @@ fn borrowed_and_owned_executors_match_basic_in_place_runs() {
     );
     let owned_telemetry = owned.run_in_place().expect("owned run");
 
-    assert_eq!(
-        borrowed_log.lock().unwrap().clone(),
-        owned_log.lock().unwrap().clone()
-    );
+    assert_eq!(borrowed_log.lock().clone(), owned_log.lock().clone());
     assert_eq!(borrowed_telemetry.nodes_executed, 3);
     assert_eq!(owned_telemetry.nodes_executed, 3);
     assert_eq!(
@@ -384,8 +368,8 @@ fn borrowed_and_owned_executors_match_parallel_in_place_runs() {
     .with_pool_size(Some(2));
     let owned_telemetry = owned.run_parallel_in_place().expect("owned run");
 
-    let mut borrowed_nodes = borrowed_log.lock().unwrap().clone();
-    let mut owned_nodes = owned_log.lock().unwrap().clone();
+    let mut borrowed_nodes = borrowed_log.lock().clone();
+    let mut owned_nodes = owned_log.lock().clone();
     borrowed_nodes.sort();
     owned_nodes.sort();
     assert_eq!(borrowed_nodes, owned_nodes);
@@ -434,10 +418,7 @@ fn borrowed_and_owned_executors_match_patch_application() {
     assert_eq!(borrowed_report.applied_ops, owned_report.applied_ops);
     assert_eq!(borrowed_report.skipped_ops, owned_report.skipped_ops);
     assert_eq!(borrowed_report.matched_nodes, owned_report.matched_nodes);
-    assert_eq!(
-        borrowed_log.lock().unwrap().clone(),
-        owned_log.lock().unwrap().clone()
-    );
+    assert_eq!(borrowed_log.lock().clone(), owned_log.lock().clone());
 }
 
 #[test]
@@ -517,13 +498,13 @@ fn execution_context_contains_node_metadata() {
         move |_node: &RuntimeNode,
               ctx: &daedalus_runtime::state::ExecutionContext,
               _io: &mut daedalus_runtime::io::NodeIo| {
-            seen.lock().unwrap().replace(ctx.metadata.clone());
+            seen.lock().replace(ctx.metadata.clone());
             Ok(())
         }
     };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
     assert_eq!(telemetry.nodes_executed, 1);
-    let captured = seen.lock().unwrap().clone().expect("metadata captured");
+    let captured = seen.lock().clone().expect("metadata captured");
     assert_eq!(captured.get("pos"), Some(&Value::Int(7)));
     assert_eq!(captured.get("label"), Some(&Value::String("alias".into())));
     assert_eq!(
@@ -537,44 +518,38 @@ fn executor_resource_lifecycle_controls_shared_state() {
     let exec = tiny_exec_plan(&[ComputeAffinity::CpuOnly]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
     let state = StateStore::default();
-    state
-        .record_node_resource_usage(
-            "n0",
-            "cache",
-            daedalus_runtime::ResourceClass::WarmCache,
-            8,
-            32,
-        )
-        .unwrap();
+    state.record_node_resource_usage(
+        "n0",
+        "cache",
+        daedalus_runtime::ResourceClass::WarmCache,
+        8,
+        32,
+    );
     let handler = LogHandler {
         log: Arc::new(Mutex::new(Vec::new())),
     };
     let executor = Executor::new(&rt, handler).with_state(state.clone());
 
-    executor.on_memory_pressure().unwrap();
-    let compacted = state.snapshot_node_resources("n0").unwrap();
+    executor.on_memory_pressure();
+    let compacted = state.snapshot_node_resources("n0");
     assert_eq!(compacted.warm_cache.live_bytes, 8);
     assert_eq!(compacted.warm_cache.retained_bytes, 8);
 
-    executor
-        .apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
-        .unwrap();
-    let idled = state.snapshot_node_resources("n0").unwrap();
+    executor.apply_resource_lifecycle(ResourceLifecycleEvent::Idle);
+    let idled = state.snapshot_node_resources("n0");
     assert_eq!(idled.warm_cache.live_bytes, 0);
     assert_eq!(idled.warm_cache.retained_bytes, 0);
 
-    state
-        .record_node_resource_usage(
-            "n0",
-            "persistent",
-            daedalus_runtime::ResourceClass::PersistentState,
-            3,
-            6,
-        )
-        .unwrap();
-    executor.shutdown_resources().unwrap();
+    state.record_node_resource_usage(
+        "n0",
+        "persistent",
+        daedalus_runtime::ResourceClass::PersistentState,
+        3,
+        6,
+    );
+    executor.shutdown_resources();
     assert_eq!(
-        state.snapshot_node_resources("n0").unwrap(),
+        state.snapshot_node_resources("n0"),
         daedalus_runtime::NodeResourceSnapshot::default()
     );
 }

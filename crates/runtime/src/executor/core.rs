@@ -3,10 +3,11 @@ use super::{
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
 };
 use crate::state::StateStore;
+use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 #[cfg(feature = "executor-pool")]
 use std::sync::OnceLock;
-use std::sync::{Arc, Mutex};
 
 pub(crate) struct ExecutorCore {
     pub(crate) state: StateStore,

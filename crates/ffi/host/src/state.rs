@@ -59,8 +59,9 @@ pub fn export_runner_state(
 
 #[cfg(test)]
 mod tests {
+    use parking_lot::Mutex;
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use daedalus_ffi_core::{
         BackendKind, BackendRuntimeModel, InvokeRequest, InvokeResponse, WORKER_PROTOCOL_VERSION,
@@ -82,27 +83,17 @@ mod tests {
                 protocol_version: request.protocol_version,
                 correlation_id: request.correlation_id,
                 outputs: BTreeMap::new(),
-                state: self
-                    .state
-                    .lock()
-                    .map_err(|_| RunnerPoolError::LockPoisoned)?
-                    .clone(),
+                state: self.state.lock().clone(),
                 events: Vec::new(),
             })
         }
 
         fn export_state(&self, _node_id: &str) -> Result<Option<WireValue>, RunnerPoolError> {
-            self.state
-                .lock()
-                .map_err(|_| RunnerPoolError::LockPoisoned)
-                .map(|state| state.clone())
+            Ok(self.state.lock().clone())
         }
 
         fn import_state(&self, _node_id: &str, state: WireValue) -> Result<(), RunnerPoolError> {
-            *self
-                .state
-                .lock()
-                .map_err(|_| RunnerPoolError::LockPoisoned)? = Some(state);
+            *self.state.lock() = Some(state);
             Ok(())
         }
     }

@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::{
-    Mutex, OnceLock,
+    OnceLock,
     atomic::{AtomicUsize, Ordering},
 };
 
@@ -17,7 +18,6 @@ pub(crate) fn register_device(device: &wgpu::Device) -> usize {
     DEVICE_KEYS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(ptr, key);
     key
 }
@@ -26,8 +26,7 @@ pub(crate) fn device_key(device: &wgpu::Device) -> usize {
     let ptr = device_ptr(device);
     let mut keys = DEVICE_KEYS
         .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .lock();
     if let Some(key) = keys.get(&ptr).copied() {
         return key;
     }
@@ -38,11 +37,10 @@ pub(crate) fn device_key(device: &wgpu::Device) -> usize {
 
 pub(crate) fn unregister_device(device: &wgpu::Device, key: usize) {
     let ptr = device_ptr(device);
-    if let Ok(mut keys) = DEVICE_KEYS
+    let mut keys = DEVICE_KEYS
         .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        && keys.get(&ptr).copied() == Some(key)
-    {
+        .lock();
+    if keys.get(&ptr).copied() == Some(key) {
         keys.remove(&ptr);
     }
 }

@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
     ComputeAffinity,
@@ -22,10 +23,7 @@ impl NodeHandler for Harness {
         _ctx: &daedalus::runtime::ExecutionContext,
         _io: &mut daedalus::runtime::NodeIo,
     ) -> Result<(), NodeError> {
-        self.calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(node.id.clone());
+        self.calls.lock().push(node.id.clone());
         if node.id == "fail" {
             return Err(NodeError::InvalidInput("intentional failure".into()));
         }
@@ -83,9 +81,7 @@ fn run_case(fail_fast: bool) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "fail_fast={fail_fast}: result={:?}; calls={:?}; telemetry_errors={}",
         result.as_ref().map(|_| ()),
-        calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        calls.lock(),
         telemetry.errors.len()
     );
     println!("{}", telemetry.compact_snapshot());

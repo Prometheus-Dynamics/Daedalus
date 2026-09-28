@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
@@ -20,7 +21,7 @@ impl NodeHandler for LogHandler {
         _ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), daedalus_runtime::NodeError> {
-        self.log.lock().unwrap().push(node.id.clone());
+        self.log.lock().push(node.id.clone());
         Ok(())
     }
 }
@@ -69,7 +70,7 @@ impl NodeHandler for PayloadBranchHandler {
                     .filter_map(|(_, payload)| payload.inner.get_ref::<i32>().copied())
                     .collect::<Vec<_>>();
                 values.sort_unstable();
-                self.seen.lock().unwrap().extend(values);
+                self.seen.lock().extend(values);
             }
             _ => {}
         }
@@ -111,7 +112,7 @@ impl NodeHandler for BoundedFanoutHandler {
                     .filter_map(|(_, payload)| payload.inner.get_ref::<i32>().copied())
                     .collect::<Vec<_>>();
                 values.sort_unstable();
-                self.seen.lock().unwrap().extend(values);
+                self.seen.lock().extend(values);
             }
             _ => {}
         }
@@ -137,7 +138,7 @@ impl NodeHandler for DirectChainHandler {
             }
             "n1" => {
                 if let Some(value) = io.get_typed::<i32>("in") {
-                    self.seen.lock().unwrap().push(value);
+                    self.seen.lock().push(value);
                 }
             }
             _ => {}
@@ -158,7 +159,7 @@ impl NodeHandler for FailingParallelHandler {
         _ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
-        self.seen.lock().unwrap().push(node.id.clone());
+        self.seen.lock().push(node.id.clone());
         if node.id.starts_with("bad") {
             return Err(NodeError::InvalidInput(
                 "intentional parallel failure".into(),
@@ -374,7 +375,7 @@ fn serial_and_parallel_scope_align() {
     let telem2 = Executor::new(&rt, h2).run_parallel().expect("parallel run");
     assert_eq!(telem2.nodes_executed, 2);
 
-    assert_eq!(*log1.lock().unwrap(), *log2.lock().unwrap());
+    assert_eq!(*log1.lock(), *log2.lock());
 }
 
 #[test]
@@ -396,7 +397,7 @@ fn parallel_payload_branch_merges_outputs() {
         .expect("parallel payload run");
 
     assert_eq!(telemetry.nodes_executed, 4);
-    assert_eq!(*seen.lock().unwrap(), vec![41, 42]);
+    assert_eq!(*seen.lock(), vec![41, 42]);
 }
 
 #[cfg(feature = "executor-pool")]
@@ -423,7 +424,7 @@ fn direct_runtime_parallel_path_can_prewarm_worker_pool() {
         .expect("pooled parallel run succeeds");
 
     assert_eq!(telemetry.nodes_executed, 4);
-    assert_eq!(*seen.lock().unwrap(), vec![41, 42]);
+    assert_eq!(*seen.lock(), vec![41, 42]);
 }
 
 #[test]
@@ -446,7 +447,7 @@ fn serial_run_in_place_resets_direct_slots_between_ticks() {
 
     assert_eq!(first.nodes_executed, 4);
     assert_eq!(second.nodes_executed, 4);
-    assert_eq!(*seen.lock().unwrap(), vec![41, 42, 41, 42]);
+    assert_eq!(*seen.lock(), vec![41, 42, 41, 42]);
 }
 
 #[test]
@@ -473,7 +474,7 @@ fn parallel_run_in_place_uses_locked_direct_slots_between_ticks() {
 
     assert_eq!(first.nodes_executed, 4);
     assert_eq!(second.nodes_executed, 4);
-    assert_eq!(*seen.lock().unwrap(), vec![41, 42, 41, 42]);
+    assert_eq!(*seen.lock(), vec![41, 42, 41, 42]);
 }
 
 #[test]
@@ -500,7 +501,7 @@ fn parallel_latest_only_direct_slot_transfers_payloads_between_ticks() {
 
     assert_eq!(first.nodes_executed, 2);
     assert_eq!(second.nodes_executed, 2);
-    assert_eq!(*seen.lock().unwrap(), vec![7, 7]);
+    assert_eq!(*seen.lock(), vec![7, 7]);
 }
 
 #[test]
@@ -527,7 +528,7 @@ fn retained_executor_can_switch_direct_slots_between_serial_and_parallel_ticks()
         assert_eq!(parallel.nodes_executed, 4);
     }
 
-    let seen = seen.lock().unwrap();
+    let seen = seen.lock();
     assert_eq!(seen.len(), 64);
     for pair in seen.chunks_exact(2) {
         assert_eq!(pair, [41, 42]);
@@ -554,7 +555,7 @@ fn parallel_bounded_queue_reports_backpressure_without_blocking_independent_bran
 
     assert_eq!(telemetry.nodes_executed, 3);
     assert_eq!(telemetry.backpressure_events, 1);
-    let mut seen_values = seen.lock().unwrap().clone();
+    let mut seen_values = seen.lock().clone();
     seen_values.sort_unstable();
     assert_eq!(seen_values, vec![1, 9]);
 }
@@ -584,7 +585,7 @@ fn parallel_bounded_error_overflow_fails_segment() {
             ..
         }
     ));
-    assert!(seen.lock().unwrap().is_empty());
+    assert!(seen.lock().is_empty());
 }
 
 #[test]
@@ -620,7 +621,7 @@ fn parallel_non_fail_fast_records_segment_errors_and_completes_ready_work() {
             .iter()
             .any(|error| error.node_id.contains("bad_two"))
     );
-    let mut seen = seen.lock().unwrap().clone();
+    let mut seen = seen.lock().clone();
     seen.sort();
     assert_eq!(
         seen,
@@ -672,7 +673,7 @@ fn parallel_fail_fast_stops_scheduling_new_segments_after_error() {
         }
         other => panic!("unexpected parallel error: {other:?}"),
     }
-    assert_eq!(*seen.lock().unwrap(), vec!["bad".to_string()]);
+    assert_eq!(*seen.lock(), vec!["bad".to_string()]);
 }
 
 #[test]

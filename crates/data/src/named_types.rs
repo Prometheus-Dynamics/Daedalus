@@ -1,6 +1,7 @@
 use crate::model::TypeExpr;
+use parking_lot::RwLock;
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 /// Policy for whether a port typed as a given schema should be considered exportable through
 /// callers that explicitly encode host boundary payloads as JSON or bytes.
@@ -48,10 +49,7 @@ impl NamedTypeRegistry {
     ) -> Result<(), String> {
         let key = key.into();
         let expr = expr.normalize();
-        let mut guard = self
-            .types
-            .write()
-            .map_err(|_| "daedalus_data::named_types registry lock poisoned".to_string())?;
+        let mut guard = self.types.write();
 
         if let Some(prev) = guard.get(&key) {
             if prev.expr != expr || prev.export != export {
@@ -67,8 +65,7 @@ impl NamedTypeRegistry {
     }
 
     pub fn lookup(&self, key: &str) -> Option<NamedType> {
-        let guard = self.types.read().ok()?;
-        guard.get(key).cloned()
+        self.types.read().get(key).cloned()
     }
 
     pub fn resolve_opaque(&self, expr: &TypeExpr) -> Option<TypeExpr> {
@@ -92,11 +89,7 @@ impl NamedTypeRegistry {
     }
 
     pub fn snapshot(&self) -> Vec<NamedType> {
-        let guard = match self.types.read() {
-            Ok(guard) => guard,
-            Err(_) => return Vec::new(),
-        };
-        guard.values().cloned().collect()
+        self.types.read().values().cloned().collect()
     }
 }
 

@@ -1,7 +1,8 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::poll_fn;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
@@ -107,9 +108,7 @@ fn begin_map_read_async_with_state(
 
     let future_state = Arc::clone(&state);
     let future = poll_fn(move |cx| {
-        let mut state = future_state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = future_state.lock();
         if let Some(done) = state.result.take() {
             return Poll::Ready(done);
         }
@@ -137,12 +136,7 @@ fn submit_map_poll_job_with_timeout(
         let started_at = Instant::now();
         let mut polls = 0_u64;
         loop {
-            let all_completed = states.iter().all(|(_, state)| {
-                state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .completed
-            });
+            let all_completed = states.iter().all(|(_, state)| state.lock().completed);
             if all_completed {
                 tracing::trace!(
                     target: "daedalus_gpu::readback",
@@ -257,23 +251,14 @@ pub(crate) async fn resolve_readbacks_async(
             }
         }
         buffer.unmap();
-        if let Ok(mut p) = temp_pool().lock() {
-            p.put_buffer(device_key, size, buffer);
-            tracing::trace!(
-                target: "daedalus_gpu::readback",
-                binding,
-                size,
-                device_key,
-                "returned async readback buffer to temp pool"
-            );
-        } else {
-            tracing::warn!(
-                target: "daedalus_gpu::readback",
-                binding,
-                size,
-                "failed to return async readback buffer to temp pool because lock was poisoned"
-            );
-        }
+        temp_pool().lock().put_buffer(device_key, size, buffer);
+        tracing::trace!(
+            target: "daedalus_gpu::readback",
+            binding,
+            size,
+            device_key,
+            "returned async readback buffer to temp pool"
+        );
     }
 
     Ok(result)
@@ -281,9 +266,7 @@ pub(crate) async fn resolve_readbacks_async(
 
 fn complete_map_state(state: &Arc<Mutex<MapState>>, result: Result<(), GpuError>) -> bool {
     let waker = {
-        let mut state = state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = state.lock();
         if state.completed {
             return false;
         }
@@ -334,7 +317,7 @@ mod tests {
         ));
         assert!(!complete_map_state(&state, Ok(())));
 
-        let mut guard = state.lock().expect("map state lock");
+        let mut guard = state.lock();
         assert!(guard.completed);
         let result = guard.result.take().expect("stored result");
         assert!(matches!(result, Err(GpuError::Internal(message)) if message == "timeout"));
@@ -347,7 +330,7 @@ mod tests {
         timeout_map_states(&states, Duration::from_millis(1));
 
         for state in states {
-            let mut guard = state.lock().expect("map state lock");
+            let mut guard = state.lock();
             assert!(guard.completed);
             let result = guard.result.take().expect("stored result");
             assert!(matches!(

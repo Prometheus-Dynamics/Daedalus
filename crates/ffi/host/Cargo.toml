@@ -19,6 +19,7 @@ default = []
 image-payload = ["daedalus-ffi-core/image-payload"]
 
 [dependencies]
+parking_lot = { workspace = true }
 daedalus-ffi-core = { workspace = true }
 daedalus-data = { workspace = true }
 daedalus-registry = { workspace = true }

@@ -1,4 +1,4 @@
-use std::sync::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex};
 #[cfg(feature = "gpu-async")]
 use std::{
     future::Future,
@@ -38,15 +38,9 @@ impl CopyLimiter {
     }
 
     pub(super) fn acquire(&self) -> CopyGuard<'_> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = self.state.lock();
         while state.in_flight >= self.limit {
-            state = self
-                .cv
-                .wait(state)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            self.cv.wait(&mut state);
         }
         state.in_flight += 1;
         CopyGuard { limiter: self }
@@ -65,10 +59,7 @@ impl CopyLimiter {
         #[cfg(feature = "gpu-async")]
         {
             let waiters = {
-                let mut state = self
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut state = self.state.lock();
                 state.in_flight = state.in_flight.saturating_sub(1);
                 state.waiters.drain(..).collect::<Vec<_>>()
             };
@@ -79,10 +70,7 @@ impl CopyLimiter {
 
         #[cfg(not(feature = "gpu-async"))]
         {
-            let mut state = self
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = self.state.lock();
             state.in_flight = state.in_flight.saturating_sub(1);
         }
         self.cv.notify_one();
@@ -90,19 +78,12 @@ impl CopyLimiter {
 
     #[cfg(all(test, feature = "gpu-async"))]
     pub(super) fn in_flight(&self) -> u32 {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .in_flight
+        self.state.lock().in_flight
     }
 
     #[cfg(all(test, feature = "gpu-async"))]
     pub(super) fn waiter_count(&self) -> usize {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .waiters
-            .len()
+        self.state.lock().waiters.len()
     }
 }
 
@@ -118,11 +99,7 @@ impl<'a> Future for CopyAcquireFuture<'a> {
     type Output = CopyGuard<'a>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self
-            .limiter
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = self.limiter.state.lock();
         if state.in_flight < self.limiter.limit {
             state.in_flight += 1;
             if let Some(id) = self.waiter_id.take() {
@@ -167,11 +144,7 @@ impl Drop for CopyAcquireFuture<'_> {
         let Some(id) = self.waiter_id.take() else {
             return;
         };
-        let mut state = self
-            .limiter
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = self.limiter.state.lock();
         state.waiters.retain(|waiter| waiter.id != id);
     }
 }

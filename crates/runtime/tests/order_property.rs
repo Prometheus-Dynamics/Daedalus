@@ -9,7 +9,7 @@ use rand::{RngExt, SeedableRng};
 use std::borrow::Cow;
 
 struct LogHandler {
-    order: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    order: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 #[test]
@@ -56,7 +56,7 @@ impl NodeHandler for LogHandler {
         _ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), daedalus_runtime::NodeError> {
-        self.order.lock().unwrap().push(node.id.clone());
+        self.order.lock().push(node.id.clone());
         Ok(())
     }
 }
@@ -121,14 +121,14 @@ fn serial_vs_parallel_order_matches() {
                 backpressure: daedalus_runtime::BackpressureStrategy::None,
             },
         );
-        let order1 = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let order1 = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
         let h1 = LogHandler {
             order: order1.clone(),
         };
         let telem1 = Executor::new(&rt, h1).run().expect("serial");
         assert_eq!(telem1.nodes_executed, rt.nodes.len());
 
-        let order2 = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let order2 = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
         let h2 = LogHandler {
             order: order2.clone(),
         };
@@ -137,8 +137,8 @@ fn serial_vs_parallel_order_matches() {
 
         // Ensure the parallel order respects topo constraints and schedule_order tie-breaks,
         // but allow permutations within independent segments.
-        let serial_order = order1.lock().unwrap().clone();
-        let parallel_order = order2.lock().unwrap().clone();
+        let serial_order = order1.lock().clone();
+        let parallel_order = order2.lock().clone();
         assert_eq!(
             serial_order.first(),
             parallel_order.first(),

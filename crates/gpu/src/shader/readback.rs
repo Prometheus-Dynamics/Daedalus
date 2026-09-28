@@ -55,13 +55,12 @@ pub(crate) fn enqueue_readbacks(
                 size,
                 readback,
             } if *readback => {
-                let staging = if let Some(buf) = temp_pool().lock().ok().and_then(|mut p| {
-                    p.take_buffer(
-                        device_key,
-                        *size,
-                        wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    )
-                }) {
+                let pooled = temp_pool().lock().take_buffer(
+                    device_key,
+                    *size,
+                    wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                );
+                let staging = if let Some(buf) = pooled {
                     buf
                 } else {
                     device.create_buffer(&wgpu::BufferDescriptor {
@@ -98,21 +97,13 @@ pub(crate) fn enqueue_readbacks(
                 let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
                 let padded_bpr = bytes_per_row.div_ceil(align) * align;
                 let size_bytes = (padded_bpr * (*height as usize)) as u64;
-                let staging = if let Ok(mut p) = temp_pool().lock() {
-                    if let Some(buf) = p.take_buffer(
-                        device_key,
-                        size_bytes,
-                        wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    ) {
-                        buf
-                    } else {
-                        device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("tex-readback"),
-                            size: size_bytes,
-                            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                            mapped_at_creation: false,
-                        })
-                    }
+                let pooled = temp_pool().lock().take_buffer(
+                    device_key,
+                    size_bytes,
+                    wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                );
+                let staging = if let Some(buf) = pooled {
+                    buf
                 } else {
                     device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("tex-readback"),
@@ -251,26 +242,23 @@ pub(crate) fn resolve_readbacks(
         }
 
         buffer.unmap();
-        if let Ok(mut p) = temp_pool().lock() {
-            p.put_buffer(device_key, size, buffer);
-        }
+        temp_pool().lock().put_buffer(device_key, size, buffer);
     }
     Ok(result)
 }
 
 pub(crate) fn return_pooled_textures(pool_textures_to_return: Vec<PoolReturn>) {
-    if let Ok(mut p) = temp_pool().lock() {
-        for PoolReturn {
-            device_key,
-            width,
-            height,
-            format,
-            usage,
-            texture,
-        } in pool_textures_to_return
-        {
-            p.put_texture(device_key, width, height, format, usage, texture);
-        }
+    let mut p = temp_pool().lock();
+    for PoolReturn {
+        device_key,
+        width,
+        height,
+        format,
+        usage,
+        texture,
+    } in pool_textures_to_return
+    {
+        p.put_texture(device_key, width, height, format, usage, texture);
     }
 }
 

@@ -1,8 +1,9 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -116,7 +117,7 @@ impl PersistentWorkerRunner {
     }
 
     pub fn hello(&self) -> Option<WorkerHello> {
-        self.hello.lock().ok().and_then(|hello| hello.clone())
+        self.hello.lock().clone()
     }
 
     fn spawn_process(&self) -> Result<PersistentWorkerProcess, RunnerPoolError> {
@@ -243,10 +244,7 @@ impl PersistentWorkerRunner {
                 hello_message.correlation_id.clone(),
             ),
         )?;
-        *self
-            .hello
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)? = Some(hello);
+        *self.hello.lock() = Some(hello);
         *slot = Some(process);
         self.record_worker_telemetry(FfiWorkerTelemetry {
             worker_id: self.worker_id(),
@@ -449,10 +447,7 @@ fn is_cow_payload_handle(handle: &daedalus_ffi_core::WirePayloadHandle) -> bool 
 
 impl BackendRunner for PersistentWorkerRunner {
     fn start(&self) -> Result<(), RunnerPoolError> {
-        let mut slot = self
-            .process
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?;
+        let mut slot = self.process.lock();
         if let Some(process) = slot.as_mut() {
             match process.child.try_wait() {
                 Ok(None) => return Ok(()),
@@ -463,15 +458,7 @@ impl BackendRunner for PersistentWorkerRunner {
     }
 
     fn health(&self) -> RunnerHealth {
-        let Ok(mut slot) = self.process.lock() else {
-            self.record_worker_telemetry(FfiWorkerTelemetry {
-                worker_id: self.worker_id(),
-                health_checks: 1,
-                last_health: Some(format_runner_health(RunnerHealth::Degraded).to_owned()),
-                ..Default::default()
-            });
-            return RunnerHealth::Degraded;
-        };
+        let mut slot = self.process.lock();
         let health = match slot.as_mut() {
             None => RunnerHealth::Starting,
             Some(process) => match process.child.try_wait() {
@@ -495,10 +482,7 @@ impl BackendRunner for PersistentWorkerRunner {
 
     fn invoke(&self, request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
         request.validate_protocol().map_err(worker_protocol_error)?;
-        let mut slot = self
-            .process
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?;
+        let mut slot = self.process.lock();
         let process = slot
             .as_mut()
             .ok_or_else(|| RunnerPoolError::Runner("persistent worker has not started".into()))?;
@@ -603,10 +587,7 @@ impl BackendRunner for PersistentWorkerRunner {
     }
 
     fn shutdown(&self) -> Result<(), RunnerPoolError> {
-        let mut slot = self
-            .process
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?;
+        let mut slot = self.process.lock();
         Self::stop_locked(&mut slot);
         self.record_worker_telemetry(FfiWorkerTelemetry {
             worker_id: self.worker_id(),
@@ -651,9 +632,7 @@ impl StderrDrain {
                 match stderr.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(read) => {
-                        let mut capture = thread_capture
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        let mut capture = thread_capture.lock();
                         let remaining = limit.saturating_sub(capture.bytes.len());
                         if remaining > 0 {
                             let keep = remaining.min(read);
@@ -666,9 +645,7 @@ impl StderrDrain {
                         }
                     }
                     Err(err) => {
-                        let mut capture = thread_capture
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        let mut capture = thread_capture.lock();
                         capture.read_error = Some(err.to_string());
                         break;
                     }
@@ -682,10 +659,7 @@ impl StderrDrain {
     }
 
     fn snapshot(&self) -> String {
-        let capture = self
-            .capture
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let capture = self.capture.lock();
         let mut text = String::from_utf8_lossy(&capture.bytes).into_owned();
         if capture.truncated {
             text.push_str("...");

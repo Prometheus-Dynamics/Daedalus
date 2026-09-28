@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
     ComputeAffinity,
@@ -29,10 +30,7 @@ impl NodeHandler for BurstHandler {
                 }
             }
             "consumer" => {
-                let mut seen = self
-                    .seen
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut seen = self.seen.lock();
                 for payload in io.inputs_for("in") {
                     if let Some(value) = payload.inner.get_ref::<i64>() {
                         seen.push(*value);
@@ -95,10 +93,7 @@ fn run_strategy(strategy: BackpressureStrategy) -> Result<(), Box<dyn std::error
     let result = Executor::new(&runtime, BurstHandler { seen: seen.clone() })
         .with_metrics_level(MetricsLevel::Detailed)
         .run();
-    println!(
-        "{strategy:?}: consumer saw {:?}",
-        seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    );
+    println!("{strategy:?}: consumer saw {:?}", seen.lock());
     match result {
         Ok(telemetry) => println!("{}", telemetry.compact_snapshot()),
         Err(error) => println!("{strategy:?}: execution failed as configured: {error}"),

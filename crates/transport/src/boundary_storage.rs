@@ -272,10 +272,7 @@ where
         ptr.as_ptr().cast::<T>().cast_const() as *const (dyn Any + Send + Sync)
     }
 
-    let mut vtables = VTABLES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut vtables = crate::lock_recover(VTABLES.get_or_init(|| Mutex::new(HashMap::new())));
     if let Some(vtable) = vtables.get(&TypeId::of::<T>()).copied() {
         return vtable;
     }

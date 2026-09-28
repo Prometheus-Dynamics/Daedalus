@@ -74,10 +74,11 @@ impl<T> BroadcastInner<T> {
 
     #[cfg(feature = "async-channels")]
     fn notify_subscribers(&self) {
-        if let Ok(subs) = self.subscribers.lock() {
-            for sub in subs.iter().filter_map(Weak::upgrade) {
-                sub.notify.notify_waiters();
-            }
+        for sub in crate::lock_recover(&self.subscribers)
+            .iter()
+            .filter_map(Weak::upgrade)
+        {
+            sub.notify.notify_waiters();
         }
     }
 
@@ -219,10 +220,7 @@ fn subscribe_inner<T: Send + Sync>(inner: &Arc<BroadcastInner<T>>) -> BroadcastR
         notify: Arc::new(Notify::new()),
     });
     {
-        let mut subs = inner
-            .subscribers
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
+        let mut subs = crate::lock_recover(&inner.subscribers);
         subs.push(Arc::downgrade(&subscriber));
     }
     BroadcastReceiver {
@@ -249,11 +247,7 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for BroadcastSender<T> {
         let mut live = 0usize;
         let mut upgraded = Vec::new();
         {
-            let mut subs = self
-                .inner
-                .subscribers
-                .lock()
-                .unwrap_or_else(|err| err.into_inner());
+            let mut subs = crate::lock_recover(&self.inner.subscribers);
             subs.retain(|weak_sub| {
                 if let Some(sub) = weak_sub.upgrade() {
                     upgraded.push(sub);
@@ -266,7 +260,7 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for BroadcastSender<T> {
 
         for sub in upgraded {
             live += 1;
-            let mut buf = sub.buffer.lock().unwrap_or_else(|err| err.into_inner());
+            let mut buf = crate::lock_recover(&sub.buffer);
             if buf.len() >= self.inner.capacity {
                 buf.pop_front();
                 #[cfg(feature = "metrics")]
@@ -292,11 +286,7 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for BroadcastSender<T> {
 
 impl<T: Send + Sync> ChannelRecv<Arc<T>> for BroadcastReceiver<T> {
     fn try_recv(&self) -> RecvOutcome<Arc<T>> {
-        let mut buf = self
-            .subscriber
-            .buffer
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
+        let mut buf = crate::lock_recover(&self.subscriber.buffer);
         match buf.pop_front() {
             Some(v) => {
                 self.inner.drained.fetch_add(1, Ordering::Relaxed);
@@ -314,7 +304,7 @@ impl<T: Send + Sync> BroadcastReceiver<T> {
             enqueued: self.inner.enqueued.load(Ordering::Relaxed),
             dropped: self.inner.dropped.load(Ordering::Relaxed),
             drained: self.inner.drained.load(Ordering::Relaxed),
-            depth: self.subscriber.buffer.lock().map(|b| b.len()).unwrap_or(0),
+            depth: crate::lock_recover(&self.subscriber.buffer).len(),
             closed: self.inner.closed.load(Ordering::Relaxed),
         }
     }

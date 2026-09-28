@@ -36,6 +36,7 @@ proto = []
 schema = ["daedalus-data/schema"]
 
 [dependencies]
+parking_lot = { workspace = true }
 daedalus-data = { workspace = true }
 daedalus-registry = { workspace = true }
 daedalus-transport = { workspace = true }

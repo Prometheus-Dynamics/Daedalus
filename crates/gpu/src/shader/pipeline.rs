@@ -1,8 +1,9 @@
+use parking_lot::Mutex;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, OnceLock,
     atomic::{AtomicUsize, Ordering},
 };
 
@@ -128,11 +129,7 @@ pub(crate) fn pipeline_entry(
     }
     let key = hasher.finish();
 
-    if let Some(entry) = cache
-        .lock()
-        .ok()
-        .and_then(|mut m| m.get_mut(&device_key).and_then(|c| c.get(&key)))
-    {
+    if let Some(entry) = cache.lock().get_mut(&device_key).and_then(|c| c.get(&key)) {
         return entry;
     }
 
@@ -220,10 +217,11 @@ pub(crate) fn pipeline_entry(
         bind_group_layout,
         pipeline,
     });
-    if let Ok(mut m) = cache.lock() {
-        let cache = m.entry(device_key).or_insert_with(DeviceCache::new);
-        cache.insert_with_limit(key, entry.clone(), pipeline_cache_limit());
-    }
+    cache
+        .lock()
+        .entry(device_key)
+        .or_insert_with(DeviceCache::new)
+        .insert_with_limit(key, entry.clone(), pipeline_cache_limit());
     entry
 }
 
@@ -294,11 +292,12 @@ pub(crate) fn bind_group(
     } else {
         None
     };
+    let bind_group_cache = BIND_GROUP_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(k) = bind_key
-        && let Ok(mut m) = BIND_GROUP_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
+        && let Some(bg) = bind_group_cache
             .lock()
-        && let Some(bg) = m.get_mut(&device_key).and_then(|c| c.get(&k))
+            .get_mut(&device_key)
+            .and_then(|c| c.get(&k))
     {
         return bg;
     }
@@ -308,26 +307,21 @@ pub(crate) fn bind_group(
         layout,
         entries: &entries,
     });
-    if let Some(k) = bind_key
-        && let Ok(mut m) = BIND_GROUP_CACHE
-            .get_or_init(|| Mutex::new(HashMap::new()))
+    if let Some(k) = bind_key {
+        bind_group_cache
             .lock()
-    {
-        let cache = m.entry(device_key).or_insert_with(DeviceCache::new);
-        cache.insert_with_limit(k, bg.clone(), bind_group_cache_limit());
+            .entry(device_key)
+            .or_insert_with(DeviceCache::new)
+            .insert_with_limit(k, bg.clone(), bind_group_cache_limit());
     }
     bg
 }
 
 pub(crate) fn clear_pipeline_caches_for_device(device_key: usize) {
-    if let Some(cache) = PIPE_CACHE.get()
-        && let Ok(mut cache) = cache.lock()
-    {
-        cache.remove(&device_key);
+    if let Some(cache) = PIPE_CACHE.get() {
+        cache.lock().remove(&device_key);
     }
-    if let Some(cache) = BIND_GROUP_CACHE.get()
-        && let Ok(mut cache) = cache.lock()
-    {
-        cache.remove(&device_key);
+    if let Some(cache) = BIND_GROUP_CACHE.get() {
+        cache.lock().remove(&device_key);
     }
 }

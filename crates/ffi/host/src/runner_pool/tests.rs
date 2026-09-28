@@ -92,17 +92,11 @@ impl BackendRunner for FakeRunner {
     }
 
     fn export_state(&self, _node_id: &str) -> Result<Option<WireValue>, RunnerPoolError> {
-        self.state
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)
-            .map(|state| state.clone())
+        Ok(self.state.lock().clone())
     }
 
     fn import_state(&self, _node_id: &str, state: WireValue) -> Result<(), RunnerPoolError> {
-        *self
-            .state
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)? = Some(state);
+        *self.state.lock() = Some(state);
         Ok(())
     }
 }

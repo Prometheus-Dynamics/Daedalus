@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
 
 #[cfg(feature = "lockfree-queues")]
 use crossbeam_queue::ArrayQueue;
@@ -21,25 +22,6 @@ pub(super) fn payload_size_bytes(
     payload: &daedalus_transport::Payload,
 ) -> Option<u64> {
     inspectors.estimate_payload_bytes(payload)
-}
-
-fn lock_edge_queue<'a>(
-    queue: &'a Mutex<EdgeQueue>,
-    edge_idx: usize,
-    operation: &'static str,
-) -> MutexGuard<'a, EdgeQueue> {
-    match queue.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            tracing::warn!(
-                target: "daedalus_runtime::executor::queue",
-                edge_idx,
-                operation,
-                "edge queue lock poisoned; recovering queued payloads"
-            );
-            poisoned.into_inner()
-        }
-    }
 }
 
 pub enum EdgeQueue {
@@ -320,7 +302,7 @@ pub fn pop_edge(
     let storage = queues.get(edge_idx)?;
     match storage {
         EdgeStorage::Locked { queue, metrics } => {
-            let mut guard = lock_edge_queue(queue, edge_idx, "pop");
+            let mut guard = queue.lock();
             let payload = guard.pop_front();
             if let Some(payload) = payload.as_ref() {
                 let removed = payload_size_bytes(inspectors, &payload.inner).unwrap_or(0);

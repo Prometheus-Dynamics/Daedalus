@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::hint::black_box;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -354,7 +355,7 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
         |b| {
             let graph = Arc::new(Mutex::new(stream_graph()));
             let (input, output) = {
-                let mut guard = graph.lock().expect("stream graph lock");
+                let mut guard = graph.lock();
                 guard.start().expect("stream start");
                 (
                     guard.input("in").expect("stream input"),
@@ -372,11 +373,7 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
                 value = value.wrapping_add(1);
                 black_box(output);
             });
-            graph
-                .lock()
-                .expect("stream graph lock")
-                .close()
-                .expect("stream close");
+            graph.lock().close().expect("stream close");
             worker.stop();
         },
     );
@@ -387,17 +384,13 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
             b.iter(|| {
                 let graph = Arc::new(Mutex::new(stream_graph()));
                 {
-                    let mut guard = graph.lock().expect("stream graph lock");
+                    let mut guard = graph.lock();
                     guard.start().expect("stream start");
                 }
                 let worker =
                     StreamGraph::spawn_continuous(Arc::clone(&graph), DEFAULT_STREAM_IDLE_SLEEP);
                 std::thread::sleep(DEFAULT_STREAM_IDLE_SLEEP);
-                graph
-                    .lock()
-                    .expect("stream graph lock")
-                    .close()
-                    .expect("stream close");
+                graph.lock().close().expect("stream close");
                 black_box(worker.stop());
             });
         },
@@ -408,7 +401,7 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
         |b| {
             let graph = Arc::new(Mutex::new(stream_graph()));
             let (input, output) = {
-                let mut guard = graph.lock().expect("stream graph lock");
+                let mut guard = graph.lock();
                 guard.start().expect("stream start");
                 (
                     guard.input("in").expect("stream input"),
@@ -441,11 +434,7 @@ fn executor_snapshot_overhead(c: &mut Criterion) {
                 let output = recv_stream_i64(&output, Duration::from_millis(100));
                 black_box(output);
             });
-            graph
-                .lock()
-                .expect("stream graph lock")
-                .close()
-                .expect("stream close");
+            graph.lock().close().expect("stream close");
             worker.stop();
         },
     );

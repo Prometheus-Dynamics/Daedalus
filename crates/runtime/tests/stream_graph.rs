@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use daedalus_data::model::Value;
@@ -53,11 +54,11 @@ impl NodeHandler for SlowHandler {
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
         if node.id == "echo" {
-            if let Some(tx) = self.started.lock().expect("started lock").take() {
+            if let Some(tx) = self.started.lock().take() {
                 let _ = tx.send(());
             }
             std::thread::sleep(self.sleep);
-            if let Some(tx) = self.finished.lock().expect("finished lock").take() {
+            if let Some(tx) = self.finished.lock().take() {
                 let _ = tx.send(());
             }
         }
@@ -303,7 +304,7 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
         Arc::new(Mutex::new(StreamGraph::new(runtime, EchoHandler)));
 
     let (input, output) = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         let input = graph.input("in").expect("input handle");
         let output = graph.output("out").expect("output handle");
         (input, output)
@@ -315,17 +316,9 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
         .set_policy(PressurePolicy::BufferAll, FreshnessPolicy::PreserveAll)
         .expect("output policy");
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     assert_eq!(
-        graph
-            .lock()
-            .expect("stream graph lock")
-            .diagnostics()
-            .worker_state,
+        graph.lock().diagnostics().worker_state,
         StreamWorkerState::Idle
     );
     let worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
@@ -336,18 +329,14 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
             .expect("feed should succeed");
     }
     assert!(matches!(
-        graph
-            .lock()
-            .expect("stream graph lock")
-            .diagnostics()
-            .worker_state,
+        graph.lock().diagnostics().worker_state,
         StreamWorkerState::Running | StreamWorkerState::BlockedInExecution
     ));
     let first_batch: Vec<_> = (0..32).map(|_| recv_u32(&output)).collect();
     assert_eq!(first_batch, (0..32u32).collect::<Vec<_>>());
 
     {
-        let mut graph = graph.lock().expect("stream graph lock");
+        let mut graph = graph.lock();
         graph.pause().expect("pause");
         assert_eq!(graph.state(), StreamGraphState::Paused);
         assert_eq!(graph.diagnostics().worker_state, StreamWorkerState::Paused);
@@ -366,24 +355,16 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
     );
 
     {
-        let mut graph = graph.lock().expect("stream graph lock");
+        let mut graph = graph.lock();
         graph.resume().expect("resume");
         assert_eq!(graph.state(), StreamGraphState::Running);
     }
     let second_batch: Vec<_> = (0..32).map(|_| recv_u32(&output)).collect();
     assert_eq!(second_batch, (32..64u32).collect::<Vec<_>>());
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .close()
-        .expect("close");
+    graph.lock().close().expect("close");
     assert_eq!(
-        graph
-            .lock()
-            .expect("stream graph lock")
-            .diagnostics()
-            .worker_state,
+        graph.lock().diagnostics().worker_state,
         StreamWorkerState::Closed
     );
     assert!(worker.stop().is_none());
@@ -407,15 +388,11 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
     )));
 
     let input = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         graph.input("in").expect("input handle")
     };
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     let worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
     input
         .feed(Payload::owned("demo:u32", 1u32))
@@ -423,7 +400,7 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
     started_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("handler should start");
-    let diagnostics = graph.lock().expect("stream graph lock").diagnostics();
+    let diagnostics = graph.lock().diagnostics();
     assert_eq!(
         diagnostics.worker_state,
         StreamWorkerState::BlockedInExecution
@@ -433,11 +410,7 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
     let (paused_tx, paused_rx) = mpsc::channel();
     let pause_graph = Arc::clone(&graph);
     let pause_thread = std::thread::spawn(move || {
-        pause_graph
-            .lock()
-            .expect("stream graph lock")
-            .pause()
-            .expect("pause");
+        pause_graph.lock().pause().expect("pause");
         paused_tx.send(()).expect("pause notification");
     });
 
@@ -449,19 +422,9 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
         .recv_timeout(Duration::from_secs(2))
         .expect("handler should eventually finish");
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .close()
-        .expect("close");
+    graph.lock().close().expect("close");
     let deadline = Instant::now() + Duration::from_secs(2);
-    while graph
-        .lock()
-        .expect("stream graph lock")
-        .diagnostics()
-        .last_execution_duration
-        .is_none()
-    {
+    while graph.lock().diagnostics().last_execution_duration.is_none() {
         assert!(
             Instant::now() < deadline,
             "worker should publish last execution duration"
@@ -489,15 +452,11 @@ fn continuous_worker_stop_timeout_reports_slow_handler_without_deadlocking() {
     )));
 
     let input = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         graph.input("in").expect("input handle")
     };
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     let mut worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
     input
         .feed(Payload::owned("demo:u32", 1u32))
@@ -546,15 +505,11 @@ fn continuous_worker_drop_requests_stop_without_waiting_for_slow_handler() {
     )));
 
     let input = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         graph.input("in").expect("input handle")
     };
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     let worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
     input
         .feed(Payload::owned("demo:u32", 1u32))

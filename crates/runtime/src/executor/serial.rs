@@ -129,7 +129,7 @@ pub(crate) fn run_order<H: NodeHandler>(
             gpu: exec.core.gpu.clone(),
         };
         if collect_basic_metrics {
-            let _ = exec.core.state.clear_node_custom_metrics(&node.id);
+            exec.core.state.clear_node_custom_metrics(&node.id);
         }
 
         let handler_start = collect_detailed_metrics.then(Instant::now);
@@ -212,16 +212,10 @@ pub(crate) fn run_order<H: NodeHandler>(
             exec.core.telemetry.record_node_perf(node_idx, sample);
         }
         if collect_basic_metrics {
-            match exec.core.state.drain_node_custom_metrics(&node.id) {
-                Ok(metrics) => exec
-                    .core
-                    .telemetry
-                    .record_node_custom_metrics(node_idx, metrics),
-                Err(error) => exec.core.telemetry.warnings.push(format!(
-                    "custom metrics unavailable for node {}: {error}",
-                    node.id
-                )),
-            }
+            let metrics = exec.core.state.drain_node_custom_metrics(&node.id);
+            exec.core
+                .telemetry
+                .record_node_custom_metrics(node_idx, metrics);
             exec.core.telemetry.record_node_duration(node_idx, elapsed);
         }
         if collect_trace

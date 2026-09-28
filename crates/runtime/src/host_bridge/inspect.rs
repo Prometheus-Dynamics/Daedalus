@@ -148,9 +148,7 @@ pub fn serialize_payload_value(
         return Some(value.clone());
     }
     let type_id = <dyn Any>::type_id(value);
-    let guard = serializers
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = serializers.read();
     guard.get(&type_id).and_then(|serializer| serializer(value))
 }
 

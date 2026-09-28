@@ -90,7 +90,7 @@ pub struct ConverterGraph {
 
 /// Thread-safe wrapper type for concurrent registration/resolution.
 ///
-pub type SharedConverterGraph = std::sync::Arc<std::sync::RwLock<ConverterGraph>>;
+pub type SharedConverterGraph = std::sync::Arc<parking_lot::RwLock<ConverterGraph>>;
 
 impl ConverterGraph {
     /// Create an empty converter graph.

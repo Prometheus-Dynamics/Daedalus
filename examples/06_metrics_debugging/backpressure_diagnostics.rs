@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
     ComputeAffinity,
@@ -31,10 +32,7 @@ impl NodeHandler for BurstHandler {
                 }
             }
             "consumer" => {
-                let mut seen = self
-                    .seen
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut seen = self.seen.lock();
                 for payload in io.inputs_for("in") {
                     if let Some(value) = payload.inner.get_ref::<i64>() {
                         seen.push(*value);
@@ -112,10 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_metrics_level(MetricsLevel::Detailed)
     .run()?;
 
-    println!(
-        "consumer values: {:?}",
-        seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    );
+    println!("consumer values: {:?}", seen.lock());
     println!("{}", telemetry.compact_snapshot());
 
     for (edge_idx, metrics) in &telemetry.edge_metrics {

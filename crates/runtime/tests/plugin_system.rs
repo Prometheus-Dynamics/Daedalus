@@ -215,14 +215,12 @@ fn plugin_registries_do_not_leak_types_capabilities_or_serializers() {
     assert!(
         left.value_serializers
             .read()
-            .expect("left serializer lock")
             .contains_key(&std::any::TypeId::of::<IsolatedPayload>())
     );
     assert!(
         !right
             .value_serializers
             .read()
-            .expect("right serializer lock")
             .contains_key(&std::any::TypeId::of::<IsolatedPayload>())
     );
 }
