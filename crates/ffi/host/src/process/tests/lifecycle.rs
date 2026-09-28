@@ -37,21 +37,12 @@ fn persistent_worker_restarts_exited_python_node_and_java_backends() {
 fn persistent_worker_reports_crash_and_malformed_messages() {
     let crash_telemetry = FfiHostTelemetry::new();
     let crash = PersistentWorkerRunner::from_backend(&BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some("crash".into()),
-        entry_class: None,
-        entry_symbol: Some("run".into()),
-        executable: Some("/bin/sh".into()),
         args: vec![
             "-c".into(),
             "printf 'worker failed with a long diagnostic' >&2; exit 9".into(),
         ],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Python, "/bin/sh", "run")
+            .with_entry_module("crash")
     })
     .expect("crash runner")
     .with_ffi_telemetry(crash_telemetry.clone());
@@ -71,21 +62,12 @@ fn persistent_worker_reports_crash_and_malformed_messages() {
 
     let malformed_telemetry = FfiHostTelemetry::new();
     let malformed = PersistentWorkerRunner::from_backend(&BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some("bad".into()),
-        entry_class: None,
-        entry_symbol: Some("run".into()),
-        executable: Some("/bin/sh".into()),
         args: vec![
             "-c".into(),
             "printf 'not-json\\n'; while read line; do :; done".into(),
         ],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Python, "/bin/sh", "run")
+            .with_entry_module("bad")
     })
     .expect("malformed runner")
     .with_ffi_telemetry(malformed_telemetry.clone());
@@ -105,20 +87,8 @@ fn persistent_worker_reports_crash_and_malformed_messages() {
 
 #[test]
 fn persistent_worker_rejects_unsupported_runner_limits() {
-    let config = BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some("limits".into()),
-        entry_class: None,
-        entry_symbol: Some("run".into()),
-        executable: Some("/bin/sh".into()),
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    };
+    let config = BackendConfig::persistent_worker(BackendKind::Python, "/bin/sh", "run")
+        .with_entry_module("limits");
 
     let queue_depth = PersistentWorkerRunner::from_backend_with_limits(
         &config,
@@ -156,21 +126,11 @@ fn persistent_worker_honors_request_timeout() {
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend_with_limits_and_telemetry(
         &BackendConfig {
-            backend: BackendKind::Python,
-            runtime_model: BackendRuntimeModel::PersistentWorker,
-            entry_module: Some("timeout".into()),
-            entry_class: None,
-            entry_symbol: Some("run".into()),
-            executable: Some("/bin/sh".into()),
             args: vec![
                 "-c".into(),
                 r#"printf '%s\n' '{"protocol_version":1,"correlation_id":"startup","payload":{"type":"hello","payload":{"protocol_version":1,"min_protocol_version":1,"worker_id":"timeout-worker","backend":"python","supported_nodes":["demo:add"],"capabilities":["persistent_worker"]}}}'; while read line; do :; done"#.into(),
             ],
-            classpath: Vec::new(),
-            native_library_paths: Vec::new(),
-            working_dir: None,
-            env: BTreeMap::new(),
-            options: BTreeMap::new(),
+            ..BackendConfig::persistent_worker(BackendKind::Python, "/bin/sh", "run").with_entry_module("timeout")
         },
         &RunnerLimits {
             request_timeout: Some(Duration::from_millis(20)),
@@ -197,12 +157,6 @@ fn persistent_worker_drains_stderr_while_waiting_for_stdout() {
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend_with_limits_and_telemetry(
             &BackendConfig {
-                backend: BackendKind::Python,
-                runtime_model: BackendRuntimeModel::PersistentWorker,
-                entry_module: Some("stderr-heavy".into()),
-                entry_class: None,
-                entry_symbol: Some("run".into()),
-                executable: Some("/bin/sh".into()),
                 args: vec![
                     "-c".into(),
                     r#"head -c 200000 /dev/zero | tr '\000' x >&2
@@ -217,11 +171,7 @@ done
 "#
                     .into(),
                 ],
-                classpath: Vec::new(),
-                native_library_paths: Vec::new(),
-                working_dir: None,
-                env: BTreeMap::new(),
-                options: BTreeMap::new(),
+                ..BackendConfig::persistent_worker(BackendKind::Python, "/bin/sh", "run").with_entry_module("stderr-heavy")
             },
             &RunnerLimits {
                 stderr_capture_bytes: 64,

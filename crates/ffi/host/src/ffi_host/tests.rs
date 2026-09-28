@@ -1,157 +1,38 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
-use daedalus_data::model::{TypeExpr, ValueType};
-use daedalus_ffi_core::{
-    BackendKind, BackendRuntimeModel, NodeSchema, PluginSchema, PluginSchemaInfo, SCHEMA_VERSION,
-    WirePort, WireValue,
-};
+use daedalus_ffi_core::{BackendKind, NodeSchema, PluginSchema, WireValue};
 use daedalus_registry::ids::NodeId;
-use daedalus_transport::AccessMode;
 
 use super::*;
-
-#[derive(Default)]
-struct Counters {
-    builds: AtomicUsize,
-    shutdowns: AtomicUsize,
-}
-
-struct EchoRunner {
-    counters: Arc<Counters>,
-    supported_nodes: Option<Vec<String>>,
-}
-
-impl BackendRunner for EchoRunner {
-    fn invoke(&self, request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
-        Ok(InvokeResponse {
-            protocol_version: request.protocol_version,
-            correlation_id: request.correlation_id,
-            outputs: BTreeMap::from([("out".into(), WireValue::String(request.node_id))]),
-            state: None,
-            events: Vec::new(),
-        })
-    }
-
-    fn supported_nodes(&self) -> Option<Vec<String>> {
-        self.supported_nodes.clone()
-    }
-
-    fn shutdown(&self) -> Result<(), RunnerPoolError> {
-        self.counters.shutdowns.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct EchoFactory {
-    counters: Arc<Counters>,
-    supported_nodes: Option<Vec<String>>,
-    fail_executable: Option<&'static str>,
-}
-
-impl BackendRunnerFactory for EchoFactory {
-    fn build_runner(
-        &self,
-        _node_id: &str,
-        backend: &BackendConfig,
-    ) -> Result<Arc<dyn BackendRunner>, RunnerPoolError> {
-        if self.fail_executable.is_some() && backend.executable.as_deref() == self.fail_executable {
-            return Err(RunnerPoolError::Runner("worker failed to start".into()));
-        }
-        self.counters.builds.fetch_add(1, Ordering::SeqCst);
-        Ok(Arc::new(EchoRunner {
-            counters: self.counters.clone(),
-            supported_nodes: self.supported_nodes.clone(),
-        }))
-    }
-}
-
-fn port(name: &str) -> WirePort {
-    WirePort {
-        name: name.into(),
-        ty: TypeExpr::Scalar(ValueType::Int),
-        type_key: None,
-        optional: false,
-        access: AccessMode::Read,
-        residency: None,
-        layout: None,
-        source: None,
-        const_value: None,
-    }
-}
+use crate::test_support::{EchoFactory, int_port, python_worker, rust_in_process};
 
 fn node(id: &str, backend: BackendKind) -> NodeSchema {
-    NodeSchema {
-        id: id.into(),
+    NodeSchema::new(
+        id,
         backend,
-        entrypoint: id.into(),
-        label: None,
-        stateful: false,
-        feature_flags: Vec::new(),
-        inputs: vec![port("value")],
-        outputs: vec![port("out")],
-        metadata: BTreeMap::new(),
-    }
+        id,
+        vec![int_port("value")],
+        vec![int_port("out")],
+    )
 }
 
 fn worker_backend(executable: &str) -> BackendConfig {
-    BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some("demo.py".into()),
-        entry_class: None,
-        entry_symbol: Some("run".into()),
-        executable: Some(executable.into()),
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    }
-}
-
-fn in_process_backend() -> BackendConfig {
-    BackendConfig {
-        backend: BackendKind::Rust,
-        runtime_model: BackendRuntimeModel::InProcessAbi,
-        entry_module: Some("libdemo_plugin.so".into()),
-        entry_symbol: Some("daedalus_plugin_register".into()),
-        executable: None,
-        ..worker_backend("unused")
-    }
+    python_worker(executable, "demo.py", "run")
 }
 
 fn package(plugin: &str, nodes: Vec<(NodeSchema, BackendConfig)>) -> PluginPackage {
-    let backends = nodes
-        .iter()
-        .map(|(node, backend)| (node.id.clone(), backend.clone()))
-        .collect();
-    PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: Some(PluginSchema {
-            schema_version: SCHEMA_VERSION,
-            plugin: PluginSchemaInfo {
-                name: plugin.into(),
-                version: Some("1.0.0".into()),
-                description: None,
-                metadata: BTreeMap::new(),
-            },
-            dependencies: Vec::new(),
-            required_host_capabilities: Vec::new(),
-            feature_flags: Vec::new(),
-            boundary_contracts: Vec::new(),
-            nodes: nodes.into_iter().map(|(node, _)| node).collect(),
-        }),
+    let (nodes, backends): (Vec<_>, BTreeMap<_, _>) = nodes
+        .into_iter()
+        .map(|(node, backend)| {
+            let id = node.id.clone();
+            (node, (id, backend))
+        })
+        .unzip();
+    PluginPackage::new(
+        PluginSchema::new(plugin, Some("1.0.0".into()), nodes),
         backends,
-        artifacts: Vec::new(),
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
-    }
+    )
 }
 
 fn python_package(plugin: &str, node_id: &str, executable: &str) -> PluginPackage {
@@ -212,7 +93,7 @@ fn installs_package_and_invokes_by_node_id() {
         .expect("batch");
     assert_eq!(batch.len(), 2);
 
-    assert_eq!(factory.counters.builds.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.builds(), 1);
     assert_eq!(host.pool().telemetry().invokes, 3);
     let report = host.telemetry().snapshot();
     assert!(report.packages.contains_key("demo.plugin"));
@@ -270,7 +151,7 @@ fn shares_pool_and_telemetry_across_packages() {
     )
     .expect("third package");
 
-    assert_eq!(factory.counters.builds.load(Ordering::SeqCst), 2);
+    assert_eq!(factory.builds(), 2);
     assert_eq!(host.pool().len(), 2);
     assert_eq!(host.plans().len(), 3);
     assert_eq!(
@@ -308,7 +189,7 @@ fn duplicate_node_is_rejected_without_touching_registry() {
 
     assert!(matches!(err, FfiHostError::DuplicateNode { node_id } if node_id == "demo.echo"));
     assert_eq!(registry, before);
-    assert_eq!(factory.counters.builds.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.builds(), 1);
 }
 
 #[test]
@@ -351,7 +232,7 @@ fn runner_failure_restores_registry_and_stops_started_runners() {
     assert!(registry.plugin_manifest("demo.plugin").is_none());
     assert!(host.pool().is_empty());
     assert!(!host.contains_node("demo.echo"));
-    assert_eq!(unsupported.counters.builds.load(Ordering::SeqCst), 1);
+    assert_eq!(unsupported.builds(), 1);
 
     // The first worker starts, the second fails: the first is shut down again.
     let partial = EchoFactory {
@@ -383,7 +264,7 @@ fn runner_failure_restores_registry_and_stops_started_runners() {
     ));
     assert!(registry.plugin_manifest("demo.plugin").is_none());
     assert!(host.pool().is_empty());
-    assert_eq!(partial.counters.builds.load(Ordering::SeqCst), 1);
+    assert_eq!(partial.builds(), 1);
     assert_eq!(partial.counters.shutdowns.load(Ordering::SeqCst), 1);
 }
 
@@ -400,7 +281,7 @@ fn in_process_abi_nodes_are_registered_but_not_started() {
                     node("demo.worker", BackendKind::Python),
                     worker_backend("python"),
                 ),
-                (node("demo.native", BackendKind::Rust), in_process_backend()),
+                (node("demo.native", BackendKind::Rust), rust_in_process()),
             ],
         ),
         &factory,
@@ -408,7 +289,7 @@ fn in_process_abi_nodes_are_registered_but_not_started() {
     .expect("host installs");
 
     assert!(registry.node_decl(&NodeId::new("demo.native")).is_some());
-    assert_eq!(factory.counters.builds.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.builds(), 1);
     assert!(host.runner_key("demo.native").is_none());
     assert!(host.backend("demo.native").is_some());
     assert!(matches!(
@@ -498,7 +379,7 @@ fn deferred_startup_failure_rolls_back_only_the_failing_package() {
     assert_eq!(registry, expected);
     assert!(!host.contains_node("demo.b.first"));
     assert!(host.plan("demo.b").is_none());
-    assert_eq!(factory.counters.builds.load(Ordering::SeqCst), 2);
+    assert_eq!(factory.builds(), 2);
     assert_eq!(factory.counters.shutdowns.load(Ordering::SeqCst), 1);
     assert_eq!(host.pool().len(), 1);
 
@@ -579,7 +460,7 @@ fn persistent_worker_factory_builds_without_spawning() {
     assert_eq!(runner.health(), RunnerHealth::Starting);
     assert!(
         factory
-            .build_runner("demo.native", &in_process_backend())
+            .build_runner("demo.native", &rust_in_process())
             .is_err()
     );
 }

@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+use daedalus_data::json::from_plain_json;
 use daedalus_data::model::Value;
 use daedalus_ffi_core::{
     BackendConfig, BackendKind, BackendRuntimeModel, FfiContractError, NodeSchema, PluginPackage,
@@ -389,11 +390,10 @@ pub fn node_decl_from_schema(node: &NodeSchema) -> Result<NodeDecl, HostInstallE
     let mut metadata_keys = BTreeSet::new();
     for (key, value) in &node.metadata {
         metadata_keys.insert(key.clone());
-        let value =
-            json_to_value(value.clone()).map_err(|message| HostInstallError::MetadataValue {
-                field: key.clone(),
-                message,
-            })?;
+        let value = from_plain_json(value).map_err(|err| HostInstallError::MetadataValue {
+            field: key.clone(),
+            message: err.to_string(),
+        })?;
         insert_metadata_value(&mut decl, key.clone(), value)?;
     }
     if node.stateful && !metadata_keys.contains("daedalus.ffi.stateful") {
@@ -450,42 +450,13 @@ pub fn port_decl_from_schema(port: &WirePort) -> Result<PortDecl, HostInstallErr
         decl = decl.source(source.clone());
     }
     if let Some(value) = &port.const_value {
-        let value =
-            json_to_value(value.clone()).map_err(|message| HostInstallError::ConstValue {
-                port: port.name.clone(),
-                message,
-            })?;
+        let value = from_plain_json(value).map_err(|err| HostInstallError::ConstValue {
+            port: port.name.clone(),
+            message: err.to_string(),
+        })?;
         decl = decl.const_value(value);
     }
     Ok(decl)
-}
-
-fn json_to_value(value: serde_json::Value) -> Result<Value, String> {
-    Ok(match value {
-        serde_json::Value::Null => Value::Unit,
-        serde_json::Value::Bool(value) => Value::Bool(value),
-        serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Value::Int(value)
-            } else if let Some(value) = value.as_f64() {
-                Value::Float(value)
-            } else {
-                return Err(value.to_string());
-            }
-        }
-        serde_json::Value::String(value) => Value::String(Cow::Owned(value)),
-        serde_json::Value::Array(items) => Value::List(
-            items
-                .into_iter()
-                .map(json_to_value)
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        serde_json::Value::Object(map) => Value::Map(
-            map.into_iter()
-                .map(|(key, value)| Ok((Value::String(Cow::Owned(key)), json_to_value(value)?)))
-                .collect::<Result<Vec<_>, String>>()?,
-        ),
-    })
 }
 
 fn package_id(package: &PluginPackage) -> String {

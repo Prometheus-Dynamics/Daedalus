@@ -269,18 +269,12 @@ pub mod __support {
                 registry
                     .install_plugin(&plugin)
                     .map_err(|err| err.to_string())?;
-                let manifest = registry
-                    .plugin_manifests
-                    .get(plugin.id())
-                    .ok_or_else(|| format!("plugin `{}` registered no manifest", plugin.id()))?;
-                let nodes: Vec<_> = registry
-                    .transport_capabilities
-                    .nodes()
-                    .values()
-                    .cloned()
-                    .collect();
-                let schema = daedalus_ffi_host::plugin_schema_from_manifest(manifest, &nodes)
+                let capabilities = registry
+                    .combined_transport_capabilities()
                     .map_err(|err| err.to_string())?;
+                let schema =
+                    daedalus_ffi_host::export_registry_plugin_schema(&capabilities, plugin.id())
+                        .map_err(|err| err.to_string())?;
                 let json = serde_json::to_string(&schema).map_err(|err| err.to_string())?;
                 sink.write(&json);
                 Ok(())

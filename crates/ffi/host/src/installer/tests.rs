@@ -1,82 +1,14 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use daedalus_data::model::TypeExpr;
 use daedalus_ffi_core::{
-    BackendConfig, BackendKind, BackendRuntimeModel, InvokeRequest, InvokeResponse, NodeSchema,
-    PluginPackage, PluginSchema, PluginSchemaInfo, SCHEMA_VERSION, WirePort, WireValue,
+    BackendConfig, BackendKind, NodeSchema, PluginPackage, PluginSchema, PluginSchemaInfo,
+    SCHEMA_VERSION, WirePort,
 };
 use daedalus_transport::{AccessMode, BoundaryTypeContract, Residency, TypeKey};
 
 use super::*;
-
-struct FakeRunner;
-
-impl BackendRunner for FakeRunner {
-    fn invoke(&self, request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
-        Ok(InvokeResponse {
-            protocol_version: request.protocol_version,
-            correlation_id: request.correlation_id,
-            outputs: BTreeMap::from([("out".into(), WireValue::Int(1))]),
-            state: None,
-            events: Vec::new(),
-        })
-    }
-}
-
-struct SupportedRunner {
-    supported_nodes: Vec<String>,
-}
-
-impl BackendRunner for SupportedRunner {
-    fn supported_nodes(&self) -> Option<Vec<String>> {
-        Some(self.supported_nodes.clone())
-    }
-
-    fn invoke(&self, request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
-        Ok(InvokeResponse {
-            protocol_version: request.protocol_version,
-            correlation_id: request.correlation_id,
-            outputs: BTreeMap::from([("out".into(), WireValue::Int(1))]),
-            state: None,
-            events: Vec::new(),
-        })
-    }
-}
-
-struct FakeRunnerFactory {
-    builds: Arc<AtomicUsize>,
-}
-
-impl BackendRunnerFactory for FakeRunnerFactory {
-    fn build_runner(
-        &self,
-        _node_id: &str,
-        _backend: &BackendConfig,
-    ) -> Result<Arc<dyn BackendRunner>, RunnerPoolError> {
-        self.builds.fetch_add(1, Ordering::SeqCst);
-        Ok(Arc::new(FakeRunner))
-    }
-}
-
-struct SupportedRunnerFactory {
-    supported_nodes: Vec<String>,
-    builds: Arc<AtomicUsize>,
-}
-
-impl BackendRunnerFactory for SupportedRunnerFactory {
-    fn build_runner(
-        &self,
-        _node_id: &str,
-        _backend: &BackendConfig,
-    ) -> Result<Arc<dyn BackendRunner>, RunnerPoolError> {
-        self.builds.fetch_add(1, Ordering::SeqCst);
-        Ok(Arc::new(SupportedRunner {
-            supported_nodes: self.supported_nodes.clone(),
-        }))
-    }
-}
+use crate::test_support::{EchoFactory, python_worker, rust_in_process};
 
 fn schema() -> PluginSchema {
     PluginSchema {
@@ -140,37 +72,7 @@ fn two_node_schema() -> PluginSchema {
 }
 
 fn backend() -> BackendConfig {
-    BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some("demo.py".into()),
-        entry_class: None,
-        entry_symbol: Some("add".into()),
-        executable: Some("python".into()),
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    }
-}
-
-fn in_process_backend() -> BackendConfig {
-    BackendConfig {
-        backend: BackendKind::Rust,
-        runtime_model: BackendRuntimeModel::InProcessAbi,
-        entry_module: Some("libdemo_plugin.so".into()),
-        entry_class: None,
-        entry_symbol: Some("daedalus_plugin_register".into()),
-        executable: None,
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    }
+    python_worker("python", "demo.py", "add")
 }
 
 #[test]
@@ -383,17 +285,14 @@ fn installs_plan_runners_with_fake_backend_factory() {
     let schema = schema();
     let backends = BTreeMap::from([("demo.add".into(), backend())]);
     let plan = HostInstallPlan::from_schema_and_backends(&schema, &backends).expect("plan builds");
-    let builds = Arc::new(AtomicUsize::new(0));
-    let factory = FakeRunnerFactory {
-        builds: builds.clone(),
-    };
+    let factory = EchoFactory::default();
     let mut pool = RunnerPool::new();
 
     let keys = install_plan_runners(&mut pool, &plan, &factory).expect("runners install");
 
     assert_eq!(keys.len(), 1);
     assert_eq!(pool.len(), 1);
-    assert_eq!(builds.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.builds(), 1);
     assert_eq!(pool.telemetry().starts, 1);
 }
 
@@ -403,13 +302,10 @@ fn install_plan_runners_skips_in_process_abi_backends() {
     schema.nodes[1].backend = BackendKind::Rust;
     let backends = BTreeMap::from([
         ("demo.add".into(), backend()),
-        ("demo.sub".into(), in_process_backend()),
+        ("demo.sub".into(), rust_in_process()),
     ]);
     let plan = HostInstallPlan::from_schema_and_backends(&schema, &backends).expect("plan builds");
-    let builds = Arc::new(AtomicUsize::new(0));
-    let factory = FakeRunnerFactory {
-        builds: builds.clone(),
-    };
+    let factory = EchoFactory::default();
     let mut pool = RunnerPool::new();
 
     let keys = install_plan_runners(&mut pool, &plan, &factory).expect("runners install");
@@ -417,7 +313,7 @@ fn install_plan_runners_skips_in_process_abi_backends() {
     assert_eq!(keys.len(), 1);
     assert_eq!(pool.len(), 1);
     assert_eq!(
-        builds.load(Ordering::SeqCst),
+        factory.builds(),
         1,
         "only worker/spawn backends should be inserted into RunnerPool"
     );
@@ -436,18 +332,14 @@ fn install_plan_runners_validates_advertised_worker_entrypoints() {
         ("demo.sub".into(), backend),
     ]);
     let plan = HostInstallPlan::from_schema_and_backends(&schema, &backends).expect("plan builds");
-    let builds = Arc::new(AtomicUsize::new(0));
-    let factory = SupportedRunnerFactory {
-        supported_nodes: vec!["demo.add".into(), "demo.sub".into()],
-        builds: builds.clone(),
-    };
+    let factory = EchoFactory::supporting(&["demo.add", "demo.sub"]);
     let mut pool = RunnerPool::new();
 
     let keys = install_plan_runners(&mut pool, &plan, &factory).expect("runners install");
 
     assert_eq!(keys.len(), 1);
     assert_eq!(pool.len(), 1);
-    assert_eq!(builds.load(Ordering::SeqCst), 1);
+    assert_eq!(factory.builds(), 1);
 }
 
 #[test]
@@ -459,11 +351,7 @@ fn install_plan_runners_rejects_missing_worker_entrypoint_before_invoke() {
         ("demo.sub".into(), backend),
     ]);
     let plan = HostInstallPlan::from_schema_and_backends(&schema, &backends).expect("plan builds");
-    let builds = Arc::new(AtomicUsize::new(0));
-    let factory = SupportedRunnerFactory {
-        supported_nodes: vec!["demo.add".into()],
-        builds,
-    };
+    let factory = EchoFactory::supporting(&["demo.add"]);
     let mut pool = RunnerPool::new();
 
     assert!(matches!(

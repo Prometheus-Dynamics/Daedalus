@@ -1,7 +1,15 @@
 use super::*;
 use daedalus_ffi_core::{
-    FixtureLanguage, WirePayloadHandle, generate_language_fixture, scalar_add_fixture_spec,
+    BackendRuntimeModel, FixtureLanguage, NodeSchema, WirePayloadHandle, generate_language_fixture,
+    scalar_add_fixture_spec, validate_language_backends,
 };
+
+fn validate_java_schema(
+    schema: &PluginSchema,
+    backends: &BTreeMap<String, BackendConfig>,
+) -> Result<(), FfiContractError> {
+    validate_language_backends(schema, backends, BackendKind::Java)
+}
 
 fn input() -> JavaPackageInput {
     JavaPackageInput {
@@ -91,30 +99,8 @@ fn java_package_input_rejects_missing_classpath() {
 
 #[test]
 fn validates_java_schema_and_backends() {
-    let schema = core::PluginSchema {
-        schema_version: core::SCHEMA_VERSION,
-        plugin: core::PluginSchemaInfo {
-            name: "demo.java".into(),
-            version: None,
-            description: None,
-            metadata: Default::default(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes: vec![core::NodeSchema {
-            id: "demo:add".into(),
-            backend: BackendKind::Java,
-            entrypoint: "add".into(),
-            label: None,
-            stateful: false,
-            feature_flags: Vec::new(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            metadata: Default::default(),
-        }],
-    };
+    let node = NodeSchema::new("demo:add", BackendKind::Java, "add", vec![], vec![]);
+    let schema = PluginSchema::new("demo.java", None, vec![node]);
     let backends = BTreeMap::from([(
         "demo:add".into(),
         JavaPackageInput {
@@ -178,16 +164,18 @@ fn sdk_builders_match_rust_baseline_schema_surface() {
         generate_language_fixture(&spec, FixtureLanguage::Java).expect("java fixture");
     let baseline = &rust.schema.nodes[0];
 
-    let node = java_node_schema(
+    let node = NodeSchema::new(
         baseline.id.clone(),
+        BackendKind::Java,
         java_fixture.schema.nodes[0].entrypoint.clone(),
         baseline.inputs.clone(),
         baseline.outputs.clone(),
     );
-    let schema = java_plugin_schema(
+    let schema = PluginSchema::for_backend(
         "ffi.conformance.java.scalar_add",
         Some("1.0.0".into()),
         vec![node],
+        BackendKind::Java,
     )
     .expect("schema");
     let input = JavaPackageInput {
@@ -293,9 +281,8 @@ fn complete_java_package_emits_lockfile_hash_and_language_metadata() {
         }],
         ..Default::default()
     };
-    let package =
-        java_complete_plugin_package(fixture.schema.clone(), fixture.backends.clone(), input)
-            .expect("complete package");
+    let package = java_plugin_package(fixture.schema.clone(), fixture.backends.clone(), &input)
+        .expect("complete package");
     let lock = package.generate_lockfile();
 
     assert_eq!(package.lockfile.as_deref(), Some("plugin.lock.json"));

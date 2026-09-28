@@ -64,8 +64,7 @@ mod tests {
     use std::sync::Arc;
 
     use daedalus_ffi_core::{
-        BackendKind, BackendRuntimeModel, InvokeRequest, InvokeResponse, WORKER_PROTOCOL_VERSION,
-        WirePayloadHandle,
+        BackendKind, InvokeRequest, InvokeResponse, WORKER_PROTOCOL_VERSION, WirePayloadHandle,
     };
     use daedalus_transport::{AccessMode, TypeKey};
 
@@ -111,20 +110,8 @@ mod tests {
     }
 
     fn backend_config() -> BackendConfig {
-        BackendConfig {
-            backend: BackendKind::Python,
-            runtime_model: BackendRuntimeModel::PersistentWorker,
-            entry_module: Some("plugin.py".into()),
-            entry_class: None,
-            entry_symbol: Some("add".into()),
-            executable: Some("python".into()),
-            args: Vec::new(),
-            classpath: Vec::new(),
-            native_library_paths: Vec::new(),
-            working_dir: None,
-            env: BTreeMap::new(),
-            options: BTreeMap::new(),
-        }
+        BackendConfig::persistent_worker(BackendKind::Python, "python", "add")
+            .with_entry_module("plugin.py")
     }
 
     fn decoded_response(state: Option<WireValue>) -> DecodedInvokeResponse {

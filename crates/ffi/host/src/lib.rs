@@ -17,6 +17,8 @@ mod state;
 
 #[cfg(test)]
 mod payload_ownership_tests;
+#[cfg(test)]
+mod test_support;
 
 pub use conformance::{
     FixtureHarnessError, FixtureHarnessReport, run_canonical_generated_fixture_harness,

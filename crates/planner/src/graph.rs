@@ -105,74 +105,30 @@ pub struct Graph {
 
 mod graph_metadata_serde {
     use super::*;
+    use daedalus_data::json::{from_plain_json, to_plain_json};
+    use daedalus_data::model::Value;
     use serde::{Deserializer, Serializer};
     use serde_json::Value as JsonValue;
 
-    fn json_to_value(value: JsonValue) -> Result<daedalus_data::model::Value, String> {
-        Ok(match value {
-            JsonValue::Null => daedalus_data::model::Value::Unit,
-            JsonValue::Bool(b) => daedalus_data::model::Value::Bool(b),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    daedalus_data::model::Value::Int(i)
-                } else if let Some(f) = n.as_f64() {
-                    daedalus_data::model::Value::Float(f)
-                } else {
-                    return Err(n.to_string());
-                }
-            }
-            JsonValue::String(s) => daedalus_data::model::Value::String(s.into()),
-            JsonValue::Array(items) => {
-                let mut vals = Vec::with_capacity(items.len());
-                for item in items {
-                    vals.push(json_to_value(item)?);
-                }
-                daedalus_data::model::Value::List(vals)
-            }
-            JsonValue::Object(map) => {
-                let mut entries = Vec::with_capacity(map.len());
-                for (k, v) in map {
-                    entries.push((
-                        daedalus_data::model::Value::String(k.into()),
-                        json_to_value(v)?,
-                    ));
-                }
-                daedalus_data::model::Value::Map(entries)
-            }
-        })
-    }
-
-    fn value_to_plain_json(value: &daedalus_data::model::Value) -> JsonValue {
-        daedalus_data::json::to_plain_json(value)
-    }
-
-    pub fn serialize<S>(
-        value: &BTreeMap<String, daedalus_data::model::Value>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &BTreeMap<String, Value>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut map = serde_json::Map::new();
-        for (k, v) in value {
-            map.insert(k.clone(), value_to_plain_json(v));
-        }
-        map.serialize(serializer)
+        value
+            .iter()
+            .map(|(k, v)| (k.clone(), to_plain_json(v)))
+            .collect::<serde_json::Map<_, _>>()
+            .serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<BTreeMap<String, daedalus_data::model::Value>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<String, Value>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = BTreeMap::<String, JsonValue>::deserialize(deserializer)?;
-        let mut out = BTreeMap::new();
-        for (k, v) in raw {
-            let converted = json_to_value(v).map_err(serde::de::Error::custom)?;
-            out.insert(k, converted);
-        }
-        Ok(out)
+        BTreeMap::<String, JsonValue>::deserialize(deserializer)?
+            .into_iter()
+            .map(|(k, v)| Ok((k, from_plain_json(&v).map_err(serde::de::Error::custom)?)))
+            .collect()
     }
 }
 
