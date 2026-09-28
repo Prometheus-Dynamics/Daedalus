@@ -16,6 +16,7 @@ use thiserror::Error;
 
 /// A plugin that must be loaded for a graph document to be usable.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PluginRequirement {
     /// Plugin id, as passed to `declare_plugin!(Type, "plugin.id", ...)` / `Plugin::id()`.
     pub id: String,

@@ -200,6 +200,75 @@ fn bad_documents_report_typed_errors() {
     ));
 }
 
+fn invalid_path(json: &str) -> String {
+    match GraphDocument::from_json(json).unwrap_err() {
+        GraphDocumentError::Invalid { path, source } => {
+            assert!(source.to_string().contains("unknown field"), "{source}");
+            path
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn unknown_fields_are_rejected_with_their_path() {
+    let doc = serde_json::to_value(sample_document()).unwrap();
+    let with = |pointer: &str, key: &str| {
+        let mut doc = doc.clone();
+        doc.pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert(key.into(), serde_json::json!(true));
+        doc.to_string()
+    };
+    assert_eq!(invalid_path(&with("", "grpah")), "grpah");
+    assert_eq!(
+        invalid_path(&with("/requires/0", "verison")),
+        "requires[0].verison"
+    );
+    assert_eq!(invalid_path(&with("/graph", "edgse")), "graph.edgse");
+    assert_eq!(
+        invalid_path(&with("/graph/nodes/1", "lable")),
+        "graph.nodes[1].lable"
+    );
+    assert_eq!(
+        invalid_path(&with("/graph/edges/0", "form")),
+        "graph.edges[0].form"
+    );
+    assert_eq!(
+        invalid_path(&with("/graph/edges/0/to", "prot")),
+        "graph.edges[0].to.prot"
+    );
+    // Free-form metadata maps stay open.
+    GraphDocument::from_json(&with("/metadata", "anything")).unwrap();
+    GraphDocument::from_json(&with("/graph/metadata", "anything")).unwrap();
+    // The serde impl is equally strict.
+    assert!(serde_json::from_str::<GraphDocument>(&with("", "grpah")).is_err());
+}
+
+#[test]
+fn header_is_checked_before_the_rest_of_the_document() {
+    // Format/version errors win regardless of field order or other problems.
+    let json = r#"{"graph":{"nodes":7},"extra":1,"schema_version":1,"format":"other"}"#;
+    let err = GraphDocument::from_json(json).unwrap_err();
+    assert!(matches!(err, GraphDocumentError::UnknownFormat { found } if found == "other"));
+
+    let json = r#"{"graph":{"nodes":7},"format":"daedalus.graph","schema_version":0}"#;
+    let err = GraphDocument::from_json(json).unwrap_err();
+    assert!(matches!(
+        err,
+        GraphDocumentError::UnsupportedSchemaVersion { found: 0, .. }
+    ));
+
+    let err = GraphDocument::from_json(r#"{"format":7}"#).unwrap_err();
+    assert!(matches!(err, GraphDocumentError::UnknownFormat { found } if found == "7"));
+
+    let err = GraphDocument::from_json(r#"{"format":"daedalus.graph","schema_version":"1"}"#)
+        .unwrap_err();
+    assert!(matches!(err, GraphDocumentError::MissingSchemaVersion));
+}
+
 #[test]
 fn requirement_check_reports_unmet_plugins() {
     let requires = vec![

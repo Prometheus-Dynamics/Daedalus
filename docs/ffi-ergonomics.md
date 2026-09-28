@@ -25,10 +25,12 @@ let response = host.invoke("demo.add", request)?;
 - `add_package(&mut registry, &package, &factory)` installs further packages into the same host.
   They share the runner pool and telemetry; a package whose backend config matches a running
   runner reuses it. Duplicate node ids are rejected before the registry is touched.
-- Installs are atomic: when validation, registry install, or runner startup fails, the registry is
-  restored from a snapshot and runners started for that package are shut down.
-- `shutdown()` stops every runner and reports the first failure. Dropping the host also stops
-  every runner through `RunnerPool`'s `Drop`.
+- Installs are atomic: when validation, registry install, or runner startup fails, the package's
+  registry entries are removed and runners started for that package are shut down. Deferred
+  startup rolls back the same way: `start_runners` removes a package whose runners fail to start
+  and leaves earlier (running) and later (still pending) packages alone.
+- `shutdown()` attempts every runner and reports all failures in one `RunnerShutdownError`.
+  Dropping the host also stops every runner through `RunnerPool`'s `Drop`.
 - Accessors: `telemetry()`, `plans()`, `plan(plugin_id)`, `plan_for_node(node_id)`,
   `backend(node_id)`, `runner_key(node_id)`, `node_ids()`, `pool()`, and `pool_mut()`.
 
@@ -44,7 +46,7 @@ let mut host = FfiHost::builder()
 let factory = host.persistent_worker_factory();
 host.add_package(&mut registry, &package, &factory)?;
 // The registry is populated; workers start here.
-host.start_runners(&factory)?;
+host.start_runners(&mut registry, &factory)?;
 ```
 
 `PersistentWorkerRunnerFactory` builds the built-in `PersistentWorkerRunner` for Python, Node,
@@ -68,8 +70,9 @@ install_plan_runners(&mut pool, &plan, &factory)?;
 let response = pool.invoke(&plan.backends["demo.add"], request)?;
 ```
 
-This path does not roll the registry back on runner failure and invokes by `BackendConfig` rather
-than node id.
+`install_plan_runners` shuts down the runners it started when a later one fails, but this path
+does not roll the registry back on runner failure and invokes by `BackendConfig` rather than node
+id.
 
 ## Design Guidance
 

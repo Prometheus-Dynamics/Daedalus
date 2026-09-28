@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use daedalus_data::model::{TypeExpr, ValueType};
 use daedalus_ffi_core::{
-    BackendKind, NodeSchema, PluginSchema, PluginSchemaInfo, SCHEMA_VERSION, WirePort, WireValue,
+    BackendKind, BackendRuntimeModel, NodeSchema, PluginSchema, PluginSchemaInfo, SCHEMA_VERSION,
+    WirePort, WireValue,
 };
 use daedalus_registry::ids::NodeId;
 use daedalus_transport::AccessMode;
@@ -439,11 +440,87 @@ fn deferred_startup_installs_registry_first() {
         Err(FfiHostError::RunnerNotStarted { .. })
     ));
 
-    let keys = host.start_runners(&factory).expect("runners start");
+    let keys = host
+        .start_runners(&mut registry, &factory)
+        .expect("runners start");
     assert_eq!(keys.len(), 1);
     assert!(!host.has_pending_runners());
     host.invoke("demo.echo", request("")).expect("invoke");
-    assert!(host.start_runners(&factory).unwrap().is_empty());
+    assert!(
+        host.start_runners(&mut registry, &factory)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn deferred_startup_failure_rolls_back_only_the_failing_package() {
+    let mut registry = CapabilityRegistry::default();
+    let mut host = FfiHost::builder().defer_runner_startup(true).build();
+    let first = python_package("demo.a", "demo.a.echo", "python-a");
+    // The first worker of this package starts, the second fails.
+    let failing = package(
+        "demo.b",
+        vec![
+            (
+                node("demo.b.first", BackendKind::Python),
+                worker_backend("python-b"),
+            ),
+            (
+                node("demo.b.second", BackendKind::Python),
+                worker_backend("python"),
+            ),
+        ],
+    );
+    let last = python_package("demo.c", "demo.c.echo", "python-c");
+    let factory = EchoFactory {
+        fail_executable: Some("python"),
+        ..Default::default()
+    };
+    for package in [&first, &failing, &last] {
+        host.add_package(&mut registry, package, &factory)
+            .expect("deferred install");
+    }
+
+    let err = host
+        .start_runners(&mut registry, &factory)
+        .expect_err("second package fails");
+    assert!(matches!(
+        err,
+        FfiHostError::Install(HostInstallError::Runner { node_id, .. }) if node_id == "demo.b.second"
+    ));
+
+    // The failing package is gone from the registry and the host; its started runner is stopped.
+    let mut expected = CapabilityRegistry::default();
+    for package in [&first, &last] {
+        crate::install_package(&mut expected, package).expect("expected registry");
+    }
+    assert_eq!(registry, expected);
+    assert!(!host.contains_node("demo.b.first"));
+    assert!(host.plan("demo.b").is_none());
+    assert_eq!(factory.counters.builds.load(Ordering::SeqCst), 2);
+    assert_eq!(factory.counters.shutdowns.load(Ordering::SeqCst), 1);
+    assert_eq!(host.pool().len(), 1);
+
+    // The earlier package runs; the later one is still pending and starts on the next call.
+    host.invoke("demo.a.echo", request(""))
+        .expect("first invoke");
+    assert!(host.has_pending_runners());
+    assert!(matches!(
+        host.invoke("demo.c.echo", request("")),
+        Err(FfiHostError::RunnerNotStarted { .. })
+    ));
+    let keys = host
+        .start_runners(&mut registry, &factory)
+        .expect("remaining package starts");
+    assert_eq!(keys.len(), 1);
+    assert!(!host.has_pending_runners());
+    assert_eq!(
+        host.plan_for_node("demo.c.echo").unwrap().plugin.id,
+        "demo.c"
+    );
+    host.invoke("demo.c.echo", request(""))
+        .expect("last invoke");
 }
 
 #[test]
