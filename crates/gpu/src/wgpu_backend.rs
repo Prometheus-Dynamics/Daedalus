@@ -18,6 +18,7 @@ mod adapter_select;
 mod capabilities;
 mod copy_limiter;
 mod dmabuf;
+mod mapping;
 mod resources;
 mod staging;
 
@@ -25,6 +26,8 @@ use adapter_select::{preferred_backends, select_best_adapter};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
 pub use dmabuf::texture_plane_views;
+pub(crate) use mapping::{gpu_format_from_wgpu, map_format, texture_usage_flags};
+use mapping::{gpu_usage_from_wgpu, map_texture_usage, map_usage};
 use resources::{ResourceDropToken, ResourceKind, WgpuResources};
 use staging::StagingPool;
 pub use staging::{WgpuStagingPoolConfig, WgpuStagingPoolStats};
@@ -160,6 +163,7 @@ impl WgpuBackend {
         self.resources.textures.lock().get(&handle.id).cloned()
     }
 
+    /// Track `texture` and return its handle; fails for wgpu formats with no [`GpuFormat`].
     pub(crate) fn register_texture(
         &self,
         texture: std::sync::Arc<wgpu::Texture>,
@@ -167,29 +171,20 @@ impl WgpuBackend {
         width: u32,
         height: u32,
         usage: wgpu::TextureUsages,
+    ) -> Result<GpuImageHandle, GpuError> {
+        let format = gpu_format_from_wgpu(format).ok_or(GpuError::Unsupported)?;
+        Ok(self.register_gpu_texture(texture, format, width, height, usage))
+    }
+
+    pub(crate) fn register_gpu_texture(
+        &self,
+        texture: std::sync::Arc<wgpu::Texture>,
+        gpu_format: GpuFormat,
+        width: u32,
+        height: u32,
+        usage: wgpu::TextureUsages,
     ) -> GpuImageHandle {
-        let gpu_format = match format {
-            wgpu::TextureFormat::R8Unorm => GpuFormat::R8Unorm,
-            wgpu::TextureFormat::Rgba8Unorm => GpuFormat::Rgba8Unorm,
-            wgpu::TextureFormat::Rgba16Float => GpuFormat::Rgba16Float,
-            wgpu::TextureFormat::Rg8Unorm => GpuFormat::Rg8Unorm,
-            wgpu::TextureFormat::Bgra8Unorm => GpuFormat::Bgra8Unorm,
-            wgpu::TextureFormat::NV12 => GpuFormat::Nv12,
-            _ => GpuFormat::Rgba8Unorm,
-        };
-        let mut gpu_usage = GpuUsage::empty();
-        if usage.contains(wgpu::TextureUsages::STORAGE_BINDING) {
-            gpu_usage |= GpuUsage::STORAGE;
-        }
-        if usage.contains(wgpu::TextureUsages::RENDER_ATTACHMENT) {
-            gpu_usage |= GpuUsage::RENDER_TARGET;
-        }
-        if usage.contains(wgpu::TextureUsages::COPY_DST) {
-            gpu_usage |= GpuUsage::UPLOAD;
-        }
-        if usage.contains(wgpu::TextureUsages::COPY_SRC) {
-            gpu_usage |= GpuUsage::DOWNLOAD;
-        }
+        let gpu_usage = gpu_usage_from_wgpu(usage);
         let mut handle =
             GpuImageHandle::new(gpu_format, width, height, GpuMemoryLocation::Gpu, gpu_usage);
         self.resources.textures.lock().insert(handle.id, texture);
@@ -270,8 +265,9 @@ impl GpuBackend for WgpuBackend {
         width: u32,
         height: u32,
         usage: wgpu::TextureUsages,
-    ) -> Option<GpuImageHandle> {
-        Some(self.register_texture(texture, format, width, height, usage))
+    ) -> Result<Option<GpuImageHandle>, GpuError> {
+        self.register_texture(texture, format, width, height, usage)
+            .map(Some)
     }
 
     fn create_buffer(&self, req: &GpuRequest) -> Result<GpuBufferHandle, GpuError> {
@@ -526,58 +522,6 @@ impl GpuBackend for WgpuBackend {
         };
         self.record_download(data.len() as u64);
         Ok(data)
-    }
-}
-
-fn map_usage(usage: GpuUsage) -> wgpu::BufferUsages {
-    let mut u = wgpu::BufferUsages::empty();
-    if usage.contains(GpuUsage::UPLOAD) {
-        u |= wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
-    }
-    if usage.contains(GpuUsage::DOWNLOAD) {
-        u |= wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST
-            | wgpu::BufferUsages::MAP_READ;
-    }
-    if usage.contains(GpuUsage::STORAGE) {
-        u |= wgpu::BufferUsages::STORAGE
-            | wgpu::BufferUsages::COPY_SRC
-            | wgpu::BufferUsages::COPY_DST;
-    }
-    if u.is_empty() {
-        u = wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST;
-    }
-    u
-}
-
-fn map_texture_usage(usage: GpuUsage) -> wgpu::TextureUsages {
-    let mut u = wgpu::TextureUsages::empty();
-    if usage.contains(GpuUsage::RENDER_TARGET) {
-        u |= wgpu::TextureUsages::RENDER_ATTACHMENT;
-    }
-    if usage.contains(GpuUsage::UPLOAD) {
-        u |= wgpu::TextureUsages::COPY_DST;
-    }
-    if usage.contains(GpuUsage::DOWNLOAD) {
-        u |= wgpu::TextureUsages::COPY_SRC;
-    }
-    if usage.contains(GpuUsage::STORAGE) {
-        u |= wgpu::TextureUsages::STORAGE_BINDING
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST;
-    }
-    u
-}
-
-fn map_format(format: GpuFormat) -> wgpu::TextureFormat {
-    match format {
-        GpuFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
-        GpuFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
-        GpuFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
-        GpuFormat::Depth24Stencil8 => wgpu::TextureFormat::Depth24PlusStencil8,
-        GpuFormat::Rg8Unorm => wgpu::TextureFormat::Rg8Unorm,
-        GpuFormat::Bgra8Unorm => wgpu::TextureFormat::Bgra8Unorm,
-        GpuFormat::Nv12 => wgpu::TextureFormat::NV12,
     }
 }
 

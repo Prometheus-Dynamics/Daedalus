@@ -58,6 +58,12 @@ impl MockBackend {
     }
 }
 
+const SUPPORTED_FORMATS: [GpuFormat; 3] = [
+    GpuFormat::R8Unorm,
+    GpuFormat::Rgba8Unorm,
+    GpuFormat::Rgba16Float,
+];
+
 impl Default for MockBackend {
     fn default() -> Self {
         Self {
@@ -68,11 +74,7 @@ impl Default for MockBackend {
                 vendor_id: Some("mock-vendor".into()),
             },
             caps: GpuCapabilities {
-                supported_formats: vec![
-                    GpuFormat::R8Unorm,
-                    GpuFormat::Rgba8Unorm,
-                    GpuFormat::Rgba16Float,
-                ],
+                supported_formats: SUPPORTED_FORMATS.to_vec(),
                 format_features: vec![
                     GpuFormatFeatures {
                         format: GpuFormat::R8Unorm,
@@ -96,26 +98,7 @@ impl Default for MockBackend {
                         max_samples: 1,
                     },
                 ],
-                format_blocks: vec![
-                    crate::GpuBlockInfo {
-                        format: GpuFormat::R8Unorm,
-                        block_width: 1,
-                        block_height: 1,
-                        bytes_per_block: 1,
-                    },
-                    crate::GpuBlockInfo {
-                        format: GpuFormat::Rgba8Unorm,
-                        block_width: 1,
-                        block_height: 1,
-                        bytes_per_block: 4,
-                    },
-                    crate::GpuBlockInfo {
-                        format: GpuFormat::Rgba16Float,
-                        block_width: 1,
-                        block_height: 1,
-                        bytes_per_block: 8,
-                    },
-                ],
+                format_blocks: crate::GpuBlockInfo::for_formats(&SUPPORTED_FORMATS),
                 max_buffer_size: 64 << 20,
                 max_texture_dimension: 4096,
                 max_texture_samples: 4,

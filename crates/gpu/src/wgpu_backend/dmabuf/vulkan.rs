@@ -294,7 +294,7 @@ pub(in crate::wgpu_backend) fn import(
             .create_texture_from_hal::<Vulkan>(hal_texture, &wgpu_desc)
     };
     let mut handle =
-        backend.register_texture(Arc::new(texture), wgpu_format, width, height, usage.wgpu);
+        backend.register_gpu_texture(Arc::new(texture), layout.format, width, height, usage.wgpu);
     handle.label = label;
     Ok(handle)
 }
@@ -367,44 +367,60 @@ struct UsageSet {
 
 impl UsageSet {
     /// Imported frames are always sampleable; single-plane ones are also copy sources (wgpu 29
-    /// only samples multi-planar textures).
+    /// only samples multi-planar textures) and take the requested upload/storage/render usages.
     fn new(usage: GpuUsage, planar: bool) -> Self {
+        let mut wgpu = wgpu::TextureUsages::TEXTURE_BINDING;
+        if !planar {
+            wgpu |= wgpu::TextureUsages::COPY_SRC
+                | crate::wgpu_backend::texture_usage_flags(
+                    usage & (GpuUsage::UPLOAD | GpuUsage::STORAGE | GpuUsage::RENDER_TARGET),
+                );
+        }
+        Self::from_wgpu(wgpu)
+    }
+
+    /// The hal/Vulkan usages and Vulkan format features matching `wgpu` usages.
+    fn from_wgpu(wgpu: wgpu::TextureUsages) -> Self {
         use vk::FormatFeatureFlags as F;
         use vk::ImageUsageFlags as V;
         use wgpu::TextureUsages as W;
         use wgpu::wgt::TextureUses as H;
-        let mut set = Self {
-            wgpu: W::TEXTURE_BINDING,
-            hal: H::RESOURCE,
-            vk: V::SAMPLED,
-            format_features: F::SAMPLED_IMAGE,
-        };
-        if planar {
-            return set;
-        }
-        set.wgpu |= W::COPY_SRC;
-        set.hal |= H::COPY_SRC;
-        set.vk |= V::TRANSFER_SRC;
-        set.format_features |= F::TRANSFER_SRC;
-        if usage.contains(GpuUsage::UPLOAD) {
-            set.wgpu |= W::COPY_DST;
-            set.hal |= H::COPY_DST;
-            set.vk |= V::TRANSFER_DST;
-            set.format_features |= F::TRANSFER_DST;
-        }
-        if usage.contains(GpuUsage::STORAGE) {
-            set.wgpu |= W::STORAGE_BINDING;
-            set.hal |= H::STORAGE_READ_ONLY | H::STORAGE_WRITE_ONLY | H::STORAGE_READ_WRITE;
-            set.vk |= V::STORAGE;
-            set.format_features |= F::STORAGE_IMAGE;
-        }
-        if usage.contains(GpuUsage::RENDER_TARGET) {
-            set.wgpu |= W::RENDER_ATTACHMENT;
-            set.hal |= H::COLOR_TARGET;
-            set.vk |= V::COLOR_ATTACHMENT;
-            set.format_features |= F::COLOR_ATTACHMENT;
-        }
-        set
+        let layers = [
+            (
+                W::TEXTURE_BINDING,
+                H::RESOURCE,
+                V::SAMPLED,
+                F::SAMPLED_IMAGE,
+            ),
+            (W::COPY_SRC, H::COPY_SRC, V::TRANSFER_SRC, F::TRANSFER_SRC),
+            (W::COPY_DST, H::COPY_DST, V::TRANSFER_DST, F::TRANSFER_DST),
+            (
+                W::STORAGE_BINDING,
+                H::STORAGE_READ_ONLY | H::STORAGE_WRITE_ONLY | H::STORAGE_READ_WRITE,
+                V::STORAGE,
+                F::STORAGE_IMAGE,
+            ),
+            (
+                W::RENDER_ATTACHMENT,
+                H::COLOR_TARGET,
+                V::COLOR_ATTACHMENT,
+                F::COLOR_ATTACHMENT,
+            ),
+        ];
+        layers.into_iter().filter(|(w, ..)| wgpu.contains(*w)).fold(
+            Self {
+                wgpu,
+                hal: H::empty(),
+                vk: V::empty(),
+                format_features: F::empty(),
+            },
+            |mut set, (_, hal, vk, features)| {
+                set.hal |= hal;
+                set.vk |= vk;
+                set.format_features |= features;
+                set
+            },
+        )
     }
 }
 
