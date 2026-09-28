@@ -130,6 +130,10 @@ The glue is small and always has the same shape:
 Nodes then take the frame type (or a view type reachable through adapters) directly, and the
 planner handles the rest.
 
+[`examples/04_async/external_frame_source.rs`](../examples/04_async/external_frame_source.rs)
+is a copyable template of all five steps with a synthetic source instead of a camera:
+`cargo run -p daedalus-examples --bin external_frame_source`.
+
 For dmabuf frames that GPU nodes consume, the glue can skip the CPU entirely: with the
 `gpu-dmabuf` feature, `GpuContextHandle::import_dmabuf` turns the buffer (fd, offset, stride, DRM
 fourcc/modifier) into a GPU image that aliases the producer's memory, holding a keepalive (the

@@ -17,6 +17,8 @@ gpu-styx = ["gpu-wgpu", "styx-camera-example"]
 
 [dependencies]
 daedalus = { workspace = true, features = ["engine-full", "plugins"] }
+# The `DaedalusTypeExpr`/`DaedalusToValue` derives expand to `::daedalus_data` paths.
+daedalus-data = { workspace = true }
 paste = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 tracing-subscriber = { workspace = true }
@@ -125,6 +127,10 @@ path = "04_async/async_event_driven.rs"
 [[bin]]
 name = "async_demand_select"
 path = "04_async/async_demand_select.rs"
+
+[[bin]]
+name = "external_frame_source"
+path = "04_async/external_frame_source.rs"
 
 [[bin]]
 name = "styx_camera_graph"

@@ -8,6 +8,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- Added the `external_frame_source` example (`examples/04_async`): a camera-free template for
+  integrating an external frame source (stable type key, `FrameMeta` descriptor, frame value
+  serializer, `MetadataOnly` adapter, zero-copy `Payload::shared_with`, latest-only input driven
+  by `HostGraph::drive_blocking`).
 - Added the `dylib-plugins` facade feature: `PluginLibrary` loads native Rust `cdylib` plugins
   exported with `export_plugin!`, rejecting mismatched plugin ABI, Daedalus version, rustc
   version, or build fingerprint with a typed `PluginLibraryError` before any Rust type crosses

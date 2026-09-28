@@ -59,6 +59,7 @@ cargo run -p daedalus-examples --bin quickstart_typed_cpu_graph
 cargo run -p daedalus-examples --bin quickstart_bounded_streaming_io
 cargo run -p daedalus-examples --bin typed_handle_graph
 cargo run -p daedalus-examples --bin adapter_path
+cargo run -p daedalus-examples --bin external_frame_source
 cargo run -p daedalus-examples --bin observability
 cargo run -p daedalus-examples --features gpu-wgpu --bin gpu_node
 ```
