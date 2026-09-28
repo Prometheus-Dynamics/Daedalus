@@ -47,8 +47,8 @@ pub use payload_lifecycle::{
     PayloadRelease, PayloadReleaseQueue, ReleaseContext, ReleaseMode,
 };
 pub use stream_policy::{
-    CoalesceStrategy, DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy,
-    PolicyValidationError, PressurePolicy, validate_stream_policy,
+    CoalesceStrategy, DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, PolicyQueue,
+    PolicyValidationError, PressurePolicy, PushOutcome, validate_stream_policy,
 };
 
 #[cfg(test)]

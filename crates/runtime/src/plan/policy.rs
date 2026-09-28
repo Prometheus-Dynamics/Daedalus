@@ -60,10 +60,7 @@ impl RuntimeEdgePolicy {
     }
 
     pub fn bounded_capacity(&self) -> Option<usize> {
-        match self.pressure {
-            PressurePolicy::Bounded { capacity, .. } => Some(capacity.max(1)),
-            _ => None,
-        }
+        self.pressure.bounded_capacity()
     }
 }
 

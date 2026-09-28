@@ -175,7 +175,7 @@ pub(crate) fn reset_run_storage(
             EdgeStorage::Locked { queue, metrics } => {
                 let mut q = queue.lock();
                 if let Some(edge) = edges.get(idx) {
-                    q.ensure_policy(edge.policy());
+                    q.set_policy(&edge.policy().pressure);
                 }
                 q.clear();
                 metrics.set_current_bytes(0);

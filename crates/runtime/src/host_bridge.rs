@@ -232,12 +232,17 @@ fn enqueue_locked(
     let subject: Option<(CorrelationId, TypeKey)> = events
         .enabled
         .then(|| (payload.correlation_id(), payload.type_key().clone()));
-    let outcome = state.queue.push(
-        pressure,
-        HostBridgePayload {
-            port: state.id.clone(),
-            payload,
-        },
+    let incoming = payload.correlation_id();
+    let outcome = FeedOutcome::from_push(
+        state.queue.push(
+            pressure,
+            HostBridgePayload {
+                port: state.id.clone(),
+                payload,
+            },
+        ),
+        incoming,
+        |old| old.payload.correlation_id(),
     );
     state.stats.record_enqueue(&outcome);
     let reason = match outcome {

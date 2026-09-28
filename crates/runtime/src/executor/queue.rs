@@ -5,17 +5,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "lockfree-queues")]
 use crossbeam_queue::ArrayQueue;
 
-use crate::plan::RuntimeEdgePolicy;
-use daedalus_transport::{OverflowPolicy, PressurePolicy};
+use daedalus_transport::PolicyQueue;
 
 use super::{CorrelatedPayload, RuntimeDataSizeInspectors};
 
 mod policy;
-mod ring;
 
 pub use policy::{ApplyPolicyOwnedArgs, apply_policy_owned};
-
-use ring::RingBuf;
 
 pub(super) fn payload_size_bytes(
     inspectors: &RuntimeDataSizeInspectors,
@@ -24,163 +20,18 @@ pub(super) fn payload_size_bytes(
     inspectors.estimate_payload_bytes(payload)
 }
 
-pub enum EdgeQueue {
-    Deque(std::collections::VecDeque<CorrelatedPayload>),
-    Bounded { ring: RingBuf },
-}
+/// Per-edge queue guarded by [`EdgeStorage::Locked`].
+pub type EdgeQueue = PolicyQueue<CorrelatedPayload>;
 
-impl Default for EdgeQueue {
-    fn default() -> Self {
-        EdgeQueue::Deque(std::collections::VecDeque::new())
-    }
-}
-
-impl EdgeQueue {
-    pub(crate) fn pop_front(&mut self) -> Option<CorrelatedPayload> {
-        match self {
-            EdgeQueue::Deque(d) => d.pop_front(),
-            EdgeQueue::Bounded { ring } => ring.pop_front(),
-        }
-    }
-
-    pub fn ensure_policy(&mut self, policy: &RuntimeEdgePolicy) {
-        match policy.bounded_capacity() {
-            Some(cap) => match self {
-                EdgeQueue::Bounded { ring } => {
-                    if ring.cap() != cap {
-                        *ring = RingBuf::new(cap);
-                    }
-                }
-                _ => {
-                    *self = EdgeQueue::Bounded {
-                        ring: RingBuf::new(cap),
-                    }
-                }
-            },
-            None => {
-                if let EdgeQueue::Bounded { .. } = self {
-                    *self = EdgeQueue::Deque(std::collections::VecDeque::new());
-                }
-            }
-        }
-    }
-
-    pub fn is_full(&self) -> bool {
-        match self {
-            EdgeQueue::Deque(_) => false,
-            EdgeQueue::Bounded { ring } => ring.is_full(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            EdgeQueue::Deque(d) => d.len(),
-            EdgeQueue::Bounded { ring } => ring.len(),
-        }
-    }
-
-    pub fn capacity(&self) -> Option<usize> {
-        match self {
-            EdgeQueue::Deque(_) => None,
-            EdgeQueue::Bounded { ring } => Some(ring.cap()),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        match self {
-            EdgeQueue::Deque(d) => d.is_empty(),
-            EdgeQueue::Bounded { ring } => ring.is_empty(),
-        }
-    }
-
-    pub fn transport_bytes(&self, inspectors: &RuntimeDataSizeInspectors) -> u64 {
-        match self {
-            EdgeQueue::Deque(d) => d
-                .iter()
-                .map(|payload| payload_size_bytes(inspectors, &payload.inner).unwrap_or(0))
-                .fold(0u64, u64::saturating_add),
-            EdgeQueue::Bounded { ring } => ring.transport_bytes(inspectors),
-        }
-    }
-
-    pub fn clear(&mut self) {
-        match self {
-            EdgeQueue::Deque(d) => d.clear(),
-            EdgeQueue::Bounded { ring } => ring.clear(),
-        }
-    }
-
-    pub fn push(&mut self, policy: &RuntimeEdgePolicy, payload: CorrelatedPayload) -> bool {
-        match &policy.pressure {
-            PressurePolicy::LatestOnly | PressurePolicy::Coalesce { .. } => {
-                let dropped = !self.is_empty();
-                match self {
-                    EdgeQueue::Deque(d) => {
-                        d.clear();
-                        d.push_back(payload);
-                    }
-                    EdgeQueue::Bounded { .. } => {
-                        *self = EdgeQueue::Deque(std::collections::VecDeque::from([payload]));
-                    }
-                }
-                dropped
-            }
-            PressurePolicy::DropNewest | PressurePolicy::ErrorOnFull if !self.is_empty() => true,
-            PressurePolicy::DropOldest => {
-                let dropped = !self.is_empty();
-                let _ = self.pop_front();
-                match self {
-                    EdgeQueue::Deque(d) => d.push_back(payload),
-                    EdgeQueue::Bounded { .. } => {
-                        *self = EdgeQueue::Deque(std::collections::VecDeque::from([payload]));
-                    }
-                }
-                dropped
-            }
-            PressurePolicy::Bounded { capacity, overflow } => match self {
-                EdgeQueue::Bounded { ring } => {
-                    if ring.is_full() {
-                        match overflow {
-                            OverflowPolicy::DropIncoming
-                            | OverflowPolicy::Backpressure
-                            | OverflowPolicy::Error => return true,
-                            OverflowPolicy::DropOldest => {}
-                        }
-                    }
-                    ring.push_back(payload)
-                }
-                EdgeQueue::Deque(d) => {
-                    let mut ring = RingBuf::new(*capacity);
-                    for p in d.drain(..) {
-                        ring.push_back(p);
-                    }
-                    let dropped = if ring.is_full() {
-                        match overflow {
-                            OverflowPolicy::DropIncoming
-                            | OverflowPolicy::Backpressure
-                            | OverflowPolicy::Error => true,
-                            OverflowPolicy::DropOldest => ring.push_back(payload),
-                        }
-                    } else {
-                        ring.push_back(payload)
-                    };
-                    *self = EdgeQueue::Bounded { ring };
-                    dropped
-                }
-            },
-            PressurePolicy::BufferAll
-            | PressurePolicy::DropNewest
-            | PressurePolicy::ErrorOnFull => {
-                match self {
-                    EdgeQueue::Deque(d) => d.push_back(payload),
-                    EdgeQueue::Bounded { .. } => {
-                        *self = EdgeQueue::Deque(std::collections::VecDeque::from([payload]));
-                    }
-                }
-                false
-            }
-        }
-    }
+/// Total estimated transport bytes held by `queue`.
+pub(super) fn queue_transport_bytes(
+    queue: &EdgeQueue,
+    inspectors: &RuntimeDataSizeInspectors,
+) -> u64 {
+    queue
+        .iter()
+        .map(|payload| payload_size_bytes(inspectors, &payload.inner).unwrap_or(0))
+        .fold(0u64, u64::saturating_add)
 }
 
 #[cfg(test)]
@@ -248,50 +99,25 @@ pub fn build_queues(plan: &crate::plan::RuntimePlan) -> Vec<EdgeStorage> {
         .iter()
         .map(|edge| {
             let policy = edge.policy();
-            match policy.bounded_capacity() {
-                Some(cap) => {
-                    let metrics = Arc::new(EdgeStorageMetrics::default());
-                    #[cfg(feature = "lockfree-queues")]
-                    {
-                        if should_use_lockfree_queue(policy) {
-                            EdgeStorage::BoundedLf {
-                                queue: Arc::new(ArrayQueue::new(cap)),
-                                metrics,
-                            }
-                        } else {
-                            EdgeStorage::Locked {
-                                queue: Arc::new(Mutex::new(EdgeQueue::Bounded {
-                                    ring: RingBuf::new(cap),
-                                })),
-                                metrics,
-                            }
-                        }
-                    }
-                    #[cfg(not(feature = "lockfree-queues"))]
-                    {
-                        EdgeStorage::Locked {
-                            queue: Arc::new(Mutex::new(EdgeQueue::Bounded {
-                                ring: RingBuf::new(cap),
-                            })),
-                            metrics,
-                        }
-                    }
-                }
-                _ => EdgeStorage::Locked {
-                    queue: Arc::new(Mutex::new(EdgeQueue::default())),
-                    metrics: Arc::new(EdgeStorageMetrics::default()),
-                },
+            let metrics = Arc::new(EdgeStorageMetrics::default());
+            // Lock-free queues only help bounded hot edges where the runtime can avoid a mutex in
+            // parallel/streaming paths. Unbounded/latest/coalesced edges stay on the locked queue
+            // because their semantics need replacement/inspection behavior.
+            #[cfg(feature = "lockfree-queues")]
+            if let Some(cap) = policy.bounded_capacity() {
+                return EdgeStorage::BoundedLf {
+                    queue: Arc::new(ArrayQueue::new(cap)),
+                    metrics,
+                };
+            }
+            let mut queue = EdgeQueue::default();
+            queue.set_policy(&policy.pressure);
+            EdgeStorage::Locked {
+                queue: Arc::new(Mutex::new(queue)),
+                metrics,
             }
         })
         .collect()
-}
-
-#[cfg(feature = "lockfree-queues")]
-fn should_use_lockfree_queue(policy: &crate::plan::RuntimeEdgePolicy) -> bool {
-    // Automatic policy for now: lock-free only helps bounded hot edges where the runtime can avoid
-    // a mutex in parallel/streaming paths. Unbounded/latest/coalesced edges stay on the normal
-    // queue because their semantics need replacement/inspection behavior.
-    policy.bounded_capacity().is_some()
 }
 
 pub fn pop_edge(
@@ -308,7 +134,7 @@ pub fn pop_edge(
                 let removed = payload_size_bytes(inspectors, &payload.inner).unwrap_or(0);
                 metrics.adjust_bytes(0, removed);
             } else {
-                metrics.set_current_bytes(guard.transport_bytes(inspectors));
+                metrics.set_current_bytes(queue_transport_bytes(&guard, inspectors));
             }
             payload
         }
