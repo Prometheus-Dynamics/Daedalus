@@ -133,6 +133,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   debug info; the example `cdylib` plugin is built without debug info in dev.
 - Rewrote the `#[plugin]`, `#[type_key]`, `#[adapt]`, `#[device]`, and `Outputs` macro docs to
   describe what they generate, with examples.
+- CI adds an `aarch64` job (`cargo check --target aarch64-unknown-linux-gnu` for the default
+  CI features, the `embedded` preset, and `daedalus-gpu/gpu-dmabuf`), a `lean-preset` job that
+  tests the facade/engine/runtime without the executor pool or metrics (excluding the daemon
+  crate so its features do not unify in), and runs the CPU-only example binaries (now including
+  `external_frame_source`).
+- Added a `bench` workflow (manual, weekly, and on pushes to `main` touching runtime/engine/
+  transport) that runs the host bridge and executor criterion benches, uploads the criterion
+  output, and flags >15% median regressions against the previous run via
+  `scripts/bench-compare.py`.
+- `scripts/ci.sh` is organized into subcommands (`lints`, `test`, `aarch64`, `lean`, `smoke`,
+  `bench`, ...) that the CI jobs call; no arguments still runs the full default loop.
 
 ## [2.0.0] - 2026-04-30
 
