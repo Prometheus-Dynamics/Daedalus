@@ -14,6 +14,25 @@ pub use daedalus_core::metadata::{
     PLAN_TOPO_ORDER_KEY,
 };
 
+/// Opaque type name the planner treats as a type variable, inferred from connected edges.
+pub const GENERIC_TYPE_NAME: &str = "generic";
+
+/// Whether `ty` is the generic type marker (`Opaque("generic")`, case-insensitive).
+pub fn is_generic_marker(ty: &TypeExpr) -> bool {
+    matches!(ty, TypeExpr::Opaque(name) if name.eq_ignore_ascii_case(GENERIC_TYPE_NAME))
+}
+
+/// Node metadata for a host bridge: the host-bridge marker plus generic dynamic inputs and
+/// outputs, so arbitrary host ports are allowed and the planner infers their types from edges.
+pub fn host_bridge_metadata() -> BTreeMap<String, Value> {
+    let generic = Value::String(Cow::Borrowed(GENERIC_TYPE_NAME));
+    BTreeMap::from([
+        (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
+        (DYNAMIC_INPUTS_KEY.to_string(), generic.clone()),
+        (DYNAMIC_OUTPUTS_KEY.to_string(), generic),
+    ])
+}
+
 pub fn metadata_bool(metadata: &BTreeMap<String, Value>, key: &str) -> bool {
     matches!(metadata.get(key), Some(Value::Bool(true)))
 }

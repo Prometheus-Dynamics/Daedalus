@@ -50,8 +50,7 @@ use schedule::{gpu, schedule};
 use setup::{apply_descriptor_defaults, clear_planner_owned_graph_metadata};
 use suggest::suggest_nodes;
 use type_utils::{
-    adapt_request_for_input, input_access_for, input_ty_for, is_generic_marker, port_type,
-    target_residency_for_node,
+    adapt_request_for_input, input_access_for, input_ty_for, port_type, target_residency_for_node,
 };
 use typecheck::typecheck;
 pub use types::{

@@ -1,5 +1,4 @@
 use super::*;
-use daedalus_core::metadata::{DYNAMIC_INPUTS_KEY, DYNAMIC_OUTPUTS_KEY};
 use daedalus_data::to_value::ToValue;
 
 impl PluginRegistry {
@@ -15,19 +14,10 @@ impl PluginRegistry {
         let mut manifest = PluginManifest::new(BUILTIN_HOST_BOUNDARY_ID);
         let host_id = NodeId::new(crate::host_bridge::HOST_BRIDGE_ID);
         let decl = NodeDecl::new(crate::host_bridge::HOST_BRIDGE_ID)
-            .execution_kind(NodeExecutionKind::HostBridge)
-            .metadata(
-                crate::host_bridge::HOST_BRIDGE_META_KEY,
-                daedalus_data::model::Value::Bool(true),
-            )
-            .metadata(
-                DYNAMIC_INPUTS_KEY,
-                daedalus_data::model::Value::String(std::borrow::Cow::Borrowed("generic")),
-            )
-            .metadata(
-                DYNAMIC_OUTPUTS_KEY,
-                daedalus_data::model::Value::String(std::borrow::Cow::Borrowed("generic")),
-            );
+            .execution_kind(NodeExecutionKind::HostBridge);
+        let decl = daedalus_planner::host_bridge_metadata()
+            .into_iter()
+            .fold(decl, |decl, (key, value)| decl.metadata(key, value));
         self.transport_capabilities
             .register_node(decl)
             .map_err(|source| {

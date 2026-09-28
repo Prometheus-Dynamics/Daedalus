@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use daedalus_data::model::TypeExpr;
-use daedalus_planner::{DynamicPortMetadata, NodeRef, is_host_bridge_metadata};
+use daedalus_planner::{DynamicPortMetadata, NodeRef, is_generic_marker, is_host_bridge_metadata};
 use daedalus_transport::TypeKey;
 use serde::{Deserialize, Serialize};
 
@@ -68,11 +68,7 @@ impl HostPortDescriptor {
 }
 
 fn concrete(ty: Option<TypeExpr>) -> Option<TypeExpr> {
-    ty.filter(|ty| !matches!(ty, TypeExpr::Opaque(name) if name.eq_ignore_ascii_case("generic")))
-}
-
-fn host_alias(node: &super::RuntimeNode) -> &str {
-    node.label.as_deref().unwrap_or(&node.id)
+    ty.filter(|ty| !is_generic_marker(ty))
 }
 
 impl RuntimePlan {
@@ -81,7 +77,7 @@ impl RuntimePlan {
         self.nodes
             .iter()
             .filter(|node| is_host_bridge_metadata(&node.metadata))
-            .map(|node| host_alias(node).to_string())
+            .map(|node| node.host_alias().to_string())
             .collect()
     }
 
@@ -190,7 +186,7 @@ impl RuntimePlan {
             let descriptor = ports
                 .entry(host_port.clone())
                 .or_insert_with(|| HostPortDescriptor {
-                    alias: host_alias(host).to_string(),
+                    alias: host.host_alias().to_string(),
                     host_node: NodeRef(host_idx),
                     direction,
                     name: host_port.clone(),

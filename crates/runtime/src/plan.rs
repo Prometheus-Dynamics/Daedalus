@@ -195,6 +195,13 @@ pub struct RuntimeNode {
     pub metadata: std::collections::BTreeMap<String, daedalus_data::model::Value>,
 }
 
+impl RuntimeNode {
+    /// Host bridge alias of this node: its label, or its id when unlabeled.
+    pub fn host_alias(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.id)
+    }
+}
+
 /// A schedulable segment (may group GPU-required nodes).
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

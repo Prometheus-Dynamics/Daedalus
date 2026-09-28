@@ -53,7 +53,7 @@ pub(crate) fn resolve_host_nodes(
             }
             Some(HostNodeIo {
                 node_idx: node_ref.0,
-                handle: bridges.ensure_handle(node.label.as_deref().unwrap_or(&node.id)),
+                handle: bridges.ensure_handle(node.host_alias()),
                 inbound: inbound.into(),
                 outbound: incoming.get(node_ref.0).cloned().unwrap_or_default().into(),
             })

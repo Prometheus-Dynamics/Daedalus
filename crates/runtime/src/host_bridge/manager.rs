@@ -152,8 +152,7 @@ impl HostBridgeManager {
             if !is_host_bridge_metadata(&node.metadata) {
                 continue;
             }
-            let alias = node.label.as_deref().unwrap_or(&node.id);
-            self.ensure_handle(alias);
+            self.ensure_handle(node.host_alias());
         }
     }
 }
@@ -167,7 +166,7 @@ pub fn bridge_handler(
 ) -> Result<(), NodeError> {
     let mut inbound = Vec::new();
     move |node, _ctx, io| {
-        let handle = bridges.ensure_handle(node.label.as_deref().unwrap_or(&node.id));
+        let handle = bridges.ensure_handle(node.host_alias());
         for (port, payload) in io.inputs() {
             handle.push_outbound_ref(port.as_str(), payload.inner.clone());
         }

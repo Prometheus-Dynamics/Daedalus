@@ -15,8 +15,6 @@ pub use scope::GraphScope;
 pub use spec::{GraphBuildError, IntoPortSpec, NodeSpec, PortSpec};
 
 use crate::handles::{NodeHandleLike, PortHandle};
-use crate::host_bridge::HOST_BRIDGE_META_KEY;
-use daedalus_core::metadata::{DYNAMIC_INPUTS_KEY, DYNAMIC_OUTPUTS_KEY};
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_planner::{
     ComputeAffinity, Edge, Graph, HostPortTypes, NodeInstance, NodeRef, PortRef,
@@ -359,20 +357,7 @@ impl GraphBuilder {
             compute: ComputeAffinity::CpuOnly,
             const_inputs: Vec::new(),
             sync_groups: Vec::new(),
-            metadata: BTreeMap::from([
-                (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-                // Allow arbitrary host ports without registry-declared schemas.
-                // The planner treats `Opaque("generic")` as a type variable and infers
-                // concrete types from graph edges.
-                (
-                    DYNAMIC_INPUTS_KEY.to_string(),
-                    Value::String(std::borrow::Cow::from("generic")),
-                ),
-                (
-                    DYNAMIC_OUTPUTS_KEY.to_string(),
-                    Value::String(std::borrow::Cow::from("generic")),
-                ),
-            ]),
+            metadata: daedalus_planner::host_bridge_metadata(),
         });
         self
     }
