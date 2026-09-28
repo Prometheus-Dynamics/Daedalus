@@ -4,11 +4,17 @@ use std::time::Duration;
 
 use daedalus_runtime::RuntimeEdgePolicy;
 use daedalus_runtime::handles::{HostAlias, PortId};
-use daedalus_runtime::host_bridge::{HostBridgeConfig, HostBridgeManager};
+use daedalus_runtime::host_bridge::{HostBridgeConfig, HostBridgeManager, HostBridgePayload};
 use daedalus_transport::{
     DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, Payload, PayloadLineage,
     PressurePolicy,
 };
+
+fn take_inbound(manager: &HostBridgeManager, alias: &str) -> Vec<HostBridgePayload> {
+    let mut inbound = Vec::new();
+    manager.take_inbound_into(alias, &mut inbound);
+    inbound
+}
 
 #[test]
 fn host_bridge_latest_only_replaces_inbound_payloads() {
@@ -44,7 +50,7 @@ fn host_bridge_latest_only_replaces_inbound_payloads() {
         }
     );
 
-    let inbound = manager.take_inbound("host");
+    let inbound = take_inbound(&manager, "host");
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&2));
     assert_eq!(handle.events().len(), 2);
@@ -78,7 +84,7 @@ fn host_bridge_accepts_typed_aliases_and_ports() {
         FeedOutcome::Accepted { .. }
     ));
 
-    let inbound = manager.take_inbound(alias.as_str());
+    let inbound = take_inbound(&manager, alias.as_str());
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].port, input);
     assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&7));
@@ -154,7 +160,7 @@ fn disabled_host_bridge_event_recording_keeps_queued_payload_unique() {
     handle.feed_payload("input", payload);
     assert!(handle.events().is_empty());
 
-    let mut inbound = manager.take_inbound("host");
+    let mut inbound = take_inbound(&manager, "host");
     assert_eq!(inbound.len(), 1);
     let queued = inbound.pop().unwrap().payload;
     assert!(queued.is_storage_unique());
@@ -259,7 +265,7 @@ fn host_bridge_multi_producer_input_stress_stays_bounded() {
     );
     assert_eq!(handle.pending_inbound(), 1);
     assert_eq!(handle.events().len(), 64);
-    assert_eq!(manager.take_inbound("host").len(), 1);
+    assert_eq!(take_inbound(&manager, "host").len(), 1);
 }
 
 #[test]
@@ -471,7 +477,7 @@ fn host_bridge_drop_oldest_replaces_queued_payload() {
             new: second_id,
         }
     );
-    let inbound = manager.take_inbound("host");
+    let inbound = take_inbound(&manager, "host");
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&2));
 }
@@ -604,7 +610,7 @@ fn host_bridge_arc_payloads_stay_zero_copy() {
     let handle = manager.ensure_handle("host");
     let data = Arc::new(vec![1u8, 2, 3]);
     handle.feed_payload("input", Payload::shared("demo:bytes", data.clone()));
-    let inbound = manager.take_inbound("host");
+    let inbound = take_inbound(&manager, "host");
     let extracted = inbound[0].payload.get_arc::<Vec<u8>>().unwrap();
     assert!(Arc::ptr_eq(&data, &extracted));
 }

@@ -106,7 +106,7 @@ pub trait HostGraphRunInput {
     fn into_parts(self) -> (PortId, TypeKey, Self::Value);
 }
 
-impl<I> HostGraphRunInput for (&str, I)
+impl<I> HostGraphRunInput for (&'static str, I)
 where
     I: Send + Sync + 'static,
 {
@@ -139,7 +139,7 @@ where
     }
 }
 
-impl<I, K> HostGraphRunInput for (&str, K, I)
+impl<I, K> HostGraphRunInput for (&'static str, K, I)
 where
     I: Send + Sync + 'static,
     K: Into<TypeKey>,

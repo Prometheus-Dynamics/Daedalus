@@ -82,6 +82,11 @@ fn record_pressure_event(
     telem.record_edge_pressure_event(edge_idx, reason, dropped_count);
 }
 
+/// Elapsed time for detailed-metrics timers; zero when the timer was not started.
+fn elapsed_since(start: Option<Instant>) -> std::time::Duration {
+    start.map(|start| start.elapsed()).unwrap_or_default()
+}
+
 fn payload_lifecycle_desc(payload: &daedalus_transport::Payload) -> String {
     format!("Payload({})", payload.type_key())
 }
@@ -141,7 +146,9 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
         backpressure,
         data_size_inspectors,
     } = args;
-    let apply_start = Instant::now();
+    let collect_basic = cfg!(feature = "metrics") && telem.metrics_level.is_basic();
+    let apply_start =
+        (cfg!(feature = "metrics") && telem.metrics_level.is_detailed()).then(Instant::now);
     if let Some(storage) = queues.get(edge_idx) {
         let transport_bytes = if cfg!(feature = "metrics") && telem.metrics_level.is_detailed() {
             payload_size_bytes(data_size_inspectors, &payload.inner)
@@ -181,13 +188,16 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                             .clone()
                             .unwrap_or_else(|| format!("bounded_error_edge_{edge_idx}"));
                         record_warning(&label, warnings_seen, telem);
-                        telem.record_edge_transport_apply_duration(edge_idx, apply_start.elapsed());
+                        telem.record_edge_transport_apply_duration(
+                            edge_idx,
+                            elapsed_since(apply_start),
+                        );
                         return Err(NodeError::BackpressureDrop(format!(
                             "edge {edge_idx} overflowed bounded queue"
                         )));
                     }
                     _ => {
-                        payload.enqueued_at = Instant::now();
+                        payload.enqueued_at = collect_basic.then(Instant::now);
                         trace_edge_enqueue(edge_idx, policy, &payload);
                         let mut lifecycle = DataLifecycleRecord::new(
                             payload.correlation_id,
@@ -250,7 +260,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                             dropped = true;
                             pressure_reason = Some(reason);
                         } else {
-                            payload.enqueued_at = Instant::now();
+                            payload.enqueued_at = collect_basic.then(Instant::now);
                             trace_edge_enqueue(edge_idx, policy, &payload);
                             let mut lifecycle = DataLifecycleRecord::new(
                                 payload.correlation_id,
@@ -296,13 +306,13 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                             record_warning(&label, warnings_seen, telem);
                             telem.record_edge_transport_apply_duration(
                                 edge_idx,
-                                apply_start.elapsed(),
+                                elapsed_since(apply_start),
                             );
                             return Err(NodeError::BackpressureDrop(format!(
                                 "edge {edge_idx} overflowed bounded lock-free queue"
                             )));
                         } else {
-                            payload.enqueued_at = Instant::now();
+                            payload.enqueued_at = collect_basic.then(Instant::now);
                             trace_edge_enqueue(edge_idx, policy, &payload);
                             let mut lifecycle = DataLifecycleRecord::new(
                                 payload.correlation_id,
@@ -331,7 +341,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                                     record_warning(&label, warnings_seen, telem);
                                     telem.record_edge_transport_apply_duration(
                                         edge_idx,
-                                        apply_start.elapsed(),
+                                        elapsed_since(apply_start),
                                     );
                                     return Err(NodeError::BackpressureDrop(format!(
                                         "edge {edge_idx} overflowed bounded lock-free queue"
@@ -341,7 +351,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                         }
                     }
                     BackpressureStrategy::None => {
-                        payload.enqueued_at = Instant::now();
+                        payload.enqueued_at = collect_basic.then(Instant::now);
                         trace_edge_enqueue(edge_idx, policy, &payload);
                         let payload_type = payload.inner.type_key().clone();
                         let correlation_id = payload.correlation_id;
@@ -394,7 +404,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                 telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
             }
         }
-        telem.record_edge_transport_apply_duration(edge_idx, apply_start.elapsed());
+        telem.record_edge_transport_apply_duration(edge_idx, elapsed_since(apply_start));
     }
     Ok(())
 }

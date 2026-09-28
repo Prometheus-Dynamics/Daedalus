@@ -136,6 +136,37 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `HostGraph::drive` docs describe running `drive_blocking` under
   `tokio::task::spawn_blocking` with a `HostGraphStopHandle`; added the `host_graph_drive`
   criterion bench to `daedalus-engine`.
+- `TypeKey`, `PortId` and the other runtime text ids (`NodeAlias`, `NodeHandleId`, `HostAlias`,
+  `FeatureFlag`, `CapabilityId`) wrap the new `daedalus_transport::IdStr`, either a
+  `&'static str` or a shared `Arc<str>`. `From<&'static str>` wraps string literals without
+  allocating (`from_static` is `const`); borrowed text goes through `::new` (or `From<String>` /
+  `From<&String>`). Equality, ordering, hashing and serialization only see the text.
+  `HostGraphRunInput` tuples take `&'static str` port names.
+- `NodeIo` ports are `PortId`s: `inputs()`/`outputs()` return `&[NodePort]`
+  (`(PortId, CorrelatedPayload)`), `push*` take `impl Into<PortId>`, and `from_inputs` takes any
+  iterator of `NodePort`. `NodeConstInputs` is keyed by `PortId`.
+- `HostBridgeManager::take_inbound` became `take_inbound_into(alias, &mut Vec)`, backed by the new
+  `HostBridgeHandle::take_inbound_into`, so callers reuse one buffer.
+- `Executor::with_host_bridges` / `OwnedExecutor::with_host_bridges` resolve every host-bridge
+  node to its bridge handle and port wiring once (creating missing bridges); ticks no longer look
+  bridges up through the manager.
+- `CorrelatedPayload::correlation_id` is the payload's lineage correlation id and `enqueued_at`
+  is an `Option<Instant>` set only when basic metrics are on; `next_correlation_id` was removed.
+- `Payload` stores `Arc<dyn PayloadStorage>` (one allocation instead of two) and an empty
+  residency cache without allocating; `PayloadStorage::into_any` became `into_any_arc`.
+  `try_into_owned` and boundary owned takes still move the value out of unique payloads.
+
+### Performance
+
+- Host graph hot path (push, tick, take) with metrics off went from 31 heap allocations per
+  round trip to 4 (the two payloads), covered by the `hot_path_allocations` engine test. Removed
+  per tick: the schedule-order copy, the per-node `RuntimeNode` clone, node-id and port-name
+  strings, host-node/port vectors, the inbound `Vec`, `Payload`'s boxed storage and empty
+  residency map, and the per-construction boundary-contract registry clone/lock.
+- The serial executor runs and drains host outputs on one snapshot, times edge-policy
+  application only at `Detailed` metrics, and stamps `enqueued_at` only at `Basic` and above.
+- `host_graph_drive` gained a `push_tick_take_metrics_off` case. Numbers are in
+  `docs/development.md` (Performance).
 
 ### Removed
 

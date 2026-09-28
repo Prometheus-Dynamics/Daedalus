@@ -105,7 +105,9 @@ pub use host_bridge::{
     HostBridgeConfig, HostBridgeHandle, HostBridgeManager, InboundWait, InboundWaiter,
     PayloadInspection, PayloadSummary, bridge_handler, inspect_payload,
 };
-pub use io::{DEFAULT_OUTPUT_PORT, NodeIo, TypedInputResolution, TypedInputResolutionKind};
+pub use io::{
+    DEFAULT_OUTPUT_PORT, NodeIo, NodePort, TypedInputResolution, TypedInputResolutionKind,
+};
 pub use plan::{
     BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry,
     HostPortConnection, HostPortDescriptor, HostPortDirection, NODE_EXECUTION_KIND_META_KEY,

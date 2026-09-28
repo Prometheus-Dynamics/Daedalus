@@ -13,7 +13,7 @@ use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, Port
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 use daedalus_registry::ids::NodeId;
 use daedalus_runtime::RuntimeNode;
-use daedalus_runtime::executor::{NodeError, NodeHandler};
+use daedalus_runtime::executor::{MetricsLevel, NodeError, NodeHandler};
 use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::plugins::PluginRegistry;
@@ -120,6 +120,7 @@ fn bench_bridge_push_pop(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
     let manager = HostBridgeManager::new();
     let handle = manager.ensure_handle("host");
+    let mut inbound = Vec::new();
     handle.set_event_recording(false);
     let port = PortId::from("in");
     let out_port = PortId::from("out");
@@ -129,13 +130,17 @@ fn bench_bridge_push_pop(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("inbound", "small"), |b| {
         b.iter(|| {
             black_box(handle.push_payload(port.clone(), Payload::owned(INT_KEY, 1i64)));
-            black_box(manager.take_inbound("host"));
+            manager.take_inbound_into("host", &mut inbound);
+            black_box(&inbound);
+            inbound.clear();
         })
     });
     group.bench_function(BenchmarkId::new("inbound", "arc_1mib"), |b| {
         b.iter(|| {
             black_box(handle.push_payload(port.clone(), Payload::shared(FRAME_KEY, frame.clone())));
-            black_box(manager.take_inbound("host"));
+            manager.take_inbound_into("host", &mut inbound);
+            black_box(&inbound);
+            inbound.clear();
         })
     });
 
@@ -158,17 +163,23 @@ fn bench_bridge_push_pop(c: &mut Criterion) {
 fn bench_graph_round_trip(c: &mut Criterion) {
     let mut group = c.benchmark_group("host_graph_round_trip");
     group.throughput(Throughput::Elements(1));
-    let (_plugins, mut graph) = compile_graph(EngineConfig::default());
-    graph.host().set_event_recording(false);
     let port = PortId::from("in");
     let out_port = PortId::from("out");
-    group.bench_function("push_tick_take", |b| {
-        b.iter(|| {
-            black_box(graph.push_payload(port.clone(), Payload::owned(INT_KEY, Value::Int(1))));
-            black_box(graph.tick().expect("tick"));
-            black_box(graph.take_payload(&out_port));
-        })
-    });
+    for (name, level) in [
+        ("push_tick_take", MetricsLevel::default()),
+        ("push_tick_take_metrics_off", MetricsLevel::Off),
+    ] {
+        let (_plugins, mut graph) =
+            compile_graph(EngineConfig::default().with_metrics_level(level));
+        graph.host().set_event_recording(false);
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                black_box(graph.push_payload(port.clone(), Payload::owned(INT_KEY, Value::Int(1))));
+                black_box(graph.tick().expect("tick"));
+                black_box(graph.take_payload(&out_port));
+            })
+        });
+    }
     group.finish();
 }
 
@@ -199,6 +210,7 @@ fn bench_event_recording(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1));
     let manager = HostBridgeManager::new();
     let handle = manager.ensure_handle("host");
+    let mut inbound = Vec::new();
     let port = PortId::from("in");
     for enabled in [false, true] {
         handle.set_event_recording(enabled);
@@ -206,7 +218,9 @@ fn bench_event_recording(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("push", label), |b| {
             b.iter(|| {
                 black_box(handle.push_payload(port.clone(), Payload::owned(INT_KEY, 1i64)));
-                black_box(manager.take_inbound("host"));
+                manager.take_inbound_into("host", &mut inbound);
+                black_box(&inbound);
+                inbound.clear();
             })
         });
     }

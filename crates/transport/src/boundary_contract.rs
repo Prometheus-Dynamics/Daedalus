@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -152,7 +152,7 @@ impl BoundaryTypeContract {
 /// registration helpers remain as compatibility wrappers for process-wide type registration.
 #[derive(Clone, Debug, Default)]
 pub struct BoundaryContractRegistry {
-    contracts_by_rust_type: Arc<Mutex<BTreeMap<String, BoundaryTypeContract>>>,
+    contracts_by_rust_type: Arc<RwLock<BTreeMap<String, BoundaryTypeContract>>>,
 }
 
 impl BoundaryContractRegistry {
@@ -161,18 +161,23 @@ impl BoundaryContractRegistry {
     }
 
     pub fn register(&self, contract: BoundaryTypeContract) {
-        if let Some(rust_type_name) = contract.rust_type_name.clone()
-            && let Ok(mut contracts) = self.contracts_by_rust_type.lock()
-        {
-            contracts.insert(rust_type_name, contract);
+        if let Some(rust_type_name) = contract.rust_type_name.clone() {
+            self.contracts_by_rust_type
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(rust_type_name, contract);
         }
     }
 
     pub fn contract_for_type<T: 'static>(&self) -> Option<BoundaryTypeContract> {
-        self.contracts_by_rust_type
-            .lock()
-            .ok()
-            .and_then(|contracts| contracts.get(std::any::type_name::<T>()).cloned())
+        let contracts = self
+            .contracts_by_rust_type
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        if contracts.is_empty() {
+            return None;
+        }
+        contracts.get(std::any::type_name::<T>()).cloned()
     }
 }
 
@@ -201,8 +206,10 @@ pub fn register_boundary_contract(contract: BoundaryTypeContract) {
     global_boundary_contract_registry().register(contract);
 }
 
+/// Look up `T` in the global registry. Payload construction calls this for every owned value, so
+/// it neither initializes nor clones the registry.
 pub fn boundary_contract_for_type<T: 'static>() -> Option<BoundaryTypeContract> {
-    global_boundary_contract_registry().contract_for_type::<T>()
+    GLOBAL_BOUNDARY_CONTRACTS.get()?.contract_for_type::<T>()
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

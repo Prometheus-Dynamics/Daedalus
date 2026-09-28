@@ -6,7 +6,6 @@ use daedalus_transport::{
     CorrelationId, DropReason, FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError,
     PressurePolicy, TypeKey, validate_stream_policy,
 };
-use smallvec::SmallVec;
 
 use crate::handles::{HostAlias, PortId};
 
@@ -587,27 +586,21 @@ impl HostBridgeHandle {
         }
     }
 
-    pub(crate) fn take_inbound_small(&self) -> SmallVec<[HostBridgePayload; 4]> {
+    /// Move every queued inbound payload into `out` (oldest first per port). Reuse `out` across
+    /// calls to keep draining allocation-free.
+    pub fn take_inbound_into(&self, out: &mut Vec<HostBridgePayload>) {
         let mut guard = lock_host_buffers(&self.shared);
-        let mut payloads = SmallVec::new();
         for state in guard.inbound.ports.values_mut() {
-            state.queue.drain_into(|entry| payloads.push(entry));
+            state.queue.drain_into(|entry| out.push(entry));
         }
-        payloads
     }
 
-    pub(crate) fn take_inbound_for_ports_small(
-        &self,
-        ports: &[PortId],
-    ) -> SmallVec<[HostBridgePayload; 4]> {
-        let mut guard = lock_host_buffers(&self.shared);
-        let mut payloads = SmallVec::new();
-        for port in ports {
-            if let Some(state) = guard.inbound.get_mut(port.as_str()) {
-                state.queue.drain_into(|entry| payloads.push(entry));
-            }
+    /// Hand every queued payload of one inbound port to `sink` while the bridge lock is held.
+    /// `sink` must not call back into this bridge.
+    pub(crate) fn drain_inbound_port(&self, port: &str, sink: impl FnMut(HostBridgePayload)) {
+        if let Some(state) = lock_host_buffers(&self.shared).inbound.get_mut(port) {
+            state.queue.drain_into(sink);
         }
-        payloads
     }
 
     pub fn try_pop_arc<T>(&self, port: impl AsRef<str>) -> Option<Arc<T>>

@@ -1,45 +1,37 @@
+use daedalus_transport::IdStr;
 use std::borrow::Borrow;
 use std::fmt;
-use std::sync::Arc;
 
 macro_rules! define_text_id {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
-        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(Arc<str>);
+        ///
+        /// String literals convert without allocating (`"frame".into()`); borrowed text goes
+        /// through [`Self::new`]. Clones never copy text.
+        #[derive(
+            Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+        )]
+        #[serde(transparent)]
+        pub struct $name(IdStr);
 
         impl $name {
             pub fn new(value: impl Into<String>) -> Self {
-                Self(value.into().into())
+                Self(IdStr::new(value))
+            }
+
+            /// Wrap a string literal without allocating.
+            pub const fn from_static(value: &'static str) -> Self {
+                Self(IdStr::from_static(value))
             }
 
             pub fn as_str(&self) -> &str {
-                &self.0
+                self.0.as_str()
             }
         }
 
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-
-        impl serde::Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::Serializer,
-            {
-                serializer.serialize_str(self.as_str())
-            }
-        }
-
-        impl<'de> serde::Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                let value = <String as serde::Deserialize>::deserialize(deserializer)?;
-                Ok(Self::from(value))
+                f.write_str(self.as_str())
             }
         }
 
@@ -55,13 +47,13 @@ macro_rules! define_text_id {
             }
         }
 
-        impl From<&str> for $name {
-            fn from(value: &str) -> Self {
-                Self::new(value)
+        impl From<&'static str> for $name {
+            fn from(value: &'static str) -> Self {
+                Self::from_static(value)
             }
         }
 
-        /// Cheap clone (reference-count bump); lets `&id` satisfy `impl Into<Id>` parameters.
+        /// Cheap clone (reference-count bump at most); lets `&id` satisfy `impl Into<Id>`.
         impl From<&$name> for $name {
             fn from(value: &$name) -> Self {
                 value.clone()
@@ -74,9 +66,15 @@ macro_rules! define_text_id {
             }
         }
 
+        impl From<&String> for $name {
+            fn from(value: &String) -> Self {
+                Self::new(value.as_str())
+            }
+        }
+
         impl From<$name> for String {
             fn from(value: $name) -> Self {
-                value.0.to_string()
+                value.as_str().to_string()
             }
         }
 

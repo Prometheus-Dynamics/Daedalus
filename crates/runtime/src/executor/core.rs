@@ -23,11 +23,14 @@ pub(crate) struct ExecutorCore {
     pub(crate) pool_workers: usize,
     #[cfg(feature = "executor-pool")]
     pub(crate) worker_pool: Arc<OnceLock<Arc<rayon::ThreadPool>>>,
-    pub(crate) host_bridges: Option<crate::host_bridge::HostBridgeManager>,
+    /// Host-bridge nodes resolved when bridges were attached; empty without bridges.
+    pub(crate) host_nodes: Arc<[super::serial::HostNodeIo]>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
     pub(crate) runtime_transport: Option<Arc<crate::transport::RuntimeTransport>>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
     pub(crate) node_metadata: NodeMetadataStore,
+    /// Node ids shared with `ExecutionContext::node_id` so ticks do not allocate them.
+    pub(crate) node_ids: Arc<[Arc<str>]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
 }
 
@@ -54,11 +57,16 @@ impl ExecutorCore {
             pool_workers: init.pool_workers,
             #[cfg(feature = "executor-pool")]
             worker_pool: Arc::new(OnceLock::new()),
-            host_bridges: None,
+            host_nodes: Arc::new([]),
             const_coercers: None,
             runtime_transport: None,
             graph_metadata: Arc::new(graph_metadata.clone()),
             node_metadata: init.node_metadata.clone(),
+            node_ids: init
+                .nodes
+                .iter()
+                .map(|node| Arc::from(node.id.as_str()))
+                .collect(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
         }
     }
@@ -82,11 +90,12 @@ impl ExecutorCore {
             pool_workers: self.pool_workers,
             #[cfg(feature = "executor-pool")]
             worker_pool: self.worker_pool.clone(),
-            host_bridges: self.host_bridges.clone(),
+            host_nodes: self.host_nodes.clone(),
             const_coercers: self.const_coercers.clone(),
             runtime_transport: self.runtime_transport.clone(),
             graph_metadata: self.graph_metadata.clone(),
             node_metadata: self.node_metadata.clone(),
+            node_ids: self.node_ids.clone(),
             capabilities: self.capabilities.clone(),
         }
     }

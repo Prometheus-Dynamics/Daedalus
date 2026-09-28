@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::os::raw::c_void;
 use std::ptr::NonNull;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use thiserror::Error;
 
@@ -202,7 +202,7 @@ impl PayloadStorage for BoundaryStorage {
         self
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 

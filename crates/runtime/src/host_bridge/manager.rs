@@ -66,7 +66,7 @@ impl HostBridgeManager {
         if let Some((alias, shared)) = guard.get_key_value(alias) {
             return HostBridgeHandle::new(alias.clone(), shared.clone());
         }
-        let alias = HostAlias::from(alias);
+        let alias = HostAlias::new(alias);
         let defaults = lock_host_defaults(&self.defaults).clone();
         let buffers = HostBridgeBuffers {
             inbound: PortDirection::with_defaults(
@@ -197,11 +197,12 @@ impl HostBridgeManager {
         self.ensure_handle(alias).push_outbound_ref(port, payload);
     }
 
-    pub fn take_inbound(&self, alias: &str) -> Vec<HostBridgePayload> {
-        let Some(handle) = self.handle(alias) else {
-            return Vec::new();
-        };
-        handle.take_inbound_small().into_vec()
+    /// Move every queued inbound payload of `alias` into `out`; see
+    /// [`HostBridgeHandle::take_inbound_into`].
+    pub fn take_inbound_into(&self, alias: &str, out: &mut Vec<HostBridgePayload>) {
+        if let Some(handle) = self.handle(alias) {
+            handle.take_inbound_into(out);
+        }
     }
 
     pub fn populate_from_plan(&self, plan: &crate::RuntimePlan) {
@@ -222,17 +223,16 @@ pub fn bridge_handler(
     &crate::state::ExecutionContext,
     &mut NodeIo,
 ) -> Result<(), NodeError> {
+    let mut inbound = Vec::new();
     move |node, _ctx, io| {
-        let alias = node.label.as_deref().unwrap_or(&node.id);
-
-        for (port, payload) in io.inputs().iter().cloned() {
-            bridges.push_outbound(alias, &port, payload.inner);
+        let handle = bridges.ensure_handle(node.label.as_deref().unwrap_or(&node.id));
+        for (port, payload) in io.inputs() {
+            handle.push_outbound_ref(port.as_str(), payload.inner.clone());
         }
-
-        for inbound in bridges.take_inbound(alias) {
-            io.push_correlated_payload(inbound.port, CorrelatedPayload::from_edge(inbound.payload));
+        handle.take_inbound_into(&mut inbound);
+        for entry in inbound.drain(..) {
+            io.push_correlated_payload(entry.port, CorrelatedPayload::from_edge(entry.payload));
         }
-
         Ok(())
     }
 }

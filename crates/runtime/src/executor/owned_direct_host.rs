@@ -98,7 +98,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         }
         let mut exec = self.snapshot(DirectSlotAccess::Serial);
         exec.core.run_config.active_direct_edges = Some(route.active_direct_edges.clone());
-        let telemetry = serial::run_order(exec, self.schedule_order.as_slice());
+        let telemetry = serial::run_order(&mut exec, self.schedule_order.as_slice());
         if telemetry.is_err() {
             self.storage_needs_reset = true;
         }
@@ -237,9 +237,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let input_edge = self.edges.get(input_edge)?;
         let output_edge = self.edges.get(output_edge)?;
         let input_node = input_edge.to();
-        let input_port = input_edge.target_port();
         let output_node = output_edge.from();
-        let output_port = output_edge.source_port();
         if input_node != output_node {
             return None;
         }
@@ -249,7 +247,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         }
         let ctx = ExecutionContext {
             state: self.core.state.clone(),
-            node_id: node.id.clone().into(),
+            node_id: self.core.node_ids[input_node.0].clone(),
             metadata: self.core.node_metadata[input_node.0].clone(),
             graph_metadata: self.core.graph_metadata.clone(),
             capabilities: self.core.capabilities.clone(),
@@ -260,8 +258,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             node: node.clone(),
             node_idx: input_node.0,
             ctx,
-            input_port: input_port.to_string(),
-            output_port: output_port.to_string(),
+            input_port: input_edge.target_port_id().clone(),
+            output_port: output_edge.source_port_id().clone(),
             direct_payload: self.handler.direct_payload_handler(node.stable_id),
         })
     }
