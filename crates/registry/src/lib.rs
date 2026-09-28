@@ -13,6 +13,12 @@ pub mod ids;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
+/// Whether this build of `daedalus-registry` was compiled with the `gpu` feature.
+///
+/// Dynamic plugin loaders fold this into their build fingerprint so hosts and
+/// plugins built with different registry layouts are rejected.
+pub const GPU_FEATURE_ENABLED: bool = cfg!(feature = "gpu");
+
 /// Convert a Daedalus type expression into the stable transport identity used by
 /// manifests, adapters, and runtime payloads.
 ///

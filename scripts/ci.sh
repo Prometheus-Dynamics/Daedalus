@@ -22,6 +22,7 @@ cargo check --workspace --all-targets
 echo "==> Checking feature surfaces"
 cargo check -p daedalus-rs --no-default-features
 cargo check -p daedalus-rs --features "engine,plugins,gpu-mock"
+cargo check -p daedalus-rs --features "dylib-plugins"
 cargo check -p daedalus-runtime --features "metrics,executor-pool,lockfree-queues"
 cargo check -p daedalus-ffi --no-default-features
 cargo check -p daedalus-ffi --features "image-payload"
@@ -29,9 +30,11 @@ cargo check -p daedalus-ffi --features "gpu-wgpu"
 
 echo "==> Running clippy"
 cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
+cargo clippy -p daedalus-rs --all-targets --features "engine,plugins,dylib-plugins" -- -D warnings
 
 echo "==> Running tests"
 cargo test --workspace --all-targets --features "engine,plugins"
+cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 
 echo "==> Building examples"
 cargo check -p daedalus-rs --features "engine,plugins" --examples

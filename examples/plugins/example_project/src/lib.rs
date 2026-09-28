@@ -85,3 +85,8 @@ declare_plugin!(
         register_capabilities(registry);
     }
 );
+
+// Export the plugin for dynamic loading when built as a `cdylib`
+// (`daedalus::PluginLibrary::load("libdaedalus_plugins_example_project.so")`).
+#[cfg(feature = "plugins")]
+daedalus::export_plugin!(ExampleProjectPlugin);

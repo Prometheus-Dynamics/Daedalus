@@ -47,6 +47,9 @@ jobs:
       - name: Check minimal facade surface
         run: cargo check -p daedalus-rs --no-default-features
 
+      - name: Test dynamic plugin loading
+        run: cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
+
       - name: Build examples
         run: cargo check -p daedalus-rs --features "engine,plugins" --examples
 
@@ -70,6 +73,9 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
+
+      - name: Run clippy (dynamic plugin loading)
+        run: cargo clippy -p daedalus-rs --all-targets --features "engine,plugins,dylib-plugins" -- -D warnings
 
       - name: Build docs
         run: cargo doc --workspace --no-deps

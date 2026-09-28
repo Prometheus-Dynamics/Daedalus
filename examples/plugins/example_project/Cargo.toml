@@ -9,6 +9,7 @@ workspace = true
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 doctest = false
 
 [features]

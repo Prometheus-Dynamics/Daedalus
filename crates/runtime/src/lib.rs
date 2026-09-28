@@ -26,6 +26,13 @@ pub mod stream;
 pub mod transport;
 pub use daedalus_transport as transport_types;
 
+/// Whether this build of `daedalus-runtime` was compiled with the `gpu` feature.
+///
+/// The `gpu` feature changes the layout of runtime types (including
+/// `plugins::PluginRegistry`), so dynamic plugin loaders fold it into their build
+/// fingerprint.
+pub const GPU_FEATURE_ENABLED: bool = cfg!(feature = "gpu");
+
 /// Apply a plugin prefix to a node id without duplicating overlapping segments.
 ///
 /// Prefixes already present at the start of the id are not duplicated.

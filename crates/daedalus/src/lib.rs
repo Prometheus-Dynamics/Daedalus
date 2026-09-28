@@ -61,6 +61,18 @@ pub use host_bridge::{
     HostBridgeInstallError, host_port, install_default_host_bridge, install_host_bridge,
 };
 
+/// Native Rust plugins shipped as `cdylib`s: ABI types, `export_plugin!`, and (feature
+/// `dylib-plugins`) the `PluginLibrary` loader.
+#[cfg(feature = "plugins")]
+pub mod dylib;
+#[cfg(feature = "plugins")]
+pub use dylib::{
+    BOUNDARY_CONTRACTS_SYMBOL, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_INFO_SYMBOL,
+    PluginErrorSink, PluginInfo, REGISTER_SYMBOL, RUSTC_VERSION, StrView, build_fingerprint,
+};
+#[cfg(feature = "dylib-plugins")]
+pub use dylib::{PluginLibrary, PluginLibraryError, check_plugin_info, discover_plugin_libraries};
+
 // Optional plugin crates are re-exported via features; no in-crate plugins live here.
 
 /// Common imports for application and example code.
