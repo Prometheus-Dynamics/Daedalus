@@ -2,18 +2,60 @@ use std::sync::Mutex;
 
 use crate::handles::{GpuBufferHandle, GpuImageHandle};
 use crate::traits::GpuBackend;
+#[cfg(target_os = "linux")]
+use crate::{DrmFourcc, ExternalFrameDescriptor, ExternalImportError, GpuImageId};
 use crate::{
-    GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError, GpuFormat, GpuFormatFeatures,
-    GpuImageRequest, GpuMemoryLocation, GpuOptions, GpuRequest, GpuUsage,
+    ExternalImportSupport, GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError, GpuFormat,
+    GpuFormatFeatures, GpuImageRequest, GpuMemoryLocation, GpuOptions, GpuRequest, GpuUsage,
     buffer::{BufferPool, SimpleBufferPool, TransferStats},
 };
 
 /// Deterministic mock backend for tests/CI.
+///
+/// dmabuf imports are accepted without touching real memory: the descriptor is validated like a
+/// real backend would, recorded (see [`MockBackend::imported_frames`]), and its fds and keepalive
+/// are held by the returned handle until it is dropped.
 pub struct MockBackend {
     adapter: GpuAdapterInfo,
     caps: GpuCapabilities,
     pool: SimpleBufferPool,
     stats: Mutex<TransferStats>,
+    dmabuf_import: bool,
+    #[cfg(target_os = "linux")]
+    imports: Mutex<Vec<MockImportRecord>>,
+}
+
+/// What the mock backend saw for one successful dmabuf import.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MockImportRecord {
+    pub image: GpuImageId,
+    pub width: u32,
+    pub height: u32,
+    pub fourcc: DrmFourcc,
+    pub modifier: Option<u64>,
+    pub format: GpuFormat,
+    /// `(offset, stride)` per plane.
+    pub planes: Vec<(u64, u64)>,
+    pub label: Option<String>,
+    pub has_keepalive: bool,
+}
+
+impl MockBackend {
+    /// Report dmabuf import as unsupported, to exercise fallback paths.
+    pub fn without_dmabuf_import(mut self) -> Self {
+        self.dmabuf_import = false;
+        self
+    }
+
+    /// Every dmabuf import accepted so far, oldest first.
+    #[cfg(target_os = "linux")]
+    pub fn imported_frames(&self) -> Vec<MockImportRecord> {
+        self.imports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
 }
 
 impl Default for MockBackend {
@@ -87,6 +129,9 @@ impl Default for MockBackend {
             },
             pool: SimpleBufferPool::new(),
             stats: Mutex::new(TransferStats::default()),
+            dmabuf_import: true,
+            #[cfg(target_os = "linux")]
+            imports: Mutex::new(Vec::new()),
         }
     }
 }
@@ -229,6 +274,67 @@ impl GpuBackend for MockBackend {
         let bytes = (handle.width as usize) * (handle.height as usize) * 4;
         self.record_download(bytes as u64);
         Ok(vec![0; bytes])
+    }
+
+    fn dmabuf_import_support(&self) -> ExternalImportSupport {
+        if !cfg!(target_os = "linux") {
+            ExternalImportSupport::unsupported("dmabuf import requires Linux")
+        } else if self.dmabuf_import {
+            ExternalImportSupport::Supported
+        } else {
+            ExternalImportSupport::unsupported("mock backend configured without dmabuf import")
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn import_dmabuf(
+        &self,
+        desc: ExternalFrameDescriptor,
+    ) -> Result<GpuImageHandle, ExternalImportError> {
+        if let Some(reason) = self.dmabuf_import_support().reason() {
+            return Err(ExternalImportError::Unsupported {
+                reason: reason.to_string(),
+            });
+        }
+        let layout = desc.validate()?;
+        if desc.width > self.caps.max_texture_dimension
+            || desc.height > self.caps.max_texture_dimension
+        {
+            return Err(ExternalImportError::invalid(format!(
+                "extent {}x{} exceeds max texture dimension {}",
+                desc.width, desc.height, self.caps.max_texture_dimension
+            )));
+        }
+        let mut handle = GpuImageHandle::new(
+            layout.format,
+            desc.width,
+            desc.height,
+            GpuMemoryLocation::Gpu,
+            desc.usage | GpuUsage::DOWNLOAD,
+        );
+        if let Some(label) = &desc.label {
+            handle.label = Some(label.clone());
+        }
+        let record = MockImportRecord {
+            image: handle.id,
+            width: desc.width,
+            height: desc.height,
+            fourcc: desc.fourcc,
+            modifier: desc.modifier,
+            format: layout.format,
+            planes: desc.planes.iter().map(|p| (p.offset, p.stride)).collect(),
+            label: desc.label.clone(),
+            has_keepalive: desc.keepalive.is_some(),
+        };
+        handle.drop_token = Some(std::sync::Arc::new(crate::external::ExternalImageToken {
+            fds: desc.planes.into_iter().map(|p| p.fd).collect(),
+            keepalive: desc.keepalive,
+        }));
+        self.imports
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(record);
+        Ok(handle)
     }
 }
 

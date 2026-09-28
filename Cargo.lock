@@ -613,12 +613,14 @@ dependencies = [
 name = "daedalus-gpu"
 version = "2.0.0"
 dependencies = [
+ "ash",
  "async-trait",
  "bitflags 2.11.1",
  "bytemuck",
  "daedalus-wgsl-infer",
  "half",
  "image",
+ "libc",
  "pollster",
  "serde",
  "tracing",

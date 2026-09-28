@@ -46,3 +46,61 @@ Hosts that need different limits can configure the process before the first asyn
 - `shader::async_poll_worker_limit`, `shader::async_poll_overflow_thread_limit`, and
   `shader::active_async_poll_overflow_threads` expose the effective configured limits and current
   overflow pressure for diagnostics.
+
+## Importing external frames (dmabuf)
+
+Frames that already live in GPU-importable memory, such as camera buffers on a Raspberry Pi 5 /
+CM5 (Mesa `v3dv`) or any Linux dmabuf producer, can become GPU images without a CPU round trip:
+
+```rust,ignore
+use daedalus_gpu::{DrmFourcc, ExternalFrameDescriptor, ExternalPlane, DRM_FORMAT_MOD_LINEAR};
+
+if ctx.supports_dmabuf_import() {
+    let plane = ExternalPlane::from_borrowed(buffer_fd.as_fd(), offset, stride)?; // dup()s the fd
+    let image = ctx.import_dmabuf(
+        ExternalFrameDescriptor::single_plane(width, height, DrmFourcc::XRGB8888, plane)
+            .with_modifier(DRM_FORMAT_MOD_LINEAR)
+            .with_keepalive(Arc::new(camera_request)), // released when the GPU is done
+    )?;
+    // `image` is a normal GpuImageHandle: sample it, dispatch shaders on it, read it back.
+} else {
+    tracing::info!(reason = ?ctx.dmabuf_import_support().reason(), "falling back to CPU upload");
+}
+```
+
+- **Capability query:** `dmabuf_import_support()` / `supports_dmabuf_import()` on
+  `GpuContextHandle` and `GpuBackend` never panic and give a reason when unsupported (no GPU,
+  non-Vulkan adapter, missing extensions, non-Linux, or `gpu-dmabuf` not built).
+- **Backends:** `gpu-mock` validates and records imports (`MockBackend::imported_frames`) and holds
+  the fds/keepalive for the handle's lifetime, so planner/runtime paths are testable anywhere;
+  `MockBackend::without_dmabuf_import()` exercises fallbacks. Noop returns `Unsupported`. The real
+  path is `gpu-dmabuf` (implies `gpu-wgpu`, Linux + Vulkan only): the device is created with
+  `VK_KHR_external_memory_fd`, `VK_EXT_external_memory_dma_buf`, and
+  `VK_EXT_image_drm_format_modifier` when the adapter has them, and the dmabuf is bound to a
+  `VkImage` with the explicit plane layout, then wrapped as a `wgpu::Texture`.
+- **Formats:** single-plane `R8`, `GR88`, `XRGB8888`/`ARGB8888` (`Bgra8Unorm`), and
+  `XBGR8888`/`ABGR8888` (`Rgba8Unorm`); the `X` variants leave alpha undefined. Multi-planar YUV
+  (`NV12`, `YU12`) is not imported as one image: import the Y plane as `R8` and the interleaved UV
+  plane as `GR88` using each plane's offset and stride. `modifier: None` means linear. Imported
+  images are sampleable and copy sources; request `GpuUsage::{UPLOAD, STORAGE, RENDER_TARGET}` only
+  if you intend to write into the producer's buffer.
+- **Ownership:** planes take `OwnedFd`s (use `ExternalPlane::from_borrowed` to `dup`). The import
+  keeps the dmabuf referenced for the image's lifetime, but that does not stop the producer from
+  recycling it, so pass the producer's buffer lease as the keepalive. It is dropped only after the
+  handle and all clones are gone and no submitted GPU work uses the image. Held images hold
+  producer buffers; drop them promptly.
+- **Errors:** `ExternalImportError::{Unsupported, InvalidDescriptor, UnsupportedFormat,
+  ImportFailed}`, convertible to `GpuError`.
+- **Sync caveat:** Daedalus does no dmabuf fence or queue-family-foreign handoff. Import frames
+  whose producer writes have completed (dequeued V4L2/libcamera buffers are). wgpu's first
+  barrier transitions from `UNDEFINED`, which keeps contents on drivers without compression
+  metadata for the imported modifier (v3dv, and RADV/ANV for `LINEAR`).
+
+Hardware test (`#[ignore]`d; needs a Vulkan GPU and a readable `/dev/dma_heap/*`, e.g. membership
+in the `video` group):
+
+```bash
+CARGO_BUILD_JOBS=4 cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf
+# On a Pi, pick a heap explicitly if needed:
+DAEDALUS_DMA_HEAP=/dev/dma_heap/system cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf
+```

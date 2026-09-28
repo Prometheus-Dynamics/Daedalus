@@ -36,6 +36,7 @@ gpu-engine = [
 gpu = ["gpu-engine"]
 gpu-wgpu = ["gpu-engine", "daedalus-gpu/gpu-wgpu"]
 gpu-async = ["gpu-wgpu", "daedalus-gpu/gpu-async"]
+gpu-dmabuf = ["gpu-wgpu", "daedalus-gpu/gpu-dmabuf"]
 gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
 schema = ["daedalus-data/schema", "daedalus-planner/schema"]
 proto = ["daedalus-data/proto", "daedalus-planner/proto"]

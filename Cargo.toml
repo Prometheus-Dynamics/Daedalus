@@ -56,6 +56,7 @@ daedalus-ffi-node = { path = "crates/ffi/node", version = "2.0.0" }
 daedalus-ffi-java = { path = "crates/ffi/java", version = "2.0.0" }
 daedalus-ffi-cpp = { path = "crates/ffi/cpp", version = "2.0.0" }
 daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "2.0.0" }
+ash = { version = "0.38", default-features = false, features = ["std"] }
 async-trait = "0.1.89"
 base64 = "0.22.1"
 bitflags = { version = "2.11.1", features = ["serde"] }

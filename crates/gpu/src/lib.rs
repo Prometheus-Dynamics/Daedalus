@@ -12,6 +12,7 @@
 mod async_api;
 mod buffer;
 mod convert;
+mod external;
 mod handles;
 #[cfg(feature = "gpu-mock")]
 mod mock;
@@ -27,9 +28,17 @@ mod wgpu_backend;
 pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use convert::{Backing, Compute, DeviceBridge};
+pub use external::{
+    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalImportError,
+    ExternalImportSupport, ExternalKeepalive,
+};
+#[cfg(target_os = "linux")]
+pub use external::{ExternalFrameDescriptor, ExternalPlane, ValidatedLayout};
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
 #[cfg(feature = "gpu-mock")]
 pub use mock::MockBackend;
+#[cfg(all(feature = "gpu-mock", target_os = "linux"))]
+pub use mock::MockImportRecord;
 pub use noop::NoopBackend;
 pub use selection::select_backend;
 #[cfg(feature = "gpu-async")]
@@ -81,6 +90,10 @@ pub enum GpuFormat {
     Rgba8Unorm,
     Rgba16Float,
     Depth24Stencil8,
+    /// Two 8-bit channels (e.g. an imported NV12 UV plane).
+    Rg8Unorm,
+    /// 8-bit BGRA in memory order (e.g. an imported `XRGB8888` camera frame).
+    Bgra8Unorm,
 }
 
 /// Per-format feature flags for planner/runtime decisions.
@@ -377,6 +390,26 @@ impl GpuContextHandle {
     pub fn create_image(&self, req: &GpuImageRequest) -> Result<GpuImageHandle, GpuError> {
         self.backend.create_image(req)
     }
+
+    /// Whether the selected backend can import dmabuf frames, with the reason when it cannot.
+    pub fn dmabuf_import_support(&self) -> ExternalImportSupport {
+        self.backend.dmabuf_import_support()
+    }
+
+    pub fn supports_dmabuf_import(&self) -> bool {
+        self.backend.dmabuf_import_support().is_supported()
+    }
+
+    /// Import an externally owned dmabuf frame as a GPU image without a CPU copy.
+    ///
+    /// See [`ExternalFrameDescriptor`] for fd ownership and the keepalive contract.
+    #[cfg(target_os = "linux")]
+    pub fn import_dmabuf(
+        &self,
+        desc: ExternalFrameDescriptor,
+    ) -> Result<GpuImageHandle, ExternalImportError> {
+        self.backend.import_dmabuf(desc)
+    }
 }
 
 pub fn format_bytes_per_pixel(format: GpuFormat) -> Option<u32> {
@@ -385,6 +418,8 @@ pub fn format_bytes_per_pixel(format: GpuFormat) -> Option<u32> {
         GpuFormat::Rgba8Unorm => Some(4),
         GpuFormat::Rgba16Float => Some(8),
         GpuFormat::Depth24Stencil8 => Some(4),
+        GpuFormat::Rg8Unorm => Some(2),
+        GpuFormat::Bgra8Unorm => Some(4),
     }
 }
 

@@ -1,8 +1,11 @@
+#[cfg(target_os = "linux")]
+use crate::ExternalFrameDescriptor;
 #[cfg(feature = "gpu-wgpu")]
 use crate::shader::SubmissionTracker;
 use crate::{
-    GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError, GpuImageHandle, GpuImageRequest,
-    GpuOptions, GpuRequest, buffer::TransferStats, handles::GpuBufferHandle,
+    ExternalImportError, ExternalImportSupport, GpuAdapterInfo, GpuBackendKind, GpuCapabilities,
+    GpuError, GpuImageHandle, GpuImageRequest, GpuOptions, GpuRequest, buffer::TransferStats,
+    handles::GpuBufferHandle,
 };
 use std::any::Any;
 #[cfg(feature = "gpu-wgpu")]
@@ -35,6 +38,31 @@ pub trait GpuBackend: Send + Sync {
         self.stats()
     }
     fn record_download(&self, _bytes: u64) {}
+
+    /// Whether [`GpuBackend::import_dmabuf`] can succeed on this backend, and why not.
+    ///
+    /// Must be cheap and must not panic, including on machines without a GPU.
+    fn dmabuf_import_support(&self) -> ExternalImportSupport {
+        ExternalImportSupport::backend_cannot_import(self.kind())
+    }
+
+    /// Import an externally owned dmabuf frame as a GPU image without copying it.
+    ///
+    /// Takes ownership of the plane fds and the keepalive; both are released once the returned
+    /// handle (and all its clones) are dropped and the GPU no longer uses the image.
+    #[cfg(target_os = "linux")]
+    fn import_dmabuf(
+        &self,
+        _desc: ExternalFrameDescriptor,
+    ) -> Result<GpuImageHandle, ExternalImportError> {
+        Err(ExternalImportError::Unsupported {
+            reason: self
+                .dmabuf_import_support()
+                .reason()
+                .unwrap_or("backend does not implement dmabuf import")
+                .to_string(),
+        })
+    }
 
     /// wgpu-only escape hatches used by the shader dispatch path.
     ///
