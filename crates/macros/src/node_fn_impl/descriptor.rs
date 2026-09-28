@@ -167,8 +167,7 @@ fn port_decl_token(input: PortDeclToken<'_>) -> TokenStream {
             let __ty = #ty_expr;
             let mut __port = #registry_crate::capability::PortDecl::new(
                 #name,
-                #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                    .map_err(|_| "invalid node input type key")?,
+                #runtime_crate::transport::typeexpr_transport_key(&__ty),
             )
             .schema(__ty)
             .access(#access);
@@ -301,7 +300,6 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
                 Some(boundary_contract_push(
                     ty_expr,
                     quote! { #contract_ty },
-                    "invalid node input boundary type key",
                     runtime_crate,
                 ))
             })
@@ -325,7 +323,6 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
                 Some(boundary_contract_push(
                     ty_expr,
                     quote! { #contract_ty },
-                    "invalid node output boundary type key",
                     runtime_crate,
                 ))
             })
@@ -367,14 +364,12 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
 fn boundary_contract_push(
     ty_expr: TokenStream,
     contract_ty: TokenStream,
-    error: &'static str,
     runtime_crate: &TokenStream,
 ) -> TokenStream {
     quote! {
         {
             let __ty = #ty_expr;
-            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                .map_err(|_| #error)?;
+            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty);
             __contracts.push(
                 #runtime_crate::transport_types::BoundaryTypeContract::for_schema::<#contract_ty>(
                     __key,
@@ -441,8 +436,7 @@ pub(super) fn fanin_input_decl_tokens(inputs: FanInInputs<'_>) -> Vec<TokenStrea
                     #registry_crate::capability::FanInDecl::new(
                         #prefix,
                         0,
-                        #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                            .map_err(|_| "invalid fan-in input type key")?,
+                        #runtime_crate::transport::typeexpr_transport_key(&__ty),
                     )
                     .schema(__ty)
                 }
@@ -550,8 +544,7 @@ fn node_decl_body(input: NodeDeclBody<'_>) -> TokenStream {
                 let __ty = #output_type_exprs;
                 let mut __port = #registry_crate::capability::PortDecl::new(
                     #output_names,
-                    #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                        .map_err(|_| "invalid node output type key")?,
+                    #runtime_crate::transport::typeexpr_transport_key(&__ty),
                 )
                 .schema(__ty)
                 .access(#runtime_crate::transport_types::AccessMode::Read);

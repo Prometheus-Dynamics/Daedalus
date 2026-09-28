@@ -20,11 +20,11 @@ mod bindings;
 mod drive;
 mod introspect;
 
-use bindings::type_key_for;
 pub use bindings::{
     HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
     HostGraphRunInput, HostGraphSubscription,
 };
+use daedalus_runtime::transport::type_key_of;
 pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
 
 /// In-process graph runner for host-driven applications.
@@ -235,7 +235,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         HostGraphInput {
             host: self.host.clone(),
             port: port.into(),
-            type_key: type_key_for::<T>(),
+            type_key: type_key_of::<T>(),
             _ty: PhantomData,
         }
     }
@@ -369,7 +369,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.direct_host_route(input_port, output_port)
             .map(|route| HostGraphLane {
                 route,
-                type_key: type_key_for::<I>(),
+                type_key: type_key_of::<I>(),
                 _input: PhantomData,
             })
     }
@@ -451,7 +451,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
                 ))
             })?;
         let output =
-            self.tick_direct_route_payload(&route, Payload::owned(type_key_for::<I>(), input))?;
+            self.tick_direct_route_payload(&route, Payload::owned(type_key_of::<I>(), input))?;
         output
             .map(|payload| {
                 payload.try_into_owned::<O>().map_err(|payload| {

@@ -1,9 +1,10 @@
 use daedalus_core::metadata::PLAN_EDGE_EXPLANATIONS_KEY;
 use daedalus_planner::ExecutionPlan;
+use daedalus_registry::typeexpr_transport_key;
 
 use super::transport_parse::{
     access_field, adapter_path_field, adapter_steps_field, bool_field, residency_field,
-    string_field, struct_fields, typeexpr_field, typeexpr_transport_key, u64_field,
+    string_field, struct_fields, typeexpr_field, u64_field,
 };
 use super::{RuntimeEdge, RuntimeEdgeTransport};
 

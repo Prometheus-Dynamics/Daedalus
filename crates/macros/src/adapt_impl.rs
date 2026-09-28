@@ -409,11 +409,7 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         .map(|from| quote! { ::std::string::String::from(#from) })
         .unwrap_or_else(|| {
             quote! {
-                #runtime_crate::transport::typeexpr_transport_key(
-                    &#data_crate::typing::type_expr::<#inferred_from_ty>()
-                )
-                .map(|__key| __key.to_string())
-                .unwrap_or_else(|_| ::std::string::String::from(::core::any::type_name::<#inferred_from_ty>()))
+                #runtime_crate::transport::type_key_of::<#inferred_from_ty>().to_string()
             }
         });
     let to_key = parsed
@@ -422,11 +418,7 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         .map(|to| quote! { ::std::string::String::from(#to) })
         .unwrap_or_else(|| {
             quote! {
-                #runtime_crate::transport::typeexpr_transport_key(
-                    &#data_crate::typing::type_expr::<#inferred_to_ty>()
-                )
-                .map(|__key| __key.to_string())
-                .unwrap_or_else(|_| ::std::string::String::from(::core::any::type_name::<#inferred_to_ty>()))
+                #runtime_crate::transport::type_key_of::<#inferred_to_ty>().to_string()
             }
         });
     let residency_option = residency

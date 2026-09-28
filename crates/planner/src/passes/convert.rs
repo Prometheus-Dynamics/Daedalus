@@ -1,6 +1,7 @@
 //! Lowering of a typechecked graph into an [`ExecutionPlan`].
 
 use daedalus_data::model::Value;
+use daedalus_registry::typeexpr_transport_key;
 use std::collections::HashMap;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
@@ -11,7 +12,7 @@ use super::{
     AdapterResolutionMode, EdgeResolutionExplanation, EdgeResolutionKind, PlannerCatalog,
     PlannerConfig, adapt_request_for_input, diagnostic_node_id, edge_resolution_to_value,
     input_access_for, latest_node, port_type, resolve_edge_adapter_request,
-    target_residency_for_node, typeexpr_transport_key,
+    target_residency_for_node,
 };
 
 pub(super) fn convert(

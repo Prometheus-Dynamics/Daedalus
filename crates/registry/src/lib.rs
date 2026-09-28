@@ -41,6 +41,11 @@ pub fn typeexpr_transport_key(ty: &daedalus_data::model::TypeExpr) -> daedalus_t
     }
 }
 
+/// Transport identity of the Rust type `T`, derived from its [`daedalus_data::typing::type_expr`].
+pub fn type_key_of<T: 'static>() -> daedalus_transport::TypeKey {
+    typeexpr_transport_key(&daedalus_data::typing::type_expr::<T>())
+}
+
 pub mod prelude {
     pub use crate::capability::{
         AdapterDecl, AdapterRegistry, CapabilityRegistry, CapabilityRegistrySnapshot, DeviceDecl,
@@ -50,6 +55,6 @@ pub mod prelude {
     };
     pub use crate::diagnostics::{RegistryError, RegistryErrorCode, RegistryResult};
     pub use crate::ids::{GroupId, IdValidationError, NodeId};
-    pub use crate::typeexpr_transport_key;
+    pub use crate::{type_key_of, typeexpr_transport_key};
     pub use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
 }

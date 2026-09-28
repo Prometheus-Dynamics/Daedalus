@@ -31,7 +31,6 @@ pub(super) struct HandlerInputs<'a> {
     pub(super) state_ty_attr: Option<&'a syn::Type>,
     pub(super) capability_attr: Option<&'a LitStr>,
     pub(super) inner_fn_ident: &'a syn::Ident,
-    pub(super) data_crate: &'a TokenStream,
     pub(super) runtime_crate: &'a TokenStream,
     pub(super) gpu_crate: &'a TokenStream,
 }
@@ -67,7 +66,6 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         state_ty_attr,
         capability_attr,
         inner_fn_ident,
-        data_crate,
         runtime_crate,
         gpu_crate,
     } = inputs;
@@ -400,18 +398,14 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                             } else if let Some(inner) = arc_inner_type(elem_ty) {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#inner>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#inner>();
                                         io.push_arc_as(Some(#port), __key, #ident);
                                     }
                                 }
                             } else {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#elem_ty>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#elem_ty>();
                                         io.push_as(Some(#port), __key, #ident);
                                     }
                                 }
@@ -423,9 +417,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         .zip(out_idents.iter())
                         .map(|(port, ident)| quote! {
                             {
-                                let __ty = #data_crate::model::TypeExpr::Opaque(::std::string::String::from("rust:unknown"));
-                                let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                    .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                let __key = #runtime_crate::transport_types::TypeKey::new("rust:unknown");
                                 io.push_as(Some(#port), __key, #ident);
                             }
                         })
@@ -453,18 +445,14 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                             if let Some(inner) = arc_inner_type(ok_ty) {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#inner>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#inner>();
                                         io.push_arc_as(Some(#out_port), __key, val);
                                     }
                                 }
                             } else {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#ok_ty>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#ok_ty>();
                                         io.push_as(Some(#out_port), __key, val);
                                     }
                                 }
@@ -472,9 +460,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         } else {
                             quote! {
                                 {
-                                    let __ty = #data_crate::model::TypeExpr::Opaque(::std::string::String::from("rust:unknown"));
-                                    let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                        .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                    let __key = #runtime_crate::transport_types::TypeKey::new("rust:unknown");
                                     io.push_as(Some(#out_port), __key, val);
                                 }
                             }

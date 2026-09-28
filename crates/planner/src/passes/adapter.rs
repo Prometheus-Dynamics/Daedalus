@@ -1,7 +1,9 @@
 use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::AdapterPathStep;
 
-use super::{AdapterResolutionMode, EdgeResolutionKind, typeexpr_transport_key};
+use daedalus_registry::typeexpr_transport_key;
+
+use super::{AdapterResolutionMode, EdgeResolutionKind};
 
 #[derive(Clone, Debug)]
 pub(super) struct ResolvedEdgeCompatibility {

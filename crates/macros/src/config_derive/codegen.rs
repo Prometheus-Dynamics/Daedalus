@@ -55,8 +55,7 @@ pub(super) fn port_decl_tokens(
     quote! {
         {
             let __ty = #ty_expr;
-            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                .expect("NodeConfig port type must have a transport key");
+            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty);
             let mut __port = #registry_crate::capability::PortDecl::new(#name, __key)
                 .schema(__ty);
             if let Some(__source) = #source {

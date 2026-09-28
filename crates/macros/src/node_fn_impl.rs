@@ -127,7 +127,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         state_ty_attr: state_ty_attr.as_ref(),
         capability_attr: capability_attr.as_ref(),
         inner_fn_ident: &inner_fn_ident,
-        data_crate: &data_crate,
         runtime_crate: &runtime_crate,
         gpu_crate: &gpu_crate,
     }) {
@@ -447,7 +446,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             same_payload_attr,
             inner_fn_ident: &inner_fn_ident,
             runtime_crate: &runtime_crate,
-            data_crate: &data_crate,
         });
 
     let handler_registry_fn =
