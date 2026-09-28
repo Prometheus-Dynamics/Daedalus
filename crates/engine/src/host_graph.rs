@@ -419,15 +419,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         O: Send + Sync + 'static,
     {
         self.run_lane(lane, input)?
-            .map(|payload| {
-                payload.try_into_owned::<O>().map_err(|payload| {
-                    EngineError::Config(format!(
-                        "expected unique direct lane output payload, got type_key={} rust_type={:?}",
-                        payload.type_key(),
-                        payload.storage_rust_type_name()
-                    ))
-                })
-            })
+            .map(|payload| into_owned_or_err::<O>(payload, "direct lane output payload"))
             .transpose()
     }
 
@@ -454,13 +446,10 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
             self.tick_direct_route_payload(&route, Payload::owned(type_key_of::<I>(), input))?;
         output
             .map(|payload| {
-                payload.try_into_owned::<O>().map_err(|payload| {
-                    EngineError::Config(format!(
-                        "expected unique direct output payload on '{output_port}', got type_key={} rust_type={:?}",
-                        payload.type_key(),
-                        payload.storage_rust_type_name()
-                    ))
-                })
+                into_owned_or_err::<O>(
+                    payload,
+                    format_args!("direct output payload on '{output_port}'"),
+                )
             })
             .transpose()
     }
@@ -614,13 +603,10 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     where
         T: Send + Sync + 'static,
     {
-        self.host.try_pop_owned(port).map_err(|payload| {
-            EngineError::Config(format!(
-                "expected unique payload on host output, got type_key={} rust_type={:?}",
-                payload.type_key(),
-                payload.storage_rust_type_name()
-            ))
-        })
+        self.host
+            .try_pop_payload(port)
+            .map(|payload| into_owned_or_err(payload, "payload on host output"))
+            .transpose()
     }
 
     pub fn latest<T>(&self, port: impl AsRef<str>) -> Option<T>
@@ -647,15 +633,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     {
         self.drain_payloads(port)
             .into_iter()
-            .map(|payload| {
-                payload.try_into_owned::<T>().map_err(|payload| {
-                    EngineError::Config(format!(
-                        "expected unique payload on host output, got type_key={} rust_type={:?}",
-                        payload.type_key(),
-                        payload.storage_rust_type_name()
-                    ))
-                })
-            })
+            .map(|payload| into_owned_or_err::<T>(payload, "payload on host output"))
             .collect()
     }
 
@@ -665,4 +643,18 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     {
         self.host.drain(port)
     }
+}
+
+/// Take ownership of `payload` as `T`, or report what was expected (`what`) and what was found.
+fn into_owned_or_err<T>(payload: Payload, what: impl std::fmt::Display) -> Result<T, EngineError>
+where
+    T: Send + Sync + 'static,
+{
+    payload.try_into_owned::<T>().map_err(|payload| {
+        EngineError::Config(format!(
+            "expected unique {what}, got type_key={} rust_type={:?}",
+            payload.type_key(),
+            payload.storage_rust_type_name()
+        ))
+    })
 }
