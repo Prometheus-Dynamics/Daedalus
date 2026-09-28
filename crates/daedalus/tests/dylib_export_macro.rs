@@ -75,10 +75,9 @@ fn exported_descriptor_reports_info_schema_and_installs() {
 #[test]
 fn null_registry_is_reported_not_dereferenced() {
     let descriptor = daedalus_plugin_descriptor();
-    let mut message = None;
-    assert!(!unsafe { (descriptor.register)(std::ptr::null_mut(), sink(&mut message)) });
-    assert!(message.unwrap().contains("null"));
-    assert!(!unsafe {
-        (descriptor.register_boundary_contracts)(std::ptr::null_mut(), StrSink::discard())
-    });
+    for install in [descriptor.register, descriptor.register_boundary_contracts] {
+        let mut message = None;
+        assert!(!unsafe { install(std::ptr::null_mut(), sink(&mut message)) });
+        assert!(message.unwrap().contains("null"));
+    }
 }

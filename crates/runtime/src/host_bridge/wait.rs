@@ -26,12 +26,6 @@ pub enum InboundWait {
     TimedOut,
 }
 
-impl InboundWait {
-    pub fn is_ready(self) -> bool {
-        matches!(self, InboundWait::Ready)
-    }
-}
-
 /// A one-shot wait for inbound host payloads.
 ///
 /// Create it with [`HostBridgeHandle::inbound_waiter`]. Any explicit wakeup issued *after*
@@ -231,7 +225,10 @@ mod tests {
             InboundWait::TimedOut
         );
         handle.push("in", 1i64);
-        assert!(handle.wait_inbound(Some(Duration::ZERO)).is_ready());
+        assert_eq!(
+            handle.wait_inbound(Some(Duration::ZERO)),
+            InboundWait::Ready
+        );
     }
 
     #[test]

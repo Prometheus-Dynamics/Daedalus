@@ -72,15 +72,6 @@ fn concrete(ty: Option<TypeExpr>) -> Option<TypeExpr> {
 }
 
 impl RuntimePlan {
-    /// Aliases of every host-bridge node in the plan, in node order.
-    pub fn host_bridge_aliases(&self) -> Vec<String> {
-        self.nodes
-            .iter()
-            .filter(|node| is_host_bridge_metadata(&node.metadata))
-            .map(|node| node.host_alias().to_string())
-            .collect()
-    }
-
     /// Describe every host port of every host-bridge node.
     ///
     /// Ordering is deterministic: host nodes in plan order, inputs before outputs, then ports by

@@ -34,11 +34,6 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         &self.value_serializers
     }
 
-    /// Replace the serializer map used by [`HostGraph::inspect_payload`].
-    pub fn set_value_serializers(&mut self, serializers: ValueSerializerMap) {
-        self.value_serializers = serializers;
-    }
-
     /// Convert a payload into a `Value` using the registered value serializers, falling back to a
     /// structured summary (type key, rust type, residency, layout, bytes estimate).
     pub fn inspect_payload(&self, payload: &Payload) -> PayloadInspection {

@@ -141,7 +141,7 @@ fn host_ports_are_typed_from_plan() {
     assert_eq!(outputs[0].connections[0].port.as_str(), "out");
 
     assert_eq!(graph.host_ports().len(), 2);
-    assert_eq!(graph.runtime_plan().host_bridge_aliases(), vec!["host"]);
+    assert!(graph.host_ports().iter().all(|port| port.alias == "host"));
     assert!(graph.runtime_plan().host_ports_for("other").is_empty());
 }
 

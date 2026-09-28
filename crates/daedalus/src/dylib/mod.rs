@@ -149,14 +149,6 @@ pub struct StrSink {
 }
 
 impl StrSink {
-    /// A sink that discards strings.
-    pub const fn discard() -> Self {
-        Self {
-            ctx: std::ptr::null_mut(),
-            write: None,
-        }
-    }
-
     /// Hand `value` to the host.
     ///
     /// # Safety
