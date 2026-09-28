@@ -19,8 +19,16 @@
 //!   drops it only once the GPU image is destroyed and no submitted GPU work still uses it.
 //! - Holding imported images therefore holds producer buffers. Drop handles promptly: a camera
 //!   with four buffers stalls once four frames are held.
+//!
+//! # Synchronization
+//!
+//! If the producer may still be writing when it hands the buffer over, pass its `sync_file` with
+//! [`ExternalFrameDescriptor::with_acquire_fence`] (or [`ExternalFrameDescriptor::with_implicit_fence`]
+//! for producers that only fence the dmabuf itself). The import waits for it on the CPU, bounded by
+//! [`ExternalFrameDescriptor::acquire_timeout`], before the GPU can touch the memory.
 
 use std::fmt;
+use std::time::Duration;
 
 use crate::{GpuBackendKind, GpuError, GpuFormat};
 
@@ -51,7 +59,8 @@ impl DrmFourcc {
     pub const XBGR8888: Self = Self::from_bytes(*b"XB24");
     /// 32-bit R,G,B,A in memory order (`DRM_FORMAT_ABGR8888`).
     pub const ABGR8888: Self = Self::from_bytes(*b"AB24");
-    /// Two-plane 4:2:0 YUV. Not importable as one image; import each plane separately.
+    /// Two-plane 4:2:0 YUV (Y, then interleaved UV); imported as one [`GpuFormat::Nv12`] image
+    /// where the device supports it.
     pub const NV12: Self = Self::from_bytes(*b"NV12");
     /// Three-plane 4:2:0 YUV. Not importable as one image; import each plane separately.
     pub const YUV420: Self = Self::from_bytes(*b"YU12");
@@ -61,13 +70,14 @@ impl DrmFourcc {
         self.0.to_le_bytes()
     }
 
-    /// GPU image format the fourcc maps to, if it is importable as a single-plane image.
+    /// GPU image format the fourcc imports as, if it is importable as one image.
     pub fn gpu_format(self) -> Option<GpuFormat> {
         match self {
             Self::R8 => Some(GpuFormat::R8Unorm),
             Self::GR88 => Some(GpuFormat::Rg8Unorm),
             Self::XBGR8888 | Self::ABGR8888 => Some(GpuFormat::Rgba8Unorm),
             Self::XRGB8888 | Self::ARGB8888 => Some(GpuFormat::Bgra8Unorm),
+            Self::NV12 => Some(GpuFormat::Nv12),
             _ => None,
         }
     }
@@ -138,7 +148,7 @@ impl ExternalImportSupport {
 pub enum ExternalImportError {
     /// Backend, platform, build, or device cannot import this kind of memory at all.
     Unsupported { reason: String },
-    /// The descriptor is malformed (zero size, bad stride, buffer too small, ...).
+    /// The descriptor is malformed (zero size, bad stride, buffer too small, bad fence, ...).
     InvalidDescriptor { reason: String },
     /// The device cannot import this format/modifier combination.
     UnsupportedFormat {
@@ -146,6 +156,8 @@ pub enum ExternalImportError {
         modifier: Option<u64>,
         reason: String,
     },
+    /// The acquire fence did not signal within the descriptor's timeout.
+    FenceTimeout { timeout: Duration },
     /// The driver rejected the import.
     ImportFailed { reason: String },
 }
@@ -176,6 +188,9 @@ impl fmt::Display for ExternalImportError {
                 ),
                 None => write!(f, "unsupported format {fourcc}: {reason}"),
             },
+            Self::FenceTimeout { timeout } => {
+                write!(f, "acquire fence not signaled within {timeout:?}")
+            }
             Self::ImportFailed { reason } => write!(f, "external import failed: {reason}"),
         }
     }
@@ -194,211 +209,16 @@ impl From<ExternalImportError> for GpuError {
 }
 
 #[cfg(target_os = "linux")]
-pub use linux::*;
+#[path = "external/fence.rs"]
+mod fence;
+#[cfg(target_os = "linux")]
+#[path = "external/linux.rs"]
+mod linux;
 
 #[cfg(target_os = "linux")]
-mod linux {
-    use std::fmt;
-    use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
-
-    use super::{DRM_FORMAT_MOD_INVALID, DrmFourcc, ExternalImportError, ExternalKeepalive};
-    use crate::{GpuFormat, GpuUsage, format_bytes_per_pixel};
-
-    /// One plane of an external frame: a dmabuf fd plus the plane layout inside it.
-    pub struct ExternalPlane {
-        /// dmabuf file descriptor; ownership moves into the backend on import.
-        pub fd: OwnedFd,
-        /// Byte offset of the plane's first row inside the dmabuf.
-        pub offset: u64,
-        /// Bytes between the starts of consecutive rows.
-        pub stride: u64,
-    }
-
-    impl ExternalPlane {
-        pub fn new(fd: OwnedFd, offset: u64, stride: u64) -> Self {
-            Self { fd, offset, stride }
-        }
-
-        /// Duplicate (`dup`) a descriptor the frame source keeps owning.
-        pub fn from_borrowed(
-            fd: BorrowedFd<'_>,
-            offset: u64,
-            stride: u64,
-        ) -> std::io::Result<Self> {
-            Ok(Self::new(fd.try_clone_to_owned()?, offset, stride))
-        }
-    }
-
-    impl fmt::Debug for ExternalPlane {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ExternalPlane")
-                .field("fd", &self.fd.as_raw_fd())
-                .field("offset", &self.offset)
-                .field("stride", &self.stride)
-                .finish()
-        }
-    }
-
-    /// Description of an externally owned frame to import without copying.
-    pub struct ExternalFrameDescriptor {
-        pub width: u32,
-        pub height: u32,
-        pub fourcc: DrmFourcc,
-        /// DRM format modifier. `None` means the implicit layout, treated as
-        /// [`DRM_FORMAT_MOD_LINEAR`](super::DRM_FORMAT_MOD_LINEAR) (what V4L2/libcamera buffers use).
-        pub modifier: Option<u64>,
-        pub planes: Vec<ExternalPlane>,
-        /// Extra usages beyond the implied sampling + copy-source (`UPLOAD` = copy destination,
-        /// `STORAGE`, `RENDER_TARGET` write into the producer's buffer).
-        pub usage: GpuUsage,
-        pub label: Option<String>,
-        /// Kept alive until the GPU image is destroyed and idle; see the module docs.
-        pub keepalive: Option<ExternalKeepalive>,
-    }
-
-    impl ExternalFrameDescriptor {
-        pub fn new(width: u32, height: u32, fourcc: DrmFourcc, planes: Vec<ExternalPlane>) -> Self {
-            Self {
-                width,
-                height,
-                fourcc,
-                modifier: None,
-                planes,
-                usage: GpuUsage::empty(),
-                label: None,
-                keepalive: None,
-            }
-        }
-
-        /// Convenience for the common single-plane case.
-        pub fn single_plane(
-            width: u32,
-            height: u32,
-            fourcc: DrmFourcc,
-            plane: ExternalPlane,
-        ) -> Self {
-            Self::new(width, height, fourcc, vec![plane])
-        }
-
-        pub fn with_modifier(mut self, modifier: u64) -> Self {
-            self.modifier = Some(modifier);
-            self
-        }
-
-        pub fn with_usage(mut self, usage: GpuUsage) -> Self {
-            self.usage = usage;
-            self
-        }
-
-        pub fn with_label(mut self, label: impl Into<String>) -> Self {
-            self.label = Some(label.into());
-            self
-        }
-
-        pub fn with_keepalive(mut self, keepalive: ExternalKeepalive) -> Self {
-            self.keepalive = Some(keepalive);
-            self
-        }
-
-        /// Backend-independent checks shared by every backend: non-zero extent, exactly one plane,
-        /// a known single-plane fourcc, a valid modifier, and a stride that fits a row.
-        pub fn validate(&self) -> Result<ValidatedLayout, ExternalImportError> {
-            if self.width == 0 || self.height == 0 {
-                return Err(ExternalImportError::invalid(format!(
-                    "extent {}x{} must be non-zero",
-                    self.width, self.height
-                )));
-            }
-            if self.modifier == Some(DRM_FORMAT_MOD_INVALID) {
-                return Err(ExternalImportError::invalid(
-                    "DRM_FORMAT_MOD_INVALID is not an importable modifier",
-                ));
-            }
-            let Some(format) = self.fourcc.gpu_format() else {
-                let reason = if self.fourcc.is_multi_planar() {
-                    "multi-planar YUV is not imported as one image; import each plane separately \
-                     (Y as R8, interleaved UV as GR88) using its offset and stride"
-                } else {
-                    "no GPU format mapping for this fourcc"
-                };
-                return Err(ExternalImportError::UnsupportedFormat {
-                    fourcc: self.fourcc,
-                    modifier: self.modifier,
-                    reason: reason.into(),
-                });
-            };
-            if self.planes.len() != 1 {
-                return Err(ExternalImportError::invalid(format!(
-                    "{} expects exactly 1 plane, got {}",
-                    self.fourcc,
-                    self.planes.len()
-                )));
-            }
-            let plane = &self.planes[0];
-            let bpp = u64::from(format_bytes_per_pixel(format).unwrap_or(4));
-            let row_bytes = u64::from(self.width) * bpp;
-            if plane.stride < row_bytes {
-                return Err(ExternalImportError::invalid(format!(
-                    "stride {} is smaller than a {}-pixel row of {} ({} bytes)",
-                    plane.stride, self.width, self.fourcc, row_bytes
-                )));
-            }
-            let min_len = plane
-                .stride
-                .checked_mul(u64::from(self.height - 1))
-                .and_then(|v| v.checked_add(row_bytes))
-                .and_then(|v| v.checked_add(plane.offset))
-                .ok_or_else(|| ExternalImportError::invalid("plane layout overflows u64"))?;
-            Ok(ValidatedLayout {
-                format,
-                bytes_per_pixel: bpp as u32,
-                min_len,
-            })
-        }
-    }
-
-    impl fmt::Debug for ExternalFrameDescriptor {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ExternalFrameDescriptor")
-                .field("width", &self.width)
-                .field("height", &self.height)
-                .field("fourcc", &self.fourcc)
-                .field("modifier", &self.modifier)
-                .field("planes", &self.planes)
-                .field("usage", &self.usage)
-                .field("label", &self.label)
-                .field("keepalive", &self.keepalive.is_some())
-                .finish()
-        }
-    }
-
-    /// Result of [`ExternalFrameDescriptor::validate`].
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct ValidatedLayout {
-        pub format: GpuFormat,
-        pub bytes_per_pixel: u32,
-        /// Minimum dmabuf length needed to hold the plane (offset + last row end).
-        pub min_len: u64,
-    }
-
-    /// Drop token holding an import's fds and keepalive for as long as the handle lives (mock
-    /// backend; the wgpu backend hands both to the Vulkan image instead).
-    #[cfg(feature = "gpu-mock")]
-    pub(crate) struct ExternalImageToken {
-        pub(crate) fds: Vec<OwnedFd>,
-        pub(crate) keepalive: Option<ExternalKeepalive>,
-    }
-
-    #[cfg(feature = "gpu-mock")]
-    impl fmt::Debug for ExternalImageToken {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("ExternalImageToken")
-                .field("fds", &self.fds)
-                .field("keepalive", &self.keepalive.is_some())
-                .finish()
-        }
-    }
-}
+pub use fence::{DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, export_dmabuf_fence};
+#[cfg(target_os = "linux")]
+pub use linux::*;
 
 #[cfg(all(test, target_os = "linux"))]
 #[path = "external/tests.rs"]

@@ -23,6 +23,7 @@ mod staging;
 use adapter_select::{preferred_backends, select_best_adapter};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
+pub use dmabuf::texture_plane_views;
 use resources::{ResourceDropToken, ResourceKind, WgpuResources};
 use staging::StagingPool;
 pub use staging::{WgpuStagingPoolConfig, WgpuStagingPoolStats};
@@ -187,6 +188,7 @@ impl WgpuBackend {
             wgpu::TextureFormat::Rgba16Float => GpuFormat::Rgba16Float,
             wgpu::TextureFormat::Rg8Unorm => GpuFormat::Rg8Unorm,
             wgpu::TextureFormat::Bgra8Unorm => GpuFormat::Bgra8Unorm,
+            wgpu::TextureFormat::NV12 => GpuFormat::Nv12,
             _ => GpuFormat::Rgba8Unorm,
         };
         let mut gpu_usage = GpuUsage::empty();
@@ -614,6 +616,7 @@ fn map_format(format: GpuFormat) -> wgpu::TextureFormat {
         GpuFormat::Depth24Stencil8 => wgpu::TextureFormat::Depth24PlusStencil8,
         GpuFormat::Rg8Unorm => wgpu::TextureFormat::Rg8Unorm,
         GpuFormat::Bgra8Unorm => wgpu::TextureFormat::Bgra8Unorm,
+        GpuFormat::Nv12 => wgpu::TextureFormat::NV12,
     }
 }
 
