@@ -20,16 +20,13 @@ pub mod sync;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 
-/// Cargo features of `daedalus-core` enabled in this build, in `Cargo.toml` declaration order.
+/// Cargo features of `daedalus-core` enabled in this build (comma-separated).
 ///
-/// Dynamic plugin loaders fold this into their build fingerprint so hosts and plugins built
-/// with different feature sets are rejected before any Rust type crosses the boundary.
-pub const ENABLED_FEATURES: &[&str] = &[
-    #[cfg(feature = "metrics")]
-    "metrics",
-    #[cfg(feature = "async-channels")]
-    "async-channels",
-];
+/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
+/// each feature, this feeds the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+/// This crate's `Cargo.toml`.
+pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 
 /// Commonly used types re-exported for convenience.
 pub mod prelude {

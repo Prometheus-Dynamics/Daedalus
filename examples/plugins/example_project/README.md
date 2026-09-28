@@ -21,6 +21,9 @@ From repo root:
 cargo build -p daedalus-plugins-example-project
 ```
 
+Add `--features dylib` to export the plugin from the `cdylib` for `daedalus::PluginLibrary`
+(see [`docs/dynamic-plugins.md`](../../../docs/dynamic-plugins.md)).
+
 ## Use in an app
 
 In your host app (Rust), install the plugin and build graphs from the registered nodes:

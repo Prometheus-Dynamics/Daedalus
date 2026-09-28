@@ -13,18 +13,13 @@ pub mod ids;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
-/// Cargo features of `daedalus-registry` enabled in this build, in `Cargo.toml` declaration order.
+/// Cargo features of `daedalus-registry` enabled in this build (comma-separated).
 ///
-/// Dynamic plugin loaders fold this into their build fingerprint so hosts and plugins built
-/// with different feature sets are rejected before any Rust type crosses the boundary.
-pub const ENABLED_FEATURES: &[&str] = &[
-    #[cfg(feature = "bundle")]
-    "bundle",
-    #[cfg(feature = "plugin")]
-    "plugin",
-    #[cfg(feature = "gpu")]
-    "gpu",
-];
+/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
+/// each feature, this feeds the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+/// This crate's `Cargo.toml`.
+pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 
 /// Convert a Daedalus type expression into the stable transport identity used by
 /// manifests, adapters, and runtime payloads.
