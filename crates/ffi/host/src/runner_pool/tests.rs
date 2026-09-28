@@ -202,6 +202,56 @@ fn runner_pool_shutdown_removes_registered_runners() {
     assert!(pool.is_empty());
 }
 
+struct StuckRunner;
+
+impl BackendRunner for StuckRunner {
+    fn invoke(&self, _request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
+        Err(RunnerPoolError::Runner("unused".into()))
+    }
+
+    fn shutdown(&self) -> Result<(), RunnerPoolError> {
+        Err(RunnerPoolError::Runner("stuck".into()))
+    }
+}
+
+#[test]
+fn runner_pool_shutdown_all_attempts_every_runner_and_aggregates_failures() {
+    let telemetry = FfiHostTelemetry::new();
+    let mut pool = RunnerPool::new().with_ffi_telemetry(telemetry.clone());
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let stuck_a = backend_config("stuck_a.py");
+    let clean = backend_config("clean.py");
+    let stuck_b = backend_config("stuck_b.py");
+    pool.insert(&stuck_a, StuckRunner).expect("insert runner");
+    pool.insert(
+        &clean,
+        FakeRunner::ready_with_shutdowns(Arc::default(), shutdowns.clone()),
+    )
+    .expect("insert runner");
+    pool.insert(&stuck_b, StuckRunner).expect("insert runner");
+
+    let err = pool.shutdown_all().expect_err("two runners fail");
+    assert!(pool.is_empty());
+    assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
+    let key = |config| RunnerKey::from_backend(config).expect("runner key");
+    let failed: Vec<_> = err.failures.iter().map(|failure| &failure.key).collect();
+    assert_eq!(failed, [&key(&stuck_a), &key(&stuck_b)]);
+    assert!(err.failures.iter().all(
+        |failure| matches!(&failure.source, RunnerPoolError::Runner(message) if message == "stuck")
+    ));
+    assert!(
+        err.to_string()
+            .starts_with("2 runner(s) failed to shut down: runner `")
+    );
+
+    assert_eq!(pool.telemetry().shutdowns, 1);
+    let report = telemetry.snapshot();
+    let clean_report = &report.backends[key(&clean).as_str()];
+    assert_eq!(clean_report.runner_shutdowns, 1);
+    assert_eq!(clean_report.language.as_deref(), Some("python"));
+    assert_eq!(report.backends[key(&stuck_a).as_str()].runner_shutdowns, 0);
+}
+
 #[test]
 fn runner_pool_drop_shuts_down_remaining_runners() {
     let invokes = Arc::new(AtomicUsize::new(0));

@@ -69,6 +69,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- `FfiHost::start_runners` now takes `(&mut CapabilityRegistry, &factory)`; a pending package whose
+  runners fail to start is rolled back like a failed `add_package` (registry entries, routes, and
+  its started runners removed) while other packages are untouched.
+- `RunnerPool::shutdown_all` attempts every runner, records per-backend shutdown telemetry, and
+  returns a `RunnerShutdownError` listing every `RunnerShutdownFailure`;
+  `FfiHostError::Shutdown` carries it. `install_plan_runners` shuts down the runners it started
+  when a later runner fails, and every package/schema installer leaves the registry untouched on
+  failure.
 - The facade `engine` feature no longer enables the Rayon executor pool or metrics; use
   `engine-full` for the previous behavior. Without `executor-pool`, parallel/adaptive runtime
   modes run on scoped threads. The workspace `daedalus-engine` dependency now sets

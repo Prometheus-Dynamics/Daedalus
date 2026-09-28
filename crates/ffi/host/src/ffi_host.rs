@@ -9,17 +9,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use daedalus_ffi_core::{
-    BackendConfig, BackendRuntimeModel, InvokeRequest, InvokeResponse, PluginPackage,
-};
+use daedalus_ffi_core::{BackendConfig, InvokeRequest, InvokeResponse, PluginPackage};
 use daedalus_registry::capability::CapabilityRegistry;
 use thiserror::Error;
 
-use crate::installer::start_plan_runners;
+use crate::installer::{start_plan_runners, uninstall_plan};
 use crate::{
     BackendRunner, BackendRunnerFactory, FfiHostTelemetry, HostInstallError, HostInstallPlan,
     PersistentWorkerRunner, RunnerHealth, RunnerKey, RunnerLimits, RunnerPool, RunnerPoolError,
-    RunnerPoolOptions, install_package_with_ffi_telemetry,
+    RunnerPoolOptions, RunnerShutdownError, install_package_with_ffi_telemetry,
 };
 
 /// Errors returned by [`FfiHost`].
@@ -58,7 +56,7 @@ pub enum FfiHostError {
     },
     /// One or more runners failed to shut down cleanly.
     #[error("failed to shut down FFI runners: {0}")]
-    Shutdown(#[source] RunnerPoolError),
+    Shutdown(#[source] RunnerShutdownError),
 }
 
 /// Builder for [`FfiHost`] options: shared telemetry, pool options, and deferred startup.
@@ -174,8 +172,8 @@ impl FfiHost {
     /// Install another package into `registry` and this host, sharing the pool and telemetry.
     ///
     /// The install is atomic: if validation, registry install, or runner startup fails, the
-    /// registry is restored and runners started for this package are shut down. Runners whose
-    /// backend config matches an already running runner are reused.
+    /// package's registry entries are removed and runners started for it are shut down. Runners
+    /// whose backend config matches an already running runner are reused.
     pub fn add_package(
         &mut self,
         registry: &mut CapabilityRegistry,
@@ -192,77 +190,72 @@ impl FfiHost {
                 node_id: node.id.clone(),
             });
         }
-        let backup = registry.clone();
-        let installed = install_package_with_ffi_telemetry(registry, package, &self.telemetry)
-            .map_err(FfiHostError::from)
-            .and_then(|plan| Ok((plan_routes(&plan, self.plans.len())?, plan)))
-            .and_then(|(routes, plan)| {
-                if !self.defer_runner_startup {
-                    self.start_plan(&plan, factory)?;
-                }
-                Ok((routes, plan))
-            });
-        let (routes, plan) = match installed {
-            Ok(installed) => installed,
-            Err(err) => {
-                *registry = backup;
-                return Err(err);
-            }
-        };
+        let plan = install_package_with_ffi_telemetry(registry, package, &self.telemetry)?;
         let index = self.plans.len();
-        self.routes.extend(routes);
-        if self.defer_runner_startup {
-            self.pending.push(index);
-        }
         self.plans.push(plan);
+        let result = plan_routes(&self.plans[index], index).and_then(|routes| {
+            self.routes.extend(routes);
+            if self.defer_runner_startup {
+                self.pending.push(index);
+                Ok(())
+            } else {
+                self.start_plan(index, factory).map(drop)
+            }
+        });
+        if let Err(err) = result {
+            self.remove_package(registry, index);
+            return Err(err.into());
+        }
         Ok(&self.plans[index])
     }
 
     /// Start runners for packages installed with deferred startup. Returns new runner keys.
     ///
-    /// On failure, runners started for the failing package are shut down and that package and
-    /// every later pending package stay pending.
+    /// `registry` must be the registry the pending packages were installed into. Packages start
+    /// in install order. If one fails, it is rolled back like a failed [`FfiHost::add_package`]:
+    /// its registry entries and host routes are removed and runners started for it are shut down.
+    /// Packages started before it keep running; later packages stay pending.
     pub fn start_runners(
         &mut self,
+        registry: &mut CapabilityRegistry,
         factory: &impl BackendRunnerFactory,
     ) -> Result<Vec<RunnerKey>, FfiHostError> {
         let mut started = Vec::new();
-        while let Some(&index) = self.pending.first() {
-            let plan = self.plans[index].clone();
-            started.extend(self.start_plan(&plan, factory)?);
-            self.pending.remove(0);
+        while !self.pending.is_empty() {
+            let index = self.pending.remove(0);
+            match self.start_plan(index, factory) {
+                Ok(keys) => started.extend(keys),
+                Err(err) => {
+                    self.remove_package(registry, index);
+                    return Err(err.into());
+                }
+            }
         }
         Ok(started)
     }
 
+    /// Start the runners of plan `index`; on failure the runners it started are already stopped.
     fn start_plan(
         &mut self,
-        plan: &HostInstallPlan,
+        index: usize,
         factory: &impl BackendRunnerFactory,
-    ) -> Result<Vec<RunnerKey>, FfiHostError> {
-        match start_plan_runners(&mut self.pool, plan, factory, &self.started) {
-            Ok(keys) => {
-                self.started.extend(keys.iter().cloned());
-                Ok(keys)
-            }
-            Err(err) => {
-                let mut fresh = BTreeMap::new();
-                for backend in plan.backends.values() {
-                    if backend.runtime_model == BackendRuntimeModel::InProcessAbi {
-                        continue;
-                    }
-                    if let Ok(key) = RunnerKey::from_backend(backend)
-                        && !self.started.contains(&key)
-                    {
-                        fresh.insert(key, backend);
-                    }
-                }
-                for backend in fresh.values() {
-                    let _ = self.pool.shutdown(backend);
-                }
-                Err(err.into())
-            }
-        }
+    ) -> Result<Vec<RunnerKey>, HostInstallError> {
+        let keys = start_plan_runners(&mut self.pool, &self.plans[index], factory, &self.started)?;
+        self.started.extend(keys.iter().cloned());
+        Ok(keys)
+    }
+
+    /// Roll back plan `index`: remove its registry entries, routes, and pending slot.
+    fn remove_package(&mut self, registry: &mut CapabilityRegistry, index: usize) {
+        let plan = self.plans.remove(index);
+        uninstall_plan(registry, &plan);
+        self.routes.retain(|_, route| route.plan != index);
+        self.pending.retain(|&pending| pending != index);
+        let shift = |plan: &mut usize| *plan -= usize::from(*plan > index);
+        self.routes
+            .values_mut()
+            .for_each(|route| shift(&mut route.plan));
+        self.pending.iter_mut().for_each(shift);
     }
 
     /// Invoke `node_id` on its runner.
@@ -368,30 +361,9 @@ impl FfiHost {
             .with_ffi_telemetry(self.telemetry.clone())
     }
 
-    /// Shut down every runner, reporting the first failure after attempting all of them.
+    /// Shut down every runner, reporting every failure after attempting all of them.
     pub fn shutdown(mut self) -> Result<(), FfiHostError> {
-        let mut backends = BTreeMap::new();
-        for route in self.routes.values() {
-            if let Some(key) = &route.key
-                && self.started.contains(key)
-            {
-                backends.entry(key.clone()).or_insert(&route.backend);
-            }
-        }
-        let mut first_error = None;
-        for backend in backends.values() {
-            match self.pool.shutdown(backend) {
-                Ok(()) | Err(RunnerPoolError::MissingRunner) => {}
-                Err(err) => {
-                    first_error.get_or_insert(err);
-                }
-            }
-        }
-        self.started.clear();
-        if let Err(err) = self.pool.shutdown_all() {
-            first_error.get_or_insert(err);
-        }
-        first_error.map_or(Ok(()), |err| Err(FfiHostError::Shutdown(err)))
+        self.pool.shutdown_all().map_err(FfiHostError::Shutdown)
     }
 
     fn runner_backend(&self, node_id: &str) -> Result<&BackendConfig, FfiHostError> {
@@ -419,22 +391,20 @@ impl FfiHost {
 fn plan_routes(
     plan: &HostInstallPlan,
     index: usize,
-) -> Result<Vec<(String, NodeRoute)>, FfiHostError> {
-    plan.backends
+) -> Result<Vec<(String, NodeRoute)>, HostInstallError> {
+    let mut keys = plan.runner_keys()?;
+    Ok(plan
+        .backends
         .iter()
         .map(|(node_id, backend)| {
-            let key = (backend.runtime_model != BackendRuntimeModel::InProcessAbi)
-                .then(|| RunnerKey::from_backend(backend))
-                .transpose()
-                .map_err(|source| runner_error(node_id, source))?;
             let route = NodeRoute {
                 plan: index,
                 backend: backend.clone(),
-                key,
+                key: keys.remove(node_id.as_str()),
             };
-            Ok((node_id.clone(), route))
+            (node_id.clone(), route)
         })
-        .collect()
+        .collect())
 }
 
 fn bind_request(node_id: &str, request: &mut InvokeRequest) -> Result<(), FfiHostError> {
