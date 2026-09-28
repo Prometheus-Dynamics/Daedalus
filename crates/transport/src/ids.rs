@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::IdStr;
+
 /// Stable graph/plugin-facing type identity.
 ///
 /// `TypeKey` is the transport identity that survives manifests, plugins, and FFI boundaries.
@@ -10,11 +12,16 @@ use serde::{Deserialize, Serialize};
 /// graph type identity.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct TypeKey(Arc<str>);
+pub struct TypeKey(IdStr);
 
 impl TypeKey {
     pub fn new(key: impl Into<String>) -> Self {
-        Self(key.into().into())
+        Self(IdStr::new(key))
+    }
+
+    /// Wrap a string literal without allocating.
+    pub const fn from_static(key: &'static str) -> Self {
+        Self(IdStr::from_static(key))
     }
 
     pub fn opaque(key: impl Into<String>) -> Self {
@@ -22,19 +29,26 @@ impl TypeKey {
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
 impl fmt::Display for TypeKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.as_str())
     }
 }
 
-impl From<&str> for TypeKey {
-    fn from(value: &str) -> Self {
-        Self::new(value)
+/// String literals are wrapped without allocating; use [`TypeKey::new`] for borrowed text.
+impl From<&'static str> for TypeKey {
+    fn from(value: &'static str) -> Self {
+        Self::from_static(value)
+    }
+}
+
+impl From<&String> for TypeKey {
+    fn from(value: &String) -> Self {
+        Self::new(value.as_str())
     }
 }
 

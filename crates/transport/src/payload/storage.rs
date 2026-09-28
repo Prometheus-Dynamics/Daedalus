@@ -10,7 +10,8 @@ use crate::{ReleaseMode, TypeKey};
 pub trait PayloadStorage: Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+    /// Upcast a shared handle so a unique payload can recover its concrete storage.
+    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
     fn type_key(&self) -> &TypeKey;
     fn value_any(&self) -> Option<&dyn Any> {
         None
@@ -58,7 +59,7 @@ impl<T: Send + Sync + 'static> PayloadStorage for TypedStorage<T> {
         self
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 
@@ -98,7 +99,7 @@ impl PayloadStorage for BytesStorage {
         self
     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 

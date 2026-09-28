@@ -37,7 +37,7 @@ pub use handler::{DirectPayloadFn, NodeHandler};
 pub(crate) use init::{ExecutorInit, build_executor_init};
 pub use owned::OwnedExecutor;
 pub(crate) use patching::apply_patch_to_const_inputs;
-pub use payload::{CorrelatedPayload, next_correlation_id};
+pub use payload::CorrelatedPayload;
 pub use queue::EdgeStorage;
 pub(crate) use schedule_compile::{
     CompiledSchedule, CompiledSegmentGraph, build_compiled_schedule, build_node_execution_metadata,
@@ -71,8 +71,8 @@ struct DirectHostSingleNodeRoute {
     node: RuntimeNode,
     node_idx: usize,
     ctx: ExecutionContext,
-    input_port: String,
-    output_port: String,
+    input_port: crate::handles::PortId,
+    output_port: crate::handles::PortId,
     direct_payload: Option<DirectPayloadFn>,
 }
 
@@ -143,10 +143,18 @@ type MaybeGpu = Option<daedalus_gpu::GpuContextHandle>;
 #[cfg(not(feature = "gpu"))]
 type MaybeGpu = Option<()>;
 
-pub type NodeConstInputs = Vec<(String, daedalus_data::model::Value)>;
+pub type NodeConstInputs = Vec<(crate::handles::PortId, daedalus_data::model::Value)>;
 pub type ConstInputs = Vec<NodeConstInputs>;
 pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
 type EdgeSpec = RuntimeEdge;
+
+/// Const inputs keyed by pre-built port ids so ticks do not allocate port names.
+pub(crate) fn node_const_inputs(node: &RuntimeNode) -> NodeConstInputs {
+    node.const_inputs
+        .iter()
+        .map(|(port, value)| (port.into(), value.clone()))
+        .collect()
+}
 type NodeMetadataStore = Arc<Vec<Arc<BTreeMap<String, daedalus_data::model::Value>>>>;
 
 pub(crate) fn reset_run_storage(
@@ -250,7 +258,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             segments: &plan.segments,
             schedule_order: &plan.schedule_order,
             const_inputs: Arc::new(RwLock::new(
-                plan.nodes.iter().map(|n| n.const_inputs.clone()).collect(),
+                plan.nodes.iter().map(node_const_inputs).collect(),
             )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
@@ -475,8 +483,16 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     }
 
     /// Attach a host bridge manager to enable implicit host I/O nodes.
+    /// Attach host bridges; each host-bridge node is resolved to its bridge once, here.
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        self.apply_host_bridges(mgr);
+        self.core.host_nodes = serial::resolve_host_nodes(
+            &mgr,
+            &self.nodes,
+            self.edges,
+            &self.schedule.host_nodes,
+            &self.incoming_edges,
+            &self.outgoing_edges,
+        );
         self
     }
 

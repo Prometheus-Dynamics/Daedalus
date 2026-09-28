@@ -4,8 +4,8 @@ use super::parallel;
 use super::{
     CompiledSchedule, ConstInputStore, DirectSlotAccess, ExecuteError, ExecutionTelemetry,
     Executor, ExecutorBuildError, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler,
-    RuntimeDataSizeInspectors, apply_patch_to_const_inputs, build_executor_init, reset_run_storage,
-    serial, should_run_parallel_adaptive,
+    RuntimeDataSizeInspectors, apply_patch_to_const_inputs, build_executor_init, node_const_inputs,
+    reset_run_storage, serial, should_run_parallel_adaptive,
 };
 #[cfg(feature = "executor-pool")]
 use super::{compiled_worker_pool, pool};
@@ -96,7 +96,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             segments: Arc::new(plan.segments.clone()),
             schedule_order: Arc::new(plan.schedule_order.clone()),
             const_inputs: Arc::new(RwLock::new(
-                plan.nodes.iter().map(|n| n.const_inputs.clone()).collect(),
+                plan.nodes.iter().map(node_const_inputs).collect(),
             )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
@@ -283,8 +283,16 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
+    /// Attach host bridges; each host-bridge node is resolved to its bridge once, here.
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        self.apply_host_bridges(mgr);
+        self.core.host_nodes = serial::resolve_host_nodes(
+            &mgr,
+            &self.nodes,
+            &self.edges,
+            &self.schedule.host_nodes,
+            &self.incoming_edges,
+            &self.outgoing_edges,
+        );
         self
     }
 
@@ -393,10 +401,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     pub fn run_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError> {
         self.reset_for_run();
-        let exec = self.snapshot(DirectSlotAccess::Serial);
-        let res = serial::run(exec);
-        let mut drain_exec = self.snapshot(DirectSlotAccess::Serial);
-        serial::drain_host_outputs(&mut drain_exec);
+        let mut exec = self.snapshot(DirectSlotAccess::Serial);
+        let res = serial::run_with_boundaries(&mut exec);
+        serial::drain_host_outputs(&mut exec);
         if res.is_err() {
             self.storage_needs_reset = true;
         }

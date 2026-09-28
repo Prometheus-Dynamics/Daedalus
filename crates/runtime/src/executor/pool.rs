@@ -13,8 +13,8 @@ where
 {
     serial::inject_host_inputs(&mut exec)?;
     if exec.core.pool_workers <= 1 {
-        let order = exec.schedule_order.to_vec();
-        return serial::run_order(exec, &order);
+        let order = exec.schedule_order;
+        return serial::run_order(&mut exec, order);
     }
 
     let graph = &exec.schedule.host_deferred_graph;
@@ -35,7 +35,7 @@ where
 
     pool.scope(|scope| {
         let spawn_segment = |segment_idx: usize, tx: mpsc::Sender<_>| {
-            let (segment_exec, order) = segment_template.segment_snapshot(segment_idx);
+            let (mut segment_exec, order) = segment_template.segment_snapshot(segment_idx);
 
             scope.spawn(move |_| {
                 let segment_span = tracing::debug_span!(
@@ -54,7 +54,7 @@ where
                     "parallel segment started"
                 );
                 let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    serial::run_order(segment_exec, &order)
+                    serial::run_order(&mut segment_exec, &order)
                 }))
                 .unwrap_or_else(|panic| {
                     Err(ExecuteError::HandlerPanicked {

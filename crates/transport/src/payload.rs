@@ -1,5 +1,4 @@
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -13,8 +12,8 @@ mod residency;
 mod storage;
 
 pub use boundary::BoundaryPayloadError;
+use residency::ResidencyCache;
 pub use residency::ResidencyCacheKey;
-use residency::ResidentPayload;
 pub use storage::PayloadStorage;
 use storage::{BytesStorage, TypedStorage};
 
@@ -44,12 +43,13 @@ impl OpaquePayloadHandle {
 #[derive(Clone)]
 pub struct Payload {
     type_key: TypeKey,
-    // Keep `Arc<Box<dyn PayloadStorage>>` rather than `Arc<dyn PayloadStorage>`
-    // so unique payloads can recover owned storage without cloning.
-    storage: Arc<Box<dyn PayloadStorage>>,
+    /// Single allocation; unique payloads recover owned storage through
+    /// [`PayloadStorage::into_any_arc`].
+    storage: Arc<dyn PayloadStorage>,
     residency: Residency,
     layout: Option<Layout>,
-    residency_cache: Arc<BTreeMap<ResidencyCacheKey, ResidentPayload>>,
+    /// Empty (and allocation-free) until a resident is cached.
+    residency_cache: ResidencyCache,
     lineage: PayloadLineage,
 }
 
@@ -61,7 +61,7 @@ impl fmt::Debug for Payload {
             .field("layout", &self.layout)
             .field(
                 "cached_residencies",
-                &self.residency_cache.keys().collect::<Vec<_>>(),
+                &self.cached_residencies().collect::<Vec<_>>(),
             )
             .field("rust_type_name", &self.storage.rust_type_name())
             .field("bytes_estimate", &self.storage.bytes_estimate())
@@ -103,10 +103,10 @@ impl Payload {
         let type_key = storage.type_key.clone();
         Self {
             type_key,
-            storage: Arc::new(Box::new(storage) as Box<dyn PayloadStorage>),
+            storage: Arc::new(storage),
             residency: Residency::Cpu,
             layout: None,
-            residency_cache: Arc::new(BTreeMap::new()),
+            residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
         }
     }
@@ -135,14 +135,14 @@ impl Payload {
         let type_key = type_key.into();
         Self {
             type_key: type_key.clone(),
-            storage: Arc::new(Box::new(TypedStorage {
+            storage: Arc::new(TypedStorage {
                 type_key,
                 value,
                 bytes_estimate,
-            }) as Box<dyn PayloadStorage>),
+            }),
             residency,
             layout,
-            residency_cache: Arc::new(BTreeMap::new()),
+            residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
         }
     }
@@ -155,10 +155,10 @@ impl Payload {
         let type_key = type_key.into();
         Self {
             type_key: type_key.clone(),
-            storage: Arc::new(Box::new(BytesStorage { type_key, bytes }) as Box<dyn PayloadStorage>),
+            storage: Arc::new(BytesStorage { type_key, bytes }),
             residency: Residency::Cpu,
             layout: None,
-            residency_cache: Arc::new(BTreeMap::new()),
+            residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
         }
     }
@@ -287,36 +287,16 @@ impl Payload {
         if Arc::strong_count(&self.storage) != 1 || Arc::strong_count(&storage.value) != 1 {
             return Err(Box::new(self));
         }
-
-        let Self {
-            type_key,
-            storage,
-            residency,
-            layout,
-            residency_cache,
-            lineage,
-        } = self;
-        let storage = match Arc::try_unwrap(storage) {
-            Ok(storage) => storage,
-            Err(storage) => {
-                return Err(Box::new(Self {
-                    type_key,
-                    storage,
-                    residency,
-                    layout,
-                    residency_cache,
-                    lineage,
-                }));
-            }
-        };
-        let storage = match storage.into_any().downcast::<TypedStorage<T>>() {
-            Ok(storage) => storage,
-            Err(_) => unreachable!("payload storage type was checked before move"),
-        };
-        match Arc::try_unwrap(storage.value) {
-            Ok(value) => Ok(value),
-            Err(_) => unreachable!("payload value uniqueness was checked before move"),
-        }
+        // Both handles are unique and owned by `self`, so nothing can clone them concurrently.
+        let storage = self
+            .storage
+            .into_any_arc()
+            .downcast::<TypedStorage<T>>()
+            .ok()
+            .and_then(Arc::into_inner)
+            .expect("payload storage type and uniqueness were checked before move");
+        Ok(Arc::into_inner(storage.value)
+            .expect("payload value uniqueness was checked before move"))
     }
 
     pub fn is_storage_unique(&self) -> bool {

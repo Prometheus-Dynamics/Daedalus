@@ -27,7 +27,7 @@ impl NodeHandler for Handler {
             }
             "cons" => {
                 if let Some((port, _)) = io.inputs().first() {
-                    self.seen_ports.lock().unwrap().push(port.clone());
+                    self.seen_ports.lock().unwrap().push(port.to_string());
                 }
             }
             _ => {}

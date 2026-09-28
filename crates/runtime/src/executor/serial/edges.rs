@@ -5,12 +5,13 @@ use std::time::Instant;
 use daedalus_transport::{AdaptRequest, Payload};
 use smallvec::SmallVec;
 
-use crate::plan::RuntimeEdgePolicy;
+use crate::io::NodePort;
 
 use crate::executor::queue::{ApplyPolicyOwnedArgs, apply_policy_owned, pop_edge};
 use crate::executor::serial_direct_slot::{pop_direct_edge, push_direct_edge};
 use crate::executor::{
-    CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, ExecuteError, Executor, NodeHandler,
+    CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, ExecuteError, Executor, NodeError,
+    NodeHandler,
 };
 
 use super::{edge_is_active, edge_uses_direct_slot};
@@ -18,23 +19,20 @@ use super::{edge_is_active, edge_uses_direct_slot};
 pub(super) fn collect_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
-) -> Result<Vec<(String, CorrelatedPayload)>, ExecuteError> {
+) -> Result<SmallVec<[NodePort; 4]>, ExecuteError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
     let collect_lifecycle = cfg!(feature = "metrics")
         && (exec.core.run_config.metrics_level.is_profile()
             || exec.core.run_config.metrics_level.is_trace());
-    let mut inputs = Vec::new();
-    let incoming: SmallVec<[usize; 4]> = exec
-        .incoming_edges
-        .get(node_idx)
-        .map(|edges| edges.iter().copied().collect())
-        .unwrap_or_default();
-    for edge_idx in incoming {
-        let Some(edge) = exec.edges.get(edge_idx) else {
+    let mut inputs = SmallVec::new();
+    let edges = exec.edges;
+    let incoming = exec.incoming_edges.clone();
+    for &edge_idx in incoming.get(node_idx).into_iter().flatten() {
+        let Some(edge) = edges.get(edge_idx) else {
             continue;
         };
-        let to_port = edge.target_port().to_string();
+        let to_port = edge.target_port_id();
         if !edge_is_active(exec, edge_idx) {
             continue;
         }
@@ -47,7 +45,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
                     );
                     lifecycle.node_idx = Some(node_idx);
                     lifecycle.edge_idx = Some(edge_idx);
-                    lifecycle.port = Some(to_port.clone());
+                    lifecycle.port = Some(to_port.to_string());
                     lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
                     exec.core.telemetry.record_data_lifecycle(lifecycle);
                 }
@@ -74,7 +72,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
                 );
                 lifecycle.node_idx = Some(node_idx);
                 lifecycle.edge_idx = Some(edge_idx);
-                lifecycle.port = Some(to_port.clone());
+                lifecycle.port = Some(to_port.to_string());
                 lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
                 exec.core.telemetry.record_data_lifecycle(lifecycle);
             }
@@ -87,7 +85,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
                     .telemetry
                     .record_node_transport_in(node_idx, bytes);
             }
-            payload = adapt_edge_payload(exec, edge_idx, payload, node_idx, &to_port)?;
+            payload = adapt_edge_payload(exec, edge_idx, payload, node_idx, to_port.as_str())?;
             inputs.push((to_port.clone(), payload));
         }
     }
@@ -95,14 +93,11 @@ pub(super) fn collect_inputs<H: NodeHandler>(
     let const_inputs = exec
         .const_inputs
         .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(node_idx)
-        .cloned()
-        .unwrap_or_default();
-    for (port, value) in const_inputs {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    for (port, value) in const_inputs.get(node_idx).into_iter().flatten() {
         inputs.push((
-            port,
-            CorrelatedPayload::from_edge(Payload::owned("value", value)),
+            port.clone(),
+            CorrelatedPayload::from_edge(Payload::owned("value", value.clone())),
         ));
     }
     Ok(inputs)
@@ -252,14 +247,15 @@ fn adapter_path_detail(edge_transport: &crate::plan::RuntimeEdgeTransport) -> Op
 pub(super) fn publish_outputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
-    outputs: Vec<(String, CorrelatedPayload)>,
-) -> Result<(), crate::executor::NodeError> {
+    outputs: SmallVec<[NodePort; 4]>,
+) -> Result<(), NodeError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
-    let outgoing: SmallVec<[usize; 4]> = exec
-        .outgoing_edges
+    let edges = exec.edges;
+    let outgoing = exec.outgoing_edges.clone();
+    let outgoing = outgoing
         .get(node_idx)
-        .map(|edges| edges.iter().copied().collect())
+        .map(Vec::as_slice)
         .unwrap_or_default();
     for (port, payload) in outputs {
         if collect_detailed_metrics {
@@ -271,68 +267,62 @@ pub(super) fn publish_outputs<H: NodeHandler>(
                 .telemetry
                 .record_node_transport_out(node_idx, bytes);
         }
-        let matching_edges: SmallVec<[(usize, RuntimeEdgePolicy); 4]> = outgoing
+        let targets: SmallVec<[usize; 4]> = outgoing
             .iter()
             .copied()
-            .filter_map(|edge_idx| {
-                let edge = exec.edges.get(edge_idx)?;
-                (edge.source_port() == port.as_str() && edge_is_active(exec, edge_idx))
-                    .then(|| (edge_idx, edge.policy().clone()))
+            .filter(|&edge_idx| {
+                edges[edge_idx].source_port_id() == &port && edge_is_active(exec, edge_idx)
             })
             .collect();
-        let last_edge = matching_edges.len().saturating_sub(1);
-        let mut payload_slot = Some(payload);
-        for (idx, (edge_idx, policy)) in matching_edges.into_iter().enumerate() {
-            let cloned_payload = idx != last_edge;
-            let payload = if cloned_payload {
-                let Some(payload) = payload_slot.as_ref() else {
-                    tracing::error!(
-                        target: "daedalus_runtime::executor",
-                        edge_idx,
-                        "payload slot unexpectedly empty before clone"
-                    );
-                    continue;
-                };
-                payload.clone()
-            } else {
-                let Some(payload) = payload_slot.take() else {
-                    tracing::error!(
-                        target: "daedalus_runtime::executor",
-                        edge_idx,
-                        "payload slot unexpectedly empty before handoff"
-                    );
-                    continue;
-                };
-                payload
-            };
-            if collect_detailed_metrics {
-                exec.core.telemetry.record_edge_handoff(
-                    edge_idx,
-                    payload.inner.is_storage_unique(),
-                    cloned_payload,
-                    0,
-                );
-            }
-            if edge_uses_direct_slot(exec, edge_idx) {
-                push_direct_edge(exec, edge_idx, payload);
-                continue;
-            }
-            let queues = exec.core.queues.clone();
-            let warnings_seen = exec.core.warnings_seen.clone();
-            let data_size_inspectors = exec.core.data_size_inspectors.clone();
-            let backpressure = exec.backpressure.clone();
-            apply_policy_owned(ApplyPolicyOwnedArgs {
-                edge_idx,
-                policy: &policy,
-                payload,
-                queues: &queues,
-                warnings_seen: &warnings_seen,
-                telem: &mut exec.core.telemetry,
-                warning_label: None,
-                backpressure,
-                data_size_inspectors: &data_size_inspectors,
-            })?;
-        }
+        fan_out(exec, &targets, payload)?;
     }
     Ok(())
+}
+
+/// Hand `payload` to every edge in `targets`, cloning it for all but the last edge.
+pub(super) fn fan_out<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    targets: &[usize],
+    payload: CorrelatedPayload,
+) -> Result<(), NodeError> {
+    let Some((&last, rest)) = targets.split_last() else {
+        return Ok(());
+    };
+    for &edge_idx in rest {
+        deliver(exec, edge_idx, payload.clone(), true)?;
+    }
+    deliver(exec, last, payload, false)
+}
+
+fn deliver<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    edge_idx: usize,
+    payload: CorrelatedPayload,
+    cloned_payload: bool,
+) -> Result<(), NodeError> {
+    if cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed() {
+        exec.core.telemetry.record_edge_handoff(
+            edge_idx,
+            payload.inner.is_storage_unique(),
+            cloned_payload,
+            0,
+        );
+    }
+    if edge_uses_direct_slot(exec, edge_idx) {
+        push_direct_edge(exec, edge_idx, payload);
+        return Ok(());
+    }
+    let edges = exec.edges;
+    let core = &mut exec.core;
+    apply_policy_owned(ApplyPolicyOwnedArgs {
+        edge_idx,
+        policy: edges[edge_idx].policy(),
+        payload,
+        queues: &core.queues,
+        warnings_seen: &core.warnings_seen,
+        telem: &mut core.telemetry,
+        warning_label: None,
+        backpressure: exec.backpressure.clone(),
+        data_size_inspectors: &core.data_size_inspectors,
+    })
 }

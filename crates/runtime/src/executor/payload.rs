@@ -1,27 +1,22 @@
 use std::time::Instant;
 
-/// Correlated transport payload with a shared emission identifier.
+/// Transport payload moving along a runtime edge.
 #[derive(Clone, Debug)]
 pub struct CorrelatedPayload {
+    /// Emission identifier; taken from the payload lineage so host and edge events line up.
     pub correlation_id: u64,
     pub inner: daedalus_transport::Payload,
-    pub enqueued_at: Instant,
+    /// Set when the payload is queued on an edge with basic metrics enabled.
+    pub enqueued_at: Option<Instant>,
 }
 
 impl CorrelatedPayload {
-    /// Wrap an edge payload with a new correlation id.
+    /// Wrap an edge payload, reusing its lineage correlation id.
     pub fn from_edge(inner: daedalus_transport::Payload) -> Self {
         Self {
-            correlation_id: next_correlation_id(),
+            correlation_id: inner.correlation_id(),
             inner,
-            enqueued_at: Instant::now(),
+            enqueued_at: None,
         }
     }
-}
-
-/// Generate a new correlation id.
-///
-pub fn next_correlation_id() -> u64 {
-    static CORR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    CORR.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }

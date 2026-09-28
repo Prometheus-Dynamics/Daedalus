@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::{BoundaryStorage, BoundaryTakeError, BoundaryTypeContract};
 
-use super::{Payload, PayloadStorage};
+use super::Payload;
 
 impl Payload {
     pub fn boundary_contract(&self) -> Option<&BoundaryTypeContract> {
@@ -45,65 +45,26 @@ impl Payload {
     }
 
     pub fn try_take_boundary_owned<T>(
-        self,
+        mut self,
         required: &BoundaryTypeContract,
     ) -> Result<T, BoundaryPayloadError>
     where
         T: Send + Sync + 'static,
     {
-        if !self.storage.as_any().is::<BoundaryStorage>() {
-            return Err(BoundaryPayloadError(
-                Box::new(self),
-                BoundaryTakeError::NotBoundary,
-            ));
-        }
-        if Arc::strong_count(&self.storage) != 1 {
-            return Err(BoundaryPayloadError(
-                Box::new(self),
-                BoundaryTakeError::Shared,
-            ));
-        }
-        let Self {
-            type_key,
-            storage,
-            residency,
-            layout,
-            residency_cache,
-            lineage,
-        } = self;
-        let storage = match Arc::try_unwrap(storage) {
-            Ok(storage) => storage,
-            Err(storage) => {
-                return Err(BoundaryPayloadError(
-                    Box::new(Self {
-                        type_key,
-                        storage,
-                        residency,
-                        layout,
-                        residency_cache,
-                        lineage,
-                    }),
-                    BoundaryTakeError::Shared,
-                ));
-            }
+        let taken = if self.storage.as_any().is::<BoundaryStorage>() {
+            Arc::get_mut(&mut self.storage)
+                .ok_or(BoundaryTakeError::Shared)
+                .and_then(|storage| {
+                    storage
+                        .as_any_mut()
+                        .downcast_mut::<BoundaryStorage>()
+                        .ok_or(BoundaryTakeError::NotBoundary)?
+                        .try_take_owned::<T>(required)
+                })
+        } else {
+            Err(BoundaryTakeError::NotBoundary)
         };
-        let mut storage = match storage.into_any().downcast::<BoundaryStorage>() {
-            Ok(storage) => storage,
-            Err(_) => unreachable!("boundary storage type was checked before move"),
-        };
-        storage.try_take_owned::<T>(required).map_err(|err| {
-            BoundaryPayloadError(
-                Box::new(Self {
-                    type_key,
-                    storage: Arc::new(storage as Box<dyn PayloadStorage>),
-                    residency,
-                    layout,
-                    residency_cache,
-                    lineage,
-                }),
-                err,
-            )
-        })
+        taken.map_err(|err| BoundaryPayloadError(Box::new(self), err))
     }
 }
 

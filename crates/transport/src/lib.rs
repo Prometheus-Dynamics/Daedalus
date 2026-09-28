@@ -8,6 +8,7 @@ mod adapter;
 mod boundary_contract;
 mod boundary_storage;
 mod device;
+mod id_str;
 mod ids;
 mod kinds;
 mod payload;
@@ -25,6 +26,7 @@ pub use boundary_contract::{
 };
 pub use boundary_storage::{BoundaryStorage, BoundaryTakeError, BoundaryVTable};
 pub use device::{Cpu, Device, DeviceClass, DeviceTransfer, Gpu, TransferFrom, TransferTo};
+pub use id_str::IdStr;
 pub use ids::{AdapterId, Layout, LayoutHash, SourceId, TypeKey};
 pub use kinds::{AccessMode, AdaptKind, AdapterKind, Residency};
 pub use payload::{

@@ -110,6 +110,36 @@ Linear graphs stay on the serial execution path, so neither profile starts worke
 this workload; the pool mainly costs crates and binary size. Re-measure on the target board
 before budgeting.
 
+## Performance
+
+`cargo bench -p daedalus-engine --features plugins --bench host_graph_drive` measures the host
+bridge and a one-node `HostGraph` (`host.in -> inc -> host.out`, serial mode). Save a baseline
+with `-- --save-baseline <name>` and compare with `-- --baseline <name>`. The
+`hot_path_allocations` engine test pins the metrics-off round trip at 4 heap allocations (the
+input and output payloads); it was 31 before the hot-path pass.
+
+Hot-path pass (x86_64 Linux, shared 24-core machine at load ~6-8, criterion medians; before is
+the `helios-integration` tree benched back to back with after, so treat differences under ~10%
+as noise):
+
+| Benchmark | Before | After |
+| --- | --- | --- |
+| bridge inbound push + take (small) | 607 ns | 499 ns |
+| bridge outbound push + pop (small) | 632 ns | 550 ns |
+| `push_tick_take` (`MetricsLevel::Basic`) | 3.43 µs | 2.47 µs |
+| `push_tick_take_metrics_off` | 3.20 µs | 2.15 µs |
+| latest-only 100-push burst + tick | 56.2 µs | 49.0 µs |
+| bridge push + take, events off / on | 654 / 694 ns | 504 / 562 ns |
+
+What the tick no longer does: look bridges up through `HostBridgeManager` (host nodes are
+resolved in `with_host_bridges`), copy the schedule order, clone the `RuntimeNode`, allocate
+node-id and port-name strings (`PortId`/`TypeKey` literals are `&'static str`, edge and const
+ports are pre-built), collect host nodes/ports into vectors, snapshot the executor twice, or read
+the clock when the metrics level does not use it. `Payload` construction dropped from four
+allocations to two (single `Arc<dyn PayloadStorage>`, no empty residency map, no global
+boundary-registry clone). The inbound bench now drains into a reused `Vec`
+(`take_inbound_into`).
+
 ## Troubleshooting
 
 | Symptom | First checks |

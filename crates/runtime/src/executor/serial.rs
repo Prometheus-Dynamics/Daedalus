@@ -11,27 +11,27 @@ mod edges;
 mod host_io;
 
 use edges::{collect_inputs, publish_outputs};
-pub(crate) use host_io::{drain_host_outputs, inject_host_inputs};
+pub(crate) use host_io::{HostNodeIo, drain_host_outputs, inject_host_inputs, resolve_host_nodes};
 
-pub fn run<H: NodeHandler>(exec: Executor<'_, H>) -> Result<ExecutionTelemetry, ExecuteError> {
-    let order = exec.schedule_order.to_vec();
-    run_with_boundaries(exec, &order)
+pub fn run<H: NodeHandler>(mut exec: Executor<'_, H>) -> Result<ExecutionTelemetry, ExecuteError> {
+    run_with_boundaries(&mut exec)
 }
 
+/// Inject host inputs and run the whole schedule on `exec`, which stays usable for draining host
+/// outputs afterwards.
 pub(crate) fn run_with_boundaries<H: NodeHandler>(
-    mut exec: Executor<'_, H>,
-    order: &[daedalus_planner::NodeRef],
+    exec: &mut Executor<'_, H>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
-    inject_host_inputs(&mut exec)?;
-    let result = run_order(exec, order);
-    result.map(|mut telemetry| {
+    inject_host_inputs(exec)?;
+    let order = exec.schedule_order;
+    run_order(exec, order).map(|mut telemetry| {
         telemetry.recompute_unattributed_runtime_duration();
         telemetry
     })
 }
 
 pub(crate) fn run_order<H: NodeHandler>(
-    mut exec: Executor<'_, H>,
+    exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
 ) -> Result<ExecutionTelemetry, ExecuteError> {
     let graph_span = tracing::debug_span!(
@@ -49,13 +49,14 @@ pub(crate) fn run_order<H: NodeHandler>(
     let collect_trace = cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_trace();
     let graph_start = (collect_basic_metrics || collect_trace).then(Instant::now);
     let mut first_error = None;
+    let nodes = exec.nodes.clone();
 
     for node_ref in order.iter().copied() {
         let node_idx = node_ref.0;
-        if !node_is_active(&exec, node_idx) {
+        if !node_is_active(exec, node_idx) {
             continue;
         }
-        let Some(node) = exec.nodes.get(node_idx).cloned() else {
+        let Some(node) = nodes.get(node_idx) else {
             continue;
         };
         let node_span = tracing::debug_span!(
@@ -115,12 +116,12 @@ pub(crate) fn run_order<H: NodeHandler>(
         } else {
             None
         };
-        let inputs = collect_inputs(&mut exec, node_idx)?;
+        let inputs = collect_inputs(exec, node_idx)?;
         let mut io =
             NodeIo::from_inputs(inputs).with_const_coercers(exec.core.const_coercers.clone());
         let ctx = ExecutionContext {
             state: exec.core.state.clone(),
-            node_id: node.id.clone().into(),
+            node_id: exec.core.node_ids[node_idx].clone(),
             metadata: exec.core.node_metadata[node_idx].clone(),
             graph_metadata: exec.core.graph_metadata.clone(),
             capabilities: exec.core.capabilities.clone(),
@@ -140,7 +141,7 @@ pub(crate) fn run_order<H: NodeHandler>(
         );
         let run_result = {
             let _handler_span = handler_span.enter();
-            exec.handler.run(&node, &ctx, &mut io)
+            exec.handler.run(node, &ctx, &mut io)
         };
         if let Some(handler_start) = handler_start {
             exec.core
@@ -152,7 +153,7 @@ pub(crate) fn run_order<H: NodeHandler>(
         } else {
             None
         };
-        let outputs = io.take_outputs();
+        let outputs = io.take_outputs_small();
 
         if let Err(error) = run_result {
             record_failure(&mut exec.core.telemetry, node_idx, &node.id, &error);
@@ -179,7 +180,7 @@ pub(crate) fn run_order<H: NodeHandler>(
                 error,
             });
         } else {
-            if let Err(error) = publish_outputs(&mut exec, node_idx, outputs) {
+            if let Err(error) = publish_outputs(exec, node_idx, outputs) {
                 record_failure(&mut exec.core.telemetry, node_idx, &node.id, &error);
                 if exec.core.run_config.fail_fast {
                     return Err(ExecuteError::HandlerFailed {
@@ -242,7 +243,6 @@ pub(crate) fn run_order<H: NodeHandler>(
     exec.core
         .telemetry
         .recompute_unattributed_runtime_duration();
-    let nodes = exec.nodes.clone();
     exec.core.telemetry.aggregate_groups(&nodes);
 
     if exec.core.run_config.fail_fast

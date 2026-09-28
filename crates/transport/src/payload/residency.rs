@@ -25,12 +25,33 @@ impl ResidencyCacheKey {
     }
 }
 
+/// Cached residents of one payload. `None` means empty, so plain payloads never allocate a map.
+#[derive(Clone, Default)]
+pub(super) struct ResidencyCache(Option<Arc<BTreeMap<ResidencyCacheKey, ResidentPayload>>>);
+
+impl ResidencyCache {
+    fn map(&self) -> Option<&BTreeMap<ResidencyCacheKey, ResidentPayload>> {
+        self.0.as_deref()
+    }
+
+    fn get(&self, key: &ResidencyCacheKey) -> Option<&ResidentPayload> {
+        self.map()?.get(key)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&ResidencyCacheKey, &ResidentPayload)> {
+        self.map().into_iter().flatten()
+    }
+
+    /// Copy-on-write access for inserting residents.
+    fn make_mut(&mut self) -> &mut BTreeMap<ResidencyCacheKey, ResidentPayload> {
+        Arc::make_mut(self.0.get_or_insert_with(Default::default))
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct ResidentPayload {
     pub(super) type_key: TypeKey,
-    // The boxed trait object is intentional: owned extraction paths unwrap the
-    // Arc, then consume the box through `PayloadStorage::into_any`.
-    pub(super) storage: Arc<Box<dyn PayloadStorage>>,
+    pub(super) storage: Arc<dyn PayloadStorage>,
     pub(super) residency: Residency,
     pub(super) layout: Option<Layout>,
     pub(super) lineage: PayloadLineage,
@@ -63,10 +84,7 @@ impl ResidentPayload {
         }
     }
 
-    pub(super) fn into_payload(
-        self,
-        cache: Arc<BTreeMap<ResidencyCacheKey, ResidentPayload>>,
-    ) -> Payload {
+    pub(super) fn into_payload(self, cache: ResidencyCache) -> Payload {
         Payload {
             type_key: self.type_key,
             storage: self.storage,
@@ -89,7 +107,7 @@ impl Payload {
     }
 
     pub fn insert_cached_resident(&mut self, resident: Payload) {
-        let mut cache = (*self.residency_cache).clone();
+        let cache = self.residency_cache.make_mut();
         cache.extend(
             resident
                 .residency_cache
@@ -98,23 +116,22 @@ impl Payload {
         );
         let resident = ResidentPayload::from_payload(&resident);
         cache.insert(resident.key(), resident);
-        self.residency_cache = Arc::new(cache);
     }
 
     pub fn cache_current(mut self) -> Self {
-        let mut cache = (*self.residency_cache).clone();
         let resident = ResidentPayload::from_payload(&self);
-        cache.insert(resident.key(), resident);
-        self.residency_cache = Arc::new(cache);
+        self.residency_cache
+            .make_mut()
+            .insert(resident.key(), resident);
         self
     }
 
     pub fn residency_cache_len(&self) -> usize {
-        self.residency_cache.len()
+        self.residency_cache.map().map_or(0, BTreeMap::len)
     }
 
     pub fn cached_residencies(&self) -> impl Iterator<Item = &ResidencyCacheKey> {
-        self.residency_cache.keys()
+        self.residency_cache.iter().map(|(key, _)| key)
     }
 
     pub fn has_resident(
@@ -124,7 +141,7 @@ impl Payload {
         layout: Option<&Layout>,
     ) -> bool {
         let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        self.key() == key || self.residency_cache.contains_key(&key)
+        self.key() == key || self.residency_cache.get(&key).is_some()
     }
 
     pub fn resident(
@@ -162,7 +179,8 @@ impl Payload {
             }
         }
         self.residency_cache
-            .values()
+            .iter()
+            .map(|(_, resident)| resident)
             .find(|resident| {
                 &resident.type_key == type_key
                     && layout.is_none_or(|layout| resident.layout.as_ref() == Some(layout))

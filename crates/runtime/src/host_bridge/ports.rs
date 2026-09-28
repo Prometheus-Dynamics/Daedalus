@@ -202,7 +202,7 @@ impl PortDirection {
                 .or_insert_with_key(|id| PortState::new(id.clone())),
             PortKey::Name(name) => {
                 if !ports.contains_key(name) {
-                    let id = PortId::from(name);
+                    let id = PortId::new(name);
                     ports.insert(id.clone(), PortState::new(id));
                 }
                 ports
