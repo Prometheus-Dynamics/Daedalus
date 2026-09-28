@@ -1,0 +1,74 @@
+name: bench
+
+# Benchmark tracking: never runs on pull requests. Each run uploads its criterion output as the
+# `criterion` artifact and compares against the newest earlier run on the default branch that
+# still has one (scripts/bench-compare.py; >15% median regression fails the compare step).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # Mondays 04:17 UTC
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/runtime/**"
+      - "crates/engine/**"
+      - "crates/transport/**"
+      - "Cargo.lock"
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  BENCH_ARTIFACT: criterion
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Start from an empty criterion directory so only this run's estimates are uploaded.
+      - name: Run benches
+        run: rm -rf target/criterion && ./scripts/ci.sh bench
+
+      - name: Upload criterion output
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BENCH_ARTIFACT }}
+          path: target/criterion
+          retention-days: 90
+
+      - name: Download previous baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          mkdir -p baseline
+          for id in $(gh run list --workflow bench.yml --branch "$BRANCH" --status completed \
+              --limit 20 --json databaseId --jq '.[].databaseId'); do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            if gh run download "$id" --name "$BENCH_ARTIFACT" --dir baseline 2>/dev/null; then
+              echo "Using baseline from run $id"
+              exit 0
+            fi
+          done
+          echo "No previous baseline artifact found"
+
+      - name: Compare against baseline
+        run: python3 scripts/bench-compare.py baseline target/criterion --threshold 15

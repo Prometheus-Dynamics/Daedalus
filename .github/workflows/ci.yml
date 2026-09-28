@@ -19,10 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
+      - &checkout
+        name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Rust toolchain
+      - &toolchain-lint
+        name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -30,7 +32,8 @@ jobs:
       - name: Install native camera dependencies
         run: sudo apt-get update && sudo apt-get install -y libcamera-dev pkg-config
 
-      - name: Cache Rust artifacts
+      - &cache
+        name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
@@ -65,20 +68,20 @@ jobs:
       - name: Run example tests
         run: cargo test -p daedalus-rs --features "engine,plugins" --examples
 
+      - name: Run CPU-only example binaries
+        run: ./scripts/ci.sh smoke
+
   # trybuild compiles its own project per UI test run, so it gets a job that runs in parallel
   # with the workspace tests (the test is `#[ignore]`d in the regular test run).
   macro-ui:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
+      - *checkout
+      - &toolchain
+        name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+      - *cache
 
       - name: Run macro UI (trybuild) tests
         run: cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
@@ -87,14 +90,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+      - *checkout
+      - *toolchain
+      - *cache
 
       - name: Test dynamic plugin loading
         run: cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
@@ -103,16 +101,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+      - *checkout
+      - *toolchain-lint
+      - *cache
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
@@ -127,14 +118,37 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
+      - *checkout
+      - *toolchain
+      - *cache
 
       - name: Validate package surface
         run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --allow-dirty --no-verify
+
+  # Type-check only (no linking): the C cross compiler is for build scripts that compile C.
+  aarch64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - *cache
+      - name: Install aarch64 C cross compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Check aarch64 (default, embedded, gpu-dmabuf)
+        run: ./scripts/ci.sh aarch64
+
+  # Workspace tests unify the daemon crate's executor-pool/metrics features into every crate;
+  # this job tests the facade/engine/runtime without them.
+  lean-preset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *toolchain
+      - *cache
+      - name: Test lean preset (no executor pool, no metrics)
+        run: ./scripts/ci.sh lean
