@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn type_key_round_trips_as_string() {
-        let key = TypeKey::opaque("image:dynamic");
+        let key = TypeKey::new("image:dynamic");
         assert_eq!(key.as_str(), "image:dynamic");
         assert_eq!(key.to_string(), "image:dynamic");
     }

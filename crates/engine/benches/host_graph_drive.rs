@@ -129,7 +129,7 @@ fn bench_bridge_push_pop(c: &mut Criterion) {
     // Host -> graph: feed an inbound payload, then drain it as the bridge node does.
     group.bench_function(BenchmarkId::new("inbound", "small"), |b| {
         b.iter(|| {
-            black_box(handle.push_payload(port.clone(), Payload::owned(INT_KEY, 1i64)));
+            black_box(handle.feed_payload(port.clone(), Payload::owned(INT_KEY, 1i64)));
             manager.take_inbound_into("host", &mut inbound);
             black_box(&inbound);
             inbound.clear();
@@ -137,7 +137,7 @@ fn bench_bridge_push_pop(c: &mut Criterion) {
     });
     group.bench_function(BenchmarkId::new("inbound", "arc_1mib"), |b| {
         b.iter(|| {
-            black_box(handle.push_payload(port.clone(), Payload::shared(FRAME_KEY, frame.clone())));
+            black_box(handle.feed_payload(port.clone(), Payload::shared(FRAME_KEY, frame.clone())));
             manager.take_inbound_into("host", &mut inbound);
             black_box(&inbound);
             inbound.clear();
@@ -217,7 +217,7 @@ fn bench_event_recording(c: &mut Criterion) {
         let label = if enabled { "on" } else { "off" };
         group.bench_function(BenchmarkId::new("push", label), |b| {
             b.iter(|| {
-                black_box(handle.push_payload(port.clone(), Payload::owned(INT_KEY, 1i64)));
+                black_box(handle.feed_payload(port.clone(), Payload::owned(INT_KEY, 1i64)));
                 manager.take_inbound_into("host", &mut inbound);
                 black_box(&inbound);
                 inbound.clear();

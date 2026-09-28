@@ -19,14 +19,7 @@ pub struct StableHash(pub u64);
 
 impl StableHash {
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-        const FNV_PRIME: u64 = 0x100000001b3;
-        let mut hash = FNV_OFFSET;
-        for b in bytes {
-            hash ^= *b as u64;
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-        StableHash(hash)
+        StableHash(daedalus_core::stable_id::fnv1a64(bytes))
     }
 }
 

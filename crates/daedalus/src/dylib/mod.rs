@@ -230,14 +230,10 @@ pub mod __support {
         let message = match catch_unwind(AssertUnwindSafe(body)) {
             Ok(Ok(())) => return true,
             Ok(Err(message)) => message,
-            Err(payload) => {
-                let detail = payload
-                    .downcast_ref::<&str>()
-                    .map(|s| (*s).to_string())
-                    .or_else(|| payload.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "non-string panic payload".to_string());
-                format!("plugin panicked: {detail}")
-            }
+            Err(payload) => format!(
+                "plugin panicked: {}",
+                crate::runtime::executor::panic_message(&*payload)
+            ),
         };
         // Safety: forwarded from the caller.
         unsafe { sink.write(&message) };

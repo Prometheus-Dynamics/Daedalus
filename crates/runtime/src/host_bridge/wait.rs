@@ -200,10 +200,6 @@ impl HostBridgeHandle {
         wake_all(wakers);
     }
 
-    pub(crate) fn notify_waiters(&self) {
-        self.wake_inbound_waiters();
-    }
-
     /// Whether the whole bridge has been closed.
     pub fn is_closed(&self) -> bool {
         self.shared.buffers.lock().closed

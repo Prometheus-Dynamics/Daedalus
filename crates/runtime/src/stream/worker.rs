@@ -125,7 +125,7 @@ impl StreamGraphWorker {
         self.stop.store(true, Ordering::Release);
         let mut requested_at = self.stop_requested_at.lock();
         requested_at.get_or_insert_with(Instant::now);
-        self.wake.notify_waiters();
+        self.wake.wake_inbound_waiters();
     }
 
     /// Request worker shutdown and wait until the worker thread exits.

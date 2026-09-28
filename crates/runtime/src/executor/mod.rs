@@ -129,13 +129,14 @@ pub(crate) fn segment_failure(segment_idx: usize, error: &ExecuteError) -> NodeF
     }
 }
 
-pub(crate) fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+/// Text of a caught panic payload (`&str` or `String`), or a placeholder for other payloads.
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()
     } else {
-        "handler panicked with non-string payload".to_string()
+        "non-string panic payload".to_string()
     }
 }
 

@@ -448,7 +448,7 @@ fn borrowed_host_bridge_run_matches_owned_direct_host_route() {
     let borrowed_bridges = HostBridgeManager::new();
     borrowed_bridges.populate_from_plan(&rt);
     let borrowed_host = borrowed_bridges.ensure_handle("host");
-    borrowed_host.push_payload("in", Payload::owned("demo:u32", 7_u32));
+    borrowed_host.feed_payload("in", Payload::owned("demo:u32", 7_u32));
     let mut borrowed = Executor::new(&rt, EchoHandler).with_host_bridges(borrowed_bridges.clone());
     let borrowed_telemetry = borrowed.run_in_place().expect("borrowed run");
     let borrowed_output = borrowed_host

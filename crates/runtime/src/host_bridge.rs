@@ -432,10 +432,6 @@ impl HostBridgeHandle {
         outcome
     }
 
-    pub fn push_payload(&self, port: impl Into<PortId>, payload: Payload) -> FeedOutcome {
-        self.feed_payload(port, payload)
-    }
-
     pub fn push<T>(&self, port: impl Into<PortId>, value: T) -> FeedOutcome
     where
         T: Send + Sync + 'static,
@@ -466,13 +462,6 @@ impl HostBridgeHandle {
         T: Send + Sync + 'static,
     {
         self.feed_payload(port, Payload::shared(type_key, value))
-    }
-
-    pub fn push_any<T>(&self, port: impl Into<PortId>, value: T) -> FeedOutcome
-    where
-        T: Send + Sync + 'static,
-    {
-        self.push(port, value)
     }
 
     pub fn try_pop_payload(&self, port: impl AsRef<str>) -> Option<Payload> {
