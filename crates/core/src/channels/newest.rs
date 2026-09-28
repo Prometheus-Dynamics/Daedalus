@@ -213,11 +213,7 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for NewestSender<T> {
             return Backpressure::Closed;
         }
         let seq = Sequence::new(self.inner.next_seq.fetch_add(1, Ordering::Relaxed));
-        let mut guard = self
-            .inner
-            .slot
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
+        let mut guard = crate::lock_recover(&self.inner.slot);
         let dropped = guard.replace((seq, value)).is_some();
         if dropped {
             self.inner.dropped.fetch_add(1, Ordering::Relaxed);
@@ -233,12 +229,8 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for NewestSender<T> {
 
 impl<T: Send + Sync> ChannelRecv<Arc<T>> for NewestReceiver<T> {
     fn try_recv(&self) -> RecvOutcome<Arc<T>> {
-        let mut last_seen = self.last_seen.lock().unwrap_or_else(|err| err.into_inner());
-        let guard = self
-            .inner
-            .slot
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
+        let mut last_seen = crate::lock_recover(&self.last_seen);
+        let guard = crate::lock_recover(&self.inner.slot);
         let Some((seq, value)) = guard.as_ref() else {
             return if self.inner.closed.load(Ordering::Acquire) {
                 RecvOutcome::Closed

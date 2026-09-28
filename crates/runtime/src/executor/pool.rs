@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Mutex;
 use std::sync::mpsc;
 
 use super::{
@@ -86,15 +86,7 @@ where
         });
 
         while scheduler.has_running() {
-            let received = {
-                let Ok(receiver) = rx.lock() else {
-                    return Err(ExecuteError::HandlerPanicked {
-                        node: "executor_pool".into(),
-                        message: "pool result receiver lock poisoned".into(),
-                    });
-                };
-                receiver.recv()
-            };
+            let received = rx.lock().recv();
             let Ok((segment_idx, result)) = received else {
                 break;
             };

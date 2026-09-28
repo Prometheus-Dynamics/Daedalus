@@ -17,18 +17,12 @@ impl FfiHostTelemetry {
 
     /// Return a point-in-time copy of the accumulated FFI telemetry.
     pub fn snapshot(&self) -> FfiTelemetryReport {
-        self.report
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .clone()
+        self.report.lock().clone()
     }
 
     /// Merge a partial FFI telemetry report into the shared collector.
     pub fn merge(&self, update: FfiTelemetryReport) {
-        self.report
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .merge(update);
+        self.report.lock().merge(update);
     }
 
     pub(super) fn record_backend(

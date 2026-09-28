@@ -199,13 +199,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut ticks = 0;
     host.drive_blocking(&stop, |host, _turn| {
         ticks += 1;
-        let json = |port| {
-            let payload = host.take_payload(port);
-            payload
-                .map(|p| host.inspect_payload(&p).to_json())
-                .unwrap_or_default()
-        };
-        let (luma, meta) = (json("luma"), json("meta"));
+        let (mut luma, mut meta) = Default::default();
+        for (port, inspection) in host.inspect_outputs() {
+            match port.as_str() {
+                "luma" => luma = inspection.to_json(),
+                "meta" => meta = inspection.to_json(),
+                _ => {}
+            }
+        }
         println!("tick {ticks:>2} sequence={} luma={luma}", meta["sequence"]);
         if ticks == TICKS {
             println!("last meta: {meta}");
@@ -218,13 +219,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     producer.join().expect("producer thread");
 
-    let stats = host.host().stats();
+    let frame = host.host().input_port_stats("frame").unwrap_or_default();
+    let luma = host.host().output_port_stats("luma").unwrap_or_default();
     println!(
-        "produced={} ticks={ticks} accepted={} replaced(stale)={} dropped={}",
+        "produced={} ticks={ticks} frame: accepted={} replaced(stale)={} dropped={} delivered={} \
+         luma: delivered={}",
         produced.load(Ordering::Relaxed),
-        stats.inbound_accepted,
-        stats.inbound_replaced,
-        stats.inbound_dropped
+        frame.accepted,
+        frame.replaced,
+        frame.dropped,
+        frame.delivered,
+        luma.delivered,
     );
     Ok(())
 }

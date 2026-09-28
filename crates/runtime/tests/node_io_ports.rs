@@ -8,7 +8,7 @@ use daedalus_runtime::{
 };
 
 struct Handler {
-    seen_ports: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    seen_ports: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for Handler {
@@ -27,7 +27,7 @@ impl NodeHandler for Handler {
             }
             "cons" => {
                 if let Some((port, _)) = io.inputs().first() {
-                    self.seen_ports.lock().unwrap().push(port.to_string());
+                    self.seen_ports.lock().push(port.to_string());
                 }
             }
             _ => {}
@@ -83,13 +83,13 @@ fn node_io_respects_ports_and_policies() {
         },
     );
 
-    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = Handler {
         seen_ports: seen.clone(),
     };
     let telemetry = Executor::new(&rt, handler).run().expect("runtime run");
     assert_eq!(telemetry.nodes_executed, 2);
-    let ports = seen.lock().unwrap().clone();
+    let ports = seen.lock().clone();
     assert_eq!(ports, vec!["in".to_string()]);
 }
 

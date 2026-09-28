@@ -1,7 +1,8 @@
+use parking_lot::RwLock;
 use std::any::Any;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_data::typing;
@@ -338,8 +339,7 @@ impl NodeIo {
         T: Clone + Send + Sync + 'static,
     {
         if let Some(map) = self.const_coercers.as_ref()
-            && let Ok(guard) = map.read()
-            && let Some(coercer) = guard.get(std::any::type_name::<T>())
+            && let Some(coercer) = map.read().get(std::any::type_name::<T>())
             && let Some(any) = coercer(value)
             && let Ok(typed) = any.downcast::<T>()
         {

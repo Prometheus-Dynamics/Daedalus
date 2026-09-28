@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
@@ -31,7 +32,7 @@ impl NodeHandler for Harness {
                 );
             }
             "cons" => {
-                let mut guard = self.seen.lock().unwrap();
+                let mut guard = self.seen.lock();
                 for payload in io.inputs_for("in") {
                     if let Some(bytes) = payload.inner.get_bytes() {
                         guard.push(String::from_utf8_lossy(&bytes).into());
@@ -97,7 +98,7 @@ fn fifo_drains_all_inputs() {
     let telemetry = Executor::new(&rt, handler).run().expect("run");
     assert_eq!(telemetry.backpressure_events, 0);
     assert_eq!(
-        seen.lock().unwrap().clone(),
+        seen.lock().clone(),
         vec!["one".to_string(), "two".to_string()]
     );
 }
@@ -117,7 +118,7 @@ fn bounded_backpressure_warns_and_preserves_queue() {
     let telemetry = Executor::new(&rt, handler).run().expect("run");
     assert_eq!(telemetry.backpressure_events, 1);
     // Second payload should be rejected, first retained.
-    assert_eq!(seen.lock().unwrap().clone(), vec!["one".to_string()]);
+    assert_eq!(seen.lock().clone(), vec!["one".to_string()]);
     assert_eq!(telemetry.warnings.len(), 1);
 }
 
@@ -143,5 +144,5 @@ fn bounded_backpressure_error_fails_fast() {
             ..
         }
     ));
-    assert!(seen.lock().unwrap().is_empty());
+    assert!(seen.lock().is_empty());
 }

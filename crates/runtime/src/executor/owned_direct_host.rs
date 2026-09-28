@@ -142,7 +142,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), ExecuteError> {
         if let Some(handler) = &route.direct_payload {
-            let _ = self.core.state.clear_node_custom_metrics(&route.node.id);
+            self.core.state.clear_node_custom_metrics(&route.node.id);
             let output = handler(&route.node, &route.ctx, payload).map_err(|error| {
                 ExecuteError::HandlerFailed {
                     node: route.node.id.clone(),
@@ -151,15 +151,14 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             })?;
             let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level);
             telemetry.nodes_executed = 1;
-            if let Ok(metrics) = self.core.state.drain_node_custom_metrics(&route.node.id) {
-                telemetry.record_node_custom_metrics(route.node_idx, metrics);
-            }
+            let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
+            telemetry.record_node_custom_metrics(route.node_idx, metrics);
             return Ok((telemetry, output));
         }
         if self.storage_needs_reset {
             self.reset_for_run();
         }
-        let _ = self.core.state.clear_node_custom_metrics(&route.node.id);
+        self.core.state.clear_node_custom_metrics(&route.node.id);
         let mut io = NodeIo::from_single_input(
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
@@ -181,9 +180,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             .find_map(|(port, payload)| (port == route.output_port).then_some(payload.inner));
         let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level);
         telemetry.nodes_executed = 1;
-        if let Ok(metrics) = self.core.state.drain_node_custom_metrics(&route.node.id) {
-            telemetry.record_node_custom_metrics(route.node_idx, metrics);
-        }
+        let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
+        telemetry.record_node_custom_metrics(route.node_idx, metrics);
         Ok((telemetry, output))
     }
 
@@ -193,20 +191,20 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         payload: Payload,
     ) -> Result<Option<Payload>, ExecuteError> {
         if let Some(handler) = &route.direct_payload {
-            let _ = self.core.state.clear_node_custom_metrics(&route.node.id);
+            self.core.state.clear_node_custom_metrics(&route.node.id);
             let output = handler(&route.node, &route.ctx, payload).map_err(|error| {
                 ExecuteError::HandlerFailed {
                     node: route.node.id.clone(),
                     error,
                 }
             })?;
-            let _ = self.core.state.drain_node_custom_metrics(&route.node.id);
+            self.core.state.drain_node_custom_metrics(&route.node.id);
             return Ok(output);
         }
         if self.storage_needs_reset {
             self.reset_for_run();
         }
-        let _ = self.core.state.clear_node_custom_metrics(&route.node.id);
+        self.core.state.clear_node_custom_metrics(&route.node.id);
         let mut io = NodeIo::from_single_input(
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
@@ -222,7 +220,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             node: route.node.id.clone(),
             error,
         })?;
-        let _ = self.core.state.drain_node_custom_metrics(&route.node.id);
+        self.core.state.drain_node_custom_metrics(&route.node.id);
         Ok(io
             .take_outputs_small()
             .into_iter()

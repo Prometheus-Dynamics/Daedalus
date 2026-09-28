@@ -1,9 +1,9 @@
 use crate::model::{EnumVariant, TypeExpr, Value, ValueType};
+use parking_lot::RwLock;
 use std::any::{Any, TypeId, type_name};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::sync::OnceLock;
-use std::sync::RwLock;
 
 /// Registered mapping between a Rust type name and a `TypeExpr`.
 ///
@@ -275,9 +275,7 @@ where
 /// state.
 ///
 pub fn register_type<T: 'static>(expr: TypeExpr) {
-    let mut guard = registry()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = registry().write();
     guard.register_type::<T>(expr);
 }
 
@@ -289,16 +287,12 @@ pub fn register_type_capabilities(
     ty: TypeExpr,
     capabilities: impl IntoIterator<Item = impl Into<String>>,
 ) {
-    let mut guard = registry()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = registry().write();
     guard.register_type_capabilities(ty, capabilities);
 }
 
 pub fn type_capabilities(ty: &TypeExpr) -> BTreeSet<String> {
-    let guard = registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().read();
     guard.type_capabilities(ty)
 }
 
@@ -310,9 +304,7 @@ pub fn has_type_capability(ty: &TypeExpr, capability: &str) -> bool {
 }
 
 pub fn snapshot_type_capabilities() -> Vec<RegisteredTypeCapabilities> {
-    let guard = registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().read();
     guard.snapshot_type_capabilities()
 }
 
@@ -322,17 +314,12 @@ pub fn snapshot_type_capabilities() -> Vec<RegisteredTypeCapabilities> {
 /// convenience registrations and restore the previous process state afterward. Code that already
 /// owns an engine or plugin registry should prefer passing an owned [`TypeRegistry`] directly.
 pub fn snapshot_global_registry() -> TypeRegistry {
-    registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
+    registry().read().clone()
 }
 
 /// Replace the process-global type registry with a previous snapshot.
 pub fn restore_global_registry(snapshot: TypeRegistry) {
-    *registry()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
+    *registry().write() = snapshot;
 }
 
 /// Reset the process-global type registry to an empty registry.
@@ -343,18 +330,14 @@ pub fn reset_global_registry() {
 /// Register an enum (variants only) for Rust type `T`.
 ///
 pub fn register_enum<T: 'static>(variants: impl IntoIterator<Item = impl Into<String>>) {
-    let mut guard = registry()
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = registry().write();
     guard.register_enum::<T>(variants);
 }
 
 /// Look up a previously registered `TypeExpr` for a Rust type `T`.
 ///
 pub fn lookup_type<T: 'static>() -> Option<TypeExpr> {
-    let guard = registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().read();
     guard.lookup_type::<T>()
 }
 
@@ -397,9 +380,7 @@ where
 /// covered by built-in mappings (without falling back to `Opaque`).
 ///
 pub fn override_type_expr<T: 'static>() -> Option<TypeExpr> {
-    let guard = registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().read();
     guard.override_type_expr::<T>()
 }
 
@@ -414,9 +395,7 @@ pub fn override_type_expr<T: 'static>() -> Option<TypeExpr> {
 /// registry.
 ///
 pub fn type_expr<T: 'static>() -> TypeExpr {
-    let guard = registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().read();
     guard.type_expr::<T>()
 }
 
@@ -425,9 +404,7 @@ pub fn type_expr<T: 'static>() -> TypeExpr {
 /// This is stable across dylib/plugin boundaries where `TypeId` differs but `type_name::<T>()`
 /// is identical (compiled from the same sources).
 pub fn lookup_type_by_rust_name(raw: &str) -> Option<TypeExpr> {
-    let guard = registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().read();
     guard.lookup_type_by_rust_name(raw)
 }
 
@@ -435,9 +412,7 @@ pub fn lookup_type_by_rust_name(raw: &str) -> Option<TypeExpr> {
 ///
 /// Intended for UIs and tooling (e.g. exposing enum/struct definitions registered by plugins).
 pub fn snapshot_by_rust_name() -> Vec<RegisteredType> {
-    let guard = registry()
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let guard = registry().read();
     guard.snapshot_by_rust_name()
 }
 

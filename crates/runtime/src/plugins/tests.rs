@@ -54,14 +54,12 @@ fn plugin_registry_value_serializers_are_isolated() {
     assert!(
         left.value_serializers
             .read()
-            .expect("serializer lock")
             .contains_key(&std::any::TypeId::of::<LocalType>())
     );
     assert!(
         !right
             .value_serializers
             .read()
-            .expect("serializer lock")
             .contains_key(&std::any::TypeId::of::<LocalType>())
     );
 }

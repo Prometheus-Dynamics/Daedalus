@@ -7,7 +7,7 @@ limit="${FILE_SIZE_LINE_LIMIT:-800}"
 exclude_dirs="${FILE_SIZE_EXCLUDE_DIRS:-}"
 
 declare -a scan_roots=()
-for candidate in crates plugins testing; do
+for candidate in crates examples testing; do
     if [[ -d "$root_dir/$candidate" ]]; then
         scan_roots+=("$root_dir/$candidate")
     fi
@@ -74,19 +74,25 @@ for entry in "${over_limit[@]}"; do
     fi
 done
 
-if [[ ${#over_limit[@]} -gt 0 ]]; then
-    printf 'Warning: Rust files over %s lines:\n' "$limit"
-    printf '  %s\n' "${over_limit[@]}"
-fi
+status=0
 
 if [[ ${#violations[@]} -gt 0 ]]; then
-    printf '\nWarning: new files over %s lines (split them, or add them to %s):\n' \
-        "$limit" "${baseline_file#$root_dir/}" >&2
+    printf 'Error: Rust files over %s lines (split them):\n' "$limit" >&2
     printf '  %s\n' "${violations[@]}" >&2
+    status=1
+fi
+
+if [[ ${#over_limit[@]} -gt ${#violations[@]} ]]; then
+    printf 'Warning: baselined Rust files still over %s lines:\n' "$limit"
+    for entry in "${over_limit[@]}"; do
+        [[ -n "${baseline[${entry#* }]:-}" ]] && printf '  %s\n' "$entry"
+    done
 fi
 
 if [[ ${#stale_entries[@]} -gt 0 ]]; then
-    printf '\nError: stale entries in %s (remove them):\n' "${baseline_file#$root_dir/}" >&2
+    printf 'Error: stale entries in %s (remove them):\n' "${baseline_file#$root_dir/}" >&2
     printf '  %s\n' "${stale_entries[@]}" >&2
-    exit 1
+    status=1
 fi
+
+exit "$status"

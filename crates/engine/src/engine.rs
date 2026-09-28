@@ -86,7 +86,7 @@ pub struct Engine {
     pub(crate) config: EngineConfig,
     caches: Arc<EngineCaches>,
     #[cfg(feature = "gpu")]
-    gpu_handle: std::sync::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
+    gpu_handle: parking_lot::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
 }
 
 impl Engine {
@@ -104,7 +104,7 @@ impl Engine {
             ),
             config,
             #[cfg(feature = "gpu")]
-            gpu_handle: std::sync::Mutex::new(None),
+            gpu_handle: parking_lot::Mutex::new(None),
         })
     }
 
@@ -577,10 +577,7 @@ impl Engine {
         if matches!(self.config.gpu, GpuBackend::Cpu) {
             return Ok(None);
         }
-        let mut guard = self
-            .gpu_handle
-            .lock()
-            .map_err(|_| EngineError::Config("gpu handle lock poisoned".into()))?;
+        let mut guard = self.gpu_handle.lock();
         if let Some(handle) = guard.as_ref() {
             return Ok(Some(handle.clone()));
         }

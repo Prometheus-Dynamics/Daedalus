@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::handles::{GpuBufferHandle, GpuImageHandle};
 use crate::traits::GpuBackend;
@@ -54,10 +54,7 @@ impl MockBackend {
     /// Every dmabuf import accepted so far, oldest first.
     #[cfg(target_os = "linux")]
     pub fn imported_frames(&self) -> Vec<MockImportRecord> {
-        self.imports
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+        self.imports.lock().clone()
     }
 }
 
@@ -185,10 +182,7 @@ impl GpuBackend for MockBackend {
         let handle = self
             .pool
             .alloc(req.size_bytes, req.usage, GpuMemoryLocation::Gpu)?;
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_upload(req.size_bytes);
         Ok(handle)
     }
@@ -222,10 +216,7 @@ impl GpuBackend for MockBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         let bytes = (req.width as u64) * (req.height as u64) * 4;
         stats.record_upload(bytes);
         Ok(GpuImageHandle::new(
@@ -238,24 +229,15 @@ impl GpuBackend for MockBackend {
     }
 
     fn stats(&self) -> TransferStats {
-        *self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        *self.stats.lock()
     }
 
     fn take_stats(&self) -> TransferStats {
-        self.stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
+        self.stats.lock().take()
     }
 
     fn record_download(&self, bytes: u64) {
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_download(bytes);
     }
 
@@ -265,10 +247,7 @@ impl GpuBackend for MockBackend {
         data: &[u8],
     ) -> Result<GpuImageHandle, GpuError> {
         let handle = self.create_image(req)?;
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_upload(data.len() as u64);
         Ok(handle)
     }
@@ -342,10 +321,7 @@ impl GpuBackend for MockBackend {
             fds: desc.planes.into_iter().map(|p| p.fd).collect(),
             keepalive: desc.keepalive,
         }));
-        self.imports
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(record);
+        self.imports.lock().push(record);
         Ok(handle)
     }
 }

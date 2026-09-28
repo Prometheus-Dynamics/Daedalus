@@ -1,7 +1,8 @@
+#[cfg(feature = "plugins")]
+use parking_lot::Mutex;
+use std::sync::Arc;
 #[cfg(all(feature = "plugins", feature = "gpu-mock"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(feature = "plugins")]
-use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "plugins")]
 use daedalus_data::model::{TypeExpr, Value, ValueType};
@@ -118,7 +119,7 @@ fn engine_run_plugin_registry_uses_registered_transport() {
         )
         .unwrap();
 
-    assert_eq!(seen.lock().unwrap().as_deref(), Some("42"));
+    assert_eq!(seen.lock().as_deref(), Some("42"));
     assert_eq!(result.runtime_plan.edge_transports.len(), 1);
 }
 
@@ -249,7 +250,7 @@ fn engine_run_plugin_registry_executes_device_upload_download() {
         )
         .unwrap();
 
-    assert_eq!(*seen.lock().unwrap(), Some(42));
+    assert_eq!(*seen.lock(), Some(42));
     assert_eq!(uploads.load(Ordering::Relaxed), 1);
     assert_eq!(
         downloads.load(Ordering::Relaxed),
@@ -522,7 +523,7 @@ impl NodeHandler for TransportEngineHandler {
                 let value = io
                     .get_typed::<String>("in")
                     .ok_or_else(|| NodeError::InvalidInput("missing string input".to_string()))?;
-                self.seen.lock().unwrap().replace(value);
+                self.seen.lock().replace(value);
             }
             _ => {}
         }
@@ -590,7 +591,7 @@ impl NodeHandler for DeviceTransportEngineHandler {
                 let value = io
                     .get_typed::<i32>("in")
                     .ok_or_else(|| NodeError::InvalidInput("missing cpu input".to_string()))?;
-                self.seen.lock().unwrap().replace(value);
+                self.seen.lock().replace(value);
             }
             _ => {}
         }

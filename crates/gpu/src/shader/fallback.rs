@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 #[cfg(feature = "gpu-async")]
 use std::{
     future::Future,
@@ -41,9 +42,8 @@ impl From<&ShaderSpec> for ShaderSpecCacheKey {
 pub(crate) fn cached_spec(spec: &ShaderSpec) -> Result<CachedSpec, GpuError> {
     static CACHE: OnceLock<Mutex<HashMap<ShaderSpecCacheKey, CachedSpec>>> = OnceLock::new();
     let key = ShaderSpecCacheKey::from(spec);
-    if let Ok(m) = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock()
-        && let Some(cached) = m.get(&key).cloned()
-    {
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(cached) = cache.lock().get(&key).cloned() {
         return Ok(cached);
     }
 
@@ -63,9 +63,7 @@ pub(crate) fn cached_spec(spec: &ShaderSpec) -> Result<CachedSpec, GpuError> {
         bindings,
         workgroup_size,
     };
-    if let Ok(mut m) = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
-        m.insert(key, cached.clone());
-    }
+    cache.lock().insert(key, cached.clone());
     Ok(cached)
 }
 
@@ -243,18 +241,12 @@ fn ctx_async_init_state() -> &'static Mutex<GpuCtxAsyncInit> {
 
 #[cfg(all(test, feature = "gpu-async"))]
 fn ctx_async_waiter_count() -> usize {
-    ctx_async_init_state()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .waiters
-        .len()
+    ctx_async_init_state().lock().waiters.len()
 }
 
 #[cfg(feature = "gpu-async")]
 fn try_start_ctx_async_init() -> Option<GpuCtxInitLeader> {
-    let mut state = ctx_async_init_state()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut state = ctx_async_init_state().lock();
     if state.in_progress {
         return None;
     }
@@ -276,9 +268,7 @@ impl GpuCtxInitLeader {
 
     fn wake_waiters(&self) {
         let waiters = {
-            let mut state = ctx_async_init_state()
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = ctx_async_init_state().lock();
             state.in_progress = false;
             state.waiters.drain(..).collect::<Vec<_>>()
         };
@@ -317,9 +307,7 @@ impl Future for GpuCtxInitWaitFuture {
         if GPU_CTX.get().is_some() {
             return Poll::Ready(());
         }
-        let mut state = ctx_async_init_state()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = ctx_async_init_state().lock();
         if !state.in_progress {
             return Poll::Ready(());
         }
@@ -352,9 +340,7 @@ impl Drop for GpuCtxInitWaitFuture {
         let Some(id) = self.waiter_id.take() else {
             return;
         };
-        let mut state = ctx_async_init_state()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = ctx_async_init_state().lock();
         state.waiters.retain(|waiter| waiter.id != id);
     }
 }

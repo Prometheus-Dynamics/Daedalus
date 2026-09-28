@@ -33,7 +33,7 @@ pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
 ///
 /// - `run_once(("in", value), "out")` for one input and one output batch.
 /// - `bind_input`/`bind_output` for repeated typed feeds and drains.
-/// - `bind_lane` plus `tick_direct_lane` for hot single-input/single-output routes.
+/// - `bind_lane` plus `run_lane` for hot single-input/single-output routes.
 ///
 /// Lower-level `push`, `tick`, and `drain_*` methods remain available for multi-input,
 /// demand-selected, or diagnostic workflows.

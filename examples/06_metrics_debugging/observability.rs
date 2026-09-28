@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
     ComputeAffinity,
@@ -33,10 +34,7 @@ impl NodeHandler for FailingHarness {
         _ctx: &daedalus::runtime::ExecutionContext,
         _io: &mut daedalus::runtime::NodeIo,
     ) -> Result<(), NodeError> {
-        self.calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(node.id.clone());
+        self.calls.lock().push(node.id.clone());
         if node.id.starts_with("fail") {
             return Err(NodeError::InvalidInput(
                 "intentional observability failure".into(),
@@ -141,12 +139,7 @@ fn segment_failure_observability() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    println!(
-        "non-fail-fast calls: {:?}",
-        calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    );
+    println!("non-fail-fast calls: {:?}", calls.lock());
     println!("segment failures:");
     for error in &telemetry.errors {
         println!(

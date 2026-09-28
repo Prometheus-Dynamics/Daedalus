@@ -628,3 +628,48 @@ fn host_bridge_event_recording_is_off_by_default() {
     assert_eq!(handle.stats().inbound_accepted, 1);
     assert_eq!(handle.stats().outbound_delivered, 1);
 }
+
+#[test]
+fn host_bridge_port_stats_count_per_port() {
+    let manager = HostBridgeManager::new();
+    let handle = manager.ensure_handle("host");
+    // The default input policy keeps only the newest payload per port.
+    handle.feed_payload("latest", Payload::owned("demo:u32", 1_u32));
+    handle.feed_payload("latest", Payload::owned("demo:u32", 2_u32));
+    handle.feed_payload("other", Payload::owned("demo:u32", 3_u32));
+    handle.close_input("closed");
+    handle.feed_payload("closed", Payload::owned("demo:u32", 4_u32));
+
+    let latest = handle.input_port_stats("latest").expect("latest used");
+    assert_eq!(
+        (
+            latest.accepted,
+            latest.replaced,
+            latest.dropped,
+            latest.pending
+        ),
+        (2, 1, 0, 1)
+    );
+    assert_eq!(
+        handle
+            .input_port_stats("other")
+            .expect("other used")
+            .accepted,
+        1
+    );
+    assert_eq!(
+        handle
+            .input_port_stats("closed")
+            .expect("closed used")
+            .dropped,
+        1
+    );
+    assert!(handle.input_port_stats("missing").is_none());
+    assert!(handle.output_port_stats("latest").is_none());
+
+    assert_eq!(take_inbound(&manager, "host").len(), 2);
+    assert_eq!(
+        handle.input_port_stats("latest").expect("latest").delivered,
+        1
+    );
+}

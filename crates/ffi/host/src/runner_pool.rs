@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use daedalus_ffi_core::{
@@ -140,8 +141,6 @@ pub enum RunnerPoolError {
         limit: &'static str,
         message: String,
     },
-    #[error("runner lock poisoned")]
-    LockPoisoned,
     #[error("runner failed: {0}")]
     Runner(String),
     #[error("payload lease `{0}` is missing")]
@@ -669,19 +668,13 @@ impl Drop for RunnerPool {
 
 impl RunnerEntry {
     fn touch(&self) -> Result<(), RunnerPoolError> {
-        let mut last_used = self
-            .last_used
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?;
+        let mut last_used = self.last_used.lock();
         *last_used = Instant::now();
         Ok(())
     }
 
     fn idle_for(&self) -> Result<Duration, RunnerPoolError> {
-        let last_used = self
-            .last_used
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)?;
+        let last_used = self.last_used.lock();
         Ok(last_used.elapsed())
     }
 }

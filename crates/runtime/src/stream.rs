@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use daedalus_transport::{

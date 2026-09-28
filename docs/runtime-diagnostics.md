@@ -90,7 +90,7 @@ FFI worker and payload details are primarily exposed through `ExecutionTelemetry
 For streaming host IO, inspect:
 
 - `StreamGraph::diagnostics()` for state, worker state, pending inbound/outbound counts, current execution elapsed time, last error, and last telemetry summary.
-- `StreamGraph::host_stats()` for accepted, replaced, dropped, delivered, and closed counters.
+- `StreamGraph::host_stats()` for accepted, replaced, dropped, delivered, and closed counters, and `HostBridgeHandle::input_port_stats(port)`/`output_port_stats(port)` for the same counters (plus pending) on one port.
 - `StreamGraph::host_config()` for active host bridge pressure/freshness policies.
 - `StreamGraph::host_events()` for retained feed/drop/deliver events (empty unless event recording is enabled).
 

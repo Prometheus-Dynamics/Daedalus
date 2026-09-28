@@ -2,8 +2,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum StateError {
-    #[error("{lock} lock poisoned")]
-    LockPoisoned { lock: &'static str },
     #[error("serde error: {source}")]
     Serde {
         #[from]
@@ -22,10 +20,6 @@ pub enum StateError {
 }
 
 impl StateError {
-    pub(crate) fn lock(lock: &'static str) -> Self {
-        Self::LockPoisoned { lock }
-    }
-
     pub(crate) fn state_type_mismatch(key: &str) -> Self {
         Self::StateTypeMismatch {
             key: key.to_string(),

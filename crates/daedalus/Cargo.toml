@@ -118,6 +118,7 @@ serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
+parking_lot = { workspace = true }
 daedalus-plugins-example-project = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }

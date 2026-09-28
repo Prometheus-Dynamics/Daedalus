@@ -17,6 +17,16 @@ pub mod policy;
 pub mod stable_id;
 pub mod sync;
 
+/// Locks `mutex`, recovering the guard if a panicking holder poisoned it.
+///
+/// Every critical section in this crate leaves the guarded state structurally valid, so a
+/// poisoned lock carries no information worth propagating.
+pub(crate) fn lock_recover<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(feature = "metrics")]
 pub mod metrics;
 

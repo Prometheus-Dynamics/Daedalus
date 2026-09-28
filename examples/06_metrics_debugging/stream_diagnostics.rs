@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use daedalus::data::model::Value;
@@ -111,10 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("stream output timed out")?;
     println!("out={:?}", payload.get_ref::<u32>());
 
-    let diagnostics = graph
-        .lock()
-        .map_err(|_| "stream graph lock poisoned")?
-        .diagnostics();
+    let diagnostics = graph.lock().diagnostics();
     println!("graph_diagnostics={diagnostics:?}");
     println!("worker_diagnostics={:?}", worker.diagnostics());
     worker.stop_timeout(Duration::from_secs(1))?;

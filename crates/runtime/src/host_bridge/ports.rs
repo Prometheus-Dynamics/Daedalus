@@ -10,8 +10,8 @@ use daedalus_transport::{FeedOutcome, FreshnessPolicy, OverflowPolicy, PressureP
 
 use crate::handles::PortId;
 
-use super::HostBridgePayload;
 use super::policy::apply_host_pressure;
+use super::{HostBridgePayload, HostPortStats};
 
 /// Queue storage for one host port.
 ///
@@ -143,6 +143,8 @@ pub(super) struct PortState {
     pub(super) marks: FreshnessMarks,
     /// Set by `close_input`; only meaningful for inbound ports.
     pub(super) closed: bool,
+    /// Lifetime counters; `pending` is filled in from the queue when snapshotted.
+    pub(super) stats: HostPortStats,
 }
 
 impl PortState {
@@ -154,6 +156,30 @@ impl PortState {
             freshness: None,
             marks: FreshnessMarks::default(),
             closed: false,
+            stats: HostPortStats::default(),
+        }
+    }
+
+    /// Take the oldest queued payload, counting it as delivered.
+    pub(super) fn pop_front(&mut self) -> Option<HostBridgePayload> {
+        let entry = self.queue.pop_front()?;
+        self.stats.delivered = self.stats.delivered.saturating_add(1);
+        Some(entry)
+    }
+
+    /// Move every queued payload, oldest first, into `sink`, counting each as delivered.
+    pub(super) fn drain_into(&mut self, mut sink: impl FnMut(HostBridgePayload)) {
+        let delivered = &mut self.stats.delivered;
+        self.queue.drain_into(|entry| {
+            *delivered = delivered.saturating_add(1);
+            sink(entry);
+        });
+    }
+
+    pub(super) fn stats(&self) -> HostPortStats {
+        HostPortStats {
+            pending: self.queue.len(),
+            ..self.stats.clone()
         }
     }
 }

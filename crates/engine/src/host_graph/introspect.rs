@@ -2,6 +2,7 @@
 
 use daedalus_runtime::HostPortDescriptor;
 use daedalus_runtime::executor::NodeHandler;
+use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::{PayloadInspection, ValueSerializerMap, inspect_payload};
 use daedalus_transport::Payload;
 
@@ -42,5 +43,18 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     /// structured summary (type key, rust type, residency, layout, bytes estimate).
     pub fn inspect_payload(&self, payload: &Payload) -> PayloadInspection {
         inspect_payload(payload, &self.value_serializers)
+    }
+
+    /// Take every queued host output and inspect it, in [`HostGraph::host_outputs`] port order
+    /// (oldest first within a port). Use it for debugging and examples; typed hosts should drain
+    /// ports through `take`/`bind_output` instead.
+    pub fn inspect_outputs(&self) -> Vec<(PortId, PayloadInspection)> {
+        let mut inspected = Vec::new();
+        for port in self.host_outputs() {
+            for payload in self.host.drain_payloads(port.name()) {
+                inspected.push((port.name.clone(), self.inspect_payload(&payload)));
+            }
+        }
+        inspected
     }
 }

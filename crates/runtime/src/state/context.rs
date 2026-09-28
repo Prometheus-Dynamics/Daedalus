@@ -33,40 +33,35 @@ impl<'a> RuntimeResources<'a> {
         self.node_id
     }
 
-    pub fn before_frame(&self) -> Result<(), StateError> {
+    pub fn before_frame(&self) {
         self.state
             .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::BeforeFrame)
     }
 
-    pub fn after_frame(&self) -> Result<(), StateError> {
+    pub fn after_frame(&self) {
         self.state
             .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::AfterFrame)
     }
 
-    pub fn on_memory_pressure(&self) -> Result<(), StateError> {
+    pub fn on_memory_pressure(&self) {
         self.state
             .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::MemoryPressure)
     }
 
-    pub fn on_idle(&self) -> Result<(), StateError> {
+    pub fn on_idle(&self) {
         self.state
             .apply_node_resource_lifecycle(self.node_id, ResourceLifecycleEvent::Idle)
     }
 
-    pub fn on_stop(&self) -> Result<(), StateError> {
+    pub fn on_stop(&self) {
         self.state.release_node_resources(self.node_id)
     }
 
-    pub fn snapshot(&self) -> Result<NodeResourceSnapshot, StateError> {
+    pub fn snapshot(&self) -> NodeResourceSnapshot {
         self.state.snapshot_node_resources(self.node_id)
     }
 
-    pub fn record_frame_scratch_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), StateError> {
+    pub fn record_frame_scratch_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.state.record_node_resource_usage(
             self.node_id,
             name,
@@ -76,12 +71,7 @@ impl<'a> RuntimeResources<'a> {
         )
     }
 
-    pub fn record_warm_cache_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), StateError> {
+    pub fn record_warm_cache_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.state.record_node_resource_usage(
             self.node_id,
             name,
@@ -91,12 +81,7 @@ impl<'a> RuntimeResources<'a> {
         )
     }
 
-    pub fn record_persistent_state_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), StateError> {
+    pub fn record_persistent_state_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.state.record_node_resource_usage(
             self.node_id,
             name,
@@ -195,27 +180,27 @@ impl ExecutionContext {
         }
     }
 
-    pub fn begin_resource_frame(&self) -> Result<(), StateError> {
+    pub fn begin_resource_frame(&self) {
         self.resources().before_frame()
     }
 
-    pub fn snapshot_resources(&self) -> Result<NodeResourceSnapshot, StateError> {
+    pub fn snapshot_resources(&self) -> NodeResourceSnapshot {
         self.resources().snapshot()
     }
 
-    pub fn end_resource_frame(&self) -> Result<(), StateError> {
+    pub fn end_resource_frame(&self) {
         self.resources().after_frame()
     }
 
-    pub fn apply_memory_pressure(&self) -> Result<(), StateError> {
+    pub fn apply_memory_pressure(&self) {
         self.resources().on_memory_pressure()
     }
 
-    pub fn notify_idle(&self) -> Result<(), StateError> {
+    pub fn notify_idle(&self) {
         self.resources().on_idle()
     }
 
-    pub fn release_resources(&self) -> Result<(), StateError> {
+    pub fn release_resources(&self) {
         self.resources().on_stop()
     }
 
@@ -223,77 +208,50 @@ impl ExecutionContext {
         &self,
         name: impl Into<String>,
         value: crate::executor::CustomMetricValue,
-    ) -> Result<(), StateError> {
+    ) {
         self.state
-            .record_node_custom_metric(&self.node_id, name, value)
+            .record_node_custom_metric(&self.node_id, name, value);
     }
 
-    pub fn increment_metric(&self, name: impl Into<String>, value: u64) -> Result<(), StateError> {
+    pub fn increment_metric(&self, name: impl Into<String>, value: u64) {
         self.record_metric(name, crate::executor::CustomMetricValue::Counter(value))
     }
 
-    pub fn gauge_metric(&self, name: impl Into<String>, value: f64) -> Result<(), StateError> {
+    pub fn gauge_metric(&self, name: impl Into<String>, value: f64) {
         self.record_metric(name, crate::executor::CustomMetricValue::Gauge(value))
     }
 
-    pub fn duration_metric(
-        &self,
-        name: impl Into<String>,
-        value: Duration,
-    ) -> Result<(), StateError> {
+    pub fn duration_metric(&self, name: impl Into<String>, value: Duration) {
         self.record_metric(name, crate::executor::CustomMetricValue::Duration(value))
     }
 
-    pub fn bytes_metric(&self, name: impl Into<String>, value: u64) -> Result<(), StateError> {
+    pub fn bytes_metric(&self, name: impl Into<String>, value: u64) {
         self.record_metric(name, crate::executor::CustomMetricValue::Bytes(value))
     }
 
-    pub fn text_metric(
-        &self,
-        name: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Result<(), StateError> {
+    pub fn text_metric(&self, name: impl Into<String>, value: impl Into<String>) {
         self.record_metric(name, crate::executor::CustomMetricValue::Text(value.into()))
     }
 
-    pub fn bool_metric(&self, name: impl Into<String>, value: bool) -> Result<(), StateError> {
+    pub fn bool_metric(&self, name: impl Into<String>, value: bool) {
         self.record_metric(name, crate::executor::CustomMetricValue::Bool(value))
     }
 
-    pub fn json_metric(
-        &self,
-        name: impl Into<String>,
-        value: serde_json::Value,
-    ) -> Result<(), StateError> {
+    pub fn json_metric(&self, name: impl Into<String>, value: serde_json::Value) {
         self.record_metric(name, crate::executor::CustomMetricValue::Json(value))
     }
 
-    pub fn record_frame_scratch_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), StateError> {
+    pub fn record_frame_scratch_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.resources()
             .record_frame_scratch_bytes(name, live_bytes, retained_bytes)
     }
 
-    pub fn record_warm_cache_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), StateError> {
+    pub fn record_warm_cache_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.resources()
             .record_warm_cache_bytes(name, live_bytes, retained_bytes)
     }
 
-    pub fn record_persistent_state_bytes(
-        &self,
-        name: &str,
-        live_bytes: u64,
-        retained_bytes: u64,
-    ) -> Result<(), StateError> {
+    pub fn record_persistent_state_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.resources()
             .record_persistent_state_bytes(name, live_bytes, retained_bytes)
     }

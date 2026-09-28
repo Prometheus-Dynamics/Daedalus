@@ -152,7 +152,7 @@ pub(super) enum ResourceStorage {
 }
 
 pub(super) type NodeResources = HashMap<String, ResourceEntry>;
-pub(super) type SharedNodeResources = Arc<std::sync::Mutex<NodeResources>>;
+pub(super) type SharedNodeResources = Arc<parking_lot::Mutex<NodeResources>>;
 
 pub trait ManagedResource: Send + Sync + 'static {
     fn live_bytes(&self) -> u64 {

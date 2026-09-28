@@ -72,7 +72,11 @@ impl StatePool {
     }
 }
 
-static STATE_POOL: OnceLock<std::sync::Mutex<StatePool>> = OnceLock::new();
+static STATE_POOL: OnceLock<parking_lot::Mutex<StatePool>> = OnceLock::new();
+
+fn state_pool() -> &'static parking_lot::Mutex<StatePool> {
+    STATE_POOL.get_or_init(|| parking_lot::Mutex::new(StatePool::new()))
+}
 
 /// Persistent GPU-side state for small POD types; keeps a device buffer alive across dispatches.
 pub struct GpuState<T: bytemuck::Pod + Copy> {
@@ -110,12 +114,10 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
         let usage = wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC;
-        let buffer = if let Some(buf) = STATE_POOL
-            .get_or_init(|| std::sync::Mutex::new(StatePool::new()))
+        let pooled = state_pool()
             .lock()
-            .ok()
-            .and_then(|mut p| p.take(super::device_key(device), size, usage))
-        {
+            .take(super::device_key(device), size, usage);
+        let buffer = if let Some(buf) = pooled {
             queue.write_buffer(buf.as_ref(), 0, bytemuck::bytes_of(&initial));
             buf
         } else {
@@ -196,10 +198,8 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
 }
 
 pub(crate) fn clear_gpu_state_pool_for_device(device_key: usize) {
-    if let Some(pool) = STATE_POOL.get()
-        && let Ok(mut pool) = pool.lock()
-    {
-        pool.per_device.remove(&device_key);
+    if let Some(pool) = STATE_POOL.get() {
+        pool.lock().per_device.remove(&device_key);
     }
 }
 
@@ -228,12 +228,10 @@ where
 impl<T: bytemuck::Pod + Copy> Drop for GpuState<T> {
     fn drop(&mut self) {
         // Only return to pool if this is the last Arc reference.
-        if Arc::strong_count(&self.buffer) == 1
-            && let Ok(mut p) = STATE_POOL
-                .get_or_init(|| std::sync::Mutex::new(StatePool::new()))
+        if Arc::strong_count(&self.buffer) == 1 {
+            state_pool()
                 .lock()
-        {
-            p.put(self.device_key, self.size, self.buffer.clone());
+                .put(self.device_key, self.size, self.buffer.clone());
         }
     }
 }

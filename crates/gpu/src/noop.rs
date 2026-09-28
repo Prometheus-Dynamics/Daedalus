@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::handles::{GpuBufferHandle, GpuImageHandle};
 use crate::traits::GpuBackend;
@@ -85,10 +85,7 @@ impl GpuBackend for NoopBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_upload(req.size_bytes);
         Ok(GpuBufferHandle::new(
             req.size_bytes,
@@ -101,10 +98,7 @@ impl GpuBackend for NoopBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         let bpp = crate::format_bytes_per_pixel(req.format).unwrap_or(4) as u64;
         let bytes = (req.width as u64) * (req.height as u64) * bpp;
         stats.record_upload(bytes);
@@ -118,24 +112,15 @@ impl GpuBackend for NoopBackend {
     }
 
     fn stats(&self) -> TransferStats {
-        *self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        *self.stats.lock()
     }
 
     fn take_stats(&self) -> TransferStats {
-        self.stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
+        self.stats.lock().take()
     }
 
     fn record_download(&self, bytes: u64) {
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_download(bytes);
     }
 
@@ -145,10 +130,7 @@ impl GpuBackend for NoopBackend {
         data: &[u8],
     ) -> Result<GpuImageHandle, GpuError> {
         let handle = self.create_image(req)?;
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_upload(data.len() as u64);
         Ok(handle)
     }

@@ -7,8 +7,9 @@ use crate::executor::MetricsLevel;
 use crate::executor::{CorrelatedPayload, RuntimeDataSizeInspectors};
 use crate::plan::{BackpressureStrategy, RuntimeEdgePolicy};
 use daedalus_transport::{CoalesceStrategy, FreshnessPolicy, OverflowPolicy, PressurePolicy};
+use parking_lot::Mutex;
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 fn payload(value: u8) -> CorrelatedPayload {
@@ -99,17 +100,6 @@ fn apply_locked_pressure_event(
     telemetry
 }
 
-fn poison_queue(queue: &Arc<Mutex<EdgeQueue>>) {
-    let _ = std::panic::catch_unwind({
-        let queue = Arc::clone(queue);
-        move || {
-            let _guard = queue.lock().expect("queue lock before poison");
-            panic!("poison queue lock for regression test");
-        }
-    });
-    assert!(queue.is_poisoned());
-}
-
 #[test]
 fn ringbuf_clear_preserves_capacity() {
     let mut ring = RingBuf::new(4);
@@ -159,9 +149,8 @@ fn bounded_backpressure_does_not_enqueue_when_full() {
 }
 
 #[test]
-fn locked_queue_recovers_from_poison_when_applying_policy() {
+fn locked_queue_applies_policy_then_pops() {
     let queue = Arc::new(Mutex::new(EdgeQueue::default()));
-    poison_queue(&queue);
     let queues = Arc::new(vec![EdgeStorage::Locked {
         queue,
         metrics: Arc::new(EdgeStorageMetrics::default()),
@@ -181,7 +170,7 @@ fn locked_queue_recovers_from_poison_when_applying_policy() {
         backpressure: BackpressureStrategy::None,
         data_size_inspectors: &inspectors,
     })
-    .expect("policy application should recover poisoned queue");
+    .expect("policy application");
 
     let value = super::pop_edge(0, &queues, &inspectors)
         .expect("queued payload")
@@ -189,29 +178,6 @@ fn locked_queue_recovers_from_poison_when_applying_policy() {
         .try_into_owned::<Vec<u8>>()
         .expect("payload value");
     assert_eq!(value, vec![1]);
-}
-
-#[test]
-fn locked_queue_recovers_from_poison_when_popping() {
-    let queue = Arc::new(Mutex::new(EdgeQueue::default()));
-    queue
-        .lock()
-        .expect("queue lock")
-        .push(&RuntimeEdgePolicy::fifo(), payload(2));
-    poison_queue(&queue);
-    let queues = Arc::new(vec![EdgeStorage::Locked {
-        queue,
-        metrics: Arc::new(EdgeStorageMetrics::default()),
-    }]);
-    let inspectors = RuntimeDataSizeInspectors::default();
-
-    let value = super::pop_edge(0, &queues, &inspectors)
-        .expect("queued payload")
-        .inner
-        .try_into_owned::<Vec<u8>>()
-        .expect("payload value");
-
-    assert_eq!(value, vec![2]);
 }
 
 #[cfg(feature = "lockfree-queues")]
@@ -460,11 +426,7 @@ fn backpressure_strategies_cover_all_pressure_policies() {
                 #[cfg(feature = "lockfree-queues")]
                 EdgeStorage::BoundedLf { .. } => unreachable!("test queue uses locked storage"),
             };
-            assert_eq!(
-                queue.lock().unwrap().len(),
-                expected_len,
-                "{name} with {strategy:?}"
-            );
+            assert_eq!(queue.lock().len(), expected_len, "{name} with {strategy:?}");
             assert_eq!(
                 telemetry.backpressure_events, expected_events,
                 "{name} with {strategy:?}"

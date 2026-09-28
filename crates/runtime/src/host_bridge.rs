@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use parking_lot::{Condvar, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use daedalus_transport::{
@@ -24,14 +24,14 @@ use events::{
 pub use inspect::{PayloadInspection, PayloadSummary, inspect_payload, serialize_payload_value};
 pub use manager::{HostBridgeManager, bridge_handler};
 use policy::freshness_drop_reason;
-use ports::{PortDirection, PortEntry, PortKey};
+use ports::{PortDirection, PortEntry, PortKey, PortState};
 pub use serializers::{
     ValueSerializer, ValueSerializerMap, new_value_serializer_map, primitive_value_serializer_map,
     register_primitive_value_serializers_in, register_value_serializer_in, value_serializer_map,
 };
 pub use types::{
     HostBridgeConfig, HostBridgeDropStats, HostBridgeEvent, HostBridgeEventKind, HostBridgePayload,
-    HostBridgeStats,
+    HostBridgeStats, HostPortStats,
 };
 pub use wait::{InboundWait, InboundWaiter};
 
@@ -189,6 +189,7 @@ fn enqueue_locked(
 
     if matches!(direction, Direction::Inbound) && (*closed || state.closed) {
         direction.count_drop(stats, Some(DropReason::Closed));
+        state.stats.dropped = state.stats.dropped.saturating_add(1);
         let outcome = FeedOutcome::Dropped {
             correlation_id: payload.correlation_id(),
             reason: DropReason::Closed,
@@ -208,6 +209,7 @@ fn enqueue_locked(
     let freshness = state.freshness.as_ref().unwrap_or(default_freshness);
     if let Some(reason) = freshness_drop_reason(&mut state.marks, &payload, freshness) {
         direction.count_drop(stats, Some(reason.clone()));
+        state.stats.dropped = state.stats.dropped.saturating_add(1);
         let outcome = FeedOutcome::Dropped {
             correlation_id: payload.correlation_id(),
             reason: reason.clone(),
@@ -237,6 +239,7 @@ fn enqueue_locked(
             payload,
         },
     );
+    state.stats.record_enqueue(&outcome);
     let reason = match outcome {
         FeedOutcome::Accepted { .. } => {
             direction.count_accepted(stats);
@@ -305,7 +308,7 @@ impl HostBridgeHandle {
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         let state = guard.inbound.port(port.into());
         state.pressure = Some(pressure);
         state.freshness = Some(freshness);
@@ -319,7 +322,7 @@ impl HostBridgeHandle {
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         let state = guard.outbound.port(port.into());
         state.pressure = Some(pressure);
         state.freshness = Some(freshness);
@@ -332,7 +335,9 @@ impl HostBridgeHandle {
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
-        lock_host_buffers(&self.shared)
+        self.shared
+            .buffers
+            .lock()
             .inbound
             .set_defaults(pressure, freshness);
         Ok(())
@@ -344,7 +349,9 @@ impl HostBridgeHandle {
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
-        lock_host_buffers(&self.shared)
+        self.shared
+            .buffers
+            .lock()
             .outbound
             .set_defaults(pressure, freshness);
         Ok(())
@@ -352,11 +359,11 @@ impl HostBridgeHandle {
 
     /// Enable or disable retained diagnostic events. Disabling clears retained events.
     pub fn set_event_recording(&self, enabled: bool) {
-        lock_host_buffers(&self.shared).events.set_enabled(enabled);
+        self.shared.buffers.lock().events.set_enabled(enabled);
     }
 
     pub fn set_event_limit(&self, limit: Option<usize>) {
-        lock_host_buffers(&self.shared).events.set_limit(limit);
+        self.shared.buffers.lock().events.set_limit(limit);
     }
 
     pub fn apply_config(&self, config: &HostBridgeConfig) -> Result<(), PolicyValidationError> {
@@ -369,7 +376,7 @@ impl HostBridgeHandle {
             &config.default_output_policy.freshness,
         )?;
 
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         guard.inbound.set_defaults(
             config.default_input_policy.pressure.clone(),
             config.default_input_policy.freshness.clone(),
@@ -386,7 +393,7 @@ impl HostBridgeHandle {
 
     /// Feed a payload into an inbound port, applying the port's freshness and pressure policy.
     pub fn feed_payload(&self, port: impl Into<PortId>, payload: Payload) -> FeedOutcome {
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         let outcome = enqueue_locked(
             &mut guard,
             Direction::Inbound,
@@ -449,7 +456,7 @@ impl HostBridgeHandle {
     }
 
     pub fn try_pop_payload(&self, port: impl AsRef<str>) -> Option<Payload> {
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         pop_outbound_locked(&mut guard, self.alias.as_str(), port.as_ref())
     }
 
@@ -460,7 +467,7 @@ impl HostBridgeHandle {
     ) -> Option<Payload> {
         let port = port.as_ref();
         let deadline = Instant::now() + timeout;
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         loop {
             if let Some(payload) = pop_outbound_locked(&mut guard, self.alias.as_str(), port) {
                 return Some(payload);
@@ -468,25 +475,19 @@ impl HostBridgeHandle {
             if guard.closed {
                 return None;
             }
-            let now = Instant::now();
-            if now >= deadline {
-                return None;
-            }
-            let remaining = deadline.saturating_duration_since(now);
-            let (next_guard, wait) = self
+            if self
                 .shared
                 .ready
-                .wait_timeout(guard, remaining)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard = next_guard;
-            if wait.timed_out() {
+                .wait_until(&mut guard, deadline)
+                .timed_out()
+            {
                 return pop_outbound_locked(&mut guard, self.alias.as_str(), port);
             }
         }
     }
 
     pub fn close(&self) {
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         guard.closed = true;
         guard.stats.closed = true;
         self.shared.ready.notify_all();
@@ -497,7 +498,7 @@ impl HostBridgeHandle {
 
     /// Close one inbound port: queued input is discarded and later feeds are dropped as closed.
     pub fn close_input(&self, port: impl Into<PortId>) {
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         let state = guard.inbound.port(port.into());
         state.closed = true;
         state.queue.clear();
@@ -505,7 +506,7 @@ impl HostBridgeHandle {
     }
 
     pub fn is_input_closed(&self, port: impl AsRef<str>) -> bool {
-        let guard = lock_host_buffers(&self.shared);
+        let guard = self.shared.buffers.lock();
         guard.closed
             || guard
                 .inbound
@@ -513,15 +514,27 @@ impl HostBridgeHandle {
                 .is_some_and(|state| state.closed)
     }
 
+    /// Counters for one inbound (host → graph) port; `None` if the port was never used.
+    pub fn input_port_stats(&self, port: impl AsRef<str>) -> Option<HostPortStats> {
+        let guard = self.shared.buffers.lock();
+        guard.inbound.get(port.as_ref()).map(PortState::stats)
+    }
+
+    /// Counters for one outbound (graph → host) port; `None` if the port was never used.
+    pub fn output_port_stats(&self, port: impl AsRef<str>) -> Option<HostPortStats> {
+        let guard = self.shared.buffers.lock();
+        guard.outbound.get(port.as_ref()).map(PortState::stats)
+    }
+
     pub fn stats(&self) -> HostBridgeStats {
-        let guard = lock_host_buffers(&self.shared);
+        let guard = self.shared.buffers.lock();
         let mut stats = guard.stats.clone();
         stats.closed = guard.closed;
         stats
     }
 
     pub fn config_snapshot(&self) -> HostBridgeConfig {
-        let guard = lock_host_buffers(&self.shared);
+        let guard = self.shared.buffers.lock();
         HostBridgeConfig {
             default_input_policy: crate::plan::RuntimeEdgePolicy {
                 pressure: guard.inbound.default_pressure.clone(),
@@ -537,20 +550,20 @@ impl HostBridgeHandle {
     }
 
     pub fn events(&self) -> Vec<HostBridgeEvent> {
-        let guard = lock_host_buffers(&self.shared);
+        let guard = self.shared.buffers.lock();
         guard.events.events.iter().cloned().collect()
     }
 
     pub fn pending_inbound(&self) -> usize {
-        lock_host_buffers(&self.shared).inbound.pending()
+        self.shared.buffers.lock().inbound.pending()
     }
 
     pub fn pending_outbound(&self) -> usize {
-        lock_host_buffers(&self.shared).outbound.pending()
+        self.shared.buffers.lock().outbound.pending()
     }
 
     pub fn has_pending_inbound(&self) -> bool {
-        has_pending_inbound_locked(&lock_host_buffers(&self.shared))
+        has_pending_inbound_locked(&self.shared.buffers.lock())
     }
 
     pub fn try_pop<T>(&self, port: impl AsRef<str>) -> Option<T>
@@ -573,7 +586,7 @@ impl HostBridgeHandle {
 
     /// Queue a graph output for the host. Allocates a `PortId` only the first time a port is seen.
     pub(crate) fn push_outbound_ref(&self, port: &str, payload: Payload) {
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         let outcome = enqueue_locked(
             &mut guard,
             Direction::Outbound,
@@ -589,17 +602,17 @@ impl HostBridgeHandle {
     /// Move every queued inbound payload into `out` (oldest first per port). Reuse `out` across
     /// calls to keep draining allocation-free.
     pub fn take_inbound_into(&self, out: &mut Vec<HostBridgePayload>) {
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         for state in guard.inbound.ports.values_mut() {
-            state.queue.drain_into(|entry| out.push(entry));
+            state.drain_into(|entry| out.push(entry));
         }
     }
 
     /// Hand every queued payload of one inbound port to `sink` while the bridge lock is held.
     /// `sink` must not call back into this bridge.
     pub(crate) fn drain_inbound_port(&self, port: &str, sink: impl FnMut(HostBridgePayload)) {
-        if let Some(state) = lock_host_buffers(&self.shared).inbound.get_mut(port) {
-            state.queue.drain_into(sink);
+        if let Some(state) = self.shared.buffers.lock().inbound.get_mut(port) {
+            state.drain_into(sink);
         }
     }
 
@@ -613,11 +626,11 @@ impl HostBridgeHandle {
 
     pub fn drain_payloads(&self, port: impl AsRef<str>) -> Vec<Payload> {
         let port = port.as_ref();
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         let buffers = &mut *guard;
         let mut payloads = Vec::new();
         if let Some(state) = buffers.outbound.get_mut(port) {
-            state.queue.drain_into(|entry| payloads.push(entry.payload));
+            state.drain_into(|entry| payloads.push(entry.payload));
         }
         buffers.stats.outbound_delivered = buffers
             .stats
@@ -666,7 +679,7 @@ fn pop_outbound_locked(guard: &mut HostBridgeBuffers, alias: &str, port: &str) -
     let payload = guard
         .outbound
         .get_mut(port)
-        .and_then(|state| state.queue.pop_front())
+        .and_then(PortState::pop_front)
         .map(|entry| entry.payload)?;
     guard.stats.outbound_delivered = guard.stats.outbound_delivered.saturating_add(1);
     record_host_event(
@@ -679,27 +692,4 @@ fn pop_outbound_locked(guard: &mut HostBridgeBuffers, alias: &str, port: &str) -
         None,
     );
     Some(payload)
-}
-
-pub(super) fn lock_host_buffers(shared: &HostBridgeShared) -> MutexGuard<'_, HostBridgeBuffers> {
-    shared
-        .buffers
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-pub(super) fn lock_host_map(
-    inner: &Mutex<HashMap<HostAlias, Arc<HostBridgeShared>>>,
-) -> MutexGuard<'_, HashMap<HostAlias, Arc<HostBridgeShared>>> {
-    inner
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-pub(in crate::host_bridge) fn lock_host_defaults(
-    defaults: &Mutex<manager::HostBridgeDefaults>,
-) -> MutexGuard<'_, manager::HostBridgeDefaults> {
-    defaults
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

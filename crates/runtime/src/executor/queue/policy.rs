@@ -1,6 +1,7 @@
 //! Edge policy application: backpressure, overflow handling and pressure telemetry.
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[cfg(feature = "lockfree-queues")]
@@ -14,7 +15,7 @@ use crate::executor::{
     ExecutionTelemetry, NodeError, RuntimeDataSizeInspectors,
 };
 
-use super::{EdgeStorage, lock_edge_queue, payload_size_bytes};
+use super::{EdgeStorage, payload_size_bytes};
 
 fn trace_edge_enqueue(edge_idx: usize, policy: &RuntimeEdgePolicy, payload: &CorrelatedPayload) {
     tracing::trace!(
@@ -163,7 +164,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
         telem.record_edge_transport(edge_idx, transport_bytes);
         match storage {
             EdgeStorage::Locked { queue, metrics } => {
-                let mut q = lock_edge_queue(queue, edge_idx, "apply_policy");
+                let mut q = queue.lock();
                 q.ensure_policy(policy);
                 telem.record_edge_capacity(edge_idx, q.capacity());
                 let payload_type = payload.inner.type_key().clone();
@@ -414,19 +415,7 @@ fn record_warning(
     seen: &Arc<Mutex<std::collections::HashSet<String>>>,
     telem: &mut ExecutionTelemetry,
 ) {
-    match seen.lock() {
-        Ok(mut s) => {
-            if s.insert(label.to_string()) {
-                telem.warnings.push(label.to_string());
-            }
-        }
-        Err(_) => {
-            tracing::warn!(
-                target: "daedalus_runtime::executor::queue",
-                warning = label,
-                "warning de-duplication lock poisoned"
-            );
-            telem.warnings.push(label.to_string());
-        }
+    if seen.lock().insert(label.to_string()) {
+        telem.warnings.push(label.to_string());
     }
 }

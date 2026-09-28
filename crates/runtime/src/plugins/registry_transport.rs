@@ -522,10 +522,7 @@ impl PluginRegistry {
             return;
         }
         let key = std::any::type_name::<T>();
-        let mut guard = self
-            .const_coercers
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self.const_coercers.write();
         guard.insert(
             key,
             Box::new(move |v| coercer(v).map(|t| Box::new(t) as Box<dyn Any + Send + Sync>)),

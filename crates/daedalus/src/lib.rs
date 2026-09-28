@@ -27,8 +27,8 @@ pub use daedalus_macros as macros;
 #[cfg(feature = "plugins")]
 pub use daedalus_macros::plugin;
 pub use daedalus_macros::{
-    BranchPayload, DaedalusToValue, DaedalusTypeExpr, GpuBindings, GpuStateful, NodeConfig,
-    Outputs, adapt, device, node, node_handler, type_key,
+    BranchPayload, DaedalusToValue, DaedalusTypeExpr, GpuBindings, GpuStateful, NodeConfig, adapt,
+    device, node, node_handler, type_key,
 };
 #[cfg(feature = "plugins")]
 pub use daedalus_nodes::declare_plugin;
@@ -114,8 +114,8 @@ pub mod prelude {
     pub use crate::{Backing, Compute, DeviceBridge, GpuBufferHandle, GpuImageHandle};
     pub use crate::{
         BackpressureStrategy, BranchPayload, ComputeAffinity, DaedalusToValue, DaedalusTypeExpr,
-        GpuBindings, GpuStateful, NodeConfig, NodeHandle, NodeHandleLike, Outputs, PortHandle,
-        SyncGroup, SyncPolicy, adapt, device, node, node_handler, type_key,
+        GpuBindings, GpuStateful, NodeConfig, NodeHandle, NodeHandleLike, PortHandle, SyncGroup,
+        SyncPolicy, adapt, device, node, node_handler, type_key,
     };
     pub use crate::{GraphDocument, GraphDocumentError, MissingPlugins, PluginRequirement};
     #[cfg(feature = "plugins")]

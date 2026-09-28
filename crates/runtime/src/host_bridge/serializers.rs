@@ -1,6 +1,7 @@
+use parking_lot::RwLock;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 use daedalus_data::model::Value;
 
@@ -25,7 +26,7 @@ where
     T: Any + Send + Sync + 'static,
     F: Fn(&T) -> Value + Send + Sync + 'static,
 {
-    let mut guard = map.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = map.write();
     guard.insert(
         TypeId::of::<T>(),
         Box::new(move |any| any.downcast_ref::<T>().map(&serializer)),

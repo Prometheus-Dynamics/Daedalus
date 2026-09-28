@@ -29,6 +29,7 @@ snapshots = ["daedalus-runtime/snapshots"]
 plugins = ["daedalus-runtime/plugins"]
 
 [dependencies]
+parking_lot = { workspace = true }
 daedalus-runtime = { version = "2.0.0", path = "../runtime", default-features = false }
 daedalus-data = { workspace = true }
 daedalus-planner = { version = "2.0.0", path = "../planner", default-features = false }

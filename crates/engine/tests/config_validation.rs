@@ -7,8 +7,9 @@ use daedalus_runtime::{
     config::RuntimeDebugConfig,
     executor::{NodeError, NodeHandler},
 };
+use parking_lot::Mutex;
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, OnceLock,
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
@@ -40,7 +41,7 @@ fn pool_size_zero_is_rejected() {
 #[cfg(feature = "config-env")]
 #[test]
 fn runtime_pool_size_env_is_parsed() {
-    let _guard = env_lock().lock().expect("env lock");
+    let _guard = env_lock().lock();
     unsafe {
         std::env::set_var("DAEDALUS_RUNTIME_POOL_SIZE", "3");
     }
@@ -69,7 +70,7 @@ fn runtime_debug_config_builder_sets_runtime_override() {
 #[cfg(feature = "config-env")]
 #[test]
 fn invalid_runtime_pool_size_env_is_rejected() {
-    let _guard = env_lock().lock().expect("env lock");
+    let _guard = env_lock().lock();
     unsafe {
         std::env::set_var("DAEDALUS_RUNTIME_POOL_SIZE", "nope");
     }
@@ -225,8 +226,8 @@ fn direct_and_compiled_parallel_execution_apply_same_runtime_config() {
         .unwrap();
     let compiled = compiled.run_telemetry().unwrap();
 
-    let mut direct_nodes = direct_log.lock().unwrap().clone();
-    let mut compiled_nodes = compiled_log.lock().unwrap().clone();
+    let mut direct_nodes = direct_log.lock().clone();
+    let mut compiled_nodes = compiled_log.lock().clone();
     direct_nodes.sort();
     compiled_nodes.sort();
 
@@ -273,7 +274,7 @@ impl NodeHandler for LogHandler {
         _ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
-        self.log.lock().unwrap().push(node.id.clone());
+        self.log.lock().push(node.id.clone());
         Ok(())
     }
 }

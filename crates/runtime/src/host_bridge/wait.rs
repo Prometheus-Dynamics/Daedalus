@@ -11,10 +11,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
 
-use super::{
-    HostBridgeBuffers, HostBridgeHandle, HostBridgeShared, has_pending_inbound_locked,
-    lock_host_buffers,
-};
+use super::{HostBridgeBuffers, HostBridgeHandle, HostBridgeShared, has_pending_inbound_locked};
 
 /// Why an inbound wait finished.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -90,7 +87,7 @@ pub(super) fn wake_all(wakers: Vec<Waker>) {
 
 impl InboundWaiter {
     fn new(shared: Arc<HostBridgeShared>) -> Self {
-        let epoch = lock_host_buffers(&shared).wake_epoch;
+        let epoch = shared.buffers.lock().wake_epoch;
         Self {
             shared,
             epoch,
@@ -100,7 +97,7 @@ impl InboundWaiter {
 
     /// Non-blocking check: `Some` when the wait would complete immediately.
     pub fn poll_now(&self) -> Option<InboundWait> {
-        let guard = lock_host_buffers(&self.shared);
+        let guard = self.shared.buffers.lock();
         inbound_state_locked(&guard, self.epoch)
     }
 
@@ -110,30 +107,23 @@ impl InboundWaiter {
     /// Do not call this while holding locks that node execution needs.
     pub fn wait(self, timeout: Option<Duration>) -> InboundWait {
         let deadline = timeout.and_then(|timeout| Instant::now().checked_add(timeout));
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         loop {
             if let Some(state) = inbound_state_locked(&guard, self.epoch) {
                 return state;
             }
-            match (timeout, deadline) {
-                (None, _) | (Some(_), None) => {
-                    guard = self
+            match deadline {
+                None => self.shared.ready.wait(&mut guard),
+                Some(deadline) => {
+                    if self
                         .shared
                         .ready
-                        .wait(guard)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                }
-                (Some(_), Some(deadline)) => {
-                    let now = Instant::now();
-                    if now >= deadline {
-                        return InboundWait::TimedOut;
+                        .wait_until(&mut guard, deadline)
+                        .timed_out()
+                    {
+                        return inbound_state_locked(&guard, self.epoch)
+                            .unwrap_or(InboundWait::TimedOut);
                     }
-                    let (next, _) = self
-                        .shared
-                        .ready
-                        .wait_timeout(guard, deadline - now)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    guard = next;
                 }
             }
         }
@@ -145,7 +135,7 @@ impl Future for InboundWaiter {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut guard = lock_host_buffers(&this.shared);
+        let mut guard = this.shared.buffers.lock();
         if let Some(state) = inbound_state_locked(&guard, this.epoch) {
             if let Some(id) = this.waker_id.take() {
                 guard.inbound_wakers.retain(|(waker_id, _)| *waker_id != id);
@@ -180,7 +170,7 @@ impl Future for InboundWaiter {
 impl Drop for InboundWaiter {
     fn drop(&mut self) {
         if let Some(id) = self.waker_id.take() {
-            let mut guard = lock_host_buffers(&self.shared);
+            let mut guard = self.shared.buffers.lock();
             guard.inbound_wakers.retain(|(waker_id, _)| *waker_id != id);
         }
     }
@@ -202,7 +192,7 @@ impl HostBridgeHandle {
     /// Waiters created before this call complete with [`InboundWait::Woken`]; use it to interrupt
     /// a host drive loop (for example to stop it).
     pub fn wake_inbound_waiters(&self) {
-        let mut guard = lock_host_buffers(&self.shared);
+        let mut guard = self.shared.buffers.lock();
         guard.wake_epoch = guard.wake_epoch.wrapping_add(1);
         self.shared.ready.notify_all();
         let wakers = take_inbound_wakers(&mut guard);
@@ -216,7 +206,7 @@ impl HostBridgeHandle {
 
     /// Whether the whole bridge has been closed.
     pub fn is_closed(&self) -> bool {
-        lock_host_buffers(&self.shared).closed
+        self.shared.buffers.lock().closed
     }
 }
 
@@ -287,7 +277,7 @@ mod tests {
 
         assert!(Pin::new(&mut waiter).poll(&mut cx).is_pending());
         assert!(Pin::new(&mut waiter).poll(&mut cx).is_pending());
-        assert_eq!(lock_host_buffers(&handle.shared).inbound_wakers.len(), 1);
+        assert_eq!(handle.shared.buffers.lock().inbound_wakers.len(), 1);
 
         handle.push("in", 1i64);
         assert!(flag.0.load(Ordering::SeqCst));
@@ -295,7 +285,7 @@ mod tests {
             Pin::new(&mut waiter).poll(&mut cx),
             Poll::Ready(InboundWait::Ready)
         );
-        assert!(lock_host_buffers(&handle.shared).inbound_wakers.is_empty());
+        assert!(handle.shared.buffers.lock().inbound_wakers.is_empty());
     }
 
     #[test]
@@ -307,6 +297,6 @@ mod tests {
         let mut waiter = handle.inbound_waiter();
         assert!(Pin::new(&mut waiter).poll(&mut cx).is_pending());
         drop(waiter);
-        assert!(lock_host_buffers(&handle.shared).inbound_wakers.is_empty());
+        assert!(handle.shared.buffers.lock().inbound_wakers.is_empty());
     }
 }

@@ -443,3 +443,44 @@ fn filtered_snapshot_respects_feature_flags() {
     assert_eq!(gpu_snapshot.nodes.len(), 2);
     assert_eq!(gpu_snapshot.plugins.len(), 2);
 }
+
+#[test]
+fn remove_plugin_drops_only_unshared_capabilities() {
+    let mut reg = CapabilityRegistry::new();
+    reg.register_type(TypeDecl::new("shared:frame")).unwrap();
+    reg.register_type(TypeDecl::new("vision:mask")).unwrap();
+    reg.register_adapter(AdapterDecl::new(
+        "vision.mask_to_frame",
+        "vision:mask",
+        "shared:frame",
+    ))
+    .unwrap();
+    reg.register_node(NodeDecl::new("vision:segment").output(PortDecl::new("out", "vision:mask")))
+        .unwrap();
+    reg.register_plugin(
+        PluginManifest::new("vision")
+            .provided_type("shared:frame")
+            .provided_type("vision:mask")
+            .provided_adapter("vision.mask_to_frame")
+            .provided_node("vision:segment"),
+    )
+    .unwrap();
+    reg.register_plugin(PluginManifest::new("camera").provided_type("shared:frame"))
+        .unwrap();
+
+    let removed = reg.remove_plugin("vision").expect("vision installed");
+    assert_eq!(removed.id, "vision");
+    assert!(reg.plugin_manifest("vision").is_none());
+    assert!(reg.type_decl(&TypeKey::new("vision:mask")).is_none());
+    assert!(
+        reg.adapter_decl(&AdapterId::new("vision.mask_to_frame"))
+            .is_none()
+    );
+    assert!(
+        reg.node_decl(&crate::ids::NodeId::new("vision:segment"))
+            .is_none()
+    );
+    assert!(reg.type_decl(&TypeKey::new("shared:frame")).is_some());
+    reg.freeze().expect("remaining registry is consistent");
+    assert!(reg.remove_plugin("vision").is_none());
+}

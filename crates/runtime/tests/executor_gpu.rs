@@ -9,7 +9,7 @@ use daedalus_runtime::{
 };
 
 struct LogHandler {
-    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    log: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for LogHandler {
@@ -19,7 +19,7 @@ impl NodeHandler for LogHandler {
         _ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
-        self.log.lock().unwrap().push(node.id.clone());
+        self.log.lock().push(node.id.clone());
         Ok(())
     }
 }
@@ -128,7 +128,7 @@ fn gpu_segments_execute_with_mock_backend() {
     })
     .expect("mock gpu backend");
 
-    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = LogHandler { log: log.clone() };
     let telemetry = Executor::new(&rt, handler)
         .with_gpu(gpu)
@@ -138,7 +138,7 @@ fn gpu_segments_execute_with_mock_backend() {
     assert_eq!(telemetry.gpu_segments, 2);
     assert_eq!(telemetry.gpu_fallbacks, 0);
     assert_eq!(telemetry.nodes_executed, 4);
-    let log = log.lock().unwrap().clone();
+    let log = log.lock().clone();
     assert!(log.contains(&"gpu_req".to_string()));
     assert!(log.contains(&"gpu_pref".to_string()));
 }

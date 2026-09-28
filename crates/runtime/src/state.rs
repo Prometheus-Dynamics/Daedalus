@@ -8,10 +8,11 @@ pub use resources::{
 };
 
 pub use crate::StateError;
+use parking_lot::RwLock;
 use resources::{ResourceEntry, ResourceStorage, SharedNodeResources};
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap, hash_map::Entry};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Shared runtime state store keyed by node id.
 #[derive(Default, Clone)]
@@ -60,10 +61,7 @@ impl ManagedResourceRestore {
         let Some(managed) = self.managed.take() else {
             return Ok(());
         };
-        let mut node_resources = self
-            .node_resources
-            .lock()
-            .map_err(|_| StateError::lock("state node resource"))?;
+        let mut node_resources = self.node_resources.lock();
         let entry = node_resources
             .entry(self.name.clone())
             .or_insert(ResourceEntry {
@@ -89,23 +87,7 @@ impl Drop for ManagedResourceRestore {
 
 impl StateStore {
     pub fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.inner.read() {
-            Ok(m) => m.get(key).cloned(),
-            Err(_) => {
-                tracing::warn!(
-                    target: "daedalus_runtime::state",
-                    key,
-                    "state read lock poisoned"
-                );
-                None
-            }
-        }
-    }
-
-    /// Fallible getter for raw values.
-    pub fn get_result(&self, key: &str) -> Result<Option<serde_json::Value>, StateError> {
-        let guard = self.inner.read().map_err(|_| StateError::lock("state"))?;
-        Ok(guard.get(key).cloned())
+        self.inner.read().get(key).cloned()
     }
 
     /// Fallible getter with error context.
@@ -113,7 +95,7 @@ impl StateStore {
         &self,
         key: &str,
     ) -> Result<Option<T>, StateError> {
-        let guard = self.inner.read().map_err(|_| StateError::lock("state"))?;
+        let guard = self.inner.read();
         if let Some(val) = guard.get(key) {
             serde_json::from_value(val.clone())
                 .map(Some)
@@ -132,10 +114,7 @@ impl StateStore {
         &self,
         key: &str,
     ) -> Result<Option<T>, StateError> {
-        let guard = self
-            .native
-            .read()
-            .map_err(|_| StateError::lock("state native"))?;
+        let guard = self.native.read();
         let Some(value) = guard.get(key) else {
             return Ok(None);
         };
@@ -151,10 +130,7 @@ impl StateStore {
         &self,
         key: &str,
     ) -> Result<Option<T>, StateError> {
-        let mut guard = self
-            .native
-            .write()
-            .map_err(|_| StateError::lock("state native"))?;
+        let mut guard = self.native.write();
         let Some(value) = guard.remove(key) else {
             return Ok(None);
         };
@@ -167,55 +143,20 @@ impl StateStore {
         }
     }
 
-    pub fn set(&self, key: &str, value: serde_json::Value) -> Result<(), StateError> {
-        let mut m = self.inner.write().map_err(|_| StateError::lock("state"))?;
-        m.insert(key.to_string(), value);
-        drop(m);
-        match self.native.write() {
-            Ok(mut native) => {
-                native.remove(key);
-            }
-            Err(_) => {
-                tracing::warn!(
-                    target: "daedalus_runtime::state",
-                    key,
-                    "state native lock poisoned while clearing stale native value"
-                );
-            }
-        }
-        Ok(())
+    pub fn set(&self, key: &str, value: serde_json::Value) {
+        self.inner.write().insert(key.to_string(), value);
+        self.native.write().remove(key);
     }
 
     pub fn set_typed<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), StateError> {
-        let json = serde_json::to_value(value)?;
-        self.set(key, json)
+        self.set(key, serde_json::to_value(value)?);
+        Ok(())
     }
 
     /// Store a native typed value without serializing it through `serde_json`.
-    pub fn set_native<T: Send + Sync + 'static>(
-        &self,
-        key: &str,
-        value: T,
-    ) -> Result<(), StateError> {
-        let mut native = self
-            .native
-            .write()
-            .map_err(|_| StateError::lock("state native"))?;
-        native.insert(key.to_string(), Box::new(value));
-        drop(native);
-        match self.inner.write() {
-            Ok(mut json) => {
-                json.remove(key);
-            }
-            Err(_) => {
-                tracing::warn!(
-                    target: "daedalus_runtime::state",
-                    key,
-                    "state lock poisoned while clearing stale json value"
-                );
-            }
-        }
-        Ok(())
+    pub fn set_native<T: Send + Sync + 'static>(&self, key: &str, value: T) {
+        self.native.write().insert(key.to_string(), Box::new(value));
+        self.inner.write().remove(key);
     }
 
     pub fn record_node_resource_usage(
@@ -225,19 +166,14 @@ impl StateStore {
         class: ResourceClass,
         live_bytes: u64,
         retained_bytes: u64,
-    ) -> Result<(), StateError> {
-        let node_resources = self.node_resources(node_id)?;
-        let mut node_resources = node_resources
-            .lock()
-            .map_err(|_| StateError::lock("state node resource"))?;
-        node_resources.insert(
+    ) {
+        self.node_resources(node_id).lock().insert(
             name.to_string(),
             ResourceEntry {
                 class,
                 storage: ResourceStorage::Usage(ResourceUsage::new(live_bytes, retained_bytes)),
             },
         );
-        Ok(())
     }
 
     pub fn record_node_custom_metric(
@@ -245,37 +181,28 @@ impl StateStore {
         node_id: &str,
         name: impl Into<String>,
         value: crate::executor::CustomMetricValue,
-    ) -> Result<(), StateError> {
-        let mut metrics = self
-            .custom_metrics
+    ) {
+        self.custom_metrics
             .write()
-            .map_err(|_| StateError::lock("state custom metrics"))?;
-        let entry = metrics.entry(node_id.to_string()).or_default();
-        entry
+            .entry(node_id.to_string())
+            .or_default()
             .entry(name.into())
             .and_modify(|existing| existing.merge(value.clone()))
             .or_insert(value);
-        Ok(())
     }
 
-    pub(crate) fn clear_node_custom_metrics(&self, node_id: &str) -> Result<(), StateError> {
-        let mut metrics = self
-            .custom_metrics
-            .write()
-            .map_err(|_| StateError::lock("state custom metrics"))?;
-        metrics.remove(node_id);
-        Ok(())
+    pub(crate) fn clear_node_custom_metrics(&self, node_id: &str) {
+        self.custom_metrics.write().remove(node_id);
     }
 
     pub(crate) fn drain_node_custom_metrics(
         &self,
         node_id: &str,
-    ) -> Result<BTreeMap<String, crate::executor::CustomMetricValue>, StateError> {
-        let mut metrics = self
-            .custom_metrics
+    ) -> BTreeMap<String, crate::executor::CustomMetricValue> {
+        self.custom_metrics
             .write()
-            .map_err(|_| StateError::lock("state custom metrics"))?;
-        Ok(metrics.remove(node_id).unwrap_or_default())
+            .remove(node_id)
+            .unwrap_or_default()
     }
 
     pub fn with_node_resource<T, R, Init, F>(
@@ -291,11 +218,9 @@ impl StateStore {
         Init: FnOnce() -> T,
         F: FnOnce(&mut T) -> R,
     {
-        let node_resources = self.node_resources(node_id)?;
+        let node_resources = self.node_resources(node_id);
         let managed = {
-            let mut node_resources = node_resources
-                .lock()
-                .map_err(|_| StateError::lock("state node resource"))?;
+            let mut node_resources = node_resources.lock();
             let entry = match node_resources.entry(name.to_string()) {
                 Entry::Occupied(entry) => entry.into_mut(),
                 Entry::Vacant(entry) => entry.insert(ResourceEntry {
@@ -348,71 +273,48 @@ impl StateStore {
         Ok(result)
     }
 
-    fn node_resources(&self, node_id: &str) -> Result<SharedNodeResources, StateError> {
+    fn node_resources(&self, node_id: &str) -> SharedNodeResources {
         {
-            let resources = self
-                .resources
-                .read()
-                .map_err(|_| StateError::lock("state resource"))?;
+            let resources = self.resources.read();
             if let Some(node_resources) = resources.get(node_id) {
-                return Ok(Arc::clone(node_resources));
+                return Arc::clone(node_resources);
             }
         }
 
-        let mut resources = self
-            .resources
-            .write()
-            .map_err(|_| StateError::lock("state resource"))?;
-        Ok(Arc::clone(
-            resources
+        Arc::clone(
+            self.resources
+                .write()
                 .entry(node_id.to_string())
-                .or_insert_with(|| Arc::new(std::sync::Mutex::new(HashMap::new()))),
-        ))
+                .or_insert_with(|| Arc::new(parking_lot::Mutex::new(HashMap::new()))),
+        )
     }
 
-    pub fn begin_node_resource_frame(&self, node_id: &str) -> Result<(), StateError> {
+    pub fn begin_node_resource_frame(&self, node_id: &str) {
         self.apply_node_resource_lifecycle(node_id, ResourceLifecycleEvent::BeforeFrame)
     }
 
-    pub fn release_node_resources(&self, node_id: &str) -> Result<(), StateError> {
-        let node_resources = self
-            .resources
-            .write()
-            .map_err(|_| StateError::lock("state resource"))?
-            .remove(node_id);
+    pub fn release_node_resources(&self, node_id: &str) {
+        let node_resources = self.resources.write().remove(node_id);
         if let Some(node_resources) = node_resources {
-            let mut node_resources = node_resources
-                .lock()
-                .map_err(|_| StateError::lock("state node resource"))?;
-            for entry in node_resources.values_mut() {
+            for entry in node_resources.lock().values_mut() {
                 entry.apply_lifecycle(ResourceLifecycleEvent::Stop);
             }
         }
-        Ok(())
     }
 
-    pub fn apply_node_resource_lifecycle(
-        &self,
-        node_id: &str,
-        event: ResourceLifecycleEvent,
-    ) -> Result<(), StateError> {
+    pub fn apply_node_resource_lifecycle(&self, node_id: &str, event: ResourceLifecycleEvent) {
         if matches!(event, ResourceLifecycleEvent::Stop) {
             return self.release_node_resources(node_id);
         }
         let Some(node_resources) = ({
-            let resources = self
-                .resources
-                .read()
-                .map_err(|_| StateError::lock("state resource"))?;
+            let resources = self.resources.read();
             resources.get(node_id).cloned()
         }) else {
-            return Ok(());
+            return;
         };
 
         let remove_node = {
-            let mut node_resources = node_resources
-                .lock()
-                .map_err(|_| StateError::lock("state node resource"))?;
+            let mut node_resources = node_resources.lock();
             for entry in node_resources.values_mut() {
                 entry.apply_lifecycle(event);
             }
@@ -426,39 +328,29 @@ impl StateStore {
             node_resources.is_empty()
         };
         if remove_node {
-            self.remove_node_resources_if_current(node_id, &node_resources)?;
+            self.remove_node_resources_if_current(node_id, &node_resources);
         }
-        Ok(())
     }
 
-    pub fn apply_resource_lifecycle(
-        &self,
-        event: ResourceLifecycleEvent,
-    ) -> Result<(), StateError> {
+    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) {
         if matches!(event, ResourceLifecycleEvent::Stop) {
             let node_resources = self
                 .resources
                 .write()
-                .map_err(|_| StateError::lock("state resource"))?
                 .drain()
                 .map(|(_, node_resources)| node_resources)
                 .collect::<Vec<_>>();
             for node_resources in node_resources {
-                let mut node_resources = node_resources
-                    .lock()
-                    .map_err(|_| StateError::lock("state node resource"))?;
+                let mut node_resources = node_resources.lock();
                 for entry in node_resources.values_mut() {
                     entry.apply_lifecycle(ResourceLifecycleEvent::Stop);
                 }
             }
-            return Ok(());
+            return;
         }
 
         let node_resource_sets = {
-            let resources = self
-                .resources
-                .read()
-                .map_err(|_| StateError::lock("state resource"))?;
+            let resources = self.resources.read();
             resources
                 .iter()
                 .map(|(node_id, node_resources)| (node_id.clone(), Arc::clone(node_resources)))
@@ -466,9 +358,7 @@ impl StateStore {
         };
         let mut empty_nodes = Vec::new();
         for (node_id, node_resources) in node_resource_sets {
-            let mut node_resources_guard = node_resources
-                .lock()
-                .map_err(|_| StateError::lock("state node resource"))?;
+            let mut node_resources_guard = node_resources.lock();
             for entry in node_resources_guard.values_mut() {
                 entry.apply_lifecycle(event);
             }
@@ -484,68 +374,47 @@ impl StateStore {
             }
         }
         for (node_id, node_resources) in empty_nodes {
-            self.remove_node_resources_if_current(&node_id, &node_resources)?;
+            self.remove_node_resources_if_current(&node_id, &node_resources);
         }
-        Ok(())
     }
 
-    pub fn snapshot_node_resources(
-        &self,
-        node_id: &str,
-    ) -> Result<NodeResourceSnapshot, StateError> {
+    pub fn snapshot_node_resources(&self, node_id: &str) -> NodeResourceSnapshot {
         let node_resources = {
-            let resources = self
-                .resources
-                .read()
-                .map_err(|_| StateError::lock("state resource"))?;
+            let resources = self.resources.read();
             resources.get(node_id).cloned()
         };
         let mut snapshot = NodeResourceSnapshot::default();
         if let Some(node_resources) = node_resources {
-            let node_resources = node_resources
-                .lock()
-                .map_err(|_| StateError::lock("state node resource"))?;
+            let node_resources = node_resources.lock();
             for entry in node_resources.values() {
                 snapshot.add_usage(entry.class, entry.usage());
             }
         }
-        Ok(snapshot)
+        snapshot
     }
 
-    fn remove_node_resources_if_current(
-        &self,
-        node_id: &str,
-        expected: &SharedNodeResources,
-    ) -> Result<(), StateError> {
-        let mut resources = self
-            .resources
-            .write()
-            .map_err(|_| StateError::lock("state resource"))?;
+    fn remove_node_resources_if_current(&self, node_id: &str, expected: &SharedNodeResources) {
+        let mut resources = self.resources.write();
         if resources
             .get(node_id)
             .is_some_and(|current| Arc::ptr_eq(current, expected))
         {
             resources.remove(node_id);
         }
-        Ok(())
     }
 
     pub fn dump_json(&self) -> Result<String, StateError> {
-        let m = self.inner.read().map_err(|_| StateError::lock("state"))?;
+        let m = self.inner.read();
         serde_json::to_string(&*m).map_err(Into::into)
     }
 
     pub fn load_json(&self, json: &str) -> Result<(), StateError> {
         let map = serde_json::from_str::<HashMap<String, serde_json::Value>>(json)?;
-        let mut guard = self.inner.write().map_err(|_| StateError::lock("state"))?;
+        let mut guard = self.inner.write();
         *guard = map;
         drop(guard);
-        if let Ok(mut native) = self.native.write() {
-            native.clear();
-        }
-        if let Ok(mut resources) = self.resources.write() {
-            resources.clear();
-        }
+        self.native.write().clear();
+        self.resources.write().clear();
         Ok(())
     }
 }

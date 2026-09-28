@@ -1,6 +1,7 @@
+use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
 
 use crate::diagnostics::Diagnostic;
 use crate::graph::Graph;
@@ -67,17 +68,13 @@ impl PlannerLoweringRegistry {
             },
             apply: Arc::new(apply),
         };
-        let mut guard = self
-            .lowerings
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self.lowerings.write();
         guard.insert(id, lowering);
     }
 
     pub fn registered(&self) -> Vec<PlannerLoweringInfo> {
         self.lowerings
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .values()
             .map(|entry| entry.info.clone())
             .collect()
@@ -89,7 +86,6 @@ impl PlannerLoweringRegistry {
     ) -> Vec<(PlannerLoweringInfo, PlannerLoweringFn)> {
         self.lowerings
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .values()
             .filter(|entry| entry.info.phase == phase)
             .map(|entry| (entry.info.clone(), entry.apply.clone()))

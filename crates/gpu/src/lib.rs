@@ -317,8 +317,9 @@ impl GpuContextHandle {
 
     #[cfg(feature = "gpu-async")]
     pub async fn read_texture_async(&self, handle: GpuImageHandle) -> Result<Vec<u8>, GpuError> {
+        use parking_lot::Mutex;
         use std::future::poll_fn;
-        use std::sync::{Arc, Mutex};
+        use std::sync::Arc;
         use std::task::Poll;
 
         struct ReadState {
@@ -343,9 +344,7 @@ impl GpuContextHandle {
             let result = ctx.read_texture(&handle);
             let ok = result.is_ok();
             let waker = {
-                let mut state = worker_state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut state = worker_state.lock();
                 state.result = Some(result);
                 state.waker.take()
             };
@@ -363,9 +362,7 @@ impl GpuContextHandle {
         });
 
         poll_fn(|cx| {
-            let mut state = state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = state.lock();
             if let Some(result) = state.result.take() {
                 return Poll::Ready(result);
             }

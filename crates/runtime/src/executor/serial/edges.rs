@@ -90,10 +90,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
         }
     }
 
-    let const_inputs = exec
-        .const_inputs
-        .read()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let const_inputs = exec.const_inputs.read();
     for (port, value) in const_inputs.get(node_idx).into_iter().flatten() {
         inputs.push((
             port.clone(),

@@ -1,6 +1,6 @@
+use parking_lot::Mutex;
 use std::{
     collections::BTreeSet,
-    sync::Mutex,
     thread,
     time::{Duration, Instant},
 };
@@ -17,7 +17,6 @@ static THREAD_LOG: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 fn work(value: &i64) -> Result<i64, NodeError> {
     THREAD_LOG
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .push(("work".to_string(), format!("{:?}", thread::current().id())));
     thread::sleep(Duration::from_millis(20));
     Ok(*value + 1)
@@ -27,10 +26,7 @@ fn work(value: &i64) -> Result<i64, NodeError> {
 struct PoolPlugin;
 
 fn run_pool(pool_size: usize) -> Result<(), Box<dyn std::error::Error>> {
-    THREAD_LOG
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clear();
+    THREAD_LOG.lock().clear();
     let mut registry = PluginRegistry::new();
     let plugin = PoolPlugin::new();
     registry.install(&plugin)?;
@@ -83,10 +79,7 @@ fn run_pool(pool_size: usize) -> Result<(), Box<dyn std::error::Error>> {
     let wall = Instant::now();
     let telemetry = runtime.tick_until_idle()?.unwrap_or_default();
     let wall = wall.elapsed();
-    let thread_log = THREAD_LOG
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
+    let thread_log = THREAD_LOG.lock().clone();
     let unique_threads = thread_log
         .iter()
         .map(|(_, thread_id)| thread_id)

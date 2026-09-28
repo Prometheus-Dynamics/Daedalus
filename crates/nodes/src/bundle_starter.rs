@@ -3,16 +3,12 @@ use daedalus_runtime::NodeError;
 use crate::NodeDecl;
 use crate::node;
 
-#[node(id = "starter.print", bundle = "starter")]
+#[node(id = "starter.print")]
 fn starter_print() -> Result<(), NodeError> {
     Ok(())
 }
 
-#[node(
-    id = "starter.gpu_copy",
-    bundle = "starter",
-    compute(ComputeAffinity::GpuPreferred)
-)]
+#[node(id = "starter.gpu_copy")]
 fn starter_gpu_copy() -> Result<(), NodeError> {
     Ok(())
 }

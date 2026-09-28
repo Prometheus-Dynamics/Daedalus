@@ -23,7 +23,7 @@ pub struct PlannerConfig {
     /// but embedders can pass `PlannerLoweringRegistry::new()` or a prebuilt registry to isolate
     /// tenants/tests from global lowering state.
     pub lowerings: PlannerLoweringRegistry,
-    /// When true, validate `GraphNode.inputs/outputs` strictly against the registry.
+    /// When true, validate `NodeInstance::{inputs, outputs}` strictly against the registry.
     ///
     /// This is intended for UI-persisted graphs where the node port lists are part of the
     /// persisted contract. It is deliberately off by default so "minimal" graphs (that omit
