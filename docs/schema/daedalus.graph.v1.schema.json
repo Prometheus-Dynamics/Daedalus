@@ -1,0 +1,460 @@
+{
+  "$defs": {
+    "edge": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/port_ref"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/value"
+          },
+          "type": "object"
+        },
+        "to": {
+          "$ref": "#/$defs/port_ref"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "graph": {
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/edge"
+          },
+          "type": "array"
+        },
+        "metadata": {
+          "description": "Graph metadata visible to nodes at runtime, as plain JSON.",
+          "type": "object"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/node"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "type": "object"
+    },
+    "node": {
+      "additionalProperties": false,
+      "properties": {
+        "bundle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "compute": {
+          "enum": [
+            "CpuOnly",
+            "GpuPreferred",
+            "GpuRequired"
+          ]
+        },
+        "const_inputs": {
+          "items": {
+            "items": false,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/value"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "Registry node id.",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "additionalProperties": {
+            "$ref": "#/$defs/value"
+          },
+          "type": "object"
+        },
+        "outputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sync_groups": {
+          "items": {
+            "$ref": "#/$defs/sync_group"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "inputs",
+        "outputs"
+      ],
+      "type": "object"
+    },
+    "plugin_requirement": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "version": {
+          "description": "`=x.y.z` (exact), `>=x.y.z` or bare `x.y.z` (at least), `*` or empty (any).",
+          "pattern": "^\\s*(\\*|(>=|=)?\\s*[0-9]+(\\.[0-9]+)*([-+].*)?\\s*)?$",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "port_ref": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "description": "Index into `graph.nodes`.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "port": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "port"
+      ],
+      "type": "object"
+    },
+    "sync_group": {
+      "properties": {
+        "backpressure": {
+          "enum": [
+            "None",
+            "BoundedQueues",
+            "ErrorOnOverflow",
+            null
+          ]
+        },
+        "capacity": {
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "policy": {
+          "enum": [
+            "AllReady",
+            "Latest",
+            "ZipByTag"
+          ]
+        },
+        "ports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "policy",
+        "ports"
+      ],
+      "type": "object"
+    },
+    "value": {
+      "description": "A Daedalus value in its tagged form: {\"type\": <variant>, \"value\": <payload>}.",
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "const": "Unit"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Bool"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Int"
+            },
+            "value": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Float"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "String"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Bytes"
+            },
+            "value": {
+              "items": {
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "List"
+            },
+            "value": {
+              "items": {
+                "$ref": "#/$defs/value"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Map"
+            },
+            "value": {
+              "items": {
+                "items": false,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/value"
+                  },
+                  {
+                    "$ref": "#/$defs/value"
+                  }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Tuple"
+            },
+            "value": {
+              "items": {
+                "$ref": "#/$defs/value"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Struct"
+            },
+            "value": {
+              "items": {
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/value"
+                  }
+                },
+                "required": [
+                  "name",
+                  "value"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Enum"
+            },
+            "value": {
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/value"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "daedalus.graph"
+    },
+    "graph": {
+      "$ref": "#/$defs/graph"
+    },
+    "metadata": {
+      "description": "Free-form application metadata (editor state, titles, ...).",
+      "type": "object"
+    },
+    "requires": {
+      "description": "Plugins that must be loaded for this graph to plan.",
+      "items": {
+        "$ref": "#/$defs/plugin_requirement"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "graph"
+  ],
+  "title": "Daedalus graph document v1",
+  "type": "object"
+}

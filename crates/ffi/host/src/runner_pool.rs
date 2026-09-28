@@ -15,6 +15,8 @@ use thiserror::Error;
 
 mod payload_leases;
 pub use payload_leases::{PayloadLease, PayloadLeaseScope, PayloadLeaseTable};
+mod telemetry;
+pub use telemetry::FfiHostTelemetry;
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RunnerKey(String);
@@ -85,96 +87,6 @@ pub struct RunnerPoolTelemetry {
     pub released_payload_leases: u64,
 }
 
-/// Shared collector for host-side FFI telemetry.
-///
-/// Clones share one report, which lets installer, runner pool, worker, adapter, and in-process ABI
-/// paths contribute to the same runtime `FfiTelemetryReport`.
-#[derive(Clone, Debug, Default)]
-pub struct FfiHostTelemetry {
-    report: Arc<Mutex<FfiTelemetryReport>>,
-}
-
-impl FfiHostTelemetry {
-    /// Create an empty shared FFI telemetry collector.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Return a point-in-time copy of the accumulated FFI telemetry.
-    pub fn snapshot(&self) -> FfiTelemetryReport {
-        self.report
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .clone()
-    }
-
-    /// Merge a partial FFI telemetry report into the shared collector.
-    pub fn merge(&self, update: FfiTelemetryReport) {
-        self.report
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .merge(update);
-    }
-
-    fn record_backend(
-        &self,
-        key: &RunnerKey,
-        backend: &BackendConfig,
-        update: FfiBackendTelemetry,
-    ) {
-        let mut report = FfiTelemetryReport::default();
-        let mut update = update;
-        if update.backend_key.is_empty() {
-            update.backend_key = key.as_str().to_owned();
-        }
-        update.backend_kind = update
-            .backend_kind
-            .or_else(|| Some(format_backend_kind(&backend.backend).to_owned()));
-        update.language = update
-            .language
-            .or_else(|| Some(format_backend_kind(&backend.backend).to_owned()));
-        report.backends.insert(key.as_str().to_owned(), update);
-        self.merge(report);
-    }
-
-    pub(crate) fn record_payloads(&self, update: FfiPayloadTelemetry) {
-        let report = FfiTelemetryReport {
-            payloads: update,
-            ..Default::default()
-        };
-        self.merge(report);
-    }
-
-    /// Record persistent-worker process metrics under `worker_id`.
-    pub fn record_worker(&self, worker_id: impl Into<String>, update: FfiWorkerTelemetry) {
-        let worker_id = worker_id.into();
-        let mut report = FfiTelemetryReport::default();
-        report.workers.insert(worker_id, update);
-        self.merge(report);
-    }
-
-    /// Record adapter metrics under `adapter_id`.
-    pub fn record_adapter(&self, adapter_id: impl Into<String>, mut update: FfiAdapterTelemetry) {
-        let adapter_id = adapter_id.into();
-        if update.adapter_id.is_empty() {
-            update.adapter_id = adapter_id.clone();
-        }
-        let mut report = FfiTelemetryReport::default();
-        report.adapters.insert(adapter_id, update);
-        self.merge(report);
-    }
-
-    /// Record in-process ABI backend metrics for a Rust/C/C++ dynamic plugin runner.
-    pub fn record_in_process_abi(&self, key: &RunnerKey, mut update: FfiBackendTelemetry) {
-        if update.backend_key.is_empty() {
-            update.backend_key = key.as_str().to_owned();
-        }
-        let mut report = FfiTelemetryReport::default();
-        report.backends.insert(key.as_str().to_owned(), update);
-        self.merge(report);
-    }
-}
-
 pub trait BackendRunner: Send + Sync + 'static {
     fn start(&self) -> Result<(), RunnerPoolError> {
         Ok(())
@@ -236,6 +148,30 @@ pub enum RunnerPoolError {
     MissingPayloadLease(String),
 }
 
+/// Every runner that failed during [`RunnerPool::shutdown_all`].
+#[derive(Debug, Error)]
+#[error("{} runner(s) failed to shut down: {}", .failures.len(), join_failures(.failures))]
+pub struct RunnerShutdownError {
+    pub failures: Vec<RunnerShutdownFailure>,
+}
+
+/// One runner that failed to shut down.
+#[derive(Debug, Error)]
+#[error("runner `{}`: {source}", .key.as_str())]
+pub struct RunnerShutdownFailure {
+    pub key: RunnerKey,
+    #[source]
+    pub source: RunnerPoolError,
+}
+
+fn join_failures(failures: &[RunnerShutdownFailure]) -> String {
+    failures
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 #[derive(Default)]
 pub struct RunnerPool {
     options: RunnerPoolOptions,
@@ -247,6 +183,7 @@ pub struct RunnerPool {
 
 struct RunnerEntry {
     runner: Arc<dyn BackendRunner>,
+    backend: BackendConfig,
     last_used: Mutex<Instant>,
 }
 
@@ -332,6 +269,7 @@ impl RunnerPool {
             key.clone(),
             RunnerEntry {
                 runner,
+                backend: config.clone(),
                 last_used: Mutex::new(Instant::now()),
             },
         );
@@ -519,15 +457,26 @@ impl RunnerPool {
             .runners
             .remove(&key)
             .ok_or(RunnerPoolError::MissingRunner)?;
+        self.shut_down_entry(&key, entry, false)
+    }
+
+    /// Shut down a runner already removed from the pool and record its shutdown telemetry.
+    fn shut_down_entry(
+        &self,
+        key: &RunnerKey,
+        entry: RunnerEntry,
+        pruned: bool,
+    ) -> Result<(), RunnerPoolError> {
         entry.runner.shutdown()?;
         self.telemetry.shutdowns.fetch_add(1, Ordering::Relaxed);
         if let Some(telemetry) = &self.ffi_telemetry {
             telemetry.record_backend(
-                &key,
-                config,
+                key,
+                &entry.backend,
                 FfiBackendTelemetry {
                     backend_key: key.as_str().to_owned(),
                     runner_shutdowns: 1,
+                    runner_pruned: u64::from(pruned),
                     ..Default::default()
                 },
             );
@@ -581,21 +530,7 @@ impl RunnerPool {
         let removed = idle.len();
         for key in idle {
             if let Some(entry) = self.runners.remove(&key) {
-                entry.runner.shutdown()?;
-                self.telemetry.shutdowns.fetch_add(1, Ordering::Relaxed);
-                if let Some(telemetry) = &self.ffi_telemetry {
-                    let mut report = FfiTelemetryReport::default();
-                    report.backends.insert(
-                        key.as_str().to_owned(),
-                        FfiBackendTelemetry {
-                            backend_key: key.as_str().to_owned(),
-                            runner_shutdowns: 1,
-                            runner_pruned: 1,
-                            ..Default::default()
-                        },
-                    );
-                    telemetry.merge(report);
-                }
+                self.shut_down_entry(&key, entry, true)?;
             }
         }
         self.telemetry
@@ -604,13 +539,22 @@ impl RunnerPool {
         Ok(removed)
     }
 
-    pub fn shutdown_all(&mut self) -> Result<(), RunnerPoolError> {
-        let runners = std::mem::take(&mut self.runners);
-        for entry in runners.into_values() {
-            entry.runner.shutdown()?;
-            self.telemetry.shutdowns.fetch_add(1, Ordering::Relaxed);
+    /// Shut down and remove every runner, recording per-backend shutdown telemetry.
+    ///
+    /// Every runner is attempted; failures are collected into one [`RunnerShutdownError`].
+    pub fn shutdown_all(&mut self) -> Result<(), RunnerShutdownError> {
+        let failures: Vec<_> = std::mem::take(&mut self.runners)
+            .into_iter()
+            .filter_map(|(key, entry)| {
+                let source = self.shut_down_entry(&key, entry, false).err()?;
+                Some(RunnerShutdownFailure { key, source })
+            })
+            .collect();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(RunnerShutdownError { failures })
         }
-        Ok(())
     }
 
     pub fn len(&self) -> usize {
@@ -764,18 +708,6 @@ fn estimate_json_bytes<T: serde::Serialize>(value: &T) -> u64 {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len() as u64)
         .unwrap_or(0)
-}
-
-fn format_backend_kind(kind: &BackendKind) -> &str {
-    match kind {
-        BackendKind::Rust => "rust",
-        BackendKind::Python => "python",
-        BackendKind::Node => "node",
-        BackendKind::Java => "java",
-        BackendKind::CCpp => "c_cpp",
-        BackendKind::Shader => "shader",
-        BackendKind::Other(value) => value.as_str(),
-    }
 }
 
 fn format_access_mode(access: AccessMode) -> String {

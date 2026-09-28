@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use daedalus::data::model::{TypeExpr, ValueType};
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
-use daedalus::{PLUGIN_ABI_VERSION, PluginLibrary, PluginLibraryError};
+use daedalus::{PluginLibrary, PluginLibraryError};
 use daedalus_plugins_example_project::ExampleProjectPlugin;
 
 const PACKAGE: &str = "daedalus-plugins-example-project";
@@ -28,41 +28,40 @@ fn plugin_cdylib() -> &'static Path {
     PATH.get_or_init(build_plugin_cdylib)
 }
 
-/// GPU facade features enabled for this test build, forwarded to the plugin's `daedalus`
-/// dependency.
-///
-/// They change the registry/runtime layout covered by the build fingerprint, so a host built
-/// with e.g. `--all-features` needs a plugin built the same way for the load to succeed.
-fn host_gpu_features() -> Vec<&'static str> {
-    [
-        ("gpu-types", cfg!(feature = "gpu-types")),
-        ("gpu-runtime", cfg!(feature = "gpu-runtime")),
-        ("gpu-engine", cfg!(feature = "gpu-engine")),
-        ("gpu-wgpu", cfg!(feature = "gpu-wgpu")),
-        ("gpu-async", cfg!(feature = "gpu-async")),
-        ("gpu-mock", cfg!(feature = "gpu-mock")),
-    ]
-    .into_iter()
-    .filter_map(|(feature, enabled)| enabled.then_some(feature))
-    .collect()
+/// `--features` for the plugin build: its `dylib` export plus this host's enabled boundary
+/// facade features (e.g. GPU), which the build fingerprint requires the plugin to share, so a
+/// host built with e.g. `--all-features` gets a plugin built the same way.
+fn plugin_features() -> String {
+    let (_, facade) = daedalus::dylib::boundary_features()
+        .into_iter()
+        .find(|(krate, _)| *krate == "daedalus")
+        .expect("facade features are fingerprinted");
+    std::iter::once("dylib".to_string())
+        .chain(
+            facade
+                .into_iter()
+                .map(|feature| format!("daedalus/{feature}")),
+        )
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn build_plugin_cdylib() -> PathBuf {
     // Use the cargo (and therefore rustc) running this test so the rustc check matches.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let features = host_gpu_features()
-        .into_iter()
-        .map(|feature| format!("daedalus/{feature}"))
-        .collect::<Vec<_>>()
-        .join(",");
     let mut command = Command::new(cargo);
     command
-        .args(["build", "-p", PACKAGE, "--lib", "--message-format=json"])
+        .args([
+            "build",
+            "-p",
+            PACKAGE,
+            "--lib",
+            "--features",
+            &plugin_features(),
+        ])
+        .arg("--message-format=json")
         .current_dir(workspace_root())
         .stderr(Stdio::inherit());
-    if !features.is_empty() {
-        command.args(["--features", &features]);
-    }
     if !cfg!(debug_assertions) {
         command.arg("--release");
     }
@@ -120,10 +119,20 @@ fn static_and_dynamic_rust_plugin_install_the_same_nodes() {
         Ok(library) => library,
         Err(err) => panic!("failed to load {}: {err}", library_path.display()),
     };
-    assert_eq!(library.abi_version(), PLUGIN_ABI_VERSION);
+    assert_eq!(library.rust_abi(), Ok(()));
     let info = library.info();
     assert_eq!(info.plugin_name.as_str(), Some(PACKAGE));
     assert_eq!(info.plugin_version.as_str(), Some(daedalus::version()));
+
+    // The stable schema describes the same nodes the plugin installs.
+    let schema_nodes: BTreeSet<String> = library
+        .schema()
+        .nodes
+        .iter()
+        .map(|node| node.id.clone())
+        .collect();
+    assert_eq!(library.schema().plugin.name, "example_rust");
+    assert_eq!(schema_nodes, node_ids(&static_registry));
 
     let mut dynamic_registry = PluginRegistry::new();
     library.install_into(&mut dynamic_registry).unwrap();

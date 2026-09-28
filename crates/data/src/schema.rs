@@ -96,6 +96,66 @@ pub fn type_to_json_schema(ty: &TypeExpr) -> DataResult<serde_json::Value> {
     Ok(schema)
 }
 
+/// JSON Schema for the serde form of [`Value`](crate::model::Value)
+/// (`{"type": "<Variant>", "value": <payload>}`).
+///
+/// Nested values refer back to this schema through `self_ref`, the JSON pointer where the caller
+/// embeds it (for example `"#/$defs/value"`).
+pub fn value_json_schema(self_ref: &str) -> serde_json::Value {
+    use serde_json::json;
+
+    let value = json!({ "$ref": self_ref });
+    let values = json!({ "type": "array", "items": value });
+    let variant = |tag: &str, payload: Option<serde_json::Value>| {
+        let mut schema = json!({
+            "type": "object",
+            "properties": { "type": { "const": tag } },
+            "required": ["type"],
+        });
+        if let Some(payload) = payload {
+            schema["properties"]["value"] = payload;
+            schema["required"] = json!(["type", "value"]);
+        }
+        schema
+    };
+    json!({
+        "description": "A Daedalus value in its tagged form: {\"type\": <variant>, \"value\": <payload>}.",
+        "oneOf": [
+            variant("Unit", None),
+            variant("Bool", Some(json!({ "type": "boolean" }))),
+            variant("Int", Some(json!({ "type": "integer" }))),
+            variant("Float", Some(json!({ "type": "number" }))),
+            variant("String", Some(json!({ "type": "string" }))),
+            variant("Bytes", Some(json!({
+                "type": "array",
+                "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+            }))),
+            variant("List", Some(values.clone())),
+            variant("Map", Some(json!({
+                "type": "array",
+                "items": { "type": "array", "prefixItems": [value, value], "items": false, "minItems": 2 },
+            }))),
+            variant("Tuple", Some(values)),
+            variant("Struct", Some(json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": { "name": { "type": "string" }, "value": value },
+                    "required": ["name", "value"],
+                },
+            }))),
+            variant("Enum", Some(json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": { "anyOf": [value, { "type": "null" }] },
+                },
+                "required": ["name"],
+            }))),
+        ],
+    })
+}
+
 /// Pretty-printed JSON Schema string.
 pub fn to_json_schema_string(ty: &TypeExpr) -> DataResult<String> {
     let schema = type_to_json_schema(ty)?;
@@ -106,6 +166,47 @@ pub fn to_json_schema_string(ty: &TypeExpr) -> DataResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn value_schema_covers_every_serialized_variant() {
+        use crate::model::{EnumValue, Value};
+
+        let schema = value_json_schema("#");
+        let tags: Vec<&str> = schema["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["properties"]["type"]["const"].as_str().unwrap())
+            .collect();
+        let samples = [
+            Value::Unit,
+            Value::Bool(true),
+            Value::Int(1),
+            Value::Float(1.5),
+            Value::String("s".into()),
+            Value::Bytes(vec![1u8].into()),
+            Value::List(vec![]),
+            Value::Map(vec![]),
+            Value::Tuple(vec![]),
+            Value::Struct(vec![]),
+            Value::Enum(EnumValue {
+                name: "e".into(),
+                value: None,
+            }),
+        ];
+        let serialized: Vec<String> = samples
+            .iter()
+            .map(|v| {
+                serde_json::to_value(v).unwrap()["type"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(tags, serialized);
+        let bytes = serde_json::to_value(Value::Bytes(vec![7u8].into())).unwrap();
+        assert_eq!(bytes["value"], serde_json::json!([7]));
+    }
 
     #[test]
     fn emits_basic_schema() {

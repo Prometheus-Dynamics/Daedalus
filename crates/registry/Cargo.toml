@@ -17,6 +17,13 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
+[package.metadata.daedalus]
+# Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
+# boundary features change types that cross the plugin boundary and must match between host
+# and plugin; host-only features only change host-side execution.
+boundary-features = ["bundle", "plugin", "gpu"]
+host-only-features = []
+
 [features]
 default = []
 bundle = []
