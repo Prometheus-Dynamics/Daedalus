@@ -6,6 +6,8 @@ mod compiled_run;
 mod config;
 #[cfg(feature = "config-env")]
 pub mod diagnostics;
+#[cfg(feature = "plugins")]
+mod document;
 mod engine;
 mod engine_execution;
 mod error;
