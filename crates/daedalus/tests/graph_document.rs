@@ -23,3 +23,37 @@ fn plugin_registry_checks_document_requirements() {
     let err: MissingPlugins = registry.check_document(&doc).unwrap_err();
     assert_eq!(err.ids(), vec!["facade.absent"]);
 }
+
+#[cfg(feature = "plugins")]
+mod versioned_plugin {
+    use daedalus::{
+        macros::{node, plugin},
+        runtime::NodeError,
+    };
+
+    #[node(id = "facade.versioned.echo", inputs("value"), outputs("out"))]
+    fn echo(value: i64) -> Result<i64, NodeError> {
+        Ok(value)
+    }
+
+    #[plugin(id = "facade.versioned", nodes(echo))]
+    pub struct VersionedPlugin;
+}
+
+#[cfg(feature = "plugins")]
+#[test]
+fn plugins_record_their_crate_version_for_requirements() {
+    let mut registry = PluginRegistry::new();
+    registry
+        .install(&versioned_plugin::VersionedPlugin::new())
+        .unwrap();
+    assert_eq!(
+        registry.installed_plugin_version("facade.versioned"),
+        Some(Some(env!("CARGO_PKG_VERSION")))
+    );
+    let doc = GraphDocument::new(daedalus::planner::Graph::default()).require(
+        PluginRequirement::new("facade.versioned")
+            .with_version(format!(">={}", env!("CARGO_PKG_VERSION"))),
+    );
+    registry.check_document(&doc).unwrap();
+}

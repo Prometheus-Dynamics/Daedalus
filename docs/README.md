@@ -19,6 +19,7 @@ This directory is the repository-level documentation index. Crate-specific detai
 - [../crates/planner/README.md](../crates/planner/README.md): graph validation, lowering, adapter resolution, and scheduling.
 - [../crates/runtime/README.md](../crates/runtime/README.md): executor, host bridge, streaming, state, and telemetry.
 - [runtime-diagnostics.md](runtime-diagnostics.md): release/debug flow for runtime telemetry, host bridge diagnostics, stream workers, and FFI workers.
+- [node-authoring.md](node-authoring.md): node authoring, adapters, payload residency, host APIs, graph documents, and external frame sources.
 - [host-bridge-lock-granularity.md](host-bridge-lock-granularity.md): release review note for host bridge shared-state locking.
 - [../crates/engine/README.md](../crates/engine/README.md): high-level host facade and warm reuse model.
 
@@ -32,6 +33,7 @@ This directory is the repository-level documentation index. Crate-specific detai
 
 ## Plugins And FFI
 
+- [dynamic-plugins.md](dynamic-plugins.md): loading native Rust `cdylib` plugins (`dylib-plugins`).
 - [../examples/plugins/README.md](../examples/plugins/README.md): native Rust plugin examples.
 - [../crates/ffi/README.md](../crates/ffi/README.md): FFI workspace overview.
 - [ffi-ergonomics.md](ffi-ergonomics.md): release review note for FFI package install and invocation ergonomics.

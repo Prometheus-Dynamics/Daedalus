@@ -32,6 +32,7 @@ The facade starts with no default feature set. Enable only the layers your appli
 
 - `engine`: high-level engine facade.
 - `plugins`: plugin registry and macro-generated plugin installation.
+- `dylib-plugins`: load native Rust `cdylib` plugins at startup (see [docs/dynamic-plugins.md](docs/dynamic-plugins.md)).
 - `gpu-types`: GPU handles and type surface only.
 - `gpu-runtime`: GPU-aware registry, planner, and runtime wiring.
 - `gpu-engine`: GPU-aware engine wiring.
@@ -80,6 +81,7 @@ cargo test -p daedalus-rs --test docker_examples -- --ignored --nocapture
 ## Documentation
 
 - [docs/README.md](docs/README.md): documentation map.
+- [docs/node-authoring.md](docs/node-authoring.md): node authoring, adapters, payload residency, and host integration.
 - [docs/development.md](docs/development.md): development rules, features, observability, and production API guidance.
 - [docs/testing.md](docs/testing.md): supported validation surface.
 - [crates/ffi/README.md](crates/ffi/README.md): FFI contract, package, worker, and SDK direction.

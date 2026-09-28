@@ -286,7 +286,8 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             fn manifest(&self) -> #registry_crate::capability::PluginManifest {
-                let mut manifest = #registry_crate::capability::PluginManifest::new(#id);
+                let mut manifest = #registry_crate::capability::PluginManifest::new(#id)
+                    .version(env!("CARGO_PKG_VERSION"));
                 #(
                     manifest.dependencies.push(#deps.to_string());
                 )*

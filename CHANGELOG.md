@@ -4,6 +4,33 @@ All notable changes to this workspace should be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- Added the `dylib-plugins` facade feature: `PluginLibrary` loads native Rust `cdylib` plugins
+  exported with `export_plugin!`, rejecting mismatched plugin ABI, Daedalus version, rustc
+  version, or build fingerprint with a typed `PluginLibraryError` before any Rust type crosses
+  the boundary. `discover_plugin_libraries` finds plugin libraries across directories.
+- Added `GraphDocument`, a versioned persisted graph format (`format: "daedalus.graph"`,
+  `schema_version`, `requires`, `metadata`, `graph`), with plugin requirement checks on
+  `PluginRegistry` and `Engine::{check,prepare,compile}_document*` wrappers.
+- Added host port introspection: `RuntimePlan::host_ports*` and
+  `HostGraph::{host_inputs, host_outputs}` return typed `HostPortDescriptor`s.
+- Added payload inspection: `HostGraph::inspect_payload` and `inspect_payload` render payloads
+  through registered value serializers, falling back to a `PayloadSummary`;
+  `daedalus_data::json::to_plain_json` renders `Value`s as plain JSON.
+- Added input-driven host graph execution: `HostBridgeHandle::inbound_waiter` (blocking and
+  `Future`), `HostGraph::{wait_for_input, tick_on_input, drive_blocking, drive}`, and
+  `HostGraphStopHandle`.
+- Added `docs/node-authoring.md` and `docs/dynamic-plugins.md`.
+
+### Changed
+
+- Plugin manifests declared with `#[plugin]` or `declare_plugin!` now record the plugin crate
+  version.
+- `BoundaryVTable` gained a `value_any` field used by `Payload::value_any_sync`.
+
 ## [2.0.0] - 2026-04-30
 
 ### Added

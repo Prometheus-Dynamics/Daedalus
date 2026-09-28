@@ -44,7 +44,8 @@ before adding an optimized binary transport.
 
 - `in_process_abi`
   Rust dynamic plugins and C/C++ shared libraries. These run in process and should not go through
-  the persistent worker pool.
+  the persistent worker pool. Native Rust `cdylib` plugins are loaded by the facade's
+  `dylib-plugins` feature; see [`docs/dynamic-plugins.md`](../../docs/dynamic-plugins.md).
 - `persistent_worker`
   Python, Node, Java, and future out-of-process languages. Workers load code once, negotiate the
   worker protocol, advertise supported nodes, and handle repeated invocations.
