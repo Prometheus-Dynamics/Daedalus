@@ -320,6 +320,19 @@ pub fn install_plan_runners(
     plan: &HostInstallPlan,
     factory: &impl BackendRunnerFactory,
 ) -> Result<Vec<RunnerKey>, HostInstallError> {
+    start_plan_runners(pool, plan, factory, &BTreeSet::new())
+}
+
+/// Start the persistent-worker runners of `plan`, reusing runners whose key is in `running`.
+///
+/// Reused runners are not rebuilt; the plan's nodes are validated against the entrypoints the
+/// already running runner advertises. Returns only the keys of newly started runners.
+pub(crate) fn start_plan_runners(
+    pool: &mut RunnerPool,
+    plan: &HostInstallPlan,
+    factory: &impl BackendRunnerFactory,
+    running: &BTreeSet<RunnerKey>,
+) -> Result<Vec<RunnerKey>, HostInstallError> {
     let mut installed = Vec::new();
     let mut seen = BTreeSet::new();
     for (node_id, backend) in &plan.backends {
@@ -331,6 +344,16 @@ pub fn install_plan_runners(
             source,
         })?;
         if !seen.insert(key.clone()) {
+            continue;
+        }
+        if running.contains(&key) {
+            let runner = pool
+                .get(backend)
+                .map_err(|source| HostInstallError::Runner {
+                    node_id: node_id.clone(),
+                    source,
+                })?;
+            validate_runner_entrypoints(runner.as_ref(), &nodes_for_runner_key(plan, &key)?)?;
             continue;
         }
         let runner =

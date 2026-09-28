@@ -29,7 +29,9 @@ before adding an optimized binary transport.
 - `host/`
   Shared host installer and runner orchestration. Owns schema-to-registry declaration generation,
   package install planning, runner pools, response decoding, state sync, persistent worker process
-  handling, and entrypoint validation.
+  handling, and entrypoint validation. `FfiHost` is the recommended entry point: it installs a
+  package, starts its persistent-worker runners, and invokes nodes by id. See
+  [`docs/ffi-ergonomics.md`](../../docs/ffi-ergonomics.md).
 - `python/`
   Python worker and SDK integration.
 - `node/`
@@ -63,6 +65,24 @@ must refer to bundled paths after rewriting.
 Normal package generation writes wrapper sources and bundles under
 `target/ffi-generated/<language>/<out-name>/`. Repo examples are demos only, not the source of truth
 for generated plugin wrappers.
+
+## Hosting Packages
+
+```rust
+use daedalus_ffi_host::{FfiHost, PersistentWorkerRunnerFactory};
+
+let factory = PersistentWorkerRunnerFactory::new();
+let mut host = FfiHost::install_package(&mut registry, &package, &factory)?;
+host.add_package(&mut registry, &other_package, &factory)?;
+let response = host.invoke("demo.add", request)?;
+host.shutdown()?;
+```
+
+Packages installed into one `FfiHost` share its `RunnerPool` and `FfiHostTelemetry`. Use
+`FfiHost::builder()` to share an existing telemetry collector, set pool options, or defer runner
+startup until `start_runners`. `in_process_abi` nodes are registered but not started by the host.
+The low-level `install_package_with_ffi_telemetry` + `install_plan_runners` + `RunnerPool::invoke`
+path remains available for custom lifecycle control.
 
 ## Registry Schema Export
 
