@@ -1,0 +1,7 @@
+error: unsupported `#[node]` argument `bundle`
+ --> tests/ui/node/fail_unknown_argument.rs:3:1
+  |
+3 | #[node(id = "ui.unknown", bundle = "starter")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `node` (in Nightly builds, run with -Z macro-backtrace for more info)

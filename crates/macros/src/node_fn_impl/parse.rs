@@ -65,7 +65,6 @@ pub(super) struct NodeArgs {
     pub(super) shader_bindings: Vec<TokenStream>,
     pub(super) shader_specs: Vec<(TokenStream, Option<LitStr>)>,
     pub(super) state_ty_attr: Option<syn::Type>,
-    pub(super) compute_attr: Option<TokenStream>,
     pub(super) sync_groups_attr: Option<TokenStream>,
     pub(super) capability_attr: Option<LitStr>,
     pub(super) fallback_attr: Option<LitStr>,
@@ -126,7 +125,6 @@ pub(super) fn parse_node_args(
     let mut shader_bindings: Vec<TokenStream> = Vec::new();
     let mut shader_specs: Vec<(TokenStream, Option<LitStr>)> = Vec::new();
     let mut state_ty_attr: Option<syn::Type> = None;
-    let mut compute_attr: Option<TokenStream> = None;
     let mut sync_groups_attr: Option<TokenStream> = None;
     let mut capability_attr: Option<LitStr> = None;
     let mut fallback_attr: Option<LitStr> = None;
@@ -158,11 +156,6 @@ pub(super) fn parse_node_args(
                                 "description must be a string literal".into(),
                             ));
                         }
-                    }
-                } else if path.is_ident("bundle") {
-                    match value {
-                        Lit::Str(_) => {}
-                        _ => return Err(compile_error("bundle must be a string literal".into())),
                     }
                 } else if path.is_ident("inputs") {
                     match value {
@@ -210,8 +203,6 @@ pub(super) fn parse_node_args(
                     }
                 } else if path.is_ident("sync_groups") {
                     sync_groups_attr = Some(value.to_token_stream());
-                } else if path.is_ident("compute") {
-                    compute_attr = Some(value.to_token_stream());
                 } else if path.is_ident("fallback") {
                     match value {
                         Lit::Str(s) => fallback_attr = Some(s),
@@ -219,7 +210,7 @@ pub(super) fn parse_node_args(
                     }
                 } else {
                     return Err(compile_error(format!(
-                        "unsupported name/value argument: {:?}",
+                        "unsupported `#[node]` argument `{}`",
                         path.to_token_stream()
                     )));
                 }
@@ -235,18 +226,6 @@ pub(super) fn parse_node_args(
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("outputs") => {
                 parse_outputs_list(&list, &mut outputs)?;
-            }
-            NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("compute") => {
-                let nested = parse_nested(&list)
-                    .map_err(|_| compile_error("compute(...) expects a single argument".into()))?;
-                if let Some(first) = nested.first() {
-                    compute_attr = Some(first.to_token_stream());
-                } else {
-                    return Err(compile_error(
-                        "compute(...) expects an affinity, e.g., compute(ComputeAffinity::GpuPreferred)"
-                            .into(),
-                    ));
-                }
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("generics") => {
                 generics_attr = Some(list.tokens.clone());
@@ -278,7 +257,7 @@ pub(super) fn parse_node_args(
             }
             other => {
                 return Err(compile_error(format!(
-                    "unsupported argument: {:?}",
+                    "unsupported `#[node]` argument `{}`",
                     other.to_token_stream()
                 )));
             }
@@ -312,7 +291,6 @@ pub(super) fn parse_node_args(
         shader_bindings,
         shader_specs,
         state_ty_attr,
-        compute_attr,
         sync_groups_attr,
         capability_attr,
         fallback_attr,

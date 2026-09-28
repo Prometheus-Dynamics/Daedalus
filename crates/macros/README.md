@@ -20,7 +20,6 @@ which resolves the generated paths to the facade's re-exports.
 - `GpuBindings` and `GpuStateful`: WGSL/GPU metadata derives.
 - `BranchPayload`, `DaedalusTypeExpr`, and `DaedalusToValue`: data helper derives. Like the
   other macros they resolve through the facade, so a `daedalus-rs` dependency is enough.
-- `Outputs`: marker derive that currently expands to nothing.
 
 See the item docs in `src/lib.rs` for arguments and examples; `crates/daedalus/tests/ui/transport`
 has compile-checked usage.

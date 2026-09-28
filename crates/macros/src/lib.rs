@@ -182,15 +182,6 @@ pub fn device(
     device_impl::device(args, item)
 }
 
-/// Marker derive for node output structs.
-///
-/// Expands to nothing: `#[node]` reads output names from its own `outputs(...)` argument, so
-/// deriving `Outputs` has no effect today.
-#[proc_macro_derive(Outputs)]
-pub fn outputs(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    proc_macro::TokenStream::new()
-}
-
 /// Derive `NodeConfig` for structured config inputs.
 ///
 #[proc_macro_derive(NodeConfig, attributes(port, validate))]

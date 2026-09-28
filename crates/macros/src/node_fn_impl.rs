@@ -49,7 +49,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         shader_bindings,
         shader_specs,
         state_ty_attr,
-        compute_attr,
         sync_groups_attr,
         capability_attr,
         fallback_attr,
@@ -87,14 +86,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             })
     };
 
-    let has_shaders = shader_path.is_some() || !shader_specs.is_empty() || !shader_paths.is_empty();
-    let _compute_expr: proc_macro2::TokenStream = if let Some(ts) = compute_attr.clone() {
-        quote! { #ts }
-    } else if has_shaders {
-        quote! { #core_crate::compute::ComputeAffinity::GpuRequired }
-    } else {
-        quote! { #core_crate::compute::ComputeAffinity::CpuOnly }
-    };
     // Common descriptor payload.
     let inputs_vec = inputs.clone();
     let outputs_vec = outputs.clone();

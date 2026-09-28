@@ -15,8 +15,7 @@ mod real_gpu {
         id = "gpu.frame_lease.contrast_boost",
         inputs("frame"),
         outputs("frame"),
-        shader = "contrast_boost.wgsl",
-        compute(daedalus::ComputeAffinity::GpuPreferred)
+        shader = "contrast_boost.wgsl"
     )]
     fn contrast_boost(frame: FrameLease, ctx: ShaderContext) -> Result<FrameLease, NodeError> {
         let mut rgba = frame

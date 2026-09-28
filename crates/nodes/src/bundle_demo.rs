@@ -26,26 +26,21 @@ pub fn install_bundle(registry: &mut PluginRegistry) -> PluginResult<HandlerRegi
     Ok(registry.take_handlers())
 }
 
-#[node(id = "demo:frame_src", bundle = "demo", outputs("frame"))]
+#[node(id = "demo:frame_src", outputs("frame"))]
 fn frame_src() -> Result<Frame, NodeError> {
     Ok(Frame {
         bytes: b"frame".to_vec(),
     })
 }
 
-#[node(
-    id = "demo:decode",
-    bundle = "demo",
-    inputs("frame"),
-    outputs("detections")
-)]
+#[node(id = "demo:decode", inputs("frame"), outputs("detections"))]
 fn decode(frame: Frame) -> Result<Vec<Detection>, NodeError> {
     Ok(vec![Detection {
         id: frame.bytes.len() as i32,
     }])
 }
 
-#[node(id = "demo:sink", bundle = "demo", inputs("detections"))]
+#[node(id = "demo:sink", inputs("detections"))]
 fn sink(detections: Vec<Detection>) -> Result<(), NodeError> {
     tracing::info!(target: "daedalus_nodes::demo", ?detections, "demo detections");
     Ok(())

@@ -37,5 +37,3 @@ paste = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 
-[dev-dependencies]
-trybuild = { workspace = true }
