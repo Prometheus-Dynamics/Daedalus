@@ -42,6 +42,7 @@ macro_rules! for_each_builtin_primitive {
         }
     };
 }
+#[cfg(feature = "plugins")]
 pub(crate) use for_each_builtin_primitive;
 
 /// Register `ToValue` serializers for the built-in primitive host value types (`()`, `bool`,
