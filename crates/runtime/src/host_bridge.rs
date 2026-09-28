@@ -11,24 +11,28 @@ use smallvec::SmallVec;
 use crate::handles::{HostAlias, PortId};
 
 mod events;
+mod inspect;
 mod manager;
 mod policy;
 mod serializers;
 mod types;
+mod wait;
 use events::{
     outcome_drop_reason, record_drop_reason, record_host_event, replacement_reason,
     trim_host_events,
 };
+pub use inspect::{PayloadInspection, PayloadSummary, inspect_payload, serialize_payload_value};
 pub use manager::{HostBridgeManager, bridge_handler};
 use policy::{apply_host_pressure, freshness_drop_reason};
 pub use serializers::{
-    ValueSerializer, ValueSerializerMap, new_value_serializer_map, register_value_serializer_in,
-    value_serializer_map,
+    ValueSerializer, ValueSerializerMap, new_value_serializer_map, primitive_value_serializer_map,
+    register_primitive_value_serializers_in, register_value_serializer_in, value_serializer_map,
 };
 pub use types::{
     HostBridgeConfig, HostBridgeDropStats, HostBridgeEvent, HostBridgeEventKind, HostBridgePayload,
     HostBridgeStats,
 };
+pub use wait::{InboundWait, InboundWaiter};
 
 pub const DEFAULT_HOST_BRIDGE_EVENT_LIMIT: usize = 1024;
 
@@ -56,6 +60,11 @@ pub(super) struct HostBridgeBuffers {
     pub(super) event_limit: Option<usize>,
     pub(super) stats: HostBridgeStats,
     pub(super) events: VecDeque<HostBridgeEvent>,
+    /// Bumped by `wake_inbound_waiters` so waiters can tell explicit wakeups from spurious ones.
+    pub(super) wake_epoch: u64,
+    pub(super) next_waker_id: u64,
+    /// Async inbound waiters, keyed by waiter id. Woken outside the lock.
+    pub(super) inbound_wakers: Vec<(u64, std::task::Waker)>,
 }
 
 pub(super) struct HostBridgeShared {
@@ -93,6 +102,9 @@ impl Default for HostBridgeBuffers {
             event_limit: Some(DEFAULT_HOST_BRIDGE_EVENT_LIMIT),
             stats: HostBridgeStats::default(),
             events: VecDeque::new(),
+            wake_epoch: 0,
+            next_waker_id: 0,
+            inbound_wakers: Vec::new(),
         }
     }
 }
@@ -314,6 +326,9 @@ impl HostBridgeHandle {
             FeedOutcome::Accepted { .. } | FeedOutcome::Replaced { .. }
         ) {
             self.shared.ready.notify_all();
+            let wakers = wait::take_inbound_wakers(&mut guard);
+            drop(guard);
+            wait::wake_all(wakers);
         }
         outcome
     }
@@ -400,31 +415,14 @@ impl HostBridgeHandle {
         }
     }
 
-    pub(crate) fn wait_for_inbound(&self, timeout: Duration) -> bool {
-        let guard = lock_host_buffers(&self.shared);
-        if has_pending_inbound_locked(&guard) || guard.closed {
-            return true;
-        }
-        if timeout.is_zero() {
-            return false;
-        }
-        let (guard, _) = self
-            .shared
-            .ready
-            .wait_timeout(guard, timeout)
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        has_pending_inbound_locked(&guard) || guard.closed
-    }
-
-    pub(crate) fn notify_waiters(&self) {
-        self.shared.ready.notify_all();
-    }
-
     pub fn close(&self) {
         let mut guard = lock_host_buffers(&self.shared);
         guard.closed = true;
         guard.stats.closed = true;
         self.shared.ready.notify_all();
+        let wakers = wait::take_inbound_wakers(&mut guard);
+        drop(guard);
+        wait::wake_all(wakers);
     }
 
     pub fn close_input(&self, port: impl Into<String>) {

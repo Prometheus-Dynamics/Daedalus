@@ -86,6 +86,11 @@ path = "tests/stateful_node_isolation.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
+name = "host_graph_introspection"
+path = "tests/host_graph_introspection.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
 name = "transport_macro_ui"
 path = "tests/transport_macro_ui.rs"
 required-features = ["plugins"]

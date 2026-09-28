@@ -69,16 +69,18 @@ pub mod prelude {
     #[cfg(feature = "engine")]
     pub use crate::engine::{
         CacheSection, CacheStatus, CompiledRun, Engine, EngineCacheMetrics, EngineConfig,
-        EngineConfigError, EngineError, GpuBackend, HostGraph, HostGraphInput, HostGraphLane,
-        HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput, PlannerSection,
-        PreparedPlan, PreparedRuntimePlan, RunResult, RuntimeMode, RuntimeSection,
+        EngineConfigError, EngineError, GpuBackend, HostGraph, HostGraphDriveExit, HostGraphInput,
+        HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
+        HostGraphStopHandle, HostGraphTurn, PlannerSection, PreparedPlan, PreparedRuntimePlan,
+        RunResult, RuntimeMode, RuntimeSection,
     };
     pub use crate::registry::prelude::*;
     pub use crate::runtime::{
-        DEFAULT_OUTPUT_PORT, ExecutionContext, ExecutionTelemetry, Executor, FanIn, MetricsLevel,
-        NodeError, NodeIo, OwnedExecutor, RuntimePlan, RuntimeTransport, SchedulerConfig,
-        StreamGraph, StreamGraphWorker, TypedInputResolution, TypedInputResolutionKind,
-        build_runtime, graph_builder,
+        DEFAULT_OUTPUT_PORT, ExecutionContext, ExecutionTelemetry, Executor, FanIn,
+        HostPortConnection, HostPortDescriptor, HostPortDirection, InboundWait, InboundWaiter,
+        MetricsLevel, NodeError, NodeIo, OwnedExecutor, PayloadInspection, PayloadSummary,
+        RuntimePlan, RuntimeTransport, SchedulerConfig, StreamGraph, StreamGraphWorker,
+        TypedInputResolution, TypedInputResolutionKind, build_runtime, graph_builder,
     };
     pub use crate::transport::{
         AccessMode, AdaptKind, AdapterId, AdapterKind, BoundaryPayloadError, Cpu, Device,

@@ -94,15 +94,16 @@ pub use handles::{
 };
 pub use host_bridge::{
     DEFAULT_HOST_BRIDGE_EVENT_LIMIT, HOST_BRIDGE_META_KEY, HostBridgeConfig, HostBridgeHandle,
-    HostBridgeManager, bridge_handler,
+    HostBridgeManager, InboundWait, InboundWaiter, PayloadInspection, PayloadSummary,
+    bridge_handler, inspect_payload,
 };
 pub use io::{DEFAULT_OUTPUT_PORT, NodeIo, TypedInputResolution, TypedInputResolutionKind};
 pub use plan::{
     BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry,
-    NODE_EXECUTION_KIND_META_KEY, NodeExecutionKind, RuntimeBranchExplanation, RuntimeEdge,
-    RuntimeEdgeExplanation, RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeNode,
-    RuntimeNodeExplanation, RuntimePlan, RuntimePlanError, RuntimePlanExplanation, RuntimeSegment,
-    RuntimeSink,
+    HostPortConnection, HostPortDescriptor, HostPortDirection, NODE_EXECUTION_KIND_META_KEY,
+    NodeExecutionKind, RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation,
+    RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeNode, RuntimeNodeExplanation, RuntimePlan,
+    RuntimePlanError, RuntimePlanExplanation, RuntimeSegment, RuntimeSink,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
 pub use state::{

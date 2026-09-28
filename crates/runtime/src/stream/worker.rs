@@ -379,7 +379,7 @@ where
                         }
                         guard.bridges.ensure_handle(guard.host_alias.clone())
                     };
-                    let _ = handle.wait_for_inbound(idle_sleep);
+                    let _ = handle.wait_inbound(Some(idle_sleep));
                 }
             }
         });

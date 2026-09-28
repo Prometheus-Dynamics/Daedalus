@@ -15,6 +15,8 @@ pub struct BoundaryVTable {
     pub drop_owned: unsafe fn(NonNull<c_void>),
     pub clone_shared: unsafe fn(NonNull<c_void>) -> Option<BoundaryStorage>,
     pub bytes_estimate: unsafe fn(NonNull<c_void>) -> u64,
+    /// Reborrow the erased pointer as a thread-safe `Any` for read-only inspection.
+    pub value_any: unsafe fn(NonNull<c_void>) -> *const (dyn Any + Send + Sync),
     pub rust_type_name: &'static str,
 }
 
@@ -158,6 +160,20 @@ impl BoundaryStorage {
         })
     }
 
+    /// Borrow the stored value as `&(dyn Any + Send + Sync)` for read-only inspection.
+    ///
+    /// Returns `None` when the contract does not grant `borrow_ref` or the value was taken.
+    pub fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
+        if !self.contract.capabilities.borrow_ref {
+            return None;
+        }
+        let ptr = self.ptr?;
+        // SAFETY: the vtable was created for the same concrete `T` stored behind `ptr`; the
+        // returned reference borrows from `self`, which keeps the allocation alive, and shared
+        // access is gated by `&self` plus the `borrow_ref` capability checked above.
+        Some(unsafe { &*(self.vtable.value_any)(ptr) })
+    }
+
     pub fn bytes_estimate(&self) -> Option<u64> {
         // SAFETY: vtable functions are created by `boundary_vtable::<T>` for
         // the same concrete allocation stored in `self.ptr`; no ownership is
@@ -192,6 +208,10 @@ impl PayloadStorage for BoundaryStorage {
 
     fn type_key(&self) -> &TypeKey {
         &self.type_key
+    }
+
+    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
+        BoundaryStorage::value_any_sync(self)
     }
 
     fn rust_type_name(&self) -> Option<&'static str> {
@@ -244,6 +264,14 @@ where
         std::mem::size_of::<T>() as u64
     }
 
+    unsafe fn value_any<T: Send + Sync + 'static>(
+        ptr: NonNull<c_void>,
+    ) -> *const (dyn Any + Send + Sync) {
+        // SAFETY: this only reinterprets the erased pointer as the `T` it was allocated as; it
+        // does not dereference it. Callers must keep the allocation alive while using the result.
+        ptr.as_ptr().cast::<T>().cast_const() as *const (dyn Any + Send + Sync)
+    }
+
     let mut vtables = VTABLES
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -255,6 +283,7 @@ where
         drop_owned: drop_owned::<T>,
         clone_shared,
         bytes_estimate: bytes_estimate::<T>,
+        value_any: value_any::<T>,
         rust_type_name: std::any::type_name::<T>(),
     }));
     vtables.insert(TypeId::of::<T>(), vtable);
@@ -394,5 +423,38 @@ mod tests {
         });
 
         assert_eq!(handle.join().expect("thread join"), 11);
+    }
+
+    #[test]
+    fn value_any_sync_exposes_typed_bytes_and_boundary_values() {
+        let typed = crate::Payload::owned("test:string", String::from("hi"));
+        assert_eq!(
+            typed
+                .value_any_sync()
+                .and_then(|value| value.downcast_ref::<String>()),
+            Some(&String::from("hi"))
+        );
+
+        let bytes = crate::Payload::bytes(Arc::from(vec![1u8, 2, 3]));
+        assert_eq!(
+            bytes
+                .value_any_sync()
+                .and_then(|value| value.downcast_ref::<Arc<[u8]>>())
+                .map(|bytes| bytes.len()),
+            Some(3)
+        );
+
+        let readable =
+            crate::Payload::boundary_owned("test:u32", 5u32, BoundaryCapabilities::rust_value());
+        assert_eq!(
+            readable
+                .value_any_sync()
+                .and_then(|value| value.downcast_ref::<u32>()),
+            Some(&5)
+        );
+
+        let opaque =
+            crate::Payload::boundary_owned("test:u32", 5u32, BoundaryCapabilities::owned());
+        assert!(opaque.value_any_sync().is_none());
     }
 }
