@@ -117,3 +117,10 @@ implementation_variants = [
 allowed_manifest_exceptions = [
     "crates/engine keeps explicit path dependencies for daedalus-runtime, daedalus-planner, and daedalus-registry because Cargo workspace inheritance cannot combine workspace = true with default-features = false under the current shared root declarations.",
 ]
+
+# `crates/daedalus/tests/dylib_plugin.rs` builds this example as a `cdylib`. Dropping its own
+# debug info and stripping the shared object keeps the debug `.so` small and quick to link; it
+# does not affect the rustc/build-fingerprint checks the loader performs.
+[profile.dev.package.daedalus-plugins-example-project]
+debug = 0
+strip = "debuginfo"

@@ -3,7 +3,10 @@ mod context;
 mod edge_policy;
 mod metadata;
 mod nested;
+mod nested_ports;
 mod scope;
+mod sections;
+mod single_node;
 mod spec;
 
 pub use context::GraphCtx;

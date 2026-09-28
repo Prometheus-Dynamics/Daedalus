@@ -99,6 +99,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Removed `daedalus_runtime::GPU_FEATURE_ENABLED` and `daedalus_registry::GPU_FEATURE_ENABLED`;
   use `ENABLED_FEATURES`.
 
+### Maintenance
+
+- Split the largest runtime, transport, planner, macro, and Java FFI source files into
+  submodules (no API or behavior change) and emptied the file-size baseline;
+  `scripts/check-file-sizes.sh` now fails on stale baseline entries.
+- CI runs the trybuild macro UI tests (now `#[ignore]`d in the default test run) and the
+  dynamic plugin tests in their own parallel jobs, with `CARGO_INCREMENTAL=0` and line-table
+  debug info; the example `cdylib` plugin is built without debug info in dev.
+- Rewrote the `#[plugin]`, `#[type_key]`, `#[adapt]`, `#[device]`, and `Outputs` macro docs to
+  describe what they generate, with examples.
+
 ## [2.0.0] - 2026-04-30
 
 ### Added

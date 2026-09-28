@@ -15,6 +15,15 @@ cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warning
 cargo doc --workspace --no-deps
 ```
 
+Slower suites run as separate CI jobs so they overlap with the workspace tests:
+
+```bash
+# trybuild macro UI tests (ignored in the default test run)
+cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
+# native Rust cdylib plugin loading
+cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
+```
+
 ## Release Feature Surface
 
 ```bash
@@ -80,4 +89,6 @@ The Docker suite uses [`testing/docker/daedalus-examples.Dockerfile`](../testing
 - UI and macro diagnostics live under `crates/nodes/tests/ui` and `crates/daedalus/tests/ui`.
 - Planner/runtime integration tests live under `crates/planner/tests` and `crates/runtime/tests`.
 - Runtime plan goldens live under `crates/runtime/tests/goldens`.
-- File-size linting is warning-only and uses `testing/ci/file-size-baseline.txt`.
+- File-size linting warns about Rust files over 800 lines that are not listed in
+  `testing/ci/file-size-baseline.txt`, and fails when a baseline entry is stale (the file is
+  missing or back within the limit), so the baseline only ever shrinks.

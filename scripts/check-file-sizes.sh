@@ -18,10 +18,19 @@ if [[ ${#scan_roots[@]} -eq 0 ]]; then
 fi
 
 declare -A baseline=()
+declare -a stale_entries=()
 if [[ -f "$baseline_file" ]]; then
-    while IFS= read -r line; do
-        [[ -z "$line" || "$line" =~ ^# ]] && continue
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" ]] && continue
         baseline["$line"]=1
+        if [[ ! -f "$root_dir/$line" ]]; then
+            stale_entries+=("$line (file does not exist)")
+        elif (( $(wc -l <"$root_dir/$line") <= limit )); then
+            stale_entries+=("$line (now $(wc -l <"$root_dir/$line") lines, within the ${limit}-line limit)")
+        fi
     done <"$baseline_file"
 fi
 
@@ -71,6 +80,13 @@ if [[ ${#over_limit[@]} -gt 0 ]]; then
 fi
 
 if [[ ${#violations[@]} -gt 0 ]]; then
-    printf '\nWarning: new files over %s lines:\n' "$limit" >&2
+    printf '\nWarning: new files over %s lines (split them, or add them to %s):\n' \
+        "$limit" "${baseline_file#$root_dir/}" >&2
     printf '  %s\n' "${violations[@]}" >&2
+fi
+
+if [[ ${#stale_entries[@]} -gt 0 ]]; then
+    printf '\nError: stale entries in %s (remove them):\n' "${baseline_file#$root_dir/}" >&2
+    printf '  %s\n' "${stale_entries[@]}" >&2
+    exit 1
 fi
