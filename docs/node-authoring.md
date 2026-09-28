@@ -130,6 +130,13 @@ The glue is small and always has the same shape:
 Nodes then take the frame type (or a view type reachable through adapters) directly, and the
 planner handles the rest.
 
+For dmabuf frames that GPU nodes consume, the glue can skip the CPU entirely: with the
+`gpu-dmabuf` feature, `GpuContextHandle::import_dmabuf` turns the buffer (fd, offset, stride, DRM
+fourcc/modifier) into a GPU image that aliases the producer's memory, holding a keepalive (the
+producer's buffer lease) until the GPU is done. Check `supports_dmabuf_import()` first and fall
+back to a CPU upload otherwise. See "Importing external frames (dmabuf)" in
+[`crates/gpu/README.md`](../crates/gpu/README.md).
+
 ## Nodes And Profiling
 
 Prefer several small nodes (or an embedded graph/node-group) over a single "mega node" that

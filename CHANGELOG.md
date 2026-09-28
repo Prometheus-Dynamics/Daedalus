@@ -25,6 +25,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `HostGraphStopHandle`.
 - Added `docs/node-authoring.md`, `docs/dynamic-plugins.md`, and a measured minimal CPU-only
   profile in `docs/development.md`.
+- Added zero-copy dmabuf import in `daedalus-gpu`: `ExternalFrameDescriptor`/`ExternalPlane`
+  (Linux, owned fds plus an `ExternalKeepalive` released when the GPU is done), `DrmFourcc`,
+  `GpuBackend::{dmabuf_import_support, import_dmabuf}` and `GpuContextHandle` wrappers with typed
+  `ExternalImportSupport`/`ExternalImportError`. The mock backend records imports; the new
+  `gpu-dmabuf` feature (daedalus-gpu and facade; implies `gpu-wgpu`) implements it on Vulkan via
+  wgpu-hal, enabling `VK_EXT_image_drm_format_modifier` at device creation when available.
+- Added `GpuFormat::{Rg8Unorm, Bgra8Unorm}` (used by imported frames).
 
 ### Changed
 

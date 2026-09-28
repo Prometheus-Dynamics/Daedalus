@@ -16,6 +16,7 @@ use wgpu::{Adapter, Backends, Features, Instance, InstanceDescriptor, Limits};
 mod adapter_select;
 mod capabilities;
 mod copy_limiter;
+mod dmabuf;
 mod resources;
 mod staging;
 
@@ -40,6 +41,7 @@ pub struct WgpuBackend {
     copy_limiter: CopyLimiter,
     submission_tracker: SubmissionTracker,
     device_key: usize,
+    dmabuf_support: crate::ExternalImportSupport,
 }
 
 impl WgpuBackend {
@@ -94,17 +96,19 @@ impl WgpuBackend {
         let (info, features, limits) = build_info_from_adapter(&adapter);
         let caps = caps_from_adapter(Some(&adapter), &limits);
 
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("wgpu-backend"),
-                required_features: Features::empty(),
-                required_limits: adapter.limits(),
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                memory_hints: wgpu::MemoryHints::default(),
-                trace: wgpu::Trace::default(),
-            })
+        let device_desc = wgpu::DeviceDescriptor {
+            label: Some("wgpu-backend"),
+            required_features: Features::empty(),
+            required_limits: adapter.limits(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::default(),
+        };
+        // With `gpu-dmabuf` on Linux/Vulkan this also enables the dmabuf import extensions.
+        let (device, queue) = dmabuf::request_device(&adapter, &device_desc)
             .await
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
+        let dmabuf_support = dmabuf::probe_support(&device);
 
         let device_key = crate::shader::register_device(&device);
 
@@ -131,6 +135,7 @@ impl WgpuBackend {
             copy_limiter: CopyLimiter::new(caps.max_inflight_copies.max(1)),
             submission_tracker: SubmissionTracker::default(),
             device_key,
+            dmabuf_support,
         })
     }
 
@@ -180,6 +185,8 @@ impl WgpuBackend {
             wgpu::TextureFormat::R8Unorm => GpuFormat::R8Unorm,
             wgpu::TextureFormat::Rgba8Unorm => GpuFormat::Rgba8Unorm,
             wgpu::TextureFormat::Rgba16Float => GpuFormat::Rgba16Float,
+            wgpu::TextureFormat::Rg8Unorm => GpuFormat::Rg8Unorm,
+            wgpu::TextureFormat::Bgra8Unorm => GpuFormat::Bgra8Unorm,
             _ => GpuFormat::Rgba8Unorm,
         };
         let mut gpu_usage = GpuUsage::empty();
@@ -253,6 +260,23 @@ impl GpuBackend for WgpuBackend {
 
     fn wgpu_device_queue(&self) -> Option<(&wgpu::Device, &wgpu::Queue)> {
         Some((&self.device, &self.queue))
+    }
+
+    fn dmabuf_import_support(&self) -> crate::ExternalImportSupport {
+        self.dmabuf_support.clone()
+    }
+
+    #[cfg(target_os = "linux")]
+    fn import_dmabuf(
+        &self,
+        desc: crate::ExternalFrameDescriptor,
+    ) -> Result<GpuImageHandle, crate::ExternalImportError> {
+        if let Some(reason) = self.dmabuf_support.reason() {
+            return Err(crate::ExternalImportError::Unsupported {
+                reason: reason.to_string(),
+            });
+        }
+        dmabuf::import(self, desc)
     }
 
     fn wgpu_submission_tracker(&self) -> Option<&SubmissionTracker> {
@@ -588,6 +612,8 @@ fn map_format(format: GpuFormat) -> wgpu::TextureFormat {
         GpuFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
         GpuFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
         GpuFormat::Depth24Stencil8 => wgpu::TextureFormat::Depth24PlusStencil8,
+        GpuFormat::Rg8Unorm => wgpu::TextureFormat::Rg8Unorm,
+        GpuFormat::Bgra8Unorm => wgpu::TextureFormat::Bgra8Unorm,
     }
 }
 

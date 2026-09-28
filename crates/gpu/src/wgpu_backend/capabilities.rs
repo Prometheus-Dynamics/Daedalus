@@ -11,17 +11,13 @@ pub(super) fn caps_from_adapter(
         GpuFormat::Rgba8Unorm,
         GpuFormat::Rgba16Float,
         GpuFormat::Depth24Stencil8,
+        GpuFormat::Rg8Unorm,
+        GpuFormat::Bgra8Unorm,
     ];
     let mut format_features = Vec::new();
     for format in formats {
         let (sampleable, renderable, storage, max_samples) = if let Some(adapter) = adapter {
-            let tf = match format {
-                GpuFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
-                GpuFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
-                GpuFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
-                GpuFormat::Depth24Stencil8 => wgpu::TextureFormat::Depth24PlusStencil8,
-            };
-            let features = adapter.get_texture_format_features(tf);
+            let features = adapter.get_texture_format_features(super::map_format(format));
             let allowed = features.allowed_usages;
             let flags = features.flags;
             let max_samples = if flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X8) {
@@ -75,6 +71,18 @@ pub(super) fn caps_from_adapter(
             },
             GpuBlockInfo {
                 format: GpuFormat::Depth24Stencil8,
+                block_width: 1,
+                block_height: 1,
+                bytes_per_block: 4,
+            },
+            GpuBlockInfo {
+                format: GpuFormat::Rg8Unorm,
+                block_width: 1,
+                block_height: 1,
+                bytes_per_block: 2,
+            },
+            GpuBlockInfo {
+                format: GpuFormat::Bgra8Unorm,
                 block_width: 1,
                 block_height: 1,
                 bytes_per_block: 4,
