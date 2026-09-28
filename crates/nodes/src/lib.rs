@@ -23,9 +23,9 @@ pub mod __macro_support {
     };
 }
 
-/// Declare a plugin struct that installs a set of node descriptors and handlers
-/// in one shot. Each entry should correspond to a `#[node]`-annotated
-/// function name in scope so `<name>_descriptor` and `<name>_handler` exist.
+/// Declare a plugin struct that installs a set of node declarations and handlers
+/// in one shot. Each entry names a `#[node]`-annotated function in scope; the macro uses the
+/// `<Name>Node` type that `#[node]` generates for it.
 ///
 #[cfg(feature = "plugins")]
 #[macro_export]
