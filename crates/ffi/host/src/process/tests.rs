@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use daedalus_ffi_core::{
-    BackendConfig, BackendKind, BackendRuntimeModel, InvokeEventLevel, InvokeRequest,
-    WORKER_PROTOCOL_VERSION, WirePayloadHandle, WireValue,
+    BackendConfig, BackendKind, InvokeEventLevel, InvokeRequest, WORKER_PROTOCOL_VERSION,
+    WirePayloadHandle, WireValue,
 };
 use daedalus_transport::{AccessMode, TypeKey};
 
@@ -651,25 +651,14 @@ public final class PayloadWorker {
 }
 
 fn one_shot_worker_config(backend: BackendKind, worker: &Path, dir: &Path) -> BackendConfig {
-    let (entry_module, entry_class) = match backend {
-        BackendKind::Python => (Some("restart_fixture.py".into()), None),
-        BackendKind::Node => (Some("restart_fixture.mjs".into()), None),
-        BackendKind::Java => (None, Some("RestartFixture".into())),
+    let config = BackendConfig::persistent_worker(backend.clone(), "/bin/sh", "add")
+        .with_args([worker.display().to_string()])
+        .with_working_dir(dir.display().to_string());
+    match backend {
+        BackendKind::Python => config.with_entry_module("restart_fixture.py"),
+        BackendKind::Node => config.with_entry_module("restart_fixture.mjs"),
+        BackendKind::Java => config.with_entry_class("RestartFixture"),
         _ => panic!("restart fixture only covers subprocess worker backends"),
-    };
-    BackendConfig {
-        backend,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module,
-        entry_class,
-        entry_symbol: Some("add".into()),
-        executable: Some("/bin/sh".into()),
-        args: vec![worker.display().to_string()],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
     }
 }
 
