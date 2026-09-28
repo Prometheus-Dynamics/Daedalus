@@ -4,7 +4,7 @@ use proc_macro2::Span;
 use quote::ToTokens;
 use syn::{Attribute, Field, Lit, LitStr, Meta, MetaNameValue};
 
-use crate::helpers::{NestedMeta, compile_error, lit_from_expr, parse_nested};
+use crate::helpers::{NestedMeta, compile_error, lit_from_expr, lit_str_arg, parse_nested};
 
 use super::model::PortSpec;
 
@@ -96,13 +96,8 @@ pub(super) fn parse_port_spec(field: Field) -> Result<PortSpec, proc_macro2::Tok
                         continue;
                     }
                     if path.is_ident("description") {
-                        if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                            description = Some(s);
-                            continue;
-                        }
-                        return Err(compile_error(
-                            "port description must be a string literal".into(),
-                        ));
+                        description = Some(lit_str_arg(&value, "port description")?);
+                        continue;
                     }
                     if path.is_ident("default")
                         && let Some(lit) = lit_from_expr(&value)
@@ -129,11 +124,8 @@ pub(super) fn parse_port_spec(field: Field) -> Result<PortSpec, proc_macro2::Tok
                         continue;
                     }
                     if path.is_ident("policy") {
-                        if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                            policy = Some(s);
-                            continue;
-                        }
-                        return Err(compile_error("policy must be a string literal".into()));
+                        policy = Some(lit_str_arg(&value, "policy")?);
+                        continue;
                     }
                     if path.is_ident("ty") {
                         ty_override = Some(value.to_token_stream());

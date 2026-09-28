@@ -3,22 +3,11 @@ use quote::quote;
 use syn::LitStr;
 
 use super::parse::{OutputPortMeta, PortMeta};
-use super::type_analysis::{contract_type_for, opaque_fallback_type_expr_for, type_expr_for};
+use super::type_analysis::{contract_type_for, node_type_expr, peel_result_or_option};
+use crate::helpers::{generic_arg, last_ident_is, last_segment, strip_ref};
 
 pub(super) fn is_fanin_ty(ty: &syn::Type) -> bool {
-    let ty = if let syn::Type::Reference(r) = ty {
-        &*r.elem
-    } else {
-        ty
-    };
-    if let syn::Type::Path(tp) = ty
-        && tp.qself.is_none()
-        && let Some(seg) = tp.path.segments.last()
-        && seg.ident == "FanIn"
-    {
-        return true;
-    }
-    false
+    last_ident_is(strip_ref(ty), "FanIn")
 }
 
 pub(super) struct InputDeclInputs<'a> {
@@ -84,19 +73,8 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
             let is_binding_mut = arg_mut_bindings.get(idx).copied().unwrap_or(false);
             let is_ref = matches!(raw_aty, syn::Type::Reference(_));
             let is_ref_mut = matches!(raw_aty, syn::Type::Reference(r) if r.mutability.is_some());
-            let aty = if let syn::Type::Reference(r) = raw_aty {
-                &*r.elem
-            } else {
-                raw_aty
-            };
-            let is_arc = if let syn::Type::Path(tp) = aty
-                && tp.qself.is_none()
-                && let Some(seg) = tp.path.segments.last()
-            {
-                seg.ident == "Arc"
-            } else {
-                false
-            };
+            let aty = strip_ref(raw_aty);
+            let is_arc = last_ident_is(aty, "Arc");
             let access = if is_ref_mut || is_binding_mut {
                 quote! { #runtime_crate::transport_types::AccessMode::Modify }
             } else if is_ref || is_arc {
@@ -120,10 +98,8 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
             };
             let ty_expr = if let Some(ty) = port.ty_override.as_ref() {
                 quote! { (#ty) }
-            } else if let Some(ts) = type_expr_for(aty, generic_type_params, data_crate) {
-                ts
             } else {
-                opaque_fallback_type_expr_for(aty, data_crate)
+                node_type_expr(aty, generic_type_params, data_crate)
             };
 
             Some(port_decl_token(PortDeclToken {
@@ -167,8 +143,7 @@ fn port_decl_token(input: PortDeclToken<'_>) -> TokenStream {
             let __ty = #ty_expr;
             let mut __port = #registry_crate::capability::PortDecl::new(
                 #name,
-                #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                    .map_err(|_| "invalid node input type key")?,
+                #runtime_crate::transport::typeexpr_transport_key(&__ty),
             )
             .schema(__ty)
             .access(#access);
@@ -190,21 +165,6 @@ pub(super) fn output_type_exprs(
     generic_type_params: &::std::collections::HashSet<::std::string::String>,
     data_crate: &TokenStream,
 ) -> Vec<TokenStream> {
-    fn peel_wrapped(ty: &syn::Type) -> &syn::Type {
-        if let syn::Type::Path(p) = ty
-            && let Some(seg) = p.path.segments.last()
-        {
-            let ident = seg.ident.to_string();
-            if (ident == "Result" || ident == "Option")
-                && let syn::PathArguments::AngleBracketed(ab) = &seg.arguments
-                && let Some(syn::GenericArgument::Type(inner)) = ab.args.first()
-            {
-                return inner;
-            }
-        }
-        ty
-    }
-
     let explicit: Vec<Option<TokenStream>> = outputs
         .iter()
         .map(|p| p.ty_override.as_ref().map(|ts| quote! { (#ts) }))
@@ -212,14 +172,7 @@ pub(super) fn output_type_exprs(
 
     let mut out: Vec<TokenStream> = Vec::new();
     if let syn::ReturnType::Type(_, ty) = ret {
-        let mut base_ty: &syn::Type = ty.as_ref();
-        loop {
-            let next = peel_wrapped(base_ty);
-            if std::ptr::eq(next, base_ty) {
-                break;
-            }
-            base_ty = next;
-        }
+        let base_ty = peel_result_or_option(ty);
 
         if let syn::Type::Tuple(t) = base_ty {
             if t.elems.len() == outputs.len() {
@@ -228,19 +181,14 @@ pub(super) fn output_type_exprs(
                         out.push(ts);
                         continue;
                     }
-                    out.push(
-                        type_expr_for(elem, generic_type_params, data_crate)
-                            .unwrap_or_else(|| opaque_fallback_type_expr_for(elem, data_crate)),
-                    );
+                    out.push(node_type_expr(elem, generic_type_params, data_crate));
                 }
             }
         } else if outputs.len() == 1 {
             if let Some(ts) = explicit.first().and_then(|v| v.clone()) {
                 out.push(ts);
-            } else if let Some(ts) = type_expr_for(base_ty, generic_type_params, data_crate) {
-                out.push(ts);
             } else {
-                out.push(opaque_fallback_type_expr_for(base_ty, data_crate));
+                out.push(node_type_expr(base_ty, generic_type_params, data_crate));
             }
         }
     }
@@ -301,7 +249,6 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
                 Some(boundary_contract_push(
                     ty_expr,
                     quote! { #contract_ty },
-                    "invalid node input boundary type key",
                     runtime_crate,
                 ))
             })
@@ -325,7 +272,6 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
                 Some(boundary_contract_push(
                     ty_expr,
                     quote! { #contract_ty },
-                    "invalid node output boundary type key",
                     runtime_crate,
                 ))
             })
@@ -367,14 +313,12 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
 fn boundary_contract_push(
     ty_expr: TokenStream,
     contract_ty: TokenStream,
-    error: &'static str,
     runtime_crate: &TokenStream,
 ) -> TokenStream {
     quote! {
         {
             let __ty = #ty_expr;
-            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                .map_err(|_| #error)?;
+            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty);
             __contracts.push(
                 #runtime_crate::transport_types::BoundaryTypeContract::for_schema::<#contract_ty>(
                     __key,
@@ -414,26 +358,13 @@ pub(super) fn fanin_input_decl_tokens(inputs: FanInInputs<'_>) -> Vec<TokenStrea
         .enumerate()
         .filter_map(|(idx, port)| {
             let aty = arg_types.get(idx)?;
-            let syn::Type::Path(tp) = aty else {
-                return None;
-            };
-            let seg = tp.path.segments.last()?;
-            if seg.ident != "FanIn" {
-                return None;
-            }
-            let syn::PathArguments::AngleBracketed(ab) = &seg.arguments else {
-                return None;
-            };
-            let Some(syn::GenericArgument::Type(inner_ty)) = ab.args.first() else {
-                return None;
-            };
+            let inner_ty = generic_arg(aty, "FanIn", 0)?;
 
             let prefix = &port.name;
             let ty_expr = if let Some(ty) = port.ty_override.as_ref() {
                 quote! { (#ty) }
             } else {
-                type_expr_for(inner_ty, generic_type_params, data_crate)
-                    .unwrap_or_else(|| opaque_fallback_type_expr_for(inner_ty, data_crate))
+                node_type_expr(inner_ty, generic_type_params, data_crate)
             };
             Some(quote! {
                 {
@@ -441,8 +372,7 @@ pub(super) fn fanin_input_decl_tokens(inputs: FanInInputs<'_>) -> Vec<TokenStrea
                     #registry_crate::capability::FanInDecl::new(
                         #prefix,
                         0,
-                        #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                            .map_err(|_| "invalid fan-in input type key")?,
+                        #runtime_crate::transport::typeexpr_transport_key(&__ty),
                     )
                     .schema(__ty)
                 }
@@ -550,8 +480,7 @@ fn node_decl_body(input: NodeDeclBody<'_>) -> TokenStream {
                 let __ty = #output_type_exprs;
                 let mut __port = #registry_crate::capability::PortDecl::new(
                     #output_names,
-                    #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                        .map_err(|_| "invalid node output type key")?,
+                    #runtime_crate::transport::typeexpr_transport_key(&__ty),
                 )
                 .schema(__ty)
                 .access(#runtime_crate::transport_types::AccessMode::Read);
@@ -577,15 +506,7 @@ fn option_string(value: &Option<LitStr>) -> TokenStream {
 }
 
 fn residency_for_ty(ty: &syn::Type, runtime_crate: &TokenStream) -> Option<TokenStream> {
-    let ty = if let syn::Type::Reference(r) = ty {
-        &*r.elem
-    } else {
-        ty
-    };
-    let syn::Type::Path(path) = ty else {
-        return None;
-    };
-    let ident = path.path.segments.last()?.ident.to_string();
+    let ident = last_segment(strip_ref(ty))?.ident.to_string();
     match ident.as_str() {
         "Cpu" => Some(quote! { #runtime_crate::transport_types::Residency::Cpu }),
         "Gpu" | "Device" => Some(quote! { #runtime_crate::transport_types::Residency::Gpu }),

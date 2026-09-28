@@ -1,13 +1,11 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{
-    Expr, FnArg, ItemFn, Lit, LitInt, LitStr, Meta, MetaNameValue, ReturnType, Type,
-    parse_macro_input,
-};
+use syn::{Expr, FnArg, ItemFn, Lit, LitInt, LitStr, Meta, MetaNameValue, Type, parse_macro_input};
 
 use crate::helpers::{
-    AttributeArgs, NestedMeta, compile_error, crate_path, lit_from_expr, str_expr,
+    AttributeArgs, DaedalusCrate, NestedMeta, arc_inner_type, compile_error, is_unit_type,
+    lit_from_expr, lit_str_arg, result_ok_type, str_expr,
 };
 
 struct AdaptArgs {
@@ -54,57 +52,35 @@ fn parse_args(args: AttributeArgs) -> Result<AdaptArgs, proc_macro2::TokenStream
                     to = Some(str_expr(&value, "adapt to")?);
                     continue;
                 }
-                let Some(lit) = lit_from_expr(&value) else {
+                if lit_from_expr(&value).is_none() {
                     return Err(compile_error(
                         "adapt arguments must be string literals".into(),
                     ));
-                };
+                }
                 if path.is_ident("id") {
-                    let Lit::Str(value) = lit else {
-                        return Err(compile_error("adapt id must be a string literal".into()));
-                    };
-                    id = Some(value);
+                    id = Some(lit_str_arg(&value, "adapt id")?);
                 } else if path.is_ident("cost") {
-                    let Lit::Int(value) = lit else {
+                    let Some(Lit::Int(value)) = lit_from_expr(&value) else {
                         return Err(compile_error(
                             "adapt cost must be an integer literal".into(),
                         ));
                     };
                     cost = Some(value);
                 } else if path.is_ident("residency") {
-                    let Lit::Str(value) = lit else {
-                        return Err(compile_error(
-                            "adapt residency must be a string literal".into(),
-                        ));
-                    };
-                    residency = Some(residency_ident(&value)?);
+                    residency = Some(residency_ident(&lit_str_arg(&value, "adapt residency")?)?);
                 } else if path.is_ident("layout") {
-                    let Lit::Str(value) = lit else {
-                        return Err(compile_error(
-                            "adapt layout must be a string literal".into(),
-                        ));
-                    };
-                    layout = Some(value);
+                    layout = Some(lit_str_arg(&value, "adapt layout")?);
                 } else if path.is_ident("requires_gpu") {
-                    let Lit::Bool(value) = lit else {
+                    let Some(Lit::Bool(value)) = lit_from_expr(&value) else {
                         return Err(compile_error(
                             "adapt requires_gpu must be a bool literal".into(),
                         ));
                     };
                     requires_gpu = value.value;
                 } else if path.is_ident("feature") {
-                    let Lit::Str(value) = lit else {
-                        return Err(compile_error(
-                            "adapt feature must be a string literal".into(),
-                        ));
-                    };
-                    feature_flags.push(value);
+                    feature_flags.push(lit_str_arg(&value, "adapt feature")?);
                 } else if path.is_ident("features") {
-                    let Lit::Str(value) = lit else {
-                        return Err(compile_error(
-                            "adapt features must be a string literal".into(),
-                        ));
-                    };
+                    let value = lit_str_arg(&value, "adapt features")?;
                     for feature in value.value().split(',') {
                         let feature = feature.trim();
                         if !feature.is_empty() {
@@ -252,30 +228,6 @@ fn residency_ident(residency: &LitStr) -> Result<syn::Ident, proc_macro2::TokenS
     Ok(syn::Ident::new(ident, residency.span()))
 }
 
-fn result_ok_type(output: &ReturnType) -> Option<&Type> {
-    let ReturnType::Type(_, ty) = output else {
-        return None;
-    };
-    let Type::Path(path) = ty.as_ref() else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Result" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    args.args.first().and_then(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
-    })
-}
-
-fn is_unit_type(ty: &Type) -> bool {
-    matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty())
-}
-
 enum AdaptInput<'a> {
     Owned(&'a Type),
     Ref(&'a Type),
@@ -288,23 +240,6 @@ enum AdaptOutput<'a> {
     Owned,
     Arc(&'a Type),
     Unit,
-}
-
-fn arc_inner_type(ty: &Type) -> Option<&Type> {
-    let Type::Path(path) = ty else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Arc" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    args.args.first().and_then(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
-    })
 }
 
 fn classify_input(ty: &Type) -> Option<AdaptInput<'_>> {
@@ -343,9 +278,9 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         return compile_error("adapt functions cannot be generic yet".into()).into();
     }
 
-    let runtime_crate = crate_path("daedalus-runtime", "runtime");
-    let data_crate = crate_path("daedalus-data", "data");
-    let transport_crate = crate_path("daedalus-transport", "transport");
+    let runtime_crate = DaedalusCrate::Runtime.path();
+    let data_crate = DaedalusCrate::Data.path();
+    let transport_crate = DaedalusCrate::Transport.path();
 
     let fn_ident = &input.sig.ident;
     let register_ident = syn::Ident::new(&format!("register_{fn_ident}_adapter"), fn_ident.span());
@@ -409,11 +344,7 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         .map(|from| quote! { ::std::string::String::from(#from) })
         .unwrap_or_else(|| {
             quote! {
-                #runtime_crate::transport::typeexpr_transport_key(
-                    &#data_crate::typing::type_expr::<#inferred_from_ty>()
-                )
-                .map(|__key| __key.to_string())
-                .unwrap_or_else(|_| ::std::string::String::from(::core::any::type_name::<#inferred_from_ty>()))
+                #runtime_crate::transport::type_key_of::<#inferred_from_ty>().to_string()
             }
         });
     let to_key = parsed
@@ -422,11 +353,7 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         .map(|to| quote! { ::std::string::String::from(#to) })
         .unwrap_or_else(|| {
             quote! {
-                #runtime_crate::transport::typeexpr_transport_key(
-                    &#data_crate::typing::type_expr::<#inferred_to_ty>()
-                )
-                .map(|__key| __key.to_string())
-                .unwrap_or_else(|_| ::std::string::String::from(::core::any::type_name::<#inferred_to_ty>()))
+                #runtime_crate::transport::type_key_of::<#inferred_to_ty>().to_string()
             }
         });
     let residency_option = residency

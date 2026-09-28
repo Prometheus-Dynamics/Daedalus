@@ -1,11 +1,7 @@
-use daedalus_data::model::TypeExpr;
+pub use daedalus_registry::{type_key_of, typeexpr_transport_key};
 use daedalus_transport::{
-    AccessMode, AdaptRequest, AdapterId, AdapterTable, Payload, TransportError, TypeKey,
+    AccessMode, AdaptRequest, AdapterId, AdapterTable, Payload, TransportError,
 };
-
-pub fn typeexpr_transport_key(ty: &TypeExpr) -> Result<TypeKey, TransportError> {
-    Ok(daedalus_registry::typeexpr_transport_key(ty))
-}
 
 /// Runtime-owned executable transport adapter table.
 #[derive(Clone, Debug, Default)]

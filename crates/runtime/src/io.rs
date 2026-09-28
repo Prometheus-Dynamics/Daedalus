@@ -182,8 +182,7 @@ impl NodeIo {
     where
         T: Send + Sync + 'static,
     {
-        let type_key = crate::transport::typeexpr_transport_key(&typing::type_expr::<T>())
-            .unwrap_or_else(|_| daedalus_transport::TypeKey::new(std::any::type_name::<T>()));
+        let type_key = crate::transport::type_key_of::<T>();
         self.push_as_to(port_or_default(port), type_key, value);
     }
 
@@ -191,8 +190,7 @@ impl NodeIo {
     where
         T: Send + Sync + 'static,
     {
-        let type_key = crate::transport::typeexpr_transport_key(&typing::type_expr::<T>())
-            .unwrap_or_else(|_| daedalus_transport::TypeKey::new(std::any::type_name::<T>()));
+        let type_key = crate::transport::type_key_of::<T>();
         self.push_as_to(port, type_key, value);
     }
 

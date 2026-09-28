@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 
-use crate::helpers::crate_path;
+use crate::helpers::DaedalusCrate;
 
 pub(super) struct CratePaths {
     pub runtime_crate: TokenStream,
@@ -13,11 +13,11 @@ pub(super) struct CratePaths {
 impl CratePaths {
     pub(super) fn detect() -> Self {
         Self {
-            runtime_crate: crate_path("daedalus-runtime", "runtime"),
-            registry_crate: crate_path("daedalus-registry", "registry"),
-            data_crate: crate_path("daedalus-data", "data"),
-            core_crate: crate_path("daedalus-core", "core"),
-            gpu_crate: crate_path("daedalus", "gpu"),
+            runtime_crate: DaedalusCrate::Runtime.path(),
+            registry_crate: DaedalusCrate::Registry.path(),
+            data_crate: DaedalusCrate::Data.path(),
+            core_crate: DaedalusCrate::Core.path(),
+            gpu_crate: DaedalusCrate::Gpu.path(),
         }
     }
 }

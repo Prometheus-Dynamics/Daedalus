@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use daedalus_runtime::executor::DirectHostRoute;
 use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::HostBridgeHandle;
-use daedalus_runtime::transport::typeexpr_transport_key;
+use daedalus_runtime::transport::type_key_of;
 use daedalus_transport::{FeedOutcome, Payload, TypeKey};
 
 pub struct HostGraphSubscription {
@@ -113,7 +113,7 @@ where
     type Value = I;
 
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), type_key_for::<I>(), self.1)
+        (PortId::from(self.0), type_key_of::<I>(), self.1)
     }
 }
 
@@ -124,7 +124,7 @@ where
     type Value = I;
 
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), type_key_for::<I>(), self.1)
+        (PortId::from(self.0), type_key_of::<I>(), self.1)
     }
 }
 
@@ -135,7 +135,7 @@ where
     type Value = I;
 
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (self.0, type_key_for::<I>(), self.1)
+        (self.0, type_key_of::<I>(), self.1)
     }
 }
 
@@ -173,9 +173,4 @@ where
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
         (self.0, self.1.into(), self.2)
     }
-}
-
-pub(crate) fn type_key_for<T: 'static>() -> TypeKey {
-    typeexpr_transport_key(&daedalus_data::typing::type_expr::<T>())
-        .unwrap_or_else(|_| TypeKey::new(std::any::type_name::<T>()))
 }

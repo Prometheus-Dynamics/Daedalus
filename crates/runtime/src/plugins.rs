@@ -16,6 +16,7 @@ use daedalus_registry::capability::{
 };
 use daedalus_registry::diagnostics::RegistryError;
 use daedalus_registry::ids::NodeId;
+use daedalus_registry::typeexpr_transport_key;
 use daedalus_transport::{
     AccessMode, AdaptCost, AdaptKind, AdaptRequest, AdapterId, BoundaryContractError,
     BoundaryTypeContract, BranchKind, BranchPayload, Layout, Payload, Residency, TransferFrom,
@@ -283,10 +284,6 @@ pub struct PluginRegistry {
 
 pub trait NodeInstall {
     fn register(into: &mut PluginRegistry) -> PluginResult<()>;
-}
-
-fn typeexpr_transport_key(ty: &TypeExpr) -> TypeKey {
-    daedalus_registry::typeexpr_transport_key(ty)
 }
 
 fn primitive_type_decls() -> impl IntoIterator<Item = ValueType> {

@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Expr, Item, Meta, MetaNameValue, parse_macro_input};
 
-use crate::helpers::{AttributeArgs, NestedMeta, compile_error, crate_path, str_expr};
+use crate::helpers::{AttributeArgs, DaedalusCrate, NestedMeta, compile_error, str_expr};
 
 const USAGE: &str =
     "type_key must use `#[type_key(\"...\")]`, `#[type_key(CONST)]` or `#[type_key(key = ...)]`";
@@ -50,7 +50,7 @@ pub fn type_key(args: TokenStream, item: TokenStream) -> TokenStream {
         return compile_error(format!("type_key {kind} cannot be generic yet")).into();
     }
 
-    let data_crate = crate_path("daedalus-data", "data");
+    let data_crate = DaedalusCrate::Data.path();
     quote! {
         #input
 

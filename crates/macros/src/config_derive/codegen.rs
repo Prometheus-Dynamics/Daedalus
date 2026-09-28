@@ -7,7 +7,7 @@ use quote::quote;
 use syn::{Lit, LitStr};
 
 use super::model::{NumberKind, PortSpec, number_kind};
-use super::type_expr::{opaque_fallback_type_expr_for, type_expr_for};
+use crate::type_expr::{GenericParams, TypeExprOptions};
 
 /// `PortDecl` construction tokens for one config port.
 pub(super) fn port_decl_tokens(
@@ -25,10 +25,15 @@ pub(super) fn port_decl_tokens(
         .unwrap_or_else(|| quote! { ::core::option::Option::<::std::string::String>::None });
     let ty_expr = if let Some(ty) = &spec.ty_override {
         quote! { (#ty) }
-    } else if let Some(ts) = type_expr_for(&spec.field_ty, generic_type_params, data_crate) {
-        ts
     } else {
-        opaque_fallback_type_expr_for(&spec.field_ty, data_crate)
+        TypeExprOptions {
+            data_crate,
+            generics: GenericParams::Fallback(generic_type_params),
+            transparent: &[("Result", 0)],
+            str_as_string: true,
+            arrays_as_lists: false,
+        }
+        .type_expr(&spec.field_ty)
     };
     let default_value = spec
         .default_value
@@ -55,8 +60,7 @@ pub(super) fn port_decl_tokens(
     quote! {
         {
             let __ty = #ty_expr;
-            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                .expect("NodeConfig port type must have a transport key");
+            let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty);
             let mut __port = #registry_crate::capability::PortDecl::new(#name, __key)
                 .schema(__ty);
             if let Some(__source) = #source {

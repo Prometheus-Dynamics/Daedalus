@@ -2,12 +2,11 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Lit, parse_macro_input};
 
-use crate::helpers::{compile_error, crate_path};
+use crate::helpers::{DaedalusCrate, compile_error};
 
 mod codegen;
 mod model;
 mod parse;
-mod type_expr;
 
 use codegen::{metadata_entries, port_decl_tokens, sanitize_field_tokens};
 use model::{PortSpec, number_kind};
@@ -18,9 +17,9 @@ pub fn node_config(item: TokenStream) -> TokenStream {
     let struct_ident = input.ident.clone();
     let generics = input.generics.clone();
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    let runtime_crate = crate_path("daedalus-runtime", "runtime");
-    let registry_crate = crate_path("daedalus-registry", "registry");
-    let data_crate = crate_path("daedalus-data", "data");
+    let runtime_crate = DaedalusCrate::Runtime.path();
+    let registry_crate = DaedalusCrate::Registry.path();
+    let data_crate = DaedalusCrate::Data.path();
 
     let validate_fn = match parse_validate_fn(&input.attrs) {
         Ok(validate_fn) => validate_fn,

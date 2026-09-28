@@ -10,6 +10,7 @@ mod node_handler_impl;
 mod plugin_impl;
 mod shader_bindings;
 mod to_value_derive;
+mod type_expr;
 mod type_key_impl;
 
 /// Define a node handler without generating registry metadata.

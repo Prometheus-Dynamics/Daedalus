@@ -128,9 +128,3 @@ pub(super) fn u64_field(
         _ => None,
     }
 }
-
-pub(super) fn typeexpr_transport_key(
-    ty: &daedalus_data::model::TypeExpr,
-) -> daedalus_transport::TypeKey {
-    daedalus_registry::typeexpr_transport_key(ty)
-}

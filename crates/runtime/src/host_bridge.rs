@@ -418,9 +418,7 @@ impl HostBridgeHandle {
     where
         T: Send + Sync + 'static,
     {
-        let type_key =
-            crate::transport::typeexpr_transport_key(&daedalus_data::typing::type_expr::<T>())
-                .unwrap_or_else(|_| TypeKey::new(std::any::type_name::<T>()));
+        let type_key = crate::transport::type_key_of::<T>();
         self.feed_payload(port, Payload::owned(type_key, value))
     }
 

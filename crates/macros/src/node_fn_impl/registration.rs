@@ -3,7 +3,8 @@ use quote::quote;
 use syn::LitStr;
 
 use super::parse::PortMeta;
-use super::type_analysis::{direct_payload_plain_type, direct_payload_same_type, result_ok_type};
+use super::type_analysis::{direct_payload_plain_type, direct_payload_same_type};
+use crate::helpers::result_ok_type;
 
 pub(super) struct DirectPayloadInputs<'a> {
     pub(super) is_low_level: bool,
@@ -23,7 +24,6 @@ pub(super) struct DirectPayloadInputs<'a> {
     pub(super) same_payload_attr: bool,
     pub(super) inner_fn_ident: &'a syn::Ident,
     pub(super) runtime_crate: &'a TokenStream,
-    pub(super) data_crate: &'a TokenStream,
 }
 
 pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> TokenStream {
@@ -45,7 +45,6 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
         same_payload_attr,
         inner_fn_ident,
         runtime_crate,
-        data_crate,
     } = inputs;
 
     let simple_typed_node = !is_low_level
@@ -116,18 +115,11 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
                 } {
                     Ok(__value) => {
                         static __OUTPUT_TYPE_KEY: ::std::sync::OnceLock<
-                            Result<#runtime_crate::transport_types::TypeKey, ::std::string::String>
+                            #runtime_crate::transport_types::TypeKey
                         > = ::std::sync::OnceLock::new();
-                        let __key = match __OUTPUT_TYPE_KEY.get_or_init(|| {
-                            let __ty = #data_crate::typing::type_expr::<#output_ty>();
-                            #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                .map_err(|err| err.to_string())
-                        }) {
-                            Ok(__key) => __key.clone(),
-                            Err(__err) => {
-                                return Err(#runtime_crate::NodeError::Handler(__err.clone()));
-                            }
-                        };
+                        let __key = __OUTPUT_TYPE_KEY
+                            .get_or_init(#runtime_crate::transport::type_key_of::<#output_ty>)
+                            .clone();
                         Ok(Some(#runtime_crate::transport_types::Payload::owned(__key, __value)))
                     }
                     Err(__error) => Err(__error),
