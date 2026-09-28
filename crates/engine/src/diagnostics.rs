@@ -22,6 +22,15 @@ pub fn render_error(err: &EngineError) -> Value {
             "registry_code": format!("{:?}", e.code()),
             "message": e.message(),
         }),
+        EngineError::MissingPlugins(missing) => json!({
+            "code": "missing_plugins",
+            "message": missing.to_string(),
+            "plugins": missing.unmet.iter().map(|u| json!({
+                "id": u.requirement.id,
+                "version": u.requirement.version,
+                "reason": u.reason.to_string(),
+            })).collect::<Vec<_>>(),
+        }),
         EngineError::Planner(diags) => json!({
             "code": "planner",
             "diagnostics": diags,

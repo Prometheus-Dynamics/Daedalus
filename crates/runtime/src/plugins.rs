@@ -30,6 +30,7 @@ use thiserror::Error;
 mod builtins;
 mod registry_admin;
 mod registry_transport;
+mod requirements;
 
 pub const BUILTIN_PRIMITIVE_TYPES_ID: &str = "daedalus.builtin.primitive_types";
 pub const BUILTIN_PRIMITIVE_SERIALIZERS_ID: &str = "daedalus.builtin.primitive_serializers";

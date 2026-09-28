@@ -6,6 +6,7 @@
 
 pub mod debug;
 mod diagnostics;
+mod document;
 mod graph;
 pub mod helpers;
 mod metadata;
@@ -15,6 +16,11 @@ mod patch;
 pub use diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSpan, DiagnosticsBundle, MissingGroup, MissingNode,
     MissingPort, TypeMismatch, bundle,
+};
+pub use document::{
+    GRAPH_DOCUMENT_FORMAT, GRAPH_DOCUMENT_SCHEMA_VERSION, GraphDocument, GraphDocumentError,
+    GraphDocumentSource, MissingPlugins, PluginRequirement, UnmetReason, UnmetRequirement,
+    check_plugin_requirements,
 };
 pub use graph::{
     ComputeAffinity, DEFAULT_PLAN_VERSION, Edge, EdgeBufferInfo, ExecutionPlan, GpuSegment, Graph,
