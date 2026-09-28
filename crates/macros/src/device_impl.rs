@@ -1,11 +1,11 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{
-    Expr, FnArg, ItemFn, Lit, LitStr, Meta, MetaNameValue, Path, ReturnType, Type,
-    parse_macro_input,
-};
+use syn::{FnArg, ItemFn, LitStr, Meta, MetaNameValue, Path, Type, parse_macro_input};
 
-use crate::helpers::{AttributeArgs, NestedMeta, compile_error, crate_path, lit_from_expr};
+use crate::helpers::{
+    AttributeArgs, DaedalusCrate, NestedMeta, compile_error, fn_path_arg, lit_str_arg,
+    result_ok_type,
+};
 
 struct DeviceArgs {
     id: LitStr,
@@ -25,38 +25,22 @@ fn parse_args(args: AttributeArgs) -> Result<DeviceArgs, proc_macro2::TokenStrea
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("id") =>
             {
-                let Some(Lit::Str(value)) = lit_from_expr(&value) else {
-                    return Err(compile_error("device id must be a string literal".into()));
-                };
-                id = Some(value);
+                id = Some(lit_str_arg(&value, "device id")?);
             }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("cpu") =>
             {
-                let Some(Lit::Str(value)) = lit_from_expr(&value) else {
-                    return Err(compile_error("device cpu must be a string literal".into()));
-                };
-                cpu = Some(value);
+                cpu = Some(lit_str_arg(&value, "device cpu")?);
             }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("device") =>
             {
-                let Some(Lit::Str(value)) = lit_from_expr(&value) else {
-                    return Err(compile_error(
-                        "device target must be a string literal".into(),
-                    ));
-                };
-                device = Some(value);
+                device = Some(lit_str_arg(&value, "device target")?);
             }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("download") =>
             {
-                let Expr::Path(path) = value else {
-                    return Err(compile_error(
-                        "device download must be a function path".into(),
-                    ));
-                };
-                download = Some(path.path);
+                download = Some(fn_path_arg(value, "device download")?);
             }
             _ => {
                 return Err(compile_error(
@@ -73,26 +57,6 @@ fn parse_args(args: AttributeArgs) -> Result<DeviceArgs, proc_macro2::TokenStrea
         device: device.ok_or_else(|| compile_error("missing device target type key".into()))?,
         download: download
             .ok_or_else(|| compile_error("missing device download function".into()))?,
-    })
-}
-
-fn result_ok_type(output: &ReturnType) -> Option<&Type> {
-    let ReturnType::Type(_, ty) = output else {
-        return None;
-    };
-    let Type::Path(path) = ty.as_ref() else {
-        return None;
-    };
-    let segment = path.path.segments.last()?;
-    if segment.ident != "Result" {
-        return None;
-    }
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    args.args.first().and_then(|arg| match arg {
-        syn::GenericArgument::Type(ty) => Some(ty),
-        _ => None,
     })
 }
 
@@ -118,8 +82,8 @@ pub fn device(args: TokenStream, item: TokenStream) -> TokenStream {
     if !input.sig.generics.params.is_empty() {
         return compile_error("device upload functions cannot be generic yet".into()).into();
     }
-    let runtime_crate = crate_path("daedalus-runtime", "runtime");
-    let data_crate = crate_path("daedalus-data", "data");
+    let runtime_crate = DaedalusCrate::Runtime.path();
+    let data_crate = DaedalusCrate::Data.path();
 
     let fn_ident = &input.sig.ident;
     let register_ident = syn::Ident::new(&format!("register_{fn_ident}_device"), fn_ident.span());

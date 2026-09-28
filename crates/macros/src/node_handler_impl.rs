@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{ItemFn, LitStr, parse_macro_input};
 
 use crate::helpers::{
-    AttributeArgs, NestedMeta, compile_error, crate_path, lit_from_expr, litstr_from_ident,
+    AttributeArgs, DaedalusCrate, NestedMeta, compile_error, lit_str_arg, litstr_from_ident,
 };
 
 pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
@@ -12,28 +12,20 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut id: Option<LitStr> = None;
     let mut outputs: Vec<LitStr> = Vec::new();
-    let runtime_crate = crate_path("daedalus-runtime", "runtime");
+    let runtime_crate = DaedalusCrate::Runtime.path();
 
     for arg in args {
         match arg {
             NestedMeta::Meta(syn::Meta::NameValue(nv)) if nv.path.is_ident("id") => {
-                match lit_from_expr(&nv.value) {
-                    Some(syn::Lit::Str(s)) => id = Some(s),
-                    _ => {
-                        return TokenStream::from(compile_error(
-                            "id must be a string literal".into(),
-                        ));
-                    }
+                match lit_str_arg(&nv.value, "id") {
+                    Ok(s) => id = Some(s),
+                    Err(err) => return TokenStream::from(err),
                 }
             }
             NestedMeta::Meta(syn::Meta::NameValue(nv)) if nv.path.is_ident("outputs") => {
-                match lit_from_expr(&nv.value) {
-                    Some(syn::Lit::Str(s)) => outputs.push(s),
-                    _ => {
-                        return TokenStream::from(compile_error(
-                            "outputs must be a string literal".into(),
-                        ));
-                    }
+                match lit_str_arg(&nv.value, "outputs") {
+                    Ok(s) => outputs.push(s),
+                    Err(err) => return TokenStream::from(err),
                 }
             }
             _ => return TokenStream::from(compile_error("expected id = \"...\"".into())),

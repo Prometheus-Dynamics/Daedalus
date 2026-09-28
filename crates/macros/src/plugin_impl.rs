@@ -1,9 +1,9 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Expr, ItemStruct, Lit, LitStr, Meta, MetaList, MetaNameValue, Path, parse_macro_input};
+use syn::{ItemStruct, Lit, LitStr, Meta, MetaList, MetaNameValue, Path, parse_macro_input};
 
 use crate::helpers::{
-    AttributeArgs, NestedMeta, compile_error, crate_path, lit_from_expr, parse_nested,
+    AttributeArgs, DaedalusCrate, NestedMeta, compile_error, fn_path_arg, lit_str_arg, parse_nested,
 };
 
 struct PluginArgs {
@@ -68,20 +68,12 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("id") =>
             {
-                let Some(Lit::Str(value)) = lit_from_expr(&value) else {
-                    return Err(compile_error("plugin id must be a string literal".into()));
-                };
-                id = Some(value);
+                id = Some(lit_str_arg(&value, "plugin id")?);
             }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("install") =>
             {
-                let Expr::Path(path) = value else {
-                    return Err(compile_error(
-                        "plugin install must be a function path".into(),
-                    ));
-                };
-                install = Some(path.path);
+                install = Some(fn_path_arg(value, "plugin install")?);
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("nodes") => {
                 nodes = collect_ident_list(&list)?;
@@ -144,9 +136,9 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
     if !input.generics.params.is_empty() {
         return compile_error("plugin structs cannot be generic yet".into()).into();
     }
-    let runtime_crate = crate_path("daedalus-runtime", "runtime");
-    let registry_crate = crate_path("daedalus-registry", "registry");
-    let data_crate = crate_path("daedalus-data", "data");
+    let runtime_crate = DaedalusCrate::Runtime.path();
+    let registry_crate = DaedalusCrate::Registry.path();
+    let data_crate = DaedalusCrate::Data.path();
 
     let ident = input.ident;
     let vis = input.vis;

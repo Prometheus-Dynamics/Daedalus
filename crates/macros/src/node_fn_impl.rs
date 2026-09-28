@@ -3,7 +3,7 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{ItemFn, LitStr, parse_macro_input, parse_quote};
 
-use crate::helpers::{AttributeArgs, compile_error};
+use crate::helpers::{AttributeArgs, compile_error, last_ident_is};
 
 mod crate_paths;
 mod descriptor;
@@ -178,16 +178,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let has_fanin_inputs = !is_low_level
-        && arg_types.iter().any(|ty| {
-            if let syn::Type::Path(tp) = ty
-                && tp.qself.is_none()
-                && let Some(seg) = tp.path.segments.last()
-            {
-                return seg.ident == "FanIn";
-            }
-            false
-        });
+    let has_fanin_inputs = !is_low_level && arg_types.iter().any(|ty| last_ident_is(ty, "FanIn"));
 
     let _sync_groups_tokens: proc_macro2::TokenStream = if let Some(ts) = sync_groups_attr {
         ts

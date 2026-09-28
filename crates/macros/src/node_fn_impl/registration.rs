@@ -3,7 +3,8 @@ use quote::quote;
 use syn::LitStr;
 
 use super::parse::PortMeta;
-use super::type_analysis::{direct_payload_plain_type, direct_payload_same_type, result_ok_type};
+use super::type_analysis::{direct_payload_plain_type, direct_payload_same_type};
+use crate::helpers::result_ok_type;
 
 pub(super) struct DirectPayloadInputs<'a> {
     pub(super) is_low_level: bool,

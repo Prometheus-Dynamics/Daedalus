@@ -2,12 +2,13 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{ItemFn, LitStr};
 
-use crate::helpers::compile_error;
+use crate::helpers::{arc_inner_type, compile_error, is_unit_type, last_segment, strip_ref};
 
+use super::descriptor::is_fanin_ty;
 use super::handler_fetch;
 use super::parse::PortMeta;
 use super::shader;
-use super::type_analysis::{arc_inner_type, is_unit_type, ok_type_from_return, payload_inner_type};
+use super::type_analysis::{ok_type_from_return, payload_inner_type};
 
 pub(super) struct GraphCtxArg {
     pub(super) ident: syn::Ident,
@@ -112,17 +113,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             if let syn::FnArg::Typed(pat) = arg
                 && let syn::Pat::Ident(id) = &*pat.pat
             {
-                let last_ident = match &*pat.ty {
-                    syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident.to_string()),
-                    syn::Type::Reference(r) => {
-                        if let syn::Type::Path(tp) = &*r.elem {
-                            tp.path.segments.last().map(|s| s.ident.to_string())
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                };
+                let last_ident = last_segment(strip_ref(&pat.ty)).map(|s| s.ident.to_string());
                 match last_ident.as_deref() {
                     Some("GraphCtx") => {
                         let is_mut_ref = matches!(
@@ -244,22 +235,6 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 "ShaderContext parameter requires shader metadata (missing shaders(...))".into(),
             ));
         }
-
-        let is_fanin_ty = |ty: &syn::Type| -> bool {
-            let ty = if let syn::Type::Reference(r) = ty {
-                &*r.elem
-            } else {
-                ty
-            };
-            if let syn::Type::Path(tp) = ty
-                && tp.qself.is_none()
-                && let Some(seg) = tp.path.segments.last()
-                && seg.ident == "FanIn"
-            {
-                return true;
-            }
-            false
-        };
 
         // Determine the effective port metadata for each typed argument.
         //

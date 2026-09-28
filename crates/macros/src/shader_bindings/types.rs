@@ -1,6 +1,8 @@
 pub use daedalus_wgsl_infer::{InferredAccess, InferredBinding};
 use proc_macro2::Span;
 
+use crate::helpers::{generic_arg, last_ident_is};
+
 #[derive(Clone)]
 pub struct Spec {
     pub src: String,
@@ -97,16 +99,7 @@ pub fn detect_texture_source(ty: &syn::Type) -> syn::Result<Option<TextureSource
         if ident == "DynamicImage" {
             return Ok(Some(TextureSource::DynamicImage));
         }
-        if ident == "Compute"
-            && let syn::PathArguments::AngleBracketed(ab) = &last.arguments
-            && let Some(syn::GenericArgument::Type(Type::Path(tp))) = ab.args.first()
-            && tp
-                .path
-                .segments
-                .last()
-                .map(|s| s.ident == "DynamicImage")
-                .unwrap_or(false)
-        {
+        if generic_arg(inner, "Compute", 0).is_some_and(|arg| last_ident_is(arg, "DynamicImage")) {
             return Ok(Some(TextureSource::ComputeDynamic));
         }
     }
