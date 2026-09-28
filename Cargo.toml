@@ -47,7 +47,7 @@ daedalus-planner = { path = "crates/planner", version = "2.0.0" }
 daedalus-runtime = { path = "crates/runtime", version = "2.0.0" }
 daedalus-macros = { path = "crates/macros", version = "2.0.0" }
 daedalus-nodes = { path = "crates/nodes", version = "2.0.0" }
-daedalus-engine = { path = "crates/engine", version = "2.0.0" }
+daedalus-engine = { path = "crates/engine", version = "2.0.0", default-features = false }
 daedalus-daemon = { path = "crates/daemon", version = "2.0.0" }
 daedalus-ffi-core = { path = "crates/ffi/core", version = "2.0.0" }
 daedalus-ffi-host = { path = "crates/ffi/host", version = "2.0.0" }

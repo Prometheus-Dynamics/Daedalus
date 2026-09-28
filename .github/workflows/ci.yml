@@ -47,6 +47,11 @@ jobs:
       - name: Check minimal facade surface
         run: cargo check -p daedalus-rs --no-default-features
 
+      - name: Check lean and full engine presets
+        run: |
+          cargo check -p daedalus-rs --no-default-features --features "embedded"
+          cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
+
       - name: Test dynamic plugin loading
         run: cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 

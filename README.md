@@ -30,7 +30,11 @@ The facade crate is published as `daedalus-rs` and imported as `daedalus`.
 
 The facade starts with no default feature set. Enable only the layers your application needs.
 
-- `engine`: high-level engine facade.
+- `engine-full`: recommended for applications; `engine` plus `executor-pool` and `metrics`.
+- `engine`: lean high-level engine facade (serial and scoped-thread execution, no worker pool, no metrics).
+- `executor-pool`: persistent Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive`; without it those modes run ready segments on scoped threads.
+- `metrics`: executor telemetry collection; without it `MetricsLevel` settings compile but record nothing.
+- `embedded`: smallest in-process host preset (`engine` + `plugins`, no pool, no metrics).
 - `plugins`: plugin registry and macro-generated plugin installation.
 - `dylib-plugins`: load native Rust `cdylib` plugins at startup (see [docs/dynamic-plugins.md](docs/dynamic-plugins.md)).
 - `gpu-types`: GPU handles and type surface only.
@@ -45,7 +49,7 @@ The facade starts with no default feature set. Enable only the layers your appli
 
 ```toml
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine", "plugins"] }
+daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine-full", "plugins"] }
 ```
 
 Useful examples:

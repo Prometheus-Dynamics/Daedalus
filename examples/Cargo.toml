@@ -16,7 +16,7 @@ gpu-wgpu = ["daedalus/gpu-wgpu"]
 gpu-styx = ["gpu-wgpu", "styx-camera-example"]
 
 [dependencies]
-daedalus = { workspace = true, features = ["engine", "plugins"] }
+daedalus = { workspace = true, features = ["engine-full", "plugins"] }
 paste = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 tracing-subscriber = { workspace = true }

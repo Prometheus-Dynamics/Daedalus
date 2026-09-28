@@ -8,7 +8,12 @@ Use this crate when an application wants the public Daedalus API from one depend
 
 ## Feature Selection
 
-- `engine`: high-level execution facade.
+- `engine-full`: `engine` + `executor-pool` + `metrics`; the recommended application preset.
+- `engine`: lean high-level execution facade (no worker pool, no metrics).
+- `executor-pool`: Rayon worker pool for parallel/adaptive runtime modes.
+- `metrics`: executor telemetry collection.
+- `embedded`: `engine` + `plugins` without pool or metrics, for constrained hosts.
+- `dylib-plugins`: load native Rust `cdylib` plugins.
 - `plugins`: plugin registry and plugin macro installation.
 - `gpu-types`: GPU handles and type surface.
 - `gpu-runtime`: registry/planner/runtime GPU wiring.
@@ -18,4 +23,4 @@ Use this crate when an application wants the public Daedalus API from one depend
 - `gpu-mock`: deterministic mock GPU backend.
 - `schema` and `proto`: optional export surfaces.
 
-For most host applications, start with `engine,plugins`. Add GPU features only when the host actually needs GPU planning or execution.
+For most host applications, start with `engine-full,plugins`; constrained hosts can use `embedded`. Add GPU features only when the host actually needs GPU planning or execution.

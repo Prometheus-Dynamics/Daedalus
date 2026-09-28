@@ -17,9 +17,14 @@
 //! 1. [`PLUGIN_ABI_VERSION`] (the shape of the exported symbols and [`PluginInfo`]).
 //! 2. The Daedalus version ([`crate::version`]).
 //! 3. The `rustc --version` string that compiled Daedalus ([`RUSTC_VERSION`]).
-//! 4. A build fingerprint ([`build_fingerprint`]) covering the target, the layout-affecting
-//!    features of the registry/runtime crates (e.g. `gpu`), and the size/alignment of
-//!    `PluginRegistry`.
+//! 4. A build fingerprint ([`build_fingerprint`]) covering the target, the enabled
+//!    boundary-relevant Cargo features of the facade, core, data, registry, planner and runtime
+//!    crates (listed readably plus a stable hash), and the size/alignment of the types that
+//!    plugin installation touches (`PluginRegistry`, `HandlerRegistry`, `Payload`, `TypeKey`,
+//!    `NodeDecl`, ...). Host-only features such as `engine`, `executor-pool` and `metrics`
+//!    ([`HOST_ONLY_FEATURES`](crate::dylib::HOST_ONLY_FEATURES)) are excluded, so a plugin
+//!    built with just `plugins` loads into a host built with `engine-full`. On mismatch the
+//!    error names the differing segments.
 //!
 //! These checks catch the common mismatches (stale plugin, different toolchain, different
 //! feature set). They cannot prove layout identity: build host and plugins from the same
@@ -46,14 +51,18 @@
 //!   registry (and anything built from it) lives; unloading would leave them dangling.
 //!   Unloading Rust `cdylib`s is also unreliable in general (thread-locals with destructors).
 
+mod fingerprint;
 #[cfg(feature = "dylib-plugins")]
 mod loader;
+
+pub use fingerprint::{
+    HOST_ONLY_FEATURES, boundary_features, build_fingerprint, describe_fingerprint_mismatch,
+};
 
 #[cfg(feature = "dylib-plugins")]
 pub use loader::{PluginLibrary, PluginLibraryError, check_plugin_info, discover_plugin_libraries};
 
 use std::ffi::c_void;
-use std::sync::OnceLock;
 
 /// Symbol exported by dynamic plugins that installs the plugin into a registry.
 pub const REGISTER_SYMBOL: &str = "daedalus_plugin_register";
@@ -70,24 +79,6 @@ pub const BOUNDARY_CONTRACTS_SYMBOL: &str = "daedalus_plugin_register_boundary_c
 pub const PLUGIN_ABI_VERSION: u32 = 4;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
-
-/// Fingerprint of layout-affecting build properties of this copy of Daedalus.
-///
-/// Hosts and plugins must produce identical fingerprints.
-pub fn build_fingerprint() -> &'static str {
-    static FINGERPRINT: OnceLock<String> = OnceLock::new();
-    FINGERPRINT.get_or_init(|| {
-        format!(
-            "target={};pointer_width={};runtime.gpu={};registry.gpu={};plugin_registry.size={};plugin_registry.align={}",
-            env!("DAEDALUS_BUILD_TARGET"),
-            usize::BITS,
-            daedalus_runtime::GPU_FEATURE_ENABLED,
-            daedalus_registry::GPU_FEATURE_ENABLED,
-            std::mem::size_of::<crate::PluginRegistry>(),
-            std::mem::align_of::<crate::PluginRegistry>(),
-        )
-    })
-}
 
 /// FFI-safe view of a `'static` UTF-8 string.
 ///

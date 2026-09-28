@@ -27,6 +27,8 @@ gpu-runtime = [
     "daedalus-registry/gpu",
     "daedalus-planner/gpu",
     "daedalus-runtime/gpu",
+    # Keep the engine's planner config in sync with `daedalus-planner/gpu` when both are on.
+    "daedalus-engine?/gpu",
 ]
 gpu-engine = [
     "gpu-runtime",
@@ -46,11 +48,22 @@ plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nod
 dylib-plugins = ["plugins", "dep:libloading", "dep:thiserror"]
 examples = []
 styx-camera-example = ["engine", "plugins", "dep:styx"]
+# Lean engine: planner + serial/scoped-thread executor, no Rayon worker pool, no metrics.
 engine = [
     "dep:daedalus-engine",
-    "daedalus-engine/executor-pool",
+    "daedalus-engine/config-env",
     "daedalus-engine/plugins",
 ]
+# Persistent Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive` (pulls rayon + crossbeam).
+# Without it those modes run ready segments on scoped threads.
+executor-pool = ["daedalus-runtime/executor-pool", "daedalus-engine?/executor-pool"]
+# Collect executor telemetry (`MetricsLevel` other than `Off`). Without it the telemetry APIs
+# still compile but record nothing.
+metrics = ["daedalus-runtime/metrics", "daedalus-engine?/metrics"]
+# Recommended preset for applications: engine with worker pool and metrics.
+engine-full = ["engine", "executor-pool", "metrics"]
+# Smallest in-process host: engine + static plugins, no worker pool, no metrics.
+embedded = ["engine", "plugins"]
 
 [dependencies]
 daedalus-core = { workspace = true }
