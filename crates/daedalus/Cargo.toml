@@ -40,6 +40,9 @@ gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
 schema = ["daedalus-data/schema", "daedalus-planner/schema"]
 proto = ["daedalus-data/proto", "daedalus-planner/proto"]
 plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nodes/plugins"]
+# Load native Rust plugin `cdylib`s at runtime (`PluginLibrary`). Plugin crates only need
+# `plugins` to use `export_plugin!`.
+dylib-plugins = ["plugins", "dep:libloading", "dep:thiserror"]
 examples = []
 styx-camera-example = ["engine", "plugins", "dep:styx"]
 engine = [
@@ -61,8 +64,11 @@ daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
 styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
 paste = { workspace = true }
+libloading = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
+daedalus-plugins-example-project = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
@@ -88,4 +94,14 @@ required-features = ["engine", "plugins"]
 [[test]]
 name = "transport_macro_ui"
 path = "tests/transport_macro_ui.rs"
+required-features = ["plugins"]
+
+[[test]]
+name = "dylib_plugin"
+path = "tests/dylib_plugin.rs"
+required-features = ["dylib-plugins"]
+
+[[test]]
+name = "dylib_export_macro"
+path = "tests/dylib_export_macro.rs"
 required-features = ["plugins"]
