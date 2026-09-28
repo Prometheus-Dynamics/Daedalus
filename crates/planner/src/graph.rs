@@ -52,6 +52,7 @@ pub struct NodeRef(pub usize);
 /// Port reference by name within a node.
 ///
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortRef {
     pub node: NodeRef,
     pub port: String,
@@ -60,6 +61,7 @@ pub struct PortRef {
 /// Edge from one node/port to another.
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Edge {
     pub from: PortRef,
     pub to: PortRef,
@@ -70,6 +72,7 @@ pub struct Edge {
 /// An instantiated node, identified by registry id.
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeInstance {
     pub id: daedalus_registry::ids::NodeId,
     pub bundle: Option<String>,
@@ -89,6 +92,7 @@ pub struct NodeInstance {
 /// Planner input graph (pre-pass).
 ///
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Graph {
     pub nodes: Vec<NodeInstance>,
     pub edges: Vec<Edge>,

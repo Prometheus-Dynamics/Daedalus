@@ -12,12 +12,17 @@
 //!   "graph": { "nodes": [], "edges": [], "metadata": {} }
 //! }
 //! ```
+//!
+//! Documents are strict: unknown fields are rejected at every level of the format.
 
 mod requirements;
+#[cfg(feature = "schema")]
+mod schema;
 
 use std::collections::BTreeMap;
+use std::fmt;
 
-use serde::de::DeserializeOwned;
+use serde::de::{IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use thiserror::Error;
@@ -88,15 +93,105 @@ struct WireRef<'a> {
     graph: &'a Graph,
 }
 
+/// Owned wire form. `format` and `schema_version` stay untyped so [`Header::check`] reports them
+/// with typed errors.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WireOwned {
-    format: String,
-    schema_version: u32,
+    #[serde(default)]
+    format: Option<JsonValue>,
+    #[serde(default)]
+    schema_version: Option<JsonValue>,
     #[serde(default)]
     requires: Vec<PluginRequirement>,
     #[serde(default)]
     metadata: BTreeMap<String, JsonValue>,
     graph: Graph,
+}
+
+impl WireOwned {
+    fn into_document(self) -> Result<GraphDocument, GraphDocumentError> {
+        let schema_version = Header {
+            format: self.format,
+            schema_version: self.schema_version,
+        }
+        .check()?;
+        let doc = GraphDocument {
+            schema_version,
+            requires: self.requires,
+            metadata: self.metadata,
+            graph: self.graph,
+        };
+        doc.validate()?;
+        Ok(doc)
+    }
+}
+
+/// The `format`/`schema_version` pair, read on its own first so it is checked before (and
+/// independently of) the rest of the document, whatever the field order.
+#[derive(Default)]
+struct Header {
+    format: Option<JsonValue>,
+    schema_version: Option<JsonValue>,
+}
+
+impl Header {
+    /// Validate the format marker and return the supported schema version.
+    fn check(self) -> Result<u32, GraphDocumentError> {
+        match self.format {
+            Some(JsonValue::String(f)) if f == GRAPH_DOCUMENT_FORMAT => {}
+            Some(JsonValue::String(found)) => {
+                return Err(GraphDocumentError::UnknownFormat { found });
+            }
+            other => {
+                return Err(GraphDocumentError::UnknownFormat {
+                    found: other.map_or_else(|| "<missing>".into(), |v| v.to_string()),
+                });
+            }
+        }
+        let version = self
+            .schema_version
+            .as_ref()
+            .and_then(JsonValue::as_u64)
+            .ok_or(GraphDocumentError::MissingSchemaVersion)?;
+        u32::try_from(version)
+            .ok()
+            .filter(|v| (1..=GRAPH_DOCUMENT_SCHEMA_VERSION).contains(v))
+            .ok_or(GraphDocumentError::UnsupportedSchemaVersion {
+                found: version,
+                supported: GRAPH_DOCUMENT_SCHEMA_VERSION,
+            })
+    }
+}
+
+impl<'de> Deserialize<'de> for Header {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct HeaderVisitor;
+
+        impl<'de> Visitor<'de> for HeaderVisitor {
+            type Value = Header;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a graph document object")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Header, A::Error> {
+                let mut header = Header::default();
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "format" => header.format = Some(map.next_value()?),
+                        "schema_version" => header.schema_version = Some(map.next_value()?),
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(header)
+            }
+        }
+
+        deserializer.deserialize_map(HeaderVisitor)
+    }
 }
 
 impl GraphDocument {
@@ -133,47 +228,27 @@ impl GraphDocument {
         self.graph
     }
 
-    /// Parse a versioned document, reporting the JSON path of any invalid field.
+    /// Parse a versioned document with typed errors.
+    ///
+    /// `format` and `schema_version` are checked first; any other problem, including an unknown
+    /// field at any level, is reported as [`GraphDocumentError::Invalid`] with its JSON path.
     pub fn from_json(json: &str) -> Result<Self, GraphDocumentError> {
-        let probe: JsonValue = serde_json::from_str(json).map_err(GraphDocumentError::Syntax)?;
-        let JsonValue::Object(obj) = &probe else {
-            return Err(GraphDocumentError::NotAnObject);
-        };
-        match obj.get("format") {
-            Some(JsonValue::String(f)) if f == GRAPH_DOCUMENT_FORMAT => {}
-            Some(JsonValue::String(s)) => {
-                return Err(GraphDocumentError::UnknownFormat { found: s.clone() });
-            }
-            Some(other) => {
-                return Err(GraphDocumentError::UnknownFormat {
-                    found: other.to_string(),
-                });
-            }
-            None => {
-                return Err(GraphDocumentError::UnknownFormat {
-                    found: "<missing>".into(),
-                });
-            }
-        }
-        let version = obj
-            .get("schema_version")
-            .and_then(JsonValue::as_u64)
-            .ok_or(GraphDocumentError::MissingSchemaVersion)?;
-        if version == 0 || version > u64::from(GRAPH_DOCUMENT_SCHEMA_VERSION) {
-            return Err(GraphDocumentError::UnsupportedSchemaVersion {
-                found: version,
-                supported: GRAPH_DOCUMENT_SCHEMA_VERSION,
-            });
-        }
-        let wire: WireOwned = parse_with_path(json)?;
-        let doc = Self {
-            schema_version: wire.schema_version,
-            requires: wire.requires,
-            metadata: wire.metadata,
-            graph: wire.graph,
-        };
-        doc.validate()?;
-        Ok(doc)
+        serde_json::from_str::<Header>(json)
+            .map_err(|err| {
+                if err.is_data() {
+                    GraphDocumentError::NotAnObject
+                } else {
+                    GraphDocumentError::Syntax(err)
+                }
+            })?
+            .check()?;
+        let mut de = serde_json::Deserializer::from_str(json);
+        serde_path_to_error::deserialize::<_, WireOwned>(&mut de)
+            .map_err(|err| GraphDocumentError::Invalid {
+                path: err.path().to_string(),
+                source: err.into_inner(),
+            })?
+            .into_document()
     }
 
     /// Check structural invariants (requirement syntax).
@@ -245,40 +320,11 @@ impl Serialize for GraphDocument {
 }
 
 impl<'de> Deserialize<'de> for GraphDocument {
-    /// Deserialize the versioned form (prefer [`GraphDocument::from_json`] for path-aware errors).
+    /// Deserialize the versioned form (prefer [`GraphDocument::from_json`] for typed, path-aware
+    /// errors).
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-        let wire = WireOwned::deserialize(deserializer)?;
-        if wire.format != GRAPH_DOCUMENT_FORMAT {
-            return Err(D::Error::custom(format!(
-                "unknown graph document format `{}`",
-                wire.format
-            )));
-        }
-        if wire.schema_version == 0 || wire.schema_version > GRAPH_DOCUMENT_SCHEMA_VERSION {
-            return Err(D::Error::custom(format!(
-                "unsupported graph document schema_version {}",
-                wire.schema_version
-            )));
-        }
-        let doc = Self {
-            schema_version: wire.schema_version,
-            requires: wire.requires,
-            metadata: wire.metadata,
-            graph: wire.graph,
-        };
-        doc.validate().map_err(D::Error::custom)?;
-        Ok(doc)
+        WireOwned::deserialize(deserializer)?
+            .into_document()
+            .map_err(serde::de::Error::custom)
     }
-}
-
-fn parse_with_path<T: DeserializeOwned>(json: &str) -> Result<T, GraphDocumentError> {
-    let mut de = serde_json::Deserializer::from_str(json);
-    serde_path_to_error::deserialize(&mut de).map_err(|err| {
-        let path = err.path().to_string();
-        GraphDocumentError::Invalid {
-            path,
-            source: err.into_inner(),
-        }
-    })
 }

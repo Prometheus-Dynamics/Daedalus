@@ -17,11 +17,16 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
+[[bin]]
+name = "graph_document_schema"
+path = "src/bin/graph_document_schema.rs"
+required-features = ["schema"]
+
 [features]
 default = []
 gpu = ["daedalus-gpu"]
 proto = []
-schema = []
+schema = ["daedalus-data/schema"]
 
 [dependencies]
 daedalus-data = { workspace = true }
