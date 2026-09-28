@@ -257,8 +257,17 @@ impl<T> PolicyQueue<T> {
     /// Adapt storage and capacity to `pressure` without queueing anything.
     #[inline]
     pub fn set_policy(&mut self, pressure: &PressurePolicy) {
-        self.capacity = pressure.bounded_capacity();
-        let single = pressure.is_single_slot();
+        let single = match pressure {
+            PressurePolicy::Bounded { capacity, overflow } => {
+                let capacity = (*capacity).max(1);
+                self.capacity = Some(capacity);
+                capacity == 1 && matches!(overflow, OverflowPolicy::DropOldest)
+            }
+            _ => {
+                self.capacity = None;
+                pressure.is_single_slot()
+            }
+        };
         match &mut self.storage {
             Storage::Fifo(queue) if single && queue.len() <= 1 => {
                 self.storage = Storage::Slot(queue.pop_front());
