@@ -23,6 +23,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added input-driven host graph execution: `HostBridgeHandle::inbound_waiter` (blocking and
   `Future`), `HostGraph::{wait_for_input, tick_on_input, drive_blocking, drive}`, and
   `HostGraphStopHandle`.
+- Added `FfiHost` to `daedalus-ffi-host`: `FfiHost::install_package(&mut registry, &package,
+  &factory)` installs a package and starts its persistent-worker runners, `invoke(node_id,
+  request)` invokes by node id with typed `FfiHostError`s, and `add_package` installs further
+  packages into the same runner pool and telemetry. Installs roll the registry back on failure.
+  `FfiHostBuilder` shares telemetry, sets pool options, and defers runner startup;
+  `PersistentWorkerRunnerFactory` is the built-in factory for persistent-worker backends.
 - Added `docs/node-authoring.md`, `docs/dynamic-plugins.md`, and a measured minimal CPU-only
   profile in `docs/development.md`.
 

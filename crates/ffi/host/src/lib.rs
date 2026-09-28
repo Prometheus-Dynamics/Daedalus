@@ -2,8 +2,12 @@
 //!
 //! This crate owns the shared installer, runner pool, persistent worker process runner, response
 //! decoding, state synchronization, and registry schema export surface.
+//!
+//! [`FfiHost`] is the recommended entry point: it installs a `PluginPackage` into a
+//! `CapabilityRegistry`, starts its persistent-worker runners, and invokes nodes by id.
 
 mod conformance;
+mod ffi_host;
 mod installer;
 mod process;
 mod response;
@@ -19,6 +23,7 @@ pub use conformance::{
     run_generated_fixture_harness, run_scalar_add_generated_fixture_harness,
 };
 pub use daedalus_ffi_core as core;
+pub use ffi_host::{FfiHost, FfiHostBuilder, FfiHostError, PersistentWorkerRunnerFactory};
 pub use installer::{
     BackendRunnerFactory, HostInstallError, HostInstallPlan, install_language_package,
     install_language_package_with_ffi_telemetry, install_language_schema, install_package,
