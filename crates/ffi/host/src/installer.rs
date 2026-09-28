@@ -266,40 +266,6 @@ fn install_plan(
     Ok(())
 }
 
-/// Remove the plugin and nodes a successful [`install_plan`] registered, keeping every other
-/// registry entry. Registration rejects duplicates, so these entries belong to `plan` alone.
-pub(crate) fn uninstall_plan(registry: &mut CapabilityRegistry, plan: &HostInstallPlan) {
-    let snapshot = registry.snapshot();
-    let mut rebuilt = CapabilityRegistry::new();
-    for plugin in snapshot.plugins {
-        if plugin.id != plan.plugin.id {
-            rebuilt.replace_plugin(plugin);
-        }
-    }
-    for node in snapshot.nodes {
-        if !plan.nodes.iter().any(|installed| installed.id == node.id) {
-            rebuilt.replace_node(node);
-        }
-    }
-    snapshot
-        .types
-        .into_iter()
-        .for_each(|decl| rebuilt.replace_type(decl));
-    snapshot
-        .adapters
-        .into_iter()
-        .for_each(|decl| rebuilt.replace_adapter(decl));
-    snapshot
-        .serializers
-        .into_iter()
-        .for_each(|decl| rebuilt.replace_serializer(decl));
-    snapshot
-        .devices
-        .into_iter()
-        .for_each(|decl| rebuilt.replace_device(decl));
-    *registry = rebuilt;
-}
-
 impl HostInstallPlan {
     /// Runner key of every persistent-worker node, by node id. `in_process_abi` nodes are skipped.
     pub(crate) fn runner_keys(&self) -> Result<BTreeMap<&str, RunnerKey>, HostInstallError> {

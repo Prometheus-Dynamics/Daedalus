@@ -13,7 +13,7 @@ use daedalus_ffi_core::{BackendConfig, InvokeRequest, InvokeResponse, PluginPack
 use daedalus_registry::capability::CapabilityRegistry;
 use thiserror::Error;
 
-use crate::installer::{start_plan_runners, uninstall_plan};
+use crate::installer::start_plan_runners;
 use crate::{
     BackendRunner, BackendRunnerFactory, FfiHostTelemetry, HostInstallError, HostInstallPlan,
     PersistentWorkerRunner, RunnerHealth, RunnerKey, RunnerLimits, RunnerPool, RunnerPoolError,
@@ -248,7 +248,7 @@ impl FfiHost {
     /// Roll back plan `index`: remove its registry entries, routes, and pending slot.
     fn remove_package(&mut self, registry: &mut CapabilityRegistry, index: usize) {
         let plan = self.plans.remove(index);
-        uninstall_plan(registry, &plan);
+        registry.remove_plugin(&plan.plugin.id);
         self.routes.retain(|_, route| route.plan != index);
         self.pending.retain(|&pending| pending != index);
         let shift = |plan: &mut usize| *plan -= usize::from(*plan > index);
