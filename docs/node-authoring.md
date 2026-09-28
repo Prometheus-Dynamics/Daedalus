@@ -180,7 +180,11 @@ than queued.
 - **Persist graphs** as `GraphDocument`s (`format: "daedalus.graph"`, `schema_version`,
   `requires`, `metadata`, `graph`). `Engine::compile_document*` checks `requires` against the
   installed plugins before planning, and `PluginRegistry::graph_document(graph)` fills
-  `requires` from the plugins that provide the graph's nodes.
+  `requires` from the plugins that provide the graph's nodes. Documents are strict:
+  `GraphDocument::from_json` rejects unknown fields at every level (only the `metadata` maps are
+  free-form) and reports the JSON path of the offending field. Editors can validate against
+  [`docs/schema/daedalus.graph.v1.schema.json`](schema/daedalus.graph.v1.schema.json), generated
+  by `GraphDocument::json_schema()` (planner `schema` feature).
 
 ## Migrating From Pre-2.0 Names
 
