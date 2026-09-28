@@ -199,13 +199,7 @@ fn decode_string_map(value: Option<&Value>) -> BTreeMap<String, String> {
     entries
         .iter()
         .filter_map(|(key, value)| {
-            let Value::String(key) = key else {
-                return None;
-            };
-            let Value::String(value) = value else {
-                return None;
-            };
-            Some((normalize_port(key), value.to_string()))
+            Some((normalize_port(key.as_str()?), value.as_str()?.to_string()))
         })
         .collect()
 }

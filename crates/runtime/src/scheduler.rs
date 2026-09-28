@@ -59,7 +59,12 @@ pub fn build_runtime(plan: &ExecutionPlan, config: &SchedulerConfig) -> RuntimeP
         .iter_mut()
         .for_each(|edge| *edge.policy_mut() = config.default_policy.clone());
 
-    if let Some(order) = metadata_string_list(plan.graph.metadata.get(PLAN_SCHEDULE_ORDER_KEY)) {
+    if let Some(order) = plan
+        .graph
+        .metadata
+        .get(PLAN_SCHEDULE_ORDER_KEY)
+        .and_then(Value::as_string_list)
+    {
         let mut used = vec![false; runtime.nodes.len()];
         let schedule: Vec<daedalus_planner::NodeRef> = order
             .iter()
@@ -104,21 +109,6 @@ pub fn build_runtime(plan: &ExecutionPlan, config: &SchedulerConfig) -> RuntimeP
         .collect();
 
     runtime
-}
-
-fn metadata_string_list(value: Option<&Value>) -> Option<Vec<String>> {
-    let Value::List(items) = value? else {
-        return None;
-    };
-    Some(
-        items
-            .iter()
-            .filter_map(|item| match item {
-                Value::String(value) => Some(value.to_string()),
-                _ => None,
-            })
-            .collect(),
-    )
 }
 
 fn topo_order(runtime: &RuntimePlan) -> Option<Vec<daedalus_planner::NodeRef>> {

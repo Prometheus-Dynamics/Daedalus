@@ -2,7 +2,6 @@ mod demand;
 mod explain;
 mod host_ports;
 mod policy;
-mod transport_parse;
 mod transports;
 
 use serde::{Deserialize, Serialize};
@@ -47,28 +46,13 @@ pub fn runtime_node_execution_kind(node: &RuntimeNode) -> NodeExecutionKind {
     node_execution_kind_from_metadata(&node.metadata)
 }
 
-fn metadata_string_list(value: Option<&Value>) -> Option<Vec<String>> {
-    let Value::List(items) = value? else {
-        return None;
-    };
-    Some(
-        items
-            .iter()
-            .filter_map(|item| match item {
-                Value::String(value) => Some(value.to_string()),
-                _ => None,
-            })
-            .collect(),
-    )
-}
-
 fn metadata_string_matrix(value: Option<&Value>) -> Option<Vec<Vec<String>>> {
     let Value::List(rows) = value? else {
         return None;
     };
     Some(
         rows.iter()
-            .filter_map(|row| metadata_string_list(Some(row)))
+            .filter_map(|row| row.as_string_list())
             .filter(|row| !row.is_empty())
             .collect(),
     )
@@ -415,11 +399,18 @@ impl RuntimePlan {
                 ))
             })
             .collect::<Result<_, RuntimePlanError>>()?;
-        let edge_transports = transports::runtime_edge_transports(plan, &edges);
+        let edge_transports = transports::runtime_edge_transports(
+            &nodes,
+            &edges,
+            &transports::EdgeExplanations::from_metadata(&plan.graph.metadata),
+        );
 
         let mut order: Vec<NodeRef> = Vec::new();
-        if let Some(order_ids) =
-            metadata_string_list(plan.graph.metadata.get(PLAN_SCHEDULE_ORDER_KEY))
+        if let Some(order_ids) = plan
+            .graph
+            .metadata
+            .get(PLAN_SCHEDULE_ORDER_KEY)
+            .and_then(Value::as_string_list)
         {
             let mut by_id: std::collections::HashMap<&str, usize> =
                 std::collections::HashMap::new();

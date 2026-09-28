@@ -128,35 +128,18 @@ pub fn bundle(diagnostics: &[Diagnostic]) -> DiagnosticsBundle {
                 let group_id = diag
                     .metadata
                     .get("missing_group_id")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::String(s) => Some(s.to_string()),
-                        _ => None,
-                    })
+                    .and_then(|v| v.as_str().map(str::to_string))
                     .unwrap_or_default();
                 let node_id = diag
                     .metadata
                     .get("missing_node_id")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::String(s) => Some(s.to_string()),
-                        _ => None,
-                    })
+                    .and_then(|v| v.as_str().map(str::to_string))
                     .or_else(|| diag.span.node.clone())
                     .unwrap_or_default();
                 let suggestions = diag
                     .metadata
                     .get("suggestions")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::List(items) => Some(
-                            items
-                                .iter()
-                                .filter_map(|v| match v {
-                                    daedalus_data::model::Value::String(s) => Some(s.to_string()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                        _ => None,
-                    })
+                    .and_then(daedalus_data::model::Value::as_string_list)
                     .unwrap_or_default();
                 if !group_id.is_empty() {
                     out.missing_groups.push(MissingGroup {
@@ -175,38 +158,21 @@ pub fn bundle(diagnostics: &[Diagnostic]) -> DiagnosticsBundle {
                 let port = diag
                     .metadata
                     .get("missing_port")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::String(s) => Some(s.to_string()),
-                        _ => None,
-                    })
+                    .and_then(|v| v.as_str().map(str::to_string))
                     .or_else(|| diag.span.port.clone())
                     .unwrap_or_default();
                 let direction = diag
                     .metadata
                     .get("missing_port_direction")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::String(s) => {
-                            let trimmed = s.trim();
-                            (!trimmed.is_empty()).then(|| trimmed.to_string())
-                        }
-                        _ => None,
-                    })
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
                     .unwrap_or_else(|| "unknown".to_string());
                 let available = diag
                     .metadata
                     .get("available_ports")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::List(items) => Some(
-                            items
-                                .iter()
-                                .filter_map(|v| match v {
-                                    daedalus_data::model::Value::String(s) => Some(s.to_string()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                        _ => None,
-                    })
+                    .and_then(daedalus_data::model::Value::as_string_list)
                     .unwrap_or_default();
                 if !node_id.is_empty() && !port.is_empty() {
                     out.missing_ports.push(MissingPort {
@@ -222,38 +188,21 @@ pub fn bundle(diagnostics: &[Diagnostic]) -> DiagnosticsBundle {
                 let port = diag
                     .metadata
                     .get("extra_port")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::String(s) => Some(s.to_string()),
-                        _ => None,
-                    })
+                    .and_then(|v| v.as_str().map(str::to_string))
                     .or_else(|| diag.span.port.clone())
                     .unwrap_or_default();
                 let direction = diag
                     .metadata
                     .get("extra_port_direction")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::String(s) => {
-                            let trimmed = s.trim();
-                            (!trimmed.is_empty()).then(|| trimmed.to_string())
-                        }
-                        _ => None,
-                    })
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
                     .unwrap_or_else(|| "unknown".to_string());
                 let available = diag
                     .metadata
                     .get("available_ports")
-                    .and_then(|v| match v {
-                        daedalus_data::model::Value::List(items) => Some(
-                            items
-                                .iter()
-                                .filter_map(|v| match v {
-                                    daedalus_data::model::Value::String(s) => Some(s.to_string()),
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>(),
-                        ),
-                        _ => None,
-                    })
+                    .and_then(daedalus_data::model::Value::as_string_list)
                     .unwrap_or_default();
                 if !node_id.is_empty() && !port.is_empty() {
                     out.extra_ports.push(MissingPort {

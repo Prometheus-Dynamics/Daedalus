@@ -35,21 +35,6 @@ fn priority_value(id: String, priority: u8) -> Value {
     ])
 }
 
-fn string_list_from_metadata(value: Option<&Value>) -> Option<Vec<String>> {
-    let Value::List(items) = value? else {
-        return None;
-    };
-    Some(
-        items
-            .iter()
-            .filter_map(|item| match item {
-                Value::String(value) => Some(value.to_string()),
-                _ => None,
-            })
-            .collect(),
-    )
-}
-
 pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Diagnostic>) {
     let mut gpu_reasons: Vec<String> = Vec::new();
     // If GPU is disabled, flag required nodes.
@@ -215,8 +200,11 @@ fn gpu_dependency_segments(graph: &Graph) -> Vec<Vec<String>> {
 
 pub(super) fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
     // If topo_order exists, use it; else declared order. Attach basic priority info.
-    let order =
-        string_list_from_metadata(graph.metadata.get(PLAN_TOPO_ORDER_KEY)).unwrap_or_else(|| {
+    let order = graph
+        .metadata
+        .get(PLAN_TOPO_ORDER_KEY)
+        .and_then(Value::as_string_list)
+        .unwrap_or_else(|| {
             graph
                 .nodes
                 .iter()
