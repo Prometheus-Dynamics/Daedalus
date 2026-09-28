@@ -143,6 +143,22 @@ Host applications exchange payloads through the host bridge (`HostGraph::push*`,
 `set_latest_output`) for live streams such as camera frames so stale values are replaced rather
 than queued.
 
+- **Discover ports** with `HostGraph::host_inputs()` / `host_outputs()`. Each
+  `HostPortDescriptor` carries the port name, its `TypeExpr` and `TypeKey` when known, and the
+  graph nodes it connects to.
+- **Drive on input, not on a timer.** `HostGraph::drive_blocking(&stop, on_outputs)` (or the
+  runtime-agnostic `async fn drive`) waits for inbound payloads, ticks, and calls `on_outputs`
+  after each turn; `HostGraphStopHandle::stop()` ends it. For custom loops use
+  `wait_for_input(timeout)` / `tick_on_input(timeout)`, or `HostBridgeHandle::inbound_waiter()`,
+  which is both a blocking waiter and a `Future`.
+- **Inspect outputs** with `HostGraph::inspect_payload(&payload)`. It uses the value serializers
+  registered in the plugin registry and falls back to a `PayloadSummary` (type key, Rust type,
+  residency, size) for types without one; `to_json()` renders either as plain JSON.
+- **Persist graphs** as `GraphDocument`s (`format: "daedalus.graph"`, `schema_version`,
+  `requires`, `metadata`, `graph`). `Engine::compile_document*` checks `requires` against the
+  installed plugins before planning, and `PluginRegistry::graph_document(graph)` fills
+  `requires` from the plugins that provide the graph's nodes.
+
 ## Migrating From Pre-2.0 Names
 
 | Pre-2.0 | 2.0 |

@@ -192,22 +192,9 @@ impl HostBridgeHandle {
         InboundWaiter::new(self.shared.clone())
     }
 
-    /// Future that resolves once inbound data is queued, the bridge closes, or an explicit wakeup
-    /// is issued. Runtime-agnostic; alias of [`HostBridgeHandle::inbound_waiter`].
-    pub fn inbound_ready(&self) -> InboundWaiter {
-        self.inbound_waiter()
-    }
-
     /// Blocking wait with a typed reason. `None` waits indefinitely.
     pub fn wait_inbound(&self, timeout: Option<Duration>) -> InboundWait {
         self.inbound_waiter().wait(timeout)
-    }
-
-    /// Blocking wait that returns `true` only when inbound payloads are queued.
-    ///
-    /// Returns `false` on timeout, closure, or an explicit wakeup.
-    pub fn wait_for_inbound(&self, timeout: Option<Duration>) -> bool {
-        self.wait_inbound(timeout).is_ready()
     }
 
     /// Wake every blocking and async inbound waiter without queuing data.
@@ -258,7 +245,7 @@ mod tests {
             InboundWait::TimedOut
         );
         handle.push("in", 1i64);
-        assert!(handle.wait_for_inbound(Some(Duration::ZERO)));
+        assert!(handle.wait_inbound(Some(Duration::ZERO)).is_ready());
     }
 
     #[test]
@@ -296,7 +283,7 @@ mod tests {
         let flag = Arc::new(FlagWaker(AtomicBool::new(false)));
         let waker = Waker::from(flag.clone());
         let mut cx = Context::from_waker(&waker);
-        let mut waiter = handle.inbound_ready();
+        let mut waiter = handle.inbound_waiter();
 
         assert!(Pin::new(&mut waiter).poll(&mut cx).is_pending());
         assert!(Pin::new(&mut waiter).poll(&mut cx).is_pending());
