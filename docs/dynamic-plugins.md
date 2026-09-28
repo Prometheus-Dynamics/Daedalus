@@ -70,7 +70,7 @@ features of the facade, `daedalus-core`, `-data`, `-registry`, `-planner` and `-
 `features.hash`; and `layout.<type>=size/align` for `PluginRegistry`, `HandlerRegistry`,
 `Payload`, `TypeKey`, `BoundaryTypeContract`, `TypeExpr`, `NodeDecl`, `AdapterDecl`,
 `PluginManifest` and `StrView`. Host-only features (`engine`, `engine-full`, `embedded`,
-`executor-pool`, `metrics`, `dylib-plugins`, and the runtime's executor-only features; see
+`executor-pool`, `metrics`, `dylib-plugins`, `gpu-dmabuf`, and the runtime's executor-only features; see
 `daedalus::dylib::HOST_ONLY_FEATURES`) are excluded, so a plugin built with `plugins` loads into
 a host built with `engine-full,plugins,dylib-plugins`. A mismatch error lists the differing
 segments, e.g. ``features.runtime: host `gpu,plugins`, plugin `plugins` ``.

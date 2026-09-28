@@ -88,6 +88,8 @@ pub const ENABLED_FEATURES: &[&str] = &[
     "gpu-wgpu",
     #[cfg(feature = "gpu-async")]
     "gpu-async",
+    #[cfg(feature = "gpu-dmabuf")]
+    "gpu-dmabuf",
     #[cfg(feature = "gpu-mock")]
     "gpu-mock",
     #[cfg(feature = "schema")]

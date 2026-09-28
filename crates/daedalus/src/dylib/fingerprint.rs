@@ -41,6 +41,7 @@ pub const HOST_ONLY_FEATURES: &[(&str, &str)] = &[
     ("daedalus", "gpu-engine"),
     ("daedalus", "gpu"),
     ("daedalus", "dylib-plugins"),
+    ("daedalus", "gpu-dmabuf"),
     ("daedalus", "examples"),
     ("daedalus", "styx-camera-example"),
     ("runtime", "executor-pool"),
