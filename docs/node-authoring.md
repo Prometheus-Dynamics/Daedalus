@@ -151,6 +151,18 @@ than queued.
   after each turn; `HostGraphStopHandle::stop()` ends it. For custom loops use
   `wait_for_input(timeout)` / `tick_on_input(timeout)`, or `HostBridgeHandle::inbound_waiter()`,
   which is both a blocking waiter and a `Future`.
+- **Async hosts (tokio):** `async fn drive` waits without blocking, but each graph tick runs
+  inline on the polling task. For anything CPU-heavy, move the `HostGraph` into
+  `tokio::task::spawn_blocking(move || graph.drive_blocking(&stop, on_outputs))`, keep a cloned
+  `HostGraphStopHandle` on the async side, and call `stop()` to end the loop (it wakes the
+  waiter). Feed inputs from async tasks through a cloned `HostBridgeHandle` (`graph.host()`).
+  See the `drive` module docs in `daedalus-engine` for a full example.
+- **Port arguments:** write paths (`push*`, `set_*_policy`, `bind_input`/`bind_output`,
+  `subscribe`) take `impl Into<PortId>`; read paths (`take*`, `drain*`, `latest`) take
+  `impl AsRef<str>`. Build `PortId`s once (or use `bind_input`) in hot loops so pushes do not
+  allocate.
+- **Host bridge events are off by default.** Enable `with_host_event_recording(true)` (or
+  `HostBridgeHandle::set_event_recording(true)`) when debugging dropped or missing payloads.
 - **Inspect outputs** with `HostGraph::inspect_payload(&payload)`. It uses the value serializers
   registered in the plugin registry and falls back to a `PayloadSummary` (type key, Rust type,
   residency, size) for types without one; `to_json()` renders either as plain JSON.

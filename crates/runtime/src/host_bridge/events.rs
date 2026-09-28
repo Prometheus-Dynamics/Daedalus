@@ -1,14 +1,71 @@
+use std::collections::VecDeque;
 use std::time::Instant;
 
-use daedalus_transport::{DropReason, FeedOutcome, OverflowPolicy, Payload, PressurePolicy};
+use daedalus_transport::{
+    CorrelationId, DropReason, FeedOutcome, OverflowPolicy, Payload, PressurePolicy, TypeKey,
+};
 
-use super::{HostBridgeBuffers, HostBridgeDropStats, HostBridgeEvent, HostBridgeEventKind};
+use super::{HostBridgeDropStats, HostBridgeEvent, HostBridgeEventKind};
+
+/// Retained diagnostic events for one host bridge.
+pub(super) struct EventLog {
+    pub(super) enabled: bool,
+    pub(super) limit: Option<usize>,
+    pub(super) events: VecDeque<HostBridgeEvent>,
+}
+
+impl EventLog {
+    pub(super) fn new(enabled: bool, limit: Option<usize>) -> Self {
+        Self {
+            enabled,
+            limit,
+            events: VecDeque::new(),
+        }
+    }
+
+    pub(super) fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+        if !enabled {
+            self.events.clear();
+        }
+    }
+
+    pub(super) fn set_limit(&mut self, limit: Option<usize>) {
+        self.limit = limit;
+        self.trim();
+    }
+
+    pub(super) fn trim(&mut self) {
+        if let Some(limit) = self.limit {
+            while self.events.len() > limit {
+                self.events.pop_front();
+            }
+        }
+    }
+}
+
+/// Identity of the payload an event refers to. Borrowed, so recording never clones the payload
+/// (a clone would make a queued unique payload shared).
+#[derive(Clone, Copy)]
+pub(super) struct EventSubject<'a> {
+    pub(super) correlation_id: CorrelationId,
+    pub(super) type_key: &'a TypeKey,
+}
+
+impl<'a> From<&'a Payload> for EventSubject<'a> {
+    fn from(payload: &'a Payload) -> Self {
+        Self {
+            correlation_id: payload.correlation_id(),
+            type_key: payload.type_key(),
+        }
+    }
+}
 
 pub(super) fn record_host_event(
-    guard: &mut HostBridgeBuffers,
+    log: &mut EventLog,
     alias: &str,
     port: &str,
-    payload: &Payload,
+    subject: EventSubject<'_>,
     kind: HostBridgeEventKind,
     outcome: Option<FeedOutcome>,
     reason: Option<DropReason>,
@@ -27,8 +84,8 @@ pub(super) fn record_host_event(
             kind = ?kind,
             reason = ?reason,
             outcome = ?outcome,
-            payload_type = %payload.type_key(),
-            correlation_id = payload.correlation_id(),
+            payload_type = %subject.type_key,
+            correlation_id = subject.correlation_id,
             "host bridge payload pressure event",
         );
     } else {
@@ -38,42 +95,34 @@ pub(super) fn record_host_event(
             port,
             kind = ?kind,
             outcome = ?outcome,
-            payload_type = %payload.type_key(),
-            correlation_id = payload.correlation_id(),
+            payload_type = %subject.type_key,
+            correlation_id = subject.correlation_id,
             "host bridge payload event",
         );
     }
 
-    if !guard.events_enabled {
+    if !log.enabled {
         return;
     }
-    let Some(limit) = guard.event_limit else {
-        guard.events.push_back(HostBridgeEvent {
-            at: Instant::now(),
-            alias: alias.to_string(),
-            port: port.to_string(),
-            correlation_id: payload.correlation_id(),
-            kind,
-            type_key: payload.type_key().clone(),
-            outcome,
-            reason,
-        });
-        return;
-    };
-    if limit == 0 {
-        guard.events.clear();
-        return;
+    match log.limit {
+        Some(0) => {
+            log.events.clear();
+            return;
+        }
+        Some(limit) => {
+            while log.events.len() >= limit {
+                log.events.pop_front();
+            }
+        }
+        None => {}
     }
-    while guard.events.len() >= limit {
-        guard.events.pop_front();
-    }
-    guard.events.push_back(HostBridgeEvent {
+    log.events.push_back(HostBridgeEvent {
         at: Instant::now(),
         alias: alias.to_string(),
         port: port.to_string(),
-        correlation_id: payload.correlation_id(),
+        correlation_id: subject.correlation_id,
         kind,
-        type_key: payload.type_key().clone(),
+        type_key: subject.type_key.clone(),
         outcome,
         reason,
     });
@@ -112,13 +161,5 @@ pub(super) fn replacement_reason(pressure: &PressurePolicy) -> Option<DropReason
             ..
         } => Some(DropReason::DropOldest),
         _ => None,
-    }
-}
-
-pub(super) fn trim_host_events(guard: &mut HostBridgeBuffers) {
-    if let Some(limit) = guard.event_limit {
-        while guard.events.len() > limit {
-            guard.events.pop_front();
-        }
     }
 }

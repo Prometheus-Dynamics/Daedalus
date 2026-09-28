@@ -5,13 +5,17 @@ use daedalus_transport::{CorrelationId, DropReason, FeedOutcome, Payload, TypeKe
 use crate::handles::PortId;
 use crate::plan::RuntimeEdgePolicy;
 
-use super::DEFAULT_HOST_BRIDGE_EVENT_LIMIT;
+use super::{DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostBridgeConfig {
     pub default_input_policy: RuntimeEdgePolicy,
     pub default_output_policy: RuntimeEdgePolicy,
     /// Whether host bridge feed/drop/deliver events are retained for runtime diagnostics.
+    ///
+    /// Off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING`): recording allocates one event per
+    /// push and delivery. Enable it while debugging dropped or missing host payloads. Stats and
+    /// `tracing` pressure warnings are always available.
     pub event_recording: bool,
     /// Maximum retained event snapshots per host bridge handle.
     ///
@@ -56,7 +60,7 @@ impl Default for HostBridgeConfig {
         Self {
             default_input_policy: RuntimeEdgePolicy::bounded(1),
             default_output_policy: RuntimeEdgePolicy::bounded(1),
-            event_recording: true,
+            event_recording: DEFAULT_HOST_BRIDGE_EVENT_RECORDING,
             event_limit: Some(DEFAULT_HOST_BRIDGE_EVENT_LIMIT),
         }
     }

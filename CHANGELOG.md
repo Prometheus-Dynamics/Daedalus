@@ -31,6 +31,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Plugin manifests declared with `#[plugin]` or `declare_plugin!` now record the plugin crate
   version.
 - `BoundaryVTable` gained a `value_any` field used by `Payload::value_any_sync`.
+- Host bridge event recording is now off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING`,
+  `HostBridgeConfig::default()`, `RuntimeSection::host_event_recording`, new manager handles).
+  Enable it explicitly for diagnostics; stats and pressure tracing are unaffected.
+- Host port arguments are consistent across `HostBridgeHandle` and `HostGraph`: write paths
+  (`push*`, `feed_payload`, `set_*_policy`, `set_latest_*`, `close_input`,
+  `profiled_feed_tick_drain_owned`) take `impl Into<PortId>`; lookups (`take*`, `try_pop*`,
+  `drain*`, `latest`, `is_input_closed`, `direct_host_route`, `bind_lane`,
+  `tick_direct_payload`, `run_direct_once`) take `impl AsRef<str>` and do not allocate.
+  `HostBridgeHandle::feed_payload_ref` was removed (use `feed_payload`); `PortId` and the other
+  text ids implement `From<&Id>`. `HostBridgeManager::ensure_handle` takes `impl AsRef<str>`.
+- Host bridge buffers keep one per-port state (queue, policy overrides, freshness watermarks,
+  close flag) per direction, so a push does a single lookup; freshness watermarks are no longer
+  shared between an input and an output port with the same name. Replace-style capacity-one
+  policies (including the default) store the value in a single slot replaced in place, and
+  recording an event no longer clones the payload.
+- `HostGraph::drive` docs describe running `drive_blocking` under
+  `tokio::task::spawn_blocking` with a `HostGraphStopHandle`; added the `host_graph_drive`
+  criterion bench to `daedalus-engine`.
 
 ## [2.0.0] - 2026-04-30
 

@@ -80,6 +80,7 @@ fn host_graph_observability() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(
         EngineConfig::from(GpuBackend::Cpu)
             .with_metrics_level(MetricsLevel::Trace)
+            .with_host_event_recording(true)
             .with_host_event_limit(Some(16)),
     )?;
     let mut runtime = engine.compile_registry(&registry, graph)?;
