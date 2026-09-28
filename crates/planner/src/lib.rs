@@ -13,13 +13,7 @@ mod metadata;
 mod passes;
 mod patch;
 
-/// Cargo features of `daedalus-planner` enabled in this build (comma-separated).
-///
-/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
-/// each feature, this feeds the dynamic plugin build fingerprint.
-pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
-/// This crate's `Cargo.toml`.
-pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
+daedalus_core::build_facts!();
 
 pub use diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSpan, DiagnosticsBundle, MissingGroup, MissingNode,

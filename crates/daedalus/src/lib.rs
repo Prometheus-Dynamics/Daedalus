@@ -72,13 +72,7 @@ pub use dylib::{
     check_rust_abi, discover_plugin_libraries,
 };
 
-/// Cargo features of the `daedalus-rs` facade enabled in this build (comma-separated).
-///
-/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
-/// each feature, this feeds the dynamic plugin build fingerprint.
-pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
-/// This crate's `Cargo.toml`.
-pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
+daedalus_core::build_facts!();
 
 // Optional plugin crates are re-exported via features; no in-crate plugins live here.
 
