@@ -11,40 +11,17 @@ use crate::executor::{CorrelatedPayload, NodeError};
 use crate::handles::HostAlias;
 use crate::io::NodeIo;
 
-use super::events::EventLog;
-use super::ports::PortDirection;
 use super::{
-    DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING, HostBridgeBuffers,
-    HostBridgeConfig, HostBridgeHandle, HostBridgePayload, HostBridgeShared,
+    Direction, HostBridgeBuffers, HostBridgeConfig, HostBridgeHandle, HostBridgePayload,
+    HostBridgeShared,
 };
+use crate::plan::RuntimeEdgePolicy;
 
 #[derive(Clone, Default)]
 pub struct HostBridgeManager {
     inner: Arc<Mutex<HashMap<HostAlias, Arc<HostBridgeShared>>>>,
-    defaults: Arc<Mutex<HostBridgeDefaults>>,
-}
-
-#[derive(Clone)]
-pub(super) struct HostBridgeDefaults {
-    pub(super) input_pressure: PressurePolicy,
-    pub(super) input_freshness: FreshnessPolicy,
-    pub(super) output_pressure: PressurePolicy,
-    pub(super) output_freshness: FreshnessPolicy,
-    pub(super) events_enabled: bool,
-    pub(super) event_limit: Option<usize>,
-}
-
-impl Default for HostBridgeDefaults {
-    fn default() -> Self {
-        Self {
-            input_pressure: PressurePolicy::default(),
-            input_freshness: FreshnessPolicy::default(),
-            output_pressure: PressurePolicy::default(),
-            output_freshness: FreshnessPolicy::default(),
-            events_enabled: DEFAULT_HOST_BRIDGE_EVENT_RECORDING,
-            event_limit: Some(DEFAULT_HOST_BRIDGE_EVENT_LIMIT),
-        }
-    }
+    /// Configuration applied to bridges created from now on.
+    defaults: Arc<Mutex<HostBridgeConfig>>,
 }
 
 impl HostBridgeManager {
@@ -67,19 +44,7 @@ impl HostBridgeManager {
             return HostBridgeHandle::new(alias.clone(), shared.clone());
         }
         let alias = HostAlias::new(alias);
-        let defaults = self.defaults.lock().clone();
-        let buffers = HostBridgeBuffers {
-            inbound: PortDirection::with_defaults(
-                defaults.input_pressure,
-                defaults.input_freshness,
-            ),
-            outbound: PortDirection::with_defaults(
-                defaults.output_pressure,
-                defaults.output_freshness,
-            ),
-            events: EventLog::new(defaults.events_enabled, defaults.event_limit),
-            ..HostBridgeBuffers::default()
-        };
+        let buffers = HostBridgeBuffers::from_config(&self.defaults.lock());
         let shared = Arc::new(HostBridgeShared {
             buffers: Mutex::new(buffers),
             ready: Condvar::new(),
@@ -88,26 +53,32 @@ impl HostBridgeManager {
         HostBridgeHandle::new(alias, shared)
     }
 
-    pub fn set_event_recording(&self, enabled: bool) {
-        {
-            let mut defaults = self.defaults.lock();
-            defaults.events_enabled = enabled;
-        }
-        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
-        for shared in handles {
-            shared.buffers.lock().events.set_enabled(enabled);
+    /// Update the defaults for new bridges with `edit`, then run `apply` on every existing
+    /// bridge's buffers.
+    fn update(
+        &self,
+        edit: impl FnOnce(&mut HostBridgeConfig),
+        apply: impl Fn(&mut HostBridgeBuffers),
+    ) {
+        edit(&mut self.defaults.lock());
+        let bridges = self.inner.lock().values().cloned().collect::<Vec<_>>();
+        for shared in bridges {
+            apply(&mut shared.buffers.lock());
         }
     }
 
+    pub fn set_event_recording(&self, enabled: bool) {
+        self.update(
+            |config| config.event_recording = enabled,
+            |buffers| buffers.events.set_enabled(enabled),
+        );
+    }
+
     pub fn set_event_limit(&self, limit: Option<usize>) {
-        {
-            let mut defaults = self.defaults.lock();
-            defaults.event_limit = limit;
-        }
-        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
-        for shared in handles {
-            shared.buffers.lock().events.set_limit(limit);
-        }
+        self.update(
+            |config| config.event_limit = limit,
+            |buffers| buffers.events.set_limit(limit),
+        );
     }
 
     pub fn set_default_input_policy(
@@ -115,21 +86,13 @@ impl HostBridgeManager {
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
-        validate_stream_policy(&pressure, &freshness)?;
-        {
-            let mut defaults = self.defaults.lock();
-            defaults.input_pressure = pressure.clone();
-            defaults.input_freshness = freshness.clone();
-        }
-        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
-        for shared in handles {
-            shared
-                .buffers
-                .lock()
-                .inbound
-                .set_defaults(pressure.clone(), freshness.clone());
-        }
-        Ok(())
+        self.set_default_policy(
+            Direction::Inbound,
+            RuntimeEdgePolicy {
+                pressure,
+                freshness,
+            },
+        )
     }
 
     pub fn set_default_output_policy(
@@ -137,47 +100,37 @@ impl HostBridgeManager {
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
-        validate_stream_policy(&pressure, &freshness)?;
-        {
-            let mut defaults = self.defaults.lock();
-            defaults.output_pressure = pressure.clone();
-            defaults.output_freshness = freshness.clone();
-        }
-        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
-        for shared in handles {
-            shared
-                .buffers
-                .lock()
-                .outbound
-                .set_defaults(pressure.clone(), freshness.clone());
-        }
+        self.set_default_policy(
+            Direction::Outbound,
+            RuntimeEdgePolicy {
+                pressure,
+                freshness,
+            },
+        )
+    }
+
+    fn set_default_policy(
+        &self,
+        direction: Direction,
+        policy: RuntimeEdgePolicy,
+    ) -> Result<(), PolicyValidationError> {
+        validate_stream_policy(&policy.pressure, &policy.freshness)?;
+        self.update(
+            |config| match direction {
+                Direction::Inbound => config.default_input_policy = policy.clone(),
+                Direction::Outbound => config.default_output_policy = policy.clone(),
+            },
+            |buffers| buffers.ports_mut(direction).set_default_policy(&policy),
+        );
         Ok(())
     }
 
     pub fn apply_config(&self, config: &HostBridgeConfig) -> Result<(), PolicyValidationError> {
-        validate_stream_policy(
-            &config.default_input_policy.pressure,
-            &config.default_input_policy.freshness,
-        )?;
-        validate_stream_policy(
-            &config.default_output_policy.pressure,
-            &config.default_output_policy.freshness,
-        )?;
-
-        {
-            let mut defaults = self.defaults.lock();
-            defaults.input_pressure = config.default_input_policy.pressure.clone();
-            defaults.input_freshness = config.default_input_policy.freshness.clone();
-            defaults.output_pressure = config.default_output_policy.pressure.clone();
-            defaults.output_freshness = config.default_output_policy.freshness.clone();
-            defaults.events_enabled = config.event_recording;
-            defaults.event_limit = config.event_limit;
-        }
-
-        let handles = self.inner.lock().values().cloned().collect::<Vec<_>>();
-        for shared in handles {
-            HostBridgeHandle::new(HostAlias::new(""), shared).apply_config(config)?;
-        }
+        config.validate()?;
+        self.update(
+            |defaults| *defaults = config.clone(),
+            |buffers| buffers.apply_config(config),
+        );
         Ok(())
     }
 

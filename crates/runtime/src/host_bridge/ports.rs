@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use daedalus_transport::{FreshnessPolicy, PolicyQueue, PressurePolicy};
 
 use crate::handles::PortId;
+use crate::plan::RuntimeEdgePolicy;
 
 use super::{HostBridgePayload, HostPortStats};
 
@@ -94,14 +95,6 @@ pub(super) struct PortDirection {
 }
 
 impl PortDirection {
-    pub(super) fn with_defaults(pressure: PressurePolicy, freshness: FreshnessPolicy) -> Self {
-        Self {
-            ports: HashMap::new(),
-            default_pressure: pressure,
-            default_freshness: freshness,
-        }
-    }
-
     /// Get or create a port's state together with the direction defaults.
     pub(super) fn entry(&mut self, key: PortKey<'_>) -> PortEntry<'_> {
         let Self {
@@ -154,5 +147,16 @@ impl PortDirection {
     pub(super) fn set_defaults(&mut self, pressure: PressurePolicy, freshness: FreshnessPolicy) {
         self.default_pressure = pressure;
         self.default_freshness = freshness;
+    }
+
+    pub(super) fn set_default_policy(&mut self, policy: &RuntimeEdgePolicy) {
+        self.set_defaults(policy.pressure.clone(), policy.freshness.clone());
+    }
+
+    pub(super) fn default_policy(&self) -> RuntimeEdgePolicy {
+        RuntimeEdgePolicy {
+            pressure: self.default_pressure.clone(),
+            freshness: self.default_freshness.clone(),
+        }
     }
 }

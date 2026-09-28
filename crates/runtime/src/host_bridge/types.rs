@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use daedalus_transport::{CorrelationId, DropReason, FeedOutcome, Payload, TypeKey};
+use daedalus_transport::{
+    CorrelationId, DropReason, FeedOutcome, Payload, PolicyValidationError, TypeKey,
+    validate_stream_policy,
+};
 
 use crate::handles::PortId;
 use crate::plan::RuntimeEdgePolicy;
@@ -25,6 +28,14 @@ pub struct HostBridgeConfig {
 }
 
 impl HostBridgeConfig {
+    /// Check both direction default policies with [`validate_stream_policy`].
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        for policy in [&self.default_input_policy, &self.default_output_policy] {
+            validate_stream_policy(&policy.pressure, &policy.freshness)?;
+        }
+        Ok(())
+    }
+
     pub fn with_default_input_policy(mut self, policy: RuntimeEdgePolicy) -> Self {
         self.default_input_policy = policy;
         self

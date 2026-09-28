@@ -94,6 +94,32 @@ impl Default for HostBridgeBuffers {
     }
 }
 
+impl HostBridgeBuffers {
+    fn from_config(config: &HostBridgeConfig) -> Self {
+        let mut buffers = Self::default();
+        buffers.apply_config(config);
+        buffers
+    }
+
+    /// Apply direction defaults and event settings; per-port overrides are kept.
+    fn apply_config(&mut self, config: &HostBridgeConfig) {
+        self.inbound
+            .set_default_policy(&config.default_input_policy);
+        self.outbound
+            .set_default_policy(&config.default_output_policy);
+        self.events.limit = config.event_limit;
+        self.events.set_enabled(config.event_recording);
+        self.events.trim();
+    }
+
+    fn ports_mut(&mut self, direction: Direction) -> &mut PortDirection {
+        match direction {
+            Direction::Inbound => &mut self.inbound,
+            Direction::Outbound => &mut self.outbound,
+        }
+    }
+}
+
 /// Which side of the bridge a payload is queued on; selects stats counters and event kinds.
 #[derive(Clone, Copy)]
 enum Direction {
@@ -313,12 +339,7 @@ impl HostBridgeHandle {
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
-        validate_stream_policy(&pressure, &freshness)?;
-        let mut guard = self.shared.buffers.lock();
-        let state = guard.inbound.port(port.into());
-        state.pressure = Some(pressure);
-        state.freshness = Some(freshness);
-        Ok(())
+        self.set_port_policy(Direction::Inbound, port.into(), pressure, freshness)
     }
 
     pub fn set_output_policy(
@@ -327,9 +348,19 @@ impl HostBridgeHandle {
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
+        self.set_port_policy(Direction::Outbound, port.into(), pressure, freshness)
+    }
+
+    fn set_port_policy(
+        &self,
+        direction: Direction,
+        port: PortId,
+        pressure: PressurePolicy,
+        freshness: FreshnessPolicy,
+    ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
         let mut guard = self.shared.buffers.lock();
-        let state = guard.outbound.port(port.into());
+        let state = guard.ports_mut(direction).port(port);
         state.pressure = Some(pressure);
         state.freshness = Some(freshness);
         Ok(())
@@ -340,13 +371,7 @@ impl HostBridgeHandle {
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
-        validate_stream_policy(&pressure, &freshness)?;
-        self.shared
-            .buffers
-            .lock()
-            .inbound
-            .set_defaults(pressure, freshness);
-        Ok(())
+        self.set_default_policy(Direction::Inbound, pressure, freshness)
     }
 
     pub fn set_default_output_policy(
@@ -354,11 +379,20 @@ impl HostBridgeHandle {
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
+        self.set_default_policy(Direction::Outbound, pressure, freshness)
+    }
+
+    fn set_default_policy(
+        &self,
+        direction: Direction,
+        pressure: PressurePolicy,
+        freshness: FreshnessPolicy,
+    ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&pressure, &freshness)?;
         self.shared
             .buffers
             .lock()
-            .outbound
+            .ports_mut(direction)
             .set_defaults(pressure, freshness);
         Ok(())
     }
@@ -373,27 +407,8 @@ impl HostBridgeHandle {
     }
 
     pub fn apply_config(&self, config: &HostBridgeConfig) -> Result<(), PolicyValidationError> {
-        validate_stream_policy(
-            &config.default_input_policy.pressure,
-            &config.default_input_policy.freshness,
-        )?;
-        validate_stream_policy(
-            &config.default_output_policy.pressure,
-            &config.default_output_policy.freshness,
-        )?;
-
-        let mut guard = self.shared.buffers.lock();
-        guard.inbound.set_defaults(
-            config.default_input_policy.pressure.clone(),
-            config.default_input_policy.freshness.clone(),
-        );
-        guard.outbound.set_defaults(
-            config.default_output_policy.pressure.clone(),
-            config.default_output_policy.freshness.clone(),
-        );
-        guard.events.limit = config.event_limit;
-        guard.events.set_enabled(config.event_recording);
-        guard.events.trim();
+        config.validate()?;
+        self.shared.buffers.lock().apply_config(config);
         Ok(())
     }
 
@@ -540,14 +555,8 @@ impl HostBridgeHandle {
     pub fn config_snapshot(&self) -> HostBridgeConfig {
         let guard = self.shared.buffers.lock();
         HostBridgeConfig {
-            default_input_policy: crate::plan::RuntimeEdgePolicy {
-                pressure: guard.inbound.default_pressure.clone(),
-                freshness: guard.inbound.default_freshness.clone(),
-            },
-            default_output_policy: crate::plan::RuntimeEdgePolicy {
-                pressure: guard.outbound.default_pressure.clone(),
-                freshness: guard.outbound.default_freshness.clone(),
-            },
+            default_input_policy: guard.inbound.default_policy(),
+            default_output_policy: guard.outbound.default_policy(),
             event_recording: guard.events.enabled,
             event_limit: guard.events.limit,
         }
