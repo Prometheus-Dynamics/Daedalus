@@ -1,5 +1,6 @@
 mod demand;
 mod explain;
+mod host_ports;
 mod policy;
 mod transport_parse;
 mod transports;
@@ -22,6 +23,7 @@ pub use explain::{
     RuntimeBranchExplanation, RuntimeEdgeExplanation, RuntimeEdgeHandoff, RuntimeNodeExplanation,
     RuntimePlanExplanation,
 };
+pub use host_ports::{HostPortConnection, HostPortDescriptor, HostPortDirection};
 use policy::edge_policy_from_metadata;
 pub use policy::{
     EDGE_CAPACITY_KEY, EDGE_FRESHNESS_LATEST_BY_SEQUENCE, EDGE_FRESHNESS_LATEST_BY_TIMESTAMP,

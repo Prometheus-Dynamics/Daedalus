@@ -139,63 +139,7 @@ mod graph_metadata_serde {
     }
 
     fn value_to_plain_json(value: &daedalus_data::model::Value) -> JsonValue {
-        use daedalus_data::model::Value;
-        match value {
-            Value::Unit => JsonValue::Null,
-            Value::Bool(b) => JsonValue::Bool(*b),
-            Value::Int(i) => serde_json::json!(i),
-            Value::Float(f) => serde_json::json!(f),
-            Value::String(s) => serde_json::json!(s),
-            Value::Bytes(b) => serde_json::json!(b.as_ref()),
-            Value::List(items) | Value::Tuple(items) => {
-                JsonValue::Array(items.iter().map(value_to_plain_json).collect())
-            }
-            Value::Struct(fields) => {
-                let mut obj = serde_json::Map::new();
-                for f in fields {
-                    obj.insert(f.name.clone(), value_to_plain_json(&f.value));
-                }
-                JsonValue::Object(obj)
-            }
-            Value::Enum(ev) => {
-                let mut obj = serde_json::Map::new();
-                obj.insert("name".into(), JsonValue::String(ev.name.clone()));
-                if let Some(v) = &ev.value {
-                    obj.insert("value".into(), value_to_plain_json(v));
-                }
-                JsonValue::Object(obj)
-            }
-            Value::Map(entries) => {
-                let mut obj = serde_json::Map::new();
-                let mut all_string_keys = true;
-                for (k, _) in entries {
-                    if !matches!(k, Value::String(_)) {
-                        all_string_keys = false;
-                        break;
-                    }
-                }
-                if all_string_keys {
-                    for (k, v) in entries {
-                        if let Value::String(s) = k {
-                            obj.insert(s.to_string(), value_to_plain_json(v));
-                        }
-                    }
-                    JsonValue::Object(obj)
-                } else {
-                    JsonValue::Array(
-                        entries
-                            .iter()
-                            .map(|(k, v)| {
-                                JsonValue::Array(vec![
-                                    value_to_plain_json(k),
-                                    value_to_plain_json(v),
-                                ])
-                            })
-                            .collect(),
-                    )
-                }
-            }
-        }
+        daedalus_data::json::to_plain_json(value)
     }
 
     pub fn serialize<S>(

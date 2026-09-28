@@ -369,6 +369,7 @@ impl Engine {
             bridges,
             host,
             node_labels,
+            value_serializers: daedalus_runtime::host_bridge::primitive_value_serializer_map(),
         })
     }
 
@@ -501,6 +502,7 @@ impl Engine {
             bridges,
             host,
             node_labels,
+            value_serializers: plugins.value_serializers.clone(),
         })
     }
 

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{DirectHostRoute, NodeHandler};
 use daedalus_runtime::handles::PortId;
-use daedalus_runtime::host_bridge::{HostBridgeHandle, HostBridgeManager};
+use daedalus_runtime::host_bridge::{HostBridgeHandle, HostBridgeManager, ValueSerializerMap};
 use daedalus_runtime::{RuntimePlan, RuntimePlanExplanation, RuntimeSink};
 use daedalus_transport::{
     FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, TypeKey,
@@ -17,12 +17,15 @@ use crate::compiled_run::{CompiledRun, RunResult};
 use crate::error::EngineError;
 
 mod bindings;
+mod drive;
+mod introspect;
 
 use bindings::type_key_for;
 pub use bindings::{
     HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
     HostGraphRunInput, HostGraphSubscription,
 };
+pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
 
 /// In-process graph runner for host-driven applications.
 ///
@@ -39,6 +42,9 @@ pub struct HostGraph<H: NodeHandler> {
     pub(crate) bridges: HostBridgeManager,
     pub(crate) host: HostBridgeHandle,
     pub(crate) node_labels: Arc<[String]>,
+    /// Serializers used by `inspect_payload`; shared with the registry the graph was compiled
+    /// from when compiled through a `PluginRegistry`.
+    pub(crate) value_serializers: ValueSerializerMap,
 }
 
 pub struct HostGraphStep<T> {

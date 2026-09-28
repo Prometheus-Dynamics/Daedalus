@@ -39,6 +39,13 @@ pub trait PayloadStorage: Send + Sync + fmt::Debug {
     fn value_any(&self) -> Option<&dyn Any> {
         None
     }
+    /// Borrow the stored value as a thread-safe `Any`, when the storage exposes one.
+    ///
+    /// Unlike [`PayloadStorage::value_any`], this keeps the `Send + Sync` bounds so the value can
+    /// be handed to serializer maps keyed by `TypeId` that expect `&(dyn Any + Send + Sync)`.
+    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
+        None
+    }
     fn rust_type_name(&self) -> Option<&'static str> {
         None
     }
@@ -87,6 +94,10 @@ impl<T: Send + Sync + 'static> PayloadStorage for TypedStorage<T> {
         Some(self.value.as_ref())
     }
 
+    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
+        Some(self.value.as_ref())
+    }
+
     fn rust_type_name(&self) -> Option<&'static str> {
         Some(std::any::type_name::<T>())
     }
@@ -120,6 +131,10 @@ impl PayloadStorage for BytesStorage {
     }
 
     fn value_any(&self) -> Option<&dyn Any> {
+        Some(&self.bytes)
+    }
+
+    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
         Some(&self.bytes)
     }
 
@@ -491,6 +506,14 @@ impl Payload {
 
     pub fn value_any(&self) -> Option<&dyn Any> {
         self.storage.value_any()
+    }
+
+    /// Borrow the payload value as `&(dyn Any + Send + Sync)`.
+    ///
+    /// Returns `None` for storage that does not expose a borrowable value (for example boundary
+    /// storage without `borrow_ref` capability, or a boundary value that was already taken).
+    pub fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
+        self.storage.value_any_sync()
     }
 
     pub fn get_ref<T>(&self) -> Option<&T>
