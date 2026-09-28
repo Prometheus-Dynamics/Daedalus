@@ -24,22 +24,13 @@ pub mod to_value;
 pub mod typing;
 pub mod units;
 
-/// Cargo features of `daedalus-data` enabled in this build, in `Cargo.toml` declaration order.
+/// Cargo features of `daedalus-data` enabled in this build (comma-separated).
 ///
-/// Dynamic plugin loaders fold this into their build fingerprint so hosts and plugins built
-/// with different feature sets are rejected before any Rust type crosses the boundary.
-pub const ENABLED_FEATURES: &[&str] = &[
-    #[cfg(feature = "schema")]
-    "schema",
-    #[cfg(feature = "proto")]
-    "proto",
-    #[cfg(feature = "gpu")]
-    "gpu",
-    #[cfg(feature = "async")]
-    "async",
-    #[cfg(feature = "json")]
-    "json",
-];
+/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
+/// each feature, this feeds the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+/// This crate's `Cargo.toml`.
+pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 
 #[cfg(feature = "json")]
 pub mod json;

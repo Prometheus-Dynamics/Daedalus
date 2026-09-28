@@ -4,67 +4,94 @@
 //!
 //! - `target`, `pointer_width`: the compilation target.
 //! - `features.<crate>`: the enabled, boundary-relevant Cargo features of every Daedalus crate
-//!   whose types cross the plugin boundary (comma-separated, declaration order).
+//!   whose types cross the plugin boundary (comma-separated).
 //! - `features.hash`: a stable FNV-1a hash of all `features.*` segments.
 //! - `layout.<type>`: `size/align` of the Rust types `PluginRegistry` installation touches.
 //!
-//! Features that only change host-side execution (the engine, the executor worker pool,
-//! metrics collection, the dylib loader itself) are excluded, so a plugin built with just
-//! `plugins` loads into a host built with `engine-full,plugins,dylib-plugins`.
+//! Each crate classifies its features in the `[package.metadata.daedalus]` table of its
+//! `Cargo.toml` (`boundary-features` / `host-only-features`), read here through the crate's
+//! `CARGO_MANIFEST`. Only enabled boundary features enter the fingerprint, so a plugin built
+//! with just `dylib-plugins` loads into a host built with `engine-full,dylib-plugins`.
+//! `daedalus-transport` has no features and `daedalus-engine` never crosses the boundary.
 
 use std::fmt::Write as _;
 use std::mem::{align_of, size_of};
 use std::sync::OnceLock;
 
-/// Per-crate enabled feature lists that feed the fingerprint.
-fn crate_features() -> [(&'static str, &'static [&'static str]); 6] {
+/// `(name, ENABLED_FEATURES, CARGO_MANIFEST)` of every crate whose types cross the boundary.
+fn fingerprinted_crates() -> [(&'static str, &'static str, &'static str); 6] {
     [
-        ("daedalus", crate::ENABLED_FEATURES),
-        ("core", daedalus_core::ENABLED_FEATURES),
-        ("data", daedalus_data::ENABLED_FEATURES),
-        ("registry", daedalus_registry::ENABLED_FEATURES),
-        ("planner", daedalus_planner::ENABLED_FEATURES),
-        ("runtime", daedalus_runtime::ENABLED_FEATURES),
+        ("daedalus", crate::ENABLED_FEATURES, crate::CARGO_MANIFEST),
+        (
+            "core",
+            daedalus_core::ENABLED_FEATURES,
+            daedalus_core::CARGO_MANIFEST,
+        ),
+        (
+            "data",
+            daedalus_data::ENABLED_FEATURES,
+            daedalus_data::CARGO_MANIFEST,
+        ),
+        (
+            "registry",
+            daedalus_registry::ENABLED_FEATURES,
+            daedalus_registry::CARGO_MANIFEST,
+        ),
+        (
+            "planner",
+            daedalus_planner::ENABLED_FEATURES,
+            daedalus_planner::CARGO_MANIFEST,
+        ),
+        (
+            "runtime",
+            daedalus_runtime::ENABLED_FEATURES,
+            daedalus_runtime::CARGO_MANIFEST,
+        ),
     ]
 }
 
-/// Features that do not change any type crossing the plugin boundary.
-///
-/// They only affect how the host plans and executes graphs; plugins normally do not enable
-/// them. `daedalus-transport` has no features and `daedalus-engine` never crosses the boundary.
-pub const HOST_ONLY_FEATURES: &[(&str, &str)] = &[
-    ("daedalus", "engine"),
-    ("daedalus", "engine-full"),
-    ("daedalus", "embedded"),
-    ("daedalus", "executor-pool"),
-    ("daedalus", "metrics"),
-    ("daedalus", "gpu-engine"),
-    ("daedalus", "gpu"),
-    ("daedalus", "dylib-plugins"),
-    ("daedalus", "gpu-dmabuf"),
-    ("daedalus", "examples"),
-    ("daedalus", "styx-camera-example"),
-    ("runtime", "executor-pool"),
-    ("runtime", "lockfree-queues"),
-    ("runtime", "metrics"),
-    ("runtime", "snapshots"),
-];
-
-fn is_host_only(krate: &str, feature: &str) -> bool {
-    HOST_ONLY_FEATURES
-        .iter()
-        .any(|(c, f)| *c == krate && *f == feature)
+/// The string array `key` of the `[package.metadata.daedalus]` table in a `Cargo.toml`
+/// (single- or multi-line). Missing tables or keys yield an empty list.
+fn metadata_list<'a>(manifest: &'a str, key: &str) -> Vec<&'a str> {
+    let mut in_table = false;
+    let mut lines = manifest.lines();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_table = line == "[package.metadata.daedalus]";
+            continue;
+        }
+        let Some(mut rest) = line
+            .strip_prefix(key)
+            .filter(|_| in_table)
+            .and_then(|rest| rest.trim_start().strip_prefix('='))
+        else {
+            continue;
+        };
+        let mut values = Vec::new();
+        loop {
+            let (chunk, closed) = rest
+                .split_once(']')
+                .map_or((rest, false), |(c, _)| (c, true));
+            values.extend(chunk.split('"').skip(1).step_by(2));
+            match lines.next() {
+                Some(next) if !closed => rest = next,
+                _ => return values,
+            }
+        }
+    }
+    Vec::new()
 }
 
 /// Boundary-relevant enabled features per crate, in fingerprint order.
 pub fn boundary_features() -> Vec<(&'static str, Vec<&'static str>)> {
-    crate_features()
+    fingerprinted_crates()
         .into_iter()
-        .map(|(krate, features)| {
-            let kept = features
-                .iter()
-                .copied()
-                .filter(|feature| !is_host_only(krate, feature))
+        .map(|(krate, enabled, manifest)| {
+            let boundary = metadata_list(manifest, "boundary-features");
+            let kept = enabled
+                .split(',')
+                .filter(|feature| boundary.contains(feature))
                 .collect();
             (krate, kept)
         })
@@ -176,7 +203,7 @@ pub fn describe_fingerprint_mismatch(host: &str, plugin: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::collections::BTreeSet;
 
     #[test]
     fn fingerprint_is_deterministic_and_readable() {
@@ -213,7 +240,8 @@ mod tests {
                 .unwrap()
                 .1
         };
-        // This module only exists with `plugins`, which forwards to these crate features.
+        // This module only exists with `dylib-plugins`, which implies `plugins` and therefore
+        // these crate features.
         assert!(features("daedalus").contains(&"plugins"));
         assert!(features("registry").contains(&"plugin"));
         let runtime = features("runtime");
@@ -228,9 +256,12 @@ mod tests {
 
     #[test]
     fn host_only_features_are_excluded() {
-        for (krate, features) in boundary_features() {
+        for ((krate, features), (_, _, manifest)) in
+            boundary_features().into_iter().zip(fingerprinted_crates())
+        {
+            let host_only = metadata_list(manifest, "host-only-features");
             for feature in features {
-                assert!(!is_host_only(krate, feature), "{krate}/{feature} leaked");
+                assert!(!host_only.contains(&feature), "{krate}/{feature} leaked");
             }
         }
         let fingerprint = build_fingerprint();
@@ -261,52 +292,58 @@ mod tests {
         assert_eq!(describe_fingerprint_mismatch(host, host), "");
     }
 
-    /// Keeps each crate's hand-written `ENABLED_FEATURES` list in sync with its manifest.
     #[test]
-    fn enabled_feature_lists_cover_every_declared_feature() {
-        let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("facade lives under crates/");
-        for krate in ["daedalus", "core", "data", "registry", "planner", "runtime"] {
-            let dir = crates_dir.join(krate);
-            let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
-            let lib = std::fs::read_to_string(dir.join("src/lib.rs")).unwrap();
-            let declared = manifest_features(&manifest);
+    fn metadata_lists_parse_single_and_multi_line_arrays() {
+        let manifest = "[package]\nname = \"x\"\n\n[package.metadata.daedalus]\n\
+            boundary-features = [\"a\", \"b-c\"]\n\
+            host-only-features = [\n    \"d\",\n    \"e\",\n]\n\n\
+            [features]\nboundary-features = [\"ignored\"]\n";
+        assert_eq!(metadata_list(manifest, "boundary-features"), ["a", "b-c"]);
+        assert_eq!(metadata_list(manifest, "host-only-features"), ["d", "e"]);
+        assert!(metadata_list(manifest, "missing").is_empty());
+        assert!(metadata_list("[features]\na = []\n", "boundary-features").is_empty());
+    }
+
+    /// A new Cargo feature must be classified in its crate's `[package.metadata.daedalus]`,
+    /// otherwise it would silently stay out of the fingerprint.
+    #[test]
+    fn every_feature_of_every_fingerprinted_crate_is_classified() {
+        for (krate, _, manifest) in fingerprinted_crates() {
+            let declared: BTreeSet<&str> = manifest_features(manifest).collect();
+            let boundary = metadata_list(manifest, "boundary-features");
+            let host_only = metadata_list(manifest, "host-only-features");
             assert!(!declared.is_empty(), "{krate} declares no features");
-            for feature in declared {
-                let entry = format!("#[cfg(feature = \"{feature}\")]\n    \"{feature}\",");
+            for feature in &boundary {
                 assert!(
-                    lib.contains(&entry),
-                    "crates/{krate}/src/lib.rs ENABLED_FEATURES is missing `{feature}`"
+                    !host_only.contains(feature),
+                    "{krate}/{feature} is classified as both boundary and host-only"
                 );
             }
+            let classified: BTreeSet<&str> = boundary.into_iter().chain(host_only).collect();
+            assert_eq!(
+                classified, declared,
+                "crates/{krate}/Cargo.toml: `[package.metadata.daedalus]` must list every \
+                 feature in exactly one of `boundary-features` / `host-only-features`"
+            );
         }
     }
 
-    fn manifest_features(manifest: &str) -> Vec<String> {
+    /// Keys of the `[features]` table, except `default`.
+    fn manifest_features(manifest: &str) -> impl Iterator<Item = &str> {
         let mut in_features = false;
-        let mut out = Vec::new();
-        for line in manifest.lines() {
+        manifest.lines().filter_map(move |line| {
             if line.starts_with('[') {
                 in_features = line.trim() == "[features]";
-                continue;
+                return None;
             }
-            if !in_features {
-                continue;
-            }
-            let Some((key, _)) = line.split_once('=') else {
-                continue;
-            };
-            let key = key.trim();
-            let is_key = !key.is_empty()
-                && !line.starts_with(char::is_whitespace)
+            let key = line.split_once('=').filter(|_| in_features)?.0.trim();
+            let is_key = !line.starts_with(char::is_whitespace)
+                && !key.is_empty()
+                && key != "default"
                 && key
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-            if is_key && key != "default" {
-                out.push(key.to_string());
-            }
-        }
-        out
+            is_key.then_some(key)
+        })
     }
 }

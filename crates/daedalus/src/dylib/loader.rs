@@ -1,13 +1,31 @@
 use super::{
-    BOUNDARY_CONTRACTS_SYMBOL, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_INFO_SYMBOL,
-    PluginErrorSink, PluginInfo, REGISTER_SYMBOL, StrView,
+    InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
+    PluginInfo, PluginSchema, StrSink, StrView,
 };
 use crate::runtime::plugins::PluginRegistry;
+use daedalus_ffi_host::core::BackendKind;
 use libloading::Library;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+/// Why a plugin cannot use the Rust-ABI install path of this host (see the [module docs](super)).
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RustAbiMismatch {
+    #[error("plugin was built against Daedalus {found}, host uses Daedalus {expected}")]
+    DaedalusVersion { expected: String, found: String },
+    #[error("plugin was built with `{found}`, host was built with `{expected}`")]
+    Rustc { expected: String, found: String },
+    #[error("build fingerprint mismatch ({differences}); host `{expected}`, plugin `{found}`")]
+    BuildFingerprint {
+        expected: String,
+        found: String,
+        /// Human-readable list of the differing fingerprint segments.
+        differences: String,
+    },
+}
 
 /// Errors that can occur while loading or installing a dynamic plugin library.
 #[derive(Debug, Error)]
@@ -25,18 +43,14 @@ pub enum PluginLibraryError {
     AbiMismatch { expected: u32, found: u32 },
     #[error("plugin info field `{field}` is null or not valid UTF-8")]
     InvalidInfo { field: &'static str },
-    #[error("plugin was built against Daedalus {found}, host uses Daedalus {expected}")]
-    DaedalusVersionMismatch { expected: String, found: String },
-    #[error("plugin was built with `{found}`, host was built with `{expected}`")]
-    RustcVersionMismatch { expected: String, found: String },
-    #[error(
-        "plugin build fingerprint mismatch ({differences}); host `{expected}`, plugin `{found}`"
-    )]
-    BuildFingerprintMismatch {
-        expected: String,
-        found: String,
-        /// Human-readable list of the differing fingerprint segments.
-        differences: String,
+    #[error("plugin `{plugin}` did not provide a valid schema: {message}")]
+    Schema { plugin: String, message: String },
+    /// The plugin loaded and its schema is readable, but it cannot be installed into this host.
+    #[error("plugin `{plugin}` cannot be installed into this host: {mismatch}")]
+    Incompatible {
+        plugin: String,
+        #[source]
+        mismatch: RustAbiMismatch,
     },
     #[error("plugin failed to register boundary contracts: {message}")]
     BoundaryContractsFailed { message: String },
@@ -45,44 +59,44 @@ pub enum PluginLibraryError {
 }
 
 type AbiFn = unsafe extern "C" fn() -> u32;
-type InfoFn = unsafe extern "C" fn() -> PluginInfo;
-type InstallFn = unsafe extern "C" fn(*mut PluginRegistry, PluginErrorSink) -> bool;
+type DescriptorFn = unsafe extern "C" fn() -> PluginDescriptor;
 
 /// A loaded native Rust plugin library (built with [`export_plugin!`](crate::export_plugin)).
 ///
 /// The underlying library is leaked and never unloaded; see the [module docs](super).
 pub struct PluginLibrary {
     path: PathBuf,
-    info: PluginInfo,
-    register: InstallFn,
-    boundary_contracts: InstallFn,
+    descriptor: PluginDescriptor,
+    schema: PluginSchema,
+    rust_abi: Result<(), RustAbiMismatch>,
 }
 
 impl std::fmt::Debug for PluginLibrary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let info = &self.descriptor.info;
         f.debug_struct("PluginLibrary")
             .field("path", &self.path)
-            .field("plugin_name", &self.info.plugin_name.as_str())
-            .field("plugin_version", &self.info.plugin_version.as_str())
+            .field("plugin_name", &info.plugin_name.as_str())
+            .field("plugin_version", &info.plugin_version.as_str())
+            .field("rust_abi", &self.rust_abi)
             .finish()
     }
 }
 
 impl PluginLibrary {
-    /// Load a plugin library and verify it is compatible with this host.
+    /// Load a plugin library and read its descriptor and schema.
     ///
-    /// Checks, in order and using only C-safe calls: the ABI version, then the Daedalus
-    /// version, rustc version and build fingerprint reported by `daedalus_plugin_info`
-    /// (see [`check_plugin_info`]). Nothing is registered until
-    /// [`install_into`](Self::install_into) is called. The library stays loaded for the rest of
-    /// the process, even when loading fails after it was opened.
+    /// Uses only C-ABI calls: checks the ABI version, validates the [`PluginInfo`] strings, and
+    /// fetches and validates the plugin's [`PluginSchema`]. A plugin built with another
+    /// toolchain, Daedalus version or feature set still loads, so it can be inspected;
+    /// [`rust_abi`](Self::rust_abi) reports whether [`install_into`](Self::install_into) will
+    /// accept it. The library stays loaded for the rest of the process, even when loading fails
+    /// after it was opened.
     ///
     /// # Safety
     /// Loading a library runs its initialisers, and the exported symbols are trusted to have
     /// the signatures generated by `export_plugin!`. The caller must ensure `path` points to a
-    /// trusted Daedalus plugin built from the same dependency graph, toolchain and Daedalus
-    /// feature set as the host (the checks catch common mismatches but cannot prove layout
-    /// compatibility), and that host and plugin share the system allocator.
+    /// trusted Daedalus plugin.
     pub unsafe fn load(path: impl AsRef<Path>) -> Result<Self, PluginLibraryError> {
         let path = path.as_ref().to_path_buf();
         // Safety: forwarded from the caller.
@@ -94,40 +108,84 @@ impl PluginLibrary {
         // Never unload: registered handlers and static data point into the library.
         let library: &'static Library = Box::leak(Box::new(library));
 
-        // Safety (all symbol lookups/calls below): signatures are defined by `export_plugin!`,
-        // and the ABI version is checked before any symbol whose shape could have changed.
+        // Safety (symbol lookups and calls): signatures are defined by `export_plugin!`; the
+        // descriptor symbol is only called once the ABI version pins its shape.
         let abi: AbiFn = unsafe { symbol(library, &path, PLUGIN_ABI_SYMBOL) }?;
-        check_abi_version(unsafe { abi() })?;
-        let info_fn: InfoFn = unsafe { symbol(library, &path, PLUGIN_INFO_SYMBOL) }?;
-        let info = unsafe { info_fn() };
-        check_plugin_info(&info)?;
-        let boundary_contracts: InstallFn =
-            unsafe { symbol(library, &path, BOUNDARY_CONTRACTS_SYMBOL) }?;
-        let register: InstallFn = unsafe { symbol(library, &path, REGISTER_SYMBOL) }?;
+        check_abi_version(unsafe { abi() }, PLUGIN_ABI_VERSION)?;
+        let descriptor: DescriptorFn = unsafe { symbol(library, &path, PLUGIN_DESCRIPTOR_SYMBOL) }?;
+        // Safety: the descriptor comes from a plugin with a matching ABI version.
+        unsafe { Self::from_descriptor(path, descriptor()) }
+    }
+
+    /// # Safety
+    /// `descriptor` must come from a plugin with ABI version [`PLUGIN_ABI_VERSION`].
+    unsafe fn from_descriptor(
+        path: PathBuf,
+        descriptor: PluginDescriptor,
+    ) -> Result<Self, PluginLibraryError> {
+        let info = &descriptor.info;
+        let plugin = info_field(info.plugin_name, "plugin_name")?.to_string();
+        info_field(info.plugin_version, "plugin_version")?;
+        info_field(info.daedalus_version, "daedalus_version")?;
+        info_field(info.rustc_version, "rustc_version")?;
+        info_field(info.build_fingerprint, "build_fingerprint")?;
+
+        let schema_error = |message: String| PluginLibraryError::Schema {
+            plugin: plugin.clone(),
+            message,
+        };
+        // Safety: `schema` only exchanges borrowed bytes through the C-ABI sink.
+        let json = call(|sink| unsafe { (descriptor.schema)(sink) }).map_err(schema_error)?;
+        let schema: PluginSchema =
+            serde_json::from_str(&json).map_err(|err| schema_error(err.to_string()))?;
+        schema
+            .validate_backend_kind(BackendKind::Rust)
+            .map_err(|err| schema_error(err.to_string()))?;
         Ok(Self {
             path,
-            info,
-            register,
-            boundary_contracts,
+            rust_abi: check_rust_abi(info),
+            descriptor,
+            schema,
         })
     }
 
     /// Install the plugin (boundary contracts first, then the plugin itself) into `registry`.
+    ///
+    /// Fails with [`PluginLibraryError::Incompatible`] without calling into the plugin when
+    /// [`rust_abi`](Self::rust_abi) reports a mismatch.
     pub fn install_into(&self, registry: &mut PluginRegistry) -> Result<(), PluginLibraryError> {
-        call_install(self.boundary_contracts, registry)
+        if let Err(mismatch) = &self.rust_abi {
+            return Err(PluginLibraryError::Incompatible {
+                plugin: self.schema.plugin.name.clone(),
+                mismatch: mismatch.clone(),
+            });
+        }
+        let install = |entry: InstallFn, registry: &mut PluginRegistry| {
+            let registry = (registry as *mut PluginRegistry).cast::<c_void>();
+            // Safety: `check_rust_abi` accepted the plugin; the registry pointer is exclusive
+            // for the call and the sink outlives it.
+            call(|sink| unsafe { entry(registry, sink) })
+        };
+        install(self.descriptor.register_boundary_contracts, registry)
             .map_err(|message| PluginLibraryError::BoundaryContractsFailed { message })?;
-        call_install(self.register, registry)
+        install(self.descriptor.register, registry)
+            .map(drop)
             .map_err(|message| PluginLibraryError::RegisterFailed { message })
     }
 
-    /// Metadata reported by the plugin (already verified against the host in `load`).
+    /// Metadata reported by the plugin.
     pub fn info(&self) -> PluginInfo {
-        self.info
+        self.descriptor.info
     }
 
-    /// ABI version reported by the plugin (equal to [`PLUGIN_ABI_VERSION`] once loaded).
-    pub fn abi_version(&self) -> u32 {
-        self.info.abi_version
+    /// The plugin's manifest and node declarations, readable whatever built the plugin.
+    pub fn schema(&self) -> &PluginSchema {
+        &self.schema
+    }
+
+    /// Whether the plugin can be installed into this host through the Rust ABI.
+    pub fn rust_abi(&self) -> Result<(), &RustAbiMismatch> {
+        self.rust_abi.as_ref().copied()
     }
 
     /// Path the library was loaded from.
@@ -152,12 +210,12 @@ unsafe fn symbol<T: Copy>(
         })
 }
 
-unsafe extern "C" fn write_error(ctx: *mut c_void, ptr: *const u8, len: usize) {
+unsafe extern "C" fn write_string(ctx: *mut c_void, ptr: *const u8, len: usize) {
     if ctx.is_null() || ptr.is_null() {
         return;
     }
-    // Safety: `ctx` is the `Option<String>` owned by `call_install`, and the plugin passes a
-    // valid `(ptr, len)` byte slice for the duration of this call.
+    // Safety: `ctx` is the `Option<String>` owned by `call`, and the plugin passes a valid
+    // `(ptr, len)` byte slice for the duration of this call.
     let (slot, bytes) = unsafe {
         (
             &mut *ctx.cast::<Option<String>>(),
@@ -167,77 +225,62 @@ unsafe extern "C" fn write_error(ctx: *mut c_void, ptr: *const u8, len: usize) {
     *slot = Some(String::from_utf8_lossy(bytes).into_owned());
 }
 
-fn call_install(install: InstallFn, registry: &mut PluginRegistry) -> Result<(), String> {
-    let mut message: Option<String> = None;
-    let sink = PluginErrorSink {
-        ctx: (&mut message as *mut Option<String>).cast(),
-        write: Some(write_error),
+/// Call a plugin entry point with a sink; return the string it wrote (empty if none) on
+/// success, or its error message on failure.
+fn call(entry: impl FnOnce(StrSink) -> bool) -> Result<String, String> {
+    let mut written: Option<String> = None;
+    let sink = StrSink {
+        ctx: (&mut written as *mut Option<String>).cast(),
+        write: Some(write_string),
     };
-    // Safety: the plugin passed the compatibility checks in `load`; the registry pointer is
-    // exclusive for the call and `sink` outlives it.
-    let ok = unsafe { install(registry as *mut PluginRegistry, sink) };
-    if ok {
-        Ok(())
-    } else {
-        Err(message.unwrap_or_else(|| "plugin reported failure without a message".to_string()))
+    match (entry(sink), written) {
+        (true, written) => Ok(written.unwrap_or_default()),
+        (false, Some(message)) => Err(message),
+        (false, None) => Err("plugin reported failure without a message".to_string()),
     }
 }
 
-fn check_abi_version(found: u32) -> Result<(), PluginLibraryError> {
-    check_abi_version_against(found, PLUGIN_ABI_VERSION)
+fn info_field(view: StrView, field: &'static str) -> Result<&'static str, PluginLibraryError> {
+    view.as_str()
+        .ok_or(PluginLibraryError::InvalidInfo { field })
 }
 
-/// Verify plugin metadata against this host's Daedalus version, rustc version and build
-/// fingerprint.
-pub fn check_plugin_info(info: &PluginInfo) -> Result<(), PluginLibraryError> {
-    check_plugin_info_against(info, &PluginInfo::for_plugin("host", "host"))
-}
-
-fn check_plugin_info_against(
-    info: &PluginInfo,
-    host: &PluginInfo,
-) -> Result<(), PluginLibraryError> {
-    check_abi_version_against(info.abi_version, host.abi_version)?;
-    let field = |view: StrView, field: &'static str| {
-        view.as_str()
-            .ok_or(PluginLibraryError::InvalidInfo { field })
-    };
-    let pair = |f: fn(&PluginInfo) -> StrView, name: &'static str| {
-        Ok::<_, PluginLibraryError>((field(f(host), name)?, field(f(info), name)?))
-    };
-    let (expected, found) = pair(|i| i.daedalus_version, "daedalus_version")?;
-    if expected != found {
-        return Err(PluginLibraryError::DaedalusVersionMismatch {
-            expected: expected.into(),
-            found: found.into(),
-        });
-    }
-    let (expected, found) = pair(|i| i.rustc_version, "rustc_version")?;
-    if expected != found {
-        return Err(PluginLibraryError::RustcVersionMismatch {
-            expected: expected.into(),
-            found: found.into(),
-        });
-    }
-    let (expected, found) = pair(|i| i.build_fingerprint, "build_fingerprint")?;
-    if expected != found {
-        return Err(PluginLibraryError::BuildFingerprintMismatch {
-            differences: super::describe_fingerprint_mismatch(expected, found),
-            expected: expected.into(),
-            found: found.into(),
-        });
-    }
-    field(info.plugin_name, "plugin_name")?;
-    field(info.plugin_version, "plugin_version")?;
-    Ok(())
-}
-
-fn check_abi_version_against(found: u32, expected: u32) -> Result<(), PluginLibraryError> {
+fn check_abi_version(found: u32, expected: u32) -> Result<(), PluginLibraryError> {
     if found == expected {
         Ok(())
     } else {
         Err(PluginLibraryError::AbiMismatch { expected, found })
     }
+}
+
+/// Check whether a plugin with this metadata can be installed into this host through the Rust
+/// ABI: its Daedalus version, rustc version and build fingerprint must match the host's.
+pub fn check_rust_abi(info: &PluginInfo) -> Result<(), RustAbiMismatch> {
+    check_rust_abi_against(info, &PluginInfo::for_plugin("host", "host"))
+}
+
+fn check_rust_abi_against(info: &PluginInfo, host: &PluginInfo) -> Result<(), RustAbiMismatch> {
+    let pair = |f: fn(&PluginInfo) -> StrView| {
+        let text = |info: &PluginInfo| f(info).as_str().unwrap_or_default().to_string();
+        (text(host), text(info))
+    };
+    let (expected, found) = pair(|i| i.daedalus_version);
+    if expected != found {
+        return Err(RustAbiMismatch::DaedalusVersion { expected, found });
+    }
+    let (expected, found) = pair(|i| i.rustc_version);
+    if expected != found {
+        return Err(RustAbiMismatch::Rustc { expected, found });
+    }
+    let (expected, found) = pair(|i| i.build_fingerprint);
+    if expected != found {
+        return Err(RustAbiMismatch::BuildFingerprint {
+            differences: super::describe_fingerprint_mismatch(&expected, &found),
+            expected,
+            found,
+        });
+    }
+    Ok(())
 }
 
 /// Find plugin libraries (`.so`, `.dylib`, `.dll`) in `dirs`.
@@ -275,147 +318,4 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dylib::{RUSTC_VERSION, build_fingerprint};
-
-    fn host() -> PluginInfo {
-        PluginInfo::for_plugin("host", "0.0.0")
-    }
-
-    #[test]
-    fn matching_info_is_accepted() {
-        let info = PluginInfo::for_plugin("plugin", "1.2.3");
-        check_plugin_info(&info).unwrap();
-        check_plugin_info_against(&info, &host()).unwrap();
-    }
-
-    #[test]
-    fn abi_mismatch_is_rejected() {
-        let info = PluginInfo {
-            abi_version: PLUGIN_ABI_VERSION + 1,
-            ..host()
-        };
-        assert!(matches!(
-            check_plugin_info_against(&info, &host()),
-            Err(PluginLibraryError::AbiMismatch { expected, found })
-                if expected == PLUGIN_ABI_VERSION && found == PLUGIN_ABI_VERSION + 1
-        ));
-        assert!(matches!(
-            check_abi_version(3),
-            Err(PluginLibraryError::AbiMismatch { found: 3, .. })
-        ));
-    }
-
-    #[test]
-    fn daedalus_version_mismatch_is_rejected() {
-        let info = PluginInfo {
-            daedalus_version: StrView::from_static("0.0.1"),
-            ..host()
-        };
-        match check_plugin_info_against(&info, &host()) {
-            Err(PluginLibraryError::DaedalusVersionMismatch { expected, found }) => {
-                assert_eq!(expected, crate::version());
-                assert_eq!(found, "0.0.1");
-            }
-            other => panic!("unexpected result: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rustc_version_mismatch_is_rejected() {
-        let info = PluginInfo {
-            rustc_version: StrView::from_static("rustc 1.0.0 (a59aba2b1 2015-05-13)"),
-            ..host()
-        };
-        match check_plugin_info_against(&info, &host()) {
-            Err(PluginLibraryError::RustcVersionMismatch { expected, found }) => {
-                assert_eq!(expected, RUSTC_VERSION);
-                assert!(found.starts_with("rustc 1.0.0"));
-            }
-            other => panic!("unexpected result: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn build_fingerprint_mismatch_is_rejected() {
-        let plugin_fingerprint: &'static str = Box::leak(
-            build_fingerprint()
-                .replace("features.runtime=", "features.runtime=gpu,")
-                .into_boxed_str(),
-        );
-        let info = PluginInfo {
-            build_fingerprint: StrView::from_static(plugin_fingerprint),
-            ..host()
-        };
-        let err = check_plugin_info_against(&info, &host()).unwrap_err();
-        let message = err.to_string();
-        match err {
-            PluginLibraryError::BuildFingerprintMismatch {
-                expected,
-                found,
-                differences,
-            } => {
-                assert_eq!(expected, build_fingerprint());
-                assert_eq!(found, plugin_fingerprint);
-                assert!(
-                    differences.starts_with("features.runtime: host `")
-                        && differences.contains("plugin `gpu,"),
-                    "{differences}"
-                );
-                assert!(message.contains(&differences));
-            }
-            other => panic!("unexpected result: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn fingerprint_covers_layout_inputs() {
-        let fingerprint = build_fingerprint();
-        assert!(fingerprint.contains("features.runtime="));
-        assert!(fingerprint.contains(&format!(
-            "layout.plugin_registry={}/{}",
-            std::mem::size_of::<PluginRegistry>(),
-            std::mem::align_of::<PluginRegistry>()
-        )));
-        assert!(RUSTC_VERSION.starts_with("rustc "));
-    }
-
-    #[test]
-    fn missing_library_is_a_typed_error() {
-        let err = unsafe { PluginLibrary::load("/nonexistent/libdaedalus_missing_plugin.so") }
-            .unwrap_err();
-        assert!(matches!(err, PluginLibraryError::Load { .. }));
-    }
-
-    #[test]
-    fn discovery_sorts_and_dedups_by_file_name() {
-        let root =
-            std::env::temp_dir().join(format!("daedalus-dylib-discovery-{}", std::process::id()));
-        let first = root.join("first");
-        let second = root.join("second");
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-        for (dir, name) in [
-            (&first, "libb.so"),
-            (&first, "notes.txt"),
-            (&second, "libb.so"),
-            (&second, "liba.dylib"),
-            (&second, "c.dll"),
-        ] {
-            std::fs::write(dir.join(name), b"").unwrap();
-        }
-        let found =
-            discover_plugin_libraries([first.clone(), second.clone(), root.join("missing")])
-                .unwrap();
-        std::fs::remove_dir_all(&root).unwrap();
-        assert_eq!(
-            found,
-            vec![
-                second.join("c.dll"),
-                second.join("liba.dylib"),
-                first.join("libb.so"),
-            ]
-        );
-    }
-}
+mod tests;

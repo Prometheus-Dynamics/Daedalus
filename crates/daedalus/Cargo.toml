@@ -19,6 +19,34 @@ path = "src/lib.rs"
 name = "daedalus"
 doctest = false
 
+[package.metadata.daedalus]
+# Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
+# boundary features change types that cross the plugin boundary and must match between host
+# and plugin; host-only features only change host-side execution.
+boundary-features = [
+    "gpu-types",
+    "gpu-runtime",
+    "gpu-wgpu",
+    "gpu-async",
+    "gpu-mock",
+    "schema",
+    "proto",
+    "plugins",
+]
+host-only-features = [
+    "gpu-engine",
+    "gpu",
+    "gpu-dmabuf",
+    "dylib-plugins",
+    "examples",
+    "styx-camera-example",
+    "engine",
+    "executor-pool",
+    "metrics",
+    "engine-full",
+    "embedded",
+]
+
 [features]
 default = []
 gpu-types = ["dep:daedalus-gpu"]
@@ -43,9 +71,15 @@ gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
 schema = ["daedalus-data/schema", "daedalus-planner/schema"]
 proto = ["daedalus-data/proto", "daedalus-planner/proto"]
 plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nodes/plugins"]
-# Load native Rust plugin `cdylib`s at runtime (`PluginLibrary`). Plugin crates only need
-# `plugins` to use `export_plugin!`.
-dylib-plugins = ["plugins", "dep:libloading", "dep:thiserror"]
+# Native Rust plugin `cdylib`s: export them with `export_plugin!` and load them at runtime
+# with `PluginLibrary`. Both plugin crates and hosts enable it.
+dylib-plugins = [
+    "plugins",
+    "dep:daedalus-ffi-host",
+    "dep:libloading",
+    "dep:serde_json",
+    "dep:thiserror",
+]
 examples = []
 styx-camera-example = ["engine", "plugins", "dep:styx"]
 # Lean engine: planner + serial/scoped-thread executor, no Rayon worker pool, no metrics.
@@ -78,7 +112,9 @@ daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
 styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
 paste = { workspace = true }
+daedalus-ffi-host = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -123,4 +159,4 @@ required-features = ["dylib-plugins"]
 [[test]]
 name = "dylib_export_macro"
 path = "tests/dylib_export_macro.rs"
-required-features = ["plugins"]
+required-features = ["dylib-plugins"]

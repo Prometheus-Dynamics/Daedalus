@@ -13,18 +13,13 @@ mod metadata;
 mod passes;
 mod patch;
 
-/// Cargo features of `daedalus-planner` enabled in this build, in `Cargo.toml` declaration order.
+/// Cargo features of `daedalus-planner` enabled in this build (comma-separated).
 ///
-/// Dynamic plugin loaders fold this into their build fingerprint so hosts and plugins built
-/// with different feature sets are rejected before any Rust type crosses the boundary.
-pub const ENABLED_FEATURES: &[&str] = &[
-    #[cfg(feature = "gpu")]
-    "gpu",
-    #[cfg(feature = "proto")]
-    "proto",
-    #[cfg(feature = "schema")]
-    "schema",
-];
+/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
+/// each feature, this feeds the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+/// This crate's `Cargo.toml`.
+pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 
 pub use diagnostics::{
     Diagnostic, DiagnosticCode, DiagnosticSpan, DiagnosticsBundle, MissingGroup, MissingNode,
