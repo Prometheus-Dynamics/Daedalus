@@ -61,60 +61,24 @@ pub use host_bridge::{
     HostBridgeInstallError, host_port, install_default_host_bridge, install_host_bridge,
 };
 
-/// Native Rust plugins shipped as `cdylib`s: ABI types, `export_plugin!`, and (feature
-/// `dylib-plugins`) the `PluginLibrary` loader.
-#[cfg(feature = "plugins")]
-pub mod dylib;
-#[cfg(feature = "plugins")]
-pub use dylib::{
-    BOUNDARY_CONTRACTS_SYMBOL, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_INFO_SYMBOL,
-    PluginErrorSink, PluginInfo, REGISTER_SYMBOL, RUSTC_VERSION, StrView, build_fingerprint,
-};
+/// Native Rust plugins shipped as `cdylib`s: the stable descriptor, `export_plugin!`, and the
+/// `PluginLibrary` loader.
 #[cfg(feature = "dylib-plugins")]
-pub use dylib::{PluginLibrary, PluginLibraryError, check_plugin_info, discover_plugin_libraries};
+pub mod dylib;
+#[cfg(feature = "dylib-plugins")]
+pub use dylib::{
+    PLUGIN_ABI_VERSION, PluginDescriptor, PluginInfo, PluginLibrary, PluginLibraryError,
+    PluginSchema, RUSTC_VERSION, RustAbiMismatch, StrSink, StrView, build_fingerprint,
+    check_rust_abi, discover_plugin_libraries,
+};
 
-/// Cargo features of the `daedalus-rs` facade enabled in this build, in `Cargo.toml`
-/// declaration order. Layout-relevant entries feed the dynamic plugin build fingerprint.
-pub const ENABLED_FEATURES: &[&str] = &[
-    #[cfg(feature = "gpu-types")]
-    "gpu-types",
-    #[cfg(feature = "gpu-runtime")]
-    "gpu-runtime",
-    #[cfg(feature = "gpu-engine")]
-    "gpu-engine",
-    #[cfg(feature = "gpu")]
-    "gpu",
-    #[cfg(feature = "gpu-wgpu")]
-    "gpu-wgpu",
-    #[cfg(feature = "gpu-async")]
-    "gpu-async",
-    #[cfg(feature = "gpu-dmabuf")]
-    "gpu-dmabuf",
-    #[cfg(feature = "gpu-mock")]
-    "gpu-mock",
-    #[cfg(feature = "schema")]
-    "schema",
-    #[cfg(feature = "proto")]
-    "proto",
-    #[cfg(feature = "plugins")]
-    "plugins",
-    #[cfg(feature = "dylib-plugins")]
-    "dylib-plugins",
-    #[cfg(feature = "examples")]
-    "examples",
-    #[cfg(feature = "styx-camera-example")]
-    "styx-camera-example",
-    #[cfg(feature = "engine")]
-    "engine",
-    #[cfg(feature = "executor-pool")]
-    "executor-pool",
-    #[cfg(feature = "metrics")]
-    "metrics",
-    #[cfg(feature = "engine-full")]
-    "engine-full",
-    #[cfg(feature = "embedded")]
-    "embedded",
-];
+/// Cargo features of the `daedalus-rs` facade enabled in this build (comma-separated).
+///
+/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
+/// each feature, this feeds the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+/// This crate's `Cargo.toml`.
+pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 
 // Optional plugin crates are re-exported via features; no in-crate plugins live here.
 

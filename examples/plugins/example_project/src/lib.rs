@@ -86,7 +86,7 @@ declare_plugin!(
     }
 );
 
-// Export the plugin for dynamic loading when built as a `cdylib`
+// Export the plugin for dynamic loading when built as a `cdylib` with `--features dylib`
 // (`daedalus::PluginLibrary::load("libdaedalus_plugins_example_project.so")`).
-#[cfg(feature = "plugins")]
+#[cfg(feature = "dylib")]
 daedalus::export_plugin!(ExampleProjectPlugin);

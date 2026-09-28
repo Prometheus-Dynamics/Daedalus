@@ -26,26 +26,13 @@ pub mod stream;
 pub mod transport;
 pub use daedalus_transport as transport_types;
 
-/// Cargo features of `daedalus-runtime` enabled in this build, in `Cargo.toml` declaration order.
+/// Cargo features of `daedalus-runtime` enabled in this build (comma-separated).
 ///
-/// Dynamic plugin loaders fold this into their build fingerprint so hosts and plugins built
-/// with different feature sets are rejected before any Rust type crosses the boundary.
-pub const ENABLED_FEATURES: &[&str] = &[
-    #[cfg(feature = "gpu")]
-    "gpu",
-    #[cfg(feature = "gpu-mock")]
-    "gpu-mock",
-    #[cfg(feature = "executor-pool")]
-    "executor-pool",
-    #[cfg(feature = "lockfree-queues")]
-    "lockfree-queues",
-    #[cfg(feature = "metrics")]
-    "metrics",
-    #[cfg(feature = "snapshots")]
-    "snapshots",
-    #[cfg(feature = "plugins")]
-    "plugins",
-];
+/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
+/// each feature, this feeds the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+/// This crate's `Cargo.toml`.
+pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 
 /// Apply a plugin prefix to a node id without duplicating overlapping segments.
 ///
