@@ -13,8 +13,9 @@ use crate::{
 /// Deterministic mock backend for tests/CI.
 ///
 /// dmabuf imports are accepted without touching real memory: the descriptor is validated like a
-/// real backend would, recorded (see [`MockBackend::imported_frames`]), and its fds and keepalive
-/// are held by the returned handle until it is dropped.
+/// real backend would (NV12 imports as one sample-only [`GpuFormat::Nv12`] image), its acquire
+/// fence is waited for, the import is recorded (see [`MockBackend::imported_frames`]), and its fds
+/// and keepalive are held by the returned handle until it is dropped.
 pub struct MockBackend {
     adapter: GpuAdapterInfo,
     caps: GpuCapabilities,
@@ -39,6 +40,8 @@ pub struct MockImportRecord {
     pub planes: Vec<(u64, u64)>,
     pub label: Option<String>,
     pub has_keepalive: bool,
+    /// The import carried an acquire fence (and waited for it).
+    pub had_acquire_fence: bool,
 }
 
 impl MockBackend {
@@ -271,6 +274,8 @@ impl GpuBackend for MockBackend {
     }
 
     fn read_texture(&self, handle: &GpuImageHandle) -> Result<Vec<u8>, GpuError> {
+        // Multi-planar images are sample-only, as on wgpu.
+        crate::format_bytes_per_pixel(handle.format).ok_or(GpuError::Unsupported)?;
         let bytes = (handle.width as usize) * (handle.height as usize) * 4;
         self.record_download(bytes as u64);
         Ok(vec![0; bytes])
@@ -305,12 +310,18 @@ impl GpuBackend for MockBackend {
                 desc.width, desc.height, self.caps.max_texture_dimension
             )));
         }
+        desc.wait_acquire_fence()?;
+        let readback = if layout.is_multi_planar() {
+            GpuUsage::empty()
+        } else {
+            GpuUsage::DOWNLOAD
+        };
         let mut handle = GpuImageHandle::new(
             layout.format,
             desc.width,
             desc.height,
             GpuMemoryLocation::Gpu,
-            desc.usage | GpuUsage::DOWNLOAD,
+            desc.usage | readback,
         );
         if let Some(label) = &desc.label {
             handle.label = Some(label.clone());
@@ -325,6 +336,7 @@ impl GpuBackend for MockBackend {
             planes: desc.planes.iter().map(|p| (p.offset, p.stride)).collect(),
             label: desc.label.clone(),
             has_keepalive: desc.keepalive.is_some(),
+            had_acquire_fence: desc.acquire_fence.is_some(),
         };
         handle.drop_token = Some(std::sync::Arc::new(crate::external::ExternalImageToken {
             fds: desc.planes.into_iter().map(|p| p.fd).collect(),

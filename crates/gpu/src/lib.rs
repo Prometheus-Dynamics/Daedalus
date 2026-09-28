@@ -28,12 +28,15 @@ mod wgpu_backend;
 pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use convert::{Backing, Compute, DeviceBridge};
+#[cfg(target_os = "linux")]
+pub use external::{
+    DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, ExternalFrameDescriptor, ExternalPlane, ValidatedLayout,
+    export_dmabuf_fence,
+};
 pub use external::{
     DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalImportError,
     ExternalImportSupport, ExternalKeepalive,
 };
-#[cfg(target_os = "linux")]
-pub use external::{ExternalFrameDescriptor, ExternalPlane, ValidatedLayout};
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
 #[cfg(feature = "gpu-mock")]
 pub use mock::MockBackend;
@@ -47,7 +50,9 @@ pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu;
 #[cfg(feature = "gpu-wgpu")]
-pub use wgpu_backend::{WgpuBackend, WgpuStagingPoolConfig, WgpuStagingPoolStats};
+pub use wgpu_backend::{
+    WgpuBackend, WgpuStagingPoolConfig, WgpuStagingPoolStats, texture_plane_views,
+};
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
@@ -94,6 +99,9 @@ pub enum GpuFormat {
     Rg8Unorm,
     /// 8-bit BGRA in memory order (e.g. an imported `XRGB8888` camera frame).
     Bgra8Unorm,
+    /// Two-plane 4:2:0 YUV: a full-size 8-bit Y plane and a half-size interleaved 8-bit UV plane.
+    /// Only produced by dmabuf import; read back as the packed Y plane followed by the UV plane.
+    Nv12,
 }
 
 /// Per-format feature flags for planner/runtime decisions.
@@ -412,14 +420,49 @@ impl GpuContextHandle {
     }
 }
 
+/// Bytes per pixel of a single-plane format; `None` for multi-planar formats.
 pub fn format_bytes_per_pixel(format: GpuFormat) -> Option<u32> {
+    match format_planes(format) {
+        [plane] => Some(plane.bytes_per_texel),
+        _ => None,
+    }
+}
+
+/// Layout of one plane of a [`GpuFormat`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuPlaneFormat {
+    pub bytes_per_texel: u32,
+    /// Horizontal and vertical subsampling divisor relative to the image extent.
+    pub subsampling: u32,
+}
+
+impl GpuPlaneFormat {
+    const fn new(bytes_per_texel: u32, subsampling: u32) -> Self {
+        Self {
+            bytes_per_texel,
+            subsampling,
+        }
+    }
+
+    /// Extent of this plane for an image of `width`x`height`.
+    pub fn extent(self, width: u32, height: u32) -> (u32, u32) {
+        (width / self.subsampling, height / self.subsampling)
+    }
+}
+
+/// Planes of a format in memory order; single-plane formats have exactly one.
+pub fn format_planes(format: GpuFormat) -> &'static [GpuPlaneFormat] {
+    const fn one(bpp: u32) -> [GpuPlaneFormat; 1] {
+        [GpuPlaneFormat::new(bpp, 1)]
+    }
     match format {
-        GpuFormat::R8Unorm => Some(1),
-        GpuFormat::Rgba8Unorm => Some(4),
-        GpuFormat::Rgba16Float => Some(8),
-        GpuFormat::Depth24Stencil8 => Some(4),
-        GpuFormat::Rg8Unorm => Some(2),
-        GpuFormat::Bgra8Unorm => Some(4),
+        GpuFormat::R8Unorm => &const { one(1) },
+        GpuFormat::Rg8Unorm => &const { one(2) },
+        GpuFormat::Rgba8Unorm | GpuFormat::Bgra8Unorm | GpuFormat::Depth24Stencil8 => {
+            &const { one(4) }
+        }
+        GpuFormat::Rgba16Float => &const { one(8) },
+        GpuFormat::Nv12 => &const { [GpuPlaneFormat::new(1, 1), GpuPlaneFormat::new(2, 2)] },
     }
 }
 

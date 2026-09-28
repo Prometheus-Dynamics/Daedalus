@@ -38,6 +38,18 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `gpu-dmabuf` feature (daedalus-gpu and facade; implies `gpu-wgpu`) implements it on Vulkan via
   wgpu-hal, enabling `VK_EXT_image_drm_format_modifier` at device creation when available.
 - Added `GpuFormat::{Rg8Unorm, Bgra8Unorm}` (used by imported frames).
+- Added explicit sync to dmabuf import: `ExternalFrameDescriptor::{with_acquire_fence,
+  with_acquire_timeout, with_implicit_fence, wait_acquire_fence}` take a `sync_file` acquire fence
+  that every backend waits for before the GPU touches the memory (CPU-side `poll`, bounded by
+  `acquire_timeout`, default `DEFAULT_ACQUIRE_TIMEOUT` = 1 s, failing with the new
+  `ExternalImportError::FenceTimeout`); `export_dmabuf_fence` + `DmabufAccess` export a dmabuf's
+  implicit fences via `DMA_BUF_IOCTL_EXPORT_SYNC_FILE`.
+- Added NV12 dmabuf import as one image: `DrmFourcc::NV12` maps to the new `GpuFormat::Nv12`
+  (two planes in one dmabuf, or disjoint planes in two), imported as a sample-only
+  `wgpu::TextureFormat::NV12` texture when the device has `TEXTURE_FORMAT_NV12` (now requested
+  under `gpu-dmabuf`), otherwise `UnsupportedFormat` so callers fall back to per-plane `R8`/`GR88`
+  imports. `texture_plane_views` returns the per-plane views; `format_planes`/`GpuPlaneFormat`
+  describe plane layouts.
 
 - Added facade features `executor-pool`, `metrics`, `engine-full` (`engine` + `executor-pool`
   + `metrics`, the recommended application preset) and `embedded` (`engine` + `plugins`, no

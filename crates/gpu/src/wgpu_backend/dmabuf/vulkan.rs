@@ -6,36 +6,60 @@
 //!    `VK_EXT_external_memory_dma_buf` whenever the adapter supports them, but not
 //!    `VK_EXT_image_drm_format_modifier`. [`request_device`] opens the hal device with
 //!    `open_with_callback` to add that extension and wraps it with
-//!    `Adapter::create_device_from_hal`. Any failure falls back to plain `request_device`.
-//! 2. Import: a `VkImage` is created with `VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT` and an
-//!    explicit plane layout (offset/stride from the descriptor), the dmabuf fd is imported with
-//!    `VkImportMemoryFdInfoKHR` into a dedicated allocation, bound, and handed to wgpu via
+//!    `Adapter::create_device_from_hal`. It also requests `TEXTURE_FORMAT_NV12` when the adapter
+//!    has it. Any failure falls back to plain `request_device`.
+//! 2. Import: the acquire fence (if any) is waited for, then a `VkImage` is created with
+//!    `VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT` and an explicit per-plane layout (offset/stride
+//!    from the descriptor). Each dmabuf is imported with `VkImportMemoryFdInfoKHR`: one dedicated
+//!    allocation when all planes share a dmabuf, or one allocation per memory plane
+//!    (`VK_IMAGE_CREATE_DISJOINT_BIT`) when they do not. The image is handed to wgpu via
 //!    `vulkan::Device::texture_from_raw` + `Device::create_texture_from_hal`.
 //! 3. Lifetime: the hal texture gets a drop callback that destroys the image, frees the imported
-//!    memory (which drops the kernel's dmabuf reference taken by the import) and only then drops
+//!    memory (which drops the kernel's dmabuf references taken by the import) and only then drops
 //!    the caller's keepalive. wgpu-core runs it once the texture is dropped and no in-flight
 //!    submission uses it.
 //!
-//! # Known gaps
+//! # NV12
 //!
-//! - No queue-family-foreign ownership transfer or explicit dmabuf fence sync: wgpu tracks the
-//!   imported image as a fresh texture and its first barrier transitions from
-//!   `VK_IMAGE_LAYOUT_UNDEFINED`. That is content-preserving on drivers without compression
-//!   metadata for the imported modifier (v3dv, RADV/ANV with `LINEAR`), and callers must hand
-//!   over frames whose producer writes have completed (V4L2/libcamera dequeued buffers are).
-//! - Single memory plane only; multi-planar YUV is imported plane by plane.
+//! NV12 imports as one `wgpu::TextureFormat::NV12` texture (`G8_B8R8_2PLANE_420_UNORM`, created
+//! `MUTABLE_FORMAT | EXTENDED_USAGE` like wgpu's own NV12 textures). Shaders read it through
+//! per-plane views ([`texture_plane_views`](crate::texture_plane_views): Y as `R8Unorm`, UV as
+//! `Rg8Unorm`); YCbCr-to-RGB conversion is up to the shader, no `VkSamplerYcbcrConversion` is
+//! used. wgpu 29 allows only sampling for NV12 (no copies, storage or render targets), so such
+//! images cannot be read back with `read_texture`. Devices without `TEXTURE_FORMAT_NV12` get
+//! `UnsupportedFormat`; import the planes separately (`R8` + `GR88`) there.
+//!
+//! # Synchronization
+//!
+//! - **Acquire fence: CPU wait.** The descriptor's `sync_file` is polled for `POLLIN` before the
+//!   image is created. A GPU-side wait would import it with `VK_KHR_external_semaphore_fd`
+//!   (`SYNC_FD`) and make the next submission wait on the semaphore, but wgpu-hal 29 cannot express
+//!   that: `vulkan::Queue` only exposes `add_signal_semaphore`, and its submit waits solely on its
+//!   own relay and swapchain semaphores. A separate raw `vkQueueSubmit` waiting on the semaphore
+//!   would not order wgpu's later submissions either: a semaphore wait only gates its own batch,
+//!   and wgpu's first barrier on the fresh texture has `srcStageMask = TOP_OF_PIPE` (from
+//!   `UNDEFINED`), so no dependency chain reaches it. The cost is that the import call blocks until
+//!   the producer finishes (typically well under a frame) instead of overlapping with GPU work.
+//! - **No queue-family-foreign acquire.** wgpu tracks the texture from `TextureUses::UNINITIALIZED`,
+//!   so its first barrier is `UNDEFINED -> X` on its own queue family and cannot be replaced by a
+//!   `VK_QUEUE_FAMILY_FOREIGN_EXT -> family` acquire. A foreign acquire in a separate submission
+//!   would be followed by that `UNDEFINED` transition anyway. Transitioning from `UNDEFINED` keeps
+//!   contents on drivers without compression metadata for the imported modifier (v3dv, RADV/ANV for
+//!   `LINEAR`); modifiers with compression/aux planes are not safe to import this way.
+//! - No release: the producer must not reuse the buffer while the keepalive is held.
 
-use std::io::{Seek, SeekFrom};
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 
 use ash::{ext, khr, vk};
 use wgpu::hal::api::Vulkan;
 use wgpu::hal::vulkan as hal_vk;
 
+use super::image::{ImportRequest, create_imported_texture};
 use crate::{
-    DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalFrameDescriptor, ExternalImportError,
-    ExternalImportSupport, ExternalKeepalive, GpuImageHandle, GpuUsage, WgpuBackend,
+    DRM_FORMAT_MOD_LINEAR, ExternalFrameDescriptor, ExternalImportError, ExternalImportSupport,
+    ExternalPlane, GpuFormat, GpuImageHandle, GpuUsage, WgpuBackend,
 };
 
 /// Device extensions an import needs. The first two are enabled by wgpu-hal itself when present.
@@ -45,18 +69,18 @@ const REQUIRED_EXTENSIONS: [&std::ffi::CStr; 3] = [
     ext::image_drm_format_modifier::NAME,
 ];
 
-const DMA_BUF: vk::ExternalMemoryHandleTypeFlags = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
-
 /// Request the wgpu device, adding `VK_EXT_image_drm_format_modifier` on Vulkan adapters that
-/// support the full dmabuf import extension set.
+/// support the full dmabuf import extension set, and `TEXTURE_FORMAT_NV12` when available.
 pub(in crate::wgpu_backend) async fn request_device(
     adapter: &wgpu::Adapter,
     desc: &wgpu::DeviceDescriptor<'_>,
 ) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
-    if let Some(open) = open_with_modifier_extension(adapter, desc) {
+    let mut desc = desc.clone();
+    desc.required_features |= adapter.features() & wgpu::Features::TEXTURE_FORMAT_NV12;
+    if let Some(open) = open_with_modifier_extension(adapter, &desc) {
         // SAFETY: `open` was created from this adapter's hal adapter with `desc`'s features and
         // limits; the callback only appended an extension the adapter reports as supported.
-        match unsafe { adapter.create_device_from_hal::<Vulkan>(open, desc) } {
+        match unsafe { adapter.create_device_from_hal::<Vulkan>(open, &desc) } {
             Ok(pair) => return Ok(pair),
             Err(err) => tracing::warn!(
                 target: "daedalus_gpu::dmabuf",
@@ -65,7 +89,7 @@ pub(in crate::wgpu_backend) async fn request_device(
             ),
         }
     }
-    adapter.request_device(desc).await
+    adapter.request_device(&desc).await
 }
 
 fn open_with_modifier_extension(
@@ -147,33 +171,6 @@ pub(in crate::wgpu_backend) fn probe_support(device: &wgpu::Device) -> ExternalI
     ExternalImportSupport::Supported
 }
 
-/// Everything the Vulkan side needs, resolved from the descriptor.
-struct ImportRequest {
-    width: u32,
-    height: u32,
-    fourcc: DrmFourcc,
-    modifier: u64,
-    offset: u64,
-    stride: u64,
-    dmabuf_len: u64,
-    wgpu_format: wgpu::TextureFormat,
-    vk_format: vk::Format,
-    vk_usage: vk::ImageUsageFlags,
-    format_features: vk::FormatFeatureFlags,
-    hal_usage: wgpu::wgt::TextureUses,
-    label: Option<String>,
-}
-
-impl ImportRequest {
-    fn format_error(&self, reason: impl Into<String>) -> ExternalImportError {
-        ExternalImportError::UnsupportedFormat {
-            fourcc: self.fourcc,
-            modifier: Some(self.modifier),
-            reason: reason.into(),
-        }
-    }
-}
-
 pub(in crate::wgpu_backend) fn import(
     backend: &WgpuBackend,
     desc: ExternalFrameDescriptor,
@@ -185,6 +182,24 @@ pub(in crate::wgpu_backend) fn import(
             "extent {}x{} exceeds max texture dimension {max}",
             desc.width, desc.height
         )));
+    }
+    let format_error = |reason: String| ExternalImportError::UnsupportedFormat {
+        fourcc: desc.fourcc,
+        modifier: desc.modifier,
+        reason,
+    };
+    let planar = layout.is_multi_planar();
+    if planar
+        && !backend
+            .device
+            .features()
+            .contains(wgpu::Features::TEXTURE_FORMAT_NV12)
+    {
+        return Err(format_error(
+            "the device lacks wgpu TEXTURE_FORMAT_NV12 (sampleable G8_B8R8_2PLANE_420_UNORM); \
+             import the Y plane as R8 and the UV plane as GR88 instead"
+                .into(),
+        ));
     }
     let features = backend
         .caps
@@ -198,17 +213,16 @@ pub(in crate::wgpu_backend) fn import(
     if (wants(GpuUsage::STORAGE) && !format_ok(|f| f.storage))
         || (wants(GpuUsage::RENDER_TARGET) && !format_ok(|f| f.renderable))
     {
-        return Err(ExternalImportError::UnsupportedFormat {
-            fourcc: desc.fourcc,
-            modifier: desc.modifier,
-            reason: format!(
-                "{:?} does not allow the requested usage {:?}",
-                layout.format, desc.usage
-            ),
-        });
+        return Err(format_error(format!(
+            "{:?} does not allow the requested usage {:?}",
+            layout.format, desc.usage
+        )));
     }
-    let usage = UsageSet::from_gpu(desc.usage);
+    let usage = UsageSet::new(desc.usage, planar);
     let wgpu_format = crate::wgpu_backend::map_format(layout.format);
+    let vk_format = map_vk_format(layout.format)
+        .ok_or_else(|| format_error(format!("no Vulkan format for {:?}", layout.format)))?;
+    desc.wait_acquire_fence()?;
 
     let ExternalFrameDescriptor {
         width,
@@ -220,24 +234,18 @@ pub(in crate::wgpu_backend) fn import(
         keepalive,
         ..
     } = desc;
-    let plane = planes
-        .into_iter()
-        .next()
-        .ok_or_else(|| ExternalImportError::invalid("no planes"))?;
-    let (fd, dmabuf_len) = dmabuf_len(plane.fd)?;
-    if dmabuf_len < layout.min_len {
-        return Err(ExternalImportError::invalid(format!(
-            "dmabuf is {dmabuf_len} bytes but the plane layout needs {}",
-            layout.min_len
-        )));
-    }
+    let plane_layouts = planes
+        .iter()
+        .map(|plane| vk::SubresourceLayout {
+            offset: plane.offset,
+            size: 0,
+            row_pitch: plane.stride,
+            array_pitch: 0,
+            depth_pitch: 0,
+        })
+        .collect();
+    let (fds, disjoint) = plane_memory(planes, &layout.min_len)?;
 
-    let vk_format =
-        map_vk_format(wgpu_format).ok_or_else(|| ExternalImportError::UnsupportedFormat {
-            fourcc,
-            modifier,
-            reason: format!("no Vulkan format for {wgpu_format:?}"),
-        })?;
     let hal_texture = {
         // SAFETY: the hal device outlives this block; resources created through it are handed to
         // wgpu below, which owns them from then on.
@@ -251,9 +259,8 @@ pub(in crate::wgpu_backend) fn import(
             height,
             fourcc,
             modifier: modifier.unwrap_or(DRM_FORMAT_MOD_LINEAR),
-            offset: plane.offset,
-            stride: plane.stride,
-            dmabuf_len,
+            plane_layouts,
+            disjoint,
             wgpu_format,
             vk_format,
             vk_usage: usage.vk,
@@ -262,7 +269,7 @@ pub(in crate::wgpu_backend) fn import(
             label: label.clone(),
         };
         // SAFETY: `hal_dev` is the device the wgpu device wraps; see `create_imported_texture`.
-        unsafe { create_imported_texture(&hal_dev, &request, fd, keepalive)? }
+        unsafe { create_imported_texture(&hal_dev, &request, fds, keepalive)? }
     };
 
     let wgpu_desc = wgpu::TextureDescriptor {
@@ -292,6 +299,64 @@ pub(in crate::wgpu_backend) fn import(
     Ok(handle)
 }
 
+/// The dmabufs backing the planes with their sizes: one when every plane lives in the same dmabuf
+/// (same or `dup`ed fd), otherwise one per plane (`disjoint`).
+fn plane_memory(
+    planes: Vec<ExternalPlane>,
+    min_len: &[u64],
+) -> Result<(Vec<(OwnedFd, u64)>, bool), ExternalImportError> {
+    let identity = |plane: &ExternalPlane| {
+        std::fs::File::from(plane.fd.try_clone()?)
+            .metadata()
+            .map(|m| (m.dev(), m.ino()))
+    };
+    let ids = planes
+        .iter()
+        .map(identity)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| ExternalImportError::invalid(format!("cannot stat plane fd: {err}")))?;
+    let shared = ids.windows(2).all(|w| w[0] == w[1]);
+    let groups: Vec<(OwnedFd, u64)> = if shared {
+        let need = min_len.iter().copied().max().unwrap_or(0);
+        let fd = planes.into_iter().next().map(|p| p.fd);
+        fd.map(|fd| (fd, need)).into_iter().collect()
+    } else {
+        planes
+            .into_iter()
+            .map(|p| p.fd)
+            .zip(min_len.iter().copied())
+            .collect()
+    };
+    let fds = groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, (fd, need))| {
+            let len = dmabuf_len(&fd)?;
+            if len < need {
+                return Err(ExternalImportError::invalid(format!(
+                    "dmabuf {index} is {len} bytes but the plane layout needs {need}"
+                )));
+            }
+            Ok((fd, len))
+        })
+        .collect::<Result<_, _>>()?;
+    Ok((fds, !shared))
+}
+
+/// Size of a dmabuf (`lseek(SEEK_END)`, which dmabufs support); the offset is reset to 0.
+fn dmabuf_len(fd: &OwnedFd) -> Result<u64, ExternalImportError> {
+    // SAFETY: plain lseek calls on a valid descriptor.
+    let len = unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_END) };
+    // SAFETY: as above.
+    if len < 0 || unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_SET) } < 0 {
+        return Err(ExternalImportError::invalid(format!(
+            "cannot determine dmabuf size (lseek): {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(len as u64)
+}
+
 /// Usage flags expressed for every layer that needs them.
 struct UsageSet {
     wgpu: wgpu::TextureUsages,
@@ -301,18 +366,26 @@ struct UsageSet {
 }
 
 impl UsageSet {
-    fn from_gpu(usage: GpuUsage) -> Self {
+    /// Imported frames are always sampleable; single-plane ones are also copy sources (wgpu 29
+    /// only samples multi-planar textures).
+    fn new(usage: GpuUsage, planar: bool) -> Self {
         use vk::FormatFeatureFlags as F;
         use vk::ImageUsageFlags as V;
         use wgpu::TextureUsages as W;
         use wgpu::wgt::TextureUses as H;
-        // Imported frames are always sampleable and readable back.
         let mut set = Self {
-            wgpu: W::TEXTURE_BINDING | W::COPY_SRC,
-            hal: H::RESOURCE | H::COPY_SRC,
-            vk: V::SAMPLED | V::TRANSFER_SRC,
-            format_features: F::SAMPLED_IMAGE | F::TRANSFER_SRC,
+            wgpu: W::TEXTURE_BINDING,
+            hal: H::RESOURCE,
+            vk: V::SAMPLED,
+            format_features: F::SAMPLED_IMAGE,
         };
+        if planar {
+            return set;
+        }
+        set.wgpu |= W::COPY_SRC;
+        set.hal |= H::COPY_SRC;
+        set.vk |= V::TRANSFER_SRC;
+        set.format_features |= F::TRANSFER_SRC;
         if usage.contains(GpuUsage::UPLOAD) {
             set.wgpu |= W::COPY_DST;
             set.hal |= H::COPY_DST;
@@ -335,287 +408,14 @@ impl UsageSet {
     }
 }
 
-fn map_vk_format(format: wgpu::TextureFormat) -> Option<vk::Format> {
+/// Vulkan format of the importable formats (those a `DrmFourcc` maps to).
+fn map_vk_format(format: GpuFormat) -> Option<vk::Format> {
     Some(match format {
-        wgpu::TextureFormat::R8Unorm => vk::Format::R8_UNORM,
-        wgpu::TextureFormat::Rg8Unorm => vk::Format::R8G8_UNORM,
-        wgpu::TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
-        wgpu::TextureFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
-        _ => return None,
+        GpuFormat::R8Unorm => vk::Format::R8_UNORM,
+        GpuFormat::Rg8Unorm => vk::Format::R8G8_UNORM,
+        GpuFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
+        GpuFormat::Bgra8Unorm => vk::Format::B8G8R8A8_UNORM,
+        GpuFormat::Nv12 => vk::Format::G8_B8R8_2PLANE_420_UNORM,
+        GpuFormat::Rgba16Float | GpuFormat::Depth24Stencil8 => return None,
     })
-}
-
-/// Size of the dmabuf (`lseek(SEEK_END)`, which dmabufs support), returning the fd unchanged.
-fn dmabuf_len(fd: OwnedFd) -> Result<(OwnedFd, u64), ExternalImportError> {
-    let mut file = std::fs::File::from(fd);
-    let len = file
-        .seek(SeekFrom::End(0))
-        .and_then(|len| file.seek(SeekFrom::Start(0)).map(|_| len))
-        .map_err(|err| {
-            ExternalImportError::invalid(format!("cannot determine dmabuf size (lseek): {err}"))
-        })?;
-    Ok((OwnedFd::from(file), len))
-}
-
-/// Create a `VkImage` over the dmabuf and wrap it as a wgpu-hal texture.
-///
-/// # Safety
-///
-/// `hal_dev` must be the hal device behind the wgpu device the texture will be registered with.
-/// On success, ownership of `fd` has moved into the Vulkan allocation and `keepalive` into the
-/// texture's drop callback.
-unsafe fn create_imported_texture(
-    hal_dev: &hal_vk::Device,
-    req: &ImportRequest,
-    fd: OwnedFd,
-    keepalive: Option<ExternalKeepalive>,
-) -> Result<hal_vk::Texture, ExternalImportError> {
-    let device = hal_dev.raw_device();
-    let instance = hal_dev.shared_instance().raw_instance();
-    let phys = hal_dev.raw_physical_device();
-
-    // SAFETY: `phys` belongs to `instance`; queries only.
-    unsafe {
-        check_modifier(instance, phys, req)?;
-        check_image_format(instance, phys, req)?;
-    }
-
-    let fd_api = khr::external_memory_fd::Device::new(instance, device);
-    let mut fd_props = vk::MemoryFdPropertiesKHR::default();
-    // SAFETY: `fd` is a valid open descriptor for the duration of the call.
-    unsafe { fd_api.get_memory_fd_properties(DMA_BUF, fd.as_raw_fd(), &mut fd_props) }.map_err(
-        |err| ExternalImportError::ImportFailed {
-            reason: format!("fd is not an importable dmabuf (vkGetMemoryFdPropertiesKHR: {err})"),
-        },
-    )?;
-
-    let plane_layouts = [vk::SubresourceLayout {
-        offset: req.offset,
-        size: 0,
-        row_pitch: req.stride,
-        array_pitch: 0,
-        depth_pitch: 0,
-    }];
-    let mut explicit = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::default()
-        .drm_format_modifier(req.modifier)
-        .plane_layouts(&plane_layouts);
-    let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(DMA_BUF);
-    let image_info = vk::ImageCreateInfo::default()
-        .image_type(vk::ImageType::TYPE_2D)
-        .format(req.vk_format)
-        .extent(vk::Extent3D {
-            width: req.width,
-            height: req.height,
-            depth: 1,
-        })
-        .mip_levels(1)
-        .array_layers(1)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-        .usage(req.vk_usage)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .push_next(&mut external)
-        .push_next(&mut explicit);
-    // SAFETY: valid create info; the image is destroyed on every error path below.
-    let image = unsafe { device.create_image(&image_info, None) }.map_err(|err| {
-        req.format_error(format!("vkCreateImage rejected the plane layout: {err}"))
-    })?;
-    let destroy_image = || {
-        // SAFETY: `image` was created above and is not referenced by anything else yet.
-        unsafe { device.destroy_image(image, None) }
-    };
-
-    // SAFETY: `image` is a valid image of `device`.
-    let reqs = unsafe { device.get_image_memory_requirements(image) };
-    let type_bits = reqs.memory_type_bits & fd_props.memory_type_bits;
-    if type_bits == 0 {
-        destroy_image();
-        return Err(ExternalImportError::ImportFailed {
-            reason: format!(
-                "no memory type compatible with both the image (0x{:x}) and the dmabuf (0x{:x})",
-                reqs.memory_type_bits, fd_props.memory_type_bits
-            ),
-        });
-    }
-    if reqs.size > req.dmabuf_len {
-        destroy_image();
-        return Err(ExternalImportError::invalid(format!(
-            "driver needs {} bytes for this image but the dmabuf has {}",
-            reqs.size, req.dmabuf_len
-        )));
-    }
-
-    let raw_fd = fd.into_raw_fd();
-    let mut import = vk::ImportMemoryFdInfoKHR::default()
-        .handle_type(DMA_BUF)
-        .fd(raw_fd);
-    let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
-    let alloc_info = vk::MemoryAllocateInfo::default()
-        .allocation_size(reqs.size)
-        .memory_type_index(type_bits.trailing_zeros())
-        .push_next(&mut import)
-        .push_next(&mut dedicated);
-    // SAFETY: on success Vulkan owns `raw_fd`; on failure it does not, so we close it.
-    let memory = match unsafe { device.allocate_memory(&alloc_info, None) } {
-        Ok(memory) => memory,
-        Err(err) => {
-            // SAFETY: Vulkan did not take ownership of `raw_fd` on failure.
-            drop(unsafe { OwnedFd::from_raw_fd(raw_fd) });
-            destroy_image();
-            return Err(ExternalImportError::ImportFailed {
-                reason: format!("vkAllocateMemory (dmabuf import) failed: {err}"),
-            });
-        }
-    };
-    // SAFETY: dedicated allocation for `image`, offset 0 (the plane offset is in the layout).
-    if let Err(err) = unsafe { device.bind_image_memory(image, memory, 0) } {
-        // SAFETY: neither handle is referenced elsewhere yet.
-        unsafe { device.free_memory(memory, None) };
-        destroy_image();
-        return Err(ExternalImportError::ImportFailed {
-            reason: format!("vkBindImageMemory failed: {err}"),
-        });
-    }
-
-    let owner = device.clone();
-    let drop_callback: wgpu::hal::DropCallback = Box::new(move || {
-        // SAFETY: wgpu-hal calls this exactly once, from `destroy_texture`, after wgpu-core has
-        // retired every submission using the texture. Nothing else references these handles.
-        unsafe {
-            owner.destroy_image(image, None);
-            owner.free_memory(memory, None);
-        }
-        // The producer may recycle its buffer only now.
-        drop(keepalive);
-    });
-    let hal_desc = wgpu::hal::TextureDescriptor {
-        label: req.label.as_deref(),
-        size: wgpu::Extent3d {
-            width: req.width,
-            height: req.height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: req.wgpu_format,
-        usage: req.hal_usage,
-        memory_flags: wgpu::hal::MemoryFlags::empty(),
-        view_formats: Vec::new(),
-    };
-    // SAFETY: `image` was created to match `hal_desc`; with a drop callback wgpu-hal does not
-    // destroy the image, and `TextureMemory::External` stops it from freeing `memory`; both are
-    // released by the callback.
-    Ok(unsafe {
-        hal_dev.texture_from_raw(
-            image,
-            &hal_desc,
-            Some(drop_callback),
-            hal_vk::TextureMemory::External,
-        )
-    })
-}
-
-/// Check that the device advertises the modifier for this format with the needed features.
-///
-/// # Safety
-///
-/// `phys` must belong to `instance`.
-unsafe fn check_modifier(
-    instance: &ash::Instance,
-    phys: vk::PhysicalDevice,
-    req: &ImportRequest,
-) -> Result<(), ExternalImportError> {
-    let mut count_list = vk::DrmFormatModifierPropertiesListEXT::default();
-    let mut props = vk::FormatProperties2::default().push_next(&mut count_list);
-    // SAFETY: valid physical device and out-structure chain.
-    unsafe { instance.get_physical_device_format_properties2(phys, req.vk_format, &mut props) };
-    let count = count_list.drm_format_modifier_count as usize;
-    let mut modifiers = vec![vk::DrmFormatModifierPropertiesEXT::default(); count];
-    let mut list = vk::DrmFormatModifierPropertiesListEXT::default()
-        .drm_format_modifier_properties(&mut modifiers);
-    let mut props = vk::FormatProperties2::default().push_next(&mut list);
-    // SAFETY: as above; `modifiers` has room for `count` entries.
-    unsafe { instance.get_physical_device_format_properties2(phys, req.vk_format, &mut props) };
-    let written = list.drm_format_modifier_count as usize;
-    modifiers.truncate(written);
-
-    let Some(entry) = modifiers
-        .iter()
-        .find(|m| m.drm_format_modifier == req.modifier)
-    else {
-        let known: Vec<String> = modifiers
-            .iter()
-            .map(|m| format!("0x{:x}", m.drm_format_modifier))
-            .collect();
-        return Err(req.format_error(format!(
-            "modifier not advertised for {:?}; device supports [{}]",
-            req.vk_format,
-            known.join(", ")
-        )));
-    };
-    if entry.drm_format_modifier_plane_count != 1 {
-        return Err(req.format_error(format!(
-            "modifier needs {} memory planes; only single-plane imports are implemented",
-            entry.drm_format_modifier_plane_count
-        )));
-    }
-    if !entry
-        .drm_format_modifier_tiling_features
-        .contains(req.format_features)
-    {
-        return Err(req.format_error(format!(
-            "modifier supports {:?}, import needs {:?}",
-            entry.drm_format_modifier_tiling_features, req.format_features
-        )));
-    }
-    Ok(())
-}
-
-/// Check that an image with this format/modifier/usage can be imported from a dmabuf.
-///
-/// # Safety
-///
-/// `phys` must belong to `instance`.
-unsafe fn check_image_format(
-    instance: &ash::Instance,
-    phys: vk::PhysicalDevice,
-    req: &ImportRequest,
-) -> Result<(), ExternalImportError> {
-    let mut external_info =
-        vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(DMA_BUF);
-    let mut modifier_info = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::default()
-        .drm_format_modifier(req.modifier)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE);
-    let info = vk::PhysicalDeviceImageFormatInfo2::default()
-        .format(req.vk_format)
-        .ty(vk::ImageType::TYPE_2D)
-        .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
-        .usage(req.vk_usage)
-        .push_next(&mut external_info)
-        .push_next(&mut modifier_info);
-    let mut external_props = vk::ExternalImageFormatProperties::default();
-    let mut props = vk::ImageFormatProperties2::default().push_next(&mut external_props);
-    // SAFETY: valid physical device and structure chains.
-    unsafe { instance.get_physical_device_image_format_properties2(phys, &info, &mut props) }
-        .map_err(|err| {
-            req.format_error(format!(
-                "vkGetPhysicalDeviceImageFormatProperties2 rejected the import: {err}"
-            ))
-        })?;
-    let max_extent = props.image_format_properties.max_extent;
-    let memory_features = external_props
-        .external_memory_properties
-        .external_memory_features;
-    if req.width > max_extent.width || req.height > max_extent.height {
-        return Err(req.format_error(format!(
-            "extent {}x{} exceeds {}x{} for this modifier",
-            req.width, req.height, max_extent.width, max_extent.height
-        )));
-    }
-    if !memory_features.contains(vk::ExternalMemoryFeatureFlags::IMPORTABLE) {
-        return Err(req.format_error("dmabuf memory is not importable for this image"));
-    }
-    Ok(())
 }
