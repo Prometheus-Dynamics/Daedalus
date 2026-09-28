@@ -145,9 +145,63 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     /// Async variant of [`HostGraph::drive_blocking`], usable from any executor.
     ///
-    /// Waiting never blocks an executor thread. Graph ticks run inline on the polling task, so on a
-    /// multi-threaded runtime prefer a dedicated task (or `drive_blocking` on a blocking thread)
-    /// for CPU-heavy graphs.
+    ///
+    /// # Driving from an async runtime
+    ///
+    /// Waiting never blocks an executor thread, but each graph tick runs inline on the task that
+    /// polls this future. On tokio (or any work-stealing runtime) a CPU-heavy tick would stall that
+    /// worker thread. The recommended pattern is to run [`HostGraph::drive_blocking`] on a blocking
+    /// thread and keep a cloned [`HostGraphStopHandle`] plus a cloned
+    /// [`HostBridgeHandle`](daedalus_runtime::host_bridge::HostBridgeHandle) on the async side:
+    ///
+    /// ```ignore
+    /// // Requires tokio in the host application (daedalus-engine does not depend on it).
+    /// let stop = graph.stop_handle();
+    /// let host = graph.host().clone(); // feed inputs from async tasks
+    /// let driver = tokio::task::spawn_blocking({
+    ///     let stop = stop.clone();
+    ///     move || {
+    ///         graph.drive_blocking(&stop, |graph, _turn| {
+    ///             for value in graph.drain_owned::<i64>("out")? {
+    ///                 println!("out = {value}");
+    ///             }
+    ///             Ok(())
+    ///         })
+    ///     }
+    /// });
+    /// host.push("in", 41i64);
+    /// // ... later, from any task or thread:
+    /// stop.stop(); // sets the flag and wakes the waiting drive loop
+    /// let exit = driver.await??; // JoinError, then EngineError
+    /// ```
+    ///
+    /// The same shape with a plain thread (compiled as a doctest):
+    ///
+    /// ```no_run
+    /// use daedalus_engine::{EngineError, HostGraph, HostGraphDriveExit};
+    /// use daedalus_runtime::executor::NodeHandler;
+    ///
+    /// fn run<H>(mut graph: HostGraph<H>) -> Result<HostGraphDriveExit, EngineError>
+    /// where
+    ///     H: NodeHandler + Send + Sync + 'static,
+    ///     HostGraph<H>: Send,
+    /// {
+    ///     let stop = graph.stop_handle();
+    ///     let host = graph.host().clone();
+    ///     let driver = std::thread::spawn({
+    ///         let stop = stop.clone();
+    ///         move || {
+    ///             graph.drive_blocking(&stop, |graph, _turn| {
+    ///                 let _outputs = graph.drain_payloads("out");
+    ///                 Ok(())
+    ///             })
+    ///         }
+    ///     });
+    ///     host.push("in", 41i64);
+    ///     stop.stop();
+    ///     driver.join().expect("drive thread panicked")
+    /// }
+    /// ```
     pub async fn drive<F>(
         &mut self,
         stop: &HostGraphStopHandle,

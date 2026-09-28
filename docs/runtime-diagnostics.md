@@ -92,9 +92,9 @@ For streaming host IO, inspect:
 - `StreamGraph::diagnostics()` for state, worker state, pending inbound/outbound counts, current execution elapsed time, last error, and last telemetry summary.
 - `StreamGraph::host_stats()` for accepted, replaced, dropped, delivered, and closed counters.
 - `StreamGraph::host_config()` for active host bridge pressure/freshness policies.
-- `StreamGraph::host_events()` for retained feed/drop/deliver events.
+- `StreamGraph::host_events()` for retained feed/drop/deliver events (empty unless event recording is enabled).
 
-Keep `HostBridgeConfig::event_limit` bounded in long-running hosts. Use `event_recording = false` when event snapshots are not needed.
+Host bridge event recording is off by default. Enable it (`HostBridgeConfig::with_event_recording(true)`, `EngineConfig::with_host_event_recording(true)`, or `DAEDALUS_HOST_EVENT_RECORDING=1`) while debugging dropped or missing payloads, and keep `HostBridgeConfig::event_limit` bounded in long-running hosts. Stats and pressure warnings on the `daedalus_runtime::host_bridge` tracing target do not depend on it.
 
 ## Stream Workers
 

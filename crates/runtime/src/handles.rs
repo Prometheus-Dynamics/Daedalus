@@ -61,6 +61,13 @@ macro_rules! define_text_id {
             }
         }
 
+        /// Cheap clone (reference-count bump); lets `&id` satisfy `impl Into<Id>` parameters.
+        impl From<&$name> for $name {
+            fn from(value: &$name) -> Self {
+                value.clone()
+            }
+        }
+
         impl From<String> for $name {
             fn from(value: String) -> Self {
                 Self(value.into())

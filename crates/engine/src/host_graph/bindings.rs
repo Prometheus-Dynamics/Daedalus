@@ -23,10 +23,8 @@ where
     T: Send + Sync + 'static,
 {
     pub fn push(&self, value: T) -> FeedOutcome {
-        self.host.feed_payload_ref(
-            self.port.as_str(),
-            Payload::owned(self.type_key.clone(), value),
-        )
+        self.host
+            .feed_payload(&self.port, Payload::owned(self.type_key.clone(), value))
     }
 
     pub fn port(&self) -> &str {
@@ -41,7 +39,7 @@ pub struct HostGraphPayloadInput {
 
 impl HostGraphPayloadInput {
     pub fn push(&self, payload: Payload) -> FeedOutcome {
-        self.host.feed_payload_ref(self.port.as_str(), payload)
+        self.host.feed_payload(&self.port, payload)
     }
 
     pub fn port(&self) -> &str {
@@ -60,7 +58,7 @@ where
     T: Send + Sync + 'static,
 {
     pub fn try_take(&self) -> Result<Option<T>, Box<Payload>> {
-        self.host.try_pop_owned::<T>(self.port.as_str())
+        self.host.try_pop_owned::<T>(&self.port)
     }
 
     pub fn port(&self) -> &str {
@@ -75,7 +73,7 @@ pub struct HostGraphPayloadOutput {
 
 impl HostGraphPayloadOutput {
     pub fn try_take(&self) -> Option<Payload> {
-        self.host.try_pop_payload(self.port.as_str())
+        self.host.try_pop_payload(&self.port)
     }
 
     pub fn port(&self) -> &str {
@@ -91,14 +89,14 @@ pub struct HostGraphLane<I> {
 
 impl HostGraphSubscription {
     pub fn try_recv_payload(&self) -> Option<Payload> {
-        self.host.try_pop_payload(self.port.as_str())
+        self.host.try_pop_payload(&self.port)
     }
 
     pub fn try_recv<T>(&self) -> Option<T>
     where
         T: Clone + Send + Sync + 'static,
     {
-        self.host.try_pop(self.port.as_str())
+        self.host.try_pop(&self.port)
     }
 }
 

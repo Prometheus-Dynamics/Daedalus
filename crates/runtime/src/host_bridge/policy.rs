@@ -4,9 +4,8 @@ use daedalus_transport::{
     DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, Payload, PressurePolicy,
 };
 
-use crate::handles::PortId;
-
-use super::{HostBridgeBuffers, HostBridgePayload};
+use super::HostBridgePayload;
+use super::ports::FreshnessMarks;
 
 pub(super) fn apply_host_pressure(
     policy: &PressurePolicy,
@@ -128,8 +127,7 @@ pub(super) fn apply_host_pressure(
 }
 
 pub(super) fn freshness_drop_reason(
-    guard: &mut HostBridgeBuffers,
-    port: &str,
+    marks: &mut FreshnessMarks,
     payload: &Payload,
     freshness: &FreshnessPolicy,
 ) -> Option<DropReason> {
@@ -140,7 +138,7 @@ pub(super) fn freshness_drop_reason(
         }
         FreshnessPolicy::LatestBySequence => {
             let sequence = payload.lineage().sequence?;
-            let latest = guard.latest_sequence.entry(PortId::from(port)).or_insert(0);
+            let latest = marks.latest_sequence.get_or_insert(0);
             if sequence < *latest {
                 Some(DropReason::MaxLag)
             } else {
@@ -150,10 +148,7 @@ pub(super) fn freshness_drop_reason(
         }
         FreshnessPolicy::LatestByTimestamp => {
             let timestamp = payload.lineage().source_timestamp?;
-            let latest = guard
-                .latest_timestamp
-                .entry(PortId::from(port))
-                .or_insert(0);
+            let latest = marks.latest_timestamp.get_or_insert(0);
             if timestamp < *latest {
                 Some(DropReason::MaxAge)
             } else {
@@ -163,10 +158,7 @@ pub(super) fn freshness_drop_reason(
         }
         FreshnessPolicy::MaxLag { frames } => {
             let sequence = payload.lineage().sequence?;
-            let latest = guard
-                .latest_sequence
-                .entry(PortId::from(port))
-                .or_insert(sequence);
+            let latest = marks.latest_sequence.get_or_insert(sequence);
             if sequence > *latest {
                 *latest = sequence;
                 return None;

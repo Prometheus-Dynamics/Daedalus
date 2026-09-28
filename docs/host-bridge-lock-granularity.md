@@ -6,14 +6,14 @@ This note records the release review of host bridge shared state in `crates/runt
 
 `HostBridgeShared` uses one `Mutex<HostBridgeBuffers>` plus one `Condvar`. The locked state currently includes:
 
-- inbound queues
-- outbound queues
-- default and per-port input policies
-- default and per-port output policies
-- freshness tracking
-- closed flags
+- one `PortDirection` per direction (inbound, outbound), each holding the direction's default
+  policies and a `HashMap<PortId, PortState>`; a `PortState` bundles the port's queue (a single
+  slot for replace-style capacity-one policies, otherwise a FIFO), policy overrides, freshness
+  watermarks, and close flag, so a push does one map lookup
+- the bridge-wide closed flag
 - stats
-- retained diagnostic events
+- retained diagnostic events (off by default)
+- inbound waiter bookkeeping (wake epoch and async wakers)
 
 This is simple and correct for the current host bridge contract. The lock is not held across node handler execution, and stream workers take the executor out of the shared `StreamGraph` before running nodes.
 

@@ -13,6 +13,7 @@ use daedalus_transport::{
 #[test]
 fn host_bridge_latest_only_replaces_inbound_payloads() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle
         .set_input_policy(
@@ -86,6 +87,7 @@ fn host_bridge_accepts_typed_aliases_and_ports() {
 #[test]
 fn host_bridge_event_limit_retains_recent_events() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle.set_event_limit(Some(2));
 
@@ -110,6 +112,7 @@ fn host_bridge_event_limit_retains_recent_events() {
 #[test]
 fn host_bridge_event_recording_can_be_disabled_or_unbounded() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
 
     handle.set_event_recording(false);
@@ -204,6 +207,7 @@ fn host_bridge_config_updates_existing_and_future_handles() {
 #[test]
 fn host_bridge_default_bounds_hold_under_long_running_pressure() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     manager.set_event_limit(Some(32));
     let handle = manager.ensure_handle("host");
 
@@ -223,6 +227,7 @@ fn host_bridge_multi_producer_input_stress_stays_bounded() {
     const PER_PRODUCER: usize = 500;
 
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     manager.set_event_limit(Some(64));
     let handle = manager.ensure_handle("host");
     let start = Arc::new(Barrier::new(PRODUCERS));
@@ -349,6 +354,7 @@ fn host_bridge_default_output_policy_is_bounded_and_overridable() {
 #[test]
 fn host_bridge_bounded_drop_newest_reports_drop() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle
         .set_input_policy(
@@ -396,6 +402,7 @@ fn host_bridge_bounded_drop_newest_reports_drop() {
 #[test]
 fn host_bridge_bounded_backpressure_reports_full_queue() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle
         .set_input_policy(
@@ -600,4 +607,18 @@ fn host_bridge_arc_payloads_stay_zero_copy() {
     let inbound = manager.take_inbound("host");
     let extracted = inbound[0].payload.get_arc::<Vec<u8>>().unwrap();
     assert!(Arc::ptr_eq(&data, &extracted));
+}
+
+#[test]
+fn host_bridge_event_recording_is_off_by_default() {
+    assert!(!HostBridgeConfig::default().event_recording);
+    let manager = HostBridgeManager::new();
+    let handle = manager.ensure_handle("host");
+    handle.feed_payload("input", Payload::owned("demo:u32", 1u32));
+    manager.push_outbound("host", "output", Payload::owned("demo:u32", 2u32));
+    assert!(handle.try_pop_payload("output").is_some());
+    assert!(handle.events().is_empty());
+    assert!(!handle.config_snapshot().event_recording);
+    assert_eq!(handle.stats().inbound_accepted, 1);
+    assert_eq!(handle.stats().outbound_delivered, 1);
 }

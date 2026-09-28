@@ -114,9 +114,9 @@ pub use handles::{
     CapabilityId, FeatureFlag, HostAlias, NodeAlias, NodeHandle, NodeHandleId, PortHandle, PortId,
 };
 pub use host_bridge::{
-    DEFAULT_HOST_BRIDGE_EVENT_LIMIT, HOST_BRIDGE_META_KEY, HostBridgeConfig, HostBridgeHandle,
-    HostBridgeManager, InboundWait, InboundWaiter, PayloadInspection, PayloadSummary,
-    bridge_handler, inspect_payload,
+    DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING, HOST_BRIDGE_META_KEY,
+    HostBridgeConfig, HostBridgeHandle, HostBridgeManager, InboundWait, InboundWaiter,
+    PayloadInspection, PayloadSummary, bridge_handler, inspect_payload,
 };
 pub use io::{DEFAULT_OUTPUT_PORT, NodeIo, TypedInputResolution, TypedInputResolutionKind};
 pub use plan::{
