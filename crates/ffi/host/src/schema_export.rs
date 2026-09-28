@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use daedalus_data::model::TypeExpr;
+use daedalus_data::json::to_plain_json;
+use daedalus_data::model::{TypeExpr, Value};
 use daedalus_ffi_core::{
     BackendKind, NodeSchema, PluginSchema, PluginSchemaInfo, SCHEMA_VERSION, WirePort,
 };
@@ -70,16 +71,6 @@ pub fn plugin_schema_from_manifest(
         schema_nodes.push(node_schema_from_decl(node));
     }
 
-    let mut dependencies = plugin.dependencies.clone();
-    dependencies.sort();
-    dependencies.dedup();
-    let mut required_host_capabilities = plugin.required_host_capabilities.clone();
-    required_host_capabilities.sort();
-    required_host_capabilities.dedup();
-    let mut feature_flags = plugin.feature_flags.clone();
-    feature_flags.sort();
-    feature_flags.dedup();
-
     let mut schema = PluginSchema {
         schema_version: SCHEMA_VERSION,
         plugin: PluginSchemaInfo {
@@ -88,9 +79,9 @@ pub fn plugin_schema_from_manifest(
             description: None,
             metadata: plugin_metadata(plugin),
         },
-        dependencies,
-        required_host_capabilities,
-        feature_flags,
+        dependencies: plugin.dependencies.clone(),
+        required_host_capabilities: plugin.required_host_capabilities.clone(),
+        feature_flags: plugin.feature_flags.clone(),
         boundary_contracts: plugin.boundary_contracts.clone(),
         nodes: schema_nodes,
     };
@@ -126,10 +117,7 @@ fn wire_port_from_decl(port: &PortDecl) -> WirePort {
         residency: port.residency,
         layout: port.layout.clone(),
         source: port.source.clone(),
-        const_value: port
-            .const_value_json
-            .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok()),
+        const_value: port.const_value_json.as_deref().map(plain_json),
     }
 }
 
@@ -161,12 +149,19 @@ fn plugin_metadata(plugin: &PluginManifest) -> BTreeMap<String, serde_json::Valu
 fn metadata_json(input: &BTreeMap<String, String>) -> BTreeMap<String, serde_json::Value> {
     input
         .iter()
-        .map(|(key, value)| {
-            let value = serde_json::from_str(value)
-                .unwrap_or_else(|_| serde_json::Value::String(value.clone()));
-            (key.clone(), value)
-        })
+        .map(|(key, json)| (key.clone(), plain_json(json)))
         .collect()
+}
+
+/// Re-encode a registry JSON string (a serialized [`Value`]) as the plain JSON that schema
+/// packages carry, so exported metadata and const values install back unchanged. Strings that
+/// are not a serialized `Value` pass through as plain JSON, or as a JSON string if unparsable.
+fn plain_json(json: &str) -> serde_json::Value {
+    match serde_json::from_str::<Value>(json) {
+        Ok(value) => to_plain_json(&value),
+        Err(_) => serde_json::from_str(json)
+            .unwrap_or_else(|_| serde_json::Value::String(json.to_owned())),
+    }
 }
 
 fn insert_string_array<'a, T>(
@@ -268,7 +263,7 @@ mod tests {
         );
         assert_eq!(
             schema.nodes[0].metadata.get("category"),
-            Some(&serde_json::json!({"type": "String", "value": "math"}))
+            Some(&serde_json::json!("math"))
         );
         assert_eq!(schema.required_host_capabilities, vec!["camera"]);
         assert_eq!(schema.boundary_contracts, vec![contract]);
@@ -276,6 +271,59 @@ mod tests {
 
         let json = export_registry_plugin_schema_json(&registry, "demo.plugin").expect("json");
         assert!(json.contains("\"demo.plugin\""));
+    }
+
+    #[test]
+    fn exported_schema_installs_back_with_identical_metadata_and_const_values() {
+        let key = TypeKey::new("demo.scalar");
+        let mut registry = CapabilityRegistry::new();
+        registry
+            .register_plugin(PluginManifest::new("demo.plugin").provided_node("demo:add"))
+            .expect("register plugin");
+        registry
+            .register_node(
+                NodeDecl::new("demo:add")
+                    .input(
+                        PortDecl::new("a", key.clone())
+                            .schema(TypeExpr::scalar(ValueType::String))
+                            .const_value(Value::String("seed".into())),
+                    )
+                    .output(
+                        PortDecl::new("out", key)
+                            .schema(TypeExpr::scalar(ValueType::Float))
+                            .const_value(Value::Float(1.5)),
+                    )
+                    .metadata("category", Value::String("math".into()))
+                    .metadata("weight", Value::Int(3))
+                    .metadata(
+                        "tags",
+                        Value::List(vec![Value::String("fast".into()), Value::Bool(true)]),
+                    ),
+            )
+            .expect("register node");
+
+        let schema = export_registry_plugin_schema(&registry, "demo.plugin").expect("export");
+        let mut installed = CapabilityRegistry::new();
+        crate::install_schema(&mut installed, &schema).expect("install exported schema");
+
+        let id = daedalus_registry::ids::NodeId::new("demo:add");
+        let original = registry.node_decl(&id).expect("original node");
+        let round_trip = installed.node_decl(&id).expect("installed node");
+        for (key, json) in &original.metadata_json {
+            assert_eq!(
+                round_trip.metadata_json.get(key),
+                Some(json),
+                "metadata {key}"
+            );
+        }
+        assert_eq!(
+            round_trip.inputs[0].const_value_json,
+            original.inputs[0].const_value_json
+        );
+        assert_eq!(
+            round_trip.outputs[0].const_value_json,
+            original.outputs[0].const_value_json
+        );
     }
 
     #[test]

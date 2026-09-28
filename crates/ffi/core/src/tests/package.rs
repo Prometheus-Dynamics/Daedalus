@@ -2,64 +2,29 @@ use super::*;
 
 #[test]
 fn plugin_schema_stays_separate_from_backend_config() {
-    let schema = PluginSchema {
-        schema_version: SCHEMA_VERSION,
-        plugin: PluginSchemaInfo {
-            name: "demo".into(),
-            version: Some("0.1.0".into()),
-            description: Some("demo plugin".into()),
-            metadata: BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes: vec![NodeSchema {
-            id: "demo.blur".into(),
-            backend: BackendKind::Python,
-            entrypoint: "blur".into(),
+    let image = WirePort::new("image", TypeExpr::opaque("image"));
+    let mut schema = PluginSchema::new(
+        "demo",
+        Some("0.1.0".into()),
+        vec![NodeSchema {
             label: Some("Blur".into()),
             stateful: true,
-            feature_flags: Vec::new(),
-            inputs: vec![WirePort {
-                name: "image".into(),
-                ty: TypeExpr::opaque("image"),
-                type_key: None,
-                optional: false,
-                access: AccessMode::Read,
-                residency: None,
-                layout: None,
-                source: None,
-                const_value: None,
-            }],
-            outputs: vec![WirePort {
-                name: "image".into(),
-                ty: TypeExpr::opaque("image"),
-                type_key: None,
-                optional: false,
-                access: AccessMode::Read,
-                residency: None,
-                layout: None,
-                source: None,
-                const_value: None,
-            }],
-            metadata: BTreeMap::new(),
+            ..NodeSchema::new(
+                "demo.blur",
+                BackendKind::Python,
+                "blur",
+                vec![image.clone()],
+                vec![image],
+            )
         }],
-    };
+    );
+    schema.plugin.description = Some("demo plugin".into());
 
     let backend = BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some("plugin".into()),
-        entry_class: None,
-        entry_symbol: Some("blur".into()),
-        executable: Some("python".into()),
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: Some("examples/plugins/demo".into()),
         env: BTreeMap::from([(String::from("PYTHONUNBUFFERED"), String::from("1"))]),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Python, "python", "blur")
+            .with_entry_module("plugin")
+            .with_working_dir("examples/plugins/demo")
     };
 
     let schema_json = serde_json::to_value(&schema).expect("serialize schema");
@@ -74,42 +39,18 @@ fn plugin_schema_stays_separate_from_backend_config() {
 
 #[test]
 fn plugin_schema_validation_rejects_duplicate_nodes_and_ports() {
-    let duplicated_port = WirePort {
-        name: "value".into(),
-        ty: TypeExpr::Scalar(daedalus_data::model::ValueType::Int),
-        type_key: None,
-        optional: false,
-        access: AccessMode::Read,
-        residency: None,
-        layout: None,
-        source: None,
-        const_value: None,
-    };
-    let node = NodeSchema {
-        id: "demo.node".into(),
-        backend: BackendKind::Python,
-        entrypoint: "run".into(),
-        label: None,
-        stateful: false,
-        feature_flags: Vec::new(),
-        inputs: vec![duplicated_port.clone(), duplicated_port],
-        outputs: Vec::new(),
-        metadata: BTreeMap::new(),
-    };
-    let schema = PluginSchema {
-        schema_version: SCHEMA_VERSION,
-        plugin: PluginSchemaInfo {
-            name: "demo".into(),
-            version: None,
-            description: None,
-            metadata: BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes: vec![node],
-    };
+    let duplicated_port = WirePort::new(
+        "value",
+        TypeExpr::Scalar(daedalus_data::model::ValueType::Int),
+    );
+    let node = NodeSchema::new(
+        "demo.node",
+        BackendKind::Python,
+        "run",
+        vec![duplicated_port.clone(), duplicated_port],
+        Vec::new(),
+    );
+    let schema = PluginSchema::new("demo", None, vec![node]);
 
     assert!(matches!(
         schema.validate(),
@@ -122,28 +63,8 @@ fn plugin_schema_validation_rejects_duplicate_nodes_and_ports() {
 
     let duplicate_nodes = PluginSchema {
         nodes: vec![
-            NodeSchema {
-                id: "demo.node".into(),
-                backend: BackendKind::Python,
-                entrypoint: "run".into(),
-                label: None,
-                stateful: false,
-                feature_flags: Vec::new(),
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                metadata: BTreeMap::new(),
-            },
-            NodeSchema {
-                id: "demo.node".into(),
-                backend: BackendKind::Node,
-                entrypoint: "run".into(),
-                label: None,
-                stateful: false,
-                feature_flags: Vec::new(),
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                metadata: BTreeMap::new(),
-            },
+            NodeSchema::new("demo.node", BackendKind::Python, "run", vec![], vec![]),
+            NodeSchema::new("demo.node", BackendKind::Node, "run", vec![], vec![]),
         ],
         ..schema
     };
@@ -156,20 +77,8 @@ fn plugin_schema_validation_rejects_duplicate_nodes_and_ports() {
 
 #[test]
 fn backend_validation_enforces_language_entrypoints() {
-    let backend = BackendConfig {
-        backend: BackendKind::Java,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: None,
-        entry_class: Some("demo.Nodes".into()),
-        entry_symbol: Some("add".into()),
-        executable: Some("java".into()),
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    };
+    let backend = BackendConfig::persistent_worker(BackendKind::Java, "java", "add")
+        .with_entry_class("demo.Nodes");
 
     assert!(matches!(
         backend.validate_for_node("demo:add"),
@@ -182,40 +91,18 @@ fn backend_validation_enforces_language_entrypoints() {
 
 #[test]
 fn package_validation_matches_schema_nodes_to_backends() {
-    let schema = PluginSchema {
-        schema_version: SCHEMA_VERSION,
-        plugin: PluginSchemaInfo {
-            name: "demo".into(),
-            version: None,
-            description: None,
-            metadata: BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes: vec![NodeSchema {
-            id: "demo.add".into(),
-            backend: BackendKind::Python,
-            entrypoint: "add".into(),
-            label: None,
-            stateful: false,
-            feature_flags: Vec::new(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            metadata: BTreeMap::new(),
-        }],
-    };
-    let package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: Some(schema),
-        backends: BTreeMap::new(),
-        artifacts: Vec::new(),
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
-    };
+    let schema = PluginSchema::new(
+        "demo",
+        None,
+        vec![NodeSchema::new(
+            "demo.add",
+            BackendKind::Python,
+            "add",
+            vec![],
+            vec![],
+        )],
+    );
+    let package = PluginPackage::new(schema, BTreeMap::new());
 
     assert!(matches!(
         package.validate(),
@@ -226,21 +113,17 @@ fn package_validation_matches_schema_nodes_to_backends() {
 #[test]
 fn plugin_package_records_physical_artifacts_separately() {
     let package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: None,
-        backends: BTreeMap::new(),
         artifacts: vec![PackageArtifact {
-            path: "_bundle/java/demo.jar".into(),
-            kind: PackageArtifactKind::Jar,
-            backend: Some(BackendKind::Java),
-            platform: None,
             sha256: Some("abc123".into()),
-            metadata: BTreeMap::new(),
+            ..PackageArtifact::new(
+                "_bundle/java/demo.jar",
+                PackageArtifactKind::Jar,
+                Some(BackendKind::Java),
+            )
         }],
         lockfile: Some("plugin.lock".into()),
         manifest_hash: Some("hash".into()),
-        signature: None,
-        metadata: BTreeMap::new(),
+        ..PluginPackage::default()
     };
 
     let json = serde_json::to_value(&package).expect("serialize package");
@@ -250,10 +133,10 @@ fn plugin_package_records_physical_artifacts_separately() {
 }
 
 #[test]
-fn rust_complete_package_emits_backend_artifacts_lockfile_and_manifest_hash() {
+fn rust_package_emits_backend_artifacts_lockfile_and_manifest_hash() {
     let spec = scalar_add_fixture_spec();
     let fixture = generate_language_fixture(&spec, FixtureLanguage::Rust).expect("rust fixture");
-    let package = rust_complete_plugin_package(
+    let package = rust_plugin_package(
         fixture.schema.clone(),
         fixture.backends.clone(),
         vec!["target/release/libffi_showcase.so".into()],
@@ -298,21 +181,16 @@ fn package_validation_accepts_existing_artifact_files() {
     std::fs::write(artifact_dir.join("demo.jar"), b"jar").expect("write artifact");
 
     let package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: None,
-        backends: BTreeMap::new(),
         artifacts: vec![PackageArtifact {
-            path: "_bundle/java/demo.jar".into(),
-            kind: PackageArtifactKind::Jar,
-            backend: Some(BackendKind::Java),
-            platform: None,
             sha256: Some("abc123".into()),
-            metadata: BTreeMap::new(),
+            ..PackageArtifact::new(
+                "_bundle/java/demo.jar",
+                PackageArtifactKind::Jar,
+                Some(BackendKind::Java),
+            )
         }],
-        lockfile: None,
         manifest_hash: Some("manifest-hash".into()),
-        signature: None,
-        metadata: BTreeMap::new(),
+        ..PluginPackage::default()
     };
 
     package
@@ -324,21 +202,12 @@ fn package_validation_accepts_existing_artifact_files() {
 fn package_validation_rejects_missing_artifact_files() {
     let dir = tempfile::tempdir().expect("tempdir");
     let package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: None,
-        backends: BTreeMap::new(),
-        artifacts: vec![PackageArtifact {
-            path: "_bundle/java/missing.jar".into(),
-            kind: PackageArtifactKind::Jar,
-            backend: Some(BackendKind::Java),
-            platform: None,
-            sha256: None,
-            metadata: BTreeMap::new(),
-        }],
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
+        artifacts: vec![PackageArtifact::new(
+            "_bundle/java/missing.jar",
+            PackageArtifactKind::Jar,
+            Some(BackendKind::Java),
+        )],
+        ..PluginPackage::default()
     };
 
     assert!(matches!(
@@ -352,21 +221,12 @@ fn package_validation_rejects_missing_artifact_files() {
 fn package_validation_rejects_artifact_paths_outside_package() {
     let dir = tempfile::tempdir().expect("tempdir");
     let package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: None,
-        backends: BTreeMap::new(),
-        artifacts: vec![PackageArtifact {
-            path: "../outside.jar".into(),
-            kind: PackageArtifactKind::Jar,
-            backend: Some(BackendKind::Java),
-            platform: None,
-            sha256: None,
-            metadata: BTreeMap::new(),
-        }],
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
+        artifacts: vec![PackageArtifact::new(
+            "../outside.jar",
+            PackageArtifactKind::Jar,
+            Some(BackendKind::Java),
+        )],
+        ..PluginPackage::default()
     };
 
     assert!(matches!(
@@ -416,31 +276,19 @@ fn package_artifact_bundle_paths_are_deterministic_by_kind() {
 #[test]
 fn package_rewrites_artifact_paths_for_bundle_layout() {
     let mut package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: None,
-        backends: BTreeMap::new(),
         artifacts: vec![
-            PackageArtifact {
-                path: "rt.py".into(),
-                kind: PackageArtifactKind::SourceFile,
-                backend: Some(BackendKind::Python),
-                platform: None,
-                sha256: None,
-                metadata: BTreeMap::new(),
-            },
-            PackageArtifact {
-                path: "build/classes/java/main".into(),
-                kind: PackageArtifactKind::ClassesDir,
-                backend: Some(BackendKind::Java),
-                platform: None,
-                sha256: None,
-                metadata: BTreeMap::new(),
-            },
+            PackageArtifact::new(
+                "rt.py",
+                PackageArtifactKind::SourceFile,
+                Some(BackendKind::Python),
+            ),
+            PackageArtifact::new(
+                "build/classes/java/main",
+                PackageArtifactKind::ClassesDir,
+                Some(BackendKind::Java),
+            ),
         ],
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
+        ..PluginPackage::default()
     };
 
     package
@@ -459,21 +307,12 @@ fn package_integrity_stamps_and_verifies_artifact_hashes() {
     std::fs::write(artifact_dir.join("data.bin"), b"payload").expect("write artifact");
 
     let mut package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: None,
-        backends: BTreeMap::new(),
-        artifacts: vec![PackageArtifact {
-            path: "_bundle/assets/data.bin".into(),
-            kind: PackageArtifactKind::Other,
-            backend: None,
-            platform: None,
-            sha256: None,
-            metadata: BTreeMap::new(),
-        }],
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
+        artifacts: vec![PackageArtifact::new(
+            "_bundle/assets/data.bin",
+            PackageArtifactKind::Other,
+            None,
+        )],
+        ..PluginPackage::default()
     };
 
     package
@@ -495,21 +334,12 @@ fn package_integrity_rejects_tampered_artifacts() {
     std::fs::write(artifact_dir.join("data.bin"), b"payload").expect("write artifact");
 
     let mut package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: None,
-        backends: BTreeMap::new(),
-        artifacts: vec![PackageArtifact {
-            path: "_bundle/assets/data.bin".into(),
-            kind: PackageArtifactKind::Other,
-            backend: None,
-            platform: None,
-            sha256: None,
-            metadata: BTreeMap::new(),
-        }],
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
+        artifacts: vec![PackageArtifact::new(
+            "_bundle/assets/data.bin",
+            PackageArtifactKind::Other,
+            None,
+        )],
+        ..PluginPackage::default()
     };
     package
         .stamp_integrity(dir.path())
@@ -531,62 +361,27 @@ fn package_descriptor_loads_from_unpacked_root_without_repo_paths() {
     std::fs::create_dir_all(&artifact_dir).expect("create bundle dir");
     std::fs::write(artifact_dir.join("demo.jar"), b"jar").expect("write jar");
 
-    let schema = PluginSchema {
-        schema_version: SCHEMA_VERSION,
-        plugin: PluginSchemaInfo {
-            name: "demo.java".into(),
-            version: Some("0.1.0".into()),
-            description: None,
-            metadata: BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes: vec![NodeSchema {
-            id: "demo.add".into(),
-            backend: BackendKind::Java,
-            entrypoint: "add".into(),
-            label: None,
-            stateful: false,
-            feature_flags: Vec::new(),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            metadata: BTreeMap::new(),
-        }],
-    };
+    let schema = PluginSchema::new(
+        "demo.java",
+        Some("0.1.0".into()),
+        vec![NodeSchema::new(
+            "demo.add",
+            BackendKind::Java,
+            "add",
+            vec![],
+            vec![],
+        )],
+    );
+    let backend = BackendConfig::persistent_worker(BackendKind::Java, "java", "add")
+        .with_entry_class("demo.Nodes")
+        .with_classpath(["_bundle/java/demo.jar"]);
     let mut package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: Some(schema),
-        backends: BTreeMap::from([(
-            "demo.add".into(),
-            BackendConfig {
-                backend: BackendKind::Java,
-                runtime_model: BackendRuntimeModel::PersistentWorker,
-                entry_module: None,
-                entry_class: Some("demo.Nodes".into()),
-                entry_symbol: Some("add".into()),
-                executable: Some("java".into()),
-                args: Vec::new(),
-                classpath: vec!["_bundle/java/demo.jar".into()],
-                native_library_paths: Vec::new(),
-                working_dir: None,
-                env: BTreeMap::new(),
-                options: BTreeMap::new(),
-            },
-        )]),
-        artifacts: vec![PackageArtifact {
-            path: "_bundle/java/demo.jar".into(),
-            kind: PackageArtifactKind::Jar,
-            backend: Some(BackendKind::Java),
-            platform: None,
-            sha256: None,
-            metadata: BTreeMap::new(),
-        }],
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::new(),
+        artifacts: vec![PackageArtifact::new(
+            "_bundle/java/demo.jar",
+            PackageArtifactKind::Jar,
+            Some(BackendKind::Java),
+        )],
+        ..PluginPackage::new(schema, BTreeMap::from([("demo.add".into(), backend)]))
     };
     package.stamp_integrity(root.path()).expect("stamp package");
     let descriptor_path = root.path().join("plugin.json");
@@ -607,125 +402,66 @@ fn package_descriptor_loads_from_unpacked_root_without_repo_paths() {
 
 #[test]
 fn package_lockfile_generation_is_deterministic_and_language_aware() {
-    let package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: Some(PluginSchema {
-            schema_version: SCHEMA_VERSION,
-            plugin: PluginSchemaInfo {
-                name: "demo.multi".into(),
-                version: Some("1.0.0".into()),
-                description: None,
-                metadata: BTreeMap::new(),
-            },
-            dependencies: Vec::new(),
-            required_host_capabilities: Vec::new(),
-            feature_flags: Vec::new(),
-            boundary_contracts: Vec::new(),
-            nodes: Vec::new(),
-        }),
-        backends: BTreeMap::from([
-            (
-                "cpp.node".into(),
-                BackendConfig {
-                    backend: BackendKind::CCpp,
-                    runtime_model: BackendRuntimeModel::InProcessAbi,
-                    entry_module: Some("_bundle/native/linux-x86_64-gnu/libdemo.so".into()),
-                    entry_class: None,
-                    entry_symbol: Some("run".into()),
-                    executable: None,
-                    args: Vec::new(),
-                    classpath: Vec::new(),
-                    native_library_paths: Vec::new(),
-                    working_dir: None,
-                    env: BTreeMap::new(),
-                    options: BTreeMap::new(),
-                },
-            ),
-            (
-                "java.node".into(),
-                BackendConfig {
-                    backend: BackendKind::Java,
-                    runtime_model: BackendRuntimeModel::PersistentWorker,
-                    entry_module: None,
-                    entry_class: Some("demo.Nodes".into()),
-                    entry_symbol: Some("add".into()),
-                    executable: Some("java".into()),
-                    args: Vec::new(),
-                    classpath: vec!["_bundle/java/demo.jar".into()],
-                    native_library_paths: vec![
-                        "_bundle/native/linux-x86_64-gnu/libopencv.so".into(),
-                    ],
-                    working_dir: None,
-                    env: BTreeMap::new(),
-                    options: BTreeMap::from([(
+    let backends = BTreeMap::from([
+        (
+            "cpp.node".into(),
+            BackendConfig::in_process(BackendKind::CCpp, "run")
+                .with_entry_module("_bundle/native/linux-x86_64-gnu/libdemo.so"),
+        ),
+        (
+            "java.node".into(),
+            BackendConfig {
+                native_library_paths: vec!["_bundle/native/linux-x86_64-gnu/libopencv.so".into()],
+                ..BackendConfig::persistent_worker(BackendKind::Java, "java", "add")
+                    .with_entry_class("demo.Nodes")
+                    .with_classpath(["_bundle/java/demo.jar"])
+                    .with_options([(
                         "maven_coordinates".into(),
                         serde_json::json!(["org.demo:demo:1.0.0"]),
-                    )]),
-                },
-            ),
-            (
-                "node.node".into(),
-                BackendConfig {
-                    backend: BackendKind::Node,
-                    runtime_model: BackendRuntimeModel::PersistentWorker,
-                    entry_module: Some("_bundle/src/index.mjs".into()),
-                    entry_class: None,
-                    entry_symbol: Some("run".into()),
-                    executable: Some("node".into()),
-                    args: Vec::new(),
-                    classpath: Vec::new(),
-                    native_library_paths: Vec::new(),
-                    working_dir: None,
-                    env: BTreeMap::new(),
-                    options: BTreeMap::from([(
-                        "package".into(),
-                        serde_json::json!({"name":"demo-node","version":"1.0.0"}),
-                    )]),
-                },
-            ),
-            (
-                "python.node".into(),
-                BackendConfig {
-                    backend: BackendKind::Python,
-                    runtime_model: BackendRuntimeModel::PersistentWorker,
-                    entry_module: Some("_bundle/src/rt.py".into()),
-                    entry_class: None,
-                    entry_symbol: Some("run".into()),
-                    executable: Some("python".into()),
-                    args: Vec::new(),
-                    classpath: Vec::new(),
-                    native_library_paths: Vec::new(),
-                    working_dir: None,
-                    env: BTreeMap::new(),
-                    options: BTreeMap::from([(
-                        "requirements".into(),
-                        serde_json::json!(["numpy==2.0.0"]),
-                    )]),
-                },
-            ),
-        ]),
+                    )])
+            },
+        ),
+        (
+            "node.node".into(),
+            BackendConfig::persistent_worker(BackendKind::Node, "node", "run")
+                .with_entry_module("_bundle/src/index.mjs")
+                .with_options([(
+                    "package".into(),
+                    serde_json::json!({"name":"demo-node","version":"1.0.0"}),
+                )]),
+        ),
+        (
+            "python.node".into(),
+            BackendConfig::persistent_worker(BackendKind::Python, "python", "run")
+                .with_entry_module("_bundle/src/rt.py")
+                .with_options([("requirements".into(), serde_json::json!(["numpy==2.0.0"]))]),
+        ),
+    ]);
+    let package = PluginPackage {
         artifacts: vec![
             PackageArtifact {
-                path: "_bundle/src/rt.py".into(),
-                kind: PackageArtifactKind::SourceFile,
-                backend: Some(BackendKind::Python),
-                platform: None,
                 sha256: Some("b".repeat(64)),
-                metadata: BTreeMap::new(),
+                ..PackageArtifact::new(
+                    "_bundle/src/rt.py",
+                    PackageArtifactKind::SourceFile,
+                    Some(BackendKind::Python),
+                )
             },
             PackageArtifact {
-                path: "_bundle/java/demo.jar".into(),
-                kind: PackageArtifactKind::Jar,
-                backend: Some(BackendKind::Java),
-                platform: None,
                 sha256: Some("a".repeat(64)),
-                metadata: BTreeMap::new(),
+                ..PackageArtifact::new(
+                    "_bundle/java/demo.jar",
+                    PackageArtifactKind::Jar,
+                    Some(BackendKind::Java),
+                )
             },
         ],
         lockfile: Some("plugin.lock.json".into()),
         manifest_hash: Some("c".repeat(64)),
-        signature: None,
-        metadata: BTreeMap::new(),
+        ..PluginPackage::new(
+            PluginSchema::new("demo.multi", Some("1.0.0".into()), Vec::new()),
+            backends,
+        )
     };
 
     let lock = package.generate_lockfile();

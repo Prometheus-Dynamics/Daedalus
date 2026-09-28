@@ -88,35 +88,23 @@ fn canonical_fixture_specs_cover_declared_matrix_and_validate_contracts() {
         };
         schema.validate().expect("fixture schema validates");
         if !spec.package_artifacts.is_empty() {
+            let model = if matches!(node.backend, BackendKind::Shader) {
+                BackendRuntimeModel::InProcessAbi
+            } else {
+                BackendRuntimeModel::PersistentWorker
+            };
+            let backend = BackendConfig {
+                entry_module: Some("fixture".into()),
+                entry_symbol: Some("run".into()),
+                executable: Some("fixture-worker".into()),
+                ..BackendConfig::new(node.backend.clone(), model)
+            };
             let package = PluginPackage {
-                schema_version: SCHEMA_VERSION,
-                schema: Some(schema.clone()),
-                backends: BTreeMap::from([(
-                    spec.node_id.clone(),
-                    BackendConfig {
-                        backend: node.backend.clone(),
-                        runtime_model: if matches!(node.backend, BackendKind::Shader) {
-                            BackendRuntimeModel::InProcessAbi
-                        } else {
-                            BackendRuntimeModel::PersistentWorker
-                        },
-                        entry_module: Some("fixture".into()),
-                        entry_class: None,
-                        entry_symbol: Some("run".into()),
-                        executable: Some("fixture-worker".into()),
-                        args: Vec::new(),
-                        classpath: Vec::new(),
-                        native_library_paths: Vec::new(),
-                        working_dir: None,
-                        env: BTreeMap::new(),
-                        options: BTreeMap::new(),
-                    },
-                )]),
                 artifacts: spec.package_artifacts.clone(),
-                lockfile: None,
-                manifest_hash: None,
-                signature: None,
-                metadata: BTreeMap::new(),
+                ..PluginPackage::new(
+                    schema.clone(),
+                    BTreeMap::from([(spec.node_id.clone(), backend)]),
+                )
             };
             package.validate().expect("fixture package validates");
         }

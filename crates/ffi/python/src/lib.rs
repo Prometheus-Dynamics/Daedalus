@@ -3,13 +3,15 @@
 use std::collections::BTreeMap;
 
 use core::{
-    BackendConfig, BackendKind, BackendRuntimeModel, FfiContractError, NodeSchema, PackageArtifact,
-    PackageArtifactKind, PluginPackage, PluginSchema, PluginSchemaInfo, SCHEMA_VERSION,
-    WirePayloadHandle, WirePort, bundled_artifact_path, validate_language_backends,
+    BackendConfig, BackendKind, FfiContractError, LanguagePackageInput, LanguagePackager,
+    MappedPayloadKeys, PackageArtifactKind, PayloadResolveError, PayloadView, PluginPackage,
+    PluginSchema, ResolvedPayload, WirePayloadHandle, package_artifacts, payload_transport_options,
 };
-use thiserror::Error;
 
 pub use daedalus_ffi_core as core;
+
+pub const PYTHON_PACKAGER: LanguagePackager =
+    LanguagePackager::new(BackendKind::Python, "python", "daedalus-ffi-python");
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PythonPayloadTransport {
@@ -18,34 +20,9 @@ pub struct PythonPayloadTransport {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PythonPackageInput {
-    pub schema: PluginSchema,
-    pub backends: BTreeMap<String, BackendConfig>,
-    pub source_files: Vec<String>,
-    pub lockfile: Option<String>,
-    pub metadata: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PythonResolvedPayload {
-    pub id: String,
-    pub type_key: String,
-    pub access: String,
-    pub view: PythonPayloadView,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PythonPayloadView {
     MemoryView { bytes_estimate: u64 },
     Mmap { path: String, offset: u64, len: u64 },
-}
-
-#[derive(Debug, Error, Eq, PartialEq)]
-pub enum PythonPayloadResolveError {
-    #[error("python payload transport supports neither memoryview nor mmap")]
-    UnsupportedTransport,
-    #[error("payload handle `{0}` is missing `{1}` metadata")]
-    MissingMetadata(String, &'static str),
 }
 
 impl PythonPayloadTransport {
@@ -57,91 +34,35 @@ impl PythonPayloadTransport {
     }
 
     pub fn backend_options(&self) -> BTreeMap<String, serde_json::Value> {
-        BTreeMap::from([(
-            "payload_transport".into(),
-            serde_json::json!({
-                "memoryview": self.memoryview,
-                "mmap": self.mmap,
-            }),
-        )])
+        payload_transport_options(&[("memoryview", self.memoryview), ("mmap", self.mmap)])
     }
 }
 
 pub fn resolve_python_payload_handle(
     handle: &WirePayloadHandle,
     transport: &PythonPayloadTransport,
-) -> Result<PythonResolvedPayload, PythonPayloadResolveError> {
-    let view = if transport.mmap {
-        if let Some(path) = metadata_string(handle, "mmap_path") {
-            Some(PythonPayloadView::Mmap {
-                path,
-                offset: metadata_u64(handle, "mmap_offset").unwrap_or(0),
-                len: metadata_u64(handle, "mmap_len")
-                    .or_else(|| metadata_u64(handle, "bytes_estimate"))
-                    .ok_or_else(|| {
-                        PythonPayloadResolveError::MissingMetadata(handle.id.clone(), "mmap_len")
-                    })?,
-            })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let view = match view {
-        Some(view) => view,
-        None if transport.memoryview => PythonPayloadView::MemoryView {
-            bytes_estimate: metadata_u64(handle, "bytes_estimate").ok_or_else(|| {
-                PythonPayloadResolveError::MissingMetadata(handle.id.clone(), "bytes_estimate")
-            })?,
+) -> Result<ResolvedPayload<PythonPayloadView>, PayloadResolveError> {
+    let mapped = transport.mmap.then_some(MappedPayloadKeys::MMAP);
+    handle.resolve_view(mapped, transport.memoryview, |view| match view {
+        PayloadView::Mapped {
+            location,
+            offset,
+            len,
+        } => PythonPayloadView::Mmap {
+            path: location,
+            offset,
+            len,
         },
-        None => return Err(PythonPayloadResolveError::UnsupportedTransport),
-    };
-    Ok(PythonResolvedPayload {
-        id: handle.id.clone(),
-        type_key: handle.type_key.to_string(),
-        access: handle.access.to_string(),
-        view,
+        PayloadView::Buffer { bytes_estimate } => PythonPayloadView::MemoryView { bytes_estimate },
     })
-}
-
-fn metadata_string(handle: &WirePayloadHandle, key: &'static str) -> Option<String> {
-    handle
-        .metadata
-        .get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-}
-
-fn metadata_u64(handle: &WirePayloadHandle, key: &'static str) -> Option<u64> {
-    handle.metadata.get(key).and_then(serde_json::Value::as_u64)
-}
-
-pub fn validate_python_schema(
-    schema: &PluginSchema,
-    backends: &BTreeMap<String, BackendConfig>,
-) -> Result<(), FfiContractError> {
-    validate_language_backends(schema, backends, BackendKind::Python)
 }
 
 pub fn python_worker_backend_config(
     module_path: impl Into<String>,
     function_name: impl Into<String>,
 ) -> BackendConfig {
-    BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(module_path.into()),
-        entry_class: None,
-        entry_symbol: Some(function_name.into()),
-        executable: Some("python".into()),
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    }
+    BackendConfig::persistent_worker(BackendKind::Python, "python", function_name)
+        .with_entry_module(module_path)
 }
 
 pub fn python_worker_backend_config_with_transport(
@@ -149,189 +70,46 @@ pub fn python_worker_backend_config_with_transport(
     function_name: impl Into<String>,
     transport: PythonPayloadTransport,
 ) -> BackendConfig {
-    let mut backend = python_worker_backend_config(module_path, function_name);
-    backend.options.extend(transport.backend_options());
-    backend
+    python_worker_backend_config(module_path, function_name)
+        .with_options(transport.backend_options())
 }
 
-pub fn python_node_schema(
-    node_id: impl Into<String>,
-    function_name: impl Into<String>,
-    inputs: Vec<WirePort>,
-    outputs: Vec<WirePort>,
-) -> NodeSchema {
-    NodeSchema {
-        id: node_id.into(),
-        backend: BackendKind::Python,
-        entrypoint: function_name.into(),
-        label: None,
-        stateful: false,
-        feature_flags: Vec::new(),
-        inputs,
-        outputs,
-        metadata: BTreeMap::new(),
-    }
-}
-
-pub fn python_plugin_schema(
-    plugin_name: impl Into<String>,
-    version: Option<String>,
-    nodes: Vec<NodeSchema>,
-) -> Result<PluginSchema, FfiContractError> {
-    let mut schema = PluginSchema {
-        schema_version: SCHEMA_VERSION,
-        plugin: PluginSchemaInfo {
-            name: plugin_name.into(),
-            version,
-            description: None,
-            metadata: BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes,
-    };
-    schema.nodes.sort_by(|a, b| a.id.cmp(&b.id));
-    schema.validate_backend_kind(BackendKind::Python)?;
-    Ok(schema)
-}
-
+/// Package Python source files with the default lockfile.
 pub fn python_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
     source_files: Vec<String>,
 ) -> Result<PluginPackage, FfiContractError> {
-    PythonPackageInput {
-        schema,
-        backends,
+    let artifacts = package_artifacts(
+        PackageArtifactKind::SourceFile,
+        &BackendKind::Python,
         source_files,
-        lockfile: None,
-        metadata: BTreeMap::new(),
-    }
-    .build()
-}
-
-impl PythonPackageInput {
-    pub fn build(self) -> Result<PluginPackage, FfiContractError> {
-        validate_language_backends(&self.schema, &self.backends, BackendKind::Python)?;
-        let mut metadata = self.metadata;
-        metadata.insert("language".into(), serde_json::json!("python"));
-        metadata.insert(
-            "package_builder".into(),
-            serde_json::json!("daedalus-ffi-python"),
-        );
-
-        let mut package = PluginPackage {
-            schema_version: SCHEMA_VERSION,
-            schema: Some(self.schema),
-            backends: self.backends,
-            artifacts: source_file_artifacts(BackendKind::Python, self.source_files)?,
-            lockfile: self.lockfile.or_else(|| Some("plugin.lock.json".into())),
-            manifest_hash: None,
-            signature: None,
-            metadata,
-        };
-        package.validate()?;
-        package.manifest_hash = Some(package.compute_manifest_hash()?);
-        Ok(package)
-    }
-}
-
-pub fn python_complete_plugin_package(
-    schema: PluginSchema,
-    backends: BTreeMap<String, BackendConfig>,
-    source_files: Vec<String>,
-) -> Result<PluginPackage, FfiContractError> {
-    PythonPackageInput {
-        schema,
-        backends,
-        source_files,
-        lockfile: Some("plugin.lock.json".into()),
-        metadata: BTreeMap::new(),
-    }
-    .build()
-}
-
-fn source_file_artifacts(
-    backend: BackendKind,
-    source_files: Vec<String>,
-) -> Result<Vec<PackageArtifact>, FfiContractError> {
-    source_files
-        .into_iter()
-        .map(|path| {
-            Ok(PackageArtifact {
-                path: bundled_artifact_path(PackageArtifactKind::SourceFile, &path, None)?,
-                kind: PackageArtifactKind::SourceFile,
-                backend: Some(backend.clone()),
-                platform: None,
-                sha256: None,
-                metadata: BTreeMap::new(),
-            })
-        })
-        .collect()
+    )?;
+    PYTHON_PACKAGER.build(LanguagePackageInput::new(schema, backends, artifacts))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use daedalus_data::model::{TypeExpr, ValueType};
-    use daedalus_ffi_core::{FixtureLanguage, generate_language_fixture, scalar_add_fixture_spec};
+    use daedalus_ffi_core::{
+        FixtureLanguage, NodeSchema, WirePort, generate_language_fixture, scalar_add_fixture_spec,
+        validate_language_backends,
+    };
     use std::path::{Path, PathBuf};
     use std::process::Command;
 
     fn schema_for_backend(backend: BackendKind) -> PluginSchema {
-        PluginSchema {
-            schema_version: SCHEMA_VERSION,
-            plugin: PluginSchemaInfo {
-                name: "demo.python".into(),
-                version: None,
-                description: None,
-                metadata: Default::default(),
-            },
-            dependencies: Vec::new(),
-            required_host_capabilities: Vec::new(),
-            feature_flags: Vec::new(),
-            boundary_contracts: Vec::new(),
-            nodes: vec![NodeSchema {
-                id: "demo:add".into(),
-                backend,
-                entrypoint: "add".into(),
-                label: None,
-                stateful: false,
-                feature_flags: Vec::new(),
-                inputs: vec![WirePort {
-                    name: "a".into(),
-                    ty: TypeExpr::scalar(ValueType::Int),
-                    type_key: None,
-                    optional: false,
-                    access: Default::default(),
-                    residency: None,
-                    layout: None,
-                    source: None,
-                    const_value: None,
-                }],
-                outputs: Vec::new(),
-                metadata: Default::default(),
-            }],
-        }
+        let input = WirePort::new("a", TypeExpr::scalar(ValueType::Int));
+        let node = NodeSchema::new("demo:add", backend, "add", vec![input], Vec::new());
+        PluginSchema::new("demo.python", None, vec![node])
     }
 
-    fn backend(backend: BackendKind) -> BackendConfig {
-        BackendConfig {
-            backend,
-            runtime_model: BackendRuntimeModel::PersistentWorker,
-            entry_module: Some("demo".into()),
-            entry_class: None,
-            entry_symbol: Some("add".into()),
-            executable: Some("python".into()),
-            args: Vec::new(),
-            classpath: Vec::new(),
-            native_library_paths: Vec::new(),
-            working_dir: None,
-            env: Default::default(),
-            options: Default::default(),
-        }
+    fn validate_python_schema(
+        schema: &PluginSchema,
+        backends: &BTreeMap<String, BackendConfig>,
+    ) -> Result<(), FfiContractError> {
+        validate_language_backends(schema, backends, BackendKind::Python)
     }
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -365,7 +143,10 @@ mod tests {
     #[test]
     fn validates_python_schema_and_backends() {
         let schema = schema_for_backend(BackendKind::Python);
-        let backends = BTreeMap::from([("demo:add".into(), backend(BackendKind::Python))]);
+        let backends = BTreeMap::from([(
+            "demo:add".into(),
+            python_worker_backend_config("demo", "add"),
+        )]);
         validate_python_schema(&schema, &backends).expect("valid python schema");
 
         let bad = schema_for_backend(BackendKind::Node);
@@ -383,16 +164,18 @@ mod tests {
             generate_language_fixture(&spec, FixtureLanguage::Python).expect("python fixture");
         let baseline = &rust.schema.nodes[0];
 
-        let node = python_node_schema(
+        let node = NodeSchema::new(
             baseline.id.clone(),
+            BackendKind::Python,
             python.schema.nodes[0].entrypoint.clone(),
             baseline.inputs.clone(),
             baseline.outputs.clone(),
         );
-        let schema = python_plugin_schema(
+        let schema = PluginSchema::for_backend(
             "ffi.conformance.python.scalar_add",
             Some("1.0.0".into()),
             vec![node],
+            BackendKind::Python,
         )
         .expect("schema");
         let backend = python_worker_backend_config("scalar_add.py", "add");
@@ -575,7 +358,7 @@ plugin("test_python_sdk", [scale, accum, payload_len, cow]) \
         let spec = scalar_add_fixture_spec();
         let fixture =
             generate_language_fixture(&spec, FixtureLanguage::Python).expect("python fixture");
-        let package = python_complete_plugin_package(
+        let package = python_plugin_package(
             fixture.schema.clone(),
             fixture.backends.clone(),
             vec!["ffi_showcase.py".into(), "build_package.py".into()],

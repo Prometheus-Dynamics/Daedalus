@@ -1,12 +1,10 @@
 //! Java FFI worker and packaging integration.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use core::{
-    BackendConfig, BackendKind, BackendRuntimeModel, FfiContractError, NodeSchema, PackageArtifact,
-    PackageArtifactKind, PackagePlatform, PluginPackage, PluginSchema, PluginSchemaInfo,
-    SCHEMA_VERSION, WirePort, bundled_artifact_path, validate_language_backends,
+    BackendConfig, BackendKind, FfiContractError, LanguagePackageInput, LanguagePackager,
+    PackageArtifact, PackageArtifactKind, PackagePlatform, PluginPackage, PluginSchema,
 };
 use thiserror::Error;
 
@@ -18,21 +16,10 @@ mod payload;
 pub use diagnostics::{
     JavaRuntimeDiagnostic, JavaRuntimeDiagnosticKind, classify_java_runtime_diagnostic,
 };
-pub use payload::{
-    JavaPayloadResolveError, JavaPayloadTransport, JavaPayloadView, JavaResolvedPayload,
-    resolve_java_payload_handle,
-};
+pub use payload::{JavaPayloadTransport, JavaPayloadView, resolve_java_payload_handle};
 
-const JAVA_BUNDLE_DIR: &str = "_bundle/java";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JavaCompletePackageInput {
-    pub schema: PluginSchema,
-    pub backends: BTreeMap<String, BackendConfig>,
-    pub package: JavaPackageInput,
-    pub lockfile: Option<String>,
-    pub metadata: BTreeMap<String, serde_json::Value>,
-}
+pub const JAVA_PACKAGER: LanguagePackager =
+    LanguagePackager::new(BackendKind::Java, "java", "daedalus-ffi-java");
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JavaPackageInput {
@@ -71,177 +58,91 @@ pub enum JavaPackageError {
     MissingEntryMethod,
     #[error("java package needs at least one classpath entry")]
     MissingClasspath,
-    #[error("path must have a file name: {path}")]
-    MissingFileName { path: String },
     #[error("failed to derive bundle path: {0}")]
     BundlePath(#[from] FfiContractError),
 }
 
 impl JavaPackageInput {
     pub fn backend_config(&self) -> Result<BackendConfig, JavaPackageError> {
-        validate_java_input(self)?;
+        // Bundling the artifacts validates the entry point and every classpath/native path.
+        self.package_artifacts()?;
         Ok(BackendConfig {
-            backend: BackendKind::Java,
-            runtime_model: BackendRuntimeModel::PersistentWorker,
-            entry_module: None,
-            entry_class: Some(self.entry_class.clone()),
-            entry_symbol: Some(self.entry_method.clone()),
-            executable: Some(self.executable.clone().unwrap_or_else(|| "java".into())),
-            args: Vec::new(),
-            classpath: self
-                .classpath
-                .iter()
-                .map(JavaClasspathEntry::path)
-                .collect(),
             native_library_paths: self
                 .native_libraries
                 .iter()
                 .map(|library| library.path.clone())
                 .collect(),
-            working_dir: None,
-            env: BTreeMap::new(),
-            options: java_metadata_options(self),
+            ..BackendConfig::persistent_worker(
+                BackendKind::Java,
+                self.executable.as_deref().unwrap_or("java"),
+                &self.entry_method,
+            )
+            .with_entry_class(&self.entry_class)
+            .with_classpath(self.classpath.iter().map(JavaClasspathEntry::path))
+            .with_options(self.metadata_options())
         })
     }
 
     pub fn package_artifacts(&self) -> Result<Vec<PackageArtifact>, JavaPackageError> {
-        validate_java_input(self)?;
+        if self.entry_class.trim().is_empty() {
+            return Err(JavaPackageError::MissingEntryClass);
+        }
+        if self.entry_method.trim().is_empty() {
+            return Err(JavaPackageError::MissingEntryMethod);
+        }
+        if self.classpath.is_empty() {
+            return Err(JavaPackageError::MissingClasspath);
+        }
+        let backend = Some(BackendKind::Java);
         let mut artifacts = Vec::new();
         for entry in &self.classpath {
-            let path = entry.path();
-            let bundled_path = bundled_artifact_path(entry.artifact_kind(), &path, None)?;
-            artifacts.push(PackageArtifact {
-                path: bundled_path,
-                kind: entry.artifact_kind(),
-                backend: Some(BackendKind::Java),
-                platform: None,
-                sha256: None,
-                metadata: java_metadata_options(self),
-            });
+            let mut artifact = PackageArtifact::bundled(
+                entry.artifact_kind(),
+                backend.clone(),
+                &entry.path(),
+                None,
+            )?;
+            artifact.metadata = self.metadata_options();
+            artifacts.push(artifact);
         }
         for library in &self.native_libraries {
-            artifacts.push(PackageArtifact {
-                path: bundled_artifact_path(
-                    PackageArtifactKind::NativeLibrary,
-                    &library.path,
-                    library.platform.as_ref(),
-                )?,
-                kind: PackageArtifactKind::NativeLibrary,
-                backend: Some(BackendKind::Java),
-                platform: library.platform.clone(),
-                sha256: None,
-                metadata: BTreeMap::new(),
-            });
+            artifacts.push(PackageArtifact::bundled(
+                PackageArtifactKind::NativeLibrary,
+                backend.clone(),
+                &library.path,
+                library.platform.clone(),
+            )?);
         }
         Ok(artifacts)
     }
-}
 
-pub fn validate_java_schema(
-    schema: &core::PluginSchema,
-    backends: &BTreeMap<String, BackendConfig>,
-) -> Result<(), FfiContractError> {
-    validate_language_backends(schema, backends, BackendKind::Java)
-}
-
-pub fn java_node_schema(
-    node_id: impl Into<String>,
-    method_name: impl Into<String>,
-    inputs: Vec<WirePort>,
-    outputs: Vec<WirePort>,
-) -> NodeSchema {
-    NodeSchema {
-        id: node_id.into(),
-        backend: BackendKind::Java,
-        entrypoint: method_name.into(),
-        label: None,
-        stateful: false,
-        feature_flags: Vec::new(),
-        inputs,
-        outputs,
-        metadata: BTreeMap::new(),
+    fn metadata_options(&self) -> BTreeMap<String, serde_json::Value> {
+        let mut options = BTreeMap::new();
+        if !self.maven_coordinates.is_empty() {
+            options.insert(
+                "maven_coordinates".into(),
+                serde_json::json!(self.maven_coordinates),
+            );
+        }
+        if !self.gradle_projects.is_empty() {
+            options.insert(
+                "gradle_projects".into(),
+                serde_json::json!(self.gradle_projects),
+            );
+        }
+        options
     }
 }
 
-pub fn java_plugin_schema(
-    plugin_name: impl Into<String>,
-    version: Option<String>,
-    nodes: Vec<NodeSchema>,
-) -> Result<PluginSchema, FfiContractError> {
-    let mut schema = PluginSchema {
-        schema_version: SCHEMA_VERSION,
-        plugin: PluginSchemaInfo {
-            name: plugin_name.into(),
-            version,
-            description: None,
-            metadata: BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes,
-    };
-    schema.nodes.sort_by(|a, b| a.id.cmp(&b.id));
-    schema.validate_backend_kind(BackendKind::Java)?;
-    Ok(schema)
-}
-
+/// Package a Java classpath and native libraries with the default lockfile.
 pub fn java_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
     input: &JavaPackageInput,
 ) -> Result<PluginPackage, JavaPackageError> {
-    JavaCompletePackageInput {
-        schema,
-        backends,
-        package: input.clone(),
-        lockfile: None,
-        metadata: BTreeMap::new(),
-    }
-    .build()
-}
-
-impl JavaCompletePackageInput {
-    pub fn build(self) -> Result<PluginPackage, JavaPackageError> {
-        validate_language_backends(&self.schema, &self.backends, BackendKind::Java)?;
-        let mut metadata = java_metadata_options(&self.package);
-        metadata.extend(self.metadata);
-        metadata.insert("language".into(), serde_json::json!("java"));
-        metadata.insert(
-            "package_builder".into(),
-            serde_json::json!("daedalus-ffi-java"),
-        );
-
-        let mut package = PluginPackage {
-            schema_version: SCHEMA_VERSION,
-            schema: Some(self.schema),
-            backends: self.backends,
-            artifacts: self.package.package_artifacts()?,
-            lockfile: self.lockfile.or_else(|| Some("plugin.lock.json".into())),
-            manifest_hash: None,
-            signature: None,
-            metadata,
-        };
-        package.validate()?;
-        package.manifest_hash = Some(package.compute_manifest_hash()?);
-        Ok(package)
-    }
-}
-
-pub fn java_complete_plugin_package(
-    schema: PluginSchema,
-    backends: BTreeMap<String, BackendConfig>,
-    input: JavaPackageInput,
-) -> Result<PluginPackage, JavaPackageError> {
-    JavaCompletePackageInput {
-        schema,
-        backends,
-        package: input,
-        lockfile: Some("plugin.lock.json".into()),
-        metadata: BTreeMap::new(),
-    }
-    .build()
+    let mut package = LanguagePackageInput::new(schema, backends, input.package_artifacts()?);
+    package.metadata = input.metadata_options();
+    Ok(JAVA_PACKAGER.build(package)?)
 }
 
 impl JavaClasspathEntry {
@@ -294,74 +195,14 @@ pub fn java_backend_config_with_transport(
     input: &JavaPackageInput,
     transport: JavaPayloadTransport,
 ) -> Result<BackendConfig, JavaPackageError> {
-    let mut backend = input.backend_config()?;
-    backend.options.extend(transport.backend_options());
-    Ok(backend)
-}
-
-pub fn bundled_java_path(path: &str) -> Result<String, JavaPackageError> {
-    Ok(format!("{JAVA_BUNDLE_DIR}/{}", file_name(path)?))
-}
-
-pub fn bundled_native_path(
-    path: &str,
-    platform: Option<&PackagePlatform>,
-) -> Result<String, JavaPackageError> {
-    Ok(bundled_artifact_path(
-        PackageArtifactKind::NativeLibrary,
-        path,
-        platform,
-    )?)
-}
-
-fn validate_java_input(input: &JavaPackageInput) -> Result<(), JavaPackageError> {
-    if input.entry_class.trim().is_empty() {
-        return Err(JavaPackageError::MissingEntryClass);
-    }
-    if input.entry_method.trim().is_empty() {
-        return Err(JavaPackageError::MissingEntryMethod);
-    }
-    if input.classpath.is_empty() {
-        return Err(JavaPackageError::MissingClasspath);
-    }
-    for entry in &input.classpath {
-        file_name(&entry.path())?;
-    }
-    for library in &input.native_libraries {
-        file_name(&library.path)?;
-    }
-    Ok(())
-}
-
-fn java_metadata_options(input: &JavaPackageInput) -> BTreeMap<String, serde_json::Value> {
-    let mut options = BTreeMap::new();
-    if !input.maven_coordinates.is_empty() {
-        options.insert(
-            "maven_coordinates".into(),
-            serde_json::json!(input.maven_coordinates),
-        );
-    }
-    if !input.gradle_projects.is_empty() {
-        options.insert(
-            "gradle_projects".into(),
-            serde_json::json!(input.gradle_projects),
-        );
-    }
-    options
+    Ok(input
+        .backend_config()?
+        .with_options(transport.backend_options()))
 }
 
 fn join_java_paths(paths: &[String]) -> String {
     let separator = if cfg!(windows) { ";" } else { ":" };
     paths.join(separator)
-}
-
-fn file_name(path: &str) -> Result<String, JavaPackageError> {
-    Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| JavaPackageError::MissingFileName { path: path.into() })
 }
 
 #[cfg(test)]

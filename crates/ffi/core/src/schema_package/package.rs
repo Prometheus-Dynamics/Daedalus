@@ -235,7 +235,7 @@ impl BackendConfig {
 }
 
 /// Physical package descriptor for an FFI plugin.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PluginPackage {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
@@ -254,59 +254,25 @@ pub struct PluginPackage {
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RustPackageInput {
-    pub schema: PluginSchema,
-    pub backends: BTreeMap<String, BackendConfig>,
-    pub compiled_modules: Vec<String>,
-    pub source_files: Vec<String>,
-    pub lockfile: Option<String>,
-    pub metadata: BTreeMap<String, serde_json::Value>,
-}
-
-impl RustPackageInput {
-    pub fn build(self) -> Result<PluginPackage, FfiContractError> {
-        validate_language_backends(&self.schema, &self.backends, BackendKind::Rust)?;
-        let mut metadata = self.metadata;
-        metadata.insert("language".into(), serde_json::json!("rust"));
-        metadata.insert(
-            "package_builder".into(),
-            serde_json::json!("daedalus-ffi-core"),
-        );
-
-        let mut artifacts = rust_compiled_module_artifacts(self.compiled_modules)?;
-        artifacts.extend(rust_source_file_artifacts(self.source_files)?);
-        let mut package = PluginPackage {
-            schema_version: SCHEMA_VERSION,
-            schema: Some(self.schema),
-            backends: self.backends,
-            artifacts,
-            lockfile: self.lockfile.or_else(|| Some("plugin.lock.json".into())),
-            manifest_hash: None,
-            signature: None,
-            metadata,
-        };
-        package.validate()?;
-        package.manifest_hash = Some(package.compute_manifest_hash()?);
-        Ok(package)
-    }
-}
-
-pub fn rust_complete_plugin_package(
+/// Package the Rust backend: compiled modules first, then source files.
+pub fn rust_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
     compiled_modules: Vec<String>,
     source_files: Vec<String>,
 ) -> Result<PluginPackage, FfiContractError> {
-    RustPackageInput {
-        schema,
-        backends,
+    let mut artifacts = package_artifacts(
+        PackageArtifactKind::CompiledModule,
+        &BackendKind::Rust,
         compiled_modules,
+    )?;
+    artifacts.extend(package_artifacts(
+        PackageArtifactKind::SourceFile,
+        &BackendKind::Rust,
         source_files,
-        lockfile: Some("plugin.lock.json".into()),
-        metadata: BTreeMap::new(),
-    }
-    .build()
+    )?);
+    LanguagePackager::new(BackendKind::Rust, "rust", "daedalus-ffi-core")
+        .build(LanguagePackageInput::new(schema, backends, artifacts))
 }
 
 impl PluginPackage {
@@ -468,42 +434,6 @@ impl PluginPackage {
     pub fn write_lockfile(&self, path: impl AsRef<Path>) -> Result<(), FfiContractError> {
         self.generate_lockfile().write(path)
     }
-}
-
-fn rust_compiled_module_artifacts(
-    compiled_modules: Vec<String>,
-) -> Result<Vec<PackageArtifact>, FfiContractError> {
-    compiled_modules
-        .into_iter()
-        .map(|path| {
-            Ok(PackageArtifact {
-                path: bundled_artifact_path(PackageArtifactKind::CompiledModule, &path, None)?,
-                kind: PackageArtifactKind::CompiledModule,
-                backend: Some(BackendKind::Rust),
-                platform: None,
-                sha256: None,
-                metadata: BTreeMap::new(),
-            })
-        })
-        .collect()
-}
-
-fn rust_source_file_artifacts(
-    source_files: Vec<String>,
-) -> Result<Vec<PackageArtifact>, FfiContractError> {
-    source_files
-        .into_iter()
-        .map(|path| {
-            Ok(PackageArtifact {
-                path: bundled_artifact_path(PackageArtifactKind::SourceFile, &path, None)?,
-                kind: PackageArtifactKind::SourceFile,
-                backend: Some(BackendKind::Rust),
-                platform: None,
-                sha256: None,
-                metadata: BTreeMap::new(),
-            })
-        })
-        .collect()
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
