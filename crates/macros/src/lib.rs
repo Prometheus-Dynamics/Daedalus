@@ -43,7 +43,14 @@ pub fn node(
 /// - `install = path::to::fn`: extra `fn(&mut PluginInstallContext<'_>) -> PluginResult<()>`
 ///   hook, run before everything else.
 /// - `parts(path, ...)`: values implementing `PluginPart`, installed in order.
-/// - `types(Ty, ...)`: `#[type_key]` types; calls the generated `register_<snake_case>_type`.
+/// - `types(Ty, ...)`: `DaedalusTypeExpr` types (`#[type_key]` or derived), registered as named
+///   types with `HostExportPolicy::None`.
+/// - `values(Ty, ...)`: `DaedalusTypeExpr + ToValue` types (e.g. `#[derive(DaedalusTypeExpr,
+///   DaedalusToValue)]` descriptors), registered with `HostExportPolicy::Value` plus a value
+///   serializer.
+///
+///   Both register the nested `DaedalusTypeExpr` field types of derived types first, so nested
+///   descriptors need no separate entry.
 /// - `nodes(fn_name, ...)`: `#[node]` functions; registers their boundary contracts, descriptors
 ///   and handlers.
 /// - `adapters(fn_name, ...)`: `#[adapt]` functions; calls `register_<fn>_adapter`.
@@ -79,25 +86,21 @@ pub fn plugin(
 
 /// Give a struct or enum a stable transport type key.
 ///
-/// Accepts `#[type_key("ns:name")]`, `#[type_key(key = "ns:name")]` or
-/// `#[type_key(type_key = "ns:name")]`. The item is kept as written and the macro adds:
-///
-/// - an implementation of `DaedalusTypeExpr` with `TYPE_KEY = "ns:name"` and
-///   `type_expr() == TypeExpr::Opaque("ns:name")`;
-/// - `fn register_<snake_case_name>_type(&mut PluginRegistry) -> PluginResult<()>` (same
-///   visibility as the item), which registers the named type with `HostExportPolicy::None`.
-///   `#[plugin(types(...))]` calls it for you.
+/// Accepts a string literal or a path to a string constant: `#[type_key("ns:name")]`,
+/// `#[type_key(FRAME_KEY)]`, `#[type_key(key = ...)]` or `#[type_key(type_key = ...)]`. The item
+/// is kept as written and the macro adds an implementation of `DaedalusTypeExpr` with
+/// `TYPE_KEY = "ns:name"` and `type_expr() == TypeExpr::Opaque("ns:name")`. Register it with
+/// `#[plugin(types(...))]` or `PluginRegistry::register_daedalus_type`.
 ///
 /// Generic items and non-struct/enum items are rejected.
 ///
 /// ```ignore
 /// use daedalus::type_key;
 ///
-/// #[type_key("demo:frame")]
-/// #[derive(Clone)]
-/// pub struct Frame(pub Vec<u8>);
+/// pub const FRAME_KEY: &str = "demo:frame";
 ///
-/// // Generated: `pub fn register_frame_type(into: &mut PluginRegistry) -> PluginResult<()>`.
+/// #[type_key(FRAME_KEY)]
+/// pub struct Frame(pub Vec<u8>);
 /// ```
 #[proc_macro_attribute]
 pub fn type_key(
@@ -118,8 +121,8 @@ pub fn type_key(
 /// Arguments (only `id` is required):
 ///
 /// - `id = "..."`: adapter id.
-/// - `from = "..."`, `to = "..."`: source/target type keys; default to the transport keys of the
-///   input and output types.
+/// - `from = ...`, `to = ...`: source/target type keys (string literals or string constants);
+///   default to the transport keys of the input and output types.
 /// - `kind = "..."`: `AdaptKind` (`identity`, `reinterpret`, `view`, `shared_view`, `cow`,
 ///   `cow_view`, `metadata_only`, `branch`, `mutate_in_place`, `materialize`,
 ///   `device_transfer`, `device_upload`, ...); defaults to `materialize`.
@@ -217,8 +220,10 @@ pub fn branch_payload(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
 
 /// Derive `DaedalusTypeExpr` for a struct/enum to define a stable `TypeExpr` schema.
 ///
-/// Use `#[daedalus(type_key = \"cv:camera_calibration\")]` to pin a portable key; otherwise
-/// the default key is `rust:<module_path>::<TypeName>`.
+/// Use `#[daedalus(type_key = "cv:camera_calibration")]` (or a string constant) to pin a portable
+/// key; otherwise the default key is `rust:<module_path>::<TypeName>`. Field types that implement
+/// `DaedalusTypeExpr` (also inside `Vec`/`Option`/`Box`/`Arc`/arrays/tuples) are reported by
+/// `visit_dependencies`, so registering the type registers them first.
 #[proc_macro_derive(DaedalusTypeExpr, attributes(daedalus))]
 pub fn daedalus_type_expr(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     daedalus_type_derive::daedalus_type_expr(item)

@@ -4,7 +4,7 @@ use crate::capabilities::CapabilityRegistry as RuntimeCapabilityRegistry;
 use crate::graph_builder::GraphBuilder;
 use crate::handler_registry::HandlerRegistry;
 use crate::transport::RuntimeTransport;
-use daedalus_data::daedalus_type::DaedalusTypeExpr;
+use daedalus_data::daedalus_type::{DaedalusTypeExpr, DaedalusTypeVisitor};
 use daedalus_data::model::{TypeExpr, ValueType};
 use daedalus_data::named_types::{HostExportPolicy, NamedTypeRegistry};
 use daedalus_data::to_value::ToValue;

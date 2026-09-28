@@ -22,7 +22,7 @@ pub fn value_serializer_map() -> ValueSerializerMap {
 
 pub fn register_value_serializer_in<T, F>(map: &ValueSerializerMap, serializer: F)
 where
-    T: Any + Clone + Send + Sync + 'static,
+    T: Any + Send + Sync + 'static,
     F: Fn(&T) -> Value + Send + Sync + 'static,
 {
     let mut guard = map.write().unwrap_or_else(|poisoned| poisoned.into_inner());

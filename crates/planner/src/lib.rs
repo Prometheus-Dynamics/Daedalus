@@ -36,9 +36,9 @@ pub use graph::{
 pub use metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_OUTPUT_LABELS_KEY,
     DYNAMIC_OUTPUT_TYPES_KEY, DynamicPortMetadata, EMBEDDED_GROUP_KEY, GROUP_ID_KEY,
-    GROUP_LABEL_KEY, GroupMetadata, HOST_BRIDGE_META_KEY, descriptor_dynamic_port_type,
-    descriptor_metadata_string, descriptor_metadata_value, is_host_bridge_metadata,
-    metadata_string,
+    GROUP_LABEL_KEY, GroupMetadata, HOST_BRIDGE_META_KEY, HOST_INPUT_TYPES_KEY,
+    HOST_OUTPUT_TYPES_KEY, HostPortTypes, descriptor_dynamic_port_type, descriptor_metadata_string,
+    descriptor_metadata_value, is_host_bridge_metadata, metadata_string,
 };
 pub use passes::{
     AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,

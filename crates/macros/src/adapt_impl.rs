@@ -1,40 +1,19 @@
 use proc_macro::TokenStream;
-use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
 use quote::quote;
 use syn::{
-    FnArg, ItemFn, Lit, LitInt, LitStr, Meta, MetaNameValue, ReturnType, Type, parse_macro_input,
+    Expr, FnArg, ItemFn, Lit, LitInt, LitStr, Meta, MetaNameValue, ReturnType, Type,
+    parse_macro_input,
 };
 
-use crate::helpers::{AttributeArgs, NestedMeta, compile_error, lit_from_expr};
-
-fn crate_path(
-    pkg: &str,
-    fallback: &str,
-    via_root: Option<&str>,
-    daedalus_root: &Option<String>,
-) -> proc_macro2::TokenStream {
-    if let Some(root) = daedalus_root
-        && let Some(via) = via_root
-    {
-        let root_ident = syn::Ident::new(root, Span::call_site());
-        let via_ident = syn::Ident::new(via, Span::call_site());
-        return quote! { ::#root_ident::#via_ident };
-    }
-    let name = crate_name(pkg)
-        .map(|found| match found {
-            FoundCrate::Itself => pkg.replace('-', "_"),
-            FoundCrate::Name(name) => name,
-        })
-        .unwrap_or_else(|_| fallback.to_string());
-    let ident = syn::Ident::new(&name, Span::call_site());
-    quote! { ::#ident }
-}
+use crate::helpers::{
+    AttributeArgs, NestedMeta, compile_error, crate_path, lit_from_expr, str_expr,
+};
 
 struct AdaptArgs {
     id: LitStr,
-    from: Option<LitStr>,
-    to: Option<LitStr>,
+    from: Option<Expr>,
+    to: Option<Expr>,
     access: Option<syn::Ident>,
     cost: LitInt,
     kind: syn::Ident,
@@ -67,6 +46,14 @@ fn parse_args(args: AttributeArgs) -> Result<AdaptArgs, proc_macro2::TokenStream
                     access = Some(access_ident_from_expr(&value)?);
                     continue;
                 }
+                if path.is_ident("from") {
+                    from = Some(str_expr(&value, "adapt from")?);
+                    continue;
+                }
+                if path.is_ident("to") {
+                    to = Some(str_expr(&value, "adapt to")?);
+                    continue;
+                }
                 let Some(lit) = lit_from_expr(&value) else {
                     return Err(compile_error(
                         "adapt arguments must be string literals".into(),
@@ -77,16 +64,6 @@ fn parse_args(args: AttributeArgs) -> Result<AdaptArgs, proc_macro2::TokenStream
                         return Err(compile_error("adapt id must be a string literal".into()));
                     };
                     id = Some(value);
-                } else if path.is_ident("from") {
-                    let Lit::Str(value) = lit else {
-                        return Err(compile_error("adapt from must be a string literal".into()));
-                    };
-                    from = Some(value);
-                } else if path.is_ident("to") {
-                    let Lit::Str(value) = lit else {
-                        return Err(compile_error("adapt to must be a string literal".into()));
-                    };
-                    to = Some(value);
                 } else if path.is_ident("cost") {
                     let Lit::Int(value) = lit else {
                         return Err(compile_error(
@@ -366,37 +343,9 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         return compile_error("adapt functions cannot be generic yet".into()).into();
     }
 
-    let daedalus_root: Option<String> = crate_name("daedalus-rs")
-        .or_else(|_| crate_name("daedalus"))
-        .ok()
-        .map(|found| match found {
-            FoundCrate::Itself => "daedalus".to_string(),
-            FoundCrate::Name(name) => {
-                if name == "daedalus_rs" {
-                    "daedalus".to_string()
-                } else {
-                    name
-                }
-            }
-        });
-    let runtime_crate = crate_path(
-        "daedalus-runtime",
-        "daedalus_runtime",
-        Some("runtime"),
-        &daedalus_root,
-    );
-    let data_crate = crate_path(
-        "daedalus-data",
-        "daedalus_data",
-        Some("data"),
-        &daedalus_root,
-    );
-    let transport_crate = crate_path(
-        "daedalus-transport",
-        "daedalus_transport",
-        Some("transport"),
-        &daedalus_root,
-    );
+    let runtime_crate = crate_path("daedalus-runtime", "runtime");
+    let data_crate = crate_path("daedalus-data", "data");
+    let transport_crate = crate_path("daedalus-transport", "transport");
 
     let fn_ident = &input.sig.ident;
     let register_ident = syn::Ident::new(&format!("register_{fn_ident}_adapter"), fn_ident.span());

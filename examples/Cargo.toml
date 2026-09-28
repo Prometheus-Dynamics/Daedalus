@@ -17,8 +17,6 @@ gpu-styx = ["gpu-wgpu", "styx-camera-example"]
 
 [dependencies]
 daedalus = { workspace = true, features = ["engine-full", "plugins"] }
-# The `DaedalusTypeExpr`/`DaedalusToValue` derives expand to `::daedalus_data` paths.
-daedalus-data = { workspace = true }
 paste = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 tracing-subscriber = { workspace = true }

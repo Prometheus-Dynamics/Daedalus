@@ -7,7 +7,7 @@ use crate::graph::ExecutionPlan;
 use crate::graph::NodeInstance;
 use crate::metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_INPUTS_KEY,
-    DYNAMIC_OUTPUT_LABELS_KEY, DYNAMIC_OUTPUT_TYPES_KEY, DYNAMIC_OUTPUTS_KEY,
+    DYNAMIC_OUTPUT_LABELS_KEY, DYNAMIC_OUTPUT_TYPES_KEY, DYNAMIC_OUTPUTS_KEY, HostPortTypes,
     PLAN_APPLIED_LOWERINGS_KEY, PLAN_CONVERTER_METADATA_PREFIX, PLAN_EDGE_EXPLANATIONS_KEY,
     PLAN_OVERLOAD_RESOLUTIONS_KEY, descriptor_metadata_value, is_host_bridge_metadata,
 };
@@ -103,6 +103,13 @@ pub fn build_plan(mut input: PlannerInput, config: PlannerConfig) -> PlannerOutp
         node.metadata.remove(DYNAMIC_OUTPUT_LABELS_KEY);
         node.metadata.remove(DYNAMIC_INPUTS_KEY);
         node.metadata.remove(DYNAMIC_OUTPUTS_KEY);
+        // Declared host port types are graph inputs: they fix the bridge's port types, and every
+        // edge is still type checked (and adapted) against the node port it connects to.
+        if is_host_bridge(node) {
+            HostPortTypes::from_node_metadata(&node.metadata)
+                .to_dynamic()
+                .write_to_node_metadata(&mut node.metadata);
+        }
     }
 
     let mut applied_lowerings = Vec::new();

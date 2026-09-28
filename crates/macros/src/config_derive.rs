@@ -1,10 +1,8 @@
 use proc_macro::TokenStream;
-use proc_macro_crate::{FoundCrate, crate_name};
-use proc_macro2::Span;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Lit, parse_macro_input};
 
-use crate::helpers::compile_error;
+use crate::helpers::{compile_error, crate_path};
 
 mod codegen;
 mod model;
@@ -20,42 +18,9 @@ pub fn node_config(item: TokenStream) -> TokenStream {
     let struct_ident = input.ident.clone();
     let generics = input.generics.clone();
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
-    let daedalus_root: Option<String> = crate_name("daedalus-rs")
-        .or_else(|_| crate_name("daedalus"))
-        .ok()
-        .map(|fc| match fc {
-            FoundCrate::Itself => "daedalus".to_string(),
-            FoundCrate::Name(name) => {
-                if name == "daedalus_rs" {
-                    "daedalus".to_string()
-                } else {
-                    name
-                }
-            }
-        });
-    let crate_path = |pkg: &str, fallback: &str, subpath: Option<&str>| {
-        if let Some(root) = &daedalus_root {
-            let root_ident = syn::Ident::new(root, Span::call_site());
-            if let Some(sub) = subpath {
-                let sub_ident = syn::Ident::new(sub, Span::call_site());
-                return quote! { ::#root_ident::#sub_ident };
-            }
-            return quote! { ::#root_ident };
-        }
-        let name = crate_name(pkg)
-            .ok()
-            .map(|fc| match fc {
-                FoundCrate::Itself => pkg.replace('-', "_"),
-                FoundCrate::Name(name) => name,
-            })
-            .unwrap_or_else(|| fallback.to_string());
-        let ident = syn::Ident::new(&name, Span::call_site());
-        quote! { ::#ident }
-    };
-    let runtime_crate = crate_path("daedalus-runtime", "daedalus_runtime", Some("runtime"));
-    let registry_crate = crate_path("daedalus-registry", "daedalus_registry", Some("registry"));
-    let data_crate = crate_path("daedalus-data", "daedalus_data", Some("data"));
+    let runtime_crate = crate_path("daedalus-runtime", "runtime");
+    let registry_crate = crate_path("daedalus-registry", "registry");
+    let data_crate = crate_path("daedalus-data", "data");
 
     let validate_fn = match parse_validate_fn(&input.attrs) {
         Ok(validate_fn) => validate_fn,

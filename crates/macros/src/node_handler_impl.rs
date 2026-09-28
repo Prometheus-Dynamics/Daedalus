@@ -1,9 +1,10 @@
 use proc_macro::TokenStream;
-use proc_macro_crate::{FoundCrate, crate_name};
 use quote::quote;
 use syn::{ItemFn, LitStr, parse_macro_input};
 
-use crate::helpers::{AttributeArgs, NestedMeta, compile_error, lit_from_expr, litstr_from_ident};
+use crate::helpers::{
+    AttributeArgs, NestedMeta, compile_error, crate_path, lit_from_expr, litstr_from_ident,
+};
 
 pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args with AttributeArgs::parse_terminated);
@@ -11,40 +12,7 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut id: Option<LitStr> = None;
     let mut outputs: Vec<LitStr> = Vec::new();
-
-    let daedalus_root: Option<String> = crate_name("daedalus-rs")
-        .or_else(|_| crate_name("daedalus"))
-        .ok()
-        .map(|fc| match fc {
-            FoundCrate::Itself => "daedalus".to_string(),
-            FoundCrate::Name(name) => {
-                if name == "daedalus_rs" {
-                    "daedalus".to_string()
-                } else {
-                    name
-                }
-            }
-        });
-    let crate_path = |pkg: &str, fallback: &str, subpath: Option<&str>| {
-        if let Some(root) = &daedalus_root {
-            let root_ident = syn::Ident::new(root, proc_macro2::Span::call_site());
-            if let Some(sub) = subpath {
-                let sub_ident = syn::Ident::new(sub, proc_macro2::Span::call_site());
-                return quote! { ::#root_ident::#sub_ident };
-            }
-            return quote! { ::#root_ident };
-        }
-        let name = crate_name(pkg)
-            .ok()
-            .map(|fc| match fc {
-                FoundCrate::Itself => pkg.replace('-', "_"),
-                FoundCrate::Name(name) => name,
-            })
-            .unwrap_or_else(|| fallback.to_string());
-        let ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
-        quote! { ::#ident }
-    };
-    let runtime_crate = crate_path("daedalus-runtime", "daedalus_runtime", Some("runtime"));
+    let runtime_crate = crate_path("daedalus-runtime", "runtime");
 
     for arg in args {
         match arg {

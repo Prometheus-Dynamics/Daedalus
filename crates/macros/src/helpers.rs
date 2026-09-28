@@ -1,3 +1,4 @@
+use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use syn::parse::{Parse, ParseStream};
@@ -8,6 +9,49 @@ use syn::{
 
 pub fn compile_error(message: String) -> proc_macro2::TokenStream {
     quote! { ::core::compile_error!(#message); }
+}
+
+/// Path to a Daedalus crate as seen from the crate being expanded.
+///
+/// Resolves through the facade (`::daedalus::<via>`) when the consumer depends on `daedalus-rs`,
+/// otherwise through the member crate itself (e.g. `::daedalus_data`).
+pub fn crate_path(pkg: &str, via: &str) -> proc_macro2::TokenStream {
+    let found_name = |found| match found {
+        FoundCrate::Itself => None,
+        FoundCrate::Name(name) => Some(name),
+    };
+    let facade = crate_name("daedalus-rs")
+        .or_else(|_| crate_name("daedalus"))
+        .ok()
+        .map(|found| {
+            found_name(found)
+                .filter(|name| name != "daedalus_rs")
+                .unwrap_or_else(|| "daedalus".to_string())
+        });
+    if let Some(root) = facade {
+        let root = syn::Ident::new(&root, Span::call_site());
+        let via = syn::Ident::new(via, Span::call_site());
+        return quote! { ::#root::#via };
+    }
+    let name = crate_name(pkg)
+        .ok()
+        .and_then(found_name)
+        .unwrap_or_else(|| pkg.replace('-', "_"));
+    let ident = syn::Ident::new(&name, Span::call_site());
+    quote! { ::#ident }
+}
+
+/// A `&'static str` argument: a string literal or a path to a `const`/`static` string.
+pub fn str_expr(expr: &Expr, what: &str) -> Result<Expr, proc_macro2::TokenStream> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: Lit::Str(_), ..
+        })
+        | Expr::Path(_) => Ok(expr.clone()),
+        _ => Err(compile_error(format!(
+            "{what} must be a string literal or a path to a string constant"
+        ))),
+    }
 }
 
 #[derive(Clone)]
