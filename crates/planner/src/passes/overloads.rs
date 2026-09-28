@@ -1,5 +1,5 @@
 use daedalus_core::metadata::NODE_OVERLOADS_KEY;
-use daedalus_data::model::{StructFieldValue, TypeExpr, Value};
+use daedalus_data::model::{TypeExpr, Value};
 use daedalus_registry::capability::NodeDecl;
 use std::collections::BTreeMap;
 
@@ -20,75 +20,28 @@ struct ParsedNodeOverload {
     inputs: BTreeMap<String, TypeExpr>,
 }
 
-fn struct_field<'a>(fields: &'a [StructFieldValue], name: &str) -> Option<&'a Value> {
-    fields
-        .iter()
-        .find(|field| field.name == name)
-        .map(|field| &field.value)
-}
-
-fn value_to_string_map(value: &Value) -> Option<BTreeMap<String, Value>> {
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    let mut map = BTreeMap::new();
-    for (key, value) in entries {
-        let Value::String(key) = key else {
-            return None;
-        };
-        map.insert(key.to_string(), value.clone());
-    }
-    Some(map)
-}
-
-fn value_to_typeexpr(value: &Value) -> Option<TypeExpr> {
-    match value {
-        Value::String(json) => serde_json::from_str::<TypeExpr>(json).ok(),
-        _ => None,
-    }
-}
-
 fn parse_node_overloads(desc: &NodeDecl) -> Vec<ParsedNodeOverload> {
     let Some(Value::List(entries)) = super::node_metadata_value(desc, NODE_OVERLOADS_KEY) else {
         return Vec::new();
     };
 
-    let mut overloads = Vec::new();
-    for entry in entries {
-        let Value::Struct(fields) = entry else {
-            continue;
-        };
-        let Some(Value::String(id)) = struct_field(&fields, "id") else {
-            continue;
-        };
-        let label = struct_field(&fields, "label").and_then(|value| match value {
-            Value::String(value) => Some(value.to_string()),
-            _ => None,
-        });
-        let Some(inputs_value) = struct_field(&fields, "inputs") else {
-            continue;
-        };
-        let Some(raw_inputs) = value_to_string_map(inputs_value) else {
-            continue;
-        };
-        let mut inputs = BTreeMap::new();
-        let mut valid = true;
-        for (port, raw_ty) in raw_inputs {
-            let Some(ty) = value_to_typeexpr(&raw_ty) else {
-                valid = false;
-                break;
-            };
-            inputs.insert(port, ty);
-        }
-        if !valid {
-            continue;
-        }
-        overloads.push(ParsedNodeOverload {
-            id: id.to_string(),
-            label,
+    let parse = |entry: &Value| {
+        let inputs = entry
+            .field("inputs")?
+            .as_string_map()?
+            .into_iter()
+            .map(|(port, raw_ty)| Some((port, TypeExpr::from_json_value(&raw_ty)?)))
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        Some(ParsedNodeOverload {
+            id: entry.field("id")?.as_str()?.to_string(),
+            label: entry
+                .field("label")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             inputs,
-        });
-    }
+        })
+    };
+    let mut overloads: Vec<_> = entries.iter().filter_map(parse).collect();
     overloads.sort_by(|a, b| a.id.cmp(&b.id));
     overloads
 }

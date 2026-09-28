@@ -15,7 +15,7 @@ use crate::executor::{
     ExecutionTelemetry, NodeError, RuntimeDataSizeInspectors,
 };
 
-use super::{EdgeStorage, payload_size_bytes};
+use super::{EdgeStorage, payload_size_bytes, queue_transport_bytes};
 
 fn trace_edge_enqueue(edge_idx: usize, policy: &RuntimeEdgePolicy, payload: &CorrelatedPayload) {
     tracing::trace!(
@@ -165,7 +165,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
         match storage {
             EdgeStorage::Locked { queue, metrics } => {
                 let mut q = queue.lock();
-                q.ensure_policy(policy);
+                q.set_policy(&policy.pressure);
                 telem.record_edge_capacity(edge_idx, q.capacity());
                 let payload_type = payload.inner.type_key().clone();
                 let correlation_id = payload.correlation_id;
@@ -207,11 +207,11 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                         lifecycle.edge_idx = Some(edge_idx);
                         lifecycle.payload = payload_desc.clone();
                         telem.record_data_lifecycle(lifecycle);
-                        q.push(policy, payload)
+                        !q.push(&policy.pressure, payload).is_accepted()
                     }
                 };
                 if dropped {
-                    metrics.set_current_bytes(q.transport_bytes(data_size_inspectors));
+                    metrics.set_current_bytes(queue_transport_bytes(&q, data_size_inspectors));
                 } else {
                     metrics.adjust_bytes(transport_bytes.unwrap_or(0), 0);
                 }

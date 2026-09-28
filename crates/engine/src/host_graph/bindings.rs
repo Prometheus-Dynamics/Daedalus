@@ -106,71 +106,27 @@ pub trait HostGraphRunInput {
     fn into_parts(self) -> (PortId, TypeKey, Self::Value);
 }
 
-impl<I> HostGraphRunInput for (&'static str, I)
+impl<P, I> HostGraphRunInput for (P, I)
 where
+    P: Into<PortId>,
     I: Send + Sync + 'static,
 {
     type Value = I;
 
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), type_key_of::<I>(), self.1)
+        (self.0.into(), type_key_of::<I>(), self.1)
     }
 }
 
-impl<I> HostGraphRunInput for (String, I)
+impl<P, K, I> HostGraphRunInput for (P, K, I)
 where
-    I: Send + Sync + 'static,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), type_key_of::<I>(), self.1)
-    }
-}
-
-impl<I> HostGraphRunInput for (PortId, I)
-where
-    I: Send + Sync + 'static,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (self.0, type_key_of::<I>(), self.1)
-    }
-}
-
-impl<I, K> HostGraphRunInput for (&'static str, K, I)
-where
-    I: Send + Sync + 'static,
+    P: Into<PortId>,
     K: Into<TypeKey>,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), self.1.into(), self.2)
-    }
-}
-
-impl<I, K> HostGraphRunInput for (String, K, I)
-where
     I: Send + Sync + 'static,
-    K: Into<TypeKey>,
 {
     type Value = I;
 
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), self.1.into(), self.2)
-    }
-}
-
-impl<I, K> HostGraphRunInput for (PortId, K, I)
-where
-    I: Send + Sync + 'static,
-    K: Into<TypeKey>,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (self.0, self.1.into(), self.2)
+        (self.0.into(), self.1.into(), self.2)
     }
 }

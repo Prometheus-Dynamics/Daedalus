@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
-
-use daedalus_planner::{Edge, Graph, NodeRef, PortRef, descriptor_dynamic_port_type};
+use daedalus_planner::{Edge, Graph, descriptor_dynamic_port_type};
 
 use crate::handles::PortHandle;
 
@@ -176,17 +174,8 @@ impl GraphBuilder {
         }
         let f_idx = self.try_find_index(&from_spec.node)?;
         let t_idx = self.try_find_index(&to_spec.node)?;
-        self.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(f_idx),
-                port: from_spec.port,
-            },
-            to: PortRef {
-                node: NodeRef(t_idx),
-                port: to_spec.port,
-            },
-            metadata: BTreeMap::new(),
-        });
+        self.edges
+            .push(Edge::new(f_idx, from_spec.port, t_idx, to_spec.port));
         Ok(())
     }
 

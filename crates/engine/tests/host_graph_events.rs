@@ -11,9 +11,8 @@ use daedalus_data::model::{TypeExpr, Value, ValueType};
 use daedalus_engine::{
     Engine, EngineConfig, HostGraph, HostGraphDriveExit, HostPortDirection, InboundWait,
 };
-use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, PortRef};
+use daedalus_planner::{Edge, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
-use daedalus_registry::ids::NodeId;
 use daedalus_runtime::RuntimeNode;
 use daedalus_runtime::executor::{NodeError, NodeHandler};
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
@@ -44,29 +43,10 @@ impl NodeHandler for IncrementHandler {
 
 fn node(id: &str, label: Option<&str>, inputs: &[&str], outputs: &[&str]) -> NodeInstance {
     NodeInstance {
-        id: NodeId::new(id),
-        bundle: None,
         label: label.map(str::to_string),
-        inputs: inputs.iter().map(|port| port.to_string()).collect(),
-        outputs: outputs.iter().map(|port| port.to_string()).collect(),
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    }
-}
-
-fn edge(from: usize, from_port: &str, to: usize, to_port: &str) -> Edge {
-    Edge {
-        from: PortRef {
-            node: NodeRef(from),
-            port: from_port.into(),
-        },
-        to: PortRef {
-            node: NodeRef(to),
-            port: to_port.into(),
-        },
-        metadata: Default::default(),
+        ..NodeInstance::new(id)
+            .with_inputs(inputs.iter().copied())
+            .with_outputs(outputs.iter().copied())
     }
 }
 
@@ -94,7 +74,7 @@ fn compile_increment_graph() -> (PluginRegistry, HostGraph<IncrementHandler>) {
         .insert(HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true));
     let graph = Graph {
         nodes: vec![host, node("inc", Some("adder"), &["in"], &["out"])],
-        edges: vec![edge(0, "in", 1, "in"), edge(1, "out", 0, "out")],
+        edges: vec![Edge::new(0, "in", 1, "in"), Edge::new(1, "out", 0, "out")],
         metadata: Default::default(),
     };
 
@@ -141,7 +121,7 @@ fn host_ports_are_typed_from_plan() {
     assert_eq!(outputs[0].connections[0].port.as_str(), "out");
 
     assert_eq!(graph.host_ports().len(), 2);
-    assert_eq!(graph.runtime_plan().host_bridge_aliases(), vec!["host"]);
+    assert!(graph.host_ports().iter().all(|port| port.alias == "host"));
     assert!(graph.runtime_plan().host_ports_for("other").is_empty());
 }
 

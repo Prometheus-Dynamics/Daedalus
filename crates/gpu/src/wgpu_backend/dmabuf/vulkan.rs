@@ -372,7 +372,7 @@ impl UsageSet {
         let mut wgpu = wgpu::TextureUsages::TEXTURE_BINDING;
         if !planar {
             wgpu |= wgpu::TextureUsages::COPY_SRC
-                | crate::wgpu_backend::texture_usage_flags(
+                | crate::wgpu_backend::mapping::texture_usage_flags(
                     usage & (GpuUsage::UPLOAD | GpuUsage::STORAGE | GpuUsage::RENDER_TARGET),
                 );
         }

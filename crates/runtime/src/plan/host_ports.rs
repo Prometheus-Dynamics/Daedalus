@@ -7,14 +7,13 @@
 
 use std::collections::BTreeMap;
 
-use daedalus_core::metadata::PLAN_EDGE_EXPLANATIONS_KEY;
 use daedalus_data::model::TypeExpr;
-use daedalus_planner::{DynamicPortMetadata, NodeRef, is_host_bridge_metadata};
+use daedalus_planner::{DynamicPortMetadata, NodeRef, is_generic_marker, is_host_bridge_metadata};
 use daedalus_transport::TypeKey;
 use serde::{Deserialize, Serialize};
 
 use super::RuntimePlan;
-use super::transport_parse::{string_field, struct_fields, typeexpr_field};
+use super::transports::EdgeExplanations;
 use crate::handles::PortId;
 
 /// Direction of a host port, from the host's point of view.
@@ -68,68 +67,17 @@ impl HostPortDescriptor {
     }
 }
 
-type EdgeKey = (String, String, String, String);
-
-fn edge_explanation_types(plan: &RuntimePlan) -> BTreeMap<EdgeKey, (TypeExpr, TypeExpr)> {
-    let mut out = BTreeMap::new();
-    let Some(daedalus_data::model::Value::List(entries)) =
-        plan.graph_metadata.get(PLAN_EDGE_EXPLANATIONS_KEY)
-    else {
-        return out;
-    };
-    for entry in entries {
-        let Some(fields) = struct_fields(entry) else {
-            continue;
-        };
-        let (Some(from_node), Some(from_port), Some(to_node), Some(to_port)) = (
-            string_field(fields, "from_node"),
-            string_field(fields, "from_port"),
-            string_field(fields, "to_node"),
-            string_field(fields, "to_port"),
-        ) else {
-            continue;
-        };
-        let (Some(from_type), Some(to_type)) = (
-            typeexpr_field(fields, "from_type"),
-            typeexpr_field(fields, "to_type"),
-        ) else {
-            continue;
-        };
-        out.entry((
-            from_node.to_string(),
-            from_port.to_string(),
-            to_node.to_string(),
-            to_port.to_string(),
-        ))
-        .or_insert((from_type, to_type));
-    }
-    out
-}
-
 fn concrete(ty: Option<TypeExpr>) -> Option<TypeExpr> {
-    ty.filter(|ty| !matches!(ty, TypeExpr::Opaque(name) if name.eq_ignore_ascii_case("generic")))
-}
-
-fn host_alias(node: &super::RuntimeNode) -> &str {
-    node.label.as_deref().unwrap_or(&node.id)
+    ty.filter(|ty| !is_generic_marker(ty))
 }
 
 impl RuntimePlan {
-    /// Aliases of every host-bridge node in the plan, in node order.
-    pub fn host_bridge_aliases(&self) -> Vec<String> {
-        self.nodes
-            .iter()
-            .filter(|node| is_host_bridge_metadata(&node.metadata))
-            .map(|node| host_alias(node).to_string())
-            .collect()
-    }
-
     /// Describe every host port of every host-bridge node.
     ///
     /// Ordering is deterministic: host nodes in plan order, inputs before outputs, then ports by
     /// name.
     pub fn host_ports(&self) -> Vec<HostPortDescriptor> {
-        let explanations = edge_explanation_types(self);
+        let explanations = EdgeExplanations::from_metadata(&self.graph_metadata);
         let mut out = Vec::new();
         for (host_idx, host) in self.nodes.iter().enumerate() {
             if !is_host_bridge_metadata(&host.metadata) {
@@ -173,7 +121,7 @@ impl RuntimePlan {
         host_idx: usize,
         direction: HostPortDirection,
         dynamic: &DynamicPortMetadata,
-        explanations: &BTreeMap<EdgeKey, (TypeExpr, TypeExpr)>,
+        explanations: &EdgeExplanations,
     ) -> Vec<HostPortDescriptor> {
         let host = &self.nodes[host_idx];
         let is_input = direction == HostPortDirection::Input;
@@ -193,17 +141,14 @@ impl RuntimePlan {
             let Some(other_node) = self.nodes.get(other.0) else {
                 continue;
             };
-            let (from_id, to_id) = if is_input {
-                (&host.id, &other_node.id)
+            let (from, to) = if is_input {
+                (host, other_node)
             } else {
-                (&other_node.id, &host.id)
+                (other_node, host)
             };
-            let explained = explanations.get(&(
-                from_id.clone(),
-                edge.source_port().to_string(),
-                to_id.clone(),
-                edge.target_port().to_string(),
-            ));
+            let explained = explanations
+                .get(from, to, edge)
+                .map(|explained| (&explained.from_type, &explained.to_type));
             let transport = self
                 .edge_transports
                 .get(edge_index)
@@ -232,7 +177,7 @@ impl RuntimePlan {
             let descriptor = ports
                 .entry(host_port.clone())
                 .or_insert_with(|| HostPortDescriptor {
-                    alias: host_alias(host).to_string(),
+                    alias: host.host_alias().to_string(),
                     host_node: NodeRef(host_idx),
                     direction,
                     name: host_port.clone(),

@@ -1,7 +1,7 @@
 use daedalus_engine::{
     Engine, EngineConfig, EngineConfigError, GpuBackend, RuntimeMode, RuntimeSection,
 };
-use daedalus_planner::{ComputeAffinity, ExecutionPlan, Graph, NodeInstance};
+use daedalus_planner::{ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::{
     RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
     config::RuntimeDebugConfig,
@@ -325,17 +325,7 @@ fn run_concurrency_probe(mode: RuntimeMode, runtime_plan: daedalus_runtime::Runt
 fn independent_runtime_plan(count: usize) -> daedalus_runtime::RuntimePlan {
     let mut graph = Graph::default();
     for idx in 0..count {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{idx}")),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(format!("n{idx}")));
     }
     build_runtime(
         &ExecutionPlan::new(graph, vec![]),

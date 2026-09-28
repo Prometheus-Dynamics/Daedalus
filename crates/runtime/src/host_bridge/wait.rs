@@ -26,12 +26,6 @@ pub enum InboundWait {
     TimedOut,
 }
 
-impl InboundWait {
-    pub fn is_ready(self) -> bool {
-        matches!(self, InboundWait::Ready)
-    }
-}
-
 /// A one-shot wait for inbound host payloads.
 ///
 /// Create it with [`HostBridgeHandle::inbound_waiter`]. Any explicit wakeup issued *after*
@@ -200,10 +194,6 @@ impl HostBridgeHandle {
         wake_all(wakers);
     }
 
-    pub(crate) fn notify_waiters(&self) {
-        self.wake_inbound_waiters();
-    }
-
     /// Whether the whole bridge has been closed.
     pub fn is_closed(&self) -> bool {
         self.shared.buffers.lock().closed
@@ -235,7 +225,10 @@ mod tests {
             InboundWait::TimedOut
         );
         handle.push("in", 1i64);
-        assert!(handle.wait_inbound(Some(Duration::ZERO)).is_ready());
+        assert_eq!(
+            handle.wait_inbound(Some(Duration::ZERO)),
+            InboundWait::Ready
+        );
     }
 
     #[test]

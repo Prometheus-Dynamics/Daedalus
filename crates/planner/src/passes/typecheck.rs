@@ -5,11 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
-use crate::metadata::DynamicPortMetadata;
+use crate::metadata::{DynamicPortMetadata, is_generic_marker};
 
 use super::{
-    PlannerCatalog, diagnostic_node_id, is_generic_marker, latest_node, port_type,
-    simplify_rust_name, suggest_nodes,
+    PlannerCatalog, diagnostic_node_id, latest_node, port_type, simplify_rust_name, suggest_nodes,
 };
 
 pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut Vec<Diagnostic>) {

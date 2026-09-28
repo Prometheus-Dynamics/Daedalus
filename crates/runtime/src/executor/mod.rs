@@ -129,13 +129,14 @@ pub(crate) fn segment_failure(segment_idx: usize, error: &ExecuteError) -> NodeF
     }
 }
 
-pub(crate) fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+/// Text of a caught panic payload (`&str` or `String`), or a placeholder for other payloads.
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()
     } else {
-        "handler panicked with non-string payload".to_string()
+        "non-string panic payload".to_string()
     }
 }
 
@@ -175,7 +176,7 @@ pub(crate) fn reset_run_storage(
             EdgeStorage::Locked { queue, metrics } => {
                 let mut q = queue.lock();
                 if let Some(edge) = edges.get(idx) {
-                    q.ensure_policy(edge.policy());
+                    q.set_policy(&edge.policy().pressure);
                 }
                 q.clear();
                 metrics.set_current_bytes(0);

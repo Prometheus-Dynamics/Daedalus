@@ -9,9 +9,8 @@ use std::cell::Cell;
 
 use daedalus_data::model::{TypeExpr, Value, ValueType};
 use daedalus_engine::{Engine, EngineConfig, HostGraph};
-use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, PortRef};
+use daedalus_planner::{Edge, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
-use daedalus_registry::ids::NodeId;
 use daedalus_runtime::executor::{MetricsLevel, NodeError, NodeHandler};
 use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
@@ -73,31 +72,17 @@ impl NodeHandler for IncrementHandler {
 }
 
 fn node(id: &str, inputs: &[&str], outputs: &[&str]) -> NodeInstance {
-    NodeInstance {
-        id: NodeId::new(id),
-        bundle: None,
-        label: Some(
+    NodeInstance::new(id)
+        .with_label(
             if id == HOST_BRIDGE_ID {
                 "host"
             } else {
                 "adder"
             }
             .to_string(),
-        ),
-        inputs: inputs.iter().map(|port| port.to_string()).collect(),
-        outputs: outputs.iter().map(|port| port.to_string()).collect(),
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    }
-}
-
-fn port(node: usize, port: &str) -> PortRef {
-    PortRef {
-        node: NodeRef(node),
-        port: port.into(),
-    }
+        )
+        .with_inputs(inputs.iter().copied())
+        .with_outputs(outputs.iter().copied())
 }
 
 fn compile(level: MetricsLevel) -> (PluginRegistry, HostGraph<IncrementHandler>) {
@@ -118,16 +103,11 @@ fn compile(level: MetricsLevel) -> (PluginRegistry, HostGraph<IncrementHandler>)
                 .output(PortDecl::new("out", INT_KEY).schema(int_ty)),
         )
         .expect("register inc decl");
-    let mut host = node(HOST_BRIDGE_ID, &["out"], &["in"]);
-    host.metadata
-        .insert(HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true));
+    let host = node(HOST_BRIDGE_ID, &["out"], &["in"])
+        .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true));
     let edges = [(0, "in", 1, "in"), (1, "out", 0, "out")]
         .into_iter()
-        .map(|(from, from_port, to, to_port)| Edge {
-            from: port(from, from_port),
-            to: port(to, to_port),
-            metadata: Default::default(),
-        })
+        .map(|(from, from_port, to, to_port)| Edge::new(from, from_port, to, to_port))
         .collect();
     let graph = Graph {
         nodes: vec![host, node("inc", &["in"], &["out"])],

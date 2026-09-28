@@ -3,7 +3,6 @@
 use daedalus_data::model::TypeExpr;
 use daedalus_planner::{Graph, GraphDocument, NodeInstance, PluginRequirement, UnmetReason};
 use daedalus_registry::capability::{NodeDecl, PluginManifest, PortDecl};
-use daedalus_registry::ids::NodeId;
 use daedalus_runtime::plugins::{
     Plugin, PluginInstallContext, PluginRegistry, PluginResult, RegistryPluginExt,
 };
@@ -44,20 +43,6 @@ fn registry() -> PluginRegistry {
     registry.install_plugin(&VersionedPlugin).unwrap();
     registry.install_plugin(&UnversionedPlugin).unwrap();
     registry
-}
-
-fn node(id: &str) -> NodeInstance {
-    NodeInstance {
-        id: NodeId::new(id),
-        bundle: None,
-        label: None,
-        inputs: Vec::new(),
-        outputs: Vec::new(),
-        compute: Default::default(),
-        const_inputs: Vec::new(),
-        sync_groups: Vec::new(),
-        metadata: Default::default(),
-    }
 }
 
 #[test]
@@ -103,9 +88,9 @@ fn check_requirements_reports_missing_and_mismatched_plugins() {
 fn graph_requirements_are_derived_from_node_providers() {
     let registry = registry();
     let mut graph = Graph::default();
-    graph.nodes.push(node("docreq.math:source"));
-    graph.nodes.push(node("docreq.math:source"));
-    graph.nodes.push(node("unknown:node"));
+    graph.nodes.push(NodeInstance::new("docreq.math:source"));
+    graph.nodes.push(NodeInstance::new("docreq.math:source"));
+    graph.nodes.push(NodeInstance::new("unknown:node"));
     assert_eq!(
         registry.graph_requirements(&graph),
         vec![PluginRequirement::new("docreq.math")]

@@ -1,39 +1,21 @@
 use daedalus_data::model::Value;
 use daedalus_planner::{
-    Edge, Graph, GraphDocument, GraphDocumentError, NodeInstance, NodeRef, PluginRequirement,
-    PortRef, UnmetReason, check_plugin_requirements,
+    Edge, Graph, GraphDocument, GraphDocumentError, NodeInstance, PluginRequirement, UnmetReason,
+    check_plugin_requirements,
 };
-use daedalus_registry::ids::NodeId;
 
 fn node(id: &str, inputs: &[&str], outputs: &[&str]) -> NodeInstance {
-    NodeInstance {
-        id: NodeId::new(id),
-        bundle: None,
-        label: None,
-        inputs: inputs.iter().map(|s| s.to_string()).collect(),
-        outputs: outputs.iter().map(|s| s.to_string()).collect(),
-        compute: Default::default(),
-        const_inputs: vec![("k".into(), Value::Int(3))],
-        sync_groups: Vec::new(),
-        metadata: Default::default(),
-    }
+    NodeInstance::new(id)
+        .with_inputs(inputs.iter().copied())
+        .with_outputs(outputs.iter().copied())
+        .with_const_input("k", Value::Int(3))
 }
 
 fn sample_graph() -> Graph {
     let mut graph = Graph::default();
     graph.nodes.push(node("demo.math:source", &[], &["out"]));
     graph.nodes.push(node("demo.math:sink", &["in"], &[]));
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph.edges.push(Edge::new(0, "out", 1, "in"));
     graph
         .metadata
         .insert("rate".into(), Value::String("30hz".into()));

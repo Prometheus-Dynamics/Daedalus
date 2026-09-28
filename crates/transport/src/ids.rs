@@ -7,12 +7,6 @@ crate::define_text_id!(
      a fast path, but it is not stable enough to be the graph type identity."
 );
 
-impl TypeKey {
-    pub fn opaque(key: impl Into<String>) -> Self {
-        Self::new(key)
-    }
-}
-
 crate::define_text_id!(
     LayoutHash,
     "Deterministic ABI/layout identity for types that may cross a Rust dynamic plugin boundary."

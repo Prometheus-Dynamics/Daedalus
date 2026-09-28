@@ -67,7 +67,7 @@ where
                 .unwrap_or_else(|panic| {
                     Err(ExecuteError::HandlerPanicked {
                         node: format!("segment_{segment_idx}"),
-                        message: panic_message(panic),
+                        message: panic_message(&*panic),
                     })
                 });
                 match &result {

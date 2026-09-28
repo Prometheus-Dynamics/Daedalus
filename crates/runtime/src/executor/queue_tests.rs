@@ -1,4 +1,4 @@
-use super::{ApplyPolicyOwnedArgs, EdgeQueue, EdgeStorage, EdgeStorageMetrics, RingBuf};
+use super::{ApplyPolicyOwnedArgs, EdgeQueue, EdgeStorage, EdgeStorageMetrics};
 #[cfg(feature = "metrics")]
 use crate::executor::EdgePressureReason;
 use crate::executor::ExecutionTelemetry;
@@ -101,24 +101,11 @@ fn apply_locked_pressure_event(
 }
 
 #[test]
-fn ringbuf_clear_preserves_capacity() {
-    let mut ring = RingBuf::new(4);
-    ring.push_back(payload(1));
-    ring.push_back(payload(2));
-    ring.clear();
-
-    assert_eq!(ring.cap(), 4);
-    assert_eq!(ring.len(), 0);
-    assert!(ring.is_empty());
-}
-
-#[test]
 fn edge_queue_clear_preserves_bounded_policy_capacity() {
     let mut queue = EdgeQueue::default();
     let policy = RuntimeEdgePolicy::bounded(3);
-    queue.ensure_policy(&policy);
-    queue.push(&policy, payload(1));
-    queue.push(&policy, payload(2));
+    queue.push(&policy.pressure, payload(1));
+    queue.push(&policy.pressure, payload(2));
 
     queue.clear();
 
@@ -138,9 +125,8 @@ fn bounded_backpressure_does_not_enqueue_when_full() {
         freshness: FreshnessPolicy::PreserveAll,
     };
 
-    queue.ensure_policy(&policy);
-    assert!(!queue.push(&policy, payload(1)));
-    assert!(queue.push(&policy, payload(2)));
+    assert!(queue.push(&policy.pressure, payload(1)).is_accepted());
+    assert!(!queue.push(&policy.pressure, payload(2)).is_accepted());
     assert_eq!(queue.len(), 1);
     assert_eq!(
         queue.pop_front().unwrap().inner.get_ref::<Vec<u8>>(),

@@ -5,10 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
-use daedalus_registry::ids::NodeId;
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::executor::OwnedExecutor;
 use daedalus_runtime::executor::{DataLifecycleRecord, DataLifecycleStage};
 use daedalus_runtime::host_bridge::HOST_BRIDGE_ID;
@@ -61,48 +58,20 @@ impl NodeHandler for BenchHandler {
 }
 
 fn cpu_node(id: &str, inputs: &[&str], outputs: &[&str]) -> NodeInstance {
-    NodeInstance {
-        id: NodeId::new(id),
-        bundle: None,
-        label: None,
-        inputs: inputs.iter().map(|port| (*port).to_string()).collect(),
-        outputs: outputs.iter().map(|port| (*port).to_string()).collect(),
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: Vec::new(),
-        sync_groups: Vec::new(),
-        metadata: BTreeMap::new(),
-    }
+    NodeInstance::new(id)
+        .with_inputs(inputs.iter().copied())
+        .with_outputs(outputs.iter().copied())
 }
 
 fn host_bridge() -> NodeInstance {
-    NodeInstance {
-        id: NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".to_string()),
-        inputs: vec!["out".to_string()],
-        outputs: vec!["in".to_string()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: Vec::new(),
-        sync_groups: Vec::new(),
-        metadata: BTreeMap::from([(
-            HOST_BRIDGE_META_KEY.to_string(),
+    NodeInstance::new(HOST_BRIDGE_ID)
+        .with_label("host")
+        .with_inputs(["out"])
+        .with_outputs(["in"])
+        .with_metadata(
+            HOST_BRIDGE_META_KEY,
             daedalus_data::model::Value::Bool(true),
-        )]),
-    }
-}
-
-fn edge(from: usize, from_port: &str, to: usize, to_port: &str) -> Edge {
-    Edge {
-        from: PortRef {
-            node: NodeRef(from),
-            port: from_port.to_string(),
-        },
-        to: PortRef {
-            node: NodeRef(to),
-            port: to_port.to_string(),
-        },
-        metadata: BTreeMap::new(),
-    }
+        )
 }
 
 fn runtime_from_graph(graph: Graph) -> Arc<daedalus_runtime::RuntimePlan> {
@@ -164,9 +133,9 @@ fn direct_host_executor() -> OwnedExecutor<BenchHandler> {
             cpu_node("bench.add.b", &["in"], &["out"]),
         ],
         edges: vec![
-            edge(0, "in", 1, "in"),
-            edge(1, "out", 2, "in"),
-            edge(2, "out", 0, "out"),
+            Edge::new(0, "in", 1, "in"),
+            Edge::new(1, "out", 2, "in"),
+            Edge::new(2, "out", 0, "out"),
         ],
         metadata: BTreeMap::new(),
     };
@@ -182,7 +151,7 @@ fn pressure_executor(
             cpu_node("bench.burst", &[], &["out"]),
             cpu_node("bench.sink", &["in"], &[]),
         ],
-        edges: vec![edge(0, "out", 1, "in")],
+        edges: vec![Edge::new(0, "out", 1, "in")],
         metadata: BTreeMap::new(),
     };
     let plan = ExecutionPlan::new(graph, Vec::new());
@@ -198,7 +167,7 @@ fn stream_graph() -> StreamGraph<BenchHandler> {
             host_bridge(),
             cpu_node("bench.add.stream", &["in"], &["out"]),
         ],
-        edges: vec![edge(0, "in", 1, "in"), edge(1, "out", 0, "out")],
+        edges: vec![Edge::new(0, "in", 1, "in"), Edge::new(1, "out", 0, "out")],
         metadata: BTreeMap::new(),
     };
     StreamGraph::new(runtime_from_graph(graph), BenchHandler)

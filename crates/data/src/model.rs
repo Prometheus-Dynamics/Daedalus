@@ -19,6 +19,69 @@ pub enum Value {
     Enum(EnumValue),
 }
 
+impl Value {
+    /// Field `name` of a `Struct` value.
+    pub fn field(&self, name: &str) -> Option<&Value> {
+        match self {
+            Value::Struct(fields) => fields
+                .iter()
+                .find(|field| field.name == name)
+                .map(|field| &field.value),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Value::String(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Non-negative `Int` value.
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Value::Int(value) => u64::try_from(*value).ok(),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<&[Value]> {
+        match self {
+            Value::List(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// String items of a `List` value; non-string items are skipped.
+    pub fn as_string_list(&self) -> Option<Vec<String>> {
+        Some(
+            self.as_list()?
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect(),
+        )
+    }
+
+    /// A `Map` whose keys are all strings, as an ordered map. `None` if any key is not a string.
+    pub fn as_string_map(&self) -> Option<std::collections::BTreeMap<String, Value>> {
+        let Value::Map(entries) = self else {
+            return None;
+        };
+        entries
+            .iter()
+            .map(|(key, value)| Some((key.as_str()?.to_string(), value.clone())))
+            .collect()
+    }
+}
+
 /// Borrowed view of a value to avoid cloning large payloads.
 ///
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +217,12 @@ impl TypeExpr {
     /// Construct an enum type.
     pub fn r#enum(variants: Vec<EnumVariant>) -> Self {
         TypeExpr::Enum(variants)
+    }
+
+    /// Decode a type expression stored as a JSON string value (the planner metadata encoding).
+    #[cfg(feature = "json")]
+    pub fn from_json_value(value: &Value) -> Option<Self> {
+        serde_json::from_str(value.as_str()?).ok()
     }
 
     /// Produce a canonically ordered representation for deterministic equality/ordering.

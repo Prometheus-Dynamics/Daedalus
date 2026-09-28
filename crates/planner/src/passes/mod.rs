@@ -36,8 +36,8 @@ pub use catalog::PlannerCatalog;
 use catalog::simplify_rust_name;
 use convert::convert;
 use embedded::expand_embedded_graphs;
-pub use explain::explain_plan;
 use explain::{applied_lowering_to_value, edge_resolution_to_value, overload_resolution_to_value};
+pub use explain::{edge_explanations, explain_plan};
 use hydrate::hydrate_registry;
 use lint::lint;
 use lowerings::apply_planner_lowerings;
@@ -50,8 +50,7 @@ use schedule::{gpu, schedule};
 use setup::{apply_descriptor_defaults, clear_planner_owned_graph_metadata};
 use suggest::suggest_nodes;
 use type_utils::{
-    adapt_request_for_input, input_access_for, input_ty_for, is_generic_marker, port_type,
-    target_residency_for_node,
+    adapt_request_for_input, input_access_for, input_ty_for, port_type, target_residency_for_node,
 };
 use typecheck::typecheck;
 pub use types::{

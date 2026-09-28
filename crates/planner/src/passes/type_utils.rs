@@ -2,13 +2,9 @@ use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 
 use crate::graph::{ComputeAffinity, NodeInstance};
-use crate::metadata::DynamicPortMetadata;
+use crate::metadata::{DynamicPortMetadata, is_generic_marker};
 
 use super::PlannerConfig;
-
-pub(super) fn is_generic_marker(ty: &TypeExpr) -> bool {
-    matches!(ty, TypeExpr::Opaque(value) if value.eq_ignore_ascii_case("generic"))
-}
 
 pub(super) fn port_type(
     node: &NodeInstance,

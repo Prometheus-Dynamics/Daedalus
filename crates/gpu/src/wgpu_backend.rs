@@ -26,7 +26,7 @@ use adapter_select::{preferred_backends, select_best_adapter};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
 pub use dmabuf::texture_plane_views;
-pub(crate) use mapping::{gpu_format_from_wgpu, map_format, texture_usage_flags};
+pub(crate) use mapping::{gpu_format_from_wgpu, map_format};
 use mapping::{gpu_usage_from_wgpu, map_texture_usage, map_usage};
 use resources::{ResourceDropToken, ResourceKind, WgpuResources};
 use staging::StagingPool;

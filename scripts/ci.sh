@@ -56,9 +56,10 @@ cmd_features() {
   cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
   cargo check -p daedalus-rs --features "dylib-plugins"
   cargo check -p daedalus-runtime --features "metrics,executor-pool,lockfree-queues"
-  cargo check -p daedalus-ffi --no-default-features
-  cargo check -p daedalus-ffi --features "image-payload"
-  cargo check -p daedalus-ffi --features "gpu-wgpu"
+  cargo check -p daedalus-ffi-core -p daedalus-ffi-host --no-default-features
+  cargo check -p daedalus-ffi-core -p daedalus-ffi-host \
+    --features "daedalus-ffi-core/image-payload,daedalus-ffi-host/image-payload"
+  cargo check -p daedalus-gpu --no-default-features --features "gpu-wgpu"
   # Needs libcamera-dev + pkg-config for the styx camera example feature.
   cargo check --workspace --all-targets --all-features
 }

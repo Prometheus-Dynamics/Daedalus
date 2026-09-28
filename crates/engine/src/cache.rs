@@ -257,8 +257,8 @@ pub(crate) fn runtime_plan_cache_key(
 mod tests {
     use super::*;
     use daedalus_data::model::Value;
-    use daedalus_planner::{Edge, ExecutionPlan, NodeInstance, NodeRef, PortRef};
-    use daedalus_registry::ids::NodeId;
+    use daedalus_planner::{Edge, ExecutionPlan, NodeInstance};
+
     use std::collections::BTreeMap;
 
     fn planner_key(value: u64) -> PlannerCacheKey {
@@ -293,39 +293,12 @@ mod tests {
         Graph {
             nodes: vec![
                 NodeInstance {
-                    id: NodeId::new("demo.source"),
-                    bundle: None,
-                    label: None,
-                    inputs: vec![],
-                    outputs: vec!["out".to_string()],
-                    compute: daedalus_planner::ComputeAffinity::CpuOnly,
-                    const_inputs: vec![],
-                    sync_groups: vec![],
                     metadata,
+                    ..NodeInstance::new("demo.source").with_outputs(["out"])
                 },
-                NodeInstance {
-                    id: NodeId::new("demo.sink"),
-                    bundle: None,
-                    label: None,
-                    inputs: vec!["in".to_string()],
-                    outputs: vec![],
-                    compute: daedalus_planner::ComputeAffinity::CpuOnly,
-                    const_inputs: vec![],
-                    sync_groups: vec![],
-                    metadata: BTreeMap::new(),
-                },
+                NodeInstance::new("demo.sink").with_inputs(["in"]),
             ],
-            edges: vec![Edge {
-                from: PortRef {
-                    node: NodeRef(0),
-                    port: "out".to_string(),
-                },
-                to: PortRef {
-                    node: NodeRef(1),
-                    port: "in".to_string(),
-                },
-                metadata: BTreeMap::new(),
-            }],
+            edges: vec![Edge::new(0, "out", 1, "in")],
             metadata: BTreeMap::new(),
         }
     }
