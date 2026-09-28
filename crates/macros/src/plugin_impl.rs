@@ -1,38 +1,16 @@
 use proc_macro::TokenStream;
-use proc_macro_crate::{FoundCrate, crate_name};
-use proc_macro2::Span;
 use quote::quote;
 use syn::{Expr, ItemStruct, Lit, LitStr, Meta, MetaList, MetaNameValue, Path, parse_macro_input};
 
-use crate::helpers::{AttributeArgs, NestedMeta, compile_error, lit_from_expr, parse_nested};
-
-fn crate_path(
-    pkg: &str,
-    fallback: &str,
-    via_root: Option<&str>,
-    daedalus_root: &Option<String>,
-) -> proc_macro2::TokenStream {
-    if let Some(root) = daedalus_root
-        && let Some(via) = via_root
-    {
-        let root_ident = syn::Ident::new(root, Span::call_site());
-        let via_ident = syn::Ident::new(via, Span::call_site());
-        return quote! { ::#root_ident::#via_ident };
-    }
-    let name = crate_name(pkg)
-        .map(|found| match found {
-            FoundCrate::Itself => pkg.replace('-', "_"),
-            FoundCrate::Name(name) => name,
-        })
-        .unwrap_or_else(|_| fallback.to_string());
-    let ident = syn::Ident::new(&name, Span::call_site());
-    quote! { ::#ident }
-}
+use crate::helpers::{
+    AttributeArgs, NestedMeta, compile_error, crate_path, lit_from_expr, parse_nested,
+};
 
 struct PluginArgs {
     id: LitStr,
     deps: Vec<LitStr>,
-    types: Vec<syn::Ident>,
+    types: Vec<Path>,
+    values: Vec<Path>,
     nodes: Vec<syn::Ident>,
     adapters: Vec<syn::Ident>,
     devices: Vec<syn::Ident>,
@@ -62,10 +40,23 @@ fn collect_ident_list(list: &MetaList) -> Result<Vec<syn::Ident>, proc_macro2::T
     Ok(out)
 }
 
+fn collect_path_list(list: &MetaList, what: &str) -> Result<Vec<Path>, proc_macro2::TokenStream> {
+    parse_nested(list)?
+        .into_iter()
+        .map(|item| match item {
+            NestedMeta::Meta(Meta::Path(path)) => Ok(path),
+            _ => Err(compile_error(format!(
+                "plugin {what} entries must be paths"
+            ))),
+        })
+        .collect()
+}
+
 fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStream> {
     let mut id = None;
     let mut deps = Vec::new();
     let mut types = Vec::new();
+    let mut values = Vec::new();
     let mut nodes = Vec::new();
     let mut adapters = Vec::new();
     let mut devices = Vec::new();
@@ -96,7 +87,10 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
                 nodes = collect_ident_list(&list)?;
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("types") => {
-                types = collect_ident_list(&list)?;
+                types = collect_path_list(&list, "types")?;
+            }
+            NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("values") => {
+                values = collect_path_list(&list, "values")?;
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("adapters") => {
                 adapters = collect_ident_list(&list)?;
@@ -115,16 +109,11 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
                 }
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("parts") => {
-                for item in parse_nested(&list)? {
-                    let NestedMeta::Meta(Meta::Path(path)) = item else {
-                        return Err(compile_error("plugin parts entries must be paths".into()));
-                    };
-                    parts.push(path);
-                }
+                parts = collect_path_list(&list, "parts")?;
             }
             _ => {
                 return Err(compile_error(
-                    "plugin arguments must use `id = \"...\", install = setup, deps(...), parts(...), types(...), nodes(...), adapters(...), devices(...)`"
+                    "plugin arguments must use `id = \"...\", install = setup, deps(...), parts(...), types(...), values(...), nodes(...), adapters(...), devices(...)`"
                         .into(),
                 ));
             }
@@ -135,6 +124,7 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
         id: id.ok_or_else(|| compile_error("missing plugin id".into()))?,
         deps,
         types,
+        values,
         nodes,
         adapters,
         devices,
@@ -154,38 +144,16 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
     if !input.generics.params.is_empty() {
         return compile_error("plugin structs cannot be generic yet".into()).into();
     }
-
-    let daedalus_root: Option<String> = crate_name("daedalus-rs")
-        .or_else(|_| crate_name("daedalus"))
-        .ok()
-        .map(|found| match found {
-            FoundCrate::Itself => "daedalus".to_string(),
-            FoundCrate::Name(name) => {
-                if name == "daedalus_rs" {
-                    "daedalus".to_string()
-                } else {
-                    name
-                }
-            }
-        });
-    let runtime_crate = crate_path(
-        "daedalus-runtime",
-        "daedalus_runtime",
-        Some("runtime"),
-        &daedalus_root,
-    );
-    let registry_crate = crate_path(
-        "daedalus-registry",
-        "daedalus_registry",
-        Some("registry"),
-        &daedalus_root,
-    );
+    let runtime_crate = crate_path("daedalus-runtime", "runtime");
+    let registry_crate = crate_path("daedalus-registry", "registry");
+    let data_crate = crate_path("daedalus-data", "data");
 
     let ident = input.ident;
     let vis = input.vis;
     let id = parsed.id;
     let deps = parsed.deps;
     let types = parsed.types;
+    let values = parsed.values;
     let nodes = parsed.nodes;
     let adapters = parsed.adapters;
     let devices = parsed.devices;
@@ -204,15 +172,6 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
     let register_devices: Vec<syn::Ident> = devices
         .iter()
         .map(|device| syn::Ident::new(&format!("register_{device}_device"), device.span()))
-        .collect();
-    let register_types: Vec<syn::Ident> = types
-        .iter()
-        .map(|ty| {
-            syn::Ident::new(
-                &format!("register_{}_type", snake_case(&ty.to_string())),
-                ty.span(),
-            )
-        })
         .collect();
     let node_methods: Vec<syn::Ident> = nodes
         .iter()
@@ -254,7 +213,12 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
                     #runtime_crate::plugins::PluginPart::install_part(&#parts, registry)?;
                 )*
                 #(
-                    #register_types(registry)?;
+                    registry.register_daedalus_type::<#types>(
+                        #data_crate::named_types::HostExportPolicy::None,
+                    )?;
+                )*
+                #(
+                    registry.register_daedalus_value::<#values>()?;
                 )*
                 #(
                     #register_adapters(registry)?;
@@ -325,19 +289,4 @@ fn node_struct_ident(fn_ident: &syn::Ident) -> syn::Ident {
         out.push_str("Node");
     }
     syn::Ident::new(&out, fn_ident.span())
-}
-
-fn snake_case(raw: &str) -> String {
-    let mut out = String::new();
-    for (idx, ch) in raw.chars().enumerate() {
-        if ch.is_ascii_uppercase() {
-            if idx != 0 {
-                out.push('_');
-            }
-            out.push(ch.to_ascii_lowercase());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }

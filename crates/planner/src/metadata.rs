@@ -7,10 +7,11 @@ use daedalus_registry::capability::NodeDecl;
 pub use daedalus_core::metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_INPUTS_KEY,
     DYNAMIC_OUTPUT_LABELS_KEY, DYNAMIC_OUTPUT_TYPES_KEY, DYNAMIC_OUTPUTS_KEY, EMBEDDED_GROUP_KEY,
-    GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, PLAN_APPLIED_LOWERINGS_KEY,
-    PLAN_CONVERTER_METADATA_PREFIX, PLAN_EDGE_EXPLANATIONS_KEY, PLAN_GPU_SEGMENTS_KEY,
-    PLAN_GPU_WHY_KEY, PLAN_OVERLOAD_RESOLUTIONS_KEY, PLAN_SCHEDULE_ORDER_KEY,
-    PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY,
+    GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, HOST_INPUT_TYPES_KEY,
+    HOST_OUTPUT_TYPES_KEY, PLAN_APPLIED_LOWERINGS_KEY, PLAN_CONVERTER_METADATA_PREFIX,
+    PLAN_EDGE_EXPLANATIONS_KEY, PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY,
+    PLAN_OVERLOAD_RESOLUTIONS_KEY, PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY,
+    PLAN_TOPO_ORDER_KEY,
 };
 
 pub fn metadata_bool(metadata: &BTreeMap<String, Value>, key: &str) -> bool {
@@ -132,6 +133,47 @@ impl DynamicPortMetadata {
         write_type_map(metadata, DYNAMIC_OUTPUT_TYPES_KEY, &self.output_types);
         write_string_map(metadata, DYNAMIC_INPUT_LABELS_KEY, &self.input_labels);
         write_string_map(metadata, DYNAMIC_OUTPUT_LABELS_KEY, &self.output_labels);
+    }
+}
+
+/// Host port types declared by the graph author on a host-bridge node (see
+/// `GraphBuilder::input_as`). Unlike the planner-owned [`DynamicPortMetadata`], these are graph
+/// inputs: the planner seeds the bridge's resolved port types from them before type checking.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostPortTypes {
+    pub inputs: BTreeMap<String, TypeExpr>,
+    pub outputs: BTreeMap<String, TypeExpr>,
+}
+
+impl HostPortTypes {
+    pub fn from_node_metadata(metadata: &BTreeMap<String, Value>) -> Self {
+        Self {
+            inputs: decode_type_map(metadata.get(HOST_INPUT_TYPES_KEY)),
+            outputs: decode_type_map(metadata.get(HOST_OUTPUT_TYPES_KEY)),
+        }
+    }
+
+    pub fn declare(&mut self, is_host_input: bool, port: &str, ty: TypeExpr) {
+        if is_host_input {
+            &mut self.inputs
+        } else {
+            &mut self.outputs
+        }
+        .insert(normalize_port(port), ty);
+    }
+
+    pub fn write_to_node_metadata(&self, metadata: &mut BTreeMap<String, Value>) {
+        write_type_map(metadata, HOST_INPUT_TYPES_KEY, &self.inputs);
+        write_type_map(metadata, HOST_OUTPUT_TYPES_KEY, &self.outputs);
+    }
+
+    /// The bridge node's resolved port types: host inputs are bridge outputs and vice versa.
+    pub fn to_dynamic(&self) -> DynamicPortMetadata {
+        DynamicPortMetadata {
+            input_types: self.outputs.clone(),
+            output_types: self.inputs.clone(),
+            ..DynamicPortMetadata::default()
+        }
     }
 }
 

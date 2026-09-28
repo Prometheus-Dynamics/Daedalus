@@ -8,17 +8,18 @@ which resolves the generated paths to the facade's re-exports.
 
 - `node` and `node_handler`: node descriptor + handler generation, and handler-only generation.
 - `plugin`: turns a unit struct into a `Plugin` that installs the listed `types(...)`,
-  `nodes(...)`, `adapters(...)`, `devices(...)` and `parts(...)`, with node handle accessors and a
-  manifest.
-- `type_key`: implements `DaedalusTypeExpr` with a stable opaque key and generates
-  `register_<type>_type`.
+  `values(...)`, `nodes(...)`, `adapters(...)`, `devices(...)` and `parts(...)`, with node handle
+  accessors and a manifest.
+- `type_key`: implements `DaedalusTypeExpr` with a stable opaque key (a string literal or a
+  string constant).
 - `adapt`: turns a `T`/`&T`/`&mut T`/`Arc<T>` function into a transport adapter and generates
   `register_<fn>_adapter`.
 - `device`: pairs an upload function with a `download = ...` function as a typed device
   transport and generates `register_<fn>_device`.
 - `NodeConfig`: structured config inputs (`#[port(...)]`, `#[validate(fn = ...)]`).
 - `GpuBindings` and `GpuStateful`: WGSL/GPU metadata derives.
-- `BranchPayload`, `DaedalusTypeExpr`, and `DaedalusToValue`: data helper derives.
+- `BranchPayload`, `DaedalusTypeExpr`, and `DaedalusToValue`: data helper derives. Like the
+  other macros they resolve through the facade, so a `daedalus-rs` dependency is enough.
 - `Outputs`: marker derive that currently expands to nothing.
 
 See the item docs in `src/lib.rs` for arguments and examples; `crates/daedalus/tests/ui/transport`

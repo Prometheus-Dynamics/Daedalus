@@ -2,8 +2,8 @@
 //!
 //! Follows "Integrating An External Frame Source" in `docs/node-authoring.md`:
 //! a stable type key, a descriptor type, a plugin that registers everything once, zero-copy
-//! payload wrapping, and a producer feeding a latest-only host input while the host graph is
-//! driven on input.
+//! payload wrapping, and a producer feeding a typed, latest-only host input while the host graph
+//! is driven on input.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use daedalus::{
     DaedalusToValue, DaedalusTypeExpr, adapt,
-    data::{daedalus_type::DaedalusTypeExpr as _, to_value::ToValue},
+    data::to_value::ToValue,
     engine::{Engine, EngineConfig},
     macros::{node, plugin},
     runtime::{NodeError, plugins::PluginRegistry},
@@ -20,10 +20,12 @@ use daedalus::{
     type_key,
 };
 
+/// Step 1: The stable key every frame payload carries. Treat it as a public contract.
+pub const FRAME_TYPE_KEY: &str = "example:synthetic_frame";
+
 /// Step 2: The frame carrier. `pixels` stands in for memory owned by the source (a dmabuf, a driver
-/// ring buffer, ...); cloning only bumps the `Arc`.
-#[type_key("example:synthetic_frame")]
-#[derive(Clone)]
+/// ring buffer, ...). It is never cloned: payloads share it through an `Arc`.
+#[type_key(FRAME_TYPE_KEY)]
 struct SyntheticFrame {
     pixels: Arc<[u8]>,
     width: u32,
@@ -32,9 +34,6 @@ struct SyntheticFrame {
     sequence: u64,
     timestamp_ns: u64,
 }
-
-/// Step 1: The stable key every frame payload carries. Treat it as a public contract.
-const FRAME_TYPE_KEY: &str = SyntheticFrame::TYPE_KEY;
 
 /// Step 2: Plain descriptor: this is what graph documents, editors, and host inspection see.
 #[derive(Clone, Debug, DaedalusTypeExpr, DaedalusToValue)]
@@ -79,12 +78,10 @@ fn frame_to_meta(frame: &SyntheticFrame) -> Result<FrameMeta, TransportError> {
     Ok(frame.meta())
 }
 
-/// Also forwards the frame (an `Arc` bump): a generic host input infers its type from its
-/// consumers, so it cannot fan out to both a frame port and a `FrameMeta` port directly.
-#[node(id = "frame.mean_luma", inputs("frame"), outputs("luma", "frame"))]
-fn mean_luma(frame: &SyntheticFrame) -> Result<(f64, SyntheticFrame), NodeError> {
+#[node(id = "frame.mean_luma", inputs("frame"), outputs("luma"))]
+fn mean_luma(frame: &SyntheticFrame) -> Result<f64, NodeError> {
     let sum: u64 = frame.pixels.iter().map(|&p| u64::from(p)).sum();
-    Ok((sum as f64 / frame.pixels.len().max(1) as f64, frame.clone()))
+    Ok(sum as f64 / frame.pixels.len().max(1) as f64)
 }
 
 #[node(id = "frame.meta", inputs("meta"), outputs("meta"))]
@@ -92,19 +89,19 @@ fn frame_meta(meta: &FrameMeta) -> Result<FrameMeta, NodeError> {
     Ok(meta.clone())
 }
 
-/// Step 3: Register once: schema types, value serializers, adapter, nodes.
+/// Frames inspect as their descriptor instead of an opaque summary.
 fn install(registry: &mut PluginRegistry) -> daedalus::runtime::plugins::PluginResult<()> {
-    registry.register_daedalus_type::<PlaneMeta>(Default::default())?;
-    registry.register_daedalus_value::<FrameMeta>()?;
-    // Frames inspect as their descriptor instead of an opaque summary.
     registry.register_value_serializer::<SyntheticFrame, _>(|frame| frame.meta().to_value());
     Ok(())
 }
 
+/// Step 3: Register once: the frame type, the descriptor (its nested `PlaneMeta` comes along),
+/// the frame serializer, the adapter and the nodes.
 #[plugin(
     id = "example.external_frame_source",
     install = install,
     types(SyntheticFrame),
+    values(FrameMeta),
     nodes(mean_luma, frame_meta),
     adapters(frame_to_meta)
 )]
@@ -146,12 +143,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     registry.install(&plugin)?;
     let luma = plugin.mean_luma.alias("luma");
     let meta = plugin.frame_meta.alias("meta");
+    // A typed host input fans out to ports of different types; the planner adapts per edge.
     let graph = registry
         .graph_builder()?
+        .input_typed::<SyntheticFrame>("frame")
         .try_node(&luma)?
         .try_node(&meta)?
         .try_connect("frame", &luma.inputs.frame)?
-        .try_connect(&luma.outputs.frame, &meta.inputs.meta)?
+        .try_connect("frame", &meta.inputs.meta)?
         .try_connect(&luma.outputs.luma, "luma")?
         .try_connect(&meta.outputs.meta, "meta")?
         .build();

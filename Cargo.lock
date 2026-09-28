@@ -528,7 +528,6 @@ dependencies = [
 name = "daedalus-examples"
 version = "2.0.0"
 dependencies = [
- "daedalus-data",
  "daedalus-rs",
  "paste",
  "styx",

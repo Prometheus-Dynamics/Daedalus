@@ -225,7 +225,7 @@ impl PluginRegistry {
         serializer: F,
     ) -> PluginResult<()>
     where
-        T: Any + Clone + Send + Sync + 'static,
+        T: Any + Send + Sync + 'static,
         F: Fn(&T) -> daedalus_data::model::Value + Send + Sync + 'static,
     {
         crate::host_bridge::register_value_serializer_in::<T, F>(

@@ -111,24 +111,32 @@ should depend on the other.
 The glue is small and always has the same shape:
 
 1. **Pick a stable key.** One `pub const FRAME_TYPE_KEY: &str = "vendor:frame";` used for every
-   payload. Treat it as a public contract.
+   payload and as the frame type's key (`#[type_key(FRAME_TYPE_KEY)]`). Treat it as a public
+   contract.
 2. **Describe the frame.** Define a plain descriptor struct (width, height, pixel format,
-   timestamp, planes with stride/length, residency) with `#[derive(DaedalusTypeExpr, ToValue)]`.
-   That struct is the graph/UI schema, so editors and graph documents see a structured type
-   instead of `opaque`.
-3. **Register once.** In a plugin install function (not per frame), register the frame type, a
-   value serializer that turns a frame into its descriptor (so host payload inspection shows
-   structured data), and any adapters, such as a `MetadataOnly` adapter from the frame to its
-   descriptor or a `View` adapter to a CPU image view for already-CPU frames.
+   timestamp, planes with stride/length, residency) with
+   `#[derive(DaedalusTypeExpr, DaedalusToValue)]`. That struct is the graph/UI schema, so editors
+   and graph documents see a structured type instead of `opaque`. The derives only need the
+   `daedalus-rs` dependency.
+3. **Register once.** In the plugin (not per frame): `#[plugin(types(Frame), values(FrameMeta),
+   adapters(...), install = ...)]` registers the frame type, the descriptor (nested descriptor
+   types such as a plane struct are registered automatically) and the adapters, such as a
+   `MetadataOnly` adapter from the frame to its descriptor or a `View` adapter to a CPU image view
+   for already-CPU frames. The install hook adds a value serializer that turns a frame into its
+   descriptor (`register_value_serializer::<Frame, _>(|frame| frame.meta().to_value())`; it only
+   borrows the frame), so host payload inspection shows structured data.
 4. **Wrap without copying.** Build payloads with
    `Payload::shared_with(FRAME_TYPE_KEY, Arc::new(frame), residency, layout, bytes)`, mapping
    the source's buffer kind to `Residency`: host memory → `Cpu`, externally owned buffers such as
    dmabuf → `External`, GPU textures → `Gpu`.
-5. **Feed the host bridge** with `push_payload` on a latest-only input so stale frames are
-   replaced rather than queued.
+5. **Feed the host bridge** through a typed input, `graph_builder.input_typed::<Frame>("frame")`,
+   with `push_payload` on a latest-only input so stale frames are replaced rather than queued.
 
 Nodes then take the frame type (or a view type reachable through adapters) directly, and the
-planner handles the rest.
+planner handles the rest. Host ports are generic unless declared: an undeclared host input takes
+its type from the node ports it feeds, so it cannot feed a frame port and a descriptor port at
+once. A declared one (`input_typed::<T>` / `input_as(name, TypeExpr)`, and `output_typed` /
+`output_as` for outputs) keeps its type, and the planner adapts each edge separately.
 
 [`examples/04_async/external_frame_source.rs`](../examples/04_async/external_frame_source.rs)
 is a copyable template of all five steps with a synthetic source instead of a camera:

@@ -8,6 +8,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- Added typed host ports: `GraphBuilder::{input_as, input_typed, output_as, output_typed}` declare
+  a host port's type (stored as `HOST_INPUT_TYPES_KEY`/`HOST_OUTPUT_TYPES_KEY` bridge metadata,
+  read through `daedalus_planner::HostPortTypes`). The planner uses the declared type instead of
+  inferring one, so a single host input can feed ports of different types with adapters inserted
+  per edge.
+- Added `#[plugin(values(...))]` for `DaedalusTypeExpr + ToValue` types (`register_daedalus_value`).
+- Added `DaedalusTypeExpr::visit_dependencies` and `DaedalusTypeVisitor`: the `DaedalusTypeExpr`
+  derive reports nested `DaedalusTypeExpr` field types, and `register_daedalus_type`/`_value`
+  register them first (skipping ones already registered).
+- `#[type_key]`, `#[adapt(from, to)]` and `#[daedalus(type_key = ...)]` accept a path to a string
+  constant as well as a string literal.
 - Added the `external_frame_source` example (`examples/04_async`): a camera-free template for
   integrating an external frame source (stable type key, `FrameMeta` descriptor, frame value
   serializer, `MetadataOnly` adapter, zero-copy `Payload::shared_with`, latest-only input driven
@@ -64,6 +75,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- The `DaedalusTypeExpr` and `DaedalusToValue` derives resolve through the `daedalus` facade like
+  the other macros; a direct `daedalus-data` dependency is no longer needed.
+- `#[plugin(types(...))]` registers any `DaedalusTypeExpr` type (including derived ones) through
+  `register_daedalus_type` and accepts paths.
+- `register_value_serializer`, `register_daedalus_value` and `register_to_value_serializer` no
+  longer require `T: Clone`; serializers only borrow the value.
+- Simplified the `external_frame_source` example: const type key, a typed host input feeding both
+  nodes, and registration through `#[plugin(types(...), values(...))]`.
 - The facade `engine` feature no longer enables the Rayon executor pool or metrics; use
   `engine-full` for the previous behavior. Without `executor-pool`, parallel/adaptive runtime
   modes run on scoped threads. The workspace `daedalus-engine` dependency now sets
@@ -100,6 +119,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Removed
 
+- `#[type_key]` no longer generates `register_<snake_case>_type`; use `#[plugin(types(...))]` or
+  `PluginRegistry::register_daedalus_type`.
 - Removed `daedalus_runtime::GPU_FEATURE_ENABLED` and `daedalus_registry::GPU_FEATURE_ENABLED`;
   use `ENABLED_FEATURES`.
 

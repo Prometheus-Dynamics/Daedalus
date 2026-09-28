@@ -699,7 +699,9 @@ fn declare_plugin_installs_adapt_macro_adapters() {
 #[test]
 fn type_key_macro_registers_opaque_type() {
     let mut registry = PluginRegistry::new();
-    register_test_frame_type(&mut registry).expect("register type");
+    registry
+        .register_daedalus_type::<TestFrame>(daedalus::data::named_types::HostExportPolicy::None)
+        .expect("register type");
 
     assert_eq!(
         daedalus::data::typing::type_expr::<TestFrame>(),

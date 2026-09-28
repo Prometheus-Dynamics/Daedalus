@@ -111,6 +111,11 @@ path = "tests/host_graph_introspection.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
+name = "typed_host_ports"
+path = "tests/typed_host_ports.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
 name = "transport_macro_ui"
 path = "tests/transport_macro_ui.rs"
 required-features = ["plugins"]
