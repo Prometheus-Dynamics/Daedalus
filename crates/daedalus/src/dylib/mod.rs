@@ -35,11 +35,25 @@
 //!    `NodeDecl`, ...). Features classified as `host-only-features` in a crate's
 //!    `[package.metadata.daedalus]` (`engine`, `executor-pool`, `metrics`, ...) are excluded,
 //!    so a plugin built with just `dylib-plugins` installs into a host built with
-//!    `engine-full,dylib-plugins`. On mismatch the error names the differing segments.
+//!    `engine-full,dylib-plugins`. On mismatch the error names the differing segments, e.g.
+//!    ``features.runtime: host `gpu,plugins`, plugin `plugins` ``.
+//!
+//! The fingerprint is a readable `key=value;...` string: `target` and `pointer_width`,
+//! `features.<crate>=...` per crate plus a stable FNV-1a `features.hash`, and
+//! `layout.<type>=size/align`. Every feature of those crates is classified next to its
+//! definition in the crate's `Cargo.toml`; a facade test fails when a declared feature is
+//! unclassified or classified twice:
+//!
+//! ```toml
+//! [package.metadata.daedalus]
+//! boundary-features = ["gpu", "gpu-mock", "plugins"]
+//! host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots"]
+//! ```
 //!
 //! These checks catch the common mismatches (stale plugin, different toolchain, different
 //! feature set). They cannot prove layout identity: build host and plugins from the same
-//! workspace/lockfile, toolchain, and Daedalus feature set. `docs/dynamic-plugins.md` sketches
+//! workspace/lockfile, toolchain, and boundary Daedalus feature set (`plugins`,
+//! `gpu-types`/`gpu-runtime`/backends, `schema`, `proto`). `docs/dynamic-plugins.md` sketches
 //! the stable handler path that would lift this requirement for wire-representable payloads.
 //!
 //! # Known limitations

@@ -18,19 +18,7 @@ Daedalus is a layered Rust workspace. Keep changes inside the layer that owns th
 
 ## Validation Loop
 
-Run the default loop before sending broad changes:
-
-```bash
-./scripts/repo-clean.sh
-cargo fmt --all -- --check
-./scripts/check-file-sizes.sh
-./scripts/check-workspace-deps.sh
-./scripts/check-gpu-async-blocking.sh
-cargo test --workspace --all-targets --features "engine,plugins"
-cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
-cargo doc --workspace --no-deps
-```
-
+Run the default loop in [testing.md](testing.md#default-surface) before sending broad changes.
 Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines with a real backend available.
 
 ## Dependency Policy
