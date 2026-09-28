@@ -63,9 +63,21 @@ missing directories, and keeps the first occurrence of a file name across direct
 
 `PluginLibrary::load` rejects a plugin with a typed `PluginLibraryError` before any Rust type
 crosses the boundary unless the plugin ABI version, Daedalus version, `rustc --version`, and
-build fingerprint (target, layout-affecting features, `PluginRegistry` layout) match the host.
+build fingerprint match the host. The fingerprint (`daedalus::build_fingerprint()`) is a
+readable `key=value;...` string: target and pointer width; the enabled boundary-relevant Cargo
+features of the facade, `daedalus-core`, `-data`, `-registry`, `-planner` and `-runtime`
+(`features.<crate>=...`, each crate's `ENABLED_FEATURES`) plus a stable FNV-1a
+`features.hash`; and `layout.<type>=size/align` for `PluginRegistry`, `HandlerRegistry`,
+`Payload`, `TypeKey`, `BoundaryTypeContract`, `TypeExpr`, `NodeDecl`, `AdapterDecl`,
+`PluginManifest` and `StrView`. Host-only features (`engine`, `engine-full`, `embedded`,
+`executor-pool`, `metrics`, `dylib-plugins`, and the runtime's executor-only features; see
+`daedalus::dylib::HOST_ONLY_FEATURES`) are excluded, so a plugin built with `plugins` loads into
+a host built with `engine-full,plugins,dylib-plugins`. A mismatch error lists the differing
+segments, e.g. ``features.runtime: host `gpu,plugins`, plugin `plugins` ``.
+
 In practice: build the host and its plugins from one workspace and lockfile with one toolchain
-and one Daedalus feature set.
+and one boundary-relevant Daedalus feature set (`plugins`, `gpu-types`/`gpu-runtime`/backends,
+`schema`, `proto`).
 
 Libraries are never unloaded; only load-at-startup is supported. A plugin has its own copy of
 Daedalus globals, so it must register everything through the `PluginRegistry` it is given, and
@@ -80,4 +92,4 @@ for the full list of limitations.
 | `daedalus::FfiPluginError` | `daedalus::PluginLibraryError` |
 | `library.info() -> Option<PluginInfo>` | `library.info() -> PluginInfo` |
 | `library.abi_version() -> Option<u32>` | `library.abi_version() -> u32` |
-| facade feature `gpu` | `gpu` (alias of `gpu-engine`); CPU-only hosts need only `engine,plugins` |
+| facade feature `gpu` | `gpu` (alias of `gpu-engine`); CPU-only hosts need only `engine-full,plugins` (or `embedded`) |

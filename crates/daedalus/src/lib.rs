@@ -73,6 +73,47 @@ pub use dylib::{
 #[cfg(feature = "dylib-plugins")]
 pub use dylib::{PluginLibrary, PluginLibraryError, check_plugin_info, discover_plugin_libraries};
 
+/// Cargo features of the `daedalus-rs` facade enabled in this build, in `Cargo.toml`
+/// declaration order. Layout-relevant entries feed the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &[&str] = &[
+    #[cfg(feature = "gpu-types")]
+    "gpu-types",
+    #[cfg(feature = "gpu-runtime")]
+    "gpu-runtime",
+    #[cfg(feature = "gpu-engine")]
+    "gpu-engine",
+    #[cfg(feature = "gpu")]
+    "gpu",
+    #[cfg(feature = "gpu-wgpu")]
+    "gpu-wgpu",
+    #[cfg(feature = "gpu-async")]
+    "gpu-async",
+    #[cfg(feature = "gpu-mock")]
+    "gpu-mock",
+    #[cfg(feature = "schema")]
+    "schema",
+    #[cfg(feature = "proto")]
+    "proto",
+    #[cfg(feature = "plugins")]
+    "plugins",
+    #[cfg(feature = "dylib-plugins")]
+    "dylib-plugins",
+    #[cfg(feature = "examples")]
+    "examples",
+    #[cfg(feature = "styx-camera-example")]
+    "styx-camera-example",
+    #[cfg(feature = "engine")]
+    "engine",
+    #[cfg(feature = "executor-pool")]
+    "executor-pool",
+    #[cfg(feature = "metrics")]
+    "metrics",
+    #[cfg(feature = "engine-full")]
+    "engine-full",
+    #[cfg(feature = "embedded")]
+    "embedded",
+];
+
 // Optional plugin crates are re-exported via features; no in-crate plugins live here.
 
 /// Common imports for application and example code.

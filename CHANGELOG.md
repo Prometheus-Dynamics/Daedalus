@@ -26,11 +26,35 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Added `docs/node-authoring.md`, `docs/dynamic-plugins.md`, and a measured minimal CPU-only
   profile in `docs/development.md`.
 
+- Added facade features `executor-pool`, `metrics`, `engine-full` (`engine` + `executor-pool`
+  + `metrics`, the recommended application preset) and `embedded` (`engine` + `plugins`, no
+  pool, no metrics).
+- Added `ENABLED_FEATURES` constants to `daedalus-rs`, `daedalus-core`, `daedalus-data`,
+  `daedalus-registry`, `daedalus-planner`, and `daedalus-runtime`, plus
+  `daedalus::dylib::{boundary_features, describe_fingerprint_mismatch, HOST_ONLY_FEATURES}`.
+
 ### Changed
 
+- The facade `engine` feature no longer enables the Rayon executor pool or metrics; use
+  `engine-full` for the previous behavior. Without `executor-pool`, parallel/adaptive runtime
+  modes run on scoped threads. The workspace `daedalus-engine` dependency now sets
+  `default-features = false`.
+- The facade `gpu-runtime` feature now also enables `daedalus-engine/gpu` when `engine` is on,
+  fixing the `engine,plugins,gpu-mock` build (planner and engine GPU config disagreed).
+- The dynamic plugin build fingerprint now covers the enabled boundary-relevant features of
+  every Daedalus crate whose types cross the plugin boundary (readable lists plus a stable
+  hash) and the size/alignment of `PluginRegistry`, `HandlerRegistry`, `Payload`, `TypeKey`,
+  `BoundaryTypeContract`, `TypeExpr`, `NodeDecl`, `AdapterDecl`, `PluginManifest`, and
+  `StrView`. `PluginLibraryError::BuildFingerprintMismatch` gained a `differences` field naming
+  the differing segments.
 - Plugin manifests declared with `#[plugin]` or `declare_plugin!` now record the plugin crate
   version.
 - `BoundaryVTable` gained a `value_any` field used by `Payload::value_any_sync`.
+
+### Removed
+
+- Removed `daedalus_runtime::GPU_FEATURE_ENABLED` and `daedalus_registry::GPU_FEATURE_ENABLED`;
+  use `ENABLED_FEATURES`.
 
 ## [2.0.0] - 2026-04-30
 

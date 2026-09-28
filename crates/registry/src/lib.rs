@@ -13,11 +13,18 @@ pub mod ids;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
-/// Whether this build of `daedalus-registry` was compiled with the `gpu` feature.
+/// Cargo features of `daedalus-registry` enabled in this build, in `Cargo.toml` declaration order.
 ///
-/// Dynamic plugin loaders fold this into their build fingerprint so hosts and
-/// plugins built with different registry layouts are rejected.
-pub const GPU_FEATURE_ENABLED: bool = cfg!(feature = "gpu");
+/// Dynamic plugin loaders fold this into their build fingerprint so hosts and plugins built
+/// with different feature sets are rejected before any Rust type crosses the boundary.
+pub const ENABLED_FEATURES: &[&str] = &[
+    #[cfg(feature = "bundle")]
+    "bundle",
+    #[cfg(feature = "plugin")]
+    "plugin",
+    #[cfg(feature = "gpu")]
+    "gpu",
+];
 
 /// Convert a Daedalus type expression into the stable transport identity used by
 /// manifests, adapters, and runtime payloads.

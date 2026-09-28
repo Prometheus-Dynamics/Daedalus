@@ -22,6 +22,8 @@ cargo check --workspace --all-targets
 echo "==> Checking feature surfaces"
 cargo check -p daedalus-rs --no-default-features
 cargo check -p daedalus-rs --features "engine,plugins,gpu-mock"
+cargo check -p daedalus-rs --no-default-features --features "embedded"
+cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
 cargo check -p daedalus-rs --features "dylib-plugins"
 cargo check -p daedalus-runtime --features "metrics,executor-pool,lockfree-queues"
 cargo check -p daedalus-ffi --no-default-features

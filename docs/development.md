@@ -70,17 +70,31 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 
 ## Minimal CPU-Only Profile
 
-For constrained hosts (embedded boards, sidecar engines), depend on the facade with only the
-layers you use:
+For constrained hosts (embedded boards, sidecar engines), depend on the facade with the
+`embedded` preset:
 
 ```toml
-daedalus = { package = "daedalus-rs", version = "2.0.0", default-features = false, features = ["engine", "plugins"] }
+daedalus = { package = "daedalus-rs", version = "2.0.0", default-features = false, features = ["embedded"] }
 ```
 
-Add `dylib-plugins` only if the host loads native plugin libraries. Leave every `gpu*` feature
-off; `EngineConfig`'s default `GpuBackend::Cpu` and `planner.enable_gpu = false` need no GPU
-feature. This set links no `wgpu`, `image`, `tokio`, or `styx`; its heaviest runtime
-dependencies are `rayon` (executor pool), `serde_json`, and `tracing`.
+`embedded` is `engine` + `plugins`: the facade's `engine` feature no longer enables the Rayon
+executor pool or metrics collection. Add `dylib-plugins` only if the host loads native plugin
+libraries. Leave every `gpu*` feature off; `EngineConfig`'s default `GpuBackend::Cpu` and
+`planner.enable_gpu = false` need no GPU feature. This set links no `wgpu`, `image`, `tokio`,
+`styx`, `rayon`, or `crossbeam`; its heaviest runtime dependencies are `serde_json` and
+`tracing`.
+
+Feature semantics without the extras:
+
+- No `executor-pool`: `RuntimeMode::Parallel` and `RuntimeMode::Adaptive` still work; ready
+  segments run on scoped threads per run instead of a persistent Rayon pool, and
+  `pool_size` only caps concurrency. Add `executor-pool` (or use `engine-full`) for hosts that
+  run parallel graphs at high frequency.
+- No `metrics`: the telemetry APIs (`MetricsLevel`, `ExecutionTelemetry`) still compile, but
+  executors record no per-node or transport metrics. Add `metrics` when you read telemetry.
+
+Applications that do not need to minimize dependencies should use `engine-full`
+(`engine` + `executor-pool` + `metrics`).
 
 Reference measurement (x86_64 Linux, rustc 1.97.1, `lto = "thin"`, `codegen-units = 1`,
 `strip = true`): a binary that installs one plugin, compiles a one-node host graph, and runs it
@@ -88,11 +102,12 @@ Reference measurement (x86_64 Linux, rustc 1.97.1, `lto = "thin"`, `codegen-unit
 
 | Features | Crates (normal deps) | Stripped binary | Peak RSS | Threads |
 | --- | --- | --- | --- | --- |
-| `engine,plugins` | 71 | 2.7 MiB | ~4.5 MiB | 1 |
-| `engine,plugins,dylib-plugins` | 72 | 2.7 MiB (loader unused) | ~4.5 MiB | 1 |
+| `embedded` | 66 | 2.6 MiB | ~4.4 MiB | 1 |
+| `engine-full,plugins` | 71 | 2.7 MiB | ~4.5 MiB | 1 |
 
-Linear graphs stay on the serial execution path, so no worker threads are started until a plan
-has useful parallelism. Re-measure on the target board before budgeting.
+Linear graphs stay on the serial execution path, so neither profile starts worker threads for
+this workload; the pool mainly costs crates and binary size. Re-measure on the target board
+before budgeting.
 
 ## Troubleshooting
 

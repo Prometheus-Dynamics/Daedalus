@@ -29,8 +29,15 @@ pub enum PluginLibraryError {
     DaedalusVersionMismatch { expected: String, found: String },
     #[error("plugin was built with `{found}`, host was built with `{expected}`")]
     RustcVersionMismatch { expected: String, found: String },
-    #[error("plugin build fingerprint mismatch: host `{expected}`, plugin `{found}`")]
-    BuildFingerprintMismatch { expected: String, found: String },
+    #[error(
+        "plugin build fingerprint mismatch ({differences}); host `{expected}`, plugin `{found}`"
+    )]
+    BuildFingerprintMismatch {
+        expected: String,
+        found: String,
+        /// Human-readable list of the differing fingerprint segments.
+        differences: String,
+    },
     #[error("plugin failed to register boundary contracts: {message}")]
     BoundaryContractsFailed { message: String },
     #[error("plugin registration failed: {message}")]
@@ -215,6 +222,7 @@ fn check_plugin_info_against(
     let (expected, found) = pair(|i| i.build_fingerprint, "build_fingerprint")?;
     if expected != found {
         return Err(PluginLibraryError::BuildFingerprintMismatch {
+            differences: super::describe_fingerprint_mismatch(expected, found),
             expected: expected.into(),
             found: found.into(),
         });
@@ -331,14 +339,31 @@ mod tests {
 
     #[test]
     fn build_fingerprint_mismatch_is_rejected() {
+        let plugin_fingerprint: &'static str = Box::leak(
+            build_fingerprint()
+                .replace("features.runtime=", "features.runtime=gpu,")
+                .into_boxed_str(),
+        );
         let info = PluginInfo {
-            build_fingerprint: StrView::from_static("runtime.gpu=true"),
+            build_fingerprint: StrView::from_static(plugin_fingerprint),
             ..host()
         };
-        match check_plugin_info_against(&info, &host()) {
-            Err(PluginLibraryError::BuildFingerprintMismatch { expected, found }) => {
+        let err = check_plugin_info_against(&info, &host()).unwrap_err();
+        let message = err.to_string();
+        match err {
+            PluginLibraryError::BuildFingerprintMismatch {
+                expected,
+                found,
+                differences,
+            } => {
                 assert_eq!(expected, build_fingerprint());
-                assert_eq!(found, "runtime.gpu=true");
+                assert_eq!(found, plugin_fingerprint);
+                assert!(
+                    differences.starts_with("features.runtime: host `")
+                        && differences.contains("plugin `gpu,"),
+                    "{differences}"
+                );
+                assert!(message.contains(&differences));
             }
             other => panic!("unexpected result: {other:?}"),
         }
@@ -347,10 +372,11 @@ mod tests {
     #[test]
     fn fingerprint_covers_layout_inputs() {
         let fingerprint = build_fingerprint();
-        assert!(fingerprint.contains("runtime.gpu="));
+        assert!(fingerprint.contains("features.runtime="));
         assert!(fingerprint.contains(&format!(
-            "plugin_registry.size={}",
-            std::mem::size_of::<PluginRegistry>()
+            "layout.plugin_registry={}/{}",
+            std::mem::size_of::<PluginRegistry>(),
+            std::mem::align_of::<PluginRegistry>()
         )));
         assert!(RUSTC_VERSION.starts_with("rustc "));
     }

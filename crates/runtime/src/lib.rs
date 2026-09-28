@@ -26,12 +26,26 @@ pub mod stream;
 pub mod transport;
 pub use daedalus_transport as transport_types;
 
-/// Whether this build of `daedalus-runtime` was compiled with the `gpu` feature.
+/// Cargo features of `daedalus-runtime` enabled in this build, in `Cargo.toml` declaration order.
 ///
-/// The `gpu` feature changes the layout of runtime types (including
-/// `plugins::PluginRegistry`), so dynamic plugin loaders fold it into their build
-/// fingerprint.
-pub const GPU_FEATURE_ENABLED: bool = cfg!(feature = "gpu");
+/// Dynamic plugin loaders fold this into their build fingerprint so hosts and plugins built
+/// with different feature sets are rejected before any Rust type crosses the boundary.
+pub const ENABLED_FEATURES: &[&str] = &[
+    #[cfg(feature = "gpu")]
+    "gpu",
+    #[cfg(feature = "gpu-mock")]
+    "gpu-mock",
+    #[cfg(feature = "executor-pool")]
+    "executor-pool",
+    #[cfg(feature = "lockfree-queues")]
+    "lockfree-queues",
+    #[cfg(feature = "metrics")]
+    "metrics",
+    #[cfg(feature = "snapshots")]
+    "snapshots",
+    #[cfg(feature = "plugins")]
+    "plugins",
+];
 
 /// Apply a plugin prefix to a node id without duplicating overlapping segments.
 ///
