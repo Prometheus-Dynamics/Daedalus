@@ -68,6 +68,32 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 - Internal edge queues preserve compatibility defaults; streaming, camera, daemon, and interactive workloads should set explicit bounded/latest-only policies.
 - WGPU staging behavior is configured through `WgpuStagingPoolConfig` or `DAEDALUS_WGPU_STAGING_*` before backend construction.
 
+## Minimal CPU-Only Profile
+
+For constrained hosts (embedded boards, sidecar engines), depend on the facade with only the
+layers you use:
+
+```toml
+daedalus = { package = "daedalus-rs", version = "2.0.0", default-features = false, features = ["engine", "plugins"] }
+```
+
+Add `dylib-plugins` only if the host loads native plugin libraries. Leave every `gpu*` feature
+off; `EngineConfig`'s default `GpuBackend::Cpu` and `planner.enable_gpu = false` need no GPU
+feature. This set links no `wgpu`, `image`, `tokio`, or `styx`; its heaviest runtime
+dependencies are `rayon` (executor pool), `serde_json`, and `tracing`.
+
+Reference measurement (x86_64 Linux, rustc 1.97.1, `lto = "thin"`, `codegen-units = 1`,
+`strip = true`): a binary that installs one plugin, compiles a one-node host graph, and runs it
+10,000 times.
+
+| Features | Crates (normal deps) | Stripped binary | Peak RSS | Threads |
+| --- | --- | --- | --- | --- |
+| `engine,plugins` | 71 | 2.7 MiB | ~4.5 MiB | 1 |
+| `engine,plugins,dylib-plugins` | 72 | 2.7 MiB (loader unused) | ~4.5 MiB | 1 |
+
+Linear graphs stay on the serial execution path, so no worker threads are started until a plan
+has useful parallelism. Re-measure on the target board before budgeting.
+
 ## Troubleshooting
 
 | Symptom | First checks |
