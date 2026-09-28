@@ -182,9 +182,12 @@ than queued.
   allocate.
 - **Host bridge events are off by default.** Enable `with_host_event_recording(true)` (or
   `HostBridgeHandle::set_event_recording(true)`) when debugging dropped or missing payloads.
-- **Inspect outputs** with `HostGraph::inspect_payload(&payload)`. It uses the value serializers
+- **Inspect outputs** with `HostGraph::inspect_payload(&payload)`, or take and inspect every
+  queued output at once with `HostGraph::inspect_outputs()`. Inspection uses the value serializers
   registered in the plugin registry and falls back to a `PayloadSummary` (type key, Rust type,
   residency, size) for types without one; `to_json()` renders either as plain JSON.
+- **Per-port counters**: `HostBridgeHandle::input_port_stats(port)` and `output_port_stats(port)`
+  report accepted, replaced, dropped, delivered, and pending counts for one port.
 - **Persist graphs** as `GraphDocument`s (`format: "daedalus.graph"`, `schema_version`,
   `requires`, `metadata`, `graph`). `Engine::compile_document*` checks `requires` against the
   installed plugins before planning, and `PluginRegistry::graph_document(graph)` fills

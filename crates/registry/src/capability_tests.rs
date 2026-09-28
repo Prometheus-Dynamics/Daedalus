@@ -476,7 +476,10 @@ fn remove_plugin_drops_only_unshared_capabilities() {
         reg.adapter_decl(&AdapterId::new("vision.mask_to_frame"))
             .is_none()
     );
-    assert!(reg.node_decl(&crate::ids::NodeId::new("vision:segment")).is_none());
+    assert!(
+        reg.node_decl(&crate::ids::NodeId::new("vision:segment"))
+            .is_none()
+    );
     assert!(reg.type_decl(&TypeKey::new("shared:frame")).is_some());
     reg.freeze().expect("remaining registry is consistent");
     assert!(reg.remove_plugin("vision").is_none());

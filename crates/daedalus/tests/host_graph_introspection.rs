@@ -77,3 +77,29 @@ fn host_outputs_inspect_through_builtin_serializers() {
     assert_eq!(inspection.value(), Some(&Value::Float(1.5)));
     assert_eq!(inspection.to_json(), serde_json::json!(1.5));
 }
+
+#[test]
+fn inspect_outputs_takes_every_queued_output() {
+    let mut graph = compile();
+    graph.push("frame_in", 3_i64);
+    graph.tick_until_idle().expect("tick");
+    let outputs = graph.inspect_outputs();
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].0.as_str(), "scaled_out");
+    assert_eq!(outputs[0].1.to_json(), serde_json::json!(1.5));
+    assert!(graph.inspect_outputs().is_empty());
+
+    let input = graph
+        .host()
+        .input_port_stats("frame_in")
+        .expect("input used");
+    assert_eq!((input.accepted, input.delivered, input.pending), (1, 1, 0));
+    let output = graph
+        .host()
+        .output_port_stats("scaled_out")
+        .expect("output used");
+    assert_eq!(
+        (output.accepted, output.delivered, output.pending),
+        (1, 1, 0)
+    );
+}

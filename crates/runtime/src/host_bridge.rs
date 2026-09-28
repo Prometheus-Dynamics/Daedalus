@@ -24,14 +24,14 @@ use events::{
 pub use inspect::{PayloadInspection, PayloadSummary, inspect_payload, serialize_payload_value};
 pub use manager::{HostBridgeManager, bridge_handler};
 use policy::freshness_drop_reason;
-use ports::{PortDirection, PortEntry, PortKey};
+use ports::{PortDirection, PortEntry, PortKey, PortState};
 pub use serializers::{
     ValueSerializer, ValueSerializerMap, new_value_serializer_map, primitive_value_serializer_map,
     register_primitive_value_serializers_in, register_value_serializer_in, value_serializer_map,
 };
 pub use types::{
     HostBridgeConfig, HostBridgeDropStats, HostBridgeEvent, HostBridgeEventKind, HostBridgePayload,
-    HostBridgeStats,
+    HostBridgeStats, HostPortStats,
 };
 pub use wait::{InboundWait, InboundWaiter};
 
@@ -189,6 +189,7 @@ fn enqueue_locked(
 
     if matches!(direction, Direction::Inbound) && (*closed || state.closed) {
         direction.count_drop(stats, Some(DropReason::Closed));
+        state.stats.dropped = state.stats.dropped.saturating_add(1);
         let outcome = FeedOutcome::Dropped {
             correlation_id: payload.correlation_id(),
             reason: DropReason::Closed,
@@ -208,6 +209,7 @@ fn enqueue_locked(
     let freshness = state.freshness.as_ref().unwrap_or(default_freshness);
     if let Some(reason) = freshness_drop_reason(&mut state.marks, &payload, freshness) {
         direction.count_drop(stats, Some(reason.clone()));
+        state.stats.dropped = state.stats.dropped.saturating_add(1);
         let outcome = FeedOutcome::Dropped {
             correlation_id: payload.correlation_id(),
             reason: reason.clone(),
@@ -237,6 +239,7 @@ fn enqueue_locked(
             payload,
         },
     );
+    state.stats.record_enqueue(&outcome);
     let reason = match outcome {
         FeedOutcome::Accepted { .. } => {
             direction.count_accepted(stats);
@@ -511,6 +514,18 @@ impl HostBridgeHandle {
                 .is_some_and(|state| state.closed)
     }
 
+    /// Counters for one inbound (host → graph) port; `None` if the port was never used.
+    pub fn input_port_stats(&self, port: impl AsRef<str>) -> Option<HostPortStats> {
+        let guard = self.shared.buffers.lock();
+        guard.inbound.get(port.as_ref()).map(PortState::stats)
+    }
+
+    /// Counters for one outbound (graph → host) port; `None` if the port was never used.
+    pub fn output_port_stats(&self, port: impl AsRef<str>) -> Option<HostPortStats> {
+        let guard = self.shared.buffers.lock();
+        guard.outbound.get(port.as_ref()).map(PortState::stats)
+    }
+
     pub fn stats(&self) -> HostBridgeStats {
         let guard = self.shared.buffers.lock();
         let mut stats = guard.stats.clone();
@@ -589,7 +604,7 @@ impl HostBridgeHandle {
     pub fn take_inbound_into(&self, out: &mut Vec<HostBridgePayload>) {
         let mut guard = self.shared.buffers.lock();
         for state in guard.inbound.ports.values_mut() {
-            state.queue.drain_into(|entry| out.push(entry));
+            state.drain_into(|entry| out.push(entry));
         }
     }
 
@@ -597,7 +612,7 @@ impl HostBridgeHandle {
     /// `sink` must not call back into this bridge.
     pub(crate) fn drain_inbound_port(&self, port: &str, sink: impl FnMut(HostBridgePayload)) {
         if let Some(state) = self.shared.buffers.lock().inbound.get_mut(port) {
-            state.queue.drain_into(sink);
+            state.drain_into(sink);
         }
     }
 
@@ -615,7 +630,7 @@ impl HostBridgeHandle {
         let buffers = &mut *guard;
         let mut payloads = Vec::new();
         if let Some(state) = buffers.outbound.get_mut(port) {
-            state.queue.drain_into(|entry| payloads.push(entry.payload));
+            state.drain_into(|entry| payloads.push(entry.payload));
         }
         buffers.stats.outbound_delivered = buffers
             .stats
@@ -664,7 +679,7 @@ fn pop_outbound_locked(guard: &mut HostBridgeBuffers, alias: &str, port: &str) -
     let payload = guard
         .outbound
         .get_mut(port)
-        .and_then(|state| state.queue.pop_front())
+        .and_then(PortState::pop_front)
         .map(|entry| entry.payload)?;
     guard.stats.outbound_delivered = guard.stats.outbound_delivered.saturating_add(1);
     record_host_event(

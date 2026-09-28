@@ -72,6 +72,41 @@ pub struct HostBridgePayload {
     pub payload: Payload,
 }
 
+/// Counters for one host port, from [`HostBridgeHandle::input_port_stats`] or
+/// [`HostBridgeHandle::output_port_stats`].
+///
+/// [`HostBridgeHandle::input_port_stats`]: super::HostBridgeHandle::input_port_stats
+/// [`HostBridgeHandle::output_port_stats`]: super::HostBridgeHandle::output_port_stats
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostPortStats {
+    /// Payloads queued on the port, including ones that replaced a queued value.
+    pub accepted: u64,
+    /// Queued payloads replaced by a newer one before they were taken.
+    pub replaced: u64,
+    /// Payloads rejected by freshness, pressure, or a closed port.
+    pub dropped: u64,
+    /// Payloads taken off the port: by the graph for inputs, by the host for outputs.
+    pub delivered: u64,
+    /// Payloads currently queued.
+    pub pending: usize,
+}
+
+impl HostPortStats {
+    pub(super) fn record_enqueue(&mut self, outcome: &FeedOutcome) {
+        let counter = match outcome {
+            FeedOutcome::Accepted { .. } => &mut self.accepted,
+            FeedOutcome::Replaced { .. } => {
+                self.accepted = self.accepted.saturating_add(1);
+                &mut self.replaced
+            }
+            FeedOutcome::Dropped { .. } | FeedOutcome::Backpressured | FeedOutcome::Closed => {
+                &mut self.dropped
+            }
+        };
+        *counter = counter.saturating_add(1);
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostBridgeStats {
     pub inbound_accepted: u64,
