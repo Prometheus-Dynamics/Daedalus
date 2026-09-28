@@ -25,9 +25,10 @@ pub use inspect::{PayloadInspection, PayloadSummary, inspect_payload, serialize_
 pub use manager::{HostBridgeManager, bridge_handler};
 use policy::freshness_drop_reason;
 use ports::{PortDirection, PortEntry, PortKey, PortState};
+pub(crate) use serializers::for_each_builtin_primitive;
 pub use serializers::{
     ValueSerializer, ValueSerializerMap, new_value_serializer_map, primitive_value_serializer_map,
-    register_primitive_value_serializers_in, register_value_serializer_in, value_serializer_map,
+    register_primitive_value_serializers_in, register_value_serializer_in,
 };
 pub use types::{
     HostBridgeConfig, HostBridgeDropStats, HostBridgeEvent, HostBridgeEventKind, HostBridgePayload,
