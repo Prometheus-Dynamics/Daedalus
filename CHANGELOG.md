@@ -58,6 +58,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `metrics`) and `embedded` (`engine` + `plugins`).
 - The `external_frame_source` example (`examples/04_async`), `docs/node-authoring.md`,
   `docs/dynamic-plugins.md`, and a measured minimal CPU-only profile in `docs/development.md`.
+- Shared building blocks: `NodeInstance::new(id)` with `with_*` builders, `Edge::new(from,
+  from_port, to, to_port)` and `From<usize> for NodeRef`; `Value::{field, as_str, as_bool,
+  as_u64, as_list, as_string_list, as_string_map}` and `TypeExpr::from_json_value`;
+  `daedalus_transport::{PolicyQueue, PushOutcome}`, `FeedOutcome::from_push` and
+  `PressurePolicy::{bounded_capacity, is_single_slot}`; `daedalus_planner::{edge_explanations,
+  host_bridge_metadata, is_generic_marker}`, `RuntimeNode::host_alias`,
+  `HostBridgeConfig::validate` and a public `daedalus_runtime::executor::panic_message`.
 
 ### Changed
 
@@ -102,6 +109,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `CorrelatedPayload::correlation_id` is the payload's lineage id and `enqueued_at` is an
   `Option<Instant>` set only with basic metrics. `Payload` stores `Arc<dyn PayloadStorage>`
   (`PayloadStorage::into_any_arc`) and an unallocated empty residency cache.
+- The host bridge port queues and executor edge queues are both `PolicyQueue`s (the executor
+  `EdgeQueue` is now `PolicyQueue<CorrelatedPayload>`): queued items survive an edge's
+  bounded-capacity change, and `Coalesce` clears a multi-item host FIFO like `LatestOnly`. The
+  runtime reads planner edge explanations through `daedalus_planner::edge_explanations` instead
+  of its own parser. `HostGraphRunInput` is implemented for `(P, I)` and `(P, K, I)` with any
+  `P: Into<PortId>`. Panic payloads that are not strings report "non-string panic payload".
 
 ### Performance
 
@@ -121,6 +134,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `PluginRegistry::register_daedalus_type`).
 - `daedalus_runtime::GPU_FEATURE_ENABLED` and `daedalus_registry::GPU_FEATURE_ENABLED` (use
   `ENABLED_FEATURES`).
+- Duplicate aliases and dead helpers: `HostBridgeHandle::{push_payload, push_any}` (use
+  `feed_payload`/`push`), `TypeKey::opaque` (use `TypeKey::new`),
+  `daedalus_runtime::host_bridge::value_serializer_map`, `HostGraph::set_value_serializers`,
+  `InboundWait::is_ready`, `RuntimePlan::host_bridge_aliases`, `StrSink::discard` and the
+  `daedalus_planner::helpers` module (use `NodeInstance::new`).
 
 ### Maintenance
 
@@ -135,6 +153,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   workflow runs the host bridge and executor criterion benches and flags >15% median regressions
   (`scripts/bench-compare.py`).
 - The `#[plugin]`, `#[type_key]`, `#[adapt]` and `#[device]` docs describe what they generate.
+- `scripts/ci.sh features` checks the real FFI packages (`daedalus-ffi-core`,
+  `daedalus-ffi-host`) instead of a nonexistent `daedalus-ffi`.
 
 ## [2.0.0] - 2026-04-30
 
