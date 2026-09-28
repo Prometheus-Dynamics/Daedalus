@@ -12,9 +12,6 @@
 //!   "graph": { "nodes": [], "edges": [], "metadata": {} }
 //! }
 //! ```
-//!
-//! [`GraphDocument::from_json`] also accepts the legacy forms (a bare `Graph`, or a
-//! `{"graph": Graph}` envelope) and upgrades them to the current schema version.
 
 mod requirements;
 
@@ -36,28 +33,14 @@ pub const GRAPH_DOCUMENT_FORMAT: &str = "daedalus.graph";
 /// Current (and highest supported) graph document schema version.
 pub const GRAPH_DOCUMENT_SCHEMA_VERSION: u32 = 1;
 
-/// Which on-disk shape a document was parsed from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GraphDocumentSource {
-    /// A versioned `{"format": "daedalus.graph", ...}` document.
-    Versioned,
-    /// A legacy bare `Graph` JSON object.
-    LegacyGraph,
-    /// A legacy `{"graph": Graph}` envelope.
-    LegacyEnvelope,
-}
-
 /// Errors produced while reading or writing a [`GraphDocument`].
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum GraphDocumentError {
     #[error("graph document is not valid JSON: {0}")]
     Syntax(#[source] serde_json::Error),
-    #[error(
-        "unrecognized graph document: expected a `daedalus.graph` document, a graph object with \
-         `nodes`, or a `{{\"graph\": ...}}` envelope"
-    )]
-    UnrecognizedShape,
+    #[error("graph document must be a JSON object")]
+    NotAnObject,
     #[error("unknown graph document format `{found}` (expected `{GRAPH_DOCUMENT_FORMAT}`)")]
     UnknownFormat { found: String },
     #[error("graph document is missing a numeric `schema_version`")]
@@ -116,11 +99,6 @@ struct WireOwned {
     graph: Graph,
 }
 
-#[derive(Deserialize)]
-struct LegacyEnvelope {
-    graph: Graph,
-}
-
 impl GraphDocument {
     /// Wrap a graph in a current-version document with no requirements.
     pub fn new(graph: Graph) -> Self {
@@ -155,67 +133,47 @@ impl GraphDocument {
         self.graph
     }
 
-    /// Parse a document, accepting the versioned format and the legacy shapes.
+    /// Parse a versioned document, reporting the JSON path of any invalid field.
     pub fn from_json(json: &str) -> Result<Self, GraphDocumentError> {
-        Self::from_json_with_source(json).map(|(doc, _)| doc)
-    }
-
-    /// Like [`GraphDocument::from_json`], also reporting which shape was parsed.
-    pub fn from_json_with_source(
-        json: &str,
-    ) -> Result<(Self, GraphDocumentSource), GraphDocumentError> {
         let probe: JsonValue = serde_json::from_str(json).map_err(GraphDocumentError::Syntax)?;
         let JsonValue::Object(obj) = &probe else {
-            return Err(GraphDocumentError::UnrecognizedShape);
+            return Err(GraphDocumentError::NotAnObject);
         };
-        if obj.contains_key("format") || obj.contains_key("schema_version") {
-            match obj.get("format") {
-                Some(JsonValue::String(f)) if f == GRAPH_DOCUMENT_FORMAT => {}
-                Some(other) => {
-                    let found = match other {
-                        JsonValue::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    return Err(GraphDocumentError::UnknownFormat { found });
-                }
-                None => {
-                    return Err(GraphDocumentError::UnknownFormat {
-                        found: "<missing>".into(),
-                    });
-                }
+        match obj.get("format") {
+            Some(JsonValue::String(f)) if f == GRAPH_DOCUMENT_FORMAT => {}
+            Some(JsonValue::String(s)) => {
+                return Err(GraphDocumentError::UnknownFormat { found: s.clone() });
             }
-            let version = obj
-                .get("schema_version")
-                .and_then(JsonValue::as_u64)
-                .ok_or(GraphDocumentError::MissingSchemaVersion)?;
-            if version == 0 || version > u64::from(GRAPH_DOCUMENT_SCHEMA_VERSION) {
-                return Err(GraphDocumentError::UnsupportedSchemaVersion {
-                    found: version,
-                    supported: GRAPH_DOCUMENT_SCHEMA_VERSION,
+            Some(other) => {
+                return Err(GraphDocumentError::UnknownFormat {
+                    found: other.to_string(),
                 });
             }
-            let wire: WireOwned = parse_with_path(json)?;
-            let doc = Self {
-                schema_version: wire.schema_version,
-                requires: wire.requires,
-                metadata: wire.metadata,
-                graph: wire.graph,
-            };
-            doc.validate()?;
-            return Ok((doc, GraphDocumentSource::Versioned));
+            None => {
+                return Err(GraphDocumentError::UnknownFormat {
+                    found: "<missing>".into(),
+                });
+            }
         }
-        if obj.contains_key("graph") {
-            let envelope: LegacyEnvelope = parse_with_path(json)?;
-            return Ok((
-                Self::new(envelope.graph),
-                GraphDocumentSource::LegacyEnvelope,
-            ));
+        let version = obj
+            .get("schema_version")
+            .and_then(JsonValue::as_u64)
+            .ok_or(GraphDocumentError::MissingSchemaVersion)?;
+        if version == 0 || version > u64::from(GRAPH_DOCUMENT_SCHEMA_VERSION) {
+            return Err(GraphDocumentError::UnsupportedSchemaVersion {
+                found: version,
+                supported: GRAPH_DOCUMENT_SCHEMA_VERSION,
+            });
         }
-        if obj.contains_key("nodes") {
-            let graph: Graph = parse_with_path(json)?;
-            return Ok((Self::new(graph), GraphDocumentSource::LegacyGraph));
-        }
-        Err(GraphDocumentError::UnrecognizedShape)
+        let wire: WireOwned = parse_with_path(json)?;
+        let doc = Self {
+            schema_version: wire.schema_version,
+            requires: wire.requires,
+            metadata: wire.metadata,
+            graph: wire.graph,
+        };
+        doc.validate()?;
+        Ok(doc)
     }
 
     /// Check structural invariants (requirement syntax).
@@ -287,8 +245,7 @@ impl Serialize for GraphDocument {
 }
 
 impl<'de> Deserialize<'de> for GraphDocument {
-    /// Strict deserialization of the versioned form only (use [`GraphDocument::from_json`] to
-    /// also accept legacy shapes).
+    /// Deserialize the versioned form (prefer [`GraphDocument::from_json`] for path-aware errors).
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
         let wire = WireOwned::deserialize(deserializer)?;

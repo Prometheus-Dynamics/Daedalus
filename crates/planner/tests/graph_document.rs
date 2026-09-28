@@ -1,8 +1,7 @@
 use daedalus_data::model::Value;
 use daedalus_planner::{
-    Edge, GRAPH_DOCUMENT_SCHEMA_VERSION, Graph, GraphDocument, GraphDocumentError,
-    GraphDocumentSource, NodeInstance, NodeRef, PluginRequirement, PortRef, UnmetReason,
-    check_plugin_requirements,
+    Edge, Graph, GraphDocument, GraphDocumentError, NodeInstance, NodeRef, PluginRequirement,
+    PortRef, UnmetReason, check_plugin_requirements,
 };
 use daedalus_registry::ids::NodeId;
 
@@ -53,8 +52,7 @@ fn sample_document() -> GraphDocument {
 fn versioned_document_roundtrips() {
     let doc = sample_document();
     let json = doc.to_json_pretty().unwrap();
-    let (parsed, source) = GraphDocument::from_json_with_source(&json).unwrap();
-    assert_eq!(source, GraphDocumentSource::Versioned);
+    let parsed = GraphDocument::from_json(&json).unwrap();
     assert_eq!(parsed, doc);
     assert_eq!(parsed.to_json_pretty().unwrap(), json);
 
@@ -151,31 +149,10 @@ fn deterministic_json_snapshot() {
 }
 
 #[test]
-fn legacy_bare_graph_is_upgraded() {
+fn bare_graph_is_rejected() {
     let json = serde_json::to_string(&sample_graph()).unwrap();
-    let (doc, source) = GraphDocument::from_json_with_source(&json).unwrap();
-    assert_eq!(source, GraphDocumentSource::LegacyGraph);
-    assert_eq!(doc.schema_version, GRAPH_DOCUMENT_SCHEMA_VERSION);
-    assert!(doc.requires.is_empty());
-    assert!(doc.metadata.is_empty());
-    assert_eq!(doc.graph, sample_graph());
-}
-
-#[test]
-fn legacy_envelope_is_upgraded() {
-    let graph = serde_json::to_value(sample_graph()).unwrap();
-    let json = serde_json::json!({ "graph": graph, "extra": true }).to_string();
-    let (doc, source) = GraphDocument::from_json_with_source(&json).unwrap();
-    assert_eq!(source, GraphDocumentSource::LegacyEnvelope);
-    assert_eq!(doc.schema_version, GRAPH_DOCUMENT_SCHEMA_VERSION);
-    assert!(doc.requires.is_empty());
-    assert_eq!(doc.graph, sample_graph());
-    // Re-serializing writes the versioned format.
-    assert!(
-        doc.to_json()
-            .unwrap()
-            .starts_with(r#"{"format":"daedalus.graph""#)
-    );
+    let err = GraphDocument::from_json(&json).unwrap_err();
+    assert!(matches!(err, GraphDocumentError::UnknownFormat { found } if found == "<missing>"));
 }
 
 #[test]
@@ -201,7 +178,7 @@ fn bad_documents_report_typed_errors() {
     assert!(matches!(err, GraphDocumentError::MissingSchemaVersion));
 
     let err = GraphDocument::from_json("[1,2]").unwrap_err();
-    assert!(matches!(err, GraphDocumentError::UnrecognizedShape));
+    assert!(matches!(err, GraphDocumentError::NotAnObject));
 
     let err = GraphDocument::from_json("{not json").unwrap_err();
     assert!(matches!(err, GraphDocumentError::Syntax(_)));
