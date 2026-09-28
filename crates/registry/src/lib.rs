@@ -49,7 +49,7 @@ pub mod prelude {
         SerializerRegistry, TypeDecl, TypeRegistry,
     };
     pub use crate::diagnostics::{RegistryError, RegistryErrorCode, RegistryResult};
-    pub use crate::ids::{GroupId, IdValidationError, NodeId};
+    pub use crate::ids::{IdValidationError, NodeId};
     pub use crate::typeexpr_transport_key;
     pub use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
 }

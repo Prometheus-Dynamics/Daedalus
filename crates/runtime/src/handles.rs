@@ -1,106 +1,12 @@
-use daedalus_transport::IdStr;
-use std::borrow::Borrow;
-use std::fmt;
-
-macro_rules! define_text_id {
-    ($name:ident, $doc:literal) => {
-        #[doc = $doc]
-        ///
-        /// String literals convert without allocating (`"frame".into()`); borrowed text goes
-        /// through [`Self::new`]. Clones never copy text.
-        #[derive(
-            Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-        )]
-        #[serde(transparent)]
-        pub struct $name(IdStr);
-
-        impl $name {
-            pub fn new(value: impl Into<String>) -> Self {
-                Self(IdStr::new(value))
-            }
-
-            /// Wrap a string literal without allocating.
-            pub const fn from_static(value: &'static str) -> Self {
-                Self(IdStr::from_static(value))
-            }
-
-            pub fn as_str(&self) -> &str {
-                self.0.as_str()
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(self.as_str())
-            }
-        }
-
-        impl AsRef<str> for $name {
-            fn as_ref(&self) -> &str {
-                self.as_str()
-            }
-        }
-
-        impl Borrow<str> for $name {
-            fn borrow(&self) -> &str {
-                self.as_str()
-            }
-        }
-
-        impl From<&'static str> for $name {
-            fn from(value: &'static str) -> Self {
-                Self::from_static(value)
-            }
-        }
-
-        /// Cheap clone (reference-count bump at most); lets `&id` satisfy `impl Into<Id>`.
-        impl From<&$name> for $name {
-            fn from(value: &$name) -> Self {
-                value.clone()
-            }
-        }
-
-        impl From<String> for $name {
-            fn from(value: String) -> Self {
-                Self(value.into())
-            }
-        }
-
-        impl From<&String> for $name {
-            fn from(value: &String) -> Self {
-                Self::new(value.as_str())
-            }
-        }
-
-        impl From<$name> for String {
-            fn from(value: $name) -> Self {
-                value.as_str().to_string()
-            }
-        }
-
-        impl PartialEq<str> for $name {
-            fn eq(&self, other: &str) -> bool {
-                self.as_str() == other
-            }
-        }
-
-        impl PartialEq<&str> for $name {
-            fn eq(&self, other: &&str) -> bool {
-                self.as_str() == *other
-            }
-        }
-    };
-}
-
-define_text_id!(NodeAlias, "Runtime node alias used for graph wiring.");
-define_text_id!(NodeHandleId, "Runtime node id used for graph wiring.");
-define_text_id!(
+daedalus_transport::define_text_id!(NodeAlias, "Runtime node alias used for graph wiring.");
+daedalus_transport::define_text_id!(NodeHandleId, "Runtime node id used for graph wiring.");
+daedalus_transport::define_text_id!(
     PortId,
     "Runtime port identifier used for node and host bridge wiring."
 );
-define_text_id!(HostAlias, "Runtime host bridge alias.");
-define_text_id!(FeatureFlag, "Runtime feature flag identifier.");
-define_text_id!(CapabilityId, "Runtime capability identifier.");
+daedalus_transport::define_text_id!(HostAlias, "Runtime host bridge alias.");
+daedalus_transport::define_text_id!(FeatureFlag, "Runtime feature flag identifier.");
+daedalus_transport::define_text_id!(CapabilityId, "Runtime capability identifier.");
 
 /// Handle to a node port (alias + port name).
 ///
