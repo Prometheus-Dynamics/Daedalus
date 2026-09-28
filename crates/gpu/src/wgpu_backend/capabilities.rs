@@ -50,44 +50,7 @@ pub(super) fn caps_from_adapter(
     GpuCapabilities {
         supported_formats: formats.to_vec(),
         format_features,
-        format_blocks: vec![
-            GpuBlockInfo {
-                format: GpuFormat::R8Unorm,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 1,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Rgba8Unorm,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 4,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Rgba16Float,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 8,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Depth24Stencil8,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 4,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Rg8Unorm,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 2,
-            },
-            GpuBlockInfo {
-                format: GpuFormat::Bgra8Unorm,
-                block_width: 1,
-                block_height: 1,
-                bytes_per_block: 4,
-            },
-        ],
+        format_blocks: GpuBlockInfo::for_formats(&formats),
         max_buffer_size: limits.max_buffer_size,
         max_texture_dimension: limits.max_texture_dimension_2d,
         max_texture_samples: limits.max_texture_dimension_2d.min(8),

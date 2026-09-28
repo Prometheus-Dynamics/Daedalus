@@ -67,7 +67,7 @@ fn exported_descriptor_reports_info_schema_and_installs() {
         registry
             .boundary_contracts
             .keys()
-            .any(|key| key.to_string() == "dylib_demo:u64")
+            .any(|key| *key == "dylib_demo:u64")
     );
     assert!(registry.plugin_manifests.contains_key("dylib_demo"));
 }

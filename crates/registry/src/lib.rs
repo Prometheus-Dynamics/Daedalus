@@ -13,13 +13,7 @@ pub mod ids;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 
-/// Cargo features of `daedalus-registry` enabled in this build (comma-separated).
-///
-/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
-/// each feature, this feeds the dynamic plugin build fingerprint.
-pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
-/// This crate's `Cargo.toml`.
-pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
+daedalus_core::build_facts!();
 
 /// Convert a Daedalus type expression into the stable transport identity used by
 /// manifests, adapters, and runtime payloads.
@@ -54,7 +48,7 @@ pub mod prelude {
         SerializerRegistry, TypeDecl, TypeRegistry,
     };
     pub use crate::diagnostics::{RegistryError, RegistryErrorCode, RegistryResult};
-    pub use crate::ids::{GroupId, IdValidationError, NodeId};
+    pub use crate::ids::{IdValidationError, NodeId};
     pub use crate::{type_key_of, typeexpr_transport_key};
     pub use daedalus_data::descriptor::{DataDescriptor, DescriptorId, DescriptorVersion};
 }

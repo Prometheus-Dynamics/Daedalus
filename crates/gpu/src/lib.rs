@@ -104,6 +104,19 @@ pub enum GpuFormat {
     Nv12,
 }
 
+impl GpuFormat {
+    /// Every format, in declaration order.
+    pub const ALL: [GpuFormat; 7] = [
+        GpuFormat::R8Unorm,
+        GpuFormat::Rgba8Unorm,
+        GpuFormat::Rgba16Float,
+        GpuFormat::Depth24Stencil8,
+        GpuFormat::Rg8Unorm,
+        GpuFormat::Bgra8Unorm,
+        GpuFormat::Nv12,
+    ];
+}
+
 /// Per-format feature flags for planner/runtime decisions.
 ///
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,6 +136,34 @@ pub struct GpuBlockInfo {
     pub block_width: u32,
     pub block_height: u32,
     pub bytes_per_block: u32,
+}
+
+impl GpuBlockInfo {
+    /// Block layout derived from [`format_planes`]: single-plane formats are 1x1 texel blocks;
+    /// subsampled multi-planar formats use the smallest block covering one texel of every plane
+    /// (NV12: a 2x2 block of 4 Y bytes plus one 2-byte UV texel).
+    pub fn for_format(format: GpuFormat) -> Self {
+        let planes = format_planes(format);
+        let block = planes.iter().map(|p| p.subsampling).max().unwrap_or(1);
+        let bytes_per_block = planes
+            .iter()
+            .map(|p| {
+                let (w, h) = p.extent(block, block);
+                p.bytes_per_texel * w * h
+            })
+            .sum();
+        Self {
+            format,
+            block_width: block,
+            block_height: block,
+            bytes_per_block,
+        }
+    }
+
+    /// Block info for each of `formats`, in order.
+    pub fn for_formats(formats: &[GpuFormat]) -> Vec<Self> {
+        formats.iter().copied().map(Self::for_format).collect()
+    }
 }
 
 bitflags! {
@@ -575,6 +616,24 @@ pub fn active_backend() -> GpuBackendKind {
 mod tests {
     use super::*;
     use std::{collections::HashSet, sync::Arc, thread};
+
+    #[test]
+    fn block_info_matches_format_planes_for_every_format() {
+        for format in GpuFormat::ALL {
+            let block = GpuBlockInfo::for_format(format);
+            assert_eq!(block.format, format);
+            match format_bytes_per_pixel(format) {
+                Some(bpp) => {
+                    assert_eq!((block.block_width, block.block_height), (1, 1));
+                    assert_eq!(block.bytes_per_block, bpp);
+                }
+                None => assert!(block.block_width > 1, "{format:?}"),
+            }
+        }
+        let nv12 = GpuBlockInfo::for_format(GpuFormat::Nv12);
+        assert_eq!((nv12.block_width, nv12.block_height), (2, 2));
+        assert_eq!(nv12.bytes_per_block, 6);
+    }
 
     #[test]
     fn falls_back_to_noop_when_only_noop_is_built() {

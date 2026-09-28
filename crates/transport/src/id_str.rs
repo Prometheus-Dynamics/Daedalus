@@ -134,6 +134,109 @@ impl<'de> serde::Deserialize<'de> for IdStr {
     }
 }
 
+/// Define a text id newtype over [`IdStr`](crate::IdStr) with the conversions every id shares.
+///
+/// The invoking crate must depend on `serde`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! define_text_id {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        ///
+        /// String literals convert without allocating (`"frame".into()`); borrowed text goes
+        /// through [`Self::new`]. Clones never copy text.
+        #[derive(
+            Clone,
+            Debug,
+            PartialEq,
+            Eq,
+            PartialOrd,
+            Ord,
+            Hash,
+            ::serde::Serialize,
+            ::serde::Deserialize,
+        )]
+        #[serde(transparent)]
+        pub struct $name($crate::IdStr);
+
+        impl $name {
+            pub fn new(value: impl Into<String>) -> Self {
+                Self($crate::IdStr::new(value))
+            }
+
+            /// Wrap a string literal without allocating.
+            pub const fn from_static(value: &'static str) -> Self {
+                Self($crate::IdStr::from_static(value))
+            }
+
+            pub fn as_str(&self) -> &str {
+                self.0.as_str()
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                self.as_str()
+            }
+        }
+
+        impl ::std::borrow::Borrow<str> for $name {
+            fn borrow(&self) -> &str {
+                self.as_str()
+            }
+        }
+
+        impl From<&'static str> for $name {
+            fn from(value: &'static str) -> Self {
+                Self::from_static(value)
+            }
+        }
+
+        /// Cheap clone (reference-count bump at most); lets `&id` satisfy `impl Into<Id>`.
+        impl From<&$name> for $name {
+            fn from(value: &$name) -> Self {
+                value.clone()
+            }
+        }
+
+        impl From<::std::string::String> for $name {
+            fn from(value: String) -> Self {
+                Self(value.into())
+            }
+        }
+
+        impl From<&String> for $name {
+            fn from(value: &String) -> Self {
+                Self::new(value.as_str())
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(value: $name) -> Self {
+                value.as_str().to_string()
+            }
+        }
+
+        impl PartialEq<str> for $name {
+            fn eq(&self, other: &str) -> bool {
+                self.as_str() == other
+            }
+        }
+
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool {
+                self.as_str() == *other
+            }
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

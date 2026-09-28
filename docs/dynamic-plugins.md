@@ -58,56 +58,19 @@ missing directories, and keeps the first occurrence of a file name across direct
 
 ## ABI And Compatibility Rules
 
-A plugin exposes two layers:
+The `daedalus::dylib` module docs ([source](../crates/daedalus/src/dylib/mod.rs), rendered on
+[docs.rs](https://docs.rs/daedalus-rs/latest/daedalus/dylib/index.html)) are the reference for the
+two ABI layers, the build fingerprint, feature classification, and known limitations. In short:
 
-- **Stable descriptor (C ABI).** `daedalus_plugin_abi_version` is frozen as
-  `extern "C" fn() -> u32`. When it equals `PLUGIN_ABI_VERSION`, `load` calls
-  `daedalus_plugin_descriptor`, a `#[repr(C)]` `PluginDescriptor` made only of C types:
-  `PluginInfo` (plugin name/version, Daedalus version, rustc version, build fingerprint as
-  `StrView`s) and `extern "C"` entry points. Its `schema` entry point installs the plugin into a
-  private registry inside the plugin and returns the manifest and node declarations as a
-  `daedalus_ffi_core::PluginSchema` (JSON), the same language-neutral schema FFI packages use.
-  None of this depends on the plugin's toolchain, Daedalus version or feature set, so `load`
-  accepts any plugin with a matching ABI version and `PluginLibrary::schema` describes it.
-  A wrong ABI version, missing symbol, invalid info string or invalid schema fails `load` with a
-  typed `PluginLibraryError`.
-- **Rust-ABI install.** Handlers are Rust closures over `Payload` (`Arc<dyn Any>`), so
-  `install_into` passes a `*mut PluginRegistry` to the plugin. That is only sound when both sides
-  agree on every layout, so `check_rust_abi` (surfaced as `PluginLibrary::rust_abi`) requires
-  the Daedalus version, `rustc --version` and build fingerprint to match the host, and
-  `install_into` returns `PluginLibraryError::Incompatible { plugin, mismatch }` without calling
-  into the plugin otherwise.
-
-The fingerprint (`daedalus::build_fingerprint()`) is a readable `key=value;...` string: target
-and pointer width; the enabled boundary Cargo features of the facade, `daedalus-core`, `-data`,
-`-registry`, `-planner` and `-runtime` (`features.<crate>=...`) plus a stable FNV-1a
-`features.hash`; and `layout.<type>=size/align` for `PluginRegistry`, `HandlerRegistry`,
-`Payload`, `TypeKey`, `BoundaryTypeContract`, `TypeExpr`, `NodeDecl`, `AdapterDecl`,
-`PluginManifest` and `StrView`. A mismatch error lists the differing segments, e.g.
-``features.runtime: host `gpu,plugins`, plugin `plugins` ``.
-
-Every feature of those crates is classified next to its definition, in the crate's `Cargo.toml`:
-
-```toml
-[package.metadata.daedalus]
-boundary-features = ["gpu", "gpu-mock", "plugins"]
-host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots"]
-```
-
-Only enabled boundary features enter the fingerprint, so a plugin built with `dylib-plugins`
-installs into a host built with `engine-full,dylib-plugins`. Each crate's build script exports its
-enabled features (`ENABLED_FEATURES`, from `CARGO_CFG_FEATURE`) and the crate embeds its manifest
-(`CARGO_MANIFEST`); a facade test fails when a declared feature is unclassified or classified
-twice.
-
-In practice: build the host and its plugins from one workspace and lockfile with one toolchain
-and one boundary Daedalus feature set (`plugins`, `gpu-types`/`gpu-runtime`/backends, `schema`,
-`proto`).
-
-Libraries are never unloaded; only load-at-startup is supported. A plugin has its own copy of
-Daedalus globals, so it must register everything through the `PluginRegistry` it is given, and
-neither side may install a custom `#[global_allocator]`. See the `daedalus::dylib` module docs
-for the full list of limitations.
+- `load` only needs a matching `PLUGIN_ABI_VERSION`; the C-ABI descriptor and `PluginLibrary::schema`
+  work across toolchains, Daedalus versions, and feature sets.
+- `install_into` passes Rust types across the boundary, so it requires the same Daedalus version,
+  `rustc --version`, and build fingerprint (`daedalus::build_fingerprint()`), and otherwise fails
+  with `PluginLibraryError::Incompatible` naming the differing segments.
+- Build the host and its plugins from one workspace and lockfile with one toolchain and one
+  boundary Daedalus feature set. Libraries are never unloaded, plugins must register everything
+  through the `PluginRegistry` they are given, and neither side may install a custom
+  `#[global_allocator]`.
 
 ## Design Note: Stable Handler Path
 

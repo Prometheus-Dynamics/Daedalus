@@ -66,22 +66,8 @@ cargo run -p daedalus-examples --features gpu-wgpu --bin gpu_node
 
 ## Validation
 
-```bash
-./scripts/repo-clean.sh
-cargo fmt --all -- --check
-./scripts/check-file-sizes.sh
-./scripts/check-workspace-deps.sh
-./scripts/check-gpu-async-blocking.sh
-cargo test --workspace --all-targets --features "engine,plugins"
-cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
-cargo doc --workspace --no-deps
-```
-
-Docker-backed example validation:
-
-```bash
-cargo test -p daedalus-rs --test docker_examples -- --ignored --nocapture
-```
+See [docs/testing.md](docs/testing.md) for the validation loop (`./scripts/repo-clean.sh` runs the
+fixes and the full CI loop), focused feature checks, GPU checks, and Docker-backed example tests.
 
 ## Documentation
 

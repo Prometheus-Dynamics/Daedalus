@@ -26,13 +26,7 @@ pub mod stream;
 pub mod transport;
 pub use daedalus_transport as transport_types;
 
-/// Cargo features of `daedalus-runtime` enabled in this build (comma-separated).
-///
-/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
-/// each feature, this feeds the dynamic plugin build fingerprint.
-pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
-/// This crate's `Cargo.toml`.
-pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
+daedalus_core::build_facts!();
 
 /// Apply a plugin prefix to a node id without duplicating overlapping segments.
 ///

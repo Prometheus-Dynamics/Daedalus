@@ -83,6 +83,8 @@ pub trait GpuBackend: Send + Sync {
         None
     }
 
+    /// Track a wgpu texture as a [`GpuImageHandle`]; `Ok(None)` when the backend does not track
+    /// wgpu textures, `Err(GpuError::Unsupported)` when `format` has no [`crate::GpuFormat`].
     #[cfg(feature = "gpu-wgpu")]
     fn wgpu_register_texture(
         &self,
@@ -91,8 +93,8 @@ pub trait GpuBackend: Send + Sync {
         _width: u32,
         _height: u32,
         _usage: wgpu::TextureUsages,
-    ) -> Option<GpuImageHandle> {
-        None
+    ) -> Result<Option<GpuImageHandle>, GpuError> {
+        Ok(None)
     }
 }
 

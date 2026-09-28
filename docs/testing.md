@@ -4,6 +4,10 @@ Daedalus validation is split into a default workspace loop, focused feature chec
 
 ## Default Surface
 
+This is the canonical validation loop; the README and development guide link here. Run it before
+sending broad changes. `./scripts/repo-clean.sh` first applies `cargo fmt` and `clippy --fix`,
+then runs the full [local CI runner](#local-ci-runner).
+
 ```bash
 cargo fmt --all -- --check
 ./scripts/check-file-sizes.sh

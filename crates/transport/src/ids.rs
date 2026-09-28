@@ -1,73 +1,24 @@
 use std::fmt;
-use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
-use crate::IdStr;
-
-/// Stable graph/plugin-facing type identity.
-///
-/// `TypeKey` is the transport identity that survives manifests, plugins, and FFI boundaries.
-/// Native Rust `TypeId` can still be used as a fast path, but it is not stable enough to be the
-/// graph type identity.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct TypeKey(IdStr);
+crate::define_text_id!(
+    TypeKey,
+    "Stable graph/plugin-facing type identity.\n\n`TypeKey` is the transport identity that \
+     survives manifests, plugins, and FFI boundaries. Native Rust `TypeId` can still be used as \
+     a fast path, but it is not stable enough to be the graph type identity."
+);
 
 impl TypeKey {
-    pub fn new(key: impl Into<String>) -> Self {
-        Self(IdStr::new(key))
-    }
-
-    /// Wrap a string literal without allocating.
-    pub const fn from_static(key: &'static str) -> Self {
-        Self(IdStr::from_static(key))
-    }
-
     pub fn opaque(key: impl Into<String>) -> Self {
         Self::new(key)
     }
-
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
 }
 
-impl fmt::Display for TypeKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// String literals are wrapped without allocating; use [`TypeKey::new`] for borrowed text.
-impl From<&'static str> for TypeKey {
-    fn from(value: &'static str) -> Self {
-        Self::from_static(value)
-    }
-}
-
-impl From<&String> for TypeKey {
-    fn from(value: &String) -> Self {
-        Self::new(value.as_str())
-    }
-}
-
-impl From<String> for TypeKey {
-    fn from(value: String) -> Self {
-        Self(value.into())
-    }
-}
-
-/// Deterministic ABI/layout identity for types that may cross a Rust dynamic plugin boundary.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct LayoutHash(Arc<str>);
+crate::define_text_id!(
+    LayoutHash,
+    "Deterministic ABI/layout identity for types that may cross a Rust dynamic plugin boundary."
+);
 
 impl LayoutHash {
-    pub fn new(hash: impl Into<String>) -> Self {
-        Self(hash.into().into())
-    }
-
     /// Runtime-local fallback layout identity for plain Rust values.
     ///
     /// This is intentionally tied to the concrete Rust type name plus basic ABI facts. Dynamic
@@ -92,12 +43,10 @@ impl LayoutHash {
             stable_hash64(schema.to_string().as_bytes())
         ))
     }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
 }
 
+/// 64-bit FNV-1a, identical to `daedalus_core::stable_id::fnv1a64`; duplicated because this crate
+/// deliberately depends on nothing but serde and thiserror.
 fn stable_hash64(bytes: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;
@@ -109,107 +58,9 @@ fn stable_hash64(bytes: &[u8]) -> u64 {
     hash
 }
 
-impl fmt::Display for LayoutHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl From<&str> for LayoutHash {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for LayoutHash {
-    fn from(value: String) -> Self {
-        Self(value.into())
-    }
-}
-
-/// Layout identity or constraint for payloads with meaningful memory/device layout.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Layout(String);
-
-impl Layout {
-    pub fn new(layout: impl Into<String>) -> Self {
-        Self(layout.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&str> for Layout {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for Layout {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
-
-/// Source id recorded in payload lineage.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SourceId(String);
-
-impl SourceId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&str> for SourceId {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for SourceId {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
-
-/// Stable adapter identifier.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AdapterId(String);
-
-impl AdapterId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for AdapterId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl From<&str> for AdapterId {
-    fn from(value: &str) -> Self {
-        Self::new(value)
-    }
-}
-
-impl From<String> for AdapterId {
-    fn from(value: String) -> Self {
-        Self::new(value)
-    }
-}
+crate::define_text_id!(
+    Layout,
+    "Layout identity or constraint for payloads with meaningful memory/device layout."
+);
+crate::define_text_id!(SourceId, "Source id recorded in payload lineage.");
+crate::define_text_id!(AdapterId, "Stable adapter identifier.");
