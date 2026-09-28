@@ -14,6 +14,7 @@
 //! with just `dylib-plugins` loads into a host built with `engine-full,dylib-plugins`.
 //! `daedalus-transport` has no features and `daedalus-engine` never crosses the boundary.
 
+use daedalus_core::stable_id::fnv1a64;
 use std::fmt::Write as _;
 use std::mem::{align_of, size_of};
 use std::sync::OnceLock;
@@ -96,16 +97,6 @@ pub fn boundary_features() -> Vec<(&'static str, Vec<&'static str>)> {
             (krate, kept)
         })
         .collect()
-}
-
-/// 64-bit FNV-1a: tiny, dependency-free, and stable across toolchains and platforms.
-fn fnv1a64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
 }
 
 fn layouts() -> [(&'static str, usize, usize); 10] {
@@ -272,8 +263,6 @@ mod tests {
 
     #[test]
     fn feature_hash_changes_with_features() {
-        assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
-        assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_ne!(
             fnv1a64(b"features.runtime=plugins;"),
             fnv1a64(b"features.runtime=gpu,plugins;")
