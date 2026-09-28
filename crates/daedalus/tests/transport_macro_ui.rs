@@ -1,6 +1,13 @@
+//! trybuild UI tests for the transport macros.
+//!
+//! These compile a separate trybuild project and are slow, so they are ignored by default and run
+//! in their own CI job:
+//! `cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored`.
+
 use trybuild::TestCases;
 
 #[test]
+#[ignore = "slow trybuild UI test; run with `--test transport_macro_ui -- --ignored`"]
 fn transport_macro_compile_failures() {
     let t = TestCases::new();
     t.pass("tests/ui/transport/ok_transport_plugin.rs");

@@ -28,14 +28,41 @@ fn plugin_cdylib() -> &'static Path {
     PATH.get_or_init(build_plugin_cdylib)
 }
 
+/// GPU facade features enabled for this test build, forwarded to the plugin's `daedalus`
+/// dependency.
+///
+/// They change the registry/runtime layout covered by the build fingerprint, so a host built
+/// with e.g. `--all-features` needs a plugin built the same way for the load to succeed.
+fn host_gpu_features() -> Vec<&'static str> {
+    [
+        ("gpu-types", cfg!(feature = "gpu-types")),
+        ("gpu-runtime", cfg!(feature = "gpu-runtime")),
+        ("gpu-engine", cfg!(feature = "gpu-engine")),
+        ("gpu-wgpu", cfg!(feature = "gpu-wgpu")),
+        ("gpu-async", cfg!(feature = "gpu-async")),
+        ("gpu-mock", cfg!(feature = "gpu-mock")),
+    ]
+    .into_iter()
+    .filter_map(|(feature, enabled)| enabled.then_some(feature))
+    .collect()
+}
+
 fn build_plugin_cdylib() -> PathBuf {
     // Use the cargo (and therefore rustc) running this test so the rustc check matches.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let features = host_gpu_features()
+        .into_iter()
+        .map(|feature| format!("daedalus/{feature}"))
+        .collect::<Vec<_>>()
+        .join(",");
     let mut command = Command::new(cargo);
     command
         .args(["build", "-p", PACKAGE, "--lib", "--message-format=json"])
         .current_dir(workspace_root())
         .stderr(Stdio::inherit());
+    if !features.is_empty() {
+        command.args(["--features", &features]);
+    }
     if !cfg!(debug_assertions) {
         command.arg("--release");
     }

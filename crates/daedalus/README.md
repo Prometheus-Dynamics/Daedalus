@@ -13,8 +13,10 @@ Use this crate when an application wants the public Daedalus API from one depend
 - `executor-pool`: Rayon worker pool for parallel/adaptive runtime modes.
 - `metrics`: executor telemetry collection.
 - `embedded`: `engine` + `plugins` without pool or metrics, for constrained hosts.
-- `dylib-plugins`: load native Rust `cdylib` plugins.
-- `plugins`: plugin registry and plugin macro installation.
+- `plugins`: plugin registry, `#[plugin]`/`declare_plugin!` installation, and `export_plugin!`
+  for building a plugin as a `cdylib`.
+- `dylib-plugins`: load native Rust plugin `cdylib`s at runtime (`PluginLibrary`); see
+  `docs/dynamic-plugins.md`.
 - `gpu-types`: GPU handles and type surface.
 - `gpu-runtime`: registry/planner/runtime GPU wiring.
 - `gpu-engine`: engine GPU wiring.
@@ -22,5 +24,8 @@ Use this crate when an application wants the public Daedalus API from one depend
 - `gpu-async`: async `wgpu` shader dispatch/readback helpers.
 - `gpu-mock`: deterministic mock GPU backend.
 - `schema` and `proto`: optional export surfaces.
+
+Macros (`node`, `plugin`, `type_key`, `adapt`, `device`, and the derives) are re-exported at the
+crate root and under `daedalus::macros`; see the `daedalus-macros` item docs for their arguments.
 
 For most host applications, start with `engine-full,plugins`; constrained hosts can use `embedded`. Add GPU features only when the host actually needs GPU planning or execution.

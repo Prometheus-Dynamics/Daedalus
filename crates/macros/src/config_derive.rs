@@ -1,14 +1,19 @@
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
-use quote::{ToTokens, quote};
-use syn::{Data, DeriveInput, Fields, Lit, LitStr, Meta, MetaNameValue, parse_macro_input};
+use quote::quote;
+use syn::{Data, DeriveInput, Fields, Lit, parse_macro_input};
 
-use crate::helpers::{NestedMeta, compile_error, lit_from_expr, parse_nested};
+use crate::helpers::compile_error;
 
+mod codegen;
 mod model;
+mod parse;
+mod type_expr;
 
-use model::{NumberKind, PortSpec, number_kind};
+use codegen::{metadata_entries, port_decl_tokens, sanitize_field_tokens};
+use model::{PortSpec, number_kind};
+use parse::{parse_port_spec, parse_validate_fn};
 
 pub fn node_config(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -52,46 +57,10 @@ pub fn node_config(item: TokenStream) -> TokenStream {
     let registry_crate = crate_path("daedalus-registry", "daedalus_registry", Some("registry"));
     let data_crate = crate_path("daedalus-data", "daedalus_data", Some("data"));
 
-    let mut validate_fn: Option<syn::Path> = None;
-    for attr in &input.attrs {
-        if attr.path().is_ident("validate") {
-            let Meta::List(list) = &attr.meta else {
-                return TokenStream::from(compile_error(
-                    "validate attribute expects validate(fn = path::to::validator)".into(),
-                ));
-            };
-            let Ok(items) = parse_nested(list) else {
-                return TokenStream::from(compile_error(
-                    "validate(...) expects comma-separated arguments".into(),
-                ));
-            };
-            for item in items {
-                if let NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) = item
-                    && path.is_ident("fn")
-                {
-                    if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                        match syn::parse_str::<syn::Path>(&s.value()) {
-                            Ok(p) => validate_fn = Some(p),
-                            Err(_) => {
-                                return TokenStream::from(compile_error(
-                                    "validate fn must be a valid path".into(),
-                                ));
-                            }
-                        }
-                        continue;
-                    }
-                    match syn::parse2::<syn::Path>(value.to_token_stream()) {
-                        Ok(p) => validate_fn = Some(p),
-                        Err(_) => {
-                            return TokenStream::from(compile_error(
-                                "validate fn must be a valid path".into(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let validate_fn = match parse_validate_fn(&input.attrs) {
+        Ok(validate_fn) => validate_fn,
+        Err(error) => return TokenStream::from(error),
+    };
 
     let fields = match input.data {
         Data::Struct(ds) => ds.fields,
@@ -118,280 +87,10 @@ pub fn node_config(item: TokenStream) -> TokenStream {
 
     let mut specs: Vec<PortSpec> = Vec::new();
     for field in named_fields {
-        let field_ident = field.ident.clone().expect("named field ident");
-        let field_ty = field.ty.clone();
-        let mut name = LitStr::new(&field_ident.to_string(), Span::call_site());
-        let mut source: Option<LitStr> = None;
-        let mut description: Option<LitStr> = None;
-        let mut default_value: Option<Lit> = None;
-        let mut min_value: Option<Lit> = None;
-        let mut max_value: Option<Lit> = None;
-        let mut odd = false;
-        let mut policy: Option<LitStr> = None;
-        let mut ty_override: Option<proc_macro2::TokenStream> = None;
-        let mut meta: Vec<(LitStr, Lit)> = Vec::new();
-
-        for attr in &field.attrs {
-            if !attr.path().is_ident("port") {
-                continue;
-            }
-            let Meta::List(list) = &attr.meta else {
-                return TokenStream::from(compile_error("port attribute expects port(...)".into()));
-            };
-            let Ok(items) = parse_nested(list) else {
-                return TokenStream::from(compile_error(
-                    "port(...) expects comma-separated arguments".into(),
-                ));
-            };
-            for item in items {
-                match item {
-                    NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) => {
-                        if path.is_ident("name")
-                            && let Some(Lit::Str(s)) = lit_from_expr(&value)
-                        {
-                            name = s;
-                            continue;
-                        }
-                        if path.is_ident("source")
-                            && let Some(Lit::Str(s)) = lit_from_expr(&value)
-                        {
-                            source = Some(s);
-                            continue;
-                        }
-                        if path.is_ident("description") {
-                            if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                                description = Some(s);
-                                continue;
-                            }
-                            return TokenStream::from(compile_error(
-                                "port description must be a string literal".into(),
-                            ));
-                        }
-                        if path.is_ident("default")
-                            && let Some(lit) = lit_from_expr(&value)
-                        {
-                            default_value = Some(lit);
-                            continue;
-                        }
-                        if path.is_ident("min")
-                            && let Some(lit) = lit_from_expr(&value)
-                        {
-                            min_value = Some(lit);
-                            continue;
-                        }
-                        if path.is_ident("max")
-                            && let Some(lit) = lit_from_expr(&value)
-                        {
-                            max_value = Some(lit);
-                            continue;
-                        }
-                        if path.is_ident("odd")
-                            && let Some(Lit::Bool(b)) = lit_from_expr(&value)
-                        {
-                            odd = b.value;
-                            continue;
-                        }
-                        if path.is_ident("policy") {
-                            if let Some(Lit::Str(s)) = lit_from_expr(&value) {
-                                policy = Some(s);
-                                continue;
-                            }
-                            return TokenStream::from(compile_error(
-                                "policy must be a string literal".into(),
-                            ));
-                        }
-                        if path.is_ident("ty") {
-                            ty_override = Some(value.to_token_stream());
-                            continue;
-                        }
-                        return TokenStream::from(compile_error(
-                            "unsupported port attribute".into(),
-                        ));
-                    }
-                    NestedMeta::Meta(Meta::List(list))
-                        if list.path.is_ident("meta") || list.path.is_ident("metadata") =>
-                    {
-                        let Ok(items) = parse_nested(&list) else {
-                            return TokenStream::from(compile_error(
-                                "meta(...) expects comma-separated arguments".into(),
-                            ));
-                        };
-                        for item in items {
-                            let NestedMeta::Meta(Meta::NameValue(MetaNameValue {
-                                path,
-                                value,
-                                ..
-                            })) = item
-                            else {
-                                return TokenStream::from(compile_error(
-                                    "meta(...) entries must be name/value pairs".into(),
-                                ));
-                            };
-                            let Some(ident) = path.get_ident() else {
-                                return TokenStream::from(compile_error(
-                                    "meta keys must be simple identifiers".into(),
-                                ));
-                            };
-                            let Some(lit) = lit_from_expr(&value) else {
-                                return TokenStream::from(compile_error(
-                                    "meta values must be literal values".into(),
-                                ));
-                            };
-                            meta.push((LitStr::new(&ident.to_string(), Span::call_site()), lit));
-                        }
-                    }
-                    NestedMeta::Meta(Meta::Path(path)) => {
-                        if path.is_ident("odd") {
-                            odd = true;
-                            continue;
-                        }
-                        return TokenStream::from(compile_error("unsupported port flag".into()));
-                    }
-                    _ => {
-                        return TokenStream::from(compile_error(
-                            "port(...) entries must be name/value pairs".into(),
-                        ));
-                    }
-                }
-            }
+        match parse_port_spec(field) {
+            Ok(spec) => specs.push(spec),
+            Err(error) => return TokenStream::from(error),
         }
-
-        specs.push(PortSpec {
-            field_ident,
-            field_ty,
-            name,
-            source,
-            description,
-            default_value,
-            min_value,
-            max_value,
-            odd,
-            policy,
-            ty_override,
-            meta,
-        });
-    }
-
-    fn type_expr_for(
-        ty: &syn::Type,
-        generic_type_params: &::std::collections::HashSet<::std::string::String>,
-        data_crate: &proc_macro2::TokenStream,
-    ) -> Option<proc_macro2::TokenStream> {
-        match ty {
-            syn::Type::Path(p) if p.qself.is_none() => {
-                if p.path.segments.len() == 1
-                    && matches!(
-                        p.path.segments.first().map(|s| &s.arguments),
-                        Some(syn::PathArguments::None)
-                    )
-                {
-                    let ident = p.path.segments.first()?.ident.to_string();
-                    if generic_type_params.contains(&ident) {
-                        return None;
-                    }
-                }
-                let ident = p.path.segments.last().map(|s| s.ident.to_string())?;
-                match ident.as_str() {
-                    "Result" => p.path.segments.last().and_then(|s| match &s.arguments {
-                        syn::PathArguments::AngleBracketed(ab) => ab.args.first(),
-                        _ => None,
-                    }).and_then(|arg| {
-                        if let syn::GenericArgument::Type(inner) = arg {
-                            type_expr_for(inner, generic_type_params, data_crate)
-                        } else {
-                            None
-                        }
-                    }),
-                    "Vec" => p
-                        .path
-                        .segments
-                        .last()
-                        .and_then(|s| match &s.arguments {
-                            syn::PathArguments::AngleBracketed(ab) => ab.args.first(),
-                            _ => None,
-                        })
-                        .and_then(|arg| {
-                            if let syn::GenericArgument::Type(inner) = arg
-                                && let Some(inner_ty) = type_expr_for(inner, generic_type_params, data_crate) {
-                                    return Some(
-                                        quote! {
-                                            if let Some(explicit) = #data_crate::typing::override_type_expr::<#ty>() {
-                                                explicit
-                                            } else {
-                                                #data_crate::model::TypeExpr::List(Box::new(#inner_ty))
-                                            }
-                                        },
-                                    );
-                                }
-                            None
-                        }),
-                    "Option" => p
-                        .path
-                        .segments
-                        .last()
-                        .and_then(|s| match &s.arguments {
-                            syn::PathArguments::AngleBracketed(ab) => ab.args.first(),
-                            _ => None,
-                        })
-                        .and_then(|arg| {
-                            if let syn::GenericArgument::Type(inner) = arg
-                                && let Some(inner_ty) = type_expr_for(inner, generic_type_params, data_crate) {
-                                    return Some(
-                                        quote! {
-                                            if let Some(explicit) = #data_crate::typing::override_type_expr::<#ty>() {
-                                                explicit
-                                            } else {
-                                                #data_crate::model::TypeExpr::Optional(Box::new(#inner_ty))
-                                            }
-                                        },
-                                    );
-                                }
-                            None
-                        }),
-                    _ => Some(quote! { #data_crate::typing::type_expr::<#ty>() }),
-                }
-            }
-            syn::Type::Reference(r) => {
-                if let syn::Type::Path(p) = &*r.elem {
-                    let ident = p.path.segments.last().map(|s| s.ident.to_string())?;
-                    match ident.as_str() {
-                        "str" => Some(
-                            quote! { #data_crate::model::TypeExpr::Scalar(#data_crate::model::ValueType::String) },
-                        ),
-                        _ => type_expr_for(&r.elem, generic_type_params, data_crate),
-                    }
-                } else {
-                    type_expr_for(&r.elem, generic_type_params, data_crate)
-                }
-            }
-            syn::Type::Tuple(t) => {
-                if t.elems.is_empty() {
-                    return Some(
-                        quote! { #data_crate::model::TypeExpr::Scalar(#data_crate::model::ValueType::Unit) },
-                    );
-                }
-                let mut elems = Vec::new();
-                for elem in &t.elems {
-                    if let Some(ts) = type_expr_for(elem, generic_type_params, data_crate) {
-                        elems.push(ts);
-                    } else {
-                        return None;
-                    }
-                }
-                Some(quote! { #data_crate::model::TypeExpr::Tuple(vec![#(#elems),*]) })
-            }
-            _ => None,
-        }
-    }
-
-    fn opaque_fallback_type_expr_for(
-        ty: &syn::Type,
-        data_crate: &proc_macro2::TokenStream,
-    ) -> proc_macro2::TokenStream {
-        let mut raw = ty.to_token_stream().to_string();
-        raw.retain(|c| !c.is_whitespace());
-        let lit = LitStr::new(&format!("rust:{raw}"), Span::call_site());
-        quote! { #data_crate::model::TypeExpr::Opaque(::std::string::String::from(#lit)) }
     }
 
     let mut errors: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -424,178 +123,19 @@ pub fn node_config(item: TokenStream) -> TokenStream {
     let ports_tokens: Vec<proc_macro2::TokenStream> = specs
         .iter()
         .map(|spec| {
-            let name = &spec.name;
-            let source = spec
-                .source
-                .as_ref()
-                .map(|s| quote! { ::core::option::Option::Some(::std::string::String::from(#s)) })
-                .unwrap_or_else(|| quote! { ::core::option::Option::<::std::string::String>::None });
-            let ty_expr = if let Some(ty) = &spec.ty_override {
-                quote! { (#ty) }
-            } else if let Some(ts) =
-                type_expr_for(&spec.field_ty, &generic_type_params, &data_crate)
-            {
-                ts
-            } else {
-                opaque_fallback_type_expr_for(&spec.field_ty, &data_crate)
-            };
-            let default_value = spec.default_value.as_ref().map(|lit| match lit {
-                Lit::Str(s) => {
-                    quote! { Some(#data_crate::model::Value::String(::std::borrow::Cow::from(#s))) }
-                }
-                Lit::Int(i) => {
-                    let v: i64 = i.base10_parse().unwrap_or(0);
-                    quote! { Some(#data_crate::model::Value::Int(#v)) }
-                }
-                Lit::Float(f) => {
-                    let v: f64 = f.base10_parse().unwrap_or(0.0);
-                    quote! { Some(#data_crate::model::Value::Float(#v)) }
-                }
-                Lit::Bool(b) => {
-                    let v = b.value;
-                    quote! { Some(#data_crate::model::Value::Bool(#v)) }
-                }
-                _ => quote! { ::core::option::Option::<#data_crate::model::Value>::None },
-            }).unwrap_or_else(|| quote! { ::core::option::Option::<#data_crate::model::Value>::None });
-            quote! {
-                {
-                    let __ty = #ty_expr;
-                    let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                        .expect("NodeConfig port type must have a transport key");
-                    let mut __port = #registry_crate::capability::PortDecl::new(#name, __key)
-                        .schema(__ty);
-                    if let Some(__source) = #source {
-                        __port = __port.source(__source.as_str());
-                    }
-                    if let Some(__default) = #default_value {
-                        __port = __port.const_value(__default);
-                    }
-                    __port
-                }
-            }
+            port_decl_tokens(
+                spec,
+                &generic_type_params,
+                &runtime_crate,
+                &registry_crate,
+                &data_crate,
+            )
         })
         .collect();
 
     let metadata_tokens: Vec<proc_macro2::TokenStream> = specs
         .iter()
-        .flat_map(|spec| {
-            let mut entries = Vec::new();
-            if let Some(desc) = &spec.description {
-                let key = LitStr::new(
-                    &format!("inputs.{}.description", spec.name.value()),
-                    Span::call_site(),
-                );
-                entries.push(quote! {
-                    __meta.insert(
-                        ::std::string::String::from(#key),
-                        #data_crate::model::Value::String(::std::borrow::Cow::from(#desc)),
-                    );
-                });
-            }
-            if let Some(policy) = &spec.policy {
-                let key = LitStr::new(
-                    &format!("inputs.{}.policy", spec.name.value()),
-                    Span::call_site(),
-                );
-                entries.push(quote! {
-                    __meta.insert(
-                        ::std::string::String::from(#key),
-                        #data_crate::model::Value::String(::std::borrow::Cow::from(#policy)),
-                    );
-                });
-            }
-            if spec.odd {
-                let key = LitStr::new(
-                    &format!("inputs.{}.odd", spec.name.value()),
-                    Span::call_site(),
-                );
-                entries.push(quote! {
-                    __meta.insert(
-                        ::std::string::String::from(#key),
-                        #data_crate::model::Value::Bool(true),
-                    );
-                });
-            }
-            if let Some(min) = &spec.min_value {
-                let key = LitStr::new(
-                    &format!("inputs.{}.min", spec.name.value()),
-                    Span::call_site(),
-                );
-                let val = match min {
-                    Lit::Int(i) => {
-                        let v: i64 = i.base10_parse().unwrap_or(0);
-                        quote! { #data_crate::model::Value::Int(#v) }
-                    }
-                    Lit::Float(f) => {
-                        let v: f64 = f.base10_parse().unwrap_or(0.0);
-                        quote! { #data_crate::model::Value::Float(#v) }
-                    }
-                    _ => quote! { #data_crate::model::Value::Int(0) },
-                };
-                entries.push(quote! {
-                    __meta.insert(
-                        ::std::string::String::from(#key),
-                        #val,
-                    );
-                });
-            }
-            if let Some(max) = &spec.max_value {
-                let key = LitStr::new(
-                    &format!("inputs.{}.max", spec.name.value()),
-                    Span::call_site(),
-                );
-                let val = match max {
-                    Lit::Int(i) => {
-                        let v: i64 = i.base10_parse().unwrap_or(0);
-                        quote! { #data_crate::model::Value::Int(#v) }
-                    }
-                    Lit::Float(f) => {
-                        let v: f64 = f.base10_parse().unwrap_or(0.0);
-                        quote! { #data_crate::model::Value::Float(#v) }
-                    }
-                    _ => quote! { #data_crate::model::Value::Int(0) },
-                };
-                entries.push(quote! {
-                    __meta.insert(
-                        ::std::string::String::from(#key),
-                        #val,
-                    );
-                });
-            }
-            if !spec.meta.is_empty() {
-                for (meta_key, meta_value) in &spec.meta {
-                    let key = LitStr::new(
-                        &format!("inputs.{}.{}", spec.name.value(), meta_key.value()),
-                        Span::call_site(),
-                    );
-                    let value = match meta_value {
-                        Lit::Str(s) => {
-                            quote! { #data_crate::model::Value::String(::std::borrow::Cow::from(#s)) }
-                        }
-                        Lit::Int(i) => {
-                            let v: i64 = i.base10_parse().unwrap_or(0);
-                            quote! { #data_crate::model::Value::Int(#v) }
-                        }
-                        Lit::Float(f) => {
-                            let v: f64 = f.base10_parse().unwrap_or(0.0);
-                            quote! { #data_crate::model::Value::Float(#v) }
-                        }
-                        Lit::Bool(b) => {
-                            let v = b.value;
-                            quote! { #data_crate::model::Value::Bool(#v) }
-                        }
-                        _ => quote! { #data_crate::model::Value::Unit },
-                    };
-                    entries.push(quote! {
-                        __meta.insert(
-                            ::std::string::String::from(#key),
-                            #value,
-                        );
-                    });
-                }
-            }
-            entries
-        })
+        .flat_map(|spec| metadata_entries(spec, &data_crate))
         .collect();
 
     let from_io_fields: Vec<proc_macro2::TokenStream> = specs
@@ -615,121 +155,7 @@ pub fn node_config(item: TokenStream) -> TokenStream {
     let sanitize_fields: Vec<proc_macro2::TokenStream> = specs
         .iter()
         .enumerate()
-        .map(|(idx, spec)| {
-            let ident = &spec.field_ident;
-            let needs_sanitize = spec.min_value.is_some() || spec.max_value.is_some() || spec.odd;
-            if !needs_sanitize {
-                return quote! {
-                    let #ident = self.#ident;
-                };
-            }
-            let name = &spec.name;
-            let policy_str = spec
-                .policy
-                .clone()
-                .unwrap_or_else(|| LitStr::new("clamp", Span::call_site()));
-            let policy_variant = match policy_str.value().as_str() {
-                "error" => quote! { #runtime_crate::config::ConfigPolicy::Error },
-                _ => quote! { #runtime_crate::config::ConfigPolicy::Clamp },
-            };
-            let number_kind = number_kind(&spec.field_ty);
-            let to_value = match number_kind {
-                Some(NumberKind::Float) => {
-                    quote! { #data_crate::model::Value::Float(value as f64) }
-                }
-                _ => quote! { #data_crate::model::Value::Int(value as i64) },
-            };
-            let min_check = spec.min_value.as_ref().map(|min| {
-                quote! {
-                    if value < #min {
-                        if matches!(#policy_variant, #runtime_crate::config::ConfigPolicy::Error) {
-                            return Err(#runtime_crate::config::ConfigError::for_port(
-                                #name,
-                                format!("must be >= {}", #min),
-                            ));
-                        }
-                        value = #min;
-                        changed = true;
-                    }
-                }
-            });
-            let max_check = spec.max_value.as_ref().map(|max| {
-                quote! {
-                    if value > #max {
-                        if matches!(#policy_variant, #runtime_crate::config::ConfigPolicy::Error) {
-                            return Err(#runtime_crate::config::ConfigError::for_port(
-                                #name,
-                                format!("must be <= {}", #max),
-                            ));
-                        }
-                        value = #max;
-                        changed = true;
-                    }
-                }
-            });
-            let odd_check = if spec.odd {
-                let min_guard = spec.min_value.as_ref().map(|min| {
-                    quote! {
-                        if candidate < #min {
-                            candidate = value + 1;
-                        }
-                    }
-                });
-                let max_guard = spec.max_value.as_ref().map(|max| {
-                    quote! {
-                        if candidate > #max {
-                            candidate = value - 1;
-                        }
-                    }
-                });
-                Some(quote! {
-                    if value % 2 == 0 {
-                        if matches!(#policy_variant, #runtime_crate::config::ConfigPolicy::Error) {
-                            return Err(#runtime_crate::config::ConfigError::for_port(
-                                #name,
-                                "must be odd",
-                            ));
-                        }
-                        let mut candidate = value + 1;
-                        #max_guard
-                        #min_guard
-                        if candidate == value {
-                            return Err(#runtime_crate::config::ConfigError::for_port(
-                                #name,
-                                "unable to coerce even value to odd",
-                            ));
-                        }
-                        value = candidate;
-                        changed = true;
-                    }
-                })
-            } else {
-                None
-            };
-            if number_kind.is_none() {
-                return quote! { compile_error!("numeric constraints require numeric types"); };
-            }
-            let change_ident = syn::Ident::new(&format!("__cfg_change_{idx}"), Span::call_site());
-            quote! {
-                let mut #ident = self.#ident;
-                let original = #ident;
-                let mut value = #ident;
-                let mut changed = false;
-                #min_check
-                #max_check
-                #odd_check
-                if changed {
-                    let #change_ident = #runtime_crate::config::ConfigChange {
-                        port: #name,
-                        previous: { let value = original; #to_value },
-                        next: { let value = value; #to_value },
-                        policy: #policy_variant,
-                    };
-                    changes.push(#change_ident);
-                }
-                #ident = value;
-            }
-        })
+        .map(|(idx, spec)| sanitize_field_tokens(idx, spec, &runtime_crate, &data_crate))
         .collect();
 
     let validate_call = validate_fn.as_ref().map(|path| {

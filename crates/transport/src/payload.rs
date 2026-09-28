@@ -4,9 +4,19 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::{
-    BoundaryCapabilities, BoundaryStorage, BoundaryTakeError, BoundaryTypeContract, CorrelationId,
-    Layout, PayloadLineage, ReleaseMode, Residency, TypeKey, boundary_contract_for_type,
+    BoundaryCapabilities, BoundaryStorage, BoundaryTypeContract, CorrelationId, Layout,
+    PayloadLineage, ReleaseMode, Residency, TypeKey, boundary_contract_for_type,
 };
+
+mod boundary;
+mod residency;
+mod storage;
+
+pub use boundary::BoundaryPayloadError;
+pub use residency::ResidencyCacheKey;
+use residency::ResidentPayload;
+pub use storage::PayloadStorage;
+use storage::{BytesStorage, TypedStorage};
 
 /// Opaque host-owned payload handle for Rust plugin fast paths.
 #[derive(Clone, Debug)]
@@ -27,190 +37,6 @@ impl OpaquePayloadHandle {
 
     pub fn into_payload(self) -> Result<Payload, Self> {
         Arc::try_unwrap(self.payload).map_err(|payload| Self { payload })
-    }
-}
-
-/// Type-erased payload storage.
-pub trait PayloadStorage: Send + Sync + fmt::Debug {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
-    fn type_key(&self) -> &TypeKey;
-    fn value_any(&self) -> Option<&dyn Any> {
-        None
-    }
-    /// Borrow the stored value as a thread-safe `Any`, when the storage exposes one.
-    ///
-    /// Unlike [`PayloadStorage::value_any`], this keeps the `Send + Sync` bounds so the value can
-    /// be handed to serializer maps keyed by `TypeId` that expect `&(dyn Any + Send + Sync)`.
-    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        None
-    }
-    fn rust_type_name(&self) -> Option<&'static str> {
-        None
-    }
-    fn bytes_estimate(&self) -> Option<u64> {
-        None
-    }
-    fn release_mode(&self) -> ReleaseMode {
-        ReleaseMode::ImmediateNonBlocking
-    }
-}
-
-struct TypedStorage<T: Send + Sync + 'static> {
-    type_key: TypeKey,
-    value: Arc<T>,
-    bytes_estimate: Option<u64>,
-}
-
-impl<T: Send + Sync + 'static> fmt::Debug for TypedStorage<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TypedStorage")
-            .field("type_key", &self.type_key)
-            .field("rust_type_name", &std::any::type_name::<T>())
-            .field("bytes_estimate", &self.bytes_estimate)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<T: Send + Sync + 'static> PayloadStorage for TypedStorage<T> {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
-        self
-    }
-
-    fn type_key(&self) -> &TypeKey {
-        &self.type_key
-    }
-
-    fn value_any(&self) -> Option<&dyn Any> {
-        Some(self.value.as_ref())
-    }
-
-    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        Some(self.value.as_ref())
-    }
-
-    fn rust_type_name(&self) -> Option<&'static str> {
-        Some(std::any::type_name::<T>())
-    }
-
-    fn bytes_estimate(&self) -> Option<u64> {
-        self.bytes_estimate
-    }
-}
-
-#[derive(Debug)]
-struct BytesStorage {
-    type_key: TypeKey,
-    bytes: Arc<[u8]>,
-}
-
-impl PayloadStorage for BytesStorage {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
-        self
-    }
-
-    fn type_key(&self) -> &TypeKey {
-        &self.type_key
-    }
-
-    fn value_any(&self) -> Option<&dyn Any> {
-        Some(&self.bytes)
-    }
-
-    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        Some(&self.bytes)
-    }
-
-    fn rust_type_name(&self) -> Option<&'static str> {
-        Some(std::any::type_name::<Arc<[u8]>>())
-    }
-
-    fn bytes_estimate(&self) -> Option<u64> {
-        Some(self.bytes.len() as u64)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ResidencyCacheKey {
-    pub type_key: TypeKey,
-    pub residency: Residency,
-    pub layout: Option<Layout>,
-}
-
-impl ResidencyCacheKey {
-    pub fn new(type_key: impl Into<TypeKey>, residency: Residency, layout: Option<Layout>) -> Self {
-        Self {
-            type_key: type_key.into(),
-            residency,
-            layout,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct ResidentPayload {
-    type_key: TypeKey,
-    // The boxed trait object is intentional: owned extraction paths unwrap the
-    // Arc, then consume the box through `PayloadStorage::into_any`.
-    storage: Arc<Box<dyn PayloadStorage>>,
-    residency: Residency,
-    layout: Option<Layout>,
-    lineage: PayloadLineage,
-}
-
-impl fmt::Debug for ResidentPayload {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ResidentPayload")
-            .field("type_key", &self.type_key)
-            .field("residency", &self.residency)
-            .field("layout", &self.layout)
-            .field("rust_type_name", &self.storage.rust_type_name())
-            .field("bytes_estimate", &self.storage.bytes_estimate())
-            .finish()
-    }
-}
-
-impl ResidentPayload {
-    fn key(&self) -> ResidencyCacheKey {
-        ResidencyCacheKey::new(self.type_key.clone(), self.residency, self.layout.clone())
-    }
-
-    fn from_payload(payload: &Payload) -> Self {
-        Self {
-            type_key: payload.type_key.clone(),
-            storage: payload.storage.clone(),
-            residency: payload.residency,
-            layout: payload.layout.clone(),
-            lineage: payload.lineage.clone(),
-        }
-    }
-
-    fn into_payload(self, cache: Arc<BTreeMap<ResidencyCacheKey, ResidentPayload>>) -> Payload {
-        Payload {
-            type_key: self.type_key,
-            storage: self.storage,
-            residency: self.residency,
-            layout: self.layout,
-            residency_cache: cache,
-            lineage: self.lineage,
-        }
     }
 }
 
@@ -354,136 +180,6 @@ impl Payload {
         self.storage.release_mode()
     }
 
-    pub fn key(&self) -> ResidencyCacheKey {
-        ResidencyCacheKey::new(self.type_key.clone(), self.residency, self.layout.clone())
-    }
-
-    pub fn with_cached_resident(mut self, resident: Payload) -> Self {
-        self.insert_cached_resident(resident);
-        self
-    }
-
-    pub fn insert_cached_resident(&mut self, resident: Payload) {
-        let mut cache = (*self.residency_cache).clone();
-        cache.extend(
-            resident
-                .residency_cache
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
-        );
-        let resident = ResidentPayload::from_payload(&resident);
-        cache.insert(resident.key(), resident);
-        self.residency_cache = Arc::new(cache);
-    }
-
-    pub fn cache_current(mut self) -> Self {
-        let mut cache = (*self.residency_cache).clone();
-        let resident = ResidentPayload::from_payload(&self);
-        cache.insert(resident.key(), resident);
-        self.residency_cache = Arc::new(cache);
-        self
-    }
-
-    pub fn residency_cache_len(&self) -> usize {
-        self.residency_cache.len()
-    }
-
-    pub fn cached_residencies(&self) -> impl Iterator<Item = &ResidencyCacheKey> {
-        self.residency_cache.keys()
-    }
-
-    pub fn has_resident(
-        &self,
-        type_key: &TypeKey,
-        residency: Residency,
-        layout: Option<&Layout>,
-    ) -> bool {
-        let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        self.key() == key || self.residency_cache.contains_key(&key)
-    }
-
-    pub fn resident(
-        &self,
-        type_key: &TypeKey,
-        residency: Residency,
-        layout: Option<&Layout>,
-    ) -> Option<Payload> {
-        let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        if self.key() == key {
-            return Some(self.clone());
-        }
-        self.residency_cache
-            .get(&key)
-            .cloned()
-            .map(|resident| resident.into_payload(self.residency_cache.clone()))
-    }
-
-    pub fn resident_by_type(&self, type_key: &TypeKey, layout: Option<&Layout>) -> Option<Payload> {
-        if &self.type_key == type_key
-            && layout.is_none_or(|layout| self.layout.as_ref() == Some(layout))
-        {
-            return Some(self.clone());
-        }
-
-        const PREFERRED_RESIDENCY: [Residency; 4] = [
-            Residency::Cpu,
-            Residency::Gpu,
-            Residency::CpuAndGpu,
-            Residency::External,
-        ];
-        for residency in PREFERRED_RESIDENCY {
-            if let Some(payload) = self.resident(type_key, residency, layout) {
-                return Some(payload);
-            }
-        }
-        self.residency_cache
-            .values()
-            .find(|resident| {
-                &resident.type_key == type_key
-                    && layout.is_none_or(|layout| resident.layout.as_ref() == Some(layout))
-            })
-            .cloned()
-            .map(|resident| resident.into_payload(self.residency_cache.clone()))
-    }
-
-    pub fn resident_ref<T>(
-        &self,
-        type_key: &TypeKey,
-        residency: Residency,
-        layout: Option<&Layout>,
-    ) -> Option<&T>
-    where
-        T: Send + Sync + 'static,
-    {
-        let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        if self.key() == key {
-            return self.get_ref::<T>();
-        }
-        self.residency_cache
-            .get(&key)
-            .and_then(|resident| resident.storage.as_any().downcast_ref::<TypedStorage<T>>())
-            .map(|storage| storage.value.as_ref())
-    }
-
-    pub fn resident_arc<T>(
-        &self,
-        type_key: &TypeKey,
-        residency: Residency,
-        layout: Option<&Layout>,
-    ) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        if self.key() == key {
-            return self.get_arc::<T>();
-        }
-        self.residency_cache
-            .get(&key)
-            .and_then(|resident| resident.storage.as_any().downcast_ref::<TypedStorage<T>>())
-            .map(|storage| storage.value.clone())
-    }
-
     pub fn type_key(&self) -> &TypeKey {
         &self.type_key
     }
@@ -623,104 +319,6 @@ impl Payload {
         }
     }
 
-    pub fn boundary_contract(&self) -> Option<&BoundaryTypeContract> {
-        self.storage
-            .as_any()
-            .downcast_ref::<BoundaryStorage>()
-            .map(BoundaryStorage::contract)
-    }
-
-    pub fn try_borrow_boundary_ref<T>(
-        &self,
-        required: &BoundaryTypeContract,
-    ) -> Result<&T, BoundaryTakeError>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.storage
-            .as_any()
-            .downcast_ref::<BoundaryStorage>()
-            .ok_or(BoundaryTakeError::NotBoundary)?
-            .try_borrow_ref(required)
-    }
-
-    pub fn try_borrow_boundary_mut<T>(
-        &mut self,
-        required: &BoundaryTypeContract,
-    ) -> Result<&mut T, BoundaryTakeError>
-    where
-        T: Send + Sync + 'static,
-    {
-        let storage = Arc::get_mut(&mut self.storage).ok_or(BoundaryTakeError::Shared)?;
-        storage
-            .as_any_mut()
-            .downcast_mut::<BoundaryStorage>()
-            .ok_or(BoundaryTakeError::NotBoundary)?
-            .try_borrow_mut(required)
-    }
-
-    pub fn try_take_boundary_owned<T>(
-        self,
-        required: &BoundaryTypeContract,
-    ) -> Result<T, BoundaryPayloadError>
-    where
-        T: Send + Sync + 'static,
-    {
-        if !self.storage.as_any().is::<BoundaryStorage>() {
-            return Err(BoundaryPayloadError(
-                Box::new(self),
-                BoundaryTakeError::NotBoundary,
-            ));
-        }
-        if Arc::strong_count(&self.storage) != 1 {
-            return Err(BoundaryPayloadError(
-                Box::new(self),
-                BoundaryTakeError::Shared,
-            ));
-        }
-        let Self {
-            type_key,
-            storage,
-            residency,
-            layout,
-            residency_cache,
-            lineage,
-        } = self;
-        let storage = match Arc::try_unwrap(storage) {
-            Ok(storage) => storage,
-            Err(storage) => {
-                return Err(BoundaryPayloadError(
-                    Box::new(Self {
-                        type_key,
-                        storage,
-                        residency,
-                        layout,
-                        residency_cache,
-                        lineage,
-                    }),
-                    BoundaryTakeError::Shared,
-                ));
-            }
-        };
-        let mut storage = match storage.into_any().downcast::<BoundaryStorage>() {
-            Ok(storage) => storage,
-            Err(_) => unreachable!("boundary storage type was checked before move"),
-        };
-        storage.try_take_owned::<T>(required).map_err(|err| {
-            BoundaryPayloadError(
-                Box::new(Self {
-                    type_key,
-                    storage: Arc::new(storage as Box<dyn PayloadStorage>),
-                    residency,
-                    layout,
-                    residency_cache,
-                    lineage,
-                }),
-                err,
-            )
-        })
-    }
-
     pub fn is_storage_unique(&self) -> bool {
         Arc::strong_count(&self.storage) == 1
     }
@@ -749,17 +347,6 @@ impl Payload {
             .map(|storage| storage.bytes.clone())
     }
 }
-
-#[derive(Debug)]
-pub struct BoundaryPayloadError(pub Box<Payload>, pub BoundaryTakeError);
-
-impl fmt::Display for BoundaryPayloadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.1.fmt(f)
-    }
-}
-
-impl std::error::Error for BoundaryPayloadError {}
 
 #[cfg(test)]
 mod tests {

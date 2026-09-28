@@ -7,6 +7,13 @@ on:
       - master
   pull_request:
 
+env:
+  # CI builds are one-shot: incremental artifacts only cost time and cache space.
+  CARGO_INCREMENTAL: 0
+  # Line tables keep backtraces useful while shrinking debug binaries and link times.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_TERM_COLOR: always
+
 jobs:
   workspace:
     runs-on: ubuntu-latest
@@ -52,14 +59,45 @@ jobs:
           cargo check -p daedalus-rs --no-default-features --features "embedded"
           cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
 
-      - name: Test dynamic plugin loading
-        run: cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
-
       - name: Build examples
         run: cargo check -p daedalus-rs --features "engine,plugins" --examples
 
       - name: Run example tests
         run: cargo test -p daedalus-rs --features "engine,plugins" --examples
+
+  # trybuild compiles its own project per UI test run, so it gets a job that runs in parallel
+  # with the workspace tests (the test is `#[ignore]`d in the regular test run).
+  macro-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run macro UI (trybuild) tests
+        run: cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
+
+  dylib-plugins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test dynamic plugin loading
+        run: cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 
   docs-and-lints:
     runs-on: ubuntu-latest

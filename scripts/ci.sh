@@ -38,6 +38,9 @@ echo "==> Running tests"
 cargo test --workspace --all-targets --features "engine,plugins"
 cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 
+echo "==> Running macro UI (trybuild) tests"
+cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
+
 echo "==> Building examples"
 cargo check -p daedalus-rs --features "engine,plugins" --examples
 
