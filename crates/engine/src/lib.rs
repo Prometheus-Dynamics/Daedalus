@@ -6,6 +6,8 @@ mod compiled_run;
 mod config;
 #[cfg(feature = "config-env")]
 pub mod diagnostics;
+#[cfg(feature = "plugins")]
+mod document;
 mod engine;
 mod engine_execution;
 mod error;
@@ -19,10 +21,14 @@ pub use config::{
     RuntimeSection,
 };
 pub use daedalus_runtime::MetricsLevel;
+pub use daedalus_runtime::host_bridge::{
+    InboundWait, InboundWaiter, PayloadInspection, PayloadSummary,
+};
+pub use daedalus_runtime::{HostPortConnection, HostPortDescriptor, HostPortDirection};
 pub use engine::Engine;
 pub use error::EngineError;
 pub use host_graph::{
-    HostGraph, HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput,
-    HostGraphPayloadOutput,
+    HostGraph, HostGraphDriveExit, HostGraphInput, HostGraphLane, HostGraphOutput,
+    HostGraphPayloadInput, HostGraphPayloadOutput, HostGraphStopHandle, HostGraphTurn,
 };
 pub use prepared_plan::{PreparedPlan, PreparedRuntimePlan};

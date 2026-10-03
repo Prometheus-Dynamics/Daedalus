@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+use daedalus_data::json::from_plain_json;
 use daedalus_data::model::Value;
 use daedalus_ffi_core::{
     BackendConfig, BackendKind, BackendRuntimeModel, FfiContractError, NodeSchema, PluginPackage,
@@ -107,14 +108,7 @@ pub fn install_package(
     registry: &mut CapabilityRegistry,
     package: &PluginPackage,
 ) -> Result<HostInstallPlan, HostInstallError> {
-    package.validate()?;
-    let schema = package
-        .schema
-        .as_ref()
-        .ok_or(HostInstallError::MissingPackageSchema)?;
-    let plan = HostInstallPlan::from_schema_and_backends(schema, &package.backends)?;
-    install_plan(registry, &plan)?;
-    Ok(plan)
+    install_package_checked(registry, package, None, None)
 }
 
 pub fn install_package_with_ffi_telemetry(
@@ -122,83 +116,7 @@ pub fn install_package_with_ffi_telemetry(
     package: &PluginPackage,
     telemetry: &FfiHostTelemetry,
 ) -> Result<HostInstallPlan, HostInstallError> {
-    let started = Instant::now();
-    let validation_started = Instant::now();
-    if let Err(source) = package.validate() {
-        record_package_telemetry(
-            telemetry,
-            package_id(package),
-            FfiPackageTelemetry {
-                validation_duration: validation_started.elapsed(),
-                load_duration: started.elapsed(),
-                install_failures: 1,
-                ..Default::default()
-            },
-        );
-        return Err(source.into());
-    }
-    let validation_duration = validation_started.elapsed();
-    let schema = match package.schema.as_ref() {
-        Some(schema) => schema,
-        None => {
-            record_package_telemetry(
-                telemetry,
-                package_id(package),
-                FfiPackageTelemetry {
-                    validation_duration,
-                    load_duration: started.elapsed(),
-                    install_failures: 1,
-                    ..Default::default()
-                },
-            );
-            return Err(HostInstallError::MissingPackageSchema);
-        }
-    };
-    let plan = match HostInstallPlan::from_schema_and_backends(schema, &package.backends) {
-        Ok(plan) => plan,
-        Err(err) => {
-            record_package_telemetry(
-                telemetry,
-                package_id(package),
-                FfiPackageTelemetry {
-                    validation_duration,
-                    load_duration: started.elapsed(),
-                    backend_resolutions: package.backends.len() as u64,
-                    artifact_checks: package.artifacts.len() as u64,
-                    install_failures: 1,
-                    ..Default::default()
-                },
-            );
-            return Err(err);
-        }
-    };
-    if let Err(err) = install_plan(registry, &plan) {
-        record_package_telemetry(
-            telemetry,
-            package_id(package),
-            FfiPackageTelemetry {
-                validation_duration,
-                load_duration: started.elapsed(),
-                backend_resolutions: package.backends.len() as u64,
-                artifact_checks: package.artifacts.len() as u64,
-                install_failures: 1,
-                ..Default::default()
-            },
-        );
-        return Err(err);
-    }
-    record_package_telemetry(
-        telemetry,
-        package_id(package),
-        FfiPackageTelemetry {
-            validation_duration,
-            load_duration: started.elapsed(),
-            backend_resolutions: package.backends.len() as u64,
-            artifact_checks: package.artifacts.len() as u64,
-            ..Default::default()
-        },
-    );
-    Ok(plan)
+    install_package_checked(registry, package, None, Some(telemetry))
 }
 
 pub fn install_language_package(
@@ -206,15 +124,7 @@ pub fn install_language_package(
     package: &PluginPackage,
     expected_backend: BackendKind,
 ) -> Result<HostInstallPlan, HostInstallError> {
-    package.validate()?;
-    let schema = package
-        .schema
-        .as_ref()
-        .ok_or(HostInstallError::MissingPackageSchema)?;
-    schema.validate_backend_kind(expected_backend)?;
-    let plan = HostInstallPlan::from_schema_and_backends(schema, &package.backends)?;
-    install_plan(registry, &plan)?;
-    Ok(plan)
+    install_package_checked(registry, package, Some(expected_backend), None)
 }
 
 pub fn install_language_package_with_ffi_telemetry(
@@ -223,154 +133,105 @@ pub fn install_language_package_with_ffi_telemetry(
     expected_backend: BackendKind,
     telemetry: &FfiHostTelemetry,
 ) -> Result<HostInstallPlan, HostInstallError> {
-    let started = Instant::now();
-    let validation_started = Instant::now();
-    if let Err(source) = package.validate() {
-        record_package_telemetry(
-            telemetry,
-            package_id(package),
-            FfiPackageTelemetry {
-                validation_duration: validation_started.elapsed(),
-                load_duration: started.elapsed(),
-                install_failures: 1,
-                ..Default::default()
-            },
-        );
-        return Err(source.into());
-    }
-    let validation_duration = validation_started.elapsed();
-    let schema = match package.schema.as_ref() {
-        Some(schema) => schema,
-        None => {
-            record_package_telemetry(
-                telemetry,
-                package_id(package),
-                FfiPackageTelemetry {
-                    validation_duration,
-                    load_duration: started.elapsed(),
-                    install_failures: 1,
-                    ..Default::default()
-                },
-            );
-            return Err(HostInstallError::MissingPackageSchema);
-        }
-    };
-    if let Err(source) = schema.validate_backend_kind(expected_backend) {
-        record_package_telemetry(
-            telemetry,
-            package_id(package),
-            FfiPackageTelemetry {
-                validation_duration,
-                load_duration: started.elapsed(),
-                install_failures: 1,
-                ..Default::default()
-            },
-        );
-        return Err(source.into());
-    }
-    let plan = match HostInstallPlan::from_schema_and_backends(schema, &package.backends) {
-        Ok(plan) => plan,
-        Err(err) => {
-            record_package_telemetry(
-                telemetry,
-                package_id(package),
-                FfiPackageTelemetry {
-                    validation_duration,
-                    load_duration: started.elapsed(),
-                    backend_resolutions: package.backends.len() as u64,
-                    artifact_checks: package.artifacts.len() as u64,
-                    install_failures: 1,
-                    ..Default::default()
-                },
-            );
-            return Err(err);
-        }
-    };
-    if let Err(err) = install_plan(registry, &plan) {
-        record_package_telemetry(
-            telemetry,
-            package_id(package),
-            FfiPackageTelemetry {
-                validation_duration,
-                load_duration: started.elapsed(),
-                backend_resolutions: package.backends.len() as u64,
-                artifact_checks: package.artifacts.len() as u64,
-                install_failures: 1,
-                ..Default::default()
-            },
-        );
-        return Err(err);
-    }
-    record_package_telemetry(
-        telemetry,
-        package_id(package),
-        FfiPackageTelemetry {
-            validation_duration,
-            load_duration: started.elapsed(),
-            backend_resolutions: package.backends.len() as u64,
-            artifact_checks: package.artifacts.len() as u64,
-            ..Default::default()
-        },
-    );
-    Ok(plan)
+    install_package_checked(registry, package, Some(expected_backend), Some(telemetry))
 }
 
+/// Validate `package` (optionally against `expected_backend`), install it into `registry`, and
+/// record package telemetry for both success and failure.
+fn install_package_checked(
+    registry: &mut CapabilityRegistry,
+    package: &PluginPackage,
+    expected_backend: Option<BackendKind>,
+    telemetry: Option<&FfiHostTelemetry>,
+) -> Result<HostInstallPlan, HostInstallError> {
+    let started = Instant::now();
+    let mut stats = FfiPackageTelemetry::default();
+    let install = || {
+        let validated = package.validate();
+        stats.validation_duration = started.elapsed();
+        validated?;
+        let schema = package
+            .schema
+            .as_ref()
+            .ok_or(HostInstallError::MissingPackageSchema)?;
+        if let Some(expected_backend) = expected_backend {
+            schema.validate_backend_kind(expected_backend)?;
+        }
+        stats.backend_resolutions = package.backends.len() as u64;
+        stats.artifact_checks = package.artifacts.len() as u64;
+        let plan = HostInstallPlan::from_schema_and_backends(schema, &package.backends)?;
+        install_plan(registry, &plan)?;
+        Ok(plan)
+    };
+    let result = install();
+    if let Some(telemetry) = telemetry {
+        stats.load_duration = started.elapsed();
+        stats.install_failures = u64::from(result.is_err());
+        record_package_telemetry(telemetry, package_id(package), stats);
+    }
+    result
+}
+
+/// Start the persistent-worker runners of `plan` in `pool`. Returns the keys of started runners.
+///
+/// The start is atomic: if any runner fails to build, start, or advertise the plan's nodes,
+/// runners already started for this plan are shut down before the error is returned.
 pub fn install_plan_runners(
     pool: &mut RunnerPool,
     plan: &HostInstallPlan,
     factory: &impl BackendRunnerFactory,
 ) -> Result<Vec<RunnerKey>, HostInstallError> {
-    let mut installed = Vec::new();
-    let mut seen = BTreeSet::new();
-    for (node_id, backend) in &plan.backends {
-        if backend.runtime_model == BackendRuntimeModel::InProcessAbi {
-            continue;
-        }
-        let key = RunnerKey::from_backend(backend).map_err(|source| HostInstallError::Runner {
-            node_id: node_id.clone(),
-            source,
-        })?;
-        if !seen.insert(key.clone()) {
-            continue;
-        }
-        let runner =
-            factory
-                .build_runner(node_id, backend)
-                .map_err(|source| HostInstallError::Runner {
-                    node_id: node_id.clone(),
-                    source,
-                })?;
-        let node_ids = nodes_for_runner_key(plan, &key)?;
-        validate_runner_entrypoints(runner.as_ref(), &node_ids)?;
-        installed.push(pool.insert_shared(backend, runner).map_err(|source| {
-            HostInstallError::Runner {
-                node_id: node_id.clone(),
-                source,
-            }
-        })?);
-    }
-    Ok(installed)
+    start_plan_runners(pool, plan, factory, &BTreeSet::new())
 }
 
-fn nodes_for_runner_key(
+/// [`install_plan_runners`], reusing runners whose key is in `running`.
+///
+/// Reused runners are not rebuilt; the plan's nodes are validated against the entrypoints the
+/// already running runner advertises. Returns only the keys of newly started runners.
+pub(crate) fn start_plan_runners(
+    pool: &mut RunnerPool,
     plan: &HostInstallPlan,
-    key: &RunnerKey,
-) -> Result<Vec<String>, HostInstallError> {
-    let mut node_ids = Vec::new();
-    for (node_id, backend) in &plan.backends {
-        if backend.runtime_model == BackendRuntimeModel::InProcessAbi {
-            continue;
-        }
-        let backend_key =
-            RunnerKey::from_backend(backend).map_err(|source| HostInstallError::Runner {
-                node_id: node_id.clone(),
-                source,
-            })?;
-        if &backend_key == key {
-            node_ids.push(node_id.clone());
+    factory: &impl BackendRunnerFactory,
+    running: &BTreeSet<RunnerKey>,
+) -> Result<Vec<RunnerKey>, HostInstallError> {
+    // One group per runner key, in node order: the first node names the runner in errors.
+    let mut groups: Vec<(RunnerKey, &BackendConfig, Vec<String>)> = Vec::new();
+    for (node_id, key) in plan.runner_keys()? {
+        match groups.iter_mut().find(|(group, ..)| *group == key) {
+            Some((.., node_ids)) => node_ids.push(node_id.to_owned()),
+            None => groups.push((key, &plan.backends[node_id], vec![node_id.to_owned()])),
         }
     }
-    Ok(node_ids)
+    let mut started = Vec::new();
+    let mut start = || {
+        for (key, backend, node_ids) in &groups {
+            let runner_error = |source| HostInstallError::Runner {
+                node_id: node_ids[0].clone(),
+                source,
+            };
+            let reused = running.contains(key);
+            let runner = if reused {
+                pool.get(backend).map_err(runner_error)?
+            } else {
+                factory
+                    .build_runner(&node_ids[0], backend)
+                    .map_err(runner_error)?
+            };
+            validate_runner_entrypoints(runner.as_ref(), node_ids)?;
+            if !reused {
+                pool.insert_shared(backend, runner).map_err(runner_error)?;
+                started.push((key.clone(), *backend));
+            }
+        }
+        Ok(())
+    };
+    if let Err(err) = start() {
+        for (_, backend) in &started {
+            let _ = pool.shutdown(backend);
+        }
+        return Err(err);
+    }
+    Ok(started.into_iter().map(|(key, _)| key).collect())
 }
 
 fn validate_runner_entrypoints(
@@ -392,18 +253,37 @@ fn validate_runner_entrypoints(
     Ok(())
 }
 
+/// Register the plan's plugin and nodes. Atomic: `registry` is untouched on failure.
 fn install_plan(
     registry: &mut CapabilityRegistry,
     plan: &HostInstallPlan,
 ) -> Result<(), HostInstallError> {
-    registry.register_plugin(plan.plugin.clone())?;
+    let mut staged = registry.clone();
+    staged.register_plugin(plan.plugin.clone())?;
     for node in &plan.nodes {
-        registry.register_node(node.clone())?;
+        staged.register_node(node.clone())?;
     }
+    *registry = staged;
     Ok(())
 }
 
 impl HostInstallPlan {
+    /// Runner key of every persistent-worker node, by node id. `in_process_abi` nodes are skipped.
+    pub(crate) fn runner_keys(&self) -> Result<BTreeMap<&str, RunnerKey>, HostInstallError> {
+        self.backends
+            .iter()
+            .filter(|(_, backend)| backend.runtime_model != BackendRuntimeModel::InProcessAbi)
+            .map(|(node_id, backend)| {
+                RunnerKey::from_backend(backend)
+                    .map(|key| (node_id.as_str(), key))
+                    .map_err(|source| HostInstallError::Runner {
+                        node_id: node_id.clone(),
+                        source,
+                    })
+            })
+            .collect()
+    }
+
     pub fn from_schema(schema: &PluginSchema) -> Result<Self, HostInstallError> {
         schema.validate()?;
         Ok(Self {
@@ -510,11 +390,10 @@ pub fn node_decl_from_schema(node: &NodeSchema) -> Result<NodeDecl, HostInstallE
     let mut metadata_keys = BTreeSet::new();
     for (key, value) in &node.metadata {
         metadata_keys.insert(key.clone());
-        let value =
-            json_to_value(value.clone()).map_err(|message| HostInstallError::MetadataValue {
-                field: key.clone(),
-                message,
-            })?;
+        let value = from_plain_json(value).map_err(|err| HostInstallError::MetadataValue {
+            field: key.clone(),
+            message: err.to_string(),
+        })?;
         insert_metadata_value(&mut decl, key.clone(), value)?;
     }
     if node.stateful && !metadata_keys.contains("daedalus.ffi.stateful") {
@@ -571,42 +450,13 @@ pub fn port_decl_from_schema(port: &WirePort) -> Result<PortDecl, HostInstallErr
         decl = decl.source(source.clone());
     }
     if let Some(value) = &port.const_value {
-        let value =
-            json_to_value(value.clone()).map_err(|message| HostInstallError::ConstValue {
-                port: port.name.clone(),
-                message,
-            })?;
+        let value = from_plain_json(value).map_err(|err| HostInstallError::ConstValue {
+            port: port.name.clone(),
+            message: err.to_string(),
+        })?;
         decl = decl.const_value(value);
     }
     Ok(decl)
-}
-
-fn json_to_value(value: serde_json::Value) -> Result<Value, String> {
-    Ok(match value {
-        serde_json::Value::Null => Value::Unit,
-        serde_json::Value::Bool(value) => Value::Bool(value),
-        serde_json::Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                Value::Int(value)
-            } else if let Some(value) = value.as_f64() {
-                Value::Float(value)
-            } else {
-                return Err(value.to_string());
-            }
-        }
-        serde_json::Value::String(value) => Value::String(Cow::Owned(value)),
-        serde_json::Value::Array(items) => Value::List(
-            items
-                .into_iter()
-                .map(json_to_value)
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        serde_json::Value::Object(map) => Value::Map(
-            map.into_iter()
-                .map(|(key, value)| Ok((Value::String(Cow::Owned(key)), json_to_value(value)?)))
-                .collect::<Result<Vec<_>, String>>()?,
-        ),
-    })
 }
 
 fn package_id(package: &PluginPackage) -> String {

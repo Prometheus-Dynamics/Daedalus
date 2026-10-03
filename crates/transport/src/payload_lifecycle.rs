@@ -196,17 +196,11 @@ pub struct PayloadReleaseQueue {
 
 impl PayloadReleaseQueue {
     pub fn push(&self, release: Box<dyn PayloadRelease>) {
-        if let Ok(mut pending) = self.pending.lock() {
-            pending.push(release);
-        }
+        crate::lock_recover(&self.pending).push(release);
     }
 
     pub fn drain(&self, ctx: ReleaseContext) -> usize {
-        let pending = if let Ok(mut pending) = self.pending.lock() {
-            pending.drain(..).collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let pending = std::mem::take(&mut *crate::lock_recover(&self.pending));
         let count = pending.len();
         for release in pending {
             release.release(ctx.clone());
@@ -215,10 +209,7 @@ impl PayloadReleaseQueue {
     }
 
     pub fn len(&self) -> usize {
-        self.pending
-            .lock()
-            .map(|pending| pending.len())
-            .unwrap_or(0)
+        crate::lock_recover(&self.pending).len()
     }
 
     pub fn is_empty(&self) -> bool {

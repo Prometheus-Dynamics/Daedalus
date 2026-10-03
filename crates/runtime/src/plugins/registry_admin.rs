@@ -347,7 +347,7 @@ impl PluginRegistry {
         Ok(GraphBuilder::new(self.combined_transport_capabilities()?))
     }
 
-    fn provider_source_kind(&self, id: &str) -> CapabilitySourceKind {
+    pub(super) fn provider_source_kind(&self, id: &str) -> CapabilitySourceKind {
         self.provider_source_kinds
             .get(id)
             .copied()

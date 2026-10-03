@@ -3,7 +3,7 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{ItemFn, LitStr, parse_macro_input, parse_quote};
 
-use crate::helpers::{AttributeArgs, compile_error};
+use crate::helpers::{AttributeArgs, compile_error, last_ident_is};
 
 mod crate_paths;
 mod descriptor;
@@ -49,7 +49,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         shader_bindings,
         shader_specs,
         state_ty_attr,
-        compute_attr,
         sync_groups_attr,
         capability_attr,
         fallback_attr,
@@ -87,14 +86,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             })
     };
 
-    let has_shaders = shader_path.is_some() || !shader_specs.is_empty() || !shader_paths.is_empty();
-    let _compute_expr: proc_macro2::TokenStream = if let Some(ts) = compute_attr.clone() {
-        quote! { #ts }
-    } else if has_shaders {
-        quote! { #core_crate::compute::ComputeAffinity::GpuRequired }
-    } else {
-        quote! { #core_crate::compute::ComputeAffinity::CpuOnly }
-    };
     // Common descriptor payload.
     let inputs_vec = inputs.clone();
     let outputs_vec = outputs.clone();
@@ -136,7 +127,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         state_ty_attr: state_ty_attr.as_ref(),
         capability_attr: capability_attr.as_ref(),
         inner_fn_ident: &inner_fn_ident,
-        data_crate: &data_crate,
         runtime_crate: &runtime_crate,
         gpu_crate: &gpu_crate,
     }) {
@@ -188,16 +178,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let has_fanin_inputs = !is_low_level
-        && arg_types.iter().any(|ty| {
-            if let syn::Type::Path(tp) = ty
-                && tp.qself.is_none()
-                && let Some(seg) = tp.path.segments.last()
-            {
-                return seg.ident == "FanIn";
-            }
-            false
-        });
+    let has_fanin_inputs = !is_low_level && arg_types.iter().any(|ty| last_ident_is(ty, "FanIn"));
 
     let _sync_groups_tokens: proc_macro2::TokenStream = if let Some(ts) = sync_groups_attr {
         ts
@@ -456,7 +437,6 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             same_payload_attr,
             inner_fn_ident: &inner_fn_ident,
             runtime_crate: &runtime_crate,
-            data_crate: &data_crate,
         });
 
     let handler_registry_fn =

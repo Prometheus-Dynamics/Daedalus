@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 
 type PollJob = Box<dyn FnOnce() + Send + 'static>;
 
@@ -63,9 +64,7 @@ impl BlockingPollPool {
 fn worker_loop(receiver: Arc<Mutex<mpsc::Receiver<PollJob>>>) {
     loop {
         let job = {
-            let receiver = receiver
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let receiver = receiver.lock();
             receiver.recv()
         };
         let Ok(job) = job else {
@@ -254,7 +253,7 @@ mod tests {
 
     #[test]
     fn shared_poll_pool_bounds_workers_under_fanout() {
-        let _guard = test_lock().lock().expect("poll driver test lock");
+        let _guard = test_lock().lock();
         let limit = async_poll_worker_limit().max(1);
         let jobs = limit * 32;
         let (tx, rx) = mpsc::channel();
@@ -283,7 +282,7 @@ mod tests {
 
     #[test]
     fn overflow_slots_are_bounded_and_released() {
-        let _guard = test_lock().lock().expect("poll driver test lock");
+        let _guard = test_lock().lock();
         let previous_limit = set_async_poll_overflow_thread_limit(2);
         while try_acquire_overflow_thread_slot() {}
         while active_async_poll_overflow_threads() > 0 {
@@ -307,7 +306,7 @@ mod tests {
 
     #[test]
     fn shared_worker_survives_panicking_job() {
-        let _guard = test_lock().lock().expect("poll driver test lock");
+        let _guard = test_lock().lock();
         let (sender, receiver) = mpsc::sync_channel::<PollJob>(2);
         let receiver = Arc::new(Mutex::new(receiver));
         let (done_tx, done_rx) = mpsc::channel();
@@ -333,7 +332,7 @@ mod tests {
 
     #[test]
     fn overflow_slot_guard_releases_after_panic() {
-        let _guard = test_lock().lock().expect("poll driver test lock");
+        let _guard = test_lock().lock();
         let previous_limit = set_async_poll_overflow_thread_limit(1);
         while active_async_poll_overflow_threads() > 0 {
             release_overflow_thread_slot();

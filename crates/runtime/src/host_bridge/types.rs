@@ -1,17 +1,24 @@
 use std::time::Instant;
 
-use daedalus_transport::{CorrelationId, DropReason, FeedOutcome, Payload, TypeKey};
+use daedalus_transport::{
+    CorrelationId, DropReason, FeedOutcome, Payload, PolicyValidationError, TypeKey,
+    validate_stream_policy,
+};
 
 use crate::handles::PortId;
 use crate::plan::RuntimeEdgePolicy;
 
-use super::DEFAULT_HOST_BRIDGE_EVENT_LIMIT;
+use super::{DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostBridgeConfig {
     pub default_input_policy: RuntimeEdgePolicy,
     pub default_output_policy: RuntimeEdgePolicy,
     /// Whether host bridge feed/drop/deliver events are retained for runtime diagnostics.
+    ///
+    /// Off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING`): recording allocates one event per
+    /// push and delivery. Enable it while debugging dropped or missing host payloads. Stats and
+    /// `tracing` pressure warnings are always available.
     pub event_recording: bool,
     /// Maximum retained event snapshots per host bridge handle.
     ///
@@ -21,6 +28,14 @@ pub struct HostBridgeConfig {
 }
 
 impl HostBridgeConfig {
+    /// Check both direction default policies with [`validate_stream_policy`].
+    pub fn validate(&self) -> Result<(), PolicyValidationError> {
+        for policy in [&self.default_input_policy, &self.default_output_policy] {
+            validate_stream_policy(&policy.pressure, &policy.freshness)?;
+        }
+        Ok(())
+    }
+
     pub fn with_default_input_policy(mut self, policy: RuntimeEdgePolicy) -> Self {
         self.default_input_policy = policy;
         self
@@ -56,7 +71,7 @@ impl Default for HostBridgeConfig {
         Self {
             default_input_policy: RuntimeEdgePolicy::bounded(1),
             default_output_policy: RuntimeEdgePolicy::bounded(1),
-            event_recording: true,
+            event_recording: DEFAULT_HOST_BRIDGE_EVENT_RECORDING,
             event_limit: Some(DEFAULT_HOST_BRIDGE_EVENT_LIMIT),
         }
     }
@@ -66,6 +81,41 @@ impl Default for HostBridgeConfig {
 pub struct HostBridgePayload {
     pub port: PortId,
     pub payload: Payload,
+}
+
+/// Counters for one host port, from [`HostBridgeHandle::input_port_stats`] or
+/// [`HostBridgeHandle::output_port_stats`].
+///
+/// [`HostBridgeHandle::input_port_stats`]: super::HostBridgeHandle::input_port_stats
+/// [`HostBridgeHandle::output_port_stats`]: super::HostBridgeHandle::output_port_stats
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostPortStats {
+    /// Payloads queued on the port, including ones that replaced a queued value.
+    pub accepted: u64,
+    /// Queued payloads replaced by a newer one before they were taken.
+    pub replaced: u64,
+    /// Payloads rejected by freshness, pressure, or a closed port.
+    pub dropped: u64,
+    /// Payloads taken off the port: by the graph for inputs, by the host for outputs.
+    pub delivered: u64,
+    /// Payloads currently queued.
+    pub pending: usize,
+}
+
+impl HostPortStats {
+    pub(super) fn record_enqueue(&mut self, outcome: &FeedOutcome) {
+        let counter = match outcome {
+            FeedOutcome::Accepted { .. } => &mut self.accepted,
+            FeedOutcome::Replaced { .. } => {
+                self.accepted = self.accepted.saturating_add(1);
+                &mut self.replaced
+            }
+            FeedOutcome::Dropped { .. } | FeedOutcome::Backpressured | FeedOutcome::Closed => {
+                &mut self.dropped
+            }
+        };
+        *counter = counter.saturating_add(1);
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -4,16 +4,17 @@ use super::parallel;
 use super::{
     CompiledSchedule, ConstInputStore, DirectSlotAccess, ExecuteError, ExecutionTelemetry,
     Executor, ExecutorBuildError, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler,
-    RuntimeDataSizeInspectors, apply_patch_to_const_inputs, build_executor_init, reset_run_storage,
-    serial, should_run_parallel_adaptive,
+    RuntimeDataSizeInspectors, apply_patch_to_const_inputs, build_executor_init, node_const_inputs,
+    reset_run_storage, serial, should_run_parallel_adaptive,
 };
 #[cfg(feature = "executor-pool")]
 use super::{compiled_worker_pool, pool};
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
-use crate::state::{ResourceLifecycleEvent, StateError, StateStore};
+use crate::state::{ResourceLifecycleEvent, StateStore};
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
+use parking_lot::RwLock;
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Owned executor that can be reused across runs without leaking the plan.
 pub struct OwnedExecutor<H: NodeHandler> {
@@ -96,7 +97,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             segments: Arc::new(plan.segments.clone()),
             schedule_order: Arc::new(plan.schedule_order.clone()),
             const_inputs: Arc::new(RwLock::new(
-                plan.nodes.iter().map(|n| n.const_inputs.clone()).collect(),
+                plan.nodes.iter().map(node_const_inputs).collect(),
             )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
@@ -231,22 +232,19 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
-    pub fn apply_resource_lifecycle(
-        &self,
-        event: ResourceLifecycleEvent,
-    ) -> Result<(), StateError> {
+    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) {
         self.core.state.apply_resource_lifecycle(event)
     }
 
-    pub fn on_memory_pressure(&self) -> Result<(), StateError> {
+    pub fn on_memory_pressure(&self) {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::MemoryPressure)
     }
 
-    pub fn on_idle(&self) -> Result<(), StateError> {
+    pub fn on_idle(&self) {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
     }
 
-    pub fn shutdown_resources(&self) -> Result<(), StateError> {
+    pub fn shutdown_resources(&self) {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::Stop)
     }
 
@@ -283,17 +281,23 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
+    /// Attach host bridges; each host-bridge node is resolved to its bridge once, here.
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        self.apply_host_bridges(mgr);
+        self.core.host_nodes = serial::resolve_host_nodes(
+            &mgr,
+            &self.nodes,
+            &self.edges,
+            &self.schedule.host_nodes,
+            &self.incoming_edges,
+            &self.outgoing_edges,
+        );
         self
     }
 
     pub fn reset(&mut self) {
         let metrics_level = self.core.run_config.metrics_level;
         self.core.telemetry.reset_for_reuse(metrics_level);
-        if let Ok(mut warnings) = self.core.warnings_seen.lock() {
-            warnings.clear();
-        }
+        self.core.warnings_seen.lock().clear();
         self.reset_storage();
         self.storage_needs_reset = false;
     }
@@ -301,9 +305,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     pub(super) fn reset_for_run(&mut self) {
         let metrics_level = self.core.run_config.metrics_level;
         self.core.telemetry.reset_for_reuse(metrics_level);
-        if let Ok(mut warnings) = self.core.warnings_seen.lock() {
-            warnings.clear();
-        }
+        self.core.warnings_seen.lock().clear();
         if self.storage_needs_reset {
             self.reset_storage();
             self.storage_needs_reset = false;
@@ -393,10 +395,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     pub fn run_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError> {
         self.reset_for_run();
-        let exec = self.snapshot(DirectSlotAccess::Serial);
-        let res = serial::run(exec);
-        let mut drain_exec = self.snapshot(DirectSlotAccess::Serial);
-        serial::drain_host_outputs(&mut drain_exec);
+        let mut exec = self.snapshot(DirectSlotAccess::Serial);
+        let res = serial::run_with_boundaries(&mut exec);
+        serial::drain_host_outputs(&mut exec);
         if res.is_err() {
             self.storage_needs_reset = true;
         }
@@ -465,10 +466,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
     pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
-        let mut guard = self
-            .const_inputs
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self.const_inputs.write();
         apply_patch_to_const_inputs(patch, &self.nodes, guard.as_mut_slice())
     }
 }

@@ -79,28 +79,12 @@ fn try_from_execution_reports_unknown_edge_freshness_policy() {
 
 fn graph_with_single_edge() -> Graph {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("src"),
-        bundle: None,
-        label: None,
-        inputs: Vec::new(),
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: Vec::new(),
-        sync_groups: Vec::new(),
-        metadata: BTreeMap::new(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("sink"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: Vec::new(),
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: Vec::new(),
-        sync_groups: Vec::new(),
-        metadata: BTreeMap::new(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("src").with_outputs(["out"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("sink").with_inputs(["in"]));
     graph.edges.push(Edge {
         from: PortRef {
             node: NodeRef(0),

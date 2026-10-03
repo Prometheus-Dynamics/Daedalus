@@ -1,13 +1,152 @@
+use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::Span;
 use quote::{ToTokens, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{
-    Expr, ExprUnary, Lit, LitFloat, LitInt, LitStr, Meta, MetaList, MetaNameValue, Token, UnOp,
+    Expr, ExprUnary, Lit, LitFloat, LitInt, LitStr, Meta, MetaNameValue, Path, PathSegment,
+    ReturnType, Token, Type, UnOp,
 };
 
 pub fn compile_error(message: String) -> proc_macro2::TokenStream {
     quote! { ::core::compile_error!(#message); }
+}
+
+/// A Daedalus member crate referenced from generated code.
+#[derive(Clone, Copy)]
+pub enum DaedalusCrate {
+    Core,
+    Data,
+    Gpu,
+    Registry,
+    Runtime,
+    Transport,
+}
+
+impl DaedalusCrate {
+    /// Path to the crate as seen from the crate being expanded.
+    ///
+    /// Resolves through the facade (`::daedalus::<via>`) when the consumer depends on
+    /// `daedalus-rs`, otherwise through the member crate itself (e.g. `::daedalus_data`).
+    pub fn path(self) -> proc_macro2::TokenStream {
+        let (pkg, via) = match self {
+            Self::Core => ("daedalus-core", "core"),
+            Self::Data => ("daedalus-data", "data"),
+            Self::Gpu => ("daedalus", "gpu"),
+            Self::Registry => ("daedalus-registry", "registry"),
+            Self::Runtime => ("daedalus-runtime", "runtime"),
+            Self::Transport => ("daedalus-transport", "transport"),
+        };
+        let found_name = |found| match found {
+            FoundCrate::Itself => None,
+            FoundCrate::Name(name) => Some(name),
+        };
+        let facade = crate_name("daedalus-rs")
+            .or_else(|_| crate_name("daedalus"))
+            .ok()
+            .map(|found| {
+                found_name(found)
+                    .filter(|name| name != "daedalus_rs")
+                    .unwrap_or_else(|| "daedalus".to_string())
+            });
+        if let Some(root) = facade {
+            let root = syn::Ident::new(&root, Span::call_site());
+            let via = syn::Ident::new(via, Span::call_site());
+            return quote! { ::#root::#via };
+        }
+        let name = crate_name(pkg)
+            .ok()
+            .and_then(found_name)
+            .unwrap_or_else(|| pkg.replace('-', "_"));
+        let ident = syn::Ident::new(&name, Span::call_site());
+        quote! { ::#ident }
+    }
+}
+
+/// A `&'static str` argument: a string literal or a path to a `const`/`static` string.
+pub fn str_expr(expr: &Expr, what: &str) -> Result<Expr, proc_macro2::TokenStream> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: Lit::Str(_), ..
+        })
+        | Expr::Path(_) => Ok(expr.clone()),
+        _ => Err(compile_error(format!(
+            "{what} must be a string literal or a path to a string constant"
+        ))),
+    }
+}
+
+/// A string literal argument.
+pub fn lit_str_arg(expr: &Expr, what: &str) -> Result<LitStr, proc_macro2::TokenStream> {
+    match lit_from_expr(expr) {
+        Some(Lit::Str(lit)) => Ok(lit),
+        _ => Err(compile_error(format!("{what} must be a string literal"))),
+    }
+}
+
+/// A function path argument.
+pub fn fn_path_arg(expr: Expr, what: &str) -> Result<Path, proc_macro2::TokenStream> {
+    match expr {
+        Expr::Path(path) => Ok(path.path),
+        _ => Err(compile_error(format!("{what} must be a function path"))),
+    }
+}
+
+/// Last path segment of a plain (non-qualified) path type.
+pub fn last_segment(ty: &Type) -> Option<&PathSegment> {
+    match ty {
+        Type::Path(p) if p.qself.is_none() => p.path.segments.last(),
+        _ => None,
+    }
+}
+
+/// Whether the last path segment of a plain path type is `name`.
+pub fn last_ident_is(ty: &Type, name: &str) -> bool {
+    last_segment(ty).is_some_and(|seg| seg.ident == name)
+}
+
+/// The referenced type of `&T` / `&mut T`, or `ty` itself.
+pub fn strip_ref(ty: &Type) -> &Type {
+    match ty {
+        Type::Reference(r) => &r.elem,
+        _ => ty,
+    }
+}
+
+/// The `idx`-th generic type argument of a path segment (`Device<A, B>` gives `B` for 1).
+pub fn segment_type_arg(seg: &PathSegment, idx: usize) -> Option<&Type> {
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    match args.args.iter().nth(idx)? {
+        syn::GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    }
+}
+
+/// The `idx`-th generic type argument of `ty` when its last path segment is `name`.
+pub fn generic_arg<'a>(ty: &'a Type, name: &str, idx: usize) -> Option<&'a Type> {
+    let seg = last_segment(ty)?;
+    if seg.ident != name {
+        return None;
+    }
+    segment_type_arg(seg, idx)
+}
+
+/// `T` of a `-> Result<T, _>` return type.
+pub fn result_ok_type(ret: &ReturnType) -> Option<&Type> {
+    let ReturnType::Type(_, ty) = ret else {
+        return None;
+    };
+    generic_arg(ty, "Result", 0)
+}
+
+pub fn arc_inner_type(ty: &Type) -> Option<&Type> {
+    generic_arg(ty, "Arc", 0)
+}
+
+pub fn is_unit_type(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(t) if t.elems.is_empty())
 }
 
 #[derive(Clone)]
@@ -67,13 +206,10 @@ fn parse_serde_string_kv(attrs: &[syn::Attribute], key: &str) -> Option<LitStr> 
         if !attr.path().is_ident("serde") {
             continue;
         }
-        let Meta::List(MetaList { .. }) = &attr.meta else {
+        let Meta::List(list) = &attr.meta else {
             continue;
         };
-        let Meta::List(list) = attr.meta.clone() else {
-            continue;
-        };
-        let Ok(items) = parse_nested(&list) else {
+        let Ok(items) = parse_nested(list) else {
             continue;
         };
         for item in items {

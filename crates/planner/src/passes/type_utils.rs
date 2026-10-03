@@ -2,13 +2,9 @@ use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 
 use crate::graph::{ComputeAffinity, NodeInstance};
-use crate::metadata::DynamicPortMetadata;
+use crate::metadata::{DynamicPortMetadata, is_generic_marker};
 
 use super::PlannerConfig;
-
-pub(super) fn is_generic_marker(ty: &TypeExpr) -> bool {
-    matches!(ty, TypeExpr::Opaque(value) if value.eq_ignore_ascii_case("generic"))
-}
 
 pub(super) fn port_type(
     node: &NodeInstance,
@@ -84,13 +80,10 @@ pub(super) fn adapt_request_for_input(
     access: daedalus_transport::AccessMode,
     ty: &TypeExpr,
 ) -> daedalus_transport::AdaptRequest {
-    let mut request = daedalus_transport::AdaptRequest::new(typeexpr_transport_key(ty));
+    let mut request =
+        daedalus_transport::AdaptRequest::new(daedalus_registry::typeexpr_transport_key(ty));
     request.access = access;
     request
-}
-
-pub(super) fn typeexpr_transport_key(ty: &TypeExpr) -> daedalus_transport::TypeKey {
-    daedalus_registry::typeexpr_transport_key(ty)
 }
 
 pub(super) fn target_residency_for_node(

@@ -17,13 +17,26 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
+[package.metadata.daedalus]
+# Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
+# boundary features change types that cross the plugin boundary and must match between host
+# and plugin; host-only features only change host-side execution.
+boundary-features = ["gpu", "proto", "schema"]
+host-only-features = []
+
+[[bin]]
+name = "graph_document_schema"
+path = "src/bin/graph_document_schema.rs"
+required-features = ["schema"]
+
 [features]
 default = []
 gpu = ["daedalus-gpu"]
 proto = []
-schema = []
+schema = ["daedalus-data/schema"]
 
 [dependencies]
+parking_lot = { workspace = true }
 daedalus-data = { workspace = true }
 daedalus-registry = { workspace = true }
 daedalus-transport = { workspace = true }
@@ -31,6 +44,8 @@ daedalus-gpu = { workspace = true, optional = true }
 daedalus-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_path_to_error = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

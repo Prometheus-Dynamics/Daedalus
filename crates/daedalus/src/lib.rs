@@ -27,12 +27,16 @@ pub use daedalus_macros as macros;
 #[cfg(feature = "plugins")]
 pub use daedalus_macros::plugin;
 pub use daedalus_macros::{
-    BranchPayload, DaedalusToValue, DaedalusTypeExpr, GpuBindings, GpuStateful, NodeConfig,
-    Outputs, adapt, device, node, node_handler, type_key,
+    BranchPayload, DaedalusToValue, DaedalusTypeExpr, GpuBindings, GpuStateful, NodeConfig, adapt,
+    device, node, node_handler, type_key,
 };
 #[cfg(feature = "plugins")]
 pub use daedalus_nodes::declare_plugin;
 pub use daedalus_planner as planner;
+pub use daedalus_planner::{
+    GRAPH_DOCUMENT_FORMAT, GRAPH_DOCUMENT_SCHEMA_VERSION, GraphDocument, GraphDocumentError,
+    MissingPlugins, PluginRequirement,
+};
 pub use daedalus_registry as registry;
 pub use daedalus_runtime as runtime;
 pub use daedalus_runtime::FanIn;
@@ -57,6 +61,19 @@ pub use host_bridge::{
     HostBridgeInstallError, host_port, install_default_host_bridge, install_host_bridge,
 };
 
+/// Native Rust plugins shipped as `cdylib`s: the stable descriptor, `export_plugin!`, and the
+/// `PluginLibrary` loader.
+#[cfg(feature = "dylib-plugins")]
+pub mod dylib;
+#[cfg(feature = "dylib-plugins")]
+pub use dylib::{
+    PLUGIN_ABI_VERSION, PluginDescriptor, PluginInfo, PluginLibrary, PluginLibraryError,
+    PluginSchema, RUSTC_VERSION, RustAbiMismatch, StrSink, StrView, build_fingerprint,
+    check_rust_abi, discover_plugin_libraries,
+};
+
+daedalus_core::build_facts!();
+
 // Optional plugin crates are re-exported via features; no in-crate plugins live here.
 
 /// Common imports for application and example code.
@@ -69,16 +86,18 @@ pub mod prelude {
     #[cfg(feature = "engine")]
     pub use crate::engine::{
         CacheSection, CacheStatus, CompiledRun, Engine, EngineCacheMetrics, EngineConfig,
-        EngineConfigError, EngineError, GpuBackend, HostGraph, HostGraphInput, HostGraphLane,
-        HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput, PlannerSection,
-        PreparedPlan, PreparedRuntimePlan, RunResult, RuntimeMode, RuntimeSection,
+        EngineConfigError, EngineError, GpuBackend, HostGraph, HostGraphDriveExit, HostGraphInput,
+        HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
+        HostGraphStopHandle, HostGraphTurn, PlannerSection, PreparedPlan, PreparedRuntimePlan,
+        RunResult, RuntimeMode, RuntimeSection,
     };
     pub use crate::registry::prelude::*;
     pub use crate::runtime::{
-        DEFAULT_OUTPUT_PORT, ExecutionContext, ExecutionTelemetry, Executor, FanIn, MetricsLevel,
-        NodeError, NodeIo, OwnedExecutor, RuntimePlan, RuntimeTransport, SchedulerConfig,
-        StreamGraph, StreamGraphWorker, TypedInputResolution, TypedInputResolutionKind,
-        build_runtime, graph_builder,
+        DEFAULT_OUTPUT_PORT, ExecutionContext, ExecutionTelemetry, Executor, FanIn,
+        HostPortConnection, HostPortDescriptor, HostPortDirection, InboundWait, InboundWaiter,
+        MetricsLevel, NodeError, NodeIo, OwnedExecutor, PayloadInspection, PayloadSummary,
+        RuntimePlan, RuntimeTransport, SchedulerConfig, StreamGraph, StreamGraphWorker,
+        TypedInputResolution, TypedInputResolutionKind, build_runtime, graph_builder,
     };
     pub use crate::transport::{
         AccessMode, AdaptKind, AdapterId, AdapterKind, BoundaryPayloadError, Cpu, Device,
@@ -89,9 +108,10 @@ pub mod prelude {
     pub use crate::{Backing, Compute, DeviceBridge, GpuBufferHandle, GpuImageHandle};
     pub use crate::{
         BackpressureStrategy, BranchPayload, ComputeAffinity, DaedalusToValue, DaedalusTypeExpr,
-        GpuBindings, GpuStateful, NodeConfig, NodeHandle, NodeHandleLike, Outputs, PortHandle,
-        SyncGroup, SyncPolicy, adapt, device, node, node_handler, type_key,
+        GpuBindings, GpuStateful, NodeConfig, NodeHandle, NodeHandleLike, PortHandle, SyncGroup,
+        SyncPolicy, adapt, device, node, node_handler, type_key,
     };
+    pub use crate::{GraphDocument, GraphDocumentError, MissingPlugins, PluginRequirement};
     #[cfg(feature = "plugins")]
     pub use crate::{
         HostBridgeInstallError, NodeInstall, Plugin, PluginGroup, PluginInstallContext,

@@ -22,7 +22,7 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
         })
         .flatten();
     if collect_basic_metrics {
-        payload.enqueued_at = Instant::now();
+        payload.enqueued_at = Some(Instant::now());
     }
     if collect_lifecycle {
         let mut lifecycle =
@@ -62,11 +62,10 @@ pub(crate) fn pop_direct_edge<H: NodeHandler>(
         .direct_slots
         .get(edge_idx)
         .and_then(|slot| slot.access(exec.direct_slot_access).take())?;
-    if collect_basic_metrics {
-        exec.core.telemetry.record_edge_wait(
-            edge_idx,
-            Instant::now().saturating_duration_since(payload.enqueued_at),
-        );
+    if collect_basic_metrics && let Some(enqueued_at) = payload.enqueued_at {
+        exec.core
+            .telemetry
+            .record_edge_wait(edge_idx, enqueued_at.elapsed());
     }
     if collect_detailed_metrics {
         exec.core.telemetry.record_edge_depth(edge_idx, 0);

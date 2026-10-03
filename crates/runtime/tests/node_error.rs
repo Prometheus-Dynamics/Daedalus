@@ -1,5 +1,5 @@
 use daedalus_data::model::Value;
-use daedalus_planner::{ComputeAffinity, ExecutionPlan, Graph, NodeInstance};
+use daedalus_planner::{ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::{
     BackpressureStrategy, ExecuteError, Executor, NODE_EXECUTION_KIND_META_KEY, NodeError,
     NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
@@ -16,15 +16,8 @@ fn single_node_plan(id: &str, execution_kind: Option<&str>) -> daedalus_runtime:
         );
     }
     graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new(id),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
         metadata,
+        ..NodeInstance::new(id)
     });
     let exec = ExecutionPlan::new(graph, vec![]);
     build_runtime(
@@ -123,17 +116,7 @@ fn invalid_execution_kind_metadata_defaults_to_handler_required() {
 #[test]
 fn handler_error_bubbles_with_context() {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("fail"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
+    graph.nodes.push(NodeInstance::new("fail"));
     let exec = ExecutionPlan::new(graph, vec![]);
     let rt = build_runtime(
         &exec,

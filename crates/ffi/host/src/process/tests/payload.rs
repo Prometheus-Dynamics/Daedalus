@@ -10,18 +10,10 @@ fn persistent_python_worker_resolves_payload_handle_to_memoryview_mmap() {
     std::fs::write(&backing, [9_u8, 2, 3, 4]).expect("write backing payload");
     let worker = write_python_payload_worker(&dir);
     let config = BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(worker.display().to_string()),
-        entry_class: None,
-        entry_symbol: Some("payload_len".into()),
-        executable: Some(python),
         args: vec![worker.display().to_string()],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Python, python, "payload_len")
+            .with_entry_module(worker.display().to_string())
     };
     let runner = PersistentWorkerRunner::from_backend(&config).expect("runner");
 
@@ -52,18 +44,10 @@ fn persistent_python_worker_exercises_payload_ownership_modes() {
     let dir = temp_dir("persistent_python_payload_modes");
     let worker = write_python_payload_worker(&dir);
     let config = BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(worker.display().to_string()),
-        entry_class: None,
-        entry_symbol: Some("payload_modes".into()),
-        executable: Some(python),
         args: vec![worker.display().to_string()],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Python, python, "payload_modes")
+            .with_entry_module(worker.display().to_string())
     };
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend(&config)
@@ -86,18 +70,10 @@ fn persistent_node_worker_resolves_payload_handle_to_buffer() {
     std::fs::write(&backing, [11_u8, 2, 3, 4]).expect("write backing payload");
     let worker = write_node_payload_worker(&dir);
     let config = BackendConfig {
-        backend: BackendKind::Node,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(worker.display().to_string()),
-        entry_class: None,
-        entry_symbol: Some("payload_len".into()),
-        executable: Some(node),
         args: vec![worker.display().to_string()],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Node, node, "payload_len")
+            .with_entry_module(worker.display().to_string())
     };
     let runner = PersistentWorkerRunner::from_backend(&config).expect("runner");
 
@@ -127,18 +103,10 @@ fn persistent_node_worker_exercises_payload_ownership_modes() {
     let dir = temp_dir("persistent_node_payload_modes");
     let worker = write_node_payload_worker(&dir);
     let config = BackendConfig {
-        backend: BackendKind::Node,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(worker.display().to_string()),
-        entry_class: None,
-        entry_symbol: Some("payload_modes".into()),
-        executable: Some(node),
         args: vec![worker.display().to_string()],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Node, node, "payload_modes")
+            .with_entry_module(worker.display().to_string())
     };
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend(&config)
@@ -161,22 +129,15 @@ fn persistent_java_worker_resolves_payload_handle_to_direct_byte_buffer_mmap() {
     std::fs::write(&backing, [13_u8, 2, 3, 4]).expect("write backing payload");
     let classes = write_java_payload_worker(&dir, &javac);
     let config = BackendConfig {
-        backend: BackendKind::Java,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: None,
-        entry_class: Some("PayloadWorker".into()),
-        entry_symbol: Some("payload_len".into()),
-        executable: Some(java),
         args: vec![
             "-cp".into(),
             classes.display().to_string(),
             "PayloadWorker".into(),
         ],
         classpath: vec![classes.display().to_string()],
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Java, java, "payload_len")
+            .with_entry_class("PayloadWorker")
     };
     let runner = PersistentWorkerRunner::from_backend(&config).expect("runner");
 
@@ -207,22 +168,15 @@ fn persistent_java_worker_exercises_payload_ownership_modes() {
     let dir = temp_dir("persistent_java_payload_modes");
     let classes = write_java_payload_worker(&dir, &javac);
     let config = BackendConfig {
-        backend: BackendKind::Java,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: None,
-        entry_class: Some("PayloadWorker".into()),
-        entry_symbol: Some("payload_modes".into()),
-        executable: Some(java),
         args: vec![
             "-cp".into(),
             classes.display().to_string(),
             "PayloadWorker".into(),
         ],
         classpath: vec![classes.display().to_string()],
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Java, java, "payload_modes")
+            .with_entry_class("PayloadWorker")
     };
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend(&config)

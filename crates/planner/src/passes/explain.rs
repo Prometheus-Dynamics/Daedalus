@@ -9,8 +9,8 @@ use crate::metadata::{
 };
 
 use super::{
-    AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,
-    NodeOverloadResolution, OverloadPortResolution, PlanExplanation, PlannerLoweringPhase,
+    AppliedPlannerLowering, EdgeResolutionExplanation, NodeOverloadResolution,
+    OverloadPortResolution, PlanExplanation, PlannerLoweringPhase,
 };
 
 fn owned_string_value(value: impl Into<String>) -> Value {
@@ -46,36 +46,8 @@ fn string_keyed_map(entries: BTreeMap<String, Value>) -> Value {
     )
 }
 
-fn struct_field<'a>(fields: &'a [StructFieldValue], name: &str) -> Option<&'a Value> {
-    fields
-        .iter()
-        .find(|field| field.name == name)
-        .map(|field| &field.value)
-}
-
-fn value_to_string_map(value: &Value) -> Option<BTreeMap<String, Value>> {
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    let mut map = BTreeMap::new();
-    for (key, value) in entries {
-        let Value::String(key) = key else {
-            return None;
-        };
-        map.insert(key.to_string(), value.clone());
-    }
-    Some(map)
-}
-
 fn typeexpr_to_value(ty: &TypeExpr) -> Value {
     owned_string_value(serde_json::to_string(ty).unwrap_or_default())
-}
-
-fn value_to_typeexpr(value: &Value) -> Option<TypeExpr> {
-    match value {
-        Value::String(json) => serde_json::from_str::<TypeExpr>(json).ok(),
-        _ => None,
-    }
 }
 
 pub(super) fn applied_lowering_to_value(lowering: &AppliedPlannerLowering) -> Value {
@@ -224,192 +196,162 @@ pub(super) fn overload_resolution_to_value(resolution: NodeOverloadResolution) -
     ])
 }
 
-fn value_as_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => Some(value.to_string()),
-        _ => None,
-    }
+fn string(value: &Value, name: &str) -> Option<String> {
+    value.field(name)?.as_str().map(str::to_string)
 }
 
-fn value_as_u64(value: &Value) -> Option<u64> {
-    match value {
-        Value::Int(value) => (*value).try_into().ok(),
-        _ => None,
-    }
+fn u64_field(value: &Value, name: &str) -> Option<u64> {
+    value.field(name)?.as_u64()
 }
 
-fn value_as_bool(value: &Value) -> Option<bool> {
-    match value {
-        Value::Bool(value) => Some(*value),
-        _ => None,
-    }
+fn type_field(value: &Value, name: &str) -> Option<TypeExpr> {
+    TypeExpr::from_json_value(value.field(name)?)
 }
 
-fn parse_edge_resolution_kind(value: &Value) -> Option<EdgeResolutionKind> {
-    EdgeResolutionKind::from_str(&value_as_string(value)?).ok()
+fn parsed<T: FromStr>(value: &Value, name: &str) -> Option<T> {
+    value.field(name)?.as_str()?.parse().ok()
 }
 
-fn parse_adapter_mode(value: &Value) -> Option<AdapterResolutionMode> {
-    AdapterResolutionMode::from_str(&value_as_string(value)?).ok()
+fn string_list(value: &Value, name: &str) -> Option<Vec<String>> {
+    value.field(name)?.as_string_list()
 }
 
 fn parse_planner_lowering_phase(value: &Value) -> Option<PlannerLoweringPhase> {
-    match value_as_string(value)?.as_str() {
+    match value.field("phase")?.as_str()? {
         "before_typecheck" => Some(PlannerLoweringPhase::BeforeTypecheck),
         "after_convert" => Some(PlannerLoweringPhase::AfterConvert),
         _ => None,
     }
 }
 
-fn parse_access_mode(value: &Value) -> Option<daedalus_transport::AccessMode> {
-    daedalus_transport::AccessMode::from_str(&value_as_string(value)?).ok()
-}
-
-fn parse_residency(value: &Value) -> Option<daedalus_transport::Residency> {
-    daedalus_transport::Residency::from_str(&value_as_string(value)?).ok()
-}
-
 fn parse_applied_lowering(value: &Value) -> Option<AppliedPlannerLowering> {
-    let Value::Struct(fields) = value else {
-        return None;
-    };
     Some(AppliedPlannerLowering {
-        id: value_as_string(struct_field(fields, "id")?)?,
-        phase: parse_planner_lowering_phase(struct_field(fields, "phase")?)?,
-        summary: value_as_string(struct_field(fields, "summary")?)?,
-        changed: value_as_bool(struct_field(fields, "changed")?)?,
-        metadata: value_to_string_map(struct_field(fields, "metadata")?)?,
+        id: string(value, "id")?,
+        phase: parse_planner_lowering_phase(value)?,
+        summary: string(value, "summary")?,
+        changed: value.field("changed")?.as_bool()?,
+        metadata: value.field("metadata")?.as_string_map()?,
     })
 }
 
 fn parse_edge_explanation(value: &Value) -> Option<EdgeResolutionExplanation> {
-    let Value::Struct(fields) = value else {
-        return None;
-    };
     Some(EdgeResolutionExplanation {
-        from_node: value_as_string(struct_field(fields, "from_node")?)?,
-        from_port: value_as_string(struct_field(fields, "from_port")?)?,
-        to_node: value_as_string(struct_field(fields, "to_node")?)?,
-        to_port: value_as_string(struct_field(fields, "to_port")?)?,
-        from_type: value_to_typeexpr(struct_field(fields, "from_type")?)?,
-        to_type: value_to_typeexpr(struct_field(fields, "to_type")?)?,
-        target_access: struct_field(fields, "target_access")
-            .and_then(parse_access_mode)
+        from_node: string(value, "from_node")?,
+        from_port: string(value, "from_port")?,
+        to_node: string(value, "to_node")?,
+        to_port: string(value, "to_port")?,
+        from_type: type_field(value, "from_type")?,
+        to_type: type_field(value, "to_type")?,
+        target_access: parsed(value, "target_access")
             .unwrap_or(daedalus_transport::AccessMode::Read),
-        target_exclusive: struct_field(fields, "target_exclusive")
-            .and_then(value_as_bool)
+        target_exclusive: value
+            .field("target_exclusive")
+            .and_then(Value::as_bool)
             .unwrap_or(false),
-        target_residency: struct_field(fields, "target_residency").and_then(parse_residency),
-        transport_target: struct_field(fields, "transport_target")
-            .and_then(value_as_string)
-            .map(daedalus_transport::TypeKey::new),
-        resolution_kind: parse_edge_resolution_kind(struct_field(fields, "resolution_kind")?)?,
-        adapter_mode: parse_adapter_mode(struct_field(fields, "adapter_mode")?)?,
-        total_cost: value_as_u64(struct_field(fields, "total_cost")?)?,
-        converter_steps: match struct_field(fields, "converter_steps")? {
-            Value::List(values) => values.iter().filter_map(value_as_string).collect(),
-            _ => return None,
-        },
-        adapter_path: match struct_field(fields, "adapter_path") {
-            Some(Value::List(values)) => values.iter().filter_map(parse_adapter_step).collect(),
-            _ => Vec::new(),
-        },
+        target_residency: parsed(value, "target_residency"),
+        transport_target: string(value, "transport_target").map(daedalus_transport::TypeKey::new),
+        resolution_kind: parsed(value, "resolution_kind")?,
+        adapter_mode: parsed(value, "adapter_mode")?,
+        total_cost: u64_field(value, "total_cost")?,
+        converter_steps: string_list(value, "converter_steps")?,
+        adapter_path: value
+            .field("adapter_path")
+            .and_then(Value::as_list)
+            .map(|steps| steps.iter().filter_map(parse_adapter_step).collect())
+            .unwrap_or_default(),
     })
 }
 
 fn parse_adapter_step(value: &Value) -> Option<AdapterPathStep> {
-    let Value::Struct(fields) = value else {
-        return None;
-    };
-    let kind = struct_field(fields, "kind")
-        .and_then(value_as_string)
-        .and_then(|name| daedalus_transport::AdaptKind::from_str(&name).ok())?;
+    let kind: daedalus_transport::AdaptKind = parsed(value, "kind")?;
     let mut cost = daedalus_transport::AdaptCost::new(kind);
-    if let Some(weight) = struct_field(fields, "cost").and_then(value_as_u64) {
+    if let Some(weight) = u64_field(value, "cost") {
         cost.cpu_ns = weight.min(u64::from(u32::MAX)) as u32;
     }
     Some(AdapterPathStep {
-        adapter: daedalus_transport::AdapterId::new(value_as_string(struct_field(
-            fields, "adapter",
-        )?)?),
-        from: daedalus_transport::TypeKey::new(value_as_string(struct_field(fields, "from")?)?),
-        to: daedalus_transport::TypeKey::new(value_as_string(struct_field(fields, "to")?)?),
+        adapter: daedalus_transport::AdapterId::new(string(value, "adapter")?),
+        from: daedalus_transport::TypeKey::new(string(value, "from")?),
+        to: daedalus_transport::TypeKey::new(string(value, "to")?),
         kind,
-        access: struct_field(fields, "access")
-            .and_then(parse_access_mode)
-            .unwrap_or(daedalus_transport::AccessMode::Read),
+        access: parsed(value, "access").unwrap_or(daedalus_transport::AccessMode::Read),
         cost,
-        requires_gpu: struct_field(fields, "requires_gpu")
-            .and_then(value_as_bool)
+        requires_gpu: value
+            .field("requires_gpu")
+            .and_then(Value::as_bool)
             .unwrap_or(false),
-        residency: struct_field(fields, "residency").and_then(parse_residency),
-        layout: struct_field(fields, "layout")
-            .and_then(value_as_string)
-            .map(daedalus_transport::Layout::new),
+        residency: parsed(value, "residency"),
+        layout: string(value, "layout").map(daedalus_transport::Layout::new),
     })
 }
 
 fn parse_overload_port_resolution(value: &Value) -> Option<OverloadPortResolution> {
-    let Value::Struct(fields) = value else {
-        return None;
-    };
     Some(OverloadPortResolution {
-        port: value_as_string(struct_field(fields, "port")?)?,
-        from_node: value_as_string(struct_field(fields, "from_node")?)?,
-        from_port: value_as_string(struct_field(fields, "from_port")?)?,
-        from_type: value_to_typeexpr(struct_field(fields, "from_type")?)?,
-        to_type: value_to_typeexpr(struct_field(fields, "to_type")?)?,
-        resolution_kind: parse_edge_resolution_kind(struct_field(fields, "resolution_kind")?)?,
-        adapter_mode: parse_adapter_mode(struct_field(fields, "adapter_mode")?)?,
-        total_cost: value_as_u64(struct_field(fields, "total_cost")?)?,
-        converter_steps: match struct_field(fields, "converter_steps")? {
-            Value::List(values) => values.iter().filter_map(value_as_string).collect(),
-            _ => return None,
-        },
+        port: string(value, "port")?,
+        from_node: string(value, "from_node")?,
+        from_port: string(value, "from_port")?,
+        from_type: type_field(value, "from_type")?,
+        to_type: type_field(value, "to_type")?,
+        resolution_kind: parsed(value, "resolution_kind")?,
+        adapter_mode: parsed(value, "adapter_mode")?,
+        total_cost: u64_field(value, "total_cost")?,
+        converter_steps: string_list(value, "converter_steps")?,
     })
 }
 
 fn parse_overload_resolution(value: &Value) -> Option<NodeOverloadResolution> {
-    let Value::Struct(fields) = value else {
-        return None;
-    };
     Some(NodeOverloadResolution {
-        node: value_as_string(struct_field(fields, "node")?)?,
-        overload_id: value_as_string(struct_field(fields, "overload_id")?)?,
-        overload_label: match struct_field(fields, "overload_label")? {
+        node: string(value, "node")?,
+        overload_id: string(value, "overload_id")?,
+        overload_label: match value.field("overload_label")? {
             Value::Unit => None,
-            value => value_as_string(value),
+            label => label.as_str().map(str::to_string),
         },
-        total_cost: value_as_u64(struct_field(fields, "total_cost")?)?,
-        ports: match struct_field(fields, "ports")? {
-            Value::List(values) => values
-                .iter()
-                .filter_map(parse_overload_port_resolution)
-                .collect(),
-            _ => return None,
-        },
+        total_cost: u64_field(value, "total_cost")?,
+        ports: value
+            .field("ports")?
+            .as_list()?
+            .iter()
+            .filter_map(parse_overload_port_resolution)
+            .collect(),
     })
 }
 
+fn parse_list<T>(
+    metadata: &BTreeMap<String, Value>,
+    key: &str,
+    parse: fn(&Value) -> Option<T>,
+) -> Vec<T> {
+    metadata
+        .get(key)
+        .and_then(Value::as_list)
+        .map(|items| items.iter().filter_map(parse).collect())
+        .unwrap_or_default()
+}
+
+/// Typed edge resolution explanations the planner recorded in a plan graph's metadata
+/// (`Graph::metadata`).
+pub fn edge_explanations(
+    graph_metadata: &BTreeMap<String, Value>,
+) -> Vec<EdgeResolutionExplanation> {
+    parse_list(
+        graph_metadata,
+        PLAN_EDGE_EXPLANATIONS_KEY,
+        parse_edge_explanation,
+    )
+}
+
 pub fn explain_plan(graph: &Graph) -> PlanExplanation {
-    let lowerings = match graph.metadata.get(PLAN_APPLIED_LOWERINGS_KEY) {
-        Some(Value::List(values)) => values.iter().filter_map(parse_applied_lowering).collect(),
-        _ => Vec::new(),
-    };
-    let overloads = match graph.metadata.get(PLAN_OVERLOAD_RESOLUTIONS_KEY) {
-        Some(Value::List(values)) => values
-            .iter()
-            .filter_map(parse_overload_resolution)
-            .collect(),
-        _ => Vec::new(),
-    };
-    let edges = match graph.metadata.get(PLAN_EDGE_EXPLANATIONS_KEY) {
-        Some(Value::List(values)) => values.iter().filter_map(parse_edge_explanation).collect(),
-        _ => Vec::new(),
-    };
     PlanExplanation {
-        lowerings,
-        overloads,
-        edges,
+        lowerings: parse_list(
+            &graph.metadata,
+            PLAN_APPLIED_LOWERINGS_KEY,
+            parse_applied_lowering,
+        ),
+        overloads: parse_list(
+            &graph.metadata,
+            PLAN_OVERLOAD_RESOLUTIONS_KEY,
+            parse_overload_resolution,
+        ),
+        edges: edge_explanations(&graph.metadata),
     }
 }

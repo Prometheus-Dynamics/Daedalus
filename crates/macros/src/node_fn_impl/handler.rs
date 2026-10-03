@@ -2,12 +2,13 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{ItemFn, LitStr};
 
-use crate::helpers::compile_error;
+use crate::helpers::{arc_inner_type, compile_error, is_unit_type, last_segment, strip_ref};
 
+use super::descriptor::is_fanin_ty;
 use super::handler_fetch;
 use super::parse::PortMeta;
 use super::shader;
-use super::type_analysis::{arc_inner_type, is_unit_type, ok_type_from_return, payload_inner_type};
+use super::type_analysis::{ok_type_from_return, payload_inner_type};
 
 pub(super) struct GraphCtxArg {
     pub(super) ident: syn::Ident,
@@ -31,7 +32,6 @@ pub(super) struct HandlerInputs<'a> {
     pub(super) state_ty_attr: Option<&'a syn::Type>,
     pub(super) capability_attr: Option<&'a LitStr>,
     pub(super) inner_fn_ident: &'a syn::Ident,
-    pub(super) data_crate: &'a TokenStream,
     pub(super) runtime_crate: &'a TokenStream,
     pub(super) gpu_crate: &'a TokenStream,
 }
@@ -67,7 +67,6 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         state_ty_attr,
         capability_attr,
         inner_fn_ident,
-        data_crate,
         runtime_crate,
         gpu_crate,
     } = inputs;
@@ -114,17 +113,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             if let syn::FnArg::Typed(pat) = arg
                 && let syn::Pat::Ident(id) = &*pat.pat
             {
-                let last_ident = match &*pat.ty {
-                    syn::Type::Path(tp) => tp.path.segments.last().map(|s| s.ident.to_string()),
-                    syn::Type::Reference(r) => {
-                        if let syn::Type::Path(tp) = &*r.elem {
-                            tp.path.segments.last().map(|s| s.ident.to_string())
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                };
+                let last_ident = last_segment(strip_ref(&pat.ty)).map(|s| s.ident.to_string());
                 match last_ident.as_deref() {
                     Some("GraphCtx") => {
                         let is_mut_ref = matches!(
@@ -246,22 +235,6 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 "ShaderContext parameter requires shader metadata (missing shaders(...))".into(),
             ));
         }
-
-        let is_fanin_ty = |ty: &syn::Type| -> bool {
-            let ty = if let syn::Type::Reference(r) = ty {
-                &*r.elem
-            } else {
-                ty
-            };
-            if let syn::Type::Path(tp) = ty
-                && tp.qself.is_none()
-                && let Some(seg) = tp.path.segments.last()
-                && seg.ident == "FanIn"
-            {
-                return true;
-            }
-            false
-        };
 
         // Determine the effective port metadata for each typed argument.
         //
@@ -400,18 +373,14 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                             } else if let Some(inner) = arc_inner_type(elem_ty) {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#inner>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#inner>();
                                         io.push_arc_as(Some(#port), __key, #ident);
                                     }
                                 }
                             } else {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#elem_ty>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#elem_ty>();
                                         io.push_as(Some(#port), __key, #ident);
                                     }
                                 }
@@ -423,9 +392,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         .zip(out_idents.iter())
                         .map(|(port, ident)| quote! {
                             {
-                                let __ty = #data_crate::model::TypeExpr::Opaque(::std::string::String::from("rust:unknown"));
-                                let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                    .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                let __key = #runtime_crate::transport_types::TypeKey::new("rust:unknown");
                                 io.push_as(Some(#port), __key, #ident);
                             }
                         })
@@ -453,18 +420,14 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                             if let Some(inner) = arc_inner_type(ok_ty) {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#inner>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#inner>();
                                         io.push_arc_as(Some(#out_port), __key, val);
                                     }
                                 }
                             } else {
                                 quote! {
                                     {
-                                        let __ty = #data_crate::typing::type_expr::<#ok_ty>();
-                                        let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                            .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                        let __key = #runtime_crate::transport::type_key_of::<#ok_ty>();
                                         io.push_as(Some(#out_port), __key, val);
                                     }
                                 }
@@ -472,9 +435,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         } else {
                             quote! {
                                 {
-                                    let __ty = #data_crate::model::TypeExpr::Opaque(::std::string::String::from("rust:unknown"));
-                                    let __key = #runtime_crate::transport::typeexpr_transport_key(&__ty)
-                                        .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                                    let __key = #runtime_crate::transport_types::TypeKey::new("rust:unknown");
                                     io.push_as(Some(#out_port), __key, val);
                                 }
                             }
@@ -513,9 +474,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         let ret_handling = if state_binding.is_some() {
             quote! {
                 let __state_result = { #ret_handling };
-                ctx.state
-                    .set_native(&__state_key, __state_value)
-                    .map_err(|err| #runtime_crate::NodeError::Handler(err.to_string()))?;
+                ctx.state.set_native(&__state_key, __state_value);
                 __state_result
             }
         } else {

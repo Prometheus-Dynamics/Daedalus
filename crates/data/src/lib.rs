@@ -24,6 +24,14 @@ pub mod to_value;
 pub mod typing;
 pub mod units;
 
+/// Cargo features of `daedalus-data` enabled in this build (comma-separated).
+///
+/// Together with [`CARGO_MANIFEST`], whose `[package.metadata.daedalus]` table classifies
+/// each feature, this feeds the dynamic plugin build fingerprint.
+pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+/// This crate's `Cargo.toml`.
+pub const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
+
 #[cfg(feature = "json")]
 pub mod json;
 

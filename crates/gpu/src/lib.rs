@@ -12,6 +12,7 @@
 mod async_api;
 mod buffer;
 mod convert;
+mod external;
 mod handles;
 #[cfg(feature = "gpu-mock")]
 mod mock;
@@ -27,9 +28,20 @@ mod wgpu_backend;
 pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use convert::{Backing, Compute, DeviceBridge};
+#[cfg(target_os = "linux")]
+pub use external::{
+    DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, ExternalFrameDescriptor, ExternalPlane, ValidatedLayout,
+    export_dmabuf_fence,
+};
+pub use external::{
+    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalImportError,
+    ExternalImportSupport, ExternalKeepalive,
+};
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
 #[cfg(feature = "gpu-mock")]
 pub use mock::MockBackend;
+#[cfg(all(feature = "gpu-mock", target_os = "linux"))]
+pub use mock::MockImportRecord;
 pub use noop::NoopBackend;
 pub use selection::select_backend;
 #[cfg(feature = "gpu-async")]
@@ -38,7 +50,9 @@ pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu;
 #[cfg(feature = "gpu-wgpu")]
-pub use wgpu_backend::{WgpuBackend, WgpuStagingPoolConfig, WgpuStagingPoolStats};
+pub use wgpu_backend::{
+    WgpuBackend, WgpuStagingPoolConfig, WgpuStagingPoolStats, texture_plane_views,
+};
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
@@ -81,6 +95,26 @@ pub enum GpuFormat {
     Rgba8Unorm,
     Rgba16Float,
     Depth24Stencil8,
+    /// Two 8-bit channels (e.g. an imported NV12 UV plane).
+    Rg8Unorm,
+    /// 8-bit BGRA in memory order (e.g. an imported `XRGB8888` camera frame).
+    Bgra8Unorm,
+    /// Two-plane 4:2:0 YUV: a full-size 8-bit Y plane and a half-size interleaved 8-bit UV plane.
+    /// Only produced by dmabuf import; read back as the packed Y plane followed by the UV plane.
+    Nv12,
+}
+
+impl GpuFormat {
+    /// Every format, in declaration order.
+    pub const ALL: [GpuFormat; 7] = [
+        GpuFormat::R8Unorm,
+        GpuFormat::Rgba8Unorm,
+        GpuFormat::Rgba16Float,
+        GpuFormat::Depth24Stencil8,
+        GpuFormat::Rg8Unorm,
+        GpuFormat::Bgra8Unorm,
+        GpuFormat::Nv12,
+    ];
 }
 
 /// Per-format feature flags for planner/runtime decisions.
@@ -102,6 +136,34 @@ pub struct GpuBlockInfo {
     pub block_width: u32,
     pub block_height: u32,
     pub bytes_per_block: u32,
+}
+
+impl GpuBlockInfo {
+    /// Block layout derived from [`format_planes`]: single-plane formats are 1x1 texel blocks;
+    /// subsampled multi-planar formats use the smallest block covering one texel of every plane
+    /// (NV12: a 2x2 block of 4 Y bytes plus one 2-byte UV texel).
+    pub fn for_format(format: GpuFormat) -> Self {
+        let planes = format_planes(format);
+        let block = planes.iter().map(|p| p.subsampling).max().unwrap_or(1);
+        let bytes_per_block = planes
+            .iter()
+            .map(|p| {
+                let (w, h) = p.extent(block, block);
+                p.bytes_per_texel * w * h
+            })
+            .sum();
+        Self {
+            format,
+            block_width: block,
+            block_height: block,
+            bytes_per_block,
+        }
+    }
+
+    /// Block info for each of `formats`, in order.
+    pub fn for_formats(formats: &[GpuFormat]) -> Vec<Self> {
+        formats.iter().copied().map(Self::for_format).collect()
+    }
 }
 
 bitflags! {
@@ -296,8 +358,9 @@ impl GpuContextHandle {
 
     #[cfg(feature = "gpu-async")]
     pub async fn read_texture_async(&self, handle: GpuImageHandle) -> Result<Vec<u8>, GpuError> {
+        use parking_lot::Mutex;
         use std::future::poll_fn;
-        use std::sync::{Arc, Mutex};
+        use std::sync::Arc;
         use std::task::Poll;
 
         struct ReadState {
@@ -322,9 +385,7 @@ impl GpuContextHandle {
             let result = ctx.read_texture(&handle);
             let ok = result.is_ok();
             let waker = {
-                let mut state = worker_state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut state = worker_state.lock();
                 state.result = Some(result);
                 state.waker.take()
             };
@@ -342,9 +403,7 @@ impl GpuContextHandle {
         });
 
         poll_fn(|cx| {
-            let mut state = state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = state.lock();
             if let Some(result) = state.result.take() {
                 return Poll::Ready(result);
             }
@@ -377,14 +436,71 @@ impl GpuContextHandle {
     pub fn create_image(&self, req: &GpuImageRequest) -> Result<GpuImageHandle, GpuError> {
         self.backend.create_image(req)
     }
+
+    /// Whether the selected backend can import dmabuf frames, with the reason when it cannot.
+    pub fn dmabuf_import_support(&self) -> ExternalImportSupport {
+        self.backend.dmabuf_import_support()
+    }
+
+    pub fn supports_dmabuf_import(&self) -> bool {
+        self.backend.dmabuf_import_support().is_supported()
+    }
+
+    /// Import an externally owned dmabuf frame as a GPU image without a CPU copy.
+    ///
+    /// See [`ExternalFrameDescriptor`] for fd ownership and the keepalive contract.
+    #[cfg(target_os = "linux")]
+    pub fn import_dmabuf(
+        &self,
+        desc: ExternalFrameDescriptor,
+    ) -> Result<GpuImageHandle, ExternalImportError> {
+        self.backend.import_dmabuf(desc)
+    }
 }
 
+/// Bytes per pixel of a single-plane format; `None` for multi-planar formats.
 pub fn format_bytes_per_pixel(format: GpuFormat) -> Option<u32> {
+    match format_planes(format) {
+        [plane] => Some(plane.bytes_per_texel),
+        _ => None,
+    }
+}
+
+/// Layout of one plane of a [`GpuFormat`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpuPlaneFormat {
+    pub bytes_per_texel: u32,
+    /// Horizontal and vertical subsampling divisor relative to the image extent.
+    pub subsampling: u32,
+}
+
+impl GpuPlaneFormat {
+    const fn new(bytes_per_texel: u32, subsampling: u32) -> Self {
+        Self {
+            bytes_per_texel,
+            subsampling,
+        }
+    }
+
+    /// Extent of this plane for an image of `width`x`height`.
+    pub fn extent(self, width: u32, height: u32) -> (u32, u32) {
+        (width / self.subsampling, height / self.subsampling)
+    }
+}
+
+/// Planes of a format in memory order; single-plane formats have exactly one.
+pub fn format_planes(format: GpuFormat) -> &'static [GpuPlaneFormat] {
+    const fn one(bpp: u32) -> [GpuPlaneFormat; 1] {
+        [GpuPlaneFormat::new(bpp, 1)]
+    }
     match format {
-        GpuFormat::R8Unorm => Some(1),
-        GpuFormat::Rgba8Unorm => Some(4),
-        GpuFormat::Rgba16Float => Some(8),
-        GpuFormat::Depth24Stencil8 => Some(4),
+        GpuFormat::R8Unorm => &const { one(1) },
+        GpuFormat::Rg8Unorm => &const { one(2) },
+        GpuFormat::Rgba8Unorm | GpuFormat::Bgra8Unorm | GpuFormat::Depth24Stencil8 => {
+            &const { one(4) }
+        }
+        GpuFormat::Rgba16Float => &const { one(8) },
+        GpuFormat::Nv12 => &const { [GpuPlaneFormat::new(1, 1), GpuPlaneFormat::new(2, 2)] },
     }
 }
 
@@ -500,6 +616,24 @@ pub fn active_backend() -> GpuBackendKind {
 mod tests {
     use super::*;
     use std::{collections::HashSet, sync::Arc, thread};
+
+    #[test]
+    fn block_info_matches_format_planes_for_every_format() {
+        for format in GpuFormat::ALL {
+            let block = GpuBlockInfo::for_format(format);
+            assert_eq!(block.format, format);
+            match format_bytes_per_pixel(format) {
+                Some(bpp) => {
+                    assert_eq!((block.block_width, block.block_height), (1, 1));
+                    assert_eq!(block.bytes_per_block, bpp);
+                }
+                None => assert!(block.block_width > 1, "{format:?}"),
+            }
+        }
+        let nv12 = GpuBlockInfo::for_format(GpuFormat::Nv12);
+        assert_eq!((nv12.block_width, nv12.block_height), (2, 2));
+        assert_eq!(nv12.bytes_per_block, 6);
+    }
 
     #[test]
     fn falls_back_to_noop_when_only_noop_is_built() {

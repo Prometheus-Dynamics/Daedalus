@@ -1,10 +1,6 @@
-use daedalus_core::metadata::{DYNAMIC_INPUTS_KEY, DYNAMIC_OUTPUTS_KEY};
-use daedalus_data::model::Value;
 use daedalus_registry::capability::NodeDecl;
 use daedalus_runtime::handles::{NodeHandle, PortHandle};
-use daedalus_runtime::host_bridge::{
-    HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager, bridge_handler,
-};
+use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HostBridgeManager, bridge_handler};
 use daedalus_runtime::plugins::{PluginError, PluginRegistry};
 use std::fmt;
 
@@ -60,18 +56,11 @@ pub fn install_host_bridge(
         HOST_BRIDGE_ID.to_string()
     };
 
-    let decl = NodeDecl::new(&qualified_id)
-        .metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
-        // Allow arbitrary host ports without schema; the planner treats
-        // `Opaque("generic")` as a type variable and infers concrete types from graph edges.
-        .metadata(
-            DYNAMIC_INPUTS_KEY,
-            Value::String(::std::borrow::Cow::from("generic")),
-        )
-        .metadata(
-            DYNAMIC_OUTPUTS_KEY,
-            Value::String(::std::borrow::Cow::from("generic")),
-        );
+    let decl = daedalus_planner::host_bridge_metadata()
+        .into_iter()
+        .fold(NodeDecl::new(&qualified_id), |decl, (key, value)| {
+            decl.metadata(key, value)
+        });
     registry.register_node_decl(decl)?;
 
     let mut handler = bridge_handler(manager);

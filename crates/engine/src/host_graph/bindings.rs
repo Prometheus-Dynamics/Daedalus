@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use daedalus_runtime::executor::DirectHostRoute;
 use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::HostBridgeHandle;
-use daedalus_runtime::transport::typeexpr_transport_key;
+use daedalus_runtime::transport::type_key_of;
 use daedalus_transport::{FeedOutcome, Payload, TypeKey};
 
 pub struct HostGraphSubscription {
@@ -23,10 +23,8 @@ where
     T: Send + Sync + 'static,
 {
     pub fn push(&self, value: T) -> FeedOutcome {
-        self.host.feed_payload_ref(
-            self.port.as_str(),
-            Payload::owned(self.type_key.clone(), value),
-        )
+        self.host
+            .feed_payload(&self.port, Payload::owned(self.type_key.clone(), value))
     }
 
     pub fn port(&self) -> &str {
@@ -41,7 +39,7 @@ pub struct HostGraphPayloadInput {
 
 impl HostGraphPayloadInput {
     pub fn push(&self, payload: Payload) -> FeedOutcome {
-        self.host.feed_payload_ref(self.port.as_str(), payload)
+        self.host.feed_payload(&self.port, payload)
     }
 
     pub fn port(&self) -> &str {
@@ -60,7 +58,7 @@ where
     T: Send + Sync + 'static,
 {
     pub fn try_take(&self) -> Result<Option<T>, Box<Payload>> {
-        self.host.try_pop_owned::<T>(self.port.as_str())
+        self.host.try_pop_owned::<T>(&self.port)
     }
 
     pub fn port(&self) -> &str {
@@ -75,7 +73,7 @@ pub struct HostGraphPayloadOutput {
 
 impl HostGraphPayloadOutput {
     pub fn try_take(&self) -> Option<Payload> {
-        self.host.try_pop_payload(self.port.as_str())
+        self.host.try_pop_payload(&self.port)
     }
 
     pub fn port(&self) -> &str {
@@ -91,14 +89,14 @@ pub struct HostGraphLane<I> {
 
 impl HostGraphSubscription {
     pub fn try_recv_payload(&self) -> Option<Payload> {
-        self.host.try_pop_payload(self.port.as_str())
+        self.host.try_pop_payload(&self.port)
     }
 
     pub fn try_recv<T>(&self) -> Option<T>
     where
         T: Clone + Send + Sync + 'static,
     {
-        self.host.try_pop(self.port.as_str())
+        self.host.try_pop(&self.port)
     }
 }
 
@@ -108,76 +106,27 @@ pub trait HostGraphRunInput {
     fn into_parts(self) -> (PortId, TypeKey, Self::Value);
 }
 
-impl<I> HostGraphRunInput for (&str, I)
+impl<P, I> HostGraphRunInput for (P, I)
 where
+    P: Into<PortId>,
     I: Send + Sync + 'static,
 {
     type Value = I;
 
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), type_key_for::<I>(), self.1)
+        (self.0.into(), type_key_of::<I>(), self.1)
     }
 }
 
-impl<I> HostGraphRunInput for (String, I)
+impl<P, K, I> HostGraphRunInput for (P, K, I)
 where
-    I: Send + Sync + 'static,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), type_key_for::<I>(), self.1)
-    }
-}
-
-impl<I> HostGraphRunInput for (PortId, I)
-where
-    I: Send + Sync + 'static,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (self.0, type_key_for::<I>(), self.1)
-    }
-}
-
-impl<I, K> HostGraphRunInput for (&str, K, I)
-where
-    I: Send + Sync + 'static,
+    P: Into<PortId>,
     K: Into<TypeKey>,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), self.1.into(), self.2)
-    }
-}
-
-impl<I, K> HostGraphRunInput for (String, K, I)
-where
     I: Send + Sync + 'static,
-    K: Into<TypeKey>,
 {
     type Value = I;
 
     fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (PortId::from(self.0), self.1.into(), self.2)
+        (self.0.into(), self.1.into(), self.2)
     }
-}
-
-impl<I, K> HostGraphRunInput for (PortId, K, I)
-where
-    I: Send + Sync + 'static,
-    K: Into<TypeKey>,
-{
-    type Value = I;
-
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (self.0, self.1.into(), self.2)
-    }
-}
-
-pub(crate) fn type_key_for<T: 'static>() -> TypeKey {
-    typeexpr_transport_key(&daedalus_data::typing::type_expr::<T>())
-        .unwrap_or_else(|_| TypeKey::new(std::any::type_name::<T>()))
 }

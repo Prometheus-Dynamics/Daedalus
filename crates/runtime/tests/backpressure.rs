@@ -1,8 +1,7 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::{
     BackpressureStrategy, ExecuteError, Executor, NodeHandler, RuntimeEdgePolicy, RuntimeNode,
     SchedulerConfig, build_runtime,
@@ -31,7 +30,7 @@ impl NodeHandler for Harness {
                 );
             }
             "cons" => {
-                let mut guard = self.seen.lock().unwrap();
+                let mut guard = self.seen.lock();
                 for payload in io.inputs_for("in") {
                     if let Some(bytes) = payload.inner.get_bytes() {
                         guard.push(String::from_utf8_lossy(&bytes).into());
@@ -46,39 +45,13 @@ impl NodeHandler for Harness {
 
 fn plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("prod"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("cons"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("prod").with_outputs(["out"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("cons").with_inputs(["in"]));
+    graph.edges.push(Edge::new(0, "out", 1, "in"));
     ExecutionPlan::new(graph, vec![])
 }
 
@@ -97,7 +70,7 @@ fn fifo_drains_all_inputs() {
     let telemetry = Executor::new(&rt, handler).run().expect("run");
     assert_eq!(telemetry.backpressure_events, 0);
     assert_eq!(
-        seen.lock().unwrap().clone(),
+        seen.lock().clone(),
         vec!["one".to_string(), "two".to_string()]
     );
 }
@@ -117,7 +90,7 @@ fn bounded_backpressure_warns_and_preserves_queue() {
     let telemetry = Executor::new(&rt, handler).run().expect("run");
     assert_eq!(telemetry.backpressure_events, 1);
     // Second payload should be rejected, first retained.
-    assert_eq!(seen.lock().unwrap().clone(), vec!["one".to_string()]);
+    assert_eq!(seen.lock().clone(), vec!["one".to_string()]);
     assert_eq!(telemetry.warnings.len(), 1);
 }
 
@@ -143,5 +116,5 @@ fn bounded_backpressure_error_fails_fast() {
             ..
         }
     ));
-    assert!(seen.lock().unwrap().is_empty());
+    assert!(seen.lock().is_empty());
 }

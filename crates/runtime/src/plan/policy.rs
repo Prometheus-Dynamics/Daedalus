@@ -60,10 +60,7 @@ impl RuntimeEdgePolicy {
     }
 
     pub fn bounded_capacity(&self) -> Option<usize> {
-        match self.pressure {
-            PressurePolicy::Bounded { capacity, .. } => Some(capacity.max(1)),
-            _ => None,
-        }
+        self.pressure.bounded_capacity()
     }
 }
 
@@ -84,10 +81,7 @@ pub(crate) fn edge_policy_from_metadata(
 ) -> Result<RuntimeEdgePolicy, EdgePolicyMetadataError> {
     let policy = metadata
         .get(EDGE_PRESSURE_POLICY_KEY)
-        .and_then(|value| match value {
-            Value::String(s) => Some(s.as_ref()),
-            _ => None,
-        })
+        .and_then(Value::as_str)
         .unwrap_or(EDGE_PRESSURE_FIFO);
     let pressure = match policy {
         EDGE_PRESSURE_LATEST_ONLY | EDGE_PRESSURE_NEWEST_WINS => PressurePolicy::LatestOnly,
@@ -97,10 +91,7 @@ pub(crate) fn edge_policy_from_metadata(
         EDGE_PRESSURE_BOUNDED => {
             let cap = metadata
                 .get(EDGE_CAPACITY_KEY)
-                .and_then(|value| match value {
-                    Value::Int(n) => u64::try_from(*n).ok(),
-                    _ => None,
-                })
+                .and_then(Value::as_u64)
                 .and_then(|cap| usize::try_from(cap).ok())
                 .unwrap_or(1)
                 .max(1);
@@ -118,10 +109,7 @@ pub(crate) fn edge_policy_from_metadata(
     };
     let freshness = metadata
         .get(EDGE_FRESHNESS_POLICY_KEY)
-        .and_then(|value| match value {
-            Value::String(s) => Some(s.as_ref()),
-            _ => None,
-        })
+        .and_then(Value::as_str)
         .map(|policy| match policy {
             EDGE_FRESHNESS_LATEST_BY_SEQUENCE => Ok(FreshnessPolicy::LatestBySequence),
             EDGE_FRESHNESS_LATEST_BY_TIMESTAMP => Ok(FreshnessPolicy::LatestByTimestamp),

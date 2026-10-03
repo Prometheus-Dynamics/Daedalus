@@ -1,7 +1,8 @@
+use parking_lot::RwLock;
 use std::any::Any;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_data::typing;
@@ -9,6 +10,7 @@ use daedalus_transport::Payload;
 use smallvec::SmallVec;
 
 use crate::executor::CorrelatedPayload;
+use crate::handles::PortId;
 
 pub const DEFAULT_OUTPUT_PORT: &str = "out";
 
@@ -36,13 +38,21 @@ pub struct TypedInputResolution {
 pub type ConstCoercer = Box<dyn Fn(&Value) -> Option<Box<dyn Any + Send + Sync>> + Send + Sync>;
 pub type ConstCoercerMap = Arc<RwLock<HashMap<&'static str, ConstCoercer>>>;
 
+/// One port-tagged payload on a node's inputs or outputs.
+pub type NodePort = (PortId, CorrelatedPayload);
+
+/// Resolve an optional port name, defaulting to [`DEFAULT_OUTPUT_PORT`] without allocating.
+fn port_or_default(port: Option<&str>) -> PortId {
+    port.map_or(PortId::from_static(DEFAULT_OUTPUT_PORT), PortId::new)
+}
+
 pub fn new_const_coercer_map() -> ConstCoercerMap {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
 pub struct NodeIo {
-    inputs: SmallVec<[(String, CorrelatedPayload); 4]>,
-    outputs: SmallVec<[(String, CorrelatedPayload); 4]>,
+    inputs: SmallVec<[NodePort; 4]>,
+    outputs: SmallVec<[NodePort; 4]>,
     const_coercers: Option<ConstCoercerMap>,
 }
 
@@ -55,15 +65,15 @@ impl NodeIo {
         }
     }
 
-    pub fn from_inputs(inputs: Vec<(String, CorrelatedPayload)>) -> Self {
+    pub fn from_inputs(inputs: impl IntoIterator<Item = NodePort>) -> Self {
         Self {
-            inputs: SmallVec::from_vec(inputs),
+            inputs: inputs.into_iter().collect(),
             outputs: SmallVec::new(),
             const_coercers: None,
         }
     }
 
-    pub fn from_single_input(port: String, payload: CorrelatedPayload) -> Self {
+    pub fn from_single_input(port: PortId, payload: CorrelatedPayload) -> Self {
         let mut inputs = SmallVec::new();
         inputs.push((port, payload));
         Self {
@@ -78,7 +88,7 @@ impl NodeIo {
         self
     }
 
-    pub fn inputs(&self) -> &[(String, CorrelatedPayload)] {
+    pub fn inputs(&self) -> &[NodePort] {
         &self.inputs
     }
 
@@ -89,19 +99,19 @@ impl NodeIo {
             .map(|(_, payload)| payload)
     }
 
-    pub fn outputs(&self) -> &[(String, CorrelatedPayload)] {
+    pub fn outputs(&self) -> &[NodePort] {
         &self.outputs
     }
 
-    pub fn take_outputs(self) -> Vec<(String, CorrelatedPayload)> {
+    pub fn take_outputs(self) -> Vec<NodePort> {
         self.outputs.into_vec()
     }
 
-    pub fn take_outputs_small(self) -> SmallVec<[(String, CorrelatedPayload); 4]> {
+    pub fn take_outputs_small(self) -> SmallVec<[NodePort; 4]> {
         self.outputs
     }
 
-    pub fn push_payload(&mut self, port: impl Into<String>, payload: Payload) {
+    pub fn push_payload(&mut self, port: impl Into<PortId>, payload: Payload) {
         self.outputs
             .push((port.into(), CorrelatedPayload::from_edge(payload)));
     }
@@ -118,12 +128,12 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_as_to(port.unwrap_or(DEFAULT_OUTPUT_PORT), type_key, value);
+        self.push_as_to(port_or_default(port), type_key, value);
     }
 
     pub fn push_as_to<T>(
         &mut self,
-        port: impl Into<String>,
+        port: impl Into<PortId>,
         type_key: daedalus_transport::TypeKey,
         value: T,
     ) where
@@ -147,12 +157,12 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_arc_as_to(port.unwrap_or(DEFAULT_OUTPUT_PORT), type_key, value);
+        self.push_arc_as_to(port_or_default(port), type_key, value);
     }
 
     pub fn push_arc_as_to<T>(
         &mut self,
-        port: impl Into<String>,
+        port: impl Into<PortId>,
         type_key: daedalus_transport::TypeKey,
         value: Arc<T>,
     ) where
@@ -172,17 +182,15 @@ impl NodeIo {
     where
         T: Send + Sync + 'static,
     {
-        let type_key = crate::transport::typeexpr_transport_key(&typing::type_expr::<T>())
-            .unwrap_or_else(|_| daedalus_transport::TypeKey::new(std::any::type_name::<T>()));
-        self.push_as_to(port.unwrap_or(DEFAULT_OUTPUT_PORT), type_key, value);
+        let type_key = crate::transport::type_key_of::<T>();
+        self.push_as_to(port_or_default(port), type_key, value);
     }
 
-    pub fn push_to<T>(&mut self, port: impl Into<String>, value: T)
+    pub fn push_to<T>(&mut self, port: impl Into<PortId>, value: T)
     where
         T: Send + Sync + 'static,
     {
-        let type_key = crate::transport::typeexpr_transport_key(&typing::type_expr::<T>())
-            .unwrap_or_else(|_| daedalus_transport::TypeKey::new(std::any::type_name::<T>()));
+        let type_key = crate::transport::type_key_of::<T>();
         self.push_as_to(port, type_key, value);
     }
 
@@ -197,14 +205,14 @@ impl NodeIo {
     where
         T: Send + Sync + 'static,
     {
-        self.push_to(port.unwrap_or(DEFAULT_OUTPUT_PORT), value);
+        self.push_to(port_or_default(port), value);
     }
 
     pub fn push_output<T>(&mut self, port: Option<&str>, value: T)
     where
         T: Send + Sync + 'static,
     {
-        self.push_to(port.unwrap_or(DEFAULT_OUTPUT_PORT), value);
+        self.push_to(port_or_default(port), value);
     }
 
     pub fn push_output_default<T>(&mut self, value: T)
@@ -215,10 +223,10 @@ impl NodeIo {
     }
 
     pub fn push_value(&mut self, port: Option<&str>, value: Value) {
-        self.push_value_to(port.unwrap_or(DEFAULT_OUTPUT_PORT), value);
+        self.push_value_to(port_or_default(port), value);
     }
 
-    pub fn push_value_to(&mut self, port: impl Into<String>, value: Value) {
+    pub fn push_value_to(&mut self, port: impl Into<PortId>, value: Value) {
         self.push_payload(port, Payload::owned("value", value));
     }
 
@@ -226,7 +234,7 @@ impl NodeIo {
         self.push_value_to(DEFAULT_OUTPUT_PORT, value);
     }
 
-    pub fn push_correlated_payload(&mut self, port: impl Into<String>, payload: CorrelatedPayload) {
+    pub fn push_correlated_payload(&mut self, port: impl Into<PortId>, payload: CorrelatedPayload) {
         self.outputs.push((port.into(), payload));
     }
 
@@ -286,7 +294,7 @@ impl NodeIo {
         self.inputs
             .iter()
             .filter_map(|(port, payload)| {
-                let index = crate::fanin::parse_indexed_port(prefix, port)?;
+                let index = crate::fanin::parse_indexed_port(prefix, port.as_str())?;
                 let value = payload.inner.get_ref::<T>()?.clone();
                 Some((index, value))
             })
@@ -329,8 +337,7 @@ impl NodeIo {
         T: Clone + Send + Sync + 'static,
     {
         if let Some(map) = self.const_coercers.as_ref()
-            && let Ok(guard) = map.read()
-            && let Some(coercer) = guard.get(std::any::type_name::<T>())
+            && let Some(coercer) = map.read().get(std::any::type_name::<T>())
             && let Some(any) = coercer(value)
             && let Ok(typed) = any.downcast::<T>()
         {

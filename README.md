@@ -30,8 +30,13 @@ The facade crate is published as `daedalus-rs` and imported as `daedalus`.
 
 The facade starts with no default feature set. Enable only the layers your application needs.
 
-- `engine`: high-level engine facade.
+- `engine-full`: recommended for applications; `engine` plus `executor-pool` and `metrics`.
+- `engine`: lean high-level engine facade (serial and scoped-thread execution, no worker pool, no metrics).
+- `executor-pool`: persistent Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive`; without it those modes run ready segments on scoped threads.
+- `metrics`: executor telemetry collection; without it `MetricsLevel` settings compile but record nothing.
+- `embedded`: smallest in-process host preset (`engine` + `plugins`, no pool, no metrics).
 - `plugins`: plugin registry and macro-generated plugin installation.
+- `dylib-plugins`: load native Rust `cdylib` plugins at startup (see [docs/dynamic-plugins.md](docs/dynamic-plugins.md)).
 - `gpu-types`: GPU handles and type surface only.
 - `gpu-runtime`: GPU-aware registry, planner, and runtime wiring.
 - `gpu-engine`: GPU-aware engine wiring.
@@ -44,7 +49,7 @@ The facade starts with no default feature set. Enable only the layers your appli
 
 ```toml
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine", "plugins"] }
+daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine-full", "plugins"] }
 ```
 
 Useful examples:
@@ -54,32 +59,20 @@ cargo run -p daedalus-examples --bin quickstart_typed_cpu_graph
 cargo run -p daedalus-examples --bin quickstart_bounded_streaming_io
 cargo run -p daedalus-examples --bin typed_handle_graph
 cargo run -p daedalus-examples --bin adapter_path
+cargo run -p daedalus-examples --bin external_frame_source
 cargo run -p daedalus-examples --bin observability
 cargo run -p daedalus-examples --features gpu-wgpu --bin gpu_node
 ```
 
 ## Validation
 
-```bash
-./scripts/repo-clean.sh
-cargo fmt --all -- --check
-./scripts/check-file-sizes.sh
-./scripts/check-workspace-deps.sh
-./scripts/check-gpu-async-blocking.sh
-cargo test --workspace --all-targets --features "engine,plugins"
-cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
-cargo doc --workspace --no-deps
-```
-
-Docker-backed example validation:
-
-```bash
-cargo test -p daedalus-rs --test docker_examples -- --ignored --nocapture
-```
+See [docs/testing.md](docs/testing.md) for the validation loop (`./scripts/repo-clean.sh` runs the
+fixes and the full CI loop), focused feature checks, GPU checks, and Docker-backed example tests.
 
 ## Documentation
 
 - [docs/README.md](docs/README.md): documentation map.
+- [docs/node-authoring.md](docs/node-authoring.md): node authoring, adapters, payload residency, and host integration.
 - [docs/development.md](docs/development.md): development rules, features, observability, and production API guidance.
 - [docs/testing.md](docs/testing.md): supported validation surface.
 - [crates/ffi/README.md](crates/ffi/README.md): FFI contract, package, worker, and SDK direction.

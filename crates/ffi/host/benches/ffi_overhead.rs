@@ -1,7 +1,8 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use daedalus_ffi_core::{
@@ -40,10 +41,7 @@ impl BackendRunner for EchoRunner {
             response.outputs.insert("out".into(), value.clone());
         }
         if let Some(value) = request.state {
-            *self
-                .state
-                .lock()
-                .map_err(|_| RunnerPoolError::LockPoisoned)? = Some(value.clone());
+            *self.state.lock() = Some(value.clone());
             response.state = Some(value);
         }
         Ok(response)
@@ -508,18 +506,10 @@ fn bench_cross_process_payload_handle_refs(c: &mut Criterion) {
             let root = tempfile::tempdir().expect("python payload worker root");
             let worker = write_python_payload_worker(root.path());
             let backend = BackendConfig {
-                backend: BackendKind::Python,
-                runtime_model: daedalus_ffi_core::BackendRuntimeModel::PersistentWorker,
-                entry_module: Some(worker.display().to_string()),
-                entry_class: None,
-                entry_symbol: Some("payload_len".into()),
-                executable: Some(python),
                 args: vec![worker.display().to_string()],
-                classpath: Vec::new(),
-                native_library_paths: Vec::new(),
                 working_dir: Some(root.path().display().to_string()),
-                env: BTreeMap::new(),
-                options: BTreeMap::new(),
+                ..BackendConfig::persistent_worker(BackendKind::Python, python, "payload_len")
+                    .with_entry_module(worker.display().to_string())
             };
             let runner = PersistentWorkerRunner::from_backend(&backend).expect("python runner");
             runner.start().expect("start python payload worker");
@@ -535,18 +525,10 @@ fn bench_cross_process_payload_handle_refs(c: &mut Criterion) {
             let root = tempfile::tempdir().expect("node payload worker root");
             let worker = write_node_payload_worker(root.path());
             let backend = BackendConfig {
-                backend: BackendKind::Node,
-                runtime_model: daedalus_ffi_core::BackendRuntimeModel::PersistentWorker,
-                entry_module: Some(worker.display().to_string()),
-                entry_class: None,
-                entry_symbol: Some("payload_len".into()),
-                executable: Some(node),
                 args: vec![worker.display().to_string()],
-                classpath: Vec::new(),
-                native_library_paths: Vec::new(),
                 working_dir: Some(root.path().display().to_string()),
-                env: BTreeMap::new(),
-                options: BTreeMap::new(),
+                ..BackendConfig::persistent_worker(BackendKind::Node, node, "payload_len")
+                    .with_entry_module(worker.display().to_string())
             };
             let runner = PersistentWorkerRunner::from_backend(&backend).expect("node runner");
             runner.start().expect("start node payload worker");
@@ -562,22 +544,15 @@ fn bench_cross_process_payload_handle_refs(c: &mut Criterion) {
             let root = tempfile::tempdir().expect("java payload worker root");
             let classes = write_java_payload_worker(root.path(), &javac);
             let backend = BackendConfig {
-                backend: BackendKind::Java,
-                runtime_model: daedalus_ffi_core::BackendRuntimeModel::PersistentWorker,
-                entry_module: None,
-                entry_class: Some("PayloadWorker".into()),
-                entry_symbol: Some("payload_len".into()),
-                executable: Some(java),
                 args: vec![
                     "-cp".into(),
                     classes.display().to_string(),
                     "PayloadWorker".into(),
                 ],
                 classpath: vec![classes.display().to_string()],
-                native_library_paths: Vec::new(),
                 working_dir: Some(root.path().display().to_string()),
-                env: BTreeMap::new(),
-                options: BTreeMap::new(),
+                ..BackendConfig::persistent_worker(BackendKind::Java, java, "payload_len")
+                    .with_entry_class("PayloadWorker")
             };
             let runner = PersistentWorkerRunner::from_backend(&backend).expect("java runner");
             runner.start().expect("start java payload worker");

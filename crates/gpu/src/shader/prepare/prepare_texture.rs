@@ -12,6 +12,30 @@ fn should_register_texture_handle(binding: &ShaderBinding, layout: &BindingSpec)
     matches!(layout.access, Access::WriteOnly | Access::ReadWrite)
 }
 
+/// Register a written texture binding with the backend so it can be returned as a handle.
+///
+/// Formats with no [`crate::GpuFormat`] (e.g. `r32float`) stay dispatch-internal: they get no
+/// handle rather than one that misreports the format.
+fn register_output_texture(
+    ctx: &TexturePrepareContext<'_>,
+    binding: &ShaderBinding,
+    layout: &BindingSpec,
+    texture: &Arc<wgpu::Texture>,
+    format: wgpu::TextureFormat,
+    (width, height): (u32, u32),
+    usage: wgpu::TextureUsages,
+) -> Result<Option<crate::GpuImageHandle>, GpuError> {
+    match ctx.backend {
+        Some(backend)
+            if should_register_texture_handle(binding, layout)
+                && crate::wgpu_backend::gpu_format_from_wgpu(format).is_some() =>
+        {
+            backend.wgpu_register_texture(texture.clone(), format, width, height, usage)
+        }
+        _ => Ok(None),
+    }
+}
+
 pub(super) struct TexturePrepareContext<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
@@ -47,8 +71,9 @@ pub(super) fn prepare_texture_binding(
             if ctx.is_storage_tex {
                 usage |= wgpu::TextureUsages::STORAGE_BINDING;
             }
-            let texture = if let Ok(mut p) = temp_pool().lock() {
-                p.take_texture(
+            let texture = temp_pool()
+                .lock()
+                .take_texture(
                     ctx.device_key,
                     size.width,
                     size.height,
@@ -66,32 +91,16 @@ pub(super) fn prepare_texture_binding(
                         usage,
                         view_formats: &[],
                     }))
-                })
-            } else {
-                Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("texture-binding"),
-                    size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage,
-                    view_formats: &[],
-                }))
-            };
-            let tex_handle = if should_register_texture_handle(binding, layout) {
-                ctx.backend.and_then(|b| {
-                    b.wgpu_register_texture(
-                        texture.clone(),
-                        wgpu::TextureFormat::Rgba8Unorm,
-                        *width,
-                        *height,
-                        usage,
-                    )
-                })
-            } else {
-                None
-            };
+                });
+            let tex_handle = register_output_texture(
+                &ctx,
+                binding,
+                layout,
+                &texture,
+                wgpu::TextureFormat::Rgba8Unorm,
+                (*width, *height),
+                usage,
+            )?;
             let bytes_per_row = (*width as usize) * 4;
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
             let padded_bpr = bytes_per_row.div_ceil(align) * align;
@@ -147,39 +156,30 @@ pub(super) fn prepare_texture_binding(
                 | wgpu::TextureUsages::COPY_SRC
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::TEXTURE_BINDING;
-            let texture = if let Ok(mut p) = temp_pool().lock() {
-                p.take_texture(ctx.device_key, size.width, size.height, format, usage)
-                    .unwrap_or_else(|| {
-                        Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
-                            label: Some("storage-texture"),
-                            size,
-                            mip_level_count: 1,
-                            sample_count: 1,
-                            dimension: wgpu::TextureDimension::D2,
-                            format,
-                            usage,
-                            view_formats: &[],
-                        }))
-                    })
-            } else {
-                Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("storage-texture"),
-                    size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                }))
-            };
-            let tex_handle = if should_register_texture_handle(binding, layout) {
-                ctx.backend.and_then(|b| {
-                    b.wgpu_register_texture(texture.clone(), format, *width, *height, usage)
-                })
-            } else {
-                None
-            };
+            let texture = temp_pool()
+                .lock()
+                .take_texture(ctx.device_key, size.width, size.height, format, usage)
+                .unwrap_or_else(|| {
+                    Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("storage-texture"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage,
+                        view_formats: &[],
+                    }))
+                });
+            let tex_handle = register_output_texture(
+                &ctx,
+                binding,
+                layout,
+                &texture,
+                format,
+                (*width, *height),
+                usage,
+            )?;
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             Ok(Prepared::Texture {
                 spec: *layout,
@@ -227,8 +227,9 @@ pub(super) fn prepare_texture_binding(
             if ctx.is_storage_tex {
                 usage |= wgpu::TextureUsages::STORAGE_BINDING;
             }
-            let texture = if let Ok(mut p) = temp_pool().lock() {
-                p.take_texture(
+            let texture = temp_pool()
+                .lock()
+                .take_texture(
                     ctx.device_key,
                     size.width,
                     size.height,
@@ -246,32 +247,16 @@ pub(super) fn prepare_texture_binding(
                         usage,
                         view_formats: &[],
                     }))
-                })
-            } else {
-                Arc::new(ctx.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("texture-binding"),
-                    size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage,
-                    view_formats: &[],
-                }))
-            };
-            let tex_handle = if should_register_texture_handle(binding, layout) {
-                ctx.backend.and_then(|b| {
-                    b.wgpu_register_texture(
-                        texture.clone(),
-                        wgpu::TextureFormat::Rgba8Unorm,
-                        handle.width,
-                        handle.height,
-                        usage,
-                    )
-                })
-            } else {
-                None
-            };
+                });
+            let tex_handle = register_output_texture(
+                &ctx,
+                binding,
+                layout,
+                &texture,
+                wgpu::TextureFormat::Rgba8Unorm,
+                (handle.width, handle.height),
+                usage,
+            )?;
             let bytes_per_row = (handle.width as usize) * 4;
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
             let padded_bpr = bytes_per_row.div_ceil(align) * align;

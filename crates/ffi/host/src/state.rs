@@ -59,12 +59,12 @@ pub fn export_runner_state(
 
 #[cfg(test)]
 mod tests {
+    use parking_lot::Mutex;
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     use daedalus_ffi_core::{
-        BackendKind, BackendRuntimeModel, InvokeRequest, InvokeResponse, WORKER_PROTOCOL_VERSION,
-        WirePayloadHandle,
+        BackendKind, InvokeRequest, InvokeResponse, WORKER_PROTOCOL_VERSION, WirePayloadHandle,
     };
     use daedalus_transport::{AccessMode, TypeKey};
 
@@ -82,27 +82,17 @@ mod tests {
                 protocol_version: request.protocol_version,
                 correlation_id: request.correlation_id,
                 outputs: BTreeMap::new(),
-                state: self
-                    .state
-                    .lock()
-                    .map_err(|_| RunnerPoolError::LockPoisoned)?
-                    .clone(),
+                state: self.state.lock().clone(),
                 events: Vec::new(),
             })
         }
 
         fn export_state(&self, _node_id: &str) -> Result<Option<WireValue>, RunnerPoolError> {
-            self.state
-                .lock()
-                .map_err(|_| RunnerPoolError::LockPoisoned)
-                .map(|state| state.clone())
+            Ok(self.state.lock().clone())
         }
 
         fn import_state(&self, _node_id: &str, state: WireValue) -> Result<(), RunnerPoolError> {
-            *self
-                .state
-                .lock()
-                .map_err(|_| RunnerPoolError::LockPoisoned)? = Some(state);
+            *self.state.lock() = Some(state);
             Ok(())
         }
     }
@@ -120,20 +110,8 @@ mod tests {
     }
 
     fn backend_config() -> BackendConfig {
-        BackendConfig {
-            backend: BackendKind::Python,
-            runtime_model: BackendRuntimeModel::PersistentWorker,
-            entry_module: Some("plugin.py".into()),
-            entry_class: None,
-            entry_symbol: Some("add".into()),
-            executable: Some("python".into()),
-            args: Vec::new(),
-            classpath: Vec::new(),
-            native_library_paths: Vec::new(),
-            working_dir: None,
-            env: BTreeMap::new(),
-            options: BTreeMap::new(),
-        }
+        BackendConfig::persistent_worker(BackendKind::Python, "python", "add")
+            .with_entry_module("plugin.py")
     }
 
     fn decoded_response(state: Option<WireValue>) -> DecodedInvokeResponse {

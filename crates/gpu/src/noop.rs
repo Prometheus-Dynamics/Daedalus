@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::handles::{GpuBufferHandle, GpuImageHandle};
 use crate::traits::GpuBackend;
@@ -12,6 +12,8 @@ use crate::{
 pub struct NoopBackend {
     stats: Mutex<TransferStats>,
 }
+
+const SUPPORTED_FORMATS: [GpuFormat; 2] = [GpuFormat::R8Unorm, GpuFormat::Rgba8Unorm];
 
 impl GpuBackend for NoopBackend {
     fn kind(&self) -> GpuBackendKind {
@@ -33,7 +35,7 @@ impl GpuBackend for NoopBackend {
 
     fn capabilities(&self) -> GpuCapabilities {
         GpuCapabilities {
-            supported_formats: vec![GpuFormat::R8Unorm, GpuFormat::Rgba8Unorm],
+            supported_formats: SUPPORTED_FORMATS.to_vec(),
             format_features: vec![
                 GpuFormatFeatures {
                     format: GpuFormat::R8Unorm,
@@ -50,20 +52,7 @@ impl GpuBackend for NoopBackend {
                     max_samples: 1,
                 },
             ],
-            format_blocks: vec![
-                crate::GpuBlockInfo {
-                    format: GpuFormat::R8Unorm,
-                    block_width: 1,
-                    block_height: 1,
-                    bytes_per_block: 1,
-                },
-                crate::GpuBlockInfo {
-                    format: GpuFormat::Rgba8Unorm,
-                    block_width: 1,
-                    block_height: 1,
-                    bytes_per_block: 4,
-                },
-            ],
+            format_blocks: crate::GpuBlockInfo::for_formats(&SUPPORTED_FORMATS),
             max_buffer_size: 0,
             max_texture_dimension: 0,
             max_texture_samples: 1,
@@ -85,10 +74,7 @@ impl GpuBackend for NoopBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_upload(req.size_bytes);
         Ok(GpuBufferHandle::new(
             req.size_bytes,
@@ -101,10 +87,7 @@ impl GpuBackend for NoopBackend {
         if req.usage.is_empty() {
             return Err(GpuError::Unsupported);
         }
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         let bpp = crate::format_bytes_per_pixel(req.format).unwrap_or(4) as u64;
         let bytes = (req.width as u64) * (req.height as u64) * bpp;
         stats.record_upload(bytes);
@@ -118,24 +101,15 @@ impl GpuBackend for NoopBackend {
     }
 
     fn stats(&self) -> TransferStats {
-        *self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        *self.stats.lock()
     }
 
     fn take_stats(&self) -> TransferStats {
-        self.stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take()
+        self.stats.lock().take()
     }
 
     fn record_download(&self, bytes: u64) {
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_download(bytes);
     }
 
@@ -145,10 +119,7 @@ impl GpuBackend for NoopBackend {
         data: &[u8],
     ) -> Result<GpuImageHandle, GpuError> {
         let handle = self.create_image(req)?;
-        let mut stats = self
-            .stats
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self.stats.lock();
         stats.record_upload(data.len() as u64);
         Ok(handle)
     }

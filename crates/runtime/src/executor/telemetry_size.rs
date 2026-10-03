@@ -1,4 +1,5 @@
-use std::sync::{Arc, OnceLock, RwLock};
+use parking_lot::RwLock;
+use std::sync::{Arc, OnceLock};
 
 pub type RuntimeDataSizeInspector = fn(&dyn std::any::Any) -> Option<u64>;
 
@@ -18,10 +19,7 @@ impl RuntimeDataSizeInspectors {
     }
 
     pub fn register(&self, inspector: RuntimeDataSizeInspector) {
-        let mut inspectors = self
-            .inspectors
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut inspectors = self.inspectors.write();
         let inspector_addr = inspector as usize;
         if inspectors
             .iter()
@@ -37,10 +35,7 @@ impl RuntimeDataSizeInspectors {
             return Some(bytes);
         }
         let value = payload.value_any()?;
-        let inspectors = self
-            .inspectors
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let inspectors = self.inspectors.read();
         inspectors.iter().find_map(|inspector| inspector(value))
     }
 }

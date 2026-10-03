@@ -8,11 +8,22 @@ mod adapter;
 mod boundary_contract;
 mod boundary_storage;
 mod device;
+mod id_str;
 mod ids;
 mod kinds;
 mod payload;
 mod payload_lifecycle;
 mod stream_policy;
+
+/// Locks `mutex`, recovering the guard if a panicking holder poisoned it.
+///
+/// Every critical section in this crate leaves the guarded state structurally valid, so a
+/// poisoned lock carries no information worth propagating.
+pub(crate) fn lock_recover<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 pub use adapter::{
     AdaptCost, AdaptRequest, AdapterTable, CopyCost, FanoutAction, FanoutConsumer, FanoutPlan,
@@ -25,6 +36,7 @@ pub use boundary_contract::{
 };
 pub use boundary_storage::{BoundaryStorage, BoundaryTakeError, BoundaryVTable};
 pub use device::{Cpu, Device, DeviceClass, DeviceTransfer, Gpu, TransferFrom, TransferTo};
+pub use id_str::IdStr;
 pub use ids::{AdapterId, Layout, LayoutHash, SourceId, TypeKey};
 pub use kinds::{AccessMode, AdaptKind, AdapterKind, Residency};
 pub use payload::{
@@ -35,8 +47,8 @@ pub use payload_lifecycle::{
     PayloadRelease, PayloadReleaseQueue, ReleaseContext, ReleaseMode,
 };
 pub use stream_policy::{
-    CoalesceStrategy, DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy,
-    PolicyValidationError, PressurePolicy, validate_stream_policy,
+    CoalesceStrategy, DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, PolicyQueue,
+    PolicyValidationError, PressurePolicy, PushOutcome, validate_stream_policy,
 };
 
 #[cfg(test)]
@@ -52,7 +64,7 @@ mod tests {
 
     #[test]
     fn type_key_round_trips_as_string() {
-        let key = TypeKey::opaque("image:dynamic");
+        let key = TypeKey::new("image:dynamic");
         assert_eq!(key.as_str(), "image:dynamic");
         assert_eq!(key.to_string(), "image:dynamic");
     }

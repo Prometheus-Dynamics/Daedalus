@@ -3,7 +3,10 @@ mod context;
 mod edge_policy;
 mod metadata;
 mod nested;
+mod nested_ports;
 mod scope;
+mod sections;
+mod single_node;
 mod spec;
 
 pub use context::GraphCtx;
@@ -12,10 +15,10 @@ pub use scope::GraphScope;
 pub use spec::{GraphBuildError, IntoPortSpec, NodeSpec, PortSpec};
 
 use crate::handles::{NodeHandleLike, PortHandle};
-use crate::host_bridge::HOST_BRIDGE_META_KEY;
-use daedalus_core::metadata::{DYNAMIC_INPUTS_KEY, DYNAMIC_OUTPUTS_KEY};
-use daedalus_data::model::Value;
-use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, PortRef};
+use daedalus_data::model::{TypeExpr, Value};
+use daedalus_planner::{
+    ComputeAffinity, Edge, Graph, HostPortTypes, NodeInstance, NodeRef, PortRef,
+};
 use daedalus_registry::{capability::CapabilityRegistry, ids::NodeId};
 use std::collections::{BTreeMap, HashMap};
 
@@ -346,41 +349,60 @@ impl GraphBuilder {
         }
         self.host_bridge_added = true;
         self.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-            bundle: None,
-            label: Some(alias),
-            inputs: Vec::new(),
-            outputs: Vec::new(),
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: Vec::new(),
-            sync_groups: Vec::new(),
-            metadata: BTreeMap::from([
-                (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-                // Allow arbitrary host ports without registry-declared schemas.
-                // The planner treats `Opaque("generic")` as a type variable and infers
-                // concrete types from graph edges.
-                (
-                    DYNAMIC_INPUTS_KEY.to_string(),
-                    Value::String(std::borrow::Cow::from("generic")),
-                ),
-                (
-                    DYNAMIC_OUTPUTS_KEY.to_string(),
-                    Value::String(std::borrow::Cow::from("generic")),
-                ),
-            ]),
+            metadata: daedalus_planner::host_bridge_metadata(),
+            ..NodeInstance::new(HOST_BRIDGE_ID).with_label(alias)
         });
         self
     }
 
-    pub(crate) fn ensure_host_bridge_port(mut self, is_output: bool, port: &str) -> Self {
-        let host_alias = self
-            .host_bridge_alias
-            .clone()
-            .unwrap_or_else(|| "host".to_string());
-        if let Some(host) = self.nodes.iter_mut().find(|n| {
+    /// Declare host input `name` (a value the host pushes into the graph) with a fixed type.
+    ///
+    /// Undeclared host ports are generic and take their type from the connected node ports, so
+    /// one host input cannot feed ports of different types. A declared type is used as-is: each
+    /// edge from the port is checked against it and the planner inserts adapters per edge.
+    pub fn input_as(self, name: impl AsRef<str>, ty: TypeExpr) -> Self {
+        self.declare_host_port(true, name.as_ref(), ty)
+    }
+
+    /// [`Self::input_as`] with the registered type of `T` (`daedalus_data::typing::type_expr`).
+    /// Register `T` (e.g. by installing its plugin) before calling this.
+    pub fn input_typed<T: 'static>(self, name: impl AsRef<str>) -> Self {
+        self.input_as(name, daedalus_data::typing::type_expr::<T>())
+    }
+
+    /// Declare host output `name` (a value the graph delivers to the host) with a fixed type.
+    /// See [`Self::input_as`].
+    pub fn output_as(self, name: impl AsRef<str>, ty: TypeExpr) -> Self {
+        self.declare_host_port(false, name.as_ref(), ty)
+    }
+
+    /// [`Self::output_as`] with the registered type of `T`.
+    pub fn output_typed<T: 'static>(self, name: impl AsRef<str>) -> Self {
+        self.output_as(name, daedalus_data::typing::type_expr::<T>())
+    }
+
+    fn declare_host_port(self, is_host_input: bool, name: &str, ty: TypeExpr) -> Self {
+        let mut builder = self
+            .ensure_host_bridge(None)
+            .ensure_host_bridge_port(is_host_input, name);
+        if let Some(host) = builder.host_bridge_node_mut() {
+            let mut declared = HostPortTypes::from_node_metadata(&host.metadata);
+            declared.declare(is_host_input, name, ty);
+            declared.write_to_node_metadata(&mut host.metadata);
+        }
+        builder
+    }
+
+    fn host_bridge_node_mut(&mut self) -> Option<&mut NodeInstance> {
+        let host_alias = self.host_bridge_alias.as_deref().unwrap_or("host");
+        self.nodes.iter_mut().find(|n| {
             is_host_bridge(n)
-                && (n.label.as_deref() == Some(host_alias.as_str()) || n.id.0 == HOST_BRIDGE_ID)
-        }) {
+                && (n.label.as_deref() == Some(host_alias) || n.id.0 == HOST_BRIDGE_ID)
+        })
+    }
+
+    pub(crate) fn ensure_host_bridge_port(mut self, is_output: bool, port: &str) -> Self {
+        if let Some(host) = self.host_bridge_node_mut() {
             let ports = if is_output {
                 &mut host.outputs
             } else {

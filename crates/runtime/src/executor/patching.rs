@@ -80,14 +80,14 @@ fn normalize_port(port: &str) -> String {
 }
 
 fn apply_const_override(
-    const_inputs: &mut Vec<(String, daedalus_data::model::Value)>,
+    const_inputs: &mut NodeConstInputs,
     normalized_port: &str,
     port: &str,
     value: &Option<daedalus_data::model::Value>,
 ) {
     let mut matched = None;
     for (idx, (name, _)) in const_inputs.iter().enumerate() {
-        if normalize_port(name) == normalized_port {
+        if normalize_port(name.as_str()) == normalized_port {
             matched = Some(idx);
             break;
         }
@@ -106,7 +106,7 @@ fn apply_const_override(
             } else {
                 port.trim().to_string()
             };
-            const_inputs.push((key, next.clone()));
+            const_inputs.push((key.into(), next.clone()));
         }
         (None, None) => {}
     }

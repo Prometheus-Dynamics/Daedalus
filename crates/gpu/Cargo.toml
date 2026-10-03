@@ -23,9 +23,12 @@ gpu-noop = []
 gpu-mock = []
 gpu-wgpu = ["wgpu", "pollster", "bytemuck", "half", "daedalus-wgsl-infer", "image"]
 gpu-async = ["async-trait"]
+# Zero-copy import of Linux dmabuf frames into wgpu textures (Vulkan only).
+gpu-dmabuf = ["gpu-wgpu", "dep:ash"]
 image = ["dep:image"]
 
 [dependencies]
+parking_lot = { workspace = true }
 serde = { workspace = true }
 async-trait = { workspace = true, optional = true }
 bitflags = { workspace = true }
@@ -36,6 +39,11 @@ image = { workspace = true, optional = true }
 half = { workspace = true, optional = true }
 daedalus-wgsl-infer = { workspace = true, optional = true }
 tracing = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ash = { workspace = true, optional = true }
+# poll/ioctl for dmabuf acquire fences.
+libc = { workspace = true }
 
 [dev-dependencies]
 bytemuck = { workspace = true }

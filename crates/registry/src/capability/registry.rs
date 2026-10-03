@@ -35,6 +35,10 @@ impl PluginRegistry {
         self.entries.insert(manifest.id.clone(), manifest);
     }
 
+    pub fn remove(&mut self, key: &str) -> Option<PluginManifest> {
+        self.entries.remove(key)
+    }
+
     pub fn get(&self, id: &str) -> Option<&PluginManifest> {
         self.entries.get(id)
     }
@@ -90,6 +94,10 @@ impl TypeRegistry {
         self.entries.insert(decl.key.clone(), decl);
     }
 
+    pub fn remove(&mut self, key: &TypeKey) -> Option<TypeDecl> {
+        self.entries.remove(key)
+    }
+
     pub fn get(&self, key: &TypeKey) -> Option<&TypeDecl> {
         self.entries.get(key)
     }
@@ -139,6 +147,10 @@ impl AdapterRegistry {
     pub fn replace(&mut self, decl: AdapterDecl) {
         let decl = decl.normalize();
         self.entries.insert(decl.id.clone(), decl);
+    }
+
+    pub fn remove(&mut self, key: &AdapterId) -> Option<AdapterDecl> {
+        self.entries.remove(key)
     }
 
     pub fn get(&self, id: &AdapterId) -> Option<&AdapterDecl> {
@@ -195,6 +207,10 @@ impl NodeRegistry {
     pub fn replace(&mut self, decl: NodeDecl) {
         let decl = decl.normalize();
         self.entries.insert(decl.id.clone(), decl);
+    }
+
+    pub fn remove(&mut self, key: &NodeId) -> Option<NodeDecl> {
+        self.entries.remove(key)
     }
 
     pub fn get(&self, id: &NodeId) -> Option<&NodeDecl> {
@@ -256,6 +272,10 @@ impl SerializerRegistry {
         self.entries.values()
     }
 
+    pub fn remove(&mut self, key: &str) -> Option<SerializerDecl> {
+        self.entries.remove(key)
+    }
+
     pub fn get(&self, id: &str) -> Option<&SerializerDecl> {
         self.entries.get(id)
     }
@@ -309,6 +329,10 @@ impl DeviceRegistry {
 
     pub fn values(&self) -> impl Iterator<Item = &DeviceDecl> {
         self.entries.values()
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<DeviceDecl> {
+        self.entries.remove(key)
     }
 
     pub fn get(&self, id: &str) -> Option<&DeviceDecl> {
@@ -437,6 +461,45 @@ impl CapabilityRegistry {
 
     pub fn replace_device(&mut self, decl: DeviceDecl) {
         self.devices.replace(decl);
+    }
+
+    /// Remove plugin `plugin_id` and every capability its manifest provides, returning the
+    /// removed manifest.
+    ///
+    /// Plugin manifests record what each plugin contributed (`provided_*`), so a capability that
+    /// another installed plugin also provides stays registered.
+    pub fn remove_plugin(&mut self, plugin_id: &str) -> Option<PluginManifest> {
+        let manifest = self.plugins.remove(plugin_id)?;
+        let plugins = &self.plugins;
+        for key in &manifest.provided_types {
+            if !plugins.values().any(|p| p.provided_types.contains(key)) {
+                self.types.remove(key);
+            }
+        }
+        for id in &manifest.provided_adapters {
+            if !plugins.values().any(|p| p.provided_adapters.contains(id)) {
+                self.adapters.remove(id);
+            }
+        }
+        for id in &manifest.provided_nodes {
+            if !plugins.values().any(|p| p.provided_nodes.contains(id)) {
+                self.nodes.remove(id);
+            }
+        }
+        for id in &manifest.provided_serializers {
+            if !plugins
+                .values()
+                .any(|p| p.provided_serializers.contains(id))
+            {
+                self.serializers.remove(id);
+            }
+        }
+        for id in &manifest.provided_devices {
+            if !plugins.values().any(|p| p.provided_devices.contains(id)) {
+                self.devices.remove(id);
+            }
+        }
+        Some(manifest)
     }
 
     pub fn type_decl(&self, key: &TypeKey) -> Option<&TypeDecl> {

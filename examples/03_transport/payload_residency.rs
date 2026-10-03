@@ -1,9 +1,8 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
-    ComputeAffinity,
-    planner::{Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef},
-    registry::ids::NodeId,
+    planner::{Edge, ExecutionPlan, Graph, NodeInstance},
     runtime::{
         BackpressureStrategy, Executor, MetricsLevel, NodeError, NodeHandler, RuntimeEdgePolicy,
         RuntimeNode, SchedulerConfig, build_runtime,
@@ -39,10 +38,7 @@ impl NodeHandler for ResidencyHandler {
                 io.push_payload("frame", gpu);
             }
             "inspector" => {
-                let mut seen = self
-                    .seen
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut seen = self.seen.lock();
                 for payload in io.inputs_for("frame") {
                     let gpu_frame = payload
                         .inner
@@ -64,39 +60,13 @@ impl NodeHandler for ResidencyHandler {
 
 fn plan() -> daedalus::runtime::RuntimePlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("producer"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec!["frame".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("inspector"),
-        bundle: None,
-        label: None,
-        inputs: vec!["frame".into()],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "frame".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "frame".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("producer").with_outputs(["frame"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("inspector").with_inputs(["frame"]));
+    graph.edges.push(Edge::new(0, "frame", 1, "frame"));
     build_runtime(
         &ExecutionPlan::new(graph, vec![]),
         &SchedulerConfig {
@@ -112,10 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry = Executor::new(&runtime, ResidencyHandler { seen: seen.clone() })
         .with_metrics_level(MetricsLevel::Detailed)
         .run()?;
-    println!(
-        "inspector: {:?}",
-        seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    );
+    println!("inspector: {:?}", seen.lock());
     println!("{}", telemetry.compact_snapshot());
     Ok(())
 }

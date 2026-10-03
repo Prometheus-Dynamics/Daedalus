@@ -7,11 +7,31 @@ use daedalus_registry::capability::NodeDecl;
 pub use daedalus_core::metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_INPUTS_KEY,
     DYNAMIC_OUTPUT_LABELS_KEY, DYNAMIC_OUTPUT_TYPES_KEY, DYNAMIC_OUTPUTS_KEY, EMBEDDED_GROUP_KEY,
-    GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, PLAN_APPLIED_LOWERINGS_KEY,
-    PLAN_CONVERTER_METADATA_PREFIX, PLAN_EDGE_EXPLANATIONS_KEY, PLAN_GPU_SEGMENTS_KEY,
-    PLAN_GPU_WHY_KEY, PLAN_OVERLOAD_RESOLUTIONS_KEY, PLAN_SCHEDULE_ORDER_KEY,
-    PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY,
+    GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, HOST_INPUT_TYPES_KEY,
+    HOST_OUTPUT_TYPES_KEY, PLAN_APPLIED_LOWERINGS_KEY, PLAN_CONVERTER_METADATA_PREFIX,
+    PLAN_EDGE_EXPLANATIONS_KEY, PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY,
+    PLAN_OVERLOAD_RESOLUTIONS_KEY, PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY,
+    PLAN_TOPO_ORDER_KEY,
 };
+
+/// Opaque type name the planner treats as a type variable, inferred from connected edges.
+pub const GENERIC_TYPE_NAME: &str = "generic";
+
+/// Whether `ty` is the generic type marker (`Opaque("generic")`, case-insensitive).
+pub fn is_generic_marker(ty: &TypeExpr) -> bool {
+    matches!(ty, TypeExpr::Opaque(name) if name.eq_ignore_ascii_case(GENERIC_TYPE_NAME))
+}
+
+/// Node metadata for a host bridge: the host-bridge marker plus generic dynamic inputs and
+/// outputs, so arbitrary host ports are allowed and the planner infers their types from edges.
+pub fn host_bridge_metadata() -> BTreeMap<String, Value> {
+    let generic = Value::String(Cow::Borrowed(GENERIC_TYPE_NAME));
+    BTreeMap::from([
+        (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
+        (DYNAMIC_INPUTS_KEY.to_string(), generic.clone()),
+        (DYNAMIC_OUTPUTS_KEY.to_string(), generic),
+    ])
+}
 
 pub fn metadata_bool(metadata: &BTreeMap<String, Value>, key: &str) -> bool {
     matches!(metadata.get(key), Some(Value::Bool(true)))
@@ -135,6 +155,47 @@ impl DynamicPortMetadata {
     }
 }
 
+/// Host port types declared by the graph author on a host-bridge node (see
+/// `GraphBuilder::input_as`). Unlike the planner-owned [`DynamicPortMetadata`], these are graph
+/// inputs: the planner seeds the bridge's resolved port types from them before type checking.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HostPortTypes {
+    pub inputs: BTreeMap<String, TypeExpr>,
+    pub outputs: BTreeMap<String, TypeExpr>,
+}
+
+impl HostPortTypes {
+    pub fn from_node_metadata(metadata: &BTreeMap<String, Value>) -> Self {
+        Self {
+            inputs: decode_type_map(metadata.get(HOST_INPUT_TYPES_KEY)),
+            outputs: decode_type_map(metadata.get(HOST_OUTPUT_TYPES_KEY)),
+        }
+    }
+
+    pub fn declare(&mut self, is_host_input: bool, port: &str, ty: TypeExpr) {
+        if is_host_input {
+            &mut self.inputs
+        } else {
+            &mut self.outputs
+        }
+        .insert(normalize_port(port), ty);
+    }
+
+    pub fn write_to_node_metadata(&self, metadata: &mut BTreeMap<String, Value>) {
+        write_type_map(metadata, HOST_INPUT_TYPES_KEY, &self.inputs);
+        write_type_map(metadata, HOST_OUTPUT_TYPES_KEY, &self.outputs);
+    }
+
+    /// The bridge node's resolved port types: host inputs are bridge outputs and vice versa.
+    pub fn to_dynamic(&self) -> DynamicPortMetadata {
+        DynamicPortMetadata {
+            input_types: self.outputs.clone(),
+            output_types: self.inputs.clone(),
+            ..DynamicPortMetadata::default()
+        }
+    }
+}
+
 fn normalize_port(port: &str) -> String {
     port.to_ascii_lowercase()
 }
@@ -157,13 +218,7 @@ fn decode_string_map(value: Option<&Value>) -> BTreeMap<String, String> {
     entries
         .iter()
         .filter_map(|(key, value)| {
-            let Value::String(key) = key else {
-                return None;
-            };
-            let Value::String(value) = value else {
-                return None;
-            };
-            Some((normalize_port(key), value.to_string()))
+            Some((normalize_port(key.as_str()?), value.as_str()?.to_string()))
         })
         .collect()
 }

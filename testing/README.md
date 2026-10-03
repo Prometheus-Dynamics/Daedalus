@@ -4,14 +4,7 @@ Short reference for local validation. The fuller guide is [`../docs/testing.md`]
 
 ## Default
 
-```bash
-cargo fmt --all -- --check
-./scripts/check-file-sizes.sh
-./scripts/check-workspace-deps.sh
-./scripts/check-gpu-async-blocking.sh
-cargo test --workspace --all-targets --features "engine,plugins"
-cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
-```
+See [the default surface](../docs/testing.md#default-surface); `./scripts/ci.sh` runs it.
 
 ## Focused
 
@@ -34,4 +27,4 @@ The Docker suite uses [`docker/daedalus-examples.Dockerfile`](docker/daedalus-ex
 
 - Use `gpu-mock` for deterministic GPU-path coverage.
 - Use `gpu-wgpu` only on hardware-backed hosts.
-- File-size linting is warning-only and reads `ci/file-size-baseline.txt`.
+- File-size linting fails on new oversized Rust files; existing ones are listed in `ci/file-size-baseline.txt`.

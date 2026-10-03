@@ -24,6 +24,8 @@ pub enum EngineError {
     },
     #[error("registry error: {0}")]
     Registry(#[from] RegistryError),
+    #[error(transparent)]
+    MissingPlugins(#[from] daedalus_planner::MissingPlugins),
     #[error("planner diagnostics: {0:?}")]
     Planner(Vec<Diagnostic>),
     #[error("runtime failed: {0}")]

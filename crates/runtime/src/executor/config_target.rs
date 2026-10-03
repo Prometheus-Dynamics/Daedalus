@@ -99,10 +99,6 @@ pub(crate) trait ExecutorConfigTarget {
         self.apply_pool_size(pool_size);
     }
 
-    fn apply_host_bridges(&mut self, mgr: crate::host_bridge::HostBridgeManager) {
-        self.core_mut().host_bridges = Some(mgr);
-    }
-
     #[cfg(feature = "gpu")]
     fn apply_gpu(&mut self, gpu: daedalus_gpu::GpuContextHandle) {
         let core = self.core_mut();

@@ -5,30 +5,22 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use core::{
-    BackendConfig, BackendKind, BackendRuntimeModel, FfiContractError, NodeSchema, PackageArtifact,
-    PackageArtifactKind, PluginPackage, PluginSchema, PluginSchemaInfo, SCHEMA_VERSION,
-    WirePayloadHandle, WirePort, bundled_artifact_path, validate_language_backends,
+    BackendConfig, BackendKind, FfiContractError, LanguagePackageInput, LanguagePackager,
+    PackageArtifactKind, PluginPackage, PluginSchema, WirePayloadHandle, package_artifacts,
 };
 use daedalus_transport::{AccessMode, Payload};
 use thiserror::Error;
 
 pub use daedalus_ffi_core as core;
 
+pub const CPP_PACKAGER: LanguagePackager =
+    LanguagePackager::new(BackendKind::CCpp, "c_cpp", "daedalus-ffi-cpp");
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CppPointerLengthAbi {
     pub pointer_type: String,
     pub length_type: String,
     pub mutable: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CppPackageInput {
-    pub schema: PluginSchema,
-    pub backends: BTreeMap<String, BackendConfig>,
-    pub shared_libraries: Vec<String>,
-    pub source_files: Vec<String>,
-    pub lockfile: Option<String>,
-    pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,20 +148,7 @@ pub fn cpp_in_process_backend_config(
     library_path: impl Into<String>,
     symbol: impl Into<String>,
 ) -> BackendConfig {
-    BackendConfig {
-        backend: BackendKind::CCpp,
-        runtime_model: BackendRuntimeModel::InProcessAbi,
-        entry_module: Some(library_path.into()),
-        entry_class: None,
-        entry_symbol: Some(symbol.into()),
-        executable: None,
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    }
+    BackendConfig::in_process(BackendKind::CCpp, symbol).with_entry_module(library_path)
 }
 
 pub fn cpp_in_process_backend_config_with_pointer_abi(
@@ -177,181 +156,66 @@ pub fn cpp_in_process_backend_config_with_pointer_abi(
     symbol: impl Into<String>,
     abi: CppPointerLengthAbi,
 ) -> BackendConfig {
-    let mut backend = cpp_in_process_backend_config(library_path, symbol);
-    backend.options.extend(abi.backend_options());
-    backend
+    cpp_in_process_backend_config(library_path, symbol).with_options(abi.backend_options())
 }
 
-pub fn cpp_node_schema(
-    node_id: impl Into<String>,
-    symbol: impl Into<String>,
-    inputs: Vec<WirePort>,
-    outputs: Vec<WirePort>,
-) -> NodeSchema {
-    NodeSchema {
-        id: node_id.into(),
-        backend: BackendKind::CCpp,
-        entrypoint: symbol.into(),
-        label: None,
-        stateful: false,
-        feature_flags: Vec::new(),
-        inputs,
-        outputs,
-        metadata: BTreeMap::new(),
-    }
-}
-
-pub fn cpp_plugin_schema(
-    plugin_name: impl Into<String>,
-    version: Option<String>,
-    nodes: Vec<NodeSchema>,
-) -> Result<PluginSchema, FfiContractError> {
-    let mut schema = PluginSchema {
-        schema_version: SCHEMA_VERSION,
-        plugin: PluginSchemaInfo {
-            name: plugin_name.into(),
-            version,
-            description: None,
-            metadata: BTreeMap::new(),
-        },
-        dependencies: Vec::new(),
-        required_host_capabilities: Vec::new(),
-        feature_flags: Vec::new(),
-        boundary_contracts: Vec::new(),
-        nodes,
-    };
-    schema.nodes.sort_by(|a, b| a.id.cmp(&b.id));
-    schema.validate_backend_kind(BackendKind::CCpp)?;
-    Ok(schema)
-}
-
-pub fn validate_cpp_schema(
-    schema: &PluginSchema,
-    backends: &BTreeMap<String, BackendConfig>,
-) -> Result<(), FfiContractError> {
-    validate_language_backends(schema, backends, BackendKind::CCpp)
-}
-
+/// Package C/C++ shared libraries and sources with the default lockfile.
 pub fn cpp_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
     shared_libraries: Vec<String>,
-) -> Result<PluginPackage, FfiContractError> {
-    CppPackageInput {
-        schema,
-        backends,
-        shared_libraries,
-        source_files: Vec::new(),
-        lockfile: None,
-        metadata: BTreeMap::new(),
-    }
-    .build()
-}
-
-impl CppPackageInput {
-    pub fn build(self) -> Result<PluginPackage, FfiContractError> {
-        validate_language_backends(&self.schema, &self.backends, BackendKind::CCpp)?;
-        let mut metadata = self.metadata;
-        metadata.insert("language".into(), serde_json::json!("c_cpp"));
-        metadata.insert(
-            "package_builder".into(),
-            serde_json::json!("daedalus-ffi-cpp"),
-        );
-
-        let mut artifacts = shared_library_artifacts(self.shared_libraries)?;
-        artifacts.extend(source_file_artifacts(self.source_files)?);
-        let mut package = PluginPackage {
-            schema_version: SCHEMA_VERSION,
-            schema: Some(self.schema),
-            backends: self.backends,
-            artifacts,
-            lockfile: self.lockfile.or_else(|| Some("plugin.lock.json".into())),
-            manifest_hash: None,
-            signature: None,
-            metadata,
-        };
-        package.validate()?;
-        package.manifest_hash = Some(package.compute_manifest_hash()?);
-        Ok(package)
-    }
-}
-
-pub fn cpp_complete_plugin_package(
-    schema: PluginSchema,
-    backends: BTreeMap<String, BackendConfig>,
-    shared_libraries: Vec<String>,
     source_files: Vec<String>,
 ) -> Result<PluginPackage, FfiContractError> {
-    CppPackageInput {
-        schema,
-        backends,
+    let mut artifacts = package_artifacts(
+        PackageArtifactKind::SharedLibrary,
+        &BackendKind::CCpp,
         shared_libraries,
+    )?;
+    artifacts.extend(package_artifacts(
+        PackageArtifactKind::SourceFile,
+        &BackendKind::CCpp,
         source_files,
-        lockfile: Some("plugin.lock.json".into()),
-        metadata: BTreeMap::new(),
-    }
-    .build()
-}
-
-fn shared_library_artifacts(
-    shared_libraries: Vec<String>,
-) -> Result<Vec<PackageArtifact>, FfiContractError> {
-    shared_libraries
-        .into_iter()
-        .map(|path| {
-            Ok(PackageArtifact {
-                path: bundled_artifact_path(PackageArtifactKind::SharedLibrary, &path, None)?,
-                kind: PackageArtifactKind::SharedLibrary,
-                backend: Some(BackendKind::CCpp),
-                platform: None,
-                sha256: None,
-                metadata: BTreeMap::new(),
-            })
-        })
-        .collect()
-}
-
-fn source_file_artifacts(
-    source_files: Vec<String>,
-) -> Result<Vec<PackageArtifact>, FfiContractError> {
-    source_files
-        .into_iter()
-        .map(|path| {
-            Ok(PackageArtifact {
-                path: bundled_artifact_path(PackageArtifactKind::SourceFile, &path, None)?,
-                kind: PackageArtifactKind::SourceFile,
-                backend: Some(BackendKind::CCpp),
-                platform: None,
-                sha256: None,
-                metadata: BTreeMap::new(),
-            })
-        })
-        .collect()
+    )?);
+    CPP_PACKAGER.build(LanguagePackageInput::new(schema, backends, artifacts))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use daedalus_data::model::{TypeExpr, ValueType};
-    use daedalus_ffi_core::{FixtureLanguage, generate_language_fixture, scalar_add_fixture_spec};
+    use daedalus_ffi_core::{
+        FixtureLanguage, NodeSchema, WirePort, generate_language_fixture, scalar_add_fixture_spec,
+        validate_language_backends,
+    };
 
     fn port(name: &str) -> WirePort {
-        WirePort {
-            name: name.into(),
-            ty: TypeExpr::scalar(ValueType::Int),
-            type_key: None,
-            optional: false,
-            access: Default::default(),
-            residency: None,
-            layout: None,
-            source: None,
-            const_value: None,
-        }
+        WirePort::new(name, TypeExpr::scalar(ValueType::Int))
+    }
+
+    fn cpp_plugin_schema(
+        name: &str,
+        version: Option<String>,
+        nodes: Vec<NodeSchema>,
+    ) -> Result<PluginSchema, FfiContractError> {
+        PluginSchema::for_backend(name, version, nodes, BackendKind::CCpp)
+    }
+
+    fn validate_cpp_schema(
+        schema: &PluginSchema,
+        backends: &BTreeMap<String, BackendConfig>,
+    ) -> Result<(), FfiContractError> {
+        validate_language_backends(schema, backends, BackendKind::CCpp)
     }
 
     #[test]
     fn builds_and_validates_cpp_schema_helpers() {
-        let node = cpp_node_schema("demo:add", "add_i32", vec![port("a")], vec![port("out")]);
+        let node = NodeSchema::new(
+            "demo:add",
+            BackendKind::CCpp,
+            "add_i32",
+            vec![port("a")],
+            vec![port("out")],
+        );
         let schema =
             cpp_plugin_schema("demo.cpp", Some("1.0.0".into()), vec![node]).expect("schema");
         let backends = BTreeMap::from([(
@@ -364,17 +228,13 @@ mod tests {
             cpp_plugin_schema(
                 "bad",
                 None,
-                vec![NodeSchema {
-                    id: "bad:add".into(),
-                    backend: BackendKind::Python,
-                    entrypoint: "add".into(),
-                    label: None,
-                    stateful: false,
-                    feature_flags: Vec::new(),
-                    inputs: Vec::new(),
-                    outputs: Vec::new(),
-                    metadata: BTreeMap::new(),
-                }],
+                vec![NodeSchema::new(
+                    "bad:add",
+                    BackendKind::Python,
+                    "add",
+                    vec![],
+                    vec![]
+                )],
             ),
             Err(FfiContractError::UnexpectedBackendKind { .. })
         ));
@@ -387,8 +247,9 @@ mod tests {
         let cpp = generate_language_fixture(&spec, FixtureLanguage::CCpp).expect("cpp fixture");
         let baseline = &rust.schema.nodes[0];
 
-        let node = cpp_node_schema(
+        let node = NodeSchema::new(
             baseline.id.clone(),
+            BackendKind::CCpp,
             cpp.schema.nodes[0].entrypoint.clone(),
             baseline.inputs.clone(),
             baseline.outputs.clone(),
@@ -405,6 +266,7 @@ mod tests {
             schema.clone(),
             backends.clone(),
             vec!["libscalar_add.so".into()],
+            Vec::new(),
         )
         .expect("package");
 
@@ -480,7 +342,7 @@ mod tests {
     fn complete_cpp_package_emits_lockfile_hash_sources_and_language_metadata() {
         let spec = scalar_add_fixture_spec();
         let fixture = generate_language_fixture(&spec, FixtureLanguage::CCpp).expect("cpp fixture");
-        let package = cpp_complete_plugin_package(
+        let package = cpp_plugin_package(
             fixture.schema.clone(),
             fixture.backends.clone(),
             vec!["build/libffi_showcase.so".into()],

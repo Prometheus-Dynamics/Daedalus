@@ -17,14 +17,15 @@ pub mod bundle_demo;
 extern crate self as daedalus_nodes;
 #[cfg(feature = "plugins")]
 pub mod __macro_support {
+    pub use daedalus_registry::capability::PluginManifest;
     pub use daedalus_runtime::plugins::{
         NodeInstall, Plugin, PluginError, PluginInstallContext, PluginRegistry, PluginResult,
     };
 }
 
-/// Declare a plugin struct that installs a set of node descriptors and handlers
-/// in one shot. Each entry should correspond to a `#[node]`-annotated
-/// function name in scope so `<name>_descriptor` and `<name>_handler` exist.
+/// Declare a plugin struct that installs a set of node declarations and handlers
+/// in one shot. Each entry names a `#[node]`-annotated function in scope; the macro uses the
+/// `<Name>Node` type that `#[node]` generates for it.
 ///
 #[cfg(feature = "plugins")]
 #[macro_export]
@@ -81,6 +82,11 @@ macro_rules! declare_plugin {
             impl $crate::__macro_support::Plugin for $plugin {
                 fn id(&self) -> &'static str {
                     $id
+                }
+
+                fn manifest(&self) -> $crate::__macro_support::PluginManifest {
+                    $crate::__macro_support::PluginManifest::new($id)
+                        .version(env!("CARGO_PKG_VERSION"))
                 }
 
                 fn install(
@@ -142,6 +148,11 @@ macro_rules! declare_plugin {
             impl $crate::__macro_support::Plugin for $plugin {
                 fn id(&self) -> &'static str {
                     $id
+                }
+
+                fn manifest(&self) -> $crate::__macro_support::PluginManifest {
+                    $crate::__macro_support::PluginManifest::new($id)
+                        .version(env!("CARGO_PKG_VERSION"))
                 }
 
                 fn install(
@@ -210,6 +221,11 @@ macro_rules! declare_plugin {
                     $id
                 }
 
+                fn manifest(&self) -> $crate::__macro_support::PluginManifest {
+                    $crate::__macro_support::PluginManifest::new($id)
+                        .version(env!("CARGO_PKG_VERSION"))
+                }
+
                 fn install(
                     &self,
                     registry: &mut $crate::__macro_support::PluginInstallContext<'_>,
@@ -272,6 +288,11 @@ macro_rules! declare_plugin {
             impl $crate::__macro_support::Plugin for $plugin {
                 fn id(&self) -> &'static str {
                     $id
+                }
+
+                fn manifest(&self) -> $crate::__macro_support::PluginManifest {
+                    $crate::__macro_support::PluginManifest::new($id)
+                        .version(env!("CARGO_PKG_VERSION"))
                 }
 
                 fn install(

@@ -1,11 +1,10 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
-    ComputeAffinity,
     engine::{Engine, EngineConfig, GpuBackend, MetricsLevel, RuntimeMode},
     macros::{node, plugin},
     planner::{ExecutionPlan, Graph, NodeInstance},
-    registry::ids::NodeId,
     runtime::{
         NodeError, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
         plugins::PluginRegistry,
@@ -33,10 +32,7 @@ impl NodeHandler for FailingHarness {
         _ctx: &daedalus::runtime::ExecutionContext,
         _io: &mut daedalus::runtime::NodeIo,
     ) -> Result<(), NodeError> {
-        self.calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(node.id.clone());
+        self.calls.lock().push(node.id.clone());
         if node.id.starts_with("fail") {
             return Err(NodeError::InvalidInput(
                 "intentional observability failure".into(),
@@ -80,6 +76,7 @@ fn host_graph_observability() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Engine::new(
         EngineConfig::from(GpuBackend::Cpu)
             .with_metrics_level(MetricsLevel::Trace)
+            .with_host_event_recording(true)
             .with_host_event_limit(Some(16)),
     )?;
     let mut runtime = engine.compile_registry(&registry, graph)?;
@@ -104,17 +101,7 @@ fn host_graph_observability() -> Result<(), Box<dyn std::error::Error>> {
 fn failing_plan() -> daedalus::runtime::RuntimePlan {
     let mut graph = Graph::default();
     for id in ["fail.left", "fail.right", "ok.after"] {
-        graph.nodes.push(NodeInstance {
-            id: NodeId::new(id),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(id));
     }
     build_runtime(
         &ExecutionPlan::new(graph, vec![]),
@@ -140,12 +127,7 @@ fn segment_failure_observability() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    println!(
-        "non-fail-fast calls: {:?}",
-        calls
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    );
+    println!("non-fail-fast calls: {:?}", calls.lock());
     println!("segment failures:");
     for error in &telemetry.errors {
         println!(

@@ -1,12 +1,10 @@
-use std::collections::BTreeMap;
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use daedalus_data::model::Value;
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::HostBridgeManager;
 use daedalus_runtime::executor::OwnedExecutor;
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY};
@@ -53,11 +51,11 @@ impl NodeHandler for SlowHandler {
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
         if node.id == "echo" {
-            if let Some(tx) = self.started.lock().expect("started lock").take() {
+            if let Some(tx) = self.started.lock().take() {
                 let _ = tx.send(());
             }
             std::thread::sleep(self.sleep);
-            if let Some(tx) = self.finished.lock().expect("finished lock").take() {
+            if let Some(tx) = self.finished.lock().take() {
                 let _ = tx.send(());
             }
         }
@@ -67,121 +65,57 @@ impl NodeHandler for SlowHandler {
 
 fn stream_echo_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".into()),
-        inputs: vec!["out".into()],
-        outputs: vec!["in".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::from([
-            (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-            (
-                "dynamic_inputs".to_string(),
+    graph.nodes.push(
+        NodeInstance::new(HOST_BRIDGE_ID)
+            .with_label("host")
+            .with_inputs(["out"])
+            .with_outputs(["in"])
+            .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
+            .with_metadata(
+                "dynamic_inputs",
+                Value::String(std::borrow::Cow::Borrowed("generic")),
+            )
+            .with_metadata(
+                "dynamic_outputs",
                 Value::String(std::borrow::Cow::Borrowed("generic")),
             ),
-            (
-                "dynamic_outputs".to_string(),
-                Value::String(std::borrow::Cow::Borrowed("generic")),
-            ),
-        ]),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("echo"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "in".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
+    );
+    graph.nodes.push(
+        NodeInstance::new("echo")
+            .with_inputs(["in"])
+            .with_outputs(["out"]),
+    );
+    graph.edges.push(Edge::new(0, "in", 1, "in"));
+    graph.edges.push(Edge::new(1, "out", 0, "out"));
     ExecutionPlan::new(graph, vec![])
 }
 
 fn two_input_stream_echo_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".into()),
-        inputs: vec!["out".into()],
-        outputs: vec!["left".into(), "right".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::from([
-            (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-            (
-                "dynamic_inputs".to_string(),
+    graph.nodes.push(
+        NodeInstance::new(HOST_BRIDGE_ID)
+            .with_label("host")
+            .with_inputs(["out"])
+            .with_outputs(["left", "right"])
+            .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
+            .with_metadata(
+                "dynamic_inputs",
+                Value::String(std::borrow::Cow::Borrowed("generic")),
+            )
+            .with_metadata(
+                "dynamic_outputs",
                 Value::String(std::borrow::Cow::Borrowed("generic")),
             ),
-            (
-                "dynamic_outputs".to_string(),
-                Value::String(std::borrow::Cow::Borrowed("generic")),
-            ),
-        ]),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("echo"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::new(),
-    });
+    );
+    graph.nodes.push(
+        NodeInstance::new("echo")
+            .with_inputs(["in"])
+            .with_outputs(["out"]),
+    );
     for port in ["left", "right"] {
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(0),
-                port: port.into(),
-            },
-            to: PortRef {
-                node: NodeRef(1),
-                port: "in".into(),
-            },
-            metadata: BTreeMap::new(),
-        });
+        graph.edges.push(Edge::new(0, port, 1, "in"));
     }
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
+    graph.edges.push(Edge::new(1, "out", 0, "out"));
     ExecutionPlan::new(graph, vec![])
 }
 
@@ -303,7 +237,7 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
         Arc::new(Mutex::new(StreamGraph::new(runtime, EchoHandler)));
 
     let (input, output) = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         let input = graph.input("in").expect("input handle");
         let output = graph.output("out").expect("output handle");
         (input, output)
@@ -315,17 +249,9 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
         .set_policy(PressurePolicy::BufferAll, FreshnessPolicy::PreserveAll)
         .expect("output policy");
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     assert_eq!(
-        graph
-            .lock()
-            .expect("stream graph lock")
-            .diagnostics()
-            .worker_state,
+        graph.lock().diagnostics().worker_state,
         StreamWorkerState::Idle
     );
     let worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
@@ -336,18 +262,14 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
             .expect("feed should succeed");
     }
     assert!(matches!(
-        graph
-            .lock()
-            .expect("stream graph lock")
-            .diagnostics()
-            .worker_state,
+        graph.lock().diagnostics().worker_state,
         StreamWorkerState::Running | StreamWorkerState::BlockedInExecution
     ));
     let first_batch: Vec<_> = (0..32).map(|_| recv_u32(&output)).collect();
     assert_eq!(first_batch, (0..32u32).collect::<Vec<_>>());
 
     {
-        let mut graph = graph.lock().expect("stream graph lock");
+        let mut graph = graph.lock();
         graph.pause().expect("pause");
         assert_eq!(graph.state(), StreamGraphState::Paused);
         assert_eq!(graph.diagnostics().worker_state, StreamWorkerState::Paused);
@@ -366,24 +288,16 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
     );
 
     {
-        let mut graph = graph.lock().expect("stream graph lock");
+        let mut graph = graph.lock();
         graph.resume().expect("resume");
         assert_eq!(graph.state(), StreamGraphState::Running);
     }
     let second_batch: Vec<_> = (0..32).map(|_| recv_u32(&output)).collect();
     assert_eq!(second_batch, (32..64u32).collect::<Vec<_>>());
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .close()
-        .expect("close");
+    graph.lock().close().expect("close");
     assert_eq!(
-        graph
-            .lock()
-            .expect("stream graph lock")
-            .diagnostics()
-            .worker_state,
+        graph.lock().diagnostics().worker_state,
         StreamWorkerState::Closed
     );
     assert!(worker.stop().is_none());
@@ -407,15 +321,11 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
     )));
 
     let input = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         graph.input("in").expect("input handle")
     };
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     let worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
     input
         .feed(Payload::owned("demo:u32", 1u32))
@@ -423,7 +333,7 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
     started_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("handler should start");
-    let diagnostics = graph.lock().expect("stream graph lock").diagnostics();
+    let diagnostics = graph.lock().diagnostics();
     assert_eq!(
         diagnostics.worker_state,
         StreamWorkerState::BlockedInExecution
@@ -433,11 +343,7 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
     let (paused_tx, paused_rx) = mpsc::channel();
     let pause_graph = Arc::clone(&graph);
     let pause_thread = std::thread::spawn(move || {
-        pause_graph
-            .lock()
-            .expect("stream graph lock")
-            .pause()
-            .expect("pause");
+        pause_graph.lock().pause().expect("pause");
         paused_tx.send(()).expect("pause notification");
     });
 
@@ -449,19 +355,9 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
         .recv_timeout(Duration::from_secs(2))
         .expect("handler should eventually finish");
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .close()
-        .expect("close");
+    graph.lock().close().expect("close");
     let deadline = Instant::now() + Duration::from_secs(2);
-    while graph
-        .lock()
-        .expect("stream graph lock")
-        .diagnostics()
-        .last_execution_duration
-        .is_none()
-    {
+    while graph.lock().diagnostics().last_execution_duration.is_none() {
         assert!(
             Instant::now() < deadline,
             "worker should publish last execution duration"
@@ -489,15 +385,11 @@ fn continuous_worker_stop_timeout_reports_slow_handler_without_deadlocking() {
     )));
 
     let input = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         graph.input("in").expect("input handle")
     };
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     let mut worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
     input
         .feed(Payload::owned("demo:u32", 1u32))
@@ -546,15 +438,11 @@ fn continuous_worker_drop_requests_stop_without_waiting_for_slow_handler() {
     )));
 
     let input = {
-        let graph = graph.lock().expect("stream graph lock should be available");
+        let graph = graph.lock();
         graph.input("in").expect("input handle")
     };
 
-    graph
-        .lock()
-        .expect("stream graph lock")
-        .start()
-        .expect("start");
+    graph.lock().start().expect("start");
     let worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
     input
         .feed(Payload::owned("demo:u32", 1u32))

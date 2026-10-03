@@ -1,8 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use daedalus_ffi_core::{
-    BackendKind, BackendRuntimeModel, InvokeRequest, InvokeResponse, WireValue,
-};
+use daedalus_ffi_core::{BackendKind, InvokeRequest, InvokeResponse, WireValue};
 use daedalus_transport::TypeKey;
 
 use super::*;
@@ -92,36 +90,17 @@ impl BackendRunner for FakeRunner {
     }
 
     fn export_state(&self, _node_id: &str) -> Result<Option<WireValue>, RunnerPoolError> {
-        self.state
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)
-            .map(|state| state.clone())
+        Ok(self.state.lock().clone())
     }
 
     fn import_state(&self, _node_id: &str, state: WireValue) -> Result<(), RunnerPoolError> {
-        *self
-            .state
-            .lock()
-            .map_err(|_| RunnerPoolError::LockPoisoned)? = Some(state);
+        *self.state.lock() = Some(state);
         Ok(())
     }
 }
 
 fn backend_config(module: &str) -> BackendConfig {
-    BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(module.into()),
-        entry_class: None,
-        entry_symbol: Some("add".into()),
-        executable: Some("python".into()),
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
-    }
+    BackendConfig::persistent_worker(BackendKind::Python, "python", "add").with_entry_module(module)
 }
 
 fn request() -> InvokeRequest {
@@ -200,6 +179,56 @@ fn runner_pool_shutdown_removes_registered_runners() {
     assert_eq!(pool.len(), 1);
     pool.shutdown_all().expect("shutdown runners");
     assert!(pool.is_empty());
+}
+
+struct StuckRunner;
+
+impl BackendRunner for StuckRunner {
+    fn invoke(&self, _request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
+        Err(RunnerPoolError::Runner("unused".into()))
+    }
+
+    fn shutdown(&self) -> Result<(), RunnerPoolError> {
+        Err(RunnerPoolError::Runner("stuck".into()))
+    }
+}
+
+#[test]
+fn runner_pool_shutdown_all_attempts_every_runner_and_aggregates_failures() {
+    let telemetry = FfiHostTelemetry::new();
+    let mut pool = RunnerPool::new().with_ffi_telemetry(telemetry.clone());
+    let shutdowns = Arc::new(AtomicUsize::new(0));
+    let stuck_a = backend_config("stuck_a.py");
+    let clean = backend_config("clean.py");
+    let stuck_b = backend_config("stuck_b.py");
+    pool.insert(&stuck_a, StuckRunner).expect("insert runner");
+    pool.insert(
+        &clean,
+        FakeRunner::ready_with_shutdowns(Arc::default(), shutdowns.clone()),
+    )
+    .expect("insert runner");
+    pool.insert(&stuck_b, StuckRunner).expect("insert runner");
+
+    let err = pool.shutdown_all().expect_err("two runners fail");
+    assert!(pool.is_empty());
+    assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
+    let key = |config| RunnerKey::from_backend(config).expect("runner key");
+    let failed: Vec<_> = err.failures.iter().map(|failure| &failure.key).collect();
+    assert_eq!(failed, [&key(&stuck_a), &key(&stuck_b)]);
+    assert!(err.failures.iter().all(
+        |failure| matches!(&failure.source, RunnerPoolError::Runner(message) if message == "stuck")
+    ));
+    assert!(
+        err.to_string()
+            .starts_with("2 runner(s) failed to shut down: runner `")
+    );
+
+    assert_eq!(pool.telemetry().shutdowns, 1);
+    let report = telemetry.snapshot();
+    let clean_report = &report.backends[key(&clean).as_str()];
+    assert_eq!(clean_report.runner_shutdowns, 1);
+    assert_eq!(clean_report.language.as_deref(), Some("python"));
+    assert_eq!(report.backends[key(&stuck_a).as_str()].runner_shutdowns, 0);
 }
 
 #[test]

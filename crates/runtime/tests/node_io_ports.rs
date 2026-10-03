@@ -1,14 +1,12 @@
 use daedalus_data::model::Value;
-use daedalus_planner::{
-    ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef,
-};
+use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::{
     BackpressureStrategy, DEFAULT_OUTPUT_PORT, Executor, NodeHandler, RuntimeEdgePolicy,
     RuntimeNode, SchedulerConfig, build_runtime, executor::NodeError, io::NodeIo,
 };
 
 struct Handler {
-    seen_ports: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    seen_ports: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for Handler {
@@ -27,7 +25,7 @@ impl NodeHandler for Handler {
             }
             "cons" => {
                 if let Some((port, _)) = io.inputs().first() {
-                    self.seen_ports.lock().unwrap().push(port.clone());
+                    self.seen_ports.lock().push(port.to_string());
                 }
             }
             _ => {}
@@ -40,39 +38,13 @@ impl NodeHandler for Handler {
 fn node_io_respects_ports_and_policies() {
     // Graph: producer has two outputs (a -> consumer, b -> unused)
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("prod"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec!["a".into(), "b".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("cons"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "a".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("prod").with_outputs(["a", "b"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("cons").with_inputs(["in"]));
+    graph.edges.push(Edge::new(0, "a", 1, "in"));
 
     let exec = ExecutionPlan::new(graph, vec![]);
     let rt = build_runtime(
@@ -83,13 +55,13 @@ fn node_io_respects_ports_and_policies() {
         },
     );
 
-    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = Handler {
         seen_ports: seen.clone(),
     };
     let telemetry = Executor::new(&rt, handler).run().expect("runtime run");
     assert_eq!(telemetry.nodes_executed, 2);
-    let ports = seen.lock().unwrap().clone();
+    let ports = seen.lock().clone();
     assert_eq!(ports, vec!["in".to_string()]);
 }
 

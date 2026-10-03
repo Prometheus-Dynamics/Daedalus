@@ -1,8 +1,9 @@
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
-use crate::state::{ExecutionContext, ResourceLifecycleEvent, StateError, StateStore};
+use crate::state::{ExecutionContext, ResourceLifecycleEvent, StateStore};
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
+use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 mod config;
@@ -37,7 +38,7 @@ pub use handler::{DirectPayloadFn, NodeHandler};
 pub(crate) use init::{ExecutorInit, build_executor_init};
 pub use owned::OwnedExecutor;
 pub(crate) use patching::apply_patch_to_const_inputs;
-pub use payload::{CorrelatedPayload, next_correlation_id};
+pub use payload::CorrelatedPayload;
 pub use queue::EdgeStorage;
 pub(crate) use schedule_compile::{
     CompiledSchedule, CompiledSegmentGraph, build_compiled_schedule, build_node_execution_metadata,
@@ -71,8 +72,8 @@ struct DirectHostSingleNodeRoute {
     node: RuntimeNode,
     node_idx: usize,
     ctx: ExecutionContext,
-    input_port: String,
-    output_port: String,
+    input_port: crate::handles::PortId,
+    output_port: crate::handles::PortId,
     direct_payload: Option<DirectPayloadFn>,
 }
 
@@ -128,13 +129,14 @@ pub(crate) fn segment_failure(segment_idx: usize, error: &ExecuteError) -> NodeF
     }
 }
 
-pub(crate) fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+/// Text of a caught panic payload (`&str` or `String`), or a placeholder for other payloads.
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = payload.downcast_ref::<String>() {
         message.clone()
     } else {
-        "handler panicked with non-string payload".to_string()
+        "non-string panic payload".to_string()
     }
 }
 
@@ -143,10 +145,18 @@ type MaybeGpu = Option<daedalus_gpu::GpuContextHandle>;
 #[cfg(not(feature = "gpu"))]
 type MaybeGpu = Option<()>;
 
-pub type NodeConstInputs = Vec<(String, daedalus_data::model::Value)>;
+pub type NodeConstInputs = Vec<(crate::handles::PortId, daedalus_data::model::Value)>;
 pub type ConstInputs = Vec<NodeConstInputs>;
 pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
 type EdgeSpec = RuntimeEdge;
+
+/// Const inputs keyed by pre-built port ids so ticks do not allocate port names.
+pub(crate) fn node_const_inputs(node: &RuntimeNode) -> NodeConstInputs {
+    node.const_inputs
+        .iter()
+        .map(|(port, value)| (port.into(), value.clone()))
+        .collect()
+}
 type NodeMetadataStore = Arc<Vec<Arc<BTreeMap<String, daedalus_data::model::Value>>>>;
 
 pub(crate) fn reset_run_storage(
@@ -164,13 +174,12 @@ pub(crate) fn reset_run_storage(
         }
         match storage {
             EdgeStorage::Locked { queue, metrics } => {
-                if let Ok(mut q) = queue.lock() {
-                    if let Some(edge) = edges.get(idx) {
-                        q.ensure_policy(edge.policy());
-                    }
-                    q.clear();
-                    metrics.set_current_bytes(0);
+                let mut q = queue.lock();
+                if let Some(edge) = edges.get(idx) {
+                    q.set_policy(&edge.policy().pressure);
                 }
+                q.clear();
+                metrics.set_current_bytes(0);
             }
             #[cfg(feature = "lockfree-queues")]
             EdgeStorage::BoundedLf { queue, metrics } => {
@@ -250,7 +259,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             segments: &plan.segments,
             schedule_order: &plan.schedule_order,
             const_inputs: Arc::new(RwLock::new(
-                plan.nodes.iter().map(|n| n.const_inputs.clone()).collect(),
+                plan.nodes.iter().map(node_const_inputs).collect(),
             )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
@@ -411,22 +420,19 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
-    pub fn apply_resource_lifecycle(
-        &self,
-        event: ResourceLifecycleEvent,
-    ) -> Result<(), StateError> {
+    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) {
         self.core.state.apply_resource_lifecycle(event)
     }
 
-    pub fn on_memory_pressure(&self) -> Result<(), StateError> {
+    pub fn on_memory_pressure(&self) {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::MemoryPressure)
     }
 
-    pub fn on_idle(&self) -> Result<(), StateError> {
+    pub fn on_idle(&self) {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
     }
 
-    pub fn shutdown_resources(&self) -> Result<(), StateError> {
+    pub fn shutdown_resources(&self) {
         self.apply_resource_lifecycle(ResourceLifecycleEvent::Stop)
     }
 
@@ -467,16 +473,21 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
     /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
     pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
-        let mut guard = self
-            .const_inputs
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self.const_inputs.write();
         apply_patch_to_const_inputs(patch, &self.nodes, guard.as_mut_slice())
     }
 
     /// Attach a host bridge manager to enable implicit host I/O nodes.
+    /// Attach host bridges; each host-bridge node is resolved to its bridge once, here.
     pub fn with_host_bridges(mut self, mgr: crate::host_bridge::HostBridgeManager) -> Self {
-        self.apply_host_bridges(mgr);
+        self.core.host_nodes = serial::resolve_host_nodes(
+            &mgr,
+            &self.nodes,
+            self.edges,
+            &self.schedule.host_nodes,
+            &self.incoming_edges,
+            &self.outgoing_edges,
+        );
         self
     }
 
@@ -484,9 +495,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     pub fn reset(&mut self) {
         let metrics_level = self.core.run_config.metrics_level;
         self.core.telemetry.reset_for_reuse(metrics_level);
-        if let Ok(mut warnings) = self.core.warnings_seen.lock() {
-            warnings.clear();
-        }
+        self.core.warnings_seen.lock().clear();
 
         reset_run_storage(
             self.edges,

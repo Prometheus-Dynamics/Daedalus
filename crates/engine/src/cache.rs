@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
 
 use daedalus_planner::{ExecutionPlan, Graph, PlannerConfig, PlannerOutput};
 use daedalus_runtime::{RuntimePlan, SchedulerConfig};
@@ -104,10 +105,7 @@ impl EngineCaches {
     }
 
     pub(crate) fn planner_get(&self, key: &PlannerCacheKey) -> Option<PlannerOutput> {
-        let value = lock_cache_shard("planner", &self.planner)
-            .entries
-            .get(key)
-            .cloned();
+        let value = self.planner.lock().entries.get(key).cloned();
         match value {
             Some(_) => {
                 self.planner_hits.fetch_add(1, Ordering::Relaxed);
@@ -121,7 +119,7 @@ impl EngineCaches {
     }
 
     pub(crate) fn planner_insert(&self, key: PlannerCacheKey, value: PlannerOutput) {
-        let mut shard = lock_cache_shard("planner", &self.planner);
+        let mut shard = self.planner.lock();
         let is_new = !shard.entries.contains_key(&key);
         shard.entries.insert(key.clone(), value);
         if is_new {
@@ -135,10 +133,7 @@ impl EngineCaches {
     }
 
     pub(crate) fn runtime_get(&self, key: &RuntimePlanCacheKey) -> Option<RuntimePlan> {
-        let value = lock_cache_shard("runtime_plan", &self.runtime)
-            .entries
-            .get(key)
-            .cloned();
+        let value = self.runtime.lock().entries.get(key).cloned();
         match value {
             Some(_) => {
                 self.runtime_hits.fetch_add(1, Ordering::Relaxed);
@@ -152,7 +147,7 @@ impl EngineCaches {
     }
 
     pub(crate) fn runtime_insert(&self, key: RuntimePlanCacheKey, value: RuntimePlan) {
-        let mut shard = lock_cache_shard("runtime_plan", &self.runtime);
+        let mut shard = self.runtime.lock();
         let is_new = !shard.entries.contains_key(&key);
         shard.entries.insert(key.clone(), value);
         if is_new {
@@ -166,10 +161,8 @@ impl EngineCaches {
     }
 
     pub(crate) fn metrics(&self) -> EngineCacheMetrics {
-        let planner_entries = lock_cache_shard("planner", &self.planner).entries.len();
-        let runtime_entries = lock_cache_shard("runtime_plan", &self.runtime)
-            .entries
-            .len();
+        let planner_entries = self.planner.lock().entries.len();
+        let runtime_entries = self.runtime.lock().entries.len();
         EngineCacheMetrics {
             planner: CacheCounters {
                 hits: self.planner_hits.load(Ordering::Relaxed),
@@ -192,14 +185,14 @@ impl EngineCaches {
 
     pub(crate) fn clear(&self) -> EngineCacheMetrics {
         let planner_invalidated = {
-            let mut shard = lock_cache_shard("planner", &self.planner);
+            let mut shard = self.planner.lock();
             let len = shard.entries.len() as u64;
             shard.entries.clear();
             shard.order.clear();
             len
         };
         let runtime_invalidated = {
-            let mut shard = lock_cache_shard("runtime_plan", &self.runtime);
+            let mut shard = self.runtime.lock();
             let len = shard.entries.len() as u64;
             shard.entries.clear();
             shard.order.clear();
@@ -217,20 +210,6 @@ impl Default for EngineCaches {
     fn default() -> Self {
         Self::with_limits(DEFAULT_CACHE_ENTRIES, DEFAULT_CACHE_ENTRIES)
     }
-}
-
-fn lock_cache_shard<'a, K, V>(
-    name: &'static str,
-    shard: &'a Mutex<CacheShard<K, V>>,
-) -> MutexGuard<'a, CacheShard<K, V>> {
-    shard.lock().unwrap_or_else(|poisoned| {
-        tracing::warn!(
-            target: "daedalus_engine::cache",
-            cache = name,
-            "cache lock poisoned; recovering cached state"
-        );
-        poisoned.into_inner()
-    })
 }
 
 fn evict_fifo<K, V>(shard: &mut CacheShard<K, V>, max_entries: usize, evictions: &AtomicU64)
@@ -278,8 +257,8 @@ pub(crate) fn runtime_plan_cache_key(
 mod tests {
     use super::*;
     use daedalus_data::model::Value;
-    use daedalus_planner::{Edge, ExecutionPlan, NodeInstance, NodeRef, PortRef};
-    use daedalus_registry::ids::NodeId;
+    use daedalus_planner::{Edge, ExecutionPlan, NodeInstance};
+
     use std::collections::BTreeMap;
 
     fn planner_key(value: u64) -> PlannerCacheKey {
@@ -314,39 +293,12 @@ mod tests {
         Graph {
             nodes: vec![
                 NodeInstance {
-                    id: NodeId::new("demo.source"),
-                    bundle: None,
-                    label: None,
-                    inputs: vec![],
-                    outputs: vec!["out".to_string()],
-                    compute: daedalus_planner::ComputeAffinity::CpuOnly,
-                    const_inputs: vec![],
-                    sync_groups: vec![],
                     metadata,
+                    ..NodeInstance::new("demo.source").with_outputs(["out"])
                 },
-                NodeInstance {
-                    id: NodeId::new("demo.sink"),
-                    bundle: None,
-                    label: None,
-                    inputs: vec!["in".to_string()],
-                    outputs: vec![],
-                    compute: daedalus_planner::ComputeAffinity::CpuOnly,
-                    const_inputs: vec![],
-                    sync_groups: vec![],
-                    metadata: BTreeMap::new(),
-                },
+                NodeInstance::new("demo.sink").with_inputs(["in"]),
             ],
-            edges: vec![Edge {
-                from: PortRef {
-                    node: NodeRef(0),
-                    port: "out".to_string(),
-                },
-                to: PortRef {
-                    node: NodeRef(1),
-                    port: "in".to_string(),
-                },
-                metadata: BTreeMap::new(),
-            }],
+            edges: vec![Edge::new(0, "out", 1, "in")],
             metadata: BTreeMap::new(),
         }
     }

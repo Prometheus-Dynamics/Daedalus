@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, TryLockError};
+use std::sync::Arc;
 
 use crate::executor::{DirectPayloadFn, NodeError};
 use crate::io::NodeIo;
@@ -306,17 +307,11 @@ impl crate::executor::NodeHandler for HandlerRegistry {
                 handler_kind = "stateful",
                 "run handler"
             );
-            let mut handler = match f.try_lock() {
-                Ok(handler) => handler,
-                Err(TryLockError::WouldBlock) => {
-                    return Err(NodeError::Handler(format!(
-                        "stateful handler {} is already running; reentrant calls are not supported",
-                        node.id
-                    )));
-                }
-                Err(TryLockError::Poisoned(_)) => {
-                    return Err(NodeError::Handler("stateful handler lock poisoned".into()));
-                }
+            let Some(mut handler) = f.try_lock() else {
+                return Err(NodeError::Handler(format!(
+                    "stateful handler {} is already running; reentrant calls are not supported",
+                    node.id
+                )));
             };
             return handler(node, ctx, io);
         }
@@ -454,7 +449,6 @@ mod tests {
         registry.on_stateful("reentrant", move |node, ctx, _io| {
             let nested = holder_for_handler
                 .lock()
-                .expect("holder lock")
                 .as_ref()
                 .expect("registry installed")
                 .clone_arc();
@@ -464,7 +458,7 @@ mod tests {
             assert!(err.to_string().contains("already running"));
             Ok(())
         });
-        *holder.lock().expect("holder lock") = Some(registry.clone_arc());
+        *holder.lock() = Some(registry.clone_arc());
 
         let ctx = test_context();
         let mut io = NodeIo::empty();

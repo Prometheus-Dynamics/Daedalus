@@ -457,8 +457,26 @@ impl PluginRegistry {
     /// Register a stable, Daedalus-facing schema identity for a Rust type.
     ///
     /// This links the Rust runtime type `T` to `TypeExpr::Opaque(T::TYPE_KEY)` for port typing,
-    /// and registers the richer schema (`T::type_expr()`) for UI/tooling.
+    /// and registers the richer schema (`T::type_expr()`) for UI/tooling. Nested types reported
+    /// by [`DaedalusTypeExpr::visit_dependencies`] (e.g. derived field types) that are not yet
+    /// registered are registered first, with the same export policy, so `T`'s schema refers to
+    /// them by key.
     pub fn register_daedalus_type<T: DaedalusTypeExpr>(
+        &mut self,
+        export: HostExportPolicy,
+    ) -> PluginResult<()> {
+        let mut deps = DependencyRegistrar {
+            registry: self,
+            export,
+            visiting: vec![T::TYPE_KEY],
+            result: Ok(()),
+        };
+        T::visit_dependencies(&mut deps);
+        deps.result?;
+        self.register_daedalus_type_only::<T>(export)
+    }
+
+    fn register_daedalus_type_only<T: DaedalusTypeExpr>(
         &mut self,
         export: HostExportPolicy,
     ) -> PluginResult<()> {
@@ -474,7 +492,7 @@ impl PluginRegistry {
     /// Register a stable schema identity *and* a `ToValue` serializer for host-visible transport.
     pub fn register_daedalus_value<T>(&mut self) -> PluginResult<()>
     where
-        T: DaedalusTypeExpr + ToValue + Clone + Send + Sync + 'static,
+        T: DaedalusTypeExpr + ToValue + Send + Sync + 'static,
     {
         self.register_daedalus_type::<T>(HostExportPolicy::Value)?;
         self.register_value_serializer::<T, _>(|v| v.to_value());
@@ -486,7 +504,7 @@ impl PluginRegistry {
     /// Useful for container types like `Vec<T>` where you don't want a separate named type key.
     pub fn register_to_value_serializer<T>(&mut self)
     where
-        T: ToValue + Clone + Send + Sync + 'static,
+        T: ToValue + Send + Sync + 'static,
     {
         self.register_value_serializer::<T, _>(|v| v.to_value());
     }
@@ -504,10 +522,7 @@ impl PluginRegistry {
             return;
         }
         let key = std::any::type_name::<T>();
-        let mut guard = self
-            .const_coercers
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self.const_coercers.write();
         guard.insert(
             key,
             Box::new(move |v| coercer(v).map(|t| Box::new(t) as Box<dyn Any + Send + Sync>)),
@@ -520,7 +535,7 @@ impl PluginRegistry {
     /// converting them into `daedalus_data::model::Value`.
     pub fn register_value_serializer<T, F>(&mut self, serializer: F)
     where
-        T: Any + Clone + Send + Sync + 'static,
+        T: Any + Send + Sync + 'static,
         F: Fn(&T) -> daedalus_data::model::Value + Send + Sync + 'static,
     {
         if self.ensure_open().is_err() {
@@ -634,5 +649,35 @@ impl PluginRegistry {
         }
         let key_str = key.into();
         self.capabilities.register_typed3::<T, F>(key_str, f);
+    }
+}
+
+/// Registers the nested types of a `DaedalusTypeExpr`, dependencies first. Types that are already
+/// registered or are being registered further up (recursive schemas) are skipped.
+struct DependencyRegistrar<'a> {
+    registry: &'a mut PluginRegistry,
+    export: HostExportPolicy,
+    visiting: Vec<&'static str>,
+    result: PluginResult<()>,
+}
+
+impl DaedalusTypeVisitor for DependencyRegistrar<'_> {
+    fn visit<T: DaedalusTypeExpr>(&mut self) {
+        if self.result.is_err()
+            || self.visiting.contains(&T::TYPE_KEY)
+            || self
+                .registry
+                .named_type_registry
+                .lookup(T::TYPE_KEY)
+                .is_some()
+        {
+            return;
+        }
+        self.visiting.push(T::TYPE_KEY);
+        T::visit_dependencies(self);
+        self.visiting.pop();
+        if self.result.is_ok() {
+            self.result = self.registry.register_daedalus_type_only::<T>(self.export);
+        }
     }
 }

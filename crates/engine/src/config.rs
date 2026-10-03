@@ -11,7 +11,10 @@ use daedalus_runtime::{
     BackpressureStrategy, HostBridgeConfig, MetricsLevel, RuntimeDebugConfig, RuntimeEdgePolicy,
     StreamWorkerConfig,
 };
-use daedalus_runtime::{DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_STREAM_IDLE_SLEEP, RuntimeSink};
+use daedalus_runtime::{
+    DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING,
+    DEFAULT_STREAM_IDLE_SLEEP, RuntimeSink,
+};
 use thiserror::Error;
 
 pub const DEFAULT_CACHE_ENTRIES: usize = 128;
@@ -138,7 +141,7 @@ fn default_fail_fast() -> bool {
 }
 
 fn default_host_event_recording() -> bool {
-    true
+    DEFAULT_HOST_BRIDGE_EVENT_RECORDING
 }
 
 fn default_host_event_limit() -> Option<usize> {

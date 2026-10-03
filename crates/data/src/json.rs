@@ -111,6 +111,108 @@ pub fn encode_value(value: &Value) -> DataResult<JsonValue> {
     Ok(JsonValue::Object(obj))
 }
 
+/// Convert a `Value` into plain (untagged) JSON for display and host-facing APIs.
+///
+/// Unlike [`encode_value`], this is lossy and not meant to round-trip: it renders values the way a
+/// host UI or log would expect them.
+///
+/// - `Unit` becomes `null`; non-finite floats also become `null`.
+/// - `List` and `Tuple` become arrays; `Bytes` becomes an array of byte numbers.
+/// - `Struct` becomes an object keyed by field name.
+/// - `Map` becomes an object when every key is a string, otherwise an array of `[key, value]` pairs.
+/// - `Enum` becomes `{"name": ..., "value": ...}` (`value` omitted for unit variants).
+pub fn to_plain_json(value: &Value) -> JsonValue {
+    match value {
+        Value::Unit => JsonValue::Null,
+        Value::Bool(b) => JsonValue::Bool(*b),
+        Value::Int(i) => JsonValue::Number((*i).into()),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
+        Value::String(s) => JsonValue::String(s.to_string()),
+        Value::Bytes(bytes) => JsonValue::Array(
+            bytes
+                .iter()
+                .map(|byte| JsonValue::Number((*byte).into()))
+                .collect(),
+        ),
+        Value::List(items) | Value::Tuple(items) => {
+            JsonValue::Array(items.iter().map(to_plain_json).collect())
+        }
+        Value::Struct(fields) => {
+            let mut obj = serde_json::Map::new();
+            for field in fields {
+                obj.insert(field.name.clone(), to_plain_json(&field.value));
+            }
+            JsonValue::Object(obj)
+        }
+        Value::Enum(ev) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("name".into(), JsonValue::String(ev.name.clone()));
+            if let Some(v) = &ev.value {
+                obj.insert("value".into(), to_plain_json(v));
+            }
+            JsonValue::Object(obj)
+        }
+        Value::Map(entries) => {
+            if entries.iter().all(|(k, _)| matches!(k, Value::String(_))) {
+                let mut obj = serde_json::Map::new();
+                for (k, v) in entries {
+                    if let Value::String(key) = k {
+                        obj.insert(key.to_string(), to_plain_json(v));
+                    }
+                }
+                JsonValue::Object(obj)
+            } else {
+                JsonValue::Array(
+                    entries
+                        .iter()
+                        .map(|(k, v)| JsonValue::Array(vec![to_plain_json(k), to_plain_json(v)]))
+                        .collect(),
+                )
+            }
+        }
+    }
+}
+
+/// Convert plain (untagged) JSON into a `Value`; the inverse of [`to_plain_json`] where it is
+/// unambiguous.
+///
+/// - `null` becomes `Unit`; booleans and strings map directly.
+/// - Integral numbers that fit `i64` become `Int`, every other number becomes `Float`.
+/// - Arrays become `List` and objects become `Map`s with `String` keys.
+///
+/// Values that [`to_plain_json`] renders lossily (`Bytes`, `Tuple`, `Struct`, `Enum`, non-string
+/// map keys) come back in these generic shapes rather than their original variant.
+pub fn from_plain_json(value: &JsonValue) -> DataResult<Value> {
+    Ok(match value {
+        JsonValue::Null => Value::Unit,
+        JsonValue::Bool(b) => Value::Bool(*b),
+        JsonValue::Number(n) => match (n.as_i64(), n.as_f64()) {
+            (Some(i), _) => Value::Int(i),
+            (None, Some(f)) => Value::Float(f),
+            (None, None) => {
+                return Err(DataError::new(
+                    DataErrorCode::Serialization,
+                    format!("unsupported JSON number {n}"),
+                ));
+            }
+        },
+        JsonValue::String(s) => Value::String(Cow::Owned(s.clone())),
+        JsonValue::Array(items) => Value::List(
+            items
+                .iter()
+                .map(from_plain_json)
+                .collect::<DataResult<_>>()?,
+        ),
+        JsonValue::Object(map) => Value::Map(
+            map.iter()
+                .map(|(k, v)| Ok((Value::String(Cow::Owned(k.clone())), from_plain_json(v)?)))
+                .collect::<DataResult<_>>()?,
+        ),
+    })
+}
+
 /// Decode from a structured JSON value.
 pub fn decode_value(value: &JsonValue) -> DataResult<Value> {
     let obj = value.as_object().ok_or_else(|| {
@@ -270,6 +372,74 @@ pub fn decode_value(value: &JsonValue) -> DataResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_json_renders_compound_values() {
+        let value = Value::Struct(vec![
+            StructFieldValue {
+                name: "label".into(),
+                value: Value::String("cam".into()),
+            },
+            StructFieldValue {
+                name: "size".into(),
+                value: Value::Tuple(vec![Value::Int(640), Value::Int(480)]),
+            },
+            StructFieldValue {
+                name: "meta".into(),
+                value: Value::Map(vec![(Value::String("fps".into()), Value::Float(30.0))]),
+            },
+            StructFieldValue {
+                name: "mode".into(),
+                value: Value::Enum(EnumValue {
+                    name: "Auto".into(),
+                    value: None,
+                }),
+            },
+            StructFieldValue {
+                name: "nan".into(),
+                value: Value::Float(f64::NAN),
+            },
+            StructFieldValue {
+                name: "pairs".into(),
+                value: Value::Map(vec![(Value::Int(1), Value::Bool(true))]),
+            },
+        ]);
+        assert_eq!(
+            to_plain_json(&value),
+            serde_json::json!({
+                "label": "cam",
+                "size": [640, 480],
+                "meta": {"fps": 30.0},
+                "mode": {"name": "Auto"},
+                "nan": null,
+                "pairs": [[1, true]],
+            })
+        );
+        assert_eq!(to_plain_json(&Value::Unit), serde_json::Value::Null);
+        assert_eq!(
+            to_plain_json(&Value::Bytes(vec![1, 2].into())),
+            serde_json::json!([1, 2])
+        );
+    }
+
+    #[test]
+    fn plain_json_round_trips_scalars_lists_and_string_maps() {
+        let value = Value::Map(vec![
+            (Value::String("fps".into()), Value::Float(29.5)),
+            (Value::String("label".into()), Value::String("cam".into())),
+            (Value::String("n".into()), Value::Int(-3)),
+            (
+                Value::String("tags".into()),
+                Value::List(vec![Value::Bool(true), Value::Unit]),
+            ),
+        ]);
+        let json = to_plain_json(&value);
+        assert_eq!(from_plain_json(&json).expect("decode"), value);
+        assert_eq!(
+            from_plain_json(&serde_json::json!(2.0)).expect("float"),
+            Value::Float(2.0)
+        );
+    }
 
     #[test]
     fn round_trip_value() {

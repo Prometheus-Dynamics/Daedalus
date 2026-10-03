@@ -9,18 +9,10 @@ fn persistent_python_worker_loads_module_once_and_invokes_repeatedly() {
     let worker = write_python_worker(&dir);
     let module = dir.join("demo_module.py");
     let config = BackendConfig {
-        backend: BackendKind::Python,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(module.display().to_string()),
-        entry_class: None,
-        entry_symbol: Some("add".into()),
-        executable: Some(python),
         args: vec![worker.display().to_string(), module.display().to_string()],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Python, python, "add")
+            .with_entry_module(module.display().to_string())
     };
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend(&config)
@@ -61,18 +53,10 @@ fn persistent_node_worker_imports_module_once_and_invokes_repeatedly() {
     let worker = write_node_worker(&dir);
     let module = dir.join("demo_module.mjs");
     let config = BackendConfig {
-        backend: BackendKind::Node,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: Some(module.display().to_string()),
-        entry_class: None,
-        entry_symbol: Some("add".into()),
-        executable: Some(node),
         args: vec![worker.display().to_string(), module.display().to_string()],
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Node, node, "add")
+            .with_entry_module(module.display().to_string())
     };
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend(&config)
@@ -112,12 +96,6 @@ fn persistent_java_worker_loads_classpath_once_and_invokes_repeatedly() {
     let dir = temp_dir("persistent_java_worker");
     let classes = write_java_worker(&dir, &javac);
     let config = BackendConfig {
-        backend: BackendKind::Java,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module: None,
-        entry_class: Some("DemoModule".into()),
-        entry_symbol: Some("add".into()),
-        executable: Some(java),
         args: vec![
             "-cp".into(),
             classes.display().to_string(),
@@ -126,10 +104,9 @@ fn persistent_java_worker_loads_classpath_once_and_invokes_repeatedly() {
             "add".into(),
         ],
         classpath: vec![classes.display().to_string()],
-        native_library_paths: Vec::new(),
         working_dir: Some(dir.display().to_string()),
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        ..BackendConfig::persistent_worker(BackendKind::Java, java, "add")
+            .with_entry_class("DemoModule")
     };
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend(&config)

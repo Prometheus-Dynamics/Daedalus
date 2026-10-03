@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 
 use crate::handles::{GpuBufferId, GpuImageId};
 
@@ -40,37 +41,14 @@ impl Drop for ResourceDropToken {
         };
         match self.kind {
             ResourceKind::Buffer(id) => {
-                let mut buffers = resources.buffers.lock().unwrap_or_else(|poisoned| {
-                    tracing::warn!(
-                        target: "daedalus_gpu::wgpu",
-                        buffer_id = id.0,
-                        "wgpu buffer registry lock poisoned while dropping buffer"
-                    );
-                    poisoned.into_inner()
-                });
+                let mut buffers = resources.buffers.lock();
                 buffers.remove(&id);
             }
             ResourceKind::Texture { id, recycle } => {
-                let mut textures = resources.textures.lock().unwrap_or_else(|poisoned| {
-                    tracing::warn!(
-                        target: "daedalus_gpu::wgpu",
-                        texture_id = %id,
-                        "wgpu texture registry lock poisoned while dropping texture"
-                    );
-                    poisoned.into_inner()
-                });
+                let mut textures = resources.textures.lock();
                 let texture = textures.remove(&id);
                 if let (Some(texture), Some(meta)) = (texture, recycle) {
-                    let mut pool = crate::shader::temp_pool()
-                        .lock()
-                        .unwrap_or_else(|poisoned| {
-                            tracing::warn!(
-                                target: "daedalus_gpu::wgpu",
-                                texture_id = %id,
-                                "wgpu texture pool lock poisoned while recycling texture"
-                            );
-                            poisoned.into_inner()
-                        });
+                    let mut pool = crate::shader::temp_pool().lock();
                     pool.put_texture(
                         meta.device_key,
                         meta.width,

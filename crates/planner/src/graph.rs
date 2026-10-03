@@ -19,14 +19,7 @@ pub struct StableHash(pub u64);
 
 impl StableHash {
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-        const FNV_PRIME: u64 = 0x100000001b3;
-        let mut hash = FNV_OFFSET;
-        for b in bytes {
-            hash ^= *b as u64;
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-        StableHash(hash)
+        StableHash(daedalus_core::stable_id::fnv1a64(bytes))
     }
 }
 
@@ -49,9 +42,16 @@ pub(crate) fn stable_hash_serialized<T: Serialize + ?Sized>(domain: &str, value:
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NodeRef(pub usize);
 
+impl From<usize> for NodeRef {
+    fn from(index: usize) -> Self {
+        Self(index)
+    }
+}
+
 /// Port reference by name within a node.
 ///
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PortRef {
     pub node: NodeRef,
     pub port: String,
@@ -60,6 +60,7 @@ pub struct PortRef {
 /// Edge from one node/port to another.
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Edge {
     pub from: PortRef,
     pub to: PortRef,
@@ -70,6 +71,7 @@ pub struct Edge {
 /// An instantiated node, identified by registry id.
 ///
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeInstance {
     pub id: daedalus_registry::ids::NodeId,
     pub bundle: Option<String>,
@@ -86,9 +88,106 @@ pub struct NodeInstance {
     pub metadata: BTreeMap<String, daedalus_data::model::Value>,
 }
 
+impl Edge {
+    /// An edge from `from`'s `from_port` to `to`'s `to_port`, without metadata.
+    pub fn new(
+        from: impl Into<NodeRef>,
+        from_port: impl Into<String>,
+        to: impl Into<NodeRef>,
+        to_port: impl Into<String>,
+    ) -> Self {
+        Self {
+            from: PortRef {
+                node: from.into(),
+                port: from_port.into(),
+            },
+            to: PortRef {
+                node: to.into(),
+                port: to_port.into(),
+            },
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: daedalus_data::model::Value,
+    ) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+}
+
+impl NodeInstance {
+    /// A CPU-only instance of registry node `id` with no ports, label, or metadata.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: daedalus_registry::ids::NodeId::new(id),
+            bundle: None,
+            label: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            compute: ComputeAffinity::default(),
+            const_inputs: Vec::new(),
+            sync_groups: Vec::new(),
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_bundle(mut self, bundle: impl Into<String>) -> Self {
+        self.bundle = Some(bundle.into());
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn with_inputs(mut self, ports: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.inputs.extend(ports.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_outputs(mut self, ports: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.outputs.extend(ports.into_iter().map(Into::into));
+        self
+    }
+
+    pub fn with_compute(mut self, compute: ComputeAffinity) -> Self {
+        self.compute = compute;
+        self
+    }
+
+    pub fn with_const_input(
+        mut self,
+        port: impl Into<String>,
+        value: daedalus_data::model::Value,
+    ) -> Self {
+        self.const_inputs.push((port.into(), value));
+        self
+    }
+
+    pub fn with_sync_group(mut self, group: SyncGroup) -> Self {
+        self.sync_groups.push(group);
+        self
+    }
+
+    pub fn with_metadata(
+        mut self,
+        key: impl Into<String>,
+        value: daedalus_data::model::Value,
+    ) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+}
+
 /// Planner input graph (pre-pass).
 ///
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Graph {
     pub nodes: Vec<NodeInstance>,
     pub edges: Vec<Edge>,
@@ -101,130 +200,30 @@ pub struct Graph {
 
 mod graph_metadata_serde {
     use super::*;
+    use daedalus_data::json::{from_plain_json, to_plain_json};
+    use daedalus_data::model::Value;
     use serde::{Deserializer, Serializer};
     use serde_json::Value as JsonValue;
 
-    fn json_to_value(value: JsonValue) -> Result<daedalus_data::model::Value, String> {
-        Ok(match value {
-            JsonValue::Null => daedalus_data::model::Value::Unit,
-            JsonValue::Bool(b) => daedalus_data::model::Value::Bool(b),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    daedalus_data::model::Value::Int(i)
-                } else if let Some(f) = n.as_f64() {
-                    daedalus_data::model::Value::Float(f)
-                } else {
-                    return Err(n.to_string());
-                }
-            }
-            JsonValue::String(s) => daedalus_data::model::Value::String(s.into()),
-            JsonValue::Array(items) => {
-                let mut vals = Vec::with_capacity(items.len());
-                for item in items {
-                    vals.push(json_to_value(item)?);
-                }
-                daedalus_data::model::Value::List(vals)
-            }
-            JsonValue::Object(map) => {
-                let mut entries = Vec::with_capacity(map.len());
-                for (k, v) in map {
-                    entries.push((
-                        daedalus_data::model::Value::String(k.into()),
-                        json_to_value(v)?,
-                    ));
-                }
-                daedalus_data::model::Value::Map(entries)
-            }
-        })
-    }
-
-    fn value_to_plain_json(value: &daedalus_data::model::Value) -> JsonValue {
-        use daedalus_data::model::Value;
-        match value {
-            Value::Unit => JsonValue::Null,
-            Value::Bool(b) => JsonValue::Bool(*b),
-            Value::Int(i) => serde_json::json!(i),
-            Value::Float(f) => serde_json::json!(f),
-            Value::String(s) => serde_json::json!(s),
-            Value::Bytes(b) => serde_json::json!(b.as_ref()),
-            Value::List(items) | Value::Tuple(items) => {
-                JsonValue::Array(items.iter().map(value_to_plain_json).collect())
-            }
-            Value::Struct(fields) => {
-                let mut obj = serde_json::Map::new();
-                for f in fields {
-                    obj.insert(f.name.clone(), value_to_plain_json(&f.value));
-                }
-                JsonValue::Object(obj)
-            }
-            Value::Enum(ev) => {
-                let mut obj = serde_json::Map::new();
-                obj.insert("name".into(), JsonValue::String(ev.name.clone()));
-                if let Some(v) = &ev.value {
-                    obj.insert("value".into(), value_to_plain_json(v));
-                }
-                JsonValue::Object(obj)
-            }
-            Value::Map(entries) => {
-                let mut obj = serde_json::Map::new();
-                let mut all_string_keys = true;
-                for (k, _) in entries {
-                    if !matches!(k, Value::String(_)) {
-                        all_string_keys = false;
-                        break;
-                    }
-                }
-                if all_string_keys {
-                    for (k, v) in entries {
-                        if let Value::String(s) = k {
-                            obj.insert(s.to_string(), value_to_plain_json(v));
-                        }
-                    }
-                    JsonValue::Object(obj)
-                } else {
-                    JsonValue::Array(
-                        entries
-                            .iter()
-                            .map(|(k, v)| {
-                                JsonValue::Array(vec![
-                                    value_to_plain_json(k),
-                                    value_to_plain_json(v),
-                                ])
-                            })
-                            .collect(),
-                    )
-                }
-            }
-        }
-    }
-
-    pub fn serialize<S>(
-        value: &BTreeMap<String, daedalus_data::model::Value>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &BTreeMap<String, Value>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let mut map = serde_json::Map::new();
-        for (k, v) in value {
-            map.insert(k.clone(), value_to_plain_json(v));
-        }
-        map.serialize(serializer)
+        value
+            .iter()
+            .map(|(k, v)| (k.clone(), to_plain_json(v)))
+            .collect::<serde_json::Map<_, _>>()
+            .serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<BTreeMap<String, daedalus_data::model::Value>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<String, Value>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw = BTreeMap::<String, JsonValue>::deserialize(deserializer)?;
-        let mut out = BTreeMap::new();
-        for (k, v) in raw {
-            let converted = json_to_value(v).map_err(serde::de::Error::custom)?;
-            out.insert(k, converted);
-        }
-        Ok(out)
+        BTreeMap::<String, JsonValue>::deserialize(deserializer)?
+            .into_iter()
+            .map(|(k, v)| Ok((k, from_plain_json(&v).map_err(serde::de::Error::custom)?)))
+            .collect()
     }
 }
 

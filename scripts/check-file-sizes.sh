@@ -7,7 +7,7 @@ limit="${FILE_SIZE_LINE_LIMIT:-800}"
 exclude_dirs="${FILE_SIZE_EXCLUDE_DIRS:-}"
 
 declare -a scan_roots=()
-for candidate in crates plugins testing; do
+for candidate in crates examples testing; do
     if [[ -d "$root_dir/$candidate" ]]; then
         scan_roots+=("$root_dir/$candidate")
     fi
@@ -18,10 +18,19 @@ if [[ ${#scan_roots[@]} -eq 0 ]]; then
 fi
 
 declare -A baseline=()
+declare -a stale_entries=()
 if [[ -f "$baseline_file" ]]; then
-    while IFS= read -r line; do
-        [[ -z "$line" || "$line" =~ ^# ]] && continue
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" ]] && continue
         baseline["$line"]=1
+        if [[ ! -f "$root_dir/$line" ]]; then
+            stale_entries+=("$line (file does not exist)")
+        elif (( $(wc -l <"$root_dir/$line") <= limit )); then
+            stale_entries+=("$line (now $(wc -l <"$root_dir/$line") lines, within the ${limit}-line limit)")
+        fi
     done <"$baseline_file"
 fi
 
@@ -65,12 +74,25 @@ for entry in "${over_limit[@]}"; do
     fi
 done
 
-if [[ ${#over_limit[@]} -gt 0 ]]; then
-    printf 'Warning: Rust files over %s lines:\n' "$limit"
-    printf '  %s\n' "${over_limit[@]}"
-fi
+status=0
 
 if [[ ${#violations[@]} -gt 0 ]]; then
-    printf '\nWarning: new files over %s lines:\n' "$limit" >&2
+    printf 'Error: Rust files over %s lines (split them):\n' "$limit" >&2
     printf '  %s\n' "${violations[@]}" >&2
+    status=1
 fi
+
+if [[ ${#over_limit[@]} -gt ${#violations[@]} ]]; then
+    printf 'Warning: baselined Rust files still over %s lines:\n' "$limit"
+    for entry in "${over_limit[@]}"; do
+        [[ -n "${baseline[${entry#* }]:-}" ]] && printf '  %s\n' "$entry"
+    done
+fi
+
+if [[ ${#stale_entries[@]} -gt 0 ]]; then
+    printf 'Error: stale entries in %s (remove them):\n' "${baseline_file#$root_dir/}" >&2
+    printf '  %s\n' "${stale_entries[@]}" >&2
+    status=1
+fi
+
+exit "$status"

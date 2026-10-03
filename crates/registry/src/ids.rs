@@ -37,15 +37,6 @@ impl NodeId {
         Ok(id)
     }
 
-    pub fn namespaced(namespace: impl Into<String>, name: impl Into<String>) -> Self {
-        let ns = namespace.into();
-        let name = name.into();
-        if ns.is_empty() {
-            return Self(name);
-        }
-        Self(format!("{ns}.{name}"))
-    }
-
     pub fn validate(&self) -> Result<(), IdValidationError> {
         if self.0.is_empty() {
             return Err(IdValidationError::Empty);
@@ -60,50 +51,6 @@ impl NodeId {
 }
 
 impl fmt::Display for NodeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// ID for node-group registrations.
-///
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct GroupId(pub String);
-
-impl GroupId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn try_new(id: impl Into<String>) -> Result<Self, IdValidationError> {
-        let id = Self::new(id);
-        id.validate()?;
-        Ok(id)
-    }
-
-    pub fn namespaced(namespace: impl Into<String>, name: impl Into<String>) -> Self {
-        let ns = namespace.into();
-        let name = name.into();
-        if ns.is_empty() {
-            return Self(name);
-        }
-        Self(format!("{ns}.{name}"))
-    }
-
-    pub fn validate(&self) -> Result<(), IdValidationError> {
-        if self.0.is_empty() {
-            return Err(IdValidationError::Empty);
-        }
-        if !self.0.chars().all(|c| {
-            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-' | ':')
-        }) {
-            return Err(IdValidationError::InvalidCharacters);
-        }
-        Ok(())
-    }
-}
-
-impl fmt::Display for GroupId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -129,25 +76,6 @@ mod tests {
         assert_eq!(
             NodeId::try_new("demo.node:ok_1"),
             Ok(NodeId::new("demo.node:ok_1"))
-        );
-    }
-
-    #[test]
-    fn group_id_validation_returns_typed_errors() {
-        assert_eq!(GroupId::new("").validate(), Err(IdValidationError::Empty));
-        assert_eq!(GroupId::try_new(""), Err(IdValidationError::Empty));
-        assert_eq!(
-            GroupId::new("demo/group").validate(),
-            Err(IdValidationError::InvalidCharacters)
-        );
-        assert_eq!(
-            GroupId::try_new("demo/group"),
-            Err(IdValidationError::InvalidCharacters)
-        );
-        assert_eq!(GroupId::new("demo.group:ok_1").validate(), Ok(()));
-        assert_eq!(
-            GroupId::try_new("demo.group:ok_1"),
-            Ok(GroupId::new("demo.group:ok_1"))
         );
     }
 }

@@ -26,7 +26,7 @@ pub(super) fn lint(
         }
     }
 
-    // Enforce exclusivity for ports that declare `Owned`/`MutBorrowed` access.
+    // Enforce exclusivity for ports that declare `Move`/`Modify` access.
     // This is the planner-level guardrail that makes in-place / COW transforms predictable:
     // if a producer output is fanned out, a downstream node cannot claim exclusive access.
     let mut fanout: HashMap<(usize, String), usize> = HashMap::new();

@@ -16,16 +16,12 @@ use super::{
 #[test]
 fn begin_resource_frame_clears_only_frame_scratch_live_bytes() {
     let state = StateStore::default();
-    state
-        .record_node_resource_usage("node", "scratch", ResourceClass::FrameScratch, 64, 128)
-        .unwrap();
-    state
-        .record_node_resource_usage("node", "cache", ResourceClass::WarmCache, 32, 96)
-        .unwrap();
+    state.record_node_resource_usage("node", "scratch", ResourceClass::FrameScratch, 64, 128);
+    state.record_node_resource_usage("node", "cache", ResourceClass::WarmCache, 32, 96);
 
-    state.begin_node_resource_frame("node").unwrap();
+    state.begin_node_resource_frame("node");
 
-    let snapshot = state.snapshot_node_resources("node").unwrap();
+    let snapshot = state.snapshot_node_resources("node");
     assert_eq!(
         snapshot,
         NodeResourceSnapshot {
@@ -49,17 +45,11 @@ fn begin_resource_frame_clears_only_frame_scratch_live_bytes() {
 #[test]
 fn snapshot_node_resources_aggregates_by_class() {
     let state = StateStore::default();
-    state
-        .record_node_resource_usage("node", "scratch-a", ResourceClass::FrameScratch, 10, 20)
-        .unwrap();
-    state
-        .record_node_resource_usage("node", "scratch-b", ResourceClass::FrameScratch, 5, 12)
-        .unwrap();
-    state
-        .record_node_resource_usage("node", "persistent", ResourceClass::PersistentState, 7, 9)
-        .unwrap();
+    state.record_node_resource_usage("node", "scratch-a", ResourceClass::FrameScratch, 10, 20);
+    state.record_node_resource_usage("node", "scratch-b", ResourceClass::FrameScratch, 5, 12);
+    state.record_node_resource_usage("node", "persistent", ResourceClass::PersistentState, 7, 9);
 
-    let snapshot = state.snapshot_node_resources("node").unwrap();
+    let snapshot = state.snapshot_node_resources("node");
     assert_eq!(snapshot.frame_scratch.live_bytes, 15);
     assert_eq!(snapshot.frame_scratch.retained_bytes, 32);
     assert_eq!(snapshot.persistent_state.live_bytes, 7);
@@ -69,18 +59,12 @@ fn snapshot_node_resources_aggregates_by_class() {
 #[test]
 fn memory_pressure_compacts_caches_and_drops_frame_scratch() {
     let state = StateStore::default();
-    state
-        .record_node_resource_usage("node", "scratch", ResourceClass::FrameScratch, 10, 20)
-        .unwrap();
-    state
-        .record_node_resource_usage("node", "cache", ResourceClass::WarmCache, 8, 30)
-        .unwrap();
+    state.record_node_resource_usage("node", "scratch", ResourceClass::FrameScratch, 10, 20);
+    state.record_node_resource_usage("node", "cache", ResourceClass::WarmCache, 8, 30);
 
-    state
-        .apply_node_resource_lifecycle("node", ResourceLifecycleEvent::MemoryPressure)
-        .unwrap();
+    state.apply_node_resource_lifecycle("node", ResourceLifecycleEvent::MemoryPressure);
 
-    let snapshot = state.snapshot_node_resources("node").unwrap();
+    let snapshot = state.snapshot_node_resources("node");
     assert_eq!(snapshot.frame_scratch.live_bytes, 0);
     assert_eq!(snapshot.frame_scratch.retained_bytes, 0);
     assert_eq!(snapshot.warm_cache.live_bytes, 8);
@@ -90,16 +74,12 @@ fn memory_pressure_compacts_caches_and_drops_frame_scratch() {
 #[test]
 fn stop_lifecycle_removes_node_resources() {
     let state = StateStore::default();
-    state
-        .record_node_resource_usage("node", "persistent", ResourceClass::PersistentState, 5, 9)
-        .unwrap();
+    state.record_node_resource_usage("node", "persistent", ResourceClass::PersistentState, 5, 9);
 
-    state
-        .apply_node_resource_lifecycle("node", ResourceLifecycleEvent::Stop)
-        .unwrap();
+    state.apply_node_resource_lifecycle("node", ResourceLifecycleEvent::Stop);
 
     assert_eq!(
-        state.snapshot_node_resources("node").unwrap(),
+        state.snapshot_node_resources("node"),
         NodeResourceSnapshot::default()
     );
 }
@@ -208,25 +188,22 @@ fn managed_resources_are_reused_and_snapshotted() {
     )
     .unwrap();
 
-    let snapshot = ctx.snapshot_resources().unwrap();
+    let snapshot = ctx.snapshot_resources();
     assert_eq!(snapshot.warm_cache.live_bytes, 22);
     assert_eq!(snapshot.warm_cache.retained_bytes, 30);
 
-    ctx.begin_resource_frame().unwrap();
-    ctx.end_resource_frame().unwrap();
-    ctx.apply_memory_pressure().unwrap();
-    ctx.notify_idle().unwrap();
-    ctx.release_resources().unwrap();
+    ctx.begin_resource_frame();
+    ctx.end_resource_frame();
+    ctx.apply_memory_pressure();
+    ctx.notify_idle();
+    ctx.release_resources();
 
     assert_eq!(before.load(Ordering::SeqCst), 1);
     assert_eq!(after.load(Ordering::SeqCst), 1);
     assert_eq!(pressure.load(Ordering::SeqCst), 1);
     assert_eq!(idle.load(Ordering::SeqCst), 1);
     assert_eq!(stop.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        ctx.snapshot_resources().unwrap(),
-        NodeResourceSnapshot::default()
-    );
+    assert_eq!(ctx.snapshot_resources(), NodeResourceSnapshot::default());
 }
 
 #[test]
@@ -340,7 +317,7 @@ fn managed_resource_is_restored_after_panic() {
 #[test]
 fn native_type_mismatch_returns_typed_error() {
     let state = StateStore::default();
-    state.set_native("value", 7_u32).unwrap();
+    state.set_native("value", 7_u32);
 
     let err = state
         .get_native::<String>("value")
@@ -360,16 +337,16 @@ fn managed_byte_buffer_helpers_track_touch_and_reuse_capacity() {
     })
     .unwrap();
 
-    let first = ctx.snapshot_resources().unwrap();
+    let first = ctx.snapshot_resources();
     let first_retained = first.frame_scratch.retained_bytes;
     assert_eq!(first.frame_scratch.live_bytes, 16);
     assert_eq!(first.frame_scratch.touched_bytes, 16);
     assert_eq!(first.frame_scratch.allocation_events, 1);
     assert!(first_retained >= 16);
 
-    ctx.begin_resource_frame().unwrap();
+    ctx.begin_resource_frame();
 
-    let reset = ctx.snapshot_resources().unwrap();
+    let reset = ctx.snapshot_resources();
     assert_eq!(reset.frame_scratch.live_bytes, 0);
     assert_eq!(reset.frame_scratch.touched_bytes, 0);
     assert_eq!(reset.frame_scratch.retained_bytes, first_retained);
@@ -378,7 +355,7 @@ fn managed_byte_buffer_helpers_track_touch_and_reuse_capacity() {
     ctx.with_frame_scratch_bytes("scratch", 8, |bytes| bytes.fill(0xAB))
         .unwrap();
 
-    let second = ctx.snapshot_resources().unwrap();
+    let second = ctx.snapshot_resources();
     assert_eq!(second.frame_scratch.live_bytes, 8);
     assert_eq!(second.frame_scratch.touched_bytes, 8);
     assert_eq!(second.frame_scratch.retained_bytes, first_retained);

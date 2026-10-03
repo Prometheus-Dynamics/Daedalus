@@ -1,7 +1,7 @@
 use daedalus_data::model::Value;
 use daedalus_planner::{
     ComputeAffinity, Edge, ExecutionPlan, Graph, GraphNodeSelector, GraphPatch, GraphPatchOp,
-    NodeInstance, NodeRef, PortRef,
+    NodeInstance, NodeRef,
 };
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::{
@@ -10,11 +10,12 @@ use daedalus_runtime::{
     executor::{NodeError, OwnedExecutor},
 };
 use daedalus_transport::Payload;
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 struct LogHandler {
-    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    log: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for LogHandler {
@@ -24,7 +25,7 @@ impl NodeHandler for LogHandler {
         _ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
-        self.log.lock().unwrap().push(node.id.clone());
+        self.log.lock().push(node.id.clone());
         Ok(())
     }
 }
@@ -44,10 +45,7 @@ impl NodeHandler for ConstLogHandler {
             .inputs_for("mode")
             .find_map(|payload| payload.inner.get_ref::<Value>().cloned())
             .unwrap_or(Value::String("missing".into()));
-        self.log
-            .lock()
-            .unwrap()
-            .push(format!("{}:{mode:?}", node.id));
+        self.log.lock().push(format!("{}:{mode:?}", node.id));
         Ok(())
     }
 }
@@ -103,28 +101,20 @@ impl NodeHandler for CustomMetricsHandler {
         ctx: &daedalus_runtime::state::ExecutionContext,
         _io: &mut daedalus_runtime::io::NodeIo,
     ) -> Result<(), NodeError> {
-        ctx.increment_metric("detections", 2)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.increment_metric("detections", 3)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.gauge_metric("confidence", 0.875)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.duration_metric("model_time", std::time::Duration::from_millis(7))
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.bytes_metric("scratch_bytes", 4096)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.text_metric("model", "yolo-lite")
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
-        ctx.bool_metric("saturated", false)
-            .map_err(|err| NodeError::Handler(err.to_string()))?;
+        ctx.increment_metric("detections", 2);
+        ctx.increment_metric("detections", 3);
+        ctx.gauge_metric("confidence", 0.875);
+        ctx.duration_metric("model_time", std::time::Duration::from_millis(7));
+        ctx.bytes_metric("scratch_bytes", 4096);
+        ctx.text_metric("model", "yolo-lite");
+        ctx.bool_metric("saturated", false);
         ctx.json_metric(
             "classes",
             serde_json::json!({
                 "person": 3,
                 "car": 2,
             }),
-        )
-        .map_err(|err| NodeError::Handler(err.to_string()))?;
+        );
         Ok(())
     }
 }
@@ -132,30 +122,12 @@ impl NodeHandler for CustomMetricsHandler {
 fn tiny_exec_plan(compute: &[ComputeAffinity]) -> ExecutionPlan {
     let mut graph = Graph::default();
     for (idx, c) in compute.iter().enumerate() {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{idx}")),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: *c,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph
+            .nodes
+            .push(NodeInstance::new(format!("n{idx}")).with_compute(*c));
     }
     for i in 0..compute.len().saturating_sub(1) {
-        graph.edges.push(Edge {
-            from: PortRef {
-                node: NodeRef(i),
-                port: "out".into(),
-            },
-            to: PortRef {
-                node: NodeRef(i + 1),
-                port: "in".into(),
-            },
-            metadata: Default::default(),
-        });
+        graph.edges.push(Edge::new(i, "out", i + 1, "in"));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -163,17 +135,7 @@ fn tiny_exec_plan(compute: &[ComputeAffinity]) -> ExecutionPlan {
 fn independent_exec_plan(count: usize) -> ExecutionPlan {
     let mut graph = Graph::default();
     for idx in 0..count {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{idx}")),
-            bundle: None,
-            label: None,
-            inputs: vec![],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(NodeInstance::new(format!("n{idx}")));
     }
     ExecutionPlan::new(graph, vec![])
 }
@@ -181,77 +143,33 @@ fn independent_exec_plan(count: usize) -> ExecutionPlan {
 fn const_exec_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
     for (idx, mode) in ["cold", "warm"].into_iter().enumerate() {
-        graph.nodes.push(NodeInstance {
-            id: daedalus_registry::ids::NodeId::new(format!("n{idx}")),
-            bundle: None,
-            label: None,
-            inputs: vec!["mode".into()],
-            outputs: vec![],
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![("mode".into(), Value::String(mode.into()))],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        });
+        graph.nodes.push(
+            NodeInstance::new(format!("n{idx}"))
+                .with_inputs(["mode"])
+                .with_const_input("mode", Value::String(mode.into())),
+        );
     }
     ExecutionPlan::new(graph, vec![])
 }
 
 fn host_echo_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".into()),
-        inputs: vec!["out".into()],
-        outputs: vec!["in".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::from([
-            (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-            (
-                "dynamic_inputs".to_string(),
-                Value::String("generic".into()),
-            ),
-            (
-                "dynamic_outputs".to_string(),
-                Value::String("generic".into()),
-            ),
-        ]),
-    });
-    graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("echo"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "in".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
+    graph.nodes.push(
+        NodeInstance::new(HOST_BRIDGE_ID)
+            .with_label("host")
+            .with_inputs(["out"])
+            .with_outputs(["in"])
+            .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
+            .with_metadata("dynamic_inputs", Value::String("generic".into()))
+            .with_metadata("dynamic_outputs", Value::String("generic".into())),
+    );
+    graph.nodes.push(
+        NodeInstance::new("echo")
+            .with_inputs(["in"])
+            .with_outputs(["out"]),
+    );
+    graph.edges.push(Edge::new(0, "in", 1, "in"));
+    graph.edges.push(Edge::new(1, "out", 0, "out"));
     ExecutionPlan::new(graph, vec![])
 }
 
@@ -278,13 +196,10 @@ fn cpu_only_executes_in_order() {
             backpressure: BackpressureStrategy::None,
         },
     );
-    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = LogHandler { log: log.clone() };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
-    assert_eq!(
-        log.lock().unwrap().clone(),
-        vec!["n0".to_string(), "n1".to_string()]
-    );
+    assert_eq!(log.lock().clone(), vec!["n0".to_string(), "n1".to_string()]);
     assert_eq!(telemetry.nodes_executed, 2);
     assert_eq!(telemetry.cpu_segments, 2);
 }
@@ -293,7 +208,7 @@ fn cpu_only_executes_in_order() {
 fn gpu_preferred_falls_back_without_handle() {
     let exec = tiny_exec_plan(&[ComputeAffinity::GpuPreferred]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
-    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = LogHandler { log };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
     assert_eq!(telemetry.gpu_fallbacks, 1);
@@ -309,7 +224,7 @@ fn gpu_preferred_falls_back_without_handle() {
 fn gpu_required_errors_without_handle() {
     let exec = tiny_exec_plan(&[ComputeAffinity::GpuRequired]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
-    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
     let handler = LogHandler { log };
     let err = Executor::new(&rt, handler).run().unwrap_err();
     match err {
@@ -347,10 +262,7 @@ fn borrowed_and_owned_executors_match_basic_in_place_runs() {
     );
     let owned_telemetry = owned.run_in_place().expect("owned run");
 
-    assert_eq!(
-        borrowed_log.lock().unwrap().clone(),
-        owned_log.lock().unwrap().clone()
-    );
+    assert_eq!(borrowed_log.lock().clone(), owned_log.lock().clone());
     assert_eq!(borrowed_telemetry.nodes_executed, 3);
     assert_eq!(owned_telemetry.nodes_executed, 3);
     assert_eq!(
@@ -384,8 +296,8 @@ fn borrowed_and_owned_executors_match_parallel_in_place_runs() {
     .with_pool_size(Some(2));
     let owned_telemetry = owned.run_parallel_in_place().expect("owned run");
 
-    let mut borrowed_nodes = borrowed_log.lock().unwrap().clone();
-    let mut owned_nodes = owned_log.lock().unwrap().clone();
+    let mut borrowed_nodes = borrowed_log.lock().clone();
+    let mut owned_nodes = owned_log.lock().clone();
     borrowed_nodes.sort();
     owned_nodes.sort();
     assert_eq!(borrowed_nodes, owned_nodes);
@@ -434,10 +346,7 @@ fn borrowed_and_owned_executors_match_patch_application() {
     assert_eq!(borrowed_report.applied_ops, owned_report.applied_ops);
     assert_eq!(borrowed_report.skipped_ops, owned_report.skipped_ops);
     assert_eq!(borrowed_report.matched_nodes, owned_report.matched_nodes);
-    assert_eq!(
-        borrowed_log.lock().unwrap().clone(),
-        owned_log.lock().unwrap().clone()
-    );
+    assert_eq!(borrowed_log.lock().clone(), owned_log.lock().clone());
 }
 
 #[test]
@@ -467,7 +376,7 @@ fn borrowed_host_bridge_run_matches_owned_direct_host_route() {
     let borrowed_bridges = HostBridgeManager::new();
     borrowed_bridges.populate_from_plan(&rt);
     let borrowed_host = borrowed_bridges.ensure_handle("host");
-    borrowed_host.push_payload("in", Payload::owned("demo:u32", 7_u32));
+    borrowed_host.feed_payload("in", Payload::owned("demo:u32", 7_u32));
     let mut borrowed = Executor::new(&rt, EchoHandler).with_host_bridges(borrowed_bridges.clone());
     let borrowed_telemetry = borrowed.run_in_place().expect("borrowed run");
     let borrowed_output = borrowed_host
@@ -499,15 +408,10 @@ fn execution_context_contains_node_metadata() {
     let mut metadata = BTreeMap::new();
     metadata.insert("pos".into(), Value::Int(7));
     graph.nodes.push(NodeInstance {
-        id: daedalus_registry::ids::NodeId::new("n0"),
-        bundle: Some("bundle".into()),
-        label: Some("alias".into()),
-        inputs: vec![],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
         metadata,
+        ..NodeInstance::new("n0")
+            .with_bundle("bundle")
+            .with_label("alias")
     });
     let plan = ExecutionPlan::new(graph, vec![]);
     let rt = build_runtime(&plan, &SchedulerConfig::default());
@@ -517,13 +421,13 @@ fn execution_context_contains_node_metadata() {
         move |_node: &RuntimeNode,
               ctx: &daedalus_runtime::state::ExecutionContext,
               _io: &mut daedalus_runtime::io::NodeIo| {
-            seen.lock().unwrap().replace(ctx.metadata.clone());
+            seen.lock().replace(ctx.metadata.clone());
             Ok(())
         }
     };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
     assert_eq!(telemetry.nodes_executed, 1);
-    let captured = seen.lock().unwrap().clone().expect("metadata captured");
+    let captured = seen.lock().clone().expect("metadata captured");
     assert_eq!(captured.get("pos"), Some(&Value::Int(7)));
     assert_eq!(captured.get("label"), Some(&Value::String("alias".into())));
     assert_eq!(
@@ -537,44 +441,38 @@ fn executor_resource_lifecycle_controls_shared_state() {
     let exec = tiny_exec_plan(&[ComputeAffinity::CpuOnly]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
     let state = StateStore::default();
-    state
-        .record_node_resource_usage(
-            "n0",
-            "cache",
-            daedalus_runtime::ResourceClass::WarmCache,
-            8,
-            32,
-        )
-        .unwrap();
+    state.record_node_resource_usage(
+        "n0",
+        "cache",
+        daedalus_runtime::ResourceClass::WarmCache,
+        8,
+        32,
+    );
     let handler = LogHandler {
         log: Arc::new(Mutex::new(Vec::new())),
     };
     let executor = Executor::new(&rt, handler).with_state(state.clone());
 
-    executor.on_memory_pressure().unwrap();
-    let compacted = state.snapshot_node_resources("n0").unwrap();
+    executor.on_memory_pressure();
+    let compacted = state.snapshot_node_resources("n0");
     assert_eq!(compacted.warm_cache.live_bytes, 8);
     assert_eq!(compacted.warm_cache.retained_bytes, 8);
 
-    executor
-        .apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
-        .unwrap();
-    let idled = state.snapshot_node_resources("n0").unwrap();
+    executor.apply_resource_lifecycle(ResourceLifecycleEvent::Idle);
+    let idled = state.snapshot_node_resources("n0");
     assert_eq!(idled.warm_cache.live_bytes, 0);
     assert_eq!(idled.warm_cache.retained_bytes, 0);
 
-    state
-        .record_node_resource_usage(
-            "n0",
-            "persistent",
-            daedalus_runtime::ResourceClass::PersistentState,
-            3,
-            6,
-        )
-        .unwrap();
-    executor.shutdown_resources().unwrap();
+    state.record_node_resource_usage(
+        "n0",
+        "persistent",
+        daedalus_runtime::ResourceClass::PersistentState,
+        3,
+        6,
+    );
+    executor.shutdown_resources();
     assert_eq!(
-        state.snapshot_node_resources("n0").unwrap(),
+        state.snapshot_node_resources("n0"),
         daedalus_runtime::NodeResourceSnapshot::default()
     );
 }

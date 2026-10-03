@@ -1,10 +1,11 @@
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "gpu-async")]
 use std::future::poll_fn;
 #[cfg(feature = "gpu-async")]
 use std::sync::Arc;
 use std::sync::{
-    Mutex, OnceLock,
+    OnceLock,
     atomic::{AtomicUsize, Ordering},
 };
 #[cfg(feature = "gpu-async")]
@@ -72,9 +73,7 @@ async fn wait_for_submission_async(
             .map(|_| ())
             .map_err(|error| GpuError::Internal(format!("submission poll failed: {error:?}")));
         let waker = {
-            let mut state = wait_state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut state = wait_state.lock();
             state.result = Some(result);
             state.waker.take()
         };
@@ -82,9 +81,7 @@ async fn wait_for_submission_async(
             waker.wake();
         }
     }) {
-        let mut state = state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = state.lock();
         state.result = Some(Err(GpuError::Internal(error.to_string())));
         if let Some(waker) = state.waker.take() {
             waker.wake();
@@ -92,9 +89,7 @@ async fn wait_for_submission_async(
     }
 
     poll_fn(|cx| {
-        let mut state = state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = state.lock();
         if let Some(result) = state.result.take() {
             return Poll::Ready(result);
         }
@@ -105,23 +100,13 @@ async fn wait_for_submission_async(
 }
 
 impl SubmissionTracker {
-    fn lock_in_flight(&self) -> std::sync::MutexGuard<'_, VecDeque<wgpu::SubmissionIndex>> {
-        self.in_flight.lock().unwrap_or_else(|poisoned| {
-            tracing::warn!(
-                target: "daedalus_gpu::dispatch",
-                "gpu submission tracker lock poisoned; recovering tracked submissions"
-            );
-            poisoned.into_inner()
-        })
-    }
-
     pub(crate) fn track_and_throttle(
         &self,
         device: &wgpu::Device,
         submission: wgpu::SubmissionIndex,
     ) {
         {
-            let mut in_flight = self.lock_in_flight();
+            let mut in_flight = self.in_flight.lock();
             in_flight.push_back(submission.clone());
             tracing::debug!(
                 target: "daedalus_gpu::dispatch",
@@ -134,7 +119,7 @@ impl SubmissionTracker {
 
         loop {
             let wait_for = {
-                let in_flight = self.lock_in_flight();
+                let in_flight = self.in_flight.lock();
                 if in_flight.len() > max_inflight_submissions_per_device() {
                     in_flight.front().cloned()
                 } else {
@@ -161,7 +146,7 @@ impl SubmissionTracker {
                         submission = ?wait_for,
                         "gpu submission retired after throttle poll"
                     );
-                    self.lock_in_flight().pop_front();
+                    self.in_flight.lock().pop_front();
                 }
                 Err(wgpu::PollError::Timeout) => {
                     // Hard backpressure path: block until this submission completes so we do not allow
@@ -176,14 +161,14 @@ impl SubmissionTracker {
                         submission_index: Some(wait_for),
                         timeout: None,
                     });
-                    self.lock_in_flight().pop_front();
+                    self.in_flight.lock().pop_front();
                 }
                 Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
                     tracing::warn!(
                         target: "daedalus_gpu::dispatch",
                         "gpu submission index was no longer valid; clearing tracked submissions"
                     );
-                    self.lock_in_flight().clear();
+                    self.in_flight.lock().clear();
                 }
                 _ => {}
             }
@@ -197,7 +182,7 @@ impl SubmissionTracker {
         submission: wgpu::SubmissionIndex,
     ) {
         {
-            let mut in_flight = self.lock_in_flight();
+            let mut in_flight = self.in_flight.lock();
             in_flight.push_back(submission.clone());
             tracing::debug!(
                 target: "daedalus_gpu::dispatch",
@@ -210,7 +195,7 @@ impl SubmissionTracker {
 
         loop {
             let wait_for = {
-                let in_flight = self.lock_in_flight();
+                let in_flight = self.in_flight.lock();
                 if in_flight.len() > max_inflight_submissions_per_device() {
                     in_flight.front().cloned()
                 } else {
@@ -236,7 +221,7 @@ impl SubmissionTracker {
                         submission = ?wait_for,
                         "async gpu submission retired"
                     );
-                    self.lock_in_flight().pop_front();
+                    self.in_flight.lock().pop_front();
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -245,7 +230,7 @@ impl SubmissionTracker {
                         submission = ?wait_for,
                         "async gpu submission throttle poll failed"
                     );
-                    self.lock_in_flight().pop_front();
+                    self.in_flight.lock().pop_front();
                 }
             }
         }
@@ -253,7 +238,7 @@ impl SubmissionTracker {
 
     #[cfg(test)]
     fn tracked_len_for_test(&self) -> usize {
-        self.lock_in_flight().len()
+        self.in_flight.lock().len()
     }
 }
 
@@ -311,21 +296,13 @@ impl ShaderContext {
             Mutex<HashMap<usize, HashMap<&'static str, &'static ShaderInstance>>>,
         > = OnceLock::new();
         let key = self.shaders.as_ptr() as usize;
-        if let Some(inst) = NAME_CACHE
+        NAME_CACHE
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
-            .ok()
-            .and_then(|m| m.get(&key).and_then(|inner| inner.get(name).copied()))
-        {
-            return Some(inst);
-        }
-        if let Ok(mut m) = NAME_CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock() {
-            let entry = m
-                .entry(key)
-                .or_insert_with(|| self.shaders.iter().map(|s| (s.name, s)).collect());
-            return entry.get(name).copied();
-        }
-        self.shaders.iter().find(|s| s.name == name)
+            .entry(key)
+            .or_insert_with(|| self.shaders.iter().map(|s| (s.name, s)).collect())
+            .get(name)
+            .copied()
     }
 
     /// Dispatch the first shader in this context with explicitly described bindings.

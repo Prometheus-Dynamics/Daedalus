@@ -1,9 +1,8 @@
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use daedalus::{
-    ComputeAffinity,
-    planner::{Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef},
-    registry::ids::NodeId,
+    planner::{Edge, ExecutionPlan, Graph, NodeInstance},
     runtime::{
         BackpressureStrategy, Executor, MetricsLevel, NodeError, NodeHandler, RuntimeEdgePolicy,
         RuntimeNode, SchedulerConfig, build_runtime,
@@ -31,10 +30,7 @@ impl NodeHandler for BurstHandler {
                 }
             }
             "consumer" => {
-                let mut seen = self
-                    .seen
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut seen = self.seen.lock();
                 for payload in io.inputs_for("in") {
                     if let Some(value) = payload.inner.get_ref::<i64>() {
                         seen.push(*value);
@@ -55,39 +51,13 @@ fn init_tracing() {
 
 fn burst_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("producer"),
-        bundle: None,
-        label: None,
-        inputs: vec![],
-        outputs: vec!["out".into()],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("consumer"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec![],
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: Default::default(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: Default::default(),
-    });
+    graph
+        .nodes
+        .push(NodeInstance::new("producer").with_outputs(["out"]));
+    graph
+        .nodes
+        .push(NodeInstance::new("consumer").with_inputs(["in"]));
+    graph.edges.push(Edge::new(0, "out", 1, "in"));
     ExecutionPlan::new(graph, vec![])
 }
 
@@ -112,10 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .with_metrics_level(MetricsLevel::Detailed)
     .run()?;
 
-    println!(
-        "consumer values: {:?}",
-        seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-    );
+    println!("consumer values: {:?}", seen.lock());
     println!("{}", telemetry.compact_snapshot());
 
     for (edge_idx, metrics) in &telemetry.edge_metrics {

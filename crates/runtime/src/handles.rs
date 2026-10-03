@@ -1,101 +1,12 @@
-use std::borrow::Borrow;
-use std::fmt;
-use std::sync::Arc;
-
-macro_rules! define_text_id {
-    ($name:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(Arc<str>);
-
-        impl $name {
-            pub fn new(value: impl Into<String>) -> Self {
-                Self(value.into().into())
-            }
-
-            pub fn as_str(&self) -> &str {
-                &self.0
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(&self.0)
-            }
-        }
-
-        impl serde::Serialize for $name {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-            where
-                S: serde::Serializer,
-            {
-                serializer.serialize_str(self.as_str())
-            }
-        }
-
-        impl<'de> serde::Deserialize<'de> for $name {
-            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                let value = <String as serde::Deserialize>::deserialize(deserializer)?;
-                Ok(Self::from(value))
-            }
-        }
-
-        impl AsRef<str> for $name {
-            fn as_ref(&self) -> &str {
-                self.as_str()
-            }
-        }
-
-        impl Borrow<str> for $name {
-            fn borrow(&self) -> &str {
-                self.as_str()
-            }
-        }
-
-        impl From<&str> for $name {
-            fn from(value: &str) -> Self {
-                Self::new(value)
-            }
-        }
-
-        impl From<String> for $name {
-            fn from(value: String) -> Self {
-                Self(value.into())
-            }
-        }
-
-        impl From<$name> for String {
-            fn from(value: $name) -> Self {
-                value.0.to_string()
-            }
-        }
-
-        impl PartialEq<str> for $name {
-            fn eq(&self, other: &str) -> bool {
-                self.as_str() == other
-            }
-        }
-
-        impl PartialEq<&str> for $name {
-            fn eq(&self, other: &&str) -> bool {
-                self.as_str() == *other
-            }
-        }
-    };
-}
-
-define_text_id!(NodeAlias, "Runtime node alias used for graph wiring.");
-define_text_id!(NodeHandleId, "Runtime node id used for graph wiring.");
-define_text_id!(
+daedalus_transport::define_text_id!(NodeAlias, "Runtime node alias used for graph wiring.");
+daedalus_transport::define_text_id!(NodeHandleId, "Runtime node id used for graph wiring.");
+daedalus_transport::define_text_id!(
     PortId,
     "Runtime port identifier used for node and host bridge wiring."
 );
-define_text_id!(HostAlias, "Runtime host bridge alias.");
-define_text_id!(FeatureFlag, "Runtime feature flag identifier.");
-define_text_id!(CapabilityId, "Runtime capability identifier.");
+daedalus_transport::define_text_id!(HostAlias, "Runtime host bridge alias.");
+daedalus_transport::define_text_id!(FeatureFlag, "Runtime feature flag identifier.");
+daedalus_transport::define_text_id!(CapabilityId, "Runtime capability identifier.");
 
 /// Handle to a node port (alias + port name).
 ///

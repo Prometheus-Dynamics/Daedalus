@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
-use crate::helpers::{compile_error, parse_serde_rename_all, serde_name_for_ident};
+use crate::helpers::{DaedalusCrate, compile_error, parse_serde_rename_all, serde_name_for_ident};
 
 pub fn daedalus_to_value(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
@@ -13,7 +13,7 @@ pub fn daedalus_to_value(item: TokenStream) -> TokenStream {
         ));
     }
 
-    let data_crate: proc_macro2::TokenStream = quote! { ::daedalus_data };
+    let data_crate = DaedalusCrate::Data.path();
     let rename_all = parse_serde_rename_all(&input.attrs);
 
     let body: proc_macro2::TokenStream = match &input.data {

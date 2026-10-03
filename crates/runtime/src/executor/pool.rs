@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Mutex;
 use std::sync::mpsc;
 
 use super::{
@@ -13,8 +13,8 @@ where
 {
     serial::inject_host_inputs(&mut exec)?;
     if exec.core.pool_workers <= 1 {
-        let order = exec.schedule_order.to_vec();
-        return serial::run_order(exec, &order);
+        let order = exec.schedule_order;
+        return serial::run_order(&mut exec, order);
     }
 
     let graph = &exec.schedule.host_deferred_graph;
@@ -35,7 +35,7 @@ where
 
     pool.scope(|scope| {
         let spawn_segment = |segment_idx: usize, tx: mpsc::Sender<_>| {
-            let (segment_exec, order) = segment_template.segment_snapshot(segment_idx);
+            let (mut segment_exec, order) = segment_template.segment_snapshot(segment_idx);
 
             scope.spawn(move |_| {
                 let segment_span = tracing::debug_span!(
@@ -54,12 +54,12 @@ where
                     "parallel segment started"
                 );
                 let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    serial::run_order(segment_exec, &order)
+                    serial::run_order(&mut segment_exec, &order)
                 }))
                 .unwrap_or_else(|panic| {
                     Err(ExecuteError::HandlerPanicked {
                         node: format!("segment_{segment_idx}"),
-                        message: panic_message(panic),
+                        message: panic_message(&*panic),
                     })
                 });
                 match &result {
@@ -86,15 +86,7 @@ where
         });
 
         while scheduler.has_running() {
-            let received = {
-                let Ok(receiver) = rx.lock() else {
-                    return Err(ExecuteError::HandlerPanicked {
-                        node: "executor_pool".into(),
-                        message: "pool result receiver lock poisoned".into(),
-                    });
-                };
-                receiver.recv()
-            };
+            let received = rx.lock().recv();
             let Ok((segment_idx, result)) = received else {
                 break;
             };

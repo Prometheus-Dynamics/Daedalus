@@ -86,7 +86,7 @@ pub struct Engine {
     pub(crate) config: EngineConfig,
     caches: Arc<EngineCaches>,
     #[cfg(feature = "gpu")]
-    gpu_handle: std::sync::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
+    gpu_handle: parking_lot::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
 }
 
 impl Engine {
@@ -104,7 +104,7 @@ impl Engine {
             ),
             config,
             #[cfg(feature = "gpu")]
-            gpu_handle: std::sync::Mutex::new(None),
+            gpu_handle: parking_lot::Mutex::new(None),
         })
     }
 
@@ -369,6 +369,7 @@ impl Engine {
             bridges,
             host,
             node_labels,
+            value_serializers: daedalus_runtime::host_bridge::primitive_value_serializer_map(),
         })
     }
 
@@ -501,6 +502,7 @@ impl Engine {
             bridges,
             host,
             node_labels,
+            value_serializers: plugins.value_serializers.clone(),
         })
     }
 
@@ -575,10 +577,7 @@ impl Engine {
         if matches!(self.config.gpu, GpuBackend::Cpu) {
             return Ok(None);
         }
-        let mut guard = self
-            .gpu_handle
-            .lock()
-            .map_err(|_| EngineError::Config("gpu handle lock poisoned".into()))?;
+        let mut guard = self.gpu_handle.lock();
         if let Some(handle) = guard.as_ref() {
             return Ok(Some(handle.clone()));
         }
@@ -604,25 +603,14 @@ impl Engine {
 #[cfg(all(test, feature = "plugins"))]
 mod boundary_tests {
     use super::*;
-    use daedalus_planner::{ComputeAffinity, NodeInstance};
+    use daedalus_planner::NodeInstance;
     use daedalus_registry::capability::{NodeDecl, PortDecl};
-    use daedalus_registry::ids::NodeId;
     use daedalus_transport::{BoundaryTypeContract, LayoutHash, TypeKey};
     use std::collections::BTreeMap;
 
     fn graph_with_node(id: &str) -> Graph {
         Graph {
-            nodes: vec![NodeInstance {
-                id: NodeId::new(id),
-                bundle: None,
-                label: None,
-                inputs: vec![],
-                outputs: vec![],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: BTreeMap::new(),
-            }],
+            nodes: vec![NodeInstance::new(id)],
             edges: vec![],
             metadata: BTreeMap::new(),
         }

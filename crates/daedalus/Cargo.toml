@@ -19,6 +19,34 @@ path = "src/lib.rs"
 name = "daedalus"
 doctest = false
 
+[package.metadata.daedalus]
+# Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
+# boundary features change types that cross the plugin boundary and must match between host
+# and plugin; host-only features only change host-side execution.
+boundary-features = [
+    "gpu-types",
+    "gpu-runtime",
+    "gpu-wgpu",
+    "gpu-async",
+    "gpu-mock",
+    "schema",
+    "proto",
+    "plugins",
+]
+host-only-features = [
+    "gpu-engine",
+    "gpu",
+    "gpu-dmabuf",
+    "dylib-plugins",
+    "examples",
+    "styx-camera-example",
+    "engine",
+    "executor-pool",
+    "metrics",
+    "engine-full",
+    "embedded",
+]
+
 [features]
 default = []
 gpu-types = ["dep:daedalus-gpu"]
@@ -27,6 +55,8 @@ gpu-runtime = [
     "daedalus-registry/gpu",
     "daedalus-planner/gpu",
     "daedalus-runtime/gpu",
+    # Keep the engine's planner config in sync with `daedalus-planner/gpu` when both are on.
+    "daedalus-engine?/gpu",
 ]
 gpu-engine = [
     "gpu-runtime",
@@ -36,17 +66,38 @@ gpu-engine = [
 gpu = ["gpu-engine"]
 gpu-wgpu = ["gpu-engine", "daedalus-gpu/gpu-wgpu"]
 gpu-async = ["gpu-wgpu", "daedalus-gpu/gpu-async"]
+gpu-dmabuf = ["gpu-wgpu", "daedalus-gpu/gpu-dmabuf"]
 gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
 schema = ["daedalus-data/schema", "daedalus-planner/schema"]
 proto = ["daedalus-data/proto", "daedalus-planner/proto"]
 plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nodes/plugins"]
+# Native Rust plugin `cdylib`s: export them with `export_plugin!` and load them at runtime
+# with `PluginLibrary`. Both plugin crates and hosts enable it.
+dylib-plugins = [
+    "plugins",
+    "dep:daedalus-ffi-host",
+    "dep:libloading",
+    "dep:serde_json",
+    "dep:thiserror",
+]
 examples = []
 styx-camera-example = ["engine", "plugins", "dep:styx"]
+# Lean engine: planner + serial/scoped-thread executor, no Rayon worker pool, no metrics.
 engine = [
     "dep:daedalus-engine",
-    "daedalus-engine/executor-pool",
+    "daedalus-engine/config-env",
     "daedalus-engine/plugins",
 ]
+# Persistent Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive` (pulls rayon + crossbeam).
+# Without it those modes run ready segments on scoped threads.
+executor-pool = ["daedalus-runtime/executor-pool", "daedalus-engine?/executor-pool"]
+# Collect executor telemetry (`MetricsLevel` other than `Off`). Without it the telemetry APIs
+# still compile but record nothing.
+metrics = ["daedalus-runtime/metrics", "daedalus-engine?/metrics"]
+# Recommended preset for applications: engine with worker pool and metrics.
+engine-full = ["engine", "executor-pool", "metrics"]
+# Smallest in-process host: engine + static plugins, no worker pool, no metrics.
+embedded = ["engine", "plugins"]
 
 [dependencies]
 daedalus-core = { workspace = true }
@@ -61,8 +112,14 @@ daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
 styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
 paste = { workspace = true }
+daedalus-ffi-host = { workspace = true, optional = true }
+libloading = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
 
 [dev-dependencies]
+parking_lot = { workspace = true }
+daedalus-plugins-example-project = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
@@ -86,6 +143,26 @@ path = "tests/stateful_node_isolation.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
+name = "host_graph_introspection"
+path = "tests/host_graph_introspection.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
+name = "typed_host_ports"
+path = "tests/typed_host_ports.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
 name = "transport_macro_ui"
 path = "tests/transport_macro_ui.rs"
 required-features = ["plugins"]
+
+[[test]]
+name = "dylib_plugin"
+path = "tests/dylib_plugin.rs"
+required-features = ["dylib-plugins"]
+
+[[test]]
+name = "dylib_export_macro"
+path = "tests/dylib_export_macro.rs"
+required-features = ["dylib-plugins"]

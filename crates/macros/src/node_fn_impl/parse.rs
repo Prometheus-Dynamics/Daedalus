@@ -4,7 +4,9 @@ use syn::parse::Parser;
 use syn::parse::discouraged::Speculative;
 use syn::{Lit, LitStr, Member, Meta, MetaNameValue};
 
-use crate::helpers::{AttributeArgs, NestedMeta, compile_error, lit_from_expr, parse_nested};
+use crate::helpers::{
+    AttributeArgs, NestedMeta, compile_error, lit_from_expr, lit_str_arg, parse_nested,
+};
 
 #[derive(Clone)]
 pub(super) struct PortMeta {
@@ -65,7 +67,6 @@ pub(super) struct NodeArgs {
     pub(super) shader_bindings: Vec<TokenStream>,
     pub(super) shader_specs: Vec<(TokenStream, Option<LitStr>)>,
     pub(super) state_ty_attr: Option<syn::Type>,
-    pub(super) compute_attr: Option<TokenStream>,
     pub(super) sync_groups_attr: Option<TokenStream>,
     pub(super) capability_attr: Option<LitStr>,
     pub(super) fallback_attr: Option<LitStr>,
@@ -126,7 +127,6 @@ pub(super) fn parse_node_args(
     let mut shader_bindings: Vec<TokenStream> = Vec::new();
     let mut shader_specs: Vec<(TokenStream, Option<LitStr>)> = Vec::new();
     let mut state_ty_attr: Option<syn::Type> = None;
-    let mut compute_attr: Option<TokenStream> = None;
     let mut sync_groups_attr: Option<TokenStream> = None;
     let mut capability_attr: Option<LitStr> = None;
     let mut fallback_attr: Option<LitStr> = None;
@@ -134,36 +134,20 @@ pub(super) fn parse_node_args(
 
     for arg in args {
         match arg {
-            NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) => {
-                let Some(value) = lit_from_expr(&value) else {
+            NestedMeta::Meta(Meta::NameValue(MetaNameValue {
+                path, value: expr, ..
+            })) => {
+                let Some(value) = lit_from_expr(&expr) else {
                     return Err(compile_error(
                         "name/value arguments must be literal values".into(),
                     ));
                 };
                 if path.is_ident("id") {
-                    match value {
-                        Lit::Str(s) => id = Some(s),
-                        _ => return Err(compile_error("id must be a string literal".into())),
-                    }
+                    id = Some(lit_str_arg(&expr, "id")?);
                 } else if path.is_ident("summary") {
-                    match value {
-                        Lit::Str(s) => summary_attr = Some(s),
-                        _ => return Err(compile_error("summary must be a string literal".into())),
-                    }
+                    summary_attr = Some(lit_str_arg(&expr, "summary")?);
                 } else if path.is_ident("description") {
-                    match value {
-                        Lit::Str(s) => description_attr = Some(s),
-                        _ => {
-                            return Err(compile_error(
-                                "description must be a string literal".into(),
-                            ));
-                        }
-                    }
-                } else if path.is_ident("bundle") {
-                    match value {
-                        Lit::Str(_) => {}
-                        _ => return Err(compile_error("bundle must be a string literal".into())),
-                    }
+                    description_attr = Some(lit_str_arg(&expr, "description")?);
                 } else if path.is_ident("inputs") {
                     match value {
                         Lit::Str(s) => inputs.push(PortMeta::name_only(s)),
@@ -175,27 +159,12 @@ pub(super) fn parse_node_args(
                         _ => return Err(compile_error("outputs must be string literals".into())),
                     }
                 } else if path.is_ident("capability") {
-                    match value {
-                        Lit::Str(s) => capability_attr = Some(s),
-                        _ => {
-                            return Err(compile_error(
-                                "capability must be a string literal".into(),
-                            ));
-                        }
-                    }
+                    capability_attr = Some(lit_str_arg(&expr, "capability")?);
                 } else if path.is_ident("shader") {
-                    match value {
-                        Lit::Str(s) => shader_path = Some(s),
-                        _ => return Err(compile_error("shader must be a string literal".into())),
-                    }
+                    shader_path = Some(lit_str_arg(&expr, "shader")?);
                 } else if path.is_ident("entry") {
-                    match value {
-                        Lit::Str(s) => {
-                            shader_entry = s;
-                            shader_entry_explicit = true;
-                        }
-                        _ => return Err(compile_error("entry must be a string literal".into())),
-                    }
+                    shader_entry = lit_str_arg(&expr, "entry")?;
+                    shader_entry_explicit = true;
                 } else if path.is_ident("workgroup_size") {
                     match value {
                         Lit::Int(i) => {
@@ -210,16 +179,11 @@ pub(super) fn parse_node_args(
                     }
                 } else if path.is_ident("sync_groups") {
                     sync_groups_attr = Some(value.to_token_stream());
-                } else if path.is_ident("compute") {
-                    compute_attr = Some(value.to_token_stream());
                 } else if path.is_ident("fallback") {
-                    match value {
-                        Lit::Str(s) => fallback_attr = Some(s),
-                        _ => return Err(compile_error("fallback must be a string literal".into())),
-                    }
+                    fallback_attr = Some(lit_str_arg(&expr, "fallback")?);
                 } else {
                     return Err(compile_error(format!(
-                        "unsupported name/value argument: {:?}",
+                        "unsupported `#[node]` argument `{}`",
                         path.to_token_stream()
                     )));
                 }
@@ -235,18 +199,6 @@ pub(super) fn parse_node_args(
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("outputs") => {
                 parse_outputs_list(&list, &mut outputs)?;
-            }
-            NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("compute") => {
-                let nested = parse_nested(&list)
-                    .map_err(|_| compile_error("compute(...) expects a single argument".into()))?;
-                if let Some(first) = nested.first() {
-                    compute_attr = Some(first.to_token_stream());
-                } else {
-                    return Err(compile_error(
-                        "compute(...) expects an affinity, e.g., compute(ComputeAffinity::GpuPreferred)"
-                            .into(),
-                    ));
-                }
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("generics") => {
                 generics_attr = Some(list.tokens.clone());
@@ -278,7 +230,7 @@ pub(super) fn parse_node_args(
             }
             other => {
                 return Err(compile_error(format!(
-                    "unsupported argument: {:?}",
+                    "unsupported `#[node]` argument `{}`",
                     other.to_token_stream()
                 )));
             }
@@ -312,7 +264,6 @@ pub(super) fn parse_node_args(
         shader_bindings,
         shader_specs,
         state_ty_attr,
-        compute_attr,
         sync_groups_attr,
         capability_attr,
         fallback_attr,
@@ -401,13 +352,8 @@ fn parse_input_port(
             continue;
         }
         if nv.path.is_ident("description") {
-            if let Some(Lit::Str(s)) = lit_from_expr(&nv.value) {
-                description = Some(s);
-                continue;
-            }
-            return Err(compile_error(
-                "port description must be a string literal".into(),
-            ));
+            description = Some(lit_str_arg(&nv.value, "port description")?);
+            continue;
         }
         if nv.path.is_ident("default") {
             default_value = Some(default_value_tokens(&nv.value, data_crate)?);
@@ -479,13 +425,8 @@ fn parse_output_port(inner: &syn::MetaList) -> Result<OutputPortMeta, TokenStrea
                 continue;
             }
             if nv.path.is_ident("description") {
-                if let Some(Lit::Str(s)) = lit_from_expr(&nv.value) {
-                    description = Some(s);
-                    continue;
-                }
-                return Err(compile_error(
-                    "port description must be a string literal".into(),
-                ));
+                description = Some(lit_str_arg(&nv.value, "port description")?);
+                continue;
             }
         }
         if let NestedMeta::Meta(Meta::List(list)) = &nm

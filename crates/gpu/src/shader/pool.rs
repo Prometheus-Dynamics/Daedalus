@@ -1,6 +1,7 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::{
-    Arc, Mutex, OnceLock,
+    Arc, OnceLock,
     atomic::{AtomicUsize, Ordering},
 };
 
@@ -166,7 +167,5 @@ pub fn temp_pool() -> &'static Mutex<TempPool> {
 }
 
 pub(crate) fn clear_temp_pool_for_device(device_key: usize) {
-    if let Ok(mut pool) = temp_pool().lock() {
-        pool.clear_device(device_key);
-    }
+    temp_pool().lock().clear_device(device_key);
 }

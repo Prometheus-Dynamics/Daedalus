@@ -1,10 +1,9 @@
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::Duration;
 
 use daedalus::data::model::Value;
-use daedalus::planner::{Edge, ExecutionPlan, Graph, NodeInstance, NodeRef, PortRef};
-use daedalus::registry::ids::NodeId;
+use daedalus::planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus::runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY};
 use daedalus::runtime::io::NodeIo;
 use daedalus::runtime::state::ExecutionContext;
@@ -38,60 +37,28 @@ impl NodeHandler for EchoHandler {
 
 fn stream_plan() -> ExecutionPlan {
     let mut graph = Graph::default();
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new(HOST_BRIDGE_ID),
-        bundle: None,
-        label: Some("host".into()),
-        inputs: vec!["out".into()],
-        outputs: vec!["in".into()],
-        compute: daedalus::ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::from([
-            (HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true)),
-            (
-                "dynamic_inputs".to_string(),
+    graph.nodes.push(
+        NodeInstance::new(HOST_BRIDGE_ID)
+            .with_label("host")
+            .with_inputs(["out"])
+            .with_outputs(["in"])
+            .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true))
+            .with_metadata(
+                "dynamic_inputs",
+                Value::String(std::borrow::Cow::Borrowed("generic")),
+            )
+            .with_metadata(
+                "dynamic_outputs",
                 Value::String(std::borrow::Cow::Borrowed("generic")),
             ),
-            (
-                "dynamic_outputs".to_string(),
-                Value::String(std::borrow::Cow::Borrowed("generic")),
-            ),
-        ]),
-    });
-    graph.nodes.push(NodeInstance {
-        id: NodeId::new("stream.echo"),
-        bundle: None,
-        label: None,
-        inputs: vec!["in".into()],
-        outputs: vec!["out".into()],
-        compute: daedalus::ComputeAffinity::CpuOnly,
-        const_inputs: vec![],
-        sync_groups: vec![],
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(0),
-            port: "in".into(),
-        },
-        to: PortRef {
-            node: NodeRef(1),
-            port: "in".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
-    graph.edges.push(Edge {
-        from: PortRef {
-            node: NodeRef(1),
-            port: "out".into(),
-        },
-        to: PortRef {
-            node: NodeRef(0),
-            port: "out".into(),
-        },
-        metadata: BTreeMap::new(),
-    });
+    );
+    graph.nodes.push(
+        NodeInstance::new("stream.echo")
+            .with_inputs(["in"])
+            .with_outputs(["out"]),
+    );
+    graph.edges.push(Edge::new(0, "in", 1, "in"));
+    graph.edges.push(Edge::new(1, "out", 0, "out"));
     ExecutionPlan::new(graph, vec![])
 }
 
@@ -111,10 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("stream output timed out")?;
     println!("out={:?}", payload.get_ref::<u32>());
 
-    let diagnostics = graph
-        .lock()
-        .map_err(|_| "stream graph lock poisoned")?
-        .diagnostics();
+    let diagnostics = graph.lock().diagnostics();
     println!("graph_diagnostics={diagnostics:?}");
     println!("worker_diagnostics={:?}", worker.diagnostics());
     worker.stop_timeout(Duration::from_secs(1))?;

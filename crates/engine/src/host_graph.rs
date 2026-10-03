@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{DirectHostRoute, NodeHandler};
 use daedalus_runtime::handles::PortId;
-use daedalus_runtime::host_bridge::{HostBridgeHandle, HostBridgeManager};
+use daedalus_runtime::host_bridge::{HostBridgeHandle, HostBridgeManager, ValueSerializerMap};
 use daedalus_runtime::{RuntimePlan, RuntimePlanExplanation, RuntimeSink};
 use daedalus_transport::{
     FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, TypeKey,
@@ -17,12 +17,15 @@ use crate::compiled_run::{CompiledRun, RunResult};
 use crate::error::EngineError;
 
 mod bindings;
+mod drive;
+mod introspect;
 
-use bindings::type_key_for;
 pub use bindings::{
     HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
     HostGraphRunInput, HostGraphSubscription,
 };
+use daedalus_runtime::transport::type_key_of;
+pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
 
 /// In-process graph runner for host-driven applications.
 ///
@@ -30,15 +33,23 @@ pub use bindings::{
 ///
 /// - `run_once(("in", value), "out")` for one input and one output batch.
 /// - `bind_input`/`bind_output` for repeated typed feeds and drains.
-/// - `bind_lane` plus `tick_direct_lane` for hot single-input/single-output routes.
+/// - `bind_lane` plus `run_lane` for hot single-input/single-output routes.
 ///
 /// Lower-level `push`, `tick`, and `drain_*` methods remain available for multi-input,
 /// demand-selected, or diagnostic workflows.
+///
+/// Port arguments: write/bind paths (`push*`, `set_*_policy`, `set_latest_*`, `bind_input`,
+/// `bind_output`, `subscribe`) take `impl Into<PortId>`, so a reused `PortId` never allocates;
+/// read/lookup paths (`take*`, `drain*`, `latest`, `direct_host_route`, `bind_lane`) take
+/// `impl AsRef<str>` and look ports up without allocating.
 pub struct HostGraph<H: NodeHandler> {
     pub(crate) runner: CompiledRun<H>,
     pub(crate) bridges: HostBridgeManager,
     pub(crate) host: HostBridgeHandle,
     pub(crate) node_labels: Arc<[String]>,
+    /// Serializers used by `inspect_payload`; shared with the registry the graph was compiled
+    /// from when compiled through a `PluginRegistry`.
+    pub(crate) value_serializers: ValueSerializerMap,
 }
 
 pub struct HostGraphStep<T> {
@@ -224,7 +235,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         HostGraphInput {
             host: self.host.clone(),
             port: port.into(),
-            type_key: type_key_for::<T>(),
+            type_key: type_key_of::<T>(),
             _ty: PhantomData,
         }
     }
@@ -259,7 +270,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     pub fn set_input_policy(
         &self,
-        port: impl Into<String>,
+        port: impl Into<PortId>,
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
@@ -268,14 +279,14 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     pub fn set_output_policy(
         &self,
-        port: impl Into<String>,
+        port: impl Into<PortId>,
         pressure: PressurePolicy,
         freshness: FreshnessPolicy,
     ) -> Result<(), PolicyValidationError> {
         self.host.set_output_policy(port, pressure, freshness)
     }
 
-    pub fn set_latest_input(&self, port: impl Into<String>) -> Result<(), PolicyValidationError> {
+    pub fn set_latest_input(&self, port: impl Into<PortId>) -> Result<(), PolicyValidationError> {
         self.set_input_policy(
             port,
             PressurePolicy::LatestOnly,
@@ -283,7 +294,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         )
     }
 
-    pub fn set_latest_output(&self, port: impl Into<String>) -> Result<(), PolicyValidationError> {
+    pub fn set_latest_output(&self, port: impl Into<PortId>) -> Result<(), PolicyValidationError> {
         self.set_output_policy(
             port,
             PressurePolicy::LatestOnly,
@@ -292,7 +303,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     }
 
     /// Low-level typed feed. Prefer `run_once` for one-shot calls or `bind_input` for hot loops.
-    pub fn push<T>(&self, port: impl Into<String>, value: T) -> FeedOutcome
+    pub fn push<T>(&self, port: impl Into<PortId>, value: T) -> FeedOutcome
     where
         T: Send + Sync + 'static,
     {
@@ -302,7 +313,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     /// Low-level typed feed with an explicit transport type key.
     pub fn push_as<T>(
         &self,
-        port: impl Into<String>,
+        port: impl Into<PortId>,
         type_key: impl Into<TypeKey>,
         value: T,
     ) -> FeedOutcome
@@ -312,7 +323,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.host.push_as(port, type_key, value)
     }
 
-    pub fn push_payload(&self, port: impl Into<String>, payload: Payload) -> FeedOutcome {
+    pub fn push_payload(&self, port: impl Into<PortId>, payload: Payload) -> FeedOutcome {
         self.host.feed_payload(port, payload)
     }
 
@@ -323,35 +334,42 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     pub fn tick_direct_payload(
         &mut self,
-        input_port: &str,
+        input_port: impl AsRef<str>,
         payload: Payload,
-        output_port: &str,
+        output_port: impl AsRef<str>,
     ) -> Result<Option<(ExecutionTelemetry, Option<Payload>)>, EngineError> {
         self.runner
             .executor
-            .run_direct_host_payload(input_port, payload, output_port)
+            .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
             .map_err(EngineError::Runtime)
     }
 
     pub fn direct_host_route(
         &self,
-        input_port: &str,
-        output_port: &str,
+        input_port: impl AsRef<str>,
+        output_port: impl AsRef<str>,
     ) -> Option<DirectHostRoute> {
         self.runner
             .executor
-            .direct_host_route(input_port, output_port)
+            .direct_host_route(input_port.as_ref(), output_port.as_ref())
     }
 
     /// Bind a direct host lane for repeated single-input/single-output calls.
-    pub fn bind_lane<I>(&self, input_port: &str, output_port: &str) -> Option<HostGraphLane<I>>
+    ///
+    /// The lane resolves a route once and does not keep the port names, so ports are looked up
+    /// by reference like other read paths.
+    pub fn bind_lane<I>(
+        &self,
+        input_port: impl AsRef<str>,
+        output_port: impl AsRef<str>,
+    ) -> Option<HostGraphLane<I>>
     where
         I: Send + Sync + 'static,
     {
         self.direct_host_route(input_port, output_port)
             .map(|route| HostGraphLane {
                 route,
-                type_key: type_key_for::<I>(),
+                type_key: type_key_of::<I>(),
                 _input: PhantomData,
             })
     }
@@ -401,29 +419,22 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         O: Send + Sync + 'static,
     {
         self.run_lane(lane, input)?
-            .map(|payload| {
-                payload.try_into_owned::<O>().map_err(|payload| {
-                    EngineError::Config(format!(
-                        "expected unique direct lane output payload, got type_key={} rust_type={:?}",
-                        payload.type_key(),
-                        payload.storage_rust_type_name()
-                    ))
-                })
-            })
+            .map(|payload| into_owned_or_err::<O>(payload, "direct lane output payload"))
             .transpose()
     }
 
     /// Run one typed value through a direct host route when the graph shape supports it.
     pub fn run_direct_once<I, O>(
         &mut self,
-        input_port: &str,
-        output_port: &str,
+        input_port: impl AsRef<str>,
+        output_port: impl AsRef<str>,
         input: I,
     ) -> Result<Option<O>, EngineError>
     where
         I: Send + Sync + 'static,
         O: Send + Sync + 'static,
     {
+        let (input_port, output_port) = (input_port.as_ref(), output_port.as_ref());
         let route = self
             .direct_host_route(input_port, output_port)
             .ok_or_else(|| {
@@ -432,16 +443,13 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
                 ))
             })?;
         let output =
-            self.tick_direct_route_payload(&route, Payload::owned(type_key_for::<I>(), input))?;
+            self.tick_direct_route_payload(&route, Payload::owned(type_key_of::<I>(), input))?;
         output
             .map(|payload| {
-                payload.try_into_owned::<O>().map_err(|payload| {
-                    EngineError::Config(format!(
-                        "expected unique direct output payload on '{output_port}', got type_key={} rust_type={:?}",
-                        payload.type_key(),
-                        payload.storage_rust_type_name()
-                    ))
-                })
+                into_owned_or_err::<O>(
+                    payload,
+                    format_args!("direct output payload on '{output_port}'"),
+                )
             })
             .transpose()
     }
@@ -509,7 +517,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     pub fn profiled_feed_tick_drain_owned<I, O>(
         &mut self,
-        input_port: impl Into<String>,
+        input_port: impl Into<PortId>,
         type_key: impl Into<TypeKey>,
         value: I,
         output_port: impl AsRef<str>,
@@ -595,13 +603,10 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     where
         T: Send + Sync + 'static,
     {
-        self.host.try_pop_owned(port).map_err(|payload| {
-            EngineError::Config(format!(
-                "expected unique payload on host output, got type_key={} rust_type={:?}",
-                payload.type_key(),
-                payload.storage_rust_type_name()
-            ))
-        })
+        self.host
+            .try_pop_payload(port)
+            .map(|payload| into_owned_or_err(payload, "payload on host output"))
+            .transpose()
     }
 
     pub fn latest<T>(&self, port: impl AsRef<str>) -> Option<T>
@@ -628,15 +633,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     {
         self.drain_payloads(port)
             .into_iter()
-            .map(|payload| {
-                payload.try_into_owned::<T>().map_err(|payload| {
-                    EngineError::Config(format!(
-                        "expected unique payload on host output, got type_key={} rust_type={:?}",
-                        payload.type_key(),
-                        payload.storage_rust_type_name()
-                    ))
-                })
-            })
+            .map(|payload| into_owned_or_err::<T>(payload, "payload on host output"))
             .collect()
     }
 
@@ -646,4 +643,18 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     {
         self.host.drain(port)
     }
+}
+
+/// Take ownership of `payload` as `T`, or report what was expected (`what`) and what was found.
+fn into_owned_or_err<T>(payload: Payload, what: impl std::fmt::Display) -> Result<T, EngineError>
+where
+    T: Send + Sync + 'static,
+{
+    payload.try_into_owned::<T>().map_err(|payload| {
+        EngineError::Config(format!(
+            "expected unique {what}, got type_key={} rust_type={:?}",
+            payload.type_key(),
+            payload.storage_rust_type_name()
+        ))
+    })
 }

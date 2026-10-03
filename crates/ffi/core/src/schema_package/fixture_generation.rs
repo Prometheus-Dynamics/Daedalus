@@ -106,104 +106,24 @@ fn fixture_backend_config(
     backend_kind: &BackendKind,
     entrypoint: &str,
 ) -> BackendConfig {
+    let worker = |executable: &str| {
+        BackendConfig::persistent_worker(backend_kind.clone(), executable, entrypoint)
+            .with_entry_module(fixture_source_path(language))
+    };
     match backend_kind {
-        BackendKind::Rust => BackendConfig {
-            backend: BackendKind::Rust,
-            runtime_model: BackendRuntimeModel::InProcessAbi,
-            entry_module: None,
-            entry_class: None,
-            entry_symbol: Some(entrypoint.into()),
-            executable: None,
-            args: Vec::new(),
-            classpath: Vec::new(),
-            native_library_paths: Vec::new(),
-            working_dir: None,
-            env: BTreeMap::new(),
-            options: BTreeMap::new(),
-        },
-        BackendKind::Python => worker_backend(
-            BackendKind::Python,
-            Some(fixture_source_path(language).into()),
-            None,
-            Some(entrypoint.into()),
-            Some("python".into()),
-        ),
-        BackendKind::Node => worker_backend(
-            BackendKind::Node,
-            Some(fixture_source_path(language).into()),
-            None,
-            Some(entrypoint.into()),
-            Some("node".into()),
-        ),
+        BackendKind::Rust => BackendConfig::in_process(BackendKind::Rust, entrypoint),
+        BackendKind::Python => worker("python"),
+        BackendKind::Node => worker("node"),
         BackendKind::Java => {
-            let mut backend = worker_backend(
-                BackendKind::Java,
-                None,
-                Some("ffi.conformance.ScalarAdd".into()),
-                Some(entrypoint.into()),
-                Some("java".into()),
-            );
-            backend.classpath.push("classes".into());
-            backend
+            BackendConfig::persistent_worker(BackendKind::Java, "java", entrypoint)
+                .with_entry_class("ffi.conformance.ScalarAdd")
+                .with_classpath(["classes"])
         }
-        BackendKind::CCpp => BackendConfig {
-            backend: BackendKind::CCpp,
-            runtime_model: BackendRuntimeModel::InProcessAbi,
-            entry_module: Some("libscalar_add.so".into()),
-            entry_class: None,
-            entry_symbol: Some(entrypoint.into()),
-            executable: None,
-            args: Vec::new(),
-            classpath: Vec::new(),
-            native_library_paths: Vec::new(),
-            working_dir: None,
-            env: BTreeMap::new(),
-            options: BTreeMap::new(),
-        },
-        BackendKind::Shader => BackendConfig {
-            backend: BackendKind::Shader,
-            runtime_model: BackendRuntimeModel::InProcessAbi,
-            entry_module: Some("shaders/write_u32.wgsl".into()),
-            entry_class: None,
-            entry_symbol: Some(entrypoint.into()),
-            executable: None,
-            args: Vec::new(),
-            classpath: Vec::new(),
-            native_library_paths: Vec::new(),
-            working_dir: None,
-            env: BTreeMap::new(),
-            options: BTreeMap::new(),
-        },
-        BackendKind::Other(name) => worker_backend(
-            BackendKind::Other(name.clone()),
-            Some(fixture_source_path(language).into()),
-            None,
-            Some(entrypoint.into()),
-            Some("fixture-worker".into()),
-        ),
-    }
-}
-
-fn worker_backend(
-    backend: BackendKind,
-    entry_module: Option<String>,
-    entry_class: Option<String>,
-    entry_symbol: Option<String>,
-    executable: Option<String>,
-) -> BackendConfig {
-    BackendConfig {
-        backend,
-        runtime_model: BackendRuntimeModel::PersistentWorker,
-        entry_module,
-        entry_class,
-        entry_symbol,
-        executable,
-        args: Vec::new(),
-        classpath: Vec::new(),
-        native_library_paths: Vec::new(),
-        working_dir: None,
-        env: BTreeMap::new(),
-        options: BTreeMap::new(),
+        BackendKind::CCpp => BackendConfig::in_process(BackendKind::CCpp, entrypoint)
+            .with_entry_module("libscalar_add.so"),
+        BackendKind::Shader => BackendConfig::in_process(BackendKind::Shader, entrypoint)
+            .with_entry_module("shaders/write_u32.wgsl"),
+        BackendKind::Other(_) => worker("fixture-worker"),
     }
 }
 
@@ -271,44 +191,33 @@ fn fixture_files(language: FixtureLanguage) -> Vec<GeneratedFixtureFile> {
 fn package_fixture_from_language_fixture(
     fixture: GeneratedLanguageFixture,
 ) -> Result<GeneratedPackageFixture, FfiContractError> {
+    let metadata = BTreeMap::from([
+        (
+            "language".into(),
+            serde_json::json!(fixture.language.as_str()),
+        ),
+        ("fixture".into(), serde_json::json!("scalar_add")),
+    ]);
     let mut files = Vec::with_capacity(fixture.files.len());
     let mut artifacts = Vec::with_capacity(fixture.files.len());
     for file in fixture.files {
-        let path = bundled_artifact_path(PackageArtifactKind::SourceFile, &file.path, None)?;
+        let mut artifact = PackageArtifact::bundled(
+            PackageArtifactKind::SourceFile,
+            Some(fixture.language.backend()),
+            &file.path,
+            None,
+        )?;
+        artifact.metadata = metadata.clone();
         files.push(GeneratedFixtureFile {
-            path: path.clone(),
+            path: artifact.path.clone(),
             contents: file.contents,
         });
-        artifacts.push(PackageArtifact {
-            path,
-            kind: PackageArtifactKind::SourceFile,
-            backend: Some(fixture.language.backend()),
-            platform: None,
-            sha256: None,
-            metadata: BTreeMap::from([
-                (
-                    "language".into(),
-                    serde_json::json!(fixture.language.as_str()),
-                ),
-                ("fixture".into(), serde_json::json!("scalar_add")),
-            ]),
-        });
+        artifacts.push(artifact);
     }
     let package = PluginPackage {
-        schema_version: SCHEMA_VERSION,
-        schema: Some(fixture.schema),
-        backends: fixture.backends,
         artifacts,
-        lockfile: None,
-        manifest_hash: None,
-        signature: None,
-        metadata: BTreeMap::from([
-            (
-                "language".into(),
-                serde_json::json!(fixture.language.as_str()),
-            ),
-            ("fixture".into(), serde_json::json!("scalar_add")),
-        ]),
+        metadata,
+        ..PluginPackage::new(fixture.schema, fixture.backends)
     };
     package.validate()?;
     Ok(GeneratedPackageFixture {

@@ -22,7 +22,7 @@ default = []
 tcp = []
 
 [dependencies]
-daedalus-engine = { workspace = true }
+daedalus-engine = { workspace = true, features = ["config-env", "executor-pool", "metrics"] }
 daedalus-planner = { workspace = true }
 daedalus-registry = { workspace = true }
 serde = { workspace = true }

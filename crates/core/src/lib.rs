@@ -17,8 +17,43 @@ pub mod policy;
 pub mod stable_id;
 pub mod sync;
 
+/// Locks `mutex`, recovering the guard if a panicking holder poisoned it.
+///
+/// Every critical section in this crate leaves the guarded state structurally valid, so a
+/// poisoned lock carries no information worth propagating.
+pub(crate) fn lock_recover<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(feature = "metrics")]
 pub mod metrics;
+
+/// Defines `ENABLED_FEATURES` and `CARGO_MANIFEST` for the invoking crate.
+///
+/// Together they feed the dynamic plugin build fingerprint: `ENABLED_FEATURES` lists the enabled
+/// Cargo features (set by the shared `crates/build_features.rs` build script) and the
+/// `[package.metadata.daedalus]` table of `CARGO_MANIFEST` classifies each feature.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! build_facts {
+    () => {
+        #[doc = concat!(
+            "Cargo features of `",
+            env!("CARGO_PKG_NAME"),
+            "` enabled in this build (comma-separated).\n\nTogether with [`CARGO_MANIFEST`], \
+             whose `[package.metadata.daedalus]` table classifies each feature, this feeds the \
+             dynamic plugin build fingerprint."
+        )]
+        pub const ENABLED_FEATURES: &str = env!("DAEDALUS_ENABLED_FEATURES");
+        /// This crate's `Cargo.toml`.
+        pub const CARGO_MANIFEST: &str =
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
+    };
+}
+
+build_facts!();
 
 /// Commonly used types re-exported for convenience.
 pub mod prelude {

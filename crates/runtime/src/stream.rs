@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use daedalus_transport::{
@@ -259,7 +260,7 @@ impl<H: NodeHandler> StreamGraph<H> {
         self.state = StreamGraphState::Running;
         self.bridges
             .ensure_handle(self.host_alias.clone())
-            .notify_waiters();
+            .wake_inbound_waiters();
         Ok(())
     }
 
@@ -275,7 +276,7 @@ impl<H: NodeHandler> StreamGraph<H> {
             self.state = StreamGraphState::Running;
             self.bridges
                 .ensure_handle(self.host_alias.clone())
-                .notify_waiters();
+                .wake_inbound_waiters();
         }
         Ok(())
     }

@@ -4,15 +4,22 @@ use std::time::Duration;
 
 use daedalus_runtime::RuntimeEdgePolicy;
 use daedalus_runtime::handles::{HostAlias, PortId};
-use daedalus_runtime::host_bridge::{HostBridgeConfig, HostBridgeManager};
+use daedalus_runtime::host_bridge::{HostBridgeConfig, HostBridgeManager, HostBridgePayload};
 use daedalus_transport::{
     DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, Payload, PayloadLineage,
     PressurePolicy,
 };
 
+fn take_inbound(manager: &HostBridgeManager, alias: &str) -> Vec<HostBridgePayload> {
+    let mut inbound = Vec::new();
+    manager.take_inbound_into(alias, &mut inbound);
+    inbound
+}
+
 #[test]
 fn host_bridge_latest_only_replaces_inbound_payloads() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle
         .set_input_policy(
@@ -43,7 +50,7 @@ fn host_bridge_latest_only_replaces_inbound_payloads() {
         }
     );
 
-    let inbound = manager.take_inbound("host");
+    let inbound = take_inbound(&manager, "host");
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&2));
     assert_eq!(handle.events().len(), 2);
@@ -77,7 +84,7 @@ fn host_bridge_accepts_typed_aliases_and_ports() {
         FeedOutcome::Accepted { .. }
     ));
 
-    let inbound = manager.take_inbound(alias.as_str());
+    let inbound = take_inbound(&manager, alias.as_str());
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].port, input);
     assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&7));
@@ -86,6 +93,7 @@ fn host_bridge_accepts_typed_aliases_and_ports() {
 #[test]
 fn host_bridge_event_limit_retains_recent_events() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle.set_event_limit(Some(2));
 
@@ -110,6 +118,7 @@ fn host_bridge_event_limit_retains_recent_events() {
 #[test]
 fn host_bridge_event_recording_can_be_disabled_or_unbounded() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
 
     handle.set_event_recording(false);
@@ -151,7 +160,7 @@ fn disabled_host_bridge_event_recording_keeps_queued_payload_unique() {
     handle.feed_payload("input", payload);
     assert!(handle.events().is_empty());
 
-    let mut inbound = manager.take_inbound("host");
+    let mut inbound = take_inbound(&manager, "host");
     assert_eq!(inbound.len(), 1);
     let queued = inbound.pop().unwrap().payload;
     assert!(queued.is_storage_unique());
@@ -204,6 +213,7 @@ fn host_bridge_config_updates_existing_and_future_handles() {
 #[test]
 fn host_bridge_default_bounds_hold_under_long_running_pressure() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     manager.set_event_limit(Some(32));
     let handle = manager.ensure_handle("host");
 
@@ -223,6 +233,7 @@ fn host_bridge_multi_producer_input_stress_stays_bounded() {
     const PER_PRODUCER: usize = 500;
 
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     manager.set_event_limit(Some(64));
     let handle = manager.ensure_handle("host");
     let start = Arc::new(Barrier::new(PRODUCERS));
@@ -254,7 +265,7 @@ fn host_bridge_multi_producer_input_stress_stays_bounded() {
     );
     assert_eq!(handle.pending_inbound(), 1);
     assert_eq!(handle.events().len(), 64);
-    assert_eq!(manager.take_inbound("host").len(), 1);
+    assert_eq!(take_inbound(&manager, "host").len(), 1);
 }
 
 #[test]
@@ -349,6 +360,7 @@ fn host_bridge_default_output_policy_is_bounded_and_overridable() {
 #[test]
 fn host_bridge_bounded_drop_newest_reports_drop() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle
         .set_input_policy(
@@ -396,6 +408,7 @@ fn host_bridge_bounded_drop_newest_reports_drop() {
 #[test]
 fn host_bridge_bounded_backpressure_reports_full_queue() {
     let manager = HostBridgeManager::new();
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle
         .set_input_policy(
@@ -464,7 +477,7 @@ fn host_bridge_drop_oldest_replaces_queued_payload() {
             new: second_id,
         }
     );
-    let inbound = manager.take_inbound("host");
+    let inbound = take_inbound(&manager, "host");
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&2));
 }
@@ -597,7 +610,66 @@ fn host_bridge_arc_payloads_stay_zero_copy() {
     let handle = manager.ensure_handle("host");
     let data = Arc::new(vec![1u8, 2, 3]);
     handle.feed_payload("input", Payload::shared("demo:bytes", data.clone()));
-    let inbound = manager.take_inbound("host");
+    let inbound = take_inbound(&manager, "host");
     let extracted = inbound[0].payload.get_arc::<Vec<u8>>().unwrap();
     assert!(Arc::ptr_eq(&data, &extracted));
+}
+
+#[test]
+fn host_bridge_event_recording_is_off_by_default() {
+    assert!(!HostBridgeConfig::default().event_recording);
+    let manager = HostBridgeManager::new();
+    let handle = manager.ensure_handle("host");
+    handle.feed_payload("input", Payload::owned("demo:u32", 1u32));
+    manager.push_outbound("host", "output", Payload::owned("demo:u32", 2u32));
+    assert!(handle.try_pop_payload("output").is_some());
+    assert!(handle.events().is_empty());
+    assert!(!handle.config_snapshot().event_recording);
+    assert_eq!(handle.stats().inbound_accepted, 1);
+    assert_eq!(handle.stats().outbound_delivered, 1);
+}
+
+#[test]
+fn host_bridge_port_stats_count_per_port() {
+    let manager = HostBridgeManager::new();
+    let handle = manager.ensure_handle("host");
+    // The default input policy keeps only the newest payload per port.
+    handle.feed_payload("latest", Payload::owned("demo:u32", 1_u32));
+    handle.feed_payload("latest", Payload::owned("demo:u32", 2_u32));
+    handle.feed_payload("other", Payload::owned("demo:u32", 3_u32));
+    handle.close_input("closed");
+    handle.feed_payload("closed", Payload::owned("demo:u32", 4_u32));
+
+    let latest = handle.input_port_stats("latest").expect("latest used");
+    assert_eq!(
+        (
+            latest.accepted,
+            latest.replaced,
+            latest.dropped,
+            latest.pending
+        ),
+        (2, 1, 0, 1)
+    );
+    assert_eq!(
+        handle
+            .input_port_stats("other")
+            .expect("other used")
+            .accepted,
+        1
+    );
+    assert_eq!(
+        handle
+            .input_port_stats("closed")
+            .expect("closed used")
+            .dropped,
+        1
+    );
+    assert!(handle.input_port_stats("missing").is_none());
+    assert!(handle.output_port_stats("latest").is_none());
+
+    assert_eq!(take_inbound(&manager, "host").len(), 2);
+    assert_eq!(
+        handle.input_port_stats("latest").expect("latest").delivered,
+        1
+    );
 }

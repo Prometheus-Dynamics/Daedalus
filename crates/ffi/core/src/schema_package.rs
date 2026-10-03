@@ -1,8 +1,10 @@
+mod builders;
 mod fixture_generation;
 mod fixtures;
 mod package;
 mod package_support;
 
+pub use builders::*;
 pub use fixture_generation::*;
 pub use fixtures::*;
 pub use package::*;

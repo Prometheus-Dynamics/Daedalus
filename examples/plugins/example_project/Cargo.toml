@@ -9,11 +9,15 @@ workspace = true
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 doctest = false
 
 [features]
+# `declare_plugin!` gates its installer on the calling crate's `plugins` feature.
 default = ["plugins"]
 plugins = []
+# Export the plugin from the `cdylib` (`export_plugin!`).
+dylib = ["daedalus/dylib-plugins"]
 
 [dependencies]
 daedalus = { workspace = true, features = ["plugins"] }

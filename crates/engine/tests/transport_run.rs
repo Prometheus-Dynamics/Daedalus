@@ -1,7 +1,8 @@
+#[cfg(feature = "plugins")]
+use parking_lot::Mutex;
+use std::sync::Arc;
 #[cfg(all(feature = "plugins", feature = "gpu-mock"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(feature = "plugins")]
-use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "plugins")]
 use daedalus_data::model::{TypeExpr, Value, ValueType};
@@ -10,11 +11,9 @@ use daedalus_engine::GpuBackend;
 #[cfg(feature = "plugins")]
 use daedalus_engine::{Engine, EngineConfig};
 #[cfg(feature = "plugins")]
-use daedalus_planner::{ComputeAffinity, Edge, Graph, NodeInstance, NodeRef, PortRef};
+use daedalus_planner::{Edge, Graph, NodeInstance};
 #[cfg(feature = "plugins")]
 use daedalus_registry::capability::{NodeDecl, PortDecl};
-#[cfg(feature = "plugins")]
-use daedalus_registry::ids::NodeId;
 #[cfg(feature = "plugins")]
 use daedalus_runtime::RuntimeNode;
 #[cfg(feature = "plugins")]
@@ -71,40 +70,10 @@ fn engine_run_plugin_registry_uses_registered_transport() {
 
     let graph = Graph {
         nodes: vec![
-            NodeInstance {
-                id: NodeId::new("source"),
-                bundle: None,
-                label: None,
-                inputs: vec![],
-                outputs: vec!["out".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
-            NodeInstance {
-                id: NodeId::new("sink"),
-                bundle: None,
-                label: None,
-                inputs: vec!["in".into()],
-                outputs: vec![],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
+            NodeInstance::new("source").with_outputs(["out"]),
+            NodeInstance::new("sink").with_inputs(["in"]),
         ],
-        edges: vec![Edge {
-            from: PortRef {
-                node: NodeRef(0),
-                port: "out".into(),
-            },
-            to: PortRef {
-                node: NodeRef(1),
-                port: "in".into(),
-            },
-            metadata: Default::default(),
-        }],
+        edges: vec![Edge::new(0, "out", 1, "in")],
         metadata: Default::default(),
     };
 
@@ -118,7 +87,7 @@ fn engine_run_plugin_registry_uses_registered_transport() {
         )
         .unwrap();
 
-    assert_eq!(seen.lock().unwrap().as_deref(), Some("42"));
+    assert_eq!(seen.lock().as_deref(), Some("42"));
     assert_eq!(result.runtime_plan.edge_transports.len(), 1);
 }
 
@@ -175,64 +144,13 @@ fn engine_run_plugin_registry_executes_device_upload_download() {
 
     let graph = Graph {
         nodes: vec![
-            NodeInstance {
-                id: NodeId::new("source"),
-                bundle: None,
-                label: None,
-                inputs: vec![],
-                outputs: vec!["out".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
-            NodeInstance {
-                id: NodeId::new("device_passthrough"),
-                bundle: None,
-                label: None,
-                inputs: vec!["in".into()],
-                outputs: vec!["out".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
-            NodeInstance {
-                id: NodeId::new("sink"),
-                bundle: None,
-                label: None,
-                inputs: vec!["in".into()],
-                outputs: vec![],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
+            NodeInstance::new("source").with_outputs(["out"]),
+            NodeInstance::new("device_passthrough")
+                .with_inputs(["in"])
+                .with_outputs(["out"]),
+            NodeInstance::new("sink").with_inputs(["in"]),
         ],
-        edges: vec![
-            Edge {
-                from: PortRef {
-                    node: NodeRef(0),
-                    port: "out".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(1),
-                    port: "in".into(),
-                },
-                metadata: Default::default(),
-            },
-            Edge {
-                from: PortRef {
-                    node: NodeRef(1),
-                    port: "out".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(2),
-                    port: "in".into(),
-                },
-                metadata: Default::default(),
-            },
-        ],
+        edges: vec![Edge::new(0, "out", 1, "in"), Edge::new(1, "out", 2, "in")],
         metadata: Default::default(),
     };
 
@@ -249,7 +167,7 @@ fn engine_run_plugin_registry_executes_device_upload_download() {
         )
         .unwrap();
 
-    assert_eq!(*seen.lock().unwrap(), Some(42));
+    assert_eq!(*seen.lock(), Some(42));
     assert_eq!(uploads.load(Ordering::Relaxed), 1);
     assert_eq!(
         downloads.load(Ordering::Relaxed),
@@ -300,54 +218,19 @@ fn host_graph_ticks_payloads_through_bridge() {
     let graph = Graph {
         nodes: vec![
             NodeInstance {
-                id: NodeId::new(HOST_BRIDGE_ID),
-                bundle: None,
-                label: Some("host".into()),
-                inputs: vec!["out".into()],
-                outputs: vec!["in".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
                 metadata: [(HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true))]
                     .into_iter()
                     .collect(),
+                ..NodeInstance::new(HOST_BRIDGE_ID)
+                    .with_label("host")
+                    .with_inputs(["out"])
+                    .with_outputs(["in"])
             },
-            NodeInstance {
-                id: NodeId::new("inc"),
-                bundle: None,
-                label: None,
-                inputs: vec!["in".into()],
-                outputs: vec!["out".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
+            NodeInstance::new("inc")
+                .with_inputs(["in"])
+                .with_outputs(["out"]),
         ],
-        edges: vec![
-            Edge {
-                from: PortRef {
-                    node: NodeRef(0),
-                    port: "in".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(1),
-                    port: "in".into(),
-                },
-                metadata: Default::default(),
-            },
-            Edge {
-                from: PortRef {
-                    node: NodeRef(1),
-                    port: "out".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(0),
-                    port: "out".into(),
-                },
-                metadata: Default::default(),
-            },
-        ],
+        edges: vec![Edge::new(0, "in", 1, "in"), Edge::new(1, "out", 0, "out")],
         metadata: Default::default(),
     };
 
@@ -400,75 +283,25 @@ fn cached_direct_host_route_reuses_direct_slots() {
     let graph = Graph {
         nodes: vec![
             NodeInstance {
-                id: NodeId::new(HOST_BRIDGE_ID),
-                bundle: None,
-                label: Some("host".into()),
-                inputs: vec!["out".into()],
-                outputs: vec!["in".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
                 metadata: [(HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true))]
                     .into_iter()
                     .collect(),
+                ..NodeInstance::new(HOST_BRIDGE_ID)
+                    .with_label("host")
+                    .with_inputs(["out"])
+                    .with_outputs(["in"])
             },
-            NodeInstance {
-                id: NodeId::new("inc_a"),
-                bundle: None,
-                label: None,
-                inputs: vec!["in".into()],
-                outputs: vec!["out".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
-            NodeInstance {
-                id: NodeId::new("inc_b"),
-                bundle: None,
-                label: None,
-                inputs: vec!["in".into()],
-                outputs: vec!["out".into()],
-                compute: ComputeAffinity::CpuOnly,
-                const_inputs: vec![],
-                sync_groups: vec![],
-                metadata: Default::default(),
-            },
+            NodeInstance::new("inc_a")
+                .with_inputs(["in"])
+                .with_outputs(["out"]),
+            NodeInstance::new("inc_b")
+                .with_inputs(["in"])
+                .with_outputs(["out"]),
         ],
         edges: vec![
-            Edge {
-                from: PortRef {
-                    node: NodeRef(0),
-                    port: "in".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(1),
-                    port: "in".into(),
-                },
-                metadata: Default::default(),
-            },
-            Edge {
-                from: PortRef {
-                    node: NodeRef(1),
-                    port: "out".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(2),
-                    port: "in".into(),
-                },
-                metadata: Default::default(),
-            },
-            Edge {
-                from: PortRef {
-                    node: NodeRef(2),
-                    port: "out".into(),
-                },
-                to: PortRef {
-                    node: NodeRef(0),
-                    port: "out".into(),
-                },
-                metadata: Default::default(),
-            },
+            Edge::new(0, "in", 1, "in"),
+            Edge::new(1, "out", 2, "in"),
+            Edge::new(2, "out", 0, "out"),
         ],
         metadata: Default::default(),
     };
@@ -522,7 +355,7 @@ impl NodeHandler for TransportEngineHandler {
                 let value = io
                     .get_typed::<String>("in")
                     .ok_or_else(|| NodeError::InvalidInput("missing string input".to_string()))?;
-                self.seen.lock().unwrap().replace(value);
+                self.seen.lock().replace(value);
             }
             _ => {}
         }
@@ -590,7 +423,7 @@ impl NodeHandler for DeviceTransportEngineHandler {
                 let value = io
                     .get_typed::<i32>("in")
                     .ok_or_else(|| NodeError::InvalidInput("missing cpu input".to_string()))?;
-                self.seen.lock().unwrap().replace(value);
+                self.seen.lock().replace(value);
             }
             _ => {}
         }

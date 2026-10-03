@@ -26,6 +26,8 @@ pub mod stream;
 pub mod transport;
 pub use daedalus_transport as transport_types;
 
+daedalus_core::build_facts!();
+
 /// Apply a plugin prefix to a node id without duplicating overlapping segments.
 ///
 /// Prefixes already present at the start of the id are not duplicated.
@@ -93,16 +95,19 @@ pub use handles::{
     CapabilityId, FeatureFlag, HostAlias, NodeAlias, NodeHandle, NodeHandleId, PortHandle, PortId,
 };
 pub use host_bridge::{
-    DEFAULT_HOST_BRIDGE_EVENT_LIMIT, HOST_BRIDGE_META_KEY, HostBridgeConfig, HostBridgeHandle,
-    HostBridgeManager, bridge_handler,
+    DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING, HOST_BRIDGE_META_KEY,
+    HostBridgeConfig, HostBridgeHandle, HostBridgeManager, HostPortStats, InboundWait,
+    InboundWaiter, PayloadInspection, PayloadSummary, bridge_handler, inspect_payload,
 };
-pub use io::{DEFAULT_OUTPUT_PORT, NodeIo, TypedInputResolution, TypedInputResolutionKind};
+pub use io::{
+    DEFAULT_OUTPUT_PORT, NodeIo, NodePort, TypedInputResolution, TypedInputResolutionKind,
+};
 pub use plan::{
     BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry,
-    NODE_EXECUTION_KIND_META_KEY, NodeExecutionKind, RuntimeBranchExplanation, RuntimeEdge,
-    RuntimeEdgeExplanation, RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeNode,
-    RuntimeNodeExplanation, RuntimePlan, RuntimePlanError, RuntimePlanExplanation, RuntimeSegment,
-    RuntimeSink,
+    HostPortConnection, HostPortDescriptor, HostPortDirection, NODE_EXECUTION_KIND_META_KEY,
+    NodeExecutionKind, RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation,
+    RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeNode, RuntimeNodeExplanation, RuntimePlan,
+    RuntimePlanError, RuntimePlanExplanation, RuntimeSegment, RuntimeSink,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
 pub use state::{

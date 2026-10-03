@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -187,10 +187,7 @@ fn packet_source() -> Result<TestPacket, NodeError> {
 
 #[node(id = "test.summary_sink", inputs("summary"))]
 fn summary_sink(summary: TestSummary) -> Result<(), NodeError> {
-    SUMMARY_SINK_VALUE
-        .lock()
-        .map_err(|_| NodeError::Handler("summary sink lock poisoned".into()))?
-        .replace(summary.text);
+    SUMMARY_SINK_VALUE.lock().replace(summary.text);
     Ok(())
 }
 
@@ -212,10 +209,7 @@ fn dynamic_image_source() -> Result<TestDynamicImage, NodeError> {
 fn rotated_image_sink(image: TestRotatedImage) -> Result<(), NodeError> {
     let rgba = image.image.to_rgba8();
     let pixels = rgba.pixels().map(|pixel| pixel.0).collect::<Vec<_>>();
-    ROTATED_IMAGE_PIXELS
-        .lock()
-        .map_err(|_| NodeError::Handler("rotated image sink lock poisoned".into()))?
-        .replace(pixels);
+    ROTATED_IMAGE_PIXELS.lock().replace(pixels);
     Ok(())
 }
 
@@ -400,7 +394,7 @@ fn plugin_graph_executes_branch_adapter_for_fanout_into_mut_node() {
 #[test]
 fn plugin_graph_runs_macro_nodes_through_planned_transport_adapter() {
     PACKET_TO_SUMMARY_CALLS.store(0, Ordering::SeqCst);
-    SUMMARY_SINK_VALUE.lock().unwrap().take();
+    SUMMARY_SINK_VALUE.lock().take();
 
     let mut registry = PluginRegistry::new();
     let plugin = EndToEndTransportPlugin::new();
@@ -435,16 +429,13 @@ fn plugin_graph_runs_macro_nodes_through_planned_transport_adapter() {
         .expect("execute graph");
 
     assert_eq!(PACKET_TO_SUMMARY_CALLS.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        SUMMARY_SINK_VALUE.lock().unwrap().as_deref(),
-        Some("packet=7")
-    );
+    assert_eq!(SUMMARY_SINK_VALUE.lock().as_deref(), Some("packet=7"));
 }
 
 #[test]
 fn plugin_graph_rotates_dynamic_image_180_through_transport_adapter() {
     IMAGE_ROTATE_CALLS.store(0, Ordering::SeqCst);
-    ROTATED_IMAGE_PIXELS.lock().unwrap().take();
+    ROTATED_IMAGE_PIXELS.lock().take();
 
     let mut registry = PluginRegistry::new();
     let plugin = DynamicImageTransportPlugin::new();
@@ -480,7 +471,7 @@ fn plugin_graph_rotates_dynamic_image_180_through_transport_adapter() {
 
     assert_eq!(IMAGE_ROTATE_CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(
-        ROTATED_IMAGE_PIXELS.lock().unwrap().as_ref(),
+        ROTATED_IMAGE_PIXELS.lock().as_ref(),
         Some(&vec![
             [255, 255, 255, 255],
             [0, 0, 255, 255],
@@ -699,7 +690,9 @@ fn declare_plugin_installs_adapt_macro_adapters() {
 #[test]
 fn type_key_macro_registers_opaque_type() {
     let mut registry = PluginRegistry::new();
-    register_test_frame_type(&mut registry).expect("register type");
+    registry
+        .register_daedalus_type::<TestFrame>(daedalus::data::named_types::HostExportPolicy::None)
+        .expect("register type");
 
     assert_eq!(
         daedalus::data::typing::type_expr::<TestFrame>(),
