@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{ItemStruct, Lit, LitStr, Meta, MetaList, MetaNameValue, Path, parse_macro_input};
 
+use crate::foreign_type::{ForeignProvider, collect_foreign_providers, register_foreign_providers};
 use crate::helpers::{
     AttributeArgs, DaedalusCrate, NestedMeta, compile_error, fn_path_arg, lit_str_arg,
     parse_nested, str_expr,
@@ -13,6 +14,7 @@ struct PluginArgs {
     types: Vec<Path>,
     values: Vec<Path>,
     foreign_types: Vec<(Path, syn::Expr)>,
+    foreign_providers: Vec<ForeignProvider>,
     nodes: Vec<syn::Ident>,
     adapters: Vec<syn::Ident>,
     devices: Vec<syn::Ident>,
@@ -76,6 +78,7 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
     let mut deps = Vec::new();
     let mut types = Vec::new();
     let mut foreign_types = Vec::new();
+    let mut foreign_providers = Vec::new();
     let mut values = Vec::new();
     let mut nodes = Vec::new();
     let mut adapters = Vec::new();
@@ -104,6 +107,10 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("foreign_types") => {
                 foreign_types = collect_foreign_types(&list)?;
             }
+            NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("foreign_providers") => {
+                foreign_providers =
+                    collect_foreign_providers(&list).map_err(|err| err.to_compile_error())?;
+            }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("values") => {
                 values = collect_path_list(&list, "values")?;
             }
@@ -128,7 +135,7 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
             }
             _ => {
                 return Err(compile_error(
-                    "plugin arguments must use `id = \"...\", install = setup, deps(...), parts(...), types(...), foreign_types(Type = \"key\", ...), values(...), nodes(...), adapters(...), devices(...)`"
+                    "plugin arguments must use `id = \"...\", install = setup, deps(...), parts(...), types(...), foreign_types(Type = \"key\", ...), foreign_providers(Owner => Interface, ...), values(...), nodes(...), adapters(...), devices(...)`"
                         .into(),
                 ));
             }
@@ -140,6 +147,7 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
         deps,
         types,
         foreign_types,
+        foreign_providers,
         values,
         nodes,
         adapters,
@@ -170,6 +178,7 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
     let deps = parsed.deps;
     let types = parsed.types;
     let (foreign_types, foreign_keys): (Vec<_>, Vec<_>) = parsed.foreign_types.into_iter().unzip();
+    let foreign_providers = register_foreign_providers(&parsed.foreign_providers);
     let values = parsed.values;
     let nodes = parsed.nodes;
     let adapters = parsed.adapters;
@@ -228,6 +237,7 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
                 #(
                     registry.register_foreign_type::<#foreign_types>(#foreign_keys)?;
                 )*
+                #(#foreign_providers)*
                 #install_hook
                 #(
                     #runtime_crate::plugins::PluginPart::install_part(&#parts, registry)?;

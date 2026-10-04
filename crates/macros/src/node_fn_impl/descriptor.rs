@@ -97,8 +97,16 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
             } else {
                 quote! { ::core::option::Option::<#data_crate::model::Value>::None }
             };
+            let foreign = crate::foreign_type::is_foreign_view(raw_aty);
+            let access = if foreign {
+                quote! { #runtime_crate::transport_types::AccessMode::Read }
+            } else {
+                access
+            };
             let ty_expr = if let Some(ty) = port.ty_override.as_ref() {
                 quote! { (#ty) }
+            } else if foreign {
+                quote! { #runtime_crate::foreign::view_type_expr::<#raw_aty>() }
             } else {
                 node_type_expr(aty, generic_type_params, data_crate)
             };

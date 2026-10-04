@@ -382,7 +382,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
                 (false, false)
             };
             let is_binding_mut = arg_mut_bindings.get(idx).copied().unwrap_or(false);
-            let access = if is_ref {
+            let access = if is_ref || crate::foreign_type::is_foreign_view(ty) {
                 if is_ref_mut { "mutable" } else { "borrowed" }
             } else if is_binding_mut {
                 "mutable"
