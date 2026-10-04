@@ -140,6 +140,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `&'static str` constant as `id` (`concat!(..)`, a user macro, a `const`); `#[type_key]`,
   `#[adapt(from, to)]` and `foreign_types` keys accept the same.
 - `TypeRegistry::empty()`, a shared empty typing registry.
+- Adaptive tuning: `Executor`/`OwnedExecutor::with_adaptive_dispatch_overhead`,
+  `EngineConfig::with_adaptive_dispatch_overhead` (`RuntimeSection::adaptive_dispatch_overhead`)
+  and `executor::DEFAULT_DISPATCH_OVERHEAD` set the per-segment dispatch cost adaptive mode
+  assumes before it has measured one; node metadata `NODE_COST_META_KEY`
+  (`"daedalus.node.cost"`) = `"heavy"` marks a node as expensive before it is measured.
 
 ### Fixed
 
@@ -260,8 +265,31 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   of its own parser. `HostGraphRunInput` is implemented for `(P, I)` and `(P, K, I)` with any
   `P: Into<PortId>`. Panic payloads that are not strings report "non-string panic payload".
 
+- `run_adaptive_in_place` (and `RuntimeMode::Adaptive` in compiled engines and host graphs)
+  decides per frame from measured costs instead of graph shape: it times segments (per segment
+  in parallel frames, one `Instant` read per node on every fourth serial frame) and runs in
+  parallel only when the predicted gain over serial
+  (`max(critical path, work / workers) + segments × dispatch overhead`, the overhead refined by
+  parallel frames) exceeds 25% of the serial time, with hysteresis and an 8-frame dwell. Until a
+  frame is measured, only heavy-hinted (GPU affinity or `NODE_COST_META_KEY`) segments count, so
+  graphs of cheap nodes run serially. One-shot `Executor::run_adaptive` keeps the shape rule.
+- Without `executor-pool`, parallel runs fan out to persistent threads parked between frames
+  instead of a scoped OS thread per segment; `prewarm_worker_pool` exists in both builds. Parallel
+  runs use at most one worker per segment on the widest dependency level.
+- `ExecutionTelemetry::node_metrics` is a `NodeMetricsMap` (dense by node index; `get`/`entry`
+  take the index by value, `iter` yields `(usize, &NodeMetrics)`), serialized, printed and
+  reported like the former `BTreeMap<usize, NodeMetrics>`.
+
 ### Performance
 
+- Parallel frames no longer spawn a task (or, without `executor-pool`, a thread) per segment or
+  send results through a channel: workers pull ready segments from one locked queue, reuse one
+  executor snapshot each and merge telemetry in place, and the Rayon fan-out splits with `join` on
+  the stack. On the 16-node `graph_frame` graph a parallel frame allocates nothing beyond serial
+  (was 20 with the pool, 101 without); basic metrics return node metrics in one vector instead
+  of a three-node tree. Parallel frames of that graph went from 157 to 74 µs (659 to 69 µs
+  without the pool) and adaptive ones from 136 µs to serial speed; numbers and mode guidance in
+  `docs/development.md`.
 - Macro-generated handlers resolve their output keys once per registry instead of building a
   `TypeExpr`, a JSON key string and an `Arc<str>` on every push, and push to static `PortId`s;
   the single-input direct path no longer caches its key in a process-wide `static`. The
@@ -274,7 +302,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `host_graph_drive` benches (including `push_tick_take_metrics_off`) are summarized in
   `docs/development.md`.
 - A 16-node detector-like graph frame (`graph_frame_allocations` facade test, `graph_frame`
-  bench) went from 290 heap allocations to 40 in serial mode (60 with the worker pool): the 31
+  bench) went from 290 heap allocations to 40 in serial mode: the 31
   allocations of the payloads it creates and 9 from generated stateful handlers; runtime
   bookkeeping per frame is zero and pinned by the test (`docs/development.md` has the breakdown).
   Boundary payloads are checked by `TypeId` instead of formatting a `BoundaryTypeContract` per
