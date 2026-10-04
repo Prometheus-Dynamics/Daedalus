@@ -142,10 +142,10 @@ impl PluginRegistry {
     /// key `key` (what `#[plugin(foreign_types(Type = "key"))]` generates).
     ///
     /// Prefer the owning crate's own Daedalus integration when it has one: never mint a second
-    /// key for a type whose crate already owns one. Registers the type with this registry's and
-    /// the process-global typing registry (so node macros installed afterwards resolve it), a
-    /// placeholder transport type declaration (the owner's declaration may replace it), and the
-    /// boundary type. Fails when `T` already owns another key or `key` names another Rust type.
+    /// key for a type whose crate already owns one. Registers the type with this registry's
+    /// typing registry (node macros installed afterwards resolve it there), a placeholder
+    /// transport type declaration (the owner's declaration may replace it), and the boundary
+    /// type. Fails when `T` already owns another key or `key` names another Rust type.
     pub fn register_foreign_type<T: 'static>(&mut self, key: &str) -> PluginResult<()> {
         self.register_owned_type::<T>(key, |registry| {
             registry.register_transport_type_decl(TypeKey::new(key), TypeExpr::opaque(key))
@@ -180,10 +180,6 @@ impl PluginRegistry {
         if let Some(conflict) = self.boundary_type_conflicts(&identity).pop() {
             return Err(PluginError::BoundaryTypeConflict(conflict));
         }
-        // Node macros resolve types without a key of their own through the process-global
-        // typing registry, so a type keyed differently by another registry fails here too.
-        daedalus_data::typing::register_type::<T>(own.clone())
-            .map_err(|conflict| keyed_twice(conflict.existing))?;
         declare(self)?;
         self.type_registry
             .register_type::<T>(own)

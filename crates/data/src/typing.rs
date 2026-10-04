@@ -1,5 +1,4 @@
 use crate::model::{EnumVariant, TypeExpr, Value, ValueType};
-use parking_lot::RwLock;
 use std::any::{Any, TypeId, type_name};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::TryFrom;
@@ -34,11 +33,6 @@ pub struct RegisteredTypeCapabilities {
     pub ty: TypeExpr,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub capabilities: BTreeSet<String>,
-}
-
-fn registry() -> &'static RwLock<TypeRegistry> {
-    static TYPE_REGISTRY: OnceLock<RwLock<TypeRegistry>> = OnceLock::new();
-    TYPE_REGISTRY.get_or_init(|| RwLock::new(TypeRegistry::new()))
 }
 
 fn normalize_rust_type_name(raw: &str) -> String {
@@ -89,6 +83,12 @@ macro_rules! with_builtin_rust_scalar_types {
 impl TypeRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A shared empty registry: resolves builtins and the `rust:` fallback only.
+    pub fn empty() -> &'static TypeRegistry {
+        static EMPTY: OnceLock<TypeRegistry> = OnceLock::new();
+        EMPTY.get_or_init(TypeRegistry::new)
     }
 
     /// Register `expr` as the type expression of `T`. Registering the same expression again is
@@ -299,80 +299,6 @@ where
         .take()
 }
 
-/// Register a concrete `TypeExpr` for a Rust type `T`.
-///
-/// This global helper is convenience API for small applications and generic host
-/// helpers. Plugin and engine-owned code should prefer an owned [`TypeRegistry`]
-/// or `PluginRegistry::type_registry` so independent registries do not share type
-/// state.
-///
-pub fn register_type<T: 'static>(expr: TypeExpr) -> Result<(), TypeConflict> {
-    registry().write().register_type::<T>(expr)
-}
-
-pub fn register_type_capability(ty: TypeExpr, capability: impl Into<String>) {
-    register_type_capabilities(ty, [capability]);
-}
-
-pub fn register_type_capabilities(
-    ty: TypeExpr,
-    capabilities: impl IntoIterator<Item = impl Into<String>>,
-) {
-    let mut guard = registry().write();
-    guard.register_type_capabilities(ty, capabilities);
-}
-
-pub fn type_capabilities(ty: &TypeExpr) -> BTreeSet<String> {
-    let guard = registry().read();
-    guard.type_capabilities(ty)
-}
-
-pub fn has_type_capability(ty: &TypeExpr, capability: &str) -> bool {
-    if capability.trim().is_empty() {
-        return false;
-    }
-    type_capabilities(ty).contains(capability)
-}
-
-pub fn snapshot_type_capabilities() -> Vec<RegisteredTypeCapabilities> {
-    let guard = registry().read();
-    guard.snapshot_type_capabilities()
-}
-
-/// Snapshot the full process-global type registry.
-///
-/// This is intended for test isolation and embedders that need to temporarily install global
-/// convenience registrations and restore the previous process state afterward. Code that already
-/// owns an engine or plugin registry should prefer passing an owned [`TypeRegistry`] directly.
-pub fn snapshot_global_registry() -> TypeRegistry {
-    registry().read().clone()
-}
-
-/// Replace the process-global type registry with a previous snapshot.
-pub fn restore_global_registry(snapshot: TypeRegistry) {
-    *registry().write() = snapshot;
-}
-
-/// Reset the process-global type registry to an empty registry.
-pub fn reset_global_registry() {
-    restore_global_registry(TypeRegistry::new());
-}
-
-/// Register an enum (variants only) for Rust type `T`.
-///
-pub fn register_enum<T: 'static>(
-    variants: impl IntoIterator<Item = impl Into<String>>,
-) -> Result<(), TypeConflict> {
-    registry().write().register_enum::<T>(variants)
-}
-
-/// Look up a previously registered `TypeExpr` for a Rust type `T`.
-///
-pub fn lookup_type<T: 'static>() -> Option<TypeExpr> {
-    let guard = registry().read();
-    guard.lookup_type::<T>()
-}
-
 /// The type expression of a builtin Rust type: the scalars (integers, floats, `bool`, `String`,
 /// `Vec<u8>`, `()`) and `Option`/`Vec` of them, encoded as the node macros encode them. Depends
 /// on no registry.
@@ -421,78 +347,29 @@ where
     None
 }
 
-/// Return an explicit type expression if `T` has either been registered or is
-/// covered by built-in mappings (without falling back to `Opaque`).
-///
-pub fn override_type_expr<T: 'static>() -> Option<TypeExpr> {
-    let guard = registry().read();
-    guard.override_type_expr::<T>()
-}
-
-/// Returns the best-effort `TypeExpr` for a Rust type `T`.
-///
-/// Resolution order:
-/// 1) Global `register_type::<T>(...)` convenience registration
-/// 2) Built-in primitives and common shims (e.g. `Vec<u8>` as `Bytes`)
-/// 3) `Opaque("rust:<type_name>")` fallback
-///
-/// Prefer [`TypeRegistry::type_expr`] when code already owns a plugin or engine
-/// registry.
-///
-pub fn type_expr<T: 'static>() -> TypeExpr {
-    let guard = registry().read();
-    guard.type_expr::<T>()
-}
-
-/// Look up a previously registered `TypeExpr` by Rust type name (whitespace is ignored).
-///
-/// This is stable across dylib/plugin boundaries where `TypeId` differs but `type_name::<T>()`
-/// is identical (compiled from the same sources).
-pub fn lookup_type_by_rust_name(raw: &str) -> Option<TypeExpr> {
-    let guard = registry().read();
-    guard.lookup_type_by_rust_name(raw)
-}
-
-/// Snapshot the current registry as a list keyed by Rust type name.
-///
-/// Intended for UIs and tooling (e.g. exposing enum/struct definitions registered by plugins).
-pub fn snapshot_by_rust_name() -> Vec<RegisteredType> {
-    let guard = registry().read();
-    guard.snapshot_by_rust_name()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        TypeRegistry, coerce_builtin_const_value, has_type_capability, register_type_capabilities,
-        snapshot_type_capabilities, type_capabilities,
-    };
+    use super::{TypeRegistry, coerce_builtin_const_value};
     use crate::model::{TypeExpr, Value, ValueType};
 
     #[test]
     fn capabilities_are_registered_per_typeexpr() {
         let ty = TypeExpr::Opaque("test:semantic:image".to_string());
-        register_type_capabilities(
+        let mut types = TypeRegistry::new();
+        types.register_type_capabilities(
             ty.clone(),
             ["croppable", "luma-readable", "cpu-materializable"],
         );
-        let caps = type_capabilities(&ty);
+        let caps = types.type_capabilities(&ty);
         assert!(caps.contains("croppable"));
         assert!(caps.contains("luma-readable"));
-        assert!(has_type_capability(&ty, "cpu-materializable"));
-        assert!(!has_type_capability(&ty, "gpu-materializable"));
-    }
-
-    #[test]
-    fn snapshot_helpers_include_registered_capabilities() {
-        let ty = TypeExpr::Opaque("test:snapshot:type".to_string());
-        register_type_capabilities(ty.clone(), ["croppable"]);
-
-        let capability_snapshot = snapshot_type_capabilities();
+        assert!(types.has_type_capability(&ty, "cpu-materializable"));
+        assert!(!types.has_type_capability(&ty, "gpu-materializable"));
         assert!(
-            capability_snapshot
+            types
+                .snapshot_type_capabilities()
                 .iter()
-                .any(|entry| { entry.ty == ty && entry.capabilities.contains("croppable") })
+                .any(|entry| entry.ty == ty && entry.capabilities.contains("croppable"))
         );
     }
 

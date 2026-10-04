@@ -89,8 +89,11 @@ fn multiple_fanin_groups_are_described() {
 
 #[test]
 fn fanin_port_can_override_type_expr_for_generics() {
-    let decl =
-        FaninTyOverrideNode::node_decl_for::<i64>("test.fanin_ty_override").expect("node decl");
+    let decl = FaninTyOverrideNode::node_decl_for::<i64>(
+        "test.fanin_ty_override",
+        daedalus::data::typing::TypeRegistry::empty(),
+    )
+    .expect("node decl");
     assert_eq!(decl.fanin_inputs.len(), 1);
     assert_eq!(decl.fanin_inputs[0].prefix, "items");
     assert!(matches!(

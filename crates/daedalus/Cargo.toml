@@ -124,6 +124,7 @@ wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
 image = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 trybuild = { workspace = true }
 criterion = { workspace = true }
@@ -161,6 +162,16 @@ required-features = ["engine", "plugins"]
 [[test]]
 name = "typed_host_ports"
 path = "tests/typed_host_ports.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
+name = "enum_config_ports"
+path = "tests/enum_config_ports.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
+name = "macro_hot_path_allocations"
+path = "tests/macro_hot_path_allocations.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]

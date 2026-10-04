@@ -5,7 +5,7 @@ use syn::LitStr;
 pub(super) struct FinalTokens {
     pub(super) input: syn::ItemFn,
     pub(super) struct_ident: syn::Ident,
-    pub(super) id: LitStr,
+    pub(super) id: syn::Expr,
     pub(super) node_decl_fn: TokenStream,
     pub(super) boundary_contracts_fn: TokenStream,
     pub(super) handler_registry_fn: TokenStream,

@@ -60,6 +60,20 @@ changes.
       block: a node runs when each connected required input has a value and is skipped
       otherwise; optional inputs are `None` without one. `Result<Option<T>, _>` returns are
       conditional outputs. See "Optional Inputs And Readiness" in `docs/node-authoring.md`.
+- [x] **Enum config ports (Eidos).** `NodeConfig` enum fields and enum handler inputs failed
+      with `missing <port>`: the engine never handed the registry's const coercers to its
+      executors and owned/borrowed inputs never coerced `Value` constants. The node macros now
+      register a coercer per input and config field type at install (`DaedalusTypeExpr` unit
+      enums by name or index, else serde); see "Constants, Defaults And Config Enums" in
+      `docs/node-authoring.md`.
+- [x] **Ids from other macros (Eidos).** `#[node]`/`#[adapt]`/`#[plugin]` accept any `&'static
+      str` constant expression as `id` (`concat!`, a user macro, a `const`).
+- [x] **Macro leaf keys without an owned key.** Port types without a `#[type_key]` (a
+      `foreign_types` mapping) resolve through the installing registry's `TypeRegistry`
+      (`node_decl_in`, `handler_registry_in`, ...), handlers compute output keys once per
+      registry, and the process-global typing registry is gone. Dynamic plugins resolve a
+      dependency's mapping through the registry they install into: the introspection registry
+      (where `export_plugin!(.., deps [..])` installs linked dependencies first) or the host's.
 - [x] **Dynamic plugin dependencies (Eidos/Styx).** Schemas list a plugin's dependencies and
       `install_into` refuses a plugin whose dependencies the host has not installed
       (`MissingDependencies`). `export_plugin!(P, deps [Dep])` links dependency plugins into
@@ -114,15 +128,16 @@ changes.
 - [ ] **Cross-tick joins.** A node skipped for a missing required input drops what arrived on
       its other ports that tick. Graphs that need "wait until every input arrived" joins across
       ticks would need readiness checked before popping edges.
-- [ ] **Macro leaf keys without an owned key.** `#[node]`/`#[adapt]` resolve a port type that
-      has no `#[type_key]`/`DaedalusTypeExpr` (a `foreign_types` mapping) through the
-      process-global typing registry when the plugin installs, and generated handlers recompute
-      that key on every output push. Within one plugin `foreign_types` registers first, so this is
-      deterministic, but another plugin's mapping can leak in. Resolve it through the installing
-      registry (or a compile-time key) and compute output keys once per node. Dynamic plugins
-      currently rely on this: a type a dependency maps only resolves in the library when the
-      dependency is linked (`export_plugin!(.., deps [..])`), whose introspection fills the
-      library's globals before `register` runs.
+- [ ] **Fanning a builtin host input out to several nodes.** A host input of `i64` feeding two
+      `i64` node inputs failed in one of them with `payload type mismatch: same TypeKey
+      typeexpr:{"Scalar":"Int"}, different Rust type (expected i32, found i64)`: the fan-out
+      branch adapter for the shared `Int` key appears to be the one registered for `i32`. Seen
+      while testing enum config ports; `enum_config_ports` avoids it.
+- [ ] **Global boundary contract registry.** Macro installs register boundary contracts for
+      their port types (builtins included) in `daedalus_transport`'s process-global registry,
+      so `Payload::owned` of e.g. `i64` takes the boundary storage path (contract clone,
+      `LayoutHash::for_type` strings): about 8 allocations per payload instead of 2. Scope the
+      contracts to the registry, or skip them for builtins.
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29

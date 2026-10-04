@@ -1,10 +1,14 @@
 //! `TypeExpr` token generation shared by the node, `NodeConfig`, and `DaedalusTypeExpr` macros.
 //!
-//! Prefers explicit runtime overrides (typing registry) for containers, encodes common
-//! containers and primitives structurally, and resolves every other (leaf) type with
-//! [`leaf_type_expr`]: the key the type owns (`DaedalusTypeExpr`, e.g. `#[type_key]`) when it has
-//! one, else `typing::type_expr::<T>()`. Types that cannot be encoded fall back to a stable
-//! opaque `rust:<type>` identity.
+//! Prefers explicit overrides (typing registry) for containers, encodes common containers and
+//! primitives structurally, and resolves every other (leaf) type with [`leaf_type_expr`]: the key
+//! the type owns (`DaedalusTypeExpr`, e.g. `#[type_key]`) when it has one, else
+//! `types.type_expr::<T>()`. Types that cannot be encoded fall back to a stable opaque
+//! `rust:<type>` identity.
+//!
+//! The generated expressions read the typing registry from a `__types: &TypeRegistry` binding
+//! the caller puts in scope ([`TYPES`]): the installing `PluginRegistry::type_registry`, or
+//! `TypeRegistry::empty()` where no registry exists. Nothing reads process-global state.
 
 use std::collections::HashSet;
 
@@ -13,6 +17,21 @@ use quote::{ToTokens, quote};
 use syn::{LitStr, Type};
 
 use crate::helpers::{DaedalusCrate, last_segment, segment_type_arg};
+
+/// Name of the `&TypeRegistry` binding generated type expressions resolve leaf types through.
+pub(crate) const TYPES: &str = "__types";
+
+/// The [`TYPES`] binding as an expression.
+pub(crate) fn types_ident() -> TokenStream {
+    let ident = syn::Ident::new(TYPES, Span::call_site());
+    quote! { #ident }
+}
+
+/// `let __types = #registry;` (a `&TypeRegistry` expression).
+pub(crate) fn bind_types(registry: TokenStream) -> TokenStream {
+    let types = types_ident();
+    quote! { let #types: &_ = #registry; }
+}
 
 /// How bare generic type parameters of the annotated item are encoded.
 #[derive(Clone, Copy)]
@@ -116,8 +135,9 @@ impl TypeExprOptions<'_> {
     /// Container encoding that defers to an explicit typing-registry override for `ty`.
     fn overridable(&self, ty: &Type, structural: TokenStream) -> TokenStream {
         let data_crate = self.data_crate;
+        let types = types_ident();
         quote! {
-            if let Some(explicit) = #data_crate::typing::override_type_expr::<#ty>() {
+            if let Some(explicit) = #types.override_type_expr::<#ty>() {
                 explicit
             } else {
                 #data_crate::model::TypeExpr::#structural
@@ -128,20 +148,26 @@ impl TypeExprOptions<'_> {
 
 /// Autoref-specialization probe call `(&Probe::<ty>(PhantomData)).<method>()` (see
 /// `daedalus_data::daedalus_type::derive_support`).
-pub(crate) fn probe_call(ty: &Type, method: &str, data_crate: &TokenStream) -> TokenStream {
+pub(crate) fn probe_call(
+    ty: &Type,
+    method: &str,
+    args: TokenStream,
+    data_crate: &TokenStream,
+) -> TokenStream {
     let support = quote! { #data_crate::daedalus_type::derive_support };
     let method = syn::Ident::new(method, Span::call_site());
     quote! {{
         #[allow(unused_imports)]
         use #support::{KeyedLeaf as _, RegistryLeaf as _};
-        (&#support::Probe::<#ty>(::core::marker::PhantomData)).#method()
+        (&#support::Probe::<#ty>(::core::marker::PhantomData)).#method(#args)
     }}
 }
 
 /// Schema of a leaf type: `Opaque(T::TYPE_KEY)` for types that own a key, resolved at compile
-/// time so it never depends on registration order, else `typing::type_expr::<T>()`.
+/// time so it never depends on registration order, else `__types.type_expr::<T>()` (see
+/// [`TYPES`]).
 pub(crate) fn leaf_type_expr(ty: &Type, data_crate: &TokenStream) -> TokenStream {
-    probe_call(ty, "leaf_type_expr", data_crate)
+    probe_call(ty, "leaf_type_expr", types_ident(), data_crate)
 }
 
 /// Transport key of a leaf type (see [`leaf_type_expr`]): a `TypeKey` expression.
@@ -165,7 +191,7 @@ pub(crate) fn value_type_key(ty: &Type, explicit: Option<&LitStr>) -> TokenStrea
 
 /// `Option<&'static str>` expression: the key `ty` declares itself, if any.
 pub(crate) fn leaf_declared_key(ty: &Type) -> TokenStream {
-    probe_call(ty, "declared_key", &DaedalusCrate::Data.path())
+    probe_call(ty, "declared_key", quote! {}, &DaedalusCrate::Data.path())
 }
 
 /// Stable opaque `rust:<type>` identity for types without a structural encoding.
