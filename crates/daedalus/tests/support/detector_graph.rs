@@ -242,7 +242,14 @@ fn fine(
 }
 
 /// Conditional output: a tightened ROI for frames bright enough to refine (every test frame).
-#[node(id = "bench.detector.refine", inputs("stats", "roi"), outputs("roi"))]
+/// A join (`fire = "all"`): both inputs arrive every frame, so it fires every frame, and the
+/// readiness peek it adds must not allocate.
+#[node(
+    id = "bench.detector.refine",
+    inputs("stats", "roi"),
+    outputs("roi"),
+    fire = "all"
+)]
 fn refine(stats: &Stats, roi: &Roi) -> Result<Option<Roi>, NodeError> {
     Ok((stats.mean > 64.0).then_some(Roi {
         x: roi.x + 1,

@@ -1,7 +1,5 @@
 //! Wiring between outer graph endpoints and nested graph ports.
 
-use std::collections::BTreeMap;
-
 use daedalus_planner::{Edge, NodeRef, PortRef};
 
 use super::{GraphBuildError, GraphBuilder, IntoPortSpec, NestedGraphHandle, PortSpec};
@@ -26,8 +24,10 @@ impl GraphBuilder {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
+    /// Connect an outer node/port (a bare port name is a host input) to a nested graph input
+    /// port. An undeclared host input takes the type the nested graph declared for `port`.
     pub fn try_connect_to_nested<F>(
-        mut self,
+        self,
         from: F,
         nested: &NestedGraphHandle,
         port: impl AsRef<str>,
@@ -35,37 +35,7 @@ impl GraphBuilder {
     where
         F: IntoPortSpec,
     {
-        let from_spec = from.into_spec();
-        let host_alias = self
-            .host_bridge_alias
-            .clone()
-            .unwrap_or_else(|| "host".to_string());
-        if from_spec.node == host_alias {
-            self = self.ensure_host_bridge(Some(host_alias));
-            self = self.ensure_host_bridge_port(true, &from_spec.port);
-        }
-        let f_idx = self.try_find_index(&from_spec.node)?;
-        let port = port.as_ref();
-        let targets =
-            nested
-                .inputs
-                .get(port)
-                .ok_or_else(|| GraphBuildError::MissingNestedInput {
-                    alias: nested.alias.clone(),
-                    port: port.to_string(),
-                })?;
-
-        for target in targets {
-            self.edges.push(Edge {
-                from: PortRef {
-                    node: NodeRef(f_idx),
-                    port: from_spec.port.clone(),
-                },
-                to: target.clone(),
-                metadata: BTreeMap::new(),
-            });
-        }
-        Ok(self)
+        self.try_connect_to_nested_spec(from.into_spec(), nested, port.as_ref())
     }
 
     /// Connect a nested graph output port to a node/port in the outer graph.
@@ -87,8 +57,10 @@ impl GraphBuilder {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
+    /// Connect a nested graph output port to an outer node/port (a bare port name is a host
+    /// output). An undeclared host output takes the type the nested graph declared for `port`.
     pub fn try_connect_from_nested<T>(
-        mut self,
+        self,
         nested: &NestedGraphHandle,
         port: impl AsRef<str>,
         to: T,
@@ -96,46 +68,15 @@ impl GraphBuilder {
     where
         T: IntoPortSpec,
     {
-        let to_spec = to.into_spec();
-        let host_alias = self
-            .host_bridge_alias
-            .clone()
-            .unwrap_or_else(|| "host".to_string());
-        if to_spec.node == host_alias {
-            self = self.ensure_host_bridge(Some(host_alias));
-            self = self.ensure_host_bridge_port(false, &to_spec.port);
-        }
-        let t_idx = self.try_find_index(&to_spec.node)?;
-        let port = port.as_ref();
-        let sources =
-            nested
-                .outputs
-                .get(port)
-                .ok_or_else(|| GraphBuildError::MissingNestedOutput {
-                    alias: nested.alias.clone(),
-                    port: port.to_string(),
-                })?;
-
-        for source in sources {
-            self.edges.push(Edge {
-                from: source.clone(),
-                to: PortRef {
-                    node: NodeRef(t_idx),
-                    port: to_spec.port.clone(),
-                },
-                metadata: BTreeMap::new(),
-            });
-        }
-        Ok(self)
+        self.try_connect_from_nested_spec(nested, port.as_ref(), to.into_spec())
     }
 
     pub(super) fn try_connect_from_nested_spec(
-        mut self,
+        self,
         nested: &NestedGraphHandle,
         port: &str,
         to: PortSpec,
     ) -> Result<Self, GraphBuildError> {
-        let t_idx = self.try_find_index(&to.node)?;
         let sources =
             nested
                 .outputs
@@ -144,27 +85,22 @@ impl GraphBuilder {
                     alias: nested.alias.clone(),
                     port: port.to_string(),
                 })?;
-
-        for source in sources {
-            self.edges.push(Edge {
-                from: source.clone(),
-                to: PortRef {
-                    node: NodeRef(t_idx),
-                    port: to.port.clone(),
-                },
-                metadata: BTreeMap::new(),
-            });
-        }
-        Ok(self)
+        let ty = nested.host_types.outputs.get(&port.to_ascii_lowercase());
+        let (mut builder, to) = self.resolve_outer_endpoint(to, false, ty)?;
+        builder.edges.extend(sources.iter().map(|source| Edge {
+            from: source.clone(),
+            to: to.clone(),
+            metadata: Default::default(),
+        }));
+        Ok(builder)
     }
 
     pub(super) fn try_connect_to_nested_spec(
-        mut self,
+        self,
         from: PortSpec,
         nested: &NestedGraphHandle,
         port: &str,
     ) -> Result<Self, GraphBuildError> {
-        let f_idx = self.try_find_index(&from.node)?;
         let targets =
             nested
                 .inputs
@@ -173,17 +109,64 @@ impl GraphBuilder {
                     alias: nested.alias.clone(),
                     port: port.to_string(),
                 })?;
+        let ty = nested.host_types.inputs.get(&port.to_ascii_lowercase());
+        let (mut builder, from) = self.resolve_outer_endpoint(from, true, ty)?;
+        builder.edges.extend(targets.iter().map(|target| Edge {
+            from: from.clone(),
+            to: target.clone(),
+            metadata: Default::default(),
+        }));
+        Ok(builder)
+    }
 
-        for target in targets {
-            self.edges.push(Edge {
-                from: PortRef {
-                    node: NodeRef(f_idx),
-                    port: from.port.clone(),
-                },
-                to: target.clone(),
-                metadata: BTreeMap::new(),
+    /// Resolve the outer end of a nested connection; a bare port or the host alias is a host
+    /// port (`is_host_input` when it feeds the nested graph), created on demand and, when the
+    /// outer graph has not declared its type, given the nested graph's declared type `ty`.
+    fn resolve_outer_endpoint(
+        self,
+        spec: PortSpec,
+        is_host_input: bool,
+        ty: Option<&daedalus_data::model::TypeExpr>,
+    ) -> Result<(Self, PortRef), GraphBuildError> {
+        let host_alias = self
+            .host_bridge_alias
+            .clone()
+            .unwrap_or_else(|| "host".to_string());
+        let mut builder = self;
+        if spec.node.is_empty() || spec.node == host_alias {
+            let declared = builder.host_bridge_node_mut().is_some_and(|host| {
+                let types = daedalus_planner::HostPortTypes::from_node_metadata(&host.metadata);
+                let types = if is_host_input {
+                    &types.inputs
+                } else {
+                    &types.outputs
+                };
+                types.contains_key(&spec.port.to_ascii_lowercase())
             });
+            builder = match ty {
+                Some(ty) if !declared => {
+                    builder.declare_host_port(is_host_input, &spec.port, ty.clone())
+                }
+                _ => builder
+                    .ensure_host_bridge(Some(host_alias.clone()))
+                    .ensure_host_bridge_port(is_host_input, &spec.port),
+            };
+            let node = NodeRef(builder.try_find_index(&host_alias)?);
+            return Ok((
+                builder,
+                PortRef {
+                    node,
+                    port: spec.port,
+                },
+            ));
         }
-        Ok(self)
+        let node = NodeRef(builder.try_find_index(&spec.node)?);
+        Ok((
+            builder,
+            PortRef {
+                node,
+                port: spec.port,
+            },
+        ))
     }
 }

@@ -127,6 +127,29 @@ pub(super) fn output_contract_types(ret: &syn::ReturnType, outputs_len: usize) -
     Vec::new()
 }
 
+/// Per output, whether it is conditional: an `Option` return (or tuple element) pushes nothing
+/// for `None`.
+pub(super) fn conditional_outputs(ret: &syn::ReturnType, outputs_len: usize) -> Vec<bool> {
+    let syn::ReturnType::Type(_, ty) = ret else {
+        return vec![false; outputs_len];
+    };
+    let mut ty: &syn::Type = ty;
+    while let Some(inner) = generic_arg(ty, "Result", 0) {
+        ty = inner;
+    }
+    if generic_arg(ty, "Option", 0).is_some() {
+        return vec![true; outputs_len];
+    }
+    match ty {
+        syn::Type::Tuple(tuple) if tuple.elems.len() == outputs_len => tuple
+            .elems
+            .iter()
+            .map(|elem| generic_arg(elem, "Option", 0).is_some())
+            .collect(),
+        _ => vec![false; outputs_len],
+    }
+}
+
 pub(super) fn direct_payload_plain_type(ty: &syn::Type) -> Option<&syn::Type> {
     let ident = last_segment(ty)?.ident.to_string();
     (!matches!(ident.as_str(), "Arc" | "Compute" | "Option")).then_some(ty)

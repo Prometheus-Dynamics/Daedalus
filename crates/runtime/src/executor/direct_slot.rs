@@ -75,6 +75,19 @@ impl DirectSlotHandle<'_> {
             DirectSlotHandle::Shared(slot) => slot.take(),
         }
     }
+
+    /// Whether the slot holds a payload, without taking it.
+    pub(crate) fn occupied(self) -> bool {
+        match self {
+            // SAFETY: see `SerialDirectSlot::put`.
+            DirectSlotHandle::Serial(slot) => unsafe { (*slot.slot.payload.get()).is_some() },
+            DirectSlotHandle::Shared(slot) => {
+                let _guard = slot.slot.lock.lock();
+                // SAFETY: shared execution holds the slot mutex while reading.
+                unsafe { (*slot.slot.payload.get()).is_some() }
+            }
+        }
+    }
 }
 
 pub(crate) struct SerialDirectSlot<'a> {
