@@ -124,3 +124,18 @@ CARGO_BUILD_JOBS=4 cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored
 # On a Pi, pick a heap explicitly if needed:
 DAEDALUS_DMA_HEAP=/dev/dma_heap/system cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf
 ```
+
+### Probing a device
+
+The `gpu_probe` example prints a paste-friendly `key: value` report of the selected adapter and
+driver, `dmabuf_import_support()`, NV12 support (`TEXTURE_FORMAT_NV12`, the `LINEAR` modifier and
+whether it needs disjoint planes), the kernel, the dma-heaps, and whether
+`DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works. It never panics on missing hardware.
+
+```bash
+cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe
+./scripts/ci.sh pi   # the hardware tests above, then the probe
+```
+
+See "Validating on a Raspberry Pi 5" in [docs/testing.md](../../docs/testing.md) for setup and
+what each line means.

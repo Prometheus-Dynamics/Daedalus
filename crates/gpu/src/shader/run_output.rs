@@ -50,7 +50,7 @@ impl ShaderRunOutput {
         })
     }
 
-    /// Interpret an r32float texture readback into a grayscale ImageBuffer<u8> (clamped 0..1 -> 0..255).
+    /// Interpret an r32float texture readback into a grayscale `ImageBuffer<u8>` (clamped 0..1 -> 0..255).
     pub fn texture_r32f_gray_u8(
         &self,
         binding: u32,
@@ -70,7 +70,7 @@ impl ShaderRunOutput {
         })
     }
 
-    /// Interpret an r32float texture into grayscale ImageBuffer<f32>.
+    /// Interpret an r32float texture into grayscale `ImageBuffer<f32>`.
     pub fn texture_r32f_image(
         &self,
         binding: u32,
@@ -98,7 +98,7 @@ impl ShaderRunOutput {
         })
     }
 
-    /// Interpret an rgba16float texture into ImageBuffer<Rgba<f32>>.
+    /// Interpret an rgba16float texture into `ImageBuffer<Rgba<f32>>`.
     pub fn texture_rgba16f_image(
         &self,
         binding: u32,
@@ -139,7 +139,7 @@ impl ShaderRunOutput {
         self.textures.get(&binding).cloned()
     }
 
-    /// Convert a texture output into a Compute<DynamicImage>, preferring GPU handles and falling back to readback.
+    /// Convert a texture output into a `Compute<DynamicImage>`, preferring GPU handles and falling back to readback.
     pub fn into_payload(
         &self,
         binding: u32,
