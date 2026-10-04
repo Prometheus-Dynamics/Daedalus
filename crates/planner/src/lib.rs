@@ -3,6 +3,15 @@
 //! This crate validates graph structure, hydrates registry declarations, resolves
 //! type and transport requirements, annotates GPU segments, schedules execution,
 //! and emits planner diagnostics plus runtime-plan input data.
+//!
+//! `no_std` + `alloc` without the default `std` feature (see "Portability" in
+//! docs/development.md).
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg_attr(not(feature = "std"), macro_use)]
+extern crate alloc;
+
+mod portable;
 
 pub mod debug;
 mod diagnostics;

@@ -1,6 +1,9 @@
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use crate::portable::AtomicU64;
+use crate::portable::Mutex;
+use alloc::collections::VecDeque;
+use alloc::sync::{Arc, Weak};
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::{Backpressure, ChannelRecv, ChannelSend, ChannelStats, CloseBehavior, RecvOutcome};
 
@@ -127,8 +130,8 @@ impl<T> Drop for BroadcastSender<T> {
     }
 }
 
-impl<T> std::fmt::Debug for BroadcastSender<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> core::fmt::Debug for BroadcastSender<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("BroadcastSender").finish_non_exhaustive()
     }
 }
@@ -318,9 +321,9 @@ impl<T: Send + Sync> BroadcastReceiver<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
     use proptest::prelude::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
     #[test]
@@ -442,7 +445,7 @@ mod tests {
 mod metric_tests {
     use super::*;
     use crate::metrics::InMemoryMetrics;
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     #[test]
     fn metrics_record_drops_and_closed() {

@@ -1,6 +1,8 @@
+use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::vec::Vec;
 use daedalus_data::model::Value;
-use std::borrow::Cow;
-use std::collections::BTreeMap;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::{ComputeAffinity, Graph};

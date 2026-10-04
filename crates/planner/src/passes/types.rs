@@ -1,8 +1,10 @@
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
+use core::str::FromStr;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_registry::capability::{AdapterPathStep, CapabilityRegistry};
-use std::collections::BTreeMap;
-use std::fmt;
-use std::str::FromStr;
 
 use crate::diagnostics::Diagnostic;
 use crate::graph::{ExecutionPlan, Graph, StableHash, stable_hash_serialized};
@@ -137,7 +139,7 @@ impl fmt::Display for ParseEdgeResolutionKindError {
     }
 }
 
-impl std::error::Error for ParseEdgeResolutionKindError {}
+impl core::error::Error for ParseEdgeResolutionKindError {}
 
 impl FromStr for EdgeResolutionKind {
     type Err = ParseEdgeResolutionKindError;
@@ -194,7 +196,7 @@ impl fmt::Display for ParseAdapterResolutionModeError {
     }
 }
 
-impl std::error::Error for ParseAdapterResolutionModeError {}
+impl core::error::Error for ParseAdapterResolutionModeError {}
 
 impl FromStr for AdapterResolutionMode {
     type Err = ParseAdapterResolutionModeError;
@@ -266,7 +268,7 @@ pub struct PlanExplanation {
 #[cfg(test)]
 mod tests {
     use super::{AdapterResolutionMode, EdgeResolutionKind};
-    use std::str::FromStr;
+    use core::str::FromStr;
 
     #[test]
     fn edge_resolution_kind_parse_error_keeps_value() {

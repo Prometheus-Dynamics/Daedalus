@@ -1,13 +1,13 @@
 use super::*;
 use crate::model::{TypeExpr, Value, ValueType};
+#[cfg(feature = "async")]
+use core::future::Future;
+#[cfg(feature = "async")]
+use core::pin::Pin;
+#[cfg(feature = "async")]
+use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use once_cell::sync::Lazy;
 use proptest::prelude::*;
-#[cfg(feature = "async")]
-use std::future::Future;
-#[cfg(feature = "async")]
-use std::pin::Pin;
-#[cfg(feature = "async")]
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 struct Identity {
     id: ConverterId,
@@ -374,7 +374,7 @@ fn dummy_raw_waker() -> RawWaker {
         dummy_raw_waker()
     }
     static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
-    RawWaker::new(std::ptr::null(), &VTABLE)
+    RawWaker::new(core::ptr::null(), &VTABLE)
 }
 
 #[cfg(feature = "async")]

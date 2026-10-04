@@ -1,9 +1,15 @@
-use std::any::{Any, TypeId};
+use crate::portable::{Mutex, OnceLock};
+use alloc::boxed::Box;
+use alloc::string::ToString;
+use alloc::sync::Arc;
+use core::any::{Any, TypeId};
+use core::ffi::c_void;
+use core::fmt;
+use core::ptr::NonNull;
+#[cfg(not(feature = "std"))]
+use hashbrown::HashMap;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
-use std::fmt;
-use std::os::raw::c_void;
-use std::ptr::NonNull;
-use std::sync::{Arc, Mutex, OnceLock};
 
 use thiserror::Error;
 
@@ -104,7 +110,7 @@ impl BoundaryStorage {
     /// Whether the stored value could be a `T`: [held](Self::holds), or a same-named type of
     /// another build that only a full contract check (layout hash) can accept or reject.
     pub fn may_hold<T: 'static>(&self) -> bool {
-        self.holds::<T>() || self.vtable.rust_type_name == std::any::type_name::<T>()
+        self.holds::<T>() || self.vtable.rust_type_name == core::any::type_name::<T>()
     }
 
     /// Borrow a [held](Self::holds) `T` under `key` when the contract grants `borrow_ref`.
@@ -153,9 +159,9 @@ impl BoundaryStorage {
         self.contract()
             .compatible_with(required)
             .map_err(BoundaryTakeError::Incompatible)?;
-        if self.vtable.rust_type_name != std::any::type_name::<T>() {
+        if self.vtable.rust_type_name != core::any::type_name::<T>() {
             return Err(BoundaryTakeError::RustType {
-                expected: std::any::type_name::<T>(),
+                expected: core::any::type_name::<T>(),
                 found: self.vtable.rust_type_name,
             });
         }
@@ -180,9 +186,9 @@ impl BoundaryStorage {
         if !self.capabilities.borrow_ref {
             return Err(BoundaryTakeError::Capability("borrow_ref"));
         }
-        if self.vtable.rust_type_name != std::any::type_name::<T>() {
+        if self.vtable.rust_type_name != core::any::type_name::<T>() {
             return Err(BoundaryTakeError::RustType {
-                expected: std::any::type_name::<T>(),
+                expected: core::any::type_name::<T>(),
                 found: self.vtable.rust_type_name,
             });
         }
@@ -205,9 +211,9 @@ impl BoundaryStorage {
         if !self.capabilities.borrow_mut {
             return Err(BoundaryTakeError::Capability("borrow_mut"));
         }
-        if self.vtable.rust_type_name != std::any::type_name::<T>() {
+        if self.vtable.rust_type_name != core::any::type_name::<T>() {
             return Err(BoundaryTakeError::RustType {
-                expected: std::any::type_name::<T>(),
+                expected: core::any::type_name::<T>(),
                 found: self.vtable.rust_type_name,
             });
         }
@@ -327,7 +333,7 @@ where
 
     unsafe fn bytes_estimate<T>(_ptr: NonNull<c_void>) -> u64 {
         // SAFETY: this implementation does not dereference the erased pointer.
-        std::mem::size_of::<T>() as u64
+        core::mem::size_of::<T>() as u64
     }
 
     unsafe fn value_any<T: Send + Sync + 'static>(
@@ -347,7 +353,7 @@ where
         clone_shared,
         bytes_estimate: bytes_estimate::<T>,
         value_any: value_any::<T>,
-        rust_type_name: std::any::type_name::<T>(),
+        rust_type_name: core::any::type_name::<T>(),
         rust_type_id: TypeId::of::<T>(),
         layout_hash: LayoutHash::for_type::<T>,
     }));
@@ -390,7 +396,7 @@ mod tests {
         let first = BoundaryStorage::owned("test:u32", 1u32, BoundaryCapabilities::owned());
         let second = BoundaryStorage::owned("test:u32", 2u32, BoundaryCapabilities::owned());
 
-        assert!(std::ptr::eq(first.vtable, second.vtable));
+        assert!(core::ptr::eq(first.vtable, second.vtable));
     }
 
     #[test]

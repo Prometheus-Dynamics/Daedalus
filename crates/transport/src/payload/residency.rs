@@ -1,8 +1,8 @@
 //! Residency cache: per-payload cached residents keyed by type, residency and layout.
 
-use std::collections::BTreeMap;
-use std::fmt;
-use std::sync::Arc;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use core::fmt;
 
 use crate::{Layout, PayloadLineage, Residency, TypeKey};
 

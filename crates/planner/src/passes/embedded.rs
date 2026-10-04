@@ -1,6 +1,8 @@
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY};
 use daedalus_data::model::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::{Edge, Graph, NodeInstance, NodeRef, PortRef};
@@ -16,7 +18,10 @@ pub(super) fn expand_embedded_graphs(
     catalog: &PlannerCatalog,
     diags: &mut Vec<Diagnostic>,
 ) {
+    #[cfg(feature = "std")]
     let trace = std::env::var_os("DAEDALUS_TRACE_EMBEDDED_EXPAND").is_some();
+    #[cfg(not(feature = "std"))]
+    let trace = false;
     #[derive(Clone)]
     struct EmbeddedSpec {
         graph: Graph,
@@ -42,7 +47,7 @@ pub(super) fn expand_embedded_graphs(
         }
     }
 
-    let mut embedded_graphs: HashMap<usize, EmbeddedSpec> = HashMap::new();
+    let mut embedded_graphs: BTreeMap<usize, EmbeddedSpec> = BTreeMap::new();
     for (idx, node) in input.graph.nodes.iter().enumerate() {
         let Some(desc) = latest_node(catalog, &node.id) else {
             continue;
@@ -67,7 +72,7 @@ pub(super) fn expand_embedded_graphs(
         return;
     }
 
-    let mut connected_inputs: HashMap<usize, HashSet<String>> = HashMap::new();
+    let mut connected_inputs: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
     for edge in &input.graph.edges {
         if embedded_graphs.contains_key(&edge.to.node.0) {
             connected_inputs
@@ -86,7 +91,7 @@ pub(super) fn expand_embedded_graphs(
     let mut new_nodes: Vec<NodeInstance> = Vec::new();
     let mut embedded_internal_edges: Vec<Edge> = Vec::new();
     let mut remap: Vec<Option<usize>> = vec![None; input.graph.nodes.len()];
-    let mut embedded_maps: HashMap<usize, EmbeddedMap> = HashMap::new();
+    let mut embedded_maps: BTreeMap<usize, EmbeddedMap> = BTreeMap::new();
 
     for (idx, node) in input.graph.nodes.iter().enumerate() {
         let Some(spec) = embedded_graphs.get(&idx) else {
@@ -298,11 +303,11 @@ pub(super) fn expand_embedded_graphs(
                             .at_port(edge.to.port.clone())
                             .with_meta(
                                 "missing_port",
-                                Value::String(std::borrow::Cow::Owned(edge.to.port.clone())),
+                                Value::String(alloc::borrow::Cow::Owned(edge.to.port.clone())),
                             )
                             .with_meta(
                                 "missing_port_direction",
-                                Value::String(std::borrow::Cow::Borrowed("input")),
+                                Value::String(alloc::borrow::Cow::Borrowed("input")),
                             ),
                         );
                     }
@@ -349,11 +354,11 @@ pub(super) fn expand_embedded_graphs(
                             .at_port(edge.from.port.clone())
                             .with_meta(
                                 "missing_port",
-                                Value::String(std::borrow::Cow::Owned(edge.from.port.clone())),
+                                Value::String(alloc::borrow::Cow::Owned(edge.from.port.clone())),
                             )
                             .with_meta(
                                 "missing_port_direction",
-                                Value::String(std::borrow::Cow::Borrowed("output")),
+                                Value::String(alloc::borrow::Cow::Borrowed("output")),
                             ),
                         );
                     }

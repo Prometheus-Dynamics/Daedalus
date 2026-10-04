@@ -1,8 +1,11 @@
 //! JSON codecs and errors with deterministic representations.
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::Value as JsonValue;
-use std::borrow::Cow;
 
 use crate::errors::{DataError, DataErrorCode, DataResult};
 use crate::model::{EnumValue, StructFieldValue, Value};

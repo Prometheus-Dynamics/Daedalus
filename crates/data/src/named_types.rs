@@ -1,7 +1,12 @@
 use crate::model::TypeExpr;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
 use parking_lot::RwLock;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+#[cfg(not(feature = "std"))]
+use spin::RwLock;
 
 /// Policy for whether a port typed as a given schema should be considered exportable through
 /// callers that explicitly encode host boundary payloads as JSON or bytes.

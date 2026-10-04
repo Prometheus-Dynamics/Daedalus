@@ -1,6 +1,9 @@
 use crate::model::{EnumValue, StructFieldValue, Value};
-use std::borrow::Cow;
-use std::sync::Arc;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 /// Convert a Rust value into a Daedalus `Value` for host-visible/JSON-friendly transport.
 ///

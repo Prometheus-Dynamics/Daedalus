@@ -1,7 +1,9 @@
 //! Port type checking and diagnostic generation for planner graphs.
 
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use daedalus_data::model::{TypeExpr, Value};
-use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
@@ -58,7 +60,7 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 return Ok(ra);
             }
             if self.rank[ra] < self.rank[rb] {
-                std::mem::swap(&mut ra, &mut rb);
+                core::mem::swap(&mut ra, &mut rb);
             }
             self.parent[rb] = ra;
             if self.rank[ra] == self.rank[rb] {
@@ -197,14 +199,14 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 .at_node(diagnostic_node_id(from_node))
                 .with_meta(
                     "missing_node_id",
-                    Value::String(std::borrow::Cow::Owned(from_node.id.0.clone())),
+                    Value::String(alloc::borrow::Cow::Owned(from_node.id.0.clone())),
                 )
                 .with_meta(
                     "suggestions",
                     Value::List(
                         suggestions
                             .into_iter()
-                            .map(|s| Value::String(std::borrow::Cow::Owned(s)))
+                            .map(|s| Value::String(alloc::borrow::Cow::Owned(s)))
                             .collect(),
                     ),
                 ),
@@ -222,14 +224,14 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 .at_node(diagnostic_node_id(to_node))
                 .with_meta(
                     "missing_node_id",
-                    Value::String(std::borrow::Cow::Owned(to_node.id.0.clone())),
+                    Value::String(alloc::borrow::Cow::Owned(to_node.id.0.clone())),
                 )
                 .with_meta(
                     "suggestions",
                     Value::List(
                         suggestions
                             .into_iter()
-                            .map(|s| Value::String(std::borrow::Cow::Owned(s)))
+                            .map(|s| Value::String(alloc::borrow::Cow::Owned(s)))
                             .collect(),
                     ),
                 ),
@@ -242,7 +244,7 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 .map(|d| {
                     d.outputs
                         .iter()
-                        .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+                        .map(|p| Value::String(alloc::borrow::Cow::Owned(p.name.clone())))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -259,11 +261,11 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 .at_port(edge.from.port.clone())
                 .with_meta(
                     "missing_port",
-                    Value::String(std::borrow::Cow::Owned(edge.from.port.clone())),
+                    Value::String(alloc::borrow::Cow::Owned(edge.from.port.clone())),
                 )
                 .with_meta(
                     "missing_port_direction",
-                    Value::String(std::borrow::Cow::Borrowed("output")),
+                    Value::String(alloc::borrow::Cow::Borrowed("output")),
                 )
                 .with_meta("available_ports", Value::List(available)),
             );
@@ -273,7 +275,7 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 .map(|d| {
                     d.inputs
                         .iter()
-                        .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+                        .map(|p| Value::String(alloc::borrow::Cow::Owned(p.name.clone())))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -290,11 +292,11 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 .at_port(edge.to.port.clone())
                 .with_meta(
                     "missing_port",
-                    Value::String(std::borrow::Cow::Owned(edge.to.port.clone())),
+                    Value::String(alloc::borrow::Cow::Owned(edge.to.port.clone())),
                 )
                 .with_meta(
                     "missing_port_direction",
-                    Value::String(std::borrow::Cow::Borrowed("input")),
+                    Value::String(alloc::borrow::Cow::Borrowed("input")),
                 )
                 .with_meta("available_ports", Value::List(available)),
             );
@@ -365,13 +367,13 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
                 .at_port(port)
                 .with_meta(
                     "type_a",
-                    Value::String(std::borrow::Cow::Owned(
+                    Value::String(alloc::borrow::Cow::Owned(
                         serde_json::to_string(&a).unwrap_or_default(),
                     )),
                 )
                 .with_meta(
                     "type_b",
-                    Value::String(std::borrow::Cow::Owned(
+                    Value::String(alloc::borrow::Cow::Owned(
                         serde_json::to_string(&b).unwrap_or_default(),
                     )),
                 ),

@@ -1,7 +1,8 @@
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
 use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::{NodeDecl, TypeDecl};
 use daedalus_registry::ids::NodeId;
-use std::collections::BTreeMap;
 
 use super::PlannerConfig;
 

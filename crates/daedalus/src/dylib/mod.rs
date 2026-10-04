@@ -29,10 +29,10 @@
 //! 1. The Daedalus version ([`crate::version`]).
 //! 2. The `rustc --version` string that compiled Daedalus ([`RUSTC_VERSION`]).
 //! 3. A build fingerprint ([`build_fingerprint`]) covering the target, the enabled boundary
-//!    Cargo features of the facade, core, data, registry, planner and runtime crates (listed
-//!    readably plus a stable hash), and the size/alignment of the types that plugin
-//!    installation touches (`PluginRegistry`, `HandlerRegistry`, `Payload`, `TypeKey`,
-//!    `NodeDecl`, ...). Features classified as `host-only-features` in a crate's
+//!    Cargo features of the facade, core, transport, data, registry, planner and runtime crates
+//!    (`std` included: it swaps lock and map types), listed readably plus a stable hash, and
+//!    the size/alignment of the types that plugin installation touches (`PluginRegistry`,
+//!    `HandlerRegistry`, `Payload`, `TypeKey`, `NodeDecl`, ...). Features classified as `host-only-features` in a crate's
 //!    `[package.metadata.daedalus]` (`engine`, `executor-pool`, `metrics`, ...) are excluded,
 //!    so a plugin built with just `dylib-plugins` installs into a host built with
 //!    `engine-full,dylib-plugins`. On mismatch the error names the differing segments, e.g.

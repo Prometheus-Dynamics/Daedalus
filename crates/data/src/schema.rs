@@ -2,6 +2,8 @@
 
 use crate::errors::{DataError, DataErrorCode, DataResult};
 use crate::model::{EnumVariant, StructField, TypeExpr, ValueType};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 /// Convert a `TypeExpr` into a JSON Schema fragment.
 pub fn type_to_json_schema(ty: &TypeExpr) -> DataResult<serde_json::Value> {

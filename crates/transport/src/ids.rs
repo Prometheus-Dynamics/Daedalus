@@ -1,4 +1,5 @@
-use std::fmt;
+use alloc::string::ToString;
+use core::fmt;
 
 crate::define_text_id!(
     TypeKey,
@@ -21,9 +22,9 @@ impl LayoutHash {
     pub fn for_type<T: 'static>() -> Self {
         Self::new(format!(
             "rust-type-v1:{}:{}:{}",
-            std::any::type_name::<T>(),
-            std::mem::size_of::<T>(),
-            std::mem::align_of::<T>()
+            core::any::type_name::<T>(),
+            core::mem::size_of::<T>(),
+            core::mem::align_of::<T>()
         ))
     }
 
@@ -31,9 +32,9 @@ impl LayoutHash {
     pub fn for_schema<T: 'static>(schema: impl fmt::Display) -> Self {
         Self::new(format!(
             "rust-schema-v1:{}:{}:{}:{:016x}",
-            std::any::type_name::<T>(),
-            std::mem::size_of::<T>(),
-            std::mem::align_of::<T>(),
+            core::any::type_name::<T>(),
+            core::mem::size_of::<T>(),
+            core::mem::align_of::<T>(),
             stable_hash64(schema.to_string().as_bytes())
         ))
     }

@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use core::fmt::Debug;
 
 pub mod bounded;
 pub mod broadcast;

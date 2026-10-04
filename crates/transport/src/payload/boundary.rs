@@ -1,7 +1,8 @@
 //! Boundary-contract borrow/take paths on [`Payload`] and their error type.
 
-use std::fmt;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use core::fmt;
 
 use crate::{BoundaryStorage, BoundaryTakeError, BoundaryTypeContract};
 
@@ -77,4 +78,4 @@ impl fmt::Display for BoundaryPayloadError {
     }
 }
 
-impl std::error::Error for BoundaryPayloadError {}
+impl core::error::Error for BoundaryPayloadError {}

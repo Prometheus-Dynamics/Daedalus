@@ -1,7 +1,9 @@
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::str::FromStr;
 use daedalus_data::model::{StructFieldValue, TypeExpr, Value};
 use daedalus_registry::capability::AdapterPathStep;
-use std::collections::BTreeMap;
-use std::str::FromStr;
 
 use crate::graph::Graph;
 use crate::metadata::{
@@ -14,7 +16,7 @@ use super::{
 };
 
 fn owned_string_value(value: impl Into<String>) -> Value {
-    Value::String(std::borrow::Cow::Owned(value.into()))
+    Value::String(alloc::borrow::Cow::Owned(value.into()))
 }
 
 fn int_value(value: u64) -> Value {

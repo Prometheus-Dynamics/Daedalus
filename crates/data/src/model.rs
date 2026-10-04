@@ -1,5 +1,8 @@
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 
 /// Concrete runtime value.
 ///
@@ -71,7 +74,7 @@ impl Value {
     }
 
     /// A `Map` whose keys are all strings, as an ordered map. `None` if any key is not a string.
-    pub fn as_string_map(&self) -> Option<std::collections::BTreeMap<String, Value>> {
+    pub fn as_string_map(&self) -> Option<alloc::collections::BTreeMap<String, Value>> {
         let Value::Map(entries) = self else {
             return None;
         };

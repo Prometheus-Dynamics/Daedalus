@@ -10,7 +10,7 @@ use super::async_::{
     newest_async_with_behavior, unbounded_async_with_behavior,
 };
 #[cfg(feature = "async-channels")]
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 /// Selector for edge policies to construct matching channels.
 pub enum EdgePolicy {

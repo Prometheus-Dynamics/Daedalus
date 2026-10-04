@@ -1,5 +1,6 @@
 //! Debug helpers for serializing/deserializing plans, useful for goldens/CLI.
 use crate::ExecutionPlan;
+use alloc::string::String;
 
 /// Serialize a plan to pretty-printed JSON.
 pub fn to_pretty_json(plan: &ExecutionPlan) -> String {

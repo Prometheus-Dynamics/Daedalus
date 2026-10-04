@@ -19,8 +19,10 @@ mod requirements;
 #[cfg(feature = "schema")]
 mod schema;
 
-use std::collections::BTreeMap;
-use std::fmt;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 
 use serde::de::{IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -305,7 +307,7 @@ impl From<Graph> for GraphDocument {
     }
 }
 
-impl std::str::FromStr for GraphDocument {
+impl core::str::FromStr for GraphDocument {
     type Err = GraphDocumentError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

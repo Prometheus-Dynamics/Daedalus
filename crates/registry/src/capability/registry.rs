@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use daedalus_transport::{AdapterId, TypeKey};
 use serde::{Deserialize, Serialize};

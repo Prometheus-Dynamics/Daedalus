@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use daedalus_data::model::Value;
 use daedalus_registry::capability::NODE_REQUIRED_INPUTS_META_KEY;
 

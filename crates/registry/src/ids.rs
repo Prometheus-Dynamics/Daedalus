@@ -1,5 +1,6 @@
+use alloc::string::{String, ToString};
+use core::fmt;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use thiserror::Error;
 
 /// Structured validation error for registry identifiers.

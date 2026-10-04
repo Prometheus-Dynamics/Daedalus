@@ -1,5 +1,6 @@
-use std::borrow::Cow;
-use std::collections::BTreeMap;
+use alloc::borrow::{Cow, ToOwned};
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
 
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_registry::capability::NodeDecl;

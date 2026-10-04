@@ -1,6 +1,8 @@
+use alloc::collections::BTreeSet;
+use alloc::string::String;
+use alloc::vec::Vec;
 use daedalus_data::model::Value;
 use daedalus_registry::capability::NodeDecl;
-use std::collections::HashSet;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
@@ -28,10 +30,10 @@ pub(super) fn validate_port_declarations(
         let mut out: Vec<Value> = desc
             .inputs
             .iter()
-            .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+            .map(|p| Value::String(alloc::borrow::Cow::Owned(p.name.clone())))
             .collect();
         for hint in fanin_hints(desc) {
-            out.push(Value::String(std::borrow::Cow::Owned(hint)));
+            out.push(Value::String(alloc::borrow::Cow::Owned(hint)));
         }
         out
     }
@@ -39,7 +41,7 @@ pub(super) fn validate_port_declarations(
     fn available_outputs(desc: &NodeDecl) -> Vec<Value> {
         desc.outputs
             .iter()
-            .map(|p| Value::String(std::borrow::Cow::Owned(p.name.clone())))
+            .map(|p| Value::String(alloc::borrow::Cow::Owned(p.name.clone())))
             .collect()
     }
 
@@ -52,7 +54,7 @@ pub(super) fn validate_port_declarations(
 
         // Inputs: stale graph can carry extra/missing port entries even when there are no edges.
         let dynamic_inputs = is_dynamic(desc, true);
-        let mut seen_inputs: HashSet<String> = HashSet::new();
+        let mut seen_inputs: BTreeSet<String> = BTreeSet::new();
         for port in &node.inputs {
             let port_lc = port.trim().to_ascii_lowercase();
             if port_lc.is_empty() {
@@ -72,11 +74,11 @@ pub(super) fn validate_port_declarations(
                     .at_port(port.clone())
                     .with_meta(
                         "extra_port",
-                        Value::String(std::borrow::Cow::Owned(port.clone())),
+                        Value::String(alloc::borrow::Cow::Owned(port.clone())),
                     )
                     .with_meta(
                         "extra_port_direction",
-                        Value::String(std::borrow::Cow::Borrowed("input")),
+                        Value::String(alloc::borrow::Cow::Borrowed("input")),
                     )
                     .with_meta("available_ports", Value::List(available_inputs(desc))),
                 );
@@ -103,11 +105,11 @@ pub(super) fn validate_port_declarations(
                 .at_port(port.clone())
                 .with_meta(
                     "extra_port",
-                    Value::String(std::borrow::Cow::Owned(port.clone())),
+                    Value::String(alloc::borrow::Cow::Owned(port.clone())),
                 )
                 .with_meta(
                     "extra_port_direction",
-                    Value::String(std::borrow::Cow::Borrowed("input")),
+                    Value::String(alloc::borrow::Cow::Borrowed("input")),
                 )
                 .with_meta("available_ports", Value::List(available_inputs(desc))),
             );
@@ -116,7 +118,7 @@ pub(super) fn validate_port_declarations(
         // Validate missing ports when the graph declares port lists (normal UI-persisted graphs),
         // or when strict mode is enabled.
         if !dynamic_inputs && (strict_port_declarations || !node.inputs.is_empty()) {
-            let node_inputs_lc: HashSet<String> = node
+            let node_inputs_lc: BTreeSet<String> = node
                 .inputs
                 .iter()
                 .map(|p| p.trim().to_ascii_lowercase())
@@ -143,11 +145,11 @@ pub(super) fn validate_port_declarations(
                     .at_port(port.name.clone())
                     .with_meta(
                         "missing_port",
-                        Value::String(std::borrow::Cow::Owned(port.name.clone())),
+                        Value::String(alloc::borrow::Cow::Owned(port.name.clone())),
                     )
                     .with_meta(
                         "missing_port_direction",
-                        Value::String(std::borrow::Cow::Borrowed("input")),
+                        Value::String(alloc::borrow::Cow::Borrowed("input")),
                     )
                     .with_meta("available_ports", Value::List(available_inputs(desc))),
                 );
@@ -156,7 +158,7 @@ pub(super) fn validate_port_declarations(
 
         // Outputs: same story.
         let dynamic_outputs = is_dynamic(desc, false);
-        let mut seen_outputs: HashSet<String> = HashSet::new();
+        let mut seen_outputs: BTreeSet<String> = BTreeSet::new();
         for port in &node.outputs {
             let port_lc = port.trim().to_ascii_lowercase();
             if port_lc.is_empty() {
@@ -176,11 +178,11 @@ pub(super) fn validate_port_declarations(
                     .at_port(port.clone())
                     .with_meta(
                         "extra_port",
-                        Value::String(std::borrow::Cow::Owned(port.clone())),
+                        Value::String(alloc::borrow::Cow::Owned(port.clone())),
                     )
                     .with_meta(
                         "extra_port_direction",
-                        Value::String(std::borrow::Cow::Borrowed("output")),
+                        Value::String(alloc::borrow::Cow::Borrowed("output")),
                     )
                     .with_meta("available_ports", Value::List(available_outputs(desc))),
                 );
@@ -207,18 +209,18 @@ pub(super) fn validate_port_declarations(
                 .at_port(port.clone())
                 .with_meta(
                     "extra_port",
-                    Value::String(std::borrow::Cow::Owned(port.clone())),
+                    Value::String(alloc::borrow::Cow::Owned(port.clone())),
                 )
                 .with_meta(
                     "extra_port_direction",
-                    Value::String(std::borrow::Cow::Borrowed("output")),
+                    Value::String(alloc::borrow::Cow::Borrowed("output")),
                 )
                 .with_meta("available_ports", Value::List(available_outputs(desc))),
             );
         }
 
         if !dynamic_outputs && (strict_port_declarations || !node.outputs.is_empty()) {
-            let node_outputs_lc: HashSet<String> = node
+            let node_outputs_lc: BTreeSet<String> = node
                 .outputs
                 .iter()
                 .map(|p| p.trim().to_ascii_lowercase())
@@ -245,11 +247,11 @@ pub(super) fn validate_port_declarations(
                     .at_port(port.name.clone())
                     .with_meta(
                         "missing_port",
-                        Value::String(std::borrow::Cow::Owned(port.name.clone())),
+                        Value::String(alloc::borrow::Cow::Owned(port.name.clone())),
                     )
                     .with_meta(
                         "missing_port_direction",
-                        Value::String(std::borrow::Cow::Borrowed("output")),
+                        Value::String(alloc::borrow::Cow::Borrowed("output")),
                     )
                     .with_meta("available_ports", Value::List(available_outputs(desc))),
                 );
@@ -297,11 +299,11 @@ pub(super) fn validate_port_declarations(
                     .at_port(edge.from.port.clone())
                     .with_meta(
                         "missing_port",
-                        Value::String(std::borrow::Cow::Owned(edge.from.port.clone())),
+                        Value::String(alloc::borrow::Cow::Owned(edge.from.port.clone())),
                     )
                     .with_meta(
                         "missing_port_direction",
-                        Value::String(std::borrow::Cow::Borrowed("output")),
+                        Value::String(alloc::borrow::Cow::Borrowed("output")),
                     )
                     .with_meta("available_ports", available),
                 );
@@ -326,11 +328,11 @@ pub(super) fn validate_port_declarations(
                     .at_port(edge.to.port.clone())
                     .with_meta(
                         "missing_port",
-                        Value::String(std::borrow::Cow::Owned(edge.to.port.clone())),
+                        Value::String(alloc::borrow::Cow::Owned(edge.to.port.clone())),
                     )
                     .with_meta(
                         "missing_port_direction",
-                        Value::String(std::borrow::Cow::Borrowed("input")),
+                        Value::String(alloc::borrow::Cow::Borrowed("input")),
                     )
                     .with_meta("available_ports", available),
                 );

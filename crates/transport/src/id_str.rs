@@ -1,11 +1,12 @@
 //! Cheap-clone identifier string shared by transport and runtime ids.
 
-use std::borrow::Borrow;
-use std::cmp::Ordering;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::sync::Arc;
+use alloc::string::String;
+use alloc::sync::Arc;
+use core::borrow::Borrow;
+use core::cmp::Ordering;
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::ops::Deref;
 
 /// Immutable identifier text that is either a `&'static str` or a shared `Arc<str>`.
 ///
@@ -160,7 +161,7 @@ macro_rules! define_text_id {
         pub struct $name($crate::IdStr);
 
         impl $name {
-            pub fn new(value: impl Into<String>) -> Self {
+            pub fn new(value: impl Into<$crate::__private::String>) -> Self {
                 Self($crate::IdStr::new(value))
             }
 
@@ -174,8 +175,8 @@ macro_rules! define_text_id {
             }
         }
 
-        impl ::std::fmt::Display for $name {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        impl ::core::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 f.write_str(self.as_str())
             }
         }
@@ -186,7 +187,7 @@ macro_rules! define_text_id {
             }
         }
 
-        impl ::std::borrow::Borrow<str> for $name {
+        impl ::core::borrow::Borrow<str> for $name {
             fn borrow(&self) -> &str {
                 self.as_str()
             }
@@ -205,21 +206,21 @@ macro_rules! define_text_id {
             }
         }
 
-        impl From<::std::string::String> for $name {
-            fn from(value: String) -> Self {
+        impl From<$crate::__private::String> for $name {
+            fn from(value: $crate::__private::String) -> Self {
                 Self(value.into())
             }
         }
 
-        impl From<&String> for $name {
-            fn from(value: &String) -> Self {
+        impl From<&$crate::__private::String> for $name {
+            fn from(value: &$crate::__private::String) -> Self {
                 Self::new(value.as_str())
             }
         }
 
-        impl From<$name> for String {
+        impl From<$name> for $crate::__private::String {
             fn from(value: $name) -> Self {
-                value.as_str().to_string()
+                $crate::__private::String::from(value.as_str())
             }
         }
 

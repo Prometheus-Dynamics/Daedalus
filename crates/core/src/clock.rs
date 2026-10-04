@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::portable::AtomicU64;
+use core::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 

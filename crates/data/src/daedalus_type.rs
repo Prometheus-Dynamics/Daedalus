@@ -34,6 +34,7 @@ pub trait DaedalusTypeVisitor {
 /// Support code for the Daedalus derive and attribute macros; not a public API.
 #[doc(hidden)]
 pub mod derive_support {
+    use alloc::string::ToString;
     use core::marker::PhantomData;
 
     use super::{DaedalusTypeExpr, DaedalusTypeVisitor};

@@ -5,7 +5,7 @@
 //! any node, including one in a separately built plugin, reads it as a [`FrameView`]. The
 //! public contract is specified in `docs/foreign-frame-interface.md`.
 
-use std::ffi::c_void;
+use core::ffi::c_void;
 
 use crate::{ForeignRef, ProvideForeign, foreign_interface};
 
@@ -190,7 +190,7 @@ mod thunks {
 
     plane! {
         plane_data -> *const u8 = |plane| {
-            plane.and_then(|plane| plane.data).map_or(std::ptr::null(), <[u8]>::as_ptr)
+            plane.and_then(|plane| plane.data).map_or(core::ptr::null(), <[u8]>::as_ptr)
         };
         plane_len -> usize = |plane| plane.map_or(0, |plane| plane.len);
         plane_stride -> u32 = |plane| plane.map_or(0, |plane| plane.stride);
@@ -275,7 +275,7 @@ impl<'a> ForeignRef<'a, FrameInterface> {
         Some(FramePlane {
             // Safety: a non-null pointer maps `len` bytes that stay valid and unchanged while
             // the frame is shared, which the borrowed handle guarantees for `'a`.
-            data: (!ptr.is_null()).then(|| unsafe { std::slice::from_raw_parts(ptr, len) }),
+            data: (!ptr.is_null()).then(|| unsafe { core::slice::from_raw_parts(ptr, len) }),
             len,
             stride: unsafe { (vtable.plane_stride)(data, index) },
             offset: unsafe { (vtable.plane_offset)(data, index) },
@@ -293,7 +293,7 @@ impl<'a> ForeignRef<'a, FrameInterface> {
 mod tests {
     use super::*;
     use crate::{ForeignHandle, ForeignInterface};
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     struct Nv12 {
         luma: Vec<u8>,

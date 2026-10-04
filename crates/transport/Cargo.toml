@@ -14,9 +14,25 @@ categories = ["data-structures"]
 [lints]
 workspace = true
 
+[package.metadata.daedalus]
+# Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
+# boundary features change types that cross the plugin boundary and must match between host
+# and plugin; host-only features only change host-side execution.
+boundary-features = ["std"]
+host-only-features = []
+
+[features]
+default = ["std"]
+# Host OS facilities: `std` locks and collections, clocks, threads. Without it the crate is
+# `no_std` + `alloc` (see "Portability" in docs/development.md).
+std = ["daedalus-core/std", "serde/std", "thiserror/std"]
+
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
+daedalus-core = { workspace = true }
+hashbrown = { workspace = true }
 serde = { workspace = true }
+spin = { workspace = true }
 thiserror = { workspace = true }

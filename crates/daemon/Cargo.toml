@@ -23,10 +23,10 @@ tcp = []
 
 [dependencies]
 daedalus-engine = { workspace = true, features = ["config-env", "executor-pool", "metrics"] }
-daedalus-planner = { workspace = true }
-daedalus-registry = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+daedalus-planner = { workspace = true, features = ["std"] }
+daedalus-registry = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 daedalus-data = { workspace = true }

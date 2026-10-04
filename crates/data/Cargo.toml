@@ -21,20 +21,25 @@ path = "src/lib.rs"
 # Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
-boundary-features = ["schema", "proto", "gpu", "async", "json"]
+boundary-features = ["std", "schema", "proto", "gpu", "async", "json"]
 host-only-features = []
 
 [features]
-default = ["json"]
+default = ["std", "json"]
+# Host OS facilities: `std` locks and collections, clocks, threads. Without it the crate is
+# `no_std` + `alloc` (see "Portability" in docs/development.md).
+std = ["dep:parking_lot", "serde/std", "thiserror/std", "serde_json?/std", "base64?/std"]
 schema = ["dep:serde_json"]
 proto = []
-gpu = ["daedalus-gpu"]
+gpu = ["std", "daedalus-gpu"]
 async = []
 json = ["base64", "dep:serde_json"]
 
 [dependencies]
-parking_lot = { workspace = true }
+hashbrown = { workspace = true }
+parking_lot = { workspace = true, optional = true }
 serde = { workspace = true }
+spin = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }

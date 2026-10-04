@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 use crate::TransportError;
 
@@ -15,7 +15,7 @@ impl<T> Cpu<T> {
     }
 }
 
-impl<T> std::ops::Deref for Cpu<T> {
+impl<T> core::ops::Deref for Cpu<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -23,7 +23,7 @@ impl<T> std::ops::Deref for Cpu<T> {
     }
 }
 
-impl<T> std::ops::DerefMut for Cpu<T> {
+impl<T> core::ops::DerefMut for Cpu<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -42,7 +42,7 @@ impl<T> Gpu<T> {
     }
 }
 
-impl<T> std::ops::Deref for Gpu<T> {
+impl<T> core::ops::Deref for Gpu<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -50,7 +50,7 @@ impl<T> std::ops::Deref for Gpu<T> {
     }
 }
 
-impl<T> std::ops::DerefMut for Gpu<T> {
+impl<T> core::ops::DerefMut for Gpu<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -80,7 +80,7 @@ impl<D: DeviceClass, T> Device<D, T> {
     }
 }
 
-impl<D: DeviceClass, T> std::ops::Deref for Device<D, T> {
+impl<D: DeviceClass, T> core::ops::Deref for Device<D, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -88,7 +88,7 @@ impl<D: DeviceClass, T> std::ops::Deref for Device<D, T> {
     }
 }
 
-impl<D: DeviceClass, T> std::ops::DerefMut for Device<D, T> {
+impl<D: DeviceClass, T> core::ops::DerefMut for Device<D, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.value
     }

@@ -1,6 +1,10 @@
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use crate::portable::AtomicU64;
+use crate::portable::Mutex;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
+use daedalus_core::platform::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -215,7 +219,7 @@ impl PayloadReleaseQueue {
     }
 
     pub fn drain(&self, ctx: ReleaseContext) -> usize {
-        let pending = std::mem::take(&mut *crate::lock_recover(&self.pending));
+        let pending = core::mem::take(&mut *crate::lock_recover(&self.pending));
         let count = pending.len();
         for release in pending {
             release.release(ctx.clone());

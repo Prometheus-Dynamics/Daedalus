@@ -1,5 +1,7 @@
+use alloc::borrow::Cow;
+use alloc::string::String;
+use alloc::vec::Vec;
 use daedalus_data::model::Value;
-use std::borrow::Cow;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;

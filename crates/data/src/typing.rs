@@ -1,8 +1,15 @@
 use crate::model::{EnumVariant, TypeExpr, Value, ValueType};
-use std::any::{Any, TypeId, type_name};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::convert::TryFrom;
-use std::sync::OnceLock;
+use crate::portable::OnceLock;
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::any::{Any, TypeId, type_name};
+use core::convert::TryFrom;
+#[cfg(not(feature = "std"))]
+use hashbrown::HashMap;
+#[cfg(feature = "std")]
+use std::collections::HashMap;
 
 /// Registered mapping between a Rust type name and a `TypeExpr`.
 ///

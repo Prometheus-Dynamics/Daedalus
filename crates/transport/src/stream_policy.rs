@@ -1,5 +1,6 @@
-use std::collections::VecDeque;
-use std::time::Duration;
+use alloc::boxed::Box;
+use alloc::collections::VecDeque;
+use core::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

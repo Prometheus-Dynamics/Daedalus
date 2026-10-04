@@ -1,6 +1,6 @@
 use super::*;
 use crate::graph::Graph;
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 #[test]
 fn build_plan_strips_planner_owned_dynamic_metadata() {

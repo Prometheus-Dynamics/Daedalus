@@ -2,9 +2,10 @@
 //! Serde encodes them as `"prefix:n"` strings for stability in planner/runtime
 //! diagnostics and golden outputs.
 
-use std::fmt;
-use std::num::NonZeroU64;
-use std::str::FromStr;
+use alloc::string::{String, ToString};
+use core::fmt;
+use core::num::NonZeroU64;
+use core::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
