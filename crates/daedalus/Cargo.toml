@@ -168,6 +168,11 @@ path = "tests/registry_type_index.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
+name = "optional_inputs"
+path = "tests/optional_inputs.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
 name = "transport_macro_ui"
 path = "tests/transport_macro_ui.rs"
 required-features = ["plugins"]

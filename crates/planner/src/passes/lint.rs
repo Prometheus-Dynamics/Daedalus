@@ -99,14 +99,28 @@ pub(super) fn lint(
     }
 
     for (idx, node) in input.graph.nodes.iter().enumerate() {
-        if incoming[idx] == 0 && !node.inputs.is_empty() {
+        // Optional inputs are meant to be left unconnected.
+        let desc = latest_node(catalog, &node.id);
+        let required: Vec<&str> = node
+            .inputs
+            .iter()
+            .map(String::as_str)
+            .filter(|name| {
+                !desc.is_some_and(|desc| {
+                    desc.inputs
+                        .iter()
+                        .any(|port| port.optional && port.name.eq_ignore_ascii_case(name))
+                })
+            })
+            .collect();
+        if incoming[idx] == 0 && !required.is_empty() {
             diags.push(
                 Diagnostic::new(
                     DiagnosticCode::LintWarning,
                     format!(
                         "node {} has unconnected inputs: {}",
                         node.id.0,
-                        node.inputs.join(",")
+                        required.join(",")
                     ),
                 )
                 .in_pass("lint")

@@ -440,6 +440,7 @@ pub fn port_decl_from_schema(port: &WirePort) -> Result<PortDecl, HostInstallErr
     let mut decl = PortDecl::new(port.name.clone(), type_key)
         .schema(port.ty.clone())
         .access(port.access);
+    decl.optional = port.optional;
     if let Some(residency) = port.residency {
         decl = decl.residency(residency);
     }

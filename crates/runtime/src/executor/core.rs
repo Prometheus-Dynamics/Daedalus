@@ -34,6 +34,8 @@ pub(crate) struct ExecutorCore {
     pub(crate) node_metadata: NodeMetadataStore,
     /// Node ids shared with `ExecutionContext::node_id` so ticks do not allocate them.
     pub(crate) node_ids: Arc<[Arc<str>]>,
+    /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
+    pub(crate) required_inputs: Arc<[Box<[usize]>]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
 }
 
@@ -71,6 +73,7 @@ impl ExecutorCore {
                 .iter()
                 .map(|node| Arc::from(node.id.as_str()))
                 .collect(),
+            required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
         }
     }
@@ -101,6 +104,7 @@ impl ExecutorCore {
             graph_metadata: self.graph_metadata.clone(),
             node_metadata: self.node_metadata.clone(),
             node_ids: self.node_ids.clone(),
+            required_inputs: self.required_inputs.clone(),
             capabilities: self.capabilities.clone(),
         }
     }

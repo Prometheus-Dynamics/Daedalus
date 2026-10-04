@@ -122,6 +122,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Optional inputs: an `Option<T>` (`Option<&T>`, `Option<Arc<T>>`) node parameter is a port with
+  `T`'s key and schema marked `PortDecl::optional` (exported as `WirePort::optional`), so
+  producers and typed host inputs of `T` connect to it directly; before, its
+  `typeexpr:Optional(..)` key had no converter from `T` and the edge failed to plan. A
+  `Result<Option<T>, _>` return (or tuple element) is a conditional output of `T` that pushes
+  only `Some`. Readiness: a node runs on a tick only when each connected required input has a
+  value (the planner lists them in `NODE_REQUIRED_INPUTS_META_KEY` node metadata) and is skipped
+  otherwise instead of failing with `missing <port>`; optional inputs never block and are
+  `None` without a value. `NodeIo` nodes declare optional ports. The planner's
+  unconnected-inputs lint ignores optional ports.
 - Port keys no longer depend on registration order. `#[node]`/`#[adapt]` resolve a type's own
   key (`#[type_key]`, `DaedalusTypeExpr`) at compile time before the typing registry, handlers
   push outputs under the key the port declares, and `Arc<T>` ports use `T`'s key. A type from
