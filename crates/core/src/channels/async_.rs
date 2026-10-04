@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use tokio::sync::Notify;
 
@@ -276,7 +276,7 @@ pub fn newest_async_with_behavior<T: Send + Sync>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use core::time::Duration;
 
     use super::*;
 

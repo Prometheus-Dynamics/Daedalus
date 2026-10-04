@@ -1,3 +1,5 @@
+use alloc::string::String;
+use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 use crate::errors::{DataError, DataErrorCode, DataResult};

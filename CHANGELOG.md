@@ -156,6 +156,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   type, allocation-free per tick.
 - `daedalus_runtime::const_cache::{ConfigCache, DecodedInputs}` (per-node decoded configs and
   `&T` constants), `NodeConfig::port_names` and `Payload::shares_storage`.
+- Portability tier 1 (see "Portability" in `docs/development.md`): `daedalus-core`,
+  `daedalus-transport`, `daedalus-data`, `daedalus-registry` and `daedalus-planner` have a default
+  `std` feature and build `no_std` + `alloc` without it (checked on `thumbv7em-none-eabihf`).
+  `daedalus_core::platform` exports `THREADS`, `OS_CLOCK`, `Instant` (`std::time::Instant` where
+  the target has an OS clock, else a portable instant) and, without an OS clock, `set_clock`.
+  The `embedded` preset runs on `wasm32-unknown-unknown`: `Parallel`/`Adaptive` run serially
+  without threads, blocking host-bridge waits return when nothing is queued, and runtime/engine
+  timing reads `platform::Instant`. `scripts/ci.sh nostd` / `wasm` and a `portability` CI job
+  check both, the latter by running `examples/wasm_smoke` in Node.
 
 ### Fixed
 
@@ -180,6 +189,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Workspace dependencies shared with the `no_std` crates (`serde`, `serde_json`, `thiserror`,
+  `tracing`, `base64`, `crossbeam-queue`) and the five tier-1 crates are declared without
+  default features; `std` members request `features = ["std"]` (`daedalus-data`:
+  `["std", "json"]`), so what they compile is unchanged. `std` is a boundary feature of those
+  crates, and `daedalus-transport` (which now depends on `daedalus-core`) joins the plugin build
+  fingerprint (`features.transport`). `daedalus-engine` inherits planner and registry from the
+  workspace. Planner-internal hash maps are `BTreeMap`s.
+- On targets without threads (`daedalus_core::platform::THREADS == false`),
+  `InboundWaiter::wait(None)` and `StreamGraph::spawn_continuous*` panic with a message instead
+  of failing inside `parking_lot`/`std::thread`.
 - The Java and C++ FFI SDKs declare width-exact scalar ports like the Rust and Node SDKs (they
   mapped every integer to `Int`). Java: `byte`/`short`/`char`/`int`/`long`/`float`/`double` map to
   `I8`/`I16`/`U16`/`I32`/`Int`/`F32`/`Float`; Java has no unsigned types, so `@Scalar("u32")`

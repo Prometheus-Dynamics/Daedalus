@@ -1,7 +1,13 @@
+use crate::portable::OnceLock;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt;
+#[cfg(feature = "std")]
 use parking_lot::RwLock;
-use std::collections::BTreeMap;
-use std::fmt;
-use std::sync::{Arc, OnceLock};
+#[cfg(not(feature = "std"))]
+use spin::RwLock;
 
 use crate::diagnostics::Diagnostic;
 use crate::graph::Graph;

@@ -269,8 +269,12 @@ pub(crate) fn build_compiled_schedule(
 }
 
 /// Workers a parallel run may use: the configured pool size (else the available parallelism),
-/// at most one per segment.
+/// at most one per segment. One without threads (`platform::THREADS`), so `Parallel` and
+/// `Adaptive` run serially there.
 pub(crate) fn resolve_parallel_workers(pool_size: Option<usize>, segments_len: usize) -> usize {
+    if !daedalus_core::platform::THREADS {
+        return 1;
+    }
     pool_size
         .or_else(|| std::thread::available_parallelism().map(|n| n.get()).ok())
         .unwrap_or(4)

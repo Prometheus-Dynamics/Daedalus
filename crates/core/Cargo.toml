@@ -18,13 +18,16 @@ workspace = true
 # Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
-boundary-features = ["metrics", "async-channels"]
+boundary-features = ["std", "metrics", "async-channels"]
 host-only-features = []
 
 [features]
-default = []
+default = ["std"]
+# Host OS facilities: `std` locks and collections, clocks, threads. Without it the crate is
+# `no_std` + `alloc` (see "Portability" in docs/development.md).
+std = ["serde/std", "thiserror/std", "crossbeam-queue/std"]
 metrics = []
-async-channels = ["tokio"]
+async-channels = ["std", "tokio"]
 
 [lib]
 path = "src/lib.rs"
@@ -33,6 +36,7 @@ path = "src/lib.rs"
 serde = { workspace = true }
 thiserror = { workspace = true }
 crossbeam-queue = { workspace = true }
+spin = { workspace = true }
 tokio = { workspace = true, optional = true }
 
 [dev-dependencies]

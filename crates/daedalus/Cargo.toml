@@ -100,12 +100,12 @@ engine-full = ["engine", "executor-pool", "metrics"]
 embedded = ["engine", "plugins"]
 
 [dependencies]
-daedalus-core = { workspace = true }
-daedalus-transport = { workspace = true }
-daedalus-data = { workspace = true }
+daedalus-core = { workspace = true, features = ["std"] }
+daedalus-transport = { workspace = true, features = ["std"] }
+daedalus-data = { workspace = true, features = ["std", "json"] }
 daedalus-gpu = { workspace = true, optional = true }
-daedalus-registry = { workspace = true }
-daedalus-planner = { workspace = true }
+daedalus-registry = { workspace = true, features = ["std"] }
+daedalus-planner = { workspace = true, features = ["std"] }
 daedalus-runtime = { workspace = true }
 daedalus-macros = { workspace = true }
 daedalus-nodes = { workspace = true }
@@ -114,8 +114,8 @@ styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], o
 paste = { workspace = true }
 daedalus-ffi-host = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-thiserror = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["std"] }
+thiserror = { workspace = true, optional = true, features = ["std"] }
 
 [dev-dependencies]
 parking_lot = { workspace = true }

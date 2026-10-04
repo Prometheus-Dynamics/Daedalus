@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_transport::{
@@ -161,7 +163,7 @@ impl TypeDecl {
     }
 
     pub fn rust<T: 'static>(mut self) -> Self {
-        self.rust = Some(std::any::type_name::<T>().to_string());
+        self.rust = Some(core::any::type_name::<T>().to_string());
         self
     }
 
@@ -340,7 +342,7 @@ pub struct PortDecl {
     pub const_value_json: Option<String>,
     /// An optional input (`Option<T>` in a `#[node]`): it never blocks the node, which runs
     /// with `None` when the port is unconnected or has no value this tick.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub optional: bool,
 }
 

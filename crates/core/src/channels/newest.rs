@@ -1,5 +1,7 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use crate::portable::AtomicU64;
+use crate::portable::Mutex;
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::{Backpressure, ChannelRecv, ChannelSend, ChannelStats, CloseBehavior, RecvOutcome};
 use crate::messages::Sequence;
@@ -113,8 +115,8 @@ impl<T> Drop for NewestSender<T> {
     }
 }
 
-impl<T> std::fmt::Debug for NewestSender<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<T> core::fmt::Debug for NewestSender<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("NewestSender").finish_non_exhaustive()
     }
 }
@@ -320,7 +322,7 @@ mod tests {
 mod metric_tests {
     use super::*;
     use crate::metrics::InMemoryMetrics;
-    use std::sync::Arc;
+    use alloc::sync::Arc;
 
     #[test]
     fn metrics_record_dropped_and_closed() {

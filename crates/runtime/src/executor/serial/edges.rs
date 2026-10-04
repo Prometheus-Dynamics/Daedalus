@@ -1,6 +1,6 @@
 //! Edge input collection, adapter application and output publishing for serial execution.
 
-use std::time::Instant;
+use daedalus_core::platform::Instant;
 
 use daedalus_transport::{AdaptRequest, Payload};
 

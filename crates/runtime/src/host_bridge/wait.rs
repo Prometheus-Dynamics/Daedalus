@@ -99,7 +99,19 @@ impl InboundWaiter {
     /// wakeup is issued, or `timeout` elapses (`None` waits indefinitely).
     ///
     /// Do not call this while holding locks that node execution needs.
+    ///
+    /// Without threads (`daedalus_core::platform::THREADS`) nothing can arrive while the only
+    /// thread waits: a timed wait returns at once and `None` panics; poll or `.await` instead.
     pub fn wait(self, timeout: Option<Duration>) -> InboundWait {
+        if !daedalus_core::platform::THREADS {
+            return self.poll_now().unwrap_or_else(|| {
+                assert!(
+                    timeout.is_some(),
+                    "InboundWaiter::wait(None) would block forever on a target without threads"
+                );
+                InboundWait::TimedOut
+            });
+        }
         let deadline = timeout.and_then(|timeout| Instant::now().checked_add(timeout));
         let mut guard = self.shared.buffers.lock();
         loop {

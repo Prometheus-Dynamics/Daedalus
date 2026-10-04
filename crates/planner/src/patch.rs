@@ -1,8 +1,10 @@
 use crate::graph::Graph;
+use alloc::collections::{BTreeSet, VecDeque};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use daedalus_data::model::Value as DaedalusValue;
 use daedalus_registry::ids::NodeId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, VecDeque};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

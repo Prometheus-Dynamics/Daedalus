@@ -1,3 +1,4 @@
+use alloc::string::{String, ToString};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -100,17 +101,17 @@ impl BoundaryTypeContract {
         capabilities: BoundaryCapabilities,
     ) -> Self {
         let mut contract = Self::new(type_key, LayoutHash::for_type::<T>(), capabilities);
-        contract.rust_type_name = Some(std::any::type_name::<T>().to_string());
+        contract.rust_type_name = Some(core::any::type_name::<T>().to_string());
         contract
     }
 
     pub fn for_schema<T: 'static>(
         type_key: impl Into<TypeKey>,
-        schema: impl std::fmt::Display,
+        schema: impl core::fmt::Display,
         capabilities: BoundaryCapabilities,
     ) -> Self {
         let mut contract = Self::new(type_key, LayoutHash::for_schema::<T>(schema), capabilities);
-        contract.rust_type_name = Some(std::any::type_name::<T>().to_string());
+        contract.rust_type_name = Some(core::any::type_name::<T>().to_string());
         contract
     }
 
@@ -179,8 +180,11 @@ mod tests {
 
     #[test]
     fn schema_layout_hash_rejects_same_size_alignment_shape_changes() {
-        assert_eq!(std::mem::size_of::<Left>(), std::mem::size_of::<Right>());
-        assert_eq!(std::mem::align_of::<Left>(), std::mem::align_of::<Right>());
+        assert_eq!(core::mem::size_of::<Left>(), core::mem::size_of::<Right>());
+        assert_eq!(
+            core::mem::align_of::<Left>(),
+            core::mem::align_of::<Right>()
+        );
 
         let producer = BoundaryTypeContract::for_schema::<Left>(
             "example:frame",

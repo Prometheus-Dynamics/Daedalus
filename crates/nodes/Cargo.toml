@@ -28,12 +28,12 @@ plugins = ["daedalus-runtime/plugins"]
 
 [dependencies]
 daedalus-macros = { workspace = true }
-daedalus-registry = { workspace = true }
-daedalus-planner = { workspace = true }
+daedalus-registry = { workspace = true, features = ["std"] }
+daedalus-planner = { workspace = true, features = ["std"] }
 daedalus-runtime = { workspace = true }
-daedalus-data = { workspace = true }
-daedalus-core = { workspace = true }
+daedalus-data = { workspace = true, features = ["std", "json"] }
+daedalus-core = { workspace = true, features = ["std"] }
 paste = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-tracing = { workspace = true }
+serde = { workspace = true, features = ["derive", "std"] }
+tracing = { workspace = true, features = ["std"] }
 

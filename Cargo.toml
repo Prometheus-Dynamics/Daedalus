@@ -26,6 +26,7 @@ members = [
     "examples/plugins/foreign_consumer",
     "examples/plugins/dependent",
     "examples/plugins/framelease",
+    "examples/wasm_smoke",
 ]
 resolver = "3"
 
@@ -39,14 +40,16 @@ homepage = "https://github.com/Prometheus-Dynamics/Daedalus"
 rust-version = "1.90"
 
 [workspace.dependencies]
+# Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared
+# without default features; `std` consumers enable `features = ["std"]` themselves.
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "2.0.0" }
-daedalus-core = { path = "crates/core", version = "2.0.0" }
-daedalus-transport = { path = "crates/transport", version = "2.0.0" }
-daedalus-data = { path = "crates/data", version = "2.0.0" }
+daedalus-core = { path = "crates/core", version = "2.0.0", default-features = false }
+daedalus-transport = { path = "crates/transport", version = "2.0.0", default-features = false }
+daedalus-data = { path = "crates/data", version = "2.0.0", default-features = false }
 daedalus-wgsl-infer = { path = "crates/wgsl-infer", version = "2.0.0" }
 daedalus-gpu = { path = "crates/gpu", version = "2.0.0" }
-daedalus-registry = { path = "crates/registry", version = "2.0.0" }
-daedalus-planner = { path = "crates/planner", version = "2.0.0" }
+daedalus-registry = { path = "crates/registry", version = "2.0.0", default-features = false }
+daedalus-planner = { path = "crates/planner", version = "2.0.0", default-features = false }
 daedalus-runtime = { path = "crates/runtime", version = "2.0.0" }
 daedalus-macros = { path = "crates/macros", version = "2.0.0" }
 daedalus-nodes = { path = "crates/nodes", version = "2.0.0" }
@@ -61,12 +64,13 @@ daedalus-ffi-cpp = { path = "crates/ffi/cpp", version = "2.0.0" }
 daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "2.0.0" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
 async-trait = "0.1.89"
-base64 = "0.22.1"
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 bitflags = { version = "2.11.1", features = ["serde"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 criterion = "0.8.2"
-crossbeam-queue = "0.3.12"
+crossbeam-queue = { version = "0.3.12", default-features = false, features = ["alloc"] }
 glob = "0.3.3"
+hashbrown = "0.17.0"
 half = "2"
 libc = "0.2"
 libloading = "0.8.9"
@@ -80,23 +84,24 @@ pyo3 = "0.28"
 quote = "1.0.45"
 rand = "0.10.1"
 rayon = "1.12.0"
-serde = { version = "1.0.228", features = ["derive", "rc"] }
-serde_json = "1.0.149"
+serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive", "rc"] }
+serde_json = { version = "1.0.149", default-features = false, features = ["alloc"] }
 serde_path_to_error = "0.1.20"
 sha2 = "0.10"
+spin = { version = "0.10.0", default-features = false, features = ["once", "rwlock", "spin_mutex"] }
 parking_lot = "0.12.5"
 # `union` is always on: it changes `SmallVec` layouts, and `NodeIo` crosses the dynamic plugin
 # boundary, so it must not depend on whether another crate in the build (e.g. wgpu-hal) enables it.
 smallvec = { version = "1.15.1", features = ["serde", "union"] }
 syn = { version = "2.0.117", features = ["full"] }
 tempfile = "3.27.0"
-thiserror = "2.0.18"
+thiserror = { version = "2.0.18", default-features = false }
 tokio = { version = "1.52.1", features = ["rt", "macros", "sync"] }
 trybuild = "1.0.116"
 wgpu = { version = "29.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
 futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-tracing = "0.1.44"
+tracing = { version = "0.1.44", default-features = false }
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "std"] }
 styx = { version = "2.0.0", git = "https://github.com/Prometheus-Dynamics/Styx.git", branch = "main", default-features = false }
 
@@ -120,7 +125,7 @@ implementation_variants = [
     "Daedalus keeps gpu-mock and gpu-wgpu as stable feature-gated backend variants.",
 ]
 allowed_manifest_exceptions = [
-    "crates/engine keeps explicit path dependencies for daedalus-runtime, daedalus-planner, and daedalus-registry because Cargo workspace inheritance cannot combine workspace = true with default-features = false under the current shared root declarations.",
+    "crates/engine keeps an explicit path dependency for daedalus-runtime because Cargo workspace inheritance cannot combine workspace = true with default-features = false under the current shared root declaration.",
 ]
 
 # `crates/daedalus/tests/dylib_plugin.rs` builds these examples as `cdylib`s. Dropping their own

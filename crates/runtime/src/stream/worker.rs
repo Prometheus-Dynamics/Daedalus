@@ -1,8 +1,9 @@
+use daedalus_core::platform::Instant;
 use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -99,7 +100,8 @@ impl WorkerDone {
     }
 
     fn wait_timeout(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
+        // Only reached with a worker thread, so the OS clock exists.
+        let deadline = std::time::Instant::now() + timeout;
         let mut finished = self.finished.lock();
         while !*finished {
             if self.ready.wait_until(&mut finished, deadline).timed_out() {
@@ -238,10 +240,19 @@ where
         )
     }
 
+    /// Run `graph` on a dedicated worker thread until stopped.
+    ///
+    /// # Panics
+    ///
+    /// On targets without threads (`daedalus_core::platform::THREADS`); drive the graph with
+    /// [`StreamGraph::poll`] or [`StreamGraph::run_available`] there.
     pub fn spawn_continuous_with_config(
         graph: SharedStreamGraph<H>,
         config: StreamWorkerConfig,
     ) -> StreamGraphWorker {
+        if !daedalus_core::platform::THREADS {
+            panic!("stream workers need threads; drive the graph with `poll`/`run_available` here");
+        }
         let idle_sleep = normalize_idle_sleep(config.idle_sleep);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();

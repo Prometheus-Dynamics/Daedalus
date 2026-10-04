@@ -1,7 +1,9 @@
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use daedalus_core::metadata::NODE_OVERLOADS_KEY;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_registry::capability::NodeDecl;
-use std::collections::BTreeMap;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;

@@ -1,3 +1,5 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use daedalus_core::metadata::UI_NODE_ID_KEY;
 use daedalus_data::model::Value;
 use daedalus_registry::capability::NodeDecl;

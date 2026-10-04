@@ -1,6 +1,8 @@
-use std::collections::BTreeMap;
-use std::fmt;
-use std::sync::Arc;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::fmt;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -169,7 +171,7 @@ impl Default for AdaptCost {
 }
 
 impl Ord for AdaptCost {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.weight()
             .cmp(&other.weight())
             .then_with(|| self.kind.cmp(&other.kind))
@@ -181,7 +183,7 @@ impl Ord for AdaptCost {
 }
 
 impl PartialOrd for AdaptCost {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
@@ -361,7 +363,7 @@ impl TransportError {
         }
         Self::RustTypeMismatch {
             key: expected,
-            expected: std::any::type_name::<T>(),
+            expected: core::any::type_name::<T>(),
             found: payload
                 .storage_rust_type_name()
                 .unwrap_or("<untyped bytes>"),

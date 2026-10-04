@@ -1,8 +1,8 @@
 //! Type-erased payload storage backends.
 
-use std::any::{Any, TypeId};
-use std::fmt;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::any::{Any, TypeId};
+use core::fmt;
 
 use crate::{ForeignHandle, ReleaseMode, TypeKey};
 
@@ -53,7 +53,7 @@ impl<T: Send + Sync + 'static> fmt::Debug for TypedStorage<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TypedStorage")
             .field("type_key", &self.type_key)
-            .field("rust_type_name", &std::any::type_name::<T>())
+            .field("rust_type_name", &core::any::type_name::<T>())
             .field("bytes_estimate", &self.bytes_estimate)
             .finish_non_exhaustive()
     }
@@ -85,7 +85,7 @@ impl<T: Send + Sync + 'static> PayloadStorage for TypedStorage<T> {
     }
 
     fn rust_type_name(&self) -> Option<&'static str> {
-        Some(std::any::type_name::<T>())
+        Some(core::any::type_name::<T>())
     }
 
     fn rust_type_id(&self) -> Option<TypeId> {
@@ -129,7 +129,7 @@ impl PayloadStorage for BytesStorage {
     }
 
     fn rust_type_name(&self) -> Option<&'static str> {
-        Some(std::any::type_name::<Arc<[u8]>>())
+        Some(core::any::type_name::<Arc<[u8]>>())
     }
 
     fn bytes_estimate(&self) -> Option<u64> {

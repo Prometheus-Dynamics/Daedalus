@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-wasm-smoke"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "wasm32-unknown-unknown runtime smoke module for the embedded preset (scripts/ci.sh wasm)."
+
+[lints]
+workspace = true
+
+# A `cdylib` with no imports that `scripts/wasm-smoke.mjs` instantiates. Its own package rather
+# than a facade example, so the wasm build does not pull the facade's native-only dev-dependencies.
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+daedalus = { workspace = true, features = ["embedded"] }

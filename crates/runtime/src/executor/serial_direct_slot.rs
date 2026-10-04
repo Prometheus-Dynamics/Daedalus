@@ -1,5 +1,5 @@
 use super::{CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, Executor, NodeHandler};
-use std::time::Instant;
+use daedalus_core::platform::Instant;
 
 pub(crate) fn push_direct_edge<H: NodeHandler>(
     exec: &mut Executor<'_, H>,

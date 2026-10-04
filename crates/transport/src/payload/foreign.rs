@@ -4,8 +4,8 @@
 //! than a `TypeId` downcast, so a separately built plugin finds it even when its copy of this
 //! crate has other `TypeId`s.
 
-use std::any::Any;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::any::Any;
 
 use super::{Payload, PayloadStorage, ResidencyCache};
 use crate::{ForeignHandle, PayloadLineage, Residency, TypeKey};
@@ -42,7 +42,7 @@ impl PayloadStorage for ForeignStorage {
     }
 
     fn rust_type_name(&self) -> Option<&'static str> {
-        Some(std::any::type_name::<ForeignHandle>())
+        Some(core::any::type_name::<ForeignHandle>())
     }
 
     fn foreign_handle(&self) -> Option<&ForeignHandle> {

@@ -1,8 +1,8 @@
 //! Edge policy application: backpressure, overflow handling and pressure telemetry.
 
+use daedalus_core::platform::Instant;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use std::time::Instant;
 
 #[cfg(feature = "lockfree-queues")]
 use crossbeam_queue::ArrayQueue;

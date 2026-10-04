@@ -1,4 +1,6 @@
 use super::PlannerCatalog;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 pub(super) fn suggest_nodes(catalog: &PlannerCatalog, missing: &str) -> Vec<String> {
     fn edit_distance(a: &str, b: &str) -> usize {

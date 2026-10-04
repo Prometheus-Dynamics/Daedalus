@@ -1,3 +1,4 @@
+use alloc::string::ToString;
 use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 

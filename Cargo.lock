@@ -476,6 +476,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "spin",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -499,11 +500,13 @@ dependencies = [
  "base64",
  "criterion",
  "daedalus-gpu",
+ "hashbrown 0.17.0",
  "once_cell",
  "parking_lot",
  "proptest",
  "serde",
  "serde_json",
+ "spin",
  "thiserror 2.0.18",
 ]
 
@@ -512,6 +515,7 @@ name = "daedalus-engine"
 version = "2.0.0"
 dependencies = [
  "criterion",
+ "daedalus-core",
  "daedalus-data",
  "daedalus-gpu",
  "daedalus-planner",
@@ -673,6 +677,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "spin",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -799,8 +804,18 @@ dependencies = [
 name = "daedalus-transport"
 version = "2.0.0"
 dependencies = [
+ "daedalus-core",
+ "hashbrown 0.17.0",
  "serde",
+ "spin",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "daedalus-wasm-smoke"
+version = "2.0.0"
+dependencies = [
+ "daedalus-rs",
 ]
 
 [[package]]
@@ -1160,6 +1175,11 @@ name = "hashbrown"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f467dd6dccf739c208452f8014c75c18bb8301b050ad1cfb27153803edb0f51"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heck"
@@ -2248,6 +2268,12 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "spin"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 
 [[package]]
 name = "spirv"

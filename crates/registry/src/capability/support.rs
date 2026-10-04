@@ -1,4 +1,5 @@
-use std::collections::BTreeSet;
+use alloc::collections::BTreeSet;
+use alloc::string::String;
 
 use crate::diagnostics::{ConflictKind, RegistryError, RegistryErrorCode, RegistryErrorCompute};
 

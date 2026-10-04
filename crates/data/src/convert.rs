@@ -1,5 +1,8 @@
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cmp::Reverse;
 
 use serde::{Deserialize, Serialize};
 
@@ -88,9 +91,14 @@ pub struct ConverterGraph {
     adjacency: BTreeMap<TypeExpr, BTreeSet<Edge>>,
 }
 
-/// Thread-safe wrapper type for concurrent registration/resolution.
-///
-pub type SharedConverterGraph = std::sync::Arc<parking_lot::RwLock<ConverterGraph>>;
+/// Thread-safe wrapper type for concurrent registration/resolution (`parking_lot` lock with
+/// `std`, `spin` lock without).
+#[cfg(feature = "std")]
+pub type SharedConverterGraph = alloc::sync::Arc<parking_lot::RwLock<ConverterGraph>>;
+/// Thread-safe wrapper type for concurrent registration/resolution (`parking_lot` lock with
+/// `std`, `spin` lock without).
+#[cfg(not(feature = "std"))]
+pub type SharedConverterGraph = alloc::sync::Arc<spin::RwLock<ConverterGraph>>;
 
 impl ConverterGraph {
     /// Create an empty converter graph.
@@ -400,13 +408,13 @@ where
 }
 
 impl Ord for Edge {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (self.cost, &self.id).cmp(&(other.cost, &other.id))
     }
 }
 
 impl PartialOrd for Edge {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }

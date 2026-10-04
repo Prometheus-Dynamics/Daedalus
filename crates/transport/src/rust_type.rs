@@ -1,6 +1,8 @@
-use std::any::TypeId;
-use std::fmt;
-use std::hash::{Hash, Hasher};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::any::TypeId;
+use core::fmt;
+use core::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -25,10 +27,10 @@ pub struct RustTypeIdentity {
 impl RustTypeIdentity {
     pub fn of<T: 'static>() -> Self {
         Self {
-            type_name: std::any::type_name::<T>(),
+            type_name: core::any::type_name::<T>(),
             type_id_hash: Self::hash_type_id(TypeId::of::<T>()),
-            size: std::mem::size_of::<T>(),
-            align: std::mem::align_of::<T>(),
+            size: core::mem::size_of::<T>(),
+            align: core::mem::align_of::<T>(),
         }
     }
 

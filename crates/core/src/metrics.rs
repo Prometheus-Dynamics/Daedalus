@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
+use crate::portable::Mutex;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 
 /// Sink for counters/timers emitted by channel primitives.
 pub trait MetricsSink: Send + Sync {
@@ -25,7 +25,7 @@ impl MetricsSink for NoopMetrics {
 /// Simple in-memory collector useful for tests.
 #[derive(Debug, Default)]
 pub struct InMemoryMetrics {
-    counters: Mutex<HashMap<&'static str, u64>>,
+    counters: Mutex<BTreeMap<&'static str, u64>>,
 }
 
 impl MetricsSink for InMemoryMetrics {

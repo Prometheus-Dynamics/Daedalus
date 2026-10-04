@@ -5,6 +5,13 @@
 //! - `default`: transport capabilities.
 //! - `plugin`: plugin adapters.
 //! - `gpu`: no GPU backend types leak.
+//!
+//! `no_std` + `alloc` without the default `std` feature (see "Portability" in
+//! docs/development.md).
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg_attr(not(feature = "std"), macro_use)]
+extern crate alloc;
 
 pub mod capability;
 pub mod diagnostics;

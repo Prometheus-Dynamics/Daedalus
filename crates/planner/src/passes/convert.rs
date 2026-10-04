@@ -1,8 +1,10 @@
 //! Lowering of a typechecked graph into an [`ExecutionPlan`].
 
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_registry::typeexpr_transport_key;
-use std::collections::HashMap;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
@@ -22,7 +24,7 @@ pub(super) fn convert(
     config: &PlannerConfig,
 ) {
     let mut edge_explanations = Vec::new();
-    let mut source_fanout: HashMap<(usize, String), usize> = HashMap::new();
+    let mut source_fanout: BTreeMap<(usize, String), usize> = BTreeMap::new();
     for edge in &graph.edges {
         *source_fanout
             .entry((edge.from.node.0, edge.from.port.clone()))

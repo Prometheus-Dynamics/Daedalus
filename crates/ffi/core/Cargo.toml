@@ -19,12 +19,12 @@ default = []
 image-payload = []
 
 [dependencies]
-daedalus-data = { workspace = true }
-daedalus-transport = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+daedalus-data = { workspace = true, features = ["std", "json"] }
+daedalus-transport = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true, features = ["std"] }
 sha2 = { workspace = true }
-thiserror = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

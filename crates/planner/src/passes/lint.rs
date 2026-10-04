@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 
@@ -29,7 +31,7 @@ pub(super) fn lint(
     // Enforce exclusivity for ports that declare `Move`/`Modify` access.
     // This is the planner-level guardrail that makes in-place / COW transforms predictable:
     // if a producer output is fanned out, a downstream node cannot claim exclusive access.
-    let mut fanout: HashMap<(usize, String), usize> = HashMap::new();
+    let mut fanout: BTreeMap<(usize, String), usize> = BTreeMap::new();
     for e in &input.graph.edges {
         *fanout
             .entry((e.from.node.0, e.from.port.clone()))

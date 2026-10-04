@@ -1,3 +1,5 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::AdapterPathStep;
 

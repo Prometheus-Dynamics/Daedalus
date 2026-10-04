@@ -1,8 +1,9 @@
+use daedalus_core::platform::Instant;
 use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{DirectHostRoute, NodeHandler};

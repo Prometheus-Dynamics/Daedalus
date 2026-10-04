@@ -31,15 +31,16 @@ plugins = ["daedalus-runtime/plugins"]
 [dependencies]
 parking_lot = { workspace = true }
 daedalus-runtime = { version = "2.0.0", path = "../runtime", default-features = false }
-daedalus-data = { workspace = true }
-daedalus-planner = { version = "2.0.0", path = "../planner", default-features = false }
-daedalus-registry = { version = "2.0.0", path = "../registry", default-features = false }
-daedalus-transport = { workspace = true }
+daedalus-core = { workspace = true, features = ["std"] }
+daedalus-data = { workspace = true, features = ["std", "json"] }
+daedalus-planner = { workspace = true, features = ["std"] }
+daedalus-registry = { workspace = true, features = ["std"] }
+daedalus-transport = { workspace = true, features = ["std"] }
 daedalus-gpu = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
+serde = { workspace = true, optional = true, features = ["std"] }
+serde_json = { workspace = true, optional = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

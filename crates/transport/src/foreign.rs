@@ -20,10 +20,10 @@
 //!   type, and every function it calls is the owner's code, so it never depends on how the
 //!   consumer built the owner's crate.
 
-use std::ffi::c_void;
-use std::fmt;
-use std::marker::PhantomData;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::ffi::c_void;
+use core::fmt;
+use core::marker::PhantomData;
 
 use crate::Payload;
 
@@ -70,8 +70,8 @@ impl ForeignInterfaceInfo {
             return "<invalid>";
         }
         // Safety: `new` only accepts `&'static str` (plugin libraries are never unloaded).
-        let bytes = unsafe { std::slice::from_raw_parts(self.key_ptr, self.key_len) };
-        std::str::from_utf8(bytes).unwrap_or("<invalid>")
+        let bytes = unsafe { core::slice::from_raw_parts(self.key_ptr, self.key_len) };
+        core::str::from_utf8(bytes).unwrap_or("<invalid>")
     }
 
     /// Whether both describe the same interface (key, version and layout).
@@ -278,7 +278,7 @@ impl ForeignHandle {
     pub fn view<I: ForeignInterface>(&self) -> Result<ForeignRef<'_, I>, ForeignInterfaceMismatch> {
         let found = self.interface();
         // Same build: same static. Otherwise compare the identities.
-        if !std::ptr::eq(found, I::info()) && !found.same_interface(I::info()) {
+        if !core::ptr::eq(found, I::info()) && !found.same_interface(I::info()) {
             return Err(ForeignInterfaceMismatch {
                 expected: *I::info(),
                 found: *found,
@@ -391,7 +391,7 @@ impl<'a, I: ForeignInterface> ForeignView<'a> for ForeignRef<'a, I> {
 /// change. Fields should be `unsafe extern "C" fn` pointers taking the data pointer first.
 ///
 /// ```
-/// use std::ffi::c_void;
+/// use core::ffi::c_void;
 ///
 /// daedalus_transport::foreign_interface! {
 ///     /// A counter value.

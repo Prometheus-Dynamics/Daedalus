@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use daedalus_data::model::Value;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
@@ -24,14 +25,14 @@ pub(super) fn hydrate_registry(
             .at_node(diagnostic_node_id(node))
             .with_meta(
                 "missing_node_id",
-                Value::String(std::borrow::Cow::Owned(node.id.0.clone())),
+                Value::String(alloc::borrow::Cow::Owned(node.id.0.clone())),
             )
             .with_meta(
                 "suggestions",
                 Value::List(
                     suggestions
                         .into_iter()
-                        .map(|s| Value::String(std::borrow::Cow::Owned(s)))
+                        .map(|s| Value::String(alloc::borrow::Cow::Owned(s)))
                         .collect(),
                 ),
             ),

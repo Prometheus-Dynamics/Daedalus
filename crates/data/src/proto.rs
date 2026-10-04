@@ -2,6 +2,8 @@
 
 use crate::errors::{DataError, DataErrorCode, DataResult};
 use crate::model::{EnumVariant, StructField, TypeExpr, ValueType};
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 /// Render a `TypeExpr` into a proto3 type string. Map keys must be strings;
 /// tuples are not yet supported and return `UnsupportedFeature`.

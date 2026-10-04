@@ -1,6 +1,8 @@
-use std::any::Any;
-use std::fmt;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::any::Any;
+use core::fmt;
 
 use crate::{
     BoundaryCapabilities, BoundaryStorage, BoundaryTypeContract, CorrelationId, Layout,
@@ -199,7 +201,7 @@ impl Payload {
     }
 
     /// `TypeId` of the stored Rust value (`None` for bytes payloads).
-    pub fn storage_rust_type_id(&self) -> Option<std::any::TypeId> {
+    pub fn storage_rust_type_id(&self) -> Option<core::any::TypeId> {
         self.storage.rust_type_id()
     }
 
@@ -324,7 +326,7 @@ impl Payload {
     /// Whether `self` and `other` are clones of one payload (they share its storage), e.g. the
     /// copies of a graph constant handed out on every tick.
     pub fn shares_storage(&self, other: &Payload) -> bool {
-        std::ptr::addr_eq(Arc::as_ptr(&self.storage), Arc::as_ptr(&other.storage))
+        core::ptr::addr_eq(Arc::as_ptr(&self.storage), Arc::as_ptr(&other.storage))
     }
 
     pub fn is_storage_unique(&self) -> bool {

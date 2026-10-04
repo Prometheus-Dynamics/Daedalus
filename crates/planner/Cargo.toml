@@ -21,23 +21,41 @@ path = "src/lib.rs"
 # Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
-boundary-features = ["gpu", "proto", "schema"]
+boundary-features = ["std", "gpu", "proto", "schema"]
 host-only-features = []
 
 [[bin]]
 name = "graph_document_schema"
 path = "src/bin/graph_document_schema.rs"
-required-features = ["schema"]
+required-features = ["std", "schema"]
+
+[[bin]]
+name = "plan_dump"
+path = "src/bin/plan_dump.rs"
+required-features = ["std"]
 
 [features]
-default = []
-gpu = ["daedalus-gpu"]
+default = ["std"]
+# Host OS facilities: `std` locks and collections, clocks, threads. Without it the crate is
+# `no_std` + `alloc` (see "Portability" in docs/development.md).
+std = [
+    "dep:parking_lot",
+    "daedalus-core/std",
+    "daedalus-data/std",
+    "daedalus-registry/std",
+    "daedalus-transport/std",
+    "serde/std",
+    "serde_json/std",
+    "thiserror/std",
+    "tracing/std",
+]
+gpu = ["std", "daedalus-gpu"]
 proto = []
 schema = ["daedalus-data/schema"]
 
 [dependencies]
-parking_lot = { workspace = true }
-daedalus-data = { workspace = true }
+parking_lot = { workspace = true, optional = true }
+daedalus-data = { workspace = true, features = ["json"] }
 daedalus-registry = { workspace = true }
 daedalus-transport = { workspace = true }
 daedalus-gpu = { workspace = true, optional = true }
@@ -45,6 +63,7 @@ daedalus-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_path_to_error = { workspace = true }
+spin = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

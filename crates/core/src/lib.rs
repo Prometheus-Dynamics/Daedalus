@@ -5,6 +5,16 @@
 //! facade. It intentionally stays dependency-light so registry, planner,
 //! runtime, engine, FFI, and transport crates can depend on it without pulling
 //! in higher-level execution concerns.
+//!
+//! `no_std` + `alloc` without the default `std` feature (see "Portability" in
+//! docs/development.md).
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg_attr(not(feature = "std"), macro_use)]
+extern crate alloc;
+
+mod portable;
+pub(crate) use portable::lock_recover;
 
 pub mod channels;
 pub mod clock;
@@ -13,19 +23,10 @@ pub mod errors;
 pub mod ids;
 pub mod messages;
 pub mod metadata;
+pub mod platform;
 pub mod policy;
 pub mod stable_id;
 pub mod sync;
-
-/// Locks `mutex`, recovering the guard if a panicking holder poisoned it.
-///
-/// Every critical section in this crate leaves the guarded state structurally valid, so a
-/// poisoned lock carries no information worth propagating.
-pub(crate) fn lock_recover<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
 
 #[cfg(feature = "metrics")]
 pub mod metrics;

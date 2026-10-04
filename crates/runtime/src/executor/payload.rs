@@ -1,4 +1,4 @@
-use std::time::Instant;
+use daedalus_core::platform::Instant;
 
 /// Transport payload moving along a runtime edge.
 #[derive(Clone, Debug)]

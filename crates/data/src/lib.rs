@@ -7,12 +7,22 @@
 //! Deterministic ordering is required so planner/runtime goldens stay stable.
 //!
 //! # Feature Matrix (compile-checked)
-//! - `default` (includes `json`): core types, descriptors, converters, units, JSON codec.
+//! - `default` (`std`, `json`): core types, descriptors, converters, units, JSON codec.
+//! - `std`: `parking_lot` locks and `std` maps; without it the crate is `no_std` + `alloc`.
 //! - `json`: enable JSON codec/base64 support (on by default).
 //! - `gpu`: GPU handle shims; no concrete backend types.
 //! - `async`: async resolver wrappers.
 //! - `schema`: JSON Schema emission.
 //! - `proto`: proto3 type emission.
+//!
+//! `no_std` + `alloc` without the default `std` feature (see "Portability" in
+//! docs/development.md).
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg_attr(not(feature = "std"), macro_use)]
+extern crate alloc;
+
+mod portable;
 
 pub mod convert;
 pub mod daedalus_type;

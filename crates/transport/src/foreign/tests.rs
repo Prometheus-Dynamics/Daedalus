@@ -1,6 +1,6 @@
 use super::*;
 use crate::{BoundaryCapabilities, Residency};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPS: AtomicUsize = AtomicUsize::new(0);
 
@@ -141,7 +141,7 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
     assert_eq!(payload.residency(), Residency::External);
     assert_eq!(read(payload.foreign_handle().unwrap()), 5);
     // The handle is the payload's value, so `get_ref` reaches it through the value's `Any`.
-    assert!(std::ptr::eq(
+    assert!(core::ptr::eq(
         payload.get_ref::<ForeignHandle>().unwrap(),
         payload.foreign_handle().unwrap()
     ));

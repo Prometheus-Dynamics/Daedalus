@@ -1,5 +1,7 @@
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap};
+use alloc::collections::{BTreeMap, BinaryHeap};
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::cmp::Reverse;
 
 use daedalus_transport::{AccessMode, AdaptRequest, AdapterId, Residency, TypeKey};
 

@@ -3,6 +3,24 @@
 //! This crate is intentionally low-level and dependency-light. It defines the transport
 //! vocabulary shared by registry, planner, runtime, GPU, FFI, and plugin layers without depending
 //! on those layers.
+//!
+//! `no_std` + `alloc` without the default `std` feature (see "Portability" in
+//! docs/development.md).
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg_attr(not(feature = "std"), macro_use)]
+extern crate alloc;
+
+mod portable;
+pub(crate) use portable::lock_recover;
+
+daedalus_core::build_facts!();
+
+/// Paths for exported macros, which must work in `no_std` crates.
+#[doc(hidden)]
+pub mod __private {
+    pub use alloc::string::String;
+}
 
 mod adapter;
 mod boundary_contract;
@@ -17,16 +35,6 @@ mod payload;
 mod payload_lifecycle;
 mod rust_type;
 mod stream_policy;
-
-/// Locks `mutex`, recovering the guard if a panicking holder poisoned it.
-///
-/// Every critical section in this crate leaves the guarded state structurally valid, so a
-/// poisoned lock carries no information worth propagating.
-pub(crate) fn lock_recover<T: ?Sized>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
 
 pub use adapter::{
     AdaptCost, AdaptRequest, AdapterTable, CopyCost, FanoutAction, FanoutConsumer, FanoutPlan,
@@ -62,8 +70,8 @@ pub use stream_policy::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
-    use std::sync::Arc;
+    use alloc::sync::Arc;
+    use core::str::FromStr;
 
     #[derive(Debug, PartialEq, Eq)]
     struct Frame {
@@ -179,7 +187,7 @@ mod tests {
 
     #[test]
     fn payload_drop_does_not_invoke_release_queue_hooks() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use core::sync::atomic::{AtomicUsize, Ordering};
 
         struct Hook(Arc<AtomicUsize>);
 

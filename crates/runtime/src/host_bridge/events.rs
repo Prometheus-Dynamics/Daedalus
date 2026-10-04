@@ -1,5 +1,5 @@
+use daedalus_core::platform::Instant;
 use std::collections::VecDeque;
-use std::time::Instant;
 
 use daedalus_transport::{
     CorrelationId, DropReason, FeedOutcome, OverflowPolicy, Payload, PressurePolicy, TypeKey,

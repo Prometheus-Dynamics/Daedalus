@@ -12,7 +12,7 @@
 //! `Cargo.toml` (`boundary-features` / `host-only-features`), read here through the crate's
 //! `CARGO_MANIFEST`. Only enabled boundary features enter the fingerprint, so a plugin built
 //! with just `dylib-plugins` loads into a host built with `engine-full,dylib-plugins`.
-//! `daedalus-transport` has no features and `daedalus-engine` never crosses the boundary.
+//! `daedalus-engine` never crosses the boundary.
 
 use daedalus_core::stable_id::fnv1a64;
 use std::fmt::Write as _;
@@ -20,13 +20,18 @@ use std::mem::{align_of, size_of};
 use std::sync::OnceLock;
 
 /// `(name, ENABLED_FEATURES, CARGO_MANIFEST)` of every crate whose types cross the boundary.
-fn fingerprinted_crates() -> [(&'static str, &'static str, &'static str); 6] {
+fn fingerprinted_crates() -> [(&'static str, &'static str, &'static str); 7] {
     [
         ("daedalus", crate::ENABLED_FEATURES, crate::CARGO_MANIFEST),
         (
             "core",
             daedalus_core::ENABLED_FEATURES,
             daedalus_core::CARGO_MANIFEST,
+        ),
+        (
+            "transport",
+            daedalus_transport::ENABLED_FEATURES,
+            daedalus_transport::CARGO_MANIFEST,
         ),
         (
             "data",
@@ -207,7 +212,15 @@ mod tests {
             env!("DAEDALUS_BUILD_TARGET"),
             usize::BITS
         )));
-        for krate in ["daedalus", "core", "data", "registry", "planner", "runtime"] {
+        for krate in [
+            "daedalus",
+            "core",
+            "transport",
+            "data",
+            "registry",
+            "planner",
+            "runtime",
+        ] {
             assert!(
                 fingerprint.contains(&format!(";features.{krate}=")),
                 "{krate} missing from {fingerprint}"

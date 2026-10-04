@@ -715,7 +715,7 @@ where
         return serial::run_with_boundaries(exec);
     };
     let (result, wall) = if parallel {
-        let start = std::time::Instant::now();
+        let start = daedalus_core::platform::Instant::now();
         let result = parallel::run(exec, Some(costs));
         (result, Some(start.elapsed()))
     } else {

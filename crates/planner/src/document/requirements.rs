@@ -8,8 +8,10 @@
 //! Versions compare numerically per dot-separated component; missing trailing components are
 //! treated as `0` and any pre-release/build suffix (`-…`, `+…`) is ignored.
 
-use std::cmp::Ordering;
-use std::fmt;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::fmt;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
