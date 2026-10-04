@@ -26,6 +26,7 @@ use self::metadata::{const_value_from_port_decl, metadata_from_node_decl};
 use self::nested::is_host_bridge;
 use crate::host_bridge::HOST_BRIDGE_ID;
 use crate::plan::RuntimeEdgePolicy;
+use crate::type_index::TypeIndex;
 
 /// Graph builder with alias and basic port validation using native transport capabilities.
 ///
@@ -46,6 +47,9 @@ pub struct GraphBuilder {
     host_bridge_alias: Option<String>,
     host_bridge_added: bool,
     nested: HashMap<String, NestedGraphHandle>,
+    /// Resolves `input_typed`/`output_typed`; builtins only unless the builder came from a
+    /// registry (`PluginRegistry::graph_builder`).
+    types: TypeIndex,
 }
 
 impl GraphBuilder {
@@ -62,7 +66,15 @@ impl GraphBuilder {
             host_bridge_alias: Some("host".to_string()),
             host_bridge_added: false,
             nested: HashMap::new(),
+            types: TypeIndex::default(),
         }
+    }
+
+    /// Resolve `input_typed`/`output_typed` through `types` (a registry's
+    /// `PluginRegistry::type_index`; `PluginRegistry::graph_builder` sets it).
+    pub fn with_type_index(mut self, types: TypeIndex) -> Self {
+        self.types = types;
+        self
     }
 
     pub fn new_with_capabilities(capabilities: CapabilityRegistry) -> Self {
@@ -364,10 +376,12 @@ impl GraphBuilder {
         self.declare_host_port(true, name.as_ref(), ty)
     }
 
-    /// [`Self::input_as`] with the registered type of `T` (`daedalus_data::typing::type_expr`).
-    /// Register `T` (e.g. by installing its plugin) before calling this.
-    pub fn input_typed<T: 'static>(self, name: impl AsRef<str>) -> Self {
-        self.input_as(name, daedalus_data::typing::type_expr::<T>())
+    /// [`Self::input_as`] with the type of `T`, resolved through the registry this builder
+    /// came from (builtins only for a builder made with [`Self::new`]); fails with
+    /// [`GraphBuildError::TypeKey`] when the registry has no key for `T`.
+    pub fn input_typed<T: 'static>(self, name: impl AsRef<str>) -> Result<Self, GraphBuildError> {
+        let ty = self.types.type_expr_of::<T>()?;
+        Ok(self.input_as(name, ty))
     }
 
     /// Declare host output `name` (a value the graph delivers to the host) with a fixed type.
@@ -376,9 +390,10 @@ impl GraphBuilder {
         self.declare_host_port(false, name.as_ref(), ty)
     }
 
-    /// [`Self::output_as`] with the registered type of `T`.
-    pub fn output_typed<T: 'static>(self, name: impl AsRef<str>) -> Self {
-        self.output_as(name, daedalus_data::typing::type_expr::<T>())
+    /// [`Self::output_as`] with the type of `T`; see [`Self::input_typed`].
+    pub fn output_typed<T: 'static>(self, name: impl AsRef<str>) -> Result<Self, GraphBuildError> {
+        let ty = self.types.type_expr_of::<T>()?;
+        Ok(self.output_as(name, ty))
     }
 
     fn declare_host_port(self, is_host_input: bool, name: &str, ty: TypeExpr) -> Self {

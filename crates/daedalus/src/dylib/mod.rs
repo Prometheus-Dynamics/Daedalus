@@ -60,7 +60,7 @@
 //! [`PluginRegistry::boundary_types`](crate::PluginRegistry::boundary_types)).
 //! [`PluginLibrary::install_into`] compares it with the host registry's entries for the same
 //! keys and, before installing anything, fails with
-//! [`PluginLibraryError::BoundaryTypeMismatch`] listing every differing key. Keys the host does
+//! [`PluginLibraryError::BoundaryTypeConflict`] listing every differing key. Keys the host does
 //! not know are accepted, so the host should register the types it wraps in payloads itself
 //! (install the owning crate's Daedalus plugin, or `register_boundary_type::<T>(key)`).
 //!
@@ -100,7 +100,7 @@ mod boundary;
 mod fingerprint;
 mod loader;
 
-pub use boundary::{BoundaryTypeEntry, BoundaryTypeMismatch, BoundaryTypeTable, BoundaryTypesFn};
+pub use boundary::{BoundaryTypeEntry, BoundaryTypeTable, BoundaryTypesFn};
 pub use daedalus_ffi_host::core::PluginSchema;
 pub use fingerprint::{boundary_features, build_fingerprint, describe_fingerprint_mismatch};
 pub use loader::{

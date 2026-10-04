@@ -39,6 +39,8 @@ pub enum EngineError {
     #[cfg(feature = "gpu")]
     #[error("gpu selection failed: {0}")]
     Gpu(#[from] daedalus_gpu::GpuError),
+    #[error(transparent)]
+    TypeKey(#[from] daedalus_transport::TypeKeyError),
     #[error("feature '{0}' is disabled at compile time")]
     FeatureDisabled(&'static str),
 }

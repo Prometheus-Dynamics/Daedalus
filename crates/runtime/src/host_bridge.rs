@@ -4,10 +4,11 @@ use std::time::{Duration, Instant};
 
 use daedalus_transport::{
     CorrelationId, DropReason, FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError,
-    PressurePolicy, TypeKey, validate_stream_policy,
+    PressurePolicy, TypeKey, TypeKeyError, validate_stream_policy,
 };
 
 use crate::handles::{HostAlias, PortId};
+use crate::type_index::TypeIndex;
 
 mod events;
 mod inspect;
@@ -61,6 +62,8 @@ pub(super) struct HostBridgeBuffers {
     pub(super) next_waker_id: u64,
     /// Async inbound waiters, keyed by waiter id. Woken outside the lock.
     pub(super) inbound_wakers: Vec<(u64, std::task::Waker)>,
+    /// Resolves typed pushes and checks fed payloads (see [`HostBridgeManager::set_type_index`]).
+    pub(super) types: TypeIndex,
 }
 
 pub(super) struct HostBridgeShared {
@@ -91,6 +94,7 @@ impl Default for HostBridgeBuffers {
             wake_epoch: 0,
             next_waker_id: 0,
             inbound_wakers: Vec::new(),
+            types: TypeIndex::default(),
         }
     }
 }
@@ -282,7 +286,10 @@ fn enqueue_locked(
             direction.count_replaced(stats, replacement.clone());
             replacement
         }
-        FeedOutcome::Dropped { .. } | FeedOutcome::Backpressured | FeedOutcome::Closed => {
+        FeedOutcome::Dropped { .. }
+        | FeedOutcome::Backpressured
+        | FeedOutcome::Closed
+        | FeedOutcome::Rejected(_) => {
             let reason = outcome_drop_reason(&outcome);
             direction.count_drop(stats, reason.clone());
             reason
@@ -414,13 +421,47 @@ impl HostBridgeHandle {
     }
 
     /// Feed a payload into an inbound port, applying the port's freshness and pressure policy.
+    ///
+    /// A payload whose key the graph's registry maps to another Rust type than the payload
+    /// holds is refused with [`FeedOutcome::Rejected`] (see [`TypeIndex::check_payload`]).
     pub fn feed_payload(&self, port: impl Into<PortId>, payload: Payload) -> FeedOutcome {
+        self.feed_with(port.into(), |_| Ok(payload))
+    }
+
+    /// Feed `value` under the key the graph's registry gives `T`
+    /// ([`HostBridgeManager::set_type_index`]); a type the registry has no single key for is
+    /// refused with [`FeedOutcome::Rejected`] naming the fixes.
+    pub fn push<T>(&self, port: impl Into<PortId>, value: T) -> FeedOutcome
+    where
+        T: Send + Sync + 'static,
+    {
+        self.feed_with(port.into(), |types| {
+            types.key_of::<T>().map(|key| Payload::owned(key, value))
+        })
+    }
+
+    /// The type index this bridge resolves typed pushes through.
+    pub fn type_index(&self) -> TypeIndex {
+        self.shared.buffers.lock().types.clone()
+    }
+
+    fn feed_with(
+        &self,
+        port: PortId,
+        payload: impl FnOnce(&TypeIndex) -> Result<Payload, TypeKeyError>,
+    ) -> FeedOutcome {
         let mut guard = self.shared.buffers.lock();
+        let payload = match payload(&guard.types)
+            .and_then(|payload| guard.types.check_payload(&payload).map(|()| payload))
+        {
+            Ok(payload) => payload,
+            Err(error) => return FeedOutcome::Rejected(Box::new(error)),
+        };
         let outcome = enqueue_locked(
             &mut guard,
             Direction::Inbound,
             self.alias.as_str(),
-            PortKey::Id(port.into()),
+            PortKey::Id(port),
             payload,
         );
         if is_enqueued(&outcome) {
@@ -430,14 +471,6 @@ impl HostBridgeHandle {
             wait::wake_all(wakers);
         }
         outcome
-    }
-
-    pub fn push<T>(&self, port: impl Into<PortId>, value: T) -> FeedOutcome
-    where
-        T: Send + Sync + 'static,
-    {
-        let type_key = crate::transport::type_key_of::<T>();
-        self.feed_payload(port, Payload::owned(type_key, value))
     }
 
     pub fn push_as<T>(

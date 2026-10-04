@@ -95,11 +95,13 @@ fn fan_out_graph(typed: bool) -> Result<HostGraph<HandlerRegistry>, EngineError>
     let width = plugin.width.alias("width");
     let mut builder = registry.graph_builder().expect("graph builder");
     if typed {
-        builder = builder.input_typed::<Frame>("frame");
+        builder = builder
+            .input_typed::<Frame>("frame")
+            .expect("Frame has a key");
     }
     let graph = builder
         .output_typed::<i64>("width")
-        .try_node(&sum)
+        .and_then(|b| b.try_node(&sum))
         .and_then(|b| b.try_node(&width))
         .and_then(|b| b.try_connect("frame", &sum.inputs.frame))
         .and_then(|b| b.try_connect("frame", &width.inputs.meta))

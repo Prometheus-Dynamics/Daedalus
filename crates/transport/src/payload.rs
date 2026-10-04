@@ -200,6 +200,11 @@ impl Payload {
         self.storage.rust_type_name()
     }
 
+    /// `TypeId` of the stored Rust value (`None` for bytes payloads).
+    pub fn storage_rust_type_id(&self) -> Option<std::any::TypeId> {
+        self.storage.rust_type_id()
+    }
+
     pub fn value_any(&self) -> Option<&dyn Any> {
         self.storage.value_any()
     }

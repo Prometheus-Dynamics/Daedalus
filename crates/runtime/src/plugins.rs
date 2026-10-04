@@ -38,7 +38,7 @@ mod registry_transport;
 mod requirements;
 
 pub use adapters::{SmartAdapter, TransportAdapterOptions};
-pub use boundary_types::PortTypeUse;
+pub use boundary_types::{BoundaryTypeConflict, PortTypeUse};
 pub use context::{PluginGroup, PluginInstallContext, PluginInstallable};
 pub use install::install_all;
 use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
@@ -87,13 +87,32 @@ pub enum PluginError {
     },
     /// One transport key was recorded for two different Rust types.
     #[error(
-        "type key `{key}` is used for two Rust types, {existing} and {new}; a type key must name \
-         exactly one Rust type"
+        "type key `{}` is used for two Rust types, {} and {}; a type key must name exactly one \
+         Rust type",
+        .0.key, .0.registered, .0.new
     )]
-    BoundaryTypeConflict {
+    BoundaryTypeConflict(BoundaryTypeConflict),
+    /// A Rust type was given a second key of its own.
+    #[error(
+        "Rust type `{rust_type}` already owns type key `{existing}` and cannot also own `{new}`; \
+         a type owns one key (set a port's `type_key` to use another key at one port)"
+    )]
+    TypeKeyedTwice {
+        rust_type: &'static str,
+        existing: TypeKey,
+        new: TypeKey,
+    },
+    /// A type key was declared again with another schema or export policy.
+    #[error(
+        "type key `{key}` is already declared as {existing:?} (export {existing_export:?}); it \
+         cannot be redeclared as {new:?} (export {new_export:?})"
+    )]
+    TypeDeclarationConflict {
         key: TypeKey,
-        existing: daedalus_transport::RustTypeIdentity,
-        new: daedalus_transport::RustTypeIdentity,
+        existing: Option<TypeExpr>,
+        existing_export: ExportPolicy,
+        new: TypeExpr,
+        new_export: ExportPolicy,
     },
     #[error("{0}")]
     Message(&'static str),
@@ -301,6 +320,8 @@ pub struct PluginRegistry {
     pub plugin_manifests: BTreeMap<String, PluginManifest>,
     pub boundary_contracts: BTreeMap<TypeKey, BoundaryTypeContract>,
     boundary_types: BTreeMap<TypeKey, daedalus_transport::RustTypeIdentity>,
+    /// Keys each Rust type was recorded under (see `PluginRegistry::type_index`).
+    type_key_uses: std::collections::HashMap<std::any::TypeId, BTreeSet<TypeKey>>,
     pub current_prefix: Option<String>,
     pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,

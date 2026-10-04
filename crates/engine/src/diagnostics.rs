@@ -57,6 +57,11 @@ pub fn render_error(err: &EngineError) -> Value {
             "code": "gpu",
             "message": e.to_string(),
         }),
+        EngineError::TypeKey(e) => json!({
+            "code": "type_key",
+            "message": e.to_string(),
+            "error": e,
+        }),
         EngineError::FeatureDisabled(flag) => json!({
             "code": "feature_disabled",
             "feature": flag,

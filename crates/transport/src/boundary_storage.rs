@@ -18,6 +18,7 @@ pub struct BoundaryVTable {
     /// Reborrow the erased pointer as a thread-safe `Any` for read-only inspection.
     pub value_any: unsafe fn(NonNull<c_void>) -> *const (dyn Any + Send + Sync),
     pub rust_type_name: &'static str,
+    pub rust_type_id: TypeId,
 }
 
 impl fmt::Debug for BoundaryVTable {
@@ -218,6 +219,10 @@ impl PayloadStorage for BoundaryStorage {
         Some(self.vtable.rust_type_name)
     }
 
+    fn rust_type_id(&self) -> Option<TypeId> {
+        Some(self.vtable.rust_type_id)
+    }
+
     fn bytes_estimate(&self) -> Option<u64> {
         self.bytes_estimate()
     }
@@ -282,6 +287,7 @@ where
         bytes_estimate: bytes_estimate::<T>,
         value_any: value_any::<T>,
         rust_type_name: std::any::type_name::<T>(),
+        rust_type_id: TypeId::of::<T>(),
     }));
     vtables.insert(TypeId::of::<T>(), vtable);
     vtable

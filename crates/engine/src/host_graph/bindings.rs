@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 
+use daedalus_runtime::TypeIndex;
 use daedalus_runtime::executor::DirectHostRoute;
 use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::HostBridgeHandle;
-use daedalus_runtime::transport::type_key_of;
-use daedalus_transport::{FeedOutcome, Payload, TypeKey};
+use daedalus_transport::{FeedOutcome, Payload, TypeKey, TypeKeyError};
 
 pub struct HostGraphSubscription {
     pub(crate) host: HostBridgeHandle,
@@ -100,10 +100,12 @@ impl HostGraphSubscription {
     }
 }
 
+/// A `run_once` input: `(port, value)` (key from the graph's type index) or
+/// `(port, key, value)`.
 pub trait HostGraphRunInput {
     type Value;
 
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value);
+    fn into_parts(self, types: &TypeIndex) -> Result<(PortId, TypeKey, Self::Value), TypeKeyError>;
 }
 
 impl<P, I> HostGraphRunInput for (P, I)
@@ -113,8 +115,8 @@ where
 {
     type Value = I;
 
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (self.0.into(), type_key_of::<I>(), self.1)
+    fn into_parts(self, types: &TypeIndex) -> Result<(PortId, TypeKey, Self::Value), TypeKeyError> {
+        Ok((self.0.into(), types.key_of::<I>()?, self.1))
     }
 }
 
@@ -126,7 +128,10 @@ where
 {
     type Value = I;
 
-    fn into_parts(self) -> (PortId, TypeKey, Self::Value) {
-        (self.0.into(), self.1.into(), self.2)
+    fn into_parts(
+        self,
+        _types: &TypeIndex,
+    ) -> Result<(PortId, TypeKey, Self::Value), TypeKeyError> {
+        Ok((self.0.into(), self.1.into(), self.2))
     }
 }

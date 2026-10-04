@@ -16,12 +16,19 @@ use super::{
     HostBridgeShared,
 };
 use crate::plan::RuntimeEdgePolicy;
+use crate::type_index::TypeIndex;
 
 #[derive(Clone, Default)]
 pub struct HostBridgeManager {
     inner: Arc<Mutex<HashMap<HostAlias, Arc<HostBridgeShared>>>>,
-    /// Configuration applied to bridges created from now on.
-    defaults: Arc<Mutex<HostBridgeConfig>>,
+    /// Applied to bridges created from now on.
+    defaults: Arc<Mutex<BridgeDefaults>>,
+}
+
+#[derive(Default)]
+struct BridgeDefaults {
+    config: HostBridgeConfig,
+    types: TypeIndex,
 }
 
 impl HostBridgeManager {
@@ -44,7 +51,10 @@ impl HostBridgeManager {
             return HostBridgeHandle::new(alias.clone(), shared.clone());
         }
         let alias = HostAlias::new(alias);
-        let buffers = HostBridgeBuffers::from_config(&self.defaults.lock());
+        let defaults = self.defaults.lock();
+        let mut buffers = HostBridgeBuffers::from_config(&defaults.config);
+        buffers.types = defaults.types.clone();
+        drop(defaults);
         let shared = Arc::new(HostBridgeShared {
             buffers: Mutex::new(buffers),
             ready: Condvar::new(),
@@ -57,7 +67,7 @@ impl HostBridgeManager {
     /// bridge's buffers.
     fn update(
         &self,
-        edit: impl FnOnce(&mut HostBridgeConfig),
+        edit: impl FnOnce(&mut BridgeDefaults),
         apply: impl Fn(&mut HostBridgeBuffers),
     ) {
         edit(&mut self.defaults.lock());
@@ -67,16 +77,26 @@ impl HostBridgeManager {
         }
     }
 
+    /// Resolve typed pushes and check fed payloads through `types` (a registry's
+    /// `PluginRegistry::type_index`) on every bridge. Engines set it when compiling a graph
+    /// from a registry; without one only builtin types resolve.
+    pub fn set_type_index(&self, types: TypeIndex) {
+        self.update(
+            |defaults| defaults.types = types.clone(),
+            |buffers| buffers.types = types.clone(),
+        );
+    }
+
     pub fn set_event_recording(&self, enabled: bool) {
         self.update(
-            |config| config.event_recording = enabled,
+            |defaults| defaults.config.event_recording = enabled,
             |buffers| buffers.events.set_enabled(enabled),
         );
     }
 
     pub fn set_event_limit(&self, limit: Option<usize>) {
         self.update(
-            |config| config.event_limit = limit,
+            |defaults| defaults.config.event_limit = limit,
             |buffers| buffers.events.set_limit(limit),
         );
     }
@@ -116,9 +136,9 @@ impl HostBridgeManager {
     ) -> Result<(), PolicyValidationError> {
         validate_stream_policy(&policy.pressure, &policy.freshness)?;
         self.update(
-            |config| match direction {
-                Direction::Inbound => config.default_input_policy = policy.clone(),
-                Direction::Outbound => config.default_output_policy = policy.clone(),
+            |defaults| match direction {
+                Direction::Inbound => defaults.config.default_input_policy = policy.clone(),
+                Direction::Outbound => defaults.config.default_output_policy = policy.clone(),
             },
             |buffers| buffers.ports_mut(direction).set_default_policy(&policy),
         );
@@ -128,7 +148,7 @@ impl HostBridgeManager {
     pub fn apply_config(&self, config: &HostBridgeConfig) -> Result<(), PolicyValidationError> {
         config.validate()?;
         self.update(
-            |defaults| *defaults = config.clone(),
+            |defaults| defaults.config = config.clone(),
             |buffers| buffers.apply_config(config),
         );
         Ok(())

@@ -1,6 +1,6 @@
 //! Type-erased payload storage backends.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::fmt;
 use std::sync::Arc;
 
@@ -24,6 +24,11 @@ pub trait PayloadStorage: Send + Sync + fmt::Debug {
         None
     }
     fn rust_type_name(&self) -> Option<&'static str> {
+        None
+    }
+    /// `TypeId` of the stored Rust value; `None` for storage that holds no Rust value of its
+    /// own (bytes).
+    fn rust_type_id(&self) -> Option<TypeId> {
         None
     }
     fn bytes_estimate(&self) -> Option<u64> {
@@ -77,6 +82,10 @@ impl<T: Send + Sync + 'static> PayloadStorage for TypedStorage<T> {
 
     fn rust_type_name(&self) -> Option<&'static str> {
         Some(std::any::type_name::<T>())
+    }
+
+    fn rust_type_id(&self) -> Option<TypeId> {
+        Some(TypeId::of::<T>())
     }
 
     fn bytes_estimate(&self) -> Option<u64> {

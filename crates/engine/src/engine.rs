@@ -370,6 +370,7 @@ impl Engine {
             host,
             node_labels,
             value_serializers: daedalus_runtime::host_bridge::primitive_value_serializer_map(),
+            types: daedalus_runtime::TypeIndex::default(),
         })
     }
 
@@ -440,7 +441,8 @@ impl Engine {
         let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
         let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
-            .with_capabilities(plugins.capabilities.clone());
+            .with_capabilities(plugins.capabilities.clone())
+            .with_type_index(plugins.type_index());
         let executor = self.configure_owned_executor(executor)?;
         Ok(CompiledRun {
             runtime_plan,
@@ -475,12 +477,15 @@ impl Engine {
         let prepared_runtime = prepared.build()?;
         let runtime_plan_cache = prepared_runtime.cache_status();
         let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
+        let types = plugins.type_index();
         self.configure_host_bridges(&bridges)?;
+        bridges.set_type_index(types.clone());
         bridges.populate_from_plan(runtime_plan.as_ref());
         let host = bridges.ensure_handle(host_alias);
         let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
             .with_capabilities(plugins.capabilities.clone())
+            .with_type_index(types.clone())
             .with_host_bridges(bridges.clone());
         let executor = self.configure_owned_executor(executor)?;
         let node_labels = Arc::from(
@@ -503,6 +508,7 @@ impl Engine {
             host,
             node_labels,
             value_serializers: plugins.value_serializers.clone(),
+            types,
         })
     }
 

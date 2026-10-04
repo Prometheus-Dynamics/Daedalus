@@ -13,6 +13,15 @@ pub struct RegisteredType {
     pub expr: TypeExpr,
 }
 
+/// A Rust type registered with two different type expressions.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("Rust type `{rust}` is already registered as {existing:?}; it cannot also be {new:?}")]
+pub struct TypeConflict {
+    pub rust: String,
+    pub existing: TypeExpr,
+    pub new: TypeExpr,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TypeRegistry {
     by_type_id: HashMap<TypeId, RegisteredType>,
@@ -82,19 +91,33 @@ impl TypeRegistry {
         Self::default()
     }
 
-    pub fn register_type<T: 'static>(&mut self, expr: TypeExpr) {
-        let rust = rust_type_key::<T>();
+    /// Register `expr` as the type expression of `T`. Registering the same expression again is
+    /// a no-op; a different one fails instead of replacing the first, so the result never
+    /// depends on registration order.
+    pub fn register_type<T: 'static>(&mut self, expr: TypeExpr) -> Result<(), TypeConflict> {
         let expr = expr.normalize();
-
+        if let Some(existing) = self.by_type_id.get(&TypeId::of::<T>()) {
+            return if existing.expr == expr {
+                Ok(())
+            } else {
+                Err(TypeConflict {
+                    rust: existing.rust.clone(),
+                    existing: existing.expr.clone(),
+                    new: expr,
+                })
+            };
+        }
+        let rust = rust_type_key::<T>();
         self.by_rust_name.insert(rust.clone(), expr.clone());
         self.by_type_id
             .insert(TypeId::of::<T>(), RegisteredType { rust, expr });
+        Ok(())
     }
 
     pub fn register_enum<T: 'static>(
         &mut self,
         variants: impl IntoIterator<Item = impl Into<String>>,
-    ) {
+    ) -> Result<(), TypeConflict> {
         let variants = variants
             .into_iter()
             .map(|name| EnumVariant {
@@ -102,7 +125,14 @@ impl TypeRegistry {
                 ty: None,
             })
             .collect();
-        self.register_type::<T>(TypeExpr::Enum(variants));
+        self.register_type::<T>(TypeExpr::Enum(variants))
+    }
+
+    /// Every registered Rust type, by `TypeId`, with its type expression.
+    pub fn registered_types(&self) -> impl Iterator<Item = (TypeId, &RegisteredType)> {
+        self.by_type_id
+            .iter()
+            .map(|(id, registered)| (*id, registered))
     }
 
     pub fn lookup_type<T: 'static>(&self) -> Option<TypeExpr> {
@@ -274,9 +304,8 @@ where
 /// or `PluginRegistry::type_registry` so independent registries do not share type
 /// state.
 ///
-pub fn register_type<T: 'static>(expr: TypeExpr) {
-    let mut guard = registry().write();
-    guard.register_type::<T>(expr);
+pub fn register_type<T: 'static>(expr: TypeExpr) -> Result<(), TypeConflict> {
+    registry().write().register_type::<T>(expr)
 }
 
 pub fn register_type_capability(ty: TypeExpr, capability: impl Into<String>) {
@@ -329,9 +358,10 @@ pub fn reset_global_registry() {
 
 /// Register an enum (variants only) for Rust type `T`.
 ///
-pub fn register_enum<T: 'static>(variants: impl IntoIterator<Item = impl Into<String>>) {
-    let mut guard = registry().write();
-    guard.register_enum::<T>(variants);
+pub fn register_enum<T: 'static>(
+    variants: impl IntoIterator<Item = impl Into<String>>,
+) -> Result<(), TypeConflict> {
+    registry().write().register_enum::<T>(variants)
 }
 
 /// Look up a previously registered `TypeExpr` for a Rust type `T`.
@@ -341,21 +371,34 @@ pub fn lookup_type<T: 'static>() -> Option<TypeExpr> {
     guard.lookup_type::<T>()
 }
 
+/// The type expression of a builtin Rust type: the scalars (integers, floats, `bool`, `String`,
+/// `Vec<u8>`, `()`) and `Option`/`Vec` of them, encoded as the node macros encode them. Depends
+/// on no registry.
 pub fn builtin_type_expr<T: 'static>() -> Option<TypeExpr> {
-    let tid = TypeId::of::<T>();
+    builtin_type_exprs().get(&TypeId::of::<T>()).cloned()
+}
 
-    macro_rules! find_builtin {
-        ($($ty:ty => $value_type:ident),* $(,)?) => {
-            $(
-                if tid == TypeId::of::<$ty>() {
-                    return Some(TypeExpr::Scalar(ValueType::$value_type));
-                }
-            )*
-        };
-    }
-    with_builtin_rust_scalar_types!(find_builtin);
-
-    None
+/// The type expression of every builtin Rust type (see [`builtin_type_expr`]) by `TypeId`.
+pub fn builtin_type_exprs() -> &'static HashMap<TypeId, TypeExpr> {
+    static BUILTINS: OnceLock<HashMap<TypeId, TypeExpr>> = OnceLock::new();
+    BUILTINS.get_or_init(|| {
+        let mut builtins = HashMap::new();
+        macro_rules! insert_builtins {
+            ($($ty:ty => $value_type:ident),* $(,)?) => {
+                $(
+                    let scalar = TypeExpr::Scalar(ValueType::$value_type);
+                    let optional = TypeExpr::Optional(Box::new(scalar.clone()));
+                    let list = TypeExpr::List(Box::new(scalar.clone()));
+                    builtins.entry(TypeId::of::<Option<$ty>>()).or_insert(optional);
+                    builtins.entry(TypeId::of::<Vec<$ty>>()).or_insert(list);
+                    // Scalars win over containers (`Vec<u8>` is `Bytes`, not a list of ints).
+                    builtins.insert(TypeId::of::<$ty>(), scalar);
+                )*
+            };
+        }
+        with_builtin_rust_scalar_types!(insert_builtins);
+        builtins
+    })
 }
 
 pub fn coerce_builtin_const_value<T>(value: &Value) -> Option<T>
@@ -457,7 +500,8 @@ mod tests {
 
         let mut left = TypeRegistry::new();
         let right = TypeRegistry::new();
-        left.register_type::<LocalType>(TypeExpr::Scalar(ValueType::Bool));
+        left.register_type::<LocalType>(TypeExpr::Scalar(ValueType::Bool))
+            .unwrap();
 
         assert_eq!(
             left.lookup_type::<LocalType>(),

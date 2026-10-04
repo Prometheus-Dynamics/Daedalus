@@ -8,7 +8,7 @@ use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{DirectHostRoute, NodeHandler};
 use daedalus_runtime::handles::PortId;
 use daedalus_runtime::host_bridge::{HostBridgeHandle, HostBridgeManager, ValueSerializerMap};
-use daedalus_runtime::{RuntimePlan, RuntimePlanExplanation, RuntimeSink};
+use daedalus_runtime::{RuntimePlan, RuntimePlanExplanation, RuntimeSink, TypeIndex};
 use daedalus_transport::{
     FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, TypeKey,
 };
@@ -24,7 +24,6 @@ pub use bindings::{
     HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
     HostGraphRunInput, HostGraphSubscription,
 };
-use daedalus_runtime::transport::type_key_of;
 pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
 
 /// In-process graph runner for host-driven applications.
@@ -50,6 +49,9 @@ pub struct HostGraph<H: NodeHandler> {
     /// Serializers used by `inspect_payload`; shared with the registry the graph was compiled
     /// from when compiled through a `PluginRegistry`.
     pub(crate) value_serializers: ValueSerializerMap,
+    /// The registry's type index (builtins only without a registry): resolves typed feeds and
+    /// checks raw payloads fed into the graph.
+    pub(crate) types: TypeIndex,
 }
 
 pub struct HostGraphStep<T> {
@@ -227,17 +229,24 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         &self.host
     }
 
-    /// Bind a typed host input once and reuse it across ticks.
-    pub fn bind_input<T>(&self, port: impl Into<PortId>) -> HostGraphInput<T>
+    /// The type index typed feeds resolve through (`PluginRegistry::type_index` of the registry
+    /// the graph was compiled from; builtins only otherwise).
+    pub fn type_index(&self) -> &TypeIndex {
+        &self.types
+    }
+
+    /// Bind a typed host input once and reuse it across ticks. Resolves `T`'s key now, so an
+    /// unknown type fails here rather than on every push.
+    pub fn bind_input<T>(&self, port: impl Into<PortId>) -> Result<HostGraphInput<T>, EngineError>
     where
         T: Send + Sync + 'static,
     {
-        HostGraphInput {
+        Ok(HostGraphInput {
             host: self.host.clone(),
             port: port.into(),
-            type_key: type_key_of::<T>(),
+            type_key: self.types.key_of::<T>()?,
             _ty: PhantomData,
-        }
+        })
     }
 
     /// Bind a raw payload input for dynamic or plugin-driven payloads.
@@ -302,7 +311,9 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         )
     }
 
-    /// Low-level typed feed. Prefer `run_once` for one-shot calls or `bind_input` for hot loops.
+    /// Low-level typed feed under `T`'s key in the graph's registry; an unknown type is
+    /// [`FeedOutcome::Rejected`]. Prefer `run_once` for one-shot calls or `bind_input` for hot
+    /// loops.
     pub fn push<T>(&self, port: impl Into<PortId>, value: T) -> FeedOutcome
     where
         T: Send + Sync + 'static,
@@ -338,6 +349,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
         output_port: impl AsRef<str>,
     ) -> Result<Option<(ExecutionTelemetry, Option<Payload>)>, EngineError> {
+        self.types.check_payload(&payload)?;
         self.runner
             .executor
             .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
@@ -356,21 +368,33 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     /// Bind a direct host lane for repeated single-input/single-output calls.
     ///
-    /// The lane resolves a route once and does not keep the port names, so ports are looked up
-    /// by reference like other read paths.
+    /// The lane resolves the route and `I`'s key once and does not keep the port names, so
+    /// ports are looked up by reference like other read paths.
     pub fn bind_lane<I>(
         &self,
         input_port: impl AsRef<str>,
         output_port: impl AsRef<str>,
-    ) -> Option<HostGraphLane<I>>
+    ) -> Result<HostGraphLane<I>, EngineError>
     where
         I: Send + Sync + 'static,
     {
+        Ok(HostGraphLane {
+            route: self.required_direct_route(input_port.as_ref(), output_port.as_ref())?,
+            type_key: self.types.key_of::<I>()?,
+            _input: PhantomData,
+        })
+    }
+
+    fn required_direct_route(
+        &self,
+        input_port: &str,
+        output_port: &str,
+    ) -> Result<DirectHostRoute, EngineError> {
         self.direct_host_route(input_port, output_port)
-            .map(|route| HostGraphLane {
-                route,
-                type_key: type_key_of::<I>(),
-                _input: PhantomData,
+            .ok_or_else(|| {
+                EngineError::Config(format!(
+                    "no direct host route from '{input_port}' to '{output_port}'"
+                ))
             })
     }
 
@@ -379,6 +403,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         route: &DirectHostRoute,
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), EngineError> {
+        self.types.check_payload(&payload)?;
         self.runner
             .executor
             .run_direct_host_route(route, payload)
@@ -390,6 +415,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         route: &DirectHostRoute,
         payload: Payload,
     ) -> Result<Option<Payload>, EngineError> {
+        self.types.check_payload(&payload)?;
         self.runner
             .executor
             .run_direct_host_route_payload(route, payload)
@@ -435,15 +461,9 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         O: Send + Sync + 'static,
     {
         let (input_port, output_port) = (input_port.as_ref(), output_port.as_ref());
-        let route = self
-            .direct_host_route(input_port, output_port)
-            .ok_or_else(|| {
-                EngineError::Config(format!(
-                    "no direct host route from '{input_port}' to '{output_port}'"
-                ))
-            })?;
-        let output =
-            self.tick_direct_route_payload(&route, Payload::owned(type_key_of::<I>(), input))?;
+        let route = self.required_direct_route(input_port, output_port)?;
+        let payload = Payload::owned(self.types.key_of::<I>()?, input);
+        let output = self.tick_direct_route_payload(&route, payload)?;
         output
             .map(|payload| {
                 into_owned_or_err::<O>(
@@ -527,7 +547,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         O: Send + Sync + 'static,
     {
         let feed_start = Instant::now();
-        self.push_as(input_port, type_key, value);
+        rejected(self.push_as(input_port, type_key, value))?;
         let feed_duration = feed_start.elapsed();
 
         let run_start = Instant::now();
@@ -565,8 +585,8 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         I::Value: Send + Sync + 'static,
         O: Send + Sync + 'static,
     {
-        let (input_port, type_key, value) = input.into_parts();
-        self.push_as(input_port, type_key, value);
+        let (input_port, type_key, value) = input.into_parts(&self.types)?;
+        rejected(self.push_as(input_port, type_key, value))?;
         self.tick_until_idle()?;
         self.drain_owned(output_port)
     }
@@ -642,6 +662,15 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         T: Clone + Send + Sync + 'static,
     {
         self.host.drain(port)
+    }
+}
+
+/// Turn a [`FeedOutcome::Rejected`] into an error; queue-policy outcomes (drops, replacements)
+/// stay successes.
+fn rejected(outcome: FeedOutcome) -> Result<FeedOutcome, EngineError> {
+    match outcome {
+        FeedOutcome::Rejected(error) => Err((*error).into()),
+        outcome => Ok(outcome),
     }
 }
 

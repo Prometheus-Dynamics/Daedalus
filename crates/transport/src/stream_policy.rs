@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::CorrelationId;
+use crate::{CorrelationId, TypeKeyError};
 
 /// Queue pressure policy used by sources, edges, and host outputs.
 ///
@@ -101,6 +101,9 @@ pub enum FeedOutcome {
     },
     Backpressured,
     Closed,
+    /// Refused before queueing: the payload's Rust type does not match the type registered for
+    /// its key, or a typed push found no key for its Rust type.
+    Rejected(Box<TypeKeyError>),
 }
 
 impl FeedOutcome {

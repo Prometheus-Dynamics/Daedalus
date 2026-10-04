@@ -401,7 +401,7 @@ mod tests {
         let mut calls = 0_u32;
         registry.on_stateful("counter", move |_node, _ctx, io| {
             calls += 1;
-            io.push(Some("out"), calls);
+            io.push(Some("out"), calls)?;
             Ok(())
         });
         let prefixed = registry

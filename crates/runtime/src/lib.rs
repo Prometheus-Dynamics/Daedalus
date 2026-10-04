@@ -24,6 +24,7 @@ pub mod state;
 mod state_error;
 pub mod stream;
 pub mod transport;
+pub mod type_index;
 pub use daedalus_transport as transport_types;
 
 daedalus_core::build_facts!();
@@ -122,3 +123,4 @@ pub use stream::{
     StreamWorkerConfig, StreamWorkerDiagnostics, StreamWorkerState, StreamWorkerStopError,
 };
 pub use transport::RuntimeTransport;
+pub use type_index::{TypeIndex, TypeKeyUses};

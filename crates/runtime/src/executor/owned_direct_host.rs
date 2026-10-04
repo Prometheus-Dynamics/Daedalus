@@ -163,7 +163,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
         )
-        .with_const_coercers(self.core.const_coercers.clone());
+        .with_const_coercers(self.core.const_coercers.clone())
+        .with_type_index(self.core.type_index.clone());
         self.handler
             .run(&route.node, &route.ctx, &mut io)
             .map_err(|error| ExecuteError::HandlerFailed {
@@ -209,7 +210,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
         )
-        .with_const_coercers(self.core.const_coercers.clone());
+        .with_const_coercers(self.core.const_coercers.clone())
+        .with_type_index(self.core.type_index.clone());
         self.handler
             .run(&route.node, &route.ctx, &mut io)
             .map_err(|error| ExecuteError::HandlerFailed {

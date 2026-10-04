@@ -1,4 +1,4 @@
-pub use daedalus_registry::{type_key_of, typeexpr_transport_key};
+pub use daedalus_registry::{transport_key_typeexpr, typeexpr_transport_key};
 use daedalus_transport::{
     AccessMode, AdaptRequest, AdapterId, AdapterTable, Payload, TransportError,
 };

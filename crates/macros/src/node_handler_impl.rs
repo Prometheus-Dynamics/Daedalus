@@ -82,7 +82,7 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
                 let result = #call;
                 match result {
                     Ok(val) => {
-                        io.push(Some(#out_port), val);
+                        io.push(Some(#out_port), val)?;
                         Ok(())
                     }
                     Err(e) => Err(e),

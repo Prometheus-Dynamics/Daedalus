@@ -1,10 +1,10 @@
-//! The C-safe table of boundary types a plugin exports, and the host-side comparison that
-//! refuses a plugin whose Rust types differ from the host's for the same `TypeKey`.
+//! The C-safe table of boundary types a plugin exports. The host compares it with its registry
+//! ([`PluginRegistry::boundary_type_conflicts`]) and refuses a plugin whose Rust types differ
+//! from the host's for the same `TypeKey`.
 
 use super::{StrSink, StrView};
-use crate::runtime::plugins::PluginRegistry;
+use crate::runtime::plugins::{BoundaryTypeConflict, PluginRegistry};
 use crate::transport::{RustTypeIdentity, TypeKey};
-use std::fmt;
 
 /// One `TypeKey` a plugin consumes, produces or registers, with the Rust type behind it in the
 /// plugin's build (see [`PluginRegistry::boundary_types`]).
@@ -32,51 +32,13 @@ pub struct BoundaryTypeTable {
 pub type BoundaryTypesFn =
     unsafe extern "C" fn(table: *mut BoundaryTypeTable, sink: StrSink) -> bool;
 
-/// A `TypeKey` the host and a plugin map to different Rust types.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BoundaryTypeMismatch {
-    pub key: TypeKey,
-    pub host_type: RustTypeIdentity,
-    pub plugin_type: RustTypeIdentity,
-}
-
-impl fmt::Display for BoundaryTypeMismatch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "`{}`: host {}, plugin {}",
-            self.key, self.host_type, self.plugin_type
-        )
-    }
-}
-
-/// Join mismatches for an error message.
-pub(super) fn describe(mismatches: &[BoundaryTypeMismatch]) -> String {
-    mismatches
+/// Join conflicts for an error message.
+pub(super) fn describe(conflicts: &[BoundaryTypeConflict]) -> String {
+    conflicts
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("; ")
-}
-
-/// Every plugin boundary type whose key the host's `registry` maps to another Rust type. Keys
-/// the host does not know are fine.
-pub(super) fn mismatches(
-    registry: &PluginRegistry,
-    plugin_types: &[(TypeKey, RustTypeIdentity)],
-) -> Vec<BoundaryTypeMismatch> {
-    let host_types = registry.boundary_types();
-    plugin_types
-        .iter()
-        .filter_map(|(key, plugin_type)| {
-            let host_type = host_types.get(key)?;
-            (!host_type.same_type(plugin_type)).then(|| BoundaryTypeMismatch {
-                key: key.clone(),
-                host_type: *host_type,
-                plugin_type: *plugin_type,
-            })
-        })
-        .collect()
 }
 
 /// Read a table returned by a plugin's [`BoundaryTypesFn`].

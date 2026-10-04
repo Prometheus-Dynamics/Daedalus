@@ -9,8 +9,9 @@ use daedalus_data::typing;
 use daedalus_transport::Payload;
 use smallvec::SmallVec;
 
-use crate::executor::CorrelatedPayload;
+use crate::executor::{CorrelatedPayload, NodeError};
 use crate::handles::PortId;
+use crate::type_index::TypeIndex;
 
 pub const DEFAULT_OUTPUT_PORT: &str = "out";
 
@@ -54,6 +55,7 @@ pub struct NodeIo {
     inputs: SmallVec<[NodePort; 4]>,
     outputs: SmallVec<[NodePort; 4]>,
     const_coercers: Option<ConstCoercerMap>,
+    types: Option<TypeIndex>,
 }
 
 impl NodeIo {
@@ -62,6 +64,7 @@ impl NodeIo {
             inputs: SmallVec::new(),
             outputs: SmallVec::new(),
             const_coercers: None,
+            types: None,
         }
     }
 
@@ -70,6 +73,7 @@ impl NodeIo {
             inputs: inputs.into_iter().collect(),
             outputs: SmallVec::new(),
             const_coercers: None,
+            types: None,
         }
     }
 
@@ -80,11 +84,18 @@ impl NodeIo {
             inputs,
             outputs: SmallVec::new(),
             const_coercers: None,
+            types: None,
         }
     }
 
     pub fn with_const_coercers(mut self, const_coercers: Option<ConstCoercerMap>) -> Self {
         self.const_coercers = const_coercers;
+        self
+    }
+
+    /// Resolve generic pushes ([`Self::push_to`]) through `types`.
+    pub fn with_type_index(mut self, types: Option<TypeIndex>) -> Self {
+        self.types = types;
         self
     }
 
@@ -178,48 +189,37 @@ impl NodeIo {
         self.push_arc_as_to(DEFAULT_OUTPUT_PORT, type_key, value);
     }
 
-    pub fn push_any<T>(&mut self, port: Option<&str>, value: T)
+    /// Push `value` under the key the graph's registry gives `T` (its `TypeIndex`, see
+    /// [`Self::with_type_index`]; builtins only without one). Fails when the registry has no
+    /// single key for `T`; use [`Self::push_as_to`] to name the key.
+    pub fn push_to<T>(&mut self, port: impl Into<PortId>, value: T) -> Result<(), NodeError>
     where
         T: Send + Sync + 'static,
     {
-        let type_key = crate::transport::type_key_of::<T>();
-        self.push_as_to(port_or_default(port), type_key, value);
-    }
-
-    pub fn push_to<T>(&mut self, port: impl Into<PortId>, value: T)
-    where
-        T: Send + Sync + 'static,
-    {
-        let type_key = crate::transport::type_key_of::<T>();
+        let type_key = self.type_index().key_of::<T>()?;
         self.push_as_to(port, type_key, value);
+        Ok(())
     }
 
-    pub fn push_default<T>(&mut self, value: T)
+    /// [`Self::push_to`] on [`DEFAULT_OUTPUT_PORT`].
+    pub fn push_default<T>(&mut self, value: T) -> Result<(), NodeError>
     where
         T: Send + Sync + 'static,
     {
-        self.push_to(DEFAULT_OUTPUT_PORT, value);
+        self.push_to(DEFAULT_OUTPUT_PORT, value)
     }
 
-    pub fn push<T>(&mut self, port: Option<&str>, value: T)
+    /// [`Self::push_to`] on `port`, or [`DEFAULT_OUTPUT_PORT`] for `None`.
+    pub fn push<T>(&mut self, port: Option<&str>, value: T) -> Result<(), NodeError>
     where
         T: Send + Sync + 'static,
     {
-        self.push_to(port_or_default(port), value);
+        self.push_to(port_or_default(port), value)
     }
 
-    pub fn push_output<T>(&mut self, port: Option<&str>, value: T)
-    where
-        T: Send + Sync + 'static,
-    {
-        self.push_to(port_or_default(port), value);
-    }
-
-    pub fn push_output_default<T>(&mut self, value: T)
-    where
-        T: Send + Sync + 'static,
-    {
-        self.push_default(value);
+    /// The type index generic pushes resolve through.
+    pub fn type_index(&self) -> &TypeIndex {
+        self.types.as_ref().unwrap_or_else(|| TypeIndex::builtin())
     }
 
     pub fn push_value(&mut self, port: Option<&str>, value: Value) {
