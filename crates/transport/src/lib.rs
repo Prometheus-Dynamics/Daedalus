@@ -57,7 +57,7 @@ pub use payload_lifecycle::{
     BranchKind, BranchPayload, CorrelationId, PayloadLifecycleStage, PayloadLineage,
     PayloadRelease, PayloadReleaseQueue, ReleaseContext, ReleaseMode,
 };
-pub use rust_type::RustTypeIdentity;
+pub use rust_type::{RustTypeIdentity, TypeKeyError};
 pub use stream_policy::{
     CoalesceStrategy, DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, PolicyQueue,
     PolicyValidationError, PressurePolicy, PushOutcome, validate_stream_policy,

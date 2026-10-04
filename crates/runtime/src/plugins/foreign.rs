@@ -36,7 +36,7 @@ impl PluginRegistry {
         self.ensure_open()?;
         let owner_key = owner_key.into();
         self.register_foreign_interface::<I>()?;
-        self.record_boundary_type::<O>(&owner_key)?;
+        self.register_boundary_type::<O>(owner_key.clone())?;
         let options = TransportAdapterOptions::default()
             .cost(AdaptCost::view())
             .access(AccessMode::Read);

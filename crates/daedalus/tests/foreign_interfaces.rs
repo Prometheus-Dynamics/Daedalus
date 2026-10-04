@@ -102,7 +102,7 @@ fn frame_views_read_host_frames_in_place() {
         .graph_builder()
         .expect("graph builder")
         .input_typed::<GrayFrame>("frame")
-        .try_node(&sum)
+        .and_then(|b| b.try_node(&sum))
         .and_then(|b| b.try_node(&sequence))
         .and_then(|b| b.try_connect("frame", &sum.inputs.frame))
         .and_then(|b| b.try_connect("frame", &sequence.inputs.frame))

@@ -146,6 +146,9 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
         payload.foreign_handle().unwrap()
     ));
     assert!(shared.foreign_handle().is_none());
+    // A handle is no Rust value of the key's type, so fed-payload identity checks skip it.
+    assert_eq!(payload.storage_rust_type_id(), None);
+    assert!(shared.storage_rust_type_id().is_some());
 
     // Boundary storage has no `Arc` to share: the handle keeps the payload alive instead.
     let boundary = Payload::boundary_owned(

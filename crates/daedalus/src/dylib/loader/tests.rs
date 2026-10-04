@@ -154,11 +154,19 @@ fn boundary_types_are_exported_and_checked_against_the_host() {
 }
 
 #[test]
-fn boundary_type_mismatch_refuses_install_before_anything_is_installed() {
+fn boundary_type_conflict_refuses_install_before_anything_is_installed() {
     let library =
         load_with(|descriptor| descriptor.boundary_types = forged_boundary_types).unwrap();
-    // Unknown to the host: fine.
-    library.install_into(&mut PluginRegistry::new()).unwrap();
+    // Unknown to the host, but the exported table is recorded after install and contradicts
+    // the type the plugin registered itself.
+    let err = library
+        .install_into(&mut PluginRegistry::new())
+        .unwrap_err();
+    assert!(
+        matches!(err, PluginLibraryError::BoundaryTypeConflict { ref conflicts, .. }
+            if conflicts.len() == 1),
+        "{err}"
+    );
 
     let mut registry = PluginRegistry::new();
     registry
@@ -166,18 +174,21 @@ fn boundary_type_mismatch_refuses_install_before_anything_is_installed() {
         .unwrap();
     let err = library.install_into(&mut registry).unwrap_err();
     let message = err.to_string();
-    let PluginLibraryError::BoundaryTypeMismatch { plugin, mismatches } = err else {
+    let PluginLibraryError::BoundaryTypeConflict { plugin, conflicts } = err else {
         panic!("unexpected error: {err:?}");
     };
     assert_eq!(plugin, "loader_test");
-    assert_eq!(mismatches.len(), 1);
-    assert_eq!(mismatches[0].key, TypeKey::new(FRAME_KEY));
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].key, TypeKey::new(FRAME_KEY));
     assert_eq!(
-        mismatches[0].host_type,
+        conflicts[0].registered,
         RustTypeIdentity::of::<LoaderFrame>()
     );
-    assert_ne!(mismatches[0].plugin_type, mismatches[0].host_type);
-    assert!(message.contains("`loader:frame`: host `"), "{message}");
+    assert_ne!(conflicts[0].new, conflicts[0].registered);
+    assert!(
+        message.contains("`loader:frame`: registered `"),
+        "{message}"
+    );
     assert!(message.contains("same cargo build"), "{message}");
     assert!(!registry.plugin_manifests.contains_key("loader_test"));
 }

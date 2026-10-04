@@ -27,6 +27,8 @@ pub(crate) struct ExecutorCore {
     /// Host-bridge nodes resolved when bridges were attached; empty without bridges.
     pub(crate) host_nodes: Arc<[super::serial::HostNodeIo]>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
+    /// Handed to every `NodeIo` so generic pushes resolve through the graph's registry.
+    pub(crate) type_index: Option<crate::type_index::TypeIndex>,
     pub(crate) runtime_transport: Option<Arc<crate::transport::RuntimeTransport>>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
     pub(crate) node_metadata: NodeMetadataStore,
@@ -60,6 +62,7 @@ impl ExecutorCore {
             worker_pool: Arc::new(OnceLock::new()),
             host_nodes: Arc::new([]),
             const_coercers: None,
+            type_index: None,
             runtime_transport: None,
             graph_metadata: Arc::new(graph_metadata.clone()),
             node_metadata: init.node_metadata.clone(),
@@ -93,6 +96,7 @@ impl ExecutorCore {
             worker_pool: self.worker_pool.clone(),
             host_nodes: self.host_nodes.clone(),
             const_coercers: self.const_coercers.clone(),
+            type_index: self.type_index.clone(),
             runtime_transport: self.runtime_transport.clone(),
             graph_metadata: self.graph_metadata.clone(),
             node_metadata: self.node_metadata.clone(),

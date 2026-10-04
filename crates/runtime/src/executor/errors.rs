@@ -31,6 +31,12 @@ impl std::fmt::Display for NodeError {
 
 impl std::error::Error for NodeError {}
 
+impl From<daedalus_transport::TypeKeyError> for NodeError {
+    fn from(error: daedalus_transport::TypeKeyError) -> Self {
+        NodeError::Handler(error.to_string())
+    }
+}
+
 impl NodeError {
     /// Return a stable string code for this error.
     pub fn code(&self) -> &'static str {

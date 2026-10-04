@@ -117,8 +117,9 @@ pub(crate) fn run_order<H: NodeHandler>(
             None
         };
         let inputs = collect_inputs(exec, node_idx)?;
-        let mut io =
-            NodeIo::from_inputs(inputs).with_const_coercers(exec.core.const_coercers.clone());
+        let mut io = NodeIo::from_inputs(inputs)
+            .with_const_coercers(exec.core.const_coercers.clone())
+            .with_type_index(exec.core.type_index.clone());
         let ctx = ExecutionContext {
             state: exec.core.state.clone(),
             node_id: exec.core.node_ids[node_idx].clone(),

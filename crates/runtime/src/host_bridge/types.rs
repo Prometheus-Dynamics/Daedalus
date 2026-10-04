@@ -110,9 +110,10 @@ impl HostPortStats {
                 self.accepted = self.accepted.saturating_add(1);
                 &mut self.replaced
             }
-            FeedOutcome::Dropped { .. } | FeedOutcome::Backpressured | FeedOutcome::Closed => {
-                &mut self.dropped
-            }
+            FeedOutcome::Dropped { .. }
+            | FeedOutcome::Backpressured
+            | FeedOutcome::Closed
+            | FeedOutcome::Rejected(_) => &mut self.dropped,
         };
         *counter = counter.saturating_add(1);
     }

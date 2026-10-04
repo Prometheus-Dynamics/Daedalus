@@ -1,12 +1,38 @@
-//! Rust types behind transport keys: foreign-type keys, the fail-loud check for unkeyed
-//! foreign port types, and the per-key [`RustTypeIdentity`] table that dynamic plugin
-//! installation compares between host and plugin.
+//! Rust types behind transport keys: types that own a key (strict, one key per type and one
+//! type per key), the fail-loud check for unkeyed foreign port types, the per-key
+//! [`RustTypeIdentity`] table that dynamic plugin installation compares between host and plugin,
+//! and the frozen [`TypeIndex`] graphs resolve generic pushes through.
 
 use super::*;
+use crate::type_index::{TypeIndex, TypeKeyUses};
 use daedalus_transport::RustTypeIdentity;
+use std::any::TypeId;
+use std::collections::HashMap;
+use std::fmt;
 
 /// Crates whose types keep their `rust:` fallback key without an error.
 const STD_CRATES: &[&str] = &["core", "alloc", "std"];
+
+/// One type key registered for two different Rust types (two plugins, a plugin and the host,
+/// or a dynamic plugin built separately from the host).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundaryTypeConflict {
+    pub key: TypeKey,
+    /// The Rust type the registry already maps `key` to.
+    pub registered: RustTypeIdentity,
+    /// The Rust type the rejected registration uses.
+    pub new: RustTypeIdentity,
+}
+
+impl fmt::Display for BoundaryTypeConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "`{}`: registered {}, new {}",
+            self.key, self.registered, self.new
+        )
+    }
+}
 
 impl PluginRegistry {
     /// Record that payloads under `key` hold the Rust type `T`.
@@ -14,32 +40,102 @@ impl PluginRegistry {
     /// Node macros, `#[adapt]`, [`Self::register_daedalus_type`] and
     /// [`Self::register_foreign_type`] call this; call it directly for a type the host wraps in
     /// payloads itself (`Payload::shared_with(key, Arc<T>, ..)`) without registering it otherwise,
-    /// so dynamic plugins using the key are checked against it (see
-    /// [`Self::boundary_types`]). Fails when `key` is already recorded for another Rust type.
+    /// so dynamic plugins using the key are checked against it (see [`Self::boundary_types`]) and
+    /// generic pushes of `T` resolve to `key` (see [`Self::type_index`]). Fails with
+    /// [`PluginError::BoundaryTypeConflict`] when `key` is already recorded for another Rust
+    /// type. Structural keys (`typeexpr:...`, e.g. `List(Int)`) name no single Rust type and
+    /// only feed the type index.
     pub fn register_boundary_type<T: 'static>(
         &mut self,
         key: impl Into<TypeKey>,
     ) -> PluginResult<()> {
         self.ensure_open()?;
         let key = key.into();
-        let new = RustTypeIdentity::of::<T>();
-        match self.boundary_types.get(&key) {
-            Some(existing) if existing.same_type(&new) => Ok(()),
-            Some(existing) => Err(PluginError::BoundaryTypeConflict {
-                key,
-                existing: *existing,
-                new,
-            }),
-            None => {
-                self.boundary_types.insert(key, new);
-                Ok(())
-            }
+        if !is_structural(&key) {
+            self.record_boundary_identity(&key, RustTypeIdentity::of::<T>())?;
         }
+        self.type_key_uses
+            .entry(TypeId::of::<T>())
+            .or_default()
+            .insert(key);
+        Ok(())
+    }
+
+    /// Record Rust types reported for keys by another build (a dynamic plugin's
+    /// `boundary_types()`). Fails on the first key already recorded for another Rust type; use
+    /// [`Self::boundary_type_conflicts`] first to report all of them.
+    pub fn register_boundary_identities<'a>(
+        &mut self,
+        types: impl IntoIterator<Item = &'a (TypeKey, RustTypeIdentity)>,
+    ) -> PluginResult<()> {
+        self.ensure_open()?;
+        types
+            .into_iter()
+            .try_for_each(|(key, identity)| self.record_boundary_identity(key, *identity))
+    }
+
+    /// Every entry of `types` whose key this registry maps to another Rust type.
+    pub fn boundary_type_conflicts<'a>(
+        &self,
+        types: impl IntoIterator<Item = &'a (TypeKey, RustTypeIdentity)>,
+    ) -> Vec<BoundaryTypeConflict> {
+        types
+            .into_iter()
+            .filter_map(|(key, new)| {
+                let registered = *self.boundary_types.get(key)?;
+                (!registered.same_type(new)).then(|| BoundaryTypeConflict {
+                    key: key.clone(),
+                    registered,
+                    new: *new,
+                })
+            })
+            .collect()
+    }
+
+    fn record_boundary_identity(
+        &mut self,
+        key: &TypeKey,
+        new: RustTypeIdentity,
+    ) -> PluginResult<()> {
+        if let Some(conflict) = self.boundary_type_conflicts(&[(key.clone(), new)]).pop() {
+            return Err(PluginError::BoundaryTypeConflict(conflict));
+        }
+        self.boundary_types.entry(key.clone()).or_insert(new);
+        Ok(())
     }
 
     /// The Rust type recorded for each transport key (see [`Self::register_boundary_type`]).
     pub fn boundary_types(&self) -> &BTreeMap<TypeKey, RustTypeIdentity> {
         &self.boundary_types
+    }
+
+    /// Freeze what this registry knows about Rust types into a [`TypeIndex`]: each type
+    /// resolves to the key it owns (`#[type_key]`/`DaedalusTypeExpr`, a foreign-type mapping,
+    /// [`Self::type_registry`]) or else to the single key ports and adapters use it under, and
+    /// each key to the Rust type recorded for it. Graph builders and compiled graphs capture
+    /// one, so lookups only depend on this registry, never on install order or on other
+    /// registries in the process.
+    pub fn type_index(&self) -> TypeIndex {
+        let mut types: HashMap<TypeId, TypeKeyUses> = self
+            .type_key_uses
+            .iter()
+            .map(|(id, used)| {
+                let uses = TypeKeyUses {
+                    owned: None,
+                    used: used.clone(),
+                };
+                (*id, uses)
+            })
+            .collect();
+        for (id, registered) in self.type_registry.registered_types() {
+            types.entry(id).or_default().owned = Some(typeexpr_transport_key(&registered.expr));
+        }
+        TypeIndex::new(
+            types,
+            self.boundary_types
+                .iter()
+                .map(|(key, identity)| (key.clone(), *identity)),
+        )
     }
 
     /// Give a Rust type defined in another crate, which declares no key itself, the transport
@@ -48,13 +144,50 @@ impl PluginRegistry {
     /// Prefer the owning crate's own Daedalus integration when it has one: never mint a second
     /// key for a type whose crate already owns one. Registers the type with this registry's and
     /// the process-global typing registry (so node macros installed afterwards resolve it), a
-    /// transport type declaration, and the boundary type.
+    /// placeholder transport type declaration (the owner's declaration may replace it), and the
+    /// boundary type. Fails when `T` already owns another key or `key` names another Rust type.
     pub fn register_foreign_type<T: 'static>(&mut self, key: &str) -> PluginResult<()> {
+        self.register_owned_type::<T>(key, |registry| {
+            registry.register_transport_type_decl(TypeKey::new(key), TypeExpr::opaque(key))
+        })
+    }
+
+    /// Make `key` the key `T` owns, after `declare` registered the key's type declaration.
+    ///
+    /// Strict, so the result never depends on registration order: registering the same type
+    /// under the same key again is a no-op, while another key for `T`
+    /// ([`PluginError::TypeKeyedTwice`]), another Rust type for `key`
+    /// ([`PluginError::BoundaryTypeConflict`]) or another declaration for `key`
+    /// ([`PluginError::TypeDeclarationConflict`]) fails before anything is registered.
+    pub(super) fn register_owned_type<T: 'static>(
+        &mut self,
+        key: &str,
+        declare: impl FnOnce(&mut Self) -> PluginResult<()>,
+    ) -> PluginResult<()> {
         self.ensure_open()?;
-        let expr = TypeExpr::opaque(key);
-        self.type_registry.register_type::<T>(expr.clone());
-        daedalus_data::typing::register_type::<T>(expr.clone());
-        self.register_transport_type_decl(TypeKey::new(key), expr)?;
+        let own = TypeExpr::opaque(key);
+        let keyed_twice = |existing: TypeExpr| PluginError::TypeKeyedTwice {
+            rust_type: std::any::type_name::<T>(),
+            existing: typeexpr_transport_key(&existing),
+            new: TypeKey::new(key),
+        };
+        if let Some(existing) = self.type_registry.lookup_type::<T>()
+            && existing != own
+        {
+            return Err(keyed_twice(existing));
+        }
+        let identity = [(TypeKey::new(key), RustTypeIdentity::of::<T>())];
+        if let Some(conflict) = self.boundary_type_conflicts(&identity).pop() {
+            return Err(PluginError::BoundaryTypeConflict(conflict));
+        }
+        // Node macros resolve types without a key of their own through the process-global
+        // typing registry, so a type keyed differently by another registry fails here too.
+        daedalus_data::typing::register_type::<T>(own.clone())
+            .map_err(|conflict| keyed_twice(conflict.existing))?;
+        declare(self)?;
+        self.type_registry
+            .register_type::<T>(own)
+            .map_err(|conflict| keyed_twice(conflict.existing))?;
         self.register_boundary_type::<T>(TypeKey::new(key))
     }
 
@@ -64,7 +197,7 @@ impl PluginRegistry {
     /// from the type itself (`DaedalusTypeExpr`) or an explicit `type_key`/`from`/`to`. An
     /// undeclared `rust:` fallback key for a type from another crate depends on whether some
     /// other code registered the type first, so it fails with
-    /// [`PluginError::UnkeyedForeignType`]. Structural keys (`typeexpr:...`) are skipped.
+    /// [`PluginError::UnkeyedForeignType`].
     #[doc(hidden)]
     pub fn register_port_type<T: 'static>(
         &mut self,
@@ -82,16 +215,7 @@ impl PluginRegistry {
                 key,
             });
         }
-        self.record_boundary_type::<T>(&key)
-    }
-
-    /// [`Self::register_boundary_type`] for keys that name one type; structural keys
-    /// (`typeexpr:...`, e.g. `List(Int)`) are skipped.
-    pub(super) fn record_boundary_type<T: 'static>(&mut self, key: &TypeKey) -> PluginResult<()> {
-        if key.as_str().starts_with("typeexpr:") {
-            return Ok(());
-        }
-        self.register_boundary_type::<T>(key.clone())
+        self.register_boundary_type::<T>(key)
     }
 }
 
@@ -104,6 +228,11 @@ pub struct PortTypeUse<'a> {
     pub port: &'a str,
     /// `module_path!()` of the declaring code.
     pub defined_in: &'a str,
+}
+
+/// Structural keys (`typeexpr:...`) describe a shape that many Rust types share.
+fn is_structural(key: &TypeKey) -> bool {
+    key.as_str().starts_with("typeexpr:")
 }
 
 /// Whether `rust_type` (a `type_name`) is a path into a crate other than the one `module_path`

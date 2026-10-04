@@ -52,7 +52,7 @@ for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plu
     let schema = library.schema(); // readable even if the plugin cannot be installed
     tracing::info!(path = %library.path().display(), plugin = %schema.plugin.name,
         nodes = schema.nodes.len(), "found plugin");
-    library.install_into(&mut registry)?; // Incompatible / BoundaryTypeMismatch on a mismatch
+    library.install_into(&mut registry)?; // Incompatible / BoundaryTypeConflict on a mismatch
     libraries.push(library);
 }
 ```
@@ -75,8 +75,12 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
   type key its nodes and adapters consume or produce and every type it registers, with the Rust
   type behind it: `TypeId` hash, size, align, name; `PluginLibrary::boundary_types()`) against
   the host registry's (`PluginRegistry::boundary_types()`). A key the host maps to another Rust
-  type fails with `PluginLibraryError::BoundaryTypeMismatch`, listing every such key; keys the
-  host does not know are accepted. `PLUGIN_ABI_VERSION` 6 added this table to the descriptor.
+  type fails with `PluginLibraryError::BoundaryTypeConflict`, listing every such key as a
+  `BoundaryTypeConflict` (the same type static installs fail with,
+  `PluginError::BoundaryTypeConflict`); keys the host does not know are accepted. After a
+  successful install the plugin's table is recorded in the host registry, so later plugins, typed
+  pushes and payloads fed to the host bridge are checked against it. `PLUGIN_ABI_VERSION` 6 added
+  this table to the descriptor.
 - `install_into` also compares the foreign interfaces the plugin uses (key, version, vtable
   layout hash; `PluginLibrary::foreign_interfaces()`) with the host registry's
   (`PluginRegistry::foreign_interfaces()`) and fails with
@@ -113,6 +117,10 @@ styx:framelease`. Now:
   ``plugin `helios_cv` uses type keys for different Rust types than the host (`styx:framelease`:
   host `styx_core::frame::FrameLease` (type id ..., size 48, align 8), plugin ...); Rust-ABI
   plugins must come from the same cargo build as the host, ...``;
+- a payload the host feeds under a registered key but built with another Rust type (say, by a
+  separately built frame source) is refused at the host bridge, before any node runs:
+  `FeedOutcome::Rejected` with ``payload for `styx:framelease` holds `...` but this graph
+  expects `styx_core::frame::FrameLease` (built separately?)``;
 - a downcast that still fails names both Rust types: ``payload type mismatch: same TypeKey
   `styx:framelease`, different Rust type (expected `...`, found `...`); the producer and consumer
   were likely built separately``.

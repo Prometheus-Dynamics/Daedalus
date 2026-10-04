@@ -178,7 +178,7 @@ fn run_metrics_off_wall_payload_take() -> Result<Duration, Box<dyn std::error::E
 
 fn run_metrics_off_bound_push_take() -> Result<Duration, Box<dyn std::error::Error>> {
     let mut runtime = build_runtime(MetricsLevel::Off)?;
-    let input = runtime.bind_input::<i64>("in");
+    let input = runtime.bind_input::<i64>("in")?;
     let output = runtime.bind_output::<i64>("out");
     for value in 0..WARMUP_ITERS {
         input.push(value);
@@ -287,9 +287,7 @@ fn run_metrics_off_cached_direct_payload() -> Result<Duration, Box<dyn std::erro
 
 fn run_metrics_off_bound_lane() -> Result<Duration, Box<dyn std::error::Error>> {
     let mut runtime = build_runtime(MetricsLevel::Off)?;
-    let lane = runtime
-        .bind_lane::<i64>("in", "out")
-        .ok_or("bound lane unsupported")?;
+    let lane = runtime.bind_lane::<i64>("in", "out")?;
     for value in 0..WARMUP_ITERS {
         let output = runtime.run_lane(&lane, value)?;
         let _ = output

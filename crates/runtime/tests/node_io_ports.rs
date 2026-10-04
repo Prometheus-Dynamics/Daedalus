@@ -68,7 +68,7 @@ fn node_io_respects_ports_and_policies() {
 #[test]
 fn node_io_default_output_helpers_use_default_port() {
     let mut io = NodeIo::empty();
-    io.push_default(7_i64);
+    io.push_default(7_i64).unwrap();
     io.push_value_default(Value::Bool(true));
 
     let outputs = io.take_outputs();
@@ -85,7 +85,7 @@ fn node_io_default_output_helpers_use_default_port() {
 #[test]
 fn node_io_explicit_output_helpers_preserve_ports() {
     let mut io = NodeIo::empty();
-    io.push_to("custom", 9_i64);
+    io.push_to("custom", 9_i64).unwrap();
     io.push_value_to("value", Value::Int(11));
 
     let outputs = io.take_outputs();

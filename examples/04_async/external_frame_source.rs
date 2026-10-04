@@ -146,7 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // A typed host input fans out to ports of different types; the planner adapts per edge.
     let graph = registry
         .graph_builder()?
-        .input_typed::<SyntheticFrame>("frame")
+        .input_typed::<SyntheticFrame>("frame")?
         .try_node(&luma)?
         .try_node(&meta)?
         .try_connect("frame", &luma.inputs.frame)?

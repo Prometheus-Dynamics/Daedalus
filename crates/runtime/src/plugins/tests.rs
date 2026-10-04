@@ -8,7 +8,8 @@ fn plugin_registry_type_registries_are_isolated() {
     let mut left = PluginRegistry::bare();
     let right = PluginRegistry::bare();
     left.type_registry
-        .register_type::<LocalType>(TypeExpr::Scalar(ValueType::Bool));
+        .register_type::<LocalType>(TypeExpr::Scalar(ValueType::Bool))
+        .unwrap();
 
     assert_eq!(
         left.type_registry.lookup_type::<LocalType>(),

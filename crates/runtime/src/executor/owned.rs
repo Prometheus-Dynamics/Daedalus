@@ -209,6 +209,13 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
+    /// Resolve handlers' generic pushes (`NodeIo::push_to`) through a registry's type index
+    /// (`PluginRegistry::type_index`).
+    pub fn with_type_index(mut self, types: crate::type_index::TypeIndex) -> Self {
+        self.apply_type_index(types);
+        self
+    }
+
     pub fn with_data_size_inspectors(mut self, inspectors: RuntimeDataSizeInspectors) -> Self {
         self.apply_data_size_inspectors(inspectors);
         self

@@ -60,6 +60,8 @@ pub enum GraphBuildError {
         id: String,
         source: IdValidationError,
     },
+    #[error(transparent)]
+    TypeKey(#[from] daedalus_transport::TypeKeyError),
 }
 
 /// Conversion into a graph port reference.

@@ -169,7 +169,7 @@ fn one_key_names_one_rust_type() {
         .register_boundary_type::<Right>("test:shared")
         .unwrap_err();
     assert!(
-        matches!(err, PluginError::BoundaryTypeConflict { ref key, .. } if key.as_str() == "test:shared"),
+        matches!(err, PluginError::BoundaryTypeConflict(ref conflict) if conflict.key.as_str() == "test:shared"),
         "{err}"
     );
 }

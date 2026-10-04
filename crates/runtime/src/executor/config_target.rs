@@ -61,6 +61,10 @@ pub(crate) trait ExecutorConfigTarget {
         self.core_mut().const_coercers = Some(coercers);
     }
 
+    fn apply_type_index(&mut self, types: crate::type_index::TypeIndex) {
+        self.core_mut().type_index = Some(types);
+    }
+
     fn apply_data_size_inspectors(&mut self, inspectors: RuntimeDataSizeInspectors) {
         self.core_mut().data_size_inspectors = inspectors;
     }

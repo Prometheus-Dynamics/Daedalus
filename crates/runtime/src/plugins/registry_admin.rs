@@ -25,6 +25,7 @@ impl PluginRegistry {
             plugin_manifests: BTreeMap::new(),
             boundary_contracts: BTreeMap::new(),
             boundary_types: BTreeMap::new(),
+            type_key_uses: Default::default(),
             foreign_interfaces: BTreeMap::new(),
             current_prefix: None,
             capabilities: RuntimeCapabilityRegistry::new(),
@@ -344,9 +345,11 @@ impl PluginRegistry {
         Ok(sources)
     }
 
-    /// Build graphs against plugin-native node declarations.
+    /// Build graphs against plugin-native node declarations, resolving typed host ports
+    /// (`input_typed`) through this registry's [`Self::type_index`].
     pub fn graph_builder(&self) -> PluginResult<GraphBuilder> {
-        Ok(GraphBuilder::new(self.combined_transport_capabilities()?))
+        Ok(GraphBuilder::new(self.combined_transport_capabilities()?)
+            .with_type_index(self.type_index()))
     }
 
     pub(super) fn provider_source_kind(&self, id: &str) -> CapabilitySourceKind {

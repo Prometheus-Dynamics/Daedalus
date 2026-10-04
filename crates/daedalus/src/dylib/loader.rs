@@ -1,10 +1,10 @@
-use super::boundary::{self, BoundaryTypeMismatch, BoundaryTypeTable};
+use super::boundary::{self, BoundaryTypeTable};
 use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
     PluginInfo, PluginSchema, StrSink, StrView,
 };
-use crate::runtime::plugins::PluginRegistry;
+use crate::runtime::plugins::{BoundaryTypeConflict, PluginError, PluginRegistry};
 use crate::transport::{ForeignInterfaceInfo, RustTypeIdentity, TypeKey};
 use daedalus_ffi_host::core::BackendKind;
 use libloading::Library;
@@ -55,18 +55,19 @@ pub enum PluginLibraryError {
         #[source]
         mismatch: RustAbiMismatch,
     },
-    /// The plugin maps type keys the host also uses to different Rust types (typically a
-    /// dependency such as a frame library resolved with other features in a separate build).
-    /// Nothing was installed.
+    /// The plugin maps type keys the host registry also uses to different Rust types
+    /// (typically a dependency such as a frame library resolved with other features in a
+    /// separate build); `registered` is the host's type, `new` the plugin's. Nothing was
+    /// installed.
     #[error(
         "plugin `{plugin}` uses type keys for different Rust types than the host ({}); Rust-ABI \
          plugins must come from the same cargo build as the host, with every shared dependency \
          resolved identically",
-        boundary::describe(mismatches)
+        boundary::describe(conflicts)
     )]
-    BoundaryTypeMismatch {
+    BoundaryTypeConflict {
         plugin: String,
-        mismatches: Vec<BoundaryTypeMismatch>,
+        conflicts: Vec<BoundaryTypeConflict>,
     },
     /// The plugin uses a foreign interface key with another version or vtable layout than the
     /// host. Nothing was installed.
@@ -205,7 +206,7 @@ impl PluginLibrary {
     ///
     /// Fails without calling into the plugin with [`PluginLibraryError::Incompatible`] when
     /// [`rust_abi`](Self::rust_abi) reports a mismatch, and with
-    /// [`PluginLibraryError::BoundaryTypeMismatch`] when one of the plugin's
+    /// [`PluginLibraryError::BoundaryTypeConflict`] when one of the plugin's
     /// [`boundary_types`](Self::boundary_types) is a key `registry` already maps to another Rust
     /// type ([`PluginRegistry::boundary_types`]), and with
     /// [`PluginLibraryError::ForeignInterfaceMismatch`] when one of its
@@ -219,11 +220,11 @@ impl PluginLibrary {
                 mismatch: mismatch.clone(),
             });
         }
-        let mismatches = boundary::mismatches(registry, &self.boundary_types);
-        if !mismatches.is_empty() {
-            return Err(PluginLibraryError::BoundaryTypeMismatch {
+        let conflicts = registry.boundary_type_conflicts(&self.boundary_types);
+        if !conflicts.is_empty() {
+            return Err(PluginLibraryError::BoundaryTypeConflict {
                 plugin: plugin(),
-                mismatches,
+                conflicts,
             });
         }
         let mismatches = foreign::mismatches(registry, &self.foreign_interfaces);
@@ -242,8 +243,22 @@ impl PluginLibrary {
         install(self.descriptor.register_boundary_contracts, registry)
             .map_err(|message| PluginLibraryError::BoundaryContractsFailed { message })?;
         install(self.descriptor.register, registry)
-            .map(drop)
-            .map_err(|message| PluginLibraryError::RegisterFailed { message })
+            .map_err(|message| PluginLibraryError::RegisterFailed { message })?;
+        // Record every exported boundary type, including any the install did not touch, so later
+        // plugins and fed payloads are checked against them.
+        registry
+            .register_boundary_identities(&self.boundary_types)
+            .map_err(|error| match error {
+                PluginError::BoundaryTypeConflict(conflict) => {
+                    PluginLibraryError::BoundaryTypeConflict {
+                        plugin: plugin(),
+                        conflicts: vec![conflict],
+                    }
+                }
+                other => PluginLibraryError::RegisterFailed {
+                    message: other.to_string(),
+                },
+            })
     }
 
     /// Metadata reported by the plugin.

@@ -188,8 +188,8 @@ fn static_and_dynamic_rust_plugin_install_the_same_nodes() {
     assert!(!plugin_counter.same_type(&host_counter));
     let err = library.install_into(&mut static_registry).unwrap_err();
     assert!(
-        matches!(err, PluginLibraryError::BoundaryTypeMismatch { ref mismatches, .. }
-            if mismatches.iter().any(|mismatch| mismatch.key == counter)),
+        matches!(err, PluginLibraryError::BoundaryTypeConflict { ref conflicts, .. }
+            if conflicts.iter().any(|conflict| conflict.key == counter)),
         "unexpected error: {err}"
     );
 }

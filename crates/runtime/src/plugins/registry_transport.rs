@@ -17,6 +17,11 @@ impl PluginRegistry {
             })
     }
 
+    /// Declare `key` with `schema` and `export`. Strict, so the result never depends on
+    /// registration order: an identical declaration is a no-op, the placeholder a port or
+    /// adapter left when it used the key first (schema `Opaque(key)`, no export) and a built-in
+    /// declaration are replaced, and any other declaration fails with
+    /// [`PluginError::TypeDeclarationConflict`].
     fn register_explicit_transport_type_decl(
         &mut self,
         key: TypeKey,
@@ -24,36 +29,36 @@ impl PluginRegistry {
         export: ExportPolicy,
     ) -> PluginResult<()> {
         self.ensure_open()?;
-        let decl = TypeDecl::new(key.clone())
-            .schema(schema.normalize())
-            .export(export);
-        // A port or adapter that uses the key before its owner registers it leaves a
-        // placeholder declaration (schema `Opaque(key)`); the owner's declaration replaces it,
-        // so install order does not matter.
-        let placeholder = self.transport_capabilities.type_decl(&key).map(|existing| {
-            existing.schema.as_ref() == Some(&TypeExpr::opaque(key.as_str()))
-                && existing.export == ExportPolicy::None
-        });
-        let replace = match placeholder {
-            None => false,
-            Some(true) => true,
-            Some(false) => {
-                let builtin = self.remove_builtin_type_source(&key);
-                if builtin {
-                    self.overridden_capabilities.types.insert(key.clone());
-                }
-                builtin
-            }
+        let schema = schema.normalize();
+        let Some(existing) = self.transport_capabilities.type_decl(&key) else {
+            return self
+                .transport_capabilities
+                .register_type(TypeDecl::new(key).schema(schema).export(export))
+                .map_err(|source| {
+                    PluginError::registry("transport type capability register failed", source)
+                });
         };
-        if replace {
-            self.transport_capabilities.replace_type(decl);
-            return Ok(());
+        let (existing, existing_export) = (existing.schema.clone(), existing.export);
+        let placeholder = existing.as_ref() == Some(&TypeExpr::opaque(key.as_str()))
+            && existing_export == ExportPolicy::None;
+        if !placeholder {
+            if !self.remove_builtin_type_source(&key) {
+                if existing.as_ref() == Some(&schema) && existing_export == export {
+                    return Ok(());
+                }
+                return Err(PluginError::TypeDeclarationConflict {
+                    key,
+                    existing,
+                    existing_export,
+                    new: schema,
+                    new_export: export,
+                });
+            }
+            self.overridden_capabilities.types.insert(key.clone());
         }
         self.transport_capabilities
-            .register_type(decl)
-            .map_err(|source| {
-                PluginError::registry("transport type capability register failed", source)
-            })
+            .replace_type(TypeDecl::new(key).schema(schema).export(export));
+        Ok(())
     }
 
     /// Register a native node declaration into the transport capability registry.
@@ -201,7 +206,7 @@ impl PluginRegistry {
         T: BranchPayload,
     {
         let key = typeexpr_transport_key(&schema);
-        self.record_boundary_type::<T>(&key)?;
+        self.register_boundary_type::<T>(key.clone())?;
         let mut cost = AdaptCost::new(match T::BRANCH_KIND {
             BranchKind::Shared => AdaptKind::SharedView,
             BranchKind::Clone | BranchKind::Domain => AdaptKind::Branch,
@@ -267,8 +272,8 @@ impl PluginRegistry {
     {
         let from_key = typeexpr_transport_key(&from);
         let to_key = typeexpr_transport_key(&to);
-        self.record_boundary_type::<S>(&from_key)?;
-        self.record_boundary_type::<T>(&to_key)?;
+        self.register_boundary_type::<S>(from_key.clone())?;
+        self.register_boundary_type::<T>(to_key.clone())?;
         self.register_transport_adapter_fn_with_cost(
             id,
             from,
@@ -309,8 +314,8 @@ impl PluginRegistry {
         } = spec;
         let cpu_key = typeexpr_transport_key(&cpu);
         let device_key = typeexpr_transport_key(&device);
-        self.record_boundary_type::<Cpu>(&cpu_key)?;
-        self.record_boundary_type::<Device>(&device_key)?;
+        self.register_boundary_type::<Cpu>(cpu_key.clone())?;
+        self.register_boundary_type::<Device>(device_key.clone())?;
 
         let mut upload_options = TransportAdapterOptions::default()
             .cost(AdaptCost::device_transfer())
@@ -430,7 +435,8 @@ impl PluginRegistry {
         Ok(spec)
     }
 
-    /// Register a named schema keyed by a stable `TypeExpr::Opaque(<key>)` string.
+    /// Register a named schema keyed by a stable `TypeExpr::Opaque(<key>)` string. Strict like
+    /// every key declaration: an identical one is a no-op, another one fails.
     pub fn register_named_type(
         &mut self,
         key: impl Into<String>,
@@ -439,14 +445,14 @@ impl PluginRegistry {
     ) -> PluginResult<()> {
         self.ensure_open()?;
         let key = key.into();
-        self.named_type_registry
-            .register(key.clone(), expr.clone(), export)
-            .map_err(|message| PluginError::NamedType { message })?;
         self.register_explicit_transport_type_decl(
-            TypeKey::new(key),
-            expr,
+            TypeKey::new(key.clone()),
+            expr.clone(),
             host_export_policy_to_transport(export),
-        )
+        )?;
+        self.named_type_registry
+            .register(key, expr, export)
+            .map_err(|message| PluginError::NamedType { message })
     }
 
     pub fn register_boundary_contract(
@@ -493,14 +499,9 @@ impl PluginRegistry {
         &mut self,
         export: HostExportPolicy,
     ) -> PluginResult<()> {
-        let expr = TypeExpr::Opaque(T::TYPE_KEY.to_string());
-        self.type_registry.register_type::<T>(expr.clone());
-        // Keep the process-global type helper populated for macro-generated descriptor and handler
-        // paths that resolve type keys at registration time. Plugin-owned code should use
-        // `PluginRegistry::type_registry` directly when isolation matters.
-        daedalus_data::typing::register_type::<T>(expr);
-        self.register_boundary_type::<T>(T::TYPE_KEY)?;
-        self.register_named_type(T::TYPE_KEY, T::type_expr(), export)
+        self.register_owned_type::<T>(T::TYPE_KEY, |registry| {
+            registry.register_named_type(T::TYPE_KEY, T::type_expr(), export)
+        })
     }
 
     /// Register a stable schema identity *and* a `ToValue` serializer for host-visible transport.
