@@ -1,5 +1,4 @@
 use super::{CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, Executor, NodeHandler};
-use daedalus_core::platform::Instant;
 
 pub(crate) fn push_direct_edge<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
@@ -13,7 +12,7 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
     let collect_lifecycle = cfg!(feature = "metrics")
         && (exec.core.run_config.metrics_level.is_profile()
             || exec.core.run_config.metrics_level.is_trace());
-    let start = collect_detailed_metrics.then(Instant::now);
+    let start = collect_detailed_metrics.then(|| exec.core.clock.now());
     let bytes = collect_detailed_metrics
         .then(|| {
             exec.core
@@ -22,7 +21,7 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
         })
         .flatten();
     if collect_basic_metrics {
-        payload.enqueued_at = Some(Instant::now());
+        payload.enqueued_at = Some(exec.core.clock.now());
     }
     if collect_lifecycle {
         let mut lifecycle =
@@ -44,7 +43,7 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
         if let Some(start) = start {
             exec.core
                 .telemetry
-                .record_edge_transport_apply_duration(edge_idx, start.elapsed());
+                .record_edge_transport_apply_duration(edge_idx, exec.core.clock.elapsed(start));
         }
     }
 }
@@ -63,9 +62,8 @@ pub(crate) fn pop_direct_edge<H: NodeHandler>(
         .get(edge_idx)
         .and_then(|slot| slot.access(exec.direct_slot_access).take())?;
     if collect_basic_metrics && let Some(enqueued_at) = payload.enqueued_at {
-        exec.core
-            .telemetry
-            .record_edge_wait(edge_idx, enqueued_at.elapsed());
+        let waited = exec.core.clock.elapsed(enqueued_at);
+        exec.core.telemetry.record_edge_wait(edge_idx, waited);
     }
     if collect_detailed_metrics {
         exec.core.telemetry.record_edge_depth(edge_idx, 0);

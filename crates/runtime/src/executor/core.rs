@@ -4,6 +4,7 @@ use super::{
 };
 use crate::state::StateStore;
 use crate::sync::Mutex;
+use daedalus_core::platform::Clock;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -37,6 +38,8 @@ pub(crate) struct ExecutorCore {
     /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
     pub(crate) required_inputs: Arc<[Box<[usize]>]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
+    /// Clock behind every timing this executor records (`Executor::with_clock`).
+    pub(crate) clock: Clock,
 }
 
 impl ExecutorCore {
@@ -75,6 +78,7 @@ impl ExecutorCore {
                 .collect(),
             required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
+            clock: Clock::default(),
         }
     }
 
@@ -103,7 +107,8 @@ impl ExecutorCore {
             direct_edges: self.direct_edges.clone(),
             direct_slots: self.direct_slots.clone(),
             warnings_seen: self.warnings_seen.clone(),
-            telemetry: ExecutionTelemetry::with_level(self.run_config.metrics_level),
+            telemetry: ExecutionTelemetry::with_level(self.run_config.metrics_level)
+                .with_clock(&self.clock),
             data_size_inspectors: self.data_size_inspectors.clone(),
             run_config: self.run_config.clone(),
             parallel_workers: self.parallel_workers,
@@ -119,6 +124,7 @@ impl ExecutorCore {
             node_ids: self.node_ids.clone(),
             required_inputs: self.required_inputs.clone(),
             capabilities: self.capabilities.clone(),
+            clock: self.clock.clone(),
         }
     }
 }

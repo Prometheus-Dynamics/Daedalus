@@ -1,7 +1,5 @@
 //! Edge input collection, adapter application and output publishing for serial execution.
 
-use daedalus_core::platform::Instant;
-
 use daedalus_transport::{AdaptRequest, Payload};
 
 use crate::io::NodePort;
@@ -173,14 +171,14 @@ fn adapt_edge_payload<H: NodeHandler>(
         .run_config
         .metrics_level
         .is_detailed()
-        .then(Instant::now);
+        .then(|| exec.core.clock.now());
     let source = collect_lifecycle.then(|| inner.clone());
     match runtime_transport.execute_adapter_path(inner, &edge_transport.adapter_steps, &request) {
         Ok(adapted) => {
             if let Some(start) = adapter_start {
                 exec.core
                     .telemetry
-                    .record_edge_adapter_duration(edge_idx, start.elapsed());
+                    .record_edge_adapter_duration(edge_idx, exec.core.clock.elapsed(start));
             }
             record(
                 exec,

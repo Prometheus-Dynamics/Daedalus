@@ -3,6 +3,7 @@
 use std::future::Future;
 use std::pin::pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 use std::time::Duration;
@@ -10,7 +11,9 @@ use std::time::Duration;
 use daedalus_data::model::{TypeExpr, Value, ValueType};
 #[cfg(feature = "threads")]
 use daedalus_engine::InboundWait;
-use daedalus_engine::{Engine, EngineConfig, HostGraph, HostGraphDriveExit, HostPortDirection};
+use daedalus_engine::{
+    Clock, Engine, EngineConfig, HostGraph, HostGraphDriveExit, HostPortDirection, MetricsLevel,
+};
 use daedalus_planner::{Edge, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 use daedalus_runtime::RuntimeNode;
@@ -51,6 +54,12 @@ fn node(id: &str, label: Option<&str>, inputs: &[&str], outputs: &[&str]) -> Nod
 }
 
 fn compile_increment_graph() -> (PluginRegistry, HostGraph<IncrementHandler>) {
+    compile_increment_graph_with(EngineConfig::default())
+}
+
+fn compile_increment_graph_with(
+    config: EngineConfig,
+) -> (PluginRegistry, HostGraph<IncrementHandler>) {
     let int_ty = TypeExpr::Scalar(ValueType::Int);
     let mut plugins = PluginRegistry::new();
     plugins
@@ -78,7 +87,7 @@ fn compile_increment_graph() -> (PluginRegistry, HostGraph<IncrementHandler>) {
         metadata: Default::default(),
     };
 
-    let host_graph = Engine::new(EngineConfig::default())
+    let host_graph = Engine::new(config)
         .unwrap()
         .compile_host_graph_plugin_registry(
             &plugins,
@@ -89,6 +98,35 @@ fn compile_increment_graph() -> (PluginRegistry, HostGraph<IncrementHandler>) {
         )
         .unwrap();
     (plugins, host_graph)
+}
+
+/// Executor and step timings read the engine's clock: here one that advances 1 ms per reading.
+#[test]
+fn step_timings_read_the_engine_clock() {
+    let readings = Arc::new(AtomicU64::new(0));
+    let clock = Clock::new({
+        let readings = readings.clone();
+        move || Duration::from_millis(readings.fetch_add(1, Ordering::Relaxed))
+    });
+    let config = EngineConfig::default()
+        .with_metrics_level(MetricsLevel::Basic)
+        .with_clock(clock.clone());
+    let (_plugins, mut graph) = compile_increment_graph_with(config);
+
+    let step = graph
+        .profiled_feed_tick_drain_owned::<_, Value>("in", INT_KEY, Value::Int(1), "out")
+        .unwrap();
+    assert_eq!(step.outputs, [Value::Int(2)]);
+    let whole_ms = |duration: Duration| duration.as_nanos().is_multiple_of(1_000_000);
+    let metrics = &step.metrics;
+    assert_eq!(metrics.feed_duration, Duration::from_millis(1));
+    assert!(metrics.run_duration >= Duration::from_millis(1) && whole_ms(metrics.run_duration));
+    assert_eq!(metrics.drain_duration, Duration::from_millis(1));
+    let telemetry = metrics.telemetry.as_ref().unwrap();
+    assert_eq!(telemetry.clock(), &clock);
+    if cfg!(feature = "metrics") {
+        assert!(telemetry.graph_duration > Duration::ZERO && whole_ms(telemetry.graph_duration));
+    }
 }
 
 #[test]

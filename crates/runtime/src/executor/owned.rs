@@ -296,6 +296,18 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
+    /// Read every timing (telemetry, adaptive costs, edge waits) from `clock` instead of the
+    /// platform clock.
+    pub fn with_clock(mut self, clock: daedalus_core::platform::Clock) -> Self {
+        self.apply_clock(clock);
+        self
+    }
+
+    /// The clock this executor's timings read.
+    pub fn clock(&self) -> &daedalus_core::platform::Clock {
+        &self.core.clock
+    }
+
     pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
         self.apply_runtime_debug_config(config);
         self

@@ -1,7 +1,7 @@
 //! Continuous stream workers: a thread per graph (`threads` feature).
 
 use crate::sync::{Condvar, Mutex};
-use daedalus_core::platform::Instant;
+use daedalus_core::platform::{Clock, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -35,6 +35,8 @@ pub enum StreamWorkerStopError {
 pub struct StreamGraphWorker {
     stop: Arc<AtomicBool>,
     stop_requested_at: Arc<Mutex<Option<Instant>>>,
+    /// The graph's clock.
+    clock: Clock,
     last_error: Arc<Mutex<Option<String>>>,
     done: Arc<WorkerDone>,
     wake: HostBridgeHandle,
@@ -81,7 +83,7 @@ impl StreamGraphWorker {
     fn request_stop(&self) {
         self.stop.store(true, Ordering::Release);
         let mut requested_at = self.stop_requested_at.lock();
-        requested_at.get_or_insert_with(Instant::now);
+        requested_at.get_or_insert_with(|| self.clock.now());
         self.wake.wake_inbound_waiters();
     }
 
@@ -145,7 +147,7 @@ impl StreamGraphWorker {
         let stop_requested_elapsed = self
             .stop_requested_at
             .lock()
-            .map(|requested_at| requested_at.elapsed());
+            .map(|requested_at| self.clock.elapsed(requested_at));
         StreamWorkerDiagnostics {
             stop_requested,
             worker_finished,
@@ -172,7 +174,7 @@ impl Drop for StreamGraphWorker {
                 stop_requested_elapsed = ?self
                     .stop_requested_at
                     .lock()
-                    .map(|requested_at| requested_at.elapsed()),
+                    .map(|requested_at| self.clock.elapsed(requested_at)),
                 "dropping stream worker before thread finished; call stop or stop_timeout to observe shutdown completion"
             );
         }
@@ -209,10 +211,14 @@ where
         let worker_error = last_error.clone();
         let done = Arc::new(WorkerDone::default());
         let worker_done = done.clone();
-        let wake = {
+        let (wake, clock) = {
             let guard = graph.lock();
-            guard.bridges.ensure_handle(guard.host_alias.clone())
+            (
+                guard.bridges.ensure_handle(guard.host_alias.clone()),
+                guard.clock.clone(),
+            )
         };
+        let worker_clock = clock.clone();
         let handle = thread::spawn(move || {
             let _done_guard = WorkerDoneGuard { done: worker_done };
             while !worker_stop.load(Ordering::Acquire) {
@@ -226,7 +232,7 @@ where
                             let handle = guard.bridges.ensure_handle(guard.host_alias.clone());
                             pending_before = handle.pending_inbound();
                             if pending_before > 0 {
-                                guard.current_execution_started_at = Some(Instant::now());
+                                guard.current_execution_started_at = Some(worker_clock.now());
                                 guard.executor.take()
                             } else {
                                 None
@@ -237,7 +243,7 @@ where
                 };
                 if let Some(mut executor) = executor {
                     let result = executor.run_in_place();
-                    let finished_at = Instant::now();
+                    let finished_at = worker_clock.now();
                     let mut guard = graph.lock();
                     if let Some(started) = guard.current_execution_started_at.take() {
                         guard.last_execution_duration = Some(finished_at.duration_since(started));
@@ -308,6 +314,7 @@ where
         StreamGraphWorker {
             stop,
             stop_requested_at,
+            clock,
             last_error,
             done,
             wake,

@@ -1,5 +1,3 @@
-use daedalus_core::platform::Instant;
-
 use daedalus_planner::{ComputeAffinity, NodeRef};
 
 use crate::state::ExecutionContext;
@@ -68,7 +66,8 @@ fn run_order_timed<H: NodeHandler>(
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
     let collect_trace = cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_trace();
-    let graph_start = (collect_basic_metrics || collect_trace).then(Instant::now);
+    let clock = exec.core.clock.clone();
+    let graph_start = (collect_basic_metrics || collect_trace).then(|| clock.now());
     let mut first_error = None;
     let nodes = exec.nodes.clone();
     if collect_basic_metrics {
@@ -91,7 +90,7 @@ fn run_order_timed<H: NodeHandler>(
             compute = ?node.compute,
         );
         let _node_span = node_span.enter();
-        let cost_start = costs.is_some().then(Instant::now);
+        let cost_start = costs.is_some().then(|| clock.now());
 
         let inputs = collect_inputs(exec, node_idx)?;
         if !required_inputs_ready(exec, node_idx, &inputs) {
@@ -137,7 +136,7 @@ fn run_order_timed<H: NodeHandler>(
         if collect_detailed_metrics {
             exec.core.telemetry.start_node_call(node_idx);
         }
-        let node_start = (collect_basic_metrics || collect_trace).then(Instant::now);
+        let node_start = (collect_basic_metrics || collect_trace).then(|| clock.now());
         let cpu_start = exec
             .core
             .run_config
@@ -164,7 +163,7 @@ fn run_order_timed<H: NodeHandler>(
             exec.core.state.clear_node_custom_metrics(&node.id);
         }
 
-        let handler_start = collect_detailed_metrics.then(Instant::now);
+        let handler_start = collect_detailed_metrics.then(|| clock.now());
         let handler_span = tracing::debug_span!(
             target: "daedalus_runtime::executor",
             "runtime_handler_call",
@@ -178,7 +177,7 @@ fn run_order_timed<H: NodeHandler>(
         if let Some(handler_start) = handler_start {
             exec.core
                 .telemetry
-                .record_node_handler_duration(node_idx, handler_start.elapsed());
+                .record_node_handler_duration(node_idx, clock.elapsed(handler_start));
         }
         let flush_result = if run_result.is_ok() {
             io.flush().err()
@@ -228,8 +227,7 @@ fn run_order_timed<H: NodeHandler>(
         }
 
         let elapsed = node_start
-            .as_ref()
-            .map(Instant::elapsed)
+            .map(|start| clock.elapsed(start))
             .unwrap_or_default();
         if let Some(cpu_start) = cpu_start
             && let Some(cpu_end) = super::thread_cpu_time()
@@ -267,12 +265,12 @@ fn run_order_timed<H: NodeHandler>(
                 .get(node_idx)
                 .and_then(|&segment| costs.costs.get_mut(segment))
         {
-            *cost += start.elapsed().as_nanos() as u64;
+            *cost += clock.elapsed(start).as_nanos() as u64;
         }
     }
 
     if let Some(graph_start) = graph_start {
-        exec.core.telemetry.graph_duration = graph_start.elapsed();
+        exec.core.telemetry.graph_duration = clock.elapsed(graph_start);
     }
     exec.core
         .telemetry

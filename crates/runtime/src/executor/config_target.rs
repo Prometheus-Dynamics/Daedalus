@@ -88,6 +88,12 @@ pub(crate) trait ExecutorConfigTarget {
         }
     }
 
+    fn apply_clock(&mut self, clock: daedalus_core::platform::Clock) {
+        let core = self.core_mut();
+        core.telemetry = std::mem::take(&mut core.telemetry).with_clock(&clock);
+        core.clock = clock;
+    }
+
     fn apply_metrics_level(&mut self, level: MetricsLevel) {
         let core = self.core_mut();
         core.run_config.metrics_level = level;

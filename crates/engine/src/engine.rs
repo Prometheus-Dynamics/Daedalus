@@ -120,6 +120,7 @@ impl Engine {
         exec = exec
             .with_fail_fast(self.config.runtime.fail_fast)
             .with_metrics_level(self.config.runtime.metrics_level)
+            .with_clock(self.config.runtime.clock.clone())
             .with_runtime_debug_config(self.config.runtime.debug_config);
         if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
             exec = exec.with_demand_sinks(self.config.runtime.demand_sinks.clone());
@@ -157,6 +158,7 @@ impl Engine {
         exec = exec
             .with_fail_fast(self.config.runtime.fail_fast)
             .with_metrics_level(self.config.runtime.metrics_level)
+            .with_clock(self.config.runtime.clock.clone())
             .with_runtime_debug_config(self.config.runtime.debug_config);
         if self.config.runtime.demand_driven && !self.config.runtime.demand_sinks.is_empty() {
             exec = exec.with_demand_sinks(self.config.runtime.demand_sinks.clone());

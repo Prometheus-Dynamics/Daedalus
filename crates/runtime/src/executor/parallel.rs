@@ -2,7 +2,7 @@
 //! from, so a frame costs one fan-out to the worker pool plus a lock per segment, with no
 //! per-segment task, channel or executor snapshot.
 
-use daedalus_core::platform::Instant;
+use daedalus_core::platform::Clock;
 use std::panic::{self, AssertUnwindSafe};
 
 use crate::sync::{Condvar, Mutex, MutexGuard};
@@ -38,7 +38,8 @@ where
     }
 
     let pool = WorkerPool::get_or_init(&exec.core.worker_pool, workers)?;
-    let queue = SegmentQueue::new(graph, exec.core.run_config.fail_fast, costs);
+    let clock = costs.is_some().then(|| exec.core.clock.clone());
+    let queue = SegmentQueue::new(graph, exec.core.run_config.fail_fast, clock, costs);
     {
         let shared: &Executor<'_, H> = exec;
         pool.fan_out(workers, &|| {
@@ -68,7 +69,8 @@ where
 struct SegmentQueue<'g, 'c> {
     graph: &'g CompiledSegmentGraph,
     fail_fast: bool,
-    timed: bool,
+    /// Times each segment when costs are collected.
+    clock: Option<Clock>,
     state: Mutex<QueueState<'c>>,
     wake: Condvar,
 }
@@ -89,11 +91,16 @@ struct QueueState<'c> {
 }
 
 impl<'g, 'c> SegmentQueue<'g, 'c> {
-    fn new(graph: &'g CompiledSegmentGraph, fail_fast: bool, costs: Option<&'c mut [u64]>) -> Self {
+    fn new(
+        graph: &'g CompiledSegmentGraph,
+        fail_fast: bool,
+        clock: Option<Clock>,
+        costs: Option<&'c mut [u64]>,
+    ) -> Self {
         Self {
             graph,
             fail_fast,
-            timed: costs.is_some(),
+            clock,
             state: Mutex::new(QueueState {
                 indegree: graph.indegree.iter().copied().collect(),
                 ready: graph.ready_segments.iter().copied().collect(),
@@ -124,11 +131,14 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
             };
             state.running += 1;
             let (result, nanos) = MutexGuard::unlocked(&mut state, || {
-                let start = self.timed.then(Instant::now);
+                let start = self.clock.as_ref().map(Clock::now);
                 let result = run_segment(segment, &mut run);
                 (
                     result,
-                    start.map_or(0, |start| start.elapsed().as_nanos() as u64),
+                    self.clock
+                        .as_ref()
+                        .zip(start)
+                        .map_or(0, |(clock, start)| clock.elapsed(start).as_nanos() as u64),
                 )
             });
             state.running -= 1;

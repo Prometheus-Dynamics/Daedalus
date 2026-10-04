@@ -1,5 +1,5 @@
 use crate::sync::Mutex;
-use daedalus_core::platform::Instant;
+use daedalus_core::platform::{Clock, Instant};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
@@ -261,6 +261,8 @@ pub struct StreamGraph<H: NodeHandler> {
     last_error: Option<String>,
     current_execution_started_at: Option<Instant>,
     last_execution_duration: Option<Duration>,
+    /// Shared with the executor (`with_clock`).
+    clock: Clock,
     _handler: PhantomData<H>,
 }
 
@@ -288,8 +290,24 @@ impl<H: NodeHandler> StreamGraph<H> {
             last_error: None,
             current_execution_started_at: None,
             last_execution_duration: None,
+            clock: Clock::default(),
             _handler: PhantomData,
         }
+    }
+
+    /// Time executions (and the executor's telemetry) with `clock` instead of the platform clock.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.executor = self
+            .executor
+            .take()
+            .map(|executor| executor.with_clock(clock.clone()));
+        self.clock = clock;
+        self
+    }
+
+    /// The clock executions are timed with.
+    pub fn clock(&self) -> &Clock {
+        &self.clock
     }
 
     pub fn input(&self, port: impl Into<String>) -> Result<GraphInput, ExecuteError> {
@@ -509,19 +527,19 @@ impl<H: NodeHandler> StreamGraph<H> {
     }
 
     fn begin_execution(&mut self) -> Instant {
-        let started = Instant::now();
+        let started = self.clock.now();
         self.current_execution_started_at = Some(started);
         started
     }
 
     fn finish_execution(&mut self, started: Instant) {
         self.current_execution_started_at = None;
-        self.last_execution_duration = Some(started.elapsed());
+        self.last_execution_duration = Some(self.clock.elapsed(started));
     }
 
     fn current_execution_elapsed(&self) -> Option<Duration> {
         self.current_execution_started_at
-            .map(|started| started.elapsed())
+            .map(|started| self.clock.elapsed(started))
     }
 }
 

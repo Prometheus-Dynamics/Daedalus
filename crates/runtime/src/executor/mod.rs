@@ -523,6 +523,18 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
+    /// Read every timing (telemetry, adaptive costs, edge waits) from `clock` instead of the
+    /// platform clock.
+    pub fn with_clock(mut self, clock: daedalus_core::platform::Clock) -> Self {
+        self.apply_clock(clock);
+        self
+    }
+
+    /// The clock this executor's timings read.
+    pub fn clock(&self) -> &daedalus_core::platform::Clock {
+        &self.core.clock
+    }
+
     pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
         self.apply_runtime_debug_config(config);
         self
@@ -728,9 +740,10 @@ where
     let (result, wall) = match parallel {
         #[cfg(feature = "threads")]
         true => {
-            let start = daedalus_core::platform::Instant::now();
+            let clock = exec.core.clock.clone();
+            let start = clock.now();
             let result = parallel::run(exec, Some(costs));
-            (result, Some(start.elapsed()))
+            (result, Some(clock.elapsed(start)))
         }
         _ => {
             let costs = serial::SegmentCosts {
