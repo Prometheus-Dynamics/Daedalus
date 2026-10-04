@@ -579,8 +579,9 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
     })
 }
 
-/// Push `value` (of type `ty`, or `Arc` of it) to `port` under its explicit or leaf type key,
-/// which is appended to `keys` and read from `__output_keys` (computed once, not per push).
+/// Push `value` (of type `ty`, `Arc` of it, or `Option` of either) to `port` under its explicit
+/// or leaf type key, which is appended to `keys` and read from `__output_keys` (computed once,
+/// not per push).
 fn push_output(
     ty: &syn::Type,
     port: &LitStr,
@@ -588,6 +589,11 @@ fn push_output(
     value: TokenStream,
     keys: &mut Vec<TokenStream>,
 ) -> TokenStream {
+    // A conditional output: nothing is pushed for `None`.
+    if let Some(inner) = crate::helpers::generic_arg(ty, "Option", 0) {
+        let push = push_output(inner, port, explicit, quote! { __value }, keys);
+        return quote! { if let Some(__value) = #value { #push } };
+    }
     let idx = keys.len();
     let key = quote! { __output_keys[#idx].clone() };
     match arc_inner_type(ty) {

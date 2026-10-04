@@ -14,7 +14,9 @@ use daedalus_planner::{
     ComputeAffinity, EdgeBufferInfo, ExecutionPlan, GpuSegment, GraphNodeSelector, NodeRef,
     is_host_bridge_metadata,
 };
-pub use daedalus_registry::capability::{NODE_EXECUTION_KIND_META_KEY, NodeExecutionKind};
+pub use daedalus_registry::capability::{
+    NODE_EXECUTION_KIND_META_KEY, NODE_REQUIRED_INPUTS_META_KEY, NodeExecutionKind,
+};
 use daedalus_transport::PressurePolicy;
 pub(crate) use demand::active_nodes_mask_for_sinks;
 pub use demand::{DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry};

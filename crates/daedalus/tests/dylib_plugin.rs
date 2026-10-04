@@ -2,7 +2,8 @@
 //! nodes and boundary contracts as the statically linked plugin, and that a boundary type built
 //! differently on each side is refused; then loads `examples/plugins/foreign_consumer`, built
 //! with a different copy of the example crate, which reads host counters through a foreign
-//! interface instead.
+//! interface instead; and loads `examples/plugins/dependent`, which depends on (and links) the
+//! example plugin.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,8 @@ const PACKAGE: &str = "daedalus-plugins-example-project";
 const LIB_NAME: &str = "daedalus_plugins_example_project";
 const CONSUMER_PACKAGE: &str = "daedalus-plugins-foreign-consumer";
 const CONSUMER_LIB_NAME: &str = "daedalus_plugins_foreign_consumer";
+const DEPENDENT_PACKAGE: &str = "daedalus-plugins-dependent";
+const DEPENDENT_LIB_NAME: &str = "daedalus_plugins_dependent";
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -39,6 +42,12 @@ fn plugin_cdylib() -> &'static Path {
 fn consumer_cdylib() -> &'static Path {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
     PATH.get_or_init(|| build_cdylib(CONSUMER_PACKAGE, CONSUMER_LIB_NAME))
+}
+
+/// Build the plugin that depends on the example plugin as a cdylib.
+fn dependent_cdylib() -> &'static Path {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| build_cdylib(DEPENDENT_PACKAGE, DEPENDENT_LIB_NAME))
 }
 
 /// `--features` for the plugin build: its `dylib` export plus this host's enabled boundary
@@ -263,4 +272,60 @@ fn discovery_finds_built_plugin() {
     let dir = library_path.parent().expect("artifact dir");
     let found = daedalus::discover_plugin_libraries([dir]).unwrap();
     assert!(found.iter().any(|path| path == library_path), "{found:?}");
+}
+
+#[test]
+fn dependent_plugin_links_its_dependency_and_requires_the_host_to_install_it() {
+    let library = unsafe { PluginLibrary::load(dependent_cdylib()) }.unwrap();
+    let schema = library.schema();
+    assert_eq!(schema.plugin.name, "example_dependent");
+    assert_eq!(schema.dependencies, ["example_rust"]);
+    // `Lease` has no key of its own; the linked example plugin maps it in the library's private
+    // introspection registry, so the schema carries the real key and no external types.
+    let port_key = |node: &str, port: &str, outputs: bool| {
+        let node = schema
+            .nodes
+            .iter()
+            .find(|n| n.id.ends_with(node))
+            .unwrap_or_else(|| panic!("node {node}"));
+        let ports = if outputs { &node.outputs } else { &node.inputs };
+        let port = ports.iter().find(|p| p.name == port).expect("port");
+        port.type_key.clone().expect("port key").to_string()
+    };
+    assert_eq!(port_key("slot", "lease", false), "example:lease");
+    assert_eq!(port_key("lease", "lease", true), "example:lease");
+    assert_eq!(port_key("lease", "counter", false), "example:counter");
+    assert!(!schema.plugin.metadata.contains_key("external_types"));
+    let lease = TypeKey::new("example:lease");
+    assert!(
+        library
+            .boundary_types()
+            .iter()
+            .any(|(key, _)| *key == lease)
+    );
+
+    // The host must install the dependency (its own build of it) first.
+    let err = library
+        .install_into(&mut PluginRegistry::new())
+        .unwrap_err();
+    assert!(
+        matches!(err, PluginLibraryError::MissingDependencies { ref missing, .. }
+            if missing == &["example_rust"]),
+        "unexpected error: {err}"
+    );
+    assert!(err.to_string().contains("`example_rust`"), "{err}");
+
+    // With it installed the dependency check passes. This host's example crate is built
+    // differently from the plugin's (see `static_and_dynamic_rust_plugin_install_the_same_nodes`),
+    // so the boundary check then refuses the dependency's keys, including the mapped one.
+    let mut registry = PluginRegistry::new();
+    registry
+        .install_plugin(&ExampleProjectPlugin::default())
+        .unwrap();
+    let err = library.install_into(&mut registry).unwrap_err();
+    assert!(
+        matches!(err, PluginLibraryError::BoundaryTypeConflict { ref conflicts, .. }
+            if conflicts.iter().any(|conflict| conflict.key == lease)),
+        "unexpected error: {err}"
+    );
 }

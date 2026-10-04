@@ -11,6 +11,11 @@ pub(super) fn is_fanin_ty(ty: &syn::Type) -> bool {
     last_ident_is(strip_ref(ty), "FanIn")
 }
 
+/// `X` of an optional input or conditional output `Option<X>` (not `&Option<X>`).
+pub(super) fn optional_input_type(ty: &syn::Type) -> Option<&syn::Type> {
+    generic_arg(ty, "Option", 0)
+}
+
 pub(super) struct InputDeclInputs<'a> {
     pub(super) is_low_level: bool,
     pub(super) inputs: &'a [PortMeta],
@@ -59,6 +64,8 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
                     ty_expr,
                     access: quote! { #runtime_crate::transport_types::AccessMode::Read },
                     residency: quote! {},
+                    // The handler reads `NodeIo` itself and sees whatever arrived.
+                    optional: true,
                     runtime_crate,
                     registry_crate,
                 })
@@ -71,14 +78,19 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
         .enumerate()
         .filter_map(|(idx, port)| {
             let raw_aty = arg_types.get(idx)?;
-            let is_binding_mut = arg_mut_bindings.get(idx).copied().unwrap_or(false);
+            // `Option<X>` is an optional input carrying `X`: same key and schema as `X`, so
+            // producers of `X` connect directly. `Option<T>` clones, so it only reads.
+            let optional = optional_input_type(raw_aty);
+            let raw_aty = optional.unwrap_or(raw_aty);
+            let is_binding_mut =
+                optional.is_none() && arg_mut_bindings.get(idx).copied().unwrap_or(false);
             let is_ref = matches!(raw_aty, syn::Type::Reference(_));
             let is_ref_mut = matches!(raw_aty, syn::Type::Reference(r) if r.mutability.is_some());
             let aty = strip_ref(raw_aty);
             let is_arc = last_ident_is(aty, "Arc");
             let access = if is_ref_mut || is_binding_mut {
                 quote! { #runtime_crate::transport_types::AccessMode::Modify }
-            } else if is_ref || is_arc {
+            } else if is_ref || is_arc || optional.is_some() {
                 quote! { #runtime_crate::transport_types::AccessMode::Read }
             } else {
                 quote! { #runtime_crate::transport_types::AccessMode::Move }
@@ -118,6 +130,7 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
                 ty_expr,
                 access,
                 residency,
+                optional: optional.is_some(),
                 runtime_crate,
                 registry_crate,
             }))
@@ -132,6 +145,7 @@ struct PortDeclToken<'a> {
     ty_expr: TokenStream,
     access: TokenStream,
     residency: TokenStream,
+    optional: bool,
     runtime_crate: &'a TokenStream,
     registry_crate: &'a TokenStream,
 }
@@ -144,9 +158,11 @@ fn port_decl_token(input: PortDeclToken<'_>) -> TokenStream {
         ty_expr,
         access,
         residency,
+        optional,
         runtime_crate,
         registry_crate,
     } = input;
+    let optional = optional.then(|| quote! { __port = __port.optional(); });
     quote! {
         {
             let __ty = #ty_expr;
@@ -157,6 +173,7 @@ fn port_decl_token(input: PortDeclToken<'_>) -> TokenStream {
             .schema(__ty)
             .access(#access);
             #residency
+            #optional
             if let Some(__source) = #source {
                 __port = __port.source(__source.as_str());
             }
@@ -190,6 +207,7 @@ pub(super) fn output_type_exprs(
                         out.push(ts);
                         continue;
                     }
+                    let elem = optional_input_type(elem).unwrap_or(elem);
                     out.push(node_type_expr(elem, generic_type_params, data_crate));
                 }
             }

@@ -78,11 +78,16 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> (Vec<TokenStream>, V
                 let #tmp_ident = io.get_all_fanin_indexed::<#inner_ty>(#port);
                 let #ident = #runtime_crate::FanIn::<#inner_ty>::from_indexed(#tmp_ident);
             }
-        } else if let Some(inner_ty) = generic_arg(ty_core, "Option", 0)
-            && mode == "owned"
-        {
-            quote! {
-                let #ident = io.get_typed::<#inner_ty>(#port);
+        } else if let Some(inner_ty) = generic_arg(ty, "Option", 0) {
+            // Optional input: `None` when the port has no value this tick.
+            if let syn::Type::Reference(inner) = inner_ty {
+                let inner_ty = &inner.elem;
+                arg_fetch_ref_stmts.push(quote! { let #ident = io.get_ref::<#inner_ty>(#port); });
+                continue;
+            }
+            match generic_arg(inner_ty, "Arc", 0) {
+                Some(arc_ty) => quote! { let #ident = io.get_arc::<#arc_ty>(#port); },
+                None => quote! { let #ident = io.get_typed::<#inner_ty>(#port); },
             }
         } else if let Some(inner_ty) = generic_arg(ty_core, "Arc", 0) {
             let value = get("get_arc", inner_ty);

@@ -60,6 +60,43 @@ for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plu
 `discover_plugin_libraries` returns `.so` / `.dylib` / `.dll` files sorted by file name, skips
 missing directories, and keeps the first occurrence of a file name across directories.
 
+## Plugin Dependencies
+
+A plugin whose nodes use types another plugin registers (a frame library's integration plugin
+that owns `styx:framelease` and provides `daedalus:frame`, say) declares the dependency and, when
+it can, links that plugin into its library:
+
+```rust
+#[plugin(id = "eidos", deps("styx.frames"), nodes(to_gray))]
+pub struct EidosPlugin;
+
+daedalus::export_plugin!(EidosPlugin, deps [styx_core::daedalus_integration::StyxPlugin]);
+```
+
+- **Declared** (`#[plugin(deps(...))]`, plus every linked plugin): the schema lists the
+  dependencies (`PluginSchema::dependencies`), and `install_into` fails with
+  `PluginLibraryError::MissingDependencies` naming every one the host registry has not
+  installed, before calling into the plugin. Install the dependency in the host first, from the
+  host's build: it is never installed from the plugin's library.
+- **Linked** (`export_plugin!(.., deps [Plugin, ...])`, each `Plugin + Default`): the
+  descriptor's introspection entry points (`schema`, `boundary_types`, `foreign_interfaces`)
+  install the linked plugins before the plugin into their private registry, so the keys they own
+  or map (`foreign_types`) resolve and their adapters, providers and types are there. Their
+  boundary types and foreign interfaces are part of the exported tables, so the host checks the
+  plugin's copy of them too. Linking matters for types that declare no key themselves (a
+  dependency's `foreign_types` mapping): node macros resolve those through the library's own
+  process globals, which only a linked dependency fills. Types that own their key (`#[type_key]`,
+  `DaedalusTypeExpr`) resolve without it.
+- **Not linked**: introspection runs in a lenient mode. A port type from another crate without a
+  key is recorded instead of failing (`PluginRegistry::record_external_types`), listed in the
+  schema as `plugin.metadata.external_types` (`owner`, `port`, `rust_type`), and keeps its
+  `rust:` key; the schema loads, but installing fails with `UnkeyedForeignType`. Link the
+  dependency (or give the port a `type_key`).
+
+`examples/plugins/dependent` depends on and links the example plugin (whose `Lease` type has no
+key of its own); the facade's `dylib_plugin`, `dylib_linked_deps` and `dylib_external_types`
+tests cover the three cases.
+
 ## ABI And Compatibility Rules
 
 The `daedalus::dylib` module docs ([source](../crates/daedalus/src/dylib/mod.rs), rendered on
@@ -102,7 +139,8 @@ A plugin that uses a type from another crate (a camera library's `FrameLease`, s
 the crate that owns the type, with that crate's optional `daedalus` feature, so port keys come
 from the type itself; it never registers the type under a key of its own. When the owner has no
 integration, the plugin declares the key with `#[plugin(foreign_types(Type = "key"))]` or a port
-`type_key`. List the owner's plugin in `deps(...)` so the requirement is explicit. See "Library-Owned
+`type_key`. List the owner's plugin in `deps(...)` so the requirement is explicit, and link it
+(see [Plugin Dependencies](#plugin-dependencies)). See "Library-Owned
 Integration Features" in [`node-authoring.md`](node-authoring.md#library-owned-integration-features).
 
 The fingerprint only covers Daedalus crates, so a plugin built in a separate cargo invocation that
