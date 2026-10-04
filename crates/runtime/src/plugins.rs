@@ -29,6 +29,7 @@ use std::ops::{Deref, DerefMut};
 use thiserror::Error;
 
 mod adapters;
+mod boundary_types;
 mod builtins;
 mod context;
 mod install;
@@ -37,6 +38,7 @@ mod registry_transport;
 mod requirements;
 
 pub use adapters::{SmartAdapter, TransportAdapterOptions};
+pub use boundary_types::PortTypeUse;
 pub use context::{PluginGroup, PluginInstallContext, PluginInstallable};
 pub use install::install_all;
 use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
@@ -68,6 +70,31 @@ pub enum PluginError {
     NamedType { message: String },
     #[error("plugin install failed: {message}")]
     Install { message: String },
+    /// A node port or adapter uses a type from another crate that declares no type key, so its
+    /// key would be the order-dependent `rust:` fallback.
+    #[error(
+        "`{owner}` port `{port}` uses `{rust_type}` from another crate, which declares no type \
+         key (it fell back to `{key}`, which depends on registration order); enable the owning \
+         crate's `daedalus` integration (a `#[type_key]`/`DaedalusTypeExpr` key), set the port's \
+         key (`port(name = \"{port}\", type_key = \"...\")`), or map the type on the plugin \
+         (`#[plugin(foreign_types(Type = \"...\"))]`)"
+    )]
+    UnkeyedForeignType {
+        owner: String,
+        port: String,
+        rust_type: &'static str,
+        key: TypeKey,
+    },
+    /// One transport key was recorded for two different Rust types.
+    #[error(
+        "type key `{key}` is used for two Rust types, {existing} and {new}; a type key must name \
+         exactly one Rust type"
+    )]
+    BoundaryTypeConflict {
+        key: TypeKey,
+        existing: daedalus_transport::RustTypeIdentity,
+        new: daedalus_transport::RustTypeIdentity,
+    },
     #[error("{0}")]
     Message(&'static str),
 }
@@ -273,6 +300,7 @@ pub struct PluginRegistry {
     pub named_type_registry: NamedTypeRegistry,
     pub plugin_manifests: BTreeMap<String, PluginManifest>,
     pub boundary_contracts: BTreeMap<TypeKey, BoundaryTypeContract>,
+    boundary_types: BTreeMap<TypeKey, daedalus_transport::RustTypeIdentity>,
     pub current_prefix: Option<String>,
     pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,

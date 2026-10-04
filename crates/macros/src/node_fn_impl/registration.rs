@@ -5,6 +5,7 @@ use syn::LitStr;
 use super::parse::PortMeta;
 use super::type_analysis::{direct_payload_plain_type, direct_payload_same_type};
 use crate::helpers::result_ok_type;
+use crate::type_expr::value_type_key;
 
 pub(super) struct DirectPayloadInputs<'a> {
     pub(super) is_low_level: bool,
@@ -20,6 +21,7 @@ pub(super) struct DirectPayloadInputs<'a> {
     pub(super) arg_types: &'a [syn::Type],
     pub(super) effective_inputs_for_args: &'a [PortMeta],
     pub(super) output_names: &'a [LitStr],
+    pub(super) output_type_key: Option<&'a LitStr>,
     pub(super) ret: &'a syn::ReturnType,
     pub(super) same_payload_attr: bool,
     pub(super) inner_fn_ident: &'a syn::Ident,
@@ -41,6 +43,7 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
         arg_types,
         effective_inputs_for_args,
         output_names,
+        output_type_key,
         ret,
         same_payload_attr,
         inner_fn_ident,
@@ -68,6 +71,7 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
         return quote! {};
     };
     let input_port = &effective_inputs_for_args[0].name;
+    let output_key = value_type_key(output_ty, output_type_key);
     let output_port = &output_names[0];
     let input_value_ty = if let syn::Type::Reference(reference) = input_ty {
         Some(reference.elem.as_ref())
@@ -118,7 +122,7 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
                             #runtime_crate::transport_types::TypeKey
                         > = ::std::sync::OnceLock::new();
                         let __key = __OUTPUT_TYPE_KEY
-                            .get_or_init(#runtime_crate::transport::type_key_of::<#output_ty>)
+                            .get_or_init(|| #output_key)
                             .clone();
                         Ok(Some(#runtime_crate::transport_types::Payload::owned(__key, __value)))
                     }
@@ -388,6 +392,7 @@ pub(super) fn node_install_impl(inputs: NodeInstallInputs<'_>) -> TokenStream {
                         let full_id = #runtime_crate::apply_node_prefix(prefix, #struct_ident::ID);
                         decl.id = #registry_crate::ids::NodeId::new(&full_id);
                     }
+                    #struct_ident::register_port_types(into, &decl.id.0)?;
                     #graph_register_tokens
                     into.register_node_decl(decl)?;
                     Ok(())
@@ -406,6 +411,7 @@ pub(super) fn node_install_impl(inputs: NodeInstallInputs<'_>) -> TokenStream {
                         let full_id = #runtime_crate::apply_node_prefix(prefix, #struct_ident::ID);
                         decl.id = #registry_crate::ids::NodeId::new(&full_id);
                     }
+                    #struct_ident::register_port_types(into, &decl.id.0)?;
                     into.register_node_decl(decl)?;
                     let handlers = if let Some(prefix) = &into.current_prefix {
                         #struct_ident::handler_registry().with_prefix(prefix)

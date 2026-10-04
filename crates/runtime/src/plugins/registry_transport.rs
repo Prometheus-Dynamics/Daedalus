@@ -27,11 +27,26 @@ impl PluginRegistry {
         let decl = TypeDecl::new(key.clone())
             .schema(schema.normalize())
             .export(export);
-        if self.transport_capabilities.type_decl(&key).is_some()
-            && self.remove_builtin_type_source(&key)
-        {
+        // A port or adapter that uses the key before its owner registers it leaves a
+        // placeholder declaration (schema `Opaque(key)`); the owner's declaration replaces it,
+        // so install order does not matter.
+        let placeholder = self.transport_capabilities.type_decl(&key).map(|existing| {
+            existing.schema.as_ref() == Some(&TypeExpr::opaque(key.as_str()))
+                && existing.export == ExportPolicy::None
+        });
+        let replace = match placeholder {
+            None => false,
+            Some(true) => true,
+            Some(false) => {
+                let builtin = self.remove_builtin_type_source(&key);
+                if builtin {
+                    self.overridden_capabilities.types.insert(key.clone());
+                }
+                builtin
+            }
+        };
+        if replace {
             self.transport_capabilities.replace_type(decl);
-            self.overridden_capabilities.types.insert(key);
             return Ok(());
         }
         self.transport_capabilities
@@ -210,13 +225,9 @@ impl PluginRegistry {
             schema,
             options,
             move |payload, _request| {
-                let found = payload.type_key().clone();
-                let value = payload
-                    .get_ref::<T>()
-                    .ok_or_else(|| TransportError::TypeMismatch {
-                        expected: from_key.clone(),
-                        found,
-                    })?;
+                let value = payload.get_ref::<T>().ok_or_else(|| {
+                    TransportError::type_mismatch::<T>(from_key.clone(), &payload)
+                })?;
                 Ok(Payload::owned(to_key.clone(), value.branch_payload()))
             },
         )
@@ -261,12 +272,11 @@ impl PluginRegistry {
             to,
             cost,
             move |payload, _request| {
-                let found = payload.type_key().clone();
                 let Some(input) = payload.get_ref::<S>() else {
-                    return Err(TransportError::TypeMismatch {
-                        expected: from_key.clone(),
-                        found,
-                    });
+                    return Err(TransportError::type_mismatch::<S>(
+                        from_key.clone(),
+                        &payload,
+                    ));
                 };
                 f(input).map(|output| Payload::owned(to_key.clone(), output))
             },
@@ -315,12 +325,11 @@ impl PluginRegistry {
             device.clone(),
             upload_options,
             move |payload, _request| {
-                let found = payload.type_key().clone();
                 let Some(input) = payload.get_ref::<Cpu>() else {
-                    return Err(TransportError::TypeMismatch {
-                        expected: cpu_key.clone(),
-                        found,
-                    });
+                    return Err(TransportError::type_mismatch::<Cpu>(
+                        cpu_key.clone(),
+                        &payload,
+                    ));
                 };
                 upload(input).map(|output| {
                     Payload::shared_with(
@@ -343,12 +352,11 @@ impl PluginRegistry {
             cpu.clone(),
             download_options,
             move |payload, _request| {
-                let found = payload.type_key().clone();
                 let Some(input) = payload.get_ref::<Device>() else {
-                    return Err(TransportError::TypeMismatch {
-                        expected: download_from_key.clone(),
-                        found,
-                    });
+                    return Err(TransportError::type_mismatch::<Device>(
+                        download_from_key.clone(),
+                        &payload,
+                    ));
                 };
                 download(input).map(|output| {
                     Payload::shared_with(
@@ -486,6 +494,7 @@ impl PluginRegistry {
         // paths that resolve type keys at registration time. Plugin-owned code should use
         // `PluginRegistry::type_registry` directly when isolation matters.
         daedalus_data::typing::register_type::<T>(expr);
+        self.register_boundary_type::<T>(T::TYPE_KEY)?;
         self.register_named_type(T::TYPE_KEY, T::type_expr(), export)
     }
 

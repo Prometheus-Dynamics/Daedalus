@@ -13,6 +13,7 @@ mod ids;
 mod kinds;
 mod payload;
 mod payload_lifecycle;
+mod rust_type;
 mod stream_policy;
 
 /// Locks `mutex`, recovering the guard if a panicking holder poisoned it.
@@ -46,6 +47,7 @@ pub use payload_lifecycle::{
     BranchKind, BranchPayload, CorrelationId, PayloadLifecycleStage, PayloadLineage,
     PayloadRelease, PayloadReleaseQueue, ReleaseContext, ReleaseMode,
 };
+pub use rust_type::RustTypeIdentity;
 pub use stream_policy::{
     CoalesceStrategy, DropReason, FeedOutcome, FreshnessPolicy, OverflowPolicy, PolicyQueue,
     PolicyValidationError, PressurePolicy, PushOutcome, validate_stream_policy,
@@ -370,6 +372,29 @@ mod tests {
             missing,
             TransportError::MissingAdapter {
                 adapter: AdapterId::new("demo.missing")
+            }
+        );
+    }
+
+    #[test]
+    fn type_mismatch_names_the_rust_types_when_keys_agree() {
+        struct OtherFrame;
+        let payload = Payload::owned("demo:frame", Frame { bytes: vec![] });
+        let err = TransportError::type_mismatch::<OtherFrame>("demo:frame", &payload);
+        let message = err.to_string();
+        assert!(
+            message.starts_with("payload type mismatch: same TypeKey `demo:frame`"),
+            "{message}"
+        );
+        assert!(message.contains("::OtherFrame`, found `"), "{message}");
+        assert!(message.contains("built separately"), "{message}");
+
+        let err = TransportError::type_mismatch::<OtherFrame>("demo:other", &payload);
+        assert_eq!(
+            err,
+            TransportError::TypeMismatch {
+                expected: TypeKey::new("demo:other"),
+                found: TypeKey::new("demo:frame"),
             }
         );
     }

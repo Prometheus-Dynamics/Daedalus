@@ -13,6 +13,7 @@ mod handler_fetch;
 mod idents;
 mod metadata;
 mod parse;
+mod port_types;
 mod registration;
 mod shader;
 mod type_analysis;
@@ -105,6 +106,8 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             }
         })
         .collect();
+    let output_type_keys: Vec<Option<LitStr>> =
+        outputs_vec.iter().map(|p| p.type_key.clone()).collect();
     let output_idents: Vec<syn::Ident> = outputs_vec
         .iter()
         .map(|p| port_ident(&p.name.value()))
@@ -116,6 +119,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         inputs_vec: &inputs_vec,
         outputs_len: outputs_vec.len(),
         output_names: &output_names,
+        output_type_keys: &output_type_keys,
         output_idents: &output_idents,
         config_types: &config_types,
         shader_path: shader_path.as_ref(),
@@ -251,6 +255,18 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         fn_impl_generics: &fn_impl_generics_ts,
         fn_where_clause: &fn_where_clause_ts,
     });
+
+    let register_port_types_fn = port_types::register_port_types_fn(port_types::PortTypeInputs {
+        skip: is_low_level || has_fn_generics || is_graph_node,
+        effective_inputs_for_args: &effective_inputs_for_args,
+        arg_types: &arg_types,
+        output_contract_tys: &output_contract_tys,
+        outputs: &outputs_vec,
+        generic_type_params: &generic_type_params,
+        data_crate: &data_crate,
+        runtime_crate: &runtime_crate,
+    });
+    let boundary_contracts_fn = quote! { #boundary_contracts_fn #register_port_types_fn };
 
     let graph_port_names: Vec<LitStr> = effective_inputs_for_args
         .iter()
@@ -433,6 +449,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             arg_types: &arg_types,
             effective_inputs_for_args: &effective_inputs_for_args,
             output_names: &output_names,
+            output_type_key: output_type_keys.first().and_then(Option::as_ref),
             ret: &input.sig.output,
             same_payload_attr,
             inner_fn_ident: &inner_fn_ident,
