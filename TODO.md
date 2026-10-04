@@ -49,6 +49,18 @@ changes.
 ## Remaining
 
 ### High priority
+- [ ] **Boundary type check for dylib plugins.** HeliOS found that a plugin built in a separate
+      cargo invocation passes the fingerprint check but fails on every frame with
+      `payload type mismatch: expected styx:framelease, found styx:framelease`. Third-party crates
+      (e.g. styx) were resolved with different features, so the Rust types differ. Fix:
+      - the plugin exports `(TypeKey, TypeId hash, size, align, type_name)` for every boundary type;
+      - the host compares them at install and fails with a typed `BoundaryTypeMismatch` naming the key;
+      - adapter mismatch errors say "same TypeKey, different Rust type (built separately?)";
+      - document the rule that Rust-ABI plugins must come from the same cargo build as the host.
+- [ ] **Foreign (host-owned) types for separately built plugins.** The host registers a
+      `#[repr(C)]` accessor vtable per TypeKey (e.g. frame width/height/format/planes/dmabuf fd,
+      retain/release), and plugins see an opaque handle. This gives zero-copy frames without sharing
+      Rust types. Part of the stable plugin path below.
 - [ ] **Stable plugin handler path.** Mismatched-toolchain plugins can be inspected but not run.
       Needs a `TypeKey`-keyed codec table registered by the node macros, an `invoke` entry point
       using ffi-core `InvokeRequest`/`InvokeResponse`, and schema-built host handlers (design in
