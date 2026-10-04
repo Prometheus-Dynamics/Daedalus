@@ -128,7 +128,7 @@ jobs:
       - *cache
 
       - name: Validate package surface
-        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --exclude daedalus-wasm-smoke --allow-dirty --no-verify
+        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --exclude daedalus-wasm-smoke --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer --exclude daedalus-plugins-example-project-dylib --allow-dirty --no-verify
 
   # Type-check only (no linking): the C cross compiler is for build scripts that compile C.
   aarch64:
