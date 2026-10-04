@@ -730,6 +730,7 @@ name = "daedalus-rs"
 version = "2.0.0"
 dependencies = [
  "bytemuck",
+ "criterion",
  "daedalus-core",
  "daedalus-data",
  "daedalus-engine",
