@@ -9,7 +9,7 @@ use super::{
 };
 use crate::handles::PortId;
 use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, NodeFire, RuntimeEdge, RuntimeNode, RuntimePlan};
-use alloc::sync::Arc;
+use crate::portable::Arc;
 
 pub(crate) struct ExecutorInit {
     pub(crate) nodes: Arc<[RuntimeNode]>,

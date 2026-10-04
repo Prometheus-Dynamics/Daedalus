@@ -340,7 +340,7 @@ impl PluginRegistry {
                 upload(input).map(|output| {
                     Payload::shared_with(
                         upload_to_key.clone(),
-                        alloc::sync::Arc::new(output),
+                        crate::portable::Arc::new(output),
                         Residency::Gpu,
                         None,
                         payload.bytes_estimate(),
@@ -367,7 +367,7 @@ impl PluginRegistry {
                 download(input).map(|output| {
                     Payload::shared_with(
                         download_to_key.clone(),
-                        alloc::sync::Arc::new(output),
+                        crate::portable::Arc::new(output),
                         Residency::Cpu,
                         None,
                         payload.bytes_estimate(),
@@ -574,7 +574,7 @@ impl PluginRegistry {
             return;
         }
         let variants =
-            alloc::sync::Arc::new(variants.into_iter().map(Into::into).collect::<Vec<_>>());
+            crate::portable::Arc::new(variants.into_iter().map(Into::into).collect::<Vec<_>>());
 
         fn resolve_enum_name(variants: &[String], raw: &str) -> Option<String> {
             let trimmed = raw.trim();

@@ -7,10 +7,10 @@ use super::{
     serial,
 };
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::state::{ResourceLifecycleEvent, StateStore};
 use crate::sync::RwLock;
-use alloc::sync::Arc;
 use core::time::Duration;
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
 

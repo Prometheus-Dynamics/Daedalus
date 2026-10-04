@@ -1,10 +1,10 @@
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::state::{ExecutionContext, ResourceLifecycleEvent, StateStore};
 use crate::sync::RwLock;
 use ::core::time::Duration;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
 
 mod adaptive;

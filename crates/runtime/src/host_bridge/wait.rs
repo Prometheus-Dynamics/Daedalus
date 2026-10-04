@@ -5,8 +5,8 @@
 //! buffer lock and woken after it is released) and, with `threads`, a blocking wait on the
 //! bridge's existing `Condvar`. No extra lock is introduced; see `docs/host-bridge-lock-granularity.md`.
 
+use crate::portable::Arc;
 use crate::prelude::*;
-use alloc::sync::Arc;
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};

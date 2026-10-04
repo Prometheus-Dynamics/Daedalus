@@ -1,6 +1,6 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 
 use crate::plan::{RuntimeEdge, RuntimeNode, RuntimeSegment, direct_edge_mask_for_active_edges};
 use daedalus_planner::{NodeRef, is_host_bridge_metadata};

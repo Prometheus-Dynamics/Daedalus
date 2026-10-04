@@ -1,5 +1,5 @@
+use crate::portable::Arc;
 use crate::prelude::*;
-use alloc::sync::Arc;
 use core::fmt;
 use core::marker::PhantomData;
 use core::time::Duration;

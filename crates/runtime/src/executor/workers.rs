@@ -77,8 +77,8 @@ impl WorkerPool {
 
 #[cfg(not(feature = "executor-pool"))]
 mod parked {
+    use crate::portable::Arc;
     use crate::sync::{Condvar, Mutex};
-    use alloc::sync::Arc;
     use std::panic::{self, AssertUnwindSafe};
     use std::thread::JoinHandle;
 

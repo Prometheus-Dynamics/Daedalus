@@ -1,9 +1,9 @@
 use crate::prelude::*;
 
+use crate::portable::Arc;
 #[cfg(feature = "std")]
 use crate::sync::Condvar;
 use crate::sync::Mutex;
-use alloc::sync::Arc;
 
 use daedalus_core::platform::Clock;
 use daedalus_transport::{

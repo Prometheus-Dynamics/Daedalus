@@ -1,6 +1,6 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::RwLock;
-use alloc::sync::Arc;
 use core::any::Any;
 use core::ops::{Deref, DerefMut};
 

@@ -8,8 +8,9 @@
 //! The host-bridge lock is only held while checking/queueing payloads; it is never held while a
 //! graph tick or the caller's output callback runs.
 
-use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, Ordering};
+use crate::portable::Arc;
+use crate::portable::AtomicBool;
+use core::sync::atomic::Ordering;
 #[cfg(feature = "threads")]
 use core::time::Duration;
 

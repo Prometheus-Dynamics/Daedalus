@@ -1,6 +1,6 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::Mutex;
-use alloc::sync::Arc;
 
 use crate::executor::{DirectPayloadFn, NodeError};
 use crate::io::NodeIo;

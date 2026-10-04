@@ -1,5 +1,5 @@
+use crate::portable::Arc;
 use crate::prelude::*;
-use alloc::sync::Arc;
 
 use daedalus_planner::{Graph, GraphPatch};
 use daedalus_runtime::executor::{Executor, NodeHandler};

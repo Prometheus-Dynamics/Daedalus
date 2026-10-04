@@ -1,6 +1,6 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use core::time::Duration;
 
 use super::{

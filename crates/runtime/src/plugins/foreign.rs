@@ -101,7 +101,7 @@ impl PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::sync::Arc;
+    use crate::portable::Arc;
     use daedalus_transport::{FrameInterface, FramePlane, FrameResidency, FrameSource};
 
     struct Gray(Vec<u8>);

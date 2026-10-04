@@ -1,5 +1,5 @@
+use crate::portable::Arc;
 use crate::prelude::*;
-use alloc::sync::Arc;
 
 use super::{
     Executor, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler,

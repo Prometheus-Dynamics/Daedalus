@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::const_coerce::CoerceFn;
-use alloc::sync::Arc;
+use crate::portable::Arc;
 use core::any::TypeId;
 use daedalus_data::model::Value;
 

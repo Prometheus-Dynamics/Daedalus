@@ -1,8 +1,8 @@
 //! Edge policy application: backpressure, overflow handling and pressure telemetry.
 
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::Mutex;
-use alloc::sync::Arc;
 use daedalus_core::platform::{Clock, Instant};
 
 #[cfg(feature = "lockfree-queues")]

@@ -1,8 +1,8 @@
 //! Continuous stream workers: a thread per graph (`threads` feature).
 
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::{Condvar, Mutex};
-use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};

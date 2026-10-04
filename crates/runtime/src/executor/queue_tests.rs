@@ -6,9 +6,9 @@ use crate::executor::ExecutionTelemetry;
 use crate::executor::MetricsLevel;
 use crate::executor::{CorrelatedPayload, RuntimeDataSizeInspectors};
 use crate::plan::{BackpressureStrategy, RuntimeEdgePolicy};
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::Mutex;
-use alloc::sync::Arc;
 use core::time::Duration;
 use daedalus_transport::{CoalesceStrategy, FreshnessPolicy, OverflowPolicy, PressurePolicy};
 

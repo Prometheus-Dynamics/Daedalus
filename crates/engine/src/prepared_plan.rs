@@ -1,4 +1,4 @@
-use alloc::sync::Arc;
+use crate::portable::Arc;
 
 use daedalus_runtime::{RuntimePlan, SchedulerConfig, build_runtime};
 

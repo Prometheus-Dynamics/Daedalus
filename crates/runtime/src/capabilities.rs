@@ -1,6 +1,6 @@
 use crate::executor::NodeError;
+use crate::portable::Arc;
 use crate::prelude::*;
-use alloc::sync::Arc;
 use core::any::{Any, TypeId};
 use daedalus_transport::Payload;
 

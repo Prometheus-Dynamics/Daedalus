@@ -2,11 +2,11 @@ use super::{
     DirectSlot, EdgeStorage, ExecutionTelemetry, ExecutorInit, ExecutorRunConfig, MaybeGpu,
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
 };
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::state::StateStore;
 use crate::sync::Mutex;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use daedalus_core::platform::Clock;
 
 pub(crate) struct ExecutorCore {

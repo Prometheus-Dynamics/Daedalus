@@ -4,10 +4,10 @@ use super::{
     DirectSlotAccess, ExecuteError, ExecutionTelemetry, NodeError, NodeHandler,
     is_host_bridge_node, push_const_inputs, queue, serial,
 };
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::state::ExecutionContext;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use daedalus_transport::Payload;
 
 impl<H: NodeHandler> OwnedExecutor<H> {

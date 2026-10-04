@@ -1,7 +1,7 @@
+use crate::portable::Arc;
 use crate::portable::AtomicU64;
 use crate::prelude::*;
 use crate::sync::Mutex;
-use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 
 #[cfg(feature = "lockfree-queues")]

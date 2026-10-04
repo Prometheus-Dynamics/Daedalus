@@ -1,6 +1,6 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::Mutex;
-use alloc::sync::Arc;
 use core::marker::PhantomData;
 use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};

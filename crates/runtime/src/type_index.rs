@@ -8,9 +8,9 @@
 //! scalars and `Option`/`Vec` of them resolve in every index, including
 //! [`TypeIndex::builtin`].
 
+use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::sync::Arc;
 use core::any::{TypeId, type_name};
 use core::hash::{BuildHasherDefault, Hasher};
 

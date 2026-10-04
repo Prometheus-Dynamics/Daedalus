@@ -10,10 +10,10 @@ pub use resources::{
 };
 
 pub use crate::StateError;
+use crate::portable::Arc;
 use crate::prelude::hash_map::Entry;
 use crate::sync::RwLock;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use core::any::{Any, TypeId};
 use resources::{ResourceEntry, ResourceStorage, SharedNodeResources};
 

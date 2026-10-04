@@ -1,6 +1,6 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::VecDeque;
-use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 use daedalus_runtime::sync::Mutex;
 

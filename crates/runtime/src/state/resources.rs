@@ -1,5 +1,5 @@
+use crate::portable::Arc;
 use crate::prelude::*;
-use alloc::sync::Arc;
 use core::any::Any;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

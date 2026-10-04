@@ -1,8 +1,8 @@
 use super::errors::NodeError;
 use crate::io::NodeIo;
 use crate::plan::RuntimeNode;
+use crate::portable::Arc;
 use crate::state::ExecutionContext;
-use alloc::sync::Arc;
 use daedalus_transport::Payload;
 
 pub type DirectPayloadFn = Arc<

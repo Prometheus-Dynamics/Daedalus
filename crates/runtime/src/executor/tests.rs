@@ -1,8 +1,8 @@
 use super::*;
 use crate::config::RuntimeDebugConfig;
+use crate::portable::Arc;
 #[cfg(feature = "gpu")]
 use crate::{RuntimeEdgePolicy, plan::RuntimeEdge};
-use alloc::sync::Arc;
 use daedalus_data::model::Value;
 use daedalus_planner::ComputeAffinity;
 use std::thread;

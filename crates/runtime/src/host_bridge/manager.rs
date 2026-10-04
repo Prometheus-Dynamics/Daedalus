@@ -1,6 +1,6 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::Mutex;
-use alloc::sync::Arc;
 
 use daedalus_core::platform::Clock;
 use daedalus_planner::is_host_bridge_metadata;

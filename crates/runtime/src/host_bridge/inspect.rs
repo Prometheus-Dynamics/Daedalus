@@ -172,7 +172,7 @@ pub fn inspect_payload(payload: &Payload, serializers: &ValueSerializerMap) -> P
 
 #[cfg(test)]
 mod tests {
-    use alloc::sync::Arc;
+    use crate::portable::Arc;
 
     use daedalus_transport::{BoundaryCapabilities, Layout};
 
