@@ -403,3 +403,39 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
         }
     }
 }
+
+/// Check numeric graph constants against their port's exact width (`300` for a `u8` port, a
+/// fractional value for an integer port): constants are converted to the port's Rust type
+/// when the node runs, so a value that does not fit is a plan error, not a runtime one.
+pub(super) fn check_const_inputs(
+    graph: &Graph,
+    catalog: &PlannerCatalog,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for node in &graph.nodes {
+        let Some(desc) = latest_node(catalog, &node.id) else {
+            continue;
+        };
+        for (port, value) in &node.const_inputs {
+            let scalar = match port_type(node, desc, port, true) {
+                Some(TypeExpr::Scalar(scalar)) => scalar,
+                Some(TypeExpr::Optional(inner)) if !matches!(value, Value::Unit) => match *inner {
+                    TypeExpr::Scalar(scalar) => scalar,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            if let Err(reason) = scalar.check_value(value) {
+                diags.push(
+                    Diagnostic::new(
+                        DiagnosticCode::TypeMismatch,
+                        format!("const input `{port}` of node {}: {reason}", node.id.0),
+                    )
+                    .in_pass("typecheck")
+                    .at_node(diagnostic_node_id(node))
+                    .at_port(port.clone()),
+                );
+            }
+        }
+    }
+}

@@ -47,6 +47,7 @@ use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
 pub const BUILTIN_PRIMITIVE_TYPES_ID: &str = "daedalus.builtin.primitive_types";
 pub const BUILTIN_PRIMITIVE_SERIALIZERS_ID: &str = "daedalus.builtin.primitive_serializers";
 pub const BUILTIN_STD_BRANCH_ID: &str = "daedalus.builtin.std_branch";
+pub const BUILTIN_NUMERIC_WIDENING_ID: &str = "daedalus.builtin.numeric_widening";
 pub const BUILTIN_HOST_BOUNDARY_ID: &str = "daedalus.builtin.host_boundary";
 
 pub type PluginResult<T> = Result<T, PluginError>;
@@ -165,6 +166,7 @@ pub enum BuiltinCapability {
     PrimitiveTypes,
     PrimitiveSerializers,
     StdBranch,
+    NumericWidening,
     HostBoundary,
 }
 
@@ -174,6 +176,7 @@ impl BuiltinCapability {
             Self::PrimitiveTypes => BUILTIN_PRIMITIVE_TYPES_ID,
             Self::PrimitiveSerializers => BUILTIN_PRIMITIVE_SERIALIZERS_ID,
             Self::StdBranch => BUILTIN_STD_BRANCH_ID,
+            Self::NumericWidening => BUILTIN_NUMERIC_WIDENING_ID,
             Self::HostBoundary => BUILTIN_HOST_BOUNDARY_ID,
         }
     }

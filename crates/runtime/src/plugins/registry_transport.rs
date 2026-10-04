@@ -205,23 +205,6 @@ impl PluginRegistry {
     where
         T: BranchPayload,
     {
-        self.register_branch_adapter_with::<T>(id, schema, |payload, key| {
-            let value = payload.get_ref::<T>()?;
-            Some(Payload::owned(key.clone(), value.branch_payload()))
-        })
-    }
-
-    /// Register a same-type branch adapter for `T` that branches through `branch`, which may
-    /// accept other Rust types sharing `T`'s key.
-    pub(super) fn register_branch_adapter_with<T>(
-        &mut self,
-        id: impl Into<String>,
-        schema: TypeExpr,
-        branch: impl Fn(&Payload, &TypeKey) -> Option<Payload> + Send + Sync + 'static,
-    ) -> PluginResult<()>
-    where
-        T: BranchPayload,
-    {
         let key = typeexpr_transport_key(&schema);
         self.register_boundary_type::<T>(key.clone())?;
         let mut cost = AdaptCost::new(match T::BRANCH_KIND {
@@ -245,9 +228,9 @@ impl PluginRegistry {
             schema.clone(),
             schema,
             options,
-            move |payload, _request| {
-                branch(&payload, &key)
-                    .ok_or_else(|| TransportError::type_mismatch::<T>(key.clone(), &payload))
+            move |payload, _request| match payload.get_ref::<T>() {
+                Some(value) => Ok(Payload::owned(key.clone(), value.branch_payload())),
+                None => Err(TransportError::type_mismatch::<T>(key.clone(), &payload)),
             },
         )
     }

@@ -9,9 +9,10 @@ pub fn to_proto_type(expr: &TypeExpr) -> DataResult<String> {
     match expr {
         TypeExpr::Scalar(ValueType::Unit) => Ok("google.protobuf.Empty".into()),
         TypeExpr::Scalar(ValueType::Bool) => Ok("bool".into()),
-        TypeExpr::Scalar(ValueType::I32) => Ok("int32".into()),
-        TypeExpr::Scalar(ValueType::U32) => Ok("uint32".into()),
-        TypeExpr::Scalar(ValueType::Int) => Ok("int64".into()),
+        TypeExpr::Scalar(ValueType::I8 | ValueType::I16 | ValueType::I32) => Ok("int32".into()),
+        TypeExpr::Scalar(ValueType::U8 | ValueType::U16 | ValueType::U32) => Ok("uint32".into()),
+        TypeExpr::Scalar(ValueType::Int | ValueType::ISize) => Ok("int64".into()),
+        TypeExpr::Scalar(ValueType::U64 | ValueType::USize) => Ok("uint64".into()),
         TypeExpr::Scalar(ValueType::F32) => Ok("float".into()),
         TypeExpr::Scalar(ValueType::Float) => Ok("double".into()),
         TypeExpr::Scalar(ValueType::String) => Ok("string".into()),

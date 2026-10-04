@@ -148,21 +148,112 @@ impl<'a> ValueRef<'a> {
 
 /// Static value type.
 ///
+/// Every numeric variant is one Rust type (`Int` is `i64`, `Float` is `f64`), so the transport
+/// key of a builtin scalar names exactly one Rust type. Graph values carry integers as
+/// `Value::Int` and floats as `Value::Float` whatever the width.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum ValueType {
     Unit,
     Bool,
-    /// 32-bit signed integer (stored in `Value::Int`).
+    I8,
+    I16,
     I32,
-    /// 32-bit unsigned integer (stored in `Value::Int`).
-    U32,
+    /// `i64`.
     Int,
-    /// 32-bit float (stored in `Value::Float`).
+    ISize,
+    U8,
+    U16,
+    U32,
+    U64,
+    USize,
     F32,
+    /// `f64`.
     Float,
     String,
     Bytes,
-    // Future: more primitives can be added.
+}
+
+impl ValueType {
+    /// The Rust type this scalar stands for (`Vec<u8>` for `Bytes`, `()` for `Unit`).
+    pub const fn rust_name(self) -> &'static str {
+        match self {
+            Self::Unit => "()",
+            Self::Bool => "bool",
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::Int => "i64",
+            Self::ISize => "isize",
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+            Self::USize => "usize",
+            Self::F32 => "f32",
+            Self::Float => "f64",
+            Self::String => "String",
+            Self::Bytes => "Vec<u8>",
+        }
+    }
+
+    /// The inclusive range of an integer type (`isize`/`usize` at this target's width).
+    pub fn int_range(self) -> Option<(i128, i128)> {
+        Some(match self {
+            Self::I8 => (i8::MIN.into(), i8::MAX.into()),
+            Self::I16 => (i16::MIN.into(), i16::MAX.into()),
+            Self::I32 => (i32::MIN.into(), i32::MAX.into()),
+            Self::Int => (i64::MIN.into(), i64::MAX.into()),
+            Self::ISize => (isize::MIN as i128, isize::MAX as i128),
+            Self::U8 => (0, u8::MAX.into()),
+            Self::U16 => (0, u16::MAX.into()),
+            Self::U32 => (0, u32::MAX.into()),
+            Self::U64 => (0, u64::MAX.into()),
+            Self::USize => (0, usize::MAX as i128),
+            _ => return None,
+        })
+    }
+
+    pub const fn is_float(self) -> bool {
+        matches!(self, Self::F32 | Self::Float)
+    }
+
+    pub fn is_numeric(self) -> bool {
+        self.is_float() || self.int_range().is_some()
+    }
+
+    /// Check that a graph value converts to this numeric type exactly: an integer in range, or
+    /// for floats any `Value::Float` within range (`f32` rounds) and integers it represents
+    /// exactly. Other types accept anything; their conversions check shape themselves.
+    pub fn check_value(self, value: &Value) -> Result<(), String> {
+        let rust = self.rust_name();
+        match (self.int_range(), value) {
+            (Some((min, max)), Value::Int(v)) if (min..=max).contains(&i128::from(*v)) => Ok(()),
+            (Some((min, max)), Value::Int(v)) => {
+                Err(format!("{v} is out of range for {rust} ({min}..={max})"))
+            }
+            (Some(_), other) => Err(format!("expected an integer for {rust}, found {other:?}")),
+            (None, Value::Float(v)) if self == Self::F32 && v.is_finite() => {
+                if v.abs() <= f64::from(f32::MAX) {
+                    Ok(())
+                } else {
+                    Err(format!("{v} is out of range for f32"))
+                }
+            }
+            (None, Value::Float(_)) if self.is_float() => Ok(()),
+            (None, Value::Int(v)) if self.is_float() => {
+                let exact = if self == Self::F32 { 1 << 24 } else { 1 << 53 };
+                if v.unsigned_abs() <= exact {
+                    Ok(())
+                } else {
+                    Err(format!("{v} is not exactly representable as {rust}"))
+                }
+            }
+            (None, other) if self.is_float() => {
+                Err(format!("expected a number for {rust}, found {other:?}"))
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Type expression to describe structured types.

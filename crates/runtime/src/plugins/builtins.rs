@@ -6,6 +6,7 @@ impl PluginRegistry {
         self.install_builtin_primitive_types()?;
         self.install_builtin_primitive_serializers()?;
         self.install_builtin_std_branch()?;
+        self.install_builtin_numeric_widening()?;
         self.install_builtin_host_boundary()?;
         Ok(())
     }
@@ -49,6 +50,71 @@ impl PluginRegistry {
             manifest,
             "built-in branch provider register failed",
         )
+    }
+
+    /// Lossless numeric conversions the planner inserts implicitly: every `From` conversion
+    /// between builtin numbers (`i32 -> i64`, `u32 -> i64`, `i32 -> f64`, `f32 -> f64`, ...).
+    /// Narrowing and `isize`/`usize` conversions are never implicit.
+    fn install_builtin_numeric_widening(&mut self) -> PluginResult<()> {
+        let mut manifest = PluginManifest::new(BUILTIN_NUMERIC_WIDENING_ID);
+        let registry = &mut *self;
+        macro_rules! widen {
+            ($($from:ident: $from_ty:ty => [$($to:ident: $to_ty:ty),*];)*) => {$($(
+                registry.register_numeric_widening::<$from_ty, $to_ty>(
+                    ValueType::$from,
+                    ValueType::$to,
+                    &mut manifest,
+                )?;
+            )*)*};
+        }
+        widen! {
+            I8: i8 => [I16: i16, I32: i32, Int: i64, F32: f32, Float: f64];
+            I16: i16 => [I32: i32, Int: i64, F32: f32, Float: f64];
+            I32: i32 => [Int: i64, Float: f64];
+            U8: u8 => [U16: u16, U32: u32, U64: u64, I16: i16, I32: i32, Int: i64, F32: f32, Float: f64];
+            U16: u16 => [U32: u32, U64: u64, I32: i32, Int: i64, F32: f32, Float: f64];
+            U32: u32 => [U64: u64, Int: i64, Float: f64];
+            F32: f32 => [Float: f64];
+        }
+        self.finish_builtin_provider(
+            BUILTIN_NUMERIC_WIDENING_ID,
+            manifest,
+            "built-in numeric widening provider register failed",
+        )
+    }
+
+    /// Register the `S -> T` widening adapter. Its result is a fresh value the consumer owns,
+    /// so it also serves `move`/`modify` inputs without a branch.
+    fn register_numeric_widening<S, T>(
+        &mut self,
+        from: ValueType,
+        to: ValueType,
+        manifest: &mut PluginManifest,
+    ) -> PluginResult<()>
+    where
+        S: Copy + Send + Sync + 'static,
+        T: From<S> + Send + Sync + 'static,
+    {
+        let id = format!(
+            "daedalus.builtin.widen.{}_to_{}",
+            from.rust_name(),
+            to.rust_name()
+        );
+        let (from, to) = (TypeExpr::Scalar(from), TypeExpr::Scalar(to));
+        let (from_key, to_key) = (typeexpr_transport_key(&from), typeexpr_transport_key(&to));
+        let options = TransportAdapterOptions::default().access(AccessMode::Modify);
+        self.register_transport_adapter_fn_with_options(
+            id.clone(),
+            from,
+            to,
+            options,
+            move |payload, _request| match payload.get_ref::<S>() {
+                Some(value) => Ok(Payload::owned(to_key.clone(), T::from(*value))),
+                None => Err(TransportError::type_mismatch::<S>(from_key.clone(), &payload)),
+            },
+        )?;
+        manifest.provided_adapters.push(AdapterId::new(id));
+        Ok(())
     }
 
     fn install_builtin_primitive_types(&mut self) -> PluginResult<()> {
@@ -140,7 +206,7 @@ impl PluginRegistry {
         T: BranchPayload,
     {
         let id = format!("daedalus.builtin.branch.{name}");
-        self.register_branch_adapter_with::<T>(id.clone(), schema, branch_builtin_primitive)?;
+        self.register_branch_payload_adapter::<T>(id.clone(), schema)?;
         manifest.provided_adapters.push(AdapterId::new(id));
         Ok(())
     }
@@ -162,19 +228,4 @@ impl PluginRegistry {
             .insert(provider_id.to_string(), CapabilitySourceKind::BuiltIn);
         Ok(())
     }
-}
-
-/// Branch a built-in primitive of any Rust type. `i64`, `i32` and `u32` share the `Int` key (and
-/// `f64`/`f32` share `Float`), so whichever branch adapter the planner picks for a key must accept
-/// each of them.
-fn branch_builtin_primitive(payload: &Payload, key: &TypeKey) -> Option<Payload> {
-    macro_rules! branch {
-        ($($ty:ty => $name:literal, $value_type:ident;)*) => {$(
-            if let Some(value) = payload.get_ref::<$ty>() {
-                return Some(Payload::owned(key.clone(), value.branch_payload()));
-            }
-        )*};
-    }
-    crate::host_bridge::for_each_builtin_primitive!(branch);
-    None
 }

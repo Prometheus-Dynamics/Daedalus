@@ -221,10 +221,9 @@ fn validate_default(ty: &TypeExpr, value: &Value) -> DataResult<()> {
     match (ty, value) {
         (TypeExpr::Scalar(ValueType::Unit), Value::Unit) => Ok(()),
         (TypeExpr::Scalar(ValueType::Bool), Value::Bool(_)) => Ok(()),
-        (TypeExpr::Scalar(ValueType::I32 | ValueType::U32 | ValueType::Int), Value::Int(_)) => {
-            Ok(())
-        }
-        (TypeExpr::Scalar(ValueType::F32 | ValueType::Float), Value::Float(_)) => Ok(()),
+        (TypeExpr::Scalar(number), value) if number.is_numeric() => number
+            .check_value(value)
+            .map_err(|message| DataError::new(DataErrorCode::InvalidType, message)),
         (TypeExpr::Scalar(ValueType::String), Value::String(_)) => Ok(()),
         (TypeExpr::Scalar(ValueType::Bytes), Value::Bytes(_)) => Ok(()),
         (TypeExpr::Optional(inner), v) => validate_default(inner, v),
