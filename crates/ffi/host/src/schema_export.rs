@@ -112,7 +112,7 @@ fn wire_port_from_decl(port: &PortDecl) -> WirePort {
             .clone()
             .unwrap_or_else(|| TypeExpr::opaque(port.type_key.to_string())),
         type_key: Some(port.type_key.clone()),
-        optional: false,
+        optional: port.optional,
         access: port.access,
         residency: port.residency,
         layout: port.layout.clone(),

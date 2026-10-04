@@ -338,6 +338,10 @@ pub struct PortDecl {
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub const_value_json: Option<String>,
+    /// An optional input (`Option<T>` in a `#[node]`): it never blocks the node, which runs
+    /// with `None` when the port is unconnected or has no value this tick.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub optional: bool,
 }
 
 /// Indexed fan-in input declaration for ports named `{prefix}{N}`.
@@ -378,6 +382,7 @@ impl PortDecl {
             layout: None,
             source: None,
             const_value_json: None,
+            optional: false,
         }
     }
 
@@ -388,6 +393,12 @@ impl PortDecl {
 
     pub fn access(mut self, access: AccessMode) -> Self {
         self.access = access;
+        self
+    }
+
+    /// Mark the input optional (see [`PortDecl::optional`](Self#structfield.optional)).
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
         self
     }
 
@@ -413,6 +424,10 @@ impl PortDecl {
 }
 
 pub const NODE_EXECUTION_KIND_META_KEY: &str = "daedalus.node.execution";
+/// Node metadata the planner sets to the names of the node's declared, not
+/// [optional](PortDecl#structfield.optional) inputs (a list of strings): the runtime runs the node
+/// only on ticks where each of them that is connected has a value.
+pub const NODE_REQUIRED_INPUTS_META_KEY: &str = "daedalus.node.required_inputs";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

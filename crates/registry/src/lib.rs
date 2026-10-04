@@ -47,9 +47,9 @@ pub fn transport_key_typeexpr(key: &daedalus_transport::TypeKey) -> daedalus_dat
 pub mod prelude {
     pub use crate::capability::{
         AdapterDecl, AdapterRegistry, CapabilityRegistry, CapabilityRegistrySnapshot, DeviceDecl,
-        DeviceRegistry, ExportPolicy, FanInDecl, NODE_EXECUTION_KIND_META_KEY, NodeDecl,
-        NodeExecutionKind, NodeRegistry, PluginManifest, PluginRegistry, PortDecl, SerializerDecl,
-        SerializerRegistry, TypeDecl, TypeRegistry,
+        DeviceRegistry, ExportPolicy, FanInDecl, NODE_EXECUTION_KIND_META_KEY,
+        NODE_REQUIRED_INPUTS_META_KEY, NodeDecl, NodeExecutionKind, NodeRegistry, PluginManifest,
+        PluginRegistry, PortDecl, SerializerDecl, SerializerRegistry, TypeDecl, TypeRegistry,
     };
     pub use crate::diagnostics::{RegistryError, RegistryErrorCode, RegistryResult};
     pub use crate::ids::{IdValidationError, NodeId};

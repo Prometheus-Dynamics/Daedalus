@@ -67,6 +67,14 @@ pub(crate) fn run_order<H: NodeHandler>(
         );
         let _node_span = node_span.enter();
 
+        let inputs = collect_inputs(exec, node_idx)?;
+        if !required_inputs_ready(exec, node_idx, &inputs) {
+            // Not ready this tick: a connected required input has no value (its producer was
+            // skipped or pushed nothing). Optional inputs never block.
+            tracing::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node not ready");
+            continue;
+        }
+
         match node.compute {
             ComputeAffinity::CpuOnly => {
                 exec.core.telemetry.cpu_segments =
@@ -115,7 +123,6 @@ pub(crate) fn run_order<H: NodeHandler>(
         } else {
             None
         };
-        let inputs = collect_inputs(exec, node_idx)?;
         let mut io = exec.core.node_io(node_idx, inputs);
         let ctx = ExecutionContext {
             state: exec.core.state.clone(),
@@ -265,6 +272,24 @@ fn node_is_active<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize) -> bo
         .as_deref()
         .and_then(|mask| mask.get(node_idx).copied())
         .unwrap_or(true)
+}
+
+/// Whether every connected required input of `node_idx` received a value this tick.
+fn required_inputs_ready<H: NodeHandler>(
+    exec: &Executor<'_, H>,
+    node_idx: usize,
+    inputs: &[crate::io::NodePort],
+) -> bool {
+    let Some(required) = exec.core.required_inputs.get(node_idx) else {
+        return true;
+    };
+    required.iter().all(|&edge_idx| {
+        !edge_is_active(exec, edge_idx)
+            || exec.edges.get(edge_idx).is_none_or(|edge| {
+                let port = edge.target_port_id();
+                inputs.iter().any(|(name, _)| name == port)
+            })
+    })
 }
 
 fn edge_is_active<H: NodeHandler>(exec: &Executor<'_, H>, edge_idx: usize) -> bool {

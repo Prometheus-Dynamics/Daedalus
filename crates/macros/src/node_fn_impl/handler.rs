@@ -566,13 +566,18 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
     })
 }
 
-/// Push `value` (of type `ty`, or `Arc` of it) to `port` under its explicit or leaf type key.
+/// Push `value` (of type `ty`, `Arc` of it, or `Option` of either) to `port` under its explicit or leaf type key.
 fn push_output(
     ty: &syn::Type,
     port: &LitStr,
     explicit: Option<&LitStr>,
     value: TokenStream,
 ) -> TokenStream {
+    // A conditional output: nothing is pushed for `None`.
+    if let Some(inner) = crate::helpers::generic_arg(ty, "Option", 0) {
+        let push = push_output(inner, port, explicit, quote! { __value });
+        return quote! { if let Some(__value) = #value { #push } };
+    }
     match arc_inner_type(ty) {
         Some(inner) => {
             let key = value_type_key(inner, explicit);

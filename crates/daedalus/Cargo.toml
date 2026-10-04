@@ -169,6 +169,11 @@ path = "tests/registry_type_index.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
+name = "optional_inputs"
+path = "tests/optional_inputs.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
 name = "transport_macro_ui"
 path = "tests/transport_macro_ui.rs"
 required-features = ["plugins"]
@@ -177,6 +182,16 @@ required-features = ["plugins"]
 name = "dylib_plugin"
 path = "tests/dylib_plugin.rs"
 required-features = ["engine", "dylib-plugins"]
+
+[[test]]
+name = "dylib_linked_deps"
+path = "tests/dylib_linked_deps.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
+name = "dylib_external_types"
+path = "tests/dylib_external_types.rs"
+required-features = ["dylib-plugins"]
 
 [[test]]
 name = "dylib_export_macro"

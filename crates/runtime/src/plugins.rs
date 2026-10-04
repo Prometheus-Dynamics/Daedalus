@@ -39,7 +39,7 @@ mod registry_transport;
 mod requirements;
 
 pub use adapters::{SmartAdapter, TransportAdapterOptions};
-pub use boundary_types::{BoundaryTypeConflict, PortTypeUse};
+pub use boundary_types::{BoundaryTypeConflict, ExternalTypeRef, PortTypeUse};
 pub use context::{PluginGroup, PluginInstallContext, PluginInstallable};
 pub use install::install_all;
 use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
@@ -78,7 +78,8 @@ pub enum PluginError {
          key (it fell back to `{key}`, which depends on registration order); enable the owning \
          crate's `daedalus` integration (a `#[type_key]`/`DaedalusTypeExpr` key), set the port's \
          key (`port(name = \"{port}\", type_key = \"...\")`), or map the type on the plugin \
-         (`#[plugin(foreign_types(Type = \"...\"))]`)"
+         (`#[plugin(foreign_types(Type = \"...\"))]`); a dynamic plugin whose dependency plugin \
+         maps it links that plugin (`export_plugin!(Plugin, deps [DependencyPlugin])`)"
     )]
     UnkeyedForeignType {
         owner: String,
@@ -333,6 +334,9 @@ pub struct PluginRegistry {
     /// Keys each Rust type was recorded under (see `PluginRegistry::type_index`).
     type_key_uses: std::collections::HashMap<std::any::TypeId, BTreeSet<TypeKey>>,
     foreign_interfaces: BTreeMap<TypeKey, daedalus_transport::ForeignInterfaceInfo>,
+    /// `Some` while extracting a dynamic plugin's schema: unkeyed foreign port types are
+    /// recorded here instead of failing (see [`PluginRegistry::record_external_types`]).
+    external_types: Option<Vec<ExternalTypeRef>>,
     pub current_prefix: Option<String>,
     pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,

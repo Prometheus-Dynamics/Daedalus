@@ -23,6 +23,7 @@ members = [
     "examples/plugins/math",
     "examples/plugins/example_project",
     "examples/plugins/foreign_consumer",
+    "examples/plugins/dependent",
     "examples/plugins/framelease",
 ]
 resolver = "3"
@@ -129,5 +130,9 @@ debug = 0
 strip = "debuginfo"
 
 [profile.dev.package.daedalus-plugins-foreign-consumer]
+debug = 0
+strip = "debuginfo"
+
+[profile.dev.package.daedalus-plugins-dependent]
 debug = 0
 strip = "debuginfo"

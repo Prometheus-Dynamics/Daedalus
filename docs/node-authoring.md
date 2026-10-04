@@ -112,13 +112,51 @@ planner and runtime make the value arrive in that form when a path exists.
 | `T` | owned value; moved when the payload is unique, otherwise planned branch/copy | `move` |
 | `&mut T` | in-place mutation when unique, planned copy-on-write otherwise | `modify` |
 | `Cow<'_, T>` | borrow when possible, clone on write | `modify` |
-| `Option<T>` | optional input | any |
+| `Option<T>` / `Option<&T>` / `Option<Arc<T>>` | optional input, `None` when no value arrived (see [Optional Inputs](#optional-inputs-and-readiness)) | `read` |
 | `FanIn<T>` | all values arriving on an indexed fan-in port | any |
 | `Cpu<T>` / `Gpu<T>` | explicitly request a device residency | any |
 | `FrameView<'_>` / `ForeignRef<'_, I>` | a host-owned value through a foreign interface, no copy (see [Foreign Interfaces](#foreign-interfaces)) | `read` |
 
 Use `access = "move"` or `access = "modify"` only when the node truly consumes or mutates its
 input. Read access lets fanout share one allocation.
+
+### Optional Inputs And Readiness
+
+Every tick, the runtime runs each node once with whatever arrived on its input edges that tick
+(plus const inputs). The rule:
+
+- A node runs only when **each connected required input has a value**. Otherwise it is skipped
+  for that tick: no error, no outputs, and the values that did arrive on its other ports are
+  dropped (as before, every tick consumes what arrived). Downstream nodes then see nothing either.
+- **Optional inputs never block.** A parameter `Option<T>` (or `Option<&T>`, which borrows,
+  or `Option<Arc<T>>`) is `None` when the port is unconnected or nothing arrived this tick, and
+  `Some` otherwise.
+- A required input that is **not connected** (and has no const value) still fails the node with
+  `NodeError::InvalidInput("missing <port>")`: that is a wiring error, not a timing one.
+- Nodes that take `NodeIo` read their inputs themselves, so their declared ports are optional.
+
+The port of an `Option<T>` parameter has `T`'s key and schema, so producers of `T` (and typed
+host inputs of `T`) connect to it directly, without an adapter; `PortDecl::optional` marks it
+(and `WirePort::optional` in exported schemas, and the planner does not warn about it being
+unconnected). `Option<T>` clones the value; use `Option<&T>` to borrow it.
+
+A node returning `Result<Option<T>, _>` (or a tuple element `Option<T>`) has a **conditional
+output** of type `T`: `Some` pushes, `None` pushes nothing.
+
+```rust
+#[node(id = "detect", inputs("frame"), outputs("corners"))]
+fn detect(frame: &Frame) -> Result<Option<Corners>, NodeError> { /* None: nothing found */ }
+
+#[node(id = "refine", inputs("frame", "corners"), outputs("corners"))]
+fn refine(frame: &Frame, corners: &Corners) -> Result<Corners, NodeError> { /* ... */ }
+
+// Runs every frame: with refined corners when detect and refine produced them, else `None`.
+#[node(id = "pose", inputs("frame", "refined"), outputs("pose"))]
+fn pose(frame: &Frame, refined: Option<&Corners>) -> Result<Pose, NodeError> { /* ... */ }
+```
+
+The planner records each node's required inputs in its metadata
+(`NODE_REQUIRED_INPUTS_META_KEY`); nodes without a registry declaration are never gated.
 
 ## Adapters Replace Conversion Nodes
 
@@ -297,7 +335,9 @@ pub struct EidosPlugin;
 ```
 
 The port key of `to_gray`'s `frame` is `styx:framelease` because `FrameLease` owns it, even when
-`EidosPlugin` installs before `StyxPlugin`. The host installs `StyxPlugin` and wraps frames with
+`EidosPlugin` installs before `StyxPlugin`. A dynamic plugin also links the dependency,
+`export_plugin!(EidosPlugin, deps [StyxPlugin])` (see
+[Plugin Dependencies](dynamic-plugins.md#plugin-dependencies)). The host installs `StyxPlugin` and wraps frames with
 `Payload::shared_with(styx_core::daedalus_integration::FRAME_LEASE_KEY, Arc::new(lease), ...)`.
 
 Rules:

@@ -8,7 +8,7 @@ use super::{
     edge_maps, normalize_runtime_nodes, queue,
 };
 use crate::handles::PortId;
-use crate::plan::{RuntimeNode, RuntimePlan};
+use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, RuntimeEdge, RuntimeNode, RuntimePlan};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -23,6 +23,8 @@ pub(crate) struct ExecutorInit {
     pub(crate) node_metadata: NodeMetadataStore,
     /// Each node's connected output port ids, handed to its `NodeIo`.
     pub(crate) output_ports: Arc<[Arc<[PortId]>]>,
+    /// Per node, the incoming edges into its required (not optional) inputs.
+    pub(crate) required_inputs: Arc<[Box<[usize]>]>,
     #[cfg(feature = "executor-pool")]
     pub(crate) pool_workers: usize,
     #[cfg(feature = "gpu")]
@@ -47,6 +49,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
             ports.into()
         })
         .collect();
+    let required_inputs = required_input_edges(&nodes, &plan.edges, &incoming_edges);
     let direct_edges = Arc::new(direct_edge_set(&plan.edges, &plan.edge_transports));
     let direct_slots = direct_slots(plan.edges.len());
     let schedule = Arc::new(build_compiled_schedule(
@@ -70,9 +73,43 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         direct_slots,
         node_metadata,
         output_ports,
+        required_inputs,
         #[cfg(feature = "executor-pool")]
         pool_workers,
         #[cfg(feature = "gpu")]
         data_edges,
     })
+}
+
+/// Incoming edges into the inputs the planner listed as required
+/// ([`NODE_REQUIRED_INPUTS_META_KEY`]): a node runs only when each of those ports has a value.
+/// Optional, fan-in and undeclared ports never block.
+fn required_input_edges(
+    nodes: &[RuntimeNode],
+    edges: &[RuntimeEdge],
+    incoming: &[Vec<usize>],
+) -> Arc<[Box<[usize]>]> {
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(idx, node)| {
+            let required = node
+                .metadata
+                .get(NODE_REQUIRED_INPUTS_META_KEY)
+                .and_then(|value| value.as_list())
+                .unwrap_or_default();
+            let is_required = |port: &str| required.iter().any(|name| name.as_str() == Some(port));
+            incoming
+                .get(idx)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|&edge| {
+                    edges
+                        .get(edge)
+                        .is_some_and(|e| is_required(e.target_port()))
+                })
+                .collect()
+        })
+        .collect()
 }
