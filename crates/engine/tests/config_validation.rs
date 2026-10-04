@@ -9,14 +9,14 @@ use daedalus_runtime::{
 };
 use parking_lot::Mutex;
 use std::sync::{
-    Arc, OnceLock,
+    Arc,
     atomic::{AtomicUsize, Ordering},
 };
 use std::time::Duration;
 
 #[cfg(feature = "config-env")]
 fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
 

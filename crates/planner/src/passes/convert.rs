@@ -1,6 +1,6 @@
 //! Lowering of a typechecked graph into an [`ExecutionPlan`].
 
-use daedalus_data::model::Value;
+use daedalus_data::model::{TypeExpr, Value};
 use daedalus_registry::typeexpr_transport_key;
 use std::collections::HashMap;
 
@@ -99,11 +99,24 @@ pub(super) fn convert(
         } else {
             feats.join(",")
         };
+        let numeric_hint = match (&out_ty, &in_ty) {
+            (TypeExpr::Scalar(from), TypeExpr::Scalar(to))
+                if from.is_numeric() && to.is_numeric() =>
+            {
+                format!(
+                    "; {} -> {} is not lossless on every target, so it is never converted \
+                     implicitly: convert in the producer, change a port type, or register an adapter",
+                    from.rust_name(),
+                    to.rust_name()
+                )
+            }
+            _ => String::new(),
+        };
         diags.push(
             Diagnostic::new(
                 DiagnosticCode::ConverterMissing,
                 format!(
-                    "no converter from {:?} to {:?} for edge {}.{} -> {}.{} [features: {}; gpu: {}]",
+                    "no converter from {:?} to {:?} for edge {}.{} -> {}.{} [features: {}; gpu: {}]{}",
                     out_ty,
                     in_ty,
                     from_node.id.0,
@@ -111,7 +124,8 @@ pub(super) fn convert(
                     to_node.id.0,
                     edge.to.port,
                     feats_str,
-                    allow_gpu
+                    allow_gpu,
+                    numeric_hint
                 ),
             )
             .in_pass("convert")

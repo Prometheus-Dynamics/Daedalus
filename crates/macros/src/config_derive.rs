@@ -138,6 +138,7 @@ pub fn node_config(item: TokenStream) -> TokenStream {
             .then(|| const_coercer_registration(&spec.field_ty, &coercers, &runtime_crate))
     });
 
+    let port_names = specs.iter().map(|spec| &spec.name);
     let struct_fields: Vec<syn::Ident> =
         specs.iter().map(|spec| spec.field_ident.clone()).collect();
 
@@ -147,6 +148,10 @@ pub fn node_config(item: TokenStream) -> TokenStream {
                 __types: &#data_crate::typing::TypeRegistry,
             ) -> Vec<#registry_crate::capability::PortDecl> {
                 vec![#(#ports_tokens),*]
+            }
+
+            fn port_names() -> &'static [&'static str] {
+                &[#(#port_names),*]
             }
 
             fn metadata() -> ::std::collections::BTreeMap<String, #data_crate::model::Value> {

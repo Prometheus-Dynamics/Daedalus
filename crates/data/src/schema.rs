@@ -10,9 +10,18 @@ pub fn type_to_json_schema(ty: &TypeExpr) -> DataResult<serde_json::Value> {
     let schema = match ty {
         TypeExpr::Scalar(ValueType::Unit) => json!({ "type": "null" }),
         TypeExpr::Scalar(ValueType::Bool) => json!({ "type": "boolean" }),
-        TypeExpr::Scalar(ValueType::I32 | ValueType::U32 | ValueType::Int) => {
-            json!({ "type": "integer" })
-        }
+        TypeExpr::Scalar(
+            ValueType::I8
+            | ValueType::I16
+            | ValueType::I32
+            | ValueType::Int
+            | ValueType::ISize
+            | ValueType::U8
+            | ValueType::U16
+            | ValueType::U32
+            | ValueType::U64
+            | ValueType::USize,
+        ) => json!({ "type": "integer" }),
         TypeExpr::Scalar(ValueType::F32 | ValueType::Float) => json!({ "type": "number" }),
         TypeExpr::Scalar(ValueType::String) => json!({ "type": "string" }),
         TypeExpr::Scalar(ValueType::Bytes) => {

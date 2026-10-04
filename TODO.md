@@ -79,6 +79,14 @@ changes.
       (`MissingDependencies`). `export_plugin!(P, deps [Dep])` links dependency plugins into
       the library's introspection registry, so keys they map resolve; without the link,
       unkeyed foreign port types are listed as `external_types` instead of failing the schema.
+- [x] **One key per builtin number.** `i32`/`u32`/`f32` (and every other width) shared
+      `Int`/`Float` with `i64`/`f64`: plugins with `i64` and `i32` ports conflicted and a fanned-out
+      `i64` host input was branched by the `i32` adapter. Each builtin number now has its own
+      `ValueType` and key, the planner inserts lossless widening adapters (`i32 -> i64`,
+      `f32 -> f64`, ...) and rejects narrowing at plan time, and constants are range-checked
+      against the port's exact width. See "Builtin Numbers" in `docs/node-authoring.md`.
+- [x] **Typed nodes with three reference parameters.** `fn(&A, &B, &mut State)` was taken for
+      the low-level `(node, ctx, io)` form; the form is now recognized by parameter types.
 
 ### Performance
 - [x] Host bridge: per-port state, single-slot latest-only queues, events off by default.
@@ -86,6 +94,10 @@ changes.
       enforced by `crates/engine/tests/hot_path_allocations.rs`), `IdStr` for static ids, cheaper
       `Payload`.
 - [x] Shared `PolicyQueue<T>` for host ports and executor edges.
+- [x] Generated handlers allocate nothing per frame: stateful nodes keep state in per-node
+      `StateStore` slots instead of formatting a key per call, and configs and `&T` constants are
+      decoded once per change (`daedalus_runtime::const_cache`), so the detector graph frame is
+      its 31 payload allocations.
 - [x] Benchmarks: `crates/engine/benches/host_graph_drive.rs`, plus `.github/workflows/bench.yml`
       with regression flagging.
 
@@ -128,11 +140,6 @@ changes.
 - [ ] **Cross-tick joins.** A node skipped for a missing required input drops what arrived on
       its other ports that tick. Graphs that need "wait until every input arrived" joins across
       ticks would need readiness checked before popping edges.
-- [ ] **Fanning a builtin host input out to several nodes.** A host input of `i64` feeding two
-      `i64` node inputs failed in one of them with `payload type mismatch: same TypeKey
-      typeexpr:{"Scalar":"Int"}, different Rust type (expected i32, found i64)`: the fan-out
-      branch adapter for the shared `Int` key appears to be the one registered for `i32`. Seen
-      while testing enum config ports; `enum_config_ports` avoids it.
 - [ ] **Global boundary contract registry.** Macro installs register boundary contracts for
       their port types (builtins included) in `daedalus_transport`'s process-global registry,
       so `Payload::owned` of e.g. `i64` takes the boundary storage path (contract clone,
@@ -151,6 +158,16 @@ changes.
       a variant-drift test.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
+- [ ] **Owned constants decode per call.** An owned `T` parameter fed a non-builtin constant
+      (an enum, a serde struct, a `String`) still converts it on every call; `&T` and config
+      fields use the per-node cache. Caching owned values needs `T: Clone` (or typed const
+      payloads built when the graph compiles or is patched).
+- [ ] **`run_direct_once` skips const inputs.** A two-input node with one const input fails with
+      `missing <const port>` through `HostGraph::run_direct_once` but works through `run_once`
+      (seen in `stateful_node_isolation`); the direct path does not deliver const payloads.
+- [ ] **Java and C++ SDK integer widths.** Their schemas still map every integer to `Int`
+      (`i64`); map `int`/`short`/`byte` (Java) and the C++ widths to their own value types like
+      the node SDK does.
 
 ### Low priority
 - [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.

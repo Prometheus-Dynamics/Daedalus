@@ -32,11 +32,18 @@ macro_rules! for_each_builtin_primitive {
         $callback! {
             () => "unit", Unit;
             bool => "bool", Bool;
+            i8 => "i8", I8;
+            i16 => "i16", I16;
+            i32 => "i32", I32;
             i64 => "i64", Int;
-            i32 => "i32", Int;
-            u32 => "u32", Int;
+            isize => "isize", ISize;
+            u8 => "u8", U8;
+            u16 => "u16", U16;
+            u32 => "u32", U32;
+            u64 => "u64", U64;
+            usize => "usize", USize;
+            f32 => "f32", F32;
             f64 => "f64", Float;
-            f32 => "f32", Float;
             String => "string", String;
             Vec<u8> => "bytes", Bytes;
         }
@@ -46,8 +53,8 @@ macro_rules! for_each_builtin_primitive {
 pub(crate) use for_each_builtin_primitive;
 
 /// Register `ToValue` serializers for the built-in primitive host value types (`()`, `bool`,
-/// `i64`, `i32`, `u32`, `f64`, `f32`, `String`, `Vec<u8>`) plus `daedalus_data::model::Value`
-/// itself.
+/// integers and floats of every width but 128 bits, `String`, `Vec<u8>`) plus
+/// `daedalus_data::model::Value` itself.
 pub fn register_primitive_value_serializers_in(map: &ValueSerializerMap) {
     use daedalus_data::to_value::ToValue;
 

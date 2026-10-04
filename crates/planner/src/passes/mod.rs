@@ -52,7 +52,7 @@ use suggest::suggest_nodes;
 use type_utils::{
     adapt_request_for_input, input_access_for, input_ty_for, port_type, target_residency_for_node,
 };
-use typecheck::typecheck;
+use typecheck::{check_const_inputs, typecheck};
 pub use types::{
     AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,
     NodeOverloadResolution, OverloadPortResolution, PlanExplanation, PlannerConfig, PlannerInput,
@@ -131,6 +131,7 @@ pub fn build_plan(mut input: PlannerInput, config: PlannerConfig) -> PlannerOutp
     let overload_resolutions =
         resolve_node_overloads(&mut input.graph, &catalog, &config, &mut diags);
     typecheck(&mut input.graph, &catalog, &mut diags);
+    check_const_inputs(&input.graph, &catalog, &mut diags);
     convert(&mut input.graph, &catalog, &mut diags, &config);
     applied_lowerings.extend(apply_planner_lowerings(
         &mut input.graph,

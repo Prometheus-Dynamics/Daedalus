@@ -13,7 +13,21 @@ pub(super) struct FetchInputs<'a> {
     pub(super) runtime_crate: &'a TokenStream,
 }
 
-pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> (Vec<TokenStream>, Vec<TokenStream>) {
+/// Name of the handler's `daedalus_runtime::const_cache::DecodedInputs` local.
+pub(super) const DECODED: &str = "__decoded_inputs";
+
+/// Input fetch statements, in the order they run.
+pub(super) struct FetchStmts {
+    /// Fetches that take from or mutably borrow `io`.
+    pub(super) mutable: Vec<TokenStream>,
+    /// `DecodedInputs::refresh` calls for `&T` parameters that may receive a `Value`; the
+    /// handler binds [`DECODED`] before them when there are any.
+    pub(super) decode: Vec<TokenStream>,
+    /// Shared borrows of `io` and of the decoded values.
+    pub(super) borrowed: Vec<TokenStream>,
+}
+
+pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
     let FetchInputs {
         arg_idents,
         arg_types,
@@ -22,7 +36,9 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> (Vec<TokenStream>, V
         runtime_crate,
     } = inputs;
     let mut arg_fetch_mut_stmts: Vec<TokenStream> = Vec::new();
+    let mut arg_decode_stmts: Vec<TokenStream> = Vec::new();
     let mut arg_fetch_ref_stmts: Vec<TokenStream> = Vec::new();
+    let decoded = syn::Ident::new(DECODED, Span::call_site());
     for idx in 0..arg_idents.len() {
         let ident = &arg_idents[idx];
         let ty = &arg_types[idx];
@@ -111,19 +127,16 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> (Vec<TokenStream>, V
             bind(get("take_owned", ty_core), None)
         } else {
             match mode {
-                // A `Value` input (a graph constant) is coerced into a local the argument borrows.
+                // A `Value` input (a graph constant) is borrowed from its decoded value, which is
+                // kept across calls until the input changes.
                 "borrowed" if super::port_types::coercible(ty_core) => {
-                    let coerced = syn::Ident::new(&format!("__coerced_{idx}"), Span::call_site());
+                    arg_decode_stmts.push(quote! { #decoded.refresh::<#ty_core>(io, #port); });
                     quote! {
-                        let #coerced: #ty_core;
                         let #ident = match io.get_ref::<#ty_core>(#port) {
                             Some(value) => value,
-                            None => {
-                                #coerced = io.coerce_input::<#ty_core>(#port).ok_or_else(|| {
-                                    #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port))
-                                })?;
-                                &#coerced
-                            }
+                            None => #decoded.get::<#ty_core>(#port).ok_or_else(|| {
+                                #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port))
+                            })?,
                         };
                     }
                 }
@@ -139,5 +152,9 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> (Vec<TokenStream>, V
             arg_fetch_mut_stmts.push(fetch);
         }
     }
-    (arg_fetch_mut_stmts, arg_fetch_ref_stmts)
+    FetchStmts {
+        mutable: arg_fetch_mut_stmts,
+        decode: arg_decode_stmts,
+        borrowed: arg_fetch_ref_stmts,
+    }
 }

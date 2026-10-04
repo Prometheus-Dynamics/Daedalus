@@ -46,33 +46,39 @@ fn rust_type_key<T: 'static>() -> String {
 pub const BUILTIN_VALUE_TYPES: &[ValueType] = &[
     ValueType::Unit,
     ValueType::Bool,
+    ValueType::I8,
+    ValueType::I16,
     ValueType::I32,
-    ValueType::U32,
     ValueType::Int,
+    ValueType::ISize,
+    ValueType::U8,
+    ValueType::U16,
+    ValueType::U32,
+    ValueType::U64,
+    ValueType::USize,
     ValueType::F32,
     ValueType::Float,
     ValueType::String,
     ValueType::Bytes,
 ];
 
+/// Builtin Rust scalars and their value types: one Rust type per value type (and so per key).
 macro_rules! with_builtin_rust_scalar_types {
     ($macro:ident) => {
         $macro! {
             () => Unit,
             bool => Bool,
-            i8 => Int,
-            i16 => Int,
-            i32 => Int,
+            i8 => I8,
+            i16 => I16,
+            i32 => I32,
             i64 => Int,
-            i128 => Int,
-            isize => Int,
-            u8 => Int,
-            u16 => Int,
-            u32 => Int,
-            u64 => Int,
-            u128 => Int,
-            usize => Int,
-            f32 => Float,
+            isize => ISize,
+            u8 => U8,
+            u16 => U16,
+            u32 => U32,
+            u64 => U64,
+            usize => USize,
+            f32 => F32,
             f64 => Float,
             String => String,
             Vec<u8> => Bytes,
@@ -234,7 +240,7 @@ impl BuiltinConstCoerce for bool {
     }
 }
 
-macro_rules! impl_builtin_signed_const_coerce {
+macro_rules! impl_builtin_int_const_coerce {
     ($($ty:ty),* $(,)?) => {
         $(
             impl BuiltinConstCoerce for $ty {
@@ -249,13 +255,18 @@ macro_rules! impl_builtin_signed_const_coerce {
     };
 }
 
+impl_builtin_int_const_coerce!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
+
+/// Floats take `Value::Float` (`f32` rounds, within range) and integers they represent exactly.
 macro_rules! impl_builtin_float_const_coerce {
-    ($($ty:ty),* $(,)?) => {
+    ($($ty:ty => $value_type:ident),* $(,)?) => {
         $(
             impl BuiltinConstCoerce for $ty {
                 fn coerce_builtin(value: &Value) -> Option<Self> {
+                    ValueType::$value_type.check_value(value).ok()?;
                     match value {
                         Value::Float(v) => Some(*v as $ty),
+                        Value::Int(v) => Some(*v as $ty),
                         _ => None,
                     }
                 }
@@ -264,10 +275,7 @@ macro_rules! impl_builtin_float_const_coerce {
     };
 }
 
-impl_builtin_signed_const_coerce!(
-    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize
-);
-impl_builtin_float_const_coerce!(f32, f64);
+impl_builtin_float_const_coerce!(f32 => F32, f64 => Float);
 
 impl BuiltinConstCoerce for String {
     fn coerce_builtin(value: &Value) -> Option<Self> {
@@ -299,9 +307,9 @@ where
         .take()
 }
 
-/// The type expression of a builtin Rust type: the scalars (integers, floats, `bool`, `String`,
-/// `Vec<u8>`, `()`) and `Option`/`Vec` of them, encoded as the node macros encode them. Depends
-/// on no registry.
+/// The type expression of a builtin Rust type: the scalars (integers and floats of every width
+/// but 128 bits, `bool`, `String`, `Vec<u8>`, `()`) and `Option`/`Vec` of them, encoded as the
+/// node macros encode them. Depends on no registry.
 pub fn builtin_type_expr<T: 'static>() -> Option<TypeExpr> {
     builtin_type_exprs().get(&TypeId::of::<T>()).cloned()
 }
@@ -417,9 +425,7 @@ mod tests {
             coerce_builtin_const_value::<bool>(&Value::Bool(true)),
             Some(true)
         );
-        assert_builtin_int!(
-            i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize
-        );
+        assert_builtin_int!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
         assert_eq!(
             coerce_builtin_const_value::<f32>(&Value::Float(1.5)),
             Some(1.5)
@@ -435,6 +441,15 @@ mod tests {
         assert_eq!(
             coerce_builtin_const_value::<Vec<u8>>(&Value::Bytes(vec![1, 2, 3].into())),
             Some(vec![1, 2, 3])
+        );
+        assert_eq!(coerce_builtin_const_value::<f64>(&Value::Int(2)), Some(2.0));
+        assert_eq!(
+            coerce_builtin_const_value::<f32>(&Value::Float(1e300)),
+            None
+        );
+        assert_eq!(
+            coerce_builtin_const_value::<f32>(&Value::Int((1 << 24) + 1)),
+            None
         );
         assert_eq!(coerce_builtin_const_value::<u8>(&Value::Int(-1)), None);
         assert_eq!(

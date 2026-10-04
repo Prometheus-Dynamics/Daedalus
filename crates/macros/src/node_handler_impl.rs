@@ -44,11 +44,7 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
     );
 
     // Determine if signature is low-level (node, ctx, io) or typed (args only).
-    let is_low_level = {
-        let inputs = &input.sig.inputs;
-        inputs.len() == 3
-            && matches!(&inputs[0], syn::FnArg::Typed(pat) if matches!(*pat.ty, syn::Type::Reference(_)))
-    };
+    let is_low_level = crate::helpers::is_low_level_handler(&input.sig);
 
     let r#gen = if is_low_level {
         quote! {

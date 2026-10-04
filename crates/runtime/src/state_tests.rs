@@ -377,3 +377,17 @@ fn native_take_and_set_reuse_the_slot() {
         Some("replaced")
     );
 }
+
+#[test]
+fn node_state_is_keyed_by_node_and_type() {
+    let state = StateStore::default();
+    let (a, b): (Arc<str>, Arc<str>) = (Arc::from("a"), Arc::from("b"));
+    assert_eq!(state.take_node_state::<u32>(&a), None);
+    state.set_node_state(&a, 1_u32);
+    state.set_node_state(&a, String::from("text"));
+    state.set_node_state(&b, 2_u32);
+    assert_eq!(state.take_node_state::<u32>(&a), Some(1));
+    assert_eq!(state.take_node_state::<u32>(&a), None);
+    assert_eq!(state.take_node_state::<u32>(&b), Some(2));
+    assert_eq!(state.take_node_state::<String>(&a).as_deref(), Some("text"));
+}

@@ -1,7 +1,7 @@
 //! A detector-like graph shared by the `graph_frame_allocations` test and the `graph_frame` bench.
 //!
 //! One host `frame` input fans out to 16 nodes: config-struct and const inputs (one node takes
-//! five inputs), a metadata-only adapter edge, connected and unconnected `Option<T>` inputs, two
+//! five inputs; one config has a serde enum and a `String` field), a metadata-only adapter edge, connected and unconnected `Option<T>` inputs, two
 //! conditional producers (one emits every frame, one never, so its required consumer is skipped),
 //! `Arc`'d list and small-struct outputs, fan-in nodes, and four host outputs. Handlers allocate
 //! nothing per frame (they reuse `Arc`'d inputs and state and return `Copy` values), so
@@ -85,6 +85,7 @@ pub struct Histogram(pub [u32; 8]);
 pub struct Track {
     pub count: u32,
     pub best: f32,
+    pub label_len: u32,
 }
 
 #[type_key("bench:detector:report")]
@@ -120,10 +121,22 @@ pub struct DetectConfig {
     min_score: f64,
 }
 
+/// Decoded through serde (no `DaedalusTypeExpr`), the costliest const conversion.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackScore {
+    Best,
+    First,
+}
+
 #[derive(Clone, Debug, NodeConfig)]
 pub struct TrackConfig {
     #[port(default = 3, min = 1, max = 16, policy = "clamp")]
     history: i64,
+    #[port(default = "best")]
+    score: TrackScore,
+    #[port(default = "main")]
+    label: String,
 }
 
 /// Per-node scratch so detector outputs are shared, not reallocated, every frame.
@@ -303,16 +316,20 @@ fn merge_detections(
 }
 
 #[node(id = "bench.detector.track", inputs("detections", "info", config = TrackConfig), outputs("track"))]
-fn track(detections: &Detections, info: &FrameInfo, cfg: TrackConfig) -> Result<Track, NodeError> {
-    let best = detections
+fn track(detections: &Detections, info: &FrameInfo, cfg: &TrackConfig) -> Result<Track, NodeError> {
+    let mut scores = detections
         .0
         .iter()
         .filter(|det| det.x < info.width)
-        .map(|det| det.score)
-        .fold(0.0f32, f32::max);
+        .map(|det| det.score);
+    let best = match cfg.score {
+        TrackScore::Best => scores.fold(0.0f32, f32::max),
+        TrackScore::First => scores.next().unwrap_or_default(),
+    };
     Ok(Track {
         count: detections.0.len().min(cfg.history as usize * 8) as u32,
         best,
+        label_len: cfg.label.len() as u32,
     })
 }
 

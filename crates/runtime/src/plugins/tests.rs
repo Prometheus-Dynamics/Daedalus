@@ -79,17 +79,39 @@ fn plugin_registry_transport_capabilities_are_isolated() {
 }
 
 #[test]
-fn builtin_branch_adapters_accept_every_primitive_under_their_key() {
+fn builtin_numbers_have_one_key_per_rust_type() {
     let registry = PluginRegistry::new();
-    let int_key = typeexpr_transport_key(&TypeExpr::Scalar(ValueType::Int));
-    let request = daedalus_transport::AdaptRequest::new(int_key.clone());
+    let key = |value_type| typeexpr_transport_key(&TypeExpr::Scalar(value_type));
+    let (i32_key, i64_key) = (key(ValueType::I32), key(ValueType::Int));
+    assert_ne!(i32_key, i64_key);
     let adapters = registry.runtime_transport.adapters();
-    for id in ["i64", "i32", "u32"] {
-        let id = AdapterId::new(format!("daedalus.builtin.branch.{id}"));
-        let branch = |payload| adapters.adapt(&id, payload, &request).expect("branch");
-        let wide = branch(Payload::owned(int_key.clone(), 7_i64));
-        assert_eq!(wide.get_ref::<i64>(), Some(&7));
-        let narrow = branch(Payload::owned(int_key.clone(), 7_u32));
-        assert_eq!(narrow.get_ref::<u32>(), Some(&7));
-    }
+    let adapt = |id: &str, payload, target: &TypeKey| {
+        let request = daedalus_transport::AdaptRequest::new(target.clone());
+        adapters.adapt(&AdapterId::new(id), payload, &request)
+    };
+
+    let branched = adapt(
+        "daedalus.builtin.branch.i64",
+        Payload::owned(i64_key.clone(), 7_i64),
+        &i64_key,
+    );
+    assert_eq!(branched.expect("branch").get_ref::<i64>(), Some(&7));
+    let wrong_type = adapt(
+        "daedalus.builtin.branch.i64",
+        Payload::owned(i64_key.clone(), 7_i32),
+        &i64_key,
+    );
+    assert!(
+        wrong_type.is_err(),
+        "a branch adapter only takes its own Rust type"
+    );
+
+    let widened = adapt(
+        "daedalus.builtin.widen.i32_to_i64",
+        Payload::owned(i32_key, -7_i32),
+        &i64_key,
+    );
+    let widened = widened.expect("widen");
+    assert_eq!(widened.type_key(), &i64_key);
+    assert_eq!(widened.get_ref::<i64>(), Some(&-7));
 }

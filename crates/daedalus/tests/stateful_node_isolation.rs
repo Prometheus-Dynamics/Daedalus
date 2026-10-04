@@ -1,4 +1,5 @@
 use daedalus::{
+    data::model::Value,
     engine::{Engine, EngineConfig, HostGraph},
     macros::{node, plugin},
     runtime::{NodeError, handler_registry::HandlerRegistry, plugins::PluginRegistry},
@@ -20,7 +21,22 @@ fn stateful_counter(step: i64, state: &mut CounterState) -> Result<i64, NodeErro
     Ok(state.value)
 }
 
-#[plugin(id = "test.stateful_node_isolation", nodes(stateful_counter))]
+/// Three reference parameters: a typed stateful node, not the low-level `(node, ctx, io)` form.
+#[node(
+    id = "test.weighted_sum",
+    inputs("value", "weight"),
+    outputs("sum"),
+    state(CounterState)
+)]
+fn weighted_sum(value: &i64, weight: &i64, state: &mut CounterState) -> Result<i64, NodeError> {
+    state.value += value * weight;
+    Ok(state.value)
+}
+
+#[plugin(
+    id = "test.stateful_node_isolation",
+    nodes(stateful_counter, weighted_sum)
+)]
 struct StatefulPlugin;
 
 fn compile_counter_graph() -> HostGraph<HandlerRegistry> {
@@ -69,4 +85,31 @@ fn generated_stateful_node_state_is_executor_local() {
             .expect("isolated tick"),
         Some(1)
     );
+}
+
+#[test]
+fn three_reference_parameters_are_a_typed_node() {
+    let mut registry = PluginRegistry::new();
+    let plugin = StatefulPlugin::new();
+    registry.install(&plugin).expect("install plugin");
+    let sum = plugin.weighted_sum.alias("sum");
+    let graph = registry
+        .graph_builder()
+        .expect("graph builder")
+        .try_node(&sum)
+        .expect("sum node")
+        .try_connect("in", &sum.inputs.value)
+        .expect("input edge")
+        .try_connect(&sum.outputs.sum, "out")
+        .expect("output edge")
+        .const_input(&sum.inputs.weight, Some(Value::Int(3)))
+        .build();
+    let mut host = Engine::new(EngineConfig::default())
+        .expect("engine")
+        .compile_registry(&registry, graph)
+        .expect("compile graph");
+    for expected in [6, 12] {
+        let out = host.run_once::<_, i64>(("in", 2_i64), "out");
+        assert_eq!(out.expect("tick"), [expected]);
+    }
 }

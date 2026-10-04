@@ -57,7 +57,22 @@ macro_rules! impl_clone_branch_payload {
     };
 }
 
-impl_clone_branch_payload!((), bool, i32, i64, u32, f32, f64);
+impl_clone_branch_payload!(
+    (),
+    bool,
+    i8,
+    i16,
+    i32,
+    i64,
+    isize,
+    u8,
+    u16,
+    u32,
+    u64,
+    usize,
+    f32,
+    f64
+);
 
 impl BranchPayload for String {
     const BRANCH_KIND: BranchKind = BranchKind::Clone;

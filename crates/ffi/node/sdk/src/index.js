@@ -26,8 +26,11 @@ function typeExpr(value) {
   switch (value) {
     case "unit": return scalar("Unit");
     case "bool": return scalar("Bool");
+    case "i32": return scalar("I32");
     case "i64": return scalar("Int");
-    case "u64": return scalar("Int");
+    case "u32": return scalar("U32");
+    case "u64": return scalar("U64");
+    case "f32": return scalar("F32");
     case "f64": return scalar("Float");
     case "string": return scalar("String");
     case "bytes": return scalar("Bytes");

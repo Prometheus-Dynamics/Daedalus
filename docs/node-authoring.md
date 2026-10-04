@@ -62,7 +62,8 @@ fn blur(frame: &Frame) -> Result<Frame, NodeError> { /* ... */ }
    `#[plugin(foreign_types(Type = "key"))]` (see below), which registers the mapping before the
    plugin's nodes install, or `register_foreign_type` on that registry. Mappings made in another
    registry never apply, and nothing is read from process-global state.
-4. Builtins (integers, floats, `bool`, `String`, `Vec<u8>`, `()`) and structural containers
+4. Builtins (integers and floats of every width but 128 bits, `bool`, `String`, `Vec<u8>`,
+   `()`; each its own key, see [Builtin Numbers](#builtin-numbers)) and structural containers
    (`Vec<T>`, `Option<T>`, tuples). `&T`, `Arc<T>`, `Cpu<T>` and `Gpu<T>` use `T`'s key.
 5. Otherwise the fallback `rust:<type path>`. Whether a mapping exists depends on what the
    registry installed first, so for a type defined in **another crate** the fallback is an error
@@ -119,6 +120,36 @@ another Rust type is refused with `FeedOutcome::Rejected(TypeKeyError::RustTypeM
 in a node later. Payloads under unknown keys, bytes and foreign handles pass; the check compares
 one `u64` per feed and is skipped when the registry records no Rust types.
 
+#### Builtin Numbers
+
+Every builtin number is one Rust type and one key: `i8`, `i16`, `i32`, `i64`, `isize`, `u8`,
+`u16`, `u32`, `u64`, `usize`, `f32` and `f64` are `TypeExpr::Scalar` of `ValueType::I8`, `I16`,
+`I32`, `Int`, `ISize`, `U8`, `U16`, `U32`, `U64`, `USize`, `F32` and `Float` (`Int` is `i64`,
+`Float` is `f64`), with keys such as `typeexpr:{"Scalar":"I32"}`. So a plugin with `i64` ports
+and one with `i32` ports coexist, and a fanned-out `i64` is branched as an `i64`. (`i128` and
+`u128` are not builtins: they keep `rust:` keys.)
+
+Where widths differ, the planner inserts a builtin widening adapter
+(`daedalus.builtin.widen.i32_to_i64`) when the conversion is lossless, that is, for every `From`
+conversion between these types:
+
+| From | Widens implicitly to |
+| --- | --- |
+| `i8` | `i16`, `i32`, `i64`, `f32`, `f64` |
+| `i16` | `i32`, `i64`, `f32`, `f64` |
+| `i32` | `i64`, `f64` |
+| `u8` | `u16`, `u32`, `u64`, `i16`, `i32`, `i64`, `f32`, `f64` |
+| `u16` | `u32`, `u64`, `i32`, `i64`, `f32`, `f64` |
+| `u32` | `u64`, `i64`, `f64` |
+| `f32` | `f64` |
+
+Anything else (`i64 -> i32`, `f64 -> f32`, `u64 -> i64`, and every `isize`/`usize` conversion,
+whose width depends on the target) is never converted implicitly: planning fails with
+``no converter from Scalar(Int) to Scalar(I32) ...; i64 -> i32 is not lossless on every target``.
+Convert in the producer, change a port type, or register an `#[adapt]` that decides how to
+narrow. Graph values stay width-free (`Value::Int` is an `i64`, `Value::Float` an `f64`); see
+[Constants](#constants-defaults-and-config-enums) for how constants reach a port's width.
+
 ## Handler Inputs: Ask For The Type You Want
 
 Write handlers against the type the algorithm needs. The macro generates the fetch code; the
@@ -138,6 +169,13 @@ planner and runtime make the value arrive in that form when a path exists.
 
 Use `access = "move"` or `access = "modify"` only when the node truly consumes or mutates its
 input. Read access lets fanout share one allocation.
+
+A function taking exactly `(&RuntimeNode, &ExecutionContext, &mut NodeIo)` is a low-level
+handler that reads and pushes ports itself; the form is recognized by those parameter types, so
+any other signature, including one of three references such as
+`fn(frame: &Frame, roi: &Roi, state: &mut Tracker)` with `state(Tracker)`, is a typed node. A
+`state(T)` value lives in the node instance's slot (`StateStore::take_node_state`), starting
+from `T::default()`.
 
 ### Optional Inputs And Readiness
 
@@ -184,7 +222,10 @@ Port defaults (`port(name = "mode", default = "wrap")`, `#[port(default = ...)]`
 `Value`. A handler parameter or config field of another type gets it converted when the node
 runs (`T`, `&T`, `&mut T`, `Option<T>`, and config fields):
 
-- builtins (integers, floats, `bool`, `String`, `Vec<u8>`) convert directly;
+- builtins (integers, floats, `bool`, `String`, `Vec<u8>`) convert directly, to the port's exact
+  width: the planner rejects a numeric constant or default that does not fit
+  (``const input `factor` of node ..: 300 is out of range for u8 (0..=255)``), and float ports
+  also take integers they represent exactly (`2` for an `f64`);
 - enums deriving `DaedalusTypeExpr` whose variants are all unit variants take a variant name
   (`Value::String` or `Value::Enum`, case-insensitive) or an index (`Value::Int`), with no serde
   dependency (`DaedalusTypeExpr::from_value`);
@@ -196,6 +237,15 @@ installs, so no `register_enum` or `register_const_coercer` call is needed. A co
 registered explicitly with `PluginRegistry::register_const_coercer` (or `register_enum`) takes
 precedence, whichever installs first. Values that arrive typed (an upstream node producing the
 enum) are used as they are.
+
+A constant is the same payload on every tick until a patch replaces it, so generated handlers
+convert it once and keep the result in the node's state slot (`daedalus_runtime::const_cache`):
+a config struct is built, sanitized and validated again only when one of its input payloads
+changes (sanitization warnings are logged once per change), and a `&T` parameter borrows its
+converted constant. Take the config as `&Config` to borrow it (by value, it is cloned: a
+`String` field then allocates per call), and a converted input as `&T`; an owned `T` parameter
+fed a constant converts it on every call. `#[derive(NodeConfig)]` types must be
+`Clone + Send + Sync + 'static`.
 
 ```rust
 #[derive(Clone, Copy, Debug, daedalus::DaedalusTypeExpr)]

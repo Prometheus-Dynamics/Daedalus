@@ -165,10 +165,11 @@ fn static_and_dynamic_rust_plugin_install_the_same_nodes() {
         boundary_keys(&static_registry),
         boundary_keys(&dynamic_registry)
     );
-    let scalar_int_key =
-        daedalus::registry::typeexpr_transport_key(&TypeExpr::Scalar(ValueType::Int)).to_string();
+    // The example's nodes take `i32`, which has its own key.
+    let scalar_i32_key =
+        daedalus::registry::typeexpr_transport_key(&TypeExpr::Scalar(ValueType::I32)).to_string();
     assert!(
-        boundary_keys(&dynamic_registry).contains(scalar_int_key.as_str()),
+        boundary_keys(&dynamic_registry).contains(scalar_i32_key.as_str()),
         "node macros should auto-register primitive boundary contracts"
     );
 
