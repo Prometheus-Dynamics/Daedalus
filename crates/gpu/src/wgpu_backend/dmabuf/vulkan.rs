@@ -2,18 +2,21 @@
 //!
 //! # How it works
 //!
-//! 1. Device creation: wgpu-hal 29 already enables `VK_KHR_external_memory_fd` and
+//! 1. Device creation: wgpu-hal 30 already enables `VK_KHR_external_memory_fd` and
 //!    `VK_EXT_external_memory_dma_buf` whenever the adapter supports them, but not
 //!    `VK_EXT_image_drm_format_modifier`. [`request_device`] opens the hal device with
-//!    `open_with_callback` to add that extension and wraps it with
+//!    `open_with_callback` to add that extension (plus `VK_KHR_external_semaphore_fd` and
+//!    `VK_EXT_queue_family_foreign` when available) and wraps it with
 //!    `Adapter::create_device_from_hal`. It also requests `TEXTURE_FORMAT_NV12` when the adapter
 //!    has it. Any failure falls back to plain `request_device`.
-//! 2. Import: the acquire fence (if any) is waited for, then a `VkImage` is created with
+//! 2. Import: a pending acquire fence is imported as a semaphore (or waited for on the CPU, see
+//!    below), then a `VkImage` is created with
 //!    `VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT` and an explicit per-plane layout (offset/stride
 //!    from the descriptor). Each dmabuf is imported with `VkImportMemoryFdInfoKHR`: one dedicated
 //!    allocation when all planes share a dmabuf, or one allocation per memory plane
 //!    (`VK_IMAGE_CREATE_DISJOINT_BIT`) when they do not. The image is handed to wgpu via
-//!    `vulkan::Device::texture_from_raw` + `Device::create_texture_from_hal`.
+//!    `vulkan::Device::texture_from_raw` + `Device::create_texture_from_hal`, and a queue family
+//!    acquire is submitted for it (`dmabuf/acquire.rs`).
 //! 3. Lifetime: the hal texture gets a drop callback that destroys the image, frees the imported
 //!    memory (which drops the kernel's dmabuf references taken by the import) and only then drops
 //!    the caller's keepalive. wgpu-core runs it once the texture is dropped and no in-flight
@@ -25,30 +28,31 @@
 //! `MUTABLE_FORMAT | EXTENDED_USAGE` like wgpu's own NV12 textures). Shaders read it through
 //! per-plane views ([`texture_plane_views`](crate::texture_plane_views): Y as `R8Unorm`, UV as
 //! `Rg8Unorm`); YCbCr-to-RGB conversion is up to the shader, no `VkSamplerYcbcrConversion` is
-//! used. wgpu 29 allows only sampling for NV12 (no copies, storage or render targets), so such
+//! used. wgpu 30 allows only sampling for NV12 (no copies, storage or render targets), so such
 //! images cannot be read back with `read_texture`. Devices without `TEXTURE_FORMAT_NV12` get
 //! `UnsupportedFormat`; import the planes separately (`R8` + `GR88`) there.
 //!
 //! # Synchronization
 //!
-//! - **Acquire fence: CPU wait.** The descriptor's `sync_file` is polled for `POLLIN` before the
-//!   image is created. A GPU-side wait would import it with `VK_KHR_external_semaphore_fd`
-//!   (`SYNC_FD`) and make the next submission wait on the semaphore, but wgpu-hal 29 cannot express
-//!   that: `vulkan::Queue` only exposes `add_signal_semaphore`, and its submit waits solely on its
-//!   own relay and swapchain semaphores. A separate raw `vkQueueSubmit` waiting on the semaphore
-//!   would not order wgpu's later submissions either: a semaphore wait only gates its own batch,
-//!   and wgpu's first barrier on the fresh texture has `srcStageMask = TOP_OF_PIPE` (from
-//!   `UNDEFINED`), so no dependency chain reaches it. The cost is that the import call blocks until
-//!   the producer finishes (typically well under a frame) instead of overlapping with GPU work.
-//! - **No queue-family-foreign acquire.** wgpu tracks the texture from `TextureUses::UNINITIALIZED`,
-//!   so its first barrier is `UNDEFINED -> X` on its own queue family and cannot be replaced by a
-//!   `VK_QUEUE_FAMILY_FOREIGN_EXT -> family` acquire. A foreign acquire in a separate submission
-//!   would be followed by that `UNDEFINED` transition anyway. Transitioning from `UNDEFINED` keeps
-//!   contents on drivers without compression metadata for the imported modifier (v3dv, RADV/ANV for
-//!   `LINEAR`); modifiers with compression/aux planes are not safe to import this way.
+//! - **Acquire fence: GPU wait** ([`AcquireFenceWait::Gpu`](crate::AcquireFenceWait::Gpu)) when the
+//!   device has `VK_KHR_external_semaphore_fd` with importable `SYNC_FD` semaphores: the
+//!   `sync_file` is imported (temporarily) into a binary semaphore and staged with wgpu-hal 30's
+//!   `vulkan::Queue::add_wait_semaphore` for the acquire submission, so the import returns at once
+//!   and later GPU work on the queue runs after the producer. An already signaled fence is skipped;
+//!   an fd that is not a `sync_file` falls back to the CPU wait. There is no timeout on this path:
+//!   a fence that never signals stalls the queue until the kernel's GPU hang detection steps in.
+//! - **Acquire fence: CPU wait** ([`AcquireFenceWait::Cpu`](crate::AcquireFenceWait::Cpu))
+//!   otherwise: the import polls the `sync_file` for `POLLIN`, bounded by the descriptor's
+//!   `acquire_timeout`, before any Vulkan object is created.
+//! - **Queue family acquire.** Every import submits a `FOREIGN` (or `EXTERNAL`) -> wgpu family
+//!   ownership acquire, `GENERAL -> SHADER_READ_ONLY_OPTIMAL`, and registers the texture with wgpu
+//!   in that state (`TextureUses::RESOURCE`, wgpu 30's `create_texture_from_hal` initial state), so
+//!   wgpu never transitions it from `UNDEFINED` and every later barrier chains to the fence wait.
+//!   The acquire treats the freshly created image as `GENERAL`, the convention of Mesa-based
+//!   compositors for dmabufs; modifiers with compression/aux planes are still untested.
 //! - No release: the producer must not reuse the buffer while the keepalive is held.
 
-use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 
@@ -56,10 +60,11 @@ use ash::{ext, khr, vk};
 use wgpu::hal::api::Vulkan;
 use wgpu::hal::vulkan as hal_vk;
 
+use super::acquire::{Acquire, OPTIONAL_EXTENSIONS};
 use super::image::{ImportRequest, create_imported_texture};
 use crate::{
     DRM_FORMAT_MOD_LINEAR, ExternalFrameDescriptor, ExternalImportError, ExternalImportSupport,
-    ExternalPlane, GpuFormat, GpuImageHandle, GpuUsage, WgpuBackend,
+    ExternalPlane, GpuFormat, GpuImageHandle, GpuUsage, WgpuBackend, external::sync_file_signaled,
 };
 
 /// Device extensions an import needs. The first two are enabled by wgpu-hal itself when present.
@@ -115,9 +120,14 @@ fn open_with_modifier_extension(
         );
         return None;
     }
-    let callback = Box::new(|args: hal_vk::CreateDeviceCallbackArgs<'_, '_, '_>| {
-        for ext in REQUIRED_EXTENSIONS {
-            if !args.extensions.contains(&ext) {
+    let extensions: Vec<&'static std::ffi::CStr> = REQUIRED_EXTENSIONS
+        .into_iter()
+        .chain(OPTIONAL_EXTENSIONS)
+        .filter(|ext| caps.supports_extension(ext))
+        .collect();
+    let callback = Box::new(move |args: hal_vk::CreateDeviceCallbackArgs<'_, '_, '_>| {
+        for ext in &extensions {
+            if !args.extensions.contains(ext) {
                 args.extensions.push(ext);
             }
         }
@@ -145,14 +155,31 @@ fn open_with_modifier_extension(
     }
 }
 
-/// Decide whether the created device can import dmabufs.
-pub(in crate::wgpu_backend) fn probe_support(device: &wgpu::Device) -> ExternalImportSupport {
-    // SAFETY: only read-only queries are made through the hal device.
+/// Per-device import state; `None` when import is unsupported.
+pub(in crate::wgpu_backend) type ImportState = Option<Acquire>;
+
+/// Decide whether the created device can import dmabufs, and how acquire fences are waited for.
+pub(in crate::wgpu_backend) fn probe(
+    device: &wgpu::Device,
+) -> (ExternalImportSupport, ImportState) {
+    // SAFETY: only queries are made through the hal device (and an ash device handle cloned).
     let Some(hal_dev) = (unsafe { device.as_hal::<Vulkan>() }) else {
-        return ExternalImportSupport::unsupported(
-            "the wgpu device is not using the Vulkan backend (dmabuf import needs Vulkan)",
-        );
+        let reason = "the wgpu device is not using the Vulkan backend (dmabuf import needs Vulkan)";
+        return (ExternalImportSupport::unsupported(reason), None);
     };
+    match probe_support(&hal_dev) {
+        Ok(()) => {
+            let acquire = Acquire::new(&hal_dev);
+            let support = ExternalImportSupport::Supported {
+                acquire_fence: acquire.fence_wait(),
+            };
+            (support, Some(acquire))
+        }
+        Err(reason) => (ExternalImportSupport::unsupported(reason), None),
+    }
+}
+
+fn probe_support(hal_dev: &hal_vk::Device) -> Result<(), String> {
     let enabled = hal_dev.enabled_device_extensions();
     let missing: Vec<String> = REQUIRED_EXTENSIONS
         .iter()
@@ -160,21 +187,27 @@ pub(in crate::wgpu_backend) fn probe_support(device: &wgpu::Device) -> ExternalI
         .map(|ext| ext.to_string_lossy().into_owned())
         .collect();
     if !missing.is_empty() {
-        return ExternalImportSupport::unsupported(format!(
+        return Err(format!(
             "Vulkan device lacks required extensions: {}",
             missing.join(", ")
         ));
     }
     if hal_dev.shared_instance().instance_api_version() < vk::API_VERSION_1_1 {
-        return ExternalImportSupport::unsupported("Vulkan instance older than 1.1");
+        return Err("Vulkan instance older than 1.1".into());
     }
-    ExternalImportSupport::Supported
+    Ok(())
 }
 
 pub(in crate::wgpu_backend) fn import(
     backend: &WgpuBackend,
-    desc: ExternalFrameDescriptor,
+    mut desc: ExternalFrameDescriptor,
 ) -> Result<GpuImageHandle, ExternalImportError> {
+    let acquire = backend
+        .dmabuf
+        .as_ref()
+        .ok_or_else(|| ExternalImportError::Unsupported {
+            reason: "dmabuf import is unavailable on this device".into(),
+        })?;
     let layout = desc.validate()?;
     let max = backend.caps.max_texture_dimension;
     if desc.width > max || desc.height > max {
@@ -222,7 +255,19 @@ pub(in crate::wgpu_backend) fn import(
     let wgpu_format = crate::wgpu_backend::map_format(layout.format);
     let vk_format = map_vk_format(layout.format)
         .ok_or_else(|| format_error(format!("no Vulkan format for {:?}", layout.format)))?;
-    desc.wait_acquire_fence()?;
+    // A fence that already signaled needs no wait at all; a pending one becomes a GPU wait where
+    // possible, else the import blocks here (before any Vulkan object exists).
+    let gpu_fence = match desc.acquire_fence.take() {
+        Some(fence) if !sync_file_signaled(fence.as_fd()) => match acquire.import_fence(fence) {
+            Ok(gpu) => Some(gpu),
+            Err(fence) => {
+                desc.acquire_fence = Some(fence);
+                desc.wait_acquire_fence()?;
+                None
+            }
+        },
+        _ => None,
+    };
 
     let ExternalFrameDescriptor {
         width,
@@ -287,16 +332,34 @@ pub(in crate::wgpu_backend) fn import(
         view_formats: &[],
     };
     // SAFETY: the hal texture was created on this device with exactly `wgpu_desc`'s extent,
-    // format, and usages, and its memory is bound to initialized (imported) contents.
+    // format, and usages, and its memory is bound to initialized (imported) contents. Its state
+    // is `RESOURCE` (`SHADER_READ_ONLY_OPTIMAL`) as of the acquire submitted right below, before
+    // anyone else can use the texture.
     let texture = unsafe {
-        backend
-            .device
-            .create_texture_from_hal::<Vulkan>(hal_texture, &wgpu_desc)
+        backend.device.create_texture_from_hal::<Vulkan>(
+            hal_texture,
+            &wgpu_desc,
+            wgpu::wgt::TextureUses::RESOURCE,
+        )
     };
+    acquire.submit(&backend.device, &backend.queue, &texture, gpu_fence)?;
     let mut handle =
         backend.register_gpu_texture(Arc::new(texture), layout.format, width, height, usage.wgpu);
     handle.label = label;
     Ok(handle)
+}
+
+#[cfg(test)]
+impl WgpuBackend {
+    /// Switch an import-capable backend to blocking CPU fence waits.
+    pub(in crate::wgpu_backend) fn force_cpu_fence_wait(&mut self) {
+        if let Some(acquire) = &mut self.dmabuf {
+            acquire.disable_gpu_wait();
+            self.dmabuf_support = ExternalImportSupport::Supported {
+                acquire_fence: acquire.fence_wait(),
+            };
+        }
+    }
 }
 
 /// The dmabufs backing the planes with their sizes: one when every plane lives in the same dmabuf
@@ -366,7 +429,7 @@ struct UsageSet {
 }
 
 impl UsageSet {
-    /// Imported frames are always sampleable; single-plane ones are also copy sources (wgpu 29
+    /// Imported frames are always sampleable; single-plane ones are also copy sources (wgpu 30
     /// only samples multi-planar textures) and take the requested upload/storage/render usages.
     fn new(usage: GpuUsage, planar: bool) -> Self {
         let mut wgpu = wgpu::TextureUsages::TEXTURE_BINDING;

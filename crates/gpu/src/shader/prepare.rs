@@ -124,7 +124,7 @@ pub(crate) fn prepare_resources(
                         {
                             // Match the documented behavior for Empty/Zeroed: start zeroed to avoid
                             // undefined contents reaching the shader.
-                            let mut view = buf.slice(..).get_mapped_range_mut();
+                            let mut view = buf.slice(..).get_mapped_range_mut()?;
                             view.copy_from_slice(&vec![0; view.len()]);
                         }
                         buf.unmap();

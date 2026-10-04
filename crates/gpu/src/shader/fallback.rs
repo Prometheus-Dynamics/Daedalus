@@ -181,6 +181,7 @@ async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         })
         .await
         .map_err(|_| GpuError::AdapterUnavailable)?;

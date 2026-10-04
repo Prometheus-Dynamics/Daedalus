@@ -167,7 +167,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
         rx.recv()
             .unwrap_or(Err(wgpu::BufferAsyncError))
             .map_err(|e| GpuError::Internal(format!("map failed: {e:?}")))?;
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range()?;
         let val = bytemuck::from_bytes::<T>(&data[..self.size as usize]).to_owned();
         drop(data);
         staging.unmap();
