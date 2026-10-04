@@ -39,6 +39,74 @@ function typeExpr(value) {
   }
 }
 
+const I64_MIN = -(1n << 63n);
+const I64_MAX = (1n << 63n) - 1n;
+const U64_MAX = (1n << 64n) - 1n;
+
+function wireInt(value, unsigned) {
+  const big = BigInt(value);
+  if (unsigned ? big < 0n || big > U64_MAX : big < I64_MIN) {
+    throw new RangeError(`${big} is out of range for ${unsigned ? "u64" : "i64"}`);
+  }
+  return { kind: unsigned ? "uint" : "int", value };
+}
+
+/**
+ * The `WireValue` object for `value`. `type` (a port spec such as `"u64"`, or a TypeExpr) picks
+ * `uint` for u64 ports; a BigInt above i64::MAX is always `uint`. Serialize with `stringifyWire`.
+ */
+export function toWire(value, type) {
+  const expr = type === undefined ? {} : typeof type === "string" || type.__typeExpr ? typeExpr(type) : type;
+  if (value === null || value === undefined) return { kind: "unit" };
+  if (expr.Optional) return toWire(value, expr.Optional);
+  if (typeof value === "boolean") return { kind: "bool", value };
+  if (typeof value === "bigint") return wireInt(value, expr.Scalar === "U64" || value > I64_MAX);
+  if (typeof value === "number") {
+    if (expr.Scalar === "U64") {
+      if (!Number.isSafeInteger(value)) throw new RangeError(`${value} is not an exact u64; pass a BigInt`);
+      return wireInt(value, true);
+    }
+    const float = expr.Scalar === "F32" || expr.Scalar === "Float" || !Number.isInteger(value);
+    return float ? { kind: "float", value } : wireInt(value, false);
+  }
+  if (typeof value === "string") return { kind: "string", value };
+  if (value instanceof Uint8Array) return { kind: "bytes", value: { data: [...value], encoding: "raw" } };
+  if (Array.isArray(value)) {
+    return { kind: "list", value: value.map((item, index) => toWire(item, expr.Tuple?.[index] ?? expr.List)) };
+  }
+  if (typeof value === "object") {
+    const inner = expr.Map?.[1];
+    return { kind: "record", value: Object.fromEntries(Object.entries(value).map(([key, item]) => [key, toWire(item, inner)])) };
+  }
+  throw new TypeError(`no wire encoding for ${typeof value}`);
+}
+
+/** The JS value of a `WireValue` object: `uint` decodes to a BigInt, `int` to a BigInt only beyond 2^53. */
+export function fromWire(wire) {
+  const { kind, value } = wire;
+  switch (kind) {
+    case "unit": return null;
+    case "bool": case "float": case "string": return value;
+    case "uint": return BigInt(value);
+    case "int": return Number.isSafeInteger(Number(value)) ? Number(value) : BigInt(value);
+    case "bytes": return Uint8Array.from(value.data);
+    case "list": return value.map(fromWire);
+    case "record": return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fromWire(item)]));
+    default: throw new TypeError(`unsupported wire value kind \`${kind}\``);
+  }
+}
+
+/** JSON text for wire values, writing BigInts as exact integers. */
+export function stringifyWire(value) {
+  return JSON.stringify(value, (_, item) => (typeof item === "bigint" ? JSON.rawJSON(item.toString()) : item));
+}
+
+/** Parse wire JSON, keeping integers beyond 2^53 exact as BigInts. */
+export function parseWire(text) {
+  return JSON.parse(text, (_, item, context) =>
+    typeof item === "number" && !Number.isSafeInteger(item) && /^-?\d+$/.test(context?.source ?? "") ? BigInt(context.source) : item);
+}
+
 function port(name, spec) {
   const access = spec?.access ?? "read";
   validatePortShape(name, access, spec?.residency, spec?.layout);

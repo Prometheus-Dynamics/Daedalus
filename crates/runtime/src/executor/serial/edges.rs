@@ -13,9 +13,12 @@ use crate::executor::{
 
 use super::{edge_is_active, edge_uses_direct_slot};
 
+/// Pop what the incoming edges of `node_idx` hold (plus its const inputs): everything, or with
+/// `one_per_edge` (a `fire = "all"` node) only the oldest value of each edge.
 pub(super) fn collect_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
+    one_per_edge: bool,
 ) -> Result<Vec<NodePort>, ExecuteError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
@@ -56,6 +59,9 @@ pub(super) fn collect_inputs<H: NodeHandler>(
                         .record_node_transport_in(node_idx, bytes);
                 }
                 inputs.push((to_port.clone(), payload));
+                if one_per_edge {
+                    break;
+                }
             }
             continue;
         }
@@ -84,6 +90,9 @@ pub(super) fn collect_inputs<H: NodeHandler>(
             }
             payload = adapt_edge_payload(exec, edge_idx, payload, node_idx, to_port.as_str())?;
             inputs.push((to_port.clone(), payload));
+            if one_per_edge {
+                break;
+            }
         }
     }
 

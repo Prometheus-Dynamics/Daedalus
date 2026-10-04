@@ -120,6 +120,16 @@ pub fn build_queues(plan: &crate::plan::RuntimePlan) -> Vec<EdgeStorage> {
         .collect()
 }
 
+/// Whether edge `edge_idx` holds a payload, without popping it.
+pub(crate) fn edge_has_payload(edge_idx: usize, queues: &[EdgeStorage]) -> bool {
+    match queues.get(edge_idx) {
+        Some(EdgeStorage::Locked { queue, .. }) => !queue.lock().is_empty(),
+        #[cfg(feature = "lockfree-queues")]
+        Some(EdgeStorage::BoundedLf { queue, .. }) => !queue.is_empty(),
+        None => false,
+    }
+}
+
 pub fn pop_edge(
     edge_idx: usize,
     queues: &Arc<Vec<EdgeStorage>>,

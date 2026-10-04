@@ -20,6 +20,13 @@ TypeScript compilation and Node bundle generation should remain explicit build s
 paths. The default package format should record the generated runtime artifact rather than requiring
 the host to run language build tools at load time.
 
+## Wire Values
+
+The SDK's `toWire(value, type)` and `fromWire(wire)` convert between JS values and `WireValue`
+objects: a BigInt above `i64::MAX`, and any integer on a `"u64"` port, is `{"kind":"uint"}`, and a
+`uint` decodes to a BigInt. Plain JSON loses integers beyond 2^53, so use `stringifyWire` and
+`parseWire` (Node 22+) for the JSON text; they keep such integers exact as BigInts.
+
 ## Current Status
 
 This crate is the home for Node persistent worker code, packaging helpers, TypeScript build

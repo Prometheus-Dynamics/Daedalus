@@ -1,7 +1,7 @@
 use super::*;
 use daedalus_ffi_core::{
-    BackendRuntimeModel, FixtureLanguage, NodeSchema, WirePayloadHandle, generate_language_fixture,
-    scalar_add_fixture_spec, validate_language_backends,
+    BackendRuntimeModel, FixtureLanguage, NodeSchema, WirePayloadHandle, WireValue,
+    generate_language_fixture, scalar_add_fixture_spec, validate_language_backends,
 };
 
 fn validate_java_schema(
@@ -299,8 +299,8 @@ fn complete_java_package_emits_lockfile_hash_and_language_metadata() {
     assert_eq!(lock.artifacts.len(), 3);
 }
 
-/// Compiles the Java SDK with `PackageBuilderTest` (descriptor shape and width-exact port types)
-/// and runs it; skipped when no JDK is installed.
+/// Compiles the Java SDK with `PackageBuilderTest` (descriptor shape, width-exact port types) and
+/// `WireTest` (wire round trips) and runs them; skipped when no JDK is installed.
 #[test]
 fn java_sdk_package_builder_test_passes() {
     use std::process::Command;
@@ -324,12 +324,37 @@ fn java_sdk_package_builder_test_passes() {
         .status()
         .expect("spawn javac");
     assert!(compiled.success(), "javac failed for the Java SDK");
-    let ran = Command::new(&java)
-        .args(["-ea", "-cp"])
-        .arg(&classes)
-        .arg("dev.daedalus.plugin.PackageBuilderTest")
-        .status()
-        .expect("spawn java");
+    let run = |class: &str| {
+        Command::new(&java)
+            .args(["-ea", "-cp"])
+            .arg(&classes)
+            .arg(class)
+            .output()
+            .expect("spawn java")
+    };
+    let builder = run("dev.daedalus.plugin.PackageBuilderTest");
+    // `WireTest` prints its encoder output: `@Scalar("u64") long` bits and BigIntegers above
+    // `Long.MAX_VALUE` must decode as `WireValue::UInt` in Rust.
+    let wire = run("dev.daedalus.plugin.WireTest");
     let _ = std::fs::remove_dir_all(&classes);
-    assert!(ran.success(), "Java SDK PackageBuilderTest failed");
+    assert!(
+        builder.status.success(),
+        "Java SDK PackageBuilderTest failed:\n{}",
+        String::from_utf8_lossy(&builder.stderr)
+    );
+    assert!(
+        wire.status.success(),
+        "Java SDK WireTest failed:\n{}",
+        String::from_utf8_lossy(&wire.stderr)
+    );
+    let values: Vec<WireValue> = serde_json::from_slice(&wire.stdout).expect("wire values");
+    assert_eq!(
+        values,
+        [
+            WireValue::UInt(u64::MAX),
+            WireValue::UInt(5),
+            WireValue::Int(-3),
+            WireValue::List(vec![WireValue::UInt(1 << 63)])
+        ]
+    );
 }

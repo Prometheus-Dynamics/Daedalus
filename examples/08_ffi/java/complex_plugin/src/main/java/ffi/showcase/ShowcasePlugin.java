@@ -15,7 +15,6 @@ import dev.daedalus.plugin.Input;
 import dev.daedalus.plugin.MutableBytes;
 import dev.daedalus.plugin.MutableRgba8Image;
 import dev.daedalus.plugin.Node;
-import dev.daedalus.plugin.Outputs;
 import dev.daedalus.plugin.Rgba8Image;
 import dev.daedalus.plugin.SharedBytes;
 import dev.daedalus.plugin.State;
@@ -48,6 +47,11 @@ public final class ShowcasePlugin {
   @TypeKey("ffi.external.LegacyCount")
   public record ExternalLegacyCount(String raw) {}
 
+  /** Multi-output nodes return a record whose components name and type their outputs. */
+  public record SignSplit(long positive, long negative) {}
+
+  public record IoSummary(double score, String label, Point point) {}
+
   @Adapter(id = "ffi.showcase.internal_count_to_i64", source = InternalCount.class, target = Long.class)
   public static long internalCountToI64(InternalCount value) {
     return value.value();
@@ -64,8 +68,8 @@ public final class ShowcasePlugin {
   }
 
   @Node(id = "split_sign", inputs = {"value"}, outputs = {"positive", "negative"})
-  public static Outputs splitSign(long value) {
-    return Outputs.of("positive", value, "negative", -value);
+  public static SignSplit splitSign(long value) {
+    return new SignSplit(value, -value);
   }
 
   @Node(id = "scale", inputs = {"value", "config"}, outputs = {"out"})
@@ -127,9 +131,9 @@ public final class ShowcasePlugin {
   }
 
   @Node(id = "node_io_complex", inputs = {"point", "weights", "metadata"}, outputs = {"score", "label", "point"})
-  public static Outputs nodeIoComplex(Point point, List<Double> weights, Map<String, String> metadata) {
+  public static IoSummary nodeIoComplex(Point point, List<Double> weights, Map<String, String> metadata) {
     double weightSum = weights.stream().mapToDouble(Double::doubleValue).sum();
-    return Outputs.of("score", point.x() + point.y() + weightSum, "label", metadata.getOrDefault("label", "unlabeled"), "point", point);
+    return new IoSummary(point.x() + point.y() + weightSum, metadata.getOrDefault("label", "unlabeled"), point);
   }
 
   @Node(id = "gpu_tint", inputs = {"rgba8"}, outputs = {"rgba8"}, residency = "gpu", layout = "rgba8-hwc")

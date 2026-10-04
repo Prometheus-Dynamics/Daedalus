@@ -216,10 +216,13 @@ mod tests {
         )
         .expect("i8 list");
         decode(WireValue::Unit, TypeExpr::optional(scalar(ValueType::U8))).expect("none");
+        let max = decode(WireValue::UInt(u64::MAX), scalar(ValueType::U64)).expect("u64 max");
+        assert_eq!(max.get_ref::<u64>(), Some(&u64::MAX));
 
         for (value, ty) in [
             (WireValue::Int(1 << 40), scalar(ValueType::I32)),
             (WireValue::Int(-1), scalar(ValueType::U32)),
+            (WireValue::UInt(u64::MAX), scalar(ValueType::Int)),
             (
                 WireValue::Int(256),
                 TypeExpr::optional(scalar(ValueType::U8)),

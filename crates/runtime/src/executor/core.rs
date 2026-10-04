@@ -36,7 +36,7 @@ pub(crate) struct ExecutorCore {
     /// Node ids shared with `ExecutionContext::node_id` so ticks do not allocate them.
     pub(crate) node_ids: Arc<[Arc<str>]>,
     /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
-    pub(crate) required_inputs: Arc<[Box<[usize]>]>,
+    pub(crate) required_inputs: Arc<[super::init::RequiredInputs]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
     /// Clock behind every timing this executor records (`Executor::with_clock`).
     pub(crate) clock: Clock,

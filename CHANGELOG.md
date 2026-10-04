@@ -178,8 +178,44 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
     set per engine with `EngineConfig::with_clock` (re-exported as `daedalus_engine::Clock`) or
     on `Executor`/`OwnedExecutor`/`StreamGraph::with_clock`; executor telemetry, adaptive costs,
     edge timings, stream and `HostGraph` step timings read it.
+- `WireValue::UInt(u64)` (JSON kind `"uint"`) carries unsigned integers above `i64::MAX` across
+  the FFI wire. `check_type` range-checks it against the port width; `into_payload` stores a
+  top-level value above `i64::MAX` as a native `u64` payload (graph `Value::Int` is `i64`) and
+  `from_payload` maps native `u64` payloads back; inside a list or record such a value is
+  `WireValueConversionError::IntegerOutOfRange`.
+- FFI SDK wire encoders that write `u64` port values as `uint`: Python `to_wire`/`from_wire` and
+  the `daedalus_ffi.u64` port annotation; Node `toWire`/`fromWire` (BigInt to and from `uint`)
+  with `stringifyWire`/`parseWire`, which keep integers beyond 2^53 exact (Node 22+); Java
+  `Wire.encode`/`decode`/`write`/`read` (`@Scalar("u64") long` bits with unsigned semantics,
+  `BigInteger` above `Long.MAX_VALUE`); C++ `daedalus::to_wire`/`from_wire<T>` (`uint64_t`,
+  range-checked decoding). The language crates' tests run each SDK's own tests and decode its
+  encoder output with serde.
+- `scripts/ci.sh pi` (not part of `all`) runs the ignored dmabuf hardware tests and the
+  `daedalus-gpu` `gpu_probe` example, a paste-friendly report of the adapter and driver,
+  `dmabuf_import_support()`, `TEXTURE_FORMAT_NV12`, LINEAR NV12 modifier support and whether it
+  needs `DISJOINT`, the kernel version, `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` and dma-heaps; see
+  "Validating on a Raspberry Pi 5" in `docs/testing.md`.
+- Cross-tick joins: a node's fire mode (`NodeFire`, node metadata `daedalus.node.fire` /
+  `NODE_FIRE_META_KEY`) is `any` (default, per-tick readiness) or `all`: wait, popping nothing,
+  until every connected required input holds a value, then take one value per edge. Set it with
+  `#[node(fire = "all")]`, `GraphBuilder::{fire_all, fire}` or graph-document node metadata.
+  Optional inputs never block; edge policies decide what is held (FIFO edges pair values in
+  arrival order, latest-only edges replace a held value). The planner lint warns about unknown
+  modes and `all` nodes joining producers that may not produce; `#[node]` records `Option`
+  returns as `outputs.<port>.conditional` metadata for it. See "Cross-Tick Joins" in
+  `docs/node-authoring.md`.
 
 ### Fixed
+
+- Declared host port types were lost when a graph was embedded: the planner's embedded-graph
+  expansion and `GraphBuilder::nest` dropped the inner host bridge, so an inner `input_typed`
+  port fanned into differently typed nodes left the outer host port generic (a type conflict).
+  An undeclared outer host port wired to a declared inner one now takes its type
+  (`NestedGraphHandle::host_types`); `try_connect_to_nested`/`try_connect_from_nested` also
+  accept a bare host port name and create the bridge port, like `try_connect`.
+- Per-edge pressure and freshness policies (`edge_latest_only`, `edge_bounded`, edge metadata in
+  graph documents) were overwritten by `SchedulerConfig::default_policy`; the default now applies
+  only to edges without a policy of their own.
 
 - `#[node]` and `#[node_handler]` treated any fn with three reference parameters as the
   low-level `(node, ctx, io)` form, so `fn(&A, &B, &mut State)` did not compile. The low-level
@@ -366,6 +402,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `ExecutionTelemetry::node_metrics` is a `NodeMetricsMap` (dense by node index; `get`/`entry`
   take the index by value, `iter` yields `(usize, &NodeMetrics)`), serialized, printed and
   reported like the former `BTreeMap<usize, NodeMetrics>`.
+- C++ FFI SDK: `DAEDALUS_NODE(fn, inputs(...), outputs(...))` (and the stateful, capability and
+  GPU variants) now names the node function, goes after it, and types every port from
+  `decltype(&fn)`; the node id is the function name. Unmapped port types, more inputs than
+  parameters and output counts that do not match the return type are `static_assert`s instead of
+  the name-based `Int`/`Bytes` fallback. Several outputs are returned as a `std::tuple`;
+  `std::span<T>` maps to `List`, and `DAEDALUS_TYPE_KEY(T, key)` (after the type) gives structs
+  and enums their `Opaque` key.
+- Java FFI SDK: a node with several outputs returns a record whose components are named after
+  them, and each component (with its `@Scalar`) types its output port; other return types fail
+  the build instead of leaving the outputs `Opaque("Object")`.
 
 ### Performance
 
@@ -423,6 +469,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   (`PluginRegistry::{type_registry, named_type_registry}`); `register_foreign_type`/
   `foreign_types` no longer write process-global state.
 - The no-op `Outputs` derive.
+- The untyped multi-output helpers of the FFI SDKs: Java `Outputs` (return a record) and C++
+  `daedalus::Outputs`/`daedalus::outputs` (return a `std::tuple`), and the C++
+  `daedalus::signature<F>()` registration option (registrations always use the function type).
 - `daedalus_registry::type_key_of` (and its `daedalus_runtime::transport` re-export): generic
   pushes resolve through `PluginRegistry::type_index`. `NodeIo::{push_any, push_output,
   push_output_default}` (use `push`/`push_to`/`push_default`).
@@ -463,6 +512,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `examples/plugins/example_project_dylib`; `example_project` is a plain `rlib` without a `dylib`
   feature. `docs/dynamic-plugins.md` explains the rule, and `scripts/ci.sh features` and CI now
   run `cargo build --workspace --lib --all-features`, which links.
+- The graph JSON Schema's enum lists (`compute`, sync group `policy` and `backpressure`) are
+  generated from `ComputeAffinity::ALL`, `SyncPolicy::ALL` and `BackpressureStrategy::ALL`
+  (new in `daedalus-core`; an exhaustive match next to each fails to compile until a new variant
+  is listed), and a planner test validates a document using every variant against the schema.
 
 ## [2.0.0] - 2026-04-30
 

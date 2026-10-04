@@ -1,4 +1,7 @@
-use crate::plan::{BackpressureStrategy, RuntimeEdgePolicy, RuntimePlan};
+use crate::plan::{
+    BackpressureStrategy, EDGE_FRESHNESS_POLICY_KEY, EDGE_PRESSURE_POLICY_KEY, RuntimeEdgePolicy,
+    RuntimePlan,
+};
 use daedalus_core::metadata::PLAN_SCHEDULE_ORDER_KEY;
 use daedalus_data::model::Value;
 use daedalus_planner::{ExecutionPlan, StableHash};
@@ -53,11 +56,17 @@ pub fn build_runtime(plan: &ExecutionPlan, config: &SchedulerConfig) -> RuntimeP
     runtime.default_policy = config.default_policy.clone();
     runtime.backpressure = config.backpressure.clone();
 
-    // Assign configured default policy to all edges for now.
-    runtime
-        .edges
-        .iter_mut()
-        .for_each(|edge| *edge.policy_mut() = config.default_policy.clone());
+    // The configured default applies to every edge whose metadata does not set its own pressure
+    // or freshness policy (`edge_latest_only`, `edge_bounded`, graph documents, ...).
+    for (edge, planned) in runtime.edges.iter_mut().zip(&plan.graph.edges) {
+        let policy = edge.policy_mut();
+        if !planned.metadata.contains_key(EDGE_PRESSURE_POLICY_KEY) {
+            policy.pressure = config.default_policy.pressure.clone();
+        }
+        if !planned.metadata.contains_key(EDGE_FRESHNESS_POLICY_KEY) {
+            policy.freshness = config.default_policy.freshness.clone();
+        }
+    }
 
     if let Some(order) = plan
         .graph

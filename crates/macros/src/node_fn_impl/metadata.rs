@@ -11,6 +11,9 @@ pub(super) struct MetadataInputs<'a> {
     pub(super) input_access: &'a [(LitStr, LitStr)],
     pub(super) outputs: &'a [OutputPortMeta],
     pub(super) fallback_attr: Option<&'a LitStr>,
+    pub(super) fire_attr: Option<&'a LitStr>,
+    /// Per output: an `Option` return, recorded as `outputs.<port>.conditional`.
+    pub(super) conditional_outputs: &'a [bool],
     pub(super) config_types: &'a [syn::Type],
     pub(super) data_crate: &'a TokenStream,
     pub(super) runtime_crate: &'a TokenStream,
@@ -24,6 +27,8 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
         input_access,
         outputs,
         fallback_attr,
+        fire_attr,
+        conditional_outputs,
         config_types,
         data_crate,
         runtime_crate,
@@ -81,6 +86,30 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
             __meta.insert(
                 ::std::string::String::from(#key),
                 #data_crate::model::Value::String(::std::borrow::Cow::from(#access)),
+            );
+        });
+    }
+    for (port, _) in outputs
+        .iter()
+        .zip(conditional_outputs)
+        .filter(|(_, conditional)| **conditional)
+    {
+        let key = LitStr::new(
+            &format!("outputs.{}.conditional", port.name.value()),
+            Span::call_site(),
+        );
+        inserts.push(quote! {
+            __meta.insert(
+                ::std::string::String::from(#key),
+                #data_crate::model::Value::Bool(true),
+            );
+        });
+    }
+    if let Some(fire) = fire_attr {
+        inserts.push(quote! {
+            __meta.insert(
+                ::std::string::String::from(#runtime_crate::NODE_FIRE_META_KEY),
+                #data_crate::model::Value::String(::std::borrow::Cow::from(#fire)),
             );
         });
     }

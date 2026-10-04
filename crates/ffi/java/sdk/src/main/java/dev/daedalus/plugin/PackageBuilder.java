@@ -3,6 +3,7 @@ package dev.daedalus.plugin;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.lang.reflect.RecordComponent;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -277,14 +278,27 @@ public final class PackageBuilder {
     return ports;
   }
 
-  /** A single output is typed by the method's return type; named {@link Outputs} stay untyped. */
+  /**
+   * A single output is typed by the method's return type. Several outputs are returned as a record
+   * whose components are named after them; each component (and its {@link Scalar}) types its port.
+   */
   private List<Object> outputPorts(String[] names, Method method, Node node) {
-    boolean typed = names.length == 1 && method.getReturnType() != Outputs.class;
-    Class<?> type = typed ? method.getReturnType() : Object.class;
-    Scalar scalar = typed ? method.getAnnotation(Scalar.class) : null;
+    Class<?> type = method.getReturnType();
+    if (names.length == 1) {
+      return List.of(port(names[0], type, method.getAnnotation(Scalar.class), "read", node.residency(), node.layout()));
+    }
+    Map<String, RecordComponent> components = new LinkedHashMap<>();
+    for (RecordComponent component : type.isRecord() ? type.getRecordComponents() : new RecordComponent[0]) {
+      components.put(component.getName(), component);
+    }
+    if (names.length > 1 && !components.keySet().equals(Set.of(names))) {
+      throw new IllegalArgumentException("node `" + node.id() + "` has outputs " + Arrays.toString(names)
+          + "; return a record with exactly those components, found " + type.getName());
+    }
     List<Object> ports = new ArrayList<>();
     for (String name : names) {
-      ports.add(port(name, type, scalar, "read", node.residency(), node.layout()));
+      RecordComponent component = components.get(name);
+      ports.add(port(name, component.getType(), component.getAnnotation(Scalar.class), "read", node.residency(), node.layout()));
     }
     return ports;
   }

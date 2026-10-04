@@ -20,6 +20,13 @@ Python packages should emit or lower into:
 Large bytes and image-shaped values should use `WireValue` JSON first, then move to
 raw payload or handle paths where the host transport supports them.
 
+## Wire Values
+
+The SDK's `to_wire(value, ty=None)` and `from_wire(wire)` convert between Python values and
+`WireValue` JSON objects. Annotate unsigned 64-bit ports with `daedalus_ffi.u64` (`int` is `i64`):
+`to_wire` writes ints on `u64` ports, and any int above `i64::MAX`, as `{"kind":"uint"}`, and
+rejects values outside `i64`/`u64` range.
+
 ## Current Status
 
 This crate is the home for Python persistent worker code, packaging helpers, and SDK validation

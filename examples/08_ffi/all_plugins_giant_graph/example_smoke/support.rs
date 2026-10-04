@@ -540,6 +540,8 @@ pub(super) fn wire_value(value: serde_json::Value) -> Result<WireValue, ExampleS
         serde_json::Value::Number(value) => {
             if let Some(value) = value.as_i64() {
                 WireValue::Int(value)
+            } else if let Some(value) = value.as_u64() {
+                WireValue::UInt(value)
             } else if let Some(value) = value.as_f64() {
                 WireValue::Float(value)
             } else {

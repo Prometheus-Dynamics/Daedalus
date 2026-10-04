@@ -120,10 +120,10 @@ pub use io::{
 pub use plan::{
     BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry,
     HostPortConnection, HostPortDescriptor, HostPortDirection, NODE_COST_META_KEY,
-    NODE_EXECUTION_KIND_META_KEY, NODE_REQUIRED_INPUTS_META_KEY, NodeExecutionKind,
-    RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation, RuntimeEdgeHandoff,
-    RuntimeEdgePolicy, RuntimeNode, RuntimeNodeExplanation, RuntimePlan, RuntimePlanError,
-    RuntimePlanExplanation, RuntimeSegment, RuntimeSink,
+    NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_REQUIRED_INPUTS_META_KEY,
+    NodeExecutionKind, NodeFire, RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation,
+    RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeNode, RuntimeNodeExplanation, RuntimePlan,
+    RuntimePlanError, RuntimePlanExplanation, RuntimeSegment, RuntimeSink,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
 pub use state::{

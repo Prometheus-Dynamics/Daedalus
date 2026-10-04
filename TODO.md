@@ -60,6 +60,15 @@ changes.
       block: a node runs when each connected required input has a value and is skipped
       otherwise; optional inputs are `None` without one. `Result<Option<T>, _>` returns are
       conditional outputs. See "Optional Inputs And Readiness" in `docs/node-authoring.md`.
+- [x] **Cross-tick joins.** `fire = "all"` nodes (`#[node(fire = "all")]`,
+      `GraphBuilder::fire_all`, `daedalus.node.fire` metadata) peek their required edges and wait,
+      popping nothing, until each holds a value, then take one value per edge; optional inputs
+      never block, edge policies decide what is held, and the planner lints joins on producers
+      that may not produce. Per-edge policies now also survive the scheduler default.
+- [x] **Typed host ports in embedded graphs.** Embedded-graph expansion and `nest` carry an
+      inner host port's declared type to an undeclared outer host port wired to it.
+- [x] **Graph JSON Schema drift.** Enum lists come from each core type's `ALL` (guarded by an
+      exhaustive match), and a test validates every variant against the generated schema.
 - [x] **Enum config ports (Eidos).** `NodeConfig` enum fields and enum handler inputs failed
       with `missing <port>`: the engine never handed the registry's const coercers to its
       executors and owned/borrowed inputs never coerced `Value` constants. The node macros now
@@ -103,8 +112,11 @@ changes.
       decoded once per change (`daedalus_runtime::const_cache`), so the detector graph frame is
       its 31 payload allocations.
 - [x] **Java and C++ SDK integer widths.** Both SDKs declare width-exact scalars (Java
-      `@Scalar` for unsigned widths, C++ `daedalus::signature<F>()`); the host range-checks
-      worker outputs. C++ nodes without a signature still fall back to `Int`/`Bytes`.
+      `@Scalar` for unsigned widths); the host range-checks worker outputs. C++ registrations
+      always type ports from `decltype(&fn)` (unmapped types fail to compile), and Java
+      multi-output nodes type each output from a returned record's components.
+- [x] **`u64` on the FFI wire.** `WireValue::UInt` (`"uint"`) carries values above `i64::MAX`;
+      every SDK's wire encoder writes `u64` port values as `uint`.
 - [x] **Owned constants decode once.** Owned `T`/`Option<T>` parameters fed a non-builtin
       constant clone the value decoded into the per-node cache (`T: Clone`, probed by the macro)
       instead of converting it every call.
@@ -140,9 +152,10 @@ changes.
       Needs a `TypeKey`-keyed codec table registered by the node macros, an `invoke` entry point
       using ffi-core `InvokeRequest`/`InvokeResponse`, and schema-built host handlers (design in
       `docs/dynamic-plugins.md`).
-- [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Run
-      `cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf`. Check LINEAR NV12
-      modifiers, `DISJOINT`, `TEXTURE_FORMAT_NV12`, and the fence export ioctl (kernel 6.0+).
+- [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Run `./scripts/ci.sh pi` on the device and
+      paste the `gpu_probe` report (LINEAR NV12 modifiers, `DISJOINT`, `TEXTURE_FORMAT_NV12`,
+      the fence export ioctl, dma-heaps); see "Validating on a Raspberry Pi 5" in
+      `docs/testing.md`.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
 - [ ] **Tag `v2.0.0`.** There are no tags yet; downstream projects pin a commit hash.
@@ -154,20 +167,13 @@ changes.
       against `docs/node-authoring.md`.
 
 ### Medium priority
-- [ ] **Cross-tick joins.** A node skipped for a missing required input drops what arrived on
-      its other ports that tick. Graphs that need "wait until every input arrived" joins across
-      ticks would need readiness checked before popping edges.
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29
       cannot add external wait semaphores. Revisit when wgpu exposes it; also queue-family-foreign
       acquire for compressed modifiers.
-- [ ] **Typed host ports in embedded graphs.** Declared host port types are not carried through
-      embedded-graph expansion.
 - [ ] **`export_plugin!` boundary contracts** are registered at install time but are not in the
       exported schema.
-- [ ] **Graph JSON Schema** hand-copies `SyncGroup` variants from `daedalus-core`; derive them or add
-      a variant-drift test.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 
