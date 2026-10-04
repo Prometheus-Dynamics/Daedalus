@@ -211,9 +211,11 @@ public final class ShowcasePlugin {
     return a + b;
   }
 
+  public record Split(long positive, long negative) {}
+
   @Node(id = "split", inputs = {"value"}, outputs = {"positive", "negative"})
-  public static Outputs split(long value) {
-    return Outputs.of("positive", value, "negative", -value);
+  public static Split split(long value) {
+    return new Split(value, -value);
   }
 
   @Node(id = "scale", inputs = {"value", "config"}, outputs = {"out"})
@@ -234,7 +236,8 @@ Inference target:
 - infer scalar, record struct, enum, optional, list, map, tuple-equivalent, and unit-like values
   from reflection/annotation processing
 - scalars are width-exact (`int` is `I32`, `long` is `Int`, `float` is `F32`, `char` is `U16`);
-  unsigned widths use `@Scalar("u32")` and similar (see `java/README.md`)
+  unsigned widths use `@Scalar("u32")` and similar (see `java/README.md`); several outputs are the
+  components of a returned record
 - require explicit annotations for port names, config defaults, custom serializers, state class,
   type keys, boundary contracts, package artifacts, classpath, and native library metadata
 
@@ -254,36 +257,36 @@ struct AccumState {
   int64_t sum = 0;
 };
 
-DAEDALUS_TYPE_KEY(Point, "example.Point")
 struct Point {
   double x;
   double y;
 };
+DAEDALUS_TYPE_KEY(Point, "example.Point")
 
-DAEDALUS_NODE(add, inputs(a, b), outputs(out))
-int64_t add_i64(int64_t a, int64_t b) {
+int64_t add(int64_t a, int64_t b) {
   return a + b;
 }
+DAEDALUS_NODE(add, inputs(a, b), outputs(out))
 
-DAEDALUS_NODE(split, inputs(value), outputs(positive, negative))
-daedalus::Outputs split_i64(int64_t value) {
-  return daedalus::outputs("positive", value, "negative", -value);
+std::tuple<int64_t, int64_t> split(int64_t value) {
+  return {value, -value};
 }
+DAEDALUS_NODE(split, inputs(value), outputs(positive, negative))
 
-DAEDALUS_STATEFUL_NODE(accum, AccumState, inputs(value), outputs(sum))
-int64_t accum_i64(int64_t value, AccumState& state) {
+int64_t accum(int64_t value, AccumState& state) {
   state.sum += value;
   return state.sum;
 }
+DAEDALUS_STATEFUL_NODE(accum, AccumState, inputs(value), outputs(sum))
 
-DAEDALUS_PLUGIN(ffi_showcase, add_i64, split_i64, accum_i64);
+DAEDALUS_PLUGIN(ffi_showcase, add, split, accum);
 ```
 
 Inference target:
 
-- infer simple scalar ABI shapes and registered structs from macros/templates; a
-  `daedalus::signature<F>()` registration option types ports width-exactly from the function type
-  (`std::int32_t` is `I32`, `std::uint64_t` is `U64`, `float` is `F32`; see `cpp/README.md`)
+- every `DAEDALUS_NODE` types its ports width-exactly from `decltype(&fn)` (`std::int32_t` is
+  `I32`, `std::uint64_t` is `U64`, `float` is `F32`; see `cpp/README.md`); unmapped port types and
+  mismatched port counts fail to compile
 - require explicit declarations for ownership, pointer/length payloads, state allocation,
   serializers, boundary contracts, package artifacts, and ABI version metadata
 

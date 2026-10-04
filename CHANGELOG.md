@@ -165,6 +165,23 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   without threads, blocking host-bridge waits return when nothing is queued, and runtime/engine
   timing reads `platform::Instant`. `scripts/ci.sh nostd` / `wasm` and a `portability` CI job
   check both, the latter by running `examples/wasm_smoke` in Node.
+- `WireValue::UInt(u64)` (JSON kind `"uint"`) carries unsigned integers above `i64::MAX` across
+  the FFI wire. `check_type` range-checks it against the port width; `into_payload` stores a
+  top-level value above `i64::MAX` as a native `u64` payload (graph `Value::Int` is `i64`) and
+  `from_payload` maps native `u64` payloads back; inside a list or record such a value is
+  `WireValueConversionError::IntegerOutOfRange`.
+- FFI SDK wire encoders that write `u64` port values as `uint`: Python `to_wire`/`from_wire` and
+  the `daedalus_ffi.u64` port annotation; Node `toWire`/`fromWire` (BigInt to and from `uint`)
+  with `stringifyWire`/`parseWire`, which keep integers beyond 2^53 exact (Node 22+); Java
+  `Wire.encode`/`decode`/`write`/`read` (`@Scalar("u64") long` bits with unsigned semantics,
+  `BigInteger` above `Long.MAX_VALUE`); C++ `daedalus::to_wire`/`from_wire<T>` (`uint64_t`,
+  range-checked decoding). The language crates' tests run each SDK's own tests and decode its
+  encoder output with serde.
+- `scripts/ci.sh pi` (not part of `all`) runs the ignored dmabuf hardware tests and the
+  `daedalus-gpu` `gpu_probe` example, a paste-friendly report of the adapter and driver,
+  `dmabuf_import_support()`, `TEXTURE_FORMAT_NV12`, LINEAR NV12 modifier support and whether it
+  needs `DISJOINT`, the kernel version, `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` and dma-heaps; see
+  "Validating on a Raspberry Pi 5" in `docs/testing.md`.
 - Cross-tick joins: a node's fire mode (`NodeFire`, node metadata `daedalus.node.fire` /
   `NODE_FIRE_META_KEY`) is `any` (default, per-tick readiness) or `all`: wait, popping nothing,
   until every connected required input holds a value, then take one value per edge. Set it with
@@ -370,6 +387,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `ExecutionTelemetry::node_metrics` is a `NodeMetricsMap` (dense by node index; `get`/`entry`
   take the index by value, `iter` yields `(usize, &NodeMetrics)`), serialized, printed and
   reported like the former `BTreeMap<usize, NodeMetrics>`.
+- C++ FFI SDK: `DAEDALUS_NODE(fn, inputs(...), outputs(...))` (and the stateful, capability and
+  GPU variants) now names the node function, goes after it, and types every port from
+  `decltype(&fn)`; the node id is the function name. Unmapped port types, more inputs than
+  parameters and output counts that do not match the return type are `static_assert`s instead of
+  the name-based `Int`/`Bytes` fallback. Several outputs are returned as a `std::tuple`;
+  `std::span<T>` maps to `List`, and `DAEDALUS_TYPE_KEY(T, key)` (after the type) gives structs
+  and enums their `Opaque` key.
+- Java FFI SDK: a node with several outputs returns a record whose components are named after
+  them, and each component (with its `@Scalar`) types its output port; other return types fail
+  the build instead of leaving the outputs `Opaque("Object")`.
 
 ### Performance
 
@@ -427,6 +454,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   (`PluginRegistry::{type_registry, named_type_registry}`); `register_foreign_type`/
   `foreign_types` no longer write process-global state.
 - The no-op `Outputs` derive.
+- The untyped multi-output helpers of the FFI SDKs: Java `Outputs` (return a record) and C++
+  `daedalus::Outputs`/`daedalus::outputs` (return a `std::tuple`), and the C++
+  `daedalus::signature<F>()` registration option (registrations always use the function type).
 - `daedalus_registry::type_key_of` (and its `daedalus_runtime::transport` re-export): generic
   pushes resolve through `PluginRegistry::type_index`. `NodeIo::{push_any, push_output,
   push_output_default}` (use `push`/`push_to`/`push_default`).

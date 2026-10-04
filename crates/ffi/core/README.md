@@ -129,6 +129,11 @@ Inputs and outputs use `WireValue`. JSON workers should support all scalar and
 structured variants. Large bytes and image-shaped values may start with JSON encoding, then upgrade
 to raw `Payload` or future handle-based paths where the host/backend transport supports them.
 
+Integers are `{"kind":"int","value":<i64>}` or `{"kind":"uint","value":<u64>}`. Workers send `uint`
+for values above `i64::MAX` (and may for any `u64` port value); `check_type` range-checks both
+against the port's scalar width. A top-level `uint` above `i64::MAX` becomes a native `u64`
+payload, since graph `Value::Int` is `i64`; nested inside a list or record it is a conversion error.
+
 `InvokeRequest::validate_contract`, `InvokeResponse::validate_contract`, `InvokeEvent::validate_contract`,
 and `WireValue::validate_contract` enforce the stable host/backend transport shape after protocol
 version checks. Use `validate_against_node` when a request or response should be checked against a

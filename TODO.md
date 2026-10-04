@@ -112,8 +112,11 @@ changes.
       decoded once per change (`daedalus_runtime::const_cache`), so the detector graph frame is
       its 31 payload allocations.
 - [x] **Java and C++ SDK integer widths.** Both SDKs declare width-exact scalars (Java
-      `@Scalar` for unsigned widths, C++ `daedalus::signature<F>()`); the host range-checks
-      worker outputs. C++ nodes without a signature still fall back to `Int`/`Bytes`.
+      `@Scalar` for unsigned widths); the host range-checks worker outputs. C++ registrations
+      always type ports from `decltype(&fn)` (unmapped types fail to compile), and Java
+      multi-output nodes type each output from a returned record's components.
+- [x] **`u64` on the FFI wire.** `WireValue::UInt` (`"uint"`) carries values above `i64::MAX`;
+      every SDK's wire encoder writes `u64` port values as `uint`.
 - [x] **Owned constants decode once.** Owned `T`/`Option<T>` parameters fed a non-builtin
       constant clone the value decoded into the per-node cache (`T: Clone`, probed by the macro)
       instead of converting it every call.
@@ -149,9 +152,10 @@ changes.
       Needs a `TypeKey`-keyed codec table registered by the node macros, an `invoke` entry point
       using ffi-core `InvokeRequest`/`InvokeResponse`, and schema-built host handlers (design in
       `docs/dynamic-plugins.md`).
-- [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Run
-      `cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf`. Check LINEAR NV12
-      modifiers, `DISJOINT`, `TEXTURE_FORMAT_NV12`, and the fence export ioctl (kernel 6.0+).
+- [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Run `./scripts/ci.sh pi` on the device and
+      paste the `gpu_probe` report (LINEAR NV12 modifiers, `DISJOINT`, `TEXTURE_FORMAT_NV12`,
+      the fence export ioctl, dma-heaps); see "Validating on a Raspberry Pi 5" in
+      `docs/testing.md`.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
 - [ ] **Tag `v2.0.0`.** There are no tags yet; downstream projects pin a commit hash.
