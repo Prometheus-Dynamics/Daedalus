@@ -25,7 +25,18 @@ builders should rewrite classpath and native library paths to bundled paths befo
 ## Port Types
 
 `PackageBuilder` types input ports from the node method's parameters (in order) and a single
-output from its return type; outputs returned through `Outputs` stay untyped. Ports named
+output from its return type. A node with several outputs returns a record whose components are
+named after them; each component (with its `@Scalar`, if any) types its output, and a return type
+that is not such a record fails the build:
+
+```java
+public record Split(@Scalar("u64") long high, long low) {}
+
+@Node(id = "split", inputs = {"value"}, outputs = {"high", "low"})
+public static Split split(long value) { ... }
+```
+
+Ports named
 `payload`, `frame`, `blob` or containing `rgba` are `Bytes`. Scalars are width-exact:
 
 | Java | Daedalus |
@@ -45,9 +56,17 @@ Java has no unsigned integers, so unsigned and pointer-sized ports are declared 
 `@Scalar("u8" | "u16" | "u32" | "u64" | "usize" | "isize" | ...)` on the parameter (or on the
 method for its single output), e.g. `@Scalar("u32") long count`. The carrier must be an integral
 type for integer scalars and `float`/`double` for float scalars, and it must hold the range: use
-`long` for `u32`. The wire carries integers as `i64`, so `u64` values above `Long.MAX_VALUE` cannot
-cross it. Other `Number` types (`BigInteger`, `BigDecimal`, `AtomicLong`, ...) are rejected; any
+`long` for `u32`. A `@Scalar("u64") long` holds the value's bits: `Wire.encode(value, "u64")`
+writes it as `{"kind":"uint"}` with unsigned semantics (so values above `Long.MAX_VALUE` cross the
+wire exactly) and `Wire.decode` returns a `uint` as those bits again; print one with
+`Long.toUnsignedString`. Other `Number` types (`BigInteger`, `BigDecimal`, `AtomicLong`, ...) are rejected; any
 other class becomes `Opaque` with its `@TypeKey` (or simple class name).
+
+## Wire Values
+
+`Wire.encode`/`Wire.decode` convert between Java values and `WireValue` JSON objects (maps), and
+`Wire.write`/`Wire.read` between those and JSON text; `read` keeps integers beyond `long` exact as
+`BigInteger`, and `encode` writes a `BigInteger` above `Long.MAX_VALUE` as `uint`.
 
 ## Current Status
 
