@@ -93,8 +93,8 @@ mod tests {
     use super::*;
     use daedalus_data::model::{TypeExpr, ValueType};
     use daedalus_ffi_core::{
-        FixtureLanguage, NodeSchema, WirePort, generate_language_fixture, scalar_add_fixture_spec,
-        validate_language_backends,
+        FixtureLanguage, NodeSchema, WirePort, WireValue, generate_language_fixture,
+        scalar_add_fixture_spec, validate_language_backends,
     };
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -288,6 +288,48 @@ plugin("test_python_sdk", [scale, accum, payload_len, cow]) \
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Runs the SDK's unit tests, then checks its wire encoder against serde: unsigned values
+    /// above `i64::MAX` and `u64` ports encode as `WireValue::UInt`.
+    #[test]
+    fn python_sdk_tests_pass_and_wire_values_decode_in_rust() {
+        let Some(python) = python_available() else {
+            return;
+        };
+        let sdk = repo_root_from_manifest_dir().join("crates/ffi/python/sdk");
+        let tests = Command::new(&python)
+            .args(["-m", "unittest", "discover", "-s", "tests"])
+            .current_dir(&sdk)
+            .output()
+            .expect("run python sdk tests");
+        assert!(
+            tests.status.success(),
+            "python sdk tests failed:\n{}",
+            String::from_utf8_lossy(&tests.stderr)
+        );
+        let script = "import json\nfrom daedalus_ffi import to_wire, u64\n\
+            print(json.dumps([to_wire((1 << 64) - 1), to_wire(5, u64), to_wire(-3), to_wire([7], list[u64])]))";
+        let output = Command::new(&python)
+            .args(["-c", script])
+            .current_dir(&sdk)
+            .output()
+            .expect("run python wire encoder");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let values: Vec<WireValue> = serde_json::from_slice(&output.stdout).expect("wire values");
+        assert_eq!(
+            values,
+            [
+                WireValue::UInt(u64::MAX),
+                WireValue::UInt(5),
+                WireValue::Int(-3),
+                WireValue::List(vec![WireValue::UInt(7)])
+            ]
+        );
     }
 
     #[test]

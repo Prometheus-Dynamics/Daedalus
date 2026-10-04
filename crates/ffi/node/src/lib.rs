@@ -97,8 +97,8 @@ mod tests {
     use super::*;
     use daedalus_data::model::{TypeExpr, ValueType};
     use daedalus_ffi_core::{
-        FixtureLanguage, NodeSchema, WirePort, generate_language_fixture, scalar_add_fixture_spec,
-        validate_language_backends,
+        FixtureLanguage, NodeSchema, WirePort, WireValue, generate_language_fixture,
+        scalar_add_fixture_spec, validate_language_backends,
     };
 
     fn validate_node_schema(
@@ -236,6 +236,50 @@ mod tests {
             NodePayloadView::Buffer { bytes_estimate: 16 }
         );
         assert_eq!(resolved.access, "view");
+    }
+
+    /// Runs the SDK's `node --test` suite, then checks its wire encoder against serde: BigInts
+    /// above `i64::MAX` and `u64` ports encode as `WireValue::UInt`. Skipped without `node`.
+    #[test]
+    fn node_sdk_tests_pass_and_wire_values_decode_in_rust() {
+        use std::process::Command;
+        let node = std::env::var("NODE").unwrap_or_else(|_| "node".into());
+        if Command::new(&node).arg("--version").output().is_err() {
+            return;
+        }
+        let sdk = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk");
+        let tests = Command::new(&node)
+            .arg("--test")
+            .current_dir(&sdk)
+            .output()
+            .expect("run node sdk tests");
+        assert!(
+            tests.status.success(),
+            "node sdk tests failed:\n{}",
+            String::from_utf8_lossy(&tests.stdout)
+        );
+        let script = "import { stringifyWire, toWire } from './src/index.js';\n\
+            console.log(stringifyWire([toWire((1n << 64n) - 1n), toWire(5, 'u64'), toWire(-3), toWire([7n], 'list<u64>')]));";
+        let output = Command::new(&node)
+            .args(["--input-type=module", "-e", script])
+            .current_dir(&sdk)
+            .output()
+            .expect("run node wire encoder");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let values: Vec<WireValue> = serde_json::from_slice(&output.stdout).expect("wire values");
+        assert_eq!(
+            values,
+            [
+                WireValue::UInt(u64::MAX),
+                WireValue::UInt(5),
+                WireValue::Int(-3),
+                WireValue::List(vec![WireValue::UInt(7)])
+            ]
+        );
     }
 
     #[test]
