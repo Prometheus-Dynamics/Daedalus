@@ -126,10 +126,10 @@ install.
 
 **Performance** (release, x86-64 desktop, `cargo test -p daedalus-rs --features
 engine,dylib-plugins --release --test dylib_stable -- --ignored --nocapture`): a scalar node
-handler costs about 0.4 µs statically and 1.2 µs through the stable path (+0.8 µs: the input and
+handler costs about 0.4 µs statically and 1.15 µs through the stable path (+0.75 µs: the input and
 output payloads are rebuilt on the other side, node state is looked up on both sides, plus the
 encode/decode); in a host graph tick, +1.0 µs per stable node with scalars, +1.2 µs with a 4 KiB
-`Vec<u8>` (one copy in, none out), and about +1.9 µs per node for a derived struct, which crosses
+`Vec<u8>` (one copy in, none out), and about +1.5 µs per node for a derived struct, which crosses
 as a `Value` and is rebuilt through serde. Frames cross as handles at the scalar cost.
 
 ## Plugin Dependencies
