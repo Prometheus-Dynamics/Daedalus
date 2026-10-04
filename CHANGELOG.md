@@ -105,6 +105,23 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   version or layout. `examples/plugins/foreign_consumer` is a plugin built separately from the
   type it reads; "Foreign Interfaces" in `docs/node-authoring.md` and "Separately Built Plugins"
   in `docs/dynamic-plugins.md` describe the rules.
+- Stable dylib handler path: plugins built with another rustc or Daedalus patch release (same
+  `PLUGIN_ABI_VERSION`) install and run. The descriptor (`PLUGIN_ABI_VERSION` 8) carries
+  `StableHandlers` (`STABLE_ABI_VERSION` 1): a C-ABI `invoke` running a schema node with
+  `StableValue` inputs and outputs (scalars inline, strings/bytes/nested values borrowed, `u64`
+  beyond `i64::MAX`, frames and other host-owned values as `ForeignHandle`s read in place) and
+  `release` for the per-instance node state kept in the plugin. `install_into` uses the Rust-ABI
+  path for same-build plugins and otherwise registers the schema's nodes with handlers calling
+  `invoke`; `PluginLibrary::{install_mode, install_into_as, stable_abi_version}` and
+  `InstallPath { RustAbi, Stable }` report or force the path, and
+  `PluginLibraryError::StableAbiMismatch` refuses a plugin neither path accepts. Node macros
+  record per-port codecs (`PluginRegistry::{record_stable_codecs, stable_codec}`,
+  `StableCodec`) for the plugin side; panics inside plugin nodes become `NodeError`s.
+  `plugin_descriptor!` builds the descriptor without exporting symbols. See "Install Paths" in
+  `docs/dynamic-plugins.md` (about 1 µs per call for scalar nodes);
+  `examples/plugins/stable_abi` and the facade's `dylib_stable` test cover it.
+- `PluginRegistry::register_foreign_interface_info`, `ExecutionContext::detached` and
+  `RuntimeNode::new` (running handlers outside an executor).
 - `TransportError::RustTypeMismatch` (built by `TransportError::type_mismatch::<T>`): a payload
   with the expected key but another Rust type reports both type names and that producer and
   consumer were likely built separately, instead of `expected k, found k`.
@@ -238,6 +255,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- `PluginLibrary::install_into` returns the `InstallPath` it took; `export_plugin!` boundary
+  contracts are listed in the exported `PluginSchema::boundary_contracts`; `StrView` (and with it
+  `PluginInfo`, `PluginDescriptor` and `PluginLibrary`) is `Send + Sync`.
 - Workspace dependencies shared with the `no_std` crates (`serde`, `serde_json`, `thiserror`,
   `tracing`, `base64`, `crossbeam-queue`) and the five tier-1 crates are declared without
   default features; `std` members request `features = ["std"]` (`daedalus-data`:

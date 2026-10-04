@@ -173,6 +173,20 @@ impl<'a> RuntimeResources<'a> {
 }
 
 impl ExecutionContext {
+    /// A context for running a handler outside an executor (a dynamic plugin's stable `invoke`
+    /// entry point): `state` and `node_id`, no metadata, capabilities or GPU.
+    pub fn detached(state: StateStore, node_id: Arc<str>) -> Self {
+        Self {
+            state,
+            node_id,
+            metadata: Arc::default(),
+            graph_metadata: Arc::default(),
+            capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
+            #[cfg(feature = "gpu")]
+            gpu: None,
+        }
+    }
+
     pub fn resources(&self) -> RuntimeResources<'_> {
         RuntimeResources {
             state: &self.state,

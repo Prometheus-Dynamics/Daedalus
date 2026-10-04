@@ -1,0 +1,23 @@
+[package]
+name = "daedalus-plugins-stable-abi"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+doctest = false
+
+[features]
+# Export the plugin from the `cdylib` with a descriptor that claims another rustc, so hosts
+# refuse its Rust ABI and install it through the stable handler path. Nothing links this crate
+# but the facade's tests, so the `rlib` may carry the exported symbols.
+dylib = ["daedalus/dylib-plugins"]
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins"] }
+serde = { workspace = true }

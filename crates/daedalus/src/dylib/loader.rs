@@ -1,10 +1,13 @@
 use super::boundary::{self, BoundaryTypeTable};
 use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
+use super::stable::{STABLE_ABI_VERSION, StablePlugin};
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
     PluginInfo, PluginSchema, StrSink, StrView,
 };
-use crate::runtime::plugins::{BoundaryTypeConflict, PluginError, PluginRegistry};
+use crate::runtime::plugins::{
+    BoundaryTypeConflict, PluginError, PluginRegistry, RegistryPluginExt,
+};
 use crate::transport::{ForeignInterfaceInfo, RustTypeIdentity, TypeKey};
 use daedalus_ffi_host::core::BackendKind;
 use libloading::Library;
@@ -30,6 +33,20 @@ pub enum RustAbiMismatch {
     },
 }
 
+/// How [`PluginLibrary::install_into`] installs a plugin (see the [module docs](super)).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InstallPath {
+    /// The plugin registers its Rust handlers into the host registry: no per-call overhead,
+    /// every capability (adapters, serializers, ...) installs, but it needs the host's exact
+    /// build ([`PluginLibrary::rust_abi`]).
+    RustAbi,
+    /// The host registers the schema's nodes with handlers that call the plugin's C-ABI
+    /// `invoke`: works across toolchains and Daedalus patch releases with the same
+    /// [`STABLE_ABI_VERSION`](super::STABLE_ABI_VERSION), for nodes whose values are builtins,
+    /// `Value`s, `ToValue`/`Deserialize` types or foreign interface handles.
+    Stable,
+}
+
 /// Errors that can occur while loading or installing a dynamic plugin library.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -48,12 +65,27 @@ pub enum PluginLibraryError {
     InvalidInfo { field: &'static str },
     #[error("plugin `{plugin}` did not provide a valid schema: {message}")]
     Schema { plugin: String, message: String },
-    /// The plugin loaded and its schema is readable, but it cannot be installed into this host.
+    /// The plugin loaded and its schema is readable, but it cannot be installed into this host
+    /// through the Rust ABI ([`InstallPath::RustAbi`] was requested).
     #[error("plugin `{plugin}` cannot be installed into this host: {mismatch}")]
     Incompatible {
         plugin: String,
         #[source]
         mismatch: RustAbiMismatch,
+    },
+    /// The plugin's stable handler ABI differs from the host's, so it cannot be installed
+    /// through the stable path either; `rust` says why the Rust-ABI path was not taken (`None`
+    /// when [`InstallPath::Stable`] was requested).
+    #[error(
+        "plugin `{plugin}` cannot be installed into this host: its stable handler ABI is \
+         version {found}, the host's is {expected}{}",
+        rust.as_ref().map(|m| format!(", and the Rust ABI differs too ({m})")).unwrap_or_default()
+    )]
+    StableAbiMismatch {
+        plugin: String,
+        expected: u32,
+        found: u32,
+        rust: Option<RustAbiMismatch>,
     },
     /// The plugin depends on plugins (`#[plugin(deps(...))]`, `export_plugin!(.., deps [..])`)
     /// the host registry has not installed. Nothing was installed.
@@ -112,6 +144,11 @@ pub struct PluginLibrary {
     rust_abi: Result<(), RustAbiMismatch>,
 }
 
+/// The plugin id `StablePlugin` needs as `&'static str` (plugin libraries are never unloaded).
+fn leak_id(id: &str) -> &'static str {
+    Box::leak(id.to_owned().into_boxed_str())
+}
+
 impl std::fmt::Debug for PluginLibrary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let info = &self.descriptor.info;
@@ -120,6 +157,7 @@ impl std::fmt::Debug for PluginLibrary {
             .field("plugin_name", &info.plugin_name.as_str())
             .field("plugin_version", &info.plugin_version.as_str())
             .field("rust_abi", &self.rust_abi)
+            .field("stable_abi", &self.descriptor.stable.version)
             .finish()
     }
 }
@@ -213,25 +251,84 @@ impl PluginLibrary {
         })
     }
 
-    /// Install the plugin (boundary contracts first, then the plugin itself) into `registry`.
+    /// How [`install_into`](Self::install_into) installs this plugin: through the Rust ABI
+    /// when [`rust_abi`](Self::rust_abi) accepts it, else through the stable path when the
+    /// stable ABI versions match, else `None`.
+    pub fn install_mode(&self) -> Option<InstallPath> {
+        if self.rust_abi.is_ok() {
+            Some(InstallPath::RustAbi)
+        } else if self.descriptor.stable.version == STABLE_ABI_VERSION {
+            Some(InstallPath::Stable)
+        } else {
+            None
+        }
+    }
+
+    /// Install the plugin into `registry` through [`install_mode`](Self::install_mode)'s path
+    /// and return it; see [`install_into_as`](Self::install_into_as). Fails with
+    /// [`PluginLibraryError::StableAbiMismatch`] (naming the Rust ABI mismatch too) when
+    /// neither path is available.
+    pub fn install_into(
+        &self,
+        registry: &mut PluginRegistry,
+    ) -> Result<InstallPath, PluginLibraryError> {
+        let path = self
+            .install_mode()
+            .ok_or_else(|| PluginLibraryError::StableAbiMismatch {
+                plugin: self.schema.plugin.name.clone(),
+                expected: STABLE_ABI_VERSION,
+                found: self.descriptor.stable.version,
+                rust: self.rust_abi.clone().err(),
+            })?;
+        self.install_into_as(registry, path)?;
+        Ok(path)
+    }
+
+    /// Install the plugin into `registry` through `path` (e.g. [`InstallPath::Stable`] for a
+    /// plugin [`install_into`](Self::install_into) would install through the Rust ABI, to test
+    /// the stable path).
     ///
-    /// Fails without calling into the plugin with [`PluginLibraryError::Incompatible`] when
-    /// [`rust_abi`](Self::rust_abi) reports a mismatch, with
-    /// [`PluginLibraryError::MissingDependencies`] when `registry` lacks a plugin the schema lists
-    /// in `dependencies`, with
-    /// [`PluginLibraryError::BoundaryTypeConflict`] when one of the plugin's
-    /// [`boundary_types`](Self::boundary_types) is a key `registry` already maps to another Rust
-    /// type ([`PluginRegistry::boundary_types`]), and with
-    /// [`PluginLibraryError::ForeignInterfaceMismatch`] when one of its
-    /// [`foreign_interfaces`](Self::foreign_interfaces) has another version or layout in
-    /// `registry` ([`PluginRegistry::foreign_interfaces`]).
-    pub fn install_into(&self, registry: &mut PluginRegistry) -> Result<(), PluginLibraryError> {
+    /// Both paths first fail without calling into the plugin with
+    /// [`PluginLibraryError::MissingDependencies`] when `registry` lacks a plugin the schema
+    /// lists in `dependencies`, and with [`PluginLibraryError::ForeignInterfaceMismatch`] when
+    /// one of its [`foreign_interfaces`](Self::foreign_interfaces) has another version or layout
+    /// in `registry` ([`PluginRegistry::foreign_interfaces`]).
+    ///
+    /// - [`InstallPath::RustAbi`] fails with [`PluginLibraryError::Incompatible`] when
+    ///   [`rust_abi`](Self::rust_abi) reports a mismatch and with
+    ///   [`PluginLibraryError::BoundaryTypeConflict`] when one of the plugin's
+    ///   [`boundary_types`](Self::boundary_types) is a key `registry` already maps to another
+    ///   Rust type ([`PluginRegistry::boundary_types`]); it then registers the boundary
+    ///   contracts and the plugin, and records its boundary types.
+    /// - [`InstallPath::Stable`] fails with [`PluginLibraryError::StableAbiMismatch`] when the
+    ///   stable ABI versions differ. No Rust type crosses it, so boundary types are not
+    ///   compared; it registers the schema's nodes, each with a handler calling the plugin.
+    pub fn install_into_as(
+        &self,
+        registry: &mut PluginRegistry,
+        path: InstallPath,
+    ) -> Result<(), PluginLibraryError> {
         let plugin = || self.schema.plugin.name.clone();
-        if let Err(mismatch) = &self.rust_abi {
-            return Err(PluginLibraryError::Incompatible {
-                plugin: plugin(),
-                mismatch: mismatch.clone(),
-            });
+        match path {
+            InstallPath::RustAbi => {
+                if let Err(mismatch) = &self.rust_abi {
+                    return Err(PluginLibraryError::Incompatible {
+                        plugin: plugin(),
+                        mismatch: mismatch.clone(),
+                    });
+                }
+            }
+            InstallPath::Stable => {
+                let found = self.descriptor.stable.version;
+                if found != STABLE_ABI_VERSION {
+                    return Err(PluginLibraryError::StableAbiMismatch {
+                        plugin: plugin(),
+                        expected: STABLE_ABI_VERSION,
+                        found,
+                        rust: None,
+                    });
+                }
+            }
         }
         let missing: Vec<String> = self
             .schema
@@ -246,18 +343,35 @@ impl PluginLibrary {
                 missing,
             });
         }
-        let conflicts = registry.boundary_type_conflicts(&self.boundary_types);
-        if !conflicts.is_empty() {
-            return Err(PluginLibraryError::BoundaryTypeConflict {
-                plugin: plugin(),
-                conflicts,
-            });
-        }
         let mismatches = foreign::mismatches(registry, &self.foreign_interfaces);
         if !mismatches.is_empty() {
             return Err(PluginLibraryError::ForeignInterfaceMismatch {
                 plugin: plugin(),
                 mismatches,
+            });
+        }
+        match path {
+            InstallPath::RustAbi => self.install_rust_abi(registry),
+            InstallPath::Stable => registry
+                .install_plugin(&StablePlugin {
+                    id: leak_id(&self.schema.plugin.name),
+                    schema: &self.schema,
+                    handlers: self.descriptor.stable,
+                    foreign_interfaces: &self.foreign_interfaces,
+                })
+                .map_err(|err| PluginLibraryError::RegisterFailed {
+                    message: err.to_string(),
+                }),
+        }
+    }
+
+    fn install_rust_abi(&self, registry: &mut PluginRegistry) -> Result<(), PluginLibraryError> {
+        let plugin = || self.schema.plugin.name.clone();
+        let conflicts = registry.boundary_type_conflicts(&self.boundary_types);
+        if !conflicts.is_empty() {
+            return Err(PluginLibraryError::BoundaryTypeConflict {
+                plugin: plugin(),
+                conflicts,
             });
         }
         let install = |entry: InstallFn, registry: &mut PluginRegistry| {
@@ -315,6 +429,12 @@ impl PluginLibrary {
         self.rust_abi.as_ref().copied()
     }
 
+    /// The plugin's [`STABLE_ABI_VERSION`](super::STABLE_ABI_VERSION); the stable install path
+    /// requires the host's.
+    pub fn stable_abi_version(&self) -> u32 {
+        self.descriptor.stable.version
+    }
+
     /// Path the library was loaded from.
     pub fn path(&self) -> &Path {
         &self.path
@@ -337,7 +457,7 @@ unsafe fn symbol<T: Copy>(
         })
 }
 
-unsafe extern "C" fn write_string(ctx: *mut c_void, ptr: *const u8, len: usize) {
+pub(crate) unsafe extern "C" fn write_string(ctx: *mut c_void, ptr: *const u8, len: usize) {
     if ctx.is_null() || ptr.is_null() {
         return;
     }

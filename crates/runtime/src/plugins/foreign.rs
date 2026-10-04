@@ -60,9 +60,17 @@ impl PluginRegistry {
     /// Fails with [`PluginError::ForeignInterfaceConflict`] when the key is already recorded with
     /// another version or vtable layout.
     pub fn register_foreign_interface<I: ForeignInterface>(&mut self) -> PluginResult<()> {
+        self.register_foreign_interface_info(*I::info())
+    }
+
+    /// [`Self::register_foreign_interface`] from an interface's identity alone (as another
+    /// build, e.g. a dynamic plugin installed through its stable entry points, reports it).
+    pub fn register_foreign_interface_info(
+        &mut self,
+        new: ForeignInterfaceInfo,
+    ) -> PluginResult<()> {
         self.ensure_open()?;
-        let new = *I::info();
-        let key = TypeKey::new(I::KEY);
+        let key = TypeKey::new(new.key());
         if let Some(existing) = self.foreign_interfaces.get(&key) {
             return match existing.same_interface(&new) {
                 true => Ok(()),
@@ -72,7 +80,7 @@ impl PluginRegistry {
                 }),
             };
         }
-        self.register_transport_type_decl(key.clone(), TypeExpr::opaque(I::KEY))?;
+        self.register_transport_type_decl(key.clone(), TypeExpr::opaque(new.key()))?;
         self.foreign_interfaces.insert(key, new);
         Ok(())
     }
