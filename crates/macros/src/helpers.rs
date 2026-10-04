@@ -104,6 +104,20 @@ pub fn last_ident_is(ty: &Type, name: &str) -> bool {
     last_segment(ty).is_some_and(|seg| seg.ident == name)
 }
 
+/// Whether `sig` is the low-level handler form `(&RuntimeNode, &ExecutionContext, &mut NodeIo)`,
+/// recognized by its parameter types (any path ending in those names), not its arity: a typed
+/// node may well take three references, e.g. `fn(&A, &B, &mut State)`.
+pub fn is_low_level_handler(sig: &syn::Signature) -> bool {
+    const FORM: [&str; 3] = ["RuntimeNode", "ExecutionContext", "NodeIo"];
+    sig.inputs.len() == FORM.len()
+        && sig.inputs.iter().zip(FORM).all(|(arg, name)| {
+            matches!(arg, syn::FnArg::Typed(pat) if matches!(
+                &*pat.ty,
+                Type::Reference(r) if last_ident_is(&r.elem, name)
+            ))
+        })
+}
+
 /// The referenced type of `&T` / `&mut T`, or `ty` itself.
 pub fn strip_ref(ty: &Type) -> &Type {
     match ty {

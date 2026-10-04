@@ -30,6 +30,7 @@ fn node_macro_compile_failures() {
     let t = TestCases::new();
     t.pass("tests/ui/node/ok_node.rs");
     t.pass("tests/ui/node/ok_id_expressions.rs");
+    t.pass("tests/ui/node/ok_three_ref_params.rs");
     t.compile_fail("tests/ui/node/fail_id_not_string.rs");
     t.compile_fail("tests/ui/node/fail_unknown_argument.rs");
     t.compile_fail("tests/ui/node/fail_missing_id.rs");

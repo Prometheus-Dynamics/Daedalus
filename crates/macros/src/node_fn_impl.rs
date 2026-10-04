@@ -72,20 +72,9 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
     });
     let sig_for_ports = input.sig.clone();
 
-    // Detect low-level vs typed signature (same heuristic as node_handler).
-    // Low-level is only the raw (node, ctx, io) triad; otherwise we treat as typed
-    // and allow RuntimeNode/ExecutionContext/NodeIo to appear anywhere.
-    let is_low_level = {
-        let inputs_sig = &input.sig.inputs;
-        inputs_sig.len() == 3
-            && inputs_sig.iter().all(|arg| {
-                if let syn::FnArg::Typed(pat) = arg {
-                    matches!(&*pat.ty, syn::Type::Reference(_))
-                } else {
-                    false
-                }
-            })
-    };
+    // Low-level is only the raw (node, ctx, io) triad, by parameter type; otherwise the
+    // signature is typed and RuntimeNode/ExecutionContext/NodeIo may appear anywhere.
+    let is_low_level = crate::helpers::is_low_level_handler(&input.sig);
 
     // Common descriptor payload.
     let inputs_vec = inputs.clone();
