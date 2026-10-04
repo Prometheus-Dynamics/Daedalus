@@ -21,7 +21,7 @@ mod type_analysis;
 use crate_paths::CratePaths;
 use idents::{node_struct_ident, port_ident};
 use parse::NodeArgs;
-use type_analysis::output_contract_types;
+use type_analysis::{conditional_outputs, output_contract_types};
 
 pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args with AttributeArgs::parse_terminated);
@@ -53,6 +53,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         sync_groups_attr,
         capability_attr,
         fallback_attr,
+        fire_attr,
         same_payload_attr,
     } = match parse::parse_node_args(args, &data_crate, &gpu_crate) {
         Ok(args) => args,
@@ -393,6 +394,8 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             input_access: &input_access,
             outputs: &outputs_vec,
             fallback_attr: fallback_attr.as_ref(),
+            fire_attr: fire_attr.as_ref(),
+            conditional_outputs: &conditional_outputs(&input.sig.output, outputs_vec.len()),
             config_types: &config_types,
             data_crate: &data_crate,
             runtime_crate: &runtime_crate,

@@ -60,6 +60,11 @@ changes.
       block: a node runs when each connected required input has a value and is skipped
       otherwise; optional inputs are `None` without one. `Result<Option<T>, _>` returns are
       conditional outputs. See "Optional Inputs And Readiness" in `docs/node-authoring.md`.
+- [x] **Cross-tick joins.** `fire = "all"` nodes (`#[node(fire = "all")]`,
+      `GraphBuilder::fire_all`, `daedalus.node.fire` metadata) peek their required edges and wait,
+      popping nothing, until each holds a value, then take one value per edge; optional inputs
+      never block, edge policies decide what is held, and the planner lints joins on producers
+      that may not produce. Per-edge policies now also survive the scheduler default.
 - [x] **Enum config ports (Eidos).** `NodeConfig` enum fields and enum handler inputs failed
       with `missing <port>`: the engine never handed the registry's const coercers to its
       executors and owned/borrowed inputs never coerced `Value` constants. The node macros now
@@ -154,9 +159,6 @@ changes.
       against `docs/node-authoring.md`.
 
 ### Medium priority
-- [ ] **Cross-tick joins.** A node skipped for a missing required input drops what arrived on
-      its other ports that tick. Graphs that need "wait until every input arrived" joins across
-      ticks would need readiness checked before popping edges.
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29

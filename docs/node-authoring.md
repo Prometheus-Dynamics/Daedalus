@@ -215,6 +215,46 @@ fn pose(frame: &Frame, refined: Option<&Corners>) -> Result<Pose, NodeError> { /
 The planner records each node's required inputs in its metadata
 (`NODE_REQUIRED_INPUTS_META_KEY`); nodes without a registry declaration are never gated.
 
+#### Cross-Tick Joins: `fire = "all"`
+
+The rule above is the default fire mode, `any`: readiness is decided per tick, so a node whose
+inputs arrive on different ticks never runs. A node in fire mode `all` waits instead:
+
+- It runs once **every connected required input holds a value**, whichever ticks they arrived on.
+  Until then the runtime only peeks at its edges: nothing is popped, and what arrived stays
+  queued in the edges (no allocation, no copy).
+- When it fires it takes **one value per incoming edge**, the oldest; the rest stay queued for
+  later firings (at most one per tick).
+- **Optional inputs never block** it. They get the oldest queued value when it fires, else `None`;
+  while it waits, values on them stay queued too.
+- A **host input** is an edge like any other: what the host pushed is held until the node fires.
+- The **edge policy decides what is held**. On a FIFO edge (the default) values queue up, so
+  joins pair values in arrival order (zip); a producer that is faster than its partner makes that
+  queue grow. On a latest-only edge (`edge_latest_only`) a newer value **replaces** the held one,
+  so the node joins the latest of each input. Bounded edges hold up to their capacity and then
+  apply their overflow policy (drop oldest, drop incoming, ...).
+
+```rust
+// Declaration default:
+#[node(id = "fuse", inputs("frame", "detections"), outputs("overlay"), fire = "all")]
+fn fuse(frame: &Frame, detections: &Detections) -> Result<Overlay, NodeError> { /* ... */ }
+
+// Or per graph node, overriding the declaration (`fire(&handle, NodeFire::Any)` resets it):
+let graph = builder
+    .fire_all(&fuse)
+    .edge_latest_only(&camera.outputs.frame, &fuse.inputs.frame)
+    .build();
+```
+
+The mode is node metadata, `daedalus.node.fire` (`NODE_FIRE_META_KEY`, `"any"` or `"all"`), so
+graph documents carry it (`"metadata": { "daedalus.node.fire": "all" }`) and a graph node's
+value overrides its declaration's. Nodes without required inputs (or without a declaration) are
+never gated. With lints enabled, the planner warns about an unknown mode and when an `all` node
+joins a producer that may not produce, best effort: a conditional output (a `#[node]` returning
+`Option`, recorded as `outputs.<port>.conditional`) or a node that is itself skipped when such a
+producer pushes nothing. The join then holds its other inputs until that producer emits.
+`SyncGroup` metadata is descriptive only; `fire = "all"` is what the runtime enforces.
+
 ### Constants, Defaults And Config Enums
 
 Port defaults (`port(name = "mode", default = "wrap")`, `#[port(default = ...)]` on a

@@ -6,7 +6,7 @@ use super::{
     edge_maps, normalize_runtime_nodes, queue, resolve_parallel_workers,
 };
 use crate::handles::PortId;
-use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, RuntimeEdge, RuntimeNode, RuntimePlan};
+use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, NodeFire, RuntimeEdge, RuntimeNode, RuntimePlan};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ pub(crate) struct ExecutorInit {
     /// Each node's connected output port ids, handed to its `NodeIo`.
     pub(crate) output_ports: Arc<[Arc<[PortId]>]>,
     /// Per node, the incoming edges into its required (not optional) inputs.
-    pub(crate) required_inputs: Arc<[Box<[usize]>]>,
+    pub(crate) required_inputs: Arc<[RequiredInputs]>,
     pub(crate) parallel_workers: usize,
     #[cfg(feature = "gpu")]
     pub(crate) data_edges: Arc<HashSet<usize>>,
@@ -76,6 +76,13 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
     })
 }
 
+/// A node's incoming edges into its required inputs, and its [`NodeFire`] mode.
+pub(crate) struct RequiredInputs {
+    pub(crate) edges: Box<[usize]>,
+    /// [`NodeFire::All`]: pop nothing until each of `edges` holds a value.
+    pub(crate) wait_all: bool,
+}
+
 /// Incoming edges into the inputs the planner listed as required
 /// ([`NODE_REQUIRED_INPUTS_META_KEY`]): a node runs only when each of those ports has a value.
 /// Optional, fan-in and undeclared ports never block.
@@ -83,7 +90,7 @@ fn required_input_edges(
     nodes: &[RuntimeNode],
     edges: &[RuntimeEdge],
     incoming: &[Vec<usize>],
-) -> Arc<[Box<[usize]>]> {
+) -> Arc<[RequiredInputs]> {
     nodes
         .iter()
         .enumerate()
@@ -94,7 +101,7 @@ fn required_input_edges(
                 .and_then(|value| value.as_list())
                 .unwrap_or_default();
             let is_required = |port: &str| required.iter().any(|name| name.as_str() == Some(port));
-            incoming
+            let edges: Box<[usize]> = incoming
                 .get(idx)
                 .into_iter()
                 .flatten()
@@ -104,7 +111,12 @@ fn required_input_edges(
                         .get(edge)
                         .is_some_and(|e| is_required(e.target_port()))
                 })
-                .collect()
+                .collect();
+            RequiredInputs {
+                wait_all: !edges.is_empty()
+                    && NodeFire::from_metadata(&node.metadata) == NodeFire::All,
+                edges,
+            }
         })
         .collect()
 }

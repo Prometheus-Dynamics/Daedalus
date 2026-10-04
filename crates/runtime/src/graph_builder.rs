@@ -263,6 +263,22 @@ impl GraphBuilder {
         self.node_metadata_by_id(handle.alias(), key, value)
     }
 
+    /// Make the node wait until every connected required input has a value, holding what
+    /// arrived in its edges across ticks (`fire = "all"`, a cross-tick join). See
+    /// [`NodeFire`](crate::plan::NodeFire).
+    pub fn fire_all(self, handle: &impl NodeHandleLike) -> Self {
+        self.fire(handle, crate::plan::NodeFire::All)
+    }
+
+    /// Set the node's [`NodeFire`](crate::plan::NodeFire) mode, overriding its declaration's.
+    pub fn fire(self, handle: &impl NodeHandleLike, fire: crate::plan::NodeFire) -> Self {
+        self.node_metadata(
+            handle,
+            crate::plan::NODE_FIRE_META_KEY,
+            Value::String(fire.as_str().into()),
+        )
+    }
+
     /// Attach or override metadata for a node alias. Values can store arbitrary UI hints
     /// (e.g. positions, styles) without changing core types.
     pub fn node_metadata_by_id(

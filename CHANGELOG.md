@@ -165,8 +165,21 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   without threads, blocking host-bridge waits return when nothing is queued, and runtime/engine
   timing reads `platform::Instant`. `scripts/ci.sh nostd` / `wasm` and a `portability` CI job
   check both, the latter by running `examples/wasm_smoke` in Node.
+- Cross-tick joins: a node's fire mode (`NodeFire`, node metadata `daedalus.node.fire` /
+  `NODE_FIRE_META_KEY`) is `any` (default, per-tick readiness) or `all`: wait, popping nothing,
+  until every connected required input holds a value, then take one value per edge. Set it with
+  `#[node(fire = "all")]`, `GraphBuilder::{fire_all, fire}` or graph-document node metadata.
+  Optional inputs never block; edge policies decide what is held (FIFO edges pair values in
+  arrival order, latest-only edges replace a held value). The planner lint warns about unknown
+  modes and `all` nodes joining producers that may not produce; `#[node]` records `Option`
+  returns as `outputs.<port>.conditional` metadata for it. See "Cross-Tick Joins" in
+  `docs/node-authoring.md`.
 
 ### Fixed
+
+- Per-edge pressure and freshness policies (`edge_latest_only`, `edge_bounded`, edge metadata in
+  graph documents) were overwritten by `SchedulerConfig::default_policy`; the default now applies
+  only to edges without a policy of their own.
 
 - `#[node]` and `#[node_handler]` treated any fn with three reference parameters as the
   low-level `(node, ctx, io)` form, so `fn(&A, &B, &mut State)` did not compile. The low-level
