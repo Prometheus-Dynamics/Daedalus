@@ -1,14 +1,15 @@
 //! Inbound wakeups for event-driven hosts.
 //!
 //! Hosts that drive a graph from their own loop need to know *when* new input arrived without
-//! polling. [`InboundWaiter`] offers both a blocking wait (on the bridge's existing `Condvar`) and
-//! a runtime-agnostic `Future` (wakers stored under the same buffer lock and woken after it is
-//! released). No extra lock is introduced; see `docs/host-bridge-lock-granularity.md`.
+//! polling. [`InboundWaiter`] offers a runtime-agnostic `Future` (wakers stored under the same
+//! buffer lock and woken after it is released) and, with `threads`, a blocking wait on the
+//! bridge's existing `Condvar`. No extra lock is introduced; see `docs/host-bridge-lock-granularity.md`.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
+#[cfg(feature = "threads")]
 use std::time::{Duration, Instant};
 
 use super::{HostBridgeBuffers, HostBridgeHandle, HostBridgeShared, has_pending_inbound_locked};
@@ -32,8 +33,8 @@ pub enum InboundWait {
 /// creation completes the wait with [`InboundWait::Woken`], so a host can create the waiter,
 /// check its own stop flag, then wait, without missing a stop signal raised in between.
 ///
-/// Use [`InboundWaiter::wait`] from a dedicated thread, or `.await` it from any async runtime (it
-/// never blocks the executor thread).
+/// `.await` it from any async runtime (it never blocks the executor thread), or, with `threads`,
+/// block a dedicated thread in [`InboundWaiter::wait`].
 #[must_use = "an InboundWaiter does nothing until waited on or awaited"]
 pub struct InboundWaiter {
     shared: Arc<HostBridgeShared>,
@@ -99,19 +100,8 @@ impl InboundWaiter {
     /// wakeup is issued, or `timeout` elapses (`None` waits indefinitely).
     ///
     /// Do not call this while holding locks that node execution needs.
-    ///
-    /// Without threads (`daedalus_core::platform::THREADS`) nothing can arrive while the only
-    /// thread waits: a timed wait returns at once and `None` panics; poll or `.await` instead.
+    #[cfg(feature = "threads")]
     pub fn wait(self, timeout: Option<Duration>) -> InboundWait {
-        if !daedalus_core::platform::THREADS {
-            return self.poll_now().unwrap_or_else(|| {
-                assert!(
-                    timeout.is_some(),
-                    "InboundWaiter::wait(None) would block forever on a target without threads"
-                );
-                InboundWait::TimedOut
-            });
-        }
         let deadline = timeout.and_then(|timeout| Instant::now().checked_add(timeout));
         let mut guard = self.shared.buffers.lock();
         loop {
@@ -189,6 +179,7 @@ impl HostBridgeHandle {
     }
 
     /// Blocking wait with a typed reason. `None` waits indefinitely.
+    #[cfg(feature = "threads")]
     pub fn wait_inbound(&self, timeout: Option<Duration>) -> InboundWait {
         self.inbound_waiter().wait(timeout)
     }
@@ -200,7 +191,7 @@ impl HostBridgeHandle {
     pub fn wake_inbound_waiters(&self) {
         let mut guard = self.shared.buffers.lock();
         guard.wake_epoch = guard.wake_epoch.wrapping_add(1);
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
         let wakers = take_inbound_wakers(&mut guard);
         drop(guard);
         wake_all(wakers);
@@ -216,7 +207,8 @@ impl HostBridgeHandle {
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::task::Wake;
-    use std::thread;
+    #[cfg(feature = "threads")]
+    use std::{thread, time::Duration};
 
     use super::*;
     use crate::host_bridge::HostBridgeManager;
@@ -230,6 +222,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "threads")]
     fn blocking_wait_times_out_then_sees_ready() {
         let handle = HostBridgeManager::new().ensure_handle("host");
         assert_eq!(
@@ -244,6 +237,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "threads")]
     fn blocking_wait_wakes_on_feed_from_other_thread() {
         let handle = HostBridgeManager::new().ensure_handle("host");
         let feeder = handle.clone();
@@ -256,6 +250,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "threads")]
     fn explicit_wake_and_close_complete_waits() {
         let handle = HostBridgeManager::new().ensure_handle("host");
         let waiter = handle.inbound_waiter();

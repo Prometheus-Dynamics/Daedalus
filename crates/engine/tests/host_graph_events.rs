@@ -8,9 +8,9 @@ use std::thread::{self, Thread};
 use std::time::Duration;
 
 use daedalus_data::model::{TypeExpr, Value, ValueType};
-use daedalus_engine::{
-    Engine, EngineConfig, HostGraph, HostGraphDriveExit, HostPortDirection, InboundWait,
-};
+#[cfg(feature = "threads")]
+use daedalus_engine::InboundWait;
+use daedalus_engine::{Engine, EngineConfig, HostGraph, HostGraphDriveExit, HostPortDirection};
 use daedalus_planner::{Edge, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 use daedalus_runtime::RuntimeNode;
@@ -147,6 +147,7 @@ fn inspect_payload_uses_registry_serializers() {
 }
 
 #[test]
+#[cfg(feature = "threads")]
 fn tick_on_input_waits_for_feed() {
     let (_plugins, mut graph) = compile_increment_graph();
     let turn = graph.tick_on_input(Some(Duration::from_millis(5))).unwrap();
@@ -167,6 +168,7 @@ fn tick_on_input_waits_for_feed() {
 }
 
 #[test]
+#[cfg(feature = "threads")]
 fn drive_blocking_processes_inputs_until_stopped() {
     let (_plugins, mut graph) = compile_increment_graph();
     graph.set_latest_input("in").unwrap();
@@ -200,6 +202,7 @@ fn drive_blocking_processes_inputs_until_stopped() {
 }
 
 #[test]
+#[cfg(feature = "threads")]
 fn drive_blocking_exits_when_bridge_closes() {
     let (_plugins, mut graph) = compile_increment_graph();
     let stop = graph.stop_handle();

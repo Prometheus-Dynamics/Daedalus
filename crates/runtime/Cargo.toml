@@ -22,15 +22,18 @@ path = "src/lib.rs"
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
 boundary-features = ["gpu", "gpu-mock", "plugins", "std"]
-host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots"]
+host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots", "threads"]
 
 [features]
-default = ["std"]
+default = ["threads"]
 # Lock backend: `parking_lot` with `std`, `spin` without (see `daedalus_runtime::sync`).
 std = ["dep:parking_lot"]
+# Worker threads: the parallel worker pool, stream workers (`spawn_continuous*`) and blocking
+# waits. Without it `Parallel`/`Adaptive` run serially and the thread-only APIs do not exist.
+threads = ["std"]
 gpu = ["daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
-executor-pool = ["rayon"]
+executor-pool = ["threads", "rayon"]
 lockfree-queues = ["crossbeam-queue"]
 metrics = []
 snapshots = []
@@ -61,3 +64,4 @@ criterion = { workspace = true }
 [[bench]]
 name = "executor_snapshot"
 harness = false
+required-features = ["threads"]

@@ -1,4 +1,5 @@
-//! `wasm32-unknown-unknown` runtime smoke module for the `embedded` preset (`scripts/ci.sh wasm`).
+//! `wasm32-unknown-unknown` runtime smoke module for the `embedded` preset without `threads`
+//! (`scripts/ci.sh wasm`).
 //!
 //! Built as a `cdylib` with no imports; `scripts/wasm-smoke.mjs` instantiates it and calls
 //! [`smoke`]. A fan-out graph (`x + 1` and `x * 2`, summed) runs a few ticks in each runtime mode:

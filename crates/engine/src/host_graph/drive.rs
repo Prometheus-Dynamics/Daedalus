@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "threads")]
 use std::time::Duration;
 
 use daedalus_runtime::ExecutionTelemetry;
@@ -87,19 +88,21 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         }
     }
 
-    /// Waiter for inbound host input; `.wait(timeout)` blocks, `.await` suspends.
+    /// Waiter for inbound host input; `.await` suspends, `.wait(timeout)` blocks (`threads`).
     pub fn inbound_waiter(&self) -> InboundWaiter {
         self.host.inbound_waiter()
     }
 
     /// Block until host input is queued, the bridge closes, it is explicitly woken, or `timeout`
     /// elapses (`None` waits indefinitely).
+    #[cfg(feature = "threads")]
     pub fn wait_for_input(&self, timeout: Option<Duration>) -> InboundWait {
         self.host.wait_inbound(timeout)
     }
 
     /// Wait for host input (see [`HostGraph::wait_for_input`]) and run one graph tick if any input
     /// is pending. Outputs produced by the tick are left on the bridge for the caller to drain.
+    #[cfg(feature = "threads")]
     pub fn tick_on_input(
         &mut self,
         timeout: Option<Duration>,
@@ -116,6 +119,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     /// wait returns immediately, so the graph runs until idle while outputs are handed back after
     /// each tick. Returns when `stop` is signalled, when the bridge is closed and drained, or with
     /// the first error from a tick or from `on_outputs`.
+    #[cfg(feature = "threads")]
     pub fn drive_blocking<F>(
         &mut self,
         stop: &HostGraphStopHandle,

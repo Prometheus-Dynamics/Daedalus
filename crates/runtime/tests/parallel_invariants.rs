@@ -168,8 +168,10 @@ impl NodeHandler for FailingParallelHandler {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "threads")]
 struct PanicParallelHandler;
 
+#[cfg(feature = "threads")]
 impl NodeHandler for PanicParallelHandler {
     fn run(
         &self,
@@ -587,6 +589,7 @@ fn parallel_fail_fast_stops_scheduling_new_segments_after_error() {
 }
 
 #[test]
+#[cfg(feature = "threads")]
 fn parallel_worker_panic_returns_typed_error_without_stranding_scheduler() {
     let plan = independent_failure_plan();
     let rt = build_runtime(&plan, &SchedulerConfig::default());

@@ -1,23 +1,14 @@
 //! What the build target provides, and the portable fallbacks for what it lacks.
 //!
-//! - [`THREADS`]: whether `std::thread` works. Where it does not (`wasm32-unknown-unknown`,
-//!   `wasm32-wasip1`, `no_std`), executors run `Parallel`/`Adaptive` serially and blocking
-//!   waits return at once.
+//! Threads are a Cargo feature of `daedalus-runtime`/`daedalus-engine` (`threads`), not a
+//! target probe.
+//!
 //! - [`Instant`]: `std::time::Instant` wherever the target has a monotonic OS clock (the same
 //!   type, so native builds are unaffected). Elsewhere (`no_std`, `wasm32-unknown-unknown`) it is
 //!   a portable instant read from the clock installed with `set_clock`; until one is
 //!   installed every instant is zero, so optional timing reads zero durations.
 //!
 //! See "Portability" in docs/development.md.
-
-/// Whether `std::thread` can spawn threads on this target.
-pub const THREADS: bool = cfg!(all(
-    feature = "std",
-    not(all(
-        target_family = "wasm",
-        any(target_os = "unknown", not(target_feature = "atomics"))
-    ))
-));
 
 /// Whether [`Instant`] reads a monotonic OS clock (otherwise the `set_clock` clock).
 pub const OS_CLOCK: bool = cfg!(all(

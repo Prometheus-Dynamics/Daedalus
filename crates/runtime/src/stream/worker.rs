@@ -1,3 +1,5 @@
+//! Continuous stream workers: a thread per graph (`threads` feature).
+
 use crate::sync::{Condvar, Mutex};
 use daedalus_core::platform::Instant;
 use std::sync::Arc;
@@ -8,8 +10,8 @@ use std::time::Duration;
 use thiserror::Error;
 
 use super::{
-    DEFAULT_STREAM_IDLE_SLEEP, STREAM_NO_PROGRESS_WARNING, SharedStreamGraph, StreamGraph,
-    StreamGraphState,
+    STREAM_NO_PROGRESS_WARNING, SharedStreamGraph, StreamGraph, StreamGraphState,
+    StreamWorkerConfig, normalize_idle_sleep,
 };
 use crate::executor::NodeHandler;
 use crate::host_bridge::HostBridgeHandle;
@@ -27,53 +29,6 @@ pub struct StreamWorkerDiagnostics {
 pub enum StreamWorkerStopError {
     #[error("stream worker did not stop within {timeout:?}")]
     Timeout { timeout: Duration },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StreamWorkerConfig {
-    pub idle_sleep: Duration,
-}
-
-impl StreamWorkerConfig {
-    pub fn with_idle_sleep(mut self, idle_sleep: Duration) -> Self {
-        self.idle_sleep = normalize_idle_sleep(idle_sleep);
-        self
-    }
-}
-
-impl Default for StreamWorkerConfig {
-    fn default() -> Self {
-        Self {
-            idle_sleep: DEFAULT_STREAM_IDLE_SLEEP,
-        }
-    }
-}
-
-pub(super) fn normalize_idle_sleep(idle_sleep: Duration) -> Duration {
-    if idle_sleep.is_zero() {
-        DEFAULT_STREAM_IDLE_SLEEP
-    } else {
-        idle_sleep
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zero_idle_sleep_normalizes_to_default() {
-        assert_eq!(
-            StreamWorkerConfig::default()
-                .with_idle_sleep(Duration::ZERO)
-                .idle_sleep,
-            DEFAULT_STREAM_IDLE_SLEEP
-        );
-        assert_eq!(
-            normalize_idle_sleep(Duration::ZERO),
-            DEFAULT_STREAM_IDLE_SLEEP
-        );
-    }
 }
 
 #[must_use = "stream workers should be stopped explicitly with stop or stop_timeout"]
@@ -240,19 +195,12 @@ where
         )
     }
 
-    /// Run `graph` on a dedicated worker thread until stopped.
-    ///
-    /// # Panics
-    ///
-    /// On targets without threads (`daedalus_core::platform::THREADS`); drive the graph with
-    /// [`StreamGraph::poll`] or [`StreamGraph::run_available`] there.
+    /// Run `graph` on a dedicated worker thread until stopped (`threads` feature; without it,
+    /// drive the graph with [`StreamGraph::poll`] or [`StreamGraph::run_available`]).
     pub fn spawn_continuous_with_config(
         graph: SharedStreamGraph<H>,
         config: StreamWorkerConfig,
     ) -> StreamGraphWorker {
-        if !daedalus_core::platform::THREADS {
-            panic!("stream workers need threads; drive the graph with `poll`/`run_available` here");
-        }
         let idle_sleep = normalize_idle_sleep(config.idle_sleep);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();

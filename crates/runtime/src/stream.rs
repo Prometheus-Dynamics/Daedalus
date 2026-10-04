@@ -14,16 +14,63 @@ use crate::host_bridge::{
     HostBridgeConfig, HostBridgeEvent, HostBridgeHandle, HostBridgeManager, HostBridgeStats,
 };
 
+#[cfg(feature = "threads")]
 mod worker;
-pub use worker::{
-    StreamGraphWorker, StreamWorkerConfig, StreamWorkerDiagnostics, StreamWorkerStopError,
-};
+#[cfg(feature = "threads")]
+pub use worker::{StreamGraphWorker, StreamWorkerDiagnostics, StreamWorkerStopError};
 
 // Keep synchronous graph polling and host IO handles in this module. Continuous worker lifecycle
 // and shutdown behavior live in `stream::worker`.
 pub const DEFAULT_STREAM_IDLE_SLEEP: Duration = Duration::from_millis(100);
 pub(super) const STREAM_NO_PROGRESS_WARNING: &str =
     "stream tick left host inbound pending unchanged; pausing drain loop to avoid a busy spin";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamWorkerConfig {
+    pub idle_sleep: Duration,
+}
+
+impl StreamWorkerConfig {
+    pub fn with_idle_sleep(mut self, idle_sleep: Duration) -> Self {
+        self.idle_sleep = normalize_idle_sleep(idle_sleep);
+        self
+    }
+}
+
+impl Default for StreamWorkerConfig {
+    fn default() -> Self {
+        Self {
+            idle_sleep: DEFAULT_STREAM_IDLE_SLEEP,
+        }
+    }
+}
+
+fn normalize_idle_sleep(idle_sleep: Duration) -> Duration {
+    if idle_sleep.is_zero() {
+        DEFAULT_STREAM_IDLE_SLEEP
+    } else {
+        idle_sleep
+    }
+}
+
+#[cfg(test)]
+mod worker_config_tests {
+    use super::*;
+
+    #[test]
+    fn zero_idle_sleep_normalizes_to_default() {
+        assert_eq!(
+            StreamWorkerConfig::default()
+                .with_idle_sleep(Duration::ZERO)
+                .idle_sleep,
+            DEFAULT_STREAM_IDLE_SLEEP
+        );
+        assert_eq!(
+            normalize_idle_sleep(Duration::ZERO),
+            DEFAULT_STREAM_IDLE_SLEEP
+        );
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StreamGraphState {
@@ -166,7 +213,9 @@ impl GraphOutput {
             .and_then(|payload| payload.get_ref::<T>().cloned()))
     }
 
-    /// Receive an output payload by blocking until data is delivered or `timeout` expires.
+    /// Receive an output payload by blocking until data is delivered or `timeout` expires
+    /// (`threads`).
+    #[cfg(feature = "threads")]
     pub fn recv_timeout(&self, timeout: Duration) -> Result<Option<Payload>, ExecuteError> {
         Ok(self.handle.recv_payload_timeout(&self.port, timeout))
     }

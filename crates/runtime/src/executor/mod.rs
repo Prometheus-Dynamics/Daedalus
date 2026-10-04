@@ -16,6 +16,7 @@ mod handler;
 mod init;
 mod owned;
 mod owned_direct_host;
+#[cfg(feature = "threads")]
 mod parallel;
 mod patching;
 mod payload;
@@ -25,6 +26,7 @@ mod serial;
 mod serial_direct_slot;
 mod telemetry;
 mod telemetry_size;
+#[cfg(feature = "threads")]
 mod workers;
 
 pub(crate) use adaptive::AdaptiveState;
@@ -41,9 +43,11 @@ pub use owned::OwnedExecutor;
 pub(crate) use patching::apply_patch_to_const_inputs;
 pub use payload::CorrelatedPayload;
 pub use queue::EdgeStorage;
+#[cfg(feature = "threads")]
+pub(crate) use schedule_compile::CompiledSegmentGraph;
 pub(crate) use schedule_compile::{
-    CompiledSchedule, CompiledSegmentGraph, build_compiled_schedule, build_node_execution_metadata,
-    direct_edge_set, direct_slots, is_host_bridge_node, resolve_parallel_workers,
+    CompiledSchedule, build_compiled_schedule, build_node_execution_metadata, direct_edge_set,
+    direct_slots, is_host_bridge_node, resolve_parallel_workers,
 };
 pub use telemetry::{
     AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
@@ -58,6 +62,7 @@ pub use telemetry_size::{
     RuntimeDataSizeInspector, RuntimeDataSizeInspectors, estimate_payload_bytes,
     register_runtime_data_size_inspector,
 };
+#[cfg(feature = "threads")]
 pub(crate) use workers::WorkerPool;
 
 #[derive(Clone)]
@@ -116,6 +121,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) adaptive: AdaptiveState,
 }
 
+#[cfg(feature = "threads")]
 pub(crate) fn segment_failure(segment_idx: usize, error: &ExecuteError) -> NodeFailure {
     match error {
         ExecuteError::HandlerFailed { node, error } => NodeFailure {
@@ -501,6 +507,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     }
 
     /// Start the parallel worker threads now instead of on the first parallel run.
+    #[cfg(feature = "threads")]
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
         WorkerPool::get_or_init(&self.core.worker_pool, self.parallel_workers()).map(drop)
     }
@@ -610,7 +617,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         result
     }
 
-    /// Execute the runtime plan allowing independent segments to run in parallel.
+    /// Execute the runtime plan allowing independent segments to run in parallel (serially
+    /// without the `threads` feature).
     ///
     /// With fail-fast enabled, this stops scheduling new ready segments after the first segment
     /// error. Segments already running still finish before the error is returned.
@@ -684,17 +692,19 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     }
 }
 
-/// Parallel run of `exec`, or the serial path when its segments form one chain.
+/// Parallel run of `exec`, or the serial path when its segments form one chain (or without
+/// `threads`).
 pub(crate) fn run_parallel_on<H>(
     exec: &mut Executor<'_, H>,
 ) -> Result<ExecutionTelemetry, ExecuteError>
 where
     H: NodeHandler + Send + Sync + 'static,
 {
-    if exec.schedule.linear_segment_flow {
-        return serial::run_with_boundaries(exec);
+    #[cfg(feature = "threads")]
+    if !exec.schedule.linear_segment_flow {
+        return parallel::run(exec, None);
     }
-    parallel::run(exec, None)
+    serial::run_with_boundaries(exec)
 }
 
 /// One adaptive frame on `exec` in the chosen mode, timed into `adaptive`.
@@ -714,16 +724,21 @@ where
     let Some(costs) = adaptive.frame_costs() else {
         return serial::run_with_boundaries(exec);
     };
-    let (result, wall) = if parallel {
-        let start = daedalus_core::platform::Instant::now();
-        let result = parallel::run(exec, Some(costs));
-        (result, Some(start.elapsed()))
-    } else {
-        let costs = serial::SegmentCosts {
-            segment_of: &schedule.segment_of,
-            costs,
-        };
-        (serial::run_with_boundaries_timed(exec, Some(costs)), None)
+    // Without threads `choose` never picks parallel (one worker).
+    let (result, wall) = match parallel {
+        #[cfg(feature = "threads")]
+        true => {
+            let start = daedalus_core::platform::Instant::now();
+            let result = parallel::run(exec, Some(costs));
+            (result, Some(start.elapsed()))
+        }
+        _ => {
+            let costs = serial::SegmentCosts {
+                segment_of: &schedule.segment_of,
+                costs,
+            };
+            (serial::run_with_boundaries_timed(exec, Some(costs)), None)
+        }
     };
     if result.is_ok() {
         adaptive.observe(&schedule, workers, wall);

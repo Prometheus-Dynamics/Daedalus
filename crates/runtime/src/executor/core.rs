@@ -6,7 +6,6 @@ use crate::state::StateStore;
 use crate::sync::Mutex;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 pub(crate) struct ExecutorCore {
     pub(crate) state: StateStore,
@@ -22,7 +21,8 @@ pub(crate) struct ExecutorCore {
     /// Workers a parallel run may use (see `resolve_parallel_workers`).
     pub(crate) parallel_workers: usize,
     /// Threads parallel runs fan out to, created on first use and shared by snapshots.
-    pub(crate) worker_pool: Arc<OnceLock<Arc<super::WorkerPool>>>,
+    #[cfg(feature = "threads")]
+    pub(crate) worker_pool: Arc<std::sync::OnceLock<Arc<super::WorkerPool>>>,
     /// Host-bridge nodes resolved when bridges were attached; empty without bridges.
     pub(crate) host_nodes: Arc<[super::serial::HostNodeIo]>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
@@ -59,7 +59,8 @@ impl ExecutorCore {
             data_size_inspectors: RuntimeDataSizeInspectors::global(),
             run_config: ExecutorRunConfig::default(),
             parallel_workers: init.parallel_workers,
-            worker_pool: Arc::new(OnceLock::new()),
+            #[cfg(feature = "threads")]
+            worker_pool: Arc::default(),
             host_nodes: Arc::new([]),
             const_coercers: None,
             type_index: None,
@@ -106,6 +107,7 @@ impl ExecutorCore {
             data_size_inspectors: self.data_size_inspectors.clone(),
             run_config: self.run_config.clone(),
             parallel_workers: self.parallel_workers,
+            #[cfg(feature = "threads")]
             worker_pool: self.worker_pool.clone(),
             host_nodes: self.host_nodes.clone(),
             const_coercers: self.const_coercers.clone(),
