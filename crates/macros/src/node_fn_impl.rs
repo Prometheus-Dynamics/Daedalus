@@ -262,6 +262,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         arg_types: &arg_types,
         output_contract_tys: &output_contract_tys,
         outputs: &outputs_vec,
+        config_types: &config_types,
         generic_type_params: &generic_type_params,
         data_crate: &data_crate,
         runtime_crate: &runtime_crate,

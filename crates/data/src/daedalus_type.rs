@@ -1,4 +1,4 @@
-use crate::model::TypeExpr;
+use crate::model::{TypeExpr, Value};
 
 /// Trait for types that want a stable, Daedalus-facing schema identity.
 ///
@@ -14,6 +14,16 @@ pub trait DaedalusTypeExpr: 'static {
     /// nested schemas before `Self`. The `DaedalusTypeExpr` derive implements it; the default
     /// visits nothing.
     fn visit_dependencies<V: DaedalusTypeVisitor>(_visitor: &mut V) {}
+
+    /// Build `Self` from a graph value (a constant or a `Value` payload). The derive implements
+    /// it for enums whose variants are all unit variants: a variant name (`Value::String` or
+    /// `Value::Enum`, case-insensitive) or its index (`Value::Int`). The default builds nothing.
+    fn from_value(_value: &Value) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 /// Receives the nested types reported by [`DaedalusTypeExpr::visit_dependencies`].
@@ -27,7 +37,20 @@ pub mod derive_support {
     use core::marker::PhantomData;
 
     use super::{DaedalusTypeExpr, DaedalusTypeVisitor};
-    use crate::model::TypeExpr;
+    use crate::model::{TypeExpr, Value};
+
+    /// Index of the unit variant `value` names among `names`: a name (case-insensitive) as
+    /// `Value::String` or a payload-free `Value::Enum`, or an index as `Value::Int`.
+    pub fn unit_variant_index(value: &Value, names: &[&str]) -> Option<usize> {
+        let name = match value {
+            Value::Int(index) => return usize::try_from(*index).ok().filter(|i| *i < names.len()),
+            Value::String(name) => name.as_ref(),
+            Value::Enum(ev) if ev.value.is_none() => ev.name.as_str(),
+            _ => return None,
+        };
+        let name = name.trim();
+        names.iter().position(|n| n.eq_ignore_ascii_case(name))
+    }
 
     /// Autoref-specialization probe. Called as `(&Probe::<T>(PhantomData)).method()`, the
     /// `VisitTyped`/`KeyedLeaf` impls are picked when `T` implements `DaedalusTypeExpr` and the
@@ -133,5 +156,28 @@ mod tests {
             unkeyed.leaf_type_expr(),
             crate::typing::type_expr::<Unkeyed>()
         );
+    }
+
+    #[test]
+    fn unit_variant_index_accepts_names_indices_and_enum_values() {
+        use super::derive_support::unit_variant_index;
+        use crate::model::EnumValue;
+        let names = ["reflect", "wrap"];
+        assert_eq!(
+            unit_variant_index(&Value::String(" Wrap ".into()), &names),
+            Some(1)
+        );
+        assert_eq!(unit_variant_index(&Value::Int(0), &names), Some(0));
+        assert_eq!(unit_variant_index(&Value::Int(2), &names), None);
+        assert_eq!(unit_variant_index(&Value::Int(-1), &names), None);
+        let named = |value: Option<Value>| {
+            Value::Enum(EnumValue {
+                name: "wrap".into(),
+                value: value.map(Box::new),
+            })
+        };
+        assert_eq!(unit_variant_index(&named(None), &names), Some(1));
+        assert_eq!(unit_variant_index(&named(Some(Value::Unit)), &names), None);
+        assert_eq!(unit_variant_index(&Value::Bool(true), &names), None);
     }
 }

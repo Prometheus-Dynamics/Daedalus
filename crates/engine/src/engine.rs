@@ -442,6 +442,7 @@ impl Engine {
         let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
             .with_capabilities(plugins.capabilities.clone())
+            .with_const_coercers(plugins.const_coercers.clone())
             .with_type_index(plugins.type_index());
         let executor = self.configure_owned_executor(executor)?;
         Ok(CompiledRun {
@@ -485,6 +486,7 @@ impl Engine {
         let executor = OwnedExecutor::try_new(runtime_plan.clone(), handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
             .with_capabilities(plugins.capabilities.clone())
+            .with_const_coercers(plugins.const_coercers.clone())
             .with_type_index(types.clone())
             .with_host_bridges(bridges.clone());
         let executor = self.configure_owned_executor(executor)?;

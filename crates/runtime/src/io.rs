@@ -315,14 +315,24 @@ impl NodeIo {
             .and_then(|value| self.coerce_value::<T>(value))
     }
 
+    /// Take the input as an owned `T`; a `Value` input (a graph constant) is coerced to `T`.
     pub fn take_owned<T>(&mut self, port: &str) -> Option<T>
     where
         T: Send + Sync + 'static,
     {
-        self.take_input_payload(port)?
-            .inner
-            .try_into_owned::<T>()
-            .ok()
+        match self.take_input_payload(port)?.inner.try_into_owned::<T>() {
+            Ok(value) => Some(value),
+            Err(payload) => self.coerce_value(payload.get_ref::<Value>()?),
+        }
+    }
+
+    /// Coerce a `Value` input (a graph constant) to `T` through the builtin conversions and the
+    /// registered const coercers ([`crate::const_coerce`]).
+    pub fn coerce_input<T>(&self, port: &str) -> Option<T>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.coerce_value(self.get_payload(port)?.get_ref::<Value>()?)
     }
 
     pub fn take_modify<T>(&mut self, port: &str) -> Option<T>
@@ -334,7 +344,7 @@ impl NodeIo {
 
     fn coerce_value<T>(&self, value: &Value) -> Option<T>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Send + Sync + 'static,
     {
         if let Some(map) = self.const_coercers.as_ref()
             && let Some(coercer) = map.read().get(std::any::type_name::<T>())

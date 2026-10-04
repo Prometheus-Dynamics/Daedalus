@@ -392,3 +392,39 @@ pub fn lit_from_expr(expr: &syn::Expr) -> Option<Lit> {
         _ => None,
     }
 }
+
+/// Registers the default const coercer of `ty` into `coercers` (a `&ConstCoercerMap`) when a
+/// plugin installs; see `daedalus_runtime::const_coerce`.
+pub fn const_coercer_registration(
+    ty: &Type,
+    coercers: &proc_macro2::TokenStream,
+    runtime_crate: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let support = quote! { #runtime_crate::const_coerce::derive_support };
+    quote! {
+        {
+            // Only the trait matching each probe is used; which one depends on the type.
+            #[allow(unused_imports)]
+            use #support::{
+                NoSchemaCoerce as _, NoSerdeCoerce as _, SchemaCoerce as _, SerdeCoerce as _,
+            };
+            let __probe = &#support::Probe::<#ty>(::core::marker::PhantomData);
+            #runtime_crate::const_coerce::register_default_const_coercer::<#ty>(
+                #coercers,
+                __probe.schema_coercer(),
+                __probe.serde_coercer(),
+            );
+        }
+    }
+}
+
+/// Whether any token of `tokens`, including those nested in groups, matches `pred`.
+pub fn any_token(
+    tokens: proc_macro2::TokenStream,
+    pred: &dyn Fn(&proc_macro2::TokenTree) -> bool,
+) -> bool {
+    tokens.into_iter().any(|token| match &token {
+        proc_macro2::TokenTree::Group(group) => any_token(group.stream(), pred),
+        _ => pred(&token),
+    })
+}

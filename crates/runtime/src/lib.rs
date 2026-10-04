@@ -6,6 +6,7 @@
 
 pub mod capabilities;
 pub mod config;
+pub mod const_coerce;
 pub mod debug;
 pub mod executor;
 pub mod fanin;

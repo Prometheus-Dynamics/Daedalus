@@ -106,6 +106,22 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> (Vec<TokenStream>, V
             bind(get("take_owned", ty_core), None)
         } else {
             match mode {
+                // A `Value` input (a graph constant) is coerced into a local the argument borrows.
+                "borrowed" if super::port_types::coercible(ty_core) => {
+                    let coerced = syn::Ident::new(&format!("__coerced_{idx}"), Span::call_site());
+                    quote! {
+                        let #coerced: #ty_core;
+                        let #ident = match io.get_ref::<#ty_core>(#port) {
+                            Some(value) => value,
+                            None => {
+                                #coerced = io.coerce_input::<#ty_core>(#port).ok_or_else(|| {
+                                    #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port))
+                                })?;
+                                &#coerced
+                            }
+                        };
+                    }
+                }
                 "borrowed" => bind(get("get_ref", ty_core), None),
                 "borrowed_mut" => bind(get("take_modify", ty_core), Some(("__borrowed_mut", true))),
                 _ => bind(get("take_owned", ty_core), None),

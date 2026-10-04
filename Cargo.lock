@@ -747,6 +747,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "pollster",
+ "serde",
  "serde_json",
  "styx",
  "thiserror 2.0.18",

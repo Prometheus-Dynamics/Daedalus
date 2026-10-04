@@ -182,6 +182,9 @@ pub trait NodeConfig: Sized {
     fn from_io(io: &NodeIo) -> Result<Self, NodeError>;
     fn sanitize(self) -> Result<Sanitized<Self>, ConfigError>;
     fn validate(&self) -> Result<(), ConfigError>;
+    /// Register const coercers for the field types (see [`crate::const_coerce`]); called when
+    /// a node taking this config installs.
+    fn register_const_coercers(_coercers: &crate::io::ConstCoercerMap) {}
 }
 
 /// Emit warnings for config changes applied by sanitization.
