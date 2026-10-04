@@ -3,7 +3,6 @@
 use std::time::Instant;
 
 use daedalus_transport::{AdaptRequest, Payload};
-use smallvec::SmallVec;
 
 use crate::io::NodePort;
 
@@ -19,13 +18,13 @@ use super::{edge_is_active, edge_uses_direct_slot};
 pub(super) fn collect_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
-) -> Result<SmallVec<[NodePort; 4]>, ExecuteError> {
+) -> Result<Vec<NodePort>, ExecuteError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
     let collect_lifecycle = cfg!(feature = "metrics")
         && (exec.core.run_config.metrics_level.is_profile()
             || exec.core.run_config.metrics_level.is_trace());
-    let mut inputs = SmallVec::new();
+    let mut inputs = crate::io::port_buffer();
     let edges = exec.edges;
     let incoming = exec.incoming_edges.clone();
     for &edge_idx in incoming.get(node_idx).into_iter().flatten() {
@@ -261,7 +260,7 @@ fn adapter_path_detail(edge_transport: &crate::plan::RuntimeEdgeTransport) -> Op
 pub(super) fn publish_outputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
-    outputs: SmallVec<[NodePort; 4]>,
+    mut outputs: Vec<NodePort>,
 ) -> Result<(), NodeError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
@@ -271,7 +270,7 @@ pub(super) fn publish_outputs<H: NodeHandler>(
         .get(node_idx)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    for (port, payload) in outputs {
+    for (port, payload) in outputs.drain(..) {
         if collect_detailed_metrics {
             let bytes = exec
                 .core
@@ -286,6 +285,7 @@ pub(super) fn publish_outputs<H: NodeHandler>(
         };
         fan_out(exec, outgoing, routes, payload)?;
     }
+    crate::io::recycle_ports(outputs);
     Ok(())
 }
 

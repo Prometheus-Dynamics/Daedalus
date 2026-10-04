@@ -7,7 +7,7 @@ use std::sync::Arc;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_data::typing;
 use daedalus_transport::Payload;
-use smallvec::SmallVec;
+use std::cell::RefCell;
 
 use crate::executor::{CorrelatedPayload, NodeError};
 use crate::handles::PortId;
@@ -42,13 +42,45 @@ pub type ConstCoercerMap = Arc<RwLock<HashMap<&'static str, ConstCoercer>>>;
 /// One port-tagged payload on a node's inputs or outputs.
 pub type NodePort = (PortId, CorrelatedPayload);
 
+thread_local! {
+    /// Cleared port buffers reused by `NodeIo`s and the executor on this thread.
+    static PORT_BUFFERS: RefCell<Vec<Vec<NodePort>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// An empty port buffer, reusing a recycled one's capacity when this thread has one.
+pub(crate) fn port_buffer() -> Vec<NodePort> {
+    PORT_BUFFERS
+        .try_with(|pool| pool.borrow_mut().pop())
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+/// Clear `ports` and keep its capacity for [`port_buffer`] (a few modest buffers per thread).
+pub(crate) fn recycle_ports(mut ports: Vec<NodePort>) {
+    const MAX_POOLED: usize = 16;
+    const MAX_CAPACITY: usize = 256;
+    ports.clear();
+    if ports.capacity() == 0 || ports.capacity() > MAX_CAPACITY {
+        return;
+    }
+    let _ = PORT_BUFFERS.try_with(|pool| {
+        let mut pool = pool.borrow_mut();
+        if pool.len() < MAX_POOLED {
+            pool.push(ports);
+        }
+    });
+}
+
 pub fn new_const_coercer_map() -> ConstCoercerMap {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
+/// A node's inputs and outputs for one call. Its port lists reuse per-thread buffers, so a
+/// steady-state tick does not allocate them however many ports a node has.
 pub struct NodeIo {
-    inputs: SmallVec<[NodePort; 4]>,
-    outputs: SmallVec<[NodePort; 4]>,
+    inputs: Vec<NodePort>,
+    outputs: Vec<NodePort>,
     const_coercers: Option<ConstCoercerMap>,
     types: Option<TypeIndex>,
     /// The node's connected output ports, so pushes by name reuse their ids.
@@ -57,31 +89,24 @@ pub struct NodeIo {
 
 impl NodeIo {
     pub fn empty() -> Self {
-        Self {
-            inputs: SmallVec::new(),
-            outputs: SmallVec::new(),
-            const_coercers: None,
-            types: None,
-            output_ports: None,
-        }
+        Self::from_port_buffer(port_buffer())
     }
 
     pub fn from_inputs(inputs: impl IntoIterator<Item = NodePort>) -> Self {
-        Self {
-            inputs: inputs.into_iter().collect(),
-            outputs: SmallVec::new(),
-            const_coercers: None,
-            types: None,
-            output_ports: None,
-        }
+        let mut buffer = port_buffer();
+        buffer.extend(inputs);
+        Self::from_port_buffer(buffer)
     }
 
     pub fn from_single_input(port: PortId, payload: CorrelatedPayload) -> Self {
-        let mut inputs = SmallVec::new();
-        inputs.push((port, payload));
+        Self::from_inputs([(port, payload)])
+    }
+
+    /// Take `inputs` as the input list (a [`port_buffer`]).
+    pub(crate) fn from_port_buffer(inputs: Vec<NodePort>) -> Self {
         Self {
             inputs,
-            outputs: SmallVec::new(),
+            outputs: port_buffer(),
             const_coercers: None,
             types: None,
             output_ports: None,
@@ -135,12 +160,14 @@ impl NodeIo {
         &self.outputs
     }
 
-    pub fn take_outputs(self) -> Vec<NodePort> {
-        self.outputs.into_vec()
+    pub fn take_outputs(mut self) -> Vec<NodePort> {
+        std::mem::take(&mut self.outputs)
     }
 
-    pub fn take_outputs_small(self) -> SmallVec<[NodePort; 4]> {
-        self.outputs
+    /// Move out the payload pushed to `port`, if any, recycling the output list.
+    pub(crate) fn take_output(mut self, port: &PortId) -> Option<Payload> {
+        let idx = self.outputs.iter().position(|(name, _)| name == port)?;
+        Some(self.outputs.swap_remove(idx).1.inner)
     }
 
     pub fn push_payload(&mut self, port: impl Into<PortId>, payload: Payload) {
@@ -375,6 +402,13 @@ impl NodeIo {
 
     pub fn flush(&mut self) -> Result<(), crate::executor::NodeError> {
         Ok(())
+    }
+}
+
+impl Drop for NodeIo {
+    fn drop(&mut self) {
+        recycle_ports(std::mem::take(&mut self.inputs));
+        recycle_ports(std::mem::take(&mut self.outputs));
     }
 }
 

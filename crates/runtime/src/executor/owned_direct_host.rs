@@ -158,11 +158,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             self.reset_for_run();
         }
         self.core.state.clear_node_custom_metrics(&route.node.id);
-        let input = (
+        let mut inputs = crate::io::port_buffer();
+        inputs.push((
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
-        );
-        let mut io = self.core.node_io(route.node_idx, [input]);
+        ));
+        let mut io = self.core.node_io(route.node_idx, inputs);
         self.handler
             .run(&route.node, &route.ctx, &mut io)
             .map_err(|error| ExecuteError::HandlerFailed {
@@ -173,10 +174,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             node: route.node.id.clone(),
             error,
         })?;
-        let output = io
-            .take_outputs_small()
-            .into_iter()
-            .find_map(|(port, payload)| (port == route.output_port).then_some(payload.inner));
+        let output = io.take_output(&route.output_port);
         let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level);
         telemetry.nodes_executed = 1;
         let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
@@ -204,11 +202,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             self.reset_for_run();
         }
         self.core.state.clear_node_custom_metrics(&route.node.id);
-        let input = (
+        let mut inputs = crate::io::port_buffer();
+        inputs.push((
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
-        );
-        let mut io = self.core.node_io(route.node_idx, [input]);
+        ));
+        let mut io = self.core.node_io(route.node_idx, inputs);
         self.handler
             .run(&route.node, &route.ctx, &mut io)
             .map_err(|error| ExecuteError::HandlerFailed {
@@ -220,10 +219,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             error,
         })?;
         self.core.state.drain_node_custom_metrics(&route.node.id);
-        Ok(io
-            .take_outputs_small()
-            .into_iter()
-            .find_map(|(port, payload)| (port == route.output_port).then_some(payload.inner)))
+        Ok(io.take_output(&route.output_port))
     }
 
     fn direct_host_single_node_route(

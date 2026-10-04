@@ -80,14 +80,14 @@ impl ExecutorCore {
         }
     }
 
-    /// A `NodeIo` for node `node_idx` over `inputs`, wired to this executor's coercers, type
+    /// A `NodeIo` for node `node_idx` over `inputs` (a port buffer), wired to this executor's coercers, type
     /// index and the node's output ports.
     pub(crate) fn node_io(
         &self,
         node_idx: usize,
-        inputs: impl IntoIterator<Item = crate::io::NodePort>,
+        inputs: Vec<crate::io::NodePort>,
     ) -> crate::io::NodeIo {
-        crate::io::NodeIo::from_inputs(inputs)
+        crate::io::NodeIo::from_port_buffer(inputs)
             .with_const_coercers(self.const_coercers.clone())
             .with_type_index(self.type_index.clone())
             .with_output_ports(self.output_ports.get(node_idx).cloned())

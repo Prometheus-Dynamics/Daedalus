@@ -1,10 +1,11 @@
 //! A detector-like graph shared by the `graph_frame_allocations` test and the `graph_frame` bench.
 //!
-//! One host `frame` input fans out to 14 nodes: config-struct and const inputs, a metadata-only
-//! adapter edge, an unconnected `Option<T>` input, `Arc`'d list and small-struct outputs, fan-in nodes with up
-//! to four inputs, and four host outputs. Handlers allocate nothing per frame (they reuse `Arc`'d
-//! inputs and state and return `Copy` values), so allocations measured around a frame are the
-//! runtime's own plus one payload per pushed output.
+//! One host `frame` input fans out to 16 nodes: config-struct and const inputs (one node takes
+//! five inputs), a metadata-only adapter edge, connected and unconnected `Option<T>` inputs, two
+//! conditional producers (one emits every frame, one never, so its required consumer is skipped),
+//! `Arc`'d list and small-struct outputs, fan-in nodes, and four host outputs. Handlers allocate
+//! nothing per frame (they reuse `Arc`'d inputs and state and return `Copy` values), so
+//! allocations measured around a frame are the runtime's own plus the payloads pushed.
 
 use std::sync::Arc;
 
@@ -115,6 +116,8 @@ pub struct DetectConfig {
     threshold: f64,
     #[port(default = 8, min = 1, max = 64, policy = "clamp")]
     max_detections: i64,
+    #[port(default = 0.25, min = 0.0, max = 1.0, policy = "clamp")]
+    min_score: f64,
 }
 
 #[derive(Clone, Debug, NodeConfig)]
@@ -178,6 +181,7 @@ fn coarse(
     state: &mut DetectionsState,
 ) -> Result<Arc<Detections>, NodeError> {
     let cut = stats.mean * (1.0 + cfg.threshold);
+    let score = cfg.min_score.max(0.5) as f32;
     let limit = cfg.max_detections as usize;
     Ok(state.publish(|dets| {
         let hits = frame.pixels.iter().enumerate();
@@ -186,7 +190,7 @@ fn coarse(
             dets.push(Detection {
                 x: idx % frame.width,
                 y: idx / frame.width,
-                score: 0.5,
+                score,
             });
         }
     }))
@@ -200,12 +204,19 @@ fn coarse(
 )]
 fn fine(
     frame: &Frame,
-    roi: &Roi,
+    roi: Option<&Roi>,
     scale: f64,
     gain: Option<f64>,
     state: &mut DetectionsState,
 ) -> Result<Arc<Detections>, NodeError> {
     let score = (scale * gain.unwrap_or(0.1)) as f32;
+    let full = Roi {
+        x: 0,
+        y: 0,
+        w: frame.width,
+        h: frame.height,
+    };
+    let roi = roi.unwrap_or(&full);
     Ok(state.publish(|dets| {
         let n = (roi.w.min(frame.width) / 8).min(4);
         dets.extend((0..n).map(|i| Detection {
@@ -214,6 +225,29 @@ fn fine(
             score,
         }));
     }))
+}
+
+/// Conditional output: a tightened ROI for frames bright enough to refine (every test frame).
+#[node(id = "bench.detector.refine", inputs("stats", "roi"), outputs("roi"))]
+fn refine(stats: &Stats, roi: &Roi) -> Result<Option<Roi>, NodeError> {
+    Ok((stats.mean > 64.0).then_some(Roi {
+        x: roi.x + 1,
+        y: roi.y + 1,
+        w: roi.w.saturating_sub(2),
+        h: roi.h.saturating_sub(2),
+    }))
+}
+
+/// Conditional output: an alarm level for nearly black frames (never for test frames).
+#[node(id = "bench.detector.alarm", inputs("stats"), outputs("level"))]
+fn alarm(stats: &Stats) -> Result<Option<i64>, NodeError> {
+    Ok((stats.mean < 8.0).then_some(i64::from(stats.max)))
+}
+
+/// Required input from `alarm`: skipped on every frame without an alarm.
+#[node(id = "bench.detector.escalate", inputs("level"), outputs("escalation"))]
+fn escalate(level: i64) -> Result<i64, NodeError> {
+    Ok(level * 2)
 }
 
 #[node(id = "bench.detector.histogram", inputs("frame"), outputs("histogram"))]
@@ -298,14 +332,20 @@ fn quality(exposure: f64, sharpness: f64, stats: &Stats) -> Result<f64, NodeErro
 
 #[node(
     id = "bench.detector.report",
-    inputs("track", "quality", "count", "roi"),
+    inputs("track", "quality", "count", "roi", "escalation"),
     outputs("report")
 )]
-fn report(track: &Track, quality: f64, count: i64, roi: &Roi) -> Result<Report, NodeError> {
+fn report(
+    track: &Track,
+    quality: f64,
+    count: i64,
+    roi: &Roi,
+    escalation: Option<i64>,
+) -> Result<Report, NodeError> {
     Ok(Report {
         tracks: track.count,
         quality,
-        detections: count,
+        detections: count + escalation.unwrap_or(0),
         roi_area: roi.w * roi.h,
     })
 }
@@ -326,7 +366,10 @@ fn report(track: &Track, quality: f64, count: i64, roi: &Roi) -> Result<Report, 
         track,
         count,
         quality,
-        report
+        report,
+        refine,
+        alarm,
+        escalate
     ),
     adapters(frame_info)
 )]
@@ -348,14 +391,15 @@ pub fn compile(
     let (histogram, exposure, sharpness) = (&p.histogram, &p.exposure, &p.sharpness);
     let (preview, merge, track, count) = (&p.preview, &p.merge_detections, &p.track, &p.count);
     let (quality, report) = (&p.quality, &p.report);
+    let (refine, alarm, escalate) = (&p.refine, &p.alarm, &p.escalate);
     let mut builder = registry
         .graph_builder()
         .expect("graph builder")
         .input_typed::<Frame>("frame")
         .expect("frame key");
-    let nodes: [&dyn NodeHandleLike; 13] = [
+    let nodes: [&dyn NodeHandleLike; 16] = [
         stats, roi, coarse, fine, histogram, exposure, sharpness, preview, merge, track, count,
-        quality, report,
+        quality, report, refine, alarm, escalate,
     ];
     for node in nodes {
         builder = builder.try_node_handle_like(node).expect("add node");
@@ -372,8 +416,16 @@ pub fn compile(
         (host("frame"), &track.inputs.info),
         (stats.outputs.stats.clone(), &coarse.inputs.stats),
         (stats.outputs.stats.clone(), &quality.inputs.stats),
-        (roi.outputs.roi.clone(), &fine.inputs.roi),
+        (roi.outputs.roi.clone(), &refine.inputs.roi),
         (roi.outputs.roi.clone(), &report.inputs.roi),
+        (stats.outputs.stats.clone(), &refine.inputs.stats),
+        (refine.outputs.roi.clone(), &fine.inputs.roi),
+        (stats.outputs.stats.clone(), &alarm.inputs.stats),
+        (alarm.outputs.level.clone(), &escalate.inputs.level),
+        (
+            escalate.outputs.escalation.clone(),
+            &report.inputs.escalation,
+        ),
         (coarse.outputs.detections.clone(), &merge.inputs.coarse_dets),
         (fine.outputs.detections.clone(), &merge.inputs.fine_dets),
         (
