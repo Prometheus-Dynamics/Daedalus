@@ -1,6 +1,6 @@
+use crate::portable::{Arc, arc_dyn};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -284,7 +284,7 @@ impl AdapterTable {
         if self.entries.contains_key(&id) {
             return Err(TransportError::DuplicateAdapter { adapter: id });
         }
-        self.entries.insert(id, Arc::new(f));
+        self.entries.insert(id, arc_dyn!(f));
         Ok(())
     }
 
@@ -292,7 +292,7 @@ impl AdapterTable {
     where
         F: Fn(Payload, &AdaptRequest) -> Result<Payload, TransportError> + Send + Sync + 'static,
     {
-        self.entries.insert(id.into(), Arc::new(f));
+        self.entries.insert(id.into(), arc_dyn!(f));
     }
 
     pub fn register<A>(&mut self, adapter: A) -> Result<(), TransportError>

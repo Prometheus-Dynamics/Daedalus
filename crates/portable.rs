@@ -1,16 +1,50 @@
-//! `std` / `no_std` switch for the locks and lazy globals of the `no_std`-capable crates: `std`
-//! keeps the standard primitives, `no_std` + `alloc` swaps in `spin` (see "Portability" in
-//! docs/development.md).
+//! What the `no_std`-capable crates take from the platform, chosen per build (see "Portability"
+//! in docs/development.md):
+//!
+//! - Locks and lazy globals: the standard primitives with `std`, `spin` without.
+//! - Atomics and `Arc`: `core`/`alloc` where the target has pointer-sized compare-and-swap,
+//!   otherwise `portable-atomic` (`critical-section` based) and `portable-atomic-util::Arc`.
+//!   `AtomicU64` falls back to `portable-atomic` on targets without 64-bit atomics.
 //!
 //! Shared module: each crate's `src/portable.rs` is a symlink to this file (like
 //! `build_features.rs`), and each crate uses a subset of it.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code, unused_imports, unused_macros)]
 
 #[cfg(feature = "std")]
 pub(crate) use std::sync::{Mutex, MutexGuard, OnceLock};
 
 #[cfg(not(feature = "std"))]
 pub(crate) use spin::{Mutex, MutexGuard};
+
+#[cfg(target_has_atomic = "ptr")]
+pub(crate) use alloc::sync::{Arc, Weak};
+#[cfg(target_has_atomic = "ptr")]
+pub(crate) use core::sync::atomic::{AtomicBool, AtomicUsize};
+#[cfg(not(target_has_atomic = "ptr"))]
+pub(crate) use portable_atomic::{AtomicBool, AtomicUsize};
+#[cfg(not(target_has_atomic = "ptr"))]
+pub(crate) use portable_atomic_util::{Arc, Weak};
+
+#[cfg(target_has_atomic = "64")]
+pub(crate) use core::sync::atomic::AtomicU64;
+#[cfg(not(target_has_atomic = "64"))]
+pub(crate) use portable_atomic::AtomicU64;
+
+/// `Arc::new(value)` as an `Arc` of the unsized type the context expects (`Arc<dyn Trait>`).
+///
+/// `portable-atomic-util::Arc` cannot unsize-coerce on stable Rust, so on targets without
+/// compare-and-swap the value goes through a `Box` (one extra allocation and move).
+macro_rules! arc_dyn {
+    ($value:expr) => {{
+        #[cfg(target_has_atomic = "ptr")]
+        let arc = $crate::portable::Arc::new($value);
+        #[cfg(not(target_has_atomic = "ptr"))]
+        let arc =
+            $crate::portable::Arc::from(alloc::boxed::Box::new($value) as alloc::boxed::Box<_>);
+        arc
+    }};
+}
+pub(crate) use arc_dyn;
 
 /// Locks `mutex`, recovering the guard if a panicking holder poisoned it.
 ///
@@ -23,33 +57,6 @@ pub(crate) fn lock_recover<T: ?Sized>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     #[cfg(not(feature = "std"))]
     mutex.lock()
-}
-
-#[cfg(target_has_atomic = "64")]
-pub(crate) use core::sync::atomic::AtomicU64;
-
-/// The `AtomicU64` subset these crates use, behind a spin lock on targets without 64-bit
-/// atomics (e.g. `thumbv7em`).
-#[cfg(not(target_has_atomic = "64"))]
-#[derive(Debug, Default)]
-pub(crate) struct AtomicU64(spin::Mutex<u64>);
-
-#[cfg(not(target_has_atomic = "64"))]
-impl AtomicU64 {
-    pub(crate) const fn new(value: u64) -> Self {
-        Self(spin::Mutex::new(value))
-    }
-
-    pub(crate) fn load(&self, _order: core::sync::atomic::Ordering) -> u64 {
-        *self.0.lock()
-    }
-
-    pub(crate) fn fetch_add(&self, value: u64, _order: core::sync::atomic::Ordering) -> u64 {
-        let mut current = self.0.lock();
-        let previous = *current;
-        *current = previous.wrapping_add(value);
-        previous
-    }
 }
 
 /// The `std::sync::OnceLock` subset these crates use, over `spin::Once`.

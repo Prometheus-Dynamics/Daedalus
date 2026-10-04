@@ -205,10 +205,13 @@ serial executor.
 - [ ] **`alloc`-only runtime.** `serde_json` const decoding, `tracing` and telemetry without
       `std`; `libc` only on Linux; then make the runtime's `std` feature (today only the lock
       backend) drop `std` for real, and a `thumbv7em` check of the serial executor.
-- [ ] **Targets without compare-and-swap** (`thumbv6m-none-eabi`): `spin` with
-      `portable-atomic`, or a `critical-section` lock.
-- [ ] **wasm host glue.** A `wasm-bindgen` example wiring `Clock::new`/`set_clock` to
-      `performance.now()` and driving a graph from JS; a `wasm32-wasip1` check.
+- [x] **Targets without compare-and-swap** (`thumbv6m-none-eabi`, `riscv32imc`): tier-1 crates
+      build there; atomics, `spin` and `Arc` via `portable-atomic(-util)` (`critical-section`),
+      target-specific; `ci.sh nostd` checks `thumbv6m`. The runtime's `spin` backend has the same
+      option for when it drops `std`.
+- [x] **wasm host glue.** `examples/wasm_bindgen_host` (`Clock::new`/`set_clock` on
+      `performance.now()`, `push`/`tick`/`take` from JS, Node-driven), a `wasm32-wasip1` check and
+      WASI smoke run (`ci.sh wasm`).
 
 ### Low priority
 - [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.

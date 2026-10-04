@@ -1,7 +1,7 @@
 use crate::model::TypeExpr;
+use crate::portable::Arc;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use parking_lot::RwLock;

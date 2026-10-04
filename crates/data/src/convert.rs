@@ -94,11 +94,11 @@ pub struct ConverterGraph {
 /// Thread-safe wrapper type for concurrent registration/resolution (`parking_lot` lock with
 /// `std`, `spin` lock without).
 #[cfg(feature = "std")]
-pub type SharedConverterGraph = alloc::sync::Arc<parking_lot::RwLock<ConverterGraph>>;
+pub type SharedConverterGraph = crate::portable::Arc<parking_lot::RwLock<ConverterGraph>>;
 /// Thread-safe wrapper type for concurrent registration/resolution (`parking_lot` lock with
 /// `std`, `spin` lock without).
 #[cfg(not(feature = "std"))]
-pub type SharedConverterGraph = alloc::sync::Arc<spin::RwLock<ConverterGraph>>;
+pub type SharedConverterGraph = crate::portable::Arc<spin::RwLock<ConverterGraph>>;
 
 impl ConverterGraph {
     /// Create an empty converter graph.

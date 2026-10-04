@@ -1,7 +1,7 @@
 //! Boundary-contract borrow/take paths on [`Payload`] and their error type.
 
+use crate::portable::Arc;
 use alloc::boxed::Box;
-use alloc::sync::Arc;
 use core::fmt;
 
 use crate::{BoundaryStorage, BoundaryTakeError, BoundaryTypeContract};

@@ -57,6 +57,11 @@ spin = { workspace = true, features = ["lock_api", "mutex"] }
 serde_json = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 
+# Targets without compare-and-swap: the `spin` lock backend over `portable-atomic`, as in the
+# tier-1 crates (see `daedalus_runtime::sync`).
+[target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]
+spin = { workspace = true, features = ["portable_atomic"] }
+
 [dev-dependencies]
 rand = { workspace = true }
 criterion = { workspace = true }
