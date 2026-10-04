@@ -133,6 +133,11 @@ path = "tests/adapt_macro.rs"
 required-features = ["plugins"]
 
 [[test]]
+name = "foreign_interfaces"
+path = "tests/foreign_interfaces.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
 name = "foreign_type_keys"
 path = "tests/foreign_type_keys.rs"
 required-features = ["plugins"]
@@ -170,7 +175,7 @@ required-features = ["plugins"]
 [[test]]
 name = "dylib_plugin"
 path = "tests/dylib_plugin.rs"
-required-features = ["dylib-plugins"]
+required-features = ["engine", "dylib-plugins"]
 
 [[test]]
 name = "dylib_export_macro"

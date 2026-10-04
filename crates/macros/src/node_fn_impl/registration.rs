@@ -70,6 +70,9 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
     let (Some(input_ty), Some(output_ty)) = (arg_types.first(), ok_ty) else {
         return quote! {};
     };
+    if crate::foreign_type::is_foreign_view(input_ty) {
+        return quote! {};
+    }
     let input_port = &effective_inputs_for_args[0].name;
     let output_key = value_type_key(output_ty, output_type_key);
     let output_port = &output_names[0];

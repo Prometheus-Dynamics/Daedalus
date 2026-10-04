@@ -2,6 +2,7 @@ use super::*;
 use crate::dylib::{RUSTC_VERSION, build_fingerprint};
 use crate::registry::capability::{NodeDecl, PortDecl};
 use crate::runtime::plugins::{Plugin, PluginInstallContext, PluginResult};
+use crate::transport::{ForeignInterface, FrameInterface};
 
 #[derive(Default)]
 struct LoaderTestPlugin;
@@ -13,6 +14,7 @@ impl Plugin for LoaderTestPlugin {
 
     fn install(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()> {
         ctx.register_boundary_type::<LoaderFrame>(FRAME_KEY)?;
+        ctx.register_foreign_interface::<FrameInterface>()?;
         ctx.register_node_decl(
             NodeDecl::new("add")
                 .input(PortDecl::new("a", "i64"))
@@ -42,6 +44,29 @@ unsafe extern "C" fn forged_boundary_types(table: *mut BoundaryTypeTable, _: Str
     // Safety: the host passes a writable table.
     unsafe {
         *table = BoundaryTypeTable {
+            entries: entries.as_ptr(),
+            len: entries.len(),
+        }
+    };
+    true
+}
+
+crate::transport::foreign_interface! {
+    /// `daedalus:frame` as a plugin built against a newer, incompatible copy would declare it.
+    interface FrameV2("daedalus:frame", version = 2);
+    struct FrameV2VTable {
+        width: unsafe extern "C" fn(data: *const c_void) -> u64,
+    }
+}
+
+unsafe extern "C" fn newer_foreign_interfaces(
+    table: *mut ForeignInterfaceTable,
+    _: StrSink,
+) -> bool {
+    let entries = vec![*FrameV2::info()].leak();
+    // Safety: the host passes a writable table.
+    unsafe {
+        *table = ForeignInterfaceTable {
             entries: entries.as_ptr(),
             len: entries.len(),
         }
@@ -165,6 +190,41 @@ fn boundary_type_conflict_refuses_install_before_anything_is_installed() {
         "{message}"
     );
     assert!(message.contains("same cargo build"), "{message}");
+    assert!(!registry.plugin_manifests.contains_key("loader_test"));
+}
+
+#[test]
+fn foreign_interfaces_are_exported_and_checked_against_the_host() {
+    let library = load_with(|_| {}).unwrap();
+    assert_eq!(library.foreign_interfaces(), [*FrameInterface::info()]);
+    let mut registry = PluginRegistry::new();
+    registry
+        .register_foreign_interface::<FrameInterface>()
+        .unwrap();
+    library.install_into(&mut registry).unwrap();
+
+    let newer =
+        load_with(|descriptor| descriptor.foreign_interfaces = newer_foreign_interfaces).unwrap();
+    // Unknown to the host: fine.
+    newer.install_into(&mut PluginRegistry::new()).unwrap();
+    let mut registry = PluginRegistry::new();
+    registry
+        .register_foreign_interface::<FrameInterface>()
+        .unwrap();
+    let err = newer.install_into(&mut registry).unwrap_err();
+    let message = err.to_string();
+    let PluginLibraryError::ForeignInterfaceMismatch { plugin, mismatches } = err else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(plugin, "loader_test");
+    assert_eq!(mismatches.len(), 1);
+    assert_eq!(mismatches[0].host, *FrameInterface::info());
+    assert_eq!(mismatches[0].plugin, *FrameV2::info());
+    assert!(
+        message.contains("`daedalus:frame`: host v1 (layout ")
+            && message.contains("plugin v2 (layout "),
+        "{message}"
+    );
     assert!(!registry.plugin_manifests.contains_key("loader_test"));
 }
 

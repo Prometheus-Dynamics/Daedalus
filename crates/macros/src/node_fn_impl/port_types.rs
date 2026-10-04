@@ -37,8 +37,13 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
         runtime_crate,
     } = inputs;
     let mut ports: Vec<(&LitStr, Option<&LitStr>, bool, &syn::Type)> = Vec::new();
+    let mut foreign_views = Vec::new();
     if !skip {
         for (port, raw_ty) in effective_inputs_for_args.iter().zip(arg_types) {
+            if crate::foreign_type::is_foreign_view(raw_ty) {
+                foreign_views.push(quote! { into.register_foreign_port::<#raw_ty>()?; });
+                continue;
+            }
             let ty = if is_fanin_ty(raw_ty) {
                 generic_arg(crate::helpers::strip_ref(raw_ty), "FanIn", 0)
             } else {
@@ -92,6 +97,7 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
             node: &str,
         ) -> #runtime_crate::plugins::PluginResult<()> {
             #(#stmts)*
+            #(#foreign_views)*
             let _ = (into, node);
             Ok(())
         }

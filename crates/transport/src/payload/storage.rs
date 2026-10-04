@@ -4,7 +4,7 @@ use std::any::{Any, TypeId};
 use std::fmt;
 use std::sync::Arc;
 
-use crate::{ReleaseMode, TypeKey};
+use crate::{ForeignHandle, ReleaseMode, TypeKey};
 
 /// Type-erased payload storage.
 pub trait PayloadStorage: Send + Sync + fmt::Debug {
@@ -36,6 +36,10 @@ pub trait PayloadStorage: Send + Sync + fmt::Debug {
     }
     fn release_mode(&self) -> ReleaseMode {
         ReleaseMode::ImmediateNonBlocking
+    }
+    /// The [`ForeignHandle`] the payload carries (see [`Payload::foreign`](crate::Payload::foreign)).
+    fn foreign_handle(&self) -> Option<&ForeignHandle> {
+        None
     }
 }
 

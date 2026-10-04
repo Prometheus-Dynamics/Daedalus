@@ -3,6 +3,7 @@ mod branch_payload_derive;
 mod config_derive;
 mod daedalus_type_derive;
 mod device_impl;
+mod foreign_type;
 mod gpu_state_derive;
 mod helpers;
 mod node_fn_impl;

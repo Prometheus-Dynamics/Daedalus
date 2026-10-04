@@ -85,6 +85,10 @@ pub(super) fn peel_result_or_option(ty: &syn::Type) -> &syn::Type {
 }
 
 pub(super) fn contract_type_for(ty: &syn::Type) -> Option<&syn::Type> {
+    // Foreign views carry an interface, not a Rust type (see `port_types`).
+    if crate::foreign_type::is_foreign_view(ty) {
+        return None;
+    }
     let ty = strip_ref(ty);
     let ident = last_segment(ty)?.ident.to_string();
     if matches!(

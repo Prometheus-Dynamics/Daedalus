@@ -68,6 +68,26 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `BoundaryTypeTable` of the plugin's boundary types (`PluginLibrary::boundary_types`), and
   `install_into` fails with `PluginLibraryError::BoundaryTypeMismatch` (every differing key, host
   and plugin type) before installing anything when the host maps a key to another Rust type.
+- Foreign interfaces for separately built plugins: `daedalus_transport::foreign_interface!`
+  declares a `#[repr(C)]` accessor vtable with a key, version and layout hash
+  (`ForeignInterface`, `ForeignInterfaceInfo`, `foreign_layout_hash`); owners implement
+  `ProvideForeign<I>`; `ForeignHandle` (data, vtable, interface, `ForeignOwner` keepalive with
+  retain/release) and `ForeignRef<'_, I>` read a value without sharing its Rust type, and
+  `Payload::foreign`/`Payload::foreign_handle` carry handles. `daedalus:frame` v1
+  (`FrameInterface`, `FrameVTable`, `FrameView`, the safe owner trait `FrameSource`,
+  `FramePlane`, `FrameResidency`, `fourcc`; spec in `docs/foreign-frame-interface.md`) is the
+  standard camera-free frame interface. `PluginRegistry::{register_foreign_provider,
+  register_foreign_provider_as, register_foreign_interface, foreign_interfaces}` and
+  `#[plugin(foreign_providers(Owner => Interface))]` register a zero-copy `View` adapter from the
+  owner key to the interface key; node inputs typed `FrameView<'_>`/`ForeignRef<'_, I>` take the
+  interface key (`NodeIo::get_foreign`). `PluginError::ForeignInterfaceConflict` rejects two
+  versions or layouts of one interface key.
+- Dylib foreign interface check: the descriptor (`PLUGIN_ABI_VERSION` 7) exports a
+  `ForeignInterfaceTable` (`PluginLibrary::foreign_interfaces`), and `install_into` fails with
+  `PluginLibraryError::ForeignInterfaceMismatch` when the host uses an interface key with another
+  version or layout. `examples/plugins/foreign_consumer` is a plugin built separately from the
+  type it reads; "Foreign Interfaces" in `docs/node-authoring.md` and "Separately Built Plugins"
+  in `docs/dynamic-plugins.md` describe the rules.
 - `TransportError::RustTypeMismatch` (built by `TransportError::type_mismatch::<T>`): a payload
   with the expected key but another Rust type reports both type names and that producer and
   consumer were likely built separately, instead of `expected k, found k`.
@@ -117,6 +137,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `RustAbiMismatch::BuildFingerprint` names the differing segments. `#[plugin]` and
   `declare_plugin!` manifests record the plugin crate version. `BoundaryVTable` gained
   `value_any`.
+- Dynamic plugin nodes run in hosts built with other dependencies: `smallvec` always enables
+  `union` (wgpu-hal enabling it on one side only changed `NodeIo`'s layout, and plugin handlers
+  crashed), `NodeIo` and `ForeignHandle` are part of the fingerprint layouts, `Payload::get_ref`
+  falls back to the value's own `Any` when the storage was built by another copy of
+  `daedalus-transport` (other `TypeId`s), and a plugin's exported schema no longer fails on its
+  `deps(...)`.
 - Host bridge: event recording is off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING`); each
   port keeps one state (queue, policy overrides, freshness watermarks, close flag, counters) per
   direction, and replace-style capacity-one policies (including the default) use an in-place slot.

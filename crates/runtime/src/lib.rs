@@ -9,6 +9,7 @@ pub mod config;
 pub mod debug;
 pub mod executor;
 pub mod fanin;
+pub mod foreign;
 pub mod graph_builder;
 pub mod handler_registry;
 pub mod handles;

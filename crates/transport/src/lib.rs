@@ -8,6 +8,8 @@ mod adapter;
 mod boundary_contract;
 mod boundary_storage;
 mod device;
+mod foreign;
+mod foreign_frame;
 mod id_str;
 mod ids;
 mod kinds;
@@ -37,6 +39,14 @@ pub use boundary_contract::{
 };
 pub use boundary_storage::{BoundaryStorage, BoundaryTakeError, BoundaryVTable};
 pub use device::{Cpu, Device, DeviceClass, DeviceTransfer, Gpu, TransferFrom, TransferTo};
+pub use foreign::{
+    ForeignHandle, ForeignInterface, ForeignInterfaceInfo, ForeignInterfaceMismatch, ForeignOwner,
+    ForeignRef, ForeignView, ProvideForeign, foreign_layout_hash,
+};
+pub use foreign_frame::{
+    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, FRAME_INTERFACE_KEY, FrameInterface, FramePlane,
+    FrameResidency, FrameSource, FrameVTable, FrameView, fourcc,
+};
 pub use id_str::IdStr;
 pub use ids::{AdapterId, Layout, LayoutHash, SourceId, TypeKey};
 pub use kinds::{AccessMode, AdaptKind, AdapterKind, Residency};

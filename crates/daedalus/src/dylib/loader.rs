@@ -1,10 +1,11 @@
 use super::boundary::{self, BoundaryTypeTable};
+use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
     PluginInfo, PluginSchema, StrSink, StrView,
 };
 use crate::runtime::plugins::{BoundaryTypeConflict, PluginError, PluginRegistry};
-use crate::transport::{RustTypeIdentity, TypeKey};
+use crate::transport::{ForeignInterfaceInfo, RustTypeIdentity, TypeKey};
 use daedalus_ffi_host::core::BackendKind;
 use libloading::Library;
 use std::collections::BTreeMap;
@@ -68,6 +69,17 @@ pub enum PluginLibraryError {
         plugin: String,
         conflicts: Vec<BoundaryTypeConflict>,
     },
+    /// The plugin uses a foreign interface key with another version or vtable layout than the
+    /// host. Nothing was installed.
+    #[error(
+        "plugin `{plugin}` uses foreign interfaces incompatible with the host ({}); rebuild it \
+         against the same interface versions",
+        foreign::describe(mismatches)
+    )]
+    ForeignInterfaceMismatch {
+        plugin: String,
+        mismatches: Vec<ForeignInterfaceMismatch>,
+    },
     #[error("plugin failed to register boundary contracts: {message}")]
     BoundaryContractsFailed { message: String },
     #[error("plugin registration failed: {message}")]
@@ -85,6 +97,7 @@ pub struct PluginLibrary {
     descriptor: PluginDescriptor,
     schema: PluginSchema,
     boundary_types: Vec<(TypeKey, RustTypeIdentity)>,
+    foreign_interfaces: Vec<ForeignInterfaceInfo>,
     rust_abi: Result<(), RustAbiMismatch>,
 }
 
@@ -169,12 +182,23 @@ impl PluginLibrary {
         // Safety: the plugin returned a `'static` table of `len` entries.
         let boundary_types = unsafe { boundary::read_table(table) }
             .map_err(|message| schema_error(format!("boundary types: {message}")))?;
+        let mut table = ForeignInterfaceTable {
+            entries: std::ptr::null(),
+            len: 0,
+        };
+        // Safety: as for `boundary_types`.
+        call(|sink| unsafe { (descriptor.foreign_interfaces)(&mut table, sink) })
+            .map_err(|message| schema_error(format!("foreign interfaces: {message}")))?;
+        // Safety: the plugin returned a `'static` table of `len` entries.
+        let foreign_interfaces = unsafe { foreign::read_table(table) }
+            .map_err(|message| schema_error(format!("foreign interfaces: {message}")))?;
         Ok(Self {
             path,
             rust_abi: check_rust_abi(info),
             descriptor,
             schema,
             boundary_types,
+            foreign_interfaces,
         })
     }
 
@@ -184,7 +208,10 @@ impl PluginLibrary {
     /// [`rust_abi`](Self::rust_abi) reports a mismatch, and with
     /// [`PluginLibraryError::BoundaryTypeConflict`] when one of the plugin's
     /// [`boundary_types`](Self::boundary_types) is a key `registry` already maps to another Rust
-    /// type ([`PluginRegistry::boundary_types`]).
+    /// type ([`PluginRegistry::boundary_types`]), and with
+    /// [`PluginLibraryError::ForeignInterfaceMismatch`] when one of its
+    /// [`foreign_interfaces`](Self::foreign_interfaces) has another version or layout in
+    /// `registry` ([`PluginRegistry::foreign_interfaces`]).
     pub fn install_into(&self, registry: &mut PluginRegistry) -> Result<(), PluginLibraryError> {
         let plugin = || self.schema.plugin.name.clone();
         if let Err(mismatch) = &self.rust_abi {
@@ -198,6 +225,13 @@ impl PluginLibrary {
             return Err(PluginLibraryError::BoundaryTypeConflict {
                 plugin: plugin(),
                 conflicts,
+            });
+        }
+        let mismatches = foreign::mismatches(registry, &self.foreign_interfaces);
+        if !mismatches.is_empty() {
+            return Err(PluginLibraryError::ForeignInterfaceMismatch {
+                plugin: plugin(),
+                mismatches,
             });
         }
         let install = |entry: InstallFn, registry: &mut PluginRegistry| {
@@ -242,6 +276,12 @@ impl PluginLibrary {
     /// comparable with the host's when [`rust_abi`](Self::rust_abi) is `Ok`.
     pub fn boundary_types(&self) -> &[(TypeKey, RustTypeIdentity)] {
         &self.boundary_types
+    }
+
+    /// Every foreign interface the plugin's nodes take or its providers implement (key, version,
+    /// vtable layout hash). Comparable with the host's whatever built the plugin.
+    pub fn foreign_interfaces(&self) -> &[ForeignInterfaceInfo] {
+        &self.foreign_interfaces
     }
 
     /// Whether the plugin can be installed into this host through the Rust ABI.

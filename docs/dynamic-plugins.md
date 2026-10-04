@@ -77,10 +77,18 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
   the host registry's (`PluginRegistry::boundary_types()`). A key the host maps to another Rust
   type fails with `PluginLibraryError::BoundaryTypeMismatch`, listing every such key; keys the
   host does not know are accepted. `PLUGIN_ABI_VERSION` 6 added this table to the descriptor.
-- **Rust-ABI plugins must come from the same cargo build as the host**: one workspace and
+- `install_into` also compares the foreign interfaces the plugin uses (key, version, vtable
+  layout hash; `PluginLibrary::foreign_interfaces()`) with the host registry's
+  (`PluginRegistry::foreign_interfaces()`) and fails with
+  `PluginLibraryError::ForeignInterfaceMismatch` when one differs. `PLUGIN_ABI_VERSION` 7 added
+  this table.
+- **Rust-ABI plugins that share third-party Rust types with the host must come from the same
+  cargo build as the host**: one workspace and
   lockfile, one toolchain, and one `cargo build` invocation for the host and its plugins (e.g.
   `cargo build -p app -p app-plugin-a -p app-plugin-b`), so Cargo resolves Daedalus *and every
-  other shared dependency* once, with one feature set. Libraries are never unloaded, plugins must
+  other shared dependency* once, with one feature set. Plugins that share no third-party Rust
+  types with the host (they read them through foreign interfaces) can be built separately; see
+  [Separately Built Plugins](#separately-built-plugins). Libraries are never unloaded, plugins must
   register everything through the `PluginRegistry` they are given, and neither side may install
   a custom `#[global_allocator]`.
 
@@ -111,10 +119,44 @@ styx:framelease`. Now:
 
 Even a dependency built with an extra feature (for example the plugin crate's own `dylib`
 feature, when the host also links that crate) yields different types; the facade's
-`dylib_plugin` test shows the refusal. Plugins that genuinely have to be built separately need the
-foreign-type path, which is not implemented yet: the host registers a `#[repr(C)]` accessor vtable
-per key and plugins only see an opaque handle, as part of the stable handler path below (see
-`TODO.md`).
+`dylib_plugin` test shows the refusal.
+
+## Separately Built Plugins
+
+Plugins shipped as separate artifacts (built in their own cargo invocation, possibly long after
+the host) can be installed when:
+
+- **Daedalus matches**: same Daedalus version, `rustc --version` and build fingerprint (boundary
+  features and the layouts of the types installation and node calls touch). Build plugins
+  against the host's Daedalus revision and boundary feature set.
+- **Shared third-party types cross through foreign interfaces**, never as Rust types. A plugin
+  node takes `FrameView<'_>` (the `daedalus:frame` interface, see
+  [`foreign-frame-interface.md`](foreign-frame-interface.md)) or `ForeignRef<'_, I>` instead of
+  `&styx_core::FrameLease`; the host installs the owner's plugin, which registers the provider.
+  The plugin's ports then carry the interface key and no Rust boundary type, so the boundary
+  type check has nothing to refuse, while the foreign interface check refuses a plugin built
+  against another version of the interface. Frames are not copied: the plugin reads the host's
+  buffer through the owner's accessor functions. See "Foreign Interfaces" in
+  [`node-authoring.md`](node-authoring.md#foreign-interfaces).
+- **Other boundary types are `std` types or the plugin's own.** Values the plugin and host
+  exchange otherwise (scalars, strings, `Vec`s) are read through the value's own `Any`, so they
+  work even when the plugin's copy of Daedalus has other `TypeId`s (any dependency of Daedalus
+  resolved with different features changes those, without changing the fingerprint).
+
+`examples/plugins/foreign_consumer` is such a plugin: built in a separate `cargo build` with a
+deliberately different copy of the example crate, it installs into a host that owns `Counter`
+and reads host counters in place through `example:counter_view` (the facade's `dylib_plugin`
+test).
+
+What still requires one cargo build: plugins whose nodes take or return a shared third-party
+type directly, value serializers or capabilities keyed by such types, and anything that relies
+on process globals (see the module docs). Toolchain or Daedalus-version independence needs the
+stable handler path below.
+
+`smallvec` is built with its `union` feature everywhere: it changes `SmallVec` layouts, which
+`NodeIo` exposes to plugin handlers, and a host linking wgpu (whose HAL enables it) would
+otherwise lay `NodeIo` out differently from a plugin without wgpu. `NodeIo` is part of the
+fingerprint, so such a difference is a typed `Incompatible` error rather than a crash.
 
 ## Design Note: Stable Handler Path
 
@@ -142,8 +184,9 @@ Rust types:
    the stable path when every schema port has a codec on both sides, and otherwise reports
    `Incompatible` naming the offending ports.
 
-Costs: one encode/decode per call and no zero-copy for GPU or large buffers (a later
-`WireValue::Handle`-style borrowed view could address the latter).
+Costs: one encode/decode per call and no zero-copy for GPU or large buffers. Foreign handles
+already are such a borrowed view: `ForeignHandle` is `#[repr(C)]` and only calls the owner's
+`extern "C"` functions, so the stable path can pass frames as handles instead of bytes.
 
 ## Coming From The Pre-Release FFI
 

@@ -26,6 +26,7 @@ impl PluginRegistry {
             boundary_contracts: BTreeMap::new(),
             boundary_types: BTreeMap::new(),
             type_key_uses: Default::default(),
+            foreign_interfaces: BTreeMap::new(),
             current_prefix: None,
             capabilities: RuntimeCapabilityRegistry::new(),
             const_coercers: crate::io::new_const_coercer_map(),
