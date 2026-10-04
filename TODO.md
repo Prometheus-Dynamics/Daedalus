@@ -55,6 +55,17 @@ changes.
       (`FeedOutcome::Rejected`), and key registration is strict (identical is a no-op, another
       type, key or declaration fails; one `BoundaryTypeConflict` for static and dylib installs).
 
+- [x] **Optional inputs (Eidos).** `Option<T>` inputs carry `T`'s key (producers of `T` connect
+      directly; before, the edge had no converter), are marked `PortDecl::optional`, and never
+      block: a node runs when each connected required input has a value and is skipped
+      otherwise; optional inputs are `None` without one. `Result<Option<T>, _>` returns are
+      conditional outputs. See "Optional Inputs And Readiness" in `docs/node-authoring.md`.
+- [x] **Dynamic plugin dependencies (Eidos/Styx).** Schemas list a plugin's dependencies and
+      `install_into` refuses a plugin whose dependencies the host has not installed
+      (`MissingDependencies`). `export_plugin!(P, deps [Dep])` links dependency plugins into
+      the library's introspection registry, so keys they map resolve; without the link,
+      unkeyed foreign port types are listed as `external_types` instead of failing the schema.
+
 ### Performance
 - [x] Host bridge: per-port state, single-slot latest-only queues, events off by default.
 - [x] Executor: direct bridge handles, allocation-free ticks (31 → 4 allocations per round trip,
@@ -100,12 +111,18 @@ changes.
       against `docs/node-authoring.md`.
 
 ### Medium priority
+- [ ] **Cross-tick joins.** A node skipped for a missing required input drops what arrived on
+      its other ports that tick. Graphs that need "wait until every input arrived" joins across
+      ticks would need readiness checked before popping edges.
 - [ ] **Macro leaf keys without an owned key.** `#[node]`/`#[adapt]` resolve a port type that
       has no `#[type_key]`/`DaedalusTypeExpr` (a `foreign_types` mapping) through the
       process-global typing registry when the plugin installs, and generated handlers recompute
       that key on every output push. Within one plugin `foreign_types` registers first, so this is
       deterministic, but another plugin's mapping can leak in. Resolve it through the installing
-      registry (or a compile-time key) and compute output keys once per node.
+      registry (or a compile-time key) and compute output keys once per node. Dynamic plugins
+      currently rely on this: a type a dependency maps only resolves in the library when the
+      dependency is linked (`export_plugin!(.., deps [..])`), whose introspection fills the
+      library's globals before `register` runs.
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29

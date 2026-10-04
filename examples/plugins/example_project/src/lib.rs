@@ -9,6 +9,9 @@
 //!   dynamically loaded copies of this one) resolve without registering it first.
 //! - A foreign interface (`CounterInterface`) lets separately built plugins read a `Counter`
 //!   without sharing its Rust type (see `examples/plugins/foreign_consumer`).
+//! - `Lease` declares no key; the plugin maps it (`register_foreign_type`), as a library's
+//!   integration plugin keys a type it cannot annotate. Plugins using it depend on this plugin
+//!   (see `examples/plugins/dependent`).
 
 use std::ffi::c_void;
 
@@ -32,6 +35,13 @@ fn split(value: i32) -> Result<(i32, i32), NodeError> {
 #[type_key("example:counter")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Counter(pub i32);
+
+/// A type without a key of its own: [`ExampleProjectPlugin`] maps it to `example:lease`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lease(pub u32);
+
+/// Key [`ExampleProjectPlugin`] gives [`Lease`].
+pub const LEASE_KEY: &str = "example:lease";
 
 #[node(id = "count", inputs("value"), outputs("counter"))]
 fn count(value: i32) -> Result<Counter, NodeError> {
@@ -146,6 +156,7 @@ declare_plugin!(
     ],
     install = |registry| {
         register_capabilities(registry);
+        registry.register_foreign_type::<Lease>(LEASE_KEY)?;
         registry.register_foreign_provider::<Counter, CounterInterface>()?;
     }
 );

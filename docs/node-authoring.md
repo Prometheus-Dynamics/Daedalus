@@ -335,7 +335,9 @@ pub struct EidosPlugin;
 ```
 
 The port key of `to_gray`'s `frame` is `styx:framelease` because `FrameLease` owns it, even when
-`EidosPlugin` installs before `StyxPlugin`. The host installs `StyxPlugin` and wraps frames with
+`EidosPlugin` installs before `StyxPlugin`. A dynamic plugin also links the dependency,
+`export_plugin!(EidosPlugin, deps [StyxPlugin])` (see
+[Plugin Dependencies](dynamic-plugins.md#plugin-dependencies)). The host installs `StyxPlugin` and wraps frames with
 `Payload::shared_with(styx_core::daedalus_integration::FRAME_LEASE_KEY, Arc::new(lease), ...)`.
 
 Rules:

@@ -183,6 +183,16 @@ path = "tests/dylib_plugin.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_linked_deps"
+path = "tests/dylib_linked_deps.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
+name = "dylib_external_types"
+path = "tests/dylib_external_types.rs"
+required-features = ["dylib-plugins"]
+
+[[test]]
 name = "dylib_export_macro"
 path = "tests/dylib_export_macro.rs"
 required-features = ["dylib-plugins"]

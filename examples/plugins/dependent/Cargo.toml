@@ -1,0 +1,21 @@
+[package]
+name = "daedalus-plugins-dependent"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+doctest = false
+
+[features]
+# Export the plugin from the `cdylib` (`export_plugin!`), linking the example plugin it depends on.
+dylib = ["daedalus/dylib-plugins"]
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins"] }
+daedalus-plugins-example-project = { workspace = true }

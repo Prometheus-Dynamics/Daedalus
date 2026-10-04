@@ -120,6 +120,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   host_bridge_metadata, is_generic_marker}`, `RuntimeNode::host_alias`,
   `HostBridgeConfig::validate` and a public `daedalus_runtime::executor::panic_message`.
 
+- Dynamic plugin dependencies: `export_plugin!(P, deps [Dep, ..])` (also with
+  `boundary_contracts [..]`) links dependency plugins, which the descriptor's `schema`,
+  `boundary_types` and `foreign_interfaces` entry points install before `P` into their private
+  registry, so keys a dependency owns or maps resolve; the schema's `dependencies` include them.
+  `PluginLibrary::install_into` fails with `PluginLibraryError::MissingDependencies` when the
+  host registry has not installed a dependency the schema lists. Introspection is lenient:
+  unkeyed foreign port types are recorded (`PluginRegistry::{record_external_types,
+  external_types}`, `ExternalTypeRef`) and exported as `plugin.metadata.external_types` instead
+  of failing the schema. New example `examples/plugins/dependent`; the example plugin maps a
+  key-less `Lease` type.
+
 ### Changed
 
 - Optional inputs: an `Option<T>` (`Option<&T>`, `Option<Arc<T>>`) node parameter is a port with

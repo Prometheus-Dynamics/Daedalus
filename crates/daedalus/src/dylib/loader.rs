@@ -55,6 +55,17 @@ pub enum PluginLibraryError {
         #[source]
         mismatch: RustAbiMismatch,
     },
+    /// The plugin depends on plugins (`#[plugin(deps(...))]`, `export_plugin!(.., deps [..])`)
+    /// the host registry has not installed. Nothing was installed.
+    #[error(
+        "plugin `{plugin}` depends on plugins the host has not installed: {}; install them \
+         before this plugin",
+        missing.iter().map(|id| format!("`{id}`")).collect::<Vec<_>>().join(", ")
+    )]
+    MissingDependencies {
+        plugin: String,
+        missing: Vec<String>,
+    },
     /// The plugin maps type keys the host registry also uses to different Rust types
     /// (typically a dependency such as a frame library resolved with other features in a
     /// separate build); `registered` is the host's type, `new` the plugin's. Nothing was
@@ -205,7 +216,9 @@ impl PluginLibrary {
     /// Install the plugin (boundary contracts first, then the plugin itself) into `registry`.
     ///
     /// Fails without calling into the plugin with [`PluginLibraryError::Incompatible`] when
-    /// [`rust_abi`](Self::rust_abi) reports a mismatch, and with
+    /// [`rust_abi`](Self::rust_abi) reports a mismatch, with
+    /// [`PluginLibraryError::MissingDependencies`] when `registry` lacks a plugin the schema lists
+    /// in `dependencies`, with
     /// [`PluginLibraryError::BoundaryTypeConflict`] when one of the plugin's
     /// [`boundary_types`](Self::boundary_types) is a key `registry` already maps to another Rust
     /// type ([`PluginRegistry::boundary_types`]), and with
@@ -218,6 +231,19 @@ impl PluginLibrary {
             return Err(PluginLibraryError::Incompatible {
                 plugin: plugin(),
                 mismatch: mismatch.clone(),
+            });
+        }
+        let missing: Vec<String> = self
+            .schema
+            .dependencies
+            .iter()
+            .filter(|dep| !registry.plugin_manifests.contains_key(*dep))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(PluginLibraryError::MissingDependencies {
+                plugin: plugin(),
+                missing,
             });
         }
         let conflicts = registry.boundary_type_conflicts(&self.boundary_types);
