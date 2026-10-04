@@ -92,6 +92,7 @@ changes.
       the low-level `(node, ctx, io)` form; the form is now recognized by parameter types.
 
 ### Performance
+- [x] Process-global boundary contract registry removed; `Payload::owned` always uses typed storage.
 - [x] Host bridge: per-port state, single-slot latest-only queues, events off by default.
 - [x] Executor: direct bridge handles, allocation-free ticks (31 → 4 allocations per round trip,
       enforced by `crates/engine/tests/hot_path_allocations.rs`), `IdStr` for static ids, cheaper
@@ -156,11 +157,6 @@ changes.
 - [ ] **Cross-tick joins.** A node skipped for a missing required input drops what arrived on
       its other ports that tick. Graphs that need "wait until every input arrived" joins across
       ticks would need readiness checked before popping edges.
-- [ ] **Global boundary contract registry.** Macro installs register boundary contracts for
-      their port types (builtins included) in `daedalus_transport`'s process-global registry,
-      so `Payload::owned` of e.g. `i64` takes the boundary storage path (contract clone,
-      `LayoutHash::for_type` strings): about 8 allocations per payload instead of 2. Scope the
-      contracts to the registry, or skip them for builtins.
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29
