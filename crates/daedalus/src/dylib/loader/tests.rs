@@ -12,6 +12,7 @@ impl Plugin for LoaderTestPlugin {
     }
 
     fn install(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()> {
+        ctx.register_boundary_type::<LoaderFrame>(FRAME_KEY)?;
         ctx.register_node_decl(
             NodeDecl::new("add")
                 .input(PortDecl::new("a", "i64"))
@@ -22,14 +23,42 @@ impl Plugin for LoaderTestPlugin {
 
 crate::export_plugin!(LoaderTestPlugin);
 
+const FRAME_KEY: &str = "loader:frame";
+
+/// The plugin's boundary type; the host shares it, as when both come from one cargo build.
+struct LoaderFrame;
+
+/// Like `LoaderFrame`, but as another build would see it: same key and name, other `TypeId`.
+unsafe extern "C" fn forged_boundary_types(table: *mut BoundaryTypeTable, _: StrSink) -> bool {
+    let real = RustTypeIdentity::of::<LoaderFrame>();
+    let entries = vec![super::super::BoundaryTypeEntry {
+        type_key: StrView::from_static(FRAME_KEY),
+        type_name: StrView::from_static(real.type_name),
+        type_id_hash: real.type_id_hash ^ 1,
+        size: real.size,
+        align: real.align,
+    }]
+    .leak();
+    // Safety: the host passes a writable table.
+    unsafe {
+        *table = BoundaryTypeTable {
+            entries: entries.as_ptr(),
+            len: entries.len(),
+        }
+    };
+    true
+}
+
 fn host() -> PluginInfo {
     PluginInfo::for_plugin("host", "0.0.0")
 }
 
-/// This test binary's own descriptor with `info` adjusted, as if a different build produced it.
-fn load_with(adjust: impl FnOnce(&mut PluginInfo)) -> Result<PluginLibrary, PluginLibraryError> {
+/// This test binary's own descriptor, adjusted as if a different build produced it.
+fn load_with(
+    adjust: impl FnOnce(&mut PluginDescriptor),
+) -> Result<PluginLibrary, PluginLibraryError> {
     let mut descriptor = daedalus_plugin_descriptor();
-    adjust(&mut descriptor.info);
+    adjust(&mut descriptor);
     // Safety: the descriptor was produced by this crate's `export_plugin!`.
     unsafe { PluginLibrary::from_descriptor(PathBuf::from("in-process"), descriptor) }
 }
@@ -54,8 +83,8 @@ fn matching_plugin_loads_exposes_schema_and_installs() {
 
 #[test]
 fn mismatched_toolchain_is_introspectable_but_not_installable() {
-    let library = load_with(|info| {
-        info.rustc_version = StrView::from_static("rustc 1.0.0 (a59aba2b1 2015-05-13)");
+    let library = load_with(|descriptor| {
+        descriptor.info.rustc_version = StrView::from_static("rustc 1.0.0 (a59aba2b1 2015-05-13)");
     })
     .unwrap();
     assert_eq!(library.schema().plugin.name, "loader_test");
@@ -81,19 +110,67 @@ fn mismatched_toolchain_is_introspectable_but_not_installable() {
 }
 
 #[test]
+fn boundary_types_are_exported_and_checked_against_the_host() {
+    let library = load_with(|_| {}).unwrap();
+    let frame = TypeKey::new(FRAME_KEY);
+    let exported = library
+        .boundary_types()
+        .iter()
+        .find(|(key, _)| *key == frame)
+        .map(|(_, identity)| *identity);
+    assert_eq!(exported, Some(RustTypeIdentity::of::<LoaderFrame>()));
+
+    // The host knows the key with the same Rust type: installs.
+    let mut registry = PluginRegistry::new();
+    registry
+        .register_boundary_type::<LoaderFrame>(FRAME_KEY)
+        .unwrap();
+    library.install_into(&mut registry).unwrap();
+}
+
+#[test]
+fn boundary_type_mismatch_refuses_install_before_anything_is_installed() {
+    let library =
+        load_with(|descriptor| descriptor.boundary_types = forged_boundary_types).unwrap();
+    // Unknown to the host: fine.
+    library.install_into(&mut PluginRegistry::new()).unwrap();
+
+    let mut registry = PluginRegistry::new();
+    registry
+        .register_boundary_type::<LoaderFrame>(FRAME_KEY)
+        .unwrap();
+    let err = library.install_into(&mut registry).unwrap_err();
+    let message = err.to_string();
+    let PluginLibraryError::BoundaryTypeMismatch { plugin, mismatches } = err else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(plugin, "loader_test");
+    assert_eq!(mismatches.len(), 1);
+    assert_eq!(mismatches[0].key, TypeKey::new(FRAME_KEY));
+    assert_eq!(
+        mismatches[0].host_type,
+        RustTypeIdentity::of::<LoaderFrame>()
+    );
+    assert_ne!(mismatches[0].plugin_type, mismatches[0].host_type);
+    assert!(message.contains("`loader:frame`: host `"), "{message}");
+    assert!(message.contains("same cargo build"), "{message}");
+    assert!(!registry.plugin_manifests.contains_key("loader_test"));
+}
+
+#[test]
 fn invalid_info_is_rejected() {
     let null = StrView {
         ptr: std::ptr::null(),
         len: 0,
     };
     assert!(matches!(
-        load_with(|info| info.plugin_name = null),
+        load_with(|descriptor| descriptor.info.plugin_name = null),
         Err(PluginLibraryError::InvalidInfo {
             field: "plugin_name"
         })
     ));
     assert!(matches!(
-        load_with(|info| info.build_fingerprint = null),
+        load_with(|descriptor| descriptor.info.build_fingerprint = null),
         Err(PluginLibraryError::InvalidInfo {
             field: "build_fingerprint"
         })

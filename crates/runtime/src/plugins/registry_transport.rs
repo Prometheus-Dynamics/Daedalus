@@ -201,6 +201,7 @@ impl PluginRegistry {
         T: BranchPayload,
     {
         let key = typeexpr_transport_key(&schema);
+        self.record_boundary_type::<T>(&key)?;
         let mut cost = AdaptCost::new(match T::BRANCH_KIND {
             BranchKind::Shared => AdaptKind::SharedView,
             BranchKind::Clone | BranchKind::Domain => AdaptKind::Branch,
@@ -266,6 +267,8 @@ impl PluginRegistry {
     {
         let from_key = typeexpr_transport_key(&from);
         let to_key = typeexpr_transport_key(&to);
+        self.record_boundary_type::<S>(&from_key)?;
+        self.record_boundary_type::<T>(&to_key)?;
         self.register_transport_adapter_fn_with_cost(
             id,
             from,
@@ -306,6 +309,8 @@ impl PluginRegistry {
         } = spec;
         let cpu_key = typeexpr_transport_key(&cpu);
         let device_key = typeexpr_transport_key(&device);
+        self.record_boundary_type::<Cpu>(&cpu_key)?;
+        self.record_boundary_type::<Device>(&device_key)?;
 
         let mut upload_options = TransportAdapterOptions::default()
             .cost(AdaptCost::device_transfer())

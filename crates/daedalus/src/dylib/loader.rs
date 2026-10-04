@@ -1,8 +1,10 @@
+use super::boundary::{self, BoundaryTypeMismatch, BoundaryTypeTable};
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
     PluginInfo, PluginSchema, StrSink, StrView,
 };
 use crate::runtime::plugins::PluginRegistry;
+use crate::transport::{RustTypeIdentity, TypeKey};
 use daedalus_ffi_host::core::BackendKind;
 use libloading::Library;
 use std::collections::BTreeMap;
@@ -52,6 +54,19 @@ pub enum PluginLibraryError {
         #[source]
         mismatch: RustAbiMismatch,
     },
+    /// The plugin maps type keys the host also uses to different Rust types (typically a
+    /// dependency such as a frame library resolved with other features in a separate build).
+    /// Nothing was installed.
+    #[error(
+        "plugin `{plugin}` uses type keys for different Rust types than the host ({}); Rust-ABI \
+         plugins must come from the same cargo build as the host, with every shared dependency \
+         resolved identically",
+        boundary::describe(mismatches)
+    )]
+    BoundaryTypeMismatch {
+        plugin: String,
+        mismatches: Vec<BoundaryTypeMismatch>,
+    },
     #[error("plugin failed to register boundary contracts: {message}")]
     BoundaryContractsFailed { message: String },
     #[error("plugin registration failed: {message}")]
@@ -68,6 +83,7 @@ pub struct PluginLibrary {
     path: PathBuf,
     descriptor: PluginDescriptor,
     schema: PluginSchema,
+    boundary_types: Vec<(TypeKey, RustTypeIdentity)>,
     rust_abi: Result<(), RustAbiMismatch>,
 }
 
@@ -141,23 +157,46 @@ impl PluginLibrary {
         schema
             .validate_backend_kind(BackendKind::Rust)
             .map_err(|err| schema_error(err.to_string()))?;
+        let mut table = BoundaryTypeTable {
+            entries: std::ptr::null(),
+            len: 0,
+        };
+        // Safety: `boundary_types` only writes the table (a `'static` array the plugin leaks)
+        // and borrowed bytes through the C-ABI sink.
+        call(|sink| unsafe { (descriptor.boundary_types)(&mut table, sink) })
+            .map_err(|message| schema_error(format!("boundary types: {message}")))?;
+        // Safety: the plugin returned a `'static` table of `len` entries.
+        let boundary_types = unsafe { boundary::read_table(table) }
+            .map_err(|message| schema_error(format!("boundary types: {message}")))?;
         Ok(Self {
             path,
             rust_abi: check_rust_abi(info),
             descriptor,
             schema,
+            boundary_types,
         })
     }
 
     /// Install the plugin (boundary contracts first, then the plugin itself) into `registry`.
     ///
-    /// Fails with [`PluginLibraryError::Incompatible`] without calling into the plugin when
-    /// [`rust_abi`](Self::rust_abi) reports a mismatch.
+    /// Fails without calling into the plugin with [`PluginLibraryError::Incompatible`] when
+    /// [`rust_abi`](Self::rust_abi) reports a mismatch, and with
+    /// [`PluginLibraryError::BoundaryTypeMismatch`] when one of the plugin's
+    /// [`boundary_types`](Self::boundary_types) is a key `registry` already maps to another Rust
+    /// type ([`PluginRegistry::boundary_types`]).
     pub fn install_into(&self, registry: &mut PluginRegistry) -> Result<(), PluginLibraryError> {
+        let plugin = || self.schema.plugin.name.clone();
         if let Err(mismatch) = &self.rust_abi {
             return Err(PluginLibraryError::Incompatible {
-                plugin: self.schema.plugin.name.clone(),
+                plugin: plugin(),
                 mismatch: mismatch.clone(),
+            });
+        }
+        let mismatches = boundary::mismatches(registry, &self.boundary_types);
+        if !mismatches.is_empty() {
+            return Err(PluginLibraryError::BoundaryTypeMismatch {
+                plugin: plugin(),
+                mismatches,
             });
         }
         let install = |entry: InstallFn, registry: &mut PluginRegistry| {
@@ -181,6 +220,13 @@ impl PluginLibrary {
     /// The plugin's manifest and node declarations, readable whatever built the plugin.
     pub fn schema(&self) -> &PluginSchema {
         &self.schema
+    }
+
+    /// Every type key the plugin consumes, produces or registers, with the Rust type behind it
+    /// in the plugin's build. Readable whatever built the plugin; the identities are only
+    /// comparable with the host's when [`rust_abi`](Self::rust_abi) is `Ok`.
+    pub fn boundary_types(&self) -> &[(TypeKey, RustTypeIdentity)] {
+        &self.boundary_types
     }
 
     /// Whether the plugin can be installed into this host through the Rust ABI.

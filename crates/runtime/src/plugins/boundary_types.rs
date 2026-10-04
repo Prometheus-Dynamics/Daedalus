@@ -72,9 +72,6 @@ impl PluginRegistry {
         key: TypeKey,
         declared: bool,
     ) -> PluginResult<()> {
-        if key.as_str().starts_with("typeexpr:") {
-            return Ok(());
-        }
         let rust_type = std::any::type_name::<T>();
         if !declared && key.as_str().starts_with("rust:") && is_foreign(rust_type, port.defined_in)
         {
@@ -85,7 +82,16 @@ impl PluginRegistry {
                 key,
             });
         }
-        self.register_boundary_type::<T>(key)
+        self.record_boundary_type::<T>(&key)
+    }
+
+    /// [`Self::register_boundary_type`] for keys that name one type; structural keys
+    /// (`typeexpr:...`, e.g. `List(Int)`) are skipped.
+    pub(super) fn record_boundary_type<T: 'static>(&mut self, key: &TypeKey) -> PluginResult<()> {
+        if key.as_str().starts_with("typeexpr:") {
+            return Ok(());
+        }
+        self.register_boundary_type::<T>(key.clone())
     }
 }
 

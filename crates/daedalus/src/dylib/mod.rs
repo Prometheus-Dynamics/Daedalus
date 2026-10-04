@@ -50,10 +50,24 @@
 //! host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots"]
 //! ```
 //!
+//! **Boundary types.** The fingerprint only covers Daedalus crates. A payload type from another
+//! crate (a camera library's frame, say) is a different Rust type in a plugin whose cargo build
+//! resolved that crate with other features, even with the same key and type name. The
+//! descriptor's `boundary_types` entry point therefore exports a C-safe table
+//! ([`BoundaryTypeTable`]) of every type key the plugin consumes, produces or registers, with
+//! the Rust type behind it in the plugin's build (`TypeId` hash, size, align, type name; see
+//! [`PluginRegistry::boundary_types`](crate::PluginRegistry::boundary_types)).
+//! [`PluginLibrary::install_into`] compares it with the host registry's entries for the same
+//! keys and, before installing anything, fails with
+//! [`PluginLibraryError::BoundaryTypeMismatch`] listing every differing key. Keys the host does
+//! not know are accepted, so the host should register the types it wraps in payloads itself
+//! (install the owning crate's Daedalus plugin, or `register_boundary_type::<T>(key)`).
+//!
 //! These checks catch the common mismatches (stale plugin, different toolchain, different
-//! feature set). They cannot prove layout identity: build host and plugins from the same
-//! workspace/lockfile, toolchain, and boundary Daedalus feature set (`plugins`,
-//! `gpu-types`/`gpu-runtime`/backends, `schema`, `proto`). `docs/dynamic-plugins.md` sketches
+//! feature set, separately built dependency). They cannot prove layout identity: build host and
+//! plugins in the same cargo build (one workspace and lockfile, one toolchain, one boundary
+//! Daedalus feature set: `plugins`, `gpu-types`/`gpu-runtime`/backends, `schema`, `proto`, and
+//! every shared dependency resolved with the same features). `docs/dynamic-plugins.md` sketches
 //! the stable handler path that would lift this requirement for wire-representable payloads.
 //!
 //! # Known limitations
@@ -69,17 +83,23 @@
 //!   dropped by the host. Both sides must therefore use the same, shared allocator: keep the
 //!   default system allocator and do not install a `#[global_allocator]` in the host or the
 //!   plugins. (The descriptor layer only passes borrowed bytes and needs no shared allocator.)
-//! - **Type identity.** `TypeId`s of Daedalus-defined types can differ between the host and
-//!   a plugin when Cargo compiles Daedalus with different metadata (different feature sets
-//!   or dependency graphs). Prefer transport type keys over Rust `TypeId` at the boundary.
+//! - **Type identity.** `TypeId`s can differ between the host and a plugin whenever Cargo
+//!   compiles the defining crate with different metadata (different feature sets or dependency
+//!   graphs). Keys identify types at the boundary; the boundary type check above rejects keys
+//!   whose Rust types differ, and payload downcasts that still fail report
+//!   [`TransportError::RustTypeMismatch`](crate::transport::TransportError::RustTypeMismatch).
+//!   Separately built plugins need the future foreign-type path (a host-registered accessor
+//!   vtable per key), see `TODO.md`.
 //! - **No unloading.** Loaded libraries are intentionally leaked. Registered handlers,
 //!   vtables and `&'static str`s point into the library's code and data for as long as the
 //!   registry (and anything built from it) lives; unloading would leave them dangling.
 //!   Unloading Rust `cdylib`s is also unreliable in general (thread-locals with destructors).
 
+mod boundary;
 mod fingerprint;
 mod loader;
 
+pub use boundary::{BoundaryTypeEntry, BoundaryTypeMismatch, BoundaryTypeTable, BoundaryTypesFn};
 pub use daedalus_ffi_host::core::PluginSchema;
 pub use fingerprint::{boundary_features, build_fingerprint, describe_fingerprint_mismatch};
 pub use loader::{
@@ -96,8 +116,9 @@ pub const PLUGIN_DESCRIPTOR_SYMBOL: &str = "daedalus_plugin_descriptor";
 /// Version of the [`PluginDescriptor`] format.
 ///
 /// Bumped whenever the descriptor (or anything it contains) changes shape.
-/// Version 5 introduced the descriptor and its stable `schema` entry point.
-pub const PLUGIN_ABI_VERSION: u32 = 5;
+/// Version 5 introduced the descriptor and its stable `schema` entry point; version 6 added
+/// `boundary_types`.
+pub const PLUGIN_ABI_VERSION: u32 = 6;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
 
@@ -195,20 +216,21 @@ pub type InstallFn = unsafe extern "C" fn(registry: *mut c_void, sink: StrSink) 
 /// Everything a dynamic plugin exports, returned by `daedalus_plugin_descriptor`.
 ///
 /// Built only from C types, so a host can read it whatever toolchain built the plugin (once the
-/// ABI version matches). `schema` is always safe to call; `register_boundary_contracts` and
-/// `register` only once [`check_rust_abi`] accepted `info`.
+/// ABI version matches). `schema` and `boundary_types` are always safe to call;
+/// `register_boundary_contracts` and `register` only once [`check_rust_abi`] accepted `info`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct PluginDescriptor {
     pub info: PluginInfo,
     pub schema: SchemaFn,
+    pub boundary_types: BoundaryTypesFn,
     pub register_boundary_contracts: InstallFn,
     pub register: InstallFn,
 }
 
 #[doc(hidden)]
 pub mod __support {
-    use super::StrSink;
+    use super::{BoundaryTypeTable, StrSink};
     use crate::runtime::plugins::{Plugin, PluginRegistry, PluginResult, RegistryPluginExt};
     use std::ffi::c_void;
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -283,6 +305,29 @@ pub mod __support {
             })
         }
     }
+
+    /// Install `P` into a private registry and hand its
+    /// [`boundary_types`](PluginRegistry::boundary_types) to the host as a `'static` table.
+    ///
+    /// # Safety
+    /// `table` must be valid for writes and `sink` valid for the call.
+    pub unsafe fn boundary_types<P: Plugin + Default>(
+        table: *mut BoundaryTypeTable,
+        sink: StrSink,
+    ) -> bool {
+        // Safety: forwarded from the caller.
+        unsafe {
+            guarded(sink, || {
+                let table = table.as_mut().ok_or("table pointer was null")?;
+                let mut registry = PluginRegistry::new();
+                registry
+                    .install_plugin(&P::default())
+                    .map_err(|err| err.to_string())?;
+                *table = super::boundary::leak_table(&registry);
+                Ok(())
+            })
+        }
+    }
 }
 
 /// Export a [`Plugin`](crate::Plugin) implementor (which must also implement `Default`) for
@@ -324,6 +369,14 @@ macro_rules! export_plugin {
                 unsafe { __support::schema::<$ty>(sink) }
             }
 
+            unsafe extern "C" fn boundary_types(
+                table: *mut $crate::dylib::BoundaryTypeTable,
+                sink: StrSink,
+            ) -> bool {
+                // Safety: the host passes a writable table and a sink valid for the call.
+                unsafe { __support::boundary_types::<$ty>(table, sink) }
+            }
+
             unsafe extern "C" fn register_boundary_contracts(
                 registry: *mut c_void,
                 sink: StrSink,
@@ -349,6 +402,7 @@ macro_rules! export_plugin {
                     env!("CARGO_PKG_VERSION"),
                 ),
                 schema,
+                boundary_types,
                 register_boundary_contracts,
                 register,
             }

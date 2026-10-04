@@ -5,9 +5,11 @@
 //! - `#[derive(NodeConfig)]` makes config inputs first-class (defaults/validation).
 //! - `state(T)` wires up persistent state for stateful nodes.
 //! - Capability nodes can dispatch via the global capability registry.
+//! - `#[type_key]` gives a plugin-owned payload type a stable key that other plugins (and
+//!   dynamically loaded copies of this one) resolve without registering it first.
 
 use daedalus::macros::NodeConfig;
-use daedalus::{PluginRegistry, declare_plugin, macros::node, runtime::NodeError};
+use daedalus::{PluginRegistry, declare_plugin, macros::node, runtime::NodeError, type_key};
 
 // --- Stateless typed nodes --------------------------------------------------
 
@@ -19,6 +21,16 @@ fn add(a: i32, b: i32) -> Result<i32, NodeError> {
 #[node(id = "split", inputs("value"), outputs("out0", "out1"))]
 fn split(value: i32) -> Result<(i32, i32), NodeError> {
     Ok((value, -value))
+}
+
+/// A payload type this crate owns, with its stable transport key.
+#[type_key("example:counter")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Counter(pub i32);
+
+#[node(id = "count", inputs("value"), outputs("counter"))]
+fn count(value: i32) -> Result<Counter, NodeError> {
+    Ok(Counter(value))
 }
 
 // --- Config-backed input ----------------------------------------------------
@@ -80,7 +92,15 @@ fn register_capabilities(registry: &mut PluginRegistry) {
 declare_plugin!(
     ExampleProjectPlugin,
     "example_rust",
-    [add, split, scale_cfg, accum, choose_mode_meta, cap_add],
+    [
+        add,
+        split,
+        count,
+        scale_cfg,
+        accum,
+        choose_mode_meta,
+        cap_add
+    ],
     install = |registry| {
         register_capabilities(registry);
     }
