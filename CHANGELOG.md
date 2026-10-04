@@ -62,12 +62,29 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Boundary types: `PluginRegistry::{register_boundary_type, boundary_types}` record the Rust type
   (`daedalus::transport::RustTypeIdentity`: `TypeId` hash, size, align, name) behind each key,
   filled by node/adapter macros, `register_daedalus_type`, foreign types and the typed
-  adapter/device registrations. `PluginError::BoundaryTypeConflict` rejects one key used for two
-  Rust types.
+  adapter/device registrations. `PluginError::BoundaryTypeConflict(BoundaryTypeConflict)`
+  (key, registered and new Rust type) rejects one key used for two Rust types.
 - Dylib boundary type check: the descriptor (`PLUGIN_ABI_VERSION` 6) exports a C-safe
   `BoundaryTypeTable` of the plugin's boundary types (`PluginLibrary::boundary_types`), and
-  `install_into` fails with `PluginLibraryError::BoundaryTypeMismatch` (every differing key, host
-  and plugin type) before installing anything when the host maps a key to another Rust type.
+  `install_into` fails with `PluginLibraryError::BoundaryTypeConflict` (every differing key as a
+  `BoundaryTypeConflict`, via `PluginRegistry::boundary_type_conflicts`) before installing
+  anything when the host maps a key to another Rust type; after installing it records the table
+  (`PluginRegistry::register_boundary_identities`).
+- Registry type index: `PluginRegistry::type_index()` freezes a `daedalus_runtime::TypeIndex`
+  (`TypeId → TypeKey`: builtins and `Option`/`Vec` of them, the key a type owns, else the single
+  key its ports use; `TypeKey → RustTypeIdentity`). `registry.graph_builder()`
+  (`GraphBuilder::with_type_index`) and graphs compiled from a registry
+  (`HostBridgeManager::set_type_index`, `Executor`/`OwnedExecutor::with_type_index`,
+  `NodeIo::with_type_index`, `HostGraph::type_index`) resolve generic pushes through it.
+  `daedalus_transport::TypeKeyError` (`Unkeyed`, `Ambiguous`, `RustTypeMismatch`), carried by
+  `FeedOutcome::Rejected`, `EngineError::TypeKey`, `GraphBuildError::TypeKey` and `NodeError`.
+- Fed-payload check: the host bridge (`feed_payload` and every `push*`) and `HostGraph`'s direct
+  entry points refuse a payload whose key the registry records for another Rust type than it
+  holds (`TypeIndex::check_payload`, `Payload::storage_rust_type_id`,
+  `PayloadStorage::rust_type_id`, `BoundaryVTable::rust_type_id`); bytes and foreign handles
+  pass.
+- `daedalus_registry::transport_key_typeexpr` (inverse of `typeexpr_transport_key`) and
+  `daedalus_data::typing::builtin_type_exprs`; `TypeRegistry::registered_types`.
 - Foreign interfaces for separately built plugins: `daedalus_transport::foreign_interface!`
   declares a `#[repr(C)]` accessor vtable with a key, version and layout hash
   (`ForeignInterface`, `ForeignInterfaceInfo`, `foreign_layout_hash`); owners implement
@@ -111,6 +128,25 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   another crate that would get the `rust:` fallback key fails install with
   `PluginError::UnkeyedForeignType` (node, port, Rust type and the fixes). An owner's type
   declaration replaces the placeholder a consumer plugin left when it installed first.
+- Generic pushes no longer read the process-global typing registry. `HostGraph::push`,
+  `bind_input` (now `Result<HostGraphInput<T>, EngineError>`), `bind_lane` (now
+  `Result<HostGraphLane<I>, EngineError>`, also failing when there is no direct route),
+  `run_once`/`run_direct_once`, `HostBridgeHandle::push`, `NodeIo::push_to`/`push`/`push_default`
+  (now `Result<(), NodeError>`) and `GraphBuilder::input_typed`/`output_typed` (now
+  `Result<Self, GraphBuildError>`) resolve `T` through the graph's registry and fail with
+  `TypeKeyError` instead of using an order-dependent `rust:` key. `HostGraphRunInput::into_parts`
+  takes the `TypeIndex`. `run_once` and `profiled_feed_tick_drain_owned` return rejected feeds
+  as errors.
+- Key registration is strict: registering the same type under the same key again is a no-op,
+  placeholders and built-in declarations are replaced, and another Rust type for a key
+  (`BoundaryTypeConflict`), another key for a type (`PluginError::TypeKeyedTwice`) or another
+  schema or export policy for a key (`PluginError::TypeDeclarationConflict`) fails instead of the
+  later declaration replacing the earlier one. `daedalus_data::typing::TypeRegistry::register_type`
+  / `register_enum` and the global `register_type` / `register_enum` return
+  `Result<(), TypeConflict>` and no longer overwrite.
+- `RustTypeIdentity::type_id_hash` uses `RustTypeIdentity::hash_type_id`, a few-instruction fold
+  of the `TypeId`, so fed-payload checks can afford it.
+- `daedalus_data::typing::builtin_type_expr` also covers `Option`/`Vec` of the builtin scalars.
 - Shared runtime locks use `parking_lot` (`Mutex`, `RwLock`, `Condvar`) instead of `std::sync`,
   so there is no lock poisoning. `StateStore`, `ExecutionContext`, `RuntimeResources` and the
   executors' resource-lifecycle methods (`set`, `set_native`, `record_*`, `*_metric`,
@@ -176,6 +212,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Removed
 
 - The no-op `Outputs` derive.
+- `daedalus_registry::type_key_of` (and its `daedalus_runtime::transport` re-export): generic
+  pushes resolve through `PluginRegistry::type_index`. `NodeIo::{push_any, push_output,
+  push_output_default}` (use `push`/`push_to`/`push_default`).
+- `daedalus::dylib::BoundaryTypeMismatch` and `PluginLibraryError::BoundaryTypeMismatch`
+  (`PluginLibraryError::BoundaryTypeConflict` with `daedalus_runtime::plugins::BoundaryTypeConflict`).
 - `StateError::LockPoisoned`, `RunnerPoolError::LockPoisoned` and `StateStore::get_result`.
 - `HostBridgeHandle::feed_payload_ref` (use `feed_payload`), `next_correlation_id`, and
   `PayloadStorage::into_any`.

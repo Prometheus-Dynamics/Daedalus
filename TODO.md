@@ -33,7 +33,7 @@ changes.
       cargo invocation passed the fingerprint check but failed on every frame with
       `payload type mismatch: expected styx:framelease, found styx:framelease`. Now the
       descriptor (ABI 6) exports `(TypeKey, TypeId hash, size, align, type_name)` per boundary
-      type, `install_into` fails with `BoundaryTypeMismatch` naming every differing key before
+      type, `install_into` fails with `BoundaryTypeConflict` naming every differing key before
       installing anything, adapter errors say "same TypeKey, different Rust type", and the
       same-cargo-build rule is documented in `docs/dynamic-plugins.md`.
 - [x] **Foreign (host-owned) types for separately built plugins.** Foreign interfaces
@@ -45,6 +45,15 @@ changes.
       exports the interfaces a plugin uses and `install_into` refuses version/layout mismatches;
       `examples/plugins/foreign_consumer`, built separately with a different copy of the type's
       crate, reads host values in place.
+- [x] **Generic runtime key lookups.** `type_key_of` is gone. `PluginRegistry::type_index()`
+      freezes `TypeId → TypeKey` (builtins and `Option`/`Vec` of them, the key a type owns in
+      that registry, else the one key its ports use) and `TypeKey → RustTypeIdentity`; graph
+      builders and compiled graphs capture it, so `push::<T>`, `bind_input`, `bind_lane`,
+      `run_once`, `HostBridgeHandle::push`, `NodeIo::push_to` and `input_typed` no longer depend
+      on install order or on other registries, and an unknown type is a `TypeKeyError` naming
+      the fixes. The host bridge rejects payloads whose key is registered for another Rust type
+      (`FeedOutcome::Rejected`), and key registration is strict (identical is a no-op, another
+      type, key or declaration fails; one `BoundaryTypeConflict` for static and dylib installs).
 
 ### Performance
 - [x] Host bridge: per-port state, single-slot latest-only queues, events off by default.
@@ -91,13 +100,12 @@ changes.
       against `docs/node-authoring.md`.
 
 ### Medium priority
-- [ ] **Generic runtime key lookups.** `type_key_of::<T>()` (behind `HostGraph::bind_input`,
-      `GraphBuilder::input_typed`, `HostBridgeHandle::push`, `NodeIo::push_to`) still reads the
-      process-global typing registry, so a `#[type_key]` type resolves only after its plugin was
-      installed (in that copy of Daedalus) and a foreign type only after `foreign_types` /
-      `register_type`. The macros resolve owner-declared keys without it. Consider a
-      `DaedalusTypeExpr`-bounded variant or resolving through the `PluginRegistry`'s own type
-      registry.
+- [ ] **Macro leaf keys without an owned key.** `#[node]`/`#[adapt]` resolve a port type that
+      has no `#[type_key]`/`DaedalusTypeExpr` (a `foreign_types` mapping) through the
+      process-global typing registry when the plugin installs, and generated handlers recompute
+      that key on every output push. Within one plugin `foreign_types` registers first, so this is
+      deterministic, but another plugin's mapping can leak in. Resolve it through the installing
+      registry (or a compile-time key) and compute output keys once per node.
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29

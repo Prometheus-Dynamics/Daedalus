@@ -46,8 +46,8 @@ everything lands in the `PluginRegistry` the engine compiles from.
    `port(name = "...", ty = <TypeExpr>)`.
 2. The key the type owns (`#[type_key]`, `#[derive(DaedalusTypeExpr)]`). It is resolved at compile
    time through the type's trait impl, so it never depends on which plugin installed first.
-3. The typing registry: `#[plugin(foreign_types(Type = "key"))]` (see below) or
-   `daedalus::data::typing::register_type`.
+3. The typing registry: `#[plugin(foreign_types(Type = "key"))]` (see below), which registers
+   the mapping before the plugin's nodes install.
 4. Builtins (integers, floats, `bool`, `String`, `Vec<u8>`, `()`) and structural containers
    (`Vec<T>`, `Option<T>`, tuples). `&T`, `Arc<T>`, `Cpu<T>` and `Gpu<T>` use `T`'s key.
 5. Otherwise the fallback `rust:<type path>`. Whether a registry entry exists depends on what
@@ -57,7 +57,48 @@ everything lands in the `PluginRegistry` the engine compiles from.
 
 Handlers push outputs under the same key the port declares. Each port's Rust type is recorded per
 key (`PluginRegistry::boundary_types()`); one key used for two different Rust types fails with
-`PluginError::BoundaryTypeConflict`.
+`PluginError::BoundaryTypeConflict` (two plugins, a plugin and the host, or a dynamic plugin built
+separately).
+
+Key registration is strict, so the outcome never depends on install order. Registering the same
+type under the same key again (two plugins listing `types(Frame)`) is a no-op; the placeholder a
+port leaves when it uses a key before the owner installs, and a built-in declaration, are replaced.
+Anything else fails: a second key for one type (`PluginError::TypeKeyedTwice`), another Rust type
+for a key (`BoundaryTypeConflict`), or another schema or export policy for a key
+(`PluginError::TypeDeclarationConflict`).
+
+#### Generic Pushes
+
+Code that names a Rust type but no key, `HostGraph::push::<T>` / `bind_input::<T>` /
+`bind_lane::<T>` / `run_once((port, value))`, `HostBridgeHandle::push`, `NodeIo::push_to` and
+`GraphBuilder::input_typed::<T>` / `output_typed::<T>`, resolves `T` through the registry the graph
+came from, never through process-global state. `PluginRegistry::type_index()` freezes it into a
+`TypeIndex`: `registry.graph_builder()` captures one, compiling through a registry
+(`compile_registry`, `compile_host_graph_plugin_registry`, `compile_plugin_registry`) hands one to
+the host bridge and to every handler's `NodeIo`. A type resolves to:
+
+1. its builtin structural key: integers, floats, `bool`, `String`, `Vec<u8>`, `()`, and
+   `Option`/`Vec` of them, in every index;
+2. the key it owns in that registry (`#[type_key]`/`DaedalusTypeExpr` types the registry
+   installed, `foreign_types`/`register_foreign_type`, `registry.type_registry`);
+3. else the one key the registry's ports and adapters use it under (a port `type_key`, or
+   `register_boundary_type::<T>(key)` in the host).
+
+So `push::<Frame>` works when the frame's owner plugin installed after the consumer, but not in a
+graph whose registry never saw `Frame`, even if another registry in the process did. A type
+without a key fails instead of getting an order-dependent `rust:` key: `push` returns
+`FeedOutcome::Rejected(TypeKeyError::Unkeyed { .. })`, the binding and builder calls return the
+error, and `push_to` returns a `NodeError`, all naming the fixes (install the owner plugin, map it
+with `foreign_types`, give a port a `type_key`, or pass the key with `push_as`). A type used under
+several keys and owning none is `TypeKeyError::Ambiguous`. Graphs and builders made without a
+registry resolve builtins only; pass explicit keys there.
+
+The host bridge also checks fed payloads (`push_payload`, `bind_payload_input`, `push_as`,
+`feed_payload`, and the direct-lane entry points): a payload whose key the registry records for
+another Rust type is refused with `FeedOutcome::Rejected(TypeKeyError::RustTypeMismatch)`,
+``payload for `k` holds `A` but this graph expects `B` (built separately?)``, instead of failing
+in a node later. Payloads under unknown keys, bytes and foreign handles pass; the check compares
+one `u64` per feed and is skipped when the registry records no Rust types.
 
 ## Handler Inputs: Ask For The Type You Want
 
@@ -154,8 +195,9 @@ The glue is small and always has the same shape:
    `Payload::shared_with(FRAME_TYPE_KEY, Arc::new(frame), residency, layout, bytes)`, mapping
    the source's buffer kind to `Residency`: host memory → `Cpu`, externally owned buffers such as
    dmabuf → `External`, GPU textures → `Gpu`.
-5. **Feed the host bridge** through a typed input, `graph_builder.input_typed::<Frame>("frame")`,
-   with `push_payload` on a latest-only input so stale frames are replaced rather than queued.
+5. **Feed the host bridge** through a typed input, `graph_builder.input_typed::<Frame>("frame")?`
+   (resolved through the registry, see [Generic Pushes](#generic-pushes)), with `push_payload` on
+   a latest-only input so stale frames are replaced rather than queued.
 
 Nodes then take the frame type (or a view type reachable through adapters) directly, and the
 planner handles the rest. Host ports are generic unless declared: an undeclared host input takes
@@ -272,7 +314,8 @@ Rules:
   order-dependent `rust:` key.
 - **Register host-side types too.** A host that wraps a type in payloads should install the
   owner's plugin (or call `registry.register_boundary_type::<T>(key)`), so the registry records
-  which Rust type the key carries. Dynamic plugins are checked against it (see
+  which Rust type the key carries. Dynamic plugins and fed payloads are checked against it, and
+  `push::<T>` resolves the key (see [Generic Pushes](#generic-pushes) and
   [`docs/dynamic-plugins.md`](dynamic-plugins.md#types-owned-by-other-crates)).
 - **Provide `daedalus:frame` for frame types.** A frame owner implements `FrameSource` and
   registers the provider (`foreign_providers(...)` above), so nodes that only need pixels and
@@ -284,7 +327,7 @@ Rules:
 A Rust type is only the same type in two binaries when Cargo built its crate identically for
 both. A plugin built in its own cargo invocation can resolve a shared crate (say `styx-core`)
 with other features, so its `FrameLease` differs from the host's under the same key; install
-refuses such a plugin (`BoundaryTypeMismatch`). A **foreign interface** lets it consume the
+refuses such a plugin (`BoundaryTypeConflict`). A **foreign interface** lets it consume the
 host's values anyway, zero-copy, without sharing the Rust type:
 
 - **Interface**: a `#[repr(C)]` vtable of `extern "C"` accessors with a key, a version and a
@@ -367,6 +410,8 @@ than queued.
   `HostGraphStopHandle` on the async side, and call `stop()` to end the loop (it wakes the
   waiter). Feed inputs from async tasks through a cloned `HostBridgeHandle` (`graph.host()`).
   See the `drive` module docs in `daedalus-engine` for a full example.
+- **Typed feeds resolve through the graph's registry** (`push::<T>`, `bind_input::<T>`; see
+  [Generic Pushes](#generic-pushes)); a feed the bridge refuses returns `FeedOutcome::Rejected`.
 - **Port arguments:** write paths (`push*`, `set_*_policy`, `bind_input`/`bind_output`,
   `subscribe`) take `impl Into<PortId>`; read paths (`take*`, `drain*`, `latest`) take
   `impl AsRef<str>`. Build `PortId`s once (or use `bind_input`) in hot loops so pushes do not
