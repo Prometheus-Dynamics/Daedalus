@@ -2,12 +2,12 @@ use daedalus_engine::{
     Engine, EngineConfig, EngineConfigError, GpuBackend, RuntimeMode, RuntimeSection,
 };
 use daedalus_planner::{ExecutionPlan, Graph, NodeInstance};
+use daedalus_runtime::sync::Mutex;
 use daedalus_runtime::{
     RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
     config::RuntimeDebugConfig,
     executor::{NodeError, NodeHandler},
 };
-use parking_lot::Mutex;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},

@@ -1,4 +1,4 @@
-use parking_lot::Mutex;
+use daedalus_runtime::sync::Mutex;
 use std::sync::Arc;
 
 use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};

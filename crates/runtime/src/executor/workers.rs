@@ -76,7 +76,7 @@ impl WorkerPool {
 
 #[cfg(not(feature = "executor-pool"))]
 mod parked {
-    use parking_lot::{Condvar, Mutex};
+    use crate::sync::{Condvar, Mutex};
     use std::panic::{self, AssertUnwindSafe};
     use std::sync::Arc;
     use std::thread::JoinHandle;
@@ -180,7 +180,7 @@ mod parked {
                 Some(job) if state.unclaimed > 0 => {
                     state.unclaimed -= 1;
                     state.active += 1;
-                    parking_lot::MutexGuard::unlocked(&mut state, || {
+                    crate::sync::MutexGuard::unlocked(&mut state, || {
                         // SAFETY: `Finish` keeps the closure alive until `active` drops to zero.
                         let work = unsafe { &*job.0 };
                         let _ = panic::catch_unwind(AssertUnwindSafe(work));

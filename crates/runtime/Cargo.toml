@@ -21,11 +21,13 @@ path = "src/lib.rs"
 # Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
-boundary-features = ["gpu", "gpu-mock", "plugins"]
+boundary-features = ["gpu", "gpu-mock", "plugins", "std"]
 host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots"]
 
 [features]
-default = []
+default = ["std"]
+# Lock backend: `parking_lot` with `std`, `spin` without (see `daedalus_runtime::sync`).
+std = ["dep:parking_lot"]
 gpu = ["daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
 executor-pool = ["rayon"]
@@ -47,7 +49,8 @@ serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 rayon = { workspace = true, optional = true }
 smallvec = { workspace = true }
-parking_lot = { workspace = true }
+parking_lot = { workspace = true, optional = true }
+spin = { workspace = true, features = ["lock_api", "mutex"] }
 serde_json = { workspace = true, features = ["std"] }
 tracing = { workspace = true, features = ["std"] }
 

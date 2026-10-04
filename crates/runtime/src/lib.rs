@@ -26,6 +26,7 @@ pub mod snapshot;
 pub mod state;
 mod state_error;
 pub mod stream;
+pub mod sync;
 pub mod transport;
 pub mod type_index;
 pub use daedalus_transport as transport_types;

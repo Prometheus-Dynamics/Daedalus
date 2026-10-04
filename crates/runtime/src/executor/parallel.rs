@@ -5,7 +5,7 @@
 use daedalus_core::platform::Instant;
 use std::panic::{self, AssertUnwindSafe};
 
-use parking_lot::{Condvar, Mutex, MutexGuard};
+use crate::sync::{Condvar, Mutex, MutexGuard};
 use smallvec::SmallVec;
 
 use super::{

@@ -9,11 +9,11 @@ use std::time::{Duration, Instant};
 
 use daedalus_data::model::Value;
 use daedalus_planner::{ExecutionPlan, Graph, NodeInstance};
+use daedalus_runtime::sync::Mutex;
 use daedalus_runtime::{
     NODE_COST_META_KEY, NodeError, NodeHandler, OwnedExecutor, RuntimeNode, SchedulerConfig,
     build_runtime,
 };
-use parking_lot::Mutex;
 
 #[derive(Default)]
 struct Probe {

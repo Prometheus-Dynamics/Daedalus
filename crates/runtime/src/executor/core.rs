@@ -3,7 +3,7 @@ use super::{
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
 };
 use crate::state::StateStore;
-use parking_lot::Mutex;
+use crate::sync::Mutex;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::OnceLock;

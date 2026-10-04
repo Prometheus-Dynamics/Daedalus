@@ -1,4 +1,4 @@
-use parking_lot::{Condvar, Mutex};
+use crate::sync::{Condvar, Mutex};
 use std::collections::HashMap;
 use std::sync::Arc;
 

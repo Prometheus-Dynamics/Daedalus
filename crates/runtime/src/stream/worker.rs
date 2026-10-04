@@ -1,5 +1,5 @@
+use crate::sync::{Condvar, Mutex};
 use daedalus_core::platform::Instant;
-use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};

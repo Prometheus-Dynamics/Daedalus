@@ -1,5 +1,5 @@
+use crate::sync::Mutex;
 use daedalus_core::platform::Instant;
-use parking_lot::Mutex;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;

@@ -86,7 +86,7 @@ pub struct Engine {
     pub(crate) config: EngineConfig,
     caches: Arc<EngineCaches>,
     #[cfg(feature = "gpu")]
-    gpu_handle: parking_lot::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
+    gpu_handle: daedalus_runtime::sync::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
 }
 
 impl Engine {
@@ -104,7 +104,7 @@ impl Engine {
             ),
             config,
             #[cfg(feature = "gpu")]
-            gpu_handle: parking_lot::Mutex::new(None),
+            gpu_handle: daedalus_runtime::sync::Mutex::new(None),
         })
     }
 

@@ -1,4 +1,4 @@
-use parking_lot::Mutex;
+use daedalus_runtime::sync::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -1,7 +1,7 @@
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
 use crate::state::{ExecutionContext, ResourceLifecycleEvent, StateStore};
+use crate::sync::RwLock;
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
-use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;

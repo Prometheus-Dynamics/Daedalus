@@ -1,4 +1,4 @@
-use parking_lot::Mutex;
+use daedalus_runtime::sync::Mutex;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};

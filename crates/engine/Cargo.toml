@@ -18,7 +18,9 @@ workspace = true
 path = "src/lib.rs"
 
 [features]
-default = ["config-env", "executor-pool", "metrics"]
+default = ["config-env", "executor-pool", "metrics", "std"]
+# Lock backend of the runtime (see `daedalus_runtime::sync`).
+std = ["daedalus-runtime/std"]
 config-env = ["serde", "serde_json"]
 gpu = ["daedalus-runtime/gpu", "daedalus-planner/gpu", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-runtime/gpu-mock", "daedalus-gpu/gpu-mock"]
@@ -29,7 +31,6 @@ snapshots = ["daedalus-runtime/snapshots"]
 plugins = ["daedalus-runtime/plugins"]
 
 [dependencies]
-parking_lot = { workspace = true }
 daedalus-runtime = { version = "2.0.0", path = "../runtime", default-features = false }
 daedalus-core = { workspace = true, features = ["std"] }
 daedalus-data = { workspace = true, features = ["std", "json"] }
