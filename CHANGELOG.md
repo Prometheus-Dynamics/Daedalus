@@ -467,6 +467,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `examples/plugins/example_project_dylib`; `example_project` is a plain `rlib` without a `dylib`
   feature. `docs/dynamic-plugins.md` explains the rule, and `scripts/ci.sh features` and CI now
   run `cargo build --workspace --lib --all-features`, which links.
+- The graph JSON Schema's enum lists (`compute`, sync group `policy` and `backpressure`) are
+  generated from `ComputeAffinity::ALL`, `SyncPolicy::ALL` and `BackpressureStrategy::ALL`
+  (new in `daedalus-core`; an exhaustive match next to each fails to compile until a new variant
+  is listed), and a planner test validates a document using every variant against the schema.
 
 ## [2.0.0] - 2026-04-30
 

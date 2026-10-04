@@ -67,6 +67,8 @@ changes.
       that may not produce. Per-edge policies now also survive the scheduler default.
 - [x] **Typed host ports in embedded graphs.** Embedded-graph expansion and `nest` carry an
       inner host port's declared type to an undeclared outer host port wired to it.
+- [x] **Graph JSON Schema drift.** Enum lists come from each core type's `ALL` (guarded by an
+      exhaustive match), and a test validates every variant against the generated schema.
 - [x] **Enum config ports (Eidos).** `NodeConfig` enum fields and enum handler inputs failed
       with `missing <port>`: the engine never handed the registry's const coercers to its
       executors and owned/borrowed inputs never coerced `Value` constants. The node macros now
@@ -168,8 +170,6 @@ changes.
       acquire for compressed modifiers.
 - [ ] **`export_plugin!` boundary contracts** are registered at install time but are not in the
       exported schema.
-- [ ] **Graph JSON Schema** hand-copies `SyncGroup` variants from `daedalus-core`; derive them or add
-      a variant-drift test.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 

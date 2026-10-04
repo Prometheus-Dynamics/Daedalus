@@ -15,6 +15,16 @@ pub enum SyncPolicy {
     ZipByTag,
 }
 
+impl SyncPolicy {
+    /// Every variant, in declaration order (the graph JSON Schema lists them from here).
+    pub const ALL: [Self; 3] = [Self::AllReady, Self::Latest, Self::ZipByTag];
+}
+
+// A new variant fails to compile here until it is added to `ALL`.
+const _: fn(SyncPolicy) = |policy| match policy {
+    SyncPolicy::AllReady | SyncPolicy::Latest | SyncPolicy::ZipByTag => {}
+};
+
 /// Sync grouping metadata for a node.
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
