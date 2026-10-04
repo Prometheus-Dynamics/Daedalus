@@ -1,5 +1,6 @@
 #[cfg(feature = "plugins")]
 use parking_lot::Mutex;
+#[cfg(feature = "plugins")]
 use std::sync::Arc;
 #[cfg(all(feature = "plugins", feature = "gpu-mock"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
