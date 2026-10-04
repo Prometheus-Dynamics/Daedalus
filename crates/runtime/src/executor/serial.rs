@@ -93,7 +93,17 @@ fn run_order_timed<H: NodeHandler>(
         let _node_span = node_span.enter();
         let cost_start = costs.is_some().then(Instant::now);
 
-        let inputs = collect_inputs(exec, node_idx)?;
+        let wait_all = exec
+            .core
+            .required_inputs
+            .get(node_idx)
+            .is_some_and(|required| required.wait_all);
+        if wait_all && !required_inputs_held(exec, node_idx) {
+            // `fire = "all"`: wait without popping, so what arrived stays queued for a later tick.
+            tracing::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node waiting for inputs");
+            continue;
+        }
+        let inputs = collect_inputs(exec, node_idx, wait_all)?;
         if !required_inputs_ready(exec, node_idx, &inputs) {
             // Not ready this tick: a connected required input has no value (its producer was
             // skipped or pushed nothing). Optional inputs never block.
@@ -312,12 +322,31 @@ fn required_inputs_ready<H: NodeHandler>(
     let Some(required) = exec.core.required_inputs.get(node_idx) else {
         return true;
     };
-    required.iter().all(|&edge_idx| {
+    required.edges.iter().all(|&edge_idx| {
         !edge_is_active(exec, edge_idx)
             || exec.edges.get(edge_idx).is_none_or(|edge| {
                 let port = edge.target_port_id();
                 inputs.iter().any(|(name, _)| name == port)
             })
+    })
+}
+
+/// Whether every active required input edge of `node_idx` holds a value (peeked, nothing
+/// popped), for [`NodeFire::All`](crate::plan::NodeFire::All) nodes.
+fn required_inputs_held<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize) -> bool {
+    let Some(required) = exec.core.required_inputs.get(node_idx) else {
+        return true;
+    };
+    required.edges.iter().all(|&edge_idx| {
+        !edge_is_active(exec, edge_idx)
+            || if edge_uses_direct_slot(exec, edge_idx) {
+                exec.core
+                    .direct_slots
+                    .get(edge_idx)
+                    .is_some_and(|slot| slot.access(exec.direct_slot_access).occupied())
+            } else {
+                super::queue::edge_has_payload(edge_idx, &exec.core.queues)
+            }
     })
 }
 

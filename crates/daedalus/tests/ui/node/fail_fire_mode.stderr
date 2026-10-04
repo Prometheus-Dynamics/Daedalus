@@ -1,0 +1,7 @@
+error: fire must be "any" or "all"
+ --> tests/ui/node/fail_fire_mode.rs:3:1
+  |
+3 | #[node(id = "ui.fire", inputs("a"), outputs("out"), fire = "every")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `node` (in Nightly builds, run with -Z macro-backtrace for more info)

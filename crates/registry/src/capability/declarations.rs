@@ -430,6 +430,55 @@ pub const NODE_EXECUTION_KIND_META_KEY: &str = "daedalus.node.execution";
 /// [optional](PortDecl#structfield.optional) inputs (a list of strings): the runtime runs the node
 /// only on ticks where each of them that is connected has a value.
 pub const NODE_REQUIRED_INPUTS_META_KEY: &str = "daedalus.node.required_inputs";
+/// Node metadata choosing when the node fires ([`NodeFire`]): the string `"any"` (default) or
+/// `"all"`. Set on a declaration (`#[node(fire = "all")]`) or on a graph node (`fire_all`).
+pub const NODE_FIRE_META_KEY: &str = "daedalus.node.fire";
+
+/// When a node with [required inputs](NODE_REQUIRED_INPUTS_META_KEY) fires.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeFire {
+    /// Fire on a tick where every connected required input received a value; on other ticks
+    /// the node is skipped and what arrived on its ports that tick is dropped.
+    #[default]
+    Any,
+    /// Wait until every connected required input has a value: until then nothing is popped,
+    /// so values that arrived stay queued in their edges across ticks (a cross-tick join).
+    All,
+}
+
+impl NodeFire {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NodeFire::Any => "any",
+            NodeFire::All => "all",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "any" => Some(NodeFire::Any),
+            "all" => Some(NodeFire::All),
+            _ => None,
+        }
+    }
+
+    /// The mode in node `metadata` ([`NODE_FIRE_META_KEY`]); absent or unknown is `Any`.
+    pub fn from_metadata(metadata: &BTreeMap<String, Value>) -> Self {
+        metadata
+            .get(NODE_FIRE_META_KEY)
+            .and_then(Value::as_str)
+            .and_then(Self::parse)
+            .unwrap_or_default()
+    }
+
+    pub fn write_to_metadata(self, metadata: &mut BTreeMap<String, Value>) {
+        metadata.insert(
+            NODE_FIRE_META_KEY.to_string(),
+            Value::String(self.as_str().into()),
+        );
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

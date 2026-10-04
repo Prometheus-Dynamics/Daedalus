@@ -23,3 +23,15 @@ pub enum BackpressureStrategy {
     /// the executor's fail-fast configuration.
     ErrorOnOverflow,
 }
+
+impl BackpressureStrategy {
+    /// Every variant, in declaration order (the graph JSON Schema lists them from here).
+    pub const ALL: [Self; 3] = [Self::None, Self::BoundedQueues, Self::ErrorOnOverflow];
+}
+
+// A new variant fails to compile here until it is added to `ALL`.
+const _: fn(&BackpressureStrategy) = |strategy| match strategy {
+    BackpressureStrategy::None
+    | BackpressureStrategy::BoundedQueues
+    | BackpressureStrategy::ErrorOnOverflow => {}
+};
