@@ -1,6 +1,13 @@
 //! Translation between the backend-neutral [`GpuFormat`]/[`GpuUsage`] and wgpu types.
 
-use crate::{GpuFormat, GpuUsage};
+use crate::{GpuError, GpuFormat, GpuUsage};
+
+/// A mapped-range view that cannot be produced (wgpu 30 `get_mapped_range*`).
+impl From<wgpu::MapRangeError> for GpuError {
+    fn from(err: wgpu::MapRangeError) -> Self {
+        GpuError::Internal(err.to_string())
+    }
+}
 
 /// wgpu format of a [`GpuFormat`].
 pub(crate) fn map_format(format: GpuFormat) -> wgpu::TextureFormat {

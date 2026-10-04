@@ -504,7 +504,7 @@ impl GpuBackend for WgpuBackend {
         rx.recv()
             .map_err(|err| GpuError::Internal(format!("texture map canceled: {err}")))?
             .map_err(|err| GpuError::Internal(format!("texture map failed: {err:?}")))?;
-        let raw = slice.get_mapped_range().to_vec();
+        let raw = slice.get_mapped_range()?.to_vec();
         staging.unmap();
         let data = if padded_bpr == bytes_per_row {
             raw
@@ -573,7 +573,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
         crate::shader::map_read_async(&self.device, buffer_slice)
             .await
             .map_err(|err| GpuError::Internal(format!("map failed: {err}")))?;
-        let data = buffer_slice.get_mapped_range().to_vec();
+        let data = buffer_slice.get_mapped_range()?.to_vec();
         staging.unmap();
         self.record_download(data.len() as u64);
         // Return staging to pool

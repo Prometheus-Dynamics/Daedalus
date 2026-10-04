@@ -235,7 +235,7 @@ pub(crate) async fn resolve_readbacks_async(
     {
         let slice = buffer.slice(..);
         {
-            let data = slice.get_mapped_range();
+            let data = slice.get_mapped_range()?;
             if is_texture {
                 let mut trimmed = Vec::with_capacity(row_bytes * height as usize);
                 for row in 0..height as usize {

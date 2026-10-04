@@ -289,9 +289,11 @@ pub(in crate::wgpu_backend) fn import(
     // SAFETY: the hal texture was created on this device with exactly `wgpu_desc`'s extent,
     // format, and usages, and its memory is bound to initialized (imported) contents.
     let texture = unsafe {
-        backend
-            .device
-            .create_texture_from_hal::<Vulkan>(hal_texture, &wgpu_desc)
+        backend.device.create_texture_from_hal::<Vulkan>(
+            hal_texture,
+            &wgpu_desc,
+            wgpu::wgt::TextureUses::UNINITIALIZED,
+        )
     };
     let mut handle =
         backend.register_gpu_texture(Arc::new(texture), layout.format, width, height, usage.wgpu);

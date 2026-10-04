@@ -100,7 +100,7 @@ tempfile = "3.27.0"
 thiserror = { version = "2.0.18", default-features = false }
 tokio = { version = "1.52.1", features = ["rt", "macros", "sync"] }
 trybuild = "1.0.116"
-wgpu = { version = "29.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
 futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = { version = "0.1.44", default-features = false }

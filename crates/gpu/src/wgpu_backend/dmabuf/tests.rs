@@ -494,7 +494,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             .slice(..)
             .map_async(wgpu::MapMode::Read, |res| res.expect("map"));
         device_poll(backend);
-        let view = readback.slice(..).get_mapped_range();
+        let view = readback.slice(..).get_mapped_range().expect("mapped range");
         let words = bytemuck::cast_slice::<u8, u32>(&view).to_vec();
         drop(view);
         readback.unmap();
