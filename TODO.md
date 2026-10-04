@@ -101,6 +101,9 @@ changes.
       `StateStore` slots instead of formatting a key per call, and configs and `&T` constants are
       decoded once per change (`daedalus_runtime::const_cache`), so the detector graph frame is
       its 31 payload allocations.
+- [x] **Java and C++ SDK integer widths.** Both SDKs declare width-exact scalars (Java
+      `@Scalar` for unsigned widths, C++ `daedalus::signature<F>()`); the host range-checks
+      worker outputs. C++ nodes without a signature still fall back to `Int`/`Bytes`.
 - [x] **Owned constants decode once.** Owned `T`/`Option<T>` parameters fed a non-builtin
       constant clone the value decoded into the per-node cache (`T: Clone`, probed by the macro)
       instead of converting it every call.
@@ -168,9 +171,6 @@ changes.
       a variant-drift test.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
-- [ ] **Java and C++ SDK integer widths.** Their schemas still map every integer to `Int`
-      (`i64`); map `int`/`short`/`byte` (Java) and the C++ widths to their own value types like
-      the node SDK does.
 
 ### Low priority
 - [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.

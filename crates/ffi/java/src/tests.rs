@@ -298,3 +298,38 @@ fn complete_java_package_emits_lockfile_hash_and_language_metadata() {
     );
     assert_eq!(lock.artifacts.len(), 3);
 }
+
+/// Compiles the Java SDK with `PackageBuilderTest` (descriptor shape and width-exact port types)
+/// and runs it; skipped when no JDK is installed.
+#[test]
+fn java_sdk_package_builder_test_passes() {
+    use std::process::Command;
+    let javac = std::env::var("JAVAC").unwrap_or_else(|_| "javac".into());
+    let java = std::env::var("JAVA").unwrap_or_else(|_| "java".into());
+    if Command::new(&javac).arg("--version").output().is_err() {
+        return;
+    }
+    let sdk = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk/src");
+    let mut sources = Vec::new();
+    for set in ["main", "test"] {
+        for entry in std::fs::read_dir(sdk.join(set).join("java/dev/daedalus/plugin")).unwrap() {
+            sources.push(entry.unwrap().path());
+        }
+    }
+    let classes = std::env::temp_dir().join(format!("daedalus-java-sdk-{}", std::process::id()));
+    let compiled = Command::new(&javac)
+        .arg("-d")
+        .arg(&classes)
+        .args(&sources)
+        .status()
+        .expect("spawn javac");
+    assert!(compiled.success(), "javac failed for the Java SDK");
+    let ran = Command::new(&java)
+        .args(["-ea", "-cp"])
+        .arg(&classes)
+        .arg("dev.daedalus.plugin.PackageBuilderTest")
+        .status()
+        .expect("spawn java");
+    let _ = std::fs::remove_dir_all(&classes);
+    assert!(ran.success(), "Java SDK PackageBuilderTest failed");
+}

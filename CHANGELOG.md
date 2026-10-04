@@ -180,6 +180,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- The Java and C++ FFI SDKs declare width-exact scalar ports like the Rust and Node SDKs (they
+  mapped every integer to `Int`). Java: `byte`/`short`/`char`/`int`/`long`/`float`/`double` map to
+  `I8`/`I16`/`U16`/`I32`/`Int`/`F32`/`Float`; Java has no unsigned types, so `@Scalar("u32")`
+  (on a parameter, or on the method for its output) declares unsigned and pointer-sized widths;
+  other `Number` types (`BigInteger`, ...) are rejected, and a single output is typed by the return
+  type. C++: `daedalus::TypeExprOf<T>` and the `daedalus::signature<F>()` registration option type
+  ports from the function signature (fixed-width integers, `float`/`double`, strings, bytes,
+  `optional`/`vector`/`map`/`tuple`, `daedalus_type_key` opaque types); nodes without a signature
+  keep the name-based `Bytes`/`Int` fallback. On the host, `WireValue::check_type` range-checks
+  worker outputs against the exact width and `DecodedInvokeResponse::payload_output` takes the
+  `WirePort` (keyed by its transport key, `ResponseDecodeError::OutputType` on a misfit).
 - One transport key per builtin Rust number. `ValueType` gains `I8`, `I16`, `ISize`, `U8`,
   `U16`, `U64` and `USize` (`Int` is `i64`, `Float` is `f64`, next to the existing `I32`, `U32`
   and `F32`), and every builtin integer and float maps to its own value type, so

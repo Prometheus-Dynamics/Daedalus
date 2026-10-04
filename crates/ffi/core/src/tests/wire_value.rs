@@ -460,3 +460,28 @@ fn payload_to_wire_reports_unsupported_payload_storage() {
             if type_key == "demo:u32"
     ));
 }
+
+#[test]
+fn wire_value_check_type_enforces_exact_widths_through_containers() {
+    use daedalus_data::model::ValueType;
+    let pair = TypeExpr::Tuple(vec![
+        TypeExpr::scalar(ValueType::U8),
+        TypeExpr::scalar(ValueType::F32),
+    ]);
+    let table = TypeExpr::map(
+        TypeExpr::scalar(ValueType::String),
+        TypeExpr::scalar(ValueType::I16),
+    );
+    let record = |value| WireValue::Record(BTreeMap::from([("a".into(), WireValue::Int(value))]));
+    let pair_value = |first| WireValue::List(vec![WireValue::Int(first), WireValue::Float(0.25)]);
+
+    assert!(pair_value(255).check_type(&pair).is_ok());
+    assert!(pair_value(256).check_type(&pair).is_err());
+    assert!(record(-32768).check_type(&table).is_ok());
+    assert!(record(40_000).check_type(&table).is_err());
+    assert!(
+        WireValue::Bool(true)
+            .check_type(&TypeExpr::scalar(ValueType::Bool))
+            .is_ok()
+    );
+}
