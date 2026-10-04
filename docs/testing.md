@@ -42,7 +42,7 @@ cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 | `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`) |
 | `aarch64` | `cargo check --target aarch64-unknown-linux-gnu` (see below) |
 | `lean` | lean-preset tests (see below) |
-| `nostd`, `wasm` | `no_std` check of the tier-1 crates; wasm embedded-preset check and Node smoke run (see below) |
+| `nostd`, `wasm` | `no_std` check of the tier-1 crates; wasm `engine,plugins` check and Node smoke run (see below) |
 | `bench` | host bridge and executor criterion benches (see below) |
 
 ### aarch64
@@ -66,11 +66,14 @@ checked: it needs target `libcamera` via pkg-config.
 scripts/ci.sh lean
 # = cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets --no-default-features \
 #     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"
+#   then runtime + engine without `threads`:
+#   cargo test -p daedalus-runtime -p daedalus-engine --all-targets --no-default-features \
+#     --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
 ```
 
 `cargo test --workspace` unifies features across members, and `daedalus-daemon` enables the
-executor pool and metrics, so workspace tests never exercise the serial/scoped-thread executor
-or no-op telemetry. The lean run selects only the facade, engine, and runtime crates (never the
+executor pool and metrics, so workspace tests never exercise the parked-thread worker path, the
+serial-only (no `threads`) build or no-op telemetry. The lean run selects only the facade, engine, and runtime crates (never the
 daemon) with default features off. Verify with `cargo tree -i rayon` using the same flags: rayon
 should only appear under criterion.
 
@@ -82,9 +85,11 @@ scripts/ci.sh nostd wasm
 
 `nostd` checks `daedalus-core`, `-transport`, `-data`, `-registry` and `-planner` with
 `--no-default-features` for `thumbv7em-none-eabihf`, once bare and once with their alloc-only
-optional features. `wasm` checks the facade `embedded` preset for `wasm32-unknown-unknown`,
+optional features. `wasm` checks the facade's `engine,plugins` (the `embedded` preset without
+`threads`) for `wasm32-unknown-unknown`,
 builds `examples/wasm_smoke` (a `cdylib` with no imports) in release mode, and runs it with
-`node scripts/wasm-smoke.mjs`: serial, parallel and adaptive runs of a fan-out graph must match.
+`node scripts/wasm-smoke.mjs`: serial, parallel and adaptive runs of a fan-out graph, timed by an
+injected `Clock`, must match.
 A panic (say, a direct `std::time::Instant::now()` on the runtime path) traps and fails the run.
 Without `node` the run is skipped after the build. The script adds both rustup targets if
 missing; the `portability` CI job runs both subcommands. See

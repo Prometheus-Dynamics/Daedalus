@@ -55,7 +55,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   supports it, otherwise `UnsupportedFormat` for per-plane fallback (`texture_plane_views`,
   `format_planes`).
 - Facade presets `executor-pool`, `metrics`, `engine-full` (`engine` + `executor-pool` +
-  `metrics`) and `embedded` (`engine` + `plugins`).
+  `metrics`) and `embedded` (`engine` + `plugins` + `threads`).
 - Keys for types owned by other crates: `inputs(port(name = "...", type_key = "..."))` /
   `outputs(port(...))` set a port's key, `#[plugin(foreign_types(Type = "key"))]` and
   `PluginRegistry::register_foreign_type::<T>(key)` map a foreign type that declares no key.
@@ -159,12 +159,25 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Portability tier 1 (see "Portability" in `docs/development.md`): `daedalus-core`,
   `daedalus-transport`, `daedalus-data`, `daedalus-registry` and `daedalus-planner` have a default
   `std` feature and build `no_std` + `alloc` without it (checked on `thumbv7em-none-eabihf`).
-  `daedalus_core::platform` exports `THREADS`, `OS_CLOCK`, `Instant` (`std::time::Instant` where
-  the target has an OS clock, else a portable instant) and, without an OS clock, `set_clock`.
-  The `embedded` preset runs on `wasm32-unknown-unknown`: `Parallel`/`Adaptive` run serially
-  without threads, blocking host-bridge waits return when nothing is queued, and runtime/engine
-  timing reads `platform::Instant`. `scripts/ci.sh nostd` / `wasm` and a `portability` CI job
-  check both, the latter by running `examples/wasm_smoke` in Node.
+  `daedalus_core::platform` exports `OS_CLOCK`, `Instant` (`std::time::Instant` where the
+  target has an OS clock, else a portable instant) and, without an OS clock, `set_clock`.
+  The `embedded` preset without `threads` (`engine,plugins`) runs on `wasm32-unknown-unknown`.
+  `scripts/ci.sh nostd` / `wasm` and a `portability` CI job check both, the latter by running
+  `examples/wasm_smoke` in Node.
+- Portability tier 2, first steps:
+  - `threads` feature (default) on `daedalus-runtime`, `daedalus-engine` and the facade (kept by
+    `embedded`; host-only in the plugin fingerprint). Without it `Parallel`/`Adaptive` run
+    serially and the worker pool, `StreamGraph::spawn_continuous*`/`StreamGraphWorker`,
+    `InboundWaiter::wait`, `HostBridgeHandle::{wait_inbound, recv_payload_timeout}`,
+    `GraphOutput::recv_timeout`, `prewarm_worker_pool` and
+    `HostGraph::{wait_for_input, tick_on_input, drive_blocking}` do not exist. Enabling it on a
+    wasm target without threads is a compile error.
+  - `daedalus_runtime::sync`: the runtime's and engine's `lock_api` locks, `parking_lot` with the
+    runtime's new `std` feature (implied by `threads`; a boundary feature) and `spin` without.
+  - `daedalus_core::platform::Clock` (platform clock by default, or `Clock::new(fn -> Duration)`),
+    set per engine with `EngineConfig::with_clock` (re-exported as `daedalus_engine::Clock`) or
+    on `Executor`/`OwnedExecutor`/`StreamGraph::with_clock`; executor telemetry, adaptive costs,
+    edge timings, stream and `HostGraph` step timings read it.
 
 ### Fixed
 
@@ -196,9 +209,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   crates, and `daedalus-transport` (which now depends on `daedalus-core`) joins the plugin build
   fingerprint (`features.transport`). `daedalus-engine` inherits planner and registry from the
   workspace. Planner-internal hash maps are `BTreeMap`s.
-- On targets without threads (`daedalus_core::platform::THREADS == false`),
-  `InboundWaiter::wait(None)` and `StreamGraph::spawn_continuous*` panic with a message instead
-  of failing inside `parking_lot`/`std::thread`.
+- `daedalus-runtime` and the facade are declared in `[workspace.dependencies]` without default
+  features (members enable `threads`/`std` themselves), so `daedalus-engine` inherits the
+  runtime from the workspace. `dylib-plugins` enables the runtime's `std`, so plugin and host
+  agree on the lock backend. `set_clock` is now only the process-wide fallback for payload
+  lineage and host-bridge event timestamps; engines take their own `Clock`.
 - The Java and C++ FFI SDKs declare width-exact scalar ports like the Rust and Node SDKs (they
   mapped every integer to `Int`). Java: `byte`/`short`/`char`/`int`/`long`/`float`/`double` map to
   `I8`/`I16`/`U16`/`I32`/`Int`/`F32`/`Float`; Java has no unsigned types, so `@Scalar("u32")`
