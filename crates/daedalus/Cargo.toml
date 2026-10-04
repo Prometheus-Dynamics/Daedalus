@@ -133,6 +133,11 @@ path = "tests/adapt_macro.rs"
 required-features = ["plugins"]
 
 [[test]]
+name = "foreign_type_keys"
+path = "tests/foreign_type_keys.rs"
+required-features = ["plugins"]
+
+[[test]]
 name = "fanin_inputs_macro"
 path = "tests/fanin_inputs_macro.rs"
 required-features = ["plugins"]

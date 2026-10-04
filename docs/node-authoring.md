@@ -37,6 +37,28 @@ A `TypeExpr` is never the carrier. It is the portable description of it.
 Register types, nodes, and adapters through a plugin (`#[plugin(...)]` or `declare_plugin!`) so
 everything lands in the `PluginRegistry` the engine compiles from.
 
+### How Port Keys Resolve
+
+`#[node]` and `#[adapt]` give every port (and adapter end) a `TypeKey`, in this order:
+
+1. An explicit key: `inputs(port(name = "frame", type_key = "styx:framelease"))` (same for
+   `outputs(port(...))`), `#[adapt(from = "...", to = "...")]`, or a full schema with
+   `port(name = "...", ty = <TypeExpr>)`.
+2. The key the type owns (`#[type_key]`, `#[derive(DaedalusTypeExpr)]`). It is resolved at compile
+   time through the type's trait impl, so it never depends on which plugin installed first.
+3. The typing registry: `#[plugin(foreign_types(Type = "key"))]` (see below) or
+   `daedalus::data::typing::register_type`.
+4. Builtins (integers, floats, `bool`, `String`, `Vec<u8>`, `()`) and structural containers
+   (`Vec<T>`, `Option<T>`, tuples). `&T`, `Arc<T>`, `Cpu<T>` and `Gpu<T>` use `T`'s key.
+5. Otherwise the fallback `rust:<type path>`. Whether a registry entry exists depends on what
+   ran first, so for a type defined in **another crate** the fallback is an error at install:
+   `PluginError::UnkeyedForeignType` names the node (or adapter), the port and the Rust type,
+   and lists the fixes. Types from the node's own crate and from `std` keep the fallback.
+
+Handlers push outputs under the same key the port declares. Each port's Rust type is recorded per
+key (`PluginRegistry::boundary_types()`); one key used for two different Rust types fails with
+`PluginError::BoundaryTypeConflict`.
+
 ## Handler Inputs: Ask For The Type You Want
 
 Write handlers against the type the algorithm needs. The macro generates the fetch code; the
@@ -103,10 +125,12 @@ materialization.
 
 ## Integrating An External Frame Source
 
-Daedalus does not depend on any camera or media library. Integration with a frame source (a
-camera stack, a decoder, a compositor) belongs in a small glue module in the application that
-uses both, or in a standalone bridge crate if several applications share it. Neither library
-should depend on the other.
+Daedalus does not depend on any camera or media library. When the library that defines the frame
+type ships an optional `daedalus` integration feature (see
+[Library-Owned Integration Features](#library-owned-integration-features)), enable it and skip
+steps 1–3. Otherwise the integration with a frame source (a camera stack, a decoder, a
+compositor) belongs in a small glue module in the application that uses both, or in a standalone
+bridge crate if several applications share it.
 
 The glue is small and always has the same shape:
 
@@ -148,6 +172,102 @@ fourcc/modifier) into a GPU image that aliases the producer's memory, holding a 
 producer's buffer lease) until the GPU is done. Check `supports_dmabuf_import()` first and fall
 back to a CPU upload otherwise. See "Importing external frames (dmabuf)" in
 [`crates/gpu/README.md`](../crates/gpu/README.md).
+
+## Library-Owned Integration Features
+
+When several crates exchange one type through Daedalus (a camera library's `FrameLease`, consumed
+by an image-processing library's nodes and by an application's plugins), **the crate that
+defines the type owns its type key and its Daedalus registration**, behind an optional `daedalus`
+feature. Daedalus never depends on that crate; the crate optionally depends on Daedalus.
+
+The owning crate (here `styx-core`):
+
+```toml
+[features]
+daedalus = ["dep:daedalus"]
+
+[dependencies]
+daedalus = { package = "daedalus-rs", version = "2", optional = true, features = ["plugins"] }
+```
+
+```rust
+// src/frame.rs: the key is part of the type, so every consumer resolves it the same way.
+#[cfg_attr(feature = "daedalus", daedalus::type_key("styx:framelease"))]
+pub struct FrameLease { /* ... */ }
+
+#[cfg_attr(feature = "daedalus", derive(daedalus::DaedalusTypeExpr, daedalus::DaedalusToValue))]
+#[cfg_attr(feature = "daedalus", daedalus(type_key = "styx:frame_meta"))]
+pub struct FrameMeta { pub width: u32, pub height: u32, /* format, planes, ... */ }
+
+// src/lib.rs
+#[cfg(feature = "daedalus")]
+pub mod daedalus_integration;
+
+// src/daedalus_integration.rs: everything else Daedalus needs to know about the type, once.
+use daedalus::data::to_value::ToValue;
+use daedalus::runtime::plugins::{PluginInstallContext, PluginResult};
+
+pub const FRAME_LEASE_KEY: &str = "styx:framelease";
+
+#[daedalus::plugin(
+    id = "styx",
+    types(crate::FrameLease),
+    values(crate::FrameMeta),
+    adapters(lease_to_meta),
+    install = install
+)]
+pub struct StyxPlugin;
+
+#[daedalus::adapt(id = "styx.lease_to_meta", kind = daedalus::transport::AdapterKind::MetadataOnly)]
+fn lease_to_meta(
+    lease: &crate::FrameLease,
+) -> Result<crate::FrameMeta, daedalus::transport::TransportError> {
+    Ok(lease.meta())
+}
+
+fn install(registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
+    registry.register_value_serializer::<crate::FrameLease, _>(|lease| lease.meta().to_value());
+    Ok(())
+}
+```
+
+Every other crate enables that feature instead of registering the type again:
+
+```toml
+# eidos (ships its ops as nodes), or an application's plugin crate
+styx-core = { version = "...", features = ["daedalus"] }
+```
+
+```rust
+#[node(id = "to_gray", inputs("frame"), outputs("gray"))]
+fn to_gray(frame: &styx_core::FrameLease) -> Result<Gray8, NodeError> { /* ... */ }
+
+// `deps` makes the requirement explicit: freezing a registry without the styx plugin fails with a
+// missing-dependency error. The install order of the two plugins does not matter.
+#[plugin(id = "eidos", deps("styx"), nodes(to_gray))]
+pub struct EidosPlugin;
+```
+
+The port key of `to_gray`'s `frame` is `styx:framelease` because `FrameLease` owns it, even when
+`EidosPlugin` installs before `StyxPlugin`. The host installs `StyxPlugin` and wraps frames with
+`Payload::shared_with(styx_core::daedalus_integration::FRAME_LEASE_KEY, Arc::new(lease), ...)`.
+
+Rules:
+
+- **Never mint a second key for someone else's type.** Two keys for one type split the graph into
+  incompatible halves; two types under one key fail with `BoundaryTypeConflict` (or worse, at
+  runtime). Enable the owner's `daedalus` feature.
+- **When the owner has no integration yet**, declare a key where you use the type:
+  `#[plugin(foreign_types(styx_core::FrameLease = "styx:framelease"))]` registers the mapping
+  into the plugin's registry before its nodes install, and
+  `inputs(port(name = "frame", type_key = "styx:framelease"))` sets it for a single port. Pick the
+  key the owner would use and move to the owner's feature once it exists. A type from another
+  crate with no key at all fails install (`UnkeyedForeignType`) instead of silently getting an
+  order-dependent `rust:` key.
+- **Register host-side types too.** A host that wraps a type in payloads should install the
+  owner's plugin (or call `registry.register_boundary_type::<T>(key)`), so the registry records
+  which Rust type the key carries. Dynamic plugins are checked against it (see
+  [`docs/dynamic-plugins.md`](dynamic-plugins.md#types-owned-by-other-crates)).
 
 ## Nodes And Profiling
 

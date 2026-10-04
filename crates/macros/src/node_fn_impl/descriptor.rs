@@ -5,6 +5,7 @@ use syn::LitStr;
 use super::parse::{OutputPortMeta, PortMeta};
 use super::type_analysis::{contract_type_for, node_type_expr, peel_result_or_option};
 use crate::helpers::{generic_arg, last_ident_is, last_segment, strip_ref};
+use crate::type_expr::leaf_type_expr;
 
 pub(super) fn is_fanin_ty(ty: &syn::Type) -> bool {
     last_ident_is(strip_ref(ty), "FanIn")
@@ -244,7 +245,7 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
                 let ty_expr = if let Some(ty) = port.ty_override.as_ref() {
                     quote! { (#ty) }
                 } else {
-                    quote! { #data_crate::typing::type_expr::<#contract_ty>() }
+                    leaf_type_expr(contract_ty, data_crate)
                 };
                 Some(boundary_contract_push(
                     ty_expr,
@@ -267,7 +268,7 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
                     if let Some(ts) = outputs.get(idx).and_then(|port| port.ty_override.as_ref()) {
                         quote! { (#ts) }
                     } else {
-                        quote! { #data_crate::typing::type_expr::<#contract_ty>() }
+                        leaf_type_expr(contract_ty, data_crate)
                     };
                 Some(boundary_contract_push(
                     ty_expr,

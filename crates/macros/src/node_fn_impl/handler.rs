@@ -9,6 +9,7 @@ use super::handler_fetch;
 use super::parse::PortMeta;
 use super::shader;
 use super::type_analysis::{ok_type_from_return, payload_inner_type};
+use crate::type_expr::value_type_key;
 
 pub(super) struct GraphCtxArg {
     pub(super) ident: syn::Ident,
@@ -21,6 +22,8 @@ pub(super) struct HandlerInputs<'a> {
     pub(super) inputs_vec: &'a [PortMeta],
     pub(super) outputs_len: usize,
     pub(super) output_names: &'a [LitStr],
+    /// Explicit `type_key` per output port.
+    pub(super) output_type_keys: &'a [Option<LitStr>],
     pub(super) output_idents: &'a [syn::Ident],
     pub(super) config_types: &'a [syn::Type],
     pub(super) shader_path: Option<&'a LitStr>,
@@ -56,6 +59,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         inputs_vec,
         outputs_len,
         output_names,
+        output_type_keys,
         output_idents,
         config_types,
         shader_path,
@@ -367,23 +371,12 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         .iter()
                         .zip(out_ports.iter())
                         .zip(out_idents.iter())
-                        .map(|((elem_ty, port), ident)| {
+                        .zip(output_type_keys.iter())
+                        .map(|(((elem_ty, port), ident), key)| {
                             if let Some(inner) = payload_inner_type(elem_ty) {
                                 quote! { io.push_compute::<#inner>(Some(#port), #ident); }
-                            } else if let Some(inner) = arc_inner_type(elem_ty) {
-                                quote! {
-                                    {
-                                        let __key = #runtime_crate::transport::type_key_of::<#inner>();
-                                        io.push_arc_as(Some(#port), __key, #ident);
-                                    }
-                                }
                             } else {
-                                quote! {
-                                    {
-                                        let __key = #runtime_crate::transport::type_key_of::<#elem_ty>();
-                                        io.push_as(Some(#port), __key, #ident);
-                                    }
-                                }
+                                push_output(elem_ty, port, key.as_ref(), quote! { #ident })
                             }
                         })
                         .collect(),
@@ -417,21 +410,8 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                     })
                     .unwrap_or_else(|| {
                         if let Some(ok_ty) = ok_ty.as_ref() {
-                            if let Some(inner) = arc_inner_type(ok_ty) {
-                                quote! {
-                                    {
-                                        let __key = #runtime_crate::transport::type_key_of::<#inner>();
-                                        io.push_arc_as(Some(#out_port), __key, val);
-                                    }
-                                }
-                            } else {
-                                quote! {
-                                    {
-                                        let __key = #runtime_crate::transport::type_key_of::<#ok_ty>();
-                                        io.push_as(Some(#out_port), __key, val);
-                                    }
-                                }
-                            }
+                            let key = output_type_keys.first().and_then(Option::as_ref);
+                            push_output(ok_ty, &out_port, key, quote! { val })
                         } else {
                             quote! {
                                 {
@@ -584,4 +564,23 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         node_io_present,
         shader_ctx_present,
     })
+}
+
+/// Push `value` (of type `ty`, or `Arc` of it) to `port` under its explicit or leaf type key.
+fn push_output(
+    ty: &syn::Type,
+    port: &LitStr,
+    explicit: Option<&LitStr>,
+    value: TokenStream,
+) -> TokenStream {
+    match arc_inner_type(ty) {
+        Some(inner) => {
+            let key = value_type_key(inner, explicit);
+            quote! { io.push_arc_as(Some(#port), #key, #value); }
+        }
+        None => {
+            let key = value_type_key(ty, explicit);
+            quote! { io.push_as(Some(#port), #key, #value); }
+        }
+    }
 }

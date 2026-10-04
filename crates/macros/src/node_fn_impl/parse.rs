@@ -14,6 +14,8 @@ pub(super) struct PortMeta {
     pub(super) source: Option<LitStr>,
     pub(super) default_value: Option<TokenStream>,
     pub(super) ty_override: Option<TokenStream>,
+    /// Explicit transport key (`type_key = "..."`); also reflected in `ty_override`.
+    pub(super) type_key: Option<LitStr>,
     pub(super) description: Option<LitStr>,
     pub(super) meta: Vec<(LitStr, Lit)>,
 }
@@ -25,6 +27,7 @@ impl PortMeta {
             source: None,
             default_value: None,
             ty_override: None,
+            type_key: None,
             description: None,
             meta: Vec::new(),
         }
@@ -36,6 +39,8 @@ pub(super) struct OutputPortMeta {
     pub(super) name: LitStr,
     pub(super) source: Option<LitStr>,
     pub(super) ty_override: Option<TokenStream>,
+    /// Explicit transport key (`type_key = "..."`); also reflected in `ty_override`.
+    pub(super) type_key: Option<LitStr>,
     pub(super) description: Option<LitStr>,
     pub(super) meta: Vec<(LitStr, Lit)>,
 }
@@ -46,6 +51,7 @@ impl OutputPortMeta {
             name,
             source: None,
             ty_override: None,
+            type_key: None,
             description: None,
             meta: Vec::new(),
         }
@@ -198,7 +204,7 @@ pub(super) fn parse_node_args(
                 parse_inputs_list(&list, &mut inputs, &mut config_types, data_crate)?;
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("outputs") => {
-                parse_outputs_list(&list, &mut outputs)?;
+                parse_outputs_list(&list, &mut outputs, data_crate)?;
             }
             NestedMeta::Meta(Meta::List(list)) if list.path.is_ident("generics") => {
                 generics_attr = Some(list.tokens.clone());
@@ -323,6 +329,7 @@ fn parse_input_port(
     let mut source: Option<LitStr> = None;
     let mut default_value: Option<TokenStream> = None;
     let mut ty_override: Option<TokenStream> = None;
+    let mut type_key: Option<LitStr> = None;
     let mut description: Option<LitStr> = None;
     let mut meta_entries: Vec<(LitStr, Lit)> = Vec::new();
     for nm in inner_items {
@@ -351,6 +358,10 @@ fn parse_input_port(
             ty_override = Some(nv.value.to_token_stream());
             continue;
         }
+        if nv.path.is_ident("type_key") {
+            type_key = Some(lit_str_arg(&nv.value, "port type_key")?);
+            continue;
+        }
         if nv.path.is_ident("description") {
             description = Some(lit_str_arg(&nv.value, "port description")?);
             continue;
@@ -364,11 +375,13 @@ fn parse_input_port(
             "port(...) inside inputs requires name = \"...\"".into(),
         ));
     };
+    let ty_override = keyed_port_type(ty_override, type_key.as_ref(), data_crate)?;
     Ok(PortMeta {
         name,
         source,
         default_value,
         ty_override,
+        type_key,
         description,
         meta: meta_entries,
     })
@@ -377,6 +390,7 @@ fn parse_input_port(
 fn parse_outputs_list(
     list: &syn::MetaList,
     outputs: &mut Vec<OutputPortMeta>,
+    data_crate: &TokenStream,
 ) -> Result<(), TokenStream> {
     let nested_items = parse_nested(list)
         .map_err(|_| compile_error("outputs(...) must use a comma-separated list".into()))?;
@@ -388,7 +402,7 @@ fn parse_outputs_list(
         if let NestedMeta::Meta(Meta::List(inner)) = nested
             && inner.path.is_ident("port")
         {
-            outputs.push(parse_output_port(&inner)?);
+            outputs.push(parse_output_port(&inner, data_crate)?);
             continue;
         }
         return Err(compile_error(
@@ -398,12 +412,16 @@ fn parse_outputs_list(
     Ok(())
 }
 
-fn parse_output_port(inner: &syn::MetaList) -> Result<OutputPortMeta, TokenStream> {
+fn parse_output_port(
+    inner: &syn::MetaList,
+    data_crate: &TokenStream,
+) -> Result<OutputPortMeta, TokenStream> {
     let inner_items = parse_nested(inner)
         .map_err(|_| compile_error("port(...) expects comma-separated arguments".into()))?;
     let mut name: Option<LitStr> = None;
     let mut source: Option<LitStr> = None;
     let mut ty_override: Option<TokenStream> = None;
+    let mut type_key: Option<LitStr> = None;
     let mut description: Option<LitStr> = None;
     let mut meta_entries: Vec<(LitStr, Lit)> = Vec::new();
     for nm in inner_items {
@@ -424,6 +442,10 @@ fn parse_output_port(inner: &syn::MetaList) -> Result<OutputPortMeta, TokenStrea
                 ty_override = Some(nv.value.to_token_stream());
                 continue;
             }
+            if nv.path.is_ident("type_key") {
+                type_key = Some(lit_str_arg(&nv.value, "port type_key")?);
+                continue;
+            }
             if nv.path.is_ident("description") {
                 description = Some(lit_str_arg(&nv.value, "port description")?);
                 continue;
@@ -440,13 +462,32 @@ fn parse_output_port(inner: &syn::MetaList) -> Result<OutputPortMeta, TokenStrea
             "port(...) inside outputs requires name = \"...\"".into(),
         ));
     };
+    let ty_override = keyed_port_type(ty_override, type_key.as_ref(), data_crate)?;
     Ok(OutputPortMeta {
         name,
         source,
         ty_override,
+        type_key,
         description,
         meta: meta_entries,
     })
+}
+
+/// A port `type_key = "k"` becomes the port schema `Opaque("k")`; it cannot be combined with `ty`.
+fn keyed_port_type(
+    ty_override: Option<TokenStream>,
+    type_key: Option<&LitStr>,
+    data_crate: &TokenStream,
+) -> Result<Option<TokenStream>, TokenStream> {
+    match (ty_override, type_key) {
+        (Some(_), Some(_)) => Err(compile_error(
+            "port(...) takes either `ty = <TypeExpr>` or `type_key = \"...\"`, not both".into(),
+        )),
+        (ty, None) => Ok(ty),
+        (None, Some(key)) => Ok(Some(
+            quote! { #data_crate::model::TypeExpr::Opaque(::std::string::String::from(#key)) },
+        )),
+    }
 }
 
 fn parse_meta_entries(

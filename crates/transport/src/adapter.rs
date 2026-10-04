@@ -327,10 +327,44 @@ impl AdapterTable {
 pub enum TransportError {
     #[error("payload type mismatch: expected {expected}, found {found}")]
     TypeMismatch { expected: TypeKey, found: TypeKey },
+    /// The payload has the expected key but holds another Rust type: two separately built
+    /// copies of the type (e.g. a host and a dynamic plugin) share the key.
+    #[error(
+        "payload type mismatch: same TypeKey `{key}`, different Rust type (expected `{expected}`, \
+         found `{found}`); the producer and consumer were likely built separately"
+    )]
+    RustTypeMismatch {
+        key: TypeKey,
+        expected: &'static str,
+        found: &'static str,
+    },
     #[error("duplicate transport adapter: {adapter}")]
     DuplicateAdapter { adapter: AdapterId },
     #[error("missing transport adapter: {adapter}")]
     MissingAdapter { adapter: AdapterId },
     #[error("unsupported transport operation: {0}")]
     Unsupported(String),
+}
+
+impl TransportError {
+    /// Error for a `payload` that does not hold the `T` its consumer expects under `expected`.
+    ///
+    /// Distinguishes a different key ([`Self::TypeMismatch`]) from the same key carrying another
+    /// Rust type ([`Self::RustTypeMismatch`]).
+    pub fn type_mismatch<T: 'static>(expected: impl Into<TypeKey>, payload: &Payload) -> Self {
+        let expected = expected.into();
+        if payload.type_key() != &expected {
+            return Self::TypeMismatch {
+                expected,
+                found: payload.type_key().clone(),
+            };
+        }
+        Self::RustTypeMismatch {
+            key: expected,
+            expected: std::any::type_name::<T>(),
+            found: payload
+                .storage_rust_type_name()
+                .unwrap_or("<untyped bytes>"),
+        }
+    }
 }

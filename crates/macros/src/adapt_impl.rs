@@ -7,6 +7,7 @@ use crate::helpers::{
     AttributeArgs, DaedalusCrate, NestedMeta, arc_inner_type, compile_error, is_unit_type,
     lit_from_expr, lit_str_arg, result_ok_type, str_expr,
 };
+use crate::type_expr::{leaf_declared_key, leaf_type_key};
 
 struct AdaptArgs {
     id: LitStr,
@@ -338,24 +339,42 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         AdaptOutput::Arc(ty) => ty,
         AdaptOutput::Unit => inferred_from_ty,
     };
-    let from_key = parsed
-        .from
-        .as_ref()
-        .map(|from| quote! { ::std::string::String::from(#from) })
-        .unwrap_or_else(|| {
-            quote! {
-                #runtime_crate::transport::type_key_of::<#inferred_from_ty>().to_string()
-            }
-        });
-    let to_key = parsed
-        .to
-        .as_ref()
-        .map(|to| quote! { ::std::string::String::from(#to) })
-        .unwrap_or_else(|| {
-            quote! {
-                #runtime_crate::transport::type_key_of::<#inferred_to_ty>().to_string()
-            }
-        });
+    // Keys: explicit `from`/`to`, else the key the type owns, else the typing registry. The
+    // Rust types behind them are recorded (and unkeyed foreign types rejected) at registration.
+    let end_key = |explicit: Option<&Expr>, ty: &Type| match explicit {
+        Some(key) => (
+            quote! { ::std::string::String::from(#key) },
+            quote! { true },
+        ),
+        None => {
+            let key = leaf_type_key(ty);
+            let declared = leaf_declared_key(ty);
+            (quote! { #key.to_string() }, quote! { #declared.is_some() })
+        }
+    };
+    let (from_key, from_declared) = end_key(parsed.from.as_ref(), inferred_from_ty);
+    let (to_key, to_declared) = end_key(parsed.to.as_ref(), inferred_to_ty);
+    let register_end = |ty: &Type, port: &str, declared: &proc_macro2::TokenStream| {
+        let key = if port == "from" {
+            quote! { __from_key }
+        } else {
+            quote! { __to_key }
+        };
+        quote! {
+            into.register_port_type::<#ty>(
+                #runtime_crate::plugins::PortTypeUse {
+                    owner: #id,
+                    port: #port,
+                    defined_in: ::core::module_path!(),
+                },
+                #key.clone(),
+                #declared,
+            )?;
+        }
+    };
+    let register_from = register_end(inferred_from_ty, "from", &from_declared);
+    let register_to = (!matches!(output_kind, AdaptOutput::Unit))
+        .then(|| register_end(inferred_to_ty, "to", &to_declared));
     let residency_option = residency
         .map(|residency| {
             quote! {
@@ -383,7 +402,26 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         )*
         __options
     }};
-    let register_body = match input_kind {
+    let take = |getter: &str, input_ty: &Type| {
+        let getter = syn::Ident::new(getter, Span::call_site());
+        quote! {
+            let Some(__value) = payload.#getter::<#input_ty>() else {
+                return Err(#transport_crate::TransportError::type_mismatch::<#input_ty>(
+                    __from_key.clone(),
+                    &payload,
+                ));
+            };
+        }
+    };
+    let output_payload = match output_kind {
+        AdaptOutput::Arc(_) => {
+            quote! { #transport_crate::Payload::shared(__to_key.clone(), __output) }
+        }
+        AdaptOutput::Owned | AdaptOutput::Unit => {
+            quote! { #transport_crate::Payload::owned(__to_key.clone(), __output) }
+        }
+    };
+    let adapt_body = match input_kind {
         AdaptInput::Mut(input_ty) => {
             if !matches!(output_kind, AdaptOutput::Unit) {
                 return compile_error(
@@ -391,143 +429,43 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
                 )
                 .into();
             }
+            let take = take("get_mut", input_ty);
             quote! {
-                into.register_transport_adapter_fn_with_options(
-                    #id,
-                    #data_crate::model::TypeExpr::opaque(#from_key),
-                    #data_crate::model::TypeExpr::opaque(#to_key),
-                    #adapter_options,
-                    |mut payload, _request| {
-                        let __found = payload.type_key().clone();
-                        let __value = payload.get_mut::<#input_ty>().ok_or_else(|| {
-                            #transport_crate::TransportError::TypeMismatch {
-                                expected: #transport_crate::TypeKey::new(#from_key),
-                                found: __found,
-                            }
-                        })?;
-                        #fn_ident(__value)?;
-                        Ok(payload)
-                    },
-                )
+                let mut payload = payload;
+                #take
+                #fn_ident(__value)?;
+                Ok(payload)
             }
         }
-        AdaptInput::Ref(input_ty) => match output_kind {
-            AdaptOutput::Owned | AdaptOutput::Unit => {
-                quote! {
-                    into.register_transport_adapter_fn_with_options(
-                        #id,
-                        #data_crate::model::TypeExpr::opaque(#from_key),
-                        #data_crate::model::TypeExpr::opaque(#to_key),
-                        #adapter_options,
-                        |payload, _request| {
-                            let __found = payload.type_key().clone();
-                            let __value = payload
-                                .get_ref::<#input_ty>()
-                                .ok_or_else(|| {
-                                #transport_crate::TransportError::TypeMismatch {
-                                    expected: #transport_crate::TypeKey::new(#from_key),
-                                    found: __found,
-                                }
-                            })?;
-                            let __output = #fn_ident(__value)?;
-                            Ok(#transport_crate::Payload::owned(#transport_crate::TypeKey::new(#to_key), __output))
-                        },
-                    )
-                }
-            }
-            AdaptOutput::Arc(_output_inner) => {
-                quote! {
-                        into.register_transport_adapter_fn_with_options(
-                            #id,
-                            #data_crate::model::TypeExpr::opaque(#from_key),
-                            #data_crate::model::TypeExpr::opaque(#to_key),
-                            #adapter_options,
-                            |payload, _request| {
-                            let __found = payload.type_key().clone();
-                            let __value = payload
-                                .get_ref::<#input_ty>()
-                                .ok_or_else(|| {
-                                #transport_crate::TransportError::TypeMismatch {
-                                    expected: #transport_crate::TypeKey::new(#from_key),
-                                    found: __found,
-                                }
-                            })?;
-                            let __output = #fn_ident(__value)?;
-                            Ok(#transport_crate::Payload::shared(#transport_crate::TypeKey::new(#to_key), __output))
-                        },
-                    )
-                }
-            }
-        },
-        AdaptInput::Owned(input_ty) => {
-            let output_payload = match output_kind {
-                AdaptOutput::Arc(_output_inner) => {
-                    quote! { #transport_crate::Payload::shared(#transport_crate::TypeKey::new(#to_key), __output) }
-                }
-                AdaptOutput::Owned | AdaptOutput::Unit => {
-                    quote! { #transport_crate::Payload::owned(#transport_crate::TypeKey::new(#to_key), __output) }
-                }
-            };
+        AdaptInput::Ref(input_ty) => {
+            let take = take("get_ref", input_ty);
             quote! {
-                into.register_transport_adapter_fn_with_options(
-                    #id,
-                    #data_crate::model::TypeExpr::opaque(#from_key),
-                    #data_crate::model::TypeExpr::opaque(#to_key),
-                    #adapter_options,
-                    |payload, _request| {
-                        let __found = payload.type_key().clone();
-                        let __value = payload
-                            .get_arc::<#input_ty>()
-                            .ok_or_else(|| {
-                            #transport_crate::TransportError::TypeMismatch {
-                                expected: #transport_crate::TypeKey::new(#from_key),
-                                found: __found,
-                            }
-                        })?;
-                        ::core::mem::drop(payload);
-                        let __value = ::std::sync::Arc::try_unwrap(__value).map_err(|_| {
-                            #transport_crate::TransportError::Unsupported(
-                                ::std::format!(
-                                    "owned adapter {} requires a unique payload",
-                                    #id,
-                                ),
-                            )
-                        })?;
-                        let __output = #fn_ident(__value)?;
-                        Ok(#output_payload)
-                    },
-                )
+                #take
+                let __output = #fn_ident(__value)?;
+                Ok(#output_payload)
+            }
+        }
+        AdaptInput::Owned(input_ty) => {
+            let take = take("get_arc", input_ty);
+            quote! {
+                #take
+                ::core::mem::drop(payload);
+                let __value = ::std::sync::Arc::try_unwrap(__value).map_err(|_| {
+                    #transport_crate::TransportError::Unsupported(::std::format!(
+                        "owned adapter {} requires a unique payload",
+                        #id,
+                    ))
+                })?;
+                let __output = #fn_ident(__value)?;
+                Ok(#output_payload)
             }
         }
         AdaptInput::Arc(input_ty) => {
-            let output_payload = match output_kind {
-                AdaptOutput::Arc(_output_inner) => {
-                    quote! { #transport_crate::Payload::shared(#transport_crate::TypeKey::new(#to_key), __output) }
-                }
-                AdaptOutput::Owned | AdaptOutput::Unit => {
-                    quote! { #transport_crate::Payload::owned(#transport_crate::TypeKey::new(#to_key), __output) }
-                }
-            };
+            let take = take("get_arc", input_ty);
             quote! {
-                into.register_transport_adapter_fn_with_options(
-                    #id,
-                    #data_crate::model::TypeExpr::opaque(#from_key),
-                    #data_crate::model::TypeExpr::opaque(#to_key),
-                    #adapter_options,
-                    |payload, _request| {
-                        let __found = payload.type_key().clone();
-                        let __value = payload
-                            .get_arc::<#input_ty>()
-                            .ok_or_else(|| {
-                            #transport_crate::TransportError::TypeMismatch {
-                                expected: #transport_crate::TypeKey::new(#from_key),
-                                found: __found,
-                            }
-                        })?;
-                        let __output = #fn_ident(__value)?;
-                        Ok(#output_payload)
-                    },
-                )
+                #take
+                let __output = #fn_ident(__value)?;
+                Ok(#output_payload)
             }
         }
     };
@@ -538,7 +476,19 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         #vis fn #register_ident(
             into: &mut #runtime_crate::plugins::PluginRegistry,
         ) -> #runtime_crate::plugins::PluginResult<()> {
-            #register_body
+            let __from_key = #transport_crate::TypeKey::new(#from_key);
+            let __to_key = #transport_crate::TypeKey::new(#to_key);
+            #register_from
+            #register_to
+            into.register_transport_adapter_fn_with_options(
+                #id,
+                #data_crate::model::TypeExpr::opaque(__from_key.as_str()),
+                #data_crate::model::TypeExpr::opaque(__to_key.as_str()),
+                #adapter_options,
+                move |payload, _request| {
+                    #adapt_body
+                },
+            )
         }
     };
 

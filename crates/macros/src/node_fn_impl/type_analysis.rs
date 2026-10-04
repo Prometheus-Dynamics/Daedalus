@@ -7,20 +7,58 @@ use crate::helpers::{generic_arg, last_segment, segment_type_arg, strip_ref};
 use crate::type_expr::{GenericParams, TypeExprOptions};
 
 /// Schema expression for a node port type. Generic parameters become `Opaque("generic")`
-/// and residency wrappers (`Cpu<T>`, `Gpu<T>`, `Device<Cpu, T>`) encode their payload type.
+/// and handle/residency wrappers (`Arc<T>`, `Cpu<T>`, `Gpu<T>`, `Device<Cpu, T>`) encode their
+/// payload type.
 pub(super) fn node_type_expr(
     ty: &syn::Type,
     generic_type_params: &HashSet<String>,
     data_crate: &TokenStream,
 ) -> TokenStream {
+    node_type_options(generic_type_params, data_crate).type_expr(ty)
+}
+
+/// The leaf types [`node_type_expr`] resolves by key (everything but containers, tuples,
+/// references, wrappers and generic parameters).
+pub(super) fn node_type_leaves(
+    ty: &syn::Type,
+    generic_type_params: &HashSet<String>,
+    data_crate: &TokenStream,
+) -> Vec<syn::Type> {
+    let mut leaves = Vec::new();
+    node_type_options(generic_type_params, data_crate).type_expr_collecting(ty, &mut leaves);
+    leaves
+}
+
+fn node_type_options<'a>(
+    generic_type_params: &'a HashSet<String>,
+    data_crate: &'a TokenStream,
+) -> TypeExprOptions<'a> {
     TypeExprOptions {
         data_crate,
         generics: GenericParams::Opaque(generic_type_params),
-        transparent: &[("Cpu", 0), ("Gpu", 0), ("Device", 1), ("Result", 0)],
+        transparent: PAYLOAD_WRAPPERS,
         str_as_string: true,
         arrays_as_lists: false,
     }
-    .type_expr(ty)
+}
+
+/// Wrappers whose type argument (at the given index) is the payload value type.
+const PAYLOAD_WRAPPERS: &[(&str, usize)] = &[
+    ("Arc", 0),
+    ("Cpu", 0),
+    ("Gpu", 0),
+    ("Device", 1),
+    ("Result", 0),
+];
+
+/// The value type a port parameter carries: references, `Option` and [`PAYLOAD_WRAPPERS`]
+/// peeled.
+pub(super) fn payload_value_type(ty: &syn::Type) -> &syn::Type {
+    let ty = strip_ref(ty);
+    let inner = std::iter::once(("Option", 0))
+        .chain(PAYLOAD_WRAPPERS.iter().copied())
+        .find_map(|(name, idx)| generic_arg(ty, name, idx));
+    inner.map_or(ty, payload_value_type)
 }
 
 /// The success type of a return type: `T` for `Result<T, _>`, the type itself otherwise.

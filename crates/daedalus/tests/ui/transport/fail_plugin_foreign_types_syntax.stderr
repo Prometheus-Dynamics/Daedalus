@@ -1,0 +1,7 @@
+error: plugin foreign_types entries must be `Type = "key"`
+ --> tests/ui/transport/fail_plugin_foreign_types_syntax.rs:3:1
+  |
+3 | #[plugin(id = "ui.foreign", foreign_types(std::time::Duration))]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `plugin` (in Nightly builds, run with -Z macro-backtrace for more info)

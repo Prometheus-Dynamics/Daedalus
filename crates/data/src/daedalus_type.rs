@@ -21,16 +21,52 @@ pub trait DaedalusTypeVisitor {
     fn visit<T: DaedalusTypeExpr>(&mut self);
 }
 
-/// Support code for `#[derive(DaedalusTypeExpr)]`; not a public API.
+/// Support code for the Daedalus derive and attribute macros; not a public API.
 #[doc(hidden)]
 pub mod derive_support {
     use core::marker::PhantomData;
 
     use super::{DaedalusTypeExpr, DaedalusTypeVisitor};
+    use crate::model::TypeExpr;
 
-    /// Autoref-specialization probe: `(&Probe::<T>(PhantomData)).visit_into(v)` visits `T` when
-    /// it implements `DaedalusTypeExpr` and does nothing otherwise.
+    /// Autoref-specialization probe. Called as `(&Probe::<T>(PhantomData)).method()`, the
+    /// `VisitTyped`/`KeyedLeaf` impls are picked when `T` implements `DaedalusTypeExpr` and the
+    /// fallback impls otherwise:
+    ///
+    /// - `visit_into(v)` visits `T` (or nothing);
+    /// - `declared_key()` is the key `T` owns (or `None`);
+    /// - `leaf_type_expr()` is `Opaque(T::TYPE_KEY)`, resolved at compile time so it does not
+    ///   depend on registration order, or [`crate::typing::type_expr`] for types without one.
     pub struct Probe<T>(pub PhantomData<T>);
+
+    pub trait KeyedLeaf {
+        fn declared_key(&self) -> Option<&'static str>;
+        fn leaf_type_expr(&self) -> TypeExpr;
+    }
+
+    impl<T: DaedalusTypeExpr> KeyedLeaf for Probe<T> {
+        fn declared_key(&self) -> Option<&'static str> {
+            Some(T::TYPE_KEY)
+        }
+
+        fn leaf_type_expr(&self) -> TypeExpr {
+            TypeExpr::Opaque(T::TYPE_KEY.to_string())
+        }
+    }
+
+    pub trait RegistryLeaf {
+        fn declared_key(&self) -> Option<&'static str> {
+            None
+        }
+
+        fn leaf_type_expr(&self) -> TypeExpr;
+    }
+
+    impl<T: 'static> RegistryLeaf for &Probe<T> {
+        fn leaf_type_expr(&self) -> TypeExpr {
+            crate::typing::type_expr::<T>()
+        }
+    }
 
     pub trait VisitTyped {
         fn visit_into<V: DaedalusTypeVisitor>(&self, visitor: &mut V);
@@ -53,7 +89,9 @@ pub mod derive_support {
 mod tests {
     use core::marker::PhantomData;
 
-    use super::derive_support::{Probe, VisitTyped as _, VisitUntyped as _};
+    use super::derive_support::{
+        KeyedLeaf as _, Probe, RegistryLeaf as _, VisitTyped as _, VisitUntyped as _,
+    };
     use super::*;
 
     struct Keyed;
@@ -80,5 +118,20 @@ mod tests {
         (&Probe::<Keyed>(PhantomData)).visit_into(&mut keys);
         (&Probe::<u32>(PhantomData)).visit_into(&mut keys);
         assert_eq!(keys.0, ["test:keyed"]);
+    }
+
+    #[test]
+    #[allow(clippy::needless_borrow)]
+    fn probe_prefers_the_declared_key_over_the_registry() {
+        struct Unkeyed;
+        let keyed = &Probe::<Keyed>(PhantomData);
+        assert_eq!(keyed.declared_key(), Some("test:keyed"));
+        assert_eq!(keyed.leaf_type_expr(), TypeExpr::opaque("test:keyed"));
+        let unkeyed = &Probe::<Unkeyed>(PhantomData);
+        assert_eq!(unkeyed.declared_key(), None);
+        assert_eq!(
+            unkeyed.leaf_type_expr(),
+            crate::typing::type_expr::<Unkeyed>()
+        );
     }
 }

@@ -1,5 +1,6 @@
 //! Loads `examples/plugins/example_project` as a `cdylib` and checks it installs the same
-//! nodes and boundary contracts as the statically linked plugin.
+//! nodes and boundary contracts as the statically linked plugin, and that a boundary type built
+//! differently on each side is refused.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -8,8 +9,9 @@ use std::sync::OnceLock;
 
 use daedalus::data::model::{TypeExpr, ValueType};
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
+use daedalus::transport::{RustTypeIdentity, TypeKey};
 use daedalus::{PluginLibrary, PluginLibraryError};
-use daedalus_plugins_example_project::ExampleProjectPlugin;
+use daedalus_plugins_example_project::{Counter, ExampleProjectPlugin};
 
 const PACKAGE: &str = "daedalus-plugins-example-project";
 const LIB_NAME: &str = "daedalus_plugins_example_project";
@@ -155,6 +157,29 @@ fn static_and_dynamic_rust_plugin_install_the_same_nodes() {
     assert!(
         matches!(err, PluginLibraryError::RegisterFailed { ref message } if !message.is_empty()),
         "unexpected error: {err:?}"
+    );
+
+    // The plugin exports the Rust type behind every key it uses.
+    let counter = TypeKey::new("example:counter");
+    let (_, plugin_counter) = library
+        .boundary_types()
+        .iter()
+        .find(|(key, _)| *key == counter)
+        .expect("the plugin exports its owned type");
+    let host_counter = static_registry.boundary_types()[&counter];
+    assert_eq!(host_counter, RustTypeIdentity::of::<Counter>());
+    assert_eq!(plugin_counter.type_name, host_counter.type_name);
+
+    // This host links the example crate without its `dylib` feature, so Cargo built it
+    // separately from the plugin's copy and `Counter` is another Rust type with the same key
+    // and name (the failure a host hits with a separately built plugin). Install is refused
+    // before anything is registered.
+    assert!(!plugin_counter.same_type(&host_counter));
+    let err = library.install_into(&mut static_registry).unwrap_err();
+    assert!(
+        matches!(err, PluginLibraryError::BoundaryTypeMismatch { ref mismatches, .. }
+            if mismatches.iter().any(|mismatch| mismatch.key == counter)),
+        "unexpected error: {err}"
     );
 }
 
