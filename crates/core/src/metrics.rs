@@ -1,6 +1,5 @@
-use crate::portable::Mutex;
+use crate::portable::{Arc, Mutex};
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 
 /// Sink for counters/timers emitted by channel primitives.
 pub trait MetricsSink: Send + Sync {
@@ -10,7 +9,7 @@ pub trait MetricsSink: Send + Sync {
 
 /// Upcast helper for any metrics sink.
 pub fn metrics_sink<T: MetricsSink + 'static>(sink: T) -> Arc<dyn MetricsSink> {
-    Arc::new(sink)
+    crate::portable::arc_dyn!(sink)
 }
 
 /// No-op metrics collector (default when the feature is off).
@@ -48,7 +47,7 @@ impl InMemoryMetrics {
 
     /// Convenience helper to upcast into a trait object for injection.
     pub fn into_sink(self) -> Arc<dyn MetricsSink> {
-        Arc::new(self)
+        crate::portable::arc_dyn!(self)
     }
 }
 

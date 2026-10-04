@@ -1,5 +1,5 @@
+use crate::portable::{Arc, arc_dyn};
 use alloc::boxed::Box;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
@@ -46,8 +46,8 @@ impl OpaquePayloadHandle {
 #[derive(Clone)]
 pub struct Payload {
     type_key: TypeKey,
-    /// Single allocation; unique payloads recover owned storage through
-    /// [`PayloadStorage::into_any_arc`].
+    /// Single allocation; unique payloads recover owned storage by downcasting it in place
+    /// ([`Payload::try_into_owned`]).
     storage: Arc<dyn PayloadStorage>,
     residency: Residency,
     layout: Option<Layout>,
@@ -103,7 +103,7 @@ impl Payload {
         let type_key = storage.type_key.clone();
         Self {
             type_key,
-            storage: Arc::new(storage),
+            storage: arc_dyn!(storage),
             residency: Residency::Cpu,
             layout: None,
             residency_cache: ResidencyCache::default(),
@@ -135,7 +135,7 @@ impl Payload {
         let type_key = type_key.into();
         Self {
             type_key: type_key.clone(),
-            storage: Arc::new(TypedStorage {
+            storage: arc_dyn!(TypedStorage {
                 type_key,
                 value,
                 bytes_estimate,
@@ -155,7 +155,7 @@ impl Payload {
         let type_key = type_key.into();
         Self {
             type_key: type_key.clone(),
-            storage: Arc::new(BytesStorage { type_key, bytes }),
+            storage: arc_dyn!(BytesStorage { type_key, bytes }),
             residency: Residency::Cpu,
             layout: None,
             residency_cache: ResidencyCache::default(),
@@ -308,17 +308,19 @@ impl Payload {
         let Some(storage) = self.storage.as_any().downcast_ref::<TypedStorage<T>>() else {
             return Err(Box::new(self));
         };
-        if Arc::strong_count(&self.storage) != 1 || Arc::strong_count(&storage.value) != 1 {
+        if Arc::strong_count(&self.storage) != 1
+            || Arc::strong_count(&storage.value) != 1
+            || !core::ptr::addr_eq(storage, Arc::as_ptr(&self.storage))
+        {
             return Err(Box::new(self));
         }
         // Both handles are unique and owned by `self`, so nothing can clone them concurrently.
-        let storage = self
-            .storage
-            .into_any_arc()
-            .downcast::<TypedStorage<T>>()
-            .ok()
-            .and_then(Arc::into_inner)
-            .expect("payload storage type and uniqueness were checked before move");
+        // Safety: the allocation's value is the `TypedStorage<T>` checked above (same address),
+        // so the pointer keeps its size and alignment.
+        let storage =
+            unsafe { Arc::from_raw(Arc::into_raw(self.storage).cast::<TypedStorage<T>>()) };
+        let storage =
+            Arc::into_inner(storage).expect("payload storage uniqueness was checked before move");
         Ok(Arc::into_inner(storage.value)
             .expect("payload value uniqueness was checked before move"))
     }

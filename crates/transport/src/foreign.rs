@@ -20,7 +20,7 @@
 //!   type, and every function it calls is the owner's code, so it never depends on how the
 //!   consumer built the owner's crate.
 
-use alloc::sync::Arc;
+use crate::portable::Arc;
 use core::ffi::c_void;
 use core::fmt;
 use core::marker::PhantomData;

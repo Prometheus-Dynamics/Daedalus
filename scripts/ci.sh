@@ -11,8 +11,9 @@ cd "$root_dir"
 readonly CI_FEATURES="engine,plugins"
 readonly AARCH64_TARGET="aarch64-unknown-linux-gnu"
 readonly AARCH64_MUSL_TARGET="aarch64-unknown-linux-musl"
-# Bare-metal Cortex-M4F: no `std`, 32-bit atomics only.
-readonly NOSTD_TARGET="thumbv7em-none-eabihf"
+# Bare metal without `std`: Cortex-M4F (32-bit atomics, no 64-bit ones) and Cortex-M0 (no
+# compare-and-swap: atomics, locks and `Arc` go through `portable-atomic`).
+readonly NOSTD_TARGETS=("thumbv7em-none-eabihf" "thumbv6m-none-eabi")
 readonly NOSTD_CRATES=(-p daedalus-core -p daedalus-transport -p daedalus-data -p daedalus-registry
   -p daedalus-planner)
 readonly WASM_TARGET="wasm32-unknown-unknown"
@@ -38,7 +39,7 @@ usage: scripts/ci.sh [subcommand...]
   smoke       run the CPU-only example binaries
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics) and without threads
-  nostd       no_std + alloc check of the tier-1 crates for thumbv7em-none-eabihf
+  nostd       no_std + alloc check of the tier-1 crates for thumbv7em and thumbv6m (no CAS)
   wasm        engine,plugins (embedded without threads) check and smoke run for wasm32
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
@@ -150,11 +151,14 @@ cmd_lean() {
 
 # The tier-1 crates without `std`, with and without their alloc-only optional features.
 cmd_nostd() {
-  step "Checking no_std + alloc crates for $NOSTD_TARGET"
-  ensure_target "$NOSTD_TARGET"
-  cargo check --target "$NOSTD_TARGET" "${NOSTD_CRATES[@]}" --no-default-features
-  cargo check --target "$NOSTD_TARGET" "${NOSTD_CRATES[@]}" --no-default-features --features \
-    "daedalus-core/metrics,daedalus-data/json,daedalus-data/schema,daedalus-data/proto,daedalus-data/async,daedalus-registry/bundle,daedalus-registry/plugin,daedalus-planner/schema,daedalus-planner/proto"
+  local target
+  for target in "${NOSTD_TARGETS[@]}"; do
+    step "Checking no_std + alloc crates for $target"
+    ensure_target "$target"
+    cargo check --target "$target" "${NOSTD_CRATES[@]}" --no-default-features
+    cargo check --target "$target" "${NOSTD_CRATES[@]}" --no-default-features --features \
+      "daedalus-core/metrics,daedalus-data/json,daedalus-data/schema,daedalus-data/proto,daedalus-data/async,daedalus-registry/bundle,daedalus-registry/plugin,daedalus-planner/schema,daedalus-planner/proto"
+  done
 }
 
 # `wasm32-unknown-unknown` has `std` but no threads and no clock: check the embedded preset
