@@ -10,7 +10,7 @@ use crate::helpers::{
 use crate::type_expr::{leaf_declared_key, leaf_type_key};
 
 struct AdaptArgs {
-    id: LitStr,
+    id: Expr,
     from: Option<Expr>,
     to: Option<Expr>,
     access: Option<syn::Ident>,
@@ -53,14 +53,16 @@ fn parse_args(args: AttributeArgs) -> Result<AdaptArgs, proc_macro2::TokenStream
                     to = Some(str_expr(&value, "adapt to")?);
                     continue;
                 }
+                if path.is_ident("id") {
+                    id = Some(str_expr(&value, "adapt id")?);
+                    continue;
+                }
                 if lit_from_expr(&value).is_none() {
                     return Err(compile_error(
                         "adapt arguments must be string literals".into(),
                     ));
                 }
-                if path.is_ident("id") {
-                    id = Some(lit_str_arg(&value, "adapt id")?);
-                } else if path.is_ident("cost") {
+                if path.is_ident("cost") {
                     let Some(Lit::Int(value)) = lit_from_expr(&value) else {
                         return Err(compile_error(
                             "adapt cost must be an integer literal".into(),

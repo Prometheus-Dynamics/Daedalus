@@ -395,7 +395,7 @@ pub(super) struct NodeDeclInputs<'a> {
     pub(super) fn_impl_generics: &'a TokenStream,
     pub(super) registry_crate: &'a TokenStream,
     pub(super) fn_where_clause: &'a TokenStream,
-    pub(super) id: &'a LitStr,
+    pub(super) id: &'a syn::Expr,
     pub(super) node_input_port_decl_tokens: &'a [TokenStream],
     pub(super) config_inputs_extend: &'a [TokenStream],
     pub(super) fanin_input_decl_tokens: &'a [TokenStream],

@@ -4,12 +4,11 @@ use syn::{ItemStruct, Lit, LitStr, Meta, MetaList, MetaNameValue, Path, parse_ma
 
 use crate::foreign_type::{ForeignProvider, collect_foreign_providers, register_foreign_providers};
 use crate::helpers::{
-    AttributeArgs, DaedalusCrate, NestedMeta, compile_error, fn_path_arg, lit_str_arg,
-    parse_nested, str_expr,
+    AttributeArgs, DaedalusCrate, NestedMeta, compile_error, fn_path_arg, parse_nested, str_expr,
 };
 
 struct PluginArgs {
-    id: LitStr,
+    id: syn::Expr,
     deps: Vec<LitStr>,
     types: Vec<Path>,
     values: Vec<Path>,
@@ -91,7 +90,7 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("id") =>
             {
-                id = Some(lit_str_arg(&value, "plugin id")?);
+                id = Some(str_expr(&value, "plugin id")?);
             }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("install") =>

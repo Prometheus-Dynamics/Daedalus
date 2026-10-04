@@ -63,15 +63,14 @@ impl DaedalusCrate {
     }
 }
 
-/// A `&'static str` argument: a string literal or a path to a `const`/`static` string.
+/// A `&'static str` argument: a string literal, a path to a `const`/`static` string, or any other
+/// expression such as `concat!(...)` or a user macro. The type checker validates non-literal forms;
+/// only literals of another type are rejected here.
 pub fn str_expr(expr: &Expr, what: &str) -> Result<Expr, proc_macro2::TokenStream> {
-    match expr {
-        Expr::Lit(syn::ExprLit {
-            lit: Lit::Str(_), ..
-        })
-        | Expr::Path(_) => Ok(expr.clone()),
-        _ => Err(compile_error(format!(
-            "{what} must be a string literal or a path to a string constant"
+    match lit_from_expr(expr) {
+        Some(Lit::Str(_)) | None => Ok(expr.clone()),
+        Some(_) => Err(compile_error(format!(
+            "{what} must be a string literal or an expression evaluating to `&'static str`"
         ))),
     }
 }
