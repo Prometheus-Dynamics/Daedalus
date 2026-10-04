@@ -39,8 +39,12 @@ Enable the `dylib-plugins` feature:
 
 ```rust
 use daedalus::{PluginLibrary, PluginRegistry, discover_plugin_libraries};
+use daedalus::runtime::plugins::RegistryPluginExt;
 
 let mut registry = PluginRegistry::new();
+// Types the host shares with plugins first (e.g. the frame library's own Daedalus plugin), so
+// `install_into` can check the plugins use the same Rust types for those keys.
+registry.install_plugin(&styx_core::daedalus_integration::StyxPlugin::new())?;
 let mut libraries = Vec::new();
 for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plugins"])? {
     // Safety: plugins are trusted Daedalus plugins.
@@ -48,7 +52,7 @@ for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plu
     let schema = library.schema(); // readable even if the plugin cannot be installed
     tracing::info!(path = %library.path().display(), plugin = %schema.plugin.name,
         nodes = schema.nodes.len(), "found plugin");
-    library.install_into(&mut registry)?; // PluginLibraryError::Incompatible on a mismatch
+    library.install_into(&mut registry)?; // Incompatible / BoundaryTypeMismatch on a mismatch
     libraries.push(library);
 }
 ```
@@ -67,10 +71,50 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
 - `install_into` passes Rust types across the boundary, so it requires the same Daedalus version,
   `rustc --version`, and build fingerprint (`daedalus::build_fingerprint()`), and otherwise fails
   with `PluginLibraryError::Incompatible` naming the differing segments.
-- Build the host and its plugins from one workspace and lockfile with one toolchain and one
-  boundary Daedalus feature set. Libraries are never unloaded, plugins must register everything
-  through the `PluginRegistry` they are given, and neither side may install a custom
-  `#[global_allocator]`.
+- Before calling into the plugin, `install_into` also compares the plugin's boundary types (every
+  type key its nodes and adapters consume or produce and every type it registers, with the Rust
+  type behind it: `TypeId` hash, size, align, name; `PluginLibrary::boundary_types()`) against
+  the host registry's (`PluginRegistry::boundary_types()`). A key the host maps to another Rust
+  type fails with `PluginLibraryError::BoundaryTypeMismatch`, listing every such key; keys the
+  host does not know are accepted. `PLUGIN_ABI_VERSION` 6 added this table to the descriptor.
+- **Rust-ABI plugins must come from the same cargo build as the host**: one workspace and
+  lockfile, one toolchain, and one `cargo build` invocation for the host and its plugins (e.g.
+  `cargo build -p app -p app-plugin-a -p app-plugin-b`), so Cargo resolves Daedalus *and every
+  other shared dependency* once, with one feature set. Libraries are never unloaded, plugins must
+  register everything through the `PluginRegistry` they are given, and neither side may install
+  a custom `#[global_allocator]`.
+
+## Types Owned By Other Crates
+
+A plugin that uses a type from another crate (a camera library's `FrameLease`, say) depends on
+the crate that owns the type, with that crate's optional `daedalus` feature, so port keys come
+from the type itself; it never registers the type under a key of its own. When the owner has no
+integration, the plugin declares the key with `#[plugin(foreign_types(Type = "key"))]` or a port
+`type_key`. List the owner's plugin in `deps(...)` so the requirement is explicit. See "Library-Owned
+Integration Features" in [`node-authoring.md`](node-authoring.md#library-owned-integration-features).
+
+The fingerprint only covers Daedalus crates, so a plugin built in a separate cargo invocation that
+resolved the owner crate with different features passes it, yet its `FrameLease` is a different
+Rust type: same key, same type name, different `TypeId`. Before the boundary type check every
+frame then failed at runtime with `payload type mismatch: expected styx:framelease, found
+styx:framelease`. Now:
+
+- if the host registered the type (it installed the owner's plugin, or called
+  `registry.register_boundary_type::<FrameLease>("styx:framelease")`), `install_into` refuses the
+  plugin up front:
+  ``plugin `helios_cv` uses type keys for different Rust types than the host (`styx:framelease`:
+  host `styx_core::frame::FrameLease` (type id ..., size 48, align 8), plugin ...); Rust-ABI
+  plugins must come from the same cargo build as the host, ...``;
+- a downcast that still fails names both Rust types: ``payload type mismatch: same TypeKey
+  `styx:framelease`, different Rust type (expected `...`, found `...`); the producer and consumer
+  were likely built separately``.
+
+Even a dependency built with an extra feature (for example the plugin crate's own `dylib`
+feature, when the host also links that crate) yields different types; the facade's
+`dylib_plugin` test shows the refusal. Plugins that genuinely have to be built separately need the
+foreign-type path, which is not implemented yet: the host registers a `#[repr(C)]` accessor vtable
+per key and plugins only see an opaque handle, as part of the stable handler path below (see
+`TODO.md`).
 
 ## Design Note: Stable Handler Path
 

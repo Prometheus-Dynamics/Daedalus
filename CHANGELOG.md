@@ -56,6 +56,23 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `format_planes`).
 - Facade presets `executor-pool`, `metrics`, `engine-full` (`engine` + `executor-pool` +
   `metrics`) and `embedded` (`engine` + `plugins`).
+- Keys for types owned by other crates: `inputs(port(name = "...", type_key = "..."))` /
+  `outputs(port(...))` set a port's key, `#[plugin(foreign_types(Type = "key"))]` and
+  `PluginRegistry::register_foreign_type::<T>(key)` map a foreign type that declares no key.
+- Boundary types: `PluginRegistry::{register_boundary_type, boundary_types}` record the Rust type
+  (`daedalus::transport::RustTypeIdentity`: `TypeId` hash, size, align, name) behind each key,
+  filled by node/adapter macros, `register_daedalus_type`, foreign types and the typed
+  adapter/device registrations. `PluginError::BoundaryTypeConflict` rejects one key used for two
+  Rust types.
+- Dylib boundary type check: the descriptor (`PLUGIN_ABI_VERSION` 6) exports a C-safe
+  `BoundaryTypeTable` of the plugin's boundary types (`PluginLibrary::boundary_types`), and
+  `install_into` fails with `PluginLibraryError::BoundaryTypeMismatch` (every differing key, host
+  and plugin type) before installing anything when the host maps a key to another Rust type.
+- `TransportError::RustTypeMismatch` (built by `TransportError::type_mismatch::<T>`): a payload
+  with the expected key but another Rust type reports both type names and that producer and
+  consumer were likely built separately, instead of `expected k, found k`.
+- "How Port Keys Resolve" and "Library-Owned Integration Features" in `docs/node-authoring.md`;
+  "Types Owned By Other Crates" and the same-cargo-build rule in `docs/dynamic-plugins.md`.
 - The `external_frame_source` example (`examples/04_async`), `docs/node-authoring.md`,
   `docs/dynamic-plugins.md`, and a measured minimal CPU-only profile in `docs/development.md`.
 - Shared building blocks: `NodeInstance::new(id)` with `with_*` builders, `Edge::new(from,
@@ -68,6 +85,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Port keys no longer depend on registration order. `#[node]`/`#[adapt]` resolve a type's own
+  key (`#[type_key]`, `DaedalusTypeExpr`) at compile time before the typing registry, handlers
+  push outputs under the key the port declares, and `Arc<T>` ports use `T`'s key. A type from
+  another crate that would get the `rust:` fallback key fails install with
+  `PluginError::UnkeyedForeignType` (node, port, Rust type and the fixes). An owner's type
+  declaration replaces the placeholder a consumer plugin left when it installed first.
 - Shared runtime locks use `parking_lot` (`Mutex`, `RwLock`, `Condvar`) instead of `std::sync`,
   so there is no lock poisoning. `StateStore`, `ExecutionContext`, `RuntimeResources` and the
   executors' resource-lifecycle methods (`set`, `set_native`, `record_*`, `*_metric`,

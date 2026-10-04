@@ -21,7 +21,21 @@ changes.
 - [x] dmabuf zero-copy GPU import (`gpu-dmabuf`): acquire fences and single-image NV12.
 - [x] Docs: `docs/node-authoring.md`, `docs/dynamic-plugins.md`, minimal CPU-only profile, and the
       `external_frame_source` example (camera glue pattern with no Styx dependency).
-- [x] Decision: Daedalus and Styx stay independent. The frame glue lives in the application.
+- [x] Decision: Daedalus never depends on Styx. The crate that defines a type owns its key and
+      Daedalus registration behind an optional `daedalus` feature (documented in
+      `docs/node-authoring.md`, "Library-Owned Integration Features"); without one, the frame
+      glue lives in the application.
+- [x] **Deterministic port keys for foreign types.** Macros resolve a type's own key at compile
+      time; ports take `type_key = "..."`, plugins `foreign_types(Type = "key")`; an unkeyed
+      foreign type fails install (`UnkeyedForeignType`) instead of getting an order-dependent
+      `rust:` key.
+- [x] **Boundary type check for dylib plugins.** HeliOS found that a plugin built in a separate
+      cargo invocation passed the fingerprint check but failed on every frame with
+      `payload type mismatch: expected styx:framelease, found styx:framelease`. Now the
+      descriptor (ABI 6) exports `(TypeKey, TypeId hash, size, align, type_name)` per boundary
+      type, `install_into` fails with `BoundaryTypeMismatch` naming every differing key before
+      installing anything, adapter errors say "same TypeKey, different Rust type", and the
+      same-cargo-build rule is documented in `docs/dynamic-plugins.md`.
 
 ### Performance
 - [x] Host bridge: per-port state, single-slot latest-only queues, events off by default.
@@ -49,14 +63,6 @@ changes.
 ## Remaining
 
 ### High priority
-- [ ] **Boundary type check for dylib plugins.** HeliOS found that a plugin built in a separate
-      cargo invocation passes the fingerprint check but fails on every frame with
-      `payload type mismatch: expected styx:framelease, found styx:framelease`. Third-party crates
-      (e.g. styx) were resolved with different features, so the Rust types differ. Fix:
-      - the plugin exports `(TypeKey, TypeId hash, size, align, type_name)` for every boundary type;
-      - the host compares them at install and fails with a typed `BoundaryTypeMismatch` naming the key;
-      - adapter mismatch errors say "same TypeKey, different Rust type (built separately?)";
-      - document the rule that Rust-ABI plugins must come from the same cargo build as the host.
 - [ ] **Foreign (host-owned) types for separately built plugins.** The host registers a
       `#[repr(C)]` accessor vtable per TypeKey (e.g. frame width/height/format/planes/dmabuf fd,
       retain/release), and plugins see an opaque handle. This gives zero-copy frames without sharing
@@ -72,11 +78,20 @@ changes.
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
 - [ ] **Tag `v2.0.0`.** There are no tags yet; downstream projects pin a commit hash.
 - [ ] **HeliOS migration** (in the HeliOS repo): bump the pin, drop the `ffi`/`gpu` features, switch
-      the loader to `PluginLibrary`, write the frame glue module following
-      `examples/04_async/external_frame_source.rs`, replace the 250 ms tick with `drive_blocking`,
-      and rewrite `AGENTS.md` against `docs/node-authoring.md`.
+      the loader to `PluginLibrary`, use styx-core's `daedalus` feature for `FrameLease` (or write
+      the frame glue following `examples/04_async/external_frame_source.rs` until it exists),
+      install the styx plugin in the host before loading plugins, build host and plugins in one
+      `cargo build`, replace the 250 ms tick with `drive_blocking`, and rewrite `AGENTS.md`
+      against `docs/node-authoring.md`.
 
 ### Medium priority
+- [ ] **Generic runtime key lookups.** `type_key_of::<T>()` (behind `HostGraph::bind_input`,
+      `GraphBuilder::input_typed`, `HostBridgeHandle::push`, `NodeIo::push_to`) still reads the
+      process-global typing registry, so a `#[type_key]` type resolves only after its plugin was
+      installed (in that copy of Daedalus) and a foreign type only after `foreign_types` /
+      `register_type`. The macros resolve owner-declared keys without it. Consider a
+      `DaedalusTypeExpr`-bounded variant or resolving through the `PluginRegistry`'s own type
+      registry.
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29
