@@ -1,4 +1,4 @@
-use parking_lot::RwLock;
+use crate::sync::RwLock;
 use std::sync::{Arc, OnceLock};
 
 pub type RuntimeDataSizeInspector = fn(&dyn std::any::Any) -> Option<u64>;

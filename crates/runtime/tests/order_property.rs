@@ -7,7 +7,7 @@ use rand::{RngExt, SeedableRng};
 use std::borrow::Cow;
 
 struct LogHandler {
-    order: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
+    order: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
 }
 
 #[test]
@@ -87,14 +87,14 @@ fn serial_vs_parallel_order_matches() {
                 backpressure: daedalus_runtime::BackpressureStrategy::None,
             },
         );
-        let order1 = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let order1 = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
         let h1 = LogHandler {
             order: order1.clone(),
         };
         let telem1 = Executor::new(&rt, h1).run().expect("serial");
         assert_eq!(telem1.nodes_executed, rt.nodes.len());
 
-        let order2 = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let order2 = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
         let h2 = LogHandler {
             order: order2.clone(),
         };

@@ -45,10 +45,15 @@ host-only-features = [
     "metrics",
     "engine-full",
     "embedded",
+    "threads",
 ]
 
 [features]
-default = []
+default = ["threads"]
+# Worker threads: `RuntimeMode::Parallel`/`Adaptive` on a worker pool, stream workers and
+# blocking host waits (`HostGraph::drive_blocking`, ...). Without it (e.g. on
+# `wasm32-unknown-unknown`) those modes run serially and the thread-only APIs do not exist.
+threads = ["daedalus-runtime/threads", "daedalus-engine?/threads"]
 gpu-types = ["dep:daedalus-gpu"]
 gpu-runtime = [
     "gpu-types",
@@ -75,6 +80,8 @@ plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nod
 # with `PluginLibrary`. Both plugin crates and hosts enable it.
 dylib-plugins = [
     "plugins",
+    # Plugin and host must agree on the runtime lock backend (a boundary feature).
+    "daedalus-runtime/std",
     "dep:daedalus-ffi-host",
     "dep:libloading",
     "dep:serde_json",
@@ -90,14 +97,15 @@ engine = [
 ]
 # Persistent Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive` (pulls rayon + crossbeam).
 # Without it those modes run ready segments on scoped threads.
-executor-pool = ["daedalus-runtime/executor-pool", "daedalus-engine?/executor-pool"]
+executor-pool = ["threads", "daedalus-runtime/executor-pool", "daedalus-engine?/executor-pool"]
 # Collect executor telemetry (`MetricsLevel` other than `Off`). Without it the telemetry APIs
 # still compile but record nothing.
 metrics = ["daedalus-runtime/metrics", "daedalus-engine?/metrics"]
 # Recommended preset for applications: engine with worker pool and metrics.
 engine-full = ["engine", "executor-pool", "metrics"]
-# Smallest in-process host: engine + static plugins, no worker pool, no metrics.
-embedded = ["engine", "plugins"]
+# Smallest in-process host: engine + static plugins, no worker pool, no metrics. Keeps
+# `threads`; for targets without threads use `engine,plugins` with default features off.
+embedded = ["engine", "plugins", "threads"]
 
 [dependencies]
 daedalus-core = { workspace = true, features = ["std"] }

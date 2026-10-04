@@ -2,16 +2,15 @@ use daedalus_engine::{
     Engine, EngineConfig, EngineConfigError, GpuBackend, RuntimeMode, RuntimeSection,
 };
 use daedalus_planner::{ExecutionPlan, Graph, NodeInstance};
+use daedalus_runtime::sync::Mutex;
 use daedalus_runtime::{
     RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, build_runtime,
     config::RuntimeDebugConfig,
     executor::{NodeError, NodeHandler},
 };
-use parking_lot::Mutex;
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
+#[cfg(feature = "threads")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 #[cfg(feature = "config-env")]
@@ -237,6 +236,7 @@ fn direct_and_compiled_parallel_execution_apply_same_runtime_config() {
 }
 
 #[test]
+#[cfg(feature = "threads")]
 fn adaptive_mode_uses_parallel_for_independent_segments() {
     let runtime_plan = independent_runtime_plan(4);
     assert!(
@@ -279,12 +279,14 @@ impl NodeHandler for LogHandler {
     }
 }
 
+#[cfg(feature = "threads")]
 struct ConcurrencyProbeHandler {
     active: Arc<AtomicUsize>,
     max_active: Arc<AtomicUsize>,
     sleep: Duration,
 }
 
+#[cfg(feature = "threads")]
 impl NodeHandler for ConcurrencyProbeHandler {
     fn run(
         &self,
@@ -300,6 +302,7 @@ impl NodeHandler for ConcurrencyProbeHandler {
     }
 }
 
+#[cfg(feature = "threads")]
 fn run_concurrency_probe(mode: RuntimeMode, runtime_plan: daedalus_runtime::RuntimePlan) -> usize {
     let active = Arc::new(AtomicUsize::new(0));
     let max_active = Arc::new(AtomicUsize::new(0));

@@ -1,4 +1,4 @@
-use parking_lot::{Condvar, Mutex};
+use crate::sync::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -55,10 +55,7 @@ impl HostBridgeManager {
         let mut buffers = HostBridgeBuffers::from_config(&defaults.config);
         buffers.types = defaults.types.clone();
         drop(defaults);
-        let shared = Arc::new(HostBridgeShared {
-            buffers: Mutex::new(buffers),
-            ready: Condvar::new(),
-        });
+        let shared = Arc::new(HostBridgeShared::new(buffers));
         guard.insert(alias.clone(), shared.clone());
         HostBridgeHandle::new(alias, shared)
     }

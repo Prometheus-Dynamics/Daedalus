@@ -37,9 +37,9 @@ usage: scripts/ci.sh [subcommand...]
   examples    build facade examples and run their tests
   smoke       run the CPU-only example binaries
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
-  lean        tests for the lean preset (no executor pool, no metrics)
+  lean        tests for the lean preset (no executor pool, no metrics) and without threads
   nostd       no_std + alloc check of the tier-1 crates for thumbv7em-none-eabihf
-  wasm        embedded preset check and runtime smoke run for wasm32-unknown-unknown
+  wasm        engine,plugins (embedded without threads) check and smoke run for wasm32
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
 EOF
@@ -66,6 +66,7 @@ cmd_features() {
   cargo check -p daedalus-rs --no-default-features
   cargo check -p daedalus-rs --features "engine,plugins,gpu-mock"
   cargo check -p daedalus-rs --no-default-features --features "embedded"
+  cargo check -p daedalus-rs --no-default-features --features "engine,plugins"
   cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
   cargo check -p daedalus-rs --features "dylib-plugins"
   cargo check -p daedalus-runtime --features "metrics,executor-pool,lockfree-queues"
@@ -135,13 +136,16 @@ cmd_aarch64() {
 
 # Workspace tests unify features across all members, so the daemon crate turns on the executor
 # pool and metrics for everyone. This run selects only the facade, engine, and runtime crates
-# (never daedalus-daemon) with defaults off, so the serial/scoped-thread executor path and the
-# no-op telemetry path are what get tested.
+# (never daedalus-daemon) with defaults off, so the parked-thread worker path and the no-op
+# telemetry path are what get tested.
 cmd_lean() {
   step "Testing lean preset (no executor-pool, no metrics)"
   cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets \
     --no-default-features \
     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"
+  step "Testing without threads (serial-only runtime and engine)"
+  cargo test -p daedalus-runtime -p daedalus-engine --all-targets --no-default-features \
+    --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
 }
 
 # The tier-1 crates without `std`, with and without their alloc-only optional features.
@@ -153,13 +157,14 @@ cmd_nostd() {
     "daedalus-core/metrics,daedalus-data/json,daedalus-data/schema,daedalus-data/proto,daedalus-data/async,daedalus-registry/bundle,daedalus-registry/plugin,daedalus-planner/schema,daedalus-planner/proto"
 }
 
-# `wasm32-unknown-unknown` has `std` but no threads and no clock: check the embedded preset, then
-# run serial/parallel/adaptive frames in Node (skipped without `node`).
+# `wasm32-unknown-unknown` has `std` but no threads and no clock: check the embedded preset
+# without `threads` (`engine,plugins`), then run serial/parallel/adaptive frames in Node (skipped
+# without `node`).
 cmd_wasm() {
   step "Checking the embedded preset for $WASM_TARGET"
   ensure_target "$WASM_TARGET"
   local target=(--target "$WASM_TARGET")
-  cargo check "${target[@]}" -p daedalus-rs --no-default-features --features "embedded"
+  cargo check "${target[@]}" -p daedalus-rs --no-default-features --features "engine,plugins"
   cargo build "${target[@]}" -p daedalus-wasm-smoke --release
   if command -v node >/dev/null; then
     step "Running the wasm runtime smoke test"

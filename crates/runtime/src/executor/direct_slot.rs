@@ -1,6 +1,6 @@
 use std::cell::UnsafeCell;
 
-use parking_lot::Mutex as ParkingMutex;
+use crate::sync::Mutex as ParkingMutex;
 
 use super::CorrelatedPayload;
 

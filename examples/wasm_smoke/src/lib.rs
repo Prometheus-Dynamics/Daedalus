@@ -1,12 +1,17 @@
-//! `wasm32-unknown-unknown` runtime smoke module for the `embedded` preset (`scripts/ci.sh wasm`).
+//! `wasm32-unknown-unknown` runtime smoke module for the `embedded` preset without `threads`
+//! (`scripts/ci.sh wasm`).
 //!
 //! Built as a `cdylib` with no imports; `scripts/wasm-smoke.mjs` instantiates it and calls
 //! [`smoke`]. A fan-out graph (`x + 1` and `x * 2`, summed) runs a few ticks in each runtime mode:
 //! `Parallel` and `Adaptive` must degrade to serial there, and timing must not touch the missing
-//! OS clock. Any panic traps, failing the run.
+//! OS clock: the engine reads an injected [`Clock`] (a counter here) instead. Any panic traps,
+//! failing the run.
+
+use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
 
 use daedalus::{
-    engine::{Engine, EngineConfig, RuntimeMode},
+    engine::{Clock, Engine, EngineConfig, MetricsLevel, RuntimeMode},
     macros::{node, plugin},
     runtime::{NodeError, plugins::PluginRegistry},
 };
@@ -51,9 +56,15 @@ fn run(mode: RuntimeMode, ticks: i64) -> i64 {
         .and_then(|b| b.try_connect(&add.outputs.sum, "sum"))
         .expect("wire")
         .build();
+    // Stands in for a host timer: advances 1 µs per reading.
+    static MICROS: AtomicU64 = AtomicU64::new(0);
     let config = EngineConfig::default()
         .with_runtime_mode(mode)
-        .with_pool_size(4);
+        .with_pool_size(4)
+        .with_metrics_level(MetricsLevel::Basic)
+        .with_clock(Clock::new(|| {
+            Duration::from_micros(MICROS.fetch_add(1, Ordering::Relaxed))
+        }));
     let mut host = Engine::new(config)
         .expect("engine")
         .compile_registry(&registry, graph)

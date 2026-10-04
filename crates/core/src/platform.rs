@@ -1,23 +1,18 @@
 //! What the build target provides, and the portable fallbacks for what it lacks.
 //!
-//! - [`THREADS`]: whether `std::thread` works. Where it does not (`wasm32-unknown-unknown`,
-//!   `wasm32-wasip1`, `no_std`), executors run `Parallel`/`Adaptive` serially and blocking
-//!   waits return at once.
+//! Threads are a Cargo feature of `daedalus-runtime`/`daedalus-engine` (`threads`), not a
+//! target probe.
+//!
 //! - [`Instant`]: `std::time::Instant` wherever the target has a monotonic OS clock (the same
 //!   type, so native builds are unaffected). Elsewhere (`no_std`, `wasm32-unknown-unknown`) it is
 //!   a portable instant read from the clock installed with `set_clock`; until one is
 //!   installed every instant is zero, so optional timing reads zero durations.
+//! - [`Clock`]: where runtime and engine timing reads [`Instant`]s. The default is the platform
+//!   clock above; [`Clock::new`] injects another one per engine/executor (tests, simulated
+//!   time, a target timer). `set_clock` remains only as the process-wide fallback for
+//!   timestamps taken without an engine at hand: payload lineage and host-bridge events.
 //!
 //! See "Portability" in docs/development.md.
-
-/// Whether `std::thread` can spawn threads on this target.
-pub const THREADS: bool = cfg!(all(
-    feature = "std",
-    not(all(
-        target_family = "wasm",
-        any(target_os = "unknown", not(target_feature = "atomics"))
-    ))
-));
 
 /// Whether [`Instant`] reads a monotonic OS clock (otherwise the `set_clock` clock).
 pub const OS_CLOCK: bool = cfg!(all(
@@ -47,8 +42,12 @@ mod fallback {
 
     static CLOCK: spin::Once<fn() -> Duration> = spin::Once::new();
 
-    /// Install the monotonic clock behind [`Instant::now`]: time since an arbitrary, fixed
-    /// origin (e.g. a hardware timer or `performance.now()`). Only the first call takes effect.
+    /// Install the process-wide clock behind [`Instant::now`] (and so [`super::Clock::default`]):
+    /// time since an arbitrary, fixed origin (e.g. a hardware timer or `performance.now()`).
+    /// Only the first call takes effect.
+    ///
+    /// Engines take their own clock (`EngineConfig::with_clock`); this fallback is what payload
+    /// lineage and host-bridge event timestamps, taken without an engine at hand, read.
     pub fn set_clock(now: fn() -> Duration) {
         CLOCK.call_once(|| now);
     }
@@ -56,7 +55,7 @@ mod fallback {
     /// Portable monotonic instant (the `std::time::Instant` subset Daedalus uses), read from the
     /// clock installed with [`set_clock`].
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct Instant(Duration);
+    pub struct Instant(pub(super) Duration);
 
     impl Instant {
         pub fn now() -> Self {
@@ -122,5 +121,119 @@ mod fallback {
         fn sub(self, earlier: Self) -> Duration {
             self.saturating_duration_since(earlier)
         }
+    }
+}
+
+use core::time::Duration;
+
+/// A monotonic clock: the platform clock ([`Clock::default`]) or a custom one ([`Clock::new`]).
+///
+/// The default reads [`Instant::now`] directly, so native timing is unchanged. A custom clock is
+/// a function returning the time since an arbitrary fixed origin; its readings are [`Instant`]s
+/// too, comparable with each other but not with readings of another clock. Measure with
+/// [`Clock::elapsed`], not `Instant::elapsed` (which reads the platform clock).
+#[derive(Clone, Default)]
+pub struct Clock(Option<alloc::sync::Arc<CustomClock<dyn Fn() -> Duration + Send + Sync>>>);
+
+struct CustomClock<F: ?Sized> {
+    /// Platform instant that custom readings are offset from (a std `Instant` cannot be built
+    /// from a `Duration`).
+    #[cfg(all(
+        feature = "std",
+        not(all(target_family = "wasm", target_os = "unknown"))
+    ))]
+    origin: Instant,
+    now: F,
+}
+
+impl Clock {
+    /// A clock reading `now`: the time since an arbitrary, fixed origin (e.g. a hardware timer,
+    /// `performance.now()`, or a simulated clock in tests).
+    pub fn new(now: impl Fn() -> Duration + Send + Sync + 'static) -> Self {
+        Self(Some(alloc::sync::Arc::new(CustomClock {
+            #[cfg(all(
+                feature = "std",
+                not(all(target_family = "wasm", target_os = "unknown"))
+            ))]
+            origin: Instant::now(),
+            now,
+        })))
+    }
+
+    /// Whether this is the platform clock.
+    pub fn is_platform(&self) -> bool {
+        self.0.is_none()
+    }
+
+    /// The current instant on this clock.
+    #[inline]
+    pub fn now(&self) -> Instant {
+        let Some(custom) = &self.0 else {
+            return Instant::now();
+        };
+        let since_origin = (custom.now)();
+        #[cfg(all(
+            feature = "std",
+            not(all(target_family = "wasm", target_os = "unknown"))
+        ))]
+        return custom.origin + since_origin;
+        #[cfg(not(all(
+            feature = "std",
+            not(all(target_family = "wasm", target_os = "unknown"))
+        )))]
+        return Instant(since_origin);
+    }
+
+    /// Time since `earlier` (a reading of this clock); zero if the clock went backwards.
+    #[inline]
+    pub fn elapsed(&self, earlier: Instant) -> Duration {
+        self.now().saturating_duration_since(earlier)
+    }
+}
+
+/// Clocks compare by identity: both the platform clock, or the same custom clock.
+impl PartialEq for Clock {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => alloc::sync::Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Clock {}
+
+impl core::fmt::Debug for Clock {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(if self.is_platform() {
+            "Clock::Platform"
+        } else {
+            "Clock::Custom"
+        })
+    }
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn custom_clock_drives_readings() {
+        let ticks = Arc::new(AtomicU64::new(5));
+        let clock = Clock::new({
+            let ticks = ticks.clone();
+            move || Duration::from_millis(ticks.load(Ordering::Relaxed))
+        });
+        let start = clock.now();
+        ticks.store(30, Ordering::Relaxed);
+        assert_eq!(clock.elapsed(start), Duration::from_millis(25));
+        assert_eq!(clock.now() - start, Duration::from_millis(25));
+        assert!(!clock.is_platform());
+        assert_eq!(clock, clock.clone());
+        assert_ne!(clock, Clock::default());
+        assert!(Clock::default().is_platform());
     }
 }

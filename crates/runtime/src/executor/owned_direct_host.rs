@@ -143,7 +143,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), ExecuteError> {
         let (output, metrics) = self.run_single_node(route, payload)?;
-        let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level);
+        let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level)
+            .with_clock(&self.core.clock);
         telemetry.nodes_executed = 1;
         telemetry.record_node_custom_metrics(route.node_idx, metrics);
         Ok((telemetry, output))

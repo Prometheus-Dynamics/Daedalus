@@ -28,13 +28,14 @@ The facade crate is published as `daedalus-rs` and imported as `daedalus`.
 
 ## Features
 
-The facade starts with no default feature set. Enable only the layers your application needs.
+The facade's only default feature is `threads`. Enable the layers your application needs.
 
 - `engine-full`: recommended for applications; `engine` plus `executor-pool` and `metrics`.
-- `engine`: lean high-level engine facade (serial and scoped-thread execution, no worker pool, no metrics).
+- `engine`: lean high-level engine facade (no worker pool, no metrics).
+- `threads` (default): worker threads for `RuntimeMode::Parallel`/`Adaptive`, stream workers and blocking host waits (`HostGraph::drive_blocking`, ...). Without it (e.g. `wasm32-unknown-unknown`) those modes run serially and the thread-only APIs do not exist.
 - `executor-pool`: Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive`; without it those modes use a few persistent parked threads of their own.
 - `metrics`: executor telemetry collection; without it `MetricsLevel` settings compile but record nothing.
-- `embedded`: smallest in-process host preset (`engine` + `plugins`, no pool, no metrics).
+- `embedded`: smallest in-process host preset (`engine` + `plugins` + `threads`, no pool, no metrics); targets without threads use `engine,plugins` with default features off.
 - `plugins`: plugin registry and macro-generated plugin installation.
 - `dylib-plugins`: load native Rust `cdylib` plugins at startup (see [docs/dynamic-plugins.md](docs/dynamic-plugins.md)).
 - `gpu-types`: GPU handles and type surface only.

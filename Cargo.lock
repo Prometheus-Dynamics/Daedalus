@@ -522,7 +522,6 @@ dependencies = [
  "daedalus-registry",
  "daedalus-runtime",
  "daedalus-transport",
- "parking_lot",
  "serde",
  "serde_json",
  "tempfile",
@@ -805,6 +804,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "spin",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -2283,6 +2283,9 @@ name = "spin"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "spirv"

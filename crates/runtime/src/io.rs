@@ -1,4 +1,4 @@
-use parking_lot::RwLock;
+use crate::sync::RwLock;
 use std::any::Any;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};

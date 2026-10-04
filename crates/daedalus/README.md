@@ -12,7 +12,10 @@ Use this crate when an application wants the public Daedalus API from one depend
 - `engine`: lean high-level execution facade (no worker pool, no metrics).
 - `executor-pool`: Rayon worker pool for parallel/adaptive runtime modes.
 - `metrics`: executor telemetry collection.
-- `embedded`: `engine` + `plugins` without pool or metrics, for constrained hosts.
+- `threads` (default): worker threads for parallel/adaptive modes, stream workers and blocking
+  host waits; without it those modes run serially and the thread-only APIs do not exist.
+- `embedded`: `engine` + `plugins` + `threads` without pool or metrics, for constrained hosts
+  (`engine,plugins` with default features off on targets without threads).
 - `plugins`: plugin registry and `#[plugin]`/`declare_plugin!` installation.
 - `dylib-plugins`: native Rust plugin `cdylib`s: `export_plugin!` on the plugin side,
   `PluginLibrary` to load them at runtime; see `docs/dynamic-plugins.md`.

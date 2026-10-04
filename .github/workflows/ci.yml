@@ -65,6 +65,7 @@ jobs:
       - name: Check lean and full engine presets
         run: |
           cargo check -p daedalus-rs --no-default-features --features "embedded"
+          cargo check -p daedalus-rs --no-default-features --features "engine,plugins"
           cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
 
       - name: Build examples

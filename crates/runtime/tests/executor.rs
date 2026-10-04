@@ -4,18 +4,18 @@ use daedalus_planner::{
     NodeInstance, NodeRef,
 };
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
+use daedalus_runtime::sync::Mutex;
 use daedalus_runtime::{
     BackpressureStrategy, ExecuteError, Executor, NodeHandler, ResourceLifecycleEvent,
     RuntimeEdgePolicy, RuntimeNode, SchedulerConfig, StateStore, build_runtime,
     executor::{NodeError, OwnedExecutor},
 };
 use daedalus_transport::Payload;
-use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 struct LogHandler {
-    log: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
+    log: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for LogHandler {
@@ -196,7 +196,7 @@ fn cpu_only_executes_in_order() {
             backpressure: BackpressureStrategy::None,
         },
     );
-    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
     let handler = LogHandler { log: log.clone() };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
     assert_eq!(log.lock().clone(), vec!["n0".to_string(), "n1".to_string()]);
@@ -208,7 +208,7 @@ fn cpu_only_executes_in_order() {
 fn gpu_preferred_falls_back_without_handle() {
     let exec = tiny_exec_plan(&[ComputeAffinity::GpuPreferred]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
-    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
     let handler = LogHandler { log };
     let telemetry = Executor::new(&rt, handler).run().expect("exec ok");
     assert_eq!(telemetry.gpu_fallbacks, 1);
@@ -224,7 +224,7 @@ fn gpu_preferred_falls_back_without_handle() {
 fn gpu_required_errors_without_handle() {
     let exec = tiny_exec_plan(&[ComputeAffinity::GpuRequired]);
     let rt = build_runtime(&exec, &SchedulerConfig::default());
-    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
     let handler = LogHandler { log };
     let err = Executor::new(&rt, handler).run().unwrap_err();
     match err {

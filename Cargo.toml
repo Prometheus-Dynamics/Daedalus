@@ -43,7 +43,7 @@ rust-version = "1.90"
 [workspace.dependencies]
 # Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared
 # without default features; `std` consumers enable `features = ["std"]` themselves.
-daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "2.0.0" }
+daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "2.0.0", default-features = false }
 daedalus-core = { path = "crates/core", version = "2.0.0", default-features = false }
 daedalus-transport = { path = "crates/transport", version = "2.0.0", default-features = false }
 daedalus-data = { path = "crates/data", version = "2.0.0", default-features = false }
@@ -51,7 +51,7 @@ daedalus-wgsl-infer = { path = "crates/wgsl-infer", version = "2.0.0" }
 daedalus-gpu = { path = "crates/gpu", version = "2.0.0" }
 daedalus-registry = { path = "crates/registry", version = "2.0.0", default-features = false }
 daedalus-planner = { path = "crates/planner", version = "2.0.0", default-features = false }
-daedalus-runtime = { path = "crates/runtime", version = "2.0.0" }
+daedalus-runtime = { path = "crates/runtime", version = "2.0.0", default-features = false }
 daedalus-macros = { path = "crates/macros", version = "2.0.0" }
 daedalus-nodes = { path = "crates/nodes", version = "2.0.0" }
 daedalus-engine = { path = "crates/engine", version = "2.0.0", default-features = false }
@@ -126,9 +126,7 @@ centralization = "Shared internal crates and common third-party crates belong in
 implementation_variants = [
     "Daedalus keeps gpu-mock and gpu-wgpu as stable feature-gated backend variants.",
 ]
-allowed_manifest_exceptions = [
-    "crates/engine keeps an explicit path dependency for daedalus-runtime because Cargo workspace inheritance cannot combine workspace = true with default-features = false under the current shared root declaration.",
-]
+allowed_manifest_exceptions = []
 
 # `crates/daedalus/tests/dylib_plugin.rs` builds these examples as `cdylib`s. Dropping their own
 # debug info and stripping the shared objects keeps the debug `.so`s small and quick to link; it
