@@ -116,19 +116,15 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
     };
     if let Some(fetch_and_call) = fetch_and_call {
         quote! {
-            reg.on_direct_payload(Self::ID, |_node, _ctx, payload| {
+            let __direct_output_key: #runtime_crate::transport_types::TypeKey = #output_key;
+            reg.on_direct_payload(Self::ID, move |_node, _ctx, payload| {
                 match {
                     #fetch_and_call
                 } {
-                    Ok(__value) => {
-                        static __OUTPUT_TYPE_KEY: ::std::sync::OnceLock<
-                            #runtime_crate::transport_types::TypeKey
-                        > = ::std::sync::OnceLock::new();
-                        let __key = __OUTPUT_TYPE_KEY
-                            .get_or_init(|| #output_key)
-                            .clone();
-                        Ok(Some(#runtime_crate::transport_types::Payload::owned(__key, __value)))
-                    }
+                    Ok(__value) => Ok(Some(#runtime_crate::transport_types::Payload::owned(
+                        __direct_output_key.clone(),
+                        __value,
+                    ))),
                     Err(__error) => Err(__error),
                 }
             });
@@ -145,7 +141,9 @@ pub(super) struct HandlerRegistryInputs<'a> {
     pub(super) fn_impl_generics: &'a TokenStream,
     pub(super) fn_where_clause: &'a TokenStream,
     pub(super) runtime_crate: &'a TokenStream,
+    pub(super) data_crate: &'a TokenStream,
     pub(super) handler_body: &'a TokenStream,
+    pub(super) output_keys: &'a [TokenStream],
     pub(super) direct_payload_registration: &'a TokenStream,
 }
 
@@ -156,46 +154,72 @@ pub(super) fn handler_registry_fn(inputs: HandlerRegistryInputs<'_>) -> TokenStr
         fn_impl_generics,
         fn_where_clause,
         runtime_crate,
+        data_crate,
         handler_body,
+        output_keys,
         direct_payload_registration,
     } = inputs;
-    if is_graph_node {
-        if has_generics {
-            quote! {
-                pub fn handler_registry_for #fn_impl_generics (id: impl Into<String>) -> #runtime_crate::handler_registry::HandlerRegistry #fn_where_clause {
-                    let _ = id;
-                    #runtime_crate::handler_registry::HandlerRegistry::new()
-                }
+    let registry = quote! { #runtime_crate::handler_registry::HandlerRegistry };
+    let types_ty = quote! { &#data_crate::typing::TypeRegistry };
+    let key_count = output_keys.len();
+    // Output keys resolve once per registry, not per push; the handler owns them.
+    let output_keys = quote! {
+        let __output_keys: [#runtime_crate::transport_types::TypeKey; #key_count] =
+            [#(#output_keys),*];
+    };
+    match (is_graph_node, has_generics) {
+        (true, true) => quote! {
+            pub fn handler_registry_for #fn_impl_generics (
+                id: impl Into<String>,
+                __types: #types_ty,
+            ) -> #registry #fn_where_clause {
+                let _ = (id, __types);
+                #registry::new()
             }
-        } else {
-            quote! {
-                pub fn handler_registry() -> #runtime_crate::handler_registry::HandlerRegistry {
-                    #runtime_crate::handler_registry::HandlerRegistry::new()
-                }
+        },
+        (true, false) => quote! {
+            pub fn handler_registry() -> #registry {
+                #registry::new()
             }
-        }
-    } else if has_generics {
-        quote! {
-            pub fn handler_registry_for #fn_impl_generics (id: impl Into<String>) -> #runtime_crate::handler_registry::HandlerRegistry #fn_where_clause {
+
+            pub fn handler_registry_in(__types: #types_ty) -> #registry {
+                let _ = __types;
+                #registry::new()
+            }
+        },
+        (false, true) => quote! {
+            /// The handler under `id`; output keys resolve through `__types`.
+            pub fn handler_registry_for #fn_impl_generics (
+                id: impl Into<String>,
+                __types: #types_ty,
+            ) -> #registry #fn_where_clause {
                 let id_str = id.into();
-                let mut reg = #runtime_crate::handler_registry::HandlerRegistry::new();
-                reg.on(&id_str, |node, ctx, io| {
+                #output_keys
+                let mut reg = #registry::new();
+                reg.on(&id_str, move |node, ctx, io| {
                     #handler_body
                 });
                 reg
             }
-        }
-    } else {
-        quote! {
-            pub fn handler_registry() -> #runtime_crate::handler_registry::HandlerRegistry {
-                let mut reg = #runtime_crate::handler_registry::HandlerRegistry::new();
-                reg.on(Self::ID, |node, ctx, io| {
-                    #handler_body
-                });
+        },
+        (false, false) => quote! {
+            /// [`Self::handler_registry_in`] resolving through no registry.
+            pub fn handler_registry() -> #registry {
+                Self::handler_registry_in(#data_crate::typing::TypeRegistry::empty())
+            }
+
+            /// The node's handlers; output keys resolve once through `__types` (the installing
+            /// registry's typing registry).
+            pub fn handler_registry_in(__types: #types_ty) -> #registry {
+                let mut reg = #registry::new();
                 #direct_payload_registration
+                #output_keys
+                reg.on(Self::ID, move |node, ctx, io| {
+                    #handler_body
+                });
                 reg
             }
-        }
+        },
     }
 }
 
@@ -292,10 +316,10 @@ pub(super) fn register_fn(inputs: RegisterFnInputs<'_>) -> TokenStream {
                 } else {
                     local_id.clone()
                 };
-                for __contract in #struct_ident::boundary_contracts_for #fn_turbofish_generics ()? {
+                for __contract in #struct_ident::boundary_contracts_for #fn_turbofish_generics (&into.type_registry)? {
                     into.register_boundary_contract(__contract)?;
                 }
-                let mut decl = #struct_ident::node_decl_for #fn_turbofish_generics (full_id.clone())?;
+                let mut decl = #struct_ident::node_decl_for #fn_turbofish_generics (full_id.clone(), &into.type_registry)?;
                 #graph_register_tokens
                 into.register_node_decl(decl)?;
                 Ok(#handle_ident::new_with_id(full_id))
@@ -313,12 +337,12 @@ pub(super) fn register_fn(inputs: RegisterFnInputs<'_>) -> TokenStream {
                 } else {
                     local_id.clone()
                 };
-                for __contract in #struct_ident::boundary_contracts_for #fn_turbofish_generics ()? {
+                for __contract in #struct_ident::boundary_contracts_for #fn_turbofish_generics (&into.type_registry)? {
                     into.register_boundary_contract(__contract)?;
                 }
-                let decl = #struct_ident::node_decl_for #fn_turbofish_generics (full_id.clone())?;
+                let decl = #struct_ident::node_decl_for #fn_turbofish_generics (full_id.clone(), &into.type_registry)?;
                 into.register_node_decl(decl)?;
-                let handlers = #struct_ident::handler_registry_for #fn_turbofish_generics (full_id.clone());
+                let handlers = #struct_ident::handler_registry_for #fn_turbofish_generics (full_id.clone(), &into.type_registry);
                 into.handlers.merge(handlers);
                 Ok(#handle_ident::new_with_id(full_id))
             }
@@ -387,10 +411,10 @@ pub(super) fn node_install_impl(inputs: NodeInstallInputs<'_>) -> TokenStream {
         quote! {
             impl #runtime_crate::plugins::NodeInstall for #struct_ident {
                 fn register(into: &mut #runtime_crate::plugins::PluginRegistry) -> #runtime_crate::plugins::PluginResult<()> {
-                    for __contract in #struct_ident::boundary_contracts()? {
+                    for __contract in #struct_ident::boundary_contracts_in(&into.type_registry)? {
                         into.register_boundary_contract(__contract)?;
                     }
-                    let mut decl = #struct_ident::node_decl()?;
+                    let mut decl = #struct_ident::node_decl_in(&into.type_registry)?;
                     if let Some(prefix) = &into.current_prefix {
                         let full_id = #runtime_crate::apply_node_prefix(prefix, #struct_ident::ID);
                         decl.id = #registry_crate::ids::NodeId::new(&full_id);
@@ -406,20 +430,20 @@ pub(super) fn node_install_impl(inputs: NodeInstallInputs<'_>) -> TokenStream {
         quote! {
             impl #runtime_crate::plugins::NodeInstall for #struct_ident {
                 fn register(into: &mut #runtime_crate::plugins::PluginRegistry) -> #runtime_crate::plugins::PluginResult<()> {
-                    for __contract in #struct_ident::boundary_contracts()? {
+                    for __contract in #struct_ident::boundary_contracts_in(&into.type_registry)? {
                         into.register_boundary_contract(__contract)?;
                     }
-                    let mut decl = #struct_ident::node_decl()?;
+                    let mut decl = #struct_ident::node_decl_in(&into.type_registry)?;
                     if let Some(prefix) = &into.current_prefix {
                         let full_id = #runtime_crate::apply_node_prefix(prefix, #struct_ident::ID);
                         decl.id = #registry_crate::ids::NodeId::new(&full_id);
                     }
                     #struct_ident::register_port_types(into, &decl.id.0)?;
                     into.register_node_decl(decl)?;
-                    let handlers = if let Some(prefix) = &into.current_prefix {
-                        #struct_ident::handler_registry().with_prefix(prefix)
-                    } else {
-                        #struct_ident::handler_registry()
+                    let handlers = #struct_ident::handler_registry_in(&into.type_registry);
+                    let handlers = match &into.current_prefix {
+                        Some(prefix) => handlers.with_prefix(prefix),
+                        None => handlers,
                     };
                     into.handlers.merge(handlers);
                     Ok(())

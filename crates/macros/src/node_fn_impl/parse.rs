@@ -5,7 +5,7 @@ use syn::parse::discouraged::Speculative;
 use syn::{Lit, LitStr, Member, Meta, MetaNameValue};
 
 use crate::helpers::{
-    AttributeArgs, NestedMeta, compile_error, lit_from_expr, lit_str_arg, parse_nested,
+    AttributeArgs, NestedMeta, compile_error, lit_from_expr, lit_str_arg, parse_nested, str_expr,
 };
 
 #[derive(Clone)]
@@ -59,7 +59,8 @@ impl OutputPortMeta {
 }
 
 pub(super) struct NodeArgs {
-    pub(super) id: LitStr,
+    /// The node id: a string literal or any expression evaluating to `&'static str`.
+    pub(super) id: syn::Expr,
     pub(super) summary_attr: Option<LitStr>,
     pub(super) description_attr: Option<LitStr>,
     pub(super) generics_attr: Option<TokenStream>,
@@ -117,7 +118,7 @@ pub(super) fn parse_node_args(
     data_crate: &TokenStream,
     gpu_crate: &TokenStream,
 ) -> Result<NodeArgs, TokenStream> {
-    let mut id: Option<LitStr> = None;
+    let mut id: Option<syn::Expr> = None;
     let mut summary_attr: Option<LitStr> = None;
     let mut description_attr: Option<LitStr> = None;
     let mut generics_attr: Option<TokenStream> = None;
@@ -140,6 +141,11 @@ pub(super) fn parse_node_args(
 
     for arg in args {
         match arg {
+            NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
+                if path.is_ident("id") =>
+            {
+                id = Some(str_expr(&value, "id")?);
+            }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue {
                 path, value: expr, ..
             })) => {
@@ -148,9 +154,7 @@ pub(super) fn parse_node_args(
                         "name/value arguments must be literal values".into(),
                     ));
                 };
-                if path.is_ident("id") {
-                    id = Some(lit_str_arg(&expr, "id")?);
-                } else if path.is_ident("summary") {
+                if path.is_ident("summary") {
                     summary_attr = Some(lit_str_arg(&expr, "summary")?);
                 } else if path.is_ident("description") {
                     description_attr = Some(lit_str_arg(&expr, "description")?);

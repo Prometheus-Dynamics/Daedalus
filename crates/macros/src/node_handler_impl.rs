@@ -4,20 +4,21 @@ use syn::{ItemFn, LitStr, parse_macro_input};
 
 use crate::helpers::{
     AttributeArgs, DaedalusCrate, NestedMeta, compile_error, lit_str_arg, litstr_from_ident,
+    str_expr,
 };
 
 pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args with AttributeArgs::parse_terminated);
     let input = parse_macro_input!(item as ItemFn);
 
-    let mut id: Option<LitStr> = None;
+    let mut id: Option<syn::Expr> = None;
     let mut outputs: Vec<LitStr> = Vec::new();
     let runtime_crate = DaedalusCrate::Runtime.path();
 
     for arg in args {
         match arg {
             NestedMeta::Meta(syn::Meta::NameValue(nv)) if nv.path.is_ident("id") => {
-                match lit_str_arg(&nv.value, "id") {
+                match str_expr(&nv.value, "id") {
                     Ok(s) => id = Some(s),
                     Err(err) => return TokenStream::from(err),
                 }

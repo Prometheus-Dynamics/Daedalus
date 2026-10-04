@@ -8,7 +8,7 @@ use syn::punctuated::Punctuated;
 use syn::{MetaList, Path, Token, Type};
 
 use crate::helpers::last_ident_is;
-use crate::type_expr::leaf_type_key;
+use crate::type_expr::{bind_types, leaf_type_key};
 
 /// Whether a by-value node parameter is a foreign view: the payload carries a `ForeignHandle`
 /// and the macro fetches it with `NodeIo::get_foreign` instead of a typed downcast. Recognized
@@ -46,7 +46,11 @@ pub(crate) fn register_foreign_providers(providers: &[ForeignProvider]) -> Vec<T
         .iter()
         .map(|ForeignProvider { owner, interface }| {
             let key = leaf_type_key(owner);
-            quote! { registry.register_foreign_provider_as::<#owner, #interface>(#key)?; }
+            let bind = bind_types(quote! { &registry.type_registry });
+            quote! {
+                let __key = { #bind #key };
+                registry.register_foreign_provider_as::<#owner, #interface>(__key)?;
+            }
         })
         .collect()
 }

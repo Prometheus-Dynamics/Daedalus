@@ -7,10 +7,10 @@ use crate::helpers::{
     AttributeArgs, DaedalusCrate, NestedMeta, arc_inner_type, compile_error, is_unit_type,
     lit_from_expr, lit_str_arg, result_ok_type, str_expr,
 };
-use crate::type_expr::{leaf_declared_key, leaf_type_key};
+use crate::type_expr::{bind_types, leaf_declared_key, leaf_type_key};
 
 struct AdaptArgs {
-    id: LitStr,
+    id: Expr,
     from: Option<Expr>,
     to: Option<Expr>,
     access: Option<syn::Ident>,
@@ -53,14 +53,16 @@ fn parse_args(args: AttributeArgs) -> Result<AdaptArgs, proc_macro2::TokenStream
                     to = Some(str_expr(&value, "adapt to")?);
                     continue;
                 }
+                if path.is_ident("id") {
+                    id = Some(str_expr(&value, "adapt id")?);
+                    continue;
+                }
                 if lit_from_expr(&value).is_none() {
                     return Err(compile_error(
                         "adapt arguments must be string literals".into(),
                     ));
                 }
-                if path.is_ident("id") {
-                    id = Some(lit_str_arg(&value, "adapt id")?);
-                } else if path.is_ident("cost") {
+                if path.is_ident("cost") {
                     let Some(Lit::Int(value)) = lit_from_expr(&value) else {
                         return Err(compile_error(
                             "adapt cost must be an integer literal".into(),
@@ -470,14 +472,20 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let bind_types = bind_types(quote! { &into.type_registry });
     let expanded = quote! {
         #input
 
         #vis fn #register_ident(
             into: &mut #runtime_crate::plugins::PluginRegistry,
         ) -> #runtime_crate::plugins::PluginResult<()> {
-            let __from_key = #transport_crate::TypeKey::new(#from_key);
-            let __to_key = #transport_crate::TypeKey::new(#to_key);
+            let (__from_key, __to_key) = {
+                #bind_types
+                (
+                    #transport_crate::TypeKey::new(#from_key),
+                    #transport_crate::TypeKey::new(#to_key),
+                )
+            };
             #register_from
             #register_to
             into.register_transport_adapter_fn_with_options(

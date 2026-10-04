@@ -130,6 +130,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   external_types}`, `ExternalTypeRef`) and exported as `plugin.metadata.external_types` instead
   of failing the schema. New example `examples/plugins/dependent`; the example plugin maps a
   key-less `Lease` type.
+- Constants and port defaults convert to non-builtin port types without manual registration
+  (Eidos): the node macros register a const coercer for every input and `NodeConfig` field type
+  at install (`daedalus_runtime::const_coerce`, `NodeConfig::register_const_coercers`). Unit
+  enums deriving `DaedalusTypeExpr` take a variant name or index
+  (`DaedalusTypeExpr::from_value`); other `Deserialize` types deserialize from the `Value`.
+  Explicit `register_const_coercer`/`register_enum` coercers win. `NodeIo::coerce_input`.
+- `#[node]`, `#[adapt]`, `#[plugin]` and `#[node_handler]` accept any expression evaluating to a
+  `&'static str` constant as `id` (`concat!(..)`, a user macro, a `const`); `#[type_key]`,
+  `#[adapt(from, to)]` and `foreign_types` keys accept the same.
+- `TypeRegistry::empty()`, a shared empty typing registry.
+
+### Fixed
+
+- Enum `NodeConfig` fields and enum handler inputs failed at runtime with `missing <port>`: the
+  engine never passed `PluginRegistry::const_coercers` to its executors (so even `register_enum`
+  had no effect), and owned (`T`, `&mut T`) and borrowed (`&T`) handler inputs never converted
+  `Value` constants. `Engine` executors now get the coercers (and, in `execute_*` with a plugin
+  registry, the type index), and `NodeIo::take_owned` and `&T` inputs fall back to coercion.
 
 ### Changed
 
@@ -143,6 +161,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   otherwise instead of failing with `missing <port>`; optional inputs never block and are
   `None` without a value. `NodeIo` nodes declare optional ports. The planner's
   unconnected-inputs lint ignores optional ports.
+- Macro port keys for types without a key of their own (`foreign_types` mappings) resolve through
+  the registry the plugin installs into, never through process-global state, so one registry's
+  mappings no longer leak into (or conflict with) another's. Generated code reads a
+  `&TypeRegistry`: `node_decl_in`, `boundary_contracts_in` and `handler_registry_in` take it
+  (install passes `PluginRegistry::type_registry`; `node_decl()`, `boundary_contracts()` and
+  `handler_registry()` use `TypeRegistry::empty()`), generic nodes' `node_decl_for`,
+  `boundary_contracts_for` and `handler_registry_for` take it as an extra argument,
+  `NodeConfig::ports` takes it, and so does the macro-support probe's `leaf_type_expr`. `DaedalusTypeExpr::type_expr()` resolves key-less field types
+  through `TypeRegistry::empty()` (builtins, else `rust:`).
 - Port keys no longer depend on registration order. `#[node]`/`#[adapt]` resolve a type's own
   key (`#[type_key]`, `DaedalusTypeExpr`) at compile time before the typing registry, handlers
   push outputs under the key the port declares, and `Arc<T>` ports use `T`'s key. A type from
@@ -224,6 +251,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Performance
 
+- Macro-generated handlers resolve their output keys once per registry instead of building a
+  `TypeExpr`, a JSON key string and an `Arc<str>` on every push, and push to static `PortId`s;
+  the single-input direct path no longer caches its key in a process-wide `static`. The
+  `macro_hot_path_allocations` facade test checks a typed `#[node]` allocates no more per round
+  trip than a hand-written one.
+
 - Host graph push/tick/take with metrics off went from 31 heap allocations per round trip to 4
   (the two payloads), covered by the `hot_path_allocations` engine test; the serial executor runs
   and drains host outputs on one snapshot and times edge policies only at `Detailed` metrics.
@@ -232,6 +265,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Removed
 
+- The process-global typing registry: `daedalus_data::typing::{register_type, register_enum,
+  lookup_type, lookup_type_by_rust_name, override_type_expr, type_expr, snapshot_by_rust_name,
+  register_type_capability, register_type_capabilities, type_capabilities, has_type_capability,
+  snapshot_type_capabilities, snapshot_global_registry, restore_global_registry,
+  reset_global_registry}` and the unused global named-type helpers
+  (`NamedTypeRegistry::global`, `named_types::{register_named_type, lookup_named_type,
+  resolve_opaque, export_policy_for, snapshot}`). Use a `TypeRegistry`/`NamedTypeRegistry`
+  (`PluginRegistry::{type_registry, named_type_registry}`); `register_foreign_type`/
+  `foreign_types` no longer write process-global state.
 - The no-op `Outputs` derive.
 - `daedalus_registry::type_key_of` (and its `daedalus_runtime::transport` re-export): generic
   pushes resolve through `PluginRegistry::type_index`. `NodeIo::{push_any, push_output,

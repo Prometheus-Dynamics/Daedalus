@@ -1,7 +1,7 @@
 use crate::model::TypeExpr;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// Policy for whether a port typed as a given schema should be considered exportable through
 /// callers that explicitly encode host boundary payloads as JSON or bytes.
@@ -34,11 +34,6 @@ pub struct NamedTypeRegistry {
 impl NamedTypeRegistry {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn global() -> Self {
-        static REG: OnceLock<NamedTypeRegistry> = OnceLock::new();
-        REG.get_or_init(Self::new).clone()
     }
 
     pub fn register(
@@ -91,53 +86,6 @@ impl NamedTypeRegistry {
     pub fn snapshot(&self) -> Vec<NamedType> {
         self.types.read().values().cloned().collect()
     }
-}
-
-/// Register a named type schema keyed by a stable string.
-///
-/// The `key` is expected to match `TypeExpr::Opaque(key)` when used in port schemas.
-/// Registering the same key multiple times is allowed if the normalized `TypeExpr` matches.
-pub fn register_named_type(
-    key: impl Into<String>,
-    expr: TypeExpr,
-    export: HostExportPolicy,
-) -> Result<(), String> {
-    NamedTypeRegistry::global().register(key, expr, export)
-}
-
-pub fn lookup_named_type(key: &str) -> Option<NamedType> {
-    NamedTypeRegistry::global().lookup(key)
-}
-
-/// Resolve an opaque type key into its registered (normalized) schema, if present.
-pub fn resolve_opaque(expr: &TypeExpr) -> Option<TypeExpr> {
-    if let TypeExpr::Opaque(key) = expr {
-        return lookup_named_type(key).map(|t| t.expr);
-    }
-    None
-}
-
-/// Determine the export policy for a given port schema.
-///
-/// Note: this only describes whether *serialized* host boundaries should attempt automatic
-/// JSON/bytes encoding. It does not affect typed host polling (`try_pop::<T>()`) which can
-/// still move runtime payloads like `DynamicImage` without serialization.
-pub fn export_policy_for(expr: &TypeExpr) -> HostExportPolicy {
-    use crate::model::{TypeExpr as TE, ValueType};
-
-    match expr {
-        TE::Scalar(ValueType::Bytes) => HostExportPolicy::Bytes,
-        TE::Opaque(key) => lookup_named_type(key)
-            .map(|t| t.export)
-            .unwrap_or(HostExportPolicy::None),
-        // Structural types are representable as `Value` (if the runtime payload is `Value`-like).
-        _ => HostExportPolicy::Value,
-    }
-}
-
-/// Snapshot the current named-type registry for UI/tooling.
-pub fn snapshot() -> Vec<NamedType> {
-    NamedTypeRegistry::global().snapshot()
 }
 
 #[cfg(test)]

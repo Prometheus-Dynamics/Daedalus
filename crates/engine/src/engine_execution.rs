@@ -72,7 +72,9 @@ impl Engine {
         }
         let exec = Executor::try_new(&runtime_plan, handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
-            .with_capabilities(plugins.capabilities.clone());
+            .with_capabilities(plugins.capabilities.clone())
+            .with_const_coercers(plugins.const_coercers.clone())
+            .with_type_index(plugins.type_index());
         let exec = self.configure_executor(exec)?;
         self.run_configured_executor(exec)
     }
@@ -134,6 +136,8 @@ impl Engine {
         let exec = Executor::try_new(&runtime_plan, handler)?
             .with_runtime_transport(plugins.runtime_transport.clone())
             .with_capabilities(plugins.capabilities.clone())
+            .with_const_coercers(plugins.const_coercers.clone())
+            .with_type_index(plugins.type_index())
             .try_with_active_nodes(slice.active_nodes.clone())?
             .try_with_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))?
             .try_with_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))?;

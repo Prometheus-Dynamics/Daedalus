@@ -271,3 +271,58 @@ fn registering_a_key_again_is_a_no_op_only_when_identical() {
         "{err}"
     );
 }
+
+#[node(id = "make_rgb", inputs("width"), outputs("image"))]
+fn make_rgb(width: u32) -> Result<image::RgbImage, NodeError> {
+    Ok(image::RgbImage::new(width, 1))
+}
+
+#[plugin(
+    id = "test.keyindex.rgb",
+    foreign_types(image::RgbImage = "test:keyindex:rgb"),
+    nodes(make_rgb)
+)]
+struct RgbPlugin;
+
+#[plugin(
+    id = "test.keyindex.rgb",
+    foreign_types(image::RgbImage = "test:keyindex:rgb:other"),
+    nodes(make_rgb)
+)]
+struct OtherRgbPlugin;
+
+/// The key `make_rgb` pushes its output under, in a registry with only `plugin` installed.
+fn pushed_rgb_key(plugin: &dyn daedalus::runtime::plugins::Plugin) -> String {
+    let mut registry = PluginRegistry::new();
+    registry.install_plugin(plugin).unwrap();
+    let node = daedalus::NodeHandle::new("test.keyindex.rgb:make_rgb").alias("make");
+    let graph = registry
+        .graph_builder()
+        .unwrap()
+        .try_node(&node)
+        .and_then(|b| b.try_connect("width", &node.input("width")))
+        .and_then(|b| b.try_connect(&node.output("image"), "image"))
+        .unwrap()
+        .build();
+    let mut host = Engine::new(EngineConfig::default())
+        .unwrap()
+        .compile_registry(&registry, graph)
+        .unwrap();
+    assert!(matches!(
+        host.push("width", 3_u32),
+        FeedOutcome::Accepted { .. }
+    ));
+    host.tick().expect("tick");
+    let payload = host.take_payload("image").expect("output");
+    payload.type_key().as_str().to_string()
+}
+
+#[test]
+fn macro_outputs_of_mapped_foreign_types_use_the_installing_registry_key() {
+    // Each registry resolves the mapping it installed; neither leaks into the other.
+    assert_eq!(pushed_rgb_key(&RgbPlugin::new()), "test:keyindex:rgb");
+    assert_eq!(
+        pushed_rgb_key(&OtherRgbPlugin::new()),
+        "test:keyindex:rgb:other"
+    );
+}

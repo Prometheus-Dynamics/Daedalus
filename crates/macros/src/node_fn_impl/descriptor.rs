@@ -316,8 +316,17 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
         boundary_output_contracts_for.clone()
     };
 
+    let types_ty = quote! { &#data_crate::typing::TypeRegistry };
     quote! {
+        /// [`Self::boundary_contracts_in`] resolving through no registry.
         pub fn boundary_contracts() -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> {
+            Self::boundary_contracts_in(#data_crate::typing::TypeRegistry::empty())
+        }
+
+        /// Boundary contracts of the port types, resolved through `__types`.
+        pub fn boundary_contracts_in(
+            __types: #types_ty,
+        ) -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> {
             let mut __contracts: Vec<#runtime_crate::transport_types::BoundaryTypeContract> = Vec::new();
             #(#boundary_input_contracts)*
             #(#boundary_output_contracts)*
@@ -326,7 +335,9 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
             Ok(__contracts)
         }
 
-        pub fn boundary_contracts_for #fn_impl_generics () -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> #fn_where_clause {
+        pub fn boundary_contracts_for #fn_impl_generics (
+            __types: #types_ty,
+        ) -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> #fn_where_clause {
             let mut __contracts: Vec<#runtime_crate::transport_types::BoundaryTypeContract> = Vec::new();
             #(#boundary_input_contracts_for)*
             #(#boundary_output_contracts_for)*
@@ -413,7 +424,7 @@ pub(super) struct NodeDeclInputs<'a> {
     pub(super) fn_impl_generics: &'a TokenStream,
     pub(super) registry_crate: &'a TokenStream,
     pub(super) fn_where_clause: &'a TokenStream,
-    pub(super) id: &'a LitStr,
+    pub(super) id: &'a syn::Expr,
     pub(super) node_input_port_decl_tokens: &'a [TokenStream],
     pub(super) config_inputs_extend: &'a [TokenStream],
     pub(super) fanin_input_decl_tokens: &'a [TokenStream],
@@ -422,6 +433,7 @@ pub(super) struct NodeDeclInputs<'a> {
     pub(super) runtime_crate: &'a TokenStream,
     pub(super) output_sources: &'a [TokenStream],
     pub(super) metadata_tokens: &'a TokenStream,
+    pub(super) data_crate: &'a TokenStream,
 }
 
 pub(super) fn node_decl_fn(inputs: NodeDeclInputs<'_>) -> TokenStream {
@@ -439,6 +451,7 @@ pub(super) fn node_decl_fn(inputs: NodeDeclInputs<'_>) -> TokenStream {
         runtime_crate,
         output_sources,
         metadata_tokens,
+        data_crate,
     } = inputs;
     let body = node_decl_body(NodeDeclBody {
         node_input_port_decl_tokens,
@@ -451,9 +464,15 @@ pub(super) fn node_decl_fn(inputs: NodeDeclInputs<'_>) -> TokenStream {
         output_sources,
         metadata_tokens,
     });
+    let types_ty = quote! { &#data_crate::typing::TypeRegistry };
     if has_generics {
         quote! {
-            pub fn node_decl_for #fn_impl_generics (id: impl Into<String>) -> Result<#registry_crate::capability::NodeDecl, &'static str> #fn_where_clause {
+            /// The node declaration under `id`; port types without a key of their own resolve
+            /// through `__types` (the installing registry's typing registry).
+            pub fn node_decl_for #fn_impl_generics (
+                id: impl Into<String>,
+                __types: #types_ty,
+            ) -> Result<#registry_crate::capability::NodeDecl, &'static str> #fn_where_clause {
                 let id_str = id.into();
                 let mut __node = #registry_crate::capability::NodeDecl::new(id_str);
                 #body
@@ -461,7 +480,16 @@ pub(super) fn node_decl_fn(inputs: NodeDeclInputs<'_>) -> TokenStream {
         }
     } else {
         quote! {
+            /// [`Self::node_decl_in`] resolving through no registry.
             pub fn node_decl() -> Result<#registry_crate::capability::NodeDecl, &'static str> {
+                Self::node_decl_in(#data_crate::typing::TypeRegistry::empty())
+            }
+
+            /// The node declaration; port types without a key of their own resolve through
+            /// `__types` (the installing registry's typing registry).
+            pub fn node_decl_in(
+                __types: #types_ty,
+            ) -> Result<#registry_crate::capability::NodeDecl, &'static str> {
                 let mut __node = #registry_crate::capability::NodeDecl::new(#id);
                 #body
             }

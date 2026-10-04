@@ -6,7 +6,7 @@ use crate::helpers::{
     DaedalusCrate, NestedMeta, SerdeRenameAll, compile_error, parse_nested, parse_serde_rename_all,
     serde_name_for_ident, str_expr,
 };
-use crate::type_expr::{GenericParams, TypeExprOptions};
+use crate::type_expr::{GenericParams, TypeExprOptions, bind_types};
 
 fn parse_type_key(attrs: &[syn::Attribute]) -> Result<Option<Expr>, proc_macro2::TokenStream> {
     for attr in attrs {
@@ -57,6 +57,7 @@ pub fn daedalus_type_expr(item: TokenStream) -> TokenStream {
         Err(e) => return TokenStream::from(e),
     };
 
+    let from_value = unit_enum_from_value(&input.data, rename_all, &data_crate);
     let type_expr_body: proc_macro2::TokenStream = match &input.data {
         Data::Struct(s) => match &s.fields {
             Fields::Named(fields) => {
@@ -145,15 +146,50 @@ pub fn daedalus_type_expr(item: TokenStream) -> TokenStream {
             }
         }
     });
+    // Field types without a key of their own resolve through no registry (builtins, else `rust:`).
+    let bind = bind_types(quote! { #data_crate::typing::TypeRegistry::empty() });
     let expanded = quote! {
         impl #data_crate::daedalus_type::DaedalusTypeExpr for #name {
             const TYPE_KEY: &'static str = #type_key_tokens;
             fn type_expr() -> #data_crate::model::TypeExpr {
+                #bind
                 #type_expr_body
             }
             #visit_dependencies
+            #from_value
         }
     };
 
     TokenStream::from(expanded)
+}
+
+/// `DaedalusTypeExpr::from_value` for an enum whose variants are all unit variants.
+fn unit_enum_from_value(
+    data: &Data,
+    rename_all: Option<SerdeRenameAll>,
+    data_crate: &proc_macro2::TokenStream,
+) -> Option<proc_macro2::TokenStream> {
+    let Data::Enum(e) = data else { return None };
+    if e.variants.is_empty() || e.variants.iter().any(|v| !matches!(v.fields, Fields::Unit)) {
+        return None;
+    }
+    let names = e
+        .variants
+        .iter()
+        .map(|v| serde_name_for_ident(&v.ident, &v.attrs, rename_all));
+    let arms = e.variants.iter().enumerate().map(|(idx, v)| {
+        let ident = &v.ident;
+        quote! { #idx => ::core::option::Option::Some(Self::#ident), }
+    });
+    Some(quote! {
+        fn from_value(value: &#data_crate::model::Value) -> ::core::option::Option<Self> {
+            match #data_crate::daedalus_type::derive_support::unit_variant_index(
+                value,
+                &[#(#names),*],
+            )? {
+                #(#arms)*
+                _ => ::core::option::Option::None,
+            }
+        }
+    })
 }

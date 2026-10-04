@@ -26,4 +26,4 @@ Use owned registries for release-facing hosts, plugins, tests, and multi-tenant 
 - `TypeRegistry::new()` owns Rust type mappings and type capabilities for one caller.
 - `NamedTypeRegistry::new()` owns stable named schemas and host export policies for one caller.
 
-The process-global helpers (`register_type`, `type_expr`, `register_named_type`, `lookup_named_type`, and related snapshot helpers) are convenience APIs for examples, simple binaries, and tooling. Code that already owns an engine or plugin registry should pass that registry through instead of relying on process-global state. Tests and embedders that temporarily use global type helpers can bracket changes with `snapshot_global_registry`, `restore_global_registry`, or `reset_global_registry`.
+There are no process-global type registries: the node macros and plugins resolve types through the `TypeRegistry` of the `PluginRegistry` they install into (`TypeRegistry::empty()` where there is none).

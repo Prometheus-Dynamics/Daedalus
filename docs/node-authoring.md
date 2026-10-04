@@ -37,6 +37,18 @@ A `TypeExpr` is never the carrier. It is the portable description of it.
 Register types, nodes, and adapters through a plugin (`#[plugin(...)]` or `declare_plugin!`) so
 everything lands in the `PluginRegistry` the engine compiles from.
 
+The `id` of `#[node]`, `#[adapt]` and `#[plugin]` is a string literal or any expression that
+evaluates to a `&'static str` constant, so a library can prefix its ids in one place:
+
+```rust
+macro_rules! eidos_id {
+    ($name:ident) => { concat!("eidos.", stringify!($name)) };
+}
+
+#[node(id = eidos_id!(blur), inputs("frame"), outputs("frame"))] // or id = concat!(..), id = BLUR_ID
+fn blur(frame: &Frame) -> Result<Frame, NodeError> { /* ... */ }
+```
+
 ### How Port Keys Resolve
 
 `#[node]` and `#[adapt]` give every port (and adapter end) a `TypeKey`, in this order:
@@ -46,16 +58,23 @@ everything lands in the `PluginRegistry` the engine compiles from.
    `port(name = "...", ty = <TypeExpr>)`.
 2. The key the type owns (`#[type_key]`, `#[derive(DaedalusTypeExpr)]`). It is resolved at compile
    time through the type's trait impl, so it never depends on which plugin installed first.
-3. The typing registry: `#[plugin(foreign_types(Type = "key"))]` (see below), which registers
-   the mapping before the plugin's nodes install.
+3. The installing registry's typing registry (`PluginRegistry::type_registry`):
+   `#[plugin(foreign_types(Type = "key"))]` (see below), which registers the mapping before the
+   plugin's nodes install, or `register_foreign_type` on that registry. Mappings made in another
+   registry never apply, and nothing is read from process-global state.
 4. Builtins (integers, floats, `bool`, `String`, `Vec<u8>`, `()`) and structural containers
    (`Vec<T>`, `Option<T>`, tuples). `&T`, `Arc<T>`, `Cpu<T>` and `Gpu<T>` use `T`'s key.
-5. Otherwise the fallback `rust:<type path>`. Whether a registry entry exists depends on what
-   ran first, so for a type defined in **another crate** the fallback is an error at install:
+5. Otherwise the fallback `rust:<type path>`. Whether a mapping exists depends on what the
+   registry installed first, so for a type defined in **another crate** the fallback is an error
+   at install:
    `PluginError::UnkeyedForeignType` names the node (or adapter), the port and the Rust type,
    and lists the fixes. Types from the node's own crate and from `std` keep the fallback.
 
-Handlers push outputs under the same key the port declares. Each port's Rust type is recorded per
+Handlers push outputs under the same key the port declares. The keys are resolved once, when the
+plugin installs (`node_decl_in`, `boundary_contracts_in` and `handler_registry_in` take the
+registry's `TypeRegistry`; `node_decl()` and `handler_registry()` resolve through
+`TypeRegistry::empty()`, so they see owned keys and builtins only), and handlers keep their output
+keys instead of rebuilding them on every push. Each port's Rust type is recorded per
 key (`PluginRegistry::boundary_types()`); one key used for two different Rust types fails with
 `PluginError::BoundaryTypeConflict` (two plugins, a plugin and the host, or a dynamic plugin built
 separately).
@@ -157,6 +176,43 @@ fn pose(frame: &Frame, refined: Option<&Corners>) -> Result<Pose, NodeError> { /
 
 The planner records each node's required inputs in its metadata
 (`NODE_REQUIRED_INPUTS_META_KEY`); nodes without a registry declaration are never gated.
+
+### Constants, Defaults And Config Enums
+
+Port defaults (`port(name = "mode", default = "wrap")`, `#[port(default = ...)]` on a
+`#[derive(NodeConfig)]` field) and graph constants (`const_input`, graph documents) arrive as a
+`Value`. A handler parameter or config field of another type gets it converted when the node
+runs (`T`, `&T`, `&mut T`, `Option<T>`, and config fields):
+
+- builtins (integers, floats, `bool`, `String`, `Vec<u8>`) convert directly;
+- enums deriving `DaedalusTypeExpr` whose variants are all unit variants take a variant name
+  (`Value::String` or `Value::Enum`, case-insensitive) or an index (`Value::Int`), with no serde
+  dependency (`DaedalusTypeExpr::from_value`);
+- other types implementing `serde::Deserialize` deserialize from the value (structs from
+  `Value::Struct`/`Map`, enums externally tagged: `Value::Enum { name, value }`).
+
+The node macros register these conversions for every input and config field type when the plugin
+installs, so no `register_enum` or `register_const_coercer` call is needed. A conversion
+registered explicitly with `PluginRegistry::register_const_coercer` (or `register_enum`) takes
+precedence, whichever installs first. Values that arrive typed (an upstream node producing the
+enum) are used as they are.
+
+```rust
+#[derive(Clone, Copy, Debug, daedalus::DaedalusTypeExpr)]
+#[daedalus(type_key = "eidos:border")]
+enum Border { Reflect, Constant, Wrap }
+
+#[derive(Clone, Debug, NodeConfig)]
+struct BlurConfig {
+    #[port(default = "reflect")]
+    border: Border,
+    #[port(default = 3, min = 1)]
+    radius: i32,
+}
+
+#[node(id = "blur", inputs("frame", config = BlurConfig), outputs("frame"))]
+fn blur(frame: &Frame, cfg: BlurConfig) -> Result<Frame, NodeError> { /* ... */ }
+```
 
 ## Adapters Replace Conversion Nodes
 

@@ -84,9 +84,10 @@ daedalus::export_plugin!(EidosPlugin, deps [styx_core::daedalus_integration::Sty
   or map (`foreign_types`) resolve and their adapters, providers and types are there. Their
   boundary types and foreign interfaces are part of the exported tables, so the host checks the
   plugin's copy of them too. Linking matters for types that declare no key themselves (a
-  dependency's `foreign_types` mapping): node macros resolve those through the library's own
-  process globals, which only a linked dependency fills. Types that own their key (`#[type_key]`,
-  `DaedalusTypeExpr`) resolve without it.
+  dependency's `foreign_types` mapping): node macros resolve those through the registry they
+  install into, and in the introspection registry only a linked dependency adds the mapping. At
+  `install_into` the host registry, where the dependency is installed first, provides it. Types
+  that own their key (`#[type_key]`, `DaedalusTypeExpr`) resolve without it.
 - **Not linked**: introspection runs in a lenient mode. A port type from another crate without a
   key is recorded instead of failing (`PluginRegistry::record_external_types`), listed in the
   schema as `plugin.metadata.external_types` (`owner`, `port`, `rust_type`), and keeps its

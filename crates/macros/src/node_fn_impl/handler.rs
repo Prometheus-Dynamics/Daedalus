@@ -41,6 +41,9 @@ pub(super) struct HandlerInputs<'a> {
 
 pub(super) struct HandlerBuild {
     pub(super) handler_body: TokenStream,
+    /// Key expressions of the pushed outputs, evaluated once per handler registry (with
+    /// `__types` in scope) into the `__output_keys` array the handler body indexes.
+    pub(super) output_keys: Vec<TokenStream>,
     pub(super) effective_inputs_for_args: Vec<PortMeta>,
     pub(super) arg_types: Vec<syn::Type>,
     pub(super) arg_idents: Vec<syn::Ident>,
@@ -86,6 +89,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
     let mut exec_ctx_present = false;
     let mut node_io_present = false;
     let mut shader_ctx_present = false;
+    let mut output_keys: Vec<TokenStream> = Vec::new();
 
     let handler_body = if is_low_level {
         quote! { #inner_fn_ident(node, ctx, io) }
@@ -376,7 +380,13 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                             if let Some(inner) = payload_inner_type(elem_ty) {
                                 quote! { io.push_compute::<#inner>(Some(#port), #ident); }
                             } else {
-                                push_output(elem_ty, port, key.as_ref(), quote! { #ident })
+                                push_output(
+                                    elem_ty,
+                                    port,
+                                    key.as_ref(),
+                                    quote! { #ident },
+                                    &mut output_keys,
+                                )
                             }
                         })
                         .collect(),
@@ -385,8 +395,8 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         .zip(out_idents.iter())
                         .map(|(port, ident)| quote! {
                             {
-                                let __key = #runtime_crate::transport_types::TypeKey::new("rust:unknown");
-                                io.push_as(Some(#port), __key, #ident);
+                                let __key = #runtime_crate::transport_types::TypeKey::from_static("rust:unknown");
+                                io.push_as_to(#port, __key, #ident);
                             }
                         })
                         .collect(),
@@ -411,12 +421,12 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                     .unwrap_or_else(|| {
                         if let Some(ok_ty) = ok_ty.as_ref() {
                             let key = output_type_keys.first().and_then(Option::as_ref);
-                            push_output(ok_ty, &out_port, key, quote! { val })
+                            push_output(ok_ty, &out_port, key, quote! { val }, &mut output_keys)
                         } else {
                             quote! {
                                 {
-                                    let __key = #runtime_crate::transport_types::TypeKey::new("rust:unknown");
-                                    io.push_as(Some(#out_port), __key, val);
+                                    let __key = #runtime_crate::transport_types::TypeKey::from_static("rust:unknown");
+                                    io.push_as_to(#out_port, __key, val);
                                 }
                             }
                         }
@@ -462,6 +472,8 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         };
 
         if let Some(cap_str) = capability_attr.cloned() {
+            // Capability entries push their own payloads; the typed returns are unused.
+            output_keys.clear();
             let cap_lit = cap_str;
             let port_idents: Vec<LitStr> = port_names.clone();
             quote! {
@@ -554,6 +566,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
 
     Ok(HandlerBuild {
         handler_body,
+        output_keys,
         effective_inputs_for_args,
         arg_types,
         arg_idents,
@@ -566,26 +579,31 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
     })
 }
 
-/// Push `value` (of type `ty`, `Arc` of it, or `Option` of either) to `port` under its explicit or leaf type key.
+/// Push `value` (of type `ty`, `Arc` of it, or `Option` of either) to `port` under its explicit
+/// or leaf type key, which is appended to `keys` and read from `__output_keys` (computed once,
+/// not per push).
 fn push_output(
     ty: &syn::Type,
     port: &LitStr,
     explicit: Option<&LitStr>,
     value: TokenStream,
+    keys: &mut Vec<TokenStream>,
 ) -> TokenStream {
     // A conditional output: nothing is pushed for `None`.
     if let Some(inner) = crate::helpers::generic_arg(ty, "Option", 0) {
-        let push = push_output(inner, port, explicit, quote! { __value });
+        let push = push_output(inner, port, explicit, quote! { __value }, keys);
         return quote! { if let Some(__value) = #value { #push } };
     }
+    let idx = keys.len();
+    let key = quote! { __output_keys[#idx].clone() };
     match arc_inner_type(ty) {
         Some(inner) => {
-            let key = value_type_key(inner, explicit);
-            quote! { io.push_arc_as(Some(#port), #key, #value); }
+            keys.push(value_type_key(inner, explicit));
+            quote! { io.push_arc_as_to(#port, #key, #value); }
         }
         None => {
-            let key = value_type_key(ty, explicit);
-            quote! { io.push_as(Some(#port), #key, #value); }
+            keys.push(value_type_key(ty, explicit));
+            quote! { io.push_as_to(#port, #key, #value); }
         }
     }
 }

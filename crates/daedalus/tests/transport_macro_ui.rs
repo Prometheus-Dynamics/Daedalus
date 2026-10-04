@@ -29,6 +29,8 @@ fn transport_macro_compile_failures() {
 fn node_macro_compile_failures() {
     let t = TestCases::new();
     t.pass("tests/ui/node/ok_node.rs");
+    t.pass("tests/ui/node/ok_id_expressions.rs");
+    t.compile_fail("tests/ui/node/fail_id_not_string.rs");
     t.compile_fail("tests/ui/node/fail_unknown_argument.rs");
     t.compile_fail("tests/ui/node/fail_missing_id.rs");
     t.compile_fail("tests/ui/node/fail_port_ty_and_type_key.rs");

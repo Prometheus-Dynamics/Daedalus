@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Fields, Lit, parse_macro_input};
 
-use crate::helpers::{DaedalusCrate, compile_error};
+use crate::helpers::{DaedalusCrate, any_token, compile_error, const_coercer_registration};
 
 mod codegen;
 mod model;
@@ -128,12 +128,24 @@ pub fn node_config(item: TokenStream) -> TokenStream {
         }
     });
 
+    // Field types naming a generic parameter cannot be probed for a coercer.
+    let coercers = quote! { coercers };
+    let register_coercers = specs.iter().filter_map(|spec| {
+        let generic = any_token(spec.field_ty.to_token_stream(), &|token| {
+            matches!(token, proc_macro2::TokenTree::Ident(i) if generic_type_params.contains(&i.to_string()))
+        });
+        (!generic)
+            .then(|| const_coercer_registration(&spec.field_ty, &coercers, &runtime_crate))
+    });
+
     let struct_fields: Vec<syn::Ident> =
         specs.iter().map(|spec| spec.field_ident.clone()).collect();
 
     TokenStream::from(quote! {
         impl #impl_generics #runtime_crate::config::NodeConfig for #struct_ident #ty_generics #where_clause {
-            fn ports() -> Vec<#registry_crate::capability::PortDecl> {
+            fn ports(
+                __types: &#data_crate::typing::TypeRegistry,
+            ) -> Vec<#registry_crate::capability::PortDecl> {
                 vec![#(#ports_tokens),*]
             }
 
@@ -161,6 +173,11 @@ pub fn node_config(item: TokenStream) -> TokenStream {
             fn validate(&self) -> Result<(), #runtime_crate::config::ConfigError> {
                 #validate_call
                 Ok(())
+            }
+
+            fn register_const_coercers(coercers: &#runtime_crate::io::ConstCoercerMap) {
+                #(#register_coercers)*
+                let _ = coercers;
             }
         }
     })
