@@ -17,6 +17,7 @@ readonly NOSTD_TARGETS=("thumbv7em-none-eabihf" "thumbv6m-none-eabi")
 readonly NOSTD_CRATES=(-p daedalus-core -p daedalus-transport -p daedalus-data -p daedalus-registry
   -p daedalus-planner)
 readonly WASM_TARGET="wasm32-unknown-unknown"
+readonly WASI_TARGET="wasm32-wasip1"
 
 step() { echo "==> $*"; }
 
@@ -40,7 +41,7 @@ usage: scripts/ci.sh [subcommand...]
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics) and without threads
   nostd       no_std + alloc check of the tier-1 crates for thumbv7em and thumbv6m (no CAS)
-  wasm        engine,plugins (embedded without threads) check and smoke run for wasm32
+  wasm        engine,plugins (embedded without threads) checks and Node runs for wasm32 and WASI
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
 EOF
@@ -161,22 +162,42 @@ cmd_nostd() {
   done
 }
 
-# `wasm32-unknown-unknown` has `std` but no threads and no clock: check the embedded preset
-# without `threads` (`engine,plugins`), then run serial/parallel/adaptive frames in Node (skipped
-# without `node`).
+# `wasm32-unknown-unknown` has `std` but no threads and no clock; `wasm32-wasip1` has a clock but
+# no threads. Check the embedded preset without `threads` (`engine,plugins`) for both, then run in
+# Node: serial/parallel/adaptive frames (an import-free module, and a WASI command on the platform
+# clock) and the wasm-bindgen host example driven from JS. Runs are skipped without `node`; the
+# wasm-bindgen one without a `wasm-bindgen` CLI matching Cargo.lock (required when `$CI` is set).
 cmd_wasm() {
-  step "Checking the embedded preset for $WASM_TARGET"
-  ensure_target "$WASM_TARGET"
-  local target=(--target "$WASM_TARGET")
-  cargo check "${target[@]}" -p daedalus-rs --no-default-features --features "engine,plugins"
-  cargo build "${target[@]}" -p daedalus-wasm-smoke --release
-  if command -v node >/dev/null; then
-    step "Running the wasm runtime smoke test"
-    node scripts/wasm-smoke.mjs \
-      "${CARGO_TARGET_DIR:-target}/$WASM_TARGET/release/daedalus_wasm_smoke.wasm"
-  else
-    echo "node not found: skipping the wasm runtime smoke run"
+  local out="${CARGO_TARGET_DIR:-target}" target
+  for target in "$WASM_TARGET" "$WASI_TARGET"; do
+    step "Checking the embedded preset for $target"
+    ensure_target "$target"
+    cargo check --target "$target" -p daedalus-rs --no-default-features --features "engine,plugins"
+  done
+  # Separate builds, so the smoke module keeps the preset's features (the host example adds
+  # `metrics`).
+  cargo build --target "$WASM_TARGET" --release -p daedalus-wasm-smoke --lib
+  cargo build --target "$WASM_TARGET" --release -p daedalus-wasm-bindgen-host
+  cargo build --target "$WASI_TARGET" --release -p daedalus-wasm-smoke --bin daedalus-wasi-smoke
+  if ! command -v node >/dev/null; then
+    echo "node not found: skipping the wasm smoke runs"
+    return
   fi
+  step "Running the wasm and WASI runtime smoke tests"
+  node scripts/wasm-smoke.mjs "$out/$WASM_TARGET/release/daedalus_wasm_smoke.wasm"
+  node --no-warnings scripts/wasi-smoke.mjs "$out/$WASI_TARGET/release/daedalus-wasi-smoke.wasm"
+  local version
+  version="$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p}' Cargo.lock)"
+  if [[ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]]; then
+    echo "wasm-bindgen $version not found (cargo install wasm-bindgen-cli --version $version):" \
+      "skipping the wasm-bindgen host run"
+    [[ -z "${CI:-}" ]] || return 1
+    return
+  fi
+  step "Running the wasm-bindgen host example"
+  wasm-bindgen --target nodejs --out-dir "$out/wasm-bindgen-host" \
+    "$out/$WASM_TARGET/release/daedalus_wasm_bindgen_host.wasm"
+  node scripts/wasm-bindgen-host.mjs "$out/wasm-bindgen-host/daedalus_wasm_bindgen_host.js"
 }
 
 # Criterion writes to `$CARGO_TARGET_DIR/criterion`; compare two such directories with

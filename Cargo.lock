@@ -835,6 +835,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-wasm-bindgen-host"
+version = "2.0.0"
+dependencies = [
+ "daedalus-rs",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "daedalus-wasm-smoke"
 version = "2.0.0"
 dependencies = [
