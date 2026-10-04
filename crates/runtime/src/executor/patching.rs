@@ -1,7 +1,7 @@
 use crate::plan::RuntimeNode;
 use daedalus_planner::{GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
 
-use super::NodeConstInputs;
+use super::{NodeConstInputs, const_payload};
 
 pub(crate) fn apply_patch_to_const_inputs(
     patch: &GraphPatch,
@@ -95,7 +95,7 @@ fn apply_const_override(
 
     match (matched, value) {
         (Some(idx), Some(next)) => {
-            const_inputs[idx] = (const_inputs[idx].0.clone(), next.clone());
+            const_inputs[idx].1 = const_payload(next.clone());
         }
         (Some(idx), None) => {
             const_inputs.remove(idx);
@@ -106,7 +106,7 @@ fn apply_const_override(
             } else {
                 port.trim().to_string()
             };
-            const_inputs.push((key.into(), next.clone()));
+            const_inputs.push((key.into(), const_payload(next.clone())));
         }
         (None, None) => {}
     }

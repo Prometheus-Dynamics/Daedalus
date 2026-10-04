@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use thiserror::Error;
 
 use crate::{
-    BoundaryCapabilities, BoundaryContractError, BoundaryTypeContract, PayloadStorage, TypeKey,
+    BoundaryCapabilities, BoundaryContractError, BoundaryTypeContract, LayoutHash, PayloadStorage,
+    TypeKey,
 };
 
 pub struct BoundaryVTable {
@@ -19,6 +20,8 @@ pub struct BoundaryVTable {
     pub value_any: unsafe fn(NonNull<c_void>) -> *const (dyn Any + Send + Sync),
     pub rust_type_name: &'static str,
     pub rust_type_id: TypeId,
+    /// [`LayoutHash::for_type`] of the stored type.
+    pub layout_hash: fn() -> LayoutHash,
 }
 
 impl fmt::Debug for BoundaryVTable {
@@ -31,7 +34,10 @@ impl fmt::Debug for BoundaryVTable {
 
 pub struct BoundaryStorage {
     pub(crate) type_key: TypeKey,
-    contract: BoundaryTypeContract,
+    capabilities: BoundaryCapabilities,
+    /// Built on first request: in-process access matches the stored `TypeId` instead, so the
+    /// payload hot path never formats a layout hash.
+    contract: OnceLock<BoundaryTypeContract>,
     ptr: Option<NonNull<c_void>>,
     vtable: &'static BoundaryVTable,
 }
@@ -48,7 +54,7 @@ impl fmt::Debug for BoundaryStorage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BoundaryStorage")
             .field("type_key", &self.type_key)
-            .field("contract", &self.contract)
+            .field("capabilities", &self.capabilities)
             .field("rust_type_name", &self.vtable.rust_type_name)
             .finish_non_exhaustive()
     }
@@ -63,19 +69,74 @@ impl BoundaryStorage {
     where
         T: Send + Sync + 'static,
     {
-        let type_key = type_key.into();
-        let contract = BoundaryTypeContract::for_type::<T>(type_key.clone(), capabilities);
         let ptr = Box::into_raw(Box::new(value)).cast::<c_void>();
         Self {
-            type_key,
-            contract,
+            type_key: type_key.into(),
+            capabilities,
+            contract: OnceLock::new(),
             ptr: NonNull::new(ptr),
             vtable: boundary_vtable::<T>(),
         }
     }
 
+    /// The contract for the stored type (`BoundaryTypeContract::for_type`), built on first use.
     pub fn contract(&self) -> &BoundaryTypeContract {
-        &self.contract
+        self.contract.get_or_init(|| BoundaryTypeContract {
+            type_key: self.type_key.clone(),
+            rust_type_name: Some(self.vtable.rust_type_name.to_string()),
+            abi_version: BoundaryTypeContract::ABI_VERSION,
+            layout_hash: (self.vtable.layout_hash)(),
+            capabilities: self.capabilities,
+        })
+    }
+
+    pub fn capabilities(&self) -> BoundaryCapabilities {
+        self.capabilities
+    }
+
+    /// Whether the stored value is a `T` of this build (same `TypeId`). Such access needs no
+    /// contract: key, ABI and layout match by construction, leaving only the capability checks
+    /// of [`Self::borrow_ref_as`], [`Self::borrow_mut_as`] and [`Self::take_owned_as`].
+    pub fn holds<T: 'static>(&self) -> bool {
+        self.vtable.rust_type_id == TypeId::of::<T>()
+    }
+
+    /// Whether the stored value could be a `T`: [held](Self::holds), or a same-named type of
+    /// another build that only a full contract check (layout hash) can accept or reject.
+    pub fn may_hold<T: 'static>(&self) -> bool {
+        self.holds::<T>() || self.vtable.rust_type_name == std::any::type_name::<T>()
+    }
+
+    /// Borrow a [held](Self::holds) `T` under `key` when the contract grants `borrow_ref`.
+    pub fn borrow_ref_as<T: 'static>(&self, key: &TypeKey) -> Option<&T> {
+        let ptr = self.local_ptr::<T>(key, self.capabilities.borrow_ref)?;
+        // SAFETY: `holds::<T>` matched the `TypeId` the pointer was boxed as; `&self` keeps it
+        // alive and shared.
+        Some(unsafe { &*ptr.as_ptr().cast::<T>() })
+    }
+
+    /// Mutably borrow a [held](Self::holds) `T` under `key` when the contract grants
+    /// `borrow_mut`.
+    pub fn borrow_mut_as<T: 'static>(&mut self, key: &TypeKey) -> Option<&mut T> {
+        let ptr = self.local_ptr::<T>(key, self.capabilities.borrow_mut)?;
+        // SAFETY: as in `borrow_ref_as`, with exclusive access through `&mut self`.
+        Some(unsafe { &mut *ptr.as_ptr().cast::<T>() })
+    }
+
+    /// Move a [held](Self::holds) `T` out under `key` when the contract grants `owned_move`.
+    pub fn take_owned_as<T: 'static>(&mut self, key: &TypeKey) -> Option<T> {
+        self.local_ptr::<T>(key, self.capabilities.owned_move)?;
+        let ptr = self.ptr.take()?;
+        // SAFETY: the pointer is a `Box<T>` (`TypeId` checked); taking it out of `self.ptr`
+        // keeps Drop from freeing it again.
+        Some(*unsafe { Box::from_raw(ptr.as_ptr().cast::<T>()) })
+    }
+
+    fn local_ptr<T: 'static>(&self, key: &TypeKey, granted: bool) -> Option<NonNull<c_void>> {
+        if !granted || !self.holds::<T>() || &self.type_key != key {
+            return None;
+        }
+        self.ptr
     }
 
     pub fn is_taken(&self) -> bool {
@@ -89,7 +150,7 @@ impl BoundaryStorage {
     where
         T: Send + Sync + 'static,
     {
-        self.contract
+        self.contract()
             .compatible_with(required)
             .map_err(BoundaryTakeError::Incompatible)?;
         if self.vtable.rust_type_name != std::any::type_name::<T>() {
@@ -113,10 +174,10 @@ impl BoundaryStorage {
     where
         T: Send + Sync + 'static,
     {
-        self.contract
+        self.contract()
             .compatible_with(required)
             .map_err(BoundaryTakeError::Incompatible)?;
-        if !self.contract.capabilities.borrow_ref {
+        if !self.capabilities.borrow_ref {
             return Err(BoundaryTakeError::Capability("borrow_ref"));
         }
         if self.vtable.rust_type_name != std::any::type_name::<T>() {
@@ -138,10 +199,10 @@ impl BoundaryStorage {
     where
         T: Send + Sync + 'static,
     {
-        self.contract
+        self.contract()
             .compatible_with(required)
             .map_err(BoundaryTakeError::Incompatible)?;
-        if !self.contract.capabilities.borrow_mut {
+        if !self.capabilities.borrow_mut {
             return Err(BoundaryTakeError::Capability("borrow_mut"));
         }
         if self.vtable.rust_type_name != std::any::type_name::<T>() {
@@ -165,7 +226,7 @@ impl BoundaryStorage {
     ///
     /// Returns `None` when the contract does not grant `borrow_ref` or the value was taken.
     pub fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        if !self.contract.capabilities.borrow_ref {
+        if !self.capabilities.borrow_ref {
             return None;
         }
         let ptr = self.ptr?;
@@ -288,6 +349,7 @@ where
         value_any: value_any::<T>,
         rust_type_name: std::any::type_name::<T>(),
         rust_type_id: TypeId::of::<T>(),
+        layout_hash: LayoutHash::for_type::<T>,
     }));
     vtables.insert(TypeId::of::<T>(), vtable);
     vtable
@@ -357,6 +419,26 @@ mod tests {
         assert_eq!(drops.load(Ordering::SeqCst), 1);
         drop(storage);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn contract_is_built_lazily_and_local_access_checks_key_and_capabilities() {
+        let mut storage = BoundaryStorage::owned("test:u32", 3u32, BoundaryCapabilities::owned());
+        assert_eq!(
+            storage.contract(),
+            &required::<u32>("test:u32", BoundaryCapabilities::owned())
+        );
+        let key = TypeKey::from("test:u32");
+        assert!(storage.holds::<u32>() && !storage.holds::<i32>());
+        assert!(!storage.may_hold::<i32>());
+        assert!(
+            storage.borrow_ref_as::<u32>(&key).is_none(),
+            "owned() grants no borrow"
+        );
+        let other = TypeKey::from("test:other");
+        assert!(storage.take_owned_as::<u32>(&other).is_none());
+        assert_eq!(storage.take_owned_as::<u32>(&key), Some(3));
+        assert!(storage.is_taken());
     }
 
     #[test]

@@ -119,9 +119,8 @@ impl StateStore {
             return Ok(None);
         };
         value
-            .downcast_ref::<T>()
+            .downcast_ref::<Option<T>>()
             .cloned()
-            .map(Some)
             .ok_or_else(|| StateError::state_type_mismatch(key))
     }
 
@@ -131,16 +130,12 @@ impl StateStore {
         key: &str,
     ) -> Result<Option<T>, StateError> {
         let mut guard = self.native.write();
-        let Some(value) = guard.remove(key) else {
+        let Some(slot) = guard.get_mut(key) else {
             return Ok(None);
         };
-        match value.downcast::<T>() {
-            Ok(value) => Ok(Some(*value)),
-            Err(value) => {
-                guard.insert(key.to_string(), value);
-                Err(StateError::state_type_mismatch(key))
-            }
-        }
+        slot.downcast_mut::<Option<T>>()
+            .map(Option::take)
+            .ok_or_else(|| StateError::state_type_mismatch(key))
     }
 
     pub fn set(&self, key: &str, value: serde_json::Value) {
@@ -154,9 +149,24 @@ impl StateStore {
     }
 
     /// Store a native typed value without serializing it through `serde_json`.
+    ///
+    /// Values live in per-key `Option<T>` slots: [`Self::take_native`] leaves the slot behind,
+    /// so a take/set cycle with the same key and type (per-tick node state) does not allocate.
     pub fn set_native<T: Send + Sync + 'static>(&self, key: &str, value: T) {
-        self.native.write().insert(key.to_string(), Box::new(value));
-        self.inner.write().remove(key);
+        let mut native = self.native.write();
+        match native
+            .get_mut(key)
+            .and_then(|slot| slot.downcast_mut::<Option<T>>())
+        {
+            Some(slot) => *slot = Some(value),
+            None => {
+                native.insert(key.to_string(), Box::new(Some(value)));
+            }
+        }
+        drop(native);
+        if self.inner.read().contains_key(key) {
+            self.inner.write().remove(key);
+        }
     }
 
     pub fn record_node_resource_usage(

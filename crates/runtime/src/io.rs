@@ -7,7 +7,7 @@ use std::sync::Arc;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_data::typing;
 use daedalus_transport::Payload;
-use smallvec::SmallVec;
+use std::cell::RefCell;
 
 use crate::executor::{CorrelatedPayload, NodeError};
 use crate::handles::PortId;
@@ -42,55 +42,101 @@ pub type ConstCoercerMap = Arc<RwLock<HashMap<&'static str, ConstCoercer>>>;
 /// One port-tagged payload on a node's inputs or outputs.
 pub type NodePort = (PortId, CorrelatedPayload);
 
-/// Resolve an optional port name, defaulting to [`DEFAULT_OUTPUT_PORT`] without allocating.
-fn port_or_default(port: Option<&str>) -> PortId {
-    port.map_or(PortId::from_static(DEFAULT_OUTPUT_PORT), PortId::new)
+thread_local! {
+    /// Cleared port buffers reused by `NodeIo`s and the executor on this thread.
+    static PORT_BUFFERS: RefCell<Vec<Vec<NodePort>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// An empty port buffer, reusing a recycled one's capacity when this thread has one.
+pub(crate) fn port_buffer() -> Vec<NodePort> {
+    PORT_BUFFERS
+        .try_with(|pool| pool.borrow_mut().pop())
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+}
+
+/// Clear `ports` and keep its capacity for [`port_buffer`] (a few modest buffers per thread).
+pub(crate) fn recycle_ports(mut ports: Vec<NodePort>) {
+    const MAX_POOLED: usize = 16;
+    const MAX_CAPACITY: usize = 256;
+    ports.clear();
+    if ports.capacity() == 0 || ports.capacity() > MAX_CAPACITY {
+        return;
+    }
+    let _ = PORT_BUFFERS.try_with(|pool| {
+        let mut pool = pool.borrow_mut();
+        if pool.len() < MAX_POOLED {
+            pool.push(ports);
+        }
+    });
 }
 
 pub fn new_const_coercer_map() -> ConstCoercerMap {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
+/// A node's inputs and outputs for one call. Its port lists reuse per-thread buffers, so a
+/// steady-state tick does not allocate them however many ports a node has.
 pub struct NodeIo {
-    inputs: SmallVec<[NodePort; 4]>,
-    outputs: SmallVec<[NodePort; 4]>,
+    inputs: Vec<NodePort>,
+    outputs: Vec<NodePort>,
     const_coercers: Option<ConstCoercerMap>,
     types: Option<TypeIndex>,
+    /// The node's connected output ports, so pushes by name reuse their ids.
+    output_ports: Option<Arc<[PortId]>>,
 }
 
 impl NodeIo {
     pub fn empty() -> Self {
-        Self {
-            inputs: SmallVec::new(),
-            outputs: SmallVec::new(),
-            const_coercers: None,
-            types: None,
-        }
+        Self::from_port_buffer(port_buffer())
     }
 
     pub fn from_inputs(inputs: impl IntoIterator<Item = NodePort>) -> Self {
-        Self {
-            inputs: inputs.into_iter().collect(),
-            outputs: SmallVec::new(),
-            const_coercers: None,
-            types: None,
-        }
+        let mut buffer = port_buffer();
+        buffer.extend(inputs);
+        Self::from_port_buffer(buffer)
     }
 
     pub fn from_single_input(port: PortId, payload: CorrelatedPayload) -> Self {
-        let mut inputs = SmallVec::new();
-        inputs.push((port, payload));
+        Self::from_inputs([(port, payload)])
+    }
+
+    /// Take `inputs` as the input list (a [`port_buffer`]).
+    pub(crate) fn from_port_buffer(inputs: Vec<NodePort>) -> Self {
         Self {
             inputs,
-            outputs: SmallVec::new(),
+            outputs: port_buffer(),
             const_coercers: None,
             types: None,
+            output_ports: None,
         }
     }
 
     pub fn with_const_coercers(mut self, const_coercers: Option<ConstCoercerMap>) -> Self {
         self.const_coercers = const_coercers;
         self
+    }
+
+    /// Resolve pushes to these output port names to the given ids instead of allocating new
+    /// ones (the executor passes each node's connected output ports).
+    pub fn with_output_ports(mut self, ports: Option<Arc<[PortId]>>) -> Self {
+        self.output_ports = ports;
+        self
+    }
+
+    /// The id for an optional output port name ([`DEFAULT_OUTPUT_PORT`] for `None`): a known
+    /// output port's id, or a new one.
+    fn port_or_default(&self, port: Option<&str>) -> PortId {
+        let Some(name) = port else {
+            return PortId::from_static(DEFAULT_OUTPUT_PORT);
+        };
+        self.output_ports
+            .iter()
+            .flat_map(|ports| ports.iter())
+            .find(|known| known.as_str() == name)
+            .cloned()
+            .unwrap_or_else(|| PortId::new(name))
     }
 
     /// Resolve generic pushes ([`Self::push_to`]) through `types`.
@@ -114,12 +160,14 @@ impl NodeIo {
         &self.outputs
     }
 
-    pub fn take_outputs(self) -> Vec<NodePort> {
-        self.outputs.into_vec()
+    pub fn take_outputs(mut self) -> Vec<NodePort> {
+        std::mem::take(&mut self.outputs)
     }
 
-    pub fn take_outputs_small(self) -> SmallVec<[NodePort; 4]> {
-        self.outputs
+    /// Move out the payload pushed to `port`, if any, recycling the output list.
+    pub(crate) fn take_output(mut self, port: &PortId) -> Option<Payload> {
+        let idx = self.outputs.iter().position(|(name, _)| name == port)?;
+        Some(self.outputs.swap_remove(idx).1.inner)
     }
 
     pub fn push_payload(&mut self, port: impl Into<PortId>, payload: Payload) {
@@ -139,7 +187,7 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_as_to(port_or_default(port), type_key, value);
+        self.push_as_to(self.port_or_default(port), type_key, value);
     }
 
     pub fn push_as_to<T>(
@@ -168,7 +216,7 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_arc_as_to(port_or_default(port), type_key, value);
+        self.push_arc_as_to(self.port_or_default(port), type_key, value);
     }
 
     pub fn push_arc_as_to<T>(
@@ -214,7 +262,7 @@ impl NodeIo {
     where
         T: Send + Sync + 'static,
     {
-        self.push_to(port_or_default(port), value)
+        self.push_to(self.port_or_default(port), value)
     }
 
     /// The type index generic pushes resolve through.
@@ -223,7 +271,7 @@ impl NodeIo {
     }
 
     pub fn push_value(&mut self, port: Option<&str>, value: Value) {
-        self.push_value_to(port_or_default(port), value);
+        self.push_value_to(self.port_or_default(port), value);
     }
 
     pub fn push_value_to(&mut self, port: impl Into<PortId>, value: Value) {
@@ -315,15 +363,19 @@ impl NodeIo {
             .and_then(|value| self.coerce_value::<T>(value))
     }
 
-    /// Take the input as an owned `T`; a `Value` input (a graph constant) is coerced to `T`.
+    /// Take the input as an owned `T`; a `Value` input (a graph constant) is coerced to `T`
+    /// without first failing a move (which would box the payload).
     pub fn take_owned<T>(&mut self, port: &str) -> Option<T>
     where
         T: Send + Sync + 'static,
     {
-        match self.take_input_payload(port)?.inner.try_into_owned::<T>() {
-            Ok(value) => Some(value),
-            Err(payload) => self.coerce_value(payload.get_ref::<Value>()?),
+        let payload = self.take_input_payload(port)?.inner;
+        if std::any::TypeId::of::<T>() != std::any::TypeId::of::<Value>()
+            && let Some(value) = payload.get_ref::<Value>()
+        {
+            return self.coerce_value::<T>(value);
         }
+        payload.try_into_owned::<T>().ok()
     }
 
     /// Coerce a `Value` input (a graph constant) to `T` through the builtin conversions and the
@@ -359,6 +411,13 @@ impl NodeIo {
 
     pub fn flush(&mut self) -> Result<(), crate::executor::NodeError> {
         Ok(())
+    }
+}
+
+impl Drop for NodeIo {
+    fn drop(&mut self) {
+        recycle_ports(std::mem::take(&mut self.inputs));
+        recycle_ports(std::mem::take(&mut self.outputs));
     }
 }
 

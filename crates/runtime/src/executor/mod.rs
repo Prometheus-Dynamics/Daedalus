@@ -145,17 +145,24 @@ type MaybeGpu = Option<daedalus_gpu::GpuContextHandle>;
 #[cfg(not(feature = "gpu"))]
 type MaybeGpu = Option<()>;
 
-pub type NodeConstInputs = Vec<(crate::handles::PortId, daedalus_data::model::Value)>;
+/// A node's const inputs as ready-made `Value` payloads: ticks hand out shared clones instead of
+/// rebuilding a payload per port.
+pub type NodeConstInputs = Vec<(crate::handles::PortId, daedalus_transport::Payload)>;
 pub type ConstInputs = Vec<NodeConstInputs>;
 pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
 type EdgeSpec = RuntimeEdge;
 
-/// Const inputs keyed by pre-built port ids so ticks do not allocate port names.
+/// Const inputs keyed by pre-built port ids so ticks do not allocate port names or payloads.
 pub(crate) fn node_const_inputs(node: &RuntimeNode) -> NodeConstInputs {
     node.const_inputs
         .iter()
-        .map(|(port, value)| (port.into(), value.clone()))
+        .map(|(port, value)| (port.into(), const_payload(value.clone())))
         .collect()
+}
+
+/// The payload a const input delivers on every tick.
+pub(crate) fn const_payload(value: daedalus_data::model::Value) -> daedalus_transport::Payload {
+    daedalus_transport::Payload::owned("value", value)
 }
 type NodeMetadataStore = Arc<Vec<Arc<BTreeMap<String, daedalus_data::model::Value>>>>;
 
@@ -549,12 +556,11 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         }
     }
 
-    pub(crate) fn segment_snapshot(&self, segment_idx: usize) -> (Self, Vec<NodeRef>) {
-        let order = self
-            .segments
+    pub(crate) fn segment_snapshot(&self, segment_idx: usize) -> (Self, &'a [NodeRef]) {
+        let segments: &'a [RuntimeSegment] = self.segments;
+        let order = segments
             .get(segment_idx)
-            .map(|segment| segment.nodes.clone())
-            .unwrap_or_default();
+            .map_or(&[][..], |segment| segment.nodes.as_slice());
         let exec = self.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
         (exec, order)
     }

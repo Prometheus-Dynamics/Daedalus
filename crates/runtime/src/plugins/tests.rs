@@ -77,3 +77,19 @@ fn plugin_registry_transport_capabilities_are_isolated() {
     assert!(left.transport_capabilities.type_decl(&key).is_some());
     assert!(right.transport_capabilities.type_decl(&key).is_none());
 }
+
+#[test]
+fn builtin_branch_adapters_accept_every_primitive_under_their_key() {
+    let registry = PluginRegistry::new();
+    let int_key = typeexpr_transport_key(&TypeExpr::Scalar(ValueType::Int));
+    let request = daedalus_transport::AdaptRequest::new(int_key.clone());
+    let adapters = registry.runtime_transport.adapters();
+    for id in ["i64", "i32", "u32"] {
+        let id = AdapterId::new(format!("daedalus.builtin.branch.{id}"));
+        let branch = |payload| adapters.adapt(&id, payload, &request).expect("branch");
+        let wide = branch(Payload::owned(int_key.clone(), 7_i64));
+        assert_eq!(wide.get_ref::<i64>(), Some(&7));
+        let narrow = branch(Payload::owned(int_key.clone(), 7_u32));
+        assert_eq!(narrow.get_ref::<u32>(), Some(&7));
+    }
+}

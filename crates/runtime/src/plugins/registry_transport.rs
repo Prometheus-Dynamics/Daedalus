@@ -205,6 +205,23 @@ impl PluginRegistry {
     where
         T: BranchPayload,
     {
+        self.register_branch_adapter_with::<T>(id, schema, |payload, key| {
+            let value = payload.get_ref::<T>()?;
+            Some(Payload::owned(key.clone(), value.branch_payload()))
+        })
+    }
+
+    /// Register a same-type branch adapter for `T` that branches through `branch`, which may
+    /// accept other Rust types sharing `T`'s key.
+    pub(super) fn register_branch_adapter_with<T>(
+        &mut self,
+        id: impl Into<String>,
+        schema: TypeExpr,
+        branch: impl Fn(&Payload, &TypeKey) -> Option<Payload> + Send + Sync + 'static,
+    ) -> PluginResult<()>
+    where
+        T: BranchPayload,
+    {
         let key = typeexpr_transport_key(&schema);
         self.register_boundary_type::<T>(key.clone())?;
         let mut cost = AdaptCost::new(match T::BRANCH_KIND {
@@ -223,18 +240,14 @@ impl PluginRegistry {
         let options = TransportAdapterOptions::default()
             .cost(cost)
             .access(AccessMode::Modify);
-        let from_key = key.clone();
-        let to_key = key.clone();
         self.register_transport_adapter_fn_with_options(
             id,
             schema.clone(),
             schema,
             options,
             move |payload, _request| {
-                let value = payload.get_ref::<T>().ok_or_else(|| {
-                    TransportError::type_mismatch::<T>(from_key.clone(), &payload)
-                })?;
-                Ok(Payload::owned(to_key.clone(), value.branch_payload()))
+                branch(&payload, &key)
+                    .ok_or_else(|| TransportError::type_mismatch::<T>(key.clone(), &payload))
             },
         )
     }
@@ -463,7 +476,6 @@ impl PluginRegistry {
         if let Some(existing) = self.boundary_contracts.get(&contract.type_key) {
             existing.compatible_with(&contract)?;
         }
-        daedalus_transport::register_boundary_contract(contract.clone());
         self.boundary_contracts
             .insert(contract.type_key.clone(), contract);
         Ok(())

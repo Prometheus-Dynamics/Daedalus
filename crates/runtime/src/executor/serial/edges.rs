@@ -3,7 +3,6 @@
 use std::time::Instant;
 
 use daedalus_transport::{AdaptRequest, Payload};
-use smallvec::SmallVec;
 
 use crate::io::NodePort;
 
@@ -19,13 +18,13 @@ use super::{edge_is_active, edge_uses_direct_slot};
 pub(super) fn collect_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
-) -> Result<SmallVec<[NodePort; 4]>, ExecuteError> {
+) -> Result<Vec<NodePort>, ExecuteError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
     let collect_lifecycle = cfg!(feature = "metrics")
         && (exec.core.run_config.metrics_level.is_profile()
             || exec.core.run_config.metrics_level.is_trace());
-    let mut inputs = SmallVec::new();
+    let mut inputs = crate::io::port_buffer();
     let edges = exec.edges;
     let incoming = exec.incoming_edges.clone();
     for &edge_idx in incoming.get(node_idx).into_iter().flatten() {
@@ -91,11 +90,8 @@ pub(super) fn collect_inputs<H: NodeHandler>(
     }
 
     let const_inputs = exec.const_inputs.read();
-    for (port, value) in const_inputs.get(node_idx).into_iter().flatten() {
-        inputs.push((
-            port.clone(),
-            CorrelatedPayload::from_edge(Payload::owned("value", value.clone())),
-        ));
+    for (port, payload) in const_inputs.get(node_idx).into_iter().flatten() {
+        inputs.push((port.clone(), CorrelatedPayload::from_edge(payload.clone())));
     }
     Ok(inputs)
 }
@@ -103,7 +99,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
 fn adapt_edge_payload<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     edge_idx: usize,
-    mut payload: CorrelatedPayload,
+    payload: CorrelatedPayload,
     node_idx: usize,
     port: &str,
 ) -> Result<CorrelatedPayload, ExecuteError> {
@@ -116,79 +112,100 @@ fn adapt_edge_payload<H: NodeHandler>(
     let Some(runtime_transport) = exec.core.runtime_transport.clone() else {
         return Ok(payload);
     };
+    let CorrelatedPayload {
+        correlation_id,
+        inner,
+        enqueued_at,
+    } = payload;
 
     let mut request = AdaptRequest::new(
         edge_transport
             .target_transport
             .clone()
             .or_else(|| edge_transport.transport_target.clone())
-            .unwrap_or_else(|| payload.inner.type_key().clone()),
+            .unwrap_or_else(|| inner.type_key().clone()),
     );
     request.access = edge_transport.target_access;
     request.exclusive = edge_transport.target_exclusive;
     request.residency = edge_transport.target_residency;
 
-    let steps: Vec<String> = edge_transport
-        .adapter_steps
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    let adapter_detail = adapter_path_detail(edge_transport);
-    let mut lifecycle =
-        DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::AdapterStart);
-    lifecycle.node_idx = Some(node_idx);
-    lifecycle.edge_idx = Some(edge_idx);
-    lifecycle.port = Some(port.to_string());
-    lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
-    lifecycle.adapter_steps = steps.clone();
-    lifecycle.detail = adapter_detail.clone();
-    exec.core.telemetry.record_data_lifecycle(lifecycle);
-
+    // Lifecycle records (profile/trace metrics only) carry formatted step and path text.
+    let collect_lifecycle = cfg!(feature = "metrics")
+        && (exec.core.run_config.metrics_level.is_profile()
+            || exec.core.run_config.metrics_level.is_trace());
+    let record = |exec: &mut Executor<'_, H>, stage, payload: &Payload, detail| {
+        if !collect_lifecycle {
+            return;
+        }
+        let mut lifecycle = DataLifecycleRecord::new(correlation_id, stage);
+        lifecycle.node_idx = Some(node_idx);
+        lifecycle.edge_idx = Some(edge_idx);
+        lifecycle.port = Some(port.to_string());
+        lifecycle.payload = Some(format!("Payload({})", payload.type_key()));
+        lifecycle.adapter_steps = edge_transport
+            .adapter_steps
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        lifecycle.detail = detail;
+        exec.core.telemetry.record_data_lifecycle(lifecycle);
+    };
+    record(
+        exec,
+        DataLifecycleStage::AdapterStart,
+        &inner,
+        collect_lifecycle
+            .then(|| adapter_path_detail(edge_transport))
+            .flatten(),
+    );
     tracing::debug!(
         target: "daedalus_runtime::transport",
         edge_index = edge_idx,
         node_index = node_idx,
         port,
-        source_type = %payload.inner.type_key(),
+        source_type = %inner.type_key(),
         target_type = %request.target,
         target_residency = ?request.residency,
         target_access = ?request.access,
         target_exclusive = request.exclusive,
-        adapter_steps = ?steps,
-        detail = adapter_detail.as_deref(),
+        adapter_steps = ?edge_transport.adapter_steps,
         "adapter path started"
     );
-    let adapter_start = Instant::now();
-    match runtime_transport.execute_adapter_path(
-        payload.inner.clone(),
-        &edge_transport.adapter_steps,
-        &request,
-    ) {
+    let adapter_start = exec
+        .core
+        .run_config
+        .metrics_level
+        .is_detailed()
+        .then(Instant::now);
+    let source = collect_lifecycle.then(|| inner.clone());
+    match runtime_transport.execute_adapter_path(inner, &edge_transport.adapter_steps, &request) {
         Ok(adapted) => {
-            exec.core
-                .telemetry
-                .record_edge_adapter_duration(edge_idx, adapter_start.elapsed());
-            payload.inner = adapted;
-            let mut lifecycle =
-                DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::AdapterEnd);
-            let elapsed = adapter_start.elapsed();
-            lifecycle.node_idx = Some(node_idx);
-            lifecycle.edge_idx = Some(edge_idx);
-            lifecycle.port = Some(port.to_string());
-            lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
-            lifecycle.adapter_steps = steps;
-            lifecycle.detail = adapter_detail;
-            exec.core.telemetry.record_data_lifecycle(lifecycle);
+            if let Some(start) = adapter_start {
+                exec.core
+                    .telemetry
+                    .record_edge_adapter_duration(edge_idx, start.elapsed());
+            }
+            record(
+                exec,
+                DataLifecycleStage::AdapterEnd,
+                &adapted,
+                collect_lifecycle
+                    .then(|| adapter_path_detail(edge_transport))
+                    .flatten(),
+            );
             tracing::debug!(
                 target: "daedalus_runtime::transport",
                 edge_index = edge_idx,
                 node_index = node_idx,
                 port,
-                output_type = %payload.inner.type_key(),
-                elapsed_nanos = elapsed.as_nanos() as u64,
+                output_type = %adapted.type_key(),
                 "adapter path finished"
             );
-            Ok(payload)
+            Ok(CorrelatedPayload {
+                correlation_id,
+                inner: adapted,
+                enqueued_at,
+            })
         }
         Err(error) => {
             exec.core.telemetry.record_edge_adapter_error(edge_idx);
@@ -200,15 +217,14 @@ fn adapt_edge_payload<H: NodeHandler>(
                 error = %error,
                 "adapter path failed"
             );
-            let mut lifecycle =
-                DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::AdapterError);
-            lifecycle.node_idx = Some(node_idx);
-            lifecycle.edge_idx = Some(edge_idx);
-            lifecycle.port = Some(port.to_string());
-            lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
-            lifecycle.adapter_steps = steps;
-            lifecycle.detail = Some(error.to_string());
-            exec.core.telemetry.record_data_lifecycle(lifecycle);
+            if let Some(source) = &source {
+                record(
+                    exec,
+                    DataLifecycleStage::AdapterError,
+                    source,
+                    Some(error.to_string()),
+                );
+            }
             Err(ExecuteError::HandlerFailed {
                 node: exec
                     .nodes
@@ -244,7 +260,7 @@ fn adapter_path_detail(edge_transport: &crate::plan::RuntimeEdgeTransport) -> Op
 pub(super) fn publish_outputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
-    outputs: SmallVec<[NodePort; 4]>,
+    mut outputs: Vec<NodePort>,
 ) -> Result<(), NodeError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
@@ -254,7 +270,7 @@ pub(super) fn publish_outputs<H: NodeHandler>(
         .get(node_idx)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    for (port, payload) in outputs {
+    for (port, payload) in outputs.drain(..) {
         if collect_detailed_metrics {
             let bytes = exec
                 .core
@@ -264,31 +280,35 @@ pub(super) fn publish_outputs<H: NodeHandler>(
                 .telemetry
                 .record_node_transport_out(node_idx, bytes);
         }
-        let targets: SmallVec<[usize; 4]> = outgoing
-            .iter()
-            .copied()
-            .filter(|&edge_idx| {
-                edges[edge_idx].source_port_id() == &port && edge_is_active(exec, edge_idx)
-            })
-            .collect();
-        fan_out(exec, &targets, payload)?;
+        let routes = |exec: &Executor<'_, H>, edge_idx: usize| {
+            edges[edge_idx].source_port_id() == &port && edge_is_active(exec, edge_idx)
+        };
+        fan_out(exec, outgoing, routes, payload)?;
     }
+    crate::io::recycle_ports(outputs);
     Ok(())
 }
 
-/// Hand `payload` to every edge in `targets`, cloning it for all but the last edge.
+/// Hand `payload` to every edge of `candidates` that `routes` accepts, cloning it for all but the
+/// last one (no target list is collected, so wide fan-outs do not allocate).
 pub(super) fn fan_out<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
-    targets: &[usize],
+    candidates: &[usize],
+    routes: impl Fn(&Executor<'_, H>, usize) -> bool,
     payload: CorrelatedPayload,
 ) -> Result<(), NodeError> {
-    let Some((&last, rest)) = targets.split_last() else {
+    let Some(last) = candidates
+        .iter()
+        .rposition(|&edge_idx| routes(exec, edge_idx))
+    else {
         return Ok(());
     };
-    for &edge_idx in rest {
-        deliver(exec, edge_idx, payload.clone(), true)?;
+    for &edge_idx in &candidates[..last] {
+        if routes(exec, edge_idx) {
+            deliver(exec, edge_idx, payload.clone(), true)?;
+        }
     }
-    deliver(exec, last, payload, false)
+    deliver(exec, candidates[last], payload, false)
 }
 
 fn deliver<H: NodeHandler>(

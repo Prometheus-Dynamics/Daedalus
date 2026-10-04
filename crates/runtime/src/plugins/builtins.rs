@@ -140,7 +140,7 @@ impl PluginRegistry {
         T: BranchPayload,
     {
         let id = format!("daedalus.builtin.branch.{name}");
-        self.register_branch_payload_adapter::<T>(id.clone(), schema)?;
+        self.register_branch_adapter_with::<T>(id.clone(), schema, branch_builtin_primitive)?;
         manifest.provided_adapters.push(AdapterId::new(id));
         Ok(())
     }
@@ -162,4 +162,19 @@ impl PluginRegistry {
             .insert(provider_id.to_string(), CapabilitySourceKind::BuiltIn);
         Ok(())
     }
+}
+
+/// Branch a built-in primitive of any Rust type. `i64`, `i32` and `u32` share the `Int` key (and
+/// `f64`/`f32` share `Float`), so whichever branch adapter the planner picks for a key must accept
+/// each of them.
+fn branch_builtin_primitive(payload: &Payload, key: &TypeKey) -> Option<Payload> {
+    macro_rules! branch {
+        ($($ty:ty => $name:literal, $value_type:ident;)*) => {$(
+            if let Some(value) = payload.get_ref::<$ty>() {
+                return Some(Payload::owned(key.clone(), value.branch_payload()));
+            }
+        )*};
+    }
+    crate::host_bridge::for_each_builtin_primitive!(branch);
+    None
 }

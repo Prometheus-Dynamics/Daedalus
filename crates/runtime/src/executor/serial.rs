@@ -2,7 +2,6 @@ use std::time::Instant;
 
 use daedalus_planner::{ComputeAffinity, NodeRef};
 
-use crate::io::NodeIo;
 use crate::state::ExecutionContext;
 
 use super::{ExecuteError, ExecutionTelemetry, Executor, NodeFailure, NodeHandler};
@@ -73,6 +72,7 @@ pub(crate) fn run_order<H: NodeHandler>(
             // Not ready this tick: a connected required input has no value (its producer was
             // skipped or pushed nothing). Optional inputs never block.
             tracing::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node not ready");
+            crate::io::recycle_ports(inputs);
             continue;
         }
 
@@ -124,9 +124,7 @@ pub(crate) fn run_order<H: NodeHandler>(
         } else {
             None
         };
-        let mut io = NodeIo::from_inputs(inputs)
-            .with_const_coercers(exec.core.const_coercers.clone())
-            .with_type_index(exec.core.type_index.clone());
+        let mut io = exec.core.node_io(node_idx, inputs);
         let ctx = ExecutionContext {
             state: exec.core.state.clone(),
             node_id: exec.core.node_ids[node_idx].clone(),
@@ -161,7 +159,7 @@ pub(crate) fn run_order<H: NodeHandler>(
         } else {
             None
         };
-        let outputs = io.take_outputs_small();
+        let outputs = io.take_outputs();
 
         if let Err(error) = run_result {
             record_failure(&mut exec.core.telemetry, node_idx, &node.id, &error);

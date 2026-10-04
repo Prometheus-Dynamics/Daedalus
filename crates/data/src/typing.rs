@@ -290,11 +290,13 @@ impl BuiltinConstCoerce for Vec<u8> {
 fn coerce_builtin_as<T, U>(value: &Value) -> Option<T>
 where
     T: Send + Sync + 'static,
-    U: BuiltinConstCoerce,
+    U: BuiltinConstCoerce + 'static,
 {
-    let typed = U::coerce_builtin(value)?;
-    let any: Box<dyn Any + Send + Sync> = Box::new(typed);
-    any.downcast::<T>().ok().map(|typed| *typed)
+    // `T` is `U` (the caller matched their `TypeId`s); the `Option` slot converts without boxing.
+    let mut typed = Some(U::coerce_builtin(value)?);
+    (&mut typed as &mut dyn Any)
+        .downcast_mut::<Option<T>>()?
+        .take()
 }
 
 /// The type expression of a builtin Rust type: the scalars (integers, floats, `bool`, `String`,

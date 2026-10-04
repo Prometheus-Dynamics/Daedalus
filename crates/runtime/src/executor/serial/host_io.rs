@@ -67,21 +67,17 @@ pub(crate) fn inject_host_inputs<H: NodeHandler>(
     let host_nodes = exec.core.host_nodes.clone();
     for host in host_nodes.iter() {
         for (port, group) in host.inbound.iter() {
-            let targets: SmallVec<[usize; 4]> = group
-                .iter()
-                .copied()
-                .filter(|&edge_idx| {
-                    edge_is_active(exec, edge_idx)
-                        && node_is_active(exec, exec.edges[edge_idx].to().0)
-                })
-                .collect();
-            if targets.is_empty() {
+            let routes = |exec: &Executor<'_, H>, edge_idx: usize| {
+                edge_is_active(exec, edge_idx) && node_is_active(exec, exec.edges[edge_idx].to().0)
+            };
+            if !group.iter().any(|&edge_idx| routes(exec, edge_idx)) {
                 continue;
             }
             let mut result: Result<(), NodeError> = Ok(());
             host.handle.drain_inbound_port(port.as_str(), |entry| {
                 if result.is_ok() {
-                    result = fan_out(exec, &targets, CorrelatedPayload::from_edge(entry.payload));
+                    let payload = CorrelatedPayload::from_edge(entry.payload);
+                    result = fan_out(exec, group, routes, payload);
                 }
             });
             result.map_err(|error| ExecuteError::HandlerFailed {
