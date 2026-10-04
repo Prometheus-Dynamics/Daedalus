@@ -32,9 +32,12 @@ mod hardware {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use ash::{khr, vk};
+    use wgpu::hal::api::Vulkan;
+
     use super::*;
     use crate::{
-        DRM_FORMAT_MOD_LINEAR, DmabufAccess, DrmFourcc, ExternalFrameDescriptor,
+        AcquireFenceWait, DRM_FORMAT_MOD_LINEAR, DmabufAccess, DrmFourcc, ExternalFrameDescriptor,
         ExternalImportError, ExternalKeepalive, ExternalPlane, GpuFormat, GpuImageHandle, GpuUsage,
         export_dmabuf_fence,
     };
@@ -43,6 +46,8 @@ mod hardware {
     const DMA_BUF_IOCTL_SYNC: u64 = 0x4008_6200; // _IOW('b', 0, dma_buf_sync)
     const DMA_BUF_SYNC_RW: u64 = 3;
     const DMA_BUF_SYNC_END: u64 = 4;
+    const SYNC_FD: vk::ExternalSemaphoreHandleTypeFlags =
+        vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD;
 
     #[repr(C)]
     struct DmaHeapAllocationData {
@@ -121,6 +126,20 @@ mod hardware {
 
     fn pixel(x: u32, y: u32) -> [u8; 4] {
         [x as u8, y as u8, (x ^ y) as u8, 0xff]
+    }
+
+    /// Run `f`, failing on any wgpu validation error it raises (the backend only logs those).
+    fn validated<R>(backend: &WgpuBackend, f: impl FnOnce() -> R) -> R {
+        use pollster::FutureExt;
+        let scope = backend
+            .device_queue()
+            .0
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let out = f();
+        if let Some(err) = scope.pop().block_on() {
+            panic!("wgpu validation error: {err}");
+        }
+        out
     }
 
     fn device_poll(backend: &WgpuBackend) {
@@ -256,14 +275,25 @@ mod hardware {
         eprintln!("skipping: {reason}");
     }
 
+    /// Already signaled and never signaling fences, with GPU-side waits and with the CPU fallback.
     #[test]
     #[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
     fn dmabuf_import_waits_for_fences() {
-        let backend = WgpuBackend::new().expect("wgpu backend");
+        let mut backend = WgpuBackend::new().expect("wgpu backend");
         if !backend.dmabuf_import_support().is_supported() {
             skip(format!("{:?}", backend.dmabuf_import_support().reason()));
             return;
         }
+        validated(&backend, || check_fences(&backend));
+        backend.force_cpu_fence_wait();
+        assert_eq!(
+            backend.dmabuf_import_support().acquire_fence_wait(),
+            Some(AcquireFenceWait::Cpu)
+        );
+        validated(&backend, || check_fences(&backend));
+    }
+
+    fn check_fences(backend: &WgpuBackend) {
         let (width, height, stride) = (64u32, 32u32, 256u64);
         let buf = DmaBuf::alloc((stride * u64::from(height)) as usize).expect("dma-heap alloc");
         buf.write(|bytes| bytes[..4].copy_from_slice(&pixel(0, 0)));
@@ -290,8 +320,8 @@ mod hardware {
             .expect("import with implicit fence");
         assert_eq!(&backend.read_texture(&handle).unwrap()[..4], &pixel(0, 0));
 
-        // A fence that never signals times out before any Vulkan object is created, and the
-        // keepalive is released with the failed descriptor.
+        // A fence that never signals (and is no sync_file, so even GPU-wait mode waits on the CPU)
+        // times out before any Vulkan object is created; the keepalive goes with the descriptor.
         let (never, _writer) = std::io::pipe().unwrap();
         let guard = Arc::new(());
         let err = backend
@@ -307,6 +337,256 @@ mod hardware {
             "{err}"
         );
         assert_eq!(Arc::strong_count(&guard), 1);
+    }
+
+    /// A producer device writes the dmabuf at the end of a long GPU job and hands over that job's
+    /// `sync_file`. With GPU-side waits the import returns while the fence is still pending,
+    /// consumers still read the producer's pixels, and a handle dropped before the fence signals
+    /// keeps its dmabuf until the GPU is done with the acquire. With CPU waits the import blocks.
+    #[test]
+    #[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
+    fn dmabuf_import_gpu_waits_for_late_fence() {
+        let (mut consumer, independent) = consumer_backend();
+        let support = consumer.dmabuf_import_support();
+        if support.acquire_fence_wait() != Some(AcquireFenceWait::Gpu) {
+            return skip(format!("no GPU-side fence wait: {support:?}"));
+        }
+        let producer = WgpuBackend::new().expect("producer backend");
+        let (width, height, stride) = (64u32, 32u32, 256u64);
+        let buf = DmaBuf::alloc((stride * u64::from(height)) as usize).expect("dma-heap alloc");
+        let frame = || {
+            let plane = ExternalPlane::from_borrowed(buf.fd.as_fd(), 0, stride).unwrap();
+            ExternalFrameDescriptor::single_plane(width, height, DrmFourcc::XBGR8888, plane)
+        };
+        let target = match producer.import_dmabuf(frame().with_usage(GpuUsage::STORAGE)) {
+            Ok(handle) => handle,
+            Err(ExternalImportError::UnsupportedFormat { reason, .. }) => {
+                return skip(format!("storage import for the producer: {reason}"));
+            }
+            Err(err) => panic!("producer import failed: {err}"),
+        };
+        let writer = LateWriter::new(&producer, &target);
+
+        for _ in 0..2 {
+            buf.write(|bytes| bytes.fill(0));
+            let fence = writer.write();
+            let probe = fence.try_clone().unwrap();
+            let start = std::time::Instant::now();
+            let handle = validated(&consumer, || {
+                consumer
+                    .import_dmabuf(frame().with_acquire_fence(fence))
+                    .expect("import with pending fence")
+            });
+            let elapsed = start.elapsed();
+            assert!(
+                !crate::external::sync_file_signaled(probe.as_fd()),
+                "the producer finished before the import returned ({elapsed:?}); the import \
+                 blocked or the producer job is too short"
+            );
+            let read = consumer.read_texture(&handle).expect("readback");
+            assert!(crate::external::sync_file_signaled(probe.as_fd()));
+            for (index, px) in read.chunks_exact(4).enumerate() {
+                let (x, y) = (index as u32 % width, index as u32 / width);
+                assert_eq!(
+                    px,
+                    &pixel(x, y),
+                    "pixel ({x},{y}), independent: {independent}"
+                );
+            }
+        }
+
+        let fence = writer.write();
+        let probe = fence.try_clone().unwrap();
+        let guard = Arc::new(());
+        let handle = consumer
+            .import_dmabuf(
+                frame()
+                    .with_keepalive(guard.clone())
+                    .with_acquire_fence(fence),
+            )
+            .expect("import with pending fence");
+        drop(handle);
+        let _ = consumer.device_queue().0.poll(wgpu::PollType::Poll);
+        let held = Arc::strong_count(&guard);
+        if crate::external::sync_file_signaled(probe.as_fd()) {
+            skip("producer finished before the keepalive check".into());
+        } else {
+            assert_eq!(held, 2, "dmabuf released while its acquire was pending");
+        }
+        device_poll(&consumer);
+        assert_eq!(Arc::strong_count(&guard), 1, "keepalive released once idle");
+
+        consumer.force_cpu_fence_wait();
+        let fence = writer.write();
+        let probe = fence.try_clone().unwrap();
+        let handle = consumer
+            .import_dmabuf(frame().with_acquire_fence(fence))
+            .expect("blocking import");
+        assert!(crate::external::sync_file_signaled(probe.as_fd()));
+        drop(handle);
+        device_poll(&producer); // destroys the exported semaphores
+    }
+
+    /// The consumer for [`dmabuf_import_gpu_waits_for_late_fence`], and whether its queue is
+    /// independent of the producer's GPU. lavapipe (CPU Vulkan) is: its work is not ordered behind
+    /// the producer's job by a shared hardware ring, so a missing wait shows up as stale pixels.
+    /// Otherwise the consumer is a second device on the producer's GPU, which only shows that the
+    /// import does not block (one GPU ring runs both devices' jobs in submission order anyway).
+    fn consumer_backend() -> (WgpuBackend, bool) {
+        use pollster::FutureExt;
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        let lavapipe = wgpu::Instance::new(desc)
+            .enumerate_adapters(wgpu::Backends::VULKAN)
+            .block_on()
+            .into_iter()
+            .find(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu)
+            .and_then(|adapter| {
+                WgpuBackend::with_adapter(adapter, Default::default())
+                    .block_on()
+                    .ok()
+            })
+            .filter(|backend| {
+                backend.dmabuf_import_support().acquire_fence_wait() == Some(AcquireFenceWait::Gpu)
+            });
+        match lavapipe {
+            Some(backend) => (backend, true),
+            None => {
+                skip("no lavapipe consumer; a missing GPU wait would go unnoticed".into());
+                (WgpuBackend::new().expect("wgpu backend"), false)
+            }
+        }
+    }
+
+    /// Writes `pixel(x, y)` into a storage texture after a GPU spin of about
+    /// [`LateWriter::TARGET`], handing out a `sync_file` that signals once the write is done.
+    struct LateWriter<'a> {
+        backend: &'a WgpuBackend,
+        pipeline: wgpu::ComputePipeline,
+        bind_group: wgpu::BindGroup,
+        spins: wgpu::Buffer,
+        iterations: u32,
+    }
+
+    impl<'a> LateWriter<'a> {
+        const TARGET: Duration = Duration::from_millis(300);
+
+        fn new(backend: &'a WgpuBackend, target: &GpuImageHandle) -> Self {
+            let device = backend.device_queue().0;
+            let texture = backend.get_texture(target).expect("registered texture");
+            let view = texture.create_view(&Default::default());
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("late-writer"),
+                source: wgpu::ShaderSource::Wgsl(
+                    r#"
+@group(0) @binding(0) var dst: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(1) var<uniform> spins: u32;
+@compute @workgroup_size(1)
+fn main() {
+    var acc = 1u;
+    for (var i = 0u; i < spins; i++) { acc = acc * 1664525u + 1013904223u; }
+    let dims = textureDimensions(dst);
+    for (var y = 0u; y < dims.y; y++) {
+        for (var x = 0u; x < dims.x; x++) {
+            var c = vec4<f32>(vec3<f32>(f32(x), f32(y), f32(x ^ y)) / 255.0, 1.0);
+            if (acc == 7u) { c = vec4<f32>(0.0); }
+            textureStore(dst, vec2<i32>(i32(x), i32(y)), c);
+        }
+    }
+}
+"#
+                    .into(),
+                ),
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("late-writer"),
+                layout: None,
+                module: &shader,
+                entry_point: Some("main"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            let spins = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("late-writer-spins"),
+                size: 16,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("late-writer"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: spins.as_entire_binding(),
+                    },
+                ],
+            });
+            let mut writer = Self {
+                backend,
+                pipeline,
+                bind_group,
+                spins,
+                iterations: 1 << 20,
+            };
+            // Calibrate the spin to about TARGET on this GPU.
+            let start = std::time::Instant::now();
+            writer.dispatch();
+            device_poll(backend);
+            let per_spin = start.elapsed().as_secs_f64() / f64::from(writer.iterations);
+            writer.iterations = (Self::TARGET.as_secs_f64() / per_spin).clamp(1e6, 2e9) as u32;
+            writer
+        }
+
+        fn dispatch(&self) {
+            let (device, queue) = self.backend.device_queue();
+            queue.write_buffer(&self.spins, 0, &self.iterations.to_le_bytes());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            queue.submit(Some(encoder.finish()));
+        }
+
+        /// Submit the late write and export a `sync_file` of its completion.
+        fn write(&self) -> OwnedFd {
+            let (device, queue) = self.backend.device_queue();
+            // SAFETY: the semaphore is created, signaled by the next submission, exported, and
+            // destroyed once that submission completed.
+            unsafe {
+                let hal_dev = device.as_hal::<Vulkan>().expect("Vulkan device");
+                let raw = hal_dev.raw_device().clone();
+                let mut export = vk::ExportSemaphoreCreateInfo::default().handle_types(SYNC_FD);
+                let semaphore = raw
+                    .create_semaphore(
+                        &vk::SemaphoreCreateInfo::default().push_next(&mut export),
+                        None,
+                    )
+                    .expect("exportable semaphore");
+                queue
+                    .as_hal::<Vulkan>()
+                    .expect("Vulkan queue")
+                    .add_signal_semaphore(semaphore, None);
+                self.dispatch();
+                let fd_api = khr::external_semaphore_fd::Device::new(
+                    hal_dev.shared_instance().raw_instance(),
+                    &raw,
+                );
+                let info = vk::SemaphoreGetFdInfoKHR::default()
+                    .semaphore(semaphore)
+                    .handle_type(SYNC_FD);
+                let fd = fd_api.get_semaphore_fd(&info).expect("export sync_file");
+                queue.on_submitted_work_done(move || raw.destroy_semaphore(semaphore, None));
+                OwnedFd::from_raw_fd(fd)
+            }
+        }
     }
 
     fn nv12_luma(x: u32, y: u32) -> u8 {
@@ -383,7 +663,7 @@ mod hardware {
             Err(err) => panic!("NV12 import failed: {err}"),
         };
         assert_nv12(&backend, &handle);
-        // wgpu 29 cannot copy out of NV12 textures.
+        // wgpu 30 cannot copy out of NV12 textures.
         assert_eq!(
             backend.read_texture(&handle),
             Err(crate::GpuError::Unsupported)

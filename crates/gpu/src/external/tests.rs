@@ -204,11 +204,21 @@ fn from_borrowed_dups_the_fd() {
     assert_eq!((plane.offset, plane.stride), (16, 256));
 }
 
+#[cfg(feature = "gpu-dmabuf")]
+#[test]
+fn sync_file_signaled_is_a_non_blocking_check() {
+    let (fence, mut writer) = pipe_fence();
+    assert!(!sync_file_signaled(fence.as_fd()));
+    writer.write_all(&[1]).unwrap();
+    assert!(sync_file_signaled(fence.as_fd()));
+}
+
 #[test]
 fn noop_backend_reports_unsupported() {
     let backend = NoopBackend::default();
     let support = backend.dmabuf_import_support();
     assert!(!support.is_supported());
+    assert_eq!(support.acquire_fence_wait(), None);
     assert!(support.reason().unwrap().contains("noop"));
     let err = backend.import_dmabuf(xrgb_frame(64, 4, 256)).unwrap_err();
     assert!(matches!(err, ExternalImportError::Unsupported { .. }));
@@ -230,12 +240,14 @@ mod mock {
     use std::sync::Arc;
 
     use super::*;
-    use crate::{GpuBackendKind, GpuOptions, GpuUsage, MockBackend};
+    use crate::{AcquireFenceWait, GpuBackendKind, GpuOptions, GpuUsage, MockBackend};
 
     #[test]
     fn mock_records_import_and_returns_gpu_handle() {
         let backend = MockBackend::default();
-        assert!(backend.dmabuf_import_support().is_supported());
+        let support = backend.dmabuf_import_support();
+        assert!(support.is_supported() && support.reason().is_none());
+        assert_eq!(support.acquire_fence_wait(), Some(AcquireFenceWait::Cpu));
         let handle = backend
             .import_dmabuf(
                 xrgb_frame(640, 480, 2560)
@@ -359,5 +371,24 @@ mod mock {
         assert_eq!(handle.format, GpuFormat::Bgra8Unorm);
         // Readback works through the regular texture path.
         assert_eq!(ctx.read_texture(&handle).unwrap().len(), 64 * 4 * 4);
+    }
+
+    /// CPU-wait backends block the import until a late fence signals, and no longer.
+    #[test]
+    fn mock_import_waits_for_a_late_fence() {
+        let backend = MockBackend::default();
+        let (fence, mut writer) = pipe_fence();
+        let delay = Duration::from_millis(50);
+        let signal = std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            writer.write_all(&[1]).unwrap();
+        });
+        let start = std::time::Instant::now();
+        backend
+            .import_dmabuf(xrgb_frame(64, 4, 256).with_acquire_fence(fence))
+            .unwrap();
+        assert!(start.elapsed() >= delay);
+        signal.join().unwrap();
+        assert_eq!(backend.imported_frames().len(), 1);
     }
 }

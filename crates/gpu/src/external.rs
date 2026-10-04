@@ -24,8 +24,13 @@
 //!
 //! If the producer may still be writing when it hands the buffer over, pass its `sync_file` with
 //! [`ExternalFrameDescriptor::with_acquire_fence`] (or [`ExternalFrameDescriptor::with_implicit_fence`]
-//! for producers that only fence the dmabuf itself). The import waits for it on the CPU, bounded by
-//! [`ExternalFrameDescriptor::acquire_timeout`], before the GPU can touch the memory.
+//! for producers that only fence the dmabuf itself). Where the fence is waited for is reported by
+//! [`ExternalImportSupport::acquire_fence_wait`]:
+//!
+//! - [`AcquireFenceWait::Gpu`]: the fence is imported as a Vulkan semaphore and the GPU waits for
+//!   it; the import returns immediately and the CPU never blocks. No timeout applies.
+//! - [`AcquireFenceWait::Cpu`]: the import blocks until the fence signals, bounded by
+//!   [`ExternalFrameDescriptor::acquire_timeout`].
 
 use std::fmt;
 use std::time::Duration;
@@ -108,10 +113,31 @@ impl fmt::Debug for DrmFourcc {
 /// Opaque guard kept alive until the imported GPU image is destroyed and idle.
 pub type ExternalKeepalive = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
-/// Whether a backend can import dmabuf frames, and why not.
+/// Where an import waits for the descriptor's acquire fence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AcquireFenceWait {
+    /// The `sync_file` becomes a Vulkan semaphore the GPU waits on before touching the memory; the
+    /// import call returns without blocking. An already signaled fence costs nothing; a fence that
+    /// is not a `sync_file` falls back to the CPU wait.
+    Gpu,
+    /// The import call blocks (`poll`) until the fence signals or the descriptor's
+    /// `acquire_timeout` passes.
+    Cpu,
+}
+
+impl AcquireFenceWait {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gpu => "gpu",
+            Self::Cpu => "cpu",
+        }
+    }
+}
+
+/// Whether a backend can import dmabuf frames (and how it waits for acquire fences), and why not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExternalImportSupport {
-    Supported,
+    Supported { acquire_fence: AcquireFenceWait },
     Unsupported { reason: String },
 }
 
@@ -123,14 +149,22 @@ impl ExternalImportSupport {
     }
 
     pub fn is_supported(&self) -> bool {
-        matches!(self, Self::Supported)
+        matches!(self, Self::Supported { .. })
     }
 
     /// Why import is unavailable, or `None` when supported.
     pub fn reason(&self) -> Option<&str> {
         match self {
-            Self::Supported => None,
+            Self::Supported { .. } => None,
             Self::Unsupported { reason } => Some(reason),
+        }
+    }
+
+    /// Where acquire fences are waited for, or `None` when import is unsupported.
+    pub fn acquire_fence_wait(&self) -> Option<AcquireFenceWait> {
+        match self {
+            Self::Supported { acquire_fence } => Some(*acquire_fence),
+            Self::Unsupported { .. } => None,
         }
     }
 
@@ -215,6 +249,8 @@ mod fence;
 #[path = "external/linux.rs"]
 mod linux;
 
+#[cfg(all(target_os = "linux", feature = "gpu-dmabuf"))]
+pub(crate) use fence::sync_file_signaled;
 #[cfg(target_os = "linux")]
 pub use fence::{DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, export_dmabuf_fence};
 #[cfg(target_os = "linux")]

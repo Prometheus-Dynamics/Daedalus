@@ -34,6 +34,13 @@ pub use staging::{WgpuStagingPoolConfig, WgpuStagingPoolStats};
 
 /// Minimal wgpu backend placeholder to satisfy trait; queries adapter limits when available.
 pub struct WgpuBackend {
+    /// dmabuf import state; declared first so it drops (destroying its Vulkan objects) while
+    /// `device` is still alive.
+    #[cfg_attr(
+        not(all(feature = "gpu-dmabuf", target_os = "linux")),
+        allow(dead_code)
+    )]
+    dmabuf: dmabuf::ImportState,
     adapter: GpuAdapterInfo,
     caps: GpuCapabilities,
     stats: Mutex<TransferStats>,
@@ -97,7 +104,14 @@ impl WgpuBackend {
             adapters = instance.enumerate_adapters(Backends::all()).await;
         }
         let adapter = select_best_adapter(adapters).ok_or(GpuError::AdapterUnavailable)?;
+        Self::with_adapter(adapter, staging_config).await
+    }
 
+    /// Create the backend on a specific adapter.
+    pub(crate) async fn with_adapter(
+        adapter: Adapter,
+        staging_config: WgpuStagingPoolConfig,
+    ) -> Result<Self, GpuError> {
         let (info, features, limits) = build_info_from_adapter(&adapter);
         let caps = caps_from_adapter(Some(&adapter), &limits);
 
@@ -113,7 +127,7 @@ impl WgpuBackend {
         let (device, queue) = dmabuf::request_device(&adapter, &device_desc)
             .await
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
-        let dmabuf_support = dmabuf::probe_support(&device);
+        let (dmabuf_support, dmabuf) = dmabuf::probe(&device);
 
         let device_key = crate::shader::register_device(&device);
 
@@ -128,6 +142,7 @@ impl WgpuBackend {
         }));
 
         Ok(Self {
+            dmabuf,
             adapter: info,
             caps: caps.clone(),
             stats: Mutex::new(TransferStats::default()),
