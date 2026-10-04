@@ -132,7 +132,8 @@ boundary-registry clone). The inbound bench now drains into a reused `Vec`
 
 `cargo test -p daedalus-rs --features engine,plugins --test graph_frame_allocations` drives a
 16-node detector-like graph (`crates/daedalus/tests/support/detector_graph.rs`: one frame input
-fanned out, config-struct and const inputs, a five-input node, a metadata-only adapter edge,
+fanned out, config-struct and const inputs (one config with a serde enum and a `String` field),
+a five-input node, a metadata-only adapter edge,
 connected and unconnected `Option<T>` inputs, two conditional producers, one of which never
 emits so its consumer is skipped, fan-in, four host outputs) whose handlers allocate nothing,
 and asserts the allocations per frame in serial (metrics off and basic), parallel and adaptive
@@ -141,27 +142,31 @@ call site, grouped by the first Daedalus frame and its callers.
 `cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame` times the same
 frame.
 
-Allocations per frame at four points: `dev` at the optional-inputs merge (A), `dev` after the
-macro work resolved output keys once per handler (B), with the executor/transport pass (C), and
-with the parallel scheduling pass (D). A and B carry the two harness fixes described below.
+Allocations per frame at five points: `dev` at the optional-inputs merge (A), `dev` after the
+macro work resolved output keys once per handler (B), with the executor/transport pass (C), with
+the parallel scheduling pass (D), and with per-node state slots and decoded-constant caches (E,
+whose harness adds a serde enum and a `String` config field; `track` takes its config as
+`&TrackConfig`, since a by-value config clones its `String`). A and B carry the two harness
+fixes described below.
 
-| Category | A | B | C | D |
-| --- | --- | --- | --- | --- |
-| Boundary contract formatting (`get_ref`/`try_into_owned`/`Payload::owned`) | 180 | 164 | 0 | 0 |
-| Adapter lifecycle records, step names, path text | 54 | 54 | 0 | 0 |
-| Output port names (`PortId::new` per push) | 28 | 0 | 0 | 0 |
-| Const input payloads rebuilt per tick | 14 | 14 | 0 | 0 |
-| Builtin const coercion boxing | 7 | 7 | 0 | 0 |
-| `StateStore` take/set of node state | 6 | 6 | 0 | 0 |
-| Failed moves boxing the payload (`try_into_owned` on a const) | 0 | 2 | 0 | 0 |
-| Port lists spilling past four entries | 2 | 2 | 0 | 0 |
-| Host input fan-out target list | 1 | 1 | 0 | 0 |
-| Payloads created (node outputs, adapter results, branch, host frame) | 31 | 31 | 31 | 31 |
-| Generated handler code (`daedalus-macros`: per-push keys in A, state keys) | 55 | 9 | 9 | 9 |
-| **Serial, metrics off** | **378** | **290** | **40** | **40** |
-| Serial, basic metrics (per-node metrics: a `BTreeMap` until C, one vector in D) | 381 | 293 | 43 | 41 |
-| Parallel/adaptive with `executor-pool` (C: a pool task per segment and a result channel) | 422 | 334 | 60 | 40 |
-| Parallel/adaptive without `executor-pool` (C: a scoped OS thread per segment) | 458 | 370 | 141 | 40 |
+| Category | A | B | C | D | E |
+| --- | --- | --- | --- | --- | --- |
+| Boundary contract formatting (`get_ref`/`try_into_owned`/`Payload::owned`) | 180 | 164 | 0 | 0 | 0 |
+| Adapter lifecycle records, step names, path text | 54 | 54 | 0 | 0 | 0 |
+| Output port names (`PortId::new` per push) | 28 | 0 | 0 | 0 | 0 |
+| Const input payloads rebuilt per tick | 14 | 14 | 0 | 0 | 0 |
+| Builtin const coercion boxing | 7 | 7 | 0 | 0 | 0 |
+| `StateStore` take/set of node state | 6 | 6 | 0 | 0 | 0 |
+| Failed moves boxing the payload (`try_into_owned` on a const) | 0 | 2 | 0 | 0 | 0 |
+| Port lists spilling past four entries | 2 | 2 | 0 | 0 | 0 |
+| Host input fan-out target list | 1 | 1 | 0 | 0 | 0 |
+| Payloads created (node outputs, adapter results, branch, host frame) | 31 | 31 | 31 | 31 | 31 |
+| Config decoding (E's serde enum and `String` fields, decoded per frame without the cache) | - | - | - | - | 0 |
+| Generated handler code (`daedalus-macros`: per-push keys in A, state keys until E) | 55 | 9 | 9 | 9 | 0 |
+| **Serial, metrics off** | **378** | **290** | **40** | **40** | **31** |
+| Serial, basic metrics (per-node metrics: a `BTreeMap` until C, one vector in D) | 381 | 293 | 43 | 41 | 32 |
+| Parallel/adaptive with `executor-pool` (C: a pool task per segment and a result channel) | 422 | 334 | 60 | 40 | 31 |
+| Parallel/adaptive without `executor-pool` (C: a scoped OS thread per segment) | 458 | 370 | 141 | 40 | 31 |
 
 In D a parallel frame fans out once to persistent workers (the Rayon pool, or without
 `executor-pool` a few parked threads of the executor's own) that pull ready segments from one
@@ -199,7 +204,8 @@ C against D, with (`engine-full,plugins`) and without (`engine,plugins`: no pool
 
 The harness needed two fixes to run at all: owned scalar parameters fed by const inputs
 (`NodeIo::take_owned` coercing `Value`s) and builtin branch adapters for keys shared by several
-Rust types (a fanned-out `i64` output was branched by the `i32` adapter).
+Rust types (a fanned-out `i64` output was branched by the `i32` adapter; since E every builtin
+number has its own key).
 
 ### Choosing a runtime mode
 

@@ -145,9 +145,28 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   and `executor::DEFAULT_DISPATCH_OVERHEAD` set the per-segment dispatch cost adaptive mode
   assumes before it has measured one; node metadata `NODE_COST_META_KEY`
   (`"daedalus.node.cost"`) = `"heavy"` marks a node as expensive before it is measured.
+- Builtin numeric widening: the `daedalus.builtin.numeric_widening` provider
+  (`BuiltinCapability::NumericWidening`) registers an adapter
+  (`daedalus.builtin.widen.<from>_to_<to>`) for every lossless `From` conversion between
+  builtin numbers (`i32 -> i64`, `u32 -> i64`, `i32 -> f64`, `f32 -> f64`, ...), which the planner
+  inserts on its own; it also serves `move`/`modify` inputs without a branch.
+- `ValueType::{rust_name, int_range, is_float, is_numeric, check_value}`; `check_value` tells
+  whether a graph value converts to the type exactly.
+- `StateStore::{take_node_state, set_node_state}`: typed per-node state keyed by node id and
+  type, allocation-free per tick.
+- `daedalus_runtime::const_cache::{ConfigCache, DecodedInputs}` (per-node decoded configs and
+  `&T` constants), `NodeConfig::port_names` and `Payload::shares_storage`.
 
 ### Fixed
 
+- `#[node]` and `#[node_handler]` treated any fn with three reference parameters as the
+  low-level `(node, ctx, io)` form, so `fn(&A, &B, &mut State)` did not compile. The low-level
+  form is now recognized by its parameter types (`&RuntimeNode`, `&ExecutionContext`,
+  `&mut NodeIo`).
+- A host input of `i64` fanned out to two `i64` node inputs failed with `payload type mismatch`
+  (the fan-out branch adapter for the shared `Int` key was the `i32` one), and plugins with
+  `i64` and `i32` ports could conflict on that key; builtin numbers now have distinct keys (see
+  Changed).
 - Enum `NodeConfig` fields and enum handler inputs failed at runtime with `missing <port>`: the
   engine never passed `PluginRegistry::const_coercers` to its executors (so even `register_enum`
   had no effect), and owned (`T`, `&mut T`) and borrowed (`&T`) handler inputs never converted
@@ -156,10 +175,28 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- One transport key per builtin Rust number. `ValueType` gains `I8`, `I16`, `ISize`, `U8`,
+  `U16`, `U64` and `USize` (`Int` is `i64`, `Float` is `f64`, next to the existing `I32`, `U32`
+  and `F32`), and every builtin integer and float maps to its own value type, so
+  `typeexpr:{"Scalar":"I32"}` names `i32` only (before, `i8`..`u64` all shared `Int` and `f32`
+  shared `Float`). Lossless conversions are inserted as builtin widening adapters; narrowing (and
+  `isize`/`usize` conversions) never is, and fails at plan time with a `ConverterMissing`
+  diagnostic saying the conversion is not lossless. Builtin branch adapters take only their own
+  Rust type again. `i128`/`u128` are no longer builtins (they keep `rust:` keys and convert
+  through serde). The node SDK maps `i32`, `u32`, `u64` and `f32` to their value types.
+- Graph constants convert to the port's exact Rust type: the planner checks numeric constants
+  and port defaults against the port's width (a `TypeMismatch` diagnostic such as "300 is out of
+  range for u8 (0..=255)"), and float ports also take integer
+  constants they represent exactly (an `f32` rejects values beyond its range).
+- Generated handlers decode configs and `&T` constants once per change instead of every call: a
+  node's `NodeConfig` is built (`from_io`, `sanitize`, `validate`) when one of its input payloads
+  changes and kept in the node's state slot; `&Config` parameters borrow it and by-value ones
+  clone it. Sanitization warnings are logged once per change. `NodeConfig` requires
+  `Clone + Send + Sync + 'static` and `port_names()` (the derive generates it).
+- Generated stateful handlers keep their state in `StateStore::take_node_state` slots instead of
+  native values under a formatted `macro_state:<node>:<type>` key.
 - `NodeIo::take_owned` coerces `Value` inputs (graph constants) to `T` like `get_typed`, so owned
-  scalar parameters (`target: f64`) accept const inputs. Builtin branch adapters branch every
-  primitive sharing their key (`i64`/`i32`/`u32` under `Int`, `f64`/`f32` under `Float`) instead
-  of failing when the planner picks another width's adapter. `NodeIo` port lists are `Vec`s
+  scalar parameters (`target: f64`) accept const inputs. `NodeIo` port lists are `Vec`s
   (`take_outputs_small` is gone; use `take_outputs`), `BoundaryVTable` gains `layout_hash`, and
   `BoundaryStorage` gains `holds`, `may_hold`, `capabilities` and contract-free
   `borrow_ref_as`/`borrow_mut_as`/`take_owned_as`.
@@ -302,8 +339,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `host_graph_drive` benches (including `push_tick_take_metrics_off`) are summarized in
   `docs/development.md`.
 - A 16-node detector-like graph frame (`graph_frame_allocations` facade test, `graph_frame`
-  bench) went from 290 heap allocations to 40 in serial mode: the 31
-  allocations of the payloads it creates and 9 from generated stateful handlers; runtime
+  bench) went from 290 heap allocations to 31 in serial mode, the payloads it creates: generated
+  stateful handlers no longer format a state key per call (9) and configs, including a serde
+  enum and a `String` field the harness now has, are decoded once instead of per frame. Runtime
   bookkeeping per frame is zero and pinned by the test (`docs/development.md` has the breakdown).
   Boundary payloads are checked by `TypeId` instead of formatting a `BoundaryTypeContract` per
   `get_ref`/`get_mut`/`try_into_owned` (the contract is built lazily). Const inputs are
