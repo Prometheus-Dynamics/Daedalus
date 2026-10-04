@@ -54,8 +54,9 @@
 //! crate (a camera library's frame, say) is a different Rust type in a plugin whose cargo build
 //! resolved that crate with other features, even with the same key and type name. The
 //! descriptor's `boundary_types` entry point therefore exports a C-safe table
-//! ([`BoundaryTypeTable`]) of every type key the plugin consumes, produces or registers, with
-//! the Rust type behind it in the plugin's build (`TypeId` hash, size, align, type name; see
+//! ([`BoundaryTypeTable`](crate::dylib::BoundaryTypeTable)) of every type key the plugin
+//! consumes, produces or registers, with the Rust type behind it in the plugin's build
+//! (`TypeId` hash, size, align, type name; see
 //! [`PluginRegistry::boundary_types`](crate::PluginRegistry::boundary_types)).
 //! [`PluginLibrary::install_into`] compares it with the host registry's entries for the same
 //! keys and, before installing anything, fails with
