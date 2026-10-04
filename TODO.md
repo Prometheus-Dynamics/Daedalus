@@ -65,6 +65,8 @@ changes.
       popping nothing, until each holds a value, then take one value per edge; optional inputs
       never block, edge policies decide what is held, and the planner lints joins on producers
       that may not produce. Per-edge policies now also survive the scheduler default.
+- [x] **Typed host ports in embedded graphs.** Embedded-graph expansion and `nest` carry an
+      inner host port's declared type to an undeclared outer host port wired to it.
 - [x] **Enum config ports (Eidos).** `NodeConfig` enum fields and enum handler inputs failed
       with `missing <port>`: the engine never handed the registry's const coercers to its
       executors and owned/borrowed inputs never coerced `Value` constants. The node macros now
@@ -164,8 +166,6 @@ changes.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29
       cannot add external wait semaphores. Revisit when wgpu exposes it; also queue-family-foreign
       acquire for compressed modifiers.
-- [ ] **Typed host ports in embedded graphs.** Declared host port types are not carried through
-      embedded-graph expansion.
 - [ ] **`export_plugin!` boundary contracts** are registered at install time but are not in the
       exported schema.
 - [ ] **Graph JSON Schema** hand-copies `SyncGroup` variants from `daedalus-core`; derive them or add

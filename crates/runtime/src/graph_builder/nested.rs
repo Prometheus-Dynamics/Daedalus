@@ -73,6 +73,9 @@ pub struct NestedGraphHandle {
     pub alias: String,
     pub inputs: BTreeMap<String, Vec<PortRef>>, // host -> inner targets
     pub outputs: BTreeMap<String, Vec<PortRef>>, // inner sources -> host
+    /// Port types the nested graph declared on its host bridge (`input_typed`, ...); outer host
+    /// ports connected to them without a declaration of their own take these types.
+    pub host_types: daedalus_planner::HostPortTypes,
 }
 
 impl NestedGraphHandle {

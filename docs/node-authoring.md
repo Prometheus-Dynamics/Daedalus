@@ -389,6 +389,10 @@ planner handles the rest. Host ports are generic unless declared: an undeclared 
 its type from the node ports it feeds, so it cannot feed a frame port and a descriptor port at
 once. A declared one (`input_typed::<T>` / `input_as(name, TypeExpr)`, and `output_typed` /
 `output_as` for outputs) keeps its type, and the planner adapts each edge separately.
+Declarations survive embedding: when a nested graph (`GraphBuilder::nest`) or a graph-backed
+node's embedded graph declares a host port, an outer host port wired straight to it without a
+declaration of its own takes that type (the outer declaration wins when both declare one). Other
+outer producers connect edge by edge to the inner nodes, each edge checked and adapted on its own.
 
 [`examples/04_async/external_frame_source.rs`](../examples/04_async/external_frame_source.rs)
 is a copyable template of all five steps with a synthetic source instead of a camera:

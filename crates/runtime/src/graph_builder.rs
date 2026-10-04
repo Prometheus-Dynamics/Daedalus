@@ -572,6 +572,9 @@ impl GraphBuilder {
             alias: alias.clone(),
             inputs,
             outputs,
+            host_types: HostPortTypes::from_node_metadata(
+                &nested.graph.nodes[nested.host_index].metadata,
+            ),
         };
 
         self.nested.insert(alias.clone(), handle.clone());

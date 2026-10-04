@@ -177,6 +177,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- Declared host port types were lost when a graph was embedded: the planner's embedded-graph
+  expansion and `GraphBuilder::nest` dropped the inner host bridge, so an inner `input_typed`
+  port fanned into differently typed nodes left the outer host port generic (a type conflict).
+  An undeclared outer host port wired to a declared inner one now takes its type
+  (`NestedGraphHandle::host_types`); `try_connect_to_nested`/`try_connect_from_nested` also
+  accept a bare host port name and create the bridge port, like `try_connect`.
 - Per-edge pressure and freshness policies (`edge_latest_only`, `edge_bounded`, edge metadata in
   graph documents) were overwritten by `SchedulerConfig::default_policy`; the default now applies
   only to edges without a policy of their own.
