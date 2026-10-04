@@ -15,7 +15,8 @@ use daedalus_planner::{
     is_host_bridge_metadata,
 };
 pub use daedalus_registry::capability::{
-    NODE_EXECUTION_KIND_META_KEY, NODE_REQUIRED_INPUTS_META_KEY, NodeExecutionKind,
+    NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_REQUIRED_INPUTS_META_KEY,
+    NodeExecutionKind, NodeFire,
 };
 use daedalus_transport::PressurePolicy;
 

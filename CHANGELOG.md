@@ -165,8 +165,27 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   without threads, blocking host-bridge waits return when nothing is queued, and runtime/engine
   timing reads `platform::Instant`. `scripts/ci.sh nostd` / `wasm` and a `portability` CI job
   check both, the latter by running `examples/wasm_smoke` in Node.
+- Cross-tick joins: a node's fire mode (`NodeFire`, node metadata `daedalus.node.fire` /
+  `NODE_FIRE_META_KEY`) is `any` (default, per-tick readiness) or `all`: wait, popping nothing,
+  until every connected required input holds a value, then take one value per edge. Set it with
+  `#[node(fire = "all")]`, `GraphBuilder::{fire_all, fire}` or graph-document node metadata.
+  Optional inputs never block; edge policies decide what is held (FIFO edges pair values in
+  arrival order, latest-only edges replace a held value). The planner lint warns about unknown
+  modes and `all` nodes joining producers that may not produce; `#[node]` records `Option`
+  returns as `outputs.<port>.conditional` metadata for it. See "Cross-Tick Joins" in
+  `docs/node-authoring.md`.
 
 ### Fixed
+
+- Declared host port types were lost when a graph was embedded: the planner's embedded-graph
+  expansion and `GraphBuilder::nest` dropped the inner host bridge, so an inner `input_typed`
+  port fanned into differently typed nodes left the outer host port generic (a type conflict).
+  An undeclared outer host port wired to a declared inner one now takes its type
+  (`NestedGraphHandle::host_types`); `try_connect_to_nested`/`try_connect_from_nested` also
+  accept a bare host port name and create the bridge port, like `try_connect`.
+- Per-edge pressure and freshness policies (`edge_latest_only`, `edge_bounded`, edge metadata in
+  graph documents) were overwritten by `SchedulerConfig::default_policy`; the default now applies
+  only to edges without a policy of their own.
 
 - `#[node]` and `#[node_handler]` treated any fn with three reference parameters as the
   low-level `(node, ctx, io)` form, so `fn(&A, &B, &mut State)` did not compile. The low-level
@@ -448,6 +467,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `examples/plugins/example_project_dylib`; `example_project` is a plain `rlib` without a `dylib`
   feature. `docs/dynamic-plugins.md` explains the rule, and `scripts/ci.sh features` and CI now
   run `cargo build --workspace --lib --all-features`, which links.
+- The graph JSON Schema's enum lists (`compute`, sync group `policy` and `backpressure`) are
+  generated from `ComputeAffinity::ALL`, `SyncPolicy::ALL` and `BackpressureStrategy::ALL`
+  (new in `daedalus-core`; an exhaustive match next to each fails to compile until a new variant
+  is listed), and a planner test validates a document using every variant against the schema.
 
 ## [2.0.0] - 2026-04-30
 

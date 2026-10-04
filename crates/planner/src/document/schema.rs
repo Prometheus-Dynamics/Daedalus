@@ -1,8 +1,22 @@
 //! JSON Schema (draft 2020-12) for the persisted graph document format.
 
+use alloc::vec::Vec;
+
+use daedalus_core::compute::ComputeAffinity;
+use daedalus_core::policy::BackpressureStrategy;
+use daedalus_core::sync::SyncPolicy;
+use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 
 use super::{GRAPH_DOCUMENT_FORMAT, GRAPH_DOCUMENT_SCHEMA_VERSION, GraphDocument};
+
+/// The serialized form of each of `variants`, so enum lists follow the types they describe.
+fn variants<T: Serialize>(variants: &[T]) -> Vec<JsonValue> {
+    variants
+        .iter()
+        .map(|variant| serde_json::to_value(variant).unwrap_or(JsonValue::Null))
+        .collect()
+}
 
 impl GraphDocument {
     /// JSON Schema (draft 2020-12) of the current document version, for editors and tooling.
@@ -14,6 +28,8 @@ impl GraphDocument {
         let strings = json!({ "type": "array", "items": { "type": "string" } });
         let value_map = json!({ "type": "object", "additionalProperties": value });
         let port_ref = json!({ "$ref": "#/$defs/port_ref" });
+        let mut backpressure = variants(&BackpressureStrategy::ALL);
+        backpressure.push(JsonValue::Null);
         json!({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "title": format!("Daedalus graph document v{GRAPH_DOCUMENT_SCHEMA_VERSION}"),
@@ -69,7 +85,7 @@ impl GraphDocument {
                         "label": nullable_string,
                         "inputs": strings,
                         "outputs": strings,
-                        "compute": { "enum": ["CpuOnly", "GpuPreferred", "GpuRequired"] },
+                        "compute": { "enum": variants(&ComputeAffinity::ALL) },
                         "const_inputs": {
                             "type": "array",
                             "items": {
@@ -104,8 +120,8 @@ impl GraphDocument {
                     "type": "object",
                     "properties": {
                         "name": { "type": "string" },
-                        "policy": { "enum": ["AllReady", "Latest", "ZipByTag"] },
-                        "backpressure": { "enum": ["None", "BoundedQueues", "ErrorOnOverflow", null] },
+                        "policy": { "enum": variants(&SyncPolicy::ALL) },
+                        "backpressure": { "enum": backpressure },
                         "capacity": { "type": ["integer", "null"], "minimum": 0 },
                         "ports": strings,
                     },

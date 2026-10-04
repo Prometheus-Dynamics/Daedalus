@@ -6,7 +6,7 @@ use daedalus_data::model::Value;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::{Edge, Graph, NodeInstance, NodeRef, PortRef};
-use crate::metadata::GroupMetadata;
+use crate::metadata::{DynamicPortMetadata, GroupMetadata, HostPortTypes};
 
 use super::{
     PlannerCatalog, PlannerInput, diagnostic_node_id, is_host_bridge, latest_node,
@@ -86,6 +86,8 @@ pub(super) fn expand_embedded_graphs(
     struct EmbeddedMap {
         inputs: BTreeMap<String, Vec<PortRef>>,
         outputs: BTreeMap<String, Vec<PortRef>>,
+        /// Port types the inner graph declared on its host bridge (`input_typed`, ...).
+        host_types: HostPortTypes,
     }
 
     let mut new_nodes: Vec<NodeInstance> = Vec::new();
@@ -221,7 +223,15 @@ pub(super) fn expand_embedded_graphs(
             }
         }
 
-        embedded_maps.insert(idx, EmbeddedMap { inputs, outputs });
+        let host_types = HostPortTypes::from_node_metadata(&graph.nodes[host_index].metadata);
+        embedded_maps.insert(
+            idx,
+            EmbeddedMap {
+                inputs,
+                outputs,
+                host_types,
+            },
+        );
 
         if trace {
             let mut in_keys: Vec<String> = embedded_maps
@@ -246,6 +256,9 @@ pub(super) fn expand_embedded_graphs(
         }
     }
 
+    // An undeclared outer host port wired straight to an embedded port the inner graph declared
+    // takes the inner type: (outer host node, is host input, outer port, type).
+    let mut host_types: Vec<(usize, bool, String, daedalus_data::model::TypeExpr)> = Vec::new();
     let mut new_edges: Vec<Edge> = Vec::new();
     for edge in &input.graph.edges {
         let from_map = embedded_maps.get(&edge.from.node.0);
@@ -275,6 +288,15 @@ pub(super) fn expand_embedded_graphs(
                 let Some(from_idx) = remap[edge.from.node.0] else {
                     continue;
                 };
+                if let Some(ty) = to.host_types.inputs.get(&edge.to.port.to_ascii_lowercase())
+                    && input
+                        .graph
+                        .nodes
+                        .get(edge.from.node.0)
+                        .is_some_and(is_host_bridge)
+                {
+                    host_types.push((from_idx, true, edge.from.port.clone(), ty.clone()));
+                }
                 if let Some(targets) = to.inputs.get(&edge.to.port) {
                     for target in targets {
                         new_edges.push(Edge {
@@ -327,6 +349,18 @@ pub(super) fn expand_embedded_graphs(
                 let Some(to_idx) = remap[edge.to.node.0] else {
                     continue;
                 };
+                if let Some(ty) = from
+                    .host_types
+                    .outputs
+                    .get(&edge.from.port.to_ascii_lowercase())
+                    && input
+                        .graph
+                        .nodes
+                        .get(edge.to.node.0)
+                        .is_some_and(is_host_bridge)
+                {
+                    host_types.push((to_idx, false, edge.to.port.clone(), ty.clone()));
+                }
                 if let Some(sources) = from.outputs.get(&edge.from.port) {
                     for source in sources {
                         new_edges.push(Edge {
@@ -425,6 +459,21 @@ pub(super) fn expand_embedded_graphs(
                     }
                 }
             }
+        }
+    }
+
+    for (host_idx, is_host_input, port, ty) in host_types {
+        let Some(host) = new_nodes.get_mut(host_idx) else {
+            continue;
+        };
+        // Host inputs are bridge outputs. The outer graph's own declaration wins.
+        let mut resolved = DynamicPortMetadata::from_node_metadata(&host.metadata);
+        if resolved.resolved_type(!is_host_input, &port).is_none() {
+            resolved.set_resolved_type(!is_host_input, &port, ty.clone());
+            resolved.write_to_node_metadata(&mut host.metadata);
+            let mut declared = HostPortTypes::from_node_metadata(&host.metadata);
+            declared.declare(is_host_input, &port, ty);
+            declared.write_to_node_metadata(&mut host.metadata);
         }
     }
 
