@@ -21,8 +21,10 @@ From repo root:
 cargo build -p daedalus-plugins-example-project
 ```
 
-Add `--features dylib` to export the plugin from the `cdylib` for `daedalus::PluginLibrary`
-(see [`docs/dynamic-plugins.md`](../../../docs/dynamic-plugins.md)).
+The dynamic-plugin build lives in [`../example_project_dylib`](../example_project_dylib), a
+leaf `cdylib` crate, because other plugins link this one
+(`cargo build -p daedalus-plugins-example-project-dylib --features dylib`; see
+[`docs/dynamic-plugins.md`](../../../docs/dynamic-plugins.md)).
 
 ## Use in an app
 

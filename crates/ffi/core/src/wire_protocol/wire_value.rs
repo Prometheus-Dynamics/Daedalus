@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use daedalus_data::model::{EnumValue, StructFieldValue, Value};
+use daedalus_data::model::{EnumValue, StructFieldValue, TypeExpr, Value};
 use daedalus_transport::{AccessMode, Layout, Payload, Residency, TypeKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -77,6 +77,37 @@ impl WireValue {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// Check that the numbers in this value fit `ty`'s exact scalar widths. The wire carries every
+    /// integer as `i64` and every float as `f64`, so an `I32` port must reject `1 << 40` and a
+    /// `U32` port `-1` here; non-numeric shapes are left to the value conversions.
+    pub fn check_type(&self, ty: &TypeExpr) -> Result<(), String> {
+        match (ty, self) {
+            (TypeExpr::Scalar(scalar), WireValue::Int(value)) => {
+                scalar.check_value(&Value::Int(*value))
+            }
+            (TypeExpr::Scalar(scalar), WireValue::Float(value)) => {
+                scalar.check_value(&Value::Float(*value))
+            }
+            (TypeExpr::Scalar(scalar), _) if scalar.is_numeric() => Err(format!(
+                "expected a number for {}, found a non-numeric value",
+                scalar.rust_name()
+            )),
+            (TypeExpr::Optional(_), WireValue::Unit) => Ok(()),
+            (TypeExpr::Optional(inner), value) => value.check_type(inner),
+            (TypeExpr::List(inner), WireValue::List(items)) => {
+                items.iter().try_for_each(|item| item.check_type(inner))
+            }
+            (TypeExpr::Tuple(types), WireValue::List(items)) => types
+                .iter()
+                .zip(items)
+                .try_for_each(|(ty, item)| item.check_type(ty)),
+            (TypeExpr::Map(_, inner), WireValue::Record(fields)) => {
+                fields.values().try_for_each(|item| item.check_type(inner))
+            }
+            _ => Ok(()),
         }
     }
 

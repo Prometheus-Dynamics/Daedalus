@@ -18,6 +18,27 @@ public final class PackageBuilder {
   private static final Set<String> VALID_RESIDENCY = Set.of("cpu", "gpu");
   private static final Set<String> VALID_BOUNDARY_CAPABILITIES =
       Set.of("host_read", "worker_write", "borrow_ref", "borrow_mut", "shared_clone");
+  /** Width-exact scalar of each Java carrier type; Java has no unsigned types (see {@link Scalar}). */
+  private static final Map<Class<?>, String> SCALARS = Map.ofEntries(
+      Map.entry(boolean.class, "Bool"), Map.entry(Boolean.class, "Bool"),
+      Map.entry(byte.class, "I8"), Map.entry(Byte.class, "I8"),
+      Map.entry(short.class, "I16"), Map.entry(Short.class, "I16"),
+      Map.entry(char.class, "U16"), Map.entry(Character.class, "U16"),
+      Map.entry(int.class, "I32"), Map.entry(Integer.class, "I32"),
+      Map.entry(long.class, "Int"), Map.entry(Long.class, "Int"),
+      Map.entry(float.class, "F32"), Map.entry(Float.class, "F32"),
+      Map.entry(double.class, "Float"), Map.entry(Double.class, "Float"),
+      Map.entry(String.class, "String"),
+      Map.entry(void.class, "Unit"), Map.entry(Void.class, "Unit"));
+  /** {@link Scalar} names to scalar value types. */
+  private static final Map<String, String> SCALAR_NAMES = Map.ofEntries(
+      Map.entry("i8", "I8"), Map.entry("i16", "I16"), Map.entry("i32", "I32"),
+      Map.entry("i64", "Int"), Map.entry("isize", "ISize"),
+      Map.entry("u8", "U8"), Map.entry("u16", "U16"), Map.entry("u32", "U32"),
+      Map.entry("u64", "U64"), Map.entry("usize", "USize"),
+      Map.entry("f32", "F32"), Map.entry("f64", "Float"));
+  private static final Set<String> INTEGER_CARRIERS = Set.of("I8", "I16", "U16", "I32", "Int");
+  private static final Set<String> FLOAT_CARRIERS = Set.of("F32", "Float");
   private final Class<?> pluginClass;
   private final List<String> classesDirs = new ArrayList<>();
   private final List<String> jars = new ArrayList<>();
@@ -226,7 +247,7 @@ public final class PackageBuilder {
     map.put("stateful", node.state() != Void.class);
     map.put("feature_flags", List.of());
     map.put("inputs", ports(node.inputs(), method.getParameters(), node));
-    map.put("outputs", outputPorts(node.outputs(), node));
+    map.put("outputs", outputPorts(node.outputs(), method, node));
     map.put("metadata", metadata);
     return map;
   }
@@ -250,26 +271,31 @@ public final class PackageBuilder {
     List<Object> ports = new ArrayList<>();
     for (int i = 0; i < names.length; i++) {
       Class<?> type = i < parameters.length ? parameters[i].getType() : Object.class;
-      ports.add(port(names[i], type, node.access(), node.residency(), node.layout()));
+      Scalar scalar = i < parameters.length ? parameters[i].getAnnotation(Scalar.class) : null;
+      ports.add(port(names[i], type, scalar, node.access(), node.residency(), node.layout()));
     }
     return ports;
   }
 
-  private List<Object> outputPorts(String[] names, Node node) {
+  /** A single output is typed by the method's return type; named {@link Outputs} stay untyped. */
+  private List<Object> outputPorts(String[] names, Method method, Node node) {
+    boolean typed = names.length == 1 && method.getReturnType() != Outputs.class;
+    Class<?> type = typed ? method.getReturnType() : Object.class;
+    Scalar scalar = typed ? method.getAnnotation(Scalar.class) : null;
     List<Object> ports = new ArrayList<>();
     for (String name : names) {
-      ports.add(port(name, Object.class, "read", node.residency(), node.layout()));
+      ports.add(port(name, type, scalar, "read", node.residency(), node.layout()));
     }
     return ports;
   }
 
   private Map<String, Object> port(
-      String name, Class<?> type, String access, String residency, String layout) {
+      String name, Class<?> type, Scalar scalar, String access, String residency, String layout) {
     Map<String, Object> port = new LinkedHashMap<>();
     port.put("name", name);
     port.put("ty", (name.contains("rgba") || name.equals("payload") || name.equals("frame") || name.equals("blob"))
         ? Map.of("Scalar", "Bytes")
-        : typeExpr(type));
+        : typeExpr(name, type, scalar));
     port.put("optional", false);
     port.put("access", access);
     if (!residency.isEmpty()) {
@@ -281,14 +307,23 @@ public final class PackageBuilder {
     return port;
   }
 
-  private Map<String, Object> typeExpr(Class<?> type) {
-    if (type == boolean.class || type == Boolean.class) return Map.of("Scalar", "Bool");
-    if (type == double.class || type == Double.class || type == float.class || type == Float.class) {
-      return Map.of("Scalar", "Float");
+  private static Map<String, Object> typeExpr(String port, Class<?> type, Scalar scalar) {
+    String carrier = SCALARS.get(type);
+    if (scalar != null) {
+      String exact = SCALAR_NAMES.get(scalar.value());
+      boolean fits = exact != null && carrier != null
+          &&(FLOAT_CARRIERS.contains(exact) ? FLOAT_CARRIERS : INTEGER_CARRIERS).contains(carrier);
+      if (!fits) {
+        throw new IllegalArgumentException("port `" + port + "`: @Scalar(\"" + scalar.value()
+            + "\") does not fit carrier type " + type.getName());
+      }
+      return Map.of("Scalar", exact);
     }
-    if (type == String.class) return Map.of("Scalar", "String");
-    if (type == Void.class) return Map.of("Scalar", "Unit");
-    if (Number.class.isAssignableFrom(type) || type.isPrimitive()) return Map.of("Scalar", "Int");
+    if (carrier != null) return Map.of("Scalar", carrier);
+    if (Number.class.isAssignableFrom(type)) {
+      throw new IllegalArgumentException("port `" + port + "`: unsupported numeric type "
+          + type.getName() + "; use a primitive or boxed primitive (with @Scalar for unsigned widths)");
+    }
     TypeKey key = type.getAnnotation(TypeKey.class);
     return Map.of("Opaque", key == null ? type.getSimpleName() : key.value());
   }

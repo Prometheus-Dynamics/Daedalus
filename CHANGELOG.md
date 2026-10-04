@@ -172,9 +172,25 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   had no effect), and owned (`T`, `&mut T`) and borrowed (`&T`) handler inputs never converted
   `Value` constants. `Engine` executors now get the coercers (and, in `execute_*` with a plugin
   registry, the type index), and `NodeIo::take_owned` and `&T` inputs fall back to coercion.
+- Single-node direct host routes (`HostGraph::run_direct_once`, `run_lane*`,
+  `tick_direct_*` on a graph with one node between the host ports) never delivered const inputs,
+  so a node with a constant, a port default or a config field failed with `missing <port>`
+  there while `run_once` worked. They now append the node's const inputs exactly as a scheduled
+  tick does; `DirectHostRoute::is_single_node` reports whether a route takes that path.
 
 ### Changed
 
+- The Java and C++ FFI SDKs declare width-exact scalar ports like the Rust and Node SDKs (they
+  mapped every integer to `Int`). Java: `byte`/`short`/`char`/`int`/`long`/`float`/`double` map to
+  `I8`/`I16`/`U16`/`I32`/`Int`/`F32`/`Float`; Java has no unsigned types, so `@Scalar("u32")`
+  (on a parameter, or on the method for its output) declares unsigned and pointer-sized widths;
+  other `Number` types (`BigInteger`, ...) are rejected, and a single output is typed by the return
+  type. C++: `daedalus::TypeExprOf<T>` and the `daedalus::signature<F>()` registration option type
+  ports from the function signature (fixed-width integers, `float`/`double`, strings, bytes,
+  `optional`/`vector`/`map`/`tuple`, `daedalus_type_key` opaque types); nodes without a signature
+  keep the name-based `Bytes`/`Int` fallback. On the host, `WireValue::check_type` range-checks
+  worker outputs against the exact width and `DecodedInvokeResponse::payload_output` takes the
+  `WirePort` (keyed by its transport key, `ResponseDecodeError::OutputType` on a misfit).
 - One transport key per builtin Rust number. `ValueType` gains `I8`, `I16`, `ISize`, `U8`,
   `U16`, `U64` and `USize` (`Int` is `i64`, `Float` is `f64`, next to the existing `I32`, `U32`
   and `F32`), and every builtin integer and float maps to its own value type, so
@@ -319,6 +335,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Performance
 
+- Owned handler parameters (`T`, `mut T`, `Option<T>`) fed a non-builtin constant (an enum, a
+  serde struct, a `String`) no longer convert it on every call: the generated handler converts
+  it once per constant into the node's `const_cache::DecodedInputs` slot and hands out a clone
+  (`T: Clone`, detected by the macro; other types still convert per call). The detector graph
+  frame benchmark now includes such a node and stays at its payload allocations plus the one
+  `String` clone.
 - Parallel frames no longer spawn a task (or, without `executor-pool`, a thread) per segment or
   send results through a channel: workers pull ready segments from one locked queue, reuse one
   executor snapshot each and merge telemetry in place, and the Rayon fan-out splits with `join` on
@@ -400,6 +422,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - The `#[plugin]`, `#[type_key]`, `#[adapt]` and `#[device]` docs describe what they generate.
 - `scripts/ci.sh features` checks the real FFI packages (`daedalus-ffi-core`,
   `daedalus-ffi-host`) instead of a nonexistent `daedalus-ffi`.
+- `cargo build --workspace --all-features` failed to link the example plugin `cdylib`s
+  (duplicate `daedalus_plugin_abi_version`): `examples/plugins/dependent` links
+  `example_project`, whose `dylib` feature (unified on under `--all-features`) put
+  `export_plugin!`'s symbols in its `rlib`. The export moved to a leaf `cdylib` crate,
+  `examples/plugins/example_project_dylib`; `example_project` is a plain `rlib` without a `dylib`
+  feature. `docs/dynamic-plugins.md` explains the rule, and `scripts/ci.sh features` and CI now
+  run `cargo build --workspace --lib --all-features`, which links.
 
 ## [2.0.0] - 2026-04-30
 

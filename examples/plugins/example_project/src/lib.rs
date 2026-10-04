@@ -161,7 +161,5 @@ declare_plugin!(
     }
 );
 
-// Export the plugin for dynamic loading when built as a `cdylib` with `--features dylib`
-// (`daedalus::PluginLibrary::load("libdaedalus_plugins_example_project.so")`).
-#[cfg(feature = "dylib")]
-daedalus::export_plugin!(ExampleProjectPlugin);
+// The dynamic-plugin export lives in `examples/plugins/example_project_dylib`: other plugins
+// link this crate, so its library must not carry `export_plugin!`'s symbols.

@@ -63,6 +63,9 @@ cmd_features() {
   cargo check -p daedalus-gpu --no-default-features --features "gpu-wgpu"
   # Needs libcamera-dev + pkg-config for the styx camera example feature.
   cargo check --workspace --all-targets --all-features
+  # Links every library, so `cdylib` plugins whose exported symbols clash once features unify
+  # fail here (`check` does not link).
+  cargo build --workspace --lib --all-features
 }
 
 cmd_clippy() {

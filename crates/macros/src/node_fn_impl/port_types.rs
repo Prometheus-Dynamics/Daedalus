@@ -134,6 +134,17 @@ fn coerced_input_type(raw_ty: &syn::Type) -> Option<&syn::Type> {
     coercible(ty).then_some(ty)
 }
 
+/// Whether `ty` is a builtin scalar (`bool`, `char`, a number), which converts from a `Value`
+/// without allocating.
+pub(super) fn is_scalar_primitive(ty: &syn::Type) -> bool {
+    const SCALARS: &[&str] = &[
+        "bool", "char", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64",
+        "u128", "usize", "f32", "f64",
+    ];
+    matches!(ty, syn::Type::Path(p) if p.qself.is_none() && p.path.segments.len() == 1)
+        && SCALARS.iter().any(|name| last_ident_is(ty, name))
+}
+
 /// Whether a `Value` input can be coerced to `ty`: not for fan-in, `Arc` and `Compute`, which
 /// only take typed payloads, nor for unsized or borrowing types (`str`, slices, lifetimes).
 pub(super) fn coercible(ty: &syn::Type) -> bool {

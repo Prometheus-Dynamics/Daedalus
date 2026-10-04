@@ -12,7 +12,7 @@ Status values:
 
 | Feature | Contract | Host | Rust | Python | Node/TS | Java | C/C++ | Required Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Scalars | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | generated fixture per language |
+| Scalars | contract | host | test | sdk-target | sdk-target | test | test | generated fixture per language, width-exact SDK port types |
 | Bytes | contract | host | sdk-target | test | test | test | test | embedded bytes and payload-handle benchmarks |
 | Payload refs | contract | host | sdk-target | test | test | test | test | handle validation, lease tracking, SDK transport options |
 | Images | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | image feature fixture and validation |
@@ -32,6 +32,26 @@ Status values:
 | Package artifacts | contract | host | sdk-target | sdk-target | sdk-target | test | sdk-target | missing artifact and hash mismatch |
 | Worker reuse | contract | host | not applicable | sdk-target | sdk-target | sdk-target | not applicable | repeated invokes do not restart worker |
 | Typed errors | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | malformed input and backend failure |
+
+## Scalar Widths
+
+Every SDK declares the exact `ValueType` of a numeric port (`Int` is `i64`, `Float` is `f64`), so
+its transport key names one Rust type and the planner only inserts lossless widening adapters. The
+wire still carries every integer as `i64` and every float as `f64`; `WireValue::check_type` (used by
+`DecodedInvokeResponse::payload_output`) rejects worker outputs that do not fit the port's width.
+
+| Rust | Node/TS | Java | C/C++ |
+| --- | --- | --- | --- |
+| `i8` `I8` | | `byte`/`Byte` | `std::int8_t` |
+| `i16` `I16` | | `short`/`Short` | `std::int16_t` |
+| `i32` `I32` | `"i32"` | `int`/`Integer` | `std::int32_t` |
+| `i64` `Int` | `"i64"` | `long`/`Long` | `std::int64_t` |
+| `u8` `U8` | | `@Scalar("u8")` | `std::uint8_t` |
+| `u16` `U16` | | `char`/`Character` | `std::uint16_t` |
+| `u32` `U32` | `"u32"` | `@Scalar("u32") long` | `std::uint32_t` |
+| `u64` `U64` | `"u64"` | `@Scalar("u64") long` | `std::uint64_t` |
+| `f32` `F32` | `"f32"` | `float`/`Float` | `float` |
+| `f64` `Float` | `"f64"` | `double`/`Double` | `double` |
 
 ## Propagation Checklist
 
