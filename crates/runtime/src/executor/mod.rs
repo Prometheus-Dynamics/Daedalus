@@ -29,8 +29,8 @@ mod telemetry_size;
 #[cfg(feature = "threads")]
 mod workers;
 
-pub(crate) use adaptive::AdaptiveState;
 pub use adaptive::DEFAULT_DISPATCH_OVERHEAD;
+pub(crate) use adaptive::{AdaptiveState, run_adaptive_on};
 
 pub(crate) use config::ExecutorRunConfig;
 pub(crate) use config_target::ExecutorConfigTarget;
@@ -717,46 +717,6 @@ where
         return parallel::run(exec, None);
     }
     serial::run_with_boundaries(exec)
-}
-
-/// One adaptive frame on `exec` in the chosen mode, timed into `adaptive`.
-pub(crate) fn run_adaptive_on<H>(
-    exec: &mut Executor<'_, H>,
-    adaptive: &mut AdaptiveState,
-    parallel: bool,
-    workers: usize,
-) -> Result<ExecutionTelemetry, ExecuteError>
-where
-    H: NodeHandler + Send + Sync + 'static,
-{
-    if !adaptive::can_run_parallel(&exec.schedule) {
-        return serial::run_with_boundaries(exec);
-    }
-    let schedule = exec.schedule.clone();
-    let Some(costs) = adaptive.frame_costs() else {
-        return serial::run_with_boundaries(exec);
-    };
-    // Without threads `choose` never picks parallel (one worker).
-    let (result, wall) = match parallel {
-        #[cfg(feature = "threads")]
-        true => {
-            let clock = exec.core.clock.clone();
-            let start = clock.now();
-            let result = parallel::run(exec, Some(costs));
-            (result, Some(clock.elapsed(start)))
-        }
-        _ => {
-            let costs = serial::SegmentCosts {
-                segment_of: &schedule.segment_of,
-                costs,
-            };
-            (serial::run_with_boundaries_timed(exec, Some(costs)), None)
-        }
-    };
-    if result.is_ok() {
-        adaptive.observe(&schedule, workers, wall);
-    }
-    result
 }
 
 #[cfg(feature = "gpu")]

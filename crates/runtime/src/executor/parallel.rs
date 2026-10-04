@@ -131,15 +131,10 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
             };
             state.running += 1;
             let (result, nanos) = MutexGuard::unlocked(&mut state, || {
-                let start = self.clock.as_ref().map(Clock::now);
+                let start = self.clock.as_ref().map(|clock| (clock, clock.now()));
                 let result = run_segment(segment, &mut run);
-                (
-                    result,
-                    self.clock
-                        .as_ref()
-                        .zip(start)
-                        .map_or(0, |(clock, start)| clock.elapsed(start).as_nanos() as u64),
-                )
+                let nanos = start.map_or(0, |(clock, start)| clock.elapsed(start).as_nanos());
+                (result, nanos as u64)
             });
             state.running -= 1;
             state.completed += 1;
