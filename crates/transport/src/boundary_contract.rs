@@ -169,6 +169,18 @@ impl BoundaryContractRegistry {
         }
     }
 
+    /// Capabilities `T` is registered with under `key`, without cloning its contract.
+    pub fn capabilities_for_type<T: 'static>(&self, key: &TypeKey) -> Option<BoundaryCapabilities> {
+        let contracts = self
+            .contracts_by_rust_type
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        contracts
+            .get(std::any::type_name::<T>())
+            .filter(|contract| &contract.type_key == key)
+            .map(|contract| contract.capabilities)
+    }
+
     pub fn contract_for_type<T: 'static>(&self) -> Option<BoundaryTypeContract> {
         let contracts = self
             .contracts_by_rust_type
@@ -210,6 +222,14 @@ pub fn register_boundary_contract(contract: BoundaryTypeContract) {
 /// it neither initializes nor clones the registry.
 pub fn boundary_contract_for_type<T: 'static>() -> Option<BoundaryTypeContract> {
     GLOBAL_BOUNDARY_CONTRACTS.get()?.contract_for_type::<T>()
+}
+
+/// Capabilities of `T`'s global contract when it is registered under `key`; the allocation-free
+/// lookup [`Payload::owned`](crate::Payload::owned) runs for every value.
+pub fn boundary_capabilities_for_type<T: 'static>(key: &TypeKey) -> Option<BoundaryCapabilities> {
+    GLOBAL_BOUNDARY_CONTRACTS
+        .get()?
+        .capabilities_for_type::<T>(key)
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]

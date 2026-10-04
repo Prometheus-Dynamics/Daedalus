@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{
     BoundaryCapabilities, BoundaryStorage, BoundaryTypeContract, CorrelationId, Layout,
-    PayloadLineage, ReleaseMode, Residency, TypeKey, boundary_contract_for_type,
+    PayloadLineage, ReleaseMode, Residency, TypeKey, boundary_capabilities_for_type,
 };
 
 mod boundary;
@@ -84,10 +84,8 @@ impl Payload {
         T: Send + Sync + 'static,
     {
         let type_key = type_key.into();
-        if let Some(contract) = boundary_contract_for_type::<T>()
-            && contract.type_key == type_key
-        {
-            return Self::boundary_owned(type_key, value, contract.capabilities);
+        if let Some(capabilities) = boundary_capabilities_for_type::<T>(&type_key) {
+            return Self::boundary_owned(type_key, value, capabilities);
         }
         Self::shared(type_key, Arc::new(value))
     }
@@ -230,14 +228,17 @@ impl Payload {
         {
             return Some(value);
         }
-        let required = BoundaryTypeContract::for_type::<T>(
-            self.type_key.clone(),
-            BoundaryCapabilities {
-                borrow_ref: true,
-                ..BoundaryCapabilities::default()
-            },
-        );
         if let Some(storage) = self.storage.as_any().downcast_ref::<BoundaryStorage>() {
+            if storage.holds::<T>() || !storage.may_hold::<T>() {
+                return storage.borrow_ref_as::<T>(&self.type_key);
+            }
+            let required = BoundaryTypeContract::for_type::<T>(
+                self.type_key.clone(),
+                BoundaryCapabilities {
+                    borrow_ref: true,
+                    ..BoundaryCapabilities::default()
+                },
+            );
             return storage.try_borrow_ref::<T>(&required).ok();
         }
         // Storage built by another copy of this crate (a separately built dynamic plugin) has
@@ -259,16 +260,19 @@ impl Payload {
     where
         T: Send + Sync + 'static,
     {
-        let required = BoundaryTypeContract::for_type::<T>(
-            self.type_key.clone(),
-            BoundaryCapabilities {
-                borrow_mut: true,
-                ..BoundaryCapabilities::default()
-            },
-        );
         if self.storage.as_any().is::<BoundaryStorage>() {
             let storage = Arc::get_mut(&mut self.storage)?;
             let storage = storage.as_any_mut().downcast_mut::<BoundaryStorage>()?;
+            if storage.holds::<T>() || !storage.may_hold::<T>() {
+                return storage.borrow_mut_as::<T>(&self.type_key);
+            }
+            let required = BoundaryTypeContract::for_type::<T>(
+                self.type_key.clone(),
+                BoundaryCapabilities {
+                    borrow_mut: true,
+                    ..BoundaryCapabilities::default()
+                },
+            );
             return storage.try_borrow_mut::<T>(&required).ok();
         }
         let storage = Arc::get_mut(&mut self.storage)?;
@@ -276,11 +280,22 @@ impl Payload {
         Arc::get_mut(&mut storage.value)
     }
 
-    pub fn try_into_owned<T>(self) -> Result<T, Box<Self>>
+    pub fn try_into_owned<T>(mut self) -> Result<T, Box<Self>>
     where
         T: Send + Sync + 'static,
     {
-        if self.storage.as_any().is::<BoundaryStorage>() {
+        if let Some(storage) = self.storage.as_any().downcast_ref::<BoundaryStorage>() {
+            let (holds, may_hold) = (storage.holds::<T>(), storage.may_hold::<T>());
+            if !may_hold || Arc::strong_count(&self.storage) != 1 {
+                return Err(Box::new(self));
+            }
+            if holds {
+                let taken = Arc::get_mut(&mut self.storage)
+                    .and_then(|storage| storage.as_any_mut().downcast_mut::<BoundaryStorage>())
+                    .and_then(|storage| storage.take_owned_as::<T>(&self.type_key));
+                return taken.ok_or_else(|| Box::new(self));
+            }
+            // A same-named type of another build: only the full contract can tell.
             let type_key = self.type_key.clone();
             return self
                 .try_take_boundary_owned::<T>(&BoundaryTypeContract::for_type::<T>(

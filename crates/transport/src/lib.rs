@@ -34,8 +34,8 @@ pub use adapter::{
 };
 pub use boundary_contract::{
     BoundaryCapabilities, BoundaryContractError, BoundaryContractRegistry, BoundaryTypeContract,
-    boundary_contract_for_type, boundary_contract_for_type_in, global_boundary_contract_registry,
-    register_boundary_contract, register_boundary_contract_in,
+    boundary_capabilities_for_type, boundary_contract_for_type, boundary_contract_for_type_in,
+    global_boundary_contract_registry, register_boundary_contract, register_boundary_contract_in,
 };
 pub use boundary_storage::{BoundaryStorage, BoundaryTakeError, BoundaryVTable};
 pub use device::{Cpu, Device, DeviceClass, DeviceTransfer, Gpu, TransferFrom, TransferTo};
