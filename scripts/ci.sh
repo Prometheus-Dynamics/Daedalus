@@ -10,6 +10,7 @@ cd "$root_dir"
 # Default CI feature set for workspace-wide builds.
 readonly CI_FEATURES="engine,plugins"
 readonly AARCH64_TARGET="aarch64-unknown-linux-gnu"
+readonly AARCH64_MUSL_TARGET="aarch64-unknown-linux-musl"
 
 step() { echo "==> $*"; }
 
@@ -26,7 +27,7 @@ usage: scripts/ci.sh [subcommand...]
   macro-ui    trybuild macro UI tests
   examples    build facade examples and run their tests
   smoke       run the CPU-only example binaries
-  aarch64     cargo check for aarch64-unknown-linux-gnu (default, embedded, gpu-dmabuf)
+  aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics)
   bench       host bridge + runtime executor criterion benches
 EOF
@@ -108,6 +109,13 @@ cmd_aarch64() {
   cargo check "${target[@]}" --workspace --all-targets --features "$CI_FEATURES"
   cargo check "${target[@]}" -p daedalus-rs --all-targets --no-default-features --features "embedded"
   cargo check "${target[@]}" -p daedalus-gpu --all-targets --features "gpu-dmabuf"
+  # musl: libc signatures differ from glibc (e.g. `ioctl` takes a `c_int` request). Library
+  # targets only, so no musl C toolchain is needed for test-only C build scripts.
+  step "Checking $AARCH64_MUSL_TARGET"
+  rustup target list --installed | grep -qx "$AARCH64_MUSL_TARGET" || rustup target add "$AARCH64_MUSL_TARGET"
+  cargo check --target "$AARCH64_MUSL_TARGET" --workspace --features "$CI_FEATURES"
+  cargo check --target "$AARCH64_MUSL_TARGET" -p daedalus-runtime --all-features
+  cargo check --target "$AARCH64_MUSL_TARGET" -p daedalus-gpu --features "gpu-dmabuf"
 }
 
 # Workspace tests unify features across all members, so the daemon crate turns on the executor

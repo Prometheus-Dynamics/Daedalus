@@ -171,7 +171,7 @@ mod sys {
     }
 
     pub fn ioctl_group(fd: std::os::unix::io::RawFd, cmd: libc::c_ulong) -> io::Result<()> {
-        let res = unsafe { libc::ioctl(fd, cmd, PERF_IOC_FLAG_GROUP) };
+        let res = unsafe { libc::ioctl(fd, cmd as _, PERF_IOC_FLAG_GROUP) };
         if res < 0 {
             return Err(io::Error::last_os_error());
         }
