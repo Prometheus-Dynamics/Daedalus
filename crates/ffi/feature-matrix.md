@@ -12,7 +12,7 @@ Status values:
 
 | Feature | Contract | Host | Rust | Python | Node/TS | Java | C/C++ | Required Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Scalars | contract | host | test | sdk-target | sdk-target | test | test | generated fixture per language, width-exact SDK port types |
+| Scalars | contract | host | test | test | test | test | test | generated fixture per language, width-exact SDK port types, `u64` wire round trip per SDK |
 | Bytes | contract | host | sdk-target | test | test | test | test | embedded bytes and payload-handle benchmarks |
 | Payload refs | contract | host | sdk-target | test | test | test | test | handle validation, lease tracking, SDK transport options |
 | Images | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | image feature fixture and validation |
@@ -23,7 +23,7 @@ Status values:
 | Maps | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | string-key map conversion |
 | Tuples | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | positional tuple conversion |
 | Unit | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | unit input/output conversion |
-| Multi-output | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | named output matching |
+| Multi-output | contract | host | test | test | test | test | test | named output matching, per-output port types |
 | Stateful nodes | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | repeated invoke preserves state |
 | Raw events | contract | host | sdk-target | sdk-target | sdk-target | sdk-target | sdk-target | event ordering and metadata |
 | Capability nodes | contract | host | test | sdk-target | sdk-target | sdk-target | sdk-target | host capability available/unavailable |
@@ -37,21 +37,23 @@ Status values:
 
 Every SDK declares the exact `ValueType` of a numeric port (`Int` is `i64`, `Float` is `f64`), so
 its transport key names one Rust type and the planner only inserts lossless widening adapters. The
-wire still carries every integer as `i64` and every float as `f64`; `WireValue::check_type` (used by
-`DecodedInvokeResponse::payload_output`) rejects worker outputs that do not fit the port's width.
+wire carries integers as `int` (`i64`) or `uint` (`u64`, for values above `i64::MAX`) and floats as
+`f64`; `WireValue::check_type` (used by `DecodedInvokeResponse::payload_output`) rejects worker
+outputs that do not fit the port's width. Each SDK's wire encoder (`to_wire`, `toWire`,
+`Wire.encode`, `daedalus::to_wire`) writes `u64` port values as `uint`.
 
-| Rust | Node/TS | Java | C/C++ |
-| --- | --- | --- | --- |
-| `i8` `I8` | | `byte`/`Byte` | `std::int8_t` |
-| `i16` `I16` | | `short`/`Short` | `std::int16_t` |
-| `i32` `I32` | `"i32"` | `int`/`Integer` | `std::int32_t` |
-| `i64` `Int` | `"i64"` | `long`/`Long` | `std::int64_t` |
-| `u8` `U8` | | `@Scalar("u8")` | `std::uint8_t` |
-| `u16` `U16` | | `char`/`Character` | `std::uint16_t` |
-| `u32` `U32` | `"u32"` | `@Scalar("u32") long` | `std::uint32_t` |
-| `u64` `U64` | `"u64"` | `@Scalar("u64") long` | `std::uint64_t` |
-| `f32` `F32` | `"f32"` | `float`/`Float` | `float` |
-| `f64` `Float` | `"f64"` | `double`/`Double` | `double` |
+| Rust | Python | Node/TS | Java | C/C++ |
+| --- | --- | --- | --- | --- |
+| `i8` `I8` | | | `byte`/`Byte` | `std::int8_t` |
+| `i16` `I16` | | | `short`/`Short` | `std::int16_t` |
+| `i32` `I32` | | `"i32"` | `int`/`Integer` | `std::int32_t` |
+| `i64` `Int` | `int` | `"i64"` | `long`/`Long` | `std::int64_t` |
+| `u8` `U8` | | | `@Scalar("u8")` | `std::uint8_t` |
+| `u16` `U16` | | | `char`/`Character` | `std::uint16_t` |
+| `u32` `U32` | | `"u32"` | `@Scalar("u32") long` | `std::uint32_t` |
+| `u64` `U64` | `daedalus_ffi.u64` | `"u64"` (BigInt values) | `@Scalar("u64") long` | `std::uint64_t` |
+| `f32` `F32` | | `"f32"` | `float`/`Float` | `float` |
+| `f64` `Float` | `float` | `"f64"` | `double`/`Double` | `double` |
 
 ## Propagation Checklist
 

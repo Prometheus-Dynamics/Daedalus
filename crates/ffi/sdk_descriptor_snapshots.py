@@ -155,6 +155,17 @@ class CrossLanguageDescriptorSnapshots(unittest.TestCase):
         self.assertEqual(nodes["zero_copy_len"]["inputs"][0].get("access"), "view")
         self.assertEqual(nodes["cow_append_marker"]["inputs"][0].get("access"), "modify")
         self.assertEqual(nodes["owned_bytes_len"]["inputs"][0].get("access"), "move")
+        # Multi-output nodes are typed per output in every SDK.
+        output_types = lambda node: {port["name"]: port["ty"] for port in nodes[node]["outputs"]}
+        self.assertEqual(output_types("split_sign"), {"positive": {"Scalar": "Int"}, "negative": {"Scalar": "Int"}})
+        self.assertEqual(
+            output_types("node_io_complex"),
+            {
+                "score": {"Scalar": "Float"},
+                "label": {"Scalar": "String"},
+                "point": {"Opaque": "ffi.showcase.Point"},
+            },
+        )
         self.assertEqual(
             nodes["capability_add"]["metadata"].get("capability"),
             "Add",

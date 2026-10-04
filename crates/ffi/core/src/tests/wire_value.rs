@@ -485,3 +485,53 @@ fn wire_value_check_type_enforces_exact_widths_through_containers() {
             .is_ok()
     );
 }
+
+/// Every SDK's wire encoder emits this exact string for `u64::MAX`.
+const UINT_MAX_JSON: &str = r#"{"kind":"uint","value":18446744073709551615}"#;
+
+#[test]
+fn unsigned_wire_values_cross_json_and_payloads_exactly() {
+    use daedalus_data::model::ValueType;
+    let max = WireValue::UInt(u64::MAX);
+    assert_eq!(serde_json::to_string(&max).unwrap(), UINT_MAX_JSON);
+    assert_eq!(
+        serde_json::from_str::<WireValue>(UINT_MAX_JSON).unwrap(),
+        max
+    );
+    assert!(
+        serde_json::from_str::<WireValue>(r#"{"kind":"int","value":9223372036854775808}"#).is_err()
+    );
+
+    let u64_port = TypeExpr::scalar(ValueType::U64);
+    assert!(max.check_type(&u64_port).is_ok());
+    assert!(
+        WireValue::UInt(7)
+            .check_type(&TypeExpr::scalar(ValueType::U8))
+            .is_ok()
+    );
+    for ty in [
+        ValueType::Int,
+        ValueType::U32,
+        ValueType::Float,
+        ValueType::String,
+    ] {
+        assert!(max.check_type(&TypeExpr::scalar(ty)).is_err(), "{ty:?}");
+    }
+    assert!(
+        WireValue::UInt(1 << 53)
+            .check_type(&TypeExpr::scalar(ValueType::Float))
+            .is_ok()
+    );
+
+    let payload = max.clone().into_payload("u64").unwrap();
+    assert_eq!(payload.get_ref::<u64>(), Some(&u64::MAX));
+    assert_eq!(WireValue::from_payload(&payload).unwrap(), max);
+    let small = WireValue::UInt(5).into_payload("u64").unwrap();
+    assert_eq!(small.get_ref::<Value>(), Some(&Value::Int(5)));
+
+    assert_eq!(WireValue::UInt(5).into_value(), Ok(Value::Int(5)));
+    assert_eq!(
+        WireValue::List(vec![max]).into_value(),
+        Err(WireValueConversionError::IntegerOutOfRange { value: u64::MAX })
+    );
+}

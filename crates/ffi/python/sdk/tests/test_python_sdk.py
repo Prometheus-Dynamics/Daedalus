@@ -8,7 +8,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from daedalus_ffi import Config, State, adapter, bytes_payload, node, plugin, type_key, validate_descriptor
+import json
+
+from daedalus_ffi import (
+    Config,
+    State,
+    adapter,
+    bytes_payload,
+    from_wire,
+    node,
+    plugin,
+    to_wire,
+    type_key,
+    u64,
+    validate_descriptor,
+)
+
+U64_MAX = (1 << 64) - 1
+# What the Rust host serializes for `WireValue::UInt(u64::MAX)`.
+UINT_MAX_JSON = '{"kind":"uint","value":18446744073709551615}'
 
 
 @dataclass
@@ -134,6 +152,30 @@ class PythonSdkTests(unittest.TestCase):
 
         with self.assertRaisesRegex(TypeError, "input `value` is not a function parameter|missing"):
             plugin("bad_plugin", [bad]).descriptor()
+
+
+    def test_unsigned_integers_round_trip_as_uint(self) -> None:
+        self.assertEqual(json.dumps(to_wire(U64_MAX), separators=(",", ":")), UINT_MAX_JSON)
+        self.assertEqual(from_wire(json.loads(UINT_MAX_JSON)), U64_MAX)
+        self.assertEqual(to_wire(5, u64), {"kind": "uint", "value": 5})
+        self.assertEqual(to_wire(5), {"kind": "int", "value": 5})
+        self.assertEqual(to_wire(1 << 63), {"kind": "uint", "value": 1 << 63})
+        self.assertEqual(
+            to_wire([1, 2], list[u64]),
+            {"kind": "list", "value": [{"kind": "uint", "value": 1}, {"kind": "uint", "value": 2}]},
+        )
+        nested = {"big": [U64_MAX, -1], "raw": b"\x01", "none": None, "ok": True, "f": 0.5}
+        self.assertEqual(from_wire(json.loads(json.dumps(to_wire(nested)))), {**nested, "big": [U64_MAX, -1]})
+        for value, ty in [(-1, u64), (U64_MAX + 1, None), (-(1 << 63) - 1, None)]:
+            with self.assertRaisesRegex(ValueError, "out of range"):
+                to_wire(value, ty)
+
+        @node(id="count", inputs=["value"], outputs=["out"])
+        def count(value: u64) -> u64:
+            return value
+
+        port = plugin("u64_plugin", [count]).descriptor()["schema"]["nodes"][0]["inputs"][0]
+        self.assertEqual(port["ty"], {"Scalar": "U64"})
 
 
 if __name__ == "__main__":

@@ -6,12 +6,16 @@ import types
 from dataclasses import dataclass, is_dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, get_args, get_origin, get_type_hints
+from typing import Any, Callable, NewType, get_args, get_origin, get_type_hints
 
 SCHEMA_VERSION = 1
 _VALID_ACCESS = {"read", "view", "modify", "move"}
 _VALID_RESIDENCY = {"cpu", "gpu"}
 _VALID_BOUNDARY_CAPABILITIES = {"host_read", "worker_write", "borrow_ref", "borrow_mut", "shared_clone"}
+_I64_MIN, _I64_MAX, _U64_MAX = -(1 << 63), (1 << 63) - 1, (1 << 64) - 1
+
+u64 = NewType("u64", int)
+"""Annotation for an unsigned 64-bit port (`int` is `i64`)."""
 
 
 def _scalar(name: str) -> dict[str, str]:
@@ -33,6 +37,8 @@ def _type_expr(annotation: Any) -> dict[str, Any]:
         return _scalar("Unit")
     if annotation is bool:
         return _scalar("Bool")
+    if annotation is u64:
+        return _scalar("U64")
     if annotation is int:
         return _scalar("Int")
     if annotation is float:
@@ -91,6 +97,54 @@ def _port(
     if layout is not None:
         port["layout"] = layout
     return port
+
+
+def to_wire(value: Any, ty: Any = None) -> dict[str, Any]:
+    """The `WireValue` JSON object for `value`. `ty` (an annotation or `TypeExpr` dict) picks
+    `uint` for `u64` ports; ints above `i64::MAX` are always `uint`."""
+    expr = ty if ty is None or isinstance(ty, dict) else _type_expr(ty)
+    if value is None:
+        return {"kind": "unit"}
+    if isinstance(value, bool):
+        return {"kind": "bool", "value": value}
+    if isinstance(value, int):
+        if expr == _scalar("U64") or value > _I64_MAX:
+            if not 0 <= value <= _U64_MAX:
+                raise ValueError(f"{value} is out of range for u64")
+            return {"kind": "uint", "value": value}
+        if value < _I64_MIN:
+            raise ValueError(f"{value} is out of range for i64")
+        return {"kind": "int", "value": value}
+    if isinstance(value, float):
+        return {"kind": "float", "value": value}
+    if isinstance(value, str):
+        return {"kind": "string", "value": value}
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return {"kind": "bytes", "value": {"data": list(bytes(value)), "encoding": "raw"}}
+    expr = expr or {}
+    if isinstance(value, (list, tuple)):
+        items = expr.get("Tuple") or [expr.get("List")] * len(value)
+        return {"kind": "list", "value": [to_wire(item, ty) for item, ty in zip(value, items, strict=True)]}
+    if isinstance(value, dict):
+        inner = expr["Map"][1] if "Map" in expr else None
+        return {"kind": "record", "value": {str(key): to_wire(item, inner) for key, item in value.items()}}
+    raise TypeError(f"no wire encoding for {type(value).__name__}")
+
+
+def from_wire(wire: dict[str, Any]) -> Any:
+    """The Python value of a `WireValue` JSON object (`int` and `uint` both decode to `int`)."""
+    kind, value = wire["kind"], wire.get("value")
+    if kind == "unit":
+        return None
+    if kind in ("bool", "int", "uint", "float", "string"):
+        return value
+    if kind == "bytes":
+        return bytes(value["data"])
+    if kind == "list":
+        return [from_wire(item) for item in value]
+    if kind == "record":
+        return {key: from_wire(item) for key, item in value.items()}
+    raise ValueError(f"unsupported wire value kind `{kind}`")
 
 
 class Config:

@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { adapter, bytes, config, gpu, node, plugin, state, typeKey, validateDescriptor } from "../src/index.js";
+import {
+  adapter, bytes, config, fromWire, gpu, node, parseWire, plugin, state, stringifyWire, toWire, typeKey, validateDescriptor,
+} from "../src/index.js";
+
+// What the Rust host serializes for `WireValue::UInt(u64::MAX)`.
+const UINT_MAX_JSON = '{"kind":"uint","value":18446744073709551615}';
+const U64_MAX = (1n << 64n) - 1n;
+
+test("unsigned integers round trip as uint through BigInt", () => {
+  assert.equal(stringifyWire(toWire(U64_MAX)), UINT_MAX_JSON);
+  assert.equal(fromWire(parseWire(UINT_MAX_JSON)), U64_MAX);
+  assert.deepEqual(toWire(5, "u64"), { kind: "uint", value: 5 });
+  assert.deepEqual(toWire(5n, "u64"), { kind: "uint", value: 5n });
+  assert.deepEqual(toWire(5), { kind: "int", value: 5 });
+  assert.deepEqual(toWire(1n << 63n), { kind: "uint", value: 1n << 63n });
+  assert.deepEqual(toWire(2, "f64"), { kind: "float", value: 2 });
+  assert.deepEqual(toWire([1, 2], "list<u64>").value.map((item) => item.kind), ["uint", "uint"]);
+  assert.deepEqual(toWire(3, "optional<u64>"), { kind: "uint", value: 3 });
+  const nested = { big: [U64_MAX, -1], raw: Uint8Array.of(1), none: null, ok: true, text: "x" };
+  assert.deepEqual(fromWire(parseWire(stringifyWire(toWire(nested)))), nested);
+  assert.equal(fromWire(parseWire('{"kind":"int","value":-9223372036854775808}')), -(1n << 63n));
+  for (const [value, type] of [[-1, "u64"], [U64_MAX + 1n, undefined], [-(1n << 63n) - 1n, undefined], [2 ** 60, "u64"]]) {
+    assert.throws(() => toWire(value, type), RangeError);
+  }
+});
 
 test("node sdk emits validated schema and package descriptors", () => {
   const ScaleConfig = config("ScaleConfig", {

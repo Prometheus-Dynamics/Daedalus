@@ -51,6 +51,31 @@ final class PackageBuilderTestPlugin {
   static float ratio(@Scalar("f32") double value) {
     return (float) value;
   }
+
+  record Split(@Scalar("u64") long high, Point point, String label) {}
+
+  @Node(id = "split", inputs = {"value"}, outputs = {"label", "high", "point"})
+  static Split split(long value) {
+    return new Split(value, new Point(0, 0), "");
+  }
+}
+
+@DaedalusPlugin(id = "java_sdk_untyped_outputs")
+final class UntypedOutputsPlugin {
+  @Node(id = "bad", inputs = {"value"}, outputs = {"a", "b"})
+  static Map<String, Object> bad(long value) {
+    return Map.of("a", value, "b", value);
+  }
+}
+
+@DaedalusPlugin(id = "java_sdk_mismatched_outputs")
+final class MismatchedOutputsPlugin {
+  record Pair(long a, long c) {}
+
+  @Node(id = "bad", inputs = {"value"}, outputs = {"a", "b"})
+  static Pair bad(long value) {
+    return new Pair(value, value);
+  }
 }
 
 @DaedalusPlugin(id = "java_sdk_big_integer")
@@ -88,8 +113,8 @@ public final class PackageBuilderTest {
 
     Map<?, ?> schema = (Map<?, ?>) descriptor.get("schema");
     List<?> nodes = (List<?>) schema.get("nodes");
-    if (nodes.size() != 5) {
-      throw new AssertionError("expected 5 nodes, found " + nodes.size());
+    if (nodes.size() != 6) {
+      throw new AssertionError("expected 6 nodes, found " + nodes.size());
     }
     expectPortTypes(node(nodes, "widths"), "inputs", Map.ofEntries(
         Map.entry("b", "I8"), Map.entry("s", "I16"), Map.entry("c", "U16"), Map.entry("i", "I32"),
@@ -105,6 +130,13 @@ public final class PackageBuilderTest {
     expectBuildFailure(BigIntegerPlugin.class, "unsupported numeric type java.math.BigInteger");
     expectBuildFailure(BadScalarCarrierPlugin.class, "does not fit carrier type double");
     expectBuildFailure(UnknownScalarPlugin.class, "@Scalar(\"u128\")");
+    expectPortTypes(node(nodes, "split"), "outputs", Map.of("high", "U64", "label", "String"));
+    List<?> splitOutputs = (List<?>) node(nodes, "split").get("outputs");
+    if (!Map.of("Opaque", "test.Point").equals(((Map<?, ?>) splitOutputs.get(2)).get("ty"))) {
+      throw new AssertionError("split.point should be typed from its record component: " + splitOutputs);
+    }
+    expectBuildFailure(UntypedOutputsPlugin.class, "return a record with exactly those components");
+    expectBuildFailure(MismatchedOutputsPlugin.class, "return a record with exactly those components");
     Map<?, ?> backends = (Map<?, ?>) descriptor.get("backends");
     if (!backends.containsKey("add") || !backends.containsKey("accum") || !backends.containsKey("payload")) {
       throw new AssertionError("missing backend config");
@@ -169,6 +201,7 @@ public final class PackageBuilderTest {
     for (Object value : (List<?>) node.get(direction)) {
       Map<?, ?> port = (Map<?, ?>) value;
       Object actual = ((Map<?, ?>) port.get("ty")).get("Scalar");
+      if (!expected.containsKey(String.valueOf(port.get("name")))) continue;
       if (!expected.get(String.valueOf(port.get("name"))).equals(actual)) {
         throw new AssertionError(node.get("id") + "." + port.get("name") + " expected "
             + expected.get(String.valueOf(port.get("name"))) + ", found " + port.get("ty"));

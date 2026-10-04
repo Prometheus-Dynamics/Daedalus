@@ -7,11 +7,12 @@ import java.lang.annotation.Target;
 
 /**
  * Declares the exact Daedalus scalar width of a numeric port when the Java carrier type cannot
- * express it, e.g. {@code @Scalar("u32") long count}. On a node method it types the single output.
+ * express it, e.g. {@code @Scalar("u32") long count}. On a node method it types the single output;
+ * on a record component it types that output of a multi-output node.
  * Values are Rust scalar names: i8, i16, i32, i64, isize, u8, u16, u32, u64, usize, f32, f64.
  */
 @Retention(RetentionPolicy.RUNTIME)
-@Target({ElementType.PARAMETER, ElementType.METHOD})
+@Target({ElementType.PARAMETER, ElementType.METHOD, ElementType.RECORD_COMPONENT})
 public @interface Scalar {
   String value();
 }

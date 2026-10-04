@@ -41,6 +41,7 @@ usage: scripts/ci.sh [subcommand...]
   nostd       no_std + alloc check of the tier-1 crates for thumbv7em-none-eabihf
   wasm        embedded preset check and runtime smoke run for wasm32-unknown-unknown
   bench       host bridge, runtime executor and graph frame criterion benches
+  pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
 EOF
 }
 
@@ -178,6 +179,15 @@ cmd_bench() {
   cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame
 }
 
+# Run on the target device (Raspberry Pi 5 / CM5, or any Linux Vulkan GPU): the ignored dmabuf
+# hardware tests, then a paste-friendly capability report. See docs/testing.md.
+cmd_pi() {
+  step "Running dmabuf hardware tests"
+  cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf
+  step "Probing GPU and dmabuf support"
+  cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe
+}
+
 cmd_all() {
   cmd_lints
   cmd_check
@@ -196,7 +206,7 @@ main() {
     case "$sub" in
       -h | --help | help) usage ;;
       all | lints | check | features | clippy | test | examples | smoke | aarch64 | lean | nostd | \
-        wasm | bench)
+        wasm | bench | pi)
         "cmd_$sub" ;;
       macro-ui) cmd_macro_ui ;;
       *)

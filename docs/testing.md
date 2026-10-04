@@ -44,6 +44,7 @@ cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 | `lean` | lean-preset tests (see below) |
 | `nostd`, `wasm` | `no_std` check of the tier-1 crates; wasm embedded-preset check and Node smoke run (see below) |
 | `bench` | host bridge and executor criterion benches (see below) |
+| `pi` | on-device dmabuf hardware tests and the `gpu_probe` report; not part of `all` (see [Validating on a Raspberry Pi 5](#validating-on-a-raspberry-pi-5)) |
 
 ### aarch64
 
@@ -115,6 +116,56 @@ python3 scripts/bench-compare.py /tmp/criterion-before target/criterion
 Shared CI runners are noisy; treat a single flagged run as a prompt to re-run, and a flag that
 repeats as a real regression. Since the baseline is always the previous run, an accepted
 regression only flags once.
+
+## Validating on a Raspberry Pi 5
+
+CI has no Pi, so the zero-copy dmabuf path (`daedalus-gpu` with `gpu-dmabuf`) is validated by
+running one command on the device and pasting its output back. The same command works on any
+Linux machine with a Vulkan GPU.
+
+**Install** (64-bit Raspberry Pi OS, Pi 5 or CM5):
+
+```bash
+sudo apt install build-essential pkg-config git mesa-vulkan-drivers vulkan-tools
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # stable toolchain
+sudo usermod -aG video "$USER"   # read/write access to /dev/dma_heap/*; log in again afterwards
+```
+
+`vulkaninfo --summary` should list a V3D adapter (Mesa `v3dv`). The kernel needs to be 6.0 or
+newer for `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` (current Raspberry Pi OS kernels are).
+
+**Run** from the repository root (4 build jobs keep an 8 GB board out of swap):
+
+```bash
+CARGO_BUILD_JOBS=4 ./scripts/ci.sh pi 2>&1 | tee pi-report.txt
+# Allocate the probe/test buffers from another heap (default: /dev/dma_heap/system):
+DAEDALUS_DMA_HEAP=/dev/dma_heap/linux,cma CARGO_BUILD_JOBS=4 ./scripts/ci.sh pi
+```
+
+It runs `cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf` (the
+`#[ignore]`d hardware tests: single-plane import, plane offsets, fences, NV12 in one dmabuf and
+disjoint; NV12 cases the device cannot import print a skip reason) and then
+`cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe`.
+
+**Paste back** the `test result:` line of the dmabuf tests (plus any failure or `skipping` output)
+and the whole probe report, from `daedalus-gpu gpu_probe` to the end. The probe never panics on
+missing hardware; a failed check prints its error in place of the value.
+
+| Line | Meaning |
+|---|---|
+| `kernel`, `kernel_build`, `machine`, `model` | `uname` and `/proc/device-tree/model` (e.g. `Raspberry Pi 5 Model B Rev 1.0`) |
+| `name`, `backend`, `device_type`, `vendor_id`, `device_id` | the adapter `WgpuBackend` selected; on a Pi a V3D adapter on `Vulkan` |
+| `driver`, `driver_info` | Vulkan driver name and Mesa version (e.g. `V3DV Mesa`, `Mesa 25.x`) |
+| `dmabuf_import` | `GpuContextHandle::dmabuf_import_support()`: `supported`, or `unsupported:` with the reason (non-Vulkan adapter, missing extension) |
+| `texture_format_nv12` | the device has wgpu `TEXTURE_FORMAT_NV12`; without it NV12 must be imported per plane (`R8` + `GR88`) |
+| `vulkan_api` | Vulkan version the physical device reports |
+| `nv12_modifiers` | DRM modifiers the driver advertises for `G8_B8R8_2PLANE_420_UNORM` (`0x0` is `LINEAR`) |
+| `nv12_linear`, `nv12_linear_memory_planes`, `nv12_linear_tiling_features` | whether `LINEAR` NV12 is advertised, its memory plane count and format features |
+| `nv12_linear_disjoint_feature` | the `LINEAR` NV12 modifier has `DISJOINT`, so Y and UV can live in separate dmabufs |
+| `nv12_linear_import_one_dmabuf`, `nv12_linear_import_disjoint` | `ok`, or `rejected:` with the reason, for the image-format query a sampled NV12 import makes with both planes in one dmabuf / one dmabuf per plane |
+| `nv12_linear_needs_disjoint` | `yes` when only the disjoint import is accepted, so a producer must hand out separate Y and UV dmabufs |
+| `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
+| `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
 ## Release Feature Surface
 

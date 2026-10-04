@@ -365,32 +365,131 @@ mod tests {
         assert_eq!(lock.artifacts.len(), 3);
     }
 
-    /// Compiles and runs `sdk/tests/sdk_descriptor.cpp` (descriptor shape and width-exact port
-    /// types); skipped when no C++20 compiler is installed.
-    #[test]
-    fn cpp_sdk_descriptor_test_passes() {
-        use std::process::Command;
+    /// Compiles `source` against the SDK header into a uniquely named binary; `None` when no C++20
+    /// compiler is installed.
+    fn compile_cpp(source: &str, name: &str) -> Option<std::process::Output> {
         let cxx = std::env::var("CXX").unwrap_or_else(|_| "c++".into());
-        if Command::new(&cxx).arg("--version").output().is_err() {
-            return;
-        }
+        std::process::Command::new(&cxx)
+            .arg("--version")
+            .output()
+            .ok()?;
         let sdk = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk");
-        let binary = std::env::temp_dir().join(format!("daedalus-cpp-sdk-{}", std::process::id()));
-        let compiled = Command::new(&cxx)
-            .arg("-std=c++20")
-            .arg("-I")
+        let binary =
+            std::env::temp_dir().join(format!("daedalus-cpp-{name}-{}", std::process::id()));
+        let compiled = std::process::Command::new(&cxx)
+            .args([
+                "-std=c++20",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wno-unused-parameter",
+                "-I",
+            ])
             .arg(sdk.join("include"))
-            .arg(sdk.join("tests/sdk_descriptor.cpp"))
+            .args(["-x", "c++", "-"])
             .arg("-o")
             .arg(&binary)
-            .status()
-            .expect("spawn C++ compiler");
-        assert!(
-            compiled.success(),
-            "C++ SDK descriptor test failed to compile"
-        );
-        let ran = Command::new(&binary).status().expect("run C++ SDK test");
+            .stdin(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                child
+                    .stdin
+                    .take()
+                    .expect("stdin")
+                    .write_all(source.as_bytes())?;
+                child.wait_with_output()
+            })
+            .expect("run C++ compiler");
+        if !compiled.status.success() {
+            return Some(compiled);
+        }
+        let ran = std::process::Command::new(&binary)
+            .output()
+            .expect("run C++ test");
         let _ = std::fs::remove_file(&binary);
-        assert!(ran.success(), "C++ SDK descriptor test failed");
+        Some(ran)
+    }
+
+    fn sdk_test_source(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("sdk/tests")
+            .join(name);
+        std::fs::read_to_string(path).expect("read C++ SDK test")
+    }
+
+    /// `sdk/tests/sdk_descriptor.cpp`: descriptor shape and port types deduced from each node's
+    /// function. Skipped when no C++20 compiler is installed.
+    #[test]
+    fn cpp_sdk_descriptor_test_passes() {
+        let Some(output) = compile_cpp(&sdk_test_source("sdk_descriptor.cpp"), "descriptor") else {
+            return;
+        };
+        assert!(
+            output.status.success(),
+            "C++ SDK descriptor test failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// `sdk/tests/wire.cpp` round trips and prints its encoder output: `uint64_t` values must
+    /// decode as `WireValue::UInt` in Rust.
+    #[test]
+    fn cpp_sdk_wire_values_decode_in_rust() {
+        let Some(output) = compile_cpp(&sdk_test_source("wire.cpp"), "wire") else {
+            return;
+        };
+        assert!(
+            output.status.success(),
+            "C++ SDK wire test failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let values: Vec<daedalus_ffi_core::WireValue> =
+            serde_json::from_slice(&output.stdout).expect("wire values");
+        assert_eq!(
+            values[..3],
+            [
+                daedalus_ffi_core::WireValue::UInt(u64::MAX),
+                daedalus_ffi_core::WireValue::UInt(5),
+                daedalus_ffi_core::WireValue::Int(-3)
+            ]
+        );
+        assert_eq!(
+            values[3],
+            daedalus_ffi_core::WireValue::String("a\"b\\c\n\t".into())
+        );
+    }
+
+    /// Registrations whose port types or counts do not match the function fail to compile with
+    /// the SDK's `static_assert` message.
+    #[test]
+    fn cpp_sdk_rejects_unmapped_types_and_port_counts_at_compile_time() {
+        let cases = [
+            (
+                "struct Opaque {};\nint64_t run(Opaque value) { return 0; }\n\
+                 DAEDALUS_NODE(run, inputs(value), outputs(out))",
+                "has no Daedalus mapping",
+            ),
+            (
+                "int64_t run(int64_t a) { return a; }\nDAEDALUS_NODE(run, inputs(a, b), outputs(out))",
+                "more inputs than its function has parameters",
+            ),
+            (
+                "int64_t run(int64_t a) { return a; }\nDAEDALUS_NODE(run, inputs(a), outputs(x, y))",
+                "output count does not match",
+            ),
+        ];
+        for (node, message) in cases {
+            let source = format!("#include <daedalus.hpp>\n{node}\nint main() {{}}\n");
+            let Some(output) = compile_cpp(&source, "static-assert") else {
+                return;
+            };
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !output.status.success() && stderr.contains(message),
+                "expected a compile error containing `{message}`:\n{stderr}"
+            );
+        }
     }
 }
