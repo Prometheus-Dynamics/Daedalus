@@ -26,6 +26,7 @@ members = [
     "examples/plugins/foreign_consumer",
     "examples/plugins/dependent",
     "examples/plugins/framelease",
+    "examples/plugins/stable_abi",
     "examples/wasm_smoke",
 ]
 resolver = "3"
@@ -62,6 +63,7 @@ daedalus-ffi-node = { path = "crates/ffi/node", version = "2.0.0" }
 daedalus-ffi-java = { path = "crates/ffi/java", version = "2.0.0" }
 daedalus-ffi-cpp = { path = "crates/ffi/cpp", version = "2.0.0" }
 daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "2.0.0" }
+daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi", version = "2.0.0" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
 async-trait = "0.1.89"
 base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
@@ -144,5 +146,9 @@ debug = 0
 strip = "debuginfo"
 
 [profile.dev.package.daedalus-plugins-dependent]
+debug = 0
+strip = "debuginfo"
+
+[profile.dev.package.daedalus-plugins-stable-abi]
 debug = 0
 strip = "debuginfo"

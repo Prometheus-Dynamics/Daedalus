@@ -120,6 +120,7 @@ thiserror = { workspace = true, optional = true, features = ["std"] }
 [dev-dependencies]
 parking_lot = { workspace = true }
 daedalus-plugins-example-project = { workspace = true }
+daedalus-plugins-stable-abi = { workspace = true }
 wgpu = { workspace = true }
 pollster = { workspace = true }
 bytemuck = { workspace = true }
@@ -192,6 +193,11 @@ required-features = ["plugins"]
 [[test]]
 name = "dylib_plugin"
 path = "tests/dylib_plugin.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
+name = "dylib_stable"
+path = "tests/dylib_stable.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]

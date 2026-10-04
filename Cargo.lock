@@ -732,6 +732,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-plugins-stable-abi"
+version = "2.0.0"
+dependencies = [
+ "daedalus-rs",
+ "serde",
+]
+
+[[package]]
 name = "daedalus-registry"
 version = "2.0.0"
 dependencies = [
@@ -761,6 +769,7 @@ dependencies = [
  "daedalus-nodes",
  "daedalus-planner",
  "daedalus-plugins-example-project",
+ "daedalus-plugins-stable-abi",
  "daedalus-registry",
  "daedalus-runtime",
  "daedalus-transport",
