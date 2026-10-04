@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
+mod adaptive;
 mod config;
 mod config_target;
 mod core;
@@ -15,19 +16,19 @@ mod handler;
 mod init;
 mod owned;
 mod owned_direct_host;
-#[cfg(not(feature = "executor-pool"))]
 mod parallel;
 mod patching;
 mod payload;
-#[cfg(feature = "executor-pool")]
-mod pool;
 pub mod queue;
-mod schedule;
 mod schedule_compile;
 mod serial;
 mod serial_direct_slot;
 mod telemetry;
 mod telemetry_size;
+mod workers;
+
+pub(crate) use adaptive::AdaptiveState;
+pub use adaptive::DEFAULT_DISPATCH_OVERHEAD;
 
 pub(crate) use config::ExecutorRunConfig;
 pub(crate) use config_target::ExecutorConfigTarget;
@@ -42,10 +43,8 @@ pub use payload::CorrelatedPayload;
 pub use queue::EdgeStorage;
 pub(crate) use schedule_compile::{
     CompiledSchedule, CompiledSegmentGraph, build_compiled_schedule, build_node_execution_metadata,
-    direct_edge_set, direct_slots, is_host_bridge_node,
+    direct_edge_set, direct_slots, is_host_bridge_node, resolve_parallel_workers,
 };
-#[cfg(feature = "executor-pool")]
-pub(crate) use schedule_compile::{compiled_worker_pool, resolve_pool_workers};
 pub use telemetry::{
     AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
     DataLifecycleStage, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, ExecutionTelemetry,
@@ -59,6 +58,7 @@ pub use telemetry_size::{
     RuntimeDataSizeInspector, RuntimeDataSizeInspectors, estimate_payload_bytes,
     register_runtime_data_size_inspector,
 };
+pub(crate) use workers::WorkerPool;
 
 #[derive(Clone)]
 pub struct DirectHostRoute {
@@ -105,6 +105,8 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) core: ExecutorCore,
     /// Optional execution scope: when set, nodes with `false` are skipped.
     pub(crate) direct_slot_access: DirectSlotAccess,
+    /// Measured costs behind `run_adaptive_in_place`.
+    pub(crate) adaptive: AdaptiveState,
 }
 
 pub(crate) fn segment_failure(segment_idx: usize, error: &ExecuteError) -> NodeFailure {
@@ -273,6 +275,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             handler: Arc::new(handler),
             core,
             direct_slot_access: DirectSlotAccess::Shared,
+            adaptive: AdaptiveState::default(),
         })
     }
 
@@ -464,16 +467,28 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
-    /// Override pool size when using the pool-based parallel executor.
+    /// Override the number of parallel workers (default: available parallelism).
     pub fn with_pool_size(mut self, size: Option<usize>) -> Self {
         self.apply_pool_size(size);
         self
     }
 
-    #[cfg(feature = "executor-pool")]
+    /// Initial estimate of parallel dispatch cost per segment for `run_adaptive_in_place`
+    /// (default [`DEFAULT_DISPATCH_OVERHEAD`]); parallel frames refine it.
+    pub fn with_adaptive_dispatch_overhead(mut self, overhead: Duration) -> Self {
+        self.adaptive.set_dispatch_overhead(overhead);
+        self
+    }
+
+    /// Start the parallel worker threads now instead of on the first parallel run.
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
-        let _ = compiled_worker_pool(&self.core.worker_pool, self.core.pool_workers)?;
-        Ok(())
+        WorkerPool::get_or_init(&self.core.worker_pool, self.parallel_workers()).map(drop)
+    }
+
+    fn parallel_workers(&self) -> usize {
+        self.core
+            .parallel_workers
+            .min(self.schedule.host_deferred_graph.width)
     }
 
     pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
@@ -554,16 +569,8 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             handler: self.handler.clone(),
             core: self.core.snapshot(),
             direct_slot_access,
+            adaptive: AdaptiveState::default(),
         }
-    }
-
-    pub(crate) fn segment_snapshot(&self, segment_idx: usize) -> (Self, &'a [NodeRef]) {
-        let segments: &'a [RuntimeSegment] = self.segments;
-        let order = segments
-            .get(segment_idx)
-            .map_or(&[][..], |segment| segment.nodes.as_slice());
-        let exec = self.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
-        (exec, order)
     }
 
     /// Execute the runtime plan serially in segment order.
@@ -586,35 +593,22 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     /// Execute the runtime plan allowing independent segments to run in parallel.
     ///
     /// With fail-fast enabled, this stops scheduling new ready segments after the first segment
-    /// error. Scoped threads or Rayon tasks already running are still allowed to finish before the
-    /// error is returned.
-    pub fn run_parallel(self) -> Result<ExecutionTelemetry, ExecuteError>
+    /// error. Segments already running still finish before the error is returned.
+    pub fn run_parallel(mut self) -> Result<ExecutionTelemetry, ExecuteError>
     where
         H: Send + Sync + 'static,
     {
-        if self.schedule.linear_segment_flow {
-            return serial::run_fused_linear(self);
-        }
-        #[cfg(feature = "executor-pool")]
-        {
-            pool::run(self)
-        }
-        #[cfg(not(feature = "executor-pool"))]
-        {
-            parallel::run(self)
-        }
+        run_parallel_on(&mut self)
     }
 
-    /// Execute with a conservative adaptive policy.
-    ///
-    /// Linear segment flows stay on the serial path to avoid thread-pool overhead. Plans with
-    /// multiple initially-ready segments or fan-out in the host-deferred segment graph use the
-    /// parallel executor.
+    /// Execute once, in parallel when the segment graph has independent work (several ready
+    /// segments or fan-out), serially otherwise. A single run has nothing measured to go on; for
+    /// repeated runs use [`Self::run_adaptive_in_place`], which decides from measured costs.
     pub fn run_adaptive(self) -> Result<ExecutionTelemetry, ExecuteError>
     where
         H: Send + Sync + 'static,
     {
-        if should_run_parallel_adaptive(&self.schedule) {
+        if adaptive::can_run_parallel(&self.schedule) {
             self.run_parallel()
         } else {
             serial::run(self)
@@ -629,63 +623,92 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         H: Send + Sync + 'static,
     {
         self.reset();
-        let exec = self.snapshot();
-        let result = self.run_parallel_from_snapshot(exec);
-        serial::drain_host_outputs(self);
-        if result.is_err() {
-            self.reset();
-        }
-        result
+        let mut exec = self.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
+        let result = run_parallel_on(&mut exec);
+        self.finish_in_place(exec, result)
     }
 
-    /// Execute the runtime plan with adaptive serial/parallel selection without rebuilding.
+    /// Execute without rebuilding, serially or in parallel as the measured costs of earlier runs
+    /// suggest: parallel only when the work that could overlap outweighs the dispatch overhead.
+    /// Graphs of cheap nodes run serially.
     pub fn run_adaptive_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError>
     where
         H: Send + Sync + 'static,
     {
         self.reset();
-        let exec = self.snapshot();
-        let result = if should_run_parallel_adaptive(&exec.schedule) {
-            self.run_parallel_from_snapshot(exec)
+        let mut adaptive = std::mem::take(&mut self.adaptive);
+        let workers = self.parallel_workers();
+        let parallel = adaptive.choose(&self.schedule, &self.nodes, workers);
+        let access = if parallel {
+            DirectSlotAccess::Shared
         } else {
-            serial::run(exec)
+            self.direct_slot_access
         };
-        serial::drain_host_outputs(self);
+        let mut exec = self.snapshot_with_direct_slot_access(access);
+        let result = run_adaptive_on(&mut exec, &mut adaptive, parallel, workers);
+        self.adaptive = adaptive;
+        self.finish_in_place(exec, result)
+    }
+
+    fn finish_in_place(
+        &mut self,
+        mut exec: Executor<'a, H>,
+        result: Result<ExecutionTelemetry, ExecuteError>,
+    ) -> Result<ExecutionTelemetry, ExecuteError> {
+        serial::drain_host_outputs(&mut exec);
+        drop(exec);
         if result.is_err() {
             self.reset();
         }
         result
     }
-
-    fn run_parallel_from_snapshot(
-        &self,
-        exec: Executor<'a, H>,
-    ) -> Result<ExecutionTelemetry, ExecuteError>
-    where
-        H: Send + Sync + 'static,
-    {
-        if exec.schedule.linear_segment_flow {
-            return serial::run_fused_linear(exec);
-        }
-        #[cfg(feature = "executor-pool")]
-        {
-            pool::run(exec)
-        }
-        #[cfg(not(feature = "executor-pool"))]
-        {
-            parallel::run(exec)
-        }
-    }
 }
 
-pub(crate) fn should_run_parallel_adaptive(schedule: &CompiledSchedule) -> bool {
-    !schedule.linear_segment_flow
-        && (schedule.host_deferred_graph.ready_segments.len() > 1
-            || schedule
-                .host_deferred_graph
-                .adjacency
-                .iter()
-                .any(|next| next.len() > 1))
+/// Parallel run of `exec`, or the serial path when its segments form one chain.
+pub(crate) fn run_parallel_on<H>(
+    exec: &mut Executor<'_, H>,
+) -> Result<ExecutionTelemetry, ExecuteError>
+where
+    H: NodeHandler + Send + Sync + 'static,
+{
+    if exec.schedule.linear_segment_flow {
+        return serial::run_with_boundaries(exec);
+    }
+    parallel::run(exec, None)
+}
+
+/// One adaptive frame on `exec` in the chosen mode, timed into `adaptive`.
+pub(crate) fn run_adaptive_on<H>(
+    exec: &mut Executor<'_, H>,
+    adaptive: &mut AdaptiveState,
+    parallel: bool,
+    workers: usize,
+) -> Result<ExecutionTelemetry, ExecuteError>
+where
+    H: NodeHandler + Send + Sync + 'static,
+{
+    if !adaptive::can_run_parallel(&exec.schedule) {
+        return serial::run_with_boundaries(exec);
+    }
+    let schedule = exec.schedule.clone();
+    let Some(costs) = adaptive.frame_costs() else {
+        return serial::run_with_boundaries(exec);
+    };
+    let (result, wall) = if parallel {
+        let start = std::time::Instant::now();
+        let result = parallel::run(exec, Some(costs));
+        (result, Some(start.elapsed()))
+    } else {
+        let costs = serial::SegmentCosts {
+            segment_of: &schedule.segment_of,
+            costs,
+        };
+        (serial::run_with_boundaries_timed(exec, Some(costs)), None)
+    };
+    if result.is_ok() {
+        adaptive.observe(&schedule, workers, wall);
+    }
+    result
 }
 
 #[cfg(feature = "gpu")]

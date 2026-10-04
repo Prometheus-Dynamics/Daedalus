@@ -6,7 +6,6 @@ use crate::state::StateStore;
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-#[cfg(feature = "executor-pool")]
 use std::sync::OnceLock;
 
 pub(crate) struct ExecutorCore {
@@ -20,10 +19,10 @@ pub(crate) struct ExecutorCore {
     pub(crate) telemetry: ExecutionTelemetry,
     pub(crate) data_size_inspectors: RuntimeDataSizeInspectors,
     pub(crate) run_config: ExecutorRunConfig,
-    #[cfg(feature = "executor-pool")]
-    pub(crate) pool_workers: usize,
-    #[cfg(feature = "executor-pool")]
-    pub(crate) worker_pool: Arc<OnceLock<Arc<rayon::ThreadPool>>>,
+    /// Workers a parallel run may use (see `resolve_parallel_workers`).
+    pub(crate) parallel_workers: usize,
+    /// Threads parallel runs fan out to, created on first use and shared by snapshots.
+    pub(crate) worker_pool: Arc<OnceLock<Arc<super::WorkerPool>>>,
     /// Host-bridge nodes resolved when bridges were attached; empty without bridges.
     pub(crate) host_nodes: Arc<[super::serial::HostNodeIo]>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
@@ -59,9 +58,7 @@ impl ExecutorCore {
             telemetry: ExecutionTelemetry::with_level(MetricsLevel::default()),
             data_size_inspectors: RuntimeDataSizeInspectors::global(),
             run_config: ExecutorRunConfig::default(),
-            #[cfg(feature = "executor-pool")]
-            pool_workers: init.pool_workers,
-            #[cfg(feature = "executor-pool")]
+            parallel_workers: init.parallel_workers,
             worker_pool: Arc::new(OnceLock::new()),
             host_nodes: Arc::new([]),
             const_coercers: None,
@@ -108,9 +105,7 @@ impl ExecutorCore {
             telemetry: ExecutionTelemetry::with_level(self.run_config.metrics_level),
             data_size_inspectors: self.data_size_inspectors.clone(),
             run_config: self.run_config.clone(),
-            #[cfg(feature = "executor-pool")]
-            pool_workers: self.pool_workers,
-            #[cfg(feature = "executor-pool")]
+            parallel_workers: self.parallel_workers,
             worker_pool: self.worker_pool.clone(),
             host_nodes: self.host_nodes.clone(),
             const_coercers: self.const_coercers.clone(),

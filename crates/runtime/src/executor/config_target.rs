@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-#[cfg(feature = "executor-pool")]
 use std::sync::OnceLock;
 
-#[cfg(feature = "executor-pool")]
-use super::resolve_pool_workers;
 use super::{
-    Executor, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler, RuntimeDataSizeInspectors,
+    Executor, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler,
+    RuntimeDataSizeInspectors, resolve_parallel_workers,
 };
 use crate::state::StateStore;
 
@@ -14,7 +12,6 @@ pub(crate) trait ExecutorConfigTarget {
     fn core_mut(&mut self) -> &mut ExecutorCore;
     fn nodes_len(&self) -> usize;
     fn edges_len(&self) -> usize;
-    #[cfg(feature = "executor-pool")]
     fn segments_len(&self) -> usize;
 
     fn apply_active_nodes_mask(
@@ -83,13 +80,10 @@ pub(crate) trait ExecutorConfigTarget {
 
     fn apply_pool_size(&mut self, size: Option<usize>) {
         self.core_mut().run_config.set_pool_size(size);
-        #[cfg(feature = "executor-pool")]
-        {
-            let workers = resolve_pool_workers(size, self.segments_len());
-            let core = self.core_mut();
-            core.pool_workers = workers;
-            core.worker_pool = Arc::new(OnceLock::new());
-        }
+        let workers = resolve_parallel_workers(size, self.segments_len());
+        let core = self.core_mut();
+        core.parallel_workers = workers;
+        core.worker_pool = Arc::new(OnceLock::new());
     }
 
     fn apply_metrics_level(&mut self, level: MetricsLevel) {
@@ -129,7 +123,6 @@ impl<H: NodeHandler> ExecutorConfigTarget for Executor<'_, H> {
         self.edges.len()
     }
 
-    #[cfg(feature = "executor-pool")]
     fn segments_len(&self) -> usize {
         self.segments.len()
     }

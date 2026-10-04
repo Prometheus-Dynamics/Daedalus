@@ -129,6 +129,9 @@ impl Engine {
             RuntimeMode::Parallel | RuntimeMode::Adaptive
         ) {
             exec = exec.with_pool_size(self.config.runtime.pool_size);
+            if let Some(overhead) = self.config.runtime.adaptive_dispatch_overhead {
+                exec = exec.with_adaptive_dispatch_overhead(overhead);
+            }
             #[cfg(feature = "executor-pool")]
             exec.prewarm_worker_pool()?;
         }
@@ -163,6 +166,9 @@ impl Engine {
             RuntimeMode::Parallel | RuntimeMode::Adaptive
         ) {
             exec = exec.with_pool_size(self.config.runtime.pool_size);
+            if let Some(overhead) = self.config.runtime.adaptive_dispatch_overhead {
+                exec = exec.with_adaptive_dispatch_overhead(overhead);
+            }
             #[cfg(feature = "executor-pool")]
             exec.prewarm_worker_pool()?;
         }

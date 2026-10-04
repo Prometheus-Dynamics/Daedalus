@@ -1,11 +1,9 @@
 #[cfg(feature = "gpu")]
 use super::collect_data_edges;
-#[cfg(feature = "executor-pool")]
-use super::resolve_pool_workers;
 use super::{
     CompiledSchedule, DirectSlot, EdgeStorage, ExecutorBuildError, NodeMetadataStore,
     build_compiled_schedule, build_node_execution_metadata, direct_edge_set, direct_slots,
-    edge_maps, normalize_runtime_nodes, queue,
+    edge_maps, normalize_runtime_nodes, queue, resolve_parallel_workers,
 };
 use crate::handles::PortId;
 use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, RuntimeEdge, RuntimeNode, RuntimePlan};
@@ -25,8 +23,7 @@ pub(crate) struct ExecutorInit {
     pub(crate) output_ports: Arc<[Arc<[PortId]>]>,
     /// Per node, the incoming edges into its required (not optional) inputs.
     pub(crate) required_inputs: Arc<[Box<[usize]>]>,
-    #[cfg(feature = "executor-pool")]
-    pub(crate) pool_workers: usize,
+    pub(crate) parallel_workers: usize,
     #[cfg(feature = "gpu")]
     pub(crate) data_edges: Arc<HashSet<usize>>,
 }
@@ -58,8 +55,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         &plan.segments,
         &plan.schedule_order,
     ));
-    #[cfg(feature = "executor-pool")]
-    let pool_workers = resolve_pool_workers(None, plan.segments.len());
+    let parallel_workers = resolve_parallel_workers(None, plan.segments.len());
     #[cfg(feature = "gpu")]
     let data_edges = Arc::new(collect_data_edges(&nodes, &plan.edges));
 
@@ -74,8 +70,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         node_metadata,
         output_ports,
         required_inputs,
-        #[cfg(feature = "executor-pool")]
-        pool_workers,
+        parallel_workers,
         #[cfg(feature = "gpu")]
         data_edges,
     })
