@@ -76,7 +76,17 @@ fn border_source(x: i64) -> Result<(Border, i64), NodeError> {
     Ok((if x > 0 { Border::Wrap } else { Border::Reflect }, x))
 }
 
-#[plugin(id = "test.enumcfg", nodes(blur, pick, border_source))]
+/// A single typed input: eligible for the direct-payload path.
+#[node(
+    id = "describe",
+    inputs(port(name = "mode", default = "constant")),
+    outputs("out")
+)]
+fn describe(mode: Border) -> Result<String, NodeError> {
+    Ok(format!("{mode:?}"))
+}
+
+#[plugin(id = "test.enumcfg", nodes(blur, pick, border_source, describe))]
 struct EnumCfgPlugin;
 
 fn blur_graph(consts: &[(&str, Value)]) -> HostGraph<HandlerRegistry> {
@@ -228,4 +238,25 @@ fn explicit_coercers_win_over_generated_ones() {
         .compile_registry(&registry, graph)
         .expect("compile");
     assert_eq!(run(&mut host), "1:Reflect:Linear:3");
+}
+
+#[test]
+fn single_input_nodes_take_enum_constants() {
+    let mut registry = PluginRegistry::new();
+    let plugin = EnumCfgPlugin::new();
+    registry.install_plugin(&plugin).expect("install");
+    let node = plugin.describe.alias("describe");
+    let graph = registry
+        .graph_builder()
+        .unwrap()
+        .try_node(&node)
+        .and_then(|b| b.try_connect(&node.outputs.out, "out"))
+        .unwrap()
+        .build();
+    let mut host = Engine::new(EngineConfig::default())
+        .unwrap()
+        .compile_registry(&registry, graph)
+        .expect("compile");
+    host.tick().expect("tick");
+    assert_eq!(host.take::<String>("out").as_deref(), Some("Constant"));
 }
