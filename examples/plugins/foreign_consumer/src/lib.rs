@@ -17,7 +17,11 @@ fn read_counter(counter: ForeignRef<'_, CounterInterface>) -> Result<(i32, i64),
     Ok((counter.value(), counter.data() as i64))
 }
 
-#[plugin(id = "example_foreign_consumer", nodes(read_counter))]
+#[plugin(
+    id = "example_foreign_consumer",
+    deps("example_rust"),
+    nodes(read_counter)
+)]
 pub struct ForeignConsumerPlugin;
 
 #[cfg(feature = "dylib")]

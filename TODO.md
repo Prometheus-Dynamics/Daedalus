@@ -36,6 +36,15 @@ changes.
       type, `install_into` fails with `BoundaryTypeMismatch` naming every differing key before
       installing anything, adapter errors say "same TypeKey, different Rust type", and the
       same-cargo-build rule is documented in `docs/dynamic-plugins.md`.
+- [x] **Foreign (host-owned) types for separately built plugins.** Foreign interfaces
+      (`foreign_interface!`: `#[repr(C)]` accessor vtable, key, version, layout hash), owner
+      providers registered as zero-copy `View` adapters, `ForeignHandle` payloads with an
+      `Arc`-backed keepalive, and node inputs `FrameView<'_>` / `ForeignRef<'_, I>`. The standard
+      `daedalus:frame` v1 interface (`docs/foreign-frame-interface.md`) lets owners such as
+      styx-core implement `FrameSource` in their `daedalus` feature. The descriptor (ABI 7)
+      exports the interfaces a plugin uses and `install_into` refuses version/layout mismatches;
+      `examples/plugins/foreign_consumer`, built separately with a different copy of the type's
+      crate, reads host values in place.
 
 ### Performance
 - [x] Host bridge: per-port state, single-slot latest-only queues, events off by default.
@@ -63,11 +72,8 @@ changes.
 ## Remaining
 
 ### High priority
-- [ ] **Foreign (host-owned) types for separately built plugins.** The host registers a
-      `#[repr(C)]` accessor vtable per TypeKey (e.g. frame width/height/format/planes/dmabuf fd,
-      retain/release), and plugins see an opaque handle. This gives zero-copy frames without sharing
-      Rust types. Part of the stable plugin path below.
-- [ ] **Stable plugin handler path.** Mismatched-toolchain plugins can be inspected but not run.
+- [ ] **Stable plugin handler path.** Mismatched-toolchain (or Daedalus-version) plugins can be
+      inspected but not run; separately built plugins still need the host's Daedalus build.
       Needs a `TypeKey`-keyed codec table registered by the node macros, an `invoke` entry point
       using ffi-core `InvokeRequest`/`InvokeResponse`, and schema-built host handlers (design in
       `docs/dynamic-plugins.md`).

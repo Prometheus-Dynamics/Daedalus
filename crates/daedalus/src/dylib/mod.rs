@@ -311,9 +311,16 @@ pub mod __support {
                 registry
                     .install_plugin(&plugin)
                     .map_err(|err| err.to_string())?;
-                let capabilities = registry
-                    .combined_transport_capabilities()
-                    .map_err(|err| err.to_string())?;
+                // Not `combined_transport_capabilities`: its validation fails on the plugin's
+                // `deps`, which only the host's registry provides (and checks at install).
+                let mut capabilities = registry.transport_capabilities.clone();
+                for manifest in registry.plugin_manifests.values() {
+                    if capabilities.plugin_manifest(&manifest.id).is_none() {
+                        capabilities
+                            .register_plugin(manifest.clone())
+                            .map_err(|err| err.to_string())?;
+                    }
+                }
                 let schema =
                     daedalus_ffi_host::export_registry_plugin_schema(&capabilities, plugin.id())
                         .map_err(|err| err.to_string())?;

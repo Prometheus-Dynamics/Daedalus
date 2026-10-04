@@ -11,7 +11,6 @@ use std::sync::{Arc, OnceLock};
 
 use daedalus::data::model::{TypeExpr, ValueType};
 use daedalus::engine::{Engine, EngineConfig};
-use daedalus::registry::capability::NodeDecl;
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
 use daedalus::transport::{ForeignInterface, Payload, RustTypeIdentity, TypeKey};
 use daedalus::{PluginLibrary, PluginLibraryError};
@@ -221,7 +220,7 @@ fn separately_built_plugin_consumes_host_types_through_a_foreign_interface() {
         .nodes()
         .values()
         .find(|decl| decl.id.0.ends_with("read_counter"))
-        .map(NodeDecl::clone)
+        .cloned()
         .expect("consumer node installed");
     assert_eq!(
         node.inputs[0].type_key,
