@@ -23,8 +23,9 @@
 //! **Rust-ABI install.** Node handlers are Rust closures over `Payload` (`Arc<dyn Any>`), so
 //! installation passes a `*mut PluginRegistry` across the boundary and is only sound when host
 //! and plugin agree on every Rust layout. [`check_rust_abi`] requires all of the following to
-//! match the host exactly, and `install_into` fails with
-//! [`PluginLibraryError::Incompatible`] (naming the mismatch) otherwise:
+//! match the host exactly ([`PluginLibrary::rust_abi`] names the mismatch; forcing this path
+//! with [`PluginLibrary::install_into_as`] then fails with
+//! [`PluginLibraryError::Incompatible`]):
 //!
 //! 1. The Daedalus version ([`crate::version`]).
 //! 2. The `rustc --version` string that compiled Daedalus ([`RUSTC_VERSION`]).
@@ -86,8 +87,20 @@
 //! feature set, separately built dependency). They cannot prove layout identity: build host and
 //! plugins in the same cargo build (one workspace and lockfile, one toolchain, one boundary
 //! Daedalus feature set: `plugins`, `gpu-types`/`gpu-runtime`/backends, `schema`, `proto`, and
-//! every shared dependency resolved with the same features). `docs/dynamic-plugins.md` sketches
-//! the stable handler path that would lift this requirement for wire-representable payloads.
+//! every shared dependency resolved with the same features), or let mismatched plugins take the
+//! stable path below.
+//!
+//! **Stable install.** A plugin the Rust-ABI checks refuse still installs when its
+//! [`StableHandlers::version`](crate::dylib::StableHandlers::version) equals
+//! [`STABLE_ABI_VERSION`](crate::dylib::STABLE_ABI_VERSION): [`PluginLibrary::install_into`]
+//! registers its schema's nodes with handlers that call the plugin's C-ABI `invoke`, exchanging
+//! [`StableValue`](crate::dylib::StableValue)s (scalars inline, strings/bytes/nested values
+//! borrowed, frames as foreign handles) instead of Rust types, so no boundary type check applies
+//! (foreign interface and dependency checks still do). Only nodes install that way;
+//! [`InstallPath`](crate::dylib::InstallPath) reports and
+//! [`PluginLibrary::install_into_as`] chooses the path. See [`stable`](crate::dylib::stable) for
+//! the protocol and `docs/dynamic-plugins.md` ("Install Paths") for what crosses and what it
+//! costs.
 //!
 //! # Known limitations
 //!

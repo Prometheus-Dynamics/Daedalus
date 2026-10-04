@@ -36,7 +36,9 @@ feature gate does not help, since features unify, e.g. under `--all-features`). 
 small leaf crate instead, `crate-type = ["cdylib"]` with one `export_plugin!` line, as
 `examples/plugins/example_project_dylib` does for `examples/plugins/example_project`. The plugin's manifest
 version defaults to the crate version, which graph documents can require
-(`PluginRequirement::new("demo.math").with_version(">=1.0.0")`).
+(`PluginRequirement::new("demo.math").with_version(">=1.0.0")`). `plugin_descriptor!` builds the
+same descriptor without exporting anything, for a crate that exports the two symbols itself (to
+adjust the descriptor, as `examples/plugins/stable_abi` does).
 
 ## Host
 
@@ -57,13 +59,78 @@ for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plu
     let schema = library.schema(); // readable even if the plugin cannot be installed
     tracing::info!(path = %library.path().display(), plugin = %schema.plugin.name,
         nodes = schema.nodes.len(), "found plugin");
-    library.install_into(&mut registry)?; // Incompatible / BoundaryTypeConflict on a mismatch
+    // Rust ABI for plugins from this build, the stable path for other toolchains/patch releases.
+    let path = library.install_into(&mut registry)?;
+    tracing::info!(plugin = %schema.plugin.name, ?path, "installed plugin");
     libraries.push(library);
 }
 ```
 
 `discover_plugin_libraries` returns `.so` / `.dylib` / `.dll` files sorted by file name, skips
 missing directories, and keeps the first occurrence of a file name across directories.
+
+## Install Paths
+
+`install_into` installs a plugin one of two ways and returns which (`InstallPath`);
+`PluginLibrary::install_mode` tells beforehand, and `install_into_as` forces one (e.g. the stable
+path for a same-build plugin, to test it):
+
+| | `InstallPath::RustAbi` | `InstallPath::Stable` |
+| --- | --- | --- |
+| Taken when | `rust_abi()` is `Ok` | `rust_abi()` differs and `stable_abi_version()` equals the host's `STABLE_ABI_VERSION` |
+| Requires | same Daedalus version, rustc and build fingerprint; boundary types identical to the host's | same `PLUGIN_ABI_VERSION` and `STABLE_ABI_VERSION`; foreign interfaces identical |
+| Installs | everything the plugin registers (nodes, adapters, serializers, capabilities, types) | the schema's nodes, each with a host handler calling the plugin |
+| Values | Rust payloads, no conversion | builtins, `Value`s, `ToValue`/`Deserialize` types, foreign handles |
+| Per call | nothing | about 1 µs (below) |
+
+Both check dependencies and foreign interfaces first; only the Rust ABI path compares boundary
+types (no Rust type crosses the stable path). When neither path is available, `install_into` fails
+with `PluginLibraryError::StableAbiMismatch`, naming the Rust ABI mismatch too.
+
+### The stable handler path
+
+The descriptor (`PLUGIN_ABI_VERSION` 8) carries `StableHandlers { version, invoke, release }`,
+versioned on its own by `STABLE_ABI_VERSION`, so the value encoding can evolve without breaking
+loading and introspection.
+
+- **Plugin side.** On its first `invoke` the plugin builds a private registry (linked
+  dependencies, then itself) with node port codecs recorded: for every port with a concrete Rust
+  type the node macros register how it converts from a `Value` (builtin conversions, then
+  `DaedalusTypeExpr::from_value`, then serde) and to one (`ToValue`). Codecs are keyed by node
+  port, not type key, since structural keys (`typeexpr:List(Int)`) name no single Rust type. A
+  call names a node by its index in the schema's `nodes`, decodes the inputs into payloads of the
+  handler's types, runs the handler, and encodes what it pushed (builtins directly, then `Value`s,
+  the port codec, the registry's value serializers). Node state stays in the plugin, one state
+  store per host node instance; the host releases it when the node's state is dropped. Errors
+  and panics come back as a status code (handler error, invalid input, backpressure, panic) and a
+  message; panics are caught in the plugin, so the host gets a `NodeError` and keeps running.
+- **Values** cross as `StableValue`s, a `#[repr(C)]` mirror of ffi-core's `WireValue` model
+  (plus `Tuple`/`Map`, so `Value`s cross unchanged, and `u64` beyond `i64::MAX`): scalars inline
+  with no allocation; strings, bytes and nested values borrowed for the call, copied once into
+  the receiver's owned Rust value, never serialized; foreign handles by pointer, so a `FrameView`
+  input reads the host's frame in place (the plugin clones the handle, which retains through the
+  owner's own functions).
+- **Host side.** The host registers the schema's node declarations
+  (`daedalus_ffi_host::node_decl_from_schema`, so fire modes, conditional outputs and other node
+  metadata carry over) with handlers that encode the inputs, call `invoke` and decode the outputs:
+  builtin port types into their Rust types, everything else as a `Value` payload under the port's
+  key (downstream nodes coerce it as they do graph constants). Host inputs must be builtins,
+  `Value`s, types with a registered value serializer, or foreign handles.
+- **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
+  schemas, device transports and boundary contracts stay in the plugin. Typed values the host
+  lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type converts.
+
+`examples/plugins/stable_abi` is a plugin whose descriptor claims another rustc; the facade's
+`dylib_stable` test installs it through the stable path and compares every node with the static
+install.
+
+**Performance** (release, x86-64 desktop, `cargo test -p daedalus-rs --features
+engine,dylib-plugins --release --test dylib_stable -- --ignored --nocapture`): a scalar node
+handler costs about 0.4 µs statically and 1.2 µs through the stable path (+0.8 µs: the input and
+output payloads are rebuilt on the other side, node state is looked up on both sides, plus the
+encode/decode); in a host graph tick, +1.0 µs per stable node with scalars, +1.2 µs with a 4 KiB
+`Vec<u8>` (one copy in, none out), and about +1.9 µs per node for a derived struct, which crosses
+as a `Value` and is rebuilt through serde. Frames cross as handles at the scalar cost.
 
 ## Plugin Dependencies
 
@@ -111,10 +178,13 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
 
 - `load` only needs a matching `PLUGIN_ABI_VERSION`; the C-ABI descriptor and `PluginLibrary::schema`
   work across toolchains, Daedalus versions, and feature sets.
-- `install_into` passes Rust types across the boundary, so it requires the same Daedalus version,
-  `rustc --version`, and build fingerprint (`daedalus::build_fingerprint()`), and otherwise fails
-  with `PluginLibraryError::Incompatible` naming the differing segments.
-- Before calling into the plugin, `install_into` also compares the plugin's boundary types (every
+- The Rust-ABI install path passes Rust types across the boundary, so it requires the same
+  Daedalus version, `rustc --version`, and build fingerprint (`daedalus::build_fingerprint()`);
+  `rust_abi()` names the differing segments, and forcing the path fails with
+  `PluginLibraryError::Incompatible`. Mismatched plugins install through the stable path instead
+  (see [Install Paths](#install-paths)), which needs only matching `PLUGIN_ABI_VERSION` and
+  `STABLE_ABI_VERSION`.
+- Before calling into the plugin, the Rust-ABI path also compares the plugin's boundary types (every
   type key its nodes and adapters consume or produce and every type it registers, with the Rust
   type behind it: `TypeId` hash, size, align, name; `PluginLibrary::boundary_types()`) against
   the host registry's (`PluginRegistry::boundary_types()`). A key the host maps to another Rust
@@ -124,7 +194,7 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
   successful install the plugin's table is recorded in the host registry, so later plugins, typed
   pushes and payloads fed to the host bridge are checked against it. `PLUGIN_ABI_VERSION` 6 added
   this table to the descriptor.
-- `install_into` also compares the foreign interfaces the plugin uses (key, version, vtable
+- Both paths compare the foreign interfaces the plugin uses (key, version, vtable
   layout hash; `PluginLibrary::foreign_interfaces()`) with the host registry's
   (`PluginRegistry::foreign_interfaces()`) and fails with
   `PluginLibraryError::ForeignInterfaceMismatch` when one differs. `PLUGIN_ABI_VERSION` 7 added
@@ -203,43 +273,14 @@ test).
 
 What still requires one cargo build: plugins whose nodes take or return a shared third-party
 type directly, value serializers or capabilities keyed by such types, and anything that relies
-on process globals (see the module docs). Toolchain or Daedalus-version independence needs the
-stable handler path below.
+on process globals (see the module docs). Plugins whose nodes only exchange builtins, `Value`s,
+`ToValue`/`Deserialize` types and foreign interface handles need none of this: the
+[stable path](#install-paths) runs them across toolchains and Daedalus patch releases.
 
 `smallvec` is built with its `union` feature everywhere: it changes `SmallVec` layouts, which
 `NodeIo` exposes to plugin handlers, and a host linking wgpu (whose HAL enables it) would
 otherwise lay `NodeIo` out differently from a plugin without wgpu. `NodeIo` is part of the
 fingerprint, so such a difference is a typed `Incompatible` error rather than a crash.
-
-## Design Note: Stable Handler Path
-
-Today a mismatched plugin is introspectable but not runnable. Lifting the same-build requirement
-for plugins whose ports carry wire-representable values needs a handler path that never passes
-Rust types:
-
-1. **Descriptor entry point.** Add `invoke(node: StrView, request: *const u8, len: usize,
-   sink: StrSink) -> bool` exchanging `daedalus_ffi_core::{InvokeRequest, InvokeResponse}`
-   (`WireValue` payloads) as bytes, plus instance ids for stateful nodes. Bump
-   `PLUGIN_ABI_VERSION`.
-2. **Typed wire codecs (the blocker).** Macro-generated handlers read inputs with
-   `NodeIo::take_owned::<T>`, which needs the exact Rust type in the `Payload`; a
-   `Payload::owned(key, Value)` only coerces through `get_typed`. Neither side can build a typed
-   payload from a type key today: `value_serializers` (typed → `Value`) are keyed by `TypeId`
-   and const coercers (`Value` → typed) by Rust type name and return `Box<dyn Any>`. The registry
-   needs a codec table keyed by transport `TypeKey` (`Value` ↔ `Payload` of `T`), registered by
-   the node macros for boundary-contract types.
-3. **Plugin side.** `invoke` decodes inputs with the plugin's codecs, runs the handler from its
-   private registry through `NodeIo::from_inputs`, and encodes outputs.
-4. **Host side.** Install the schema's declarations (`daedalus_ffi_host::node_decls_from_schema`)
-   and register host handlers that encode inputs, call `invoke`, and decode outputs with the
-   host's codecs.
-5. **Negotiation.** `install_into` keeps the Rust-ABI fast path when `rust_abi()` is `Ok`, uses
-   the stable path when every schema port has a codec on both sides, and otherwise reports
-   `Incompatible` naming the offending ports.
-
-Costs: one encode/decode per call and no zero-copy for GPU or large buffers. Foreign handles
-already are such a borrowed view: `ForeignHandle` is `#[repr(C)]` and only calls the owner's
-`extern "C"` functions, so the stable path can pass frames as handles instead of bytes.
 
 ## Coming From The Pre-Release FFI
 
@@ -249,7 +290,7 @@ already are such a borrowed view: `ForeignHandle` is `#[repr(C)]` and only calls
 | `daedalus::FfiPluginError` | `daedalus::PluginLibraryError` |
 | four symbols (`abi_version`, `info`, `register_boundary_contracts`, `register`) | `daedalus_plugin_abi_version` + `daedalus_plugin_descriptor` (`PluginDescriptor`) |
 | `PluginErrorSink` | `StrSink` |
-| `check_plugin_info`, `*VersionMismatch`/`BuildFingerprintMismatch` load errors | `check_rust_abi` → `RustAbiMismatch`; `install_into` fails with `Incompatible` |
+| `check_plugin_info`, `*VersionMismatch`/`BuildFingerprintMismatch` load errors | `check_rust_abi` → `RustAbiMismatch`; mismatched plugins install through the stable path (`InstallPath::Stable`), `StableAbiMismatch` when that differs too |
 | `library.abi_version()` | removed (a loaded library always has `PLUGIN_ABI_VERSION`) |
 | `HOST_ONLY_FEATURES` | `[package.metadata.daedalus]` in each crate's `Cargo.toml` |
 | facade feature `gpu` | `gpu` (alias of `gpu-engine`); CPU-only hosts need only `engine-full,plugins` (or `embedded`) |

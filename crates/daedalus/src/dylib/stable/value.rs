@@ -188,6 +188,8 @@ unsafe fn raw_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 /// Owns the nested arrays (and temporary values) a [`StableValue`] tree borrows. Moving the
 /// arena does not move what it owns, so pointers into it stay valid until it is dropped.
 #[derive(Default)]
+// Boxed so their addresses survive the vectors growing.
+#[allow(clippy::vec_box)]
 pub struct Arena {
     values: Vec<Vec<StableValue>>,
     fields: Vec<Vec<StableField>>,

@@ -67,6 +67,16 @@ changes.
       that may not produce. Per-edge policies now also survive the scheduler default.
 - [x] **Typed host ports in embedded graphs.** Embedded-graph expansion and `nest` carry an
       inner host port's declared type to an undeclared outer host port wired to it.
+- [x] **Stable plugin handler path.** Plugins built with another rustc or Daedalus patch release
+      (same `PLUGIN_ABI_VERSION`) install and run: the descriptor's `StableHandlers`
+      (`STABLE_ABI_VERSION` 1) run schema nodes through a C-ABI `invoke` with `StableValue`s
+      (scalars inline, strings/bytes/nested values borrowed, frames as foreign handles), node port
+      codecs registered by the node macros convert to and from the handlers' Rust types, and
+      `install_into` picks `InstallPath::RustAbi` or `InstallPath::Stable`
+      (`install_into_as` forces one). `examples/plugins/stable_abi` and the facade's
+      `dylib_stable` test cover it.
+- [x] **`export_plugin!` boundary contracts in the schema.** `PluginSchema::boundary_contracts`
+      lists them next to the plugin's own.
 - [x] **Graph JSON Schema drift.** Enum lists come from each core type's `ALL` (guarded by an
       exhaustive match), and a test validates every variant against the generated schema.
 - [x] **Enum config ports (Eidos).** `NodeConfig` enum fields and enum handler inputs failed
@@ -147,11 +157,6 @@ changes.
 ## Remaining
 
 ### High priority
-- [ ] **Stable plugin handler path.** Mismatched-toolchain (or Daedalus-version) plugins can be
-      inspected but not run; separately built plugins still need the host's Daedalus build.
-      Needs a `TypeKey`-keyed codec table registered by the node macros, an `invoke` entry point
-      using ffi-core `InvokeRequest`/`InvokeResponse`, and schema-built host handlers (design in
-      `docs/dynamic-plugins.md`).
 - [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (LINEAR NV12 modifiers, `DISJOINT`, `TEXTURE_FORMAT_NV12`,
       the fence export ioctl, dma-heaps); see "Validating on a Raspberry Pi 5" in
@@ -172,8 +177,6 @@ changes.
 - [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29
       cannot add external wait semaphores. Revisit when wgpu exposes it; also queue-family-foreign
       acquire for compressed modifiers.
-- [ ] **`export_plugin!` boundary contracts** are registered at install time but are not in the
-      exported schema.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 

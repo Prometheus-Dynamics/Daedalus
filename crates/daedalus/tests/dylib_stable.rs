@@ -1,8 +1,9 @@
 //! Loads `examples/plugins/stable_abi` as a `cdylib` whose descriptor claims another rustc (a
 //! plugin built by another toolchain), installs it through the stable handler path, and checks
-//! its nodes produce what the statically installed plugin produces: scalars, a derived struct,
-//! bytes, an optional input, node state, and a host frame read in place through
-//! `daedalus:frame`. A panic inside the plugin becomes a node error the host survives.
+//! its nodes produce what the statically installed plugin produces: scalars (`u64` included), a
+//! derived struct, bytes, an optional input, node state, a host frame read in place through
+//! `daedalus:frame`, conditional outputs and a `fire = "all"` join. A panic inside the plugin
+//! becomes a node error the host survives.
 
 #[path = "support/cdylib.rs"]
 mod cdylib;
@@ -386,115 +387,118 @@ fn the_schema_lists_the_plugin_and_its_nodes() {
     assert_eq!(library().foreign_interfaces().len(), 1);
 }
 
+/// A graph to time: its wiring, host inputs and what it pushes per tick.
+struct Case {
+    name: &'static str,
+    wire: Vec<(&'static str, &'static str)>,
+    inputs: Vec<(&'static str, TypeExpr)>,
+    push: fn(&HostGraph<HandlerRegistry>),
+}
+
+const TIMED_RUNS: u32 = 20_000;
+
+/// Mean time of `once` over [`TIMED_RUNS`] runs, after a warm-up.
+fn time_ns(mut once: impl FnMut()) -> f64 {
+    (0..1_000).for_each(|_| once());
+    let start = Instant::now();
+    (0..TIMED_RUNS).for_each(|_| once());
+    start.elapsed().as_nanos() as f64 / f64::from(TIMED_RUNS)
+}
+
+fn time_case(registry: &PluginRegistry, case: &Case) -> f64 {
+    let mut host = compile(registry, &case.wire, &case.inputs);
+    time_ns(|| {
+        (case.push)(&host);
+        host.tick().unwrap();
+        host.take_payload("out");
+    })
+}
+
+/// The `scale` handler alone, outside the executor.
+fn time_scale_handler(registry: &PluginRegistry) -> f64 {
+    use daedalus::runtime::executor::{CorrelatedPayload, NodeHandler};
+    use daedalus::runtime::{ExecutionContext, NodeIo, RuntimeNode, StateStore};
+    let node = RuntimeNode::new("stable_abi:scale");
+    let ctx = ExecutionContext::detached(StateStore::default(), "scale".into());
+    let input = |port: &'static str, payload| (port.into(), CorrelatedPayload::from_edge(payload));
+    time_ns(|| {
+        let mut io = NodeIo::from_inputs([
+            input("value", Payload::owned("i32", 7_i32)),
+            input("factor", Payload::owned("f64", 1.5_f64)),
+        ]);
+        registry.handlers.run(&node, &ctx, &mut io).unwrap();
+        assert_eq!(io.outputs().len(), 1);
+    })
+}
+
 /// Per-call cost of the stable path over a statically installed (equivalently, Rust-ABI) node:
 /// `cargo test -p daedalus-rs --features engine,dylib-plugins --release --test dylib_stable --
 /// --ignored --nocapture`.
 #[test]
 #[ignore = "timing; run manually"]
+#[allow(clippy::print_stdout)]
 fn stable_call_overhead() {
-    const TICKS: u32 = 20_000;
-    let measure = |registry: &PluginRegistry,
-                   wire: &[(&str, &str)],
-                   inputs: &[(&str, TypeExpr)],
-                   push: &dyn Fn(&HostGraph<HandlerRegistry>)| {
-        let mut host = compile(registry, wire, inputs);
-        for _ in 0..1_000 {
-            push(&host);
-            host.tick().unwrap();
-            host.take_payload("out");
-        }
-        let start = Instant::now();
-        for _ in 0..TICKS {
-            push(&host);
-            host.tick().unwrap();
-            host.take_payload("out");
-        }
-        start.elapsed().as_nanos() as f64 / f64::from(TICKS)
-    };
-    let cases: [(
-        &str,
-        Vec<(&str, &str)>,
-        Vec<(&str, TypeExpr)>,
-        Box<dyn Fn(&HostGraph<HandlerRegistry>)>,
-    ); 3] = [
-        (
-            "scale (i32, f64 -> f64)",
-            vec![
+    let cases = [
+        Case {
+            name: "scale (i32, f64 -> f64)",
+            wire: vec![
                 ("value", "scale.value"),
                 ("factor", "scale.factor"),
                 ("scale.out", "out"),
             ],
-            vec![
+            inputs: vec![
                 ("value", scalar(ValueType::I32)),
                 ("factor", scalar(ValueType::Float)),
             ],
-            Box::new(|host| {
+            push: |host| {
                 host.push("value", 7_i32);
                 host.push("factor", 1.5_f64);
-            }),
-        ),
-        (
-            "checksum (4 KiB Vec<u8>)",
-            vec![("bytes", "checksum.bytes"), ("checksum.sum", "out")],
-            vec![("bytes", scalar(ValueType::Bytes))],
-            Box::new(|host| {
+            },
+        },
+        Case {
+            name: "checksum (4 KiB Vec<u8>)",
+            wire: vec![("bytes", "checksum.bytes"), ("checksum.sum", "out")],
+            inputs: vec![("bytes", scalar(ValueType::Bytes))],
+            push: |host| {
                 host.push("bytes", vec![7_u8; 4096]);
-            }),
-        ),
-        (
-            "describe (derived struct)",
-            vec![
+            },
+        },
+        Case {
+            name: "point -> describe (derived struct, two nodes)",
+            wire: vec![
                 ("x", "point.x"),
                 ("y", "point.y"),
                 ("label", "point.label"),
                 ("point.point", "describe.point"),
                 ("describe.norm", "out"),
             ],
-            vec![
+            inputs: vec![
                 ("x", scalar(ValueType::Int)),
                 ("y", scalar(ValueType::Float)),
                 ("label", scalar(ValueType::String)),
             ],
-            Box::new(|host| {
+            push: |host| {
                 host.push("x", 3_i64);
                 host.push("y", 4.0_f64);
                 host.push("label", String::from("p"));
-            }),
-        ),
+            },
+        },
     ];
     let (static_registry, stable_registry) = (static_registry(), stable_registry());
-    // The handler alone, outside the executor.
-    let call = |registry: &PluginRegistry| {
-        use daedalus::runtime::executor::{CorrelatedPayload, NodeHandler};
-        use daedalus::runtime::{ExecutionContext, NodeIo, RuntimeNode, StateStore};
-        let node = RuntimeNode::new("stable_abi:scale");
-        let ctx = ExecutionContext::detached(StateStore::default(), "scale".into());
-        let input = |port: &'static str, payload: Payload| {
-            (port.into(), CorrelatedPayload::from_edge(payload))
-        };
-        let once = || {
-            let mut io = NodeIo::from_inputs([
-                input("value", Payload::owned("i32", 7_i32)),
-                input("factor", Payload::owned("f64", 1.5_f64)),
-            ]);
-            registry.handlers.run(&node, &ctx, &mut io).unwrap();
-            assert_eq!(io.outputs().len(), 1);
-        };
-        (0..1_000).for_each(|_| once());
-        let start = Instant::now();
-        (0..TICKS).for_each(|_| once());
-        start.elapsed().as_nanos() as f64 / f64::from(TICKS)
-    };
-    let (base, stable) = (call(&static_registry), call(&stable_registry));
+    let (base, stable) = (
+        time_scale_handler(&static_registry),
+        time_scale_handler(&stable_registry),
+    );
     println!(
         "scale handler call: static {base:.0} ns, stable {stable:.0} ns, +{:.0} ns",
         stable - base
     );
-    for (name, wire, inputs, push) in &cases {
-        let base = measure(&static_registry, wire, inputs, push.as_ref());
-        let stable = measure(&stable_registry, wire, inputs, push.as_ref());
+    for case in &cases {
+        let base = time_case(&static_registry, case);
+        let stable = time_case(&stable_registry, case);
         println!(
-            "{name}: static {base:.0} ns/tick, stable {stable:.0} ns/tick, +{:.0} ns",
+            "{}: static {base:.0} ns/tick, stable {stable:.0} ns/tick, +{:.0} ns",
+            case.name,
             stable - base
         );
     }

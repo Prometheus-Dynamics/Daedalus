@@ -1,6 +1,7 @@
 //! The stable handler path: running a plugin's nodes through C-ABI entry points, so a plugin
-//! built with another toolchain or Daedalus patch release (same [`PLUGIN_ABI_VERSION`]) can be
-//! installed and run, not just inspected.
+//! built with another toolchain or Daedalus patch release (same
+//! [`PLUGIN_ABI_VERSION`](super::PLUGIN_ABI_VERSION)) can be installed and run, not just
+//! inspected.
 //!
 //! **Plugin side.** [`export_plugin!`](crate::export_plugin) adds [`StableHandlers`] to the
 //! descriptor. On the first [`InvokeFn`] call the plugin builds a private registry (its linked
