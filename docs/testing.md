@@ -42,7 +42,7 @@ cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 | `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`) |
 | `aarch64` | `cargo check --target aarch64-unknown-linux-gnu` (see below) |
 | `lean` | lean-preset tests (see below) |
-| `nostd`, `wasm` | `no_std` check of the tier-1 crates; wasm `engine,plugins` check and Node smoke run (see below) |
+| `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS); wasm and WASI `engine,plugins` checks and Node runs (see below) |
 | `bench` | host bridge and executor criterion benches (see below) |
 | `pi` | on-device dmabuf hardware tests and the `gpu_probe` report; not part of `all` (see [Validating on a Raspberry Pi 5](#validating-on-a-raspberry-pi-5)) |
 
@@ -85,14 +85,23 @@ scripts/ci.sh nostd wasm
 ```
 
 `nostd` checks `daedalus-core`, `-transport`, `-data`, `-registry` and `-planner` with
-`--no-default-features` for `thumbv7em-none-eabihf`, once bare and once with their alloc-only
-optional features. `wasm` checks the facade's `engine,plugins` (the `embedded` preset without
-`threads`) for `wasm32-unknown-unknown`,
-builds `examples/wasm_smoke` (a `cdylib` with no imports) in release mode, and runs it with
-`node scripts/wasm-smoke.mjs`: serial, parallel and adaptive runs of a fan-out graph, timed by an
-injected `Clock`, must match.
-A panic (say, a direct `std::time::Instant::now()` on the runtime path) traps and fails the run.
-Without `node` the run is skipped after the build. The script adds both rustup targets if
+`--no-default-features` for `thumbv7em-none-eabihf` and `thumbv6m-none-eabi` (no
+compare-and-swap), once bare and once with their alloc-only optional features. `wasm` checks the
+facade's `engine,plugins` (the `embedded` preset without `threads`) for `wasm32-unknown-unknown`
+and `wasm32-wasip1`, builds the wasm modules in release mode and runs them in Node:
+
+- `node scripts/wasm-smoke.mjs`: `examples/wasm_smoke` as a `cdylib` with no imports. Serial,
+  parallel and adaptive runs of a fan-out graph, timed by an injected `Clock`, must match. A
+  panic (say, a direct `std::time::Instant::now()` on the runtime path) traps and fails the run.
+- `node --no-warnings scripts/wasi-smoke.mjs`: the same runs in the `daedalus-wasi-smoke` WASI
+  command, on the platform clock, under Node's `node:wasi`.
+- `node scripts/wasm-bindgen-host.mjs`: `examples/wasm_bindgen_host` after
+  `wasm-bindgen --target nodejs`, driven from JavaScript (`push`/`tick`/`take`) on a simulated
+  `performance.now()`; outputs and tick durations must match. It needs the `wasm-bindgen` CLI at
+  the `Cargo.lock` version (`cargo install wasm-bindgen-cli --version <version>`); without it the
+  run is skipped, unless `$CI` is set.
+
+Without `node` the runs are skipped after the builds. The script adds the rustup targets if
 missing; the `portability` CI job runs both subcommands. See
 [development.md](development.md#portability) for what each target supports.
 

@@ -159,9 +159,10 @@ jobs:
       - name: Test lean preset (no executor pool, no metrics)
         run: ./scripts/ci.sh lean
 
-  # no_std + alloc check of the tier-1 crates, runtime and engine on bare metal (plus the no_std
-  # smoke graph run natively), and the embedded preset on wasm32-unknown-unknown: type-checked,
-  # then run in Node (preinstalled on the runner).
+  # no_std + alloc check of the tier-1 crates on bare metal (with and without compare-and-swap)
+  # and of the serial runtime and engine (plus the no_std smoke graph run natively), and the
+  # embedded preset on wasm32-unknown-unknown and wasm32-wasip1: type-checked, then run in Node
+  # (preinstalled on the runner), including the wasm-bindgen host example.
   portability:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -170,7 +171,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: thumbv7em-none-eabihf,wasm32-unknown-unknown
+          targets: thumbv7em-none-eabihf,thumbv6m-none-eabi,wasm32-unknown-unknown,wasm32-wasip1
+      # Must match the `wasm-bindgen` version in Cargo.lock (`scripts/ci.sh wasm` checks).
+      - name: Install wasm-bindgen CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.117
       - *cache
       - name: Check no_std crates and the wasm embedded preset
         run: ./scripts/ci.sh nostd wasm

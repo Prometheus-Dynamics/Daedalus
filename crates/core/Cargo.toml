@@ -39,6 +39,23 @@ crossbeam-queue = { workspace = true }
 spin = { workspace = true }
 tokio = { workspace = true, optional = true }
 
+# `Message` serializes its `Arc` payload: serde's `rc` needs `alloc::sync`, which only exists with
+# compare-and-swap; elsewhere `portable-atomic-util` provides the impls.
+[target.'cfg(target_has_atomic = "ptr")'.dependencies]
+serde = { workspace = true, features = ["rc"] }
+
+# Targets without 64-bit atomics (`thumbv7em`, ...): `portable-atomic`'s `AtomicU64`.
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { workspace = true }
+
+# Targets without pointer-sized compare-and-swap (`thumbv6m`, `riscv32imc`): atomics, `spin` locks
+# and `Arc` go through `portable-atomic`, whose `critical-section` implementation the final
+# binary provides (see "Portability" in docs/development.md).
+[target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }
+portable-atomic-util = { workspace = true, features = ["serde"] }
+spin = { workspace = true, features = ["portable_atomic"] }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 proptest = { workspace = true }

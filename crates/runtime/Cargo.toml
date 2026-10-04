@@ -76,6 +76,17 @@ tracing = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true, optional = true }
 
+# Targets without 64-bit atomics (`thumbv7em`, ...): `portable-atomic`'s `AtomicU64` (`portable`).
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { workspace = true }
+
+# Targets without pointer-sized compare-and-swap (`thumbv6m`, `riscv32imc`): atomics, `spin` locks
+# and `Arc` go through `portable-atomic`, as in the tier-1 crates (see `daedalus_runtime::sync`).
+[target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }
+portable-atomic-util = { workspace = true }
+spin = { workspace = true, features = ["portable_atomic"] }
+
 [dev-dependencies]
 rand = { workspace = true }
 criterion = { workspace = true }

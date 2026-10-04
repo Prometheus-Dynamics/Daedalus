@@ -13,6 +13,17 @@ use super::{
     node_metadata_value,
 };
 
+/// Runs its body only with `std`, the only build that reads `DAEDALUS_TRACE_EMBEDDED_EXPAND`
+/// (`tracing` is a `std` dependency here: it needs compare-and-swap).
+macro_rules! traced {
+    ($($body:tt)*) => {
+        #[cfg(feature = "std")]
+        {
+            $($body)*
+        }
+    };
+}
+
 pub(super) fn expand_embedded_graphs(
     input: &mut PlannerInput,
     catalog: &PlannerCatalog,
@@ -20,8 +31,6 @@ pub(super) fn expand_embedded_graphs(
 ) {
     #[cfg(feature = "std")]
     let trace = std::env::var_os("DAEDALUS_TRACE_EMBEDDED_EXPAND").is_some();
-    #[cfg(not(feature = "std"))]
-    let trace = false;
     #[derive(Clone)]
     struct EmbeddedSpec {
         graph: Graph,
@@ -233,26 +242,28 @@ pub(super) fn expand_embedded_graphs(
             },
         );
 
-        if trace {
-            let mut in_keys: Vec<String> = embedded_maps
-                .get(&idx)
-                .map(|m| m.inputs.keys().cloned().collect())
-                .unwrap_or_default();
-            let mut out_keys: Vec<String> = embedded_maps
-                .get(&idx)
-                .map(|m| m.outputs.keys().cloned().collect())
-                .unwrap_or_default();
-            in_keys.sort();
-            out_keys.sort();
-            tracing::debug!(
-                target: "daedalus_planner::passes",
-                node_idx = idx,
-                node_id = %node.id.0,
-                group_label = %group_label,
-                embedded_inputs = ?in_keys,
-                embedded_outputs = ?out_keys,
-                "embedded graph expanded"
-            );
+        traced! {
+            if trace {
+                let mut in_keys: Vec<String> = embedded_maps
+                    .get(&idx)
+                    .map(|m| m.inputs.keys().cloned().collect())
+                    .unwrap_or_default();
+                let mut out_keys: Vec<String> = embedded_maps
+                    .get(&idx)
+                    .map(|m| m.outputs.keys().cloned().collect())
+                    .unwrap_or_default();
+                in_keys.sort();
+                out_keys.sort();
+                tracing::debug!(
+                    target: "daedalus_planner::passes",
+                    node_idx = idx,
+                    node_id = %node.id.0,
+                    group_label = %group_label,
+                    embedded_inputs = ?in_keys,
+                    embedded_outputs = ?out_keys,
+                    "embedded graph expanded"
+                );
+            }
         }
     }
 
@@ -333,15 +344,17 @@ pub(super) fn expand_embedded_graphs(
                             ),
                         );
                     }
-                    if trace {
-                        let keys: Vec<&String> = to.inputs.keys().collect();
-                        tracing::debug!(
-                            target: "daedalus_planner::passes",
-                            to_node_idx = edge.to.node.0,
-                            to_port = %edge.to.port,
-                            available_inputs = ?keys,
-                            "embedded edge dropped because target input is not mapped"
-                        );
+                    traced! {
+                        if trace {
+                            let keys: Vec<&String> = to.inputs.keys().collect();
+                            tracing::debug!(
+                                target: "daedalus_planner::passes",
+                                to_node_idx = edge.to.node.0,
+                                to_port = %edge.to.port,
+                                available_inputs = ?keys,
+                                "embedded edge dropped because target input is not mapped"
+                            );
+                        }
                     }
                 }
             }
@@ -396,15 +409,17 @@ pub(super) fn expand_embedded_graphs(
                             ),
                         );
                     }
-                    if trace {
-                        let keys: Vec<&String> = from.outputs.keys().collect();
-                        tracing::debug!(
-                            target: "daedalus_planner::passes",
-                            from_node_idx = edge.from.node.0,
-                            from_port = %edge.from.port,
-                            available_outputs = ?keys,
-                            "embedded edge dropped because source output is not mapped"
-                        );
+                    traced! {
+                        if trace {
+                            let keys: Vec<&String> = from.outputs.keys().collect();
+                            tracing::debug!(
+                                target: "daedalus_planner::passes",
+                                from_node_idx = edge.from.node.0,
+                                from_port = %edge.from.port,
+                                available_outputs = ?keys,
+                                "embedded edge dropped because source output is not mapped"
+                            );
+                        }
                     }
                 }
             }
@@ -421,19 +436,23 @@ pub(super) fn expand_embedded_graphs(
                             });
                         }
                     }
-                } else if trace {
-                    let out_keys: Vec<&String> = from.outputs.keys().collect();
-                    let in_keys: Vec<&String> = to.inputs.keys().collect();
-                    tracing::debug!(
-                        target: "daedalus_planner::passes",
-                        from_node_idx = edge.from.node.0,
-                        from_port = %edge.from.port,
-                        available_outputs = ?out_keys,
-                        to_node_idx = edge.to.node.0,
-                        to_port = %edge.to.port,
-                        available_inputs = ?in_keys,
-                        "embedded edge dropped because one endpoint is not mapped"
-                    );
+                } else {
+                    traced! {
+                        if trace {
+                            let out_keys: Vec<&String> = from.outputs.keys().collect();
+                            let in_keys: Vec<&String> = to.inputs.keys().collect();
+                            tracing::debug!(
+                                target: "daedalus_planner::passes",
+                                from_node_idx = edge.from.node.0,
+                                from_port = %edge.from.port,
+                                available_outputs = ?out_keys,
+                                to_node_idx = edge.to.node.0,
+                                to_port = %edge.to.port,
+                                available_inputs = ?in_keys,
+                                "embedded edge dropped because one endpoint is not mapped"
+                            );
+                        }
+                    }
                 }
             }
         }

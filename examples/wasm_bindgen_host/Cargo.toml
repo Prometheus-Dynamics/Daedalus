@@ -1,0 +1,23 @@
+[package]
+name = "daedalus-wasm-bindgen-host"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "wasm-bindgen host glue for the embedded preset: a graph driven from JavaScript (scripts/ci.sh wasm)."
+
+[lints]
+workspace = true
+
+# Built for `wasm32-unknown-unknown` and bound with `wasm-bindgen --target nodejs`;
+# `scripts/wasm-bindgen-host.mjs` drives it. Its own package, like `wasm_smoke`, so the wasm build
+# does not pull the facade's native-only dev-dependencies.
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+doctest = false
+
+[dependencies]
+# The `embedded` preset without `threads` (which this target lacks), plus `metrics` so tick
+# telemetry reads the injected clock.
+daedalus = { workspace = true, features = ["engine", "plugins", "metrics"] }
+wasm-bindgen = { workspace = true }

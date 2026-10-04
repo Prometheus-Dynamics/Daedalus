@@ -1,8 +1,8 @@
+use crate::portable::AtomicU64;
 use crate::prelude::*;
 use crate::sync::Mutex;
 use alloc::sync::Arc;
-#[cfg(target_has_atomic = "64")]
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
 
 #[cfg(feature = "lockfree-queues")]
 use crossbeam_queue::ArrayQueue;
@@ -41,40 +41,12 @@ pub(super) fn queue_transport_bytes(
 mod tests;
 
 /// Current and peak queued bytes of an edge.
-#[cfg(target_has_atomic = "64")]
 #[derive(Default)]
 pub struct EdgeStorageMetrics {
     current_queue_bytes: AtomicU64,
     peak_queue_bytes: AtomicU64,
 }
 
-/// Current and peak queued bytes of an edge, under a lock on targets without 64-bit atomics.
-#[cfg(not(target_has_atomic = "64"))]
-#[derive(Default)]
-pub struct EdgeStorageMetrics(Mutex<(u64, u64)>);
-
-#[cfg(not(target_has_atomic = "64"))]
-impl EdgeStorageMetrics {
-    pub(crate) fn set_current_bytes(&self, current_bytes: u64) {
-        let mut bytes = self.0.lock();
-        *bytes = (current_bytes, bytes.1.max(current_bytes));
-    }
-
-    pub(crate) fn adjust_bytes(&self, added_bytes: u64, removed_bytes: u64) {
-        let mut bytes = self.0.lock();
-        let next = bytes
-            .0
-            .saturating_add(added_bytes)
-            .saturating_sub(removed_bytes);
-        *bytes = (next, bytes.1.max(next));
-    }
-
-    pub(crate) fn snapshot(&self) -> (u64, u64) {
-        *self.0.lock()
-    }
-}
-
-#[cfg(target_has_atomic = "64")]
 impl EdgeStorageMetrics {
     pub(crate) fn set_current_bytes(&self, current_bytes: u64) {
         self.current_queue_bytes

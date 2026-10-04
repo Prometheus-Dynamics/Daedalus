@@ -29,6 +29,7 @@ members = [
     "examples/plugins/stable_abi",
     "examples/wasm_smoke",
     "examples/nostd_smoke",
+    "examples/wasm_bindgen_host",
 ]
 resolver = "3"
 
@@ -80,6 +81,10 @@ libloading = "0.8.9"
 once_cell = "1.21.4"
 paste = "1.0.15"
 pollster = "0.4.0"
+# Atomics and `Arc` on targets without (64-bit) compare-and-swap; only pulled in there (see
+# "Portability" in docs/development.md).
+portable-atomic = { version = "1.13.1", default-features = false, features = ["fallback"] }
+portable-atomic-util = { version = "0.2.8", default-features = false, features = ["alloc"] }
 proc-macro-crate = "3.5.0"
 proc-macro2 = "1.0.106"
 proptest = "1.11.0"
@@ -87,7 +92,7 @@ pyo3 = "0.28"
 quote = "1.0.45"
 rand = "0.10.1"
 rayon = "1.12.0"
-serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive", "rc"] }
+serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "1.0.149", default-features = false, features = ["alloc"] }
 serde_path_to_error = "0.1.20"
 sha2 = "0.10"
@@ -105,6 +110,7 @@ wgpu = { version = "29.0.1", default-features = false, features = ["std", "wgsl"
 futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = { version = "0.1.44", default-features = false }
+wasm-bindgen = "0.2.117"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "std"] }
 styx = { version = "2.0.0", git = "https://github.com/Prometheus-Dynamics/Styx.git", branch = "main", default-features = false }
 

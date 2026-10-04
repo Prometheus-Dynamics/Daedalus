@@ -1,7 +1,7 @@
 //! Cheap-clone identifier string shared by transport and runtime ids.
 
+use crate::portable::Arc;
 use alloc::string::String;
-use alloc::sync::Arc;
 use core::borrow::Borrow;
 use core::cmp::Ordering;
 use core::fmt;

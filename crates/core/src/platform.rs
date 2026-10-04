@@ -11,8 +11,16 @@
 //!   clock above; [`Clock::new`] injects another one per engine/executor/bridge (tests,
 //!   simulated time, a target timer). There is no process-wide clock: without an OS clock,
 //!   inject one, or timing reads zero durations.
+//! - [`Arc`]: the `Arc` in Daedalus signatures. `alloc::sync::Arc` wherever the target has
+//!   pointer-sized compare-and-swap; elsewhere (`thumbv6m`, `riscv32imc`, which have no
+//!   `alloc::sync`) `portable_atomic_util::Arc`.
 //!
 //! See "Portability" in docs/development.md.
+
+#[cfg(target_has_atomic = "ptr")]
+pub use alloc::sync::Arc;
+#[cfg(not(target_has_atomic = "ptr"))]
+pub use portable_atomic_util::Arc;
 
 /// Whether [`Instant::now`] reads a monotonic OS clock (otherwise it reads zero).
 pub const OS_CLOCK: bool = cfg!(all(
@@ -122,7 +130,7 @@ use core::time::Duration;
 /// too, comparable with each other but not with readings of another clock. Measure with
 /// [`Clock::elapsed`], not `Instant::elapsed` (which reads the platform clock).
 #[derive(Clone, Default)]
-pub struct Clock(Option<alloc::sync::Arc<CustomClock<dyn Fn() -> Duration + Send + Sync>>>);
+pub struct Clock(Option<crate::portable::Arc<CustomClock<dyn Fn() -> Duration + Send + Sync>>>);
 
 struct CustomClock<F: ?Sized> {
     /// Platform instant that custom readings are offset from (a std `Instant` cannot be built
@@ -139,7 +147,7 @@ impl Clock {
     /// A clock reading `now`: the time since an arbitrary, fixed origin (e.g. a hardware timer,
     /// `performance.now()`, or a simulated clock in tests).
     pub fn new(now: impl Fn() -> Duration + Send + Sync + 'static) -> Self {
-        Self(Some(alloc::sync::Arc::new(CustomClock {
+        Self(Some(crate::portable::arc_dyn!(CustomClock {
             #[cfg(all(
                 feature = "std",
                 not(all(target_family = "wasm", target_os = "unknown"))
@@ -185,7 +193,7 @@ impl PartialEq for Clock {
     fn eq(&self, other: &Self) -> bool {
         match (&self.0, &other.0) {
             (None, None) => true,
-            (Some(a), Some(b)) => alloc::sync::Arc::ptr_eq(a, b),
+            (Some(a), Some(b)) => crate::portable::Arc::ptr_eq(a, b),
             _ => false,
         }
     }

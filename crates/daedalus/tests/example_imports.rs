@@ -31,10 +31,11 @@ fn examples_use_only_facade() {
             // Forbid importing internal crates directly; allow the facade `daedalus` only.
             //
             // FFI examples intentionally exercise the split FFI crates and package builders rather
-            // than the end-user graph facade. Example plugin crates (`daedalus_plugins_*`) are
-            // not internal crates.
+            // than the end-user graph facade. Example crates (`daedalus_plugins_*`,
+            // `daedalus_wasm_*`) are not internal crates.
             if l.starts_with("use daedalus_")
                 && !l.starts_with("use daedalus_plugins_")
+                && !l.starts_with("use daedalus_wasm_")
                 && !is_ffi_example
             {
                 violations.push(format!(

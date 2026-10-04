@@ -419,6 +419,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -473,6 +479,8 @@ name = "daedalus-core"
 version = "2.0.0"
 dependencies = [
  "crossbeam-queue",
+ "portable-atomic",
+ "portable-atomic-util",
  "proptest",
  "serde",
  "serde_json",
@@ -503,6 +511,8 @@ dependencies = [
  "hashbrown 0.17.0",
  "once_cell",
  "parking_lot",
+ "portable-atomic",
+ "portable-atomic-util",
  "proptest",
  "serde",
  "serde_json",
@@ -522,6 +532,8 @@ dependencies = [
  "daedalus-registry",
  "daedalus-runtime",
  "daedalus-transport",
+ "portable-atomic",
+ "portable-atomic-util",
  "serde",
  "serde_json",
  "spin",
@@ -686,6 +698,8 @@ dependencies = [
  "daedalus-transport",
  "once_cell",
  "parking_lot",
+ "portable-atomic",
+ "portable-atomic-util",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -813,6 +827,8 @@ dependencies = [
  "hashbrown 0.17.0",
  "libc",
  "parking_lot",
+ "portable-atomic",
+ "portable-atomic-util",
  "rand 0.10.1",
  "rayon",
  "serde",
@@ -829,9 +845,19 @@ version = "2.0.0"
 dependencies = [
  "daedalus-core",
  "hashbrown 0.17.0",
+ "portable-atomic",
+ "portable-atomic-util",
  "serde",
  "spin",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "daedalus-wasm-bindgen-host"
+version = "2.0.0"
+dependencies = [
+ "daedalus-rs",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1808,14 +1834,18 @@ name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+dependencies = [
+ "critical-section",
+]
 
 [[package]]
 name = "portable-atomic-util"
-version = "0.2.6"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "091397be61a01d4be58e7841595bd4bfedb15f1cd54977d79b8271e94ed799a3"
+checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
 dependencies = [
  "portable-atomic",
+ "serde",
 ]
 
 [[package]]
@@ -2301,6 +2331,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 dependencies = [
  "lock_api",
+ "portable-atomic",
 ]
 
 [[package]]

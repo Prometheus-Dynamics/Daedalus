@@ -1,9 +1,7 @@
-use crate::portable::AtomicU64;
-use crate::portable::Mutex;
+use crate::portable::{Arc, AtomicBool, AtomicU64, AtomicUsize, Mutex, Weak};
 use alloc::collections::VecDeque;
-use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::Ordering;
 
 use super::{Backpressure, ChannelRecv, ChannelSend, ChannelStats, CloseBehavior, RecvOutcome};
 

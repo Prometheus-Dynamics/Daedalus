@@ -1,6 +1,6 @@
 //! Type-erased payload storage backends.
 
-use alloc::sync::Arc;
+use crate::portable::Arc;
 use core::any::{Any, TypeId};
 use core::fmt;
 
@@ -10,8 +10,6 @@ use crate::{ForeignHandle, ReleaseMode, TypeKey};
 pub trait PayloadStorage: Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    /// Upcast a shared handle so a unique payload can recover its concrete storage.
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
     fn type_key(&self) -> &TypeKey;
     fn value_any(&self) -> Option<&dyn Any> {
         None
@@ -68,10 +66,6 @@ impl<T: Send + Sync + 'static> PayloadStorage for TypedStorage<T> {
         self
     }
 
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-
     fn type_key(&self) -> &TypeKey {
         &self.type_key
     }
@@ -109,10 +103,6 @@ impl PayloadStorage for BytesStorage {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 

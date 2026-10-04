@@ -1,5 +1,4 @@
-use crate::portable::AtomicU64;
-use crate::portable::Mutex;
+use crate::portable::{AtomicU64, Mutex};
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
