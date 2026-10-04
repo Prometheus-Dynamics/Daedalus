@@ -269,6 +269,7 @@ fn host_bridge_multi_producer_input_stress_stays_bounded() {
 }
 
 #[test]
+#[cfg(feature = "threads")]
 fn host_bridge_outbound_push_wakes_waiting_receiver() {
     let manager = HostBridgeManager::new();
     let handle = manager.ensure_handle("host");

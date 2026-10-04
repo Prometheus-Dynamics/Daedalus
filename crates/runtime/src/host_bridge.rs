@@ -1,6 +1,7 @@
-use parking_lot::{Condvar, Mutex};
+#[cfg(feature = "std")]
+use crate::sync::Condvar;
+use crate::sync::Mutex;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use daedalus_transport::{
     CorrelationId, DropReason, FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError,
@@ -68,15 +69,31 @@ pub(super) struct HostBridgeBuffers {
 
 pub(super) struct HostBridgeShared {
     pub(super) buffers: Mutex<HostBridgeBuffers>,
+    /// Wakes blocking waits (`threads`); kept with `std` so the layout follows the lock backend.
+    #[cfg(feature = "std")]
     pub(super) ready: Condvar,
+}
+
+impl HostBridgeShared {
+    pub(super) fn new(buffers: HostBridgeBuffers) -> Self {
+        Self {
+            buffers: Mutex::new(buffers),
+            #[cfg(feature = "std")]
+            ready: Condvar::new(),
+        }
+    }
+
+    /// Wake blocking waiters after a change to `buffers`.
+    #[inline]
+    pub(super) fn notify_all(&self) {
+        #[cfg(feature = "std")]
+        self.ready.notify_all();
+    }
 }
 
 impl Default for HostBridgeShared {
     fn default() -> Self {
-        Self {
-            buffers: Mutex::new(HostBridgeBuffers::default()),
-            ready: Condvar::new(),
-        }
+        Self::new(HostBridgeBuffers::default())
     }
 }
 
@@ -465,7 +482,7 @@ impl HostBridgeHandle {
             payload,
         );
         if is_enqueued(&outcome) {
-            self.shared.ready.notify_all();
+            self.shared.notify_all();
             let wakers = wait::take_inbound_wakers(&mut guard);
             drop(guard);
             wait::wake_all(wakers);
@@ -502,19 +519,15 @@ impl HostBridgeHandle {
         pop_outbound_locked(&mut guard, self.alias.as_str(), port.as_ref())
     }
 
-    /// Pop an outbound payload from `port`, waiting up to `timeout` for one (without threads,
-    /// `daedalus_core::platform::THREADS`, it returns at once: nothing can arrive meanwhile).
+    /// Pop an outbound payload from `port`, blocking up to `timeout` for one (`threads`).
+    #[cfg(feature = "threads")]
     pub fn recv_payload_timeout(
         &self,
         port: impl AsRef<str>,
-        timeout: Duration,
+        timeout: std::time::Duration,
     ) -> Option<Payload> {
         let port = port.as_ref();
-        if !daedalus_core::platform::THREADS {
-            // Nothing can arrive while the only thread waits.
-            return self.try_pop_payload(port);
-        }
-        let deadline = Instant::now() + timeout;
+        let deadline = std::time::Instant::now() + timeout;
         let mut guard = self.shared.buffers.lock();
         loop {
             if let Some(payload) = pop_outbound_locked(&mut guard, self.alias.as_str(), port) {
@@ -538,7 +551,7 @@ impl HostBridgeHandle {
         let mut guard = self.shared.buffers.lock();
         guard.closed = true;
         guard.stats.closed = true;
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
         let wakers = wait::take_inbound_wakers(&mut guard);
         drop(guard);
         wait::wake_all(wakers);
@@ -550,7 +563,7 @@ impl HostBridgeHandle {
         let state = guard.inbound.port(port.into());
         state.closed = true;
         state.queue.clear();
-        self.shared.ready.notify_all();
+        self.shared.notify_all();
     }
 
     pub fn is_input_closed(&self, port: impl AsRef<str>) -> bool {
@@ -637,7 +650,7 @@ impl HostBridgeHandle {
             payload,
         );
         if is_enqueued(&outcome) {
-            self.shared.ready.notify_all();
+            self.shared.notify_all();
         }
     }
 

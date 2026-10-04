@@ -203,3 +203,46 @@ fn is_heavy(node: &RuntimeNode) -> bool {
         .and_then(|value| value.as_str())
         == Some("heavy")
 }
+
+/// One adaptive frame on `exec` in the chosen mode, timed into `adaptive`.
+pub(crate) fn run_adaptive_on<H>(
+    exec: &mut super::Executor<'_, H>,
+    adaptive: &mut AdaptiveState,
+    parallel: bool,
+    workers: usize,
+) -> Result<super::ExecutionTelemetry, super::ExecuteError>
+where
+    H: super::NodeHandler + Send + Sync + 'static,
+{
+    if !can_run_parallel(&exec.schedule) {
+        return super::serial::run_with_boundaries(exec);
+    }
+    let schedule = exec.schedule.clone();
+    let Some(costs) = adaptive.frame_costs() else {
+        return super::serial::run_with_boundaries(exec);
+    };
+    // Without threads `choose` never picks parallel (one worker).
+    let (result, wall) = match parallel {
+        #[cfg(feature = "threads")]
+        true => {
+            let clock = exec.core.clock.clone();
+            let start = clock.now();
+            let result = super::parallel::run(exec, Some(costs));
+            (result, Some(clock.elapsed(start)))
+        }
+        _ => {
+            let costs = super::serial::SegmentCosts {
+                segment_of: &schedule.segment_of,
+                costs,
+            };
+            (
+                super::serial::run_with_boundaries_timed(exec, Some(costs)),
+                None,
+            )
+        }
+    };
+    if result.is_ok() {
+        adaptive.observe(&schedule, workers, wall);
+    }
+    result
+}

@@ -1,5 +1,5 @@
 #[cfg(feature = "plugins")]
-use parking_lot::Mutex;
+use daedalus_runtime::sync::Mutex;
 #[cfg(feature = "plugins")]
 use std::sync::Arc;
 #[cfg(all(feature = "plugins", feature = "gpu-mock"))]

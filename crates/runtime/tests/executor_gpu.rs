@@ -7,7 +7,7 @@ use daedalus_runtime::{
 };
 
 struct LogHandler {
-    log: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
+    log: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for LogHandler {
@@ -62,7 +62,7 @@ fn gpu_segments_execute_with_mock_backend() {
     })
     .expect("mock gpu backend");
 
-    let log = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
     let handler = LogHandler { log: log.clone() };
     let telemetry = Executor::new(&rt, handler)
         .with_gpu(gpu)

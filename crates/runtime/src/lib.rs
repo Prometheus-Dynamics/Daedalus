@@ -4,6 +4,16 @@
 //! queues, streaming workers, state/resources, transport execution, and
 //! telemetry.
 
+#[cfg(all(
+    feature = "threads",
+    target_family = "wasm",
+    any(target_os = "unknown", not(target_feature = "atomics"))
+))]
+compile_error!(
+    "daedalus-runtime: this target cannot spawn threads; disable the `threads` feature \
+     (`default-features = false`)"
+);
+
 pub mod capabilities;
 pub mod config;
 pub mod const_cache;
@@ -26,6 +36,7 @@ pub mod snapshot;
 pub mod state;
 mod state_error;
 pub mod stream;
+pub mod sync;
 pub mod transport;
 pub mod type_index;
 pub use daedalus_transport as transport_types;
@@ -123,8 +134,10 @@ pub use state_error::StateError;
 pub use stream::{
     DEFAULT_STREAM_IDLE_SLEEP, GraphInput, GraphOutput, InputStats, OutputStats,
     OutputSubscription, SharedStreamGraph, StreamExecutionMode, StreamGraph,
-    StreamGraphDiagnostics, StreamGraphState, StreamGraphWorker, StreamTelemetrySummary,
-    StreamWorkerConfig, StreamWorkerDiagnostics, StreamWorkerState, StreamWorkerStopError,
+    StreamGraphDiagnostics, StreamGraphState, StreamTelemetrySummary, StreamWorkerConfig,
+    StreamWorkerState,
 };
+#[cfg(feature = "threads")]
+pub use stream::{StreamGraphWorker, StreamWorkerDiagnostics, StreamWorkerStopError};
 pub use transport::RuntimeTransport;
 pub use type_index::{TypeIndex, TypeKeyUses};

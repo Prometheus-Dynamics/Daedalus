@@ -23,7 +23,7 @@ parking_lot = { workspace = true }
 daedalus-ffi-core = { workspace = true }
 daedalus-data = { workspace = true, features = ["std", "json"] }
 daedalus-registry = { workspace = true, features = ["std"] }
-daedalus-runtime = { workspace = true }
+daedalus-runtime = { workspace = true, features = ["std"] }
 daedalus-transport = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }

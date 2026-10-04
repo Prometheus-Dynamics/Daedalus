@@ -1,4 +1,4 @@
-use parking_lot::Mutex;
+use daedalus_runtime::sync::Mutex;
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::Arc;

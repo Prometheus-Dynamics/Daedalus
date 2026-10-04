@@ -1,5 +1,7 @@
-use daedalus_core::platform::Instant;
-use parking_lot::{Condvar, Mutex};
+//! Continuous stream workers: a thread per graph (`threads` feature).
+
+use crate::sync::{Condvar, Mutex};
+use daedalus_core::platform::{Clock, Instant};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -8,8 +10,8 @@ use std::time::Duration;
 use thiserror::Error;
 
 use super::{
-    DEFAULT_STREAM_IDLE_SLEEP, STREAM_NO_PROGRESS_WARNING, SharedStreamGraph, StreamGraph,
-    StreamGraphState,
+    STREAM_NO_PROGRESS_WARNING, SharedStreamGraph, StreamGraph, StreamGraphState,
+    StreamWorkerConfig, normalize_idle_sleep,
 };
 use crate::executor::NodeHandler;
 use crate::host_bridge::HostBridgeHandle;
@@ -29,57 +31,12 @@ pub enum StreamWorkerStopError {
     Timeout { timeout: Duration },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StreamWorkerConfig {
-    pub idle_sleep: Duration,
-}
-
-impl StreamWorkerConfig {
-    pub fn with_idle_sleep(mut self, idle_sleep: Duration) -> Self {
-        self.idle_sleep = normalize_idle_sleep(idle_sleep);
-        self
-    }
-}
-
-impl Default for StreamWorkerConfig {
-    fn default() -> Self {
-        Self {
-            idle_sleep: DEFAULT_STREAM_IDLE_SLEEP,
-        }
-    }
-}
-
-pub(super) fn normalize_idle_sleep(idle_sleep: Duration) -> Duration {
-    if idle_sleep.is_zero() {
-        DEFAULT_STREAM_IDLE_SLEEP
-    } else {
-        idle_sleep
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zero_idle_sleep_normalizes_to_default() {
-        assert_eq!(
-            StreamWorkerConfig::default()
-                .with_idle_sleep(Duration::ZERO)
-                .idle_sleep,
-            DEFAULT_STREAM_IDLE_SLEEP
-        );
-        assert_eq!(
-            normalize_idle_sleep(Duration::ZERO),
-            DEFAULT_STREAM_IDLE_SLEEP
-        );
-    }
-}
-
 #[must_use = "stream workers should be stopped explicitly with stop or stop_timeout"]
 pub struct StreamGraphWorker {
     stop: Arc<AtomicBool>,
     stop_requested_at: Arc<Mutex<Option<Instant>>>,
+    /// The graph's clock.
+    clock: Clock,
     last_error: Arc<Mutex<Option<String>>>,
     done: Arc<WorkerDone>,
     wake: HostBridgeHandle,
@@ -126,7 +83,7 @@ impl StreamGraphWorker {
     fn request_stop(&self) {
         self.stop.store(true, Ordering::Release);
         let mut requested_at = self.stop_requested_at.lock();
-        requested_at.get_or_insert_with(Instant::now);
+        requested_at.get_or_insert_with(|| self.clock.now());
         self.wake.wake_inbound_waiters();
     }
 
@@ -190,7 +147,7 @@ impl StreamGraphWorker {
         let stop_requested_elapsed = self
             .stop_requested_at
             .lock()
-            .map(|requested_at| requested_at.elapsed());
+            .map(|requested_at| self.clock.elapsed(requested_at));
         StreamWorkerDiagnostics {
             stop_requested,
             worker_finished,
@@ -217,7 +174,7 @@ impl Drop for StreamGraphWorker {
                 stop_requested_elapsed = ?self
                     .stop_requested_at
                     .lock()
-                    .map(|requested_at| requested_at.elapsed()),
+                    .map(|requested_at| self.clock.elapsed(requested_at)),
                 "dropping stream worker before thread finished; call stop or stop_timeout to observe shutdown completion"
             );
         }
@@ -240,19 +197,12 @@ where
         )
     }
 
-    /// Run `graph` on a dedicated worker thread until stopped.
-    ///
-    /// # Panics
-    ///
-    /// On targets without threads (`daedalus_core::platform::THREADS`); drive the graph with
-    /// [`StreamGraph::poll`] or [`StreamGraph::run_available`] there.
+    /// Run `graph` on a dedicated worker thread until stopped (`threads` feature; without it,
+    /// drive the graph with [`StreamGraph::poll`] or [`StreamGraph::run_available`]).
     pub fn spawn_continuous_with_config(
         graph: SharedStreamGraph<H>,
         config: StreamWorkerConfig,
     ) -> StreamGraphWorker {
-        if !daedalus_core::platform::THREADS {
-            panic!("stream workers need threads; drive the graph with `poll`/`run_available` here");
-        }
         let idle_sleep = normalize_idle_sleep(config.idle_sleep);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
@@ -261,10 +211,14 @@ where
         let worker_error = last_error.clone();
         let done = Arc::new(WorkerDone::default());
         let worker_done = done.clone();
-        let wake = {
+        let (wake, clock) = {
             let guard = graph.lock();
-            guard.bridges.ensure_handle(guard.host_alias.clone())
+            (
+                guard.bridges.ensure_handle(guard.host_alias.clone()),
+                guard.clock.clone(),
+            )
         };
+        let worker_clock = clock.clone();
         let handle = thread::spawn(move || {
             let _done_guard = WorkerDoneGuard { done: worker_done };
             while !worker_stop.load(Ordering::Acquire) {
@@ -278,7 +232,7 @@ where
                             let handle = guard.bridges.ensure_handle(guard.host_alias.clone());
                             pending_before = handle.pending_inbound();
                             if pending_before > 0 {
-                                guard.current_execution_started_at = Some(Instant::now());
+                                guard.current_execution_started_at = Some(worker_clock.now());
                                 guard.executor.take()
                             } else {
                                 None
@@ -289,7 +243,7 @@ where
                 };
                 if let Some(mut executor) = executor {
                     let result = executor.run_in_place();
-                    let finished_at = Instant::now();
+                    let finished_at = worker_clock.now();
                     let mut guard = graph.lock();
                     if let Some(started) = guard.current_execution_started_at.take() {
                         guard.last_execution_duration = Some(finished_at.duration_since(started));
@@ -360,6 +314,7 @@ where
         StreamGraphWorker {
             stop,
             stop_requested_at,
+            clock,
             last_error,
             done,
             wake,

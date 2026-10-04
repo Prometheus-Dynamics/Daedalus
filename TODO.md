@@ -181,21 +181,27 @@ changes.
 Tier 1 (`no_std` + `alloc` core/transport/data/registry/planner, and the `embedded` preset on
 `wasm32-unknown-unknown`) is done; see "Portability" in `docs/development.md`. Next: a `no_std`
 serial executor.
-- [ ] **Lock backend for runtime/engine.** Replace direct `parking_lot` use with a
-      `lock_api`-based alias (`parking_lot` with `std`, `spin`/`critical-section` without).
-- [ ] **Clock injection.** Carry a `Clock` in `EngineConfig`/the executor instead of the global
-      `daedalus_core::platform::set_clock`.
-- [ ] **Non-blocking host bridge.** Make the bridge's `Condvar` waits `std`-only; `no_std` hosts
-      push, poll and await `InboundWaiter`.
-- [ ] **`threads` feature.** Gate the worker pool, stream workers and blocking waits at compile
-      time instead of the runtime `platform::THREADS` checks.
+- [x] **Lock backend for runtime/engine.** `daedalus_runtime::sync`: `parking_lot` with `std`,
+      `spin` (`lock_api`) without; the engine has no direct `parking_lot` dependency.
+- [x] **`threads` feature.** Worker pool, stream workers and blocking waits (`InboundWaiter::wait`,
+      `drive_blocking`, `recv_payload_timeout`, ...) exist only with `threads`; `platform::THREADS`
+      is gone. The bridge's `Condvar` stays (`std`) for those waits.
+- [x] **Clock injection.** `daedalus_core::platform::Clock` on the executor
+      (`with_clock`), `StreamGraph` and `EngineConfig::with_clock`; `set_clock` remains only the
+      fallback for payload lineage and host-bridge event timestamps.
+- [ ] **Non-blocking host bridge without `std`.** With `threads` off the bridge already only pushes,
+      polls and awaits `InboundWaiter`; what is left is building it without `std` (the `Condvar`
+      field and `std::task` wakers) once the runtime has a `std` feature that removes `std`.
+- [ ] **Lineage clock.** Payload lineage (`created_at`) and host-bridge events read the platform
+      clock; `FreshnessPolicy::MaxAge` compares against it. Decide whether bridges take the engine
+      `Clock` (then lineage needs a clock at payload creation).
 - [ ] **`alloc`-only runtime.** `serde_json` const decoding, `tracing` and telemetry without
-      `std`; `libc` only on Linux; then a `daedalus-runtime` `std` feature and a `thumbv7em`
-      check of the serial executor.
+      `std`; `libc` only on Linux; then make the runtime's `std` feature (today only the lock
+      backend) drop `std` for real, and a `thumbv7em` check of the serial executor.
 - [ ] **Targets without compare-and-swap** (`thumbv6m-none-eabi`): `spin` with
       `portable-atomic`, or a `critical-section` lock.
-- [ ] **wasm host glue.** A `wasm-bindgen` example wiring `set_clock` to `performance.now()` and
-      driving a graph from JS; a `wasm32-wasip1` check.
+- [ ] **wasm host glue.** A `wasm-bindgen` example wiring `Clock::new`/`set_clock` to
+      `performance.now()` and driving a graph from JS; a `wasm32-wasip1` check.
 
 ### Low priority
 - [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.

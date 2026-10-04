@@ -16,4 +16,5 @@ crate-type = ["cdylib"]
 doctest = false
 
 [dependencies]
-daedalus = { workspace = true, features = ["embedded"] }
+# `engine` + `plugins`: the `embedded` preset without `threads`, which this target lacks.
+daedalus = { workspace = true, features = ["engine", "plugins"] }

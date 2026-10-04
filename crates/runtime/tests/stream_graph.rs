@@ -1,4 +1,7 @@
-use parking_lot::Mutex;
+//! Stream graphs driven by continuous worker threads.
+#![cfg(feature = "threads")]
+
+use daedalus_runtime::sync::Mutex;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};

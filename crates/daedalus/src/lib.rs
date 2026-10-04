@@ -92,12 +92,14 @@ pub mod prelude {
         RunResult, RuntimeMode, RuntimeSection,
     };
     pub use crate::registry::prelude::*;
+    #[cfg(feature = "threads")]
+    pub use crate::runtime::StreamGraphWorker;
     pub use crate::runtime::{
         DEFAULT_OUTPUT_PORT, ExecutionContext, ExecutionTelemetry, Executor, FanIn,
         HostPortConnection, HostPortDescriptor, HostPortDirection, InboundWait, InboundWaiter,
         MetricsLevel, NodeError, NodeIo, OwnedExecutor, PayloadInspection, PayloadSummary,
-        RuntimePlan, RuntimeTransport, SchedulerConfig, StreamGraph, StreamGraphWorker,
-        TypedInputResolution, TypedInputResolutionKind, build_runtime, graph_builder,
+        RuntimePlan, RuntimeTransport, SchedulerConfig, StreamGraph, TypedInputResolution,
+        TypedInputResolutionKind, build_runtime, graph_builder,
     };
     pub use crate::transport::{
         AccessMode, AdaptKind, AdapterId, AdapterKind, BoundaryPayloadError, Cpu, Device,

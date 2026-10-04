@@ -2,14 +2,14 @@ use super::ExecutorConfigTarget;
 use super::{
     AdaptiveState, CompiledSchedule, ConstInputStore, DirectSlotAccess, ExecuteError,
     ExecutionTelemetry, Executor, ExecutorBuildError, ExecutorCore, ExecutorMaskError,
-    MetricsLevel, NodeHandler, RuntimeDataSizeInspectors, WorkerPool, apply_patch_to_const_inputs,
+    MetricsLevel, NodeHandler, RuntimeDataSizeInspectors, apply_patch_to_const_inputs,
     build_executor_init, node_const_inputs, reset_run_storage, run_adaptive_on, run_parallel_on,
     serial,
 };
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
 use crate::state::{ResourceLifecycleEvent, StateStore};
+use crate::sync::RwLock;
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
-use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -280,8 +280,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     }
 
     /// Start the parallel worker threads now instead of on the first parallel run.
+    #[cfg(feature = "threads")]
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
-        WorkerPool::get_or_init(&self.core.worker_pool, self.parallel_workers()).map(drop)
+        super::WorkerPool::get_or_init(&self.core.worker_pool, self.parallel_workers()).map(drop)
     }
 
     fn parallel_workers(&self) -> usize {
@@ -293,6 +294,18 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
         self.apply_metrics_level(level);
         self
+    }
+
+    /// Read every timing (telemetry, adaptive costs, edge waits) from `clock` instead of the
+    /// platform clock.
+    pub fn with_clock(mut self, clock: daedalus_core::platform::Clock) -> Self {
+        self.apply_clock(clock);
+        self
+    }
+
+    /// The clock this executor's timings read.
+    pub fn clock(&self) -> &daedalus_core::platform::Clock {
+        &self.core.clock
     }
 
     pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
@@ -424,7 +437,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         res
     }
 
-    /// Execute the runtime plan in parallel without rebuilding the executor.
+    /// Execute the runtime plan in parallel without rebuilding the executor (serially without
+    /// the `threads` feature).
     ///
     /// With fail-fast enabled, this stops scheduling new ready segments after the first segment
     /// error. Segments already running still finish before the error is returned.

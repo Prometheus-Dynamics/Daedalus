@@ -3,10 +3,10 @@ use super::{
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
 };
 use crate::state::StateStore;
-use parking_lot::Mutex;
+use crate::sync::Mutex;
+use daedalus_core::platform::Clock;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 pub(crate) struct ExecutorCore {
     pub(crate) state: StateStore,
@@ -22,7 +22,8 @@ pub(crate) struct ExecutorCore {
     /// Workers a parallel run may use (see `resolve_parallel_workers`).
     pub(crate) parallel_workers: usize,
     /// Threads parallel runs fan out to, created on first use and shared by snapshots.
-    pub(crate) worker_pool: Arc<OnceLock<Arc<super::WorkerPool>>>,
+    #[cfg(feature = "threads")]
+    pub(crate) worker_pool: Arc<std::sync::OnceLock<Arc<super::WorkerPool>>>,
     /// Host-bridge nodes resolved when bridges were attached; empty without bridges.
     pub(crate) host_nodes: Arc<[super::serial::HostNodeIo]>,
     pub(crate) const_coercers: Option<crate::io::ConstCoercerMap>,
@@ -37,6 +38,8 @@ pub(crate) struct ExecutorCore {
     /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
     pub(crate) required_inputs: Arc<[super::init::RequiredInputs]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
+    /// Clock behind every timing this executor records (`Executor::with_clock`).
+    pub(crate) clock: Clock,
 }
 
 impl ExecutorCore {
@@ -59,7 +62,8 @@ impl ExecutorCore {
             data_size_inspectors: RuntimeDataSizeInspectors::global(),
             run_config: ExecutorRunConfig::default(),
             parallel_workers: init.parallel_workers,
-            worker_pool: Arc::new(OnceLock::new()),
+            #[cfg(feature = "threads")]
+            worker_pool: Arc::default(),
             host_nodes: Arc::new([]),
             const_coercers: None,
             type_index: None,
@@ -74,6 +78,7 @@ impl ExecutorCore {
                 .collect(),
             required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
+            clock: Clock::default(),
         }
     }
 
@@ -102,10 +107,12 @@ impl ExecutorCore {
             direct_edges: self.direct_edges.clone(),
             direct_slots: self.direct_slots.clone(),
             warnings_seen: self.warnings_seen.clone(),
-            telemetry: ExecutionTelemetry::with_level(self.run_config.metrics_level),
+            telemetry: ExecutionTelemetry::with_level(self.run_config.metrics_level)
+                .with_clock(&self.clock),
             data_size_inspectors: self.data_size_inspectors.clone(),
             run_config: self.run_config.clone(),
             parallel_workers: self.parallel_workers,
+            #[cfg(feature = "threads")]
             worker_pool: self.worker_pool.clone(),
             host_nodes: self.host_nodes.clone(),
             const_coercers: self.const_coercers.clone(),
@@ -117,6 +124,7 @@ impl ExecutorCore {
             node_ids: self.node_ids.clone(),
             required_inputs: self.required_inputs.clone(),
             capabilities: self.capabilities.clone(),
+            clock: self.clock.clone(),
         }
     }
 }

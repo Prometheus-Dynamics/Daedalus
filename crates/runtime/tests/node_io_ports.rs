@@ -6,7 +6,7 @@ use daedalus_runtime::{
 };
 
 struct Handler {
-    seen_ports: std::sync::Arc<parking_lot::Mutex<Vec<String>>>,
+    seen_ports: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
 }
 
 impl NodeHandler for Handler {
@@ -55,7 +55,7 @@ fn node_io_respects_ports_and_policies() {
         },
     );
 
-    let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let seen = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
     let handler = Handler {
         seen_ports: seen.clone(),
     };

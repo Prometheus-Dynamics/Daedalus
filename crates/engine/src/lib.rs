@@ -20,6 +20,7 @@ pub use config::{
     CacheSection, EngineConfig, EngineConfigError, GpuBackend, PlannerSection, RuntimeMode,
     RuntimeSection,
 };
+pub use daedalus_core::platform::Clock;
 pub use daedalus_runtime::MetricsLevel;
 pub use daedalus_runtime::host_bridge::{
     InboundWait, InboundWaiter, PayloadInspection, PayloadSummary,

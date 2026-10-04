@@ -1,6 +1,7 @@
 //! `run_adaptive_in_place` goes parallel only when measured (or hinted) work pays for dispatch.
 //!
 //! A frame counts as serial when every handler ran on the calling thread.
+#![cfg(feature = "threads")]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -9,11 +10,11 @@ use std::time::{Duration, Instant};
 
 use daedalus_data::model::Value;
 use daedalus_planner::{ExecutionPlan, Graph, NodeInstance};
+use daedalus_runtime::sync::Mutex;
 use daedalus_runtime::{
     NODE_COST_META_KEY, NodeError, NodeHandler, OwnedExecutor, RuntimeNode, SchedulerConfig,
     build_runtime,
 };
-use parking_lot::Mutex;
 
 #[derive(Default)]
 struct Probe {

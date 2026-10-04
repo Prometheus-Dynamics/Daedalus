@@ -1,4 +1,3 @@
-use daedalus_core::platform::Instant;
 use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
@@ -547,17 +546,18 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         I: Send + Sync + 'static,
         O: Send + Sync + 'static,
     {
-        let feed_start = Instant::now();
+        let clock = self.runner.executor.clock().clone();
+        let feed_start = clock.now();
         rejected(self.push_as(input_port, type_key, value))?;
-        let feed_duration = feed_start.elapsed();
+        let feed_duration = clock.elapsed(feed_start);
 
-        let run_start = Instant::now();
+        let run_start = clock.now();
         let telemetry = self.run_available()?;
-        let run_duration = run_start.elapsed();
+        let run_duration = clock.elapsed(run_start);
 
-        let drain_start = Instant::now();
+        let drain_start = clock.now();
         let outputs = self.drain_owned(output_port)?;
-        let drain_duration = drain_start.elapsed();
+        let drain_duration = clock.elapsed(drain_start);
 
         Ok(HostGraphStep {
             outputs,

@@ -8,7 +8,7 @@ pub use resources::{
 };
 
 pub use crate::StateError;
-use parking_lot::RwLock;
+use crate::sync::RwLock;
 use resources::{ResourceEntry, ResourceStorage, SharedNodeResources};
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap, hash_map::Entry};
@@ -325,7 +325,7 @@ impl StateStore {
             self.resources
                 .write()
                 .entry(node_id.to_string())
-                .or_insert_with(|| Arc::new(parking_lot::Mutex::new(HashMap::new()))),
+                .or_insert_with(|| Arc::new(crate::sync::Mutex::new(HashMap::new()))),
         )
     }
 

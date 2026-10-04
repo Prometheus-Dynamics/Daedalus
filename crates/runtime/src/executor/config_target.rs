@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::OnceLock;
 
 use super::{
     Executor, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler,
@@ -83,7 +82,16 @@ pub(crate) trait ExecutorConfigTarget {
         let workers = resolve_parallel_workers(size, self.segments_len());
         let core = self.core_mut();
         core.parallel_workers = workers;
-        core.worker_pool = Arc::new(OnceLock::new());
+        #[cfg(feature = "threads")]
+        {
+            core.worker_pool = Arc::default();
+        }
+    }
+
+    fn apply_clock(&mut self, clock: daedalus_core::platform::Clock) {
+        let core = self.core_mut();
+        core.telemetry = std::mem::take(&mut core.telemetry).with_clock(&clock);
+        core.clock = clock;
     }
 
     fn apply_metrics_level(&mut self, level: MetricsLevel) {

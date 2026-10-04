@@ -1,4 +1,4 @@
-use daedalus_core::platform::Instant;
+use daedalus_core::platform::{Clock, Instant};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -69,6 +69,9 @@ pub struct ExecutionTelemetry {
     pub demand: crate::plan::DemandTelemetry,
     #[serde(default, skip_serializing_if = "FfiTelemetryReport::is_empty")]
     pub ffi: FfiTelemetryReport,
+    /// The executor's clock, which lifecycle timestamps and edge timings read.
+    #[serde(skip)]
+    clock: Clock,
     #[serde(skip)]
     lifecycle_origin: Option<Instant>,
     #[serde(skip)]
@@ -88,6 +91,20 @@ impl ExecutionTelemetry {
             lifecycle_origin: (level.is_profile() || level.is_trace()).then(Instant::now),
             ..Default::default()
         }
+    }
+
+    /// Read timestamps from `clock` (the executor's clock).
+    pub(crate) fn with_clock(mut self, clock: &Clock) -> Self {
+        if self.lifecycle_origin.is_some() {
+            self.lifecycle_origin = Some(clock.now());
+        }
+        self.clock = clock.clone();
+        self
+    }
+
+    /// The clock timings are read from.
+    pub fn clock(&self) -> &Clock {
+        &self.clock
     }
 
     pub fn is_lifecycle_enabled(&self) -> bool {
@@ -176,8 +193,8 @@ impl ExecutionTelemetry {
         } else {
             MetricsLevel::Off
         };
-        self.lifecycle_origin =
-            (self.metrics_level.is_profile() || self.metrics_level.is_trace()).then(Instant::now);
+        self.lifecycle_origin = (self.metrics_level.is_profile() || self.metrics_level.is_trace())
+            .then(|| self.clock.now());
         self.node_metrics.clear();
         self.group_metrics.clear();
         self.edge_metrics.clear();
@@ -276,8 +293,9 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_profile() && !self.metrics_level.is_trace() {
             return;
         }
-        let origin = self.lifecycle_origin.get_or_insert_with(Instant::now);
-        let at_ns = origin.elapsed().as_nanos() as u64;
+        let clock = &self.clock;
+        let origin = *self.lifecycle_origin.get_or_insert_with(|| clock.now());
+        let at_ns = clock.elapsed(origin).as_nanos() as u64;
         self.data_lifecycle.push(DataLifecycleEvent {
             correlation_id: record.correlation_id,
             stage: record.stage,
