@@ -174,9 +174,13 @@ changes.
 ### Medium priority
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
-- [ ] **dmabuf: GPU-side fence wait.** The acquire fence is waited on the CPU because wgpu-hal 29
-      cannot add external wait semaphores. Revisit when wgpu exposes it; also queue-family-foreign
-      acquire for compressed modifiers.
+- [x] **dmabuf: GPU-side fence wait.** wgpu 30: the `sync_file` is imported as a `SYNC_FD`
+      semaphore and waited on by the import's acquire submission (`AcquireFenceWait::Gpu`); CPU
+      poll fallback without `VK_KHR_external_semaphore_fd`. Every import does a queue-family-foreign
+      acquire into a known wgpu state (no `UNDEFINED` transition).
+- [ ] **dmabuf: compressed modifiers.** Imports are only validated with modifiers without
+      compression metadata (`LINEAR`, v3dv). Test DCC/CCS modifiers with the foreign acquire
+      (`GENERAL` on arrival), and add a release back to the foreign family if producers need it.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 

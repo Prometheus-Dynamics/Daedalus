@@ -148,8 +148,9 @@ DAEDALUS_DMA_HEAP=/dev/dma_heap/linux,cma CARGO_BUILD_JOBS=4 ./scripts/ci.sh pi
 ```
 
 It runs `cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf` (the
-`#[ignore]`d hardware tests: single-plane import, plane offsets, fences, NV12 in one dmabuf and
-disjoint; NV12 cases the device cannot import print a skip reason) and then
+`#[ignore]`d hardware tests: single-plane import, plane offsets, fences in both wait modes, a late
+fence from another device's GPU job, NV12 in one dmabuf and disjoint; cases the device cannot run
+print a skip reason) and then
 `cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe`.
 
 **Paste back** the `test result:` line of the dmabuf tests (plus any failure or `skipping` output)
@@ -162,6 +163,8 @@ missing hardware; a failed check prints its error in place of the value.
 | `name`, `backend`, `device_type`, `vendor_id`, `device_id` | the adapter `WgpuBackend` selected; on a Pi a V3D adapter on `Vulkan` |
 | `driver`, `driver_info` | Vulkan driver name and Mesa version (e.g. `V3DV Mesa`, `Mesa 25.x`) |
 | `dmabuf_import` | `GpuContextHandle::dmabuf_import_support()`: `supported`, or `unsupported:` with the reason (non-Vulkan adapter, missing extension) |
+| `dmabuf_acquire_fence_wait` | where acquire fences are waited for: `gpu` (imported as a Vulkan semaphore, the import never blocks) or `cpu` (the import polls the `sync_file`) |
+| `VK_KHR_external_semaphore_fd`, `VK_EXT_queue_family_foreign` | whether the device enabled them: the first enables `gpu` fence waits, the second acquires imports from the foreign queue family (otherwise `EXTERNAL`) |
 | `texture_format_nv12` | the device has wgpu `TEXTURE_FORMAT_NV12`; without it NV12 must be imported per plane (`R8` + `GR88`) |
 | `vulkan_api` | Vulkan version the physical device reports |
 | `nv12_modifiers` | DRM modifiers the driver advertises for `G8_B8R8_2PLANE_420_UNORM` (`0x0` is `LINEAR`) |
