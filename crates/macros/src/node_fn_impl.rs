@@ -139,6 +139,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
     };
     let handler::HandlerBuild {
         handler_body,
+        output_keys,
         effective_inputs_for_args,
         arg_types,
         arg_idents,
@@ -412,7 +413,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .map(|ty| {
             quote! {
-                for __port in <#ty as #runtime_crate::config::NodeConfig>::ports() {
+                for __port in <#ty as #runtime_crate::config::NodeConfig>::ports(__types) {
                     __inputs.push(__port);
                 }
             }
@@ -433,6 +434,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         runtime_crate: &runtime_crate,
         output_sources: &output_sources,
         metadata_tokens: &metadata_tokens,
+        data_crate: &data_crate,
     });
 
     let direct_payload_registration =
@@ -464,7 +466,9 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             fn_impl_generics: &fn_impl_generics_ts,
             fn_where_clause: &fn_where_clause_ts,
             runtime_crate: &runtime_crate,
+            data_crate: &data_crate,
             handler_body: &handler_body,
+            output_keys: &output_keys,
             direct_payload_registration: &direct_payload_registration,
         });
 

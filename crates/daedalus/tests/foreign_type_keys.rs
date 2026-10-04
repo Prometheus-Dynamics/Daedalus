@@ -154,6 +154,45 @@ fn unkeyed_foreign_types_fail_loudly() {
     }
 }
 
+#[node(id = "rgb_width", inputs("image"), outputs("width"))]
+fn rgb_width(image: &image::RgbImage) -> Result<u32, NodeError> {
+    Ok(image.width())
+}
+
+#[plugin(id = "unmapped", nodes(rgb_width))]
+struct UnmappedRgbPlugin;
+
+#[plugin(
+    id = "remapped",
+    foreign_types(image::RgbImage = "other:rgb8"),
+    nodes(rgb_width)
+)]
+struct RemappedRgbPlugin;
+
+#[test]
+fn foreign_type_mappings_stay_in_their_registry() {
+    let mut mapped = PluginRegistry::new();
+    mapped.install_plugin(&ImagingPlugin::new()).unwrap();
+    // Another registry neither sees the mapping nor conflicts with it.
+    let err = PluginRegistry::new()
+        .install_plugin(&UnmappedRgbPlugin::new())
+        .unwrap_err();
+    assert!(
+        matches!(err, PluginError::UnkeyedForeignType { .. }),
+        "{err}"
+    );
+    let mut remapped = PluginRegistry::new();
+    remapped.install_plugin(&RemappedRgbPlugin::new()).unwrap();
+    assert_eq!(
+        port_key(&remapped, "remapped:rgb_width", "image"),
+        TypeKey::new("other:rgb8")
+    );
+    assert_eq!(
+        port_key(&mapped, "imaging:rgb_len", "image"),
+        TypeKey::new("image:rgb8")
+    );
+}
+
 #[test]
 fn one_key_names_one_rust_type() {
     struct Left;

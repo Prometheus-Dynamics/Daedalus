@@ -695,7 +695,7 @@ fn type_key_macro_registers_opaque_type() {
         .expect("register type");
 
     assert_eq!(
-        daedalus::data::typing::type_expr::<TestFrame>(),
+        registry.type_registry.type_expr::<TestFrame>(),
         daedalus::data::model::TypeExpr::opaque("test:frame")
     );
     assert_eq!(
@@ -725,7 +725,7 @@ fn plugin_attr_installs_adapt_macro_adapters() {
         .expect("adapter path");
     assert_eq!(path.steps[0].as_str(), "test.i32_to_string");
     assert_eq!(
-        daedalus::data::typing::type_expr::<TestFrame>(),
+        registry.type_registry.type_expr::<TestFrame>(),
         daedalus::data::model::TypeExpr::opaque("test:frame")
     );
     assert!(

@@ -6,7 +6,7 @@ use crate::helpers::{
     DaedalusCrate, NestedMeta, SerdeRenameAll, compile_error, parse_nested, parse_serde_rename_all,
     serde_name_for_ident, str_expr,
 };
-use crate::type_expr::{GenericParams, TypeExprOptions};
+use crate::type_expr::{GenericParams, TypeExprOptions, bind_types};
 
 fn parse_type_key(attrs: &[syn::Attribute]) -> Result<Option<Expr>, proc_macro2::TokenStream> {
     for attr in attrs {
@@ -146,10 +146,13 @@ pub fn daedalus_type_expr(item: TokenStream) -> TokenStream {
             }
         }
     });
+    // Field types without a key of their own resolve through no registry (builtins, else `rust:`).
+    let bind = bind_types(quote! { #data_crate::typing::TypeRegistry::empty() });
     let expanded = quote! {
         impl #data_crate::daedalus_type::DaedalusTypeExpr for #name {
             const TYPE_KEY: &'static str = #type_key_tokens;
             fn type_expr() -> #data_crate::model::TypeExpr {
+                #bind
                 #type_expr_body
             }
             #visit_dependencies

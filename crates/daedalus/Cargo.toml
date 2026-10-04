@@ -169,6 +169,11 @@ path = "tests/enum_config_ports.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
+name = "macro_hot_path_allocations"
+path = "tests/macro_hot_path_allocations.rs"
+required-features = ["engine", "plugins"]
+
+[[test]]
 name = "registry_type_index"
 path = "tests/registry_type_index.rs"
 required-features = ["engine", "plugins"]

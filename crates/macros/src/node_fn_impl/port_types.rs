@@ -14,7 +14,7 @@ use super::type_analysis::{contract_type_for, node_type_leaves, payload_value_ty
 use crate::helpers::{
     any_token, const_coercer_registration, generic_arg, last_ident_is, strip_ref,
 };
-use crate::type_expr::{leaf_declared_key, leaf_type_key};
+use crate::type_expr::{bind_types, leaf_declared_key, leaf_type_key};
 
 pub(super) struct PortTypeInputs<'a> {
     /// Low-level and generic nodes declare no Rust port types.
@@ -74,16 +74,20 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
     }
     let stmts = ports.into_iter().flat_map(|(name, type_key, typed, ty)| {
         let register = |ty: &syn::Type, key: TokenStream, declared: TokenStream| {
+            let bind = bind_types(quote! { &into.type_registry });
             quote! {
-                into.register_port_type::<#ty>(
-                    #runtime_crate::plugins::PortTypeUse {
-                        owner: node,
-                        port: #name,
-                        defined_in: ::core::module_path!(),
-                    },
-                    #key,
-                    #declared,
-                )?;
+                {
+                    let __key = { #bind #key };
+                    into.register_port_type::<#ty>(
+                        #runtime_crate::plugins::PortTypeUse {
+                            owner: node,
+                            port: #name,
+                            defined_in: ::core::module_path!(),
+                        },
+                        __key,
+                        #declared,
+                    )?;
+                }
             }
         };
         match type_key {

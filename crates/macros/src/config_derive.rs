@@ -143,7 +143,9 @@ pub fn node_config(item: TokenStream) -> TokenStream {
 
     TokenStream::from(quote! {
         impl #impl_generics #runtime_crate::config::NodeConfig for #struct_ident #ty_generics #where_clause {
-            fn ports() -> Vec<#registry_crate::capability::PortDecl> {
+            fn ports(
+                __types: &#data_crate::typing::TypeRegistry,
+            ) -> Vec<#registry_crate::capability::PortDecl> {
                 vec![#(#ports_tokens),*]
             }
 

@@ -38,6 +38,7 @@ pub mod derive_support {
 
     use super::{DaedalusTypeExpr, DaedalusTypeVisitor};
     use crate::model::{TypeExpr, Value};
+    use crate::typing::TypeRegistry;
 
     /// Index of the unit variant `value` names among `names`: a name (case-insensitive) as
     /// `Value::String` or a payload-free `Value::Enum`, or an index as `Value::Int`.
@@ -58,13 +59,14 @@ pub mod derive_support {
     ///
     /// - `visit_into(v)` visits `T` (or nothing);
     /// - `declared_key()` is the key `T` owns (or `None`);
-    /// - `leaf_type_expr()` is `Opaque(T::TYPE_KEY)`, resolved at compile time so it does not
-    ///   depend on registration order, or [`crate::typing::type_expr`] for types without one.
+    /// - `leaf_type_expr(types)` is `Opaque(T::TYPE_KEY)`, resolved at compile time so it does
+    ///   not depend on registration order, or `types.type_expr::<T>()` (the installing
+    ///   registry's mapping, a builtin, or the `rust:` fallback) for types without one.
     pub struct Probe<T>(pub PhantomData<T>);
 
     pub trait KeyedLeaf {
         fn declared_key(&self) -> Option<&'static str>;
-        fn leaf_type_expr(&self) -> TypeExpr;
+        fn leaf_type_expr(&self, types: &TypeRegistry) -> TypeExpr;
     }
 
     impl<T: DaedalusTypeExpr> KeyedLeaf for Probe<T> {
@@ -72,7 +74,7 @@ pub mod derive_support {
             Some(T::TYPE_KEY)
         }
 
-        fn leaf_type_expr(&self) -> TypeExpr {
+        fn leaf_type_expr(&self, _types: &TypeRegistry) -> TypeExpr {
             TypeExpr::Opaque(T::TYPE_KEY.to_string())
         }
     }
@@ -82,12 +84,12 @@ pub mod derive_support {
             None
         }
 
-        fn leaf_type_expr(&self) -> TypeExpr;
+        fn leaf_type_expr(&self, types: &TypeRegistry) -> TypeExpr;
     }
 
     impl<T: 'static> RegistryLeaf for &Probe<T> {
-        fn leaf_type_expr(&self) -> TypeExpr {
-            crate::typing::type_expr::<T>()
+        fn leaf_type_expr(&self, types: &TypeRegistry) -> TypeExpr {
+            types.type_expr::<T>()
         }
     }
 
@@ -147,15 +149,26 @@ mod tests {
     #[allow(clippy::needless_borrow)]
     fn probe_prefers_the_declared_key_over_the_registry() {
         struct Unkeyed;
+        let mut types = crate::typing::TypeRegistry::new();
+        types
+            .register_type::<Keyed>(TypeExpr::opaque("test:elsewhere"))
+            .unwrap();
+        types
+            .register_type::<Unkeyed>(TypeExpr::opaque("test:mapped"))
+            .unwrap();
         let keyed = &Probe::<Keyed>(PhantomData);
         assert_eq!(keyed.declared_key(), Some("test:keyed"));
-        assert_eq!(keyed.leaf_type_expr(), TypeExpr::opaque("test:keyed"));
+        assert_eq!(keyed.leaf_type_expr(&types), TypeExpr::opaque("test:keyed"));
         let unkeyed = &Probe::<Unkeyed>(PhantomData);
         assert_eq!(unkeyed.declared_key(), None);
         assert_eq!(
-            unkeyed.leaf_type_expr(),
-            crate::typing::type_expr::<Unkeyed>()
+            unkeyed.leaf_type_expr(&types),
+            TypeExpr::opaque("test:mapped")
         );
+        assert!(matches!(
+            unkeyed.leaf_type_expr(crate::typing::TypeRegistry::empty()),
+            TypeExpr::Opaque(key) if key.starts_with("rust:")
+        ));
     }
 
     #[test]
