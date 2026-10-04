@@ -202,6 +202,22 @@ pub struct RuntimeNode {
 }
 
 impl RuntimeNode {
+    /// A CPU node `id` with its stable id and nothing else (for running a handler outside a
+    /// compiled plan).
+    pub fn new(id: impl Into<String>) -> Self {
+        let id = id.into();
+        Self {
+            stable_id: daedalus_core::stable_id::stable_id128("node", &id),
+            id,
+            bundle: None,
+            label: None,
+            compute: ComputeAffinity::CpuOnly,
+            const_inputs: Vec::new(),
+            sync_groups: Vec::new(),
+            metadata: Default::default(),
+        }
+    }
+
     /// Host bridge alias of this node: its label, or its id when unlabeled.
     pub fn host_alias(&self) -> &str {
         self.label.as_deref().unwrap_or(&self.id)

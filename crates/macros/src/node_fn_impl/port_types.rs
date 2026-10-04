@@ -48,11 +48,16 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
         .collect();
     let mut ports: Vec<(&LitStr, Option<&LitStr>, bool, &syn::Type)> = Vec::new();
     let mut foreign_views = Vec::new();
+    let mut stable_ports = Vec::new();
     if !skip {
         for (port, raw_ty) in effective_inputs_for_args.iter().zip(arg_types) {
             if crate::foreign_type::is_foreign_view(raw_ty) {
                 foreign_views.push(quote! { into.register_foreign_port::<#raw_ty>()?; });
                 continue;
+            }
+            let fanin = generic_arg(strip_ref(raw_ty), "FanIn", 0);
+            if let Some(ty) = fanin.or_else(|| stable_port_type(raw_ty)) {
+                stable_ports.push(stable_port_registration(&port.name, ty, runtime_crate));
             }
             if let Some(ty) = coerced_input_type(raw_ty) {
                 coercions.push(const_coercer_registration(ty, &coercers, runtime_crate));
@@ -68,6 +73,13 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
             }
         }
         for (port, ty) in outputs.iter().zip(output_contract_tys) {
+            if let Some(value_ty) = stable_port_type(ty) {
+                stable_ports.push(stable_port_registration(
+                    &port.name,
+                    value_ty,
+                    runtime_crate,
+                ));
+            }
             let typed = port.ty_override.is_some();
             ports.push((&port.name, port.type_key.as_ref(), typed, ty));
         }
@@ -115,9 +127,46 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
         ) -> #runtime_crate::plugins::PluginResult<()> {
             #(#stmts)*
             #(#foreign_views)*
+            #(#stable_ports)*
             #(#coercions)*
             let _ = (into, node);
             Ok(())
+        }
+    }
+}
+
+/// The value type a port carries when the stable plugin path can convert it (see
+/// `PluginRegistry::register_stable_port`): references, `Option` and payload wrappers peeled,
+/// and only sized, lifetime-free Rust types (no `Payload`, `NodeIo`, ... parameters).
+fn stable_port_type(raw_ty: &syn::Type) -> Option<&syn::Type> {
+    contract_type_for(raw_ty)?;
+    let ty = payload_value_type(raw_ty);
+    coercible(ty).then_some(ty)
+}
+
+/// Record port `port`'s codec for `ty` (a no-op unless the registry records stable codecs).
+fn stable_port_registration(
+    port: &LitStr,
+    ty: &syn::Type,
+    runtime_crate: &TokenStream,
+) -> TokenStream {
+    let support = quote! { #runtime_crate::const_coerce::derive_support };
+    quote! {
+        {
+            // Only the trait matching each probe is used; which one depends on the type.
+            #[allow(unused_imports)]
+            use #support::{
+                NoSchemaCoerce as _, NoSerdeCoerce as _, NoToValueProbe as _,
+                SchemaCoerce as _, SerdeCoerce as _, ToValueProbe as _,
+            };
+            let __probe = &#support::Probe::<#ty>(::core::marker::PhantomData);
+            into.register_stable_port::<#ty>(
+                node,
+                #port,
+                __probe.schema_coercer(),
+                __probe.serde_coercer(),
+                __probe.value_encoder(),
+            );
         }
     }
 }

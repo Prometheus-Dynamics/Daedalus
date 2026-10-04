@@ -100,7 +100,8 @@ fn serde_json_of(value: &Value) -> JsonValue {
 pub mod derive_support {
     use core::marker::PhantomData;
 
-    use super::{CoerceFn, DaedalusTypeExpr, DeserializeOwned, deserialize_value};
+    use super::{CoerceFn, DaedalusTypeExpr, DeserializeOwned, Value, deserialize_value};
+    use daedalus_data::to_value::ToValue;
 
     /// Autoref-specialization probe: `(&Probe::<T>(PhantomData)).schema_coercer()` is
     /// `Some(T::from_value)` when `T: DaedalusTypeExpr`, `serde_coercer()` is `Some` when
@@ -142,6 +143,26 @@ pub mod derive_support {
     }
 
     impl<T> NoSerdeCoerce<T> for &Probe<T> {}
+
+    /// `(&Probe::<T>(PhantomData)).value_encoder()` is `Some(T::to_value)` when `T: ToValue`,
+    /// else `None`.
+    pub trait ToValueProbe<T> {
+        fn value_encoder(&self) -> Option<fn(&T) -> Value>;
+    }
+
+    impl<T: ToValue> ToValueProbe<T> for Probe<T> {
+        fn value_encoder(&self) -> Option<fn(&T) -> Value> {
+            Some(T::to_value)
+        }
+    }
+
+    pub trait NoToValueProbe<T> {
+        fn value_encoder(&self) -> Option<fn(&T) -> Value> {
+            None
+        }
+    }
+
+    impl<T> NoToValueProbe<T> for &Probe<T> {}
 
     /// `(&Probe::<T>(PhantomData)).cloner()` is `Some(T::clone)` when `T: Clone`, else `None`.
     pub trait CloneProbe<T> {

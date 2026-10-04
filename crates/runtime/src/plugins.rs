@@ -37,12 +37,14 @@ mod install;
 mod registry_admin;
 mod registry_transport;
 mod requirements;
+mod stable_codecs;
 
 pub use adapters::{SmartAdapter, TransportAdapterOptions};
 pub use boundary_types::{BoundaryTypeConflict, ExternalTypeRef, PortTypeUse};
 pub use context::{PluginGroup, PluginInstallContext, PluginInstallable};
 pub use install::install_all;
 use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
+pub use stable_codecs::{StableCodec, StableDecodeFn, StableEncodeFn};
 
 pub const BUILTIN_PRIMITIVE_TYPES_ID: &str = "daedalus.builtin.primitive_types";
 pub const BUILTIN_PRIMITIVE_SERIALIZERS_ID: &str = "daedalus.builtin.primitive_serializers";
@@ -340,6 +342,9 @@ pub struct PluginRegistry {
     /// `Some` while extracting a dynamic plugin's schema: unkeyed foreign port types are
     /// recorded here instead of failing (see [`PluginRegistry::record_external_types`]).
     external_types: Option<Vec<ExternalTypeRef>>,
+    /// `Some` in a dynamic plugin's stable `invoke` registry: node port codecs (see
+    /// [`PluginRegistry::record_stable_codecs`]).
+    stable_codecs: Option<stable_codecs::StableCodecMap>,
     pub current_prefix: Option<String>,
     pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,
