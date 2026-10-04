@@ -32,20 +32,23 @@ builders must provide explicit package descriptors for node declarations.
 
 ## Port Types
 
-The header's `PackageBuilder` types ports from a node's C++ signature when the registration passes
-`daedalus::signature<F>()`. Place the macro after the function and use `decltype`, or spell the
-function type out:
+`DAEDALUS_NODE(fn, inputs(...), outputs(...), options...)` registers function `fn` as node `fn`
+and types every port from `decltype(&fn)`, so place it after the function:
 
 ```cpp
 std::int32_t add(std::int32_t a, std::int32_t b) { return a + b; }
-DAEDALUS_NODE(add, inputs(a, b), outputs(out), daedalus::signature<decltype(add)>())
+DAEDALUS_NODE(add, inputs(a, b), outputs(out))
 
-DAEDALUS_NODE(scale, inputs(value), outputs(out), daedalus::signature<std::uint32_t(std::uint32_t)>())
+std::tuple<std::int64_t, std::int64_t> split(std::int64_t value) { return {value, -value}; }
+DAEDALUS_NODE(split, inputs(value), outputs(positive, negative))
 ```
 
-Parameters type the inputs in order (trailing state or `EventContext` parameters are ignored), a
-`std::tuple` return types each output, any other return types the single output, and a
-`daedalus::Outputs` return leaves outputs untyped. The `daedalus::TypeExprOf<T>` trait maps:
+The first `inputs(...)` parameters type the inputs in order (trailing state or `EventContext`
+parameters are not ports), a `std::tuple` return types each output, `void` none, and any other
+return type the single output. A port type with no mapping, more inputs than parameters, or an
+output count that does not match the return type is a compile error (`static_assert`). The
+`DAEDALUS_STATEFUL_NODE`, `DAEDALUS_CAPABILITY_NODE` and `DAEDALUS_GPU_NODE` variants take the
+same arguments plus their state type or capability name. The `daedalus::TypeExprOf<T>` trait maps:
 
 | C++ | Daedalus |
 | --- | --- |
@@ -56,13 +59,20 @@ Parameters type the inputs in order (trailing state or `EventContext` parameters
 | `std::string`, `std::string_view` | `String` |
 | `std::vector<std::uint8_t>`, `BytesView` family, `Rgba8Image` family | `Bytes` |
 | `void`, `daedalus::Unit` | `Unit` |
-| `std::optional<T>` / `std::vector<T>` / `std::map<K, V>` / `std::tuple<Ts...>` | `Optional` / `List` / `Map` / `Tuple` |
-| type with `static constexpr const char* daedalus_type_key` | `Opaque(key)` |
+| `std::optional<T>` / `std::vector<T>`, `std::span<T>` / `std::map<K, V>` / `std::tuple<Ts...>` | `Optional` / `List` / `Map` / `Tuple` |
+| type with `static constexpr const char* daedalus_type_key`, or `DAEDALUS_TYPE_KEY(T, key)` | `Opaque(key)` |
 
 Integers map by size and signedness, so `long long`, `char` and `std::size_t` take the matching
-fixed width (`size_t` is `U64` on 64-bit targets). Unmapped types fail descriptor generation;
-specialize `daedalus::TypeExprOf<T>` for them. Nodes registered without a signature have no type
-information: ports named `payload`, `frame`, `blob` or `rgba8` are `Bytes` and the rest `Int`.
+fixed width (`size_t` is `U64` on 64-bit targets). For other types (structs, enums), place
+`DAEDALUS_TYPE_KEY(T, "key")` after the type in its namespace, add the member key, or specialize
+`daedalus::TypeExprOf<T>`.
+
+## Wire Values
+
+`daedalus::to_wire(value)` and `daedalus::from_wire<T>(json)` convert scalar port values (`bool`,
+integers, floats, strings) to and from `WireValue` JSON. 64-bit unsigned integers are
+`{"kind":"uint"}`, so values above `INT64_MAX` cross the wire exactly; `from_wire` range-checks
+integers against `T` and throws `std::out_of_range` when they do not fit.
 
 ## Current Status
 
