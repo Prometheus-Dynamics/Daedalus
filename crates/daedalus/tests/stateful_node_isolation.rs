@@ -33,7 +33,10 @@ fn weighted_sum(value: &i64, weight: &i64, state: &mut CounterState) -> Result<i
     Ok(state.value)
 }
 
-#[plugin(id = "test.stateful_node_isolation", nodes(stateful_counter, weighted_sum))]
+#[plugin(
+    id = "test.stateful_node_isolation",
+    nodes(stateful_counter, weighted_sum)
+)]
 struct StatefulPlugin;
 
 fn compile_counter_graph() -> HostGraph<HandlerRegistry> {

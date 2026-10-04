@@ -101,7 +101,10 @@ fn builtin_numbers_have_one_key_per_rust_type() {
         Payload::owned(i64_key.clone(), 7_i32),
         &i64_key,
     );
-    assert!(wrong_type.is_err(), "a branch adapter only takes its own Rust type");
+    assert!(
+        wrong_type.is_err(),
+        "a branch adapter only takes its own Rust type"
+    );
 
     let widened = adapt(
         "daedalus.builtin.widen.i32_to_i64",

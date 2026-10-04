@@ -126,7 +126,9 @@ fn narrowing_is_rejected_at_plan_time() {
         .and_then(|b| b.try_connect(&inc.outputs.out, "out"))
         .expect("wire graph")
         .build();
-    let err = compile(&registry, graph).err().expect("i64 -> i32 must fail");
+    let err = compile(&registry, graph)
+        .err()
+        .expect("i64 -> i32 must fail");
     let message = err.to_string();
     assert!(message.contains("i64 -> i32 is not lossless"), "{message}");
 }
@@ -151,15 +153,26 @@ fn scale_graph(factor: i64, gain: Value) -> Result<HostGraph<HandlerRegistry>, E
 fn constants_take_the_ports_exact_width() {
     // `Value::Int` converts to `u8`, and to `f64` when it represents it exactly.
     let mut host = scale_graph(3, Value::Int(2)).expect("compile");
-    assert_eq!(host.run_once::<_, f64>(("x", 7_i64), "out").unwrap(), [42.0]);
+    assert_eq!(
+        host.run_once::<_, f64>(("x", 7_i64), "out").unwrap(),
+        [42.0]
+    );
 
     let err = scale_graph(300, Value::Float(1.0))
         .err()
         .expect("300 does not fit u8");
     let message = err.to_string();
     assert!(message.contains("const input `factor`"), "{message}");
-    assert!(message.contains("300 is out of range for u8 (0..=255)"), "{message}");
+    assert!(
+        message.contains("300 is out of range for u8 (0..=255)"),
+        "{message}"
+    );
 
-    let err = scale_graph(3, Value::Bool(true)).err().expect("not a number");
-    assert!(err.to_string().contains("expected a number for f64"), "{err}");
+    let err = scale_graph(3, Value::Bool(true))
+        .err()
+        .expect("not a number");
+    assert!(
+        err.to_string().contains("expected a number for f64"),
+        "{err}"
+    );
 }

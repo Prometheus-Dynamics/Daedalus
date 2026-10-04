@@ -45,7 +45,8 @@ impl<C: NodeConfig> ConfigCache<C> {
             });
         if !unchanged {
             self.value = None;
-            let invalid = |err: crate::config::ConfigError| NodeError::InvalidInput(err.to_string());
+            let invalid =
+                |err: crate::config::ConfigError| NodeError::InvalidInput(err.to_string());
             let sanitized = C::from_io(io)?.sanitize().map_err(invalid)?;
             if !sanitized.changes.is_empty() {
                 log_config_changes(node_id, &sanitized.changes);
@@ -122,7 +123,10 @@ mod tests {
     use crate::handles::PortId;
 
     fn io_with(port: &'static str, payload: &Payload) -> NodeIo {
-        let input = (PortId::from_static(port), CorrelatedPayload::from_edge(payload.clone()));
+        let input = (
+            PortId::from_static(port),
+            CorrelatedPayload::from_edge(payload.clone()),
+        );
         NodeIo::from_inputs([input])
     }
 
@@ -192,7 +196,10 @@ mod tests {
         assert_eq!(cached, again, "same payload: not decoded again");
 
         decoded.refresh::<String>(&io_with("label", &second), "label");
-        assert_eq!(decoded.get::<String>("label").map(String::as_str), Some("b"));
+        assert_eq!(
+            decoded.get::<String>("label").map(String::as_str),
+            Some("b")
+        );
 
         decoded.refresh::<String>(&NodeIo::empty(), "label");
         assert_eq!(decoded.get::<String>("label"), None);

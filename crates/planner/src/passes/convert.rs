@@ -100,7 +100,9 @@ pub(super) fn convert(
             feats.join(",")
         };
         let numeric_hint = match (&out_ty, &in_ty) {
-            (TypeExpr::Scalar(from), TypeExpr::Scalar(to)) if from.is_numeric() && to.is_numeric() => {
+            (TypeExpr::Scalar(from), TypeExpr::Scalar(to))
+                if from.is_numeric() && to.is_numeric() =>
+            {
                 format!(
                     "; {} -> {} is not lossless on every target, so it is never converted \
                      implicitly: convert in the producer, change a port type, or register an adapter",

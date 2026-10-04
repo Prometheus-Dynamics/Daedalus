@@ -110,7 +110,10 @@ impl PluginRegistry {
             options,
             move |payload, _request| match payload.get_ref::<S>() {
                 Some(value) => Ok(Payload::owned(to_key.clone(), T::from(*value))),
-                None => Err(TransportError::type_mismatch::<S>(from_key.clone(), &payload)),
+                None => Err(TransportError::type_mismatch::<S>(
+                    from_key.clone(),
+                    &payload,
+                )),
             },
         )?;
         manifest.provided_adapters.push(AdapterId::new(id));

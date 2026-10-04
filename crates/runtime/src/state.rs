@@ -14,13 +14,16 @@ use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::sync::Arc;
 
+/// A node's typed state slot: node id and state type.
+type NodeStateKey = (Arc<str>, TypeId);
+
 /// Shared runtime state store keyed by node id.
 #[derive(Default, Clone)]
 pub struct StateStore {
     inner: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     native: Arc<RwLock<HashMap<String, Box<dyn Any + Send + Sync>>>>,
     /// Per-node typed state (`#[node(state(..))]`), keyed by node id and state type.
-    node_state: Arc<RwLock<HashMap<(Arc<str>, TypeId), Box<dyn Any + Send + Sync>>>>,
+    node_state: Arc<RwLock<HashMap<NodeStateKey, Box<dyn Any + Send + Sync>>>>,
     resources: Arc<RwLock<HashMap<String, SharedNodeResources>>>,
     custom_metrics:
         Arc<RwLock<HashMap<String, BTreeMap<String, crate::executor::CustomMetricValue>>>>,

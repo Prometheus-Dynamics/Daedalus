@@ -443,7 +443,10 @@ mod tests {
             Some(vec![1, 2, 3])
         );
         assert_eq!(coerce_builtin_const_value::<f64>(&Value::Int(2)), Some(2.0));
-        assert_eq!(coerce_builtin_const_value::<f32>(&Value::Float(1e300)), None);
+        assert_eq!(
+            coerce_builtin_const_value::<f32>(&Value::Float(1e300)),
+            None
+        );
         assert_eq!(
             coerce_builtin_const_value::<f32>(&Value::Int((1 << 24) + 1)),
             None
