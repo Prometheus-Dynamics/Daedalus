@@ -160,11 +160,15 @@ fn call_site(trace: &str) -> String {
 /// metadata-only adapter results, one built-in branch for the fanned-out `count`, and the host's
 /// frame (one, it is `Arc`-shared).
 const PAYLOAD_ALLOCATIONS: f64 = 10.0 * 2.0 + 4.0 + 2.0 * 2.0 + 2.0 + 1.0;
+/// The one allocation a handler makes: `exposure` takes its `String` constant by value, so it
+/// gets a clone of the decoded string (its serde enum constant is decoded once and copied).
+const OWNED_STRING_CLONE: f64 = 1.0;
 /// Serial budget: handlers (generated code included: stateful nodes keep their state in a
-/// per-node slot, and configs, including `track`'s serde enum and `String` fields, are decoded
-/// once and borrowed from a per-node cache) allocate nothing themselves, so everything beyond
-/// the payloads is runtime bookkeeping, which must stay at zero.
-const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS;
+/// per-node slot, and configs, including `track`'s serde enum and `String` fields, and constants
+/// are decoded once into a per-node cache that `&T` parameters borrow and owned ones clone)
+/// allocate nothing else, so everything beyond the payloads is runtime bookkeeping, which must
+/// stay at zero.
+const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
 /// Basic metrics return each tick's per-node metrics in one fresh vector.
 const BASIC_METRICS_ALLOCATIONS: f64 = 1.0;
 /// Parallel frames fan out to persistent workers (Rayon with `executor-pool`, parked threads

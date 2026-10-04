@@ -22,6 +22,7 @@ members = [
     "examples",
     "examples/plugins/math",
     "examples/plugins/example_project",
+    "examples/plugins/example_project_dylib",
     "examples/plugins/foreign_consumer",
     "examples/plugins/dependent",
     "examples/plugins/framelease",
@@ -130,6 +131,10 @@ allowed_manifest_exceptions = [
 # debug info and stripping the shared objects keeps the debug `.so`s small and quick to link; it
 # does not affect the rustc/build-fingerprint checks the loader performs.
 [profile.dev.package.daedalus-plugins-example-project]
+debug = 0
+strip = "debuginfo"
+
+[profile.dev.package.daedalus-plugins-example-project-dylib]
 debug = 0
 strip = "debuginfo"
 

@@ -699,6 +699,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-plugins-example-project-dylib"
+version = "2.0.0"
+dependencies = [
+ "daedalus-plugins-example-project",
+ "daedalus-rs",
+]
+
+[[package]]
 name = "daedalus-plugins-foreign-consumer"
 version = "2.0.0"
 dependencies = [

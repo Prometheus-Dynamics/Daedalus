@@ -364,4 +364,33 @@ mod tests {
         );
         assert_eq!(lock.artifacts.len(), 3);
     }
+
+    /// Compiles and runs `sdk/tests/sdk_descriptor.cpp` (descriptor shape and width-exact port
+    /// types); skipped when no C++20 compiler is installed.
+    #[test]
+    fn cpp_sdk_descriptor_test_passes() {
+        use std::process::Command;
+        let cxx = std::env::var("CXX").unwrap_or_else(|_| "c++".into());
+        if Command::new(&cxx).arg("--version").output().is_err() {
+            return;
+        }
+        let sdk = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sdk");
+        let binary = std::env::temp_dir().join(format!("daedalus-cpp-sdk-{}", std::process::id()));
+        let compiled = Command::new(&cxx)
+            .arg("-std=c++20")
+            .arg("-I")
+            .arg(sdk.join("include"))
+            .arg(sdk.join("tests/sdk_descriptor.cpp"))
+            .arg("-o")
+            .arg(&binary)
+            .status()
+            .expect("spawn C++ compiler");
+        assert!(
+            compiled.success(),
+            "C++ SDK descriptor test failed to compile"
+        );
+        let ran = Command::new(&binary).status().expect("run C++ SDK test");
+        let _ = std::fs::remove_file(&binary);
+        assert!(ran.success(), "C++ SDK descriptor test failed");
+    }
 }

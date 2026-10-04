@@ -233,6 +233,8 @@ Inference target:
 
 - infer scalar, record struct, enum, optional, list, map, tuple-equivalent, and unit-like values
   from reflection/annotation processing
+- scalars are width-exact (`int` is `I32`, `long` is `Int`, `float` is `F32`, `char` is `U16`);
+  unsigned widths use `@Scalar("u32")` and similar (see `java/README.md`)
 - require explicit annotations for port names, config defaults, custom serializers, state class,
   type keys, boundary contracts, package artifacts, classpath, and native library metadata
 
@@ -279,7 +281,9 @@ DAEDALUS_PLUGIN(ffi_showcase, add_i64, split_i64, accum_i64);
 
 Inference target:
 
-- infer simple scalar ABI shapes and registered structs from macros/templates
+- infer simple scalar ABI shapes and registered structs from macros/templates; a
+  `daedalus::signature<F>()` registration option types ports width-exactly from the function type
+  (`std::int32_t` is `I32`, `std::uint64_t` is `U64`, `float` is `F32`; see `cpp/README.md`)
 - require explicit declarations for ownership, pointer/length payloads, state allocation,
   serializers, boundary contracts, package artifacts, and ABI version metadata
 

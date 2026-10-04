@@ -241,11 +241,12 @@ enum) are used as they are.
 A constant is the same payload on every tick until a patch replaces it, so generated handlers
 convert it once and keep the result in the node's state slot (`daedalus_runtime::const_cache`):
 a config struct is built, sanitized and validated again only when one of its input payloads
-changes (sanitization warnings are logged once per change), and a `&T` parameter borrows its
-converted constant. Take the config as `&Config` to borrow it (by value, it is cloned: a
-`String` field then allocates per call), and a converted input as `&T`; an owned `T` parameter
-fed a constant converts it on every call. `#[derive(NodeConfig)]` types must be
-`Clone + Send + Sync + 'static`.
+changes (sanitization warnings are logged once per change), a `&T` parameter borrows its
+converted constant, and an owned `T` (or `Option<T>`) parameter gets a clone of it when `T` is
+`Clone` (an owned `T` that is not `Clone` is converted on every call; builtin scalars always
+convert directly, which allocates nothing). Take the config as `&Config` and a converted input as
+`&T` to avoid the clone (by value, a `String` field or input allocates per call).
+`#[derive(NodeConfig)]` types must be `Clone + Send + Sync + 'static`.
 
 ```rust
 #[derive(Clone, Copy, Debug, daedalus::DaedalusTypeExpr)]

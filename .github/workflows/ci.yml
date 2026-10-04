@@ -54,6 +54,11 @@ jobs:
       - name: Check all features
         run: cargo check --workspace --all-targets --all-features
 
+      # `check` does not link: this catches `cdylib` plugins whose exported symbols clash under
+      # feature unification.
+      - name: Build all features
+        run: cargo build --workspace --lib --all-features
+
       - name: Check minimal facade surface
         run: cargo check -p daedalus-rs --no-default-features
 

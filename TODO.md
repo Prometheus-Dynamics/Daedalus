@@ -85,6 +85,9 @@ changes.
       `ValueType` and key, the planner inserts lossless widening adapters (`i32 -> i64`,
       `f32 -> f64`, ...) and rejects narrowing at plan time, and constants are range-checked
       against the port's exact width. See "Builtin Numbers" in `docs/node-authoring.md`.
+- [x] **Direct routes deliver const inputs.** The single-node direct route (`run_direct_once`,
+      lanes, `tick_direct_*`) skipped const inputs, so constants, port defaults and config fields
+      were `missing`; it now delivers them like a scheduled tick (`tests/direct_const_inputs.rs`).
 - [x] **Typed nodes with three reference parameters.** `fn(&A, &B, &mut State)` was taken for
       the low-level `(node, ctx, io)` form; the form is now recognized by parameter types.
 
@@ -98,6 +101,12 @@ changes.
       `StateStore` slots instead of formatting a key per call, and configs and `&T` constants are
       decoded once per change (`daedalus_runtime::const_cache`), so the detector graph frame is
       its 31 payload allocations.
+- [x] **Java and C++ SDK integer widths.** Both SDKs declare width-exact scalars (Java
+      `@Scalar` for unsigned widths, C++ `daedalus::signature<F>()`); the host range-checks
+      worker outputs. C++ nodes without a signature still fall back to `Int`/`Bytes`.
+- [x] **Owned constants decode once.** Owned `T`/`Option<T>` parameters fed a non-builtin
+      constant clone the value decoded into the per-node cache (`T: Clone`, probed by the macro)
+      instead of converting it every call.
 - [x] Benchmarks: `crates/engine/benches/host_graph_drive.rs`, plus `.github/workflows/bench.yml`
       with regression flagging.
 
@@ -109,6 +118,10 @@ changes.
       graph builders (`NodeInstance::new`, `Edge::new`).
 - [x] Dead code removed (`Outputs` derive, aliases, unused globals); `CapabilityRegistry::remove_plugin`
       added.
+- [x] **`--all-features` workspace builds link.** Example plugins depending on
+      `example_project` duplicated its `export_plugin!` symbols once features unified; the export
+      lives in the leaf `examples/plugins/example_project_dylib`, and CI builds (links) the
+      workspace with `--all-features`.
 - [x] CI: aarch64 check, lean-preset tests, macro UI and dylib jobs, example smoke runs, and
       `scripts/ci.sh` subcommands.
 - [x] Bugs fixed: schema export/import encoding round trip, unknown wgpu formats silently treated
@@ -158,16 +171,6 @@ changes.
       a variant-drift test.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
-- [ ] **Owned constants decode per call.** An owned `T` parameter fed a non-builtin constant
-      (an enum, a serde struct, a `String`) still converts it on every call; `&T` and config
-      fields use the per-node cache. Caching owned values needs `T: Clone` (or typed const
-      payloads built when the graph compiles or is patched).
-- [ ] **`run_direct_once` skips const inputs.** A two-input node with one const input fails with
-      `missing <const port>` through `HostGraph::run_direct_once` but works through `run_once`
-      (seen in `stateful_node_isolation`); the direct path does not deliver const payloads.
-- [ ] **Java and C++ SDK integer widths.** Their schemas still map every integer to `Int`
-      (`i64`); map `int`/`short`/`byte` (Java) and the C++ widths to their own value types like
-      the node SDK does.
 
 ### Low priority
 - [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.

@@ -89,10 +89,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
         }
     }
 
-    let const_inputs = exec.const_inputs.read();
-    for (port, payload) in const_inputs.get(node_idx).into_iter().flatten() {
-        inputs.push((port.clone(), CorrelatedPayload::from_edge(payload.clone())));
-    }
+    crate::executor::push_const_inputs(&exec.const_inputs, node_idx, &mut inputs);
     Ok(inputs)
 }
 

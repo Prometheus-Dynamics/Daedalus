@@ -142,6 +142,25 @@ pub mod derive_support {
     }
 
     impl<T> NoSerdeCoerce<T> for &Probe<T> {}
+
+    /// `(&Probe::<T>(PhantomData)).cloner()` is `Some(T::clone)` when `T: Clone`, else `None`.
+    pub trait CloneProbe<T> {
+        fn cloner(&self) -> Option<fn(&T) -> T>;
+    }
+
+    impl<T: Clone> CloneProbe<T> for Probe<T> {
+        fn cloner(&self) -> Option<fn(&T) -> T> {
+            Some(T::clone)
+        }
+    }
+
+    pub trait NoCloneProbe<T> {
+        fn cloner(&self) -> Option<fn(&T) -> T> {
+            None
+        }
+    }
+
+    impl<T> NoCloneProbe<T> for &Probe<T> {}
 }
 
 #[cfg(test)]

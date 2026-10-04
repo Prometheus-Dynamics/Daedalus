@@ -1,14 +1,18 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -155,6 +159,121 @@ inline std::string normalize_layout(std::string value) {
   return value;
 }
 
+inline std::string scalar_json(const char* name) {
+  return std::string("{\"Scalar\":\"") + name + "\"}";
+}
+
+template <typename T>
+std::string type_expr();
+
+// Width-exact Daedalus `TypeExpr` JSON for a C++ port type, or "" when the type has no mapping.
+// Specialize for your own types, or give them a `static constexpr const char* daedalus_type_key`.
+template <typename T>
+struct TypeExprOf {
+  static std::string json() {
+    if constexpr (std::is_same_v<T, bool>) {
+      return scalar_json("Bool");
+    } else if constexpr (std::is_integral_v<T>) {
+      static_assert(sizeof(T) <= 8, "Daedalus integers are at most 64 bits wide");
+      constexpr const char* names[2][4] = {{"U8", "U16", "U32", "U64"}, {"I8", "I16", "I32", "Int"}};
+      return scalar_json(names[std::is_signed_v<T>][std::countr_zero(sizeof(T))]);
+    } else if constexpr (std::is_same_v<T, float>) {
+      return scalar_json("F32");
+    } else if constexpr (std::is_same_v<T, double>) {
+      return scalar_json("Float");
+    } else if constexpr (std::is_same_v<T, std::string> || std::is_same_v<T, std::string_view>) {
+      return scalar_json("String");
+    } else if constexpr (std::is_void_v<T> || std::is_same_v<T, Unit>) {
+      return scalar_json("Unit");
+    } else if constexpr (std::is_base_of_v<BytesView, T> || std::is_base_of_v<Rgba8Image, T>) {
+      return scalar_json("Bytes");
+    } else if constexpr (requires { T::daedalus_type_key; }) {
+      return "{\"Opaque\":\"" + json_escape(T::daedalus_type_key) + "\"}";
+    } else {
+      return "";
+    }
+  }
+};
+
+// `prefix item,item suffix`, or "" when any item has no mapping.
+inline std::string compose(const char* prefix, std::initializer_list<std::string> items, const char* suffix) {
+  std::string out = prefix;
+  const char* separator = "";
+  for (const auto& item : items) {
+    if (item.empty()) return "";
+    out += separator + item;
+    separator = ",";
+  }
+  return out + suffix;
+}
+
+template <typename T>
+struct TypeExprOf<std::optional<T>> {
+  static std::string json() { return compose("{\"Optional\":", {type_expr<T>()}, "}"); }
+};
+
+template <typename T, typename A>
+struct TypeExprOf<std::vector<T, A>> {
+  static std::string json() {
+    if constexpr (std::is_same_v<T, std::uint8_t>) return scalar_json("Bytes");
+    else return compose("{\"List\":", {type_expr<T>()}, "}");
+  }
+};
+
+template <typename K, typename V, typename C, typename A>
+struct TypeExprOf<std::map<K, V, C, A>> {
+  static std::string json() { return compose("{\"Map\":[", {type_expr<K>(), type_expr<V>()}, "]}"); }
+};
+
+template <typename... Ts>
+struct TypeExprOf<std::tuple<Ts...>> {
+  static std::string json() { return compose("{\"Tuple\":[", {type_expr<Ts>()...}, "]}"); }
+};
+
+template <typename T>
+std::string type_expr() {
+  return TypeExprOf<std::remove_cvref_t<T>>::json();
+}
+
+using TypeExprFn = std::string (*)();
+
+// Port types deduced from a node function type: parameters type inputs in order (trailing
+// state/context parameters are ignored), a `std::tuple` return types each output, any other return
+// types the single output, and `daedalus::Outputs` leaves outputs untyped.
+struct SignatureSpec {
+  std::vector<TypeExprFn> inputs;
+  std::vector<TypeExprFn> outputs;
+};
+
+template <typename R>
+struct OutputTypes {
+  static std::vector<TypeExprFn> get() { return {&type_expr<R>}; }
+};
+
+template <typename... Ts>
+struct OutputTypes<std::tuple<Ts...>> {
+  static std::vector<TypeExprFn> get() { return {&type_expr<Ts>...}; }
+};
+
+template <>
+struct OutputTypes<Outputs> {
+  static std::vector<TypeExprFn> get() { return {}; }
+};
+
+template <typename F>
+struct FunctionSignature;
+
+template <typename R, typename... Args, bool NoExcept>
+struct FunctionSignature<R(Args...) noexcept(NoExcept)> {
+  static SignatureSpec spec() { return {{&type_expr<Args>...}, OutputTypes<std::remove_cvref_t<R>>::get()}; }
+};
+
+// `daedalus::signature<decltype(fn)>()` or `daedalus::signature<std::int32_t(std::int32_t)>()`.
+template <typename F>
+SignatureSpec signature() {
+  return FunctionSignature<std::remove_pointer_t<F>>::spec();
+}
+
 struct NodeSpec {
   std::string id;
   std::vector<std::string> inputs;
@@ -165,6 +284,8 @@ struct NodeSpec {
   std::string capability;
   std::string state_type;
   bool stateful = false;
+  // Set by a `signature<F>()` option; without one ports fall back to name-based Bytes or Int.
+  std::optional<SignatureSpec> signature;
 
   template <typename... Options>
   static NodeSpec make(
@@ -224,6 +345,10 @@ inline void apply_option(NodeSpec& spec, ResidencySpec option) {
 
 inline void apply_option(NodeSpec& spec, LayoutSpec option) {
   spec.layout = normalize_layout(std::move(option.value));
+}
+
+inline void apply_option(NodeSpec& spec, SignatureSpec option) {
+  spec.signature = std::move(option);
 }
 
 struct TypeKeySpec {
@@ -406,6 +531,13 @@ class PackageBuilder {
       if (!node.layout.empty() && node.residency.empty()) {
         throw std::invalid_argument("node `" + node.id + "` layout requires residency");
       }
+      if (node.signature && node.inputs.size() > node.signature->inputs.size()) {
+        throw std::invalid_argument("node `" + node.id + "` declares more inputs than its signature has parameters");
+      }
+      if (node.signature && !node.signature->outputs.empty()
+          && node.outputs.size() != node.signature->outputs.size()) {
+        throw std::invalid_argument("node `" + node.id + "` output count does not match its signature return type");
+      }
     }
     for (const auto& boundary : reg.boundaries) {
       if (trim(boundary.type_key).empty()) {
@@ -450,8 +582,11 @@ class PackageBuilder {
 
   static std::string node_json(const NodeSpec& node) {
     std::string out = "{\"id\":\"" + json_escape(node.id) + "\",\"backend\":\"c_cpp\",\"entrypoint\":\"" + json_escape(node.id) + "\",\"stateful\":" + (node.stateful ? "true" : "false") + ",\"feature_flags\":[],\"inputs\":";
-    out += ports_json(node.inputs, node.access, node.residency, node.layout);
-    out += ",\"outputs\":" + ports_json(node.outputs, "read", node.residency, node.layout);
+    const std::vector<TypeExprFn> untyped;
+    const auto& input_types = node.signature ? node.signature->inputs : untyped;
+    const auto& output_types = node.signature ? node.signature->outputs : untyped;
+    out += ports_json(node.id, node.inputs, input_types, node.access, node.residency, node.layout);
+    out += ",\"outputs\":" + ports_json(node.id, node.outputs, output_types, "read", node.residency, node.layout);
     out += ",\"metadata\":{";
     bool wrote = false;
     if (!node.capability.empty()) {
@@ -466,8 +601,11 @@ class PackageBuilder {
     return out;
   }
 
+  // Ports take their signature type; untyped ports fall back to Bytes for payload names, else Int.
   static std::string ports_json(
+      const std::string& node_id,
       const std::vector<std::string>& ports,
+      const std::vector<TypeExprFn>& types,
       const std::string& access,
       const std::string& residency,
       const std::string& layout) {
@@ -475,7 +613,13 @@ class PackageBuilder {
     for (std::size_t i = 0; i < ports.size(); ++i) {
       if (i > 0) out += ",";
       const bool bytes = ports[i] == "payload" || ports[i] == "frame" || ports[i] == "blob" || ports[i] == "rgba8";
-      out += "{\"name\":\"" + json_escape(ports[i]) + "\",\"ty\":{\"Scalar\":\"" + std::string(bytes ? "Bytes" : "Int") + "\"},\"optional\":false,\"access\":\"" + json_escape(access) + "\"";
+      const std::string ty = i < types.size() ? types[i]() : scalar_json(bytes ? "Bytes" : "Int");
+      if (ty.empty()) {
+        throw std::invalid_argument(
+            "port `" + ports[i] + "` on node `" + node_id + "` has a C++ type with no Daedalus mapping; "
+            "specialize daedalus::TypeExprOf or add a `daedalus_type_key` member");
+      }
+      out += "{\"name\":\"" + json_escape(ports[i]) + "\",\"ty\":" + ty + ",\"optional\":false,\"access\":\"" + json_escape(access) + "\"";
       if (!residency.empty()) out += ",\"residency\":\"" + json_escape(residency) + "\"";
       if (!layout.empty()) out += ",\"layout\":\"" + json_escape(layout) + "\"";
       out += "}";

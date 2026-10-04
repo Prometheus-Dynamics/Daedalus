@@ -86,7 +86,23 @@ fn describe(mode: Border) -> Result<String, NodeError> {
     Ok(format!("{mode:?}"))
 }
 
-#[plugin(id = "test.enumcfg", nodes(blur, pick, border_source, describe))]
+/// Not `Clone`: an owned constant of it is decoded on every call instead of cloned.
+#[derive(Debug, serde::Deserialize)]
+struct Note {
+    text: String,
+}
+
+/// Owned constants: `label` and `tag` are cloned from their decoded value, `note` is decoded
+/// per call.
+#[node(id = "annotate", inputs("x", "label", "note", "tag"), outputs("out"))]
+fn annotate(x: i64, label: String, note: Note, tag: Option<String>) -> Result<String, NodeError> {
+    Ok(format!("{x}:{label}:{}:{tag:?}", note.text))
+}
+
+#[plugin(
+    id = "test.enumcfg",
+    nodes(blur, pick, border_source, describe, annotate)
+)]
 struct EnumCfgPlugin;
 
 fn blur_graph(consts: &[(&str, Value)]) -> HostGraph<HandlerRegistry> {
@@ -259,4 +275,39 @@ fn single_input_nodes_take_enum_constants() {
         .expect("compile");
     host.tick().expect("tick");
     assert_eq!(host.take::<String>("out").as_deref(), Some("Constant"));
+}
+
+#[test]
+fn owned_constants_are_decoded_once_or_per_call_without_clone() {
+    let mut registry = PluginRegistry::new();
+    let plugin = EnumCfgPlugin::new();
+    registry.install_plugin(&plugin).expect("install");
+    let node = plugin.annotate.alias("annotate");
+    let note = Value::Struct(vec![daedalus::data::model::StructFieldValue {
+        name: "text".into(),
+        value: Value::String(Cow::from("hi")),
+    }]);
+    let graph = registry
+        .graph_builder()
+        .unwrap()
+        .try_node(&node)
+        .and_then(|b| b.try_connect("x", &node.inputs.x))
+        .and_then(|b| b.try_connect(&node.outputs.out, "out"))
+        .unwrap()
+        .const_input(&node.inputs.label, Some(Value::String(Cow::from("lbl"))))
+        .const_input(&node.inputs.note, Some(note))
+        .const_input(&node.inputs.tag, Some(Value::String(Cow::from("t"))))
+        .build();
+    let mut host = Engine::new(EngineConfig::default())
+        .unwrap()
+        .compile_registry(&registry, graph)
+        .expect("compile");
+    for _ in 0..2 {
+        assert_eq!(run(&mut host), r#"1:lbl:hi:Some("t")"#);
+    }
+    let direct = host.run_direct_once::<_, String>("x", "out", 2_i64);
+    assert_eq!(
+        direct.expect("direct").as_deref(),
+        Some(r#"2:lbl:hi:Some("t")"#)
+    );
 }

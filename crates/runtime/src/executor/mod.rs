@@ -68,6 +68,13 @@ pub struct DirectHostRoute {
     single_node: Option<DirectHostSingleNodeRoute>,
 }
 
+impl DirectHostRoute {
+    /// Whether the route is one node between the host ports, run without the scheduler.
+    pub fn is_single_node(&self) -> bool {
+        self.single_node.is_some()
+    }
+}
+
 #[derive(Clone)]
 struct DirectHostSingleNodeRoute {
     node: RuntimeNode,
@@ -161,6 +168,19 @@ pub(crate) fn node_const_inputs(node: &RuntimeNode) -> NodeConstInputs {
         .iter()
         .map(|(port, value)| (port.into(), const_payload(value.clone())))
         .collect()
+}
+
+/// Append node `node_idx`'s const inputs to `inputs`, as every tick (scheduled or direct)
+/// delivers them after the edge inputs.
+pub(crate) fn push_const_inputs(
+    store: &ConstInputStore,
+    node_idx: usize,
+    inputs: &mut Vec<crate::io::NodePort>,
+) {
+    let consts = store.read();
+    for (port, payload) in consts.get(node_idx).into_iter().flatten() {
+        inputs.push((port.clone(), CorrelatedPayload::from_edge(payload.clone())));
+    }
 }
 
 /// The payload a const input delivers on every tick.

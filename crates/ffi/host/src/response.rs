@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use daedalus_data::model::Value;
 use daedalus_ffi_core::{
-    InvokeEvent, InvokeEventLevel, InvokeResponse, WireValue, WireValueConversionError,
+    InvokeEvent, InvokeEventLevel, InvokeResponse, WirePort, WireValue, WireValueConversionError,
     WorkerProtocolError,
 };
-use daedalus_transport::{Payload, TypeKey};
+use daedalus_registry::typeexpr_transport_key;
+use daedalus_transport::Payload;
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +30,8 @@ pub enum ResponseDecodeError {
         port: String,
         source: WireValueConversionError,
     },
+    #[error("output `{port}` does not fit its port type: {message}")]
+    OutputType { port: String, message: String },
 }
 
 pub fn decode_response(
@@ -89,18 +92,26 @@ impl DecodedInvokeResponse {
             })
     }
 
-    pub fn payload_output(
-        &self,
-        port: &str,
-        type_key: impl Into<TypeKey>,
-    ) -> Result<Payload, ResponseDecodeError> {
-        self.wire_output(port)?
+    /// Output `port` as a payload under the port's transport key, after checking its numbers fit
+    /// the port's exact scalar widths (workers send every integer as `i64`, every float as `f64`).
+    pub fn payload_output(&self, port: &WirePort) -> Result<Payload, ResponseDecodeError> {
+        let output = self.wire_output(&port.name)?;
+        output
+            .check_type(&port.ty)
+            .map_err(|message| ResponseDecodeError::OutputType {
+                port: port.name.clone(),
+                message,
+            })?;
+        let type_key = port
+            .type_key
             .clone()
-            .into_payload(type_key)
-            .map_err(|source| ResponseDecodeError::OutputConversion {
-                port: port.into(),
+            .unwrap_or_else(|| typeexpr_transport_key(&port.ty));
+        output.clone().into_payload(type_key).map_err(|source| {
+            ResponseDecodeError::OutputConversion {
+                port: port.name.clone(),
                 source,
-            })
+            }
+        })
     }
 
     pub fn into_inner(self) -> InvokeResponse {
@@ -110,6 +121,7 @@ impl DecodedInvokeResponse {
 
 #[cfg(test)]
 mod tests {
+    use daedalus_data::model::{TypeExpr, ValueType};
     use daedalus_ffi_core::{ByteEncoding, BytePayload, InvokeEventLevel, WORKER_PROTOCOL_VERSION};
 
     use super::*;
@@ -166,12 +178,68 @@ mod tests {
     fn decodes_bytes_output_to_payload() {
         let decoded = decode_response(response(), Some("req-1")).expect("decode");
 
-        let payload = decoded
-            .payload_output("bytes", "demo:bytes")
-            .expect("payload");
+        let port = WirePort {
+            type_key: Some("demo:bytes".into()),
+            ..WirePort::new("bytes", TypeExpr::scalar(ValueType::Bytes))
+        };
+        let payload = decoded.payload_output(&port).expect("payload");
 
         assert_eq!(payload.type_key().as_str(), "demo:bytes");
         assert_eq!(payload.bytes_estimate(), Some(3));
+    }
+
+    #[test]
+    fn checks_outputs_against_exact_scalar_widths() {
+        let decode = |value: WireValue, ty: TypeExpr| {
+            let response = InvokeResponse {
+                outputs: BTreeMap::from([("out".into(), value)]),
+                ..response()
+            };
+            decode_response(response, Some("req-1"))
+                .expect("decode")
+                .payload_output(&WirePort::new("out", ty))
+        };
+        let scalar = |ty: ValueType| TypeExpr::scalar(ty);
+
+        let payload = decode(WireValue::Int(42), scalar(ValueType::I32)).expect("i32 output");
+        assert_eq!(
+            payload.type_key(),
+            &typeexpr_transport_key(&scalar(ValueType::I32))
+        );
+        assert_eq!(payload.get_ref::<Value>(), Some(&Value::Int(42)));
+        decode(WireValue::Float(1.5), scalar(ValueType::F32)).expect("f32 output");
+        decode(WireValue::Int(3), scalar(ValueType::F32)).expect("exact integer into f32");
+        decode(WireValue::Int(u32::MAX.into()), scalar(ValueType::U32)).expect("u32 max");
+        decode(
+            WireValue::List(vec![WireValue::Int(-128), WireValue::Int(127)]),
+            TypeExpr::list(scalar(ValueType::I8)),
+        )
+        .expect("i8 list");
+        decode(WireValue::Unit, TypeExpr::optional(scalar(ValueType::U8))).expect("none");
+
+        for (value, ty) in [
+            (WireValue::Int(1 << 40), scalar(ValueType::I32)),
+            (WireValue::Int(-1), scalar(ValueType::U32)),
+            (
+                WireValue::Int(256),
+                TypeExpr::optional(scalar(ValueType::U8)),
+            ),
+            (WireValue::Float(1e300), scalar(ValueType::F32)),
+            (WireValue::Float(0.5), scalar(ValueType::I16)),
+            (WireValue::String("7".into()), scalar(ValueType::U16)),
+            (
+                WireValue::List(vec![WireValue::Int(1), WireValue::Int(128)]),
+                TypeExpr::list(scalar(ValueType::I8)),
+            ),
+        ] {
+            assert!(
+                matches!(
+                    decode(value.clone(), ty.clone()),
+                    Err(ResponseDecodeError::OutputType { ref port, .. }) if port == "out"
+                ),
+                "{value:?} should not fit {ty:?}"
+            );
+        }
     }
 
     #[test]

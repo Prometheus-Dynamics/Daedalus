@@ -1,7 +1,8 @@
 //! A detector-like graph shared by the `graph_frame_allocations` test and the `graph_frame` bench.
 //!
 //! One host `frame` input fans out to 16 nodes: config-struct and const inputs (one node takes
-//! five inputs; one config has a serde enum and a `String` field), a metadata-only adapter edge, connected and unconnected `Option<T>` inputs, two
+//! five inputs; one config has a serde enum and a `String` field, one node takes them as owned
+//! constants), a metadata-only adapter edge, connected and unconnected `Option<T>` inputs, two
 //! conditional producers (one emits every frame, one never, so its required consumer is skipped),
 //! `Arc`'d list and small-struct outputs, fan-in nodes, and four host outputs. Handlers allocate
 //! nothing per frame (they reuse `Arc`'d inputs and state and return `Copy` values), so
@@ -272,15 +273,25 @@ fn histogram(frame: &Frame) -> Result<Histogram, NodeError> {
     Ok(Histogram(bins))
 }
 
+/// Owned constants of a serde enum and a `String`: decoded once, then cloned per call.
 #[node(
     id = "bench.detector.exposure",
-    inputs("histogram", "target"),
+    inputs("histogram", "target", "weighting", "zone"),
     outputs("exposure")
 )]
-fn exposure(histogram: &Histogram, target: f64) -> Result<f64, NodeError> {
-    let bright = histogram.0[4..].iter().sum::<u32>() as f64;
+fn exposure(
+    histogram: &Histogram,
+    target: f64,
+    weighting: TrackScore,
+    zone: String,
+) -> Result<f64, NodeError> {
+    let bins = match weighting {
+        TrackScore::Best => &histogram.0[4..],
+        TrackScore::First => &histogram.0[..4],
+    };
+    let bright = bins.iter().sum::<u32>() as f64;
     let total = histogram.0.iter().sum::<u32>().max(1) as f64;
-    Ok(bright / total - target)
+    Ok(bright / total - target - zone.len() as f64 / 1000.0)
 }
 
 #[node(id = "bench.detector.sharpness", inputs("frame"), outputs("sharpness"))]
@@ -477,6 +488,11 @@ pub fn compile(
     let graph = builder
         .const_input(&fine.inputs.scale, Some(Value::Float(2.0)))
         .const_input(&exposure.inputs.target, Some(Value::Float(0.25)))
+        .const_input(
+            &exposure.inputs.weighting,
+            Some(Value::String("best".into())),
+        )
+        .const_input(&exposure.inputs.zone, Some(Value::String("center".into())))
         .build();
     let config = EngineConfig::default()
         .with_runtime_mode(mode)
