@@ -85,6 +85,9 @@ changes.
       `ValueType` and key, the planner inserts lossless widening adapters (`i32 -> i64`,
       `f32 -> f64`, ...) and rejects narrowing at plan time, and constants are range-checked
       against the port's exact width. See "Builtin Numbers" in `docs/node-authoring.md`.
+- [x] **Direct routes deliver const inputs.** The single-node direct route (`run_direct_once`,
+      lanes, `tick_direct_*`) skipped const inputs, so constants, port defaults and config fields
+      were `missing`; it now delivers them like a scheduled tick (`tests/direct_const_inputs.rs`).
 - [x] **Typed nodes with three reference parameters.** `fn(&A, &B, &mut State)` was taken for
       the low-level `(node, ctx, io)` form; the form is now recognized by parameter types.
 
@@ -162,9 +165,6 @@ changes.
       (an enum, a serde struct, a `String`) still converts it on every call; `&T` and config
       fields use the per-node cache. Caching owned values needs `T: Clone` (or typed const
       payloads built when the graph compiles or is patched).
-- [ ] **`run_direct_once` skips const inputs.** A two-input node with one const input fails with
-      `missing <const port>` through `HostGraph::run_direct_once` but works through `run_once`
-      (seen in `stateful_node_isolation`); the direct path does not deliver const payloads.
 - [ ] **Java and C++ SDK integer widths.** Their schemas still map every integer to `Int`
       (`i64`); map `int`/`short`/`byte` (Java) and the C++ widths to their own value types like
       the node SDK does.

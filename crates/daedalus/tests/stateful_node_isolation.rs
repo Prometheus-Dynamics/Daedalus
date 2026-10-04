@@ -112,4 +112,7 @@ fn three_reference_parameters_are_a_typed_node() {
         let out = host.run_once::<_, i64>(("in", 2_i64), "out");
         assert_eq!(out.expect("tick"), [expected]);
     }
+    // The direct path delivers the const `weight` too.
+    let out = host.run_direct_once::<_, i64>("in", "out", 2_i64);
+    assert_eq!(out.expect("direct tick"), Some(18));
 }

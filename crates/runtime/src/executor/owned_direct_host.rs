@@ -1,10 +1,12 @@
 use super::owned::OwnedExecutor;
 use super::{
-    CorrelatedPayload, DirectHostRoute, DirectHostSingleNodeRoute, DirectSlotAccess, ExecuteError,
-    ExecutionTelemetry, NodeError, NodeHandler, is_host_bridge_node, queue, serial,
+    CorrelatedPayload, CustomMetricValue, DirectHostRoute, DirectHostSingleNodeRoute,
+    DirectSlotAccess, ExecuteError, ExecutionTelemetry, NodeError, NodeHandler,
+    is_host_bridge_node, push_const_inputs, queue, serial,
 };
 use crate::state::ExecutionContext;
 use daedalus_transport::Payload;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 impl<H: NodeHandler> OwnedExecutor<H> {
@@ -140,44 +142,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         route: &DirectHostSingleNodeRoute,
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), ExecuteError> {
-        if let Some(handler) = &route.direct_payload {
-            self.core.state.clear_node_custom_metrics(&route.node.id);
-            let output = handler(&route.node, &route.ctx, payload).map_err(|error| {
-                ExecuteError::HandlerFailed {
-                    node: route.node.id.clone(),
-                    error,
-                }
-            })?;
-            let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level);
-            telemetry.nodes_executed = 1;
-            let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
-            telemetry.record_node_custom_metrics(route.node_idx, metrics);
-            return Ok((telemetry, output));
-        }
-        if self.storage_needs_reset {
-            self.reset_for_run();
-        }
-        self.core.state.clear_node_custom_metrics(&route.node.id);
-        let mut inputs = crate::io::port_buffer();
-        inputs.push((
-            route.input_port.clone(),
-            CorrelatedPayload::from_edge(payload),
-        ));
-        let mut io = self.core.node_io(route.node_idx, inputs);
-        self.handler
-            .run(&route.node, &route.ctx, &mut io)
-            .map_err(|error| ExecuteError::HandlerFailed {
-                node: route.node.id.clone(),
-                error,
-            })?;
-        io.flush().map_err(|error| ExecuteError::HandlerFailed {
-            node: route.node.id.clone(),
-            error,
-        })?;
-        let output = io.take_output(&route.output_port);
+        let (output, metrics) = self.run_single_node(route, payload)?;
         let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level);
         telemetry.nodes_executed = 1;
-        let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
         telemetry.record_node_custom_metrics(route.node_idx, metrics);
         Ok((telemetry, output))
     }
@@ -187,39 +154,46 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         route: &DirectHostSingleNodeRoute,
         payload: Payload,
     ) -> Result<Option<Payload>, ExecuteError> {
-        if let Some(handler) = &route.direct_payload {
-            self.core.state.clear_node_custom_metrics(&route.node.id);
-            let output = handler(&route.node, &route.ctx, payload).map_err(|error| {
-                ExecuteError::HandlerFailed {
-                    node: route.node.id.clone(),
-                    error,
-                }
-            })?;
-            self.core.state.drain_node_custom_metrics(&route.node.id);
-            return Ok(output);
-        }
-        if self.storage_needs_reset {
-            self.reset_for_run();
-        }
-        self.core.state.clear_node_custom_metrics(&route.node.id);
-        let mut inputs = crate::io::port_buffer();
-        inputs.push((
-            route.input_port.clone(),
-            CorrelatedPayload::from_edge(payload),
-        ));
-        let mut io = self.core.node_io(route.node_idx, inputs);
-        self.handler
-            .run(&route.node, &route.ctx, &mut io)
-            .map_err(|error| ExecuteError::HandlerFailed {
-                node: route.node.id.clone(),
-                error,
-            })?;
-        io.flush().map_err(|error| ExecuteError::HandlerFailed {
+        self.run_single_node(route, payload)
+            .map(|(output, _)| output)
+    }
+
+    /// Run the route's node on `payload` plus its const inputs (graph constants, port defaults
+    /// and config fields, as a scheduled tick delivers them) and return its output and the
+    /// custom metrics it recorded.
+    fn run_single_node(
+        &mut self,
+        route: &DirectHostSingleNodeRoute,
+        payload: Payload,
+    ) -> Result<(Option<Payload>, BTreeMap<String, CustomMetricValue>), ExecuteError> {
+        let failed = |error| ExecuteError::HandlerFailed {
             node: route.node.id.clone(),
             error,
-        })?;
-        self.core.state.drain_node_custom_metrics(&route.node.id);
-        Ok(io.take_output(&route.output_port))
+        };
+        self.core.state.clear_node_custom_metrics(&route.node.id);
+        // Direct payload handlers exist only for nodes with a single input, which the route's
+        // edge feeds, so they have no const input to deliver.
+        let output = if let Some(handler) = &route.direct_payload {
+            handler(&route.node, &route.ctx, payload).map_err(failed)?
+        } else {
+            if self.storage_needs_reset {
+                self.reset_for_run();
+            }
+            let mut inputs = crate::io::port_buffer();
+            inputs.push((
+                route.input_port.clone(),
+                CorrelatedPayload::from_edge(payload),
+            ));
+            push_const_inputs(&self.const_inputs, route.node_idx, &mut inputs);
+            let mut io = self.core.node_io(route.node_idx, inputs);
+            self.handler
+                .run(&route.node, &route.ctx, &mut io)
+                .map_err(failed)?;
+            io.flush().map_err(failed)?;
+            io.take_output(&route.output_port)
+        };
+        let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
+        Ok((output, metrics))
     }
 
     fn direct_host_single_node_route(

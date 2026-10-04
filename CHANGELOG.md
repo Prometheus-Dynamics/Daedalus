@@ -172,6 +172,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   had no effect), and owned (`T`, `&mut T`) and borrowed (`&T`) handler inputs never converted
   `Value` constants. `Engine` executors now get the coercers (and, in `execute_*` with a plugin
   registry, the type index), and `NodeIo::take_owned` and `&T` inputs fall back to coercion.
+- Single-node direct host routes (`HostGraph::run_direct_once`, `run_lane*`,
+  `tick_direct_*` on a graph with one node between the host ports) never delivered const inputs,
+  so a node with a constant, a port default or a config field failed with `missing <port>`
+  there while `run_once` worked. They now append the node's const inputs exactly as a scheduled
+  tick does; `DirectHostRoute::is_single_node` reports whether a route takes that path.
 
 ### Changed
 
