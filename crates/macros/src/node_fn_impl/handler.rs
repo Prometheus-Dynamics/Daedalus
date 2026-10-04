@@ -501,44 +501,64 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 }
             }
         } else {
+            // Decoded configs and `&T` constants live in the node's state slot between calls
+            // (`daedalus_runtime::const_cache`) and are decoded again only when an input changes.
             let mut config_fetch_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
+            let mut cache_restores: Vec<proc_macro2::TokenStream> = Vec::new();
+            let mut take_cache = |ident: &syn::Ident, cache_ty: TokenStream| {
+                cache_restores.push(quote! { ctx.state.set_node_state(&ctx.node_id, #ident); });
+                quote! {
+                    let mut #ident = ctx.state.take_node_state::<#cache_ty>(&ctx.node_id).unwrap_or_default();
+                }
+            };
             for (idx, cfg) in config_args.iter().enumerate() {
                 let ident = &cfg.ident;
                 let ty = &cfg.ty;
+                let cache_ident = syn::Ident::new(&format!("__cfg_cache_{idx}"), Span::call_site());
                 let owned_ident = syn::Ident::new(&format!("__cfg_owned_{idx}"), Span::call_site());
-                let sanitized_ident =
-                    syn::Ident::new(&format!("__cfg_sanitized_{idx}"), Span::call_site());
-                let value_ident = syn::Ident::new(&format!("__cfg_value_{idx}"), Span::call_site());
-                let assign = if cfg.is_ref {
-                    if cfg.is_mut {
-                        quote! { let #ident = &mut #value_ident; }
-                    } else {
-                        quote! { let #ident = &#value_ident; }
-                    }
-                } else {
-                    quote! { let #ident = #value_ident; }
+                let ref_ident = syn::Ident::new(&format!("__cfg_ref_{idx}"), Span::call_site());
+                let take = take_cache(
+                    &cache_ident,
+                    quote! { #runtime_crate::const_cache::ConfigCache<#ty> },
+                );
+                let assign = match (cfg.is_ref, cfg.is_mut) {
+                    (true, false) => quote! { let #ident = #ref_ident; },
+                    (true, true) => quote! {
+                        let mut #owned_ident = ::core::clone::Clone::clone(#ref_ident);
+                        let #ident = &mut #owned_ident;
+                    },
+                    (false, _) => quote! { let #ident = ::core::clone::Clone::clone(#ref_ident); },
                 };
                 config_fetch_stmts.push(quote! {
-                    let #owned_ident = <#ty as #runtime_crate::config::NodeConfig>::from_io(io)?;
-                    let #sanitized_ident = <#ty as #runtime_crate::config::NodeConfig>::sanitize(#owned_ident)
-                        .map_err(|e| #runtime_crate::NodeError::InvalidInput(e.to_string()))?;
-                    if !#sanitized_ident.changes.is_empty() {
-                        #runtime_crate::config::log_config_changes(&node.id, &#sanitized_ident.changes);
-                    }
-                    let mut #value_ident = #sanitized_ident.value;
-                    <#ty as #runtime_crate::config::NodeConfig>::validate(&#value_ident)
-                        .map_err(|e| #runtime_crate::NodeError::InvalidInput(e.to_string()))?;
+                    #take
+                    let #ref_ident: &#ty = #cache_ident.get(io, &node.id)?;
                     #assign
                 });
             }
-            let (arg_fetch_mut_stmts, arg_fetch_ref_stmts) =
-                handler_fetch::input_fetch_stmts(handler_fetch::FetchInputs {
-                    arg_idents: &arg_idents,
-                    arg_types: &arg_types,
-                    arg_mut_bindings: &arg_mut_bindings,
-                    port_names: &port_names,
-                    runtime_crate,
-                });
+            let fetch = handler_fetch::input_fetch_stmts(handler_fetch::FetchInputs {
+                arg_idents: &arg_idents,
+                arg_types: &arg_types,
+                arg_mut_bindings: &arg_mut_bindings,
+                port_names: &port_names,
+                runtime_crate,
+            });
+            let decoded_take = (!fetch.decode.is_empty()).then(|| {
+                take_cache(
+                    &syn::Ident::new(handler_fetch::DECODED, Span::call_site()),
+                    quote! { #runtime_crate::const_cache::DecodedInputs },
+                )
+            });
+            let (arg_fetch_mut_stmts, arg_decode_stmts, arg_fetch_ref_stmts) =
+                (fetch.mutable, fetch.decode, fetch.borrowed);
+            let ret_handling = if cache_restores.is_empty() {
+                ret_handling
+            } else {
+                quote! {
+                    let __result = { #ret_handling };
+                    #(#cache_restores)*
+                    __result
+                }
+            };
 
             let shader_gpu_init = if shader_tokens.is_some() {
                 quote! { let __ctx_gpu: Option<#gpu_crate::GpuContextHandle> = ctx.gpu.clone(); }
@@ -549,6 +569,8 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             quote! {
                 #(#config_fetch_stmts)*
                 #(#arg_fetch_mut_stmts)*
+                #decoded_take
+                #(#arg_decode_stmts)*
                 #(#arg_fetch_ref_stmts)*
                 #shader_gpu_init
                 #state_binding

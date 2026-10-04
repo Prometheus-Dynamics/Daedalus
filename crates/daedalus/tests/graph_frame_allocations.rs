@@ -161,8 +161,9 @@ fn call_site(trace: &str) -> String {
 /// frame (one, it is `Arc`-shared).
 const PAYLOAD_ALLOCATIONS: f64 = 10.0 * 2.0 + 4.0 + 2.0 * 2.0 + 2.0 + 1.0;
 /// Serial budget: handlers (generated code included: stateful nodes keep their state in a
-/// per-node slot) allocate nothing themselves, so everything beyond the payloads is runtime
-/// bookkeeping, which must stay at zero.
+/// per-node slot, and configs, including `track`'s serde enum and `String` fields, are decoded
+/// once and borrowed from a per-node cache) allocate nothing themselves, so everything beyond
+/// the payloads is runtime bookkeeping, which must stay at zero.
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS;
 /// Basic metrics return a fresh per-node metrics map with each tick.
 const BASIC_METRICS_ALLOCATIONS: f64 = 3.0;

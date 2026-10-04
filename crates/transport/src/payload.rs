@@ -321,6 +321,12 @@ impl Payload {
             .expect("payload value uniqueness was checked before move"))
     }
 
+    /// Whether `self` and `other` are clones of one payload (they share its storage), e.g. the
+    /// copies of a graph constant handed out on every tick.
+    pub fn shares_storage(&self, other: &Payload) -> bool {
+        std::ptr::addr_eq(Arc::as_ptr(&self.storage), Arc::as_ptr(&other.storage))
+    }
+
     pub fn is_storage_unique(&self) -> bool {
         Arc::strong_count(&self.storage) == 1
     }

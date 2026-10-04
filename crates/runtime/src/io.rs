@@ -394,7 +394,7 @@ impl NodeIo {
         self.take_owned(port)
     }
 
-    fn coerce_value<T>(&self, value: &Value) -> Option<T>
+    pub(crate) fn coerce_value<T>(&self, value: &Value) -> Option<T>
     where
         T: Send + Sync + 'static,
     {
