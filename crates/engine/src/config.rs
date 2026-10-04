@@ -130,6 +130,11 @@ pub struct RuntimeSection {
     pub demand_sinks: Vec<RuntimeSink>,
     #[cfg_attr(feature = "config-env", serde(default))]
     pub pool_size: Option<usize>,
+    /// Initial per-segment parallel dispatch cost the adaptive mode assumes before it has
+    /// measured one (default `daedalus_runtime::executor::DEFAULT_DISPATCH_OVERHEAD`). Raise it to
+    /// keep adaptive graphs serial longer, lower it to go parallel sooner.
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub adaptive_dispatch_overhead: Option<Duration>,
     #[cfg_attr(feature = "config-env", serde(default))]
     pub debug_config: RuntimeDebugConfig,
     #[cfg_attr(feature = "config-env", serde(default = "default_stream_idle_sleep"))]
@@ -171,6 +176,7 @@ impl Default for RuntimeSection {
             demand_driven: true,
             demand_sinks: Vec::new(),
             pool_size: None,
+            adaptive_dispatch_overhead: None,
             debug_config: RuntimeDebugConfig::default(),
             stream_idle_sleep: default_stream_idle_sleep(),
         }
@@ -318,6 +324,11 @@ impl EngineConfig {
 
     pub fn with_pool_size(mut self, pool_size: usize) -> Self {
         self.runtime.pool_size = Some(pool_size);
+        self
+    }
+
+    pub fn with_adaptive_dispatch_overhead(mut self, overhead: Duration) -> Self {
+        self.runtime.adaptive_dispatch_overhead = Some(overhead);
         self
     }
 

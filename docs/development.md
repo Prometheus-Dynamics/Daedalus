@@ -75,10 +75,10 @@ libraries. Leave every `gpu*` feature off; `EngineConfig`'s default `GpuBackend:
 
 Feature semantics without the extras:
 
-- No `executor-pool`: `RuntimeMode::Parallel` and `RuntimeMode::Adaptive` still work; ready
-  segments run on scoped threads per run instead of a persistent Rayon pool, and
-  `pool_size` only caps concurrency. Add `executor-pool` (or use `engine-full`) for hosts that
-  run parallel graphs at high frequency.
+- No `executor-pool`: `RuntimeMode::Parallel` and `RuntimeMode::Adaptive` still work; parallel
+  runs fan out to a few persistent threads (one fewer than the workers, as the calling thread
+  takes part) started on the first parallel run and parked between runs, instead of a Rayon
+  pool. A frame spawns no threads either way.
 - No `metrics`: the telemetry APIs (`MetricsLevel`, `ExecutionTelemetry`) still compile, but
   executors record no per-node or transport metrics. Add `metrics` when you read telemetry.
 
@@ -141,27 +141,34 @@ call site, grouped by the first Daedalus frame and its callers.
 `cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame` times the same
 frame.
 
-Allocations per frame at three points: `dev` at the optional-inputs merge (A), `dev` after the
-macro work resolved output keys once per handler (B), and with the executor/transport pass (C).
-A and B carry the two harness fixes described below.
+Allocations per frame at four points: `dev` at the optional-inputs merge (A), `dev` after the
+macro work resolved output keys once per handler (B), with the executor/transport pass (C), and
+with the parallel scheduling pass (D). A and B carry the two harness fixes described below.
 
-| Category | A | B | C |
-| --- | --- | --- | --- |
-| Boundary contract formatting (`get_ref`/`try_into_owned`/`Payload::owned`) | 180 | 164 | 0 |
-| Adapter lifecycle records, step names, path text | 54 | 54 | 0 |
-| Output port names (`PortId::new` per push) | 28 | 0 | 0 |
-| Const input payloads rebuilt per tick | 14 | 14 | 0 |
-| Builtin const coercion boxing | 7 | 7 | 0 |
-| `StateStore` take/set of node state | 6 | 6 | 0 |
-| Failed moves boxing the payload (`try_into_owned` on a const) | 0 | 2 | 0 |
-| Port lists spilling past four entries | 2 | 2 | 0 |
-| Host input fan-out target list | 1 | 1 | 0 |
-| Payloads created (node outputs, adapter results, branch, host frame) | 31 | 31 | 31 |
-| Generated handler code (`daedalus-macros`: per-push keys in A, state keys) | 55 | 9 | 9 |
-| **Serial, metrics off** | **378** | **290** | **40** |
-| Serial, basic metrics (per-node metrics map) | 381 | 293 | 43 |
-| Parallel/adaptive with `executor-pool` (one pool task per segment, result channel) | 422 | 334 | 60 |
-| Parallel/adaptive without `executor-pool` (a scoped thread per segment) | 458 | 370 | 141 |
+| Category | A | B | C | D |
+| --- | --- | --- | --- | --- |
+| Boundary contract formatting (`get_ref`/`try_into_owned`/`Payload::owned`) | 180 | 164 | 0 | 0 |
+| Adapter lifecycle records, step names, path text | 54 | 54 | 0 | 0 |
+| Output port names (`PortId::new` per push) | 28 | 0 | 0 | 0 |
+| Const input payloads rebuilt per tick | 14 | 14 | 0 | 0 |
+| Builtin const coercion boxing | 7 | 7 | 0 | 0 |
+| `StateStore` take/set of node state | 6 | 6 | 0 | 0 |
+| Failed moves boxing the payload (`try_into_owned` on a const) | 0 | 2 | 0 | 0 |
+| Port lists spilling past four entries | 2 | 2 | 0 | 0 |
+| Host input fan-out target list | 1 | 1 | 0 | 0 |
+| Payloads created (node outputs, adapter results, branch, host frame) | 31 | 31 | 31 | 31 |
+| Generated handler code (`daedalus-macros`: per-push keys in A, state keys) | 55 | 9 | 9 | 9 |
+| **Serial, metrics off** | **378** | **290** | **40** | **40** |
+| Serial, basic metrics (per-node metrics: a `BTreeMap` until C, one vector in D) | 381 | 293 | 43 | 41 |
+| Parallel/adaptive with `executor-pool` (C: a pool task per segment and a result channel) | 422 | 334 | 60 | 40 |
+| Parallel/adaptive without `executor-pool` (C: a scoped OS thread per segment) | 458 | 370 | 141 | 40 |
+
+In D a parallel frame fans out once to persistent workers (the Rayon pool, or without
+`executor-pool` a few parked threads of the executor's own) that pull ready segments from one
+locked queue, each reusing one executor snapshot, so dispatch allocates nothing; the test allows
+one allocation per frame for amortized growth (Rayon's injector blocks, a node's first run on a
+worker growing that thread's port buffers). The test binary is unoptimized, where the graph's
+nodes are slow enough that adaptive mode runs it in parallel; optimized, it runs serially.
 
 Each created payload is two allocations (value `Arc` and storage), one when a handler returns an
 `Arc` it already holds. `Payload::owned` always builds typed storage: boundary contracts are
@@ -180,11 +187,43 @@ to back):
 | `push_tick_take` (one node, basic metrics) | 1.90 µs | 1.57 µs |
 | `push_tick_take_metrics_off` | 1.50 µs | 1.32 µs |
 
+C against D, with (`engine-full,plugins`) and without (`engine,plugins`: no pool, no metrics)
+`executor-pool`, same machine at load 17-30, so differences under ~15% are noise:
+
+| `graph_frame/…` | C pool | D pool | C no pool | D no pool |
+| --- | --- | --- | --- | --- |
+| `serial_metrics_off` | 16.8 µs | 17.5 µs | 16.2 µs | 16.0 µs |
+| `serial_metrics_basic` | 30.8 µs | 20.2 µs | 16.2 µs | 16.7 µs |
+| `parallel_metrics_off` | 157 µs | 74 µs | 659 µs | 69 µs |
+| `adaptive_metrics_off` | 136 µs | 20 µs | 554 µs | 16.6 µs |
+
 The harness needed two fixes to run at all: owned scalar parameters fed by const inputs
 (`NodeIo::take_owned` coercing `Value`s) and builtin branch adapters for keys shared by several
-Rust types (a fanned-out `i64` output was branched by the `i32` adapter). For graphs of cheap
-nodes, serial is several times faster than parallel or adaptive (adaptive picks parallel
-whenever the segment graph fans out); parallel pays off only when segments do real work.
+Rust types (a fanned-out `i64` output was branched by the `i32` adapter).
+
+### Choosing a runtime mode
+
+A parallel frame still costs about 3-4 µs per segment more than a serial one (waking workers,
+the queue lock, cross-thread payload handoff): for the 16 cheap nodes above that is 70 µs against
+17 µs serially. Parallel pays when independent branches each do well over that much work.
+
+- `Serial`: graphs of cheap nodes, linear graphs, and anything latency-sensitive whose nodes take
+  microseconds. No worker threads are started.
+- `Parallel`: you know independent branches are heavy (milliseconds of CPU, blocking I/O, GPU
+  waits) on every frame.
+- `Adaptive`: the default choice when unsure. `run_adaptive_in_place` (compiled engines, host
+  graphs) times segments, one `Instant` read per node on every fourth serial frame and per
+  segment on parallel ones, and predicts serial as the summed segment time `T` and parallel as
+  `max(critical path, T / workers) + segments × dispatch`. It switches to parallel when that
+  saves at least 25% of `T`, back to serial when the saving drops under 5%, and stays at least 8
+  frames in a mode. `dispatch` starts at `DEFAULT_DISPATCH_OVERHEAD` (4 µs, set with
+  `EngineConfig::with_adaptive_dispatch_overhead` or `with_adaptive_dispatch_overhead` on an
+  executor) and follows what parallel frames measure. Unmeasured graphs start serial unless a node
+  is hinted heavy: GPU compute affinity, or node metadata `NODE_COST_META_KEY`
+  (`"daedalus.node.cost"`) set to `"heavy"`, which makes the first frame parallel. Cheap graphs
+  run at serial speed (the detector frame above: 16.6 µs against 16.0 µs). A one-shot
+  `Executor::run_adaptive` has nothing measured and goes parallel whenever the segment graph has
+  independent work.
 
 ## Troubleshooting
 

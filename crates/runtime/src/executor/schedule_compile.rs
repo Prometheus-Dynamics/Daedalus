@@ -1,14 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
-#[cfg(feature = "executor-pool")]
-use std::sync::OnceLock;
 
 use crate::plan::{RuntimeEdge, RuntimeNode, RuntimeSegment, direct_edge_mask_for_active_edges};
 use daedalus_planner::{NodeRef, is_host_bridge_metadata};
 
 use super::{DirectSlot, NodeMetadataStore};
-#[cfg(feature = "executor-pool")]
-use super::{ExecuteError, NodeError};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CompiledSegmentGraph {
@@ -17,6 +13,10 @@ pub(crate) struct CompiledSegmentGraph {
     pub ready_segments: Arc<Vec<usize>>,
     /// Segments a complete run executes: initially ready ones plus those with successors.
     pub total_segments: usize,
+    /// The executed segments in topological order (for cost estimates over the DAG).
+    pub topo_order: Arc<Vec<usize>>,
+    /// Most segments on one dependency level: an upper bound on useful parallel workers.
+    pub width: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -24,6 +24,8 @@ pub(crate) struct CompiledSchedule {
     pub host_nodes: Arc<Vec<NodeRef>>,
     pub host_deferred_graph: CompiledSegmentGraph,
     pub linear_segment_flow: bool,
+    /// Segment of each node (`usize::MAX` for nodes outside every segment).
+    pub segment_of: Arc<[usize]>,
 }
 
 pub(crate) fn is_host_bridge_node(node: &RuntimeNode) -> bool {
@@ -176,12 +178,43 @@ fn build_segment_graph(
 
     let mut counted: std::collections::BTreeSet<usize> = ready_segments.iter().copied().collect();
     counted.extend((0..adjacency.len()).filter(|&idx| !adjacency[idx].is_empty()));
+    let (topo_order, width) = topo_order_and_width(&adjacency, &indegree, &ready_segments);
     CompiledSegmentGraph {
         total_segments: counted.len(),
+        topo_order: Arc::new(topo_order),
+        width,
         adjacency: Arc::new(adjacency),
         indegree: Arc::new(indegree),
         ready_segments: Arc::new(ready_segments),
     }
+}
+
+/// Kahn order from `ready`, and the size of the largest level (segments whose longest path from
+/// a ready segment has the same length).
+fn topo_order_and_width(
+    adjacency: &[Vec<usize>],
+    indegree: &[usize],
+    ready: &[usize],
+) -> (Vec<usize>, usize) {
+    let mut remaining = indegree.to_vec();
+    let mut level = vec![0usize; adjacency.len()];
+    let mut order = ready.to_vec();
+    let mut next = 0;
+    while let Some(&segment) = order.get(next) {
+        next += 1;
+        for &succ in &adjacency[segment] {
+            level[succ] = level[succ].max(level[segment] + 1);
+            remaining[succ] -= 1;
+            if remaining[succ] == 0 {
+                order.push(succ);
+            }
+        }
+    }
+    let mut per_level = vec![0usize; order.len()];
+    for &segment in &order {
+        per_level[level[segment]] += 1;
+    }
+    (order, per_level.into_iter().max().unwrap_or(0))
 }
 
 pub(crate) fn build_active_host_deferred_graph(
@@ -231,42 +264,18 @@ pub(crate) fn build_compiled_schedule(
         ),
         host_nodes: Arc::new(host_nodes),
         host_deferred_graph,
+        segment_of: segment_of.into(),
     }
 }
 
-#[cfg(feature = "executor-pool")]
-pub(crate) fn resolve_pool_workers(pool_size: Option<usize>, segments_len: usize) -> usize {
+/// Workers a parallel run may use: the configured pool size (else the available parallelism),
+/// at most one per segment.
+pub(crate) fn resolve_parallel_workers(pool_size: Option<usize>, segments_len: usize) -> usize {
     pool_size
         .or_else(|| std::thread::available_parallelism().map(|n| n.get()).ok())
         .unwrap_or(4)
         .max(1)
         .min(segments_len.max(1))
-}
-
-#[cfg(feature = "executor-pool")]
-pub(crate) fn compiled_worker_pool(
-    pool: &OnceLock<Arc<rayon::ThreadPool>>,
-    workers: usize,
-) -> Result<Arc<rayon::ThreadPool>, ExecuteError> {
-    if let Some(pool) = pool.get() {
-        return Ok(pool.clone());
-    }
-    let built = Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(workers.max(1))
-            .build()
-            .map_err(|err| ExecuteError::HandlerFailed {
-                node: "pool_init".into(),
-                error: NodeError::Handler(err.to_string()),
-            })?,
-    );
-    let _ = pool.set(built);
-    pool.get()
-        .cloned()
-        .ok_or_else(|| ExecuteError::HandlerFailed {
-            node: "pool_init".into(),
-            error: NodeError::Handler("compiled worker pool unavailable".into()),
-        })
 }
 
 fn has_only_linear_segment_flow(

@@ -6,6 +6,7 @@ use daedalus_planner::GroupMetadata;
 mod basics;
 mod lifecycle;
 mod metrics;
+mod node_map;
 mod record_edge;
 mod record_node;
 mod report;
@@ -21,6 +22,7 @@ pub use metrics::{
     FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry, FfiTelemetryReport,
     FfiWorkerTelemetry, NodeMetrics, TransportMetrics,
 };
+pub use node_map::NodeMetricsMap;
 pub use report::{AdapterPathReport, OwnershipReport, TelemetryReport, TelemetryReportFilter};
 pub use resources::{
     InternalTransferMetrics, NodeAllocationSpikeExplanation, NodePerfMetrics, NodeResourceMetrics,
@@ -50,7 +52,7 @@ pub struct ExecutionTelemetry {
     #[serde(default)]
     pub metrics_level: MetricsLevel,
     /// Per-node-instance metrics keyed by the planned node index (`NodeRef.0`).
-    pub node_metrics: BTreeMap<usize, NodeMetrics>,
+    pub node_metrics: NodeMetricsMap,
     /// Per-group aggregate metrics keyed by group id (e.g. embedded graphs).
     pub group_metrics: BTreeMap<String, NodeMetrics>,
     /// Per-edge queue wait metrics keyed by the planned edge index.
@@ -111,7 +113,7 @@ impl ExecutionTelemetry {
         let hardware_counters = self
             .node_metrics
             .iter()
-            .filter_map(|(idx, node)| node.perf.clone().map(|perf| (*idx, perf)))
+            .filter_map(|(idx, node)| node.perf.clone().map(|perf| (idx, perf)))
             .collect();
         let adapter_paths = self
             .data_lifecycle
@@ -129,7 +131,7 @@ impl ExecutionTelemetry {
         let skipped_nodes = self
             .node_metrics
             .iter()
-            .filter_map(|(idx, metrics)| (metrics.calls == 0).then_some(*idx))
+            .filter_map(|(idx, metrics)| (metrics.calls == 0).then_some(idx))
             .collect();
         let fallbacks = (0..self.gpu_fallbacks)
             .map(|idx| format!("gpu_fallback_{idx}"))
@@ -142,7 +144,7 @@ impl ExecutionTelemetry {
             gpu_segments: self.gpu_segments,
             gpu_fallbacks: self.gpu_fallbacks,
             backpressure_events: self.backpressure_events,
-            node_timing: self.node_metrics.clone(),
+            node_timing: self.node_metrics.to_btree_map(),
             edge_timing: self.edge_metrics.clone(),
             transport: self.edge_metrics.clone(),
             ownership,
@@ -201,7 +203,7 @@ impl ExecutionTelemetry {
             .saturating_add(other.unattributed_runtime_duration);
         self.metrics_level = self.metrics_level.max(other.metrics_level);
         for (node, metrics) in other.node_metrics {
-            self.node_metrics.entry(node).or_default().merge(metrics);
+            self.node_metrics.entry(node).merge(metrics);
         }
         for (group, metrics) in other.group_metrics {
             self.group_metrics.entry(group).or_default().merge(metrics);
@@ -289,8 +291,8 @@ impl ExecutionTelemetry {
     }
 
     pub fn aggregate_groups(&mut self, nodes: &[crate::plan::RuntimeNode]) {
-        for (idx, metrics) in &self.node_metrics {
-            let Some(node) = nodes.get(*idx) else {
+        for (idx, metrics) in self.node_metrics.iter() {
+            let Some(node) = nodes.get(idx) else {
                 continue;
             };
             let group = GroupMetadata::from_node_metadata(&node.metadata);

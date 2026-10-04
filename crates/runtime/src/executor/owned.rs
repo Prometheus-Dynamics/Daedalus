@@ -1,20 +1,18 @@
 use super::ExecutorConfigTarget;
-#[cfg(not(feature = "executor-pool"))]
-use super::parallel;
 use super::{
-    CompiledSchedule, ConstInputStore, DirectSlotAccess, ExecuteError, ExecutionTelemetry,
-    Executor, ExecutorBuildError, ExecutorCore, ExecutorMaskError, MetricsLevel, NodeHandler,
-    RuntimeDataSizeInspectors, apply_patch_to_const_inputs, build_executor_init, node_const_inputs,
-    reset_run_storage, serial, should_run_parallel_adaptive,
+    AdaptiveState, CompiledSchedule, ConstInputStore, DirectSlotAccess, ExecuteError,
+    ExecutionTelemetry, Executor, ExecutorBuildError, ExecutorCore, ExecutorMaskError,
+    MetricsLevel, NodeHandler, RuntimeDataSizeInspectors, WorkerPool, apply_patch_to_const_inputs,
+    build_executor_init, node_const_inputs, reset_run_storage, run_adaptive_on, run_parallel_on,
+    serial,
 };
-#[cfg(feature = "executor-pool")]
-use super::{compiled_worker_pool, pool};
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
 use crate::state::{ResourceLifecycleEvent, StateStore};
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
 use parking_lot::RwLock;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Owned executor that can be reused across runs without leaking the plan.
 pub struct OwnedExecutor<H: NodeHandler> {
@@ -41,6 +39,8 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) handler: Arc<H>,
     pub(crate) core: ExecutorCore,
     pub(super) storage_needs_reset: bool,
+    /// Measured costs behind `run_adaptive_in_place`.
+    pub(super) adaptive: AdaptiveState,
 }
 
 impl<H: NodeHandler> ExecutorConfigTarget for OwnedExecutor<H> {
@@ -56,7 +56,6 @@ impl<H: NodeHandler> ExecutorConfigTarget for OwnedExecutor<H> {
         self.edges.len()
     }
 
-    #[cfg(feature = "executor-pool")]
     fn segments_len(&self) -> usize {
         self.segments.len()
     }
@@ -103,6 +102,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             handler: Arc::new(handler),
             core,
             storage_needs_reset: true,
+            adaptive: AdaptiveState::default(),
         })
     }
 
@@ -272,10 +272,22 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
-    #[cfg(feature = "executor-pool")]
+    /// Initial estimate of parallel dispatch cost per segment for `run_adaptive_in_place`
+    /// (default [`super::DEFAULT_DISPATCH_OVERHEAD`]); parallel frames refine it.
+    pub fn with_adaptive_dispatch_overhead(mut self, overhead: Duration) -> Self {
+        self.adaptive.set_dispatch_overhead(overhead);
+        self
+    }
+
+    /// Start the parallel worker threads now instead of on the first parallel run.
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
-        let _ = compiled_worker_pool(&self.core.worker_pool, self.core.pool_workers)?;
-        Ok(())
+        WorkerPool::get_or_init(&self.core.worker_pool, self.parallel_workers()).map(drop)
+    }
+
+    fn parallel_workers(&self) -> usize {
+        self.core
+            .parallel_workers
+            .min(self.schedule.host_deferred_graph.width)
     }
 
     pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
@@ -397,6 +409,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             handler: self.handler.clone(),
             core: self.core.snapshot(),
             direct_slot_access,
+            adaptive: AdaptiveState::default(),
         }
     }
 
@@ -414,57 +427,43 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     /// Execute the runtime plan in parallel without rebuilding the executor.
     ///
     /// With fail-fast enabled, this stops scheduling new ready segments after the first segment
-    /// error. Scoped threads or Rayon tasks already running are still allowed to finish before the
-    /// error is returned.
+    /// error. Segments already running still finish before the error is returned.
     pub fn run_parallel_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError>
     where
         H: Send + Sync + 'static,
     {
         self.reset_for_run();
-        let exec = self.snapshot(DirectSlotAccess::Shared);
-        let res = {
-            if exec.schedule.linear_segment_flow {
-                serial::run_fused_linear(exec)
-            } else {
-                #[cfg(feature = "executor-pool")]
-                {
-                    pool::run(exec)
-                }
-                #[cfg(not(feature = "executor-pool"))]
-                {
-                    parallel::run(exec)
-                }
-            }
-        };
-        let mut drain_exec = self.snapshot(DirectSlotAccess::Shared);
-        serial::drain_host_outputs(&mut drain_exec);
+        let mut exec = self.snapshot(DirectSlotAccess::Shared);
+        let res = run_parallel_on(&mut exec);
+        serial::drain_host_outputs(&mut exec);
+        drop(exec);
         if res.is_err() {
             self.storage_needs_reset = true;
         }
         res
     }
 
-    /// Execute the runtime plan with adaptive serial/parallel selection without rebuilding.
+    /// Execute without rebuilding, serially or in parallel as the measured costs of earlier runs
+    /// suggest: parallel only when the work that could overlap outweighs the dispatch overhead.
+    /// Graphs of cheap nodes run serially.
     pub fn run_adaptive_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError>
     where
         H: Send + Sync + 'static,
     {
         self.reset_for_run();
-        let exec = self.snapshot(DirectSlotAccess::Shared);
-        let res = if should_run_parallel_adaptive(&exec.schedule) {
-            #[cfg(feature = "executor-pool")]
-            {
-                pool::run(exec)
-            }
-            #[cfg(not(feature = "executor-pool"))]
-            {
-                parallel::run(exec)
-            }
+        let mut adaptive = std::mem::take(&mut self.adaptive);
+        let workers = self.parallel_workers();
+        let parallel = adaptive.choose(&self.schedule, &self.nodes, workers);
+        let access = if parallel {
+            DirectSlotAccess::Shared
         } else {
-            serial::run(exec)
+            DirectSlotAccess::Serial
         };
-        let mut drain_exec = self.snapshot(DirectSlotAccess::Shared);
-        serial::drain_host_outputs(&mut drain_exec);
+        let mut exec = self.snapshot(access);
+        let res = run_adaptive_on(&mut exec, &mut adaptive, parallel, workers);
+        serial::drain_host_outputs(&mut exec);
+        drop(exec);
+        self.adaptive = adaptive;
         if res.is_err() {
             self.storage_needs_reset = true;
         }
