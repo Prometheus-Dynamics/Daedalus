@@ -3,6 +3,7 @@ use core::fmt::Debug;
 pub mod bounded;
 pub mod broadcast;
 pub mod newest;
+mod queue;
 pub mod unbounded;
 
 #[cfg(feature = "async-channels")]

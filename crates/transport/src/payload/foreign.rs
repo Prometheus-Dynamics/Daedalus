@@ -4,7 +4,7 @@
 //! than a `TypeId` downcast, so a separately built plugin finds it even when its copy of this
 //! crate has other `TypeId`s.
 
-use alloc::sync::Arc;
+use crate::portable::arc_dyn;
 use core::any::Any;
 
 use super::{Payload, PayloadStorage, ResidencyCache};
@@ -22,10 +22,6 @@ impl PayloadStorage for ForeignStorage {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 
@@ -60,7 +56,7 @@ impl Payload {
         let type_key = type_key.into();
         Self {
             type_key: type_key.clone(),
-            storage: Arc::new(ForeignStorage { type_key, handle }),
+            storage: arc_dyn!(ForeignStorage { type_key, handle }),
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),

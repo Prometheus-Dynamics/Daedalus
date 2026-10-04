@@ -110,8 +110,8 @@ keeps `std` in its default features, and a native build compiles the same types 
 
 `daedalus-core`, `daedalus-transport`, `daedalus-data`, `daedalus-registry` and
 `daedalus-planner` have a default `std` feature. With `default-features = false` they are
-`#![no_std]` and need only `alloc` and pointer-sized atomic compare-and-swap (checked on
-`thumbv7em-none-eabihf`, a Cortex-M4F). That covers ids, payloads and lineage, the type and value
+`#![no_std]` and need only `alloc` (checked on `thumbv7em-none-eabihf`, a Cortex-M4F, and on
+`thumbv6m-none-eabi`, a Cortex-M0 without compare-and-swap; see below). That covers ids, payloads and lineage, the type and value
 model with its JSON codec, registry declarations, and planning (`GraphDocument` parsing,
 validation, type checking, scheduling): a device can receive, check and plan graphs. Their
 optional features (`json`, `schema`, `proto`, `bundle`, `plugin`, `metrics`, ...) work without
@@ -124,25 +124,50 @@ What `std` switches:
   `crates/build_features.rs`). `data` and `planner` keep `parking_lot` locks only with `std`.
 - Hash maps keyed by `TypeId` (`data`'s type registry, `transport`'s boundary vtables): `std`'s
   `HashMap` with `std`, `hashbrown` without. Planner passes use `BTreeMap`/`BTreeSet`.
-- 64-bit counters: `AtomicU64`, or a spin-locked `u64` on targets without 64-bit atomics.
+- 64-bit counters: `AtomicU64`, from `portable-atomic` on targets without 64-bit atomics.
 - Time: [`daedalus_core::platform`](../crates/core/src/platform.rs) exports `Instant`, which is
   `std::time::Instant` wherever the target has an OS clock and otherwise a portable instant read
   from the clock installed with `platform::set_clock` (zero until one is installed), and `Clock`
   (see "Tier 2" below).
-- `std`-only: the planner's `DAEDALUS_TRACE_EMBEDDED_EXPAND` variable and its two binaries.
+- `std`-only: the planner's `DAEDALUS_TRACE_EMBEDDED_EXPAND` variable (and its `tracing`
+  dependency) and its two binaries.
 
 Workspace wiring: shared dependencies that the tier is built from (`serde`, `serde_json`,
 `thiserror`, `tracing`, `base64`, `crossbeam-queue`) and the five crates themselves are declared
 in `[workspace.dependencies]` without default features, so `std` crates request
 `features = ["std"]` (`daedalus-data`: `["std", "json"]`). `std` is a boundary feature in the
 plugin build fingerprint because it swaps lock and map types; `daedalus-transport` is
-fingerprinted now that it has a feature.
+fingerprinted now that it has a feature. `serde`'s `rc` feature is not on workspace-wide:
+`daedalus-core` enables it where the target has compare-and-swap.
+
+#### Targets without compare-and-swap
+
+`thumbv6m-none-eabi` (Cortex-M0/M0+) and `riscv32imc-unknown-none-elf` have atomic loads and
+stores but no compare-and-swap, so `alloc::sync` (`Arc`) does not exist there and `spin` and
+`crossbeam-queue` cannot use `core` atomics. On those targets (`cfg(not(target_has_atomic =
+"ptr"))`), and only there, the tier-1 crates take their atomics and `Arc` from the `portable`
+module's other backend:
+
+- `AtomicBool`/`AtomicUsize`/`AtomicU64` from `portable-atomic`, and `spin` with its
+  `portable_atomic` feature, both over `portable-atomic`'s `critical-section` feature;
+- `Arc` is `portable_atomic_util::Arc`, public as `daedalus_core::platform::Arc` (it is
+  `alloc::sync::Arc` elsewhere): build values for Daedalus APIs that take an `Arc` with it. It
+  cannot unsize-coerce on stable Rust, so internal `Arc<dyn Trait>` values are built through a
+  `Box` there (`portable::arc_dyn!`, one extra allocation);
+- `daedalus-core`'s bounded and unbounded channels use locked `VecDeque`s instead of
+  `crossbeam-queue`, which has no queues there.
+
+The final binary must provide a `critical-section` implementation, e.g. `cortex-m`'s
+`critical-section-single-core` or `riscv`'s `critical-section-single-hart` feature, or a HAL's. The dependencies are target-specific, so every other target compiles exactly what it did
+before. `daedalus_runtime::sync` gets the same `spin` backend there, for when the runtime drops
+`std`.
 
 ### Tier 2 (in progress): runtime and engine
 
 - Locks: `daedalus-runtime` and `daedalus-engine` lock through
   [`daedalus_runtime::sync`](../crates/runtime/src/sync.rs), `lock_api` types over
-  `parking_lot` with the runtime's `std` feature and over `spin` without. The API is the same
+  `parking_lot` with the runtime's `std` feature and over `spin` without (on `portable-atomic`
+  without compare-and-swap, as above). The API is the same
   either way; `Condvar` exists only with `std`. `std` is a boundary feature (lock layouts cross
   the plugin boundary; `dylib-plugins` turns it on). It only switches the lock backend so far:
   the crates still link `std`.
@@ -174,7 +199,9 @@ fingerprinted now that it has a feature.
 thread spawning panic there). The `embedded` facade preset without `threads` (`engine,plugins`
 with default features off) builds and runs on it: CI runs the
 [`examples/wasm_smoke`](../examples/wasm_smoke/src/lib.rs) module, a fan-out graph in every
-runtime mode timed by an injected counter `Clock`, in Node. Behavior there:
+runtime mode timed by an injected counter `Clock`, and the
+[`examples/wasm_bindgen_host`](../examples/wasm_bindgen_host/src/lib.rs) `wasm-bindgen` module in
+Node. Behavior there:
 
 - No `threads`: `Parallel` and `Adaptive` run serially and the thread-only APIs are absent (see
   above). Locks are `spin` locks.
@@ -186,6 +213,18 @@ runtime mode timed by an injected counter `Clock`, in Node. Behavior there:
 - The embedded dependency tree has no `getrandom` or other OS-bound crate. `dylib-plugins`,
   `gpu*`, `executor-pool` (Rayon) and the FFI crates are not supported on wasm.
 
+Host glue: `examples/wasm_bindgen_host` is the pattern for a JavaScript host. It imports
+`performance.now()` through `wasm-bindgen` (`#[wasm_bindgen(js_namespace = performance, js_name =
+now)]`), passes it to the engine as `Clock::new` and to `platform::set_clock`, and exports a
+`Pipeline` class whose `push`/`tick`/`take` wrap `HostGraph`; `tick` returns the tick's graph
+duration on that clock (the example enables `metrics`). Bind it with
+`wasm-bindgen --target nodejs` (or `web`/`bundler` for browsers); the `wasm-bindgen` CLI must
+match the crate version in `Cargo.lock`.
+
+`wasm32-wasip1` has `std` and a clock (`OS_CLOCK` is `true`, `Instant` is `std`'s) but no
+threads: the same preset builds there, and CI runs the `daedalus-wasi-smoke` command (the smoke
+graph on the platform clock) under Node's WASI. A WASI runtime such as `wasmtime` runs it too.
+
 ### Rules for new code
 
 - Tier-1 crates: no `std::` paths outside `#[cfg(feature = "std")]` items and tests. Use `core::`
@@ -195,6 +234,10 @@ runtime mode timed by an injected counter `Clock`, in Node. Behavior there:
   alloc`.
 - No new process-global state. Where one is unavoidable (registries, interning), use
   `crate::portable::{OnceLock, Mutex}` and keep hot paths free of it.
+- Tier-1 crates take `Arc`, `Weak` and atomics (`AtomicBool`, `AtomicUsize`, `AtomicU64`) from
+  `crate::portable`, never `alloc::sync`/`core::sync::atomic` (`Ordering` is fine), and build an
+  `Arc<dyn Trait>` with `portable::arc_dyn!` (not `Arc::new` plus coercion). Trait methods cannot
+  take `self: Arc<Self>`.
 - OS facilities (files, environment, processes, threads, sleeping, blocking waits, clocks) sit
   behind `std` in tier-1 crates. In the runtime and engine, read time from the executor's `Clock`
   (`clock.now()`, `clock.elapsed(start)`; never `Instant::now()`/`Instant::elapsed()` outside
@@ -215,9 +258,8 @@ tracked in [TODO.md](../TODO.md) under "Portability (tier 2)":
   `std` feature removes `std`.
 - Lineage clock: payload lineage and host-bridge events still read the platform clock.
 - `alloc`-only runtime pieces: `serde_json` const decoding, `tracing` without `std`, telemetry
-  without `std::time`, `libc` only on Linux.
-- Targets without compare-and-swap (`thumbv6m-none-eabi`): `spin` with `portable-atomic`, or a
-  `critical-section` lock.
+  without `std::time`, `libc` only on Linux. Without compare-and-swap the runtime would also need
+  `crate::portable`-style `Arc`/atomics (and `tracing` does not build there).
 
 ## Performance
 

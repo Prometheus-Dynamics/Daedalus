@@ -36,3 +36,15 @@ hashbrown = { workspace = true }
 serde = { workspace = true }
 spin = { workspace = true }
 thiserror = { workspace = true }
+
+# Targets without 64-bit atomics (`thumbv7em`, ...): `portable-atomic`'s `AtomicU64`.
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { workspace = true }
+
+# Targets without pointer-sized compare-and-swap (`thumbv6m`, `riscv32imc`): atomics, `spin` locks
+# and `Arc` go through `portable-atomic`, whose `critical-section` implementation the final
+# binary provides (see "Portability" in docs/development.md).
+[target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }
+portable-atomic-util = { workspace = true }
+spin = { workspace = true, features = ["portable_atomic"] }

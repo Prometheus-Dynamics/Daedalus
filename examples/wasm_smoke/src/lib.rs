@@ -1,11 +1,14 @@
-//! `wasm32-unknown-unknown` runtime smoke module for the `embedded` preset without `threads`
+//! wasm32 runtime smoke module for the `embedded` preset without `threads`
 //! (`scripts/ci.sh wasm`).
 //!
-//! Built as a `cdylib` with no imports; `scripts/wasm-smoke.mjs` instantiates it and calls
-//! [`smoke`]. A fan-out graph (`x + 1` and `x * 2`, summed) runs a few ticks in each runtime mode:
-//! `Parallel` and `Adaptive` must degrade to serial there, and timing must not touch the missing
-//! OS clock: the engine reads an injected [`Clock`] (a counter here) instead. Any panic traps,
-//! failing the run.
+//! On `wasm32-unknown-unknown` it is a `cdylib` with no imports; `scripts/wasm-smoke.mjs`
+//! instantiates it and calls [`smoke`]. On `wasm32-wasip1` the `daedalus-wasi-smoke` command
+//! (`src/main.rs`) runs [`smoke_with`] on the platform clock under `scripts/wasi-smoke.mjs`.
+//!
+//! A fan-out graph (`x + 1` and `x * 2`, summed) runs a few ticks in each runtime mode:
+//! `Parallel` and `Adaptive` must degrade to serial there. On `wasm32-unknown-unknown` timing must
+//! not touch the missing OS clock: the engine reads an injected [`Clock`] (a counter) instead. Any
+//! panic traps, failing the run.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
@@ -35,7 +38,7 @@ fn add(a: i64, b: i64) -> Result<i64, NodeError> {
 struct Smoke;
 
 /// Sum of the graph outputs over `ticks` ticks fed `0..ticks`.
-fn run(mode: RuntimeMode, ticks: i64) -> i64 {
+fn run(mode: RuntimeMode, ticks: i64, clock: Clock) -> i64 {
     let mut registry = PluginRegistry::new();
     let plugin = Smoke::new();
     registry.install(&plugin).expect("install");
@@ -56,15 +59,11 @@ fn run(mode: RuntimeMode, ticks: i64) -> i64 {
         .and_then(|b| b.try_connect(&add.outputs.sum, "sum"))
         .expect("wire")
         .build();
-    // Stands in for a host timer: advances 1 µs per reading.
-    static MICROS: AtomicU64 = AtomicU64::new(0);
     let config = EngineConfig::default()
         .with_runtime_mode(mode)
         .with_pool_size(4)
         .with_metrics_level(MetricsLevel::Basic)
-        .with_clock(Clock::new(|| {
-            Duration::from_micros(MICROS.fetch_add(1, Ordering::Relaxed))
-        }));
+        .with_clock(clock);
     let mut host = Engine::new(config)
         .expect("engine")
         .compile_registry(&registry, graph)
@@ -78,9 +77,18 @@ fn run(mode: RuntimeMode, ticks: i64) -> i64 {
         .sum()
 }
 
-/// 0 on success, else the 1-based index of the first mode with a wrong result.
+/// [`smoke_with`] timed by a counter standing in for a host timer (1 µs per reading).
 #[unsafe(no_mangle)]
 pub extern "C" fn smoke() -> i32 {
+    static MICROS: AtomicU64 = AtomicU64::new(0);
+    smoke_with(Clock::new(|| {
+        Duration::from_micros(MICROS.fetch_add(1, Ordering::Relaxed))
+    }))
+}
+
+/// Runs the graph in every runtime mode on `clock`: 0 on success, else the 1-based index of the
+/// first mode with a wrong result.
+pub fn smoke_with(clock: Clock) -> i32 {
     const TICKS: i64 = 32;
     // sum of 3x + 1 over 0..TICKS
     let expected = 3 * TICKS * (TICKS - 1) / 2 + TICKS;
@@ -90,6 +98,6 @@ pub extern "C" fn smoke() -> i32 {
         RuntimeMode::Adaptive,
     ]
     .into_iter()
-    .position(|mode| run(mode, TICKS) != expected)
+    .position(|mode| run(mode, TICKS, clock.clone()) != expected)
     .map_or(0, |idx| idx as i32 + 1)
 }

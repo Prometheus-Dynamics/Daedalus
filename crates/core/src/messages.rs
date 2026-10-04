@@ -1,5 +1,4 @@
-use crate::portable::AtomicU64;
-use alloc::sync::Arc;
+use crate::portable::{Arc, AtomicU64};
 use core::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};

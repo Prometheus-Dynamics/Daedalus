@@ -1,7 +1,6 @@
-use crate::portable::OnceLock;
+use crate::portable::{Arc, OnceLock, arc_dyn};
 use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::fmt;
 #[cfg(feature = "std")]
@@ -72,7 +71,7 @@ impl PlannerLoweringRegistry {
                 id: id.clone(),
                 phase,
             },
-            apply: Arc::new(apply),
+            apply: arc_dyn!(apply),
         };
         let mut guard = self.lowerings.write();
         guard.insert(id, lowering);

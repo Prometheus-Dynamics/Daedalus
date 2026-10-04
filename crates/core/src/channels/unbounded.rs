@@ -1,7 +1,6 @@
-use crate::portable::AtomicU64;
-use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use crossbeam_queue::SegQueue;
+use super::queue::SegQueue;
+use crate::portable::{Arc, AtomicBool, AtomicU64, AtomicUsize};
+use core::sync::atomic::Ordering;
 
 use super::{Backpressure, ChannelRecv, ChannelSend, ChannelStats, CloseBehavior, RecvOutcome};
 

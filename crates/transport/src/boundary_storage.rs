@@ -1,7 +1,6 @@
 use crate::portable::{Mutex, OnceLock};
 use alloc::boxed::Box;
 use alloc::string::ToString;
-use alloc::sync::Arc;
 use core::any::{Any, TypeId};
 use core::ffi::c_void;
 use core::fmt;
@@ -267,10 +266,6 @@ impl PayloadStorage for BoundaryStorage {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_any_arc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 
