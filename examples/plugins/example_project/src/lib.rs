@@ -7,8 +7,13 @@
 //! - Capability nodes can dispatch via the global capability registry.
 //! - `#[type_key]` gives a plugin-owned payload type a stable key that other plugins (and
 //!   dynamically loaded copies of this one) resolve without registering it first.
+//! - A foreign interface (`CounterInterface`) lets separately built plugins read a `Counter`
+//!   without sharing its Rust type (see `examples/plugins/foreign_consumer`).
+
+use std::ffi::c_void;
 
 use daedalus::macros::NodeConfig;
+use daedalus::transport::{ForeignRef, ProvideForeign, foreign_interface};
 use daedalus::{PluginRegistry, declare_plugin, macros::node, runtime::NodeError, type_key};
 
 // --- Stateless typed nodes --------------------------------------------------
@@ -31,6 +36,44 @@ pub struct Counter(pub i32);
 #[node(id = "count", inputs("value"), outputs("counter"))]
 fn count(value: i32) -> Result<Counter, NodeError> {
     Ok(Counter(value))
+}
+
+// --- Foreign interface ------------------------------------------------------
+
+foreign_interface! {
+    /// `example:counter_view` v1: reads a [`Counter`] through C-safe accessors, so plugins built
+    /// separately from this crate (with a different `Counter` type) can consume host counters.
+    pub interface CounterInterface("example:counter_view", version = 1);
+    /// Accessors of `example:counter_view` v1.
+    pub struct CounterVTable {
+        pub value: unsafe extern "C" fn(data: *const c_void) -> i32,
+    }
+}
+
+unsafe extern "C" fn counter_value(data: *const c_void) -> i32 {
+    // Safety: only used in `Counter`'s vtable, whose data pointer is a `Counter`.
+    unsafe { (*data.cast::<Counter>()).0 }
+}
+
+// Safety: `counter_value` reads a `Counter` and cannot unwind.
+unsafe impl ProvideForeign<CounterInterface> for Counter {
+    fn vtable() -> &'static CounterVTable {
+        &CounterVTable {
+            value: counter_value,
+        }
+    }
+}
+
+/// Typed accessors for `ForeignRef<'_, CounterInterface>`.
+pub trait CounterView {
+    fn value(&self) -> i32;
+}
+
+impl CounterView for ForeignRef<'_, CounterInterface> {
+    fn value(&self) -> i32 {
+        // Safety: the view checked the interface; the handle keeps the counter alive.
+        unsafe { (self.vtable().value)(self.data()) }
+    }
 }
 
 // --- Config-backed input ----------------------------------------------------
@@ -103,6 +146,7 @@ declare_plugin!(
     ],
     install = |registry| {
         register_capabilities(registry);
+        registry.register_foreign_provider::<Counter, CounterInterface>()?;
     }
 );
 

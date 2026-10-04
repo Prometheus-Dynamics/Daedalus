@@ -1,0 +1,24 @@
+[package]
+name = "daedalus-plugins-foreign-consumer"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
+doctest = false
+
+[features]
+# Export the plugin from the `cdylib` (`export_plugin!`). It also builds the example crate with
+# `separate-build`, so this copy of `Counter` is deliberately another Rust type than that of a
+# host linking the example crate without it: the plugin only reaches host counters through
+# `CounterInterface`.
+dylib = ["daedalus/dylib-plugins", "daedalus-plugins-example-project/separate-build"]
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins"] }
+daedalus-plugins-example-project = { workspace = true }

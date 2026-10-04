@@ -99,7 +99,7 @@ pub fn boundary_features() -> Vec<(&'static str, Vec<&'static str>)> {
         .collect()
 }
 
-fn layouts() -> [(&'static str, usize, usize); 10] {
+fn layouts() -> [(&'static str, usize, usize); 12] {
     macro_rules! layout {
         ($name:literal, $ty:ty) => {
             ($name, size_of::<$ty>(), align_of::<$ty>())
@@ -125,6 +125,8 @@ fn layouts() -> [(&'static str, usize, usize); 10] {
             daedalus_registry::capability::PluginManifest
         ),
         layout!("str_view", super::StrView),
+        layout!("foreign_handle", daedalus_transport::ForeignHandle),
+        layout!("node_io", daedalus_runtime::io::NodeIo),
     ]
 }
 

@@ -74,6 +74,7 @@ planner and runtime make the value arrive in that form when a path exists.
 | `Option<T>` | optional input | any |
 | `FanIn<T>` | all values arriving on an indexed fan-in port | any |
 | `Cpu<T>` / `Gpu<T>` | explicitly request a device residency | any |
+| `FrameView<'_>` / `ForeignRef<'_, I>` | a host-owned value through a foreign interface, no copy (see [Foreign Interfaces](#foreign-interfaces)) | `read` |
 
 Use `access = "move"` or `access = "modify"` only when the node truly consumes or mutates its
 input. Read access lets fanout share one allocation.
@@ -214,6 +215,8 @@ pub const FRAME_LEASE_KEY: &str = "styx:framelease";
     types(crate::FrameLease),
     values(crate::FrameMeta),
     adapters(lease_to_meta),
+    // `FrameLease: FrameSource` (below): separately built plugins read leases as `FrameView`.
+    foreign_providers(crate::FrameLease => daedalus::transport::FrameInterface),
     install = install
 )]
 pub struct StyxPlugin;
@@ -229,6 +232,9 @@ fn install(registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
     registry.register_value_serializer::<crate::FrameLease, _>(|lease| lease.meta().to_value());
     Ok(())
 }
+
+// The `daedalus:frame` v1 accessors (docs/foreign-frame-interface.md).
+impl daedalus::transport::FrameSource for crate::FrameLease { /* width, height, planes, ... */ }
 ```
 
 Every other crate enables that feature instead of registering the type again:
@@ -268,6 +274,71 @@ Rules:
   owner's plugin (or call `registry.register_boundary_type::<T>(key)`), so the registry records
   which Rust type the key carries. Dynamic plugins are checked against it (see
   [`docs/dynamic-plugins.md`](dynamic-plugins.md#types-owned-by-other-crates)).
+- **Provide `daedalus:frame` for frame types.** A frame owner implements `FrameSource` and
+  registers the provider (`foreign_providers(...)` above), so nodes that only need pixels and
+  metadata take `FrameView<'_>` and work with any frame library and in plugins built separately
+  from it. Nodes that need the library's own API keep taking `&FrameLease`.
+
+## Foreign Interfaces
+
+A Rust type is only the same type in two binaries when Cargo built its crate identically for
+both. A plugin built in its own cargo invocation can resolve a shared crate (say `styx-core`)
+with other features, so its `FrameLease` differs from the host's under the same key; install
+refuses such a plugin (`BoundaryTypeMismatch`). A **foreign interface** lets it consume the
+host's values anyway, zero-copy, without sharing the Rust type:
+
+- **Interface**: a `#[repr(C)]` vtable of `extern "C"` accessors with a key, a version and a
+  layout hash of its declaration, declared with `daedalus::transport::foreign_interface!`.
+  Daedalus ships `daedalus:frame` v1 ([spec](foreign-frame-interface.md)); libraries can declare
+  their own.
+- **Provider**: the owner implements `ProvideForeign<I>` for its type (for frames, the safe
+  `FrameSource` trait) and registers it once with `#[plugin(foreign_providers(Owner =>
+  Interface))]` or `registry.register_foreign_provider::<Owner, Interface>()`. That registers a
+  `View` adapter (`daedalus.foreign:<owner key>-><interface key>`, cost of a view).
+- **Consumer**: a node takes `FrameView<'_>` (= `ForeignRef<'_, FrameInterface>`) or
+  `ForeignRef<'_, I>`. The port's key is the interface key, its access is `read`, and it records
+  no Rust boundary type. The planner inserts the provider's adapter on the edge, which wraps the
+  producer's `Arc` in a `ForeignHandle` (data pointer, vtable, interface identity and a
+  reference-counted keepalive; one `Arc` increment, no copy) carried by a payload under the
+  interface key. The node checks the handle against its own copy of the interface (key, version
+  and layout hash) and reads through the vtable.
+
+```rust
+use daedalus::transport::{FrameView, ForeignRef};
+
+#[node(id = "frame_size", inputs("frame"), outputs("pixels"))]
+fn frame_size(frame: FrameView<'_>) -> Result<u64, NodeError> {
+    Ok(u64::from(frame.width()) * u64::from(frame.height()))
+}
+
+// A library-specific interface (declared by the owner with `foreign_interface!`).
+#[node(id = "read_counter", inputs("counter"), outputs("value"))]
+fn read_counter(counter: ForeignRef<'_, CounterInterface>) -> Result<i32, NodeError> {
+    Ok(counter.value()) // an extension trait over the vtable, written by the interface's owner
+}
+```
+
+Rules and limits:
+
+- The macros recognize the parameter by name: spell it `FrameView<'_>` or `ForeignRef<'_, I>`
+  (a by-value parameter, not `Option`/`&`). Other aliases are not recognized.
+- The host input or producer must carry the owner type (declare host inputs with
+  `input_as(name, TypeExpr::opaque(owner_key))` or `input_typed::<Owner>`), and the registry needs
+  the owner's provider; otherwise planning reports a missing converter.
+- One version per interface key per registry (`PluginError::ForeignInterfaceConflict`); dynamic
+  plugins export the interfaces they use and `install_into` refuses mismatches
+  (`PluginLibraryError::ForeignInterfaceMismatch`).
+- Interfaces are input-only: a node that produces frames returns its own type, which consumers
+  read through the interface again.
+- `foreign_interface!` hashes the field names and types as written (whitespace ignored), size and
+  alignment. Keep declarations stable and bump the version for any change.
+- Accessors run the owner's code through `extern "C"` functions: they must not panic (that
+  aborts), and the owner keeps shared values immutable.
+
+[`crates/daedalus/tests/foreign_interfaces.rs`](../crates/daedalus/tests/foreign_interfaces.rs)
+shows a host frame type with a provider feeding `FrameView` and `ForeignRef` nodes, and
+[`examples/plugins/foreign_consumer`](../examples/plugins/foreign_consumer/src/lib.rs) a plugin
+built separately from the type it reads.
 
 ## Nodes And Profiling
 

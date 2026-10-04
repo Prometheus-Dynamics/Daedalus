@@ -16,6 +16,10 @@ doctest = false
 # `declare_plugin!` gates its installer on the calling crate's `plugins` feature.
 default = ["plugins"]
 plugins = []
+# No-op: only gives this crate another build identity. `foreign_consumer` enables it so its copy
+# of `Counter` is deliberately a different Rust type from the host's (a separately built
+# dependency).
+separate-build = []
 # Export the plugin from the `cdylib` (`export_plugin!`).
 dylib = ["daedalus/dylib-plugins"]
 

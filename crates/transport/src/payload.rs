@@ -8,6 +8,7 @@ use crate::{
 };
 
 mod boundary;
+mod foreign;
 mod residency;
 mod storage;
 
@@ -231,10 +232,12 @@ impl Payload {
                 ..BoundaryCapabilities::default()
             },
         );
-        self.storage
-            .as_any()
-            .downcast_ref::<BoundaryStorage>()
-            .and_then(|storage| storage.try_borrow_ref::<T>(&required).ok())
+        if let Some(storage) = self.storage.as_any().downcast_ref::<BoundaryStorage>() {
+            return storage.try_borrow_ref::<T>(&required).ok();
+        }
+        // Storage built by another copy of this crate (a separately built dynamic plugin) has
+        // other wrapper `TypeId`s; its value can still be `T` (e.g. a std type).
+        self.storage.value_any_sync()?.downcast_ref::<T>()
     }
 
     pub fn get_arc<T>(&self) -> Option<Arc<T>>

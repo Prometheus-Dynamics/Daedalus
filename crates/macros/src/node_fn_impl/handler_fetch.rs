@@ -2,6 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::LitStr;
 
+use crate::foreign_type::is_foreign_view;
 use crate::helpers::{generic_arg, last_ident_is, strip_ref};
 
 pub(super) struct FetchInputs<'a> {
@@ -66,6 +67,11 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> (Vec<TokenStream>, V
             }
         };
 
+        if is_foreign_view(ty) {
+            // Borrows `io`, so it runs with the other shared borrows.
+            arg_fetch_ref_stmts.push(quote! { let #ident = io.get_foreign::<#ty>(#port)?; });
+            continue;
+        }
         let fetch = if let Some(inner_ty) = generic_arg(ty_core, "FanIn", 0) {
             let tmp_ident = syn::Ident::new(&format!("__fanin_indexed_{idx}"), Span::call_site());
             quote! {

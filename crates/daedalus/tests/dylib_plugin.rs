@@ -1,20 +1,25 @@
 //! Loads `examples/plugins/example_project` as a `cdylib` and checks it installs the same
 //! nodes and boundary contracts as the statically linked plugin, and that a boundary type built
-//! differently on each side is refused.
+//! differently on each side is refused; then loads `examples/plugins/foreign_consumer`, built
+//! with a different copy of the example crate, which reads host counters through a foreign
+//! interface instead.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use daedalus::data::model::{TypeExpr, ValueType};
+use daedalus::engine::{Engine, EngineConfig};
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
-use daedalus::transport::{RustTypeIdentity, TypeKey};
+use daedalus::transport::{ForeignInterface, Payload, RustTypeIdentity, TypeKey};
 use daedalus::{PluginLibrary, PluginLibraryError};
-use daedalus_plugins_example_project::{Counter, ExampleProjectPlugin};
+use daedalus_plugins_example_project::{Counter, CounterInterface, ExampleProjectPlugin};
 
 const PACKAGE: &str = "daedalus-plugins-example-project";
 const LIB_NAME: &str = "daedalus_plugins_example_project";
+const CONSUMER_PACKAGE: &str = "daedalus-plugins-foreign-consumer";
+const CONSUMER_LIB_NAME: &str = "daedalus_plugins_foreign_consumer";
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -27,7 +32,13 @@ fn workspace_root() -> PathBuf {
 /// Build the example plugin as a cdylib (once per test binary) and return its path.
 fn plugin_cdylib() -> &'static Path {
     static PATH: OnceLock<PathBuf> = OnceLock::new();
-    PATH.get_or_init(build_plugin_cdylib)
+    PATH.get_or_init(|| build_cdylib(PACKAGE, LIB_NAME))
+}
+
+/// Build the foreign-interface consumer plugin as a cdylib (in its own cargo invocation).
+fn consumer_cdylib() -> &'static Path {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| build_cdylib(CONSUMER_PACKAGE, CONSUMER_LIB_NAME))
 }
 
 /// `--features` for the plugin build: its `dylib` export plus this host's enabled boundary
@@ -48,7 +59,7 @@ fn plugin_features() -> String {
         .join(",")
 }
 
-fn build_plugin_cdylib() -> PathBuf {
+fn build_cdylib(package: &str, lib_name: &str) -> PathBuf {
     // Use the cargo (and therefore rustc) running this test so the rustc check matches.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let mut command = Command::new(cargo);
@@ -56,7 +67,7 @@ fn build_plugin_cdylib() -> PathBuf {
         .args([
             "build",
             "-p",
-            PACKAGE,
+            package,
             "--lib",
             "--features",
             &plugin_features(),
@@ -75,7 +86,7 @@ fn build_plugin_cdylib() -> PathBuf {
     stdout
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|msg| msg["reason"] == "compiler-artifact" && msg["target"]["name"] == LIB_NAME)
+        .filter(|msg| msg["reason"] == "compiler-artifact" && msg["target"]["name"] == lib_name)
         .flat_map(|msg| {
             msg["filenames"]
                 .as_array()
@@ -89,7 +100,7 @@ fn build_plugin_cdylib() -> PathBuf {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with(std::env::consts::DLL_SUFFIX))
         })
-        .expect("cargo did not report a cdylib artifact for the example plugin")
+        .unwrap_or_else(|| panic!("cargo did not report a cdylib artifact for {package}"))
 }
 
 fn node_ids(registry: &PluginRegistry) -> BTreeSet<String> {
@@ -180,6 +191,69 @@ fn static_and_dynamic_rust_plugin_install_the_same_nodes() {
         matches!(err, PluginLibraryError::BoundaryTypeMismatch { ref mismatches, .. }
             if mismatches.iter().any(|mismatch| mismatch.key == counter)),
         "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn separately_built_plugin_consumes_host_types_through_a_foreign_interface() {
+    // The host owns `Counter` and its `example:counter_view` provider.
+    let mut registry = PluginRegistry::new();
+    registry
+        .install_plugin(&ExampleProjectPlugin::default())
+        .unwrap();
+
+    let library = unsafe { PluginLibrary::load(consumer_cdylib()) }.unwrap();
+    assert_eq!(library.rust_abi(), Ok(()));
+    // The consumer only declares the interface, not the (differently built) Rust type.
+    let counter_key = TypeKey::new("example:counter");
+    assert!(
+        library
+            .boundary_types()
+            .iter()
+            .all(|(key, _)| *key != counter_key)
+    );
+    assert_eq!(library.foreign_interfaces(), [*CounterInterface::info()]);
+    library.install_into(&mut registry).unwrap();
+
+    let node = registry
+        .transport_capabilities
+        .nodes()
+        .values()
+        .find(|decl| decl.id.0.ends_with("read_counter"))
+        .cloned()
+        .expect("consumer node installed");
+    assert_eq!(
+        node.inputs[0].type_key,
+        TypeKey::new("example:counter_view")
+    );
+
+    let graph = registry
+        .graph_builder()
+        .unwrap()
+        .input_as("counter", TypeExpr::opaque("example:counter"))
+        .node_id(node.id.0.as_str(), "read")
+        .connect("counter", "read.counter")
+        .connect("read.value", "value")
+        .connect("read.address", "address")
+        .build();
+    let mut host = Engine::new(EngineConfig::default())
+        .unwrap()
+        .compile_registry(&registry, graph)
+        .unwrap();
+    let counter = Arc::new(Counter(7));
+    host.push_payload(
+        "counter",
+        Payload::shared("example:counter", counter.clone()),
+    );
+    host.tick().unwrap();
+    assert_eq!(host.take::<i32>("value"), Some(7));
+    let address = Arc::as_ptr(&counter) as i64;
+    assert_eq!(host.take::<i64>("address"), Some(address), "read in place");
+    drop(host);
+    assert_eq!(
+        Arc::strong_count(&counter),
+        1,
+        "the plugin released every handle"
     );
 }
 

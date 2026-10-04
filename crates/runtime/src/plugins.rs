@@ -32,6 +32,7 @@ mod adapters;
 mod boundary_types;
 mod builtins;
 mod context;
+mod foreign;
 mod install;
 mod registry_admin;
 mod registry_transport;
@@ -94,6 +95,15 @@ pub enum PluginError {
         key: TypeKey,
         existing: daedalus_transport::RustTypeIdentity,
         new: daedalus_transport::RustTypeIdentity,
+    },
+    /// One foreign interface key was used with two versions or vtable layouts.
+    #[error(
+        "foreign interface {existing} conflicts with {new}; every user of an interface key must \
+         agree on its version and vtable"
+    )]
+    ForeignInterfaceConflict {
+        existing: daedalus_transport::ForeignInterfaceInfo,
+        new: daedalus_transport::ForeignInterfaceInfo,
     },
     #[error("{0}")]
     Message(&'static str),
@@ -301,6 +311,7 @@ pub struct PluginRegistry {
     pub plugin_manifests: BTreeMap<String, PluginManifest>,
     pub boundary_contracts: BTreeMap<TypeKey, BoundaryTypeContract>,
     boundary_types: BTreeMap<TypeKey, daedalus_transport::RustTypeIdentity>,
+    foreign_interfaces: BTreeMap<TypeKey, daedalus_transport::ForeignInterfaceInfo>,
     pub current_prefix: Option<String>,
     pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,
