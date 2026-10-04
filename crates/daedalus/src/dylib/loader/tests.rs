@@ -1,6 +1,8 @@
 use super::*;
-use crate::dylib::{RUSTC_VERSION, build_fingerprint};
+use crate::data::model::{TypeExpr, ValueType};
+use crate::dylib::{RUSTC_VERSION, STABLE_ABI_VERSION, build_fingerprint};
 use crate::registry::capability::{NodeDecl, PortDecl};
+use crate::runtime::NodeError;
 use crate::runtime::plugins::{Plugin, PluginInstallContext, PluginResult};
 use crate::transport::{ForeignInterface, FrameInterface};
 
@@ -17,9 +19,23 @@ impl Plugin for LoaderTestPlugin {
         ctx.register_foreign_interface::<FrameInterface>()?;
         ctx.register_node_decl(
             NodeDecl::new("add")
-                .input(PortDecl::new("a", "i64"))
-                .output(PortDecl::new("out", "i64")),
-        )
+                .input(PortDecl::new("a", "i64").schema(TypeExpr::Scalar(ValueType::Int)))
+                .output(PortDecl::new("out", "i64").schema(TypeExpr::Scalar(ValueType::Int)))
+                .output(PortDecl::new("calls", "u32").schema(TypeExpr::Scalar(ValueType::U32))),
+        )?;
+        // Adds one; panics on negative input; counts its calls in node state.
+        ctx.handlers.on("add", |_node, ctx, io| {
+            let a = io
+                .take_owned::<i64>("a")
+                .ok_or_else(|| NodeError::InvalidInput("missing a".into()))?;
+            assert!(a >= 0, "negative input {a}");
+            let calls = ctx.state.take_node_state::<u32>(&ctx.node_id).unwrap_or(0) + 1;
+            ctx.state.set_node_state(&ctx.node_id, calls);
+            io.push_as(Some("out"), TypeKey::new("i64"), a + 1);
+            io.push_as(Some("calls"), TypeKey::new("u32"), calls);
+            Ok(())
+        });
+        Ok(())
     }
 }
 
@@ -99,39 +115,168 @@ fn matching_plugin_loads_exposes_schema_and_installs() {
     let node = &schema.nodes[0];
     assert!(node.id.ends_with("add"), "{node:?}");
     assert_eq!(node.inputs[0].name, "a");
-    assert_eq!(node.outputs[0].name, "out");
+    assert!(node.outputs.iter().any(|port| port.name == "out"));
 
     let mut registry = PluginRegistry::new();
     library.install_into(&mut registry).unwrap();
     assert!(registry.plugin_manifests.contains_key("loader_test"));
 }
 
+const OLD_RUSTC: &str = "rustc 1.0.0 (a59aba2b1 2015-05-13)";
+
+fn old_toolchain(descriptor: &mut PluginDescriptor) {
+    descriptor.info.rustc_version = StrView::from_static(OLD_RUSTC);
+}
+
+fn old_rustc() -> RustAbiMismatch {
+    RustAbiMismatch::Rustc {
+        expected: RUSTC_VERSION.to_string(),
+        found: OLD_RUSTC.to_string(),
+    }
+}
+
+/// Run `node` from `registry` once with input `a`, in `state`.
+fn run_add(
+    registry: &PluginRegistry,
+    state: &crate::runtime::StateStore,
+    a: i64,
+) -> Result<(Option<i64>, Option<u32>), NodeError> {
+    use crate::runtime::executor::{CorrelatedPayload, NodeHandler};
+    use crate::runtime::io::NodeIo;
+    let mut io = NodeIo::from_inputs([(
+        "a".into(),
+        CorrelatedPayload::from_edge(crate::transport::Payload::owned("i64", a)),
+    )]);
+    let ctx = crate::runtime::ExecutionContext::detached(state.clone(), "add-1".into());
+    registry
+        .handlers
+        .run(&crate::runtime::RuntimeNode::new("add"), &ctx, &mut io)?;
+    let outputs = io.take_outputs();
+    let output = |port: &str| {
+        outputs
+            .iter()
+            .find(|(name, _)| name.as_str() == port)
+            .map(|(_, payload)| payload.inner.clone())
+    };
+    Ok((
+        output("out").and_then(|p| p.get_ref::<i64>().copied()),
+        output("calls").and_then(|p| p.get_ref::<u32>().copied()),
+    ))
+}
+
 #[test]
-fn mismatched_toolchain_is_introspectable_but_not_installable() {
-    let library = load_with(|descriptor| {
-        descriptor.info.rustc_version = StrView::from_static("rustc 1.0.0 (a59aba2b1 2015-05-13)");
-    })
-    .unwrap();
+fn mismatched_toolchain_installs_and_runs_through_the_stable_path() {
+    let library = load_with(old_toolchain).unwrap();
     assert_eq!(library.schema().plugin.name, "loader_test");
     assert_eq!(library.schema().nodes.len(), 1);
-    let expected = RustAbiMismatch::Rustc {
-        expected: RUSTC_VERSION.to_string(),
-        found: "rustc 1.0.0 (a59aba2b1 2015-05-13)".to_string(),
-    };
-    assert_eq!(library.rust_abi(), Err(&expected));
+    assert_eq!(library.rust_abi(), Err(&old_rustc()));
+    assert_eq!(library.stable_abi_version(), STABLE_ABI_VERSION);
+    assert_eq!(library.install_mode(), Some(InstallPath::Stable));
 
+    // The Rust ABI path stays refused.
+    let mut registry = PluginRegistry::new();
+    let err = library
+        .install_into_as(&mut registry, InstallPath::RustAbi)
+        .unwrap_err();
+    assert!(
+        matches!(err, PluginLibraryError::Incompatible { ref plugin, ref mismatch }
+            if plugin == "loader_test" && *mismatch == old_rustc()),
+        "{err:?}"
+    );
+    assert!(!registry.plugin_manifests.contains_key("loader_test"));
+
+    // The stable path registers the schema's node with a handler calling the plugin. It
+    // compares no boundary types (no Rust type crosses), so a conflicting host type is fine.
+    registry.register_boundary_type::<u8>(FRAME_KEY).unwrap();
+    assert_eq!(
+        library.install_into(&mut registry).unwrap(),
+        InstallPath::Stable
+    );
+    let manifest = &registry.plugin_manifests["loader_test"];
+    assert_eq!(manifest.provided_nodes.len(), 1);
+    assert!(
+        registry
+            .foreign_interfaces()
+            .contains_key(&TypeKey::new("daedalus:frame"))
+    );
+
+    // Outputs come back as the host's Rust types; node state stays in the plugin, one store
+    // per host node instance.
+    let state = crate::runtime::StateStore::default();
+    assert_eq!(run_add(&registry, &state, 41), Ok((Some(42), Some(1))));
+    assert_eq!(run_add(&registry, &state, 1), Ok((Some(2), Some(2))));
+    let other = crate::runtime::StateStore::default();
+    assert_eq!(run_add(&registry, &other, 1), Ok((Some(2), Some(1))));
+
+    // A panic inside the plugin is caught there and reported as a node error.
+    let err = run_add(&registry, &state, -1).unwrap_err();
+    let message = err.to_string();
+    assert!(
+        matches!(err, NodeError::Handler(_))
+            && message.contains("plugin `loader_test` node `add`")
+            && message.contains("negative input -1")
+            && message.contains("panicked"),
+        "{message}"
+    );
+    assert_eq!(run_add(&registry, &state, 2), Ok((Some(3), Some(3))));
+}
+
+#[test]
+fn stable_abi_mismatch_is_a_typed_refusal() {
+    let library = load_with(|descriptor| {
+        old_toolchain(descriptor);
+        descriptor.stable.version = STABLE_ABI_VERSION + 1;
+    })
+    .unwrap();
+    assert_eq!(library.install_mode(), None);
     let mut registry = PluginRegistry::new();
     let err = library.install_into(&mut registry).unwrap_err();
     assert!(
         err.to_string()
-            .starts_with("plugin `loader_test` cannot be installed")
+            .starts_with("plugin `loader_test` cannot be installed"),
+        "{err}"
     );
     assert!(
-        matches!(err, PluginLibraryError::Incompatible { ref plugin, ref mismatch }
-            if plugin == "loader_test" && *mismatch == expected),
+        matches!(err, PluginLibraryError::StableAbiMismatch { ref plugin, expected, found, ref rust }
+            if plugin == "loader_test" && expected == STABLE_ABI_VERSION
+                && found == STABLE_ABI_VERSION + 1 && *rust == Some(old_rustc())),
         "{err:?}"
     );
     assert!(!registry.plugin_manifests.contains_key("loader_test"));
+
+    // A plugin the Rust ABI accepts installs through it whatever its stable version...
+    let library =
+        load_with(|descriptor| descriptor.stable.version = STABLE_ABI_VERSION + 1).unwrap();
+    assert_eq!(library.install_mode(), Some(InstallPath::RustAbi));
+    // ...but cannot be forced through the stable path.
+    let err = library
+        .install_into_as(&mut registry, InstallPath::Stable)
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            PluginLibraryError::StableAbiMismatch { rust: None, .. }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn compatible_plugins_can_be_forced_through_the_stable_path() {
+    let library = load_with(|_| {}).unwrap();
+    assert_eq!(library.install_mode(), Some(InstallPath::RustAbi));
+    let mut registry = PluginRegistry::new();
+    library
+        .install_into_as(&mut registry, InstallPath::Stable)
+        .unwrap();
+    let state = crate::runtime::StateStore::default();
+    assert_eq!(run_add(&registry, &state, 1), Ok((Some(2), Some(1))));
+    // Not recorded: boundary types only matter when Rust types cross.
+    assert!(
+        !registry
+            .boundary_types()
+            .contains_key(&TypeKey::new(FRAME_KEY))
+    );
 }
 
 #[test]

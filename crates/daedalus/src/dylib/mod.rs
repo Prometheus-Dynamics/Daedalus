@@ -119,17 +119,21 @@
 //!   Unloading Rust `cdylib`s is also unreliable in general (thread-locals with destructors).
 
 mod boundary;
+mod extract;
 mod fingerprint;
 mod foreign;
 mod loader;
+pub mod stable;
 
 pub use boundary::{BoundaryTypeEntry, BoundaryTypeTable, BoundaryTypesFn};
 pub use daedalus_ffi_host::core::PluginSchema;
 pub use fingerprint::{boundary_features, build_fingerprint, describe_fingerprint_mismatch};
 pub use foreign::{ForeignInterfaceMismatch, ForeignInterfaceTable, ForeignInterfacesFn};
 pub use loader::{
-    PluginLibrary, PluginLibraryError, RustAbiMismatch, check_rust_abi, discover_plugin_libraries,
+    InstallPath, PluginLibrary, PluginLibraryError, RustAbiMismatch, check_rust_abi,
+    discover_plugin_libraries,
 };
+pub use stable::{STABLE_ABI_VERSION, StableHandlers, StableInput, StableOutputSink, StableValue};
 
 use std::ffi::c_void;
 
@@ -142,8 +146,9 @@ pub const PLUGIN_DESCRIPTOR_SYMBOL: &str = "daedalus_plugin_descriptor";
 ///
 /// Bumped whenever the descriptor (or anything it contains) changes shape.
 /// Version 5 introduced the descriptor and its stable `schema` entry point; version 6 added
-/// `boundary_types`; version 7 added `foreign_interfaces`.
-pub const PLUGIN_ABI_VERSION: u32 = 7;
+/// `boundary_types`; version 7 added `foreign_interfaces`; version 8 added `stable` (the stable
+/// handler path, versioned on its own by [`STABLE_ABI_VERSION`]).
+pub const PLUGIN_ABI_VERSION: u32 = 8;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
 
@@ -157,6 +162,11 @@ pub struct StrView {
     ptr: *const u8,
     len: usize,
 }
+
+// Safety: a `StrView` only points to immutable `'static` string data.
+unsafe impl Send for StrView {}
+// Safety: see above.
+unsafe impl Sync for StrView {}
 
 impl StrView {
     /// Wrap a static string.
@@ -241,8 +251,9 @@ pub type InstallFn = unsafe extern "C" fn(registry: *mut c_void, sink: StrSink) 
 /// Everything a dynamic plugin exports, returned by `daedalus_plugin_descriptor`.
 ///
 /// Built only from C types, so a host can read it whatever toolchain built the plugin (once the
-/// ABI version matches). `schema`, `boundary_types` and `foreign_interfaces` are always safe to call;
-/// `register_boundary_contracts` and `register` only once [`check_rust_abi`] accepted `info`.
+/// ABI version matches). `schema`, `boundary_types` and `foreign_interfaces` are always safe to
+/// call; `register_boundary_contracts` and `register` only once [`check_rust_abi`] accepted
+/// `info`; `stable` once its version matches.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct PluginDescriptor {
@@ -252,295 +263,11 @@ pub struct PluginDescriptor {
     pub foreign_interfaces: ForeignInterfacesFn,
     pub register_boundary_contracts: InstallFn,
     pub register: InstallFn,
+    /// The stable handler entry points, callable once [`StableHandlers::version`] matches the
+    /// host's [`STABLE_ABI_VERSION`] (see [`stable`]).
+    pub stable: StableHandlers,
 }
 
 #[doc(hidden)]
-pub mod __support {
-    use super::{BoundaryTypeTable, ForeignInterfaceTable, StrSink};
-    use crate::runtime::plugins::{Plugin, PluginRegistry, PluginResult, RegistryPluginExt};
-    use std::ffi::c_void;
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
-    /// A dependency plugin linked into a dynamic plugin (`export_plugin!(P, deps [D])`).
-    pub type LinkedDep = fn() -> Box<dyn Plugin>;
-
-    /// The [`LinkedDep`] for `D`.
-    pub fn linked<D: Plugin + Default + 'static>() -> Box<dyn Plugin> {
-        Box::new(D::default())
-    }
-
-    /// Run `body`, reporting its error or panic through `sink` instead of unwinding across the
-    /// FFI boundary.
-    ///
-    /// # Safety
-    /// `sink` must be valid for the call.
-    unsafe fn guarded(sink: StrSink, body: impl FnOnce() -> Result<(), String>) -> bool {
-        let message = match catch_unwind(AssertUnwindSafe(body)) {
-            Ok(Ok(())) => return true,
-            Ok(Err(message)) => message,
-            Err(payload) => format!(
-                "plugin panicked: {}",
-                crate::runtime::executor::panic_message(&*payload)
-            ),
-        };
-        // Safety: forwarded from the caller.
-        unsafe { sink.write(&message) };
-        false
-    }
-
-    /// Run `install` against a host-provided registry pointer.
-    ///
-    /// # Safety
-    /// `registry` must be null or a valid, exclusive pointer to a `PluginRegistry` with the
-    /// same layout as this crate's, and `sink` must be valid for the call.
-    pub unsafe fn install(
-        registry: *mut c_void,
-        sink: StrSink,
-        install: impl FnOnce(&mut PluginRegistry) -> PluginResult<()>,
-    ) -> bool {
-        // Safety: forwarded from the caller.
-        unsafe {
-            guarded(sink, || {
-                let registry = registry.cast::<PluginRegistry>().as_mut();
-                let registry = registry.ok_or("registry pointer was null")?;
-                install(registry).map_err(|err| err.to_string())
-            })
-        }
-    }
-
-    /// Install `P` into the registry (the `register` entry point). Its dependencies are the
-    /// host's to install first (`PluginLibrary::install_into` checks them); the linked ones
-    /// already ran in this library during schema extraction, so the type mappings they register
-    /// are known to its node macros.
-    pub fn install_plugin<P: Plugin + Default>(registry: &mut PluginRegistry) -> PluginResult<()> {
-        registry.install_plugin(&P::default())
-    }
-
-    /// The private registry the descriptor's introspection entry points read: the linked
-    /// dependencies, then `P`. Unkeyed foreign port types (keys a dependency that is not linked
-    /// maps) are recorded instead of failing (`PluginRegistry::record_external_types`).
-    fn extraction_registry<P: Plugin + Default>(
-        deps: &[LinkedDep],
-    ) -> Result<(PluginRegistry, P), String> {
-        let mut registry = PluginRegistry::new();
-        registry.record_external_types();
-        for dep in deps {
-            let dep = dep();
-            registry
-                .install_plugin(&*dep)
-                .map_err(|err| format!("linked dependency plugin `{}`: {err}", dep.id()))?;
-        }
-        let plugin = P::default();
-        registry
-            .install_plugin(&plugin)
-            .map_err(|err| err.to_string())?;
-        Ok((registry, plugin))
-    }
-
-    /// Write `P`'s [`PluginSchema`](super::PluginSchema) as JSON to `sink`: its manifest (with
-    /// the linked dependencies added to `dependencies`) and nodes, and the recorded external
-    /// port types as `plugin.metadata.external_types`.
-    ///
-    /// # Safety
-    /// `sink` must be valid for the call.
-    pub unsafe fn schema<P: Plugin + Default>(deps: &[LinkedDep], sink: StrSink) -> bool {
-        // Safety: forwarded from the caller.
-        unsafe {
-            guarded(sink, || {
-                let (registry, plugin) = extraction_registry::<P>(deps)?;
-                // Not `combined_transport_capabilities`: its validation fails on the plugin's
-                // `deps` the registry lacks, which only the host provides (and checks).
-                let mut capabilities = registry.transport_capabilities.clone();
-                for manifest in registry.plugin_manifests.values() {
-                    if capabilities.plugin_manifest(&manifest.id).is_none() {
-                        capabilities
-                            .register_plugin(manifest.clone())
-                            .map_err(|err| err.to_string())?;
-                    }
-                }
-                let mut schema =
-                    daedalus_ffi_host::export_registry_plugin_schema(&capabilities, plugin.id())
-                        .map_err(|err| err.to_string())?;
-                schema
-                    .dependencies
-                    .extend(deps.iter().map(|dep| dep().id().to_string()));
-                schema.dependencies.sort();
-                schema.dependencies.dedup();
-                let external: Vec<_> = registry
-                    .external_types()
-                    .iter()
-                    .map(|external| {
-                        serde_json::json!({
-                            "owner": external.owner,
-                            "port": external.port,
-                            "rust_type": external.rust_type,
-                        })
-                    })
-                    .collect();
-                if !external.is_empty() {
-                    schema
-                        .plugin
-                        .metadata
-                        .insert("external_types".into(), external.into());
-                }
-                let json = serde_json::to_string(&schema).map_err(|err| err.to_string())?;
-                sink.write(&json);
-                Ok(())
-            })
-        }
-    }
-
-    /// Hand the extraction registry's [`boundary_types`](PluginRegistry::boundary_types) (`P`'s
-    /// and its linked dependencies') to the host as a `'static` table.
-    ///
-    /// # Safety
-    /// `table` must be valid for writes and `sink` valid for the call.
-    pub unsafe fn boundary_types<P: Plugin + Default>(
-        deps: &[LinkedDep],
-        table: *mut BoundaryTypeTable,
-        sink: StrSink,
-    ) -> bool {
-        // Safety: forwarded from the caller.
-        unsafe {
-            guarded(sink, || {
-                let table = table.as_mut().ok_or("table pointer was null")?;
-                let (registry, _) = extraction_registry::<P>(deps)?;
-                *table = super::boundary::leak_table(&registry);
-                Ok(())
-            })
-        }
-    }
-
-    /// Hand the extraction registry's
-    /// [`foreign_interfaces`](PluginRegistry::foreign_interfaces) to the host as a `'static`
-    /// table.
-    ///
-    /// # Safety
-    /// `table` must be valid for writes and `sink` valid for the call.
-    pub unsafe fn foreign_interfaces<P: Plugin + Default>(
-        deps: &[LinkedDep],
-        table: *mut ForeignInterfaceTable,
-        sink: StrSink,
-    ) -> bool {
-        // Safety: forwarded from the caller.
-        unsafe {
-            guarded(sink, || {
-                let table = table.as_mut().ok_or("table pointer was null")?;
-                let (registry, _) = extraction_registry::<P>(deps)?;
-                *table = super::foreign::leak_table(&registry);
-                Ok(())
-            })
-        }
-    }
-}
-
-/// Export a [`Plugin`](crate::Plugin) implementor (which must also implement `Default`) for
-/// dynamic loading from a `cdylib`.
-///
-/// Generates the `daedalus_plugin_abi_version` and `daedalus_plugin_descriptor` symbols that
-/// [`PluginLibrary`] expects. The symbols are unmangled, so invoke it at most once per final
-/// `cdylib`, including across plugin crates linked into it as `rlib`s.
-///
-/// `deps [...]` links dependency plugins (`Plugin + Default`, typically the Daedalus
-/// integration of a library whose types the plugin's nodes use): the descriptor's introspection
-/// entry points install them before the plugin into their private registry, so the keys they
-/// own or map resolve, and the schema lists them in `dependencies`. They are never installed
-/// into the host: [`PluginLibrary::install_into`] requires the host to have installed every
-/// dependency first.
-///
-/// ```ignore
-/// #[derive(Default)]
-/// struct DemoPlugin;
-/// // impl daedalus::Plugin for DemoPlugin { ... }
-///
-/// daedalus::export_plugin!(DemoPlugin);
-/// // or, linking the plugin of a library whose types the nodes use:
-/// daedalus::export_plugin!(DemoPlugin, deps [styx_core::daedalus_integration::StyxPlugin]);
-/// // or, with extra boundary contracts registered before the plugin installs:
-/// daedalus::export_plugin!(DemoPlugin, boundary_contracts [my_contract()]);
-/// daedalus::export_plugin!(DemoPlugin, deps [Dep], boundary_contracts [my_contract()]);
-/// ```
-#[macro_export]
-macro_rules! export_plugin {
-    ($ty:ty) => {
-        $crate::export_plugin!($ty, deps [], boundary_contracts []);
-    };
-    ($ty:ty, boundary_contracts [ $( $contract:expr ),* $(,)? ]) => {
-        $crate::export_plugin!($ty, deps [], boundary_contracts [ $( $contract ),* ]);
-    };
-    ($ty:ty, deps [ $( $dep:ty ),* $(,)? ]) => {
-        $crate::export_plugin!($ty, deps [ $( $dep ),* ], boundary_contracts []);
-    };
-    (
-        $ty:ty,
-        deps [ $( $dep:ty ),* $(,)? ],
-        boundary_contracts [ $( $contract:expr ),* $(,)? ]
-    ) => {
-        /// Returns the Daedalus dynamic plugin ABI version.
-        #[unsafe(no_mangle)]
-        pub extern "C" fn daedalus_plugin_abi_version() -> u32 {
-            $crate::dylib::PLUGIN_ABI_VERSION
-        }
-
-        /// Returns this plugin's descriptor: metadata and entry points.
-        #[unsafe(no_mangle)]
-        pub extern "C" fn daedalus_plugin_descriptor() -> $crate::dylib::PluginDescriptor {
-            use $crate::dylib::{__support, StrSink};
-            use ::core::ffi::c_void;
-
-            const DEPS: &[__support::LinkedDep] = &[ $( __support::linked::<$dep> ),* ];
-
-            unsafe extern "C" fn schema(sink: StrSink) -> bool {
-                // Safety: the host passes a sink valid for the call.
-                unsafe { __support::schema::<$ty>(DEPS, sink) }
-            }
-
-            unsafe extern "C" fn boundary_types(
-                table: *mut $crate::dylib::BoundaryTypeTable,
-                sink: StrSink,
-            ) -> bool {
-                // Safety: the host passes a writable table and a sink valid for the call.
-                unsafe { __support::boundary_types::<$ty>(DEPS, table, sink) }
-            }
-
-            unsafe extern "C" fn foreign_interfaces(
-                table: *mut $crate::dylib::ForeignInterfaceTable,
-                sink: StrSink,
-            ) -> bool {
-                // Safety: the host passes a writable table and a sink valid for the call.
-                unsafe { __support::foreign_interfaces::<$ty>(DEPS, table, sink) }
-            }
-
-            unsafe extern "C" fn register_boundary_contracts(
-                registry: *mut c_void,
-                sink: StrSink,
-            ) -> bool {
-                // Safety: the host passes a layout-compatible registry and a valid sink.
-                unsafe {
-                    __support::install(registry, sink, |__registry| {
-                        $( __registry.register_boundary_contract($contract)?; )*
-                        let _ = __registry;
-                        Ok(())
-                    })
-                }
-            }
-
-            unsafe extern "C" fn register(registry: *mut c_void, sink: StrSink) -> bool {
-                // Safety: the host passes a layout-compatible registry and a valid sink.
-                unsafe { __support::install(registry, sink, __support::install_plugin::<$ty>) }
-            }
-
-            $crate::dylib::PluginDescriptor {
-                info: $crate::dylib::PluginInfo::for_plugin(
-                    env!("CARGO_PKG_NAME"),
-                    env!("CARGO_PKG_VERSION"),
-                ),
-                schema,
-                boundary_types,
-                foreign_interfaces,
-                register_boundary_contracts,
-                register,
-            }
-        }
-    };
-}
+#[path = "support.rs"]
+pub mod __support;
