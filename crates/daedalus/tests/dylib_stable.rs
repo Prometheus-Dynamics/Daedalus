@@ -16,6 +16,8 @@ use daedalus::data::to_value::ToValue;
 use daedalus::dylib::{InstallPath, RustAbiMismatch};
 use daedalus::engine::{Engine, EngineConfig, HostGraph};
 use daedalus::macros::plugin;
+use daedalus::registry::ids::NodeId;
+use daedalus::runtime::NODE_FIRE_META_KEY;
 use daedalus::runtime::handler_registry::HandlerRegistry;
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
 use daedalus::transport::{
@@ -116,7 +118,9 @@ fn compile(
                 && !aliases.contains(&alias)
             {
                 aliases.push(alias);
-                builder = builder.node_id(&format!("stable_abi:{alias}"), alias);
+                // An alias is its node's name, plus digits for further instances (`every2`).
+                let node = alias.trim_end_matches(|c: char| c.is_ascii_digit());
+                builder = builder.node_id(&format!("stable_abi:{node}"), alias);
             }
         }
     }
@@ -280,6 +284,76 @@ fn mismatched_toolchain_plugin_runs_through_the_stable_path_like_the_static_inst
         }
     );
     assert_eq!(run(&stable_registry()), expected);
+}
+
+/// Join outputs over six ticks (`every2` and `every3` feed a `fire = "all"` join through
+/// conditional outputs), and `successor(u64::MAX - 1)`.
+fn run_joins(registry: &PluginRegistry) -> (Vec<Option<i64>>, Option<u64>) {
+    let mut host = compile(
+        registry,
+        &[
+            ("tick", "every2.tick"),
+            ("two", "every2.every"),
+            ("tick", "every3.tick"),
+            ("three", "every3.every"),
+            ("every2.out", "join.a"),
+            ("every3.out", "join.b"),
+            ("join.out", "out"),
+            ("big", "successor.value"),
+            ("successor.out", "next"),
+        ],
+        &[
+            ("tick", scalar(ValueType::Int)),
+            ("two", scalar(ValueType::Int)),
+            ("three", scalar(ValueType::Int)),
+            ("big", scalar(ValueType::U64)),
+        ],
+    );
+    let joined = (1..=6_i64)
+        .map(|tick| {
+            host.push("tick", tick);
+            host.push("two", 2_i64);
+            host.push("three", 3_i64);
+            host.tick().unwrap();
+            host.take::<i64>("out")
+        })
+        .collect();
+    host.push("big", u64::MAX - 1);
+    host.tick().unwrap();
+    (joined, host.take::<u64>("next"))
+}
+
+#[test]
+fn joins_conditional_outputs_and_u64_behave_like_the_static_install() {
+    let (static_registry, stable_registry) = (static_registry(), stable_registry());
+    let expected = run_joins(&static_registry);
+    assert_eq!(expected.1, Some(u64::MAX));
+    assert!(expected.0.contains(&Some(203)), "{:?}", expected.0);
+    assert!(expected.0.contains(&None), "{:?}", expected.0);
+    assert_eq!(run_joins(&stable_registry), expected);
+
+    // The fire mode and conditional-output metadata cross through the schema.
+    for (node, key) in [
+        ("stable_abi:join", NODE_FIRE_META_KEY.to_string()),
+        ("stable_abi:every", "outputs.out.conditional".to_string()),
+    ] {
+        let metadata = |registry: &PluginRegistry| {
+            let decl = registry
+                .transport_capabilities
+                .node_decl(&NodeId::new(node))
+                .unwrap_or_else(|| panic!("{node} declared"));
+            let json = decl
+                .metadata_json
+                .get(&key)
+                .unwrap_or_else(|| panic!("{node} {key}"));
+            serde_json::from_str::<Value>(json).unwrap()
+        };
+        assert_eq!(
+            metadata(&stable_registry),
+            metadata(&static_registry),
+            "{node} {key}"
+        );
+    }
 }
 
 #[test]

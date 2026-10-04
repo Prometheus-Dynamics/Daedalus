@@ -2,9 +2,9 @@
 //!
 //! Its `cdylib` (`--features dylib`) reports another rustc in its descriptor, as a plugin built
 //! by another toolchain would, so a host refuses its Rust ABI and installs it through the stable
-//! entry points. Its nodes cover what crosses that path: scalars, a derived struct, bytes, an
-//! optional input, node state, a frame read through `daedalus:frame` without copying, and a
-//! panic. The facade's `dylib_stable` test runs them statically and dynamically and compares.
+//! entry points. Its nodes cover what crosses that path: scalars (`u64` beyond `i64::MAX`
+//! included), a derived struct, bytes, an optional input, node state, a frame read through
+//! `daedalus:frame` without copying, a conditional output, a `fire = "all"` join, and a panic. The facade's `dylib_stable` test runs them statically and dynamically and compares.
 
 use daedalus::macros::{node, plugin};
 use daedalus::runtime::NodeError;
@@ -77,10 +77,29 @@ fn explode(value: i64) -> Result<i64, NodeError> {
     Ok(value)
 }
 
+/// `u64` values above `i64::MAX` cross unchanged.
+#[node(id = "successor", inputs("value"), outputs("out"))]
+fn successor(value: u64) -> Result<u64, NodeError> {
+    Ok(value.wrapping_add(1))
+}
+
+/// A conditional output: pushes `tick` only when it is a multiple of `every`.
+#[node(id = "every", inputs("tick", "every"), outputs("out"))]
+fn every(tick: i64, every: i64) -> Result<Option<i64>, NodeError> {
+    Ok((tick % every == 0).then_some(tick))
+}
+
+/// A cross-tick join (`fire = "all"`): waits for both inputs.
+#[node(id = "join", inputs("a", "b"), outputs("out"), fire = "all")]
+fn join(a: i64, b: i64) -> Result<i64, NodeError> {
+    Ok(a * 100 + b)
+}
+
 #[plugin(
     id = "stable_abi",
     nodes(
-        scale, point, describe, checksum, or_default, accumulate, frame_sum, explode
+        scale, point, describe, checksum, or_default, accumulate, frame_sum, explode, successor,
+        every, join
     )
 )]
 pub struct StableAbiPlugin;
