@@ -42,7 +42,7 @@ cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 | `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`) |
 | `aarch64` | `cargo check --target aarch64-unknown-linux-gnu` (see below) |
 | `lean` | lean-preset tests (see below) |
-| `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS); wasm and WASI `engine,plugins` checks and Node runs (see below) |
+| `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS), the runtime and engine, and the no_std smoke graph; wasm and WASI `engine,plugins` checks and Node runs (see below) |
 | `bench` | host bridge and executor criterion benches (see below) |
 | `pi` | on-device dmabuf hardware tests and the `gpu_probe` report; not part of `all` (see [Validating on a Raspberry Pi 5](#validating-on-a-raspberry-pi-5)) |
 
@@ -86,7 +86,12 @@ scripts/ci.sh nostd wasm
 
 `nostd` checks `daedalus-core`, `-transport`, `-data`, `-registry` and `-planner` with
 `--no-default-features` for `thumbv7em-none-eabihf` and `thumbv6m-none-eabi` (no
-compare-and-swap), once bare and once with their alloc-only optional features. `wasm` checks the
+compare-and-swap), once bare and once with their alloc-only optional features. It then checks
+`daedalus-runtime` and `daedalus-engine` for `thumbv7em-none-eabihf` without default features,
+bare and with `plugins`, `metrics`, `snapshots`, `lockfree-queues` and `config-env`, checks
+`examples/nostd_smoke` (a `#![no_std]` crate driving a one-node graph through the serial
+executor and through `Engine`/`HostGraph` on an injected counter clock) for that target, and runs
+its tests natively, where every Daedalus crate builds without `std`. `wasm` checks the
 facade's `engine,plugins` (the `embedded` preset without `threads`) for `wasm32-unknown-unknown`
 and `wasm32-wasip1`, builds the wasm modules in release mode and runs them in Node:
 

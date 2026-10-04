@@ -186,30 +186,31 @@ changes.
 
 ### Portability (tier 2)
 Tier 1 (`no_std` + `alloc` core/transport/data/registry/planner, and the `embedded` preset on
-`wasm32-unknown-unknown`) is done; see "Portability" in `docs/development.md`. Next: a `no_std`
-serial executor.
+`wasm32-unknown-unknown`) and tier 2 (`no_std` + `alloc` runtime and engine with the serial
+executor, checked on `thumbv7em`) are done; see "Portability" in `docs/development.md`.
 - [x] **Lock backend for runtime/engine.** `daedalus_runtime::sync`: `parking_lot` with `std`,
       `spin` (`lock_api`) without; the engine has no direct `parking_lot` dependency.
 - [x] **`threads` feature.** Worker pool, stream workers and blocking waits (`InboundWaiter::wait`,
       `drive_blocking`, `recv_payload_timeout`, ...) exist only with `threads`; `platform::THREADS`
       is gone. The bridge's `Condvar` stays (`std`) for those waits.
 - [x] **Clock injection.** `daedalus_core::platform::Clock` on the executor
-      (`with_clock`), `StreamGraph` and `EngineConfig::with_clock`; `set_clock` remains only the
-      fallback for payload lineage and host-bridge event timestamps.
-- [ ] **Non-blocking host bridge without `std`.** With `threads` off the bridge already only pushes,
-      polls and awaits `InboundWaiter`; what is left is building it without `std` (the `Condvar`
-      field and `std::task` wakers) once the runtime has a `std` feature that removes `std`.
-- [ ] **Lineage clock.** Payload lineage (`created_at`) and host-bridge events read the platform
-      clock; `FreshnessPolicy::MaxAge` compares against it. Decide whether bridges take the engine
-      `Clock` (then lineage needs a clock at payload creation).
-- [ ] **`alloc`-only runtime.** `serde_json` const decoding, `tracing` and telemetry without
-      `std`; `libc` only on Linux; then make the runtime's `std` feature (today only the lock
-      backend) drop `std` for real, and a `thumbv7em` check of the serial executor.
+      (`with_clock`), `StreamGraph` and `EngineConfig::with_clock`.
+- [x] **Non-blocking host bridge without `std`.** Push, poll (`try_pop*`, `drain*`) and await the
+      `core::task` `InboundWaiter`; the `Condvar` exists only with `std`.
+- [x] **Lineage clock.** Node pushes, bridge pushes and direct lanes stamp lineage with the
+      engine/executor clock (`Payload::stamp`); bridges (`HostBridgeManager::set_clock`) timestamp
+      events and age `MaxAge` payloads on it. `platform::set_clock` is gone.
+- [x] **`alloc`-only runtime.** The runtime's and engine's `std` feature removes `std`
+      (`hashbrown` maps, spin-locked port buffer pool, perf counters/env config `std`-only);
+      `ci.sh nostd` checks both and `examples/nostd_smoke` for `thumbv7em` and runs the smoke
+      graph natively without `std`.
 - [x] **Targets without compare-and-swap** (`thumbv6m-none-eabi`, `riscv32imc`): tier-1 crates
       build there; atomics, `spin` and `Arc` via `portable-atomic(-util)` (`critical-section`),
-      target-specific; `ci.sh nostd` checks `thumbv6m`. The runtime's `spin` backend has the same
-      option for when it drops `std`.
-- [x] **wasm host glue.** `examples/wasm_bindgen_host` (`Clock::new`/`set_clock` on
+      target-specific; `ci.sh nostd` checks `thumbv6m`.
+- [ ] **Runtime and engine without compare-and-swap.** They take `Arc`/atomics from `portable`
+      already; left: `tracing` (needs CAS: make it optional or route through a no-op macro) and
+      the `Arc<dyn _>`/`Arc<[_]>` coercions (`arc_dyn!`), then a `thumbv6m` check.
+- [x] **wasm host glue.** `examples/wasm_bindgen_host` (`Clock::new` on
       `performance.now()`, `push`/`tick`/`take` from JS, Node-driven), a `wasm32-wasip1` check and
       WASI smoke run (`ci.sh wasm`).
 
