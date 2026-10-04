@@ -10,7 +10,7 @@ pub use resources::{
 pub use crate::StateError;
 use parking_lot::RwLock;
 use resources::{ResourceEntry, ResourceStorage, SharedNodeResources};
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::sync::Arc;
 
@@ -19,6 +19,8 @@ use std::sync::Arc;
 pub struct StateStore {
     inner: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     native: Arc<RwLock<HashMap<String, Box<dyn Any + Send + Sync>>>>,
+    /// Per-node typed state (`#[node(state(..))]`), keyed by node id and state type.
+    node_state: Arc<RwLock<HashMap<(Arc<str>, TypeId), Box<dyn Any + Send + Sync>>>>,
     resources: Arc<RwLock<HashMap<String, SharedNodeResources>>>,
     custom_metrics:
         Arc<RwLock<HashMap<String, BTreeMap<String, crate::executor::CustomMetricValue>>>>,
@@ -166,6 +168,31 @@ impl StateStore {
         drop(native);
         if self.inner.read().contains_key(key) {
             self.inner.write().remove(key);
+        }
+    }
+
+    /// Move node `node_id`'s state of type `T` out of the store (`None` before the first
+    /// [`Self::set_node_state`]). Keyed by node id and type, so the per-tick take/set cycle of a
+    /// stateful node neither builds a key nor allocates.
+    pub fn take_node_state<T: Send + Sync + 'static>(&self, node_id: &Arc<str>) -> Option<T> {
+        let key = (node_id.clone(), TypeId::of::<T>());
+        let mut guard = self.node_state.write();
+        guard.get_mut(&key)?.downcast_mut::<Option<T>>()?.take()
+    }
+
+    /// Store node `node_id`'s state of type `T` (see [`Self::take_node_state`]); the slot made
+    /// by the first call is reused afterwards.
+    pub fn set_node_state<T: Send + Sync + 'static>(&self, node_id: &Arc<str>, value: T) {
+        let key = (node_id.clone(), TypeId::of::<T>());
+        let mut guard = self.node_state.write();
+        match guard
+            .get_mut(&key)
+            .and_then(|slot| slot.downcast_mut::<Option<T>>())
+        {
+            Some(slot) => *slot = Some(value),
+            None => {
+                guard.insert(key, Box::new(Some(value)));
+            }
         }
     }
 
@@ -424,6 +451,7 @@ impl StateStore {
         *guard = map;
         drop(guard);
         self.native.write().clear();
+        self.node_state.write().clear();
         self.resources.write().clear();
         Ok(())
     }

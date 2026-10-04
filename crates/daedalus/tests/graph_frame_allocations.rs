@@ -160,12 +160,10 @@ fn call_site(trace: &str) -> String {
 /// metadata-only adapter results, one built-in branch for the fanned-out `count`, and the host's
 /// frame (one, it is `Arc`-shared).
 const PAYLOAD_ALLOCATIONS: f64 = 10.0 * 2.0 + 4.0 + 2.0 * 2.0 + 2.0 + 1.0;
-/// Generated handler code: the three stateful nodes format their state key on every call
-/// (`daedalus-macros`).
-const GENERATED_HANDLER_ALLOCATIONS: f64 = 3.0 * 3.0;
-/// Serial budget: with handlers that allocate nothing themselves, everything else is runtime
+/// Serial budget: handlers (generated code included: stateful nodes keep their state in a
+/// per-node slot) allocate nothing themselves, so everything beyond the payloads is runtime
 /// bookkeeping, which must stay at zero.
-const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + GENERATED_HANDLER_ALLOCATIONS;
+const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS;
 /// Basic metrics return a fresh per-node metrics map with each tick.
 const BASIC_METRICS_ALLOCATIONS: f64 = 3.0;
 /// Segments a parallel frame schedules (one per node).
