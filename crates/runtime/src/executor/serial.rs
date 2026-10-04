@@ -343,7 +343,7 @@ fn required_inputs_held<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize)
                 exec.core
                     .direct_slots
                     .get(edge_idx)
-                    .is_some_and(|slot| slot.access(exec.direct_slot_access).is_occupied())
+                    .is_some_and(|slot| slot.access(exec.direct_slot_access).occupied())
             } else {
                 super::queue::edge_has_payload(edge_idx, &exec.core.queues)
             }

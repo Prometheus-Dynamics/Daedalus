@@ -35,4 +35,5 @@ fn node_macro_compile_failures() {
     t.compile_fail("tests/ui/node/fail_unknown_argument.rs");
     t.compile_fail("tests/ui/node/fail_missing_id.rs");
     t.compile_fail("tests/ui/node/fail_port_ty_and_type_key.rs");
+    t.compile_fail("tests/ui/node/fail_fire_mode.rs");
 }

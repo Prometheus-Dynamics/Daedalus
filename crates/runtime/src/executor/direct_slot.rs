@@ -77,7 +77,7 @@ impl DirectSlotHandle<'_> {
     }
 
     /// Whether the slot holds a payload, without taking it.
-    pub(crate) fn is_occupied(self) -> bool {
+    pub(crate) fn occupied(self) -> bool {
         match self {
             // SAFETY: see `SerialDirectSlot::put`.
             DirectSlotHandle::Serial(slot) => unsafe { (*slot.slot.payload.get()).is_some() },
