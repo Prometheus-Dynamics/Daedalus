@@ -324,6 +324,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Performance
 
+- Owned handler parameters (`T`, `mut T`, `Option<T>`) fed a non-builtin constant (an enum, a
+  serde struct, a `String`) no longer convert it on every call: the generated handler converts
+  it once per constant into the node's `const_cache::DecodedInputs` slot and hands out a clone
+  (`T: Clone`, detected by the macro; other types still convert per call). The detector graph
+  frame benchmark now includes such a node and stays at its payload allocations plus the one
+  `String` clone.
 - Parallel frames no longer spawn a task (or, without `executor-pool`, a thread) per segment or
   send results through a channel: workers pull ready segments from one locked queue, reuse one
   executor snapshot each and merge telemetry in place, and the Rayon fan-out splits with `join` on

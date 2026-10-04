@@ -2,6 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::LitStr;
 
+use super::port_types::{coercible, is_scalar_primitive};
 use crate::foreign_type::is_foreign_view;
 use crate::helpers::{generic_arg, last_ident_is, strip_ref};
 
@@ -25,6 +26,8 @@ pub(super) struct FetchStmts {
     pub(super) decode: Vec<TokenStream>,
     /// Shared borrows of `io` and of the decoded values.
     pub(super) borrowed: Vec<TokenStream>,
+    /// Whether any statement uses [`DECODED`], which the handler then binds before them all.
+    pub(super) uses_decoded: bool,
 }
 
 pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
@@ -39,6 +42,11 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
     let mut arg_decode_stmts: Vec<TokenStream> = Vec::new();
     let mut arg_fetch_ref_stmts: Vec<TokenStream> = Vec::new();
     let decoded = syn::Ident::new(DECODED, Span::call_site());
+    let mut uses_decoded = false;
+    // Owned parameters fed a `Value` clone the value decoded once per constant (when the type
+    // is `Clone`); builtin scalars convert without allocating, so they skip the cache.
+    let cached = |ty: &syn::Type| coercible(ty) && !is_scalar_primitive(ty);
+    let support = quote! { #runtime_crate::const_coerce::derive_support };
     for idx in 0..arg_idents.len() {
         let ident = &arg_idents[idx];
         let ty = &arg_types[idx];
@@ -103,6 +111,10 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
             }
             match generic_arg(inner_ty, "Arc", 0) {
                 Some(arc_ty) => quote! { let #ident = io.get_arc::<#arc_ty>(#port); },
+                None if cached(inner_ty) => {
+                    uses_decoded = true;
+                    quote! { let #ident = #decoded.get_typed::<#inner_ty>(io, #port); }
+                }
                 None => quote! { let #ident = io.get_typed::<#inner_ty>(#port); },
             }
         } else if let Some(inner_ty) = generic_arg(ty_core, "Arc", 0) {
@@ -129,7 +141,7 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
             match mode {
                 // A `Value` input (a graph constant) is borrowed from its decoded value, which is
                 // kept across calls until the input changes.
-                "borrowed" if super::port_types::coercible(ty_core) => {
+                "borrowed" if coercible(ty_core) => {
                     arg_decode_stmts.push(quote! { #decoded.refresh::<#ty_core>(io, #port); });
                     quote! {
                         let #ident = match io.get_ref::<#ty_core>(#port) {
@@ -142,6 +154,19 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
                 }
                 "borrowed" => bind(get("get_ref", ty_core), None),
                 "borrowed_mut" => bind(get("take_modify", ty_core), Some(("__borrowed_mut", true))),
+                _ if cached(ty_core) => {
+                    uses_decoded = true;
+                    quote! {
+                        let #ident = {
+                            // Only the trait matching the probe is used.
+                            #[allow(unused_imports)]
+                            use #support::{CloneProbe as _, NoCloneProbe as _};
+                            let __probe = &#support::Probe::<#ty_core>(::core::marker::PhantomData);
+                            #decoded.take_owned::<#ty_core>(io, #port, __probe.cloner())
+                        }
+                        .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
+                    }
+                }
                 _ => bind(get("take_owned", ty_core), None),
             }
         };
@@ -153,6 +178,7 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
         }
     }
     FetchStmts {
+        uses_decoded: uses_decoded || !arg_decode_stmts.is_empty(),
         mutable: arg_fetch_mut_stmts,
         decode: arg_decode_stmts,
         borrowed: arg_fetch_ref_stmts,

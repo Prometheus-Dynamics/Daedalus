@@ -101,6 +101,9 @@ changes.
       `StateStore` slots instead of formatting a key per call, and configs and `&T` constants are
       decoded once per change (`daedalus_runtime::const_cache`), so the detector graph frame is
       its 31 payload allocations.
+- [x] **Owned constants decode once.** Owned `T`/`Option<T>` parameters fed a non-builtin
+      constant clone the value decoded into the per-node cache (`T: Clone`, probed by the macro)
+      instead of converting it every call.
 - [x] Benchmarks: `crates/engine/benches/host_graph_drive.rs`, plus `.github/workflows/bench.yml`
       with regression flagging.
 
@@ -161,10 +164,6 @@ changes.
       a variant-drift test.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
-- [ ] **Owned constants decode per call.** An owned `T` parameter fed a non-builtin constant
-      (an enum, a serde struct, a `String`) still converts it on every call; `&T` and config
-      fields use the per-node cache. Caching owned values needs `T: Clone` (or typed const
-      payloads built when the graph compiles or is patched).
 - [ ] **Java and C++ SDK integer widths.** Their schemas still map every integer to `Int`
       (`i64`); map `int`/`short`/`byte` (Java) and the C++ widths to their own value types like
       the node SDK does.

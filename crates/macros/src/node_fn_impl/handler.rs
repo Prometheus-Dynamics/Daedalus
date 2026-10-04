@@ -501,7 +501,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 }
             }
         } else {
-            // Decoded configs and `&T` constants live in the node's state slot between calls
+            // Decoded configs and `Value` constants live in the node's state slot between calls
             // (`daedalus_runtime::const_cache`) and are decoded again only when an input changes.
             let mut config_fetch_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
             let mut cache_restores: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -542,7 +542,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 port_names: &port_names,
                 runtime_crate,
             });
-            let decoded_take = (!fetch.decode.is_empty()).then(|| {
+            let decoded_take = fetch.uses_decoded.then(|| {
                 take_cache(
                     &syn::Ident::new(handler_fetch::DECODED, Span::call_site()),
                     quote! { #runtime_crate::const_cache::DecodedInputs },
@@ -568,8 +568,8 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
 
             quote! {
                 #(#config_fetch_stmts)*
-                #(#arg_fetch_mut_stmts)*
                 #decoded_take
+                #(#arg_fetch_mut_stmts)*
                 #(#arg_decode_stmts)*
                 #(#arg_fetch_ref_stmts)*
                 #shader_gpu_init

@@ -3,8 +3,9 @@
 //! A const input is the same payload on every tick until a patch replaces it, so generated
 //! handlers decode it once and keep the result in the node's state slot
 //! ([`crate::state::StateStore::take_node_state`]): [`ConfigCache`] for `#[derive(NodeConfig)]`
-//! structs, [`DecodedInputs`] for `&T` parameters fed a `Value`. A value is decoded again when
-//! any of its input payloads changes (a patched constant, or a new value on a connected edge).
+//! structs, [`DecodedInputs`] for `&T`, owned `T` and `Option<T>` parameters fed a `Value`
+//! (owned ones get a clone of the decoded value). A value is decoded again when any of its input
+//! payloads changes (a patched constant, or a new value on a connected edge).
 
 use std::any::{Any, TypeId};
 
@@ -61,7 +62,7 @@ impl<C: NodeConfig> ConfigCache<C> {
     }
 }
 
-/// Values decoded from `Value` inputs for `&T` parameters, by port.
+/// Values decoded from `Value` inputs for `&T`, owned `T` and `Option<T>` parameters, by port.
 #[derive(Default)]
 pub struct DecodedInputs {
     entries: Vec<DecodedInput>,
@@ -75,9 +76,10 @@ struct DecodedInput {
 
 impl DecodedInputs {
     /// Decode the `Value` on `port` into `T`, unless the cached value came from the same
-    /// payload. A port without a `Value` (missing, or a typed payload the handler borrows
-    /// directly) or one that does not convert drops its entry.
-    pub fn refresh<T: Send + Sync + 'static>(&mut self, io: &NodeIo, port: &'static str) {
+    /// payload, and return whether `port` has a decoded value. A port without a `Value`
+    /// (missing, or a typed payload the handler borrows directly) or one that does not convert
+    /// drops its entry.
+    pub fn refresh<T: Send + Sync + 'static>(&mut self, io: &NodeIo, port: &'static str) -> bool {
         let idx = self.entries.iter().position(|entry| entry.port == port);
         let value = io
             .get_payload(port)
@@ -87,22 +89,55 @@ impl DecodedInputs {
             if let Some(idx) = idx {
                 self.entries.swap_remove(idx);
             }
-            return;
+            return false;
         };
         if let Some(idx) = idx {
             let entry = &self.entries[idx];
             if entry.source.shares_storage(payload) && entry.value.is::<T>() {
-                return;
+                return true;
             }
             self.entries.swap_remove(idx);
         }
-        if let Some(decoded) = io.coerce_value::<T>(value) {
-            self.entries.push(DecodedInput {
-                port,
-                source: payload.clone(),
-                value: Box::new(decoded),
-            });
+        let Some(decoded) = io.coerce_value::<T>(value) else {
+            return false;
+        };
+        self.entries.push(DecodedInput {
+            port,
+            source: payload.clone(),
+            value: Box::new(decoded),
+        });
+        true
+    }
+
+    /// The owned `T` on `port`: a `Value` is decoded once per payload and handed out through
+    /// `clone` (`Some(T::clone)` when `T: Clone`); a typed payload, or any input without a
+    /// cloner, is taken as [`NodeIo::take_owned`] takes it.
+    pub fn take_owned<T: Send + Sync + 'static>(
+        &mut self,
+        io: &mut NodeIo,
+        port: &'static str,
+        clone: Option<fn(&T) -> T>,
+    ) -> Option<T> {
+        match clone {
+            Some(clone) if self.refresh::<T>(io, port) => {
+                io.take_input_payload(port);
+                self.get::<T>(port).map(clone)
+            }
+            _ => io.take_owned::<T>(port),
         }
+    }
+
+    /// [`NodeIo::get_typed`] for `Option<T>` parameters, cloning a decoded `Value` instead of
+    /// decoding it on every call.
+    pub fn get_typed<T: Clone + Send + Sync + 'static>(
+        &mut self,
+        io: &NodeIo,
+        port: &'static str,
+    ) -> Option<T> {
+        if self.refresh::<T>(io, port) {
+            return self.get::<T>(port).cloned();
+        }
+        io.get_typed::<T>(port)
     }
 
     /// The value [`Self::refresh`] decoded for `port`.
@@ -203,5 +238,49 @@ mod tests {
 
         decoded.refresh::<String>(&NodeIo::empty(), "label");
         assert_eq!(decoded.get::<String>("label"), None);
+    }
+
+    #[test]
+    fn owned_inputs_clone_the_decoded_value() {
+        static LABEL_DECODES: AtomicUsize = AtomicUsize::new(0);
+        #[derive(Clone, Debug, PartialEq)]
+        struct Label(String);
+        let coercers = crate::io::new_const_coercer_map();
+        let coerce: crate::io::ConstCoercer = Box::new(|value| {
+            LABEL_DECODES.fetch_add(1, Ordering::SeqCst);
+            let text = value.as_str()?;
+            Some(Box::new(Label(text.to_string())) as Box<dyn Any + Send + Sync>)
+        });
+        coercers
+            .write()
+            .insert(std::any::type_name::<Label>(), coerce);
+        let constant = Payload::owned("value", Value::String(Cow::Borrowed("a")));
+        let mut decoded = DecodedInputs::default();
+        let mut take = |payload: Payload, clone: Option<fn(&Label) -> Label>| {
+            let input = (
+                PortId::from_static("label"),
+                CorrelatedPayload::from_edge(payload),
+            );
+            let mut io = NodeIo::from_inputs([input]).with_const_coercers(Some(coercers.clone()));
+            let value = decoded.take_owned::<Label>(&mut io, "label", clone);
+            assert!(io.get_payload("label").is_none(), "the input is taken");
+            value.map(|label| label.0)
+        };
+        let decodes = || LABEL_DECODES.load(Ordering::SeqCst);
+
+        assert_eq!(
+            take(constant.clone(), Some(Label::clone)).as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            take(constant.clone(), Some(Label::clone)).as_deref(),
+            Some("a")
+        );
+        assert_eq!(decodes(), 1, "same constant: decoded once, then cloned");
+        assert_eq!(take(constant.clone(), None).as_deref(), Some("a"));
+        assert_eq!(decodes(), 2, "without a cloner: decoded per call");
+        let typed = Payload::owned("label", Label("t".into()));
+        assert_eq!(take(typed, Some(Label::clone)).as_deref(), Some("t"));
+        assert_eq!(decodes(), 2, "typed payloads move");
     }
 }
