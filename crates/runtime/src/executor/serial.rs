@@ -2,7 +2,6 @@ use std::time::Instant;
 
 use daedalus_planner::{ComputeAffinity, NodeRef};
 
-use crate::io::NodeIo;
 use crate::state::ExecutionContext;
 
 use super::{ExecuteError, ExecutionTelemetry, Executor, NodeFailure, NodeHandler};
@@ -117,9 +116,7 @@ pub(crate) fn run_order<H: NodeHandler>(
             None
         };
         let inputs = collect_inputs(exec, node_idx)?;
-        let mut io = NodeIo::from_inputs(inputs)
-            .with_const_coercers(exec.core.const_coercers.clone())
-            .with_type_index(exec.core.type_index.clone());
+        let mut io = exec.core.node_io(node_idx, inputs);
         let ctx = ExecutionContext {
             state: exec.core.state.clone(),
             node_id: exec.core.node_ids[node_idx].clone(),

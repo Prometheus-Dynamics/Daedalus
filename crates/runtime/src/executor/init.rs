@@ -7,6 +7,7 @@ use super::{
     build_compiled_schedule, build_node_execution_metadata, direct_edge_set, direct_slots,
     edge_maps, normalize_runtime_nodes, queue,
 };
+use crate::handles::PortId;
 use crate::plan::{RuntimeNode, RuntimePlan};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -20,6 +21,8 @@ pub(crate) struct ExecutorInit {
     pub(crate) direct_edges: Arc<HashSet<usize>>,
     pub(crate) direct_slots: Arc<Vec<DirectSlot>>,
     pub(crate) node_metadata: NodeMetadataStore,
+    /// Each node's connected output port ids, handed to its `NodeIo`.
+    pub(crate) output_ports: Arc<[Arc<[PortId]>]>,
     #[cfg(feature = "executor-pool")]
     pub(crate) pool_workers: usize,
     #[cfg(feature = "gpu")]
@@ -32,6 +35,18 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
     let node_metadata = build_node_execution_metadata(&nodes);
     let queues = Arc::new(queue::build_queues(plan));
     let (incoming_edges, outgoing_edges) = edge_maps(&plan.edges);
+    let output_ports = (0..nodes.len())
+        .map(|node_idx| {
+            let mut ports: Vec<PortId> = Vec::new();
+            for &edge_idx in outgoing_edges.get(node_idx).into_iter().flatten() {
+                let port = plan.edges[edge_idx].source_port_id();
+                if !ports.contains(port) {
+                    ports.push(port.clone());
+                }
+            }
+            ports.into()
+        })
+        .collect();
     let direct_edges = Arc::new(direct_edge_set(&plan.edges, &plan.edge_transports));
     let direct_slots = direct_slots(plan.edges.len());
     let schedule = Arc::new(build_compiled_schedule(
@@ -54,6 +69,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         direct_edges,
         direct_slots,
         node_metadata,
+        output_ports,
         #[cfg(feature = "executor-pool")]
         pool_workers,
         #[cfg(feature = "gpu")]

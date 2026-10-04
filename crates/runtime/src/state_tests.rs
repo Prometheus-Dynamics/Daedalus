@@ -361,3 +361,19 @@ fn managed_byte_buffer_helpers_track_touch_and_reuse_capacity() {
     assert_eq!(second.frame_scratch.retained_bytes, first_retained);
     assert_eq!(second.frame_scratch.allocation_events, 1);
 }
+
+#[test]
+fn native_take_and_set_reuse_the_slot() {
+    let state = StateStore::default();
+    state.set_native("node", 1_u32);
+    assert_eq!(state.take_native::<u32>("node").unwrap(), Some(1));
+    assert_eq!(state.take_native::<u32>("node").unwrap(), None);
+    state.set_native("node", 2_u32);
+    assert_eq!(state.get_native::<u32>("node").unwrap(), Some(2));
+    assert!(state.take_native::<String>("node").is_err());
+    state.set_native("node", String::from("replaced"));
+    assert_eq!(
+        state.take_native::<String>("node").unwrap().as_deref(),
+        Some("replaced")
+    );
+}

@@ -62,7 +62,7 @@ where
                     "parallel segment started"
                 );
                 let result = panic::catch_unwind(AssertUnwindSafe(|| {
-                    serial::run_order(&mut segment_exec, &order)
+                    serial::run_order(&mut segment_exec, order)
                 }))
                 .unwrap_or_else(|panic| {
                     Err(ExecuteError::HandlerPanicked {

@@ -15,6 +15,8 @@ pub(crate) struct CompiledSegmentGraph {
     pub adjacency: Arc<Vec<Vec<usize>>>,
     pub indegree: Arc<Vec<usize>>,
     pub ready_segments: Arc<Vec<usize>>,
+    /// Segments a complete run executes: initially ready ones plus those with successors.
+    pub total_segments: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -172,7 +174,10 @@ fn build_segment_graph(
             .unwrap_or(usize::MAX)
     });
 
+    let mut counted: std::collections::BTreeSet<usize> = ready_segments.iter().copied().collect();
+    counted.extend((0..adjacency.len()).filter(|&idx| !adjacency[idx].is_empty()));
     CompiledSegmentGraph {
+        total_segments: counted.len(),
         adjacency: Arc::new(adjacency),
         indegree: Arc::new(indegree),
         ready_segments: Arc::new(ready_segments),

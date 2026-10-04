@@ -95,3 +95,16 @@ fn node_io_explicit_output_helpers_preserve_ports() {
     assert_eq!(outputs[0].1.inner.get_ref::<i64>(), Some(&9_i64));
     assert_eq!(outputs[1].1.inner.get_ref::<Value>(), Some(&Value::Int(11)));
 }
+
+#[test]
+fn take_owned_coerces_const_value_inputs() {
+    use daedalus_runtime::executor::CorrelatedPayload;
+    let value = |v| CorrelatedPayload::from_edge(daedalus_transport::Payload::owned("value", v));
+    let mut io = NodeIo::from_inputs([
+        ("scale".into(), value(Value::Float(2.5))),
+        ("raw".into(), value(Value::Int(3))),
+    ]);
+    assert_eq!(io.take_owned::<f64>("scale"), Some(2.5));
+    assert_eq!(io.take_owned::<Value>("raw"), Some(Value::Int(3)));
+    assert_eq!(io.take_owned::<f64>("missing"), None);
+}

@@ -3,7 +3,6 @@ use super::{
     CorrelatedPayload, DirectHostRoute, DirectHostSingleNodeRoute, DirectSlotAccess, ExecuteError,
     ExecutionTelemetry, NodeError, NodeHandler, is_host_bridge_node, queue, serial,
 };
-use crate::io::NodeIo;
 use crate::state::ExecutionContext;
 use daedalus_transport::Payload;
 use std::sync::Arc;
@@ -159,12 +158,11 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             self.reset_for_run();
         }
         self.core.state.clear_node_custom_metrics(&route.node.id);
-        let mut io = NodeIo::from_single_input(
+        let input = (
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
-        )
-        .with_const_coercers(self.core.const_coercers.clone())
-        .with_type_index(self.core.type_index.clone());
+        );
+        let mut io = self.core.node_io(route.node_idx, [input]);
         self.handler
             .run(&route.node, &route.ctx, &mut io)
             .map_err(|error| ExecuteError::HandlerFailed {
@@ -206,12 +204,11 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             self.reset_for_run();
         }
         self.core.state.clear_node_custom_metrics(&route.node.id);
-        let mut io = NodeIo::from_single_input(
+        let input = (
             route.input_port.clone(),
             CorrelatedPayload::from_edge(payload),
-        )
-        .with_const_coercers(self.core.const_coercers.clone())
-        .with_type_index(self.core.type_index.clone());
+        );
+        let mut io = self.core.node_io(route.node_idx, [input]);
         self.handler
             .run(&route.node, &route.ctx, &mut io)
             .map_err(|error| ExecuteError::HandlerFailed {

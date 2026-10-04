@@ -1,24 +1,24 @@
-use std::collections::{BTreeSet, VecDeque};
+use smallvec::SmallVec;
 
 use super::CompiledSegmentGraph;
+
+/// Per-run segment bookkeeping; inline for graphs up to 32 segments, so a tick allocates none.
+type SegmentList = SmallVec<[usize; 32]>;
 
 pub(crate) struct ParallelDagScheduler<'a> {
     executor_name: &'static str,
     graph: &'a CompiledSegmentGraph,
-    indegree: Vec<usize>,
-    ready: VecDeque<usize>,
+    indegree: SegmentList,
+    /// FIFO of ready segments: `ready[next_ready..]` are still queued.
+    ready: SegmentList,
+    next_ready: usize,
     running: usize,
     completed: usize,
-    total_segments: usize,
 }
 
 impl<'a> ParallelDagScheduler<'a> {
     pub(crate) fn new(executor_name: &'static str, graph: &'a CompiledSegmentGraph) -> Self {
-        let ready = graph
-            .ready_segments
-            .iter()
-            .copied()
-            .collect::<VecDeque<_>>();
+        let ready: SegmentList = graph.ready_segments.iter().copied().collect();
         for &segment_idx in &ready {
             tracing::trace!(
                 target: "daedalus_runtime::executor",
@@ -27,28 +27,14 @@ impl<'a> ParallelDagScheduler<'a> {
                 "parallel segment queued"
             );
         }
-        let total_segments = graph
-            .ready_segments
-            .iter()
-            .copied()
-            .chain(
-                graph
-                    .adjacency
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, next)| (!next.is_empty()).then_some(idx)),
-            )
-            .collect::<BTreeSet<_>>()
-            .len()
-            .max(graph.ready_segments.len());
         Self {
             executor_name,
             graph,
-            indegree: (*graph.indegree).clone(),
+            indegree: graph.indegree.iter().copied().collect(),
             ready,
+            next_ready: 0,
             running: 0,
             completed: 0,
-            total_segments,
         }
     }
 
@@ -57,9 +43,10 @@ impl<'a> ParallelDagScheduler<'a> {
         F: FnMut(usize),
     {
         while self.running < max_workers {
-            let Some(segment_idx) = self.ready.pop_front() else {
+            let Some(&segment_idx) = self.ready.get(self.next_ready) else {
                 break;
             };
+            self.next_ready += 1;
             spawn(segment_idx);
             self.running += 1;
         }
@@ -90,20 +77,20 @@ impl<'a> ParallelDagScheduler<'a> {
                         upstream = segment_idx,
                         "parallel downstream segment unblocked"
                     );
-                    self.ready.push_back(next);
+                    self.ready.push(next);
                 }
             }
         }
     }
 
     pub(crate) fn is_drained(&self) -> bool {
-        self.running == 0 && self.ready.is_empty()
+        self.running == 0 && self.next_ready == self.ready.len()
     }
 
     pub(crate) fn log_incomplete(&self, message: &'static str) {
-        if self.completed < self.total_segments {
+        if self.completed < self.graph.total_segments {
             let completed = self.completed;
-            let total_segments = self.total_segments;
+            let total_segments = self.graph.total_segments;
             tracing::debug!(
                 target: "daedalus_runtime::executor",
                 completed,

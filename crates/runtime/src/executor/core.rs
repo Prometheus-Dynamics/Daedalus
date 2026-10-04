@@ -32,6 +32,7 @@ pub(crate) struct ExecutorCore {
     pub(crate) runtime_transport: Option<Arc<crate::transport::RuntimeTransport>>,
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
     pub(crate) node_metadata: NodeMetadataStore,
+    pub(crate) output_ports: Arc<[Arc<[crate::handles::PortId]>]>,
     /// Node ids shared with `ExecutionContext::node_id` so ticks do not allocate them.
     pub(crate) node_ids: Arc<[Arc<str>]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
@@ -66,6 +67,7 @@ impl ExecutorCore {
             runtime_transport: None,
             graph_metadata: Arc::new(graph_metadata.clone()),
             node_metadata: init.node_metadata.clone(),
+            output_ports: init.output_ports.clone(),
             node_ids: init
                 .nodes
                 .iter()
@@ -73,6 +75,19 @@ impl ExecutorCore {
                 .collect(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
         }
+    }
+
+    /// A `NodeIo` for node `node_idx` over `inputs`, wired to this executor's coercers, type
+    /// index and the node's output ports.
+    pub(crate) fn node_io(
+        &self,
+        node_idx: usize,
+        inputs: impl IntoIterator<Item = crate::io::NodePort>,
+    ) -> crate::io::NodeIo {
+        crate::io::NodeIo::from_inputs(inputs)
+            .with_const_coercers(self.const_coercers.clone())
+            .with_type_index(self.type_index.clone())
+            .with_output_ports(self.output_ports.get(node_idx).cloned())
     }
 
     pub(crate) fn snapshot(&self) -> Self {
@@ -100,6 +115,7 @@ impl ExecutorCore {
             runtime_transport: self.runtime_transport.clone(),
             graph_metadata: self.graph_metadata.clone(),
             node_metadata: self.node_metadata.clone(),
+            output_ports: self.output_ports.clone(),
             node_ids: self.node_ids.clone(),
             capabilities: self.capabilities.clone(),
         }

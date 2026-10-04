@@ -42,11 +42,6 @@ pub type ConstCoercerMap = Arc<RwLock<HashMap<&'static str, ConstCoercer>>>;
 /// One port-tagged payload on a node's inputs or outputs.
 pub type NodePort = (PortId, CorrelatedPayload);
 
-/// Resolve an optional port name, defaulting to [`DEFAULT_OUTPUT_PORT`] without allocating.
-fn port_or_default(port: Option<&str>) -> PortId {
-    port.map_or(PortId::from_static(DEFAULT_OUTPUT_PORT), PortId::new)
-}
-
 pub fn new_const_coercer_map() -> ConstCoercerMap {
     Arc::new(RwLock::new(HashMap::new()))
 }
@@ -56,6 +51,8 @@ pub struct NodeIo {
     outputs: SmallVec<[NodePort; 4]>,
     const_coercers: Option<ConstCoercerMap>,
     types: Option<TypeIndex>,
+    /// The node's connected output ports, so pushes by name reuse their ids.
+    output_ports: Option<Arc<[PortId]>>,
 }
 
 impl NodeIo {
@@ -65,6 +62,7 @@ impl NodeIo {
             outputs: SmallVec::new(),
             const_coercers: None,
             types: None,
+            output_ports: None,
         }
     }
 
@@ -74,6 +72,7 @@ impl NodeIo {
             outputs: SmallVec::new(),
             const_coercers: None,
             types: None,
+            output_ports: None,
         }
     }
 
@@ -85,12 +84,34 @@ impl NodeIo {
             outputs: SmallVec::new(),
             const_coercers: None,
             types: None,
+            output_ports: None,
         }
     }
 
     pub fn with_const_coercers(mut self, const_coercers: Option<ConstCoercerMap>) -> Self {
         self.const_coercers = const_coercers;
         self
+    }
+
+    /// Resolve pushes to these output port names to the given ids instead of allocating new
+    /// ones (the executor passes each node's connected output ports).
+    pub fn with_output_ports(mut self, ports: Option<Arc<[PortId]>>) -> Self {
+        self.output_ports = ports;
+        self
+    }
+
+    /// The id for an optional output port name ([`DEFAULT_OUTPUT_PORT`] for `None`): a known
+    /// output port's id, or a new one.
+    fn port_or_default(&self, port: Option<&str>) -> PortId {
+        let Some(name) = port else {
+            return PortId::from_static(DEFAULT_OUTPUT_PORT);
+        };
+        self.output_ports
+            .iter()
+            .flat_map(|ports| ports.iter())
+            .find(|known| known.as_str() == name)
+            .cloned()
+            .unwrap_or_else(|| PortId::new(name))
     }
 
     /// Resolve generic pushes ([`Self::push_to`]) through `types`.
@@ -139,7 +160,7 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_as_to(port_or_default(port), type_key, value);
+        self.push_as_to(self.port_or_default(port), type_key, value);
     }
 
     pub fn push_as_to<T>(
@@ -168,7 +189,7 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_arc_as_to(port_or_default(port), type_key, value);
+        self.push_arc_as_to(self.port_or_default(port), type_key, value);
     }
 
     pub fn push_arc_as_to<T>(
@@ -214,7 +235,7 @@ impl NodeIo {
     where
         T: Send + Sync + 'static,
     {
-        self.push_to(port_or_default(port), value)
+        self.push_to(self.port_or_default(port), value)
     }
 
     /// The type index generic pushes resolve through.
@@ -223,7 +244,7 @@ impl NodeIo {
     }
 
     pub fn push_value(&mut self, port: Option<&str>, value: Value) {
-        self.push_value_to(port_or_default(port), value);
+        self.push_value_to(self.port_or_default(port), value);
     }
 
     pub fn push_value_to(&mut self, port: impl Into<PortId>, value: Value) {
@@ -315,14 +336,19 @@ impl NodeIo {
             .and_then(|value| self.coerce_value::<T>(value))
     }
 
+    /// Move the input out of `port`; const and `Value` inputs coerce to `T` like
+    /// [`Self::get_typed`].
     pub fn take_owned<T>(&mut self, port: &str) -> Option<T>
     where
         T: Send + Sync + 'static,
     {
-        self.take_input_payload(port)?
-            .inner
-            .try_into_owned::<T>()
-            .ok()
+        let payload = self.take_input_payload(port)?.inner;
+        if std::any::TypeId::of::<T>() != std::any::TypeId::of::<Value>()
+            && let Some(value) = payload.get_ref::<Value>()
+        {
+            return self.coerce_value::<T>(value);
+        }
+        payload.try_into_owned::<T>().ok()
     }
 
     pub fn take_modify<T>(&mut self, port: &str) -> Option<T>
@@ -334,7 +360,7 @@ impl NodeIo {
 
     fn coerce_value<T>(&self, value: &Value) -> Option<T>
     where
-        T: Clone + Send + Sync + 'static,
+        T: Send + Sync + 'static,
     {
         if let Some(map) = self.const_coercers.as_ref()
             && let Some(coercer) = map.read().get(std::any::type_name::<T>())
