@@ -1,0 +1,23 @@
+[package]
+name = "daedalus-nostd-smoke"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "no_std + alloc smoke test of the serial runtime and engine (scripts/ci.sh nostd)."
+
+[lints]
+workspace = true
+
+# `#![no_std]` library: checked for `thumbv7em-none-eabihf`; its tests run the same code natively
+# with every Daedalus crate's `std` off.
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+daedalus-core = { workspace = true }
+daedalus-data = { workspace = true }
+daedalus-engine = { workspace = true, features = ["plugins"] }
+daedalus-planner = { workspace = true }
+daedalus-registry = { workspace = true }
+daedalus-runtime = { workspace = true, features = ["plugins"] }

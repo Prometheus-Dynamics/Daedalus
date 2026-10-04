@@ -1,5 +1,6 @@
-use daedalus_core::platform::Instant;
-use std::collections::VecDeque;
+use crate::prelude::*;
+use alloc::collections::VecDeque;
+use daedalus_core::platform::Clock;
 
 use daedalus_transport::{
     CorrelationId, DropReason, FeedOutcome, OverflowPolicy, Payload, PressurePolicy, TypeKey,
@@ -61,8 +62,11 @@ impl<'a> From<&'a Payload> for EventSubject<'a> {
     }
 }
 
+/// Trace the event and, when recording, log it at a reading of `clock` (the bridge clock).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn record_host_event(
     log: &mut EventLog,
+    clock: &Clock,
     alias: &str,
     port: &str,
     subject: EventSubject<'_>,
@@ -117,7 +121,7 @@ pub(super) fn record_host_event(
         None => {}
     }
     log.events.push_back(HostBridgeEvent {
-        at: Instant::now(),
+        at: clock.now(),
         alias: alias.to_string(),
         port: port.to_string(),
         correlation_id: subject.correlation_id,

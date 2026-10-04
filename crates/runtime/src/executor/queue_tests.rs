@@ -6,11 +6,11 @@ use crate::executor::ExecutionTelemetry;
 use crate::executor::MetricsLevel;
 use crate::executor::{CorrelatedPayload, RuntimeDataSizeInspectors};
 use crate::plan::{BackpressureStrategy, RuntimeEdgePolicy};
+use crate::portable::Arc;
+use crate::prelude::*;
 use crate::sync::Mutex;
+use core::time::Duration;
 use daedalus_transport::{CoalesceStrategy, FreshnessPolicy, OverflowPolicy, PressurePolicy};
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
 
 fn payload(value: u8) -> CorrelatedPayload {
     CorrelatedPayload::from_edge(daedalus_transport::Payload::owned(

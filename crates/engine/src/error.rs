@@ -1,4 +1,4 @@
-use std::io;
+use crate::prelude::*;
 use thiserror::Error;
 
 use daedalus_planner::Diagnostic;
@@ -16,12 +16,6 @@ pub enum EngineError {
     InvalidConfig(#[from] EngineConfigError),
     #[error("invalid configuration: {0}")]
     Config(String),
-    #[error("I/O error at {path}: {source}")]
-    Io {
-        path: String,
-        #[source]
-        source: io::Error,
-    },
     #[error("registry error: {0}")]
     Registry(#[from] RegistryError),
     #[error(transparent)]
@@ -43,14 +37,4 @@ pub enum EngineError {
     TypeKey(#[from] daedalus_transport::TypeKeyError),
     #[error("feature '{0}' is disabled at compile time")]
     FeatureDisabled(&'static str),
-}
-
-impl EngineError {
-    /// Convenience constructor for I/O errors.
-    pub fn io(path: impl Into<String>, source: io::Error) -> Self {
-        EngineError::Io {
-            path: path.into(),
-            source,
-        }
-    }
 }

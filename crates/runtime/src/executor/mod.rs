@@ -1,10 +1,11 @@
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
+use crate::portable::Arc;
+use crate::prelude::*;
 use crate::state::{ExecutionContext, ResourceLifecycleEvent, StateStore};
 use crate::sync::RwLock;
+use ::core::time::Duration;
+use alloc::collections::BTreeMap;
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
-use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
-use std::time::Duration;
 
 mod adaptive;
 mod config;
@@ -146,7 +147,7 @@ pub(crate) fn segment_failure(segment_idx: usize, error: &ExecuteError) -> NodeF
 }
 
 /// Text of a caught panic payload (`&str` or `String`), or a placeholder for other payloads.
-pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub fn panic_message(payload: &(dyn ::core::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = payload.downcast_ref::<String>() {
@@ -245,16 +246,18 @@ pub(crate) fn normalize_runtime_nodes(
         }
     }
 
-    let mut seen: std::collections::HashMap<u128, &str> = std::collections::HashMap::new();
-    for node in &nodes_vec {
-        if let Some(previous) = seen.insert(node.stable_id, node.id.as_str())
-            && previous != node.id
-        {
-            return Err(ExecutorBuildError::StableIdCollision {
-                previous: previous.to_string(),
-                current: node.id.clone(),
-                stable_id: node.stable_id,
-            });
+    {
+        let mut seen: HashMap<u128, &str> = HashMap::new();
+        for node in &nodes_vec {
+            if let Some(previous) = seen.insert(node.stable_id, node.id.as_str())
+                && previous != node.id
+            {
+                return Err(ExecutorBuildError::StableIdCollision {
+                    previous: previous.to_string(),
+                    current: node.id.clone(),
+                    stable_id: node.stable_id,
+                });
+            }
         }
     }
     Ok(nodes_vec)
@@ -676,7 +679,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         H: Send + Sync + 'static,
     {
         self.reset();
-        let mut adaptive = std::mem::take(&mut self.adaptive);
+        let mut adaptive = ::core::mem::take(&mut self.adaptive);
         let workers = self.parallel_workers();
         let parallel = adaptive.choose(&self.schedule, &self.nodes, workers);
         let access = if parallel {
@@ -730,7 +733,7 @@ fn collect_data_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usiz
 }
 
 pub(crate) fn thread_cpu_time() -> Option<Duration> {
-    #[cfg(target_os = "linux")]
+    #[cfg(all(feature = "std", target_os = "linux"))]
     unsafe {
         let mut ts = libc::timespec {
             tv_sec: 0,

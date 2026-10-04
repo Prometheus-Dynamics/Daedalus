@@ -1,5 +1,6 @@
-use std::fmt::Write as _;
-use std::time::Duration;
+use crate::prelude::*;
+use core::fmt::Write as _;
+use core::time::Duration;
 
 use super::ExecutionTelemetry;
 

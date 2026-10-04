@@ -532,8 +532,11 @@ dependencies = [
  "daedalus-registry",
  "daedalus-runtime",
  "daedalus-transport",
+ "portable-atomic",
+ "portable-atomic-util",
  "serde",
  "serde_json",
+ "spin",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
@@ -649,7 +652,6 @@ dependencies = [
 name = "daedalus-macros"
 version = "2.0.0"
 dependencies = [
- "daedalus-runtime",
  "daedalus-wgsl-infer",
  "proc-macro-crate 3.5.0",
  "proc-macro2",
@@ -670,6 +672,18 @@ dependencies = [
  "paste",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "daedalus-nostd-smoke"
+version = "2.0.0"
+dependencies = [
+ "daedalus-core",
+ "daedalus-data",
+ "daedalus-engine",
+ "daedalus-planner",
+ "daedalus-registry",
+ "daedalus-runtime",
 ]
 
 [[package]]
@@ -809,8 +823,11 @@ dependencies = [
  "daedalus-planner",
  "daedalus-registry",
  "daedalus-transport",
+ "hashbrown 0.17.0",
  "libc",
  "parking_lot",
+ "portable-atomic",
+ "portable-atomic-util",
  "rand 0.10.1",
  "rayon",
  "serde",
@@ -1190,6 +1207,8 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

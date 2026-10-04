@@ -126,9 +126,9 @@ What `std` switches:
   `HashMap` with `std`, `hashbrown` without. Planner passes use `BTreeMap`/`BTreeSet`.
 - 64-bit counters: `AtomicU64`, from `portable-atomic` on targets without 64-bit atomics.
 - Time: [`daedalus_core::platform`](../crates/core/src/platform.rs) exports `Instant`, which is
-  `std::time::Instant` wherever the target has an OS clock and otherwise a portable instant read
-  from the clock installed with `platform::set_clock` (zero until one is installed), and `Clock`
-  (see "Tier 2" below).
+  `std::time::Instant` wherever the target has an OS clock and otherwise a portable instant whose
+  platform reading (`Instant::now`) is zero, and `Clock`, the injectable clock (see "Tier 2"
+  below). There is no process-wide clock to install.
 - `std`-only: the planner's `DAEDALUS_TRACE_EMBEDDED_EXPAND` variable (and its `tracing`
   dependency) and its two binaries.
 
@@ -158,19 +158,42 @@ module's other backend:
   `crossbeam-queue`, which has no queues there.
 
 The final binary must provide a `critical-section` implementation, e.g. `cortex-m`'s
-`critical-section-single-core` or `riscv`'s `critical-section-single-hart` feature, or a HAL's. The dependencies are target-specific, so every other target compiles exactly what it did
-before. `daedalus_runtime::sync` gets the same `spin` backend there, for when the runtime drops
-`std`.
+`critical-section-single-core` or `riscv`'s `critical-section-single-hart` feature, or a HAL's.
+The dependencies are target-specific, so every other target compiles exactly what it did
+before. The runtime and engine take the same backend there (`daedalus_runtime::sync`, their
+`portable` module), but do not build without compare-and-swap yet (see the roadmap below).
 
-### Tier 2 (in progress): runtime and engine
+### Tier 2: `no_std` serial runtime and engine
 
-- Locks: `daedalus-runtime` and `daedalus-engine` lock through
-  [`daedalus_runtime::sync`](../crates/runtime/src/sync.rs), `lock_api` types over
-  `parking_lot` with the runtime's `std` feature and over `spin` without (on `portable-atomic`
-  without compare-and-swap, as above). The API is the same
-  either way; `Condvar` exists only with `std`. `std` is a boundary feature (lock layouts cross
-  the plugin boundary; `dylib-plugins` turns it on). It only switches the lock backend so far:
-  the crates still link `std`.
+`daedalus-runtime` and `daedalus-engine` are `#![no_std]` + `alloc` without their `std` feature
+(implied by the default `threads`): plan a graph, run it on the serial executor and drive it
+through host bridges or a `HostGraph` on a microcontroller. CI checks both for
+`thumbv7em-none-eabihf` with and without `plugins`, `metrics`, `snapshots`, `lockfree-queues`
+and `config-env`, and [`examples/nostd_smoke`](../examples/nostd_smoke/src/lib.rs) (a
+`#![no_std]` crate) runs `host.in -> inc -> host.out` through `Executor::run_in_place` and
+through `Engine`/`HostGraph`, checked for that target and tested natively with every Daedalus
+crate's `std` off.
+
+What the runtime's and engine's `std` switches (`std` is a boundary feature in the plugin
+fingerprint; `dylib-plugins` turns it on):
+
+- Locks: [`daedalus_runtime::sync`](../crates/runtime/src/sync.rs), `lock_api` types over
+  `parking_lot` with `std` and over `spin` without (on `portable-atomic` without
+  compare-and-swap, as above). The API is the same either way; `Condvar` exists only with `std`.
+- Hash maps: [`daedalus_runtime::collections`](../crates/runtime/src/lib.rs) (`HashMap`,
+  `HashSet`, the types in runtime signatures) are `std`'s with `std` and `hashbrown`'s without.
+- The per-thread port buffer pool (`NodeIo` input/output lists) is a `thread_local!` with `std`
+  and one `spin`-locked pool without (taken with `try_lock`, so a contended or interrupted
+  caller allocates instead of waiting).
+- `std`-only: Linux perf counters and thread CPU time (`RuntimeDebugConfig::node_perf_counters`/
+  `node_cpu_time` read nothing elsewhere), `RuntimeDebugConfig::from_env` and
+  `EngineConfig::from_env` (`config-env` without `std` keeps the serde config types only), and
+  the host bridge's `Condvar`. `libc` is a Linux-only optional dependency.
+- `std` forwards `std` to core, transport, data, registry, planner, `serde`, `serde_json`,
+  `thiserror` and `tracing`; without it the whole tree is `alloc`-only.
+
+The other switches:
+
 - Threads: the `threads` feature (default on `daedalus-runtime`, `daedalus-engine` and the facade,
   implies `std`, host-only in the fingerprint, kept by the `embedded` preset) compiles the worker
   pool and persistent workers, stream workers (`StreamGraph::spawn_continuous*`,
@@ -179,19 +202,23 @@ before. `daedalus_runtime::sync` gets the same `spin` backend there, for when th
   `HostGraph::{wait_for_input, tick_on_input, drive_blocking}`). Without it those do not exist,
   and `RuntimeMode::Parallel`/`Adaptive` resolve one worker and run serially (same results, same
   telemetry shape). Drive graphs with `HostGraph::tick`/`tick_if_ready`, the async
-  `HostGraph::drive`/`.await` on `InboundWaiter`, or `StreamGraph::poll`/`run_available`.
-  Enabling `threads` on a wasm target without threads (`wasm32-unknown-unknown`,
-  `wasm32-wasip1`) is a compile error.
-- Clock: [`platform::Clock`](../crates/core/src/platform.rs) is what runtime and engine timing
+  `HostGraph::drive`/`.await` on `InboundWaiter` (a `core::task` future), host bridge
+  `push*`/`try_pop*`/`drain*`, or `StreamGraph::poll`/`run_available`. Enabling `threads` on a
+  wasm target without threads (`wasm32-unknown-unknown`, `wasm32-wasip1`) is a compile error.
+- Clock: [`platform::Clock`](../crates/core/src/platform.rs) is what runtime and engine time
   reads: the platform clock by default (`Instant::now`, so native timing is unchanged: one
   predictable branch), or `Clock::new(|| elapsed_since_origin)` set per engine with
-  `EngineConfig::with_clock` (or `Executor`/`OwnedExecutor`/`StreamGraph::with_clock`). Telemetry,
-  adaptive segment costs, edge timings, stream execution and `HostGraph` step timings use it, so
-  hosts with several clocks and tests with simulated time can inject one. Payload lineage
-  (`created_at`) and host-bridge event timestamps are taken where no engine is at hand and keep
-  the platform clock, as does `FreshnessPolicy::MaxAge`, which compares against lineage;
-  `platform::set_clock` remains the process-wide fallback for those on targets without an OS
-  clock.
+  `EngineConfig::with_clock` (or `Executor`/`OwnedExecutor`/`StreamGraph::with_clock`,
+  `HostBridgeManager::set_clock`). Telemetry, adaptive segment costs, edge timings, stream
+  execution and `HostGraph` step timings use it, and so does payload lineage the runtime
+  creates: `NodeIo` pushes, host bridge `push*`, `GraphInput::feed_typed` and `HostGraph` direct
+  lanes stamp `created_at` with it (`Payload::stamp`, a no-op on the platform clock, so no second
+  reading natively). Host-bridge events are timestamped on the bridge clock and
+  `FreshnessPolicy::MaxAge` ages payloads on it (`PayloadLineage::age`). Payloads built outside
+  the runtime (`Payload::owned`, ...) read the platform clock; stamp them with the engine's clock
+  (`handle.clock()`, `io.clock()`) before `feed_payload`/`push_payload` when it is a custom one.
+  Engines set their clock on the bridges they create; a `HostBridgeManager` you pass to
+  `Engine::execute_with_host` keeps its own.
 
 ### WebAssembly
 
@@ -206,16 +233,16 @@ Node. Behavior there:
 - No `threads`: `Parallel` and `Adaptive` run serially and the thread-only APIs are absent (see
   above). Locks are `spin` locks.
 - `platform::OS_CLOCK` is `false`: pass the host's clock to the engine,
-  `EngineConfig::with_clock(Clock::new(|| Duration::from_secs_f64(performance_now_ms() / 1e3)))`,
-  and, for payload lineage and `FreshnessPolicy::MaxAge`, `platform::set_clock` with the same
-  function. Without a clock, durations are zero (telemetry reads zero, adaptive mode stays serial,
-  and `MaxAge` never drops).
+  `EngineConfig::with_clock(Clock::new(|| Duration::from_secs_f64(performance_now_ms() / 1e3)))`;
+  it also stamps payload lineage and drives `FreshnessPolicy::MaxAge` (see "Clock" above).
+  Without a clock, durations are zero (telemetry reads zero, adaptive mode stays serial, and
+  `MaxAge` never drops).
 - The embedded dependency tree has no `getrandom` or other OS-bound crate. `dylib-plugins`,
   `gpu*`, `executor-pool` (Rayon) and the FFI crates are not supported on wasm.
 
 Host glue: `examples/wasm_bindgen_host` is the pattern for a JavaScript host. It imports
 `performance.now()` through `wasm-bindgen` (`#[wasm_bindgen(js_namespace = performance, js_name =
-now)]`), passes it to the engine as `Clock::new` and to `platform::set_clock`, and exports a
+now)]`), passes it to the engine as `Clock::new`, and exports a
 `Pipeline` class whose `push`/`tick`/`take` wrap `HostGraph`; `tick` returns the tick's graph
 duration on that clock (the example enables `metrics`). Bind it with
 `wasm-bindgen --target nodejs` (or `web`/`bundler` for browsers); the `wasm-bindgen` CLI must
@@ -239,27 +266,28 @@ graph on the platform clock) under Node's WASI. A WASI runtime such as `wasmtime
   `Arc<dyn Trait>` with `portable::arc_dyn!` (not `Arc::new` plus coercion). Trait methods cannot
   take `self: Arc<Self>`.
 - OS facilities (files, environment, processes, threads, sleeping, blocking waits, clocks) sit
-  behind `std` in tier-1 crates. In the runtime and engine, read time from the executor's `Clock`
-  (`clock.now()`, `clock.elapsed(start)`; never `Instant::now()`/`Instant::elapsed()` outside
-  thread-only code), lock through `crate::sync`/`daedalus_runtime::sync` (never `parking_lot`
-  directly), and put anything that spawns threads or blocks behind `#[cfg(feature = "threads")]`.
+  behind `std` in tier-1 crates, the runtime and the engine. In the runtime and engine, read time
+  from the executor's `Clock` (`clock.now()`, `clock.elapsed(start)`; never
+  `Instant::now()`/`Instant::elapsed()` outside thread-only code), stamp payloads the runtime
+  builds with it (`Payload::stamp`), lock through `crate::sync`/`daedalus_runtime::sync` (never
+  `parking_lot` directly), and put anything that spawns threads or blocks behind
+  `#[cfg(feature = "threads")]`.
+- Runtime and engine follow the tier-1 rules too: `use crate::prelude::*` for `String`, `Vec`,
+  `Box`, `ToString` and the `HashMap`/`HashSet` of `daedalus_runtime::collections` (never
+  `std::collections`), `Arc` and atomics from `crate::portable`.
 - A new dependency of a tier-1 crate must support `no_std`: declare it in the workspace without
   default features and enable its `std` feature from the crate's `std` feature.
 - Run `scripts/ci.sh nostd wasm` after touching these crates or the executor.
 
-### Roadmap: tier 2
+### Roadmap
 
-Tier 2 is a `no_std` serial executor: running planned graphs on a microcontroller. Done: the
-lock backend, the `threads` feature and per-engine clocks (see "Tier 2" above). Open items are
-tracked in [TODO.md](../TODO.md) under "Portability (tier 2)":
+Tier 2 (a `no_std` serial runtime and engine) is done for targets with compare-and-swap. Open
+items are tracked in [TODO.md](../TODO.md) under "Portability (tier 2)":
 
-- Host bridge without `std`: without `threads` it already only pushes, polls and awaits the
-  waker-based `InboundWaiter`; the `Condvar` field and `std::task` wakers go once the runtime's
-  `std` feature removes `std`.
-- Lineage clock: payload lineage and host-bridge events still read the platform clock.
-- `alloc`-only runtime pieces: `serde_json` const decoding, `tracing` without `std`, telemetry
-  without `std::time`, `libc` only on Linux. Without compare-and-swap the runtime would also need
-  `crate::portable`-style `Arc`/atomics (and `tracing` does not build there).
+- Runtime and engine without compare-and-swap (`thumbv6m-none-eabi`): `tracing` does not build
+  there (make it optional, or route events through a no-op macro without it), and the few
+  `Arc<dyn _>`/`Arc<[_]>` coercions need `portable::arc_dyn!`/explicit conversions; `Arc` and
+  atomics already come from `crate::portable`.
 
 ## Performance
 

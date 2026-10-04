@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use crate::prelude::*;
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use daedalus_planner::GraphNodeSelector;
 use serde::{Deserialize, Serialize};
@@ -206,8 +207,8 @@ pub enum DemandError {
     SinkSelectorDidNotMatch { sink: RuntimeSink },
 }
 
-impl std::fmt::Display for DemandError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for DemandError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             DemandError::SinkSelectorDidNotMatch { sink } => {
                 write!(f, "runtime sink selector did not match any nodes: {sink:?}")
@@ -216,7 +217,7 @@ impl std::fmt::Display for DemandError {
     }
 }
 
-impl std::error::Error for DemandError {}
+impl core::error::Error for DemandError {}
 
 impl DemandTelemetry {
     pub fn is_empty(&self) -> bool {
@@ -318,8 +319,7 @@ pub(super) fn demand_slice_for_sinks_with_transports(
         Any,
         Ports(BTreeSet<String>),
     }
-    let mut edge_port_filter: std::collections::HashMap<usize, SinkPortFilter> =
-        std::collections::HashMap::new();
+    let mut edge_port_filter: HashMap<usize, SinkPortFilter> = HashMap::new();
     let mut q: VecDeque<usize> = VecDeque::new();
 
     for sink in sinks {
@@ -332,7 +332,7 @@ pub(super) fn demand_slice_for_sinks_with_transports(
                 let trimmed = port.as_str().trim();
                 if !trimmed.is_empty() {
                     match edge_port_filter.entry(idx) {
-                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        crate::prelude::hash_map::Entry::Occupied(mut entry) => {
                             match entry.get_mut() {
                                 SinkPortFilter::Any => {}
                                 SinkPortFilter::Ports(ports) => {
@@ -340,7 +340,7 @@ pub(super) fn demand_slice_for_sinks_with_transports(
                                 }
                             }
                         }
-                        std::collections::hash_map::Entry::Vacant(entry) => {
+                        crate::prelude::hash_map::Entry::Vacant(entry) => {
                             let mut ports = BTreeSet::new();
                             ports.insert(trimmed.to_string());
                             entry.insert(SinkPortFilter::Ports(ports));
@@ -413,7 +413,7 @@ pub(super) fn build_host_output_demand_slices(runtime: &RuntimePlan) -> Vec<Dema
                 &runtime.nodes,
                 &runtime.edges,
                 &runtime.edge_transports,
-                std::slice::from_ref(&sink),
+                core::slice::from_ref(&sink),
             ) else {
                 continue;
             };

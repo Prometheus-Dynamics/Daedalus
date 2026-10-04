@@ -1,8 +1,8 @@
 //! Lock types of the runtime and engine: `lock_api` locks over a raw lock chosen per build.
 //!
 //! - `std` (implied by the default `threads`): `parking_lot`, which parks contended threads.
-//! - without `std`: `spin` locks, for targets without threads (`wasm32-unknown-unknown`) and,
-//!   later, `no_std` (see "Portability" in docs/development.md). On targets without
+//! - without `std`: `spin` locks, for targets without threads (`wasm32-unknown-unknown`) and
+//!   `no_std` (see "Portability" in docs/development.md). On targets without
 //!   compare-and-swap (`thumbv6m`) `spin` runs on `portable-atomic`, whose `critical-section`
 //!   implementation the final binary provides, like the tier-1 crates.
 //!

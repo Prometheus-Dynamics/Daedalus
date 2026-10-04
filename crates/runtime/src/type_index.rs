@@ -8,10 +8,13 @@
 //! scalars and `Option`/`Vec` of them resolve in every index, including
 //! [`TypeIndex::builtin`].
 
-use std::any::{TypeId, type_name};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::{Arc, OnceLock};
+use crate::portable::Arc;
+use crate::prelude::*;
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::any::{TypeId, type_name};
+use core::hash::{BuildHasherDefault, Hasher};
+
+use crate::portable::OnceLock;
 
 use daedalus_data::model::TypeExpr;
 use daedalus_transport::{Payload, RustTypeIdentity, TypeKey, TypeKeyError};

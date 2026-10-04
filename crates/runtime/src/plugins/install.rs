@@ -138,6 +138,6 @@ pub fn install_all<P: Plugin>(
     }
     registry.freeze()?;
     let mut handlers = HandlerRegistry::new();
-    handlers.merge(std::mem::take(&mut registry.handlers));
+    handlers.merge(core::mem::take(&mut registry.handlers));
     Ok(handlers)
 }

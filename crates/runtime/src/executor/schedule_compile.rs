@@ -1,5 +1,6 @@
-use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
+use crate::portable::Arc;
+use crate::prelude::*;
+use alloc::collections::BTreeMap;
 
 use crate::plan::{RuntimeEdge, RuntimeNode, RuntimeSegment, direct_edge_mask_for_active_edges};
 use daedalus_planner::{NodeRef, is_host_bridge_metadata};
@@ -114,8 +115,8 @@ fn build_segment_graph(
         segment_active[segment_idx] = segment.nodes.iter().any(|node| node_exec_active(node.0));
     }
 
-    let mut adjacency_sets: Vec<std::collections::BTreeSet<usize>> =
-        vec![std::collections::BTreeSet::new(); segments.len()];
+    let mut adjacency_sets: Vec<alloc::collections::BTreeSet<usize>> =
+        vec![alloc::collections::BTreeSet::new(); segments.len()];
     let mut indegree = vec![0usize; segments.len()];
     for edge in edges {
         let from = edge.from();
@@ -176,7 +177,7 @@ fn build_segment_graph(
             .unwrap_or(usize::MAX)
     });
 
-    let mut counted: std::collections::BTreeSet<usize> = ready_segments.iter().copied().collect();
+    let mut counted: alloc::collections::BTreeSet<usize> = ready_segments.iter().copied().collect();
     counted.extend((0..adjacency.len()).filter(|&idx| !adjacency[idx].is_empty()));
     let (topo_order, width) = topo_order_and_width(&adjacency, &indegree, &ready_segments);
     CompiledSegmentGraph {
@@ -307,7 +308,7 @@ fn has_only_linear_segment_flow(
 
     let mut indegree = vec![0usize; segments.len()];
     let mut outdegree = vec![0usize; segments.len()];
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = alloc::collections::BTreeSet::new();
     for edge in edges {
         let Some(&from_segment) = segment_of.get(edge.from().0) else {
             continue;

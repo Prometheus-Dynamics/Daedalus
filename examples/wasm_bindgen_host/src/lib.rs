@@ -61,14 +61,10 @@ pub struct Pipeline {
 
 #[wasm_bindgen]
 impl Pipeline {
-    /// Compiles the graph with the given constants, timed by `performance.now()`.
+    /// Compiles the graph with the given constants, timed by `performance.now()`: the engine
+    /// clock also stamps payload lineage and host-bridge events.
     #[wasm_bindgen(constructor)]
     pub fn new(gain: f64, offset: f64) -> Result<Pipeline, JsError> {
-        // Payload lineage and host-bridge events have no engine at hand: they read the
-        // process-wide fallback clock (only the first call installs it), which exists where the
-        // target has no OS clock.
-        #[cfg(all(target_family = "wasm", target_os = "unknown"))]
-        daedalus::core::platform::set_clock(host_now);
         let mut registry = PluginRegistry::new();
         let plugin = HostNodes::new();
         registry.install(&plugin).map_err(js_error)?;

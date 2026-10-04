@@ -26,12 +26,27 @@ host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots"
 
 [features]
 default = ["threads"]
-# Lock backend: `parking_lot` with `std`, `spin` without (see `daedalus_runtime::sync`).
-std = ["dep:parking_lot"]
+# Host OS facilities: `parking_lot` locks (`spin` without, see `daedalus_runtime::sync`), `std`
+# hash maps, `Condvar` waits, Linux perf counters. Without it the crate is `no_std` + `alloc`
+# (see "Portability" in docs/development.md).
+std = [
+    "dep:parking_lot",
+    "dep:libc",
+    "daedalus-core/std",
+    "daedalus-data/std",
+    "daedalus-planner/std",
+    "daedalus-registry/std",
+    "daedalus-transport/std",
+    "crossbeam-queue?/std",
+    "serde/std",
+    "serde_json/std",
+    "thiserror/std",
+    "tracing/std",
+]
 # Worker threads: the parallel worker pool, stream workers (`spawn_continuous*`) and blocking
 # waits. Without it `Parallel`/`Adaptive` run serially and the thread-only APIs do not exist.
 threads = ["std"]
-gpu = ["daedalus-gpu"]
+gpu = ["std", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
 executor-pool = ["threads", "rayon"]
 lockfree-queues = ["crossbeam-queue"]
@@ -40,26 +55,36 @@ snapshots = []
 plugins = []
 
 [dependencies]
-daedalus-planner = { workspace = true, features = ["std"] }
-daedalus-registry = { workspace = true, features = ["std"] }
-daedalus-transport = { workspace = true, features = ["std"] }
+daedalus-planner = { workspace = true }
+daedalus-registry = { workspace = true }
+daedalus-transport = { workspace = true }
 daedalus-gpu = { workspace = true, optional = true }
-daedalus-data = { workspace = true, features = ["std", "json"] }
-daedalus-core = { workspace = true, features = ["std"] }
-libc = { workspace = true }
-crossbeam-queue = { workspace = true, optional = true, features = ["std"] }
-serde = { workspace = true, features = ["std"] }
-thiserror = { workspace = true, features = ["std"] }
+daedalus-data = { workspace = true, features = ["json"] }
+daedalus-core = { workspace = true }
+crossbeam-queue = { workspace = true, optional = true }
+hashbrown = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+thiserror = { workspace = true }
 rayon = { workspace = true, optional = true }
 smallvec = { workspace = true }
 parking_lot = { workspace = true, optional = true }
 spin = { workspace = true, features = ["lock_api", "mutex"] }
-serde_json = { workspace = true, features = ["std"] }
-tracing = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
 
-# Targets without compare-and-swap: the `spin` lock backend over `portable-atomic`, as in the
-# tier-1 crates (see `daedalus_runtime::sync`).
+# Hardware perf counters (`RuntimeDebugConfig::node_perf_counters`), Linux with `std` only.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true, optional = true }
+
+# Targets without 64-bit atomics (`thumbv7em`, ...): `portable-atomic`'s `AtomicU64` (`portable`).
+[target.'cfg(not(target_has_atomic = "64"))'.dependencies]
+portable-atomic = { workspace = true }
+
+# Targets without pointer-sized compare-and-swap (`thumbv6m`, `riscv32imc`): atomics, `spin` locks
+# and `Arc` go through `portable-atomic`, as in the tier-1 crates (see `daedalus_runtime::sync`).
 [target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }
+portable-atomic-util = { workspace = true }
 spin = { workspace = true, features = ["portable_atomic"] }
 
 [dev-dependencies]

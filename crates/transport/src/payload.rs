@@ -172,6 +172,17 @@ impl Payload {
         &self.lineage
     }
 
+    /// Stamp lineage `created_at` with a reading of `clock`, the clock of the engine or bridge
+    /// the payload is made for. Constructors read the platform clock, so this is a no-op (no
+    /// second reading) for the platform clock (`Clock::default`).
+    #[inline]
+    pub fn stamp(mut self, clock: &daedalus_core::platform::Clock) -> Self {
+        if !clock.is_platform() {
+            self.lineage.created_at = clock.now();
+        }
+        self
+    }
+
     pub fn correlation_id(&self) -> CorrelationId {
         self.lineage.correlation_id
     }

@@ -22,21 +22,24 @@ fn examples_use_only_facade() {
     let mut violations = Vec::new();
 
     for path in examples {
-        let is_ffi_example = path
-            .components()
-            .any(|component| component.as_os_str().to_str() == Some("08_ffi"));
+        // FFI examples exercise the split FFI crates and package builders, and the `no_std` smoke
+        // crate the `no_std` runtime and engine (the facade needs `std`), rather than the
+        // end-user graph facade.
+        let uses_internal_crates = path.components().any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some("08_ffi" | "nostd_smoke")
+            )
+        });
         let content = fs::read_to_string(&path).expect("read example");
         for (idx, line) in content.lines().enumerate() {
             let l = line.trim();
-            // Forbid importing internal crates directly; allow the facade `daedalus` only.
-            //
-            // FFI examples intentionally exercise the split FFI crates and package builders rather
-            // than the end-user graph facade. Example crates (`daedalus_plugins_*`,
-            // `daedalus_wasm_*`) are not internal crates.
+            // Forbid importing internal crates directly; allow the facade `daedalus` only. Example
+            // crates (`daedalus_plugins_*`, `daedalus_wasm_*`) are not internal crates.
             if l.starts_with("use daedalus_")
                 && !l.starts_with("use daedalus_plugins_")
                 && !l.starts_with("use daedalus_wasm_")
-                && !is_ffi_example
+                && !uses_internal_crates
             {
                 violations.push(format!(
                     "{}:{}: forbidden internal import: {}",
@@ -45,7 +48,7 @@ fn examples_use_only_facade() {
                     l
                 ));
             }
-            if l.contains("crate::") && !is_ffi_example {
+            if l.contains("crate::") && !uses_internal_crates {
                 violations.push(format!(
                     "{}:{}: forbidden crate-relative import: {}",
                     path.display(),

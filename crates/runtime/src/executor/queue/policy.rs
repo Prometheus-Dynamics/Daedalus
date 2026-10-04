@@ -1,8 +1,9 @@
 //! Edge policy application: backpressure, overflow handling and pressure telemetry.
 
+use crate::portable::Arc;
+use crate::prelude::*;
 use crate::sync::Mutex;
 use daedalus_core::platform::{Clock, Instant};
-use std::sync::Arc;
 
 #[cfg(feature = "lockfree-queues")]
 use crossbeam_queue::ArrayQueue;
@@ -84,7 +85,7 @@ fn record_pressure_event(
 }
 
 /// Elapsed time for detailed-metrics timers; zero when the timer was not started.
-fn elapsed_since(clock: &Clock, start: Option<Instant>) -> std::time::Duration {
+fn elapsed_since(clock: &Clock, start: Option<Instant>) -> core::time::Duration {
     start.map(|start| clock.elapsed(start)).unwrap_or_default()
 }
 
@@ -128,7 +129,7 @@ pub struct ApplyPolicyOwnedArgs<'a> {
     pub policy: &'a RuntimeEdgePolicy,
     pub payload: CorrelatedPayload,
     pub queues: &'a Arc<Vec<EdgeStorage>>,
-    pub warnings_seen: &'a Arc<Mutex<std::collections::HashSet<String>>>,
+    pub warnings_seen: &'a Arc<Mutex<HashSet<String>>>,
     pub telem: &'a mut ExecutionTelemetry,
     pub warning_label: Option<String>,
     pub backpressure: BackpressureStrategy,
@@ -411,11 +412,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
     Ok(())
 }
 
-fn record_warning(
-    label: &str,
-    seen: &Arc<Mutex<std::collections::HashSet<String>>>,
-    telem: &mut ExecutionTelemetry,
-) {
+fn record_warning(label: &str, seen: &Arc<Mutex<HashSet<String>>>, telem: &mut ExecutionTelemetry) {
     if seen.lock().insert(label.to_string()) {
         telem.warnings.push(label.to_string());
     }

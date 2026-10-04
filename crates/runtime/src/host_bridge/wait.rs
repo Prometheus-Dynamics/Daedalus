@@ -5,10 +5,11 @@
 //! buffer lock and woken after it is released) and, with `threads`, a blocking wait on the
 //! bridge's existing `Condvar`. No extra lock is introduced; see `docs/host-bridge-lock-granularity.md`.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
+use crate::portable::Arc;
+use crate::prelude::*;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll, Waker};
 #[cfg(feature = "threads")]
 use std::time::{Duration, Instant};
 
@@ -42,8 +43,8 @@ pub struct InboundWaiter {
     waker_id: Option<u64>,
 }
 
-impl std::fmt::Debug for InboundWaiter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for InboundWaiter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("InboundWaiter")
             .field("epoch", &self.epoch)
             .field("registered", &self.waker_id.is_some())
@@ -205,8 +206,8 @@ impl HostBridgeHandle {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::task::Wake;
+    use alloc::task::Wake;
+    use core::sync::atomic::{AtomicBool, Ordering};
     #[cfg(feature = "threads")]
     use std::{thread, time::Duration};
 

@@ -1,8 +1,11 @@
+use crate::prelude::*;
+
+use crate::portable::Arc;
 #[cfg(feature = "std")]
 use crate::sync::Condvar;
 use crate::sync::Mutex;
-use std::sync::Arc;
 
+use daedalus_core::platform::Clock;
 use daedalus_transport::{
     CorrelationId, DropReason, FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError,
     PressurePolicy, TypeKey, TypeKeyError, validate_stream_policy,
@@ -62,9 +65,12 @@ pub(super) struct HostBridgeBuffers {
     pub(super) wake_epoch: u64,
     pub(super) next_waker_id: u64,
     /// Async inbound waiters, keyed by waiter id. Woken outside the lock.
-    pub(super) inbound_wakers: Vec<(u64, std::task::Waker)>,
+    pub(super) inbound_wakers: Vec<(u64, core::task::Waker)>,
     /// Resolves typed pushes and checks fed payloads (see [`HostBridgeManager::set_type_index`]).
     pub(super) types: TypeIndex,
+    /// Stamps payloads built by pushes and events, and ages payloads for
+    /// `FreshnessPolicy::MaxAge` (see [`HostBridgeManager::set_clock`]).
+    pub(super) clock: Clock,
 }
 
 pub(super) struct HostBridgeShared {
@@ -112,6 +118,7 @@ impl Default for HostBridgeBuffers {
             next_waker_id: 0,
             inbound_wakers: Vec::new(),
             types: TypeIndex::default(),
+            clock: Clock::default(),
         }
     }
 }
@@ -224,6 +231,7 @@ fn enqueue_locked(
         closed,
         stats,
         events,
+        clock,
         ..
     } = buffers;
     let ports = match direction {
@@ -245,6 +253,7 @@ fn enqueue_locked(
         };
         record_host_event(
             events,
+            clock,
             alias,
             state.id.as_str(),
             EventSubject::from(&payload),
@@ -256,7 +265,7 @@ fn enqueue_locked(
     }
 
     let freshness = state.freshness.as_ref().unwrap_or(default_freshness);
-    if let Some(reason) = freshness_drop_reason(&mut state.marks, &payload, freshness) {
+    if let Some(reason) = freshness_drop_reason(&mut state.marks, &payload, freshness, clock) {
         direction.count_drop(stats, Some(reason.clone()));
         state.stats.dropped = state.stats.dropped.saturating_add(1);
         let outcome = FeedOutcome::Dropped {
@@ -265,6 +274,7 @@ fn enqueue_locked(
         };
         record_host_event(
             events,
+            clock,
             alias,
             state.id.as_str(),
             EventSubject::from(&payload),
@@ -315,6 +325,7 @@ fn enqueue_locked(
     if let Some((correlation_id, type_key)) = subject.as_ref() {
         record_host_event(
             events,
+            clock,
             alias,
             state.id.as_str(),
             EventSubject {
@@ -441,8 +452,12 @@ impl HostBridgeHandle {
     ///
     /// A payload whose key the graph's registry maps to another Rust type than the payload
     /// holds is refused with [`FeedOutcome::Rejected`] (see [`TypeIndex::check_payload`]).
+    ///
+    /// The payload keeps its lineage: `FreshnessPolicy::MaxAge` ages it on the bridge clock
+    /// ([`Self::clock`]), so with a custom clock build it with [`Payload::stamp`]. The `push*`
+    /// methods stamp the payloads they build.
     pub fn feed_payload(&self, port: impl Into<PortId>, payload: Payload) -> FeedOutcome {
-        self.feed_with(port.into(), |_| Ok(payload))
+        self.feed_with(port.into(), |_, _| Ok(payload))
     }
 
     /// Feed `value` under the key the graph's registry gives `T`
@@ -452,8 +467,10 @@ impl HostBridgeHandle {
     where
         T: Send + Sync + 'static,
     {
-        self.feed_with(port.into(), |types| {
-            types.key_of::<T>().map(|key| Payload::owned(key, value))
+        self.feed_with(port.into(), |types, clock| {
+            types
+                .key_of::<T>()
+                .map(|key| Payload::owned(key, value).stamp(clock))
         })
     }
 
@@ -462,13 +479,18 @@ impl HostBridgeHandle {
         self.shared.buffers.lock().types.clone()
     }
 
+    /// The bridge clock ([`HostBridgeManager::set_clock`]).
+    pub fn clock(&self) -> Clock {
+        self.shared.buffers.lock().clock.clone()
+    }
+
     fn feed_with(
         &self,
         port: PortId,
-        payload: impl FnOnce(&TypeIndex) -> Result<Payload, TypeKeyError>,
+        payload: impl FnOnce(&TypeIndex, &Clock) -> Result<Payload, TypeKeyError>,
     ) -> FeedOutcome {
         let mut guard = self.shared.buffers.lock();
-        let payload = match payload(&guard.types)
+        let payload = match payload(&guard.types, &guard.clock)
             .and_then(|payload| guard.types.check_payload(&payload).map(|()| payload))
         {
             Ok(payload) => payload,
@@ -499,7 +521,8 @@ impl HostBridgeHandle {
     where
         T: Send + Sync + 'static,
     {
-        self.feed_payload(port, Payload::owned(type_key, value))
+        let payload = Payload::owned(type_key, value);
+        self.feed_with(port.into(), |_, clock| Ok(payload.stamp(clock)))
     }
 
     pub fn push_arc_as<T>(
@@ -511,7 +534,8 @@ impl HostBridgeHandle {
     where
         T: Send + Sync + 'static,
     {
-        self.feed_payload(port, Payload::shared(type_key, value))
+        let payload = Payload::shared(type_key, value);
+        self.feed_with(port.into(), |_, clock| Ok(payload.stamp(clock)))
     }
 
     pub fn try_pop_payload(&self, port: impl AsRef<str>) -> Option<Payload> {
@@ -524,7 +548,7 @@ impl HostBridgeHandle {
     pub fn recv_payload_timeout(
         &self,
         port: impl AsRef<str>,
-        timeout: std::time::Duration,
+        timeout: core::time::Duration,
     ) -> Option<Payload> {
         let port = port.as_ref();
         let deadline = std::time::Instant::now() + timeout;
@@ -694,6 +718,7 @@ impl HostBridgeHandle {
         for payload in &payloads {
             record_host_event(
                 &mut buffers.events,
+                &buffers.clock,
                 self.alias.as_str(),
                 port,
                 EventSubject::from(payload),
@@ -739,6 +764,7 @@ fn pop_outbound_locked(guard: &mut HostBridgeBuffers, alias: &str, port: &str) -
     guard.stats.outbound_delivered = guard.stats.outbound_delivered.saturating_add(1);
     record_host_event(
         &mut guard.events,
+        &guard.clock,
         alias,
         port,
         EventSubject::from(&payload),

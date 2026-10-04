@@ -8,10 +8,11 @@
 //! The host-bridge lock is only held while checking/queueing payloads; it is never held while a
 //! graph tick or the caller's output callback runs.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::portable::Arc;
+use crate::portable::AtomicBool;
+use core::sync::atomic::Ordering;
 #[cfg(feature = "threads")]
-use std::time::Duration;
+use core::time::Duration;
 
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::NodeHandler;
@@ -53,8 +54,8 @@ pub struct HostGraphStopHandle {
     host: HostBridgeHandle,
 }
 
-impl std::fmt::Debug for HostGraphStopHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for HostGraphStopHandle {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("HostGraphStopHandle")
             .field("host_alias", &self.host.alias())
             .field("stopped", &self.is_stopped())

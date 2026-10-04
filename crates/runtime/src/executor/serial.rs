@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use daedalus_planner::{ComputeAffinity, NodeRef};
 
 use crate::state::ExecutionContext;
@@ -292,7 +293,7 @@ fn run_order_timed<H: NodeHandler>(
     {
         return Err(error);
     }
-    Ok(std::mem::take(&mut exec.core.telemetry))
+    Ok(core::mem::take(&mut exec.core.telemetry))
 }
 
 fn node_is_active<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize) -> bool {

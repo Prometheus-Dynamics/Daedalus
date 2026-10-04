@@ -2,9 +2,9 @@ use super::{
     GraphBuildError, GraphBuilder, IntoPortSpec, NestedGraph, NestedGraphHandle, RuntimeEdgePolicy,
 };
 use crate::handles::{NodeHandle, NodeHandleLike, PortHandle};
+use crate::prelude::*;
 use daedalus_planner::{ComputeAffinity, Graph};
 use daedalus_registry::ids::NodeId;
-use std::collections::HashMap;
 
 /// Scoped graph definition helper used by `GraphBuilder::{inputs, outputs, nodes, edges}`.
 ///

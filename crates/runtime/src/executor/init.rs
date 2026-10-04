@@ -1,3 +1,5 @@
+use crate::prelude::*;
+
 #[cfg(feature = "gpu")]
 use super::collect_data_edges;
 use super::{
@@ -7,8 +9,7 @@ use super::{
 };
 use crate::handles::PortId;
 use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, NodeFire, RuntimeEdge, RuntimeNode, RuntimePlan};
-use std::collections::HashSet;
-use std::sync::Arc;
+use crate::portable::Arc;
 
 pub(crate) struct ExecutorInit {
     pub(crate) nodes: Arc<[RuntimeNode]>,

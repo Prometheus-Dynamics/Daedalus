@@ -1,5 +1,6 @@
 //! Edge input collection, adapter application and output publishing for serial execution.
 
+use crate::prelude::*;
 use daedalus_transport::{AdaptRequest, Payload};
 
 use crate::io::NodePort;

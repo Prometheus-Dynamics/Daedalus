@@ -5,12 +5,12 @@
 //!
 //! - [`Instant`]: `std::time::Instant` wherever the target has a monotonic OS clock (the same
 //!   type, so native builds are unaffected). Elsewhere (`no_std`, `wasm32-unknown-unknown`) it is
-//!   a portable instant read from the clock installed with `set_clock`; until one is
-//!   installed every instant is zero, so optional timing reads zero durations.
-//! - [`Clock`]: where runtime and engine timing reads [`Instant`]s. The default is the platform
-//!   clock above; [`Clock::new`] injects another one per engine/executor (tests, simulated
-//!   time, a target timer). `set_clock` remains only as the process-wide fallback for
-//!   timestamps taken without an engine at hand: payload lineage and host-bridge events.
+//!   a portable instant whose platform reading is always zero: there is no clock to read.
+//! - [`Clock`]: where runtime and engine timing, payload lineage made by the runtime and host
+//!   bridges, and `FreshnessPolicy::MaxAge` read [`Instant`]s. The default is the platform
+//!   clock above; [`Clock::new`] injects another one per engine/executor/bridge (tests,
+//!   simulated time, a target timer). There is no process-wide clock: without an OS clock,
+//!   inject one, or timing reads zero durations.
 //! - [`Arc`]: the `Arc` in Daedalus signatures. `alloc::sync::Arc` wherever the target has
 //!   pointer-sized compare-and-swap; elsewhere (`thumbv6m`, `riscv32imc`, which have no
 //!   `alloc::sync`) `portable_atomic_util::Arc`.
@@ -22,7 +22,7 @@ pub use alloc::sync::Arc;
 #[cfg(not(target_has_atomic = "ptr"))]
 pub use portable_atomic_util::Arc;
 
-/// Whether [`Instant`] reads a monotonic OS clock (otherwise the `set_clock` clock).
+/// Whether [`Instant::now`] reads a monotonic OS clock (otherwise it reads zero).
 pub const OS_CLOCK: bool = cfg!(all(
     feature = "std",
     not(all(target_family = "wasm", target_os = "unknown"))
@@ -38,7 +38,7 @@ pub use std::time::Instant;
     feature = "std",
     not(all(target_family = "wasm", target_os = "unknown"))
 )))]
-pub use fallback::{Instant, set_clock};
+pub use fallback::Instant;
 
 #[cfg(not(all(
     feature = "std",
@@ -48,26 +48,15 @@ mod fallback {
     use core::ops::{Add, AddAssign, Sub, SubAssign};
     use core::time::Duration;
 
-    static CLOCK: spin::Once<fn() -> Duration> = spin::Once::new();
-
-    /// Install the process-wide clock behind [`Instant::now`] (and so [`super::Clock::default`]):
-    /// time since an arbitrary, fixed origin (e.g. a hardware timer or `performance.now()`).
-    /// Only the first call takes effect.
-    ///
-    /// Engines take their own clock (`EngineConfig::with_clock`); this fallback is what payload
-    /// lineage and host-bridge event timestamps, taken without an engine at hand, read.
-    pub fn set_clock(now: fn() -> Duration) {
-        CLOCK.call_once(|| now);
-    }
-
-    /// Portable monotonic instant (the `std::time::Instant` subset Daedalus uses), read from the
-    /// clock installed with [`set_clock`].
+    /// Portable monotonic instant (the `std::time::Instant` subset Daedalus uses): a reading of
+    /// a [`super::Clock::new`] clock. The platform reading ([`Instant::now`]) is zero.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct Instant(pub(super) Duration);
 
     impl Instant {
+        /// Zero: the target has no clock (inject one with [`super::Clock::new`]).
         pub fn now() -> Self {
-            Self(CLOCK.get().map_or(Duration::ZERO, |now| now()))
+            Self(Duration::ZERO)
         }
 
         pub fn elapsed(&self) -> Duration {

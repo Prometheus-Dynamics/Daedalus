@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use crate::portable::Arc;
+use crate::prelude::*;
 
 use daedalus_planner::{Graph, PlannerConfig, PlannerInput, build_plan};
 use daedalus_runtime::executor::{ExecutionTelemetry, Executor, NodeHandler, OwnedExecutor};
@@ -204,6 +205,7 @@ impl Engine {
         bridges
             .apply_config(&self.config.runtime.host_bridge_config())
             .map_err(|err| EngineError::Config(err.to_string()))?;
+        bridges.set_clock(self.config.runtime.clock.clone());
         Ok(())
     }
 
@@ -619,10 +621,10 @@ impl Engine {
 #[cfg(all(test, feature = "plugins"))]
 mod boundary_tests {
     use super::*;
+    use alloc::collections::BTreeMap;
     use daedalus_planner::NodeInstance;
     use daedalus_registry::capability::{NodeDecl, PortDecl};
     use daedalus_transport::{BoundaryTypeContract, LayoutHash, TypeKey};
-    use std::collections::BTreeMap;
 
     fn graph_with_node(id: &str) -> Graph {
         Graph {

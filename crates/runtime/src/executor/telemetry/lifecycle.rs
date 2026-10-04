@@ -1,3 +1,5 @@
+use crate::prelude::*;
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraceEvent {
     pub node_idx: usize,

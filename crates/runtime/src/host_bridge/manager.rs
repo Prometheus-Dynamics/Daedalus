@@ -1,7 +1,8 @@
+use crate::portable::Arc;
+use crate::prelude::*;
 use crate::sync::Mutex;
-use std::collections::HashMap;
-use std::sync::Arc;
 
+use daedalus_core::platform::Clock;
 use daedalus_planner::is_host_bridge_metadata;
 use daedalus_transport::{
     FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, validate_stream_policy,
@@ -29,6 +30,7 @@ pub struct HostBridgeManager {
 struct BridgeDefaults {
     config: HostBridgeConfig,
     types: TypeIndex,
+    clock: Clock,
 }
 
 impl HostBridgeManager {
@@ -54,6 +56,7 @@ impl HostBridgeManager {
         let defaults = self.defaults.lock();
         let mut buffers = HostBridgeBuffers::from_config(&defaults.config);
         buffers.types = defaults.types.clone();
+        buffers.clock = defaults.clock.clone();
         drop(defaults);
         let shared = Arc::new(HostBridgeShared::new(buffers));
         guard.insert(alias.clone(), shared.clone());
@@ -81,6 +84,16 @@ impl HostBridgeManager {
         self.update(
             |defaults| defaults.types = types.clone(),
             |buffers| buffers.types = types.clone(),
+        );
+    }
+
+    /// The clock of every bridge: it stamps the payloads `push*` builds and event timestamps,
+    /// and ages payloads for `FreshnessPolicy::MaxAge`. Engines set their own
+    /// (`EngineConfig::with_clock`); the default is the platform clock.
+    pub fn set_clock(&self, clock: Clock) {
+        self.update(
+            |defaults| defaults.clock = clock.clone(),
+            |buffers| buffers.clock = clock.clone(),
         );
     }
 

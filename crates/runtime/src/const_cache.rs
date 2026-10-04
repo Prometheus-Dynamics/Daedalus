@@ -7,7 +7,8 @@
 //! (owned ones get a clone of the decoded value). A value is decoded again when any of its input
 //! payloads changes (a patched constant, or a new value on a connected edge).
 
-use std::any::{Any, TypeId};
+use crate::prelude::*;
+use core::any::{Any, TypeId};
 
 use daedalus_data::model::Value;
 use daedalus_transport::Payload;
@@ -149,8 +150,8 @@ impl DecodedInputs {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use alloc::borrow::Cow;
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
     use crate::config::{ConfigError, Sanitized};
@@ -253,7 +254,7 @@ mod tests {
         });
         coercers
             .write()
-            .insert(std::any::type_name::<Label>(), coerce);
+            .insert(core::any::type_name::<Label>(), coerce);
         let constant = Payload::owned("value", Value::String(Cow::Borrowed("a")));
         let mut decoded = DecodedInputs::default();
         let mut take = |payload: Payload, clone: Option<fn(&Label) -> Label>| {

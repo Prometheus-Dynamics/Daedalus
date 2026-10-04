@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use crate::portable::Arc;
 
 use daedalus_runtime::executor::{NodeHandler, OwnedExecutor};
 use daedalus_runtime::{ExecutionTelemetry, RuntimePlan};

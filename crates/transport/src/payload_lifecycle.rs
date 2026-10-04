@@ -146,6 +146,13 @@ impl PayloadLineage {
         self.source_timestamp = Some(source_timestamp);
         self
     }
+
+    /// Time since `created_at` on `clock`, the clock it was stamped with (`Payload::stamp`;
+    /// the platform clock otherwise); zero if that lies ahead.
+    #[inline]
+    pub fn age(&self, clock: &daedalus_core::platform::Clock) -> core::time::Duration {
+        clock.elapsed(self.created_at)
+    }
 }
 
 impl Default for PayloadLineage {

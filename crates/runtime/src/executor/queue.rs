@@ -1,6 +1,8 @@
+use crate::portable::Arc;
+use crate::portable::AtomicU64;
+use crate::prelude::*;
 use crate::sync::Mutex;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
 
 #[cfg(feature = "lockfree-queues")]
 use crossbeam_queue::ArrayQueue;
@@ -38,6 +40,7 @@ pub(super) fn queue_transport_bytes(
 #[path = "queue_tests.rs"]
 mod tests;
 
+/// Current and peak queued bytes of an edge.
 #[derive(Default)]
 pub struct EdgeStorageMetrics {
     current_queue_bytes: AtomicU64,

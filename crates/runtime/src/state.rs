@@ -1,3 +1,5 @@
+use crate::prelude::*;
+
 mod context;
 mod resources;
 
@@ -8,11 +10,12 @@ pub use resources::{
 };
 
 pub use crate::StateError;
+use crate::portable::Arc;
+use crate::prelude::hash_map::Entry;
 use crate::sync::RwLock;
+use alloc::collections::BTreeMap;
+use core::any::{Any, TypeId};
 use resources::{ResourceEntry, ResourceStorage, SharedNodeResources};
-use std::any::{Any, TypeId};
-use std::collections::{BTreeMap, HashMap, hash_map::Entry};
-use std::sync::Arc;
 
 /// A node's typed state slot: node id and state type.
 type NodeStateKey = (Arc<str>, TypeId);
@@ -271,7 +274,7 @@ impl StateStore {
             if entry.class != class {
                 return Err(StateError::resource_class_mismatch(node_id, name));
             }
-            match std::mem::replace(
+            match core::mem::replace(
                 &mut entry.storage,
                 ResourceStorage::InUse(ResourceUsage::default()),
             ) {

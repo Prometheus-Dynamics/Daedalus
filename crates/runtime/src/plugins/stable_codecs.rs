@@ -8,10 +8,9 @@
 
 use super::*;
 use crate::const_coerce::CoerceFn;
+use crate::portable::Arc;
+use core::any::TypeId;
 use daedalus_data::model::Value;
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Converts a port value (the payload's `dyn Any`) to a [`Value`].
 pub type StableEncodeFn = Arc<dyn Fn(&(dyn Any + Send + Sync)) -> Option<Value> + Send + Sync>;
@@ -29,8 +28,8 @@ pub struct StableCodec {
     pub decode: StableDecodeFn,
 }
 
-impl std::fmt::Debug for StableCodec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for StableCodec {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("StableCodec")
             .field("rust_type", &self.rust_type)
             .field("encode", &self.encode.is_some())
@@ -85,7 +84,7 @@ impl PluginRegistry {
             (node.to_string(), port.to_string()),
             StableCodec {
                 type_id: TypeId::of::<T>(),
-                rust_type: std::any::type_name::<T>(),
+                rust_type: core::any::type_name::<T>(),
                 encode,
                 decode,
             },

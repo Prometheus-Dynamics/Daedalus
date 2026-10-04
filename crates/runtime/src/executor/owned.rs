@@ -7,12 +7,12 @@ use super::{
     serial,
 };
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
+use crate::portable::Arc;
+use crate::prelude::*;
 use crate::state::{ResourceLifecycleEvent, StateStore};
 use crate::sync::RwLock;
+use core::time::Duration;
 use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
 
 /// Owned executor that can be reused across runs without leaking the plan.
 pub struct OwnedExecutor<H: NodeHandler> {
@@ -465,7 +465,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         H: Send + Sync + 'static,
     {
         self.reset_for_run();
-        let mut adaptive = std::mem::take(&mut self.adaptive);
+        let mut adaptive = core::mem::take(&mut self.adaptive);
         let workers = self.parallel_workers();
         let parallel = adaptive.choose(&self.schedule, &self.nodes, workers);
         let access = if parallel {

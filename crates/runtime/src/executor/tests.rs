@@ -1,10 +1,10 @@
 use super::*;
 use crate::config::RuntimeDebugConfig;
+use crate::portable::Arc;
 #[cfg(feature = "gpu")]
 use crate::{RuntimeEdgePolicy, plan::RuntimeEdge};
 use daedalus_data::model::Value;
 use daedalus_planner::ComputeAffinity;
-use std::sync::Arc;
 use std::thread;
 
 fn test_node(id: &str) -> RuntimeNode {
@@ -16,7 +16,7 @@ fn test_node(id: &str) -> RuntimeNode {
         compute: ComputeAffinity::CpuOnly,
         const_inputs: Vec::new(),
         sync_groups: Vec::new(),
-        metadata: std::collections::BTreeMap::<String, Value>::new(),
+        metadata: alloc::collections::BTreeMap::<String, Value>::new(),
     }
 }
 

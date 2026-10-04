@@ -340,7 +340,7 @@ impl PluginRegistry {
                 upload(input).map(|output| {
                     Payload::shared_with(
                         upload_to_key.clone(),
-                        std::sync::Arc::new(output),
+                        crate::portable::Arc::new(output),
                         Residency::Gpu,
                         None,
                         payload.bytes_estimate(),
@@ -367,7 +367,7 @@ impl PluginRegistry {
                 download(input).map(|output| {
                     Payload::shared_with(
                         download_to_key.clone(),
-                        std::sync::Arc::new(output),
+                        crate::portable::Arc::new(output),
                         Residency::Cpu,
                         None,
                         payload.bytes_estimate(),
@@ -418,8 +418,8 @@ impl PluginRegistry {
             + 'static,
         <T as TransferTo<D>>::Resident: Send + Sync + 'static,
     {
-        let upload_id = format!("{}.upload.{}", D::ID, std::any::type_name::<T>());
-        let download_id = format!("{}.download.{}", D::ID, std::any::type_name::<T>());
+        let upload_id = format!("{}.upload.{}", D::ID, core::any::type_name::<T>());
+        let download_id = format!("{}.download.{}", D::ID, core::any::type_name::<T>());
         let spec = TypedDeviceTransport::new(D::ID, cpu, device, upload_id, download_id);
         let upload_ctx = ctx.clone();
         let download_ctx = ctx;
@@ -531,7 +531,7 @@ impl PluginRegistry {
         if self.ensure_open().is_err() {
             return;
         }
-        let key = std::any::type_name::<T>();
+        let key = core::any::type_name::<T>();
         let mut guard = self.const_coercers.write();
         guard.insert(
             key,
@@ -574,7 +574,7 @@ impl PluginRegistry {
             return;
         }
         let variants =
-            std::sync::Arc::new(variants.into_iter().map(Into::into).collect::<Vec<_>>());
+            crate::portable::Arc::new(variants.into_iter().map(Into::into).collect::<Vec<_>>());
 
         fn resolve_enum_name(variants: &[String], raw: &str) -> Option<String> {
             let trimmed = raw.trim();

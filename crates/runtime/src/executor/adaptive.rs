@@ -18,7 +18,8 @@
 //! with a heavy hint (GPU affinity or [`NODE_COST_META_KEY`] `"heavy"`) count as
 //! [`HEAVY_PRIOR`], others as free, so graphs of cheap nodes start, and stay, serial.
 
-use std::time::Duration;
+use crate::prelude::*;
+use core::time::Duration;
 
 use crate::plan::{NODE_COST_META_KEY, RuntimeNode};
 use daedalus_planner::ComputeAffinity;
@@ -81,7 +82,7 @@ impl AdaptiveState {
         if self.dwell < MIN_DWELL {
             self.dwell += 1;
         }
-        if self.dwell < MIN_DWELL || !std::mem::take(&mut self.fresh) {
+        if self.dwell < MIN_DWELL || !core::mem::take(&mut self.fresh) {
             return self.parallel;
         }
         let (serial, parallel) = self.estimate(schedule, workers, false);

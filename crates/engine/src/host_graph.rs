@@ -1,8 +1,8 @@
-use std::collections::HashSet;
-use std::fmt;
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::time::Duration;
+use crate::portable::Arc;
+use crate::prelude::*;
+use core::fmt;
+use core::marker::PhantomData;
+use core::time::Duration;
 
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{DirectHostRoute, NodeHandler};
@@ -431,7 +431,9 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     where
         I: Send + Sync + 'static,
     {
-        self.tick_direct_route_payload(&lane.route, Payload::owned(lane.type_key.clone(), input))
+        let payload =
+            Payload::owned(lane.type_key.clone(), input).stamp(self.runner.executor.clock());
+        self.tick_direct_route_payload(&lane.route, payload)
     }
 
     /// Run a previously bound direct lane and downcast the output payload into an owned value.
@@ -462,7 +464,8 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     {
         let (input_port, output_port) = (input_port.as_ref(), output_port.as_ref());
         let route = self.required_direct_route(input_port, output_port)?;
-        let payload = Payload::owned(self.types.key_of::<I>()?, input);
+        let payload =
+            Payload::owned(self.types.key_of::<I>()?, input).stamp(self.runner.executor.clock());
         let output = self.tick_direct_route_payload(&route, payload)?;
         output
             .map(|payload| {
@@ -676,7 +679,7 @@ fn rejected(outcome: FeedOutcome) -> Result<FeedOutcome, EngineError> {
 }
 
 /// Take ownership of `payload` as `T`, or report what was expected (`what`) and what was found.
-fn into_owned_or_err<T>(payload: Payload, what: impl std::fmt::Display) -> Result<T, EngineError>
+fn into_owned_or_err<T>(payload: Payload, what: impl core::fmt::Display) -> Result<T, EngineError>
 where
     T: Send + Sync + 'static,
 {

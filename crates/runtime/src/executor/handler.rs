@@ -1,9 +1,9 @@
 use super::errors::NodeError;
 use crate::io::NodeIo;
 use crate::plan::RuntimeNode;
+use crate::portable::Arc;
 use crate::state::ExecutionContext;
 use daedalus_transport::Payload;
-use std::sync::Arc;
 
 pub type DirectPayloadFn = Arc<
     dyn Fn(&RuntimeNode, &ExecutionContext, Payload) -> Result<Option<Payload>, NodeError>

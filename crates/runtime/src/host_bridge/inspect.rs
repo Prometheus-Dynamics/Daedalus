@@ -5,7 +5,8 @@
 //! [`ValueSerializerMap`] (typically `PluginRegistry::value_serializers`) keyed by the payload's
 //! concrete `TypeId`, and falls back to a structured [`PayloadSummary`] for unregistered types.
 
-use std::any::Any;
+use crate::prelude::*;
+use core::any::Any;
 
 use daedalus_data::model::{StructFieldValue, Value};
 use daedalus_transport::{Payload, Residency, TypeKey};
@@ -171,7 +172,7 @@ pub fn inspect_payload(payload: &Payload, serializers: &ValueSerializerMap) -> P
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use crate::portable::Arc;
 
     use daedalus_transport::{BoundaryCapabilities, Layout};
 

@@ -1,4 +1,5 @@
 use crate::handles::PortHandle;
+use crate::prelude::*;
 use daedalus_registry::ids::IdValidationError;
 
 /// Convenience wrapper so callers can pre-prefix ids (e.g. via a plugin helper)

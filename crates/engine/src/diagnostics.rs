@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use serde_json::{Value, json};
 
 use daedalus_planner::ExecutionPlan;
@@ -12,11 +13,6 @@ pub fn render_error(err: &EngineError) -> Value {
             json!({ "code": "config", "message": err.to_string() })
         }
         EngineError::Config(msg) => json!({ "code": "config", "message": msg }),
-        EngineError::Io { path, source } => json!({
-            "code": "io",
-            "path": path,
-            "message": source.to_string(),
-        }),
         EngineError::Registry(e) => json!({
             "code": "registry",
             "registry_code": format!("{:?}", e.code()),

@@ -1,13 +1,13 @@
+use crate::portable::Arc;
+use crate::prelude::*;
 use crate::sync::RwLock;
-use std::any::Any;
-use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
+use core::any::Any;
+use core::ops::{Deref, DerefMut};
 
+use daedalus_core::platform::Clock;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_data::typing;
 use daedalus_transport::Payload;
-use std::cell::RefCell;
 
 use crate::executor::{CorrelatedPayload, NodeError};
 use crate::handles::PortId;
@@ -42,18 +42,29 @@ pub type ConstCoercerMap = Arc<RwLock<HashMap<&'static str, ConstCoercer>>>;
 /// One port-tagged payload on a node's inputs or outputs.
 pub type NodePort = (PortId, CorrelatedPayload);
 
-thread_local! {
+#[cfg(feature = "std")]
+std::thread_local! {
     /// Cleared port buffers reused by `NodeIo`s and the executor on this thread.
-    static PORT_BUFFERS: RefCell<Vec<Vec<NodePort>>> = const { RefCell::new(Vec::new()) };
+    static PORT_BUFFERS: core::cell::RefCell<Vec<Vec<NodePort>>> =
+        const { core::cell::RefCell::new(Vec::new()) };
 }
 
-/// An empty port buffer, reusing a recycled one's capacity when this thread has one.
+/// Cleared port buffers reused by `NodeIo`s and the executor (one pool without threads).
+#[cfg(not(feature = "std"))]
+static PORT_BUFFERS: crate::sync::Mutex<Vec<Vec<NodePort>>> = crate::sync::Mutex::new(Vec::new());
+
+/// Runs `f` on the port buffer pool; `None` if it is unavailable (thread teardown, or held by
+/// an interrupted caller without `std`).
+fn with_port_buffers<R>(f: impl FnOnce(&mut Vec<Vec<NodePort>>) -> R) -> Option<R> {
+    #[cfg(feature = "std")]
+    return PORT_BUFFERS.try_with(|pool| f(&mut pool.borrow_mut())).ok();
+    #[cfg(not(feature = "std"))]
+    PORT_BUFFERS.try_lock().map(|mut pool| f(&mut pool))
+}
+
+/// An empty port buffer, reusing a recycled one's capacity when the pool has one.
 pub(crate) fn port_buffer() -> Vec<NodePort> {
-    PORT_BUFFERS
-        .try_with(|pool| pool.borrow_mut().pop())
-        .ok()
-        .flatten()
-        .unwrap_or_default()
+    with_port_buffers(Vec::pop).flatten().unwrap_or_default()
 }
 
 /// Clear `ports` and keep its capacity for [`port_buffer`] (a few modest buffers per thread).
@@ -64,8 +75,7 @@ pub(crate) fn recycle_ports(mut ports: Vec<NodePort>) {
     if ports.capacity() == 0 || ports.capacity() > MAX_CAPACITY {
         return;
     }
-    let _ = PORT_BUFFERS.try_with(|pool| {
-        let mut pool = pool.borrow_mut();
+    with_port_buffers(|pool| {
         if pool.len() < MAX_POOLED {
             pool.push(ports);
         }
@@ -85,6 +95,8 @@ pub struct NodeIo {
     types: Option<TypeIndex>,
     /// The node's connected output ports, so pushes by name reuse their ids.
     output_ports: Option<Arc<[PortId]>>,
+    /// Stamps the payloads pushes build (the executor's clock).
+    clock: Clock,
 }
 
 impl NodeIo {
@@ -110,6 +122,7 @@ impl NodeIo {
             const_coercers: None,
             types: None,
             output_ports: None,
+            clock: Clock::default(),
         }
     }
 
@@ -139,6 +152,19 @@ impl NodeIo {
             .unwrap_or_else(|| PortId::new(name))
     }
 
+    /// Stamp the payloads pushes build with `clock` (see `Payload::stamp`); the executor passes
+    /// its own.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// The clock pushes stamp payloads with; stamp payloads a handler builds itself with it
+    /// before [`Self::push_payload`].
+    pub fn clock(&self) -> &Clock {
+        &self.clock
+    }
+
     /// Resolve generic pushes ([`Self::push_to`]) through `types`.
     pub fn with_type_index(mut self, types: Option<TypeIndex>) -> Self {
         self.types = types;
@@ -161,7 +187,7 @@ impl NodeIo {
     }
 
     pub fn take_outputs(mut self) -> Vec<NodePort> {
-        std::mem::take(&mut self.outputs)
+        core::mem::take(&mut self.outputs)
     }
 
     /// Move out the payload pushed to `port`, if any, recycling the output list.
@@ -198,7 +224,8 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_payload(port, Payload::owned(type_key, value));
+        let payload = Payload::owned(type_key, value).stamp(&self.clock);
+        self.push_payload(port, payload);
     }
 
     pub fn push_as_default<T>(&mut self, type_key: daedalus_transport::TypeKey, value: T)
@@ -227,7 +254,8 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        self.push_payload(port, Payload::shared(type_key, value));
+        let payload = Payload::shared(type_key, value).stamp(&self.clock);
+        self.push_payload(port, payload);
     }
 
     pub fn push_arc_as_default<T>(&mut self, type_key: daedalus_transport::TypeKey, value: Arc<T>)
@@ -275,7 +303,8 @@ impl NodeIo {
     }
 
     pub fn push_value_to(&mut self, port: impl Into<PortId>, value: Value) {
-        self.push_payload(port, Payload::owned("value", value));
+        let payload = Payload::owned("value", value).stamp(&self.clock);
+        self.push_payload(port, payload);
     }
 
     pub fn push_value_default(&mut self, value: Value) {
@@ -370,7 +399,7 @@ impl NodeIo {
         T: Send + Sync + 'static,
     {
         let payload = self.take_input_payload(port)?.inner;
-        if std::any::TypeId::of::<T>() != std::any::TypeId::of::<Value>()
+        if core::any::TypeId::of::<T>() != core::any::TypeId::of::<Value>()
             && let Some(value) = payload.get_ref::<Value>()
         {
             return self.coerce_value::<T>(value);
@@ -399,7 +428,7 @@ impl NodeIo {
         T: Send + Sync + 'static,
     {
         if let Some(map) = self.const_coercers.as_ref()
-            && let Some(coercer) = map.read().get(std::any::type_name::<T>())
+            && let Some(coercer) = map.read().get(core::any::type_name::<T>())
             && let Some(any) = coercer(value)
             && let Ok(typed) = any.downcast::<T>()
         {
@@ -416,8 +445,8 @@ impl NodeIo {
 
 impl Drop for NodeIo {
     fn drop(&mut self) {
-        recycle_ports(std::mem::take(&mut self.inputs));
-        recycle_ports(std::mem::take(&mut self.outputs));
+        recycle_ports(core::mem::take(&mut self.inputs));
+        recycle_ports(core::mem::take(&mut self.outputs));
     }
 }
 

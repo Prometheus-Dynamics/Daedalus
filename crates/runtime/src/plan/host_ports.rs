@@ -5,7 +5,8 @@
 //! data, in order: the bridge node's resolved dynamic port types, the planner edge explanations
 //! for the connecting edges, and the runtime edge transports.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+use alloc::collections::BTreeMap;
 
 use daedalus_data::model::TypeExpr;
 use daedalus_planner::{DynamicPortMetadata, NodeRef, is_generic_marker, is_host_bridge_metadata};
