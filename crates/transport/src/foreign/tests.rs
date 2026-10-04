@@ -140,7 +140,11 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
     assert_eq!(payload.type_key().as_str(), "test:counter");
     assert_eq!(payload.residency(), Residency::External);
     assert_eq!(read(payload.foreign_handle().unwrap()), 5);
-    assert!(payload.get_ref::<ForeignHandle>().is_none());
+    // The handle is the payload's value, so `get_ref` reaches it through the value's `Any`.
+    assert!(std::ptr::eq(
+        payload.get_ref::<ForeignHandle>().unwrap(),
+        payload.foreign_handle().unwrap()
+    ));
     assert!(shared.foreign_handle().is_none());
 
     // Boundary storage has no `Arc` to share: the handle keeps the payload alive instead.

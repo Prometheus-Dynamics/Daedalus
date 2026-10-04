@@ -7,7 +7,7 @@
 //! different type from the host's even under the same key. A foreign interface sidesteps that:
 //!
 //! - The interface is a `#[repr(C)]` struct of `extern "C"` accessor functions (a vtable)
-//!   declared with [`foreign_interface!`], identified by a key (`"daedalus:frame"`), a version,
+//!   declared with [`foreign_interface!`](crate::foreign_interface), identified by a key (`"daedalus:frame"`), a version,
 //!   and a layout hash of the vtable's field signatures, size and alignment
 //!   ([`ForeignInterfaceInfo`]). Two separately compiled copies of the same declaration agree on
 //!   all three; a changed declaration does not.
@@ -30,7 +30,7 @@ use crate::Payload;
 /// Identity of a foreign interface: key, version and vtable layout hash.
 ///
 /// `#[repr(C)]` so it can be exported in plugin descriptors. Built only by [`Self::new`] from
-/// `'static` data (normally inside [`foreign_interface!`]).
+/// `'static` data (normally inside [`foreign_interface!`](crate::foreign_interface)).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ForeignInterfaceInfo {
@@ -141,7 +141,7 @@ pub const fn foreign_layout_hash(signature: &str, size: usize, align: usize) -> 
 
 /// A foreign interface: a C-safe vtable type plus its identity.
 ///
-/// Declare interfaces with [`foreign_interface!`] rather than implementing this by hand.
+/// Declare interfaces with [`foreign_interface!`](crate::foreign_interface) rather than implementing this by hand.
 ///
 /// # Safety
 /// `VTable` must be `#[repr(C)]` with only C-safe fields, and [`Self::info`] must return this
