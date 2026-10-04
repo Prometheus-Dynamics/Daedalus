@@ -14,6 +14,9 @@ pub enum WireValue {
     Unit,
     Bool(bool),
     Int(i64),
+    /// An unsigned integer; workers send it for values above `i64::MAX` and for `u64` ports.
+    #[serde(rename = "uint")]
+    UInt(u64),
     Float(f64),
     String(String),
     Bytes(BytePayload),
@@ -30,6 +33,7 @@ impl WireValue {
             WireValue::Unit
             | WireValue::Bool(_)
             | WireValue::Int(_)
+            | WireValue::UInt(_)
             | WireValue::Float(_)
             | WireValue::String(_)
             | WireValue::Bytes(_) => Ok(()),
@@ -81,13 +85,28 @@ impl WireValue {
     }
 
     /// Check that the numbers in this value fit `ty`'s exact scalar widths. The wire carries every
-    /// integer as `i64` and every float as `f64`, so an `I32` port must reject `1 << 40` and a
-    /// `U32` port `-1` here; non-numeric shapes are left to the value conversions.
+    /// integer as `i64` or `u64` and every float as `f64`, so an `I32` port must reject `1 << 40`,
+    /// a `U32` port `-1` and an `Int` port `u64::MAX` here; non-numeric shapes are left to the
+    /// value conversions.
     pub fn check_type(&self, ty: &TypeExpr) -> Result<(), String> {
         match (ty, self) {
             (TypeExpr::Scalar(scalar), WireValue::Int(value)) => {
                 scalar.check_value(&Value::Int(*value))
             }
+            (TypeExpr::Scalar(scalar), WireValue::UInt(value)) => match i64::try_from(*value) {
+                Ok(value) => scalar.check_value(&Value::Int(value)),
+                Err(_)
+                    if scalar
+                        .int_range()
+                        .is_some_and(|(_, max)| i128::from(*value) <= max) =>
+                {
+                    Ok(())
+                }
+                Err(_) => Err(format!(
+                    "{value} is out of range for {}",
+                    scalar.rust_name()
+                )),
+            },
             (TypeExpr::Scalar(scalar), WireValue::Float(value)) => {
                 scalar.check_value(&Value::Float(*value))
             }
@@ -119,6 +138,8 @@ impl WireValue {
         value.try_into()
     }
 
+    /// The value as a payload under `type_key`: bytes stay raw, an unsigned integer above
+    /// `i64::MAX` becomes a native `u64` (graph `Value::Int` cannot hold it), the rest a `Value`.
     pub fn into_payload(
         self,
         type_key: impl Into<TypeKey>,
@@ -129,6 +150,9 @@ impl WireValue {
                 type_key,
                 std::sync::Arc::from(payload.data),
             )),
+            WireValue::UInt(value) if i64::try_from(value).is_err() => {
+                Ok(Payload::owned(type_key, value))
+            }
             value => Ok(Payload::owned(type_key, value.into_value()?)),
         }
     }
@@ -141,9 +165,13 @@ impl WireValue {
         WireValue::Handle(WirePayloadHandle::from_payload(id, payload, access))
     }
 
+    /// A `Value` or raw-bytes payload as a wire value; a native `u64` payload becomes `UInt`.
     pub fn from_payload(payload: &Payload) -> Result<Self, WireValueConversionError> {
         if let Some(value) = payload.get_ref::<Value>() {
             return WireValue::from_value(value.clone());
+        }
+        if let Some(value) = payload.get_ref::<u64>() {
+            return Ok(WireValue::UInt(*value));
         }
         if let Some(bytes) = payload
             .value_any()
@@ -169,6 +197,10 @@ impl TryFrom<WireValue> for Value {
             WireValue::Unit => Value::Unit,
             WireValue::Bool(value) => Value::Bool(value),
             WireValue::Int(value) => Value::Int(value),
+            WireValue::UInt(value) => Value::Int(
+                i64::try_from(value)
+                    .map_err(|_| WireValueConversionError::IntegerOutOfRange { value })?,
+            ),
             WireValue::Float(value) => Value::Float(value),
             WireValue::String(value) => Value::String(Cow::Owned(value)),
             WireValue::Bytes(payload) => Value::Bytes(Cow::Owned(payload.data)),
@@ -264,6 +296,10 @@ impl TryFrom<Value> for WireValue {
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum WireValueConversionError {
+    #[error(
+        "unsigned integer {value} does not fit a graph `Value::Int`; only a top-level `u64` payload carries it"
+    )]
+    IntegerOutOfRange { value: u64 },
     #[error("unsupported wire value kind `{kind}` for target `{target}`")]
     UnsupportedWireValue {
         kind: &'static str,
