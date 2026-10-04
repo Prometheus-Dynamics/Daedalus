@@ -141,7 +141,7 @@ impl fmt::Debug for HostGraphStepMetrics {
             .map(|(idx, metrics)| {
                 let label = self
                     .node_labels
-                    .get(*idx)
+                    .get(idx)
                     .map(String::as_str)
                     .unwrap_or("unknown");
                 format!("{label}:{}", format_duration(metrics.total_duration))

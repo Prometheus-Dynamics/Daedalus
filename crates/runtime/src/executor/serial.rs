@@ -71,6 +71,9 @@ pub(crate) fn run_order<H: NodeHandler>(
         if !required_inputs_ready(exec, node_idx, &inputs) {
             // Not ready this tick: a connected required input has no value (its producer was
             // skipped or pushed nothing). Optional inputs never block.
+    if collect_basic_metrics {
+        exec.core.telemetry.node_metrics.reserve_nodes(nodes.len());
+    }
             tracing::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node not ready");
             crate::io::recycle_ports(inputs);
             continue;

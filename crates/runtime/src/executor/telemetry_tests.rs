@@ -44,7 +44,7 @@ fn record_node_resource_snapshot_tracks_current_and_peak_usage() {
         },
     );
 
-    let metrics = telemetry.node_metrics.get(&1).unwrap();
+    let metrics = telemetry.node_metrics.get(1).unwrap();
     let resources = metrics.resources.as_ref().unwrap();
     assert_eq!(resources.frame_scratch.current_live_bytes, 16);
     assert_eq!(resources.frame_scratch.current_retained_bytes, 96);
@@ -68,7 +68,7 @@ fn record_node_internal_transfers_tracks_materialization_conversion_and_gpu_flow
     telemetry.record_node_gpu_transfer(3, true, 48);
     telemetry.record_node_gpu_transfer(3, false, 32);
 
-    let metrics = telemetry.node_metrics.get(&3).unwrap();
+    let metrics = telemetry.node_metrics.get(3).unwrap();
     let resources = metrics.resources.as_ref().unwrap();
     assert_eq!(resources.materialization.count, 1);
     assert_eq!(resources.materialization.total_bytes, 64);

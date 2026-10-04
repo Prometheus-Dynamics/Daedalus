@@ -89,8 +89,8 @@ pub use executor::{
     ExecutorMaskError, FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry,
     FfiPayloadTelemetry, FfiTelemetryReport, FfiWorkerTelemetry, InternalTransferMetrics,
     MetricsLevel, NodeAllocationSpikeExplanation, NodeError, NodeHandler, NodeMetrics,
-    NodeResourceMetrics, OwnedExecutor, OwnershipReport, ProfileLevel, Profiler, ResourceMetrics,
-    TelemetryReport, TelemetryReportFilter, estimate_payload_bytes,
+    NodeMetricsMap, NodeResourceMetrics, OwnedExecutor, OwnershipReport, ProfileLevel, Profiler,
+    ResourceMetrics, TelemetryReport, TelemetryReportFilter, estimate_payload_bytes,
     register_runtime_data_size_inspector,
 };
 pub use fanin::FanIn;

@@ -18,7 +18,7 @@ impl ExecutionTelemetry {
             return;
         }
         self.in_flight_node_transport_metrics.remove(&node_idx);
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         entry.record(duration);
         if self.metrics_level.is_detailed() {
             entry
@@ -35,7 +35,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         entry.record_handler(duration);
     }
 
@@ -46,7 +46,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         entry.cpu_duration += duration;
     }
 
@@ -54,7 +54,7 @@ impl ExecutionTelemetry {
         if !cfg!(feature = "metrics") {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         entry.record_perf(sample);
     }
 
@@ -70,7 +70,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_basic() {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         entry.record_custom(name, value);
     }
 
@@ -102,7 +102,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         let payload = entry
             .transport
             .get_or_insert_with(TransportMetrics::default);
@@ -128,7 +128,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         let payload = entry
             .transport
             .get_or_insert_with(TransportMetrics::default);
@@ -161,7 +161,7 @@ impl ExecutionTelemetry {
         if snapshot == crate::state::NodeResourceSnapshot::default() {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         let resources = entry
             .resources
             .get_or_insert_with(NodeResourceMetrics::default);
@@ -175,7 +175,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() || bytes == 0 {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         let resources = entry
             .resources
             .get_or_insert_with(NodeResourceMetrics::default);
@@ -189,7 +189,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() || bytes == 0 {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         let resources = entry
             .resources
             .get_or_insert_with(NodeResourceMetrics::default);
@@ -203,7 +203,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() || bytes == 0 {
             return;
         }
-        let entry = self.node_metrics.entry(node_idx).or_default();
+        let entry = self.node_metrics.entry(node_idx);
         let resources = entry
             .resources
             .get_or_insert_with(NodeResourceMetrics::default);
@@ -218,7 +218,7 @@ impl ExecutionTelemetry {
         &self,
         node_idx: usize,
     ) -> Option<NodeAllocationSpikeExplanation> {
-        let metrics = self.node_metrics.get(&node_idx)?;
+        let metrics = self.node_metrics.get(node_idx)?;
         let resources = metrics.resources.as_ref()?;
         let mut dominant_sources = vec![
             ("frame_scratch", resources.frame_scratch.peak_retained_bytes),

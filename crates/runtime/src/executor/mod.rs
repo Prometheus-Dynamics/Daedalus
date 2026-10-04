@@ -51,8 +51,9 @@ pub use telemetry::{
     DataLifecycleStage, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, ExecutionTelemetry,
     FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry,
     FfiTelemetryReport, FfiWorkerTelemetry, InternalTransferMetrics, MetricsLevel,
-    NodeAllocationSpikeExplanation, NodeFailure, NodeMetrics, NodeResourceMetrics, OwnershipReport,
-    ProfileLevel, Profiler, ResourceMetrics, TelemetryReport, TelemetryReportFilter,
+    NodeAllocationSpikeExplanation, NodeFailure, NodeMetrics, NodeMetricsMap, NodeResourceMetrics,
+    OwnershipReport, ProfileLevel, Profiler, ResourceMetrics, TelemetryReport,
+    TelemetryReportFilter,
 };
 pub use telemetry_size::{
     RuntimeDataSizeInspector, RuntimeDataSizeInspectors, estimate_payload_bytes,
