@@ -1,7 +1,10 @@
+use crate::prelude::*;
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use core::sync::atomic::Ordering;
 use daedalus_runtime::sync::Mutex;
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::portable::AtomicU64;
 
 use daedalus_planner::{ExecutionPlan, Graph, PlannerConfig, PlannerOutput};
 use daedalus_runtime::{RuntimePlan, SchedulerConfig};
@@ -214,7 +217,7 @@ impl Default for EngineCaches {
 
 fn evict_fifo<K, V>(shard: &mut CacheShard<K, V>, max_entries: usize, evictions: &AtomicU64)
 where
-    K: Clone + Eq + std::hash::Hash,
+    K: Clone + Eq + core::hash::Hash,
 {
     while shard.entries.len() > max_entries {
         let Some(oldest) = shard.order.pop_front() else {
@@ -259,7 +262,7 @@ mod tests {
     use daedalus_data::model::Value;
     use daedalus_planner::{Edge, ExecutionPlan, NodeInstance};
 
-    use std::collections::BTreeMap;
+    use alloc::collections::BTreeMap;
 
     fn planner_key(value: u64) -> PlannerCacheKey {
         PlannerCacheKey {

@@ -1,7 +1,7 @@
 #[cfg(feature = "metrics")]
 use super::{ExecutionTelemetry, MetricsLevel};
 #[cfg(feature = "metrics")]
-use std::time::Duration;
+use core::time::Duration;
 
 #[test]
 #[cfg(feature = "metrics")]

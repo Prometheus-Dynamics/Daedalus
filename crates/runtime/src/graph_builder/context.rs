@@ -1,5 +1,6 @@
 use super::{GraphBuildError, GraphBuilder};
 use crate::handles::PortHandle;
+use crate::prelude::*;
 use daedalus_data::model::Value;
 use daedalus_planner::Graph;
 use daedalus_registry::capability::CapabilityRegistry;
@@ -16,7 +17,7 @@ pub struct GraphCtx {
 impl GraphCtx {
     fn take_builder(&mut self) -> GraphBuilder {
         let capabilities = self.builder.capabilities.clone();
-        std::mem::replace(&mut self.builder, GraphBuilder::new(capabilities))
+        core::mem::replace(&mut self.builder, GraphBuilder::new(capabilities))
     }
 
     pub fn new(capabilities: CapabilityRegistry, inputs: &[&str], outputs: &[&str]) -> Self {

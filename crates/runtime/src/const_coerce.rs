@@ -7,7 +7,8 @@
 //! deriving `DaedalusTypeExpr`), else serde (types implementing `Deserialize`). A coercer
 //! registered explicitly (`PluginRegistry::register_const_coercer`, `register_enum`) wins.
 
-use std::any::{Any, type_name};
+use crate::prelude::*;
+use core::any::{Any, type_name};
 
 use daedalus_data::daedalus_type::DaedalusTypeExpr;
 use daedalus_data::model::Value;
@@ -186,7 +187,7 @@ pub mod derive_support {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
+    use alloc::borrow::Cow;
 
     use daedalus_data::model::{EnumValue, StructFieldValue};
 

@@ -1,4 +1,5 @@
 use crate::perf::PerfSample;
+use crate::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ResourceMetrics {

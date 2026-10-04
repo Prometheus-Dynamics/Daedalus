@@ -1,4 +1,5 @@
-use std::ops::Deref;
+use crate::prelude::*;
+use core::ops::Deref;
 
 /// Indexed fan-in input collection.
 ///
@@ -36,7 +37,7 @@ impl<T> Deref for FanIn<T> {
 
 impl<T> IntoIterator for FanIn<T> {
     type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
+    type IntoIter = alloc::vec::IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.values.into_iter()

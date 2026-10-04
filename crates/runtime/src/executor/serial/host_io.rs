@@ -4,7 +4,8 @@
 //! attached ([`resolve_host_nodes`]), so a tick never touches the bridge manager's map lock and
 //! never allocates port ids.
 
-use std::sync::Arc;
+use crate::prelude::*;
+use alloc::sync::Arc;
 
 use daedalus_planner::NodeRef;
 use smallvec::SmallVec;

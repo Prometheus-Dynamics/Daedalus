@@ -1,8 +1,8 @@
 use crate::executor::NodeError;
+use crate::prelude::*;
+use alloc::sync::Arc;
+use core::any::{Any, TypeId};
 use daedalus_transport::Payload;
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
-use std::sync::Arc;
 
 type CapabilityFn = dyn Fn(&[&dyn Any]) -> Result<Payload, NodeError> + Send + Sync;
 
@@ -62,7 +62,7 @@ impl CapabilityRegistry {
                     .get(1)
                     .and_then(|value| value.downcast_ref::<T>())
                     .ok_or_else(|| NodeError::InvalidInput("rhs".into()))?;
-                f(a, b).map(|out| Payload::owned(std::any::type_name::<T>(), out))
+                f(a, b).map(|out| Payload::owned(core::any::type_name::<T>(), out))
             }),
         );
     }
@@ -88,7 +88,7 @@ impl CapabilityRegistry {
                     .get(2)
                     .and_then(|value| value.downcast_ref::<T>())
                     .ok_or_else(|| NodeError::InvalidInput("hi".into()))?;
-                f(a, b, c).map(|out| Payload::owned(std::any::type_name::<T>(), out))
+                f(a, b, c).map(|out| Payload::owned(core::any::type_name::<T>(), out))
             }),
         );
     }

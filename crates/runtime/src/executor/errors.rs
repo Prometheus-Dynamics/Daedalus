@@ -1,3 +1,5 @@
+use crate::prelude::*;
+
 /// Structured node error for better diagnostics.
 ///
 #[non_exhaustive]
@@ -10,8 +12,8 @@ pub enum NodeError {
     BackpressureDrop(String),
 }
 
-impl std::fmt::Display for NodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for NodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             NodeError::Handler(s) => write!(f, "{s}"),
             NodeError::MissingHandler { node, stable_id } => {
@@ -29,7 +31,7 @@ impl std::fmt::Display for NodeError {
     }
 }
 
-impl std::error::Error for NodeError {}
+impl core::error::Error for NodeError {}
 
 impl From<daedalus_transport::TypeKeyError> for NodeError {
     fn from(error: daedalus_transport::TypeKeyError) -> Self {
@@ -93,8 +95,8 @@ pub enum ExecutorMaskError {
     },
 }
 
-impl std::fmt::Display for ExecuteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ExecuteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ExecuteError::GpuUnavailable { .. } => write!(f, "gpu unavailable for segment"),
             ExecuteError::HandlerFailed { node, error } => {
@@ -107,7 +109,7 @@ impl std::fmt::Display for ExecuteError {
     }
 }
 
-impl std::error::Error for ExecuteError {}
+impl core::error::Error for ExecuteError {}
 
 impl ExecuteError {
     /// Return a stable string code for this error.

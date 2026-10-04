@@ -89,7 +89,7 @@ impl PluginRegistry {
     }
 
     pub fn take_handlers(&mut self) -> HandlerRegistry {
-        std::mem::take(&mut self.handlers)
+        core::mem::take(&mut self.handlers)
     }
 
     pub fn handlers(&self) -> HandlerRegistry {
@@ -97,11 +97,11 @@ impl PluginRegistry {
     }
 
     pub fn take_runtime_transport(&mut self) -> RuntimeTransport {
-        std::mem::take(&mut self.runtime_transport)
+        core::mem::take(&mut self.runtime_transport)
     }
 
     pub fn take_transport_capabilities(&mut self) -> TransportCapabilityRegistry {
-        std::mem::take(&mut self.transport_capabilities)
+        core::mem::take(&mut self.transport_capabilities)
     }
 }
 

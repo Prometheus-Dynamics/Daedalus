@@ -1,6 +1,7 @@
 //! Debug helpers for serializing/deserializing runtime plans.
 
 use crate::RuntimePlan;
+use crate::prelude::*;
 
 /// Serialize a runtime plan to pretty-printed JSON.
 pub fn to_pretty_json(plan: &RuntimePlan) -> String {

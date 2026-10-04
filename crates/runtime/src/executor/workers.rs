@@ -2,6 +2,7 @@
 //! of persistent threads parked between runs. Either way a frame spawns no threads and allocates
 //! nothing to dispatch work.
 
+use crate::prelude::*;
 use std::sync::{Arc, OnceLock};
 
 use super::{ExecuteError, NodeError};
@@ -77,8 +78,8 @@ impl WorkerPool {
 #[cfg(not(feature = "executor-pool"))]
 mod parked {
     use crate::sync::{Condvar, Mutex};
+    use alloc::sync::Arc;
     use std::panic::{self, AssertUnwindSafe};
-    use std::sync::Arc;
     use std::thread::JoinHandle;
 
     /// Helper threads that sleep on a condvar until [`Helpers::run`] hands them a job.
@@ -141,7 +142,9 @@ mod parked {
             }
             // SAFETY: only the lifetime is erased; `Finish` waits until no helper uses the job.
             let job = Job(unsafe {
-                std::mem::transmute::<*const (dyn Fn() + Sync + '_), *const (dyn Fn() + Sync)>(work)
+                core::mem::transmute::<*const (dyn Fn() + Sync + '_), *const (dyn Fn() + Sync)>(
+                    work,
+                )
             });
             {
                 let mut state = self.shared.state.lock();

@@ -1,5 +1,6 @@
 //! Wiring between outer graph endpoints and nested graph ports.
 
+use crate::prelude::*;
 use daedalus_planner::{Edge, NodeRef, PortRef};
 
 use super::{GraphBuildError, GraphBuilder, IntoPortSpec, NestedGraphHandle, PortSpec};

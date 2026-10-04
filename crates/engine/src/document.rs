@@ -1,6 +1,7 @@
 //! [`GraphDocument`] entry points: check plugin requirements, then delegate to the regular
 //! plugin-registry compile/prepare paths.
 
+use crate::prelude::*;
 use daedalus_planner::GraphDocument;
 use daedalus_runtime::HostBridgeManager;
 use daedalus_runtime::executor::NodeHandler;

@@ -1,5 +1,6 @@
 //! Scoped graph sections (`inputs`/`outputs`/`nodes`/`edges`) and subgraph embedding.
 
+use crate::prelude::*;
 use daedalus_planner::Graph;
 
 use super::{GraphBuildError, GraphBuilder, GraphScope, NestedGraph, NestedGraphHandle};

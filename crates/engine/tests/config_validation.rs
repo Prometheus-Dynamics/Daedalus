@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-#[cfg(feature = "config-env")]
+#[cfg(all(feature = "config-env", feature = "std"))]
 fn env_lock() -> &'static Mutex<()> {
     static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -37,7 +37,7 @@ fn pool_size_zero_is_rejected() {
     assert!(msg.contains("pool_size must be > 0"), "{msg}");
 }
 
-#[cfg(feature = "config-env")]
+#[cfg(all(feature = "config-env", feature = "std"))]
 #[test]
 fn runtime_pool_size_env_is_parsed() {
     let _guard = env_lock().lock();
@@ -66,7 +66,7 @@ fn runtime_debug_config_builder_sets_runtime_override() {
     assert_eq!(cfg.runtime.pool_size, Some(2));
 }
 
-#[cfg(feature = "config-env")]
+#[cfg(all(feature = "config-env", feature = "std"))]
 #[test]
 fn invalid_runtime_pool_size_env_is_rejected() {
     let _guard = env_lock().lock();

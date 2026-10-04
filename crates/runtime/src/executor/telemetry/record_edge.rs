@@ -1,6 +1,6 @@
 //! Per-edge recording hooks.
 
-use std::time::Duration;
+use core::time::Duration;
 
 use super::{EdgePressureReason, ExecutionTelemetry, Histogram};
 

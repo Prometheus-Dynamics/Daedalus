@@ -1,8 +1,9 @@
+use crate::prelude::*;
 use crate::sync::Mutex;
+use alloc::sync::Arc;
+use core::marker::PhantomData;
+use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::time::Duration;
 
 use daedalus_transport::{
     FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, TypeKey,
@@ -165,7 +166,7 @@ impl GraphInput {
     where
         T: Send + Sync + 'static,
     {
-        self.feed(Payload::owned(type_key, value))
+        Ok(self.handle.push_as(self.port.clone(), type_key, value))
     }
 
     pub fn close(&self) -> Result<(), ExecuteError> {
@@ -295,8 +296,11 @@ impl<H: NodeHandler> StreamGraph<H> {
         }
     }
 
-    /// Time executions (and the executor's telemetry) with `clock` instead of the platform clock.
+    /// Time executions (and the executor's telemetry), stamp payload lineage and age payloads
+    /// for `FreshnessPolicy::MaxAge` (the host bridges) with `clock` instead of the platform
+    /// clock.
     pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.bridges.set_clock(clock.clone());
         self.executor = self
             .executor
             .take()

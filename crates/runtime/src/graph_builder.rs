@@ -1,3 +1,5 @@
+use crate::prelude::*;
+
 mod connection;
 mod context;
 mod edge_policy;
@@ -15,12 +17,12 @@ pub use scope::GraphScope;
 pub use spec::{GraphBuildError, IntoPortSpec, NodeSpec, PortSpec};
 
 use crate::handles::{NodeHandleLike, PortHandle};
+use alloc::collections::BTreeMap;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_planner::{
     ComputeAffinity, Edge, Graph, HostPortTypes, NodeInstance, NodeRef, PortRef,
 };
 use daedalus_registry::{capability::CapabilityRegistry, ids::NodeId};
-use std::collections::{BTreeMap, HashMap};
 
 use self::metadata::{const_value_from_port_decl, metadata_from_node_decl};
 use self::nested::is_host_bridge;

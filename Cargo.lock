@@ -524,6 +524,7 @@ dependencies = [
  "daedalus-transport",
  "serde",
  "serde_json",
+ "spin",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
@@ -663,6 +664,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-nostd-smoke"
+version = "2.0.0"
+dependencies = [
+ "daedalus-core",
+ "daedalus-data",
+ "daedalus-engine",
+ "daedalus-planner",
+ "daedalus-registry",
+ "daedalus-runtime",
+]
+
+[[package]]
 name = "daedalus-planner"
 version = "2.0.0"
 dependencies = [
@@ -797,6 +810,7 @@ dependencies = [
  "daedalus-planner",
  "daedalus-registry",
  "daedalus-transport",
+ "hashbrown 0.17.0",
  "libc",
  "parking_lot",
  "rand 0.10.1",
@@ -1188,6 +1202,8 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

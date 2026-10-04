@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use daedalus_data::model::Value;
@@ -77,7 +78,7 @@ pub(crate) enum EdgePolicyMetadataError {
 }
 
 pub(crate) fn edge_policy_from_metadata(
-    metadata: &std::collections::BTreeMap<String, Value>,
+    metadata: &alloc::collections::BTreeMap<String, Value>,
 ) -> Result<RuntimeEdgePolicy, EdgePolicyMetadataError> {
     let policy = metadata
         .get(EDGE_PRESSURE_POLICY_KEY)
@@ -113,7 +114,7 @@ pub(crate) fn edge_policy_from_metadata(
         .map(|policy| match policy {
             EDGE_FRESHNESS_LATEST_BY_SEQUENCE => Ok(FreshnessPolicy::LatestBySequence),
             EDGE_FRESHNESS_LATEST_BY_TIMESTAMP => Ok(FreshnessPolicy::LatestByTimestamp),
-            EDGE_FRESHNESS_MAX_AGE => Ok(FreshnessPolicy::MaxAge(std::time::Duration::ZERO)),
+            EDGE_FRESHNESS_MAX_AGE => Ok(FreshnessPolicy::MaxAge(core::time::Duration::ZERO)),
             EDGE_FRESHNESS_MAX_LAG => Ok(FreshnessPolicy::MaxLag { frames: 0 }),
             unknown => Err(EdgePolicyMetadataError::UnknownFreshnessPolicy {
                 policy: unknown.to_string(),

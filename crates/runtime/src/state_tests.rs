@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use crate::prelude::*;
+use alloc::collections::BTreeMap;
+use core::time::Duration;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{
     Arc,
@@ -6,7 +8,6 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::Duration;
 
 use super::{
     ExecutionContext, ManagedResource, NodeResourceSnapshot, ResourceClass, ResourceLifecycleEvent,

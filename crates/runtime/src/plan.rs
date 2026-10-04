@@ -1,3 +1,5 @@
+use crate::prelude::*;
+
 mod demand;
 mod explain;
 mod host_ports;
@@ -23,6 +25,7 @@ use daedalus_transport::PressurePolicy;
 /// Node metadata hinting a node's per-run cost: `"heavy"` makes adaptive execution treat its
 /// segment as expensive before it has been measured (as it does GPU-affinity nodes).
 pub const NODE_COST_META_KEY: &str = "daedalus.node.cost";
+use alloc::collections::{BTreeMap, BTreeSet};
 pub(crate) use demand::active_nodes_mask_for_sinks;
 pub use demand::{DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry};
 pub use explain::{
@@ -38,10 +41,9 @@ pub use policy::{
     EDGE_PRESSURE_DROP_NEWEST, EDGE_PRESSURE_DROP_OLDEST, EDGE_PRESSURE_ERROR_ON_FULL,
     EDGE_PRESSURE_FIFO, EDGE_PRESSURE_LATEST_ONLY, EDGE_PRESSURE_POLICY_KEY, RuntimeEdgePolicy,
 };
-use std::collections::{BTreeMap, BTreeSet};
 
 pub fn node_execution_kind_from_metadata(
-    metadata: &std::collections::BTreeMap<String, Value>,
+    metadata: &alloc::collections::BTreeMap<String, Value>,
 ) -> NodeExecutionKind {
     if is_host_bridge_metadata(metadata) {
         return NodeExecutionKind::HostBridge;
@@ -198,8 +200,11 @@ pub struct RuntimeNode {
     pub const_inputs: Vec<(String, daedalus_data::model::Value)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sync_groups: Vec<daedalus_core::sync::SyncGroup>,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub metadata: std::collections::BTreeMap<String, daedalus_data::model::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "alloc::collections::BTreeMap::is_empty"
+    )]
+    pub metadata: alloc::collections::BTreeMap<String, daedalus_data::model::Value>,
 }
 
 impl RuntimeNode {
@@ -240,8 +245,11 @@ pub struct RuntimePlan {
     pub default_policy: RuntimeEdgePolicy,
     pub backpressure: BackpressureStrategy,
     /// Graph-level metadata (typed values) propagated into `ExecutionContext.graph_metadata`.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub graph_metadata: std::collections::BTreeMap<String, daedalus_data::model::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "alloc::collections::BTreeMap::is_empty"
+    )]
+    pub graph_metadata: alloc::collections::BTreeMap<String, daedalus_data::model::Value>,
     pub nodes: Vec<RuntimeNode>,
     pub edges: Vec<RuntimeEdge>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -442,8 +450,7 @@ impl RuntimePlan {
             .get(PLAN_SCHEDULE_ORDER_KEY)
             .and_then(Value::as_string_list)
         {
-            let mut by_id: std::collections::HashMap<&str, usize> =
-                std::collections::HashMap::new();
+            let mut by_id: HashMap<&str, usize> = HashMap::new();
             for (idx, node) in plan.graph.nodes.iter().enumerate() {
                 by_id.insert(node.id.0.as_str(), idx);
             }
@@ -502,7 +509,7 @@ impl RuntimePlan {
 }
 
 fn ensure_unique_stable_ids(nodes: &[RuntimeNode]) -> Result<(), RuntimePlanError> {
-    let mut seen: std::collections::HashMap<u128, String> = std::collections::HashMap::new();
+    let mut seen: HashMap<u128, String> = HashMap::new();
     for node in nodes {
         if let Some(previous) = seen.insert(node.stable_id, node.id.clone())
             && previous != node.id
@@ -529,7 +536,7 @@ fn is_gpu_compute(compute: ComputeAffinity) -> bool {
 }
 
 fn runtime_segments_from_planner(plan: &ExecutionPlan, order: &[NodeRef]) -> Vec<RuntimeSegment> {
-    let mut by_id: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut by_id: HashMap<&str, usize> = HashMap::new();
     for (idx, node) in plan.graph.nodes.iter().enumerate() {
         by_id.insert(node.id.0.as_str(), idx);
     }

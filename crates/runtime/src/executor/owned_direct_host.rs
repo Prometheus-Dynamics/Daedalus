@@ -4,10 +4,11 @@ use super::{
     DirectSlotAccess, ExecuteError, ExecutionTelemetry, NodeError, NodeHandler,
     is_host_bridge_node, push_const_inputs, queue, serial,
 };
+use crate::prelude::*;
 use crate::state::ExecutionContext;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 use daedalus_transport::Payload;
-use std::collections::BTreeMap;
-use std::sync::Arc;
 
 impl<H: NodeHandler> OwnedExecutor<H> {
     pub fn run_direct_host_payload(

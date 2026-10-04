@@ -1,3 +1,5 @@
+use crate::prelude::*;
+
 daedalus_transport::define_text_id!(NodeAlias, "Runtime node alias used for graph wiring.");
 daedalus_transport::define_text_id!(NodeHandleId, "Runtime node id used for graph wiring.");
 daedalus_transport::define_text_id!(

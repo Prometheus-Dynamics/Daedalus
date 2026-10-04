@@ -101,8 +101,8 @@ impl PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::sync::Arc;
     use daedalus_transport::{FrameInterface, FramePlane, FrameResidency, FrameSource};
-    use std::sync::Arc;
 
     struct Gray(Vec<u8>);
 
@@ -130,7 +130,7 @@ mod tests {
     daedalus_transport::foreign_interface! {
         interface OtherFrame("daedalus:frame", version = 2);
         struct OtherFrameVTable {
-            width: unsafe extern "C" fn(data: *const std::ffi::c_void) -> u32,
+            width: unsafe extern "C" fn(data: *const core::ffi::c_void) -> u32,
         }
     }
 

@@ -28,6 +28,7 @@ members = [
     "examples/plugins/framelease",
     "examples/plugins/stable_abi",
     "examples/wasm_smoke",
+    "examples/nostd_smoke",
 ]
 resolver = "3"
 

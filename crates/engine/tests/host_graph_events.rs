@@ -20,7 +20,7 @@ use daedalus_runtime::RuntimeNode;
 use daedalus_runtime::executor::{NodeError, NodeHandler};
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::plugins::PluginRegistry;
-use daedalus_transport::Payload;
+use daedalus_transport::{DropReason, FeedOutcome, FreshnessPolicy, Payload, PressurePolicy};
 
 const INT_KEY: &str = "typeexpr:{\"Scalar\":\"Int\"}";
 
@@ -38,7 +38,7 @@ impl NodeHandler for IncrementHandler {
                 return Err(NodeError::InvalidInput("expected int".to_string()));
             };
             let next = Value::Int(value + 1);
-            io.push_payload("out", Payload::owned(INT_KEY, next));
+            io.push_as_to("out", INT_KEY.into(), next);
         }
         Ok(())
     }
@@ -119,7 +119,8 @@ fn step_timings_read_the_engine_clock() {
     assert_eq!(step.outputs, [Value::Int(2)]);
     let whole_ms = |duration: Duration| duration.as_nanos().is_multiple_of(1_000_000);
     let metrics = &step.metrics;
-    assert_eq!(metrics.feed_duration, Duration::from_millis(1));
+    // The feed reads the clock once more to stamp the payload it builds.
+    assert_eq!(metrics.feed_duration, Duration::from_millis(2));
     assert!(metrics.run_duration >= Duration::from_millis(1) && whole_ms(metrics.run_duration));
     assert_eq!(metrics.drain_duration, Duration::from_millis(1));
     let telemetry = metrics.telemetry.as_ref().unwrap();
@@ -127,6 +128,52 @@ fn step_timings_read_the_engine_clock() {
     if cfg!(feature = "metrics") {
         assert!(telemetry.graph_duration > Duration::ZERO && whole_ms(telemetry.graph_duration));
     }
+}
+
+/// Payload lineage made by bridge and node pushes, bridge events and `MaxAge` read the
+/// engine's clock, not the platform clock.
+#[test]
+fn lineage_and_bridge_events_read_the_engine_clock() {
+    let ticks = Arc::new(AtomicU64::new(1_000));
+    let clock = Clock::new({
+        let ticks = ticks.clone();
+        move || Duration::from_millis(ticks.load(Ordering::Relaxed))
+    });
+    let config = EngineConfig::default().with_clock(clock.clone());
+    let (_plugins, mut graph) = compile_increment_graph_with(config);
+    graph.bridge_manager().set_event_recording(true);
+    assert_eq!(graph.host().clock(), clock);
+
+    assert!(matches!(
+        graph.push_as("in", INT_KEY, Value::Int(1)),
+        FeedOutcome::Accepted { .. }
+    ));
+    let pushed_at = clock.now();
+    ticks.store(1_025, Ordering::Relaxed);
+    graph.tick().unwrap();
+    ticks.store(1_040, Ordering::Relaxed);
+    let output = graph.take_payload("out").unwrap();
+    assert_eq!(output.lineage().age(&clock), Duration::from_millis(15));
+    let events = graph.host().events();
+    assert!(events.first().is_some_and(|event| event.at == pushed_at));
+    assert!(events.last().is_some_and(|event| event.at == clock.now()));
+
+    graph
+        .set_input_policy(
+            "in",
+            PressurePolicy::LatestOnly,
+            FreshnessPolicy::MaxAge(Duration::from_millis(5)),
+        )
+        .unwrap();
+    let stale = Payload::owned(INT_KEY, Value::Int(2)).stamp(&clock);
+    ticks.store(1_050, Ordering::Relaxed);
+    assert!(matches!(
+        graph.push_payload("in", stale),
+        FeedOutcome::Dropped {
+            reason: DropReason::MaxAge,
+            ..
+        }
+    ));
 }
 
 #[test]

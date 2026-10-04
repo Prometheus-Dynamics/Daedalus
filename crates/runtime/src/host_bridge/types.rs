@@ -1,3 +1,4 @@
+use crate::prelude::*;
 use daedalus_core::platform::Instant;
 
 use daedalus_transport::{
@@ -171,7 +172,8 @@ pub enum HostBridgeEventKind {
 
 #[derive(Clone, Debug)]
 pub struct HostBridgeEvent {
-    /// Monotonic timestamp captured when the host bridge event was recorded.
+    /// When the event was recorded, on the bridge clock
+    /// ([`HostBridgeManager::set_clock`](crate::HostBridgeManager::set_clock)).
     pub at: Instant,
     pub alias: String,
     pub port: String,

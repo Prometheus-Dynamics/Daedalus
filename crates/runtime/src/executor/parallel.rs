@@ -63,7 +63,7 @@ where
         .recompute_unattributed_runtime_duration();
     let nodes = exec.nodes.clone();
     exec.core.telemetry.aggregate_groups(&nodes);
-    Ok(std::mem::take(&mut exec.core.telemetry))
+    Ok(core::mem::take(&mut exec.core.telemetry))
 }
 
 struct SegmentQueue<'g, 'c> {

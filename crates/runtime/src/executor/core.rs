@@ -2,11 +2,12 @@ use super::{
     DirectSlot, EdgeStorage, ExecutionTelemetry, ExecutorInit, ExecutorRunConfig, MaybeGpu,
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
 };
+use crate::prelude::*;
 use crate::state::StateStore;
 use crate::sync::Mutex;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
 use daedalus_core::platform::Clock;
-use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
 
 pub(crate) struct ExecutorCore {
     pub(crate) state: StateStore,
@@ -82,8 +83,8 @@ impl ExecutorCore {
         }
     }
 
-    /// A `NodeIo` for node `node_idx` over `inputs` (a port buffer), wired to this executor's coercers, type
-    /// index and the node's output ports.
+    /// A `NodeIo` for node `node_idx` over `inputs` (a port buffer), wired to this executor's
+    /// coercers, type index, clock and the node's output ports.
     pub(crate) fn node_io(
         &self,
         node_idx: usize,
@@ -93,6 +94,7 @@ impl ExecutorCore {
             .with_const_coercers(self.const_coercers.clone())
             .with_type_index(self.type_index.clone())
             .with_output_ports(self.output_ports.get(node_idx).cloned())
+            .with_clock(self.clock.clone())
     }
 
     pub(crate) fn snapshot(&self) -> Self {

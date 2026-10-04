@@ -1,7 +1,8 @@
 //! Per-node metrics stored densely by node index.
 
-use std::collections::BTreeMap;
-use std::fmt;
+use crate::prelude::*;
+use alloc::collections::BTreeMap;
+use core::fmt;
 
 use super::NodeMetrics;
 
@@ -85,8 +86,8 @@ type IntoIterFn = fn((usize, Option<NodeMetrics>)) -> Option<(usize, NodeMetrics
 
 impl IntoIterator for NodeMetricsMap {
     type Item = (usize, NodeMetrics);
-    type IntoIter = std::iter::FilterMap<
-        std::iter::Enumerate<std::vec::IntoIter<Option<NodeMetrics>>>,
+    type IntoIter = core::iter::FilterMap<
+        core::iter::Enumerate<alloc::vec::IntoIter<Option<NodeMetrics>>>,
         IntoIterFn,
     >;
 

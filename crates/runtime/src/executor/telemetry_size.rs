@@ -1,7 +1,10 @@
+use crate::prelude::*;
 use crate::sync::RwLock;
-use std::sync::{Arc, OnceLock};
+use alloc::sync::Arc;
 
-pub type RuntimeDataSizeInspector = fn(&dyn std::any::Any) -> Option<u64>;
+use crate::portable::OnceLock;
+
+pub type RuntimeDataSizeInspector = fn(&dyn core::any::Any) -> Option<u64>;
 
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeDataSizeInspectors {
@@ -54,7 +57,7 @@ mod tests {
 
     struct SizedPayload;
 
-    fn sized_payload_bytes(value: &dyn std::any::Any) -> Option<u64> {
+    fn sized_payload_bytes(value: &dyn core::any::Any) -> Option<u64> {
         value.is::<SizedPayload>().then_some(42)
     }
 

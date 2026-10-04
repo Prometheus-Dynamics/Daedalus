@@ -38,7 +38,7 @@ usage: scripts/ci.sh [subcommand...]
   smoke       run the CPU-only example binaries
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics) and without threads
-  nostd       no_std + alloc check of the tier-1 crates for thumbv7em-none-eabihf
+  nostd       no_std + alloc check of tier-1 crates, runtime and engine for thumbv7em
   wasm        engine,plugins (embedded without threads) check and smoke run for wasm32
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
@@ -148,13 +148,22 @@ cmd_lean() {
     --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
 }
 
-# The tier-1 crates without `std`, with and without their alloc-only optional features.
+# The tier-1 crates without `std`, with and without their alloc-only optional features; then the
+# serial runtime and engine (tier 2), and the `examples/nostd_smoke` graph: checked for the
+# target, and its tests run natively with `std` off everywhere.
 cmd_nostd() {
   step "Checking no_std + alloc crates for $NOSTD_TARGET"
   ensure_target "$NOSTD_TARGET"
   cargo check --target "$NOSTD_TARGET" "${NOSTD_CRATES[@]}" --no-default-features
   cargo check --target "$NOSTD_TARGET" "${NOSTD_CRATES[@]}" --no-default-features --features \
     "daedalus-core/metrics,daedalus-data/json,daedalus-data/schema,daedalus-data/proto,daedalus-data/async,daedalus-registry/bundle,daedalus-registry/plugin,daedalus-planner/schema,daedalus-planner/proto"
+  step "Checking the no_std serial runtime and engine for $NOSTD_TARGET"
+  cargo check --target "$NOSTD_TARGET" -p daedalus-runtime -p daedalus-engine --no-default-features
+  cargo check --target "$NOSTD_TARGET" -p daedalus-runtime -p daedalus-engine --no-default-features \
+    --features "daedalus-runtime/plugins,daedalus-runtime/metrics,daedalus-runtime/snapshots,daedalus-runtime/lockfree-queues,daedalus-engine/plugins,daedalus-engine/config-env"
+  cargo check --target "$NOSTD_TARGET" -p daedalus-nostd-smoke
+  step "Running the no_std smoke test natively"
+  cargo test -p daedalus-nostd-smoke
 }
 
 # `wasm32-unknown-unknown` has `std` but no threads and no clock: check the embedded preset

@@ -1,4 +1,5 @@
-use std::time::Duration;
+use crate::prelude::*;
+use core::time::Duration;
 
 use super::ExecutionTelemetry;
 

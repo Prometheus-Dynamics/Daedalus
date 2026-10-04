@@ -5,10 +5,9 @@
 
 use super::*;
 use crate::type_index::{TypeIndex, TypeKeyUses};
+use core::any::TypeId;
+use core::fmt;
 use daedalus_transport::RustTypeIdentity;
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::fmt;
 
 /// Crates whose types keep their `rust:` fallback key without an error.
 const STD_CRATES: &[&str] = &["core", "alloc", "std"];
@@ -167,7 +166,7 @@ impl PluginRegistry {
         self.ensure_open()?;
         let own = TypeExpr::opaque(key);
         let keyed_twice = |existing: TypeExpr| PluginError::TypeKeyedTwice {
-            rust_type: std::any::type_name::<T>(),
+            rust_type: core::any::type_name::<T>(),
             existing: typeexpr_transport_key(&existing),
             new: TypeKey::new(key),
         };
@@ -201,7 +200,7 @@ impl PluginRegistry {
         key: TypeKey,
         declared: bool,
     ) -> PluginResult<()> {
-        let rust_type = std::any::type_name::<T>();
+        let rust_type = core::any::type_name::<T>();
         if !declared && key.as_str().starts_with("rust:") && is_foreign(rust_type, port.defined_in)
         {
             if let Some(external) = &mut self.external_types {
@@ -314,7 +313,7 @@ mod tests {
             [ExternalTypeRef {
                 owner: "my_plugin:node".into(),
                 port: "frame".into(),
-                rust_type: std::any::type_name::<Foreign>(),
+                rust_type: core::any::type_name::<Foreign>(),
             }]
         );
         assert!(!registry.boundary_types().contains_key(&key()));

@@ -3,7 +3,11 @@
 use crate::capabilities::CapabilityRegistry as RuntimeCapabilityRegistry;
 use crate::graph_builder::GraphBuilder;
 use crate::handler_registry::HandlerRegistry;
+use crate::prelude::*;
 use crate::transport::RuntimeTransport;
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::any::Any;
+use core::ops::{Deref, DerefMut};
 use daedalus_data::daedalus_type::{DaedalusTypeExpr, DaedalusTypeVisitor};
 use daedalus_data::model::{TypeExpr, ValueType};
 use daedalus_data::named_types::{HostExportPolicy, NamedTypeRegistry};
@@ -23,9 +27,6 @@ use daedalus_transport::{
     TransferTo, TransportError, TypeKey,
 };
 use serde::de::DeserializeOwned;
-use std::any::Any;
-use std::collections::{BTreeMap, BTreeSet};
-use std::ops::{Deref, DerefMut};
 use thiserror::Error;
 
 mod adapters;
@@ -337,7 +338,7 @@ pub struct PluginRegistry {
     pub boundary_contracts: BTreeMap<TypeKey, BoundaryTypeContract>,
     boundary_types: BTreeMap<TypeKey, daedalus_transport::RustTypeIdentity>,
     /// Keys each Rust type was recorded under (see `PluginRegistry::type_index`).
-    type_key_uses: std::collections::HashMap<std::any::TypeId, BTreeSet<TypeKey>>,
+    type_key_uses: HashMap<core::any::TypeId, BTreeSet<TypeKey>>,
     foreign_interfaces: BTreeMap<TypeKey, daedalus_transport::ForeignInterfaceInfo>,
     /// `Some` while extracting a dynamic plugin's schema: unkeyed foreign port types are
     /// recorded here instead of failing (see [`PluginRegistry::record_external_types`]).
@@ -373,7 +374,7 @@ fn host_export_policy_to_transport(policy: HostExportPolicy) -> ExportPolicy {
 
 fn remove_item<T, Q>(items: &mut Vec<T>, item: &Q) -> bool
 where
-    T: std::borrow::Borrow<Q>,
+    T: alloc::borrow::Borrow<Q>,
     Q: PartialEq + ?Sized,
 {
     let len = items.len();

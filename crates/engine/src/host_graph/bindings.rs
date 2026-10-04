@@ -1,4 +1,5 @@
-use std::marker::PhantomData;
+use crate::prelude::*;
+use core::marker::PhantomData;
 
 use daedalus_runtime::TypeIndex;
 use daedalus_runtime::executor::DirectHostRoute;
@@ -23,8 +24,7 @@ where
     T: Send + Sync + 'static,
 {
     pub fn push(&self, value: T) -> FeedOutcome {
-        self.host
-            .feed_payload(&self.port, Payload::owned(self.type_key.clone(), value))
+        self.host.push_as(&self.port, self.type_key.clone(), value)
     }
 
     pub fn port(&self) -> &str {

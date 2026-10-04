@@ -1,3 +1,4 @@
+use daedalus_core::platform::Clock;
 use daedalus_transport::{DropReason, FreshnessPolicy, Payload};
 
 use super::ports::FreshnessMarks;
@@ -6,11 +7,12 @@ pub(super) fn freshness_drop_reason(
     marks: &mut FreshnessMarks,
     payload: &Payload,
     freshness: &FreshnessPolicy,
+    clock: &Clock,
 ) -> Option<DropReason> {
     match freshness {
         FreshnessPolicy::PreserveAll => None,
         FreshnessPolicy::MaxAge(max_age) => {
-            (payload.lineage().created_at.elapsed() > *max_age).then_some(DropReason::MaxAge)
+            (payload.lineage().age(clock) > *max_age).then_some(DropReason::MaxAge)
         }
         FreshnessPolicy::LatestBySequence => {
             let sequence = payload.lineage().sequence?;

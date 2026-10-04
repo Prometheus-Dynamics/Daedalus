@@ -2,11 +2,12 @@ use crate::plan::{
     BackpressureStrategy, EDGE_FRESHNESS_POLICY_KEY, EDGE_PRESSURE_POLICY_KEY, RuntimeEdgePolicy,
     RuntimePlan,
 };
+use crate::prelude::*;
+use alloc::collections::BinaryHeap;
+use core::cmp::Reverse;
 use daedalus_core::metadata::PLAN_SCHEDULE_ORDER_KEY;
 use daedalus_data::model::Value;
 use daedalus_planner::{ExecutionPlan, StableHash};
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 
 /// Scheduler configuration for edge policies and backpressure.
 #[derive(Clone, Debug)]

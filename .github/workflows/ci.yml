@@ -159,8 +159,9 @@ jobs:
       - name: Test lean preset (no executor pool, no metrics)
         run: ./scripts/ci.sh lean
 
-  # no_std + alloc check of the tier-1 crates on bare metal, and the embedded preset on
-  # wasm32-unknown-unknown: type-checked, then run in Node (preinstalled on the runner).
+  # no_std + alloc check of the tier-1 crates, runtime and engine on bare metal (plus the no_std
+  # smoke graph run natively), and the embedded preset on wasm32-unknown-unknown: type-checked,
+  # then run in Node (preinstalled on the runner).
   portability:
     runs-on: ubuntu-latest
     timeout-minutes: 20

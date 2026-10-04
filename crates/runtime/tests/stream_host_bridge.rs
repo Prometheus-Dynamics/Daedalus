@@ -1,7 +1,9 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::Duration;
 
+use daedalus_core::platform::Clock;
 use daedalus_runtime::RuntimeEdgePolicy;
 use daedalus_runtime::handles::{HostAlias, PortId};
 use daedalus_runtime::host_bridge::{HostBridgeConfig, HostBridgeManager, HostBridgePayload};
@@ -549,9 +551,22 @@ fn host_bridge_error_on_full_reports_drop() {
     );
 }
 
+/// A fake clock reading `ticks` milliseconds.
+fn fake_clock() -> (Clock, Arc<AtomicU64>) {
+    let ticks = Arc::new(AtomicU64::new(1_000));
+    let clock = Clock::new({
+        let ticks = ticks.clone();
+        move || Duration::from_millis(ticks.load(Ordering::Relaxed))
+    });
+    (clock, ticks)
+}
+
 #[test]
-fn host_bridge_max_age_rejects_stale_payload() {
+fn host_bridge_max_age_follows_the_bridge_clock() {
+    let (clock, ticks) = fake_clock();
     let manager = HostBridgeManager::new();
+    manager.set_clock(clock.clone());
+    manager.set_event_recording(true);
     let handle = manager.ensure_handle("host");
     handle
         .set_input_policy(
@@ -560,20 +575,32 @@ fn host_bridge_max_age_rejects_stale_payload() {
                 capacity: 4,
                 overflow: OverflowPolicy::DropOldest,
             },
-            FreshnessPolicy::MaxAge(Duration::ZERO),
+            FreshnessPolicy::MaxAge(Duration::from_millis(5)),
         )
         .unwrap();
 
-    let payload = Payload::owned("demo:u32", 1u32);
-    let id = payload.correlation_id();
-
+    // Built at t=1000ms, fed at t=1010ms: 10ms old on the bridge clock.
+    let stale = Payload::owned("demo:u32", 1u32).stamp(&clock);
+    let stale_id = stale.correlation_id();
+    ticks.store(1_010, Ordering::Relaxed);
+    assert_eq!(stale.lineage().age(&clock), Duration::from_millis(10));
     assert_eq!(
-        handle.feed_payload("input", payload),
+        handle.feed_payload("input", stale),
         FeedOutcome::Dropped {
-            correlation_id: id,
+            correlation_id: stale_id,
             reason: DropReason::MaxAge,
         }
     );
+    // `push_as` stamps with the bridge clock, so a fresh value passes however the platform
+    // clock reads.
+    assert!(matches!(
+        handle.push_as("input", "demo:u32", 2u32),
+        FeedOutcome::Accepted { .. }
+    ));
+    let accepted = take_inbound(&manager, "host");
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].payload.lineage().created_at, clock.now());
+    assert!(handle.events().iter().all(|event| event.at == clock.now()));
 }
 
 #[test]

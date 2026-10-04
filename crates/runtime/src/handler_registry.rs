@@ -1,6 +1,6 @@
+use crate::prelude::*;
 use crate::sync::Mutex;
-use std::collections::HashMap;
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use crate::executor::{DirectPayloadFn, NodeError};
 use crate::io::NodeIo;

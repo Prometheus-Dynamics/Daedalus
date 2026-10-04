@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::Duration;
+use crate::prelude::*;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use core::time::Duration;
 
 use super::{
     ManagedByteBuffer, ManagedResource, NodeResourceSnapshot, ResourceClass,

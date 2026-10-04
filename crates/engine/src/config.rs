@@ -1,12 +1,14 @@
-#[cfg(feature = "config-env")]
+use crate::prelude::*;
+
+use core::time::Duration;
+#[cfg(all(feature = "config-env", feature = "std"))]
 use std::env;
-use std::time::Duration;
 
 #[cfg(feature = "config-env")]
 use serde::{Deserialize, Serialize};
 
 use daedalus_core::platform::Clock;
-#[cfg(feature = "config-env")]
+#[cfg(all(feature = "config-env", feature = "std"))]
 use daedalus_runtime::ENV_RUNTIME_POOL_SIZE;
 use daedalus_runtime::{
     BackpressureStrategy, HostBridgeConfig, MetricsLevel, RuntimeDebugConfig, RuntimeEdgePolicy,
@@ -140,8 +142,10 @@ pub struct RuntimeSection {
     pub debug_config: RuntimeDebugConfig,
     #[cfg_attr(feature = "config-env", serde(default = "default_stream_idle_sleep"))]
     pub stream_idle_sleep: Duration,
-    /// Clock behind executor timing (telemetry, adaptive costs, `HostGraph` step metrics). The
-    /// default is the platform clock; set one with [`EngineConfig::with_clock`].
+    /// Clock behind executor timing (telemetry, adaptive costs, `HostGraph` step metrics),
+    /// payload lineage created by the runtime and host bridges (`Payload::stamp`), bridge event
+    /// timestamps and `FreshnessPolicy::MaxAge`. The default is the platform clock; set one
+    /// with [`EngineConfig::with_clock`].
     #[cfg_attr(feature = "config-env", serde(skip))]
     pub clock: Clock,
 }
@@ -338,9 +342,11 @@ impl EngineConfig {
         self
     }
 
-    /// Time executors built by this engine with `clock` instead of the platform clock: a target
-    /// timer where there is no OS clock, or simulated time in tests. Payload lineage and
-    /// host-bridge event timestamps keep the platform clock.
+    /// Use `clock` instead of the platform clock for this engine's executors and host bridges:
+    /// a target timer where there is no OS clock, or simulated time in tests. Node pushes, bridge
+    /// pushes and direct lanes stamp payload lineage with it, and `FreshnessPolicy::MaxAge`
+    /// ages payloads on it; stamp payloads you build yourself with `Payload::stamp` (or use
+    /// the bridge `push*` methods).
     pub fn with_clock(mut self, clock: Clock) -> Self {
         self.runtime.clock = clock;
         self
@@ -387,13 +393,13 @@ impl EngineConfig {
         Ok(())
     }
 
-    /// Construct config from environment variables. Only compiled when `config-env` is enabled.
+    /// Construct config from environment variables (`config-env` and `std`).
     ///
     /// Example (doc-test guarded by the feature flag):
     ///
     /// Environment variables:
     /// - `DAEDALUS_METRICS_LEVEL=off|basic|detailed|profile`
-    #[cfg(feature = "config-env")]
+    #[cfg(all(feature = "config-env", feature = "std"))]
     pub fn from_env() -> Result<Self, EngineConfigError> {
         let mut cfg = EngineConfig::default();
 
@@ -524,7 +530,7 @@ impl EngineConfig {
     }
 }
 
-#[cfg(feature = "config-env")]
+#[cfg(all(feature = "config-env", feature = "std"))]
 fn read_bool(var: &'static str, default: bool) -> Result<bool, EngineConfigError> {
     match env::var(var) {
         Ok(val) => {

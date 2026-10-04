@@ -1,6 +1,7 @@
 //! Per-node recording hooks.
 
-use std::time::Duration;
+use crate::prelude::*;
+use core::time::Duration;
 
 use crate::perf::PerfSample;
 
@@ -77,7 +78,7 @@ impl ExecutionTelemetry {
     pub fn record_node_custom_metrics(
         &mut self,
         node_idx: usize,
-        metrics: std::collections::BTreeMap<String, CustomMetricValue>,
+        metrics: alloc::collections::BTreeMap<String, CustomMetricValue>,
     ) {
         for (name, value) in metrics {
             self.record_node_custom_metric(node_idx, name, value);

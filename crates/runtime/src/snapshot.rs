@@ -1,4 +1,5 @@
 //! Snapshot/restore scaffolding (feature-gated via `snapshots` when wiring real storage).
+use crate::prelude::*;
 use crate::state::StateStore;
 
 /// Represents a serialized snapshot of runtime state.

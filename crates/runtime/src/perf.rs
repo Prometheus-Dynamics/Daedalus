@@ -1,3 +1,4 @@
+#[cfg(all(feature = "std", target_os = "linux"))]
 use std::io;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -13,21 +14,26 @@ pub struct PerfSample {
 }
 
 pub fn node_perf_enabled(config: crate::config::RuntimeDebugConfig) -> bool {
-    if !cfg!(target_os = "linux") {
+    if !cfg!(all(feature = "std", target_os = "linux")) {
         return false;
     }
     config.node_perf_counters
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "std", target_os = "linux"))]
 pub struct PerfCounterGuard {
     fds: [std::os::unix::io::RawFd; 3],
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(feature = "std", target_os = "linux")))]
 pub struct PerfCounterGuard;
 
-#[cfg(target_os = "linux")]
+/// Perf counters need Linux and `std` ([`node_perf_enabled`] is `false` elsewhere).
+#[cfg(not(all(feature = "std", target_os = "linux")))]
+#[derive(Debug)]
+pub struct Unsupported;
+
+#[cfg(all(feature = "std", target_os = "linux"))]
 impl PerfCounterGuard {
     pub fn start() -> io::Result<Self> {
         let cache_fd = sys::open_counter(sys::PERF_COUNT_HW_CACHE_MISSES, -1)?;
@@ -70,7 +76,7 @@ impl PerfCounterGuard {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "std", target_os = "linux"))]
 impl Drop for PerfCounterGuard {
     fn drop(&mut self) {
         for fd in &self.fds {
@@ -79,24 +85,18 @@ impl Drop for PerfCounterGuard {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(feature = "std", target_os = "linux")))]
 impl PerfCounterGuard {
-    pub fn start() -> io::Result<Self> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "perf counters unavailable",
-        ))
+    pub fn start() -> Result<Self, Unsupported> {
+        Err(Unsupported)
     }
 
-    pub fn finish(self) -> io::Result<PerfSample> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "perf counters unavailable",
-        ))
+    pub fn finish(self) -> Result<PerfSample, Unsupported> {
+        Err(Unsupported)
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "std", target_os = "linux"))]
 mod sys {
     use super::*;
 
@@ -145,7 +145,7 @@ mod sys {
     ) -> io::Result<std::os::unix::io::RawFd> {
         let mut attr = PerfEventAttr {
             type_: PERF_TYPE_HARDWARE,
-            size: std::mem::size_of::<PerfEventAttr>() as u32,
+            size: core::mem::size_of::<PerfEventAttr>() as u32,
             config,
             flags: PERF_ATTR_DISABLED
                 | PERF_ATTR_INHERIT
@@ -184,13 +184,13 @@ mod sys {
             libc::read(
                 fd,
                 &mut value as *mut u64 as *mut libc::c_void,
-                std::mem::size_of::<u64>(),
+                core::mem::size_of::<u64>(),
             )
         };
         if res < 0 {
             return Err(io::Error::last_os_error());
         }
-        if res as usize != std::mem::size_of::<u64>() {
+        if res as usize != core::mem::size_of::<u64>() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
                 "perf counter read truncated",

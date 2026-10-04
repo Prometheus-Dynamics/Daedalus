@@ -3,6 +3,16 @@
 //! This crate owns runtime plans, executor paths, handler dispatch, host bridge
 //! queues, streaming workers, state/resources, transport execution, and
 //! telemetry.
+//!
+//! `no_std` + `alloc` without the `std` feature (implied by the default `threads`): the serial
+//! executor, host bridge (push, poll, await) and stream polling (see "Portability" in
+//! docs/development.md).
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg_attr(not(feature = "std"), macro_use)]
+extern crate alloc;
+#[cfg(all(test, not(feature = "std")))]
+extern crate std;
 
 #[cfg(all(
     feature = "threads",
@@ -13,6 +23,17 @@ compile_error!(
     "daedalus-runtime: this target cannot spawn threads; disable the `threads` feature \
      (`default-features = false`)"
 );
+
+mod portable;
+mod prelude;
+
+/// The hash maps in the runtime's API: `std`'s with `std`, `hashbrown`'s without.
+pub mod collections {
+    #[cfg(not(feature = "std"))]
+    pub use hashbrown::{HashMap, HashSet, hash_map};
+    #[cfg(feature = "std")]
+    pub use std::collections::{HashMap, HashSet, hash_map};
+}
 
 pub mod capabilities;
 pub mod config;
@@ -40,6 +61,9 @@ pub mod sync;
 pub mod transport;
 pub mod type_index;
 pub use daedalus_transport as transport_types;
+
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 daedalus_core::build_facts!();
 
@@ -75,7 +99,7 @@ pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
         return prefix.to_string();
     }
 
-    let max_overlap = std::cmp::min(prefix_parts.len(), id_parts.len());
+    let max_overlap = core::cmp::min(prefix_parts.len(), id_parts.len());
     let mut overlap = 0usize;
     while overlap < max_overlap && prefix_parts[overlap] == id_parts[overlap] {
         overlap += 1;

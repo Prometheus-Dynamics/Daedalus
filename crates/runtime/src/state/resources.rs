@@ -1,6 +1,6 @@
-use std::any::Any;
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::prelude::*;
+use alloc::sync::Arc;
+use core::any::Any;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
