@@ -64,6 +64,16 @@
 //! not know are accepted, so the host should register the types it wraps in payloads itself
 //! (install the owning crate's Daedalus plugin, or `register_boundary_type::<T>(key)`).
 //!
+//! **Foreign interfaces.** A plugin that has to be built separately reads host-owned types
+//! through a foreign interface instead of sharing them (node inputs typed `FrameView<'_>` or
+//! `ForeignRef<'_, I>`; see [`crate::transport::ForeignInterface`]). Its ports carry the
+//! interface key, not a Rust type, so they add no boundary type entry; instead the descriptor's
+//! `foreign_interfaces` entry point exports a C-safe table
+//! ([`ForeignInterfaceTable`](crate::dylib::ForeignInterfaceTable)) of the interfaces the plugin
+//! uses (key, version, vtable layout hash). `install_into` fails with
+//! [`PluginLibraryError::ForeignInterfaceMismatch`] when the host registry uses one of those keys
+//! with another version or layout.
+//!
 //! These checks catch the common mismatches (stale plugin, different toolchain, different
 //! feature set, separately built dependency). They cannot prove layout identity: build host and
 //! plugins in the same cargo build (one workspace and lockfile, one toolchain, one boundary
@@ -89,8 +99,12 @@
 //!   graphs). Keys identify types at the boundary; the boundary type check above rejects keys
 //!   whose Rust types differ, and payload downcasts that still fail report
 //!   [`TransportError::RustTypeMismatch`](crate::transport::TransportError::RustTypeMismatch).
-//!   Separately built plugins need the future foreign-type path (a host-registered accessor
-//!   vtable per key), see `TODO.md`.
+//!   This applies to Daedalus's own types too: a plugin built in another cargo invocation can
+//!   pass the fingerprint check yet see other `TypeId`s for Daedalus types (any dependency of
+//!   Daedalus resolved with other features changes them). Payload accessors therefore never rely
+//!   on the storage wrapper's `TypeId` alone (`Payload::get_ref` falls back to the value's own
+//!   `Any`, foreign handles are reached through a trait method), and shared third-party types
+//!   cross through foreign interfaces.
 //! - **No unloading.** Loaded libraries are intentionally leaked. Registered handlers,
 //!   vtables and `&'static str`s point into the library's code and data for as long as the
 //!   registry (and anything built from it) lives; unloading would leave them dangling.
@@ -98,11 +112,13 @@
 
 mod boundary;
 mod fingerprint;
+mod foreign;
 mod loader;
 
 pub use boundary::{BoundaryTypeEntry, BoundaryTypeMismatch, BoundaryTypeTable, BoundaryTypesFn};
 pub use daedalus_ffi_host::core::PluginSchema;
 pub use fingerprint::{boundary_features, build_fingerprint, describe_fingerprint_mismatch};
+pub use foreign::{ForeignInterfaceMismatch, ForeignInterfaceTable, ForeignInterfacesFn};
 pub use loader::{
     PluginLibrary, PluginLibraryError, RustAbiMismatch, check_rust_abi, discover_plugin_libraries,
 };
@@ -118,8 +134,8 @@ pub const PLUGIN_DESCRIPTOR_SYMBOL: &str = "daedalus_plugin_descriptor";
 ///
 /// Bumped whenever the descriptor (or anything it contains) changes shape.
 /// Version 5 introduced the descriptor and its stable `schema` entry point; version 6 added
-/// `boundary_types`.
-pub const PLUGIN_ABI_VERSION: u32 = 6;
+/// `boundary_types`; version 7 added `foreign_interfaces`.
+pub const PLUGIN_ABI_VERSION: u32 = 7;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
 
@@ -217,7 +233,7 @@ pub type InstallFn = unsafe extern "C" fn(registry: *mut c_void, sink: StrSink) 
 /// Everything a dynamic plugin exports, returned by `daedalus_plugin_descriptor`.
 ///
 /// Built only from C types, so a host can read it whatever toolchain built the plugin (once the
-/// ABI version matches). `schema` and `boundary_types` are always safe to call;
+/// ABI version matches). `schema`, `boundary_types` and `foreign_interfaces` are always safe to call;
 /// `register_boundary_contracts` and `register` only once [`check_rust_abi`] accepted `info`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -225,13 +241,14 @@ pub struct PluginDescriptor {
     pub info: PluginInfo,
     pub schema: SchemaFn,
     pub boundary_types: BoundaryTypesFn,
+    pub foreign_interfaces: ForeignInterfacesFn,
     pub register_boundary_contracts: InstallFn,
     pub register: InstallFn,
 }
 
 #[doc(hidden)]
 pub mod __support {
-    use super::{BoundaryTypeTable, StrSink};
+    use super::{BoundaryTypeTable, ForeignInterfaceTable, StrSink};
     use crate::runtime::plugins::{Plugin, PluginRegistry, PluginResult, RegistryPluginExt};
     use std::ffi::c_void;
     use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -329,6 +346,30 @@ pub mod __support {
             })
         }
     }
+
+    /// Install `P` into a private registry and hand its
+    /// [`foreign_interfaces`](PluginRegistry::foreign_interfaces) to the host as a `'static`
+    /// table.
+    ///
+    /// # Safety
+    /// `table` must be valid for writes and `sink` valid for the call.
+    pub unsafe fn foreign_interfaces<P: Plugin + Default>(
+        table: *mut ForeignInterfaceTable,
+        sink: StrSink,
+    ) -> bool {
+        // Safety: forwarded from the caller.
+        unsafe {
+            guarded(sink, || {
+                let table = table.as_mut().ok_or("table pointer was null")?;
+                let mut registry = PluginRegistry::new();
+                registry
+                    .install_plugin(&P::default())
+                    .map_err(|err| err.to_string())?;
+                *table = super::foreign::leak_table(&registry);
+                Ok(())
+            })
+        }
+    }
 }
 
 /// Export a [`Plugin`](crate::Plugin) implementor (which must also implement `Default`) for
@@ -378,6 +419,14 @@ macro_rules! export_plugin {
                 unsafe { __support::boundary_types::<$ty>(table, sink) }
             }
 
+            unsafe extern "C" fn foreign_interfaces(
+                table: *mut $crate::dylib::ForeignInterfaceTable,
+                sink: StrSink,
+            ) -> bool {
+                // Safety: the host passes a writable table and a sink valid for the call.
+                unsafe { __support::foreign_interfaces::<$ty>(table, sink) }
+            }
+
             unsafe extern "C" fn register_boundary_contracts(
                 registry: *mut c_void,
                 sink: StrSink,
@@ -404,6 +453,7 @@ macro_rules! export_plugin {
                 ),
                 schema,
                 boundary_types,
+                foreign_interfaces,
                 register_boundary_contracts,
                 register,
             }
