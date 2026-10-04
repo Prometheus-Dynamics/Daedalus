@@ -1,4 +1,5 @@
 use daedalus_data::model::Value;
+use daedalus_registry::capability::NODE_REQUIRED_INPUTS_META_KEY;
 
 use crate::graph::Graph;
 
@@ -14,6 +15,18 @@ pub(super) fn apply_descriptor_defaults(graph: &mut Graph, catalog: &PlannerCata
         };
         desc.execution_kind
             .write_default_to_metadata(&mut node.metadata);
+        let required: Vec<Value> = desc
+            .inputs
+            .iter()
+            .filter(|port| !port.optional)
+            .map(|port| Value::String(port.name.clone().into()))
+            .collect();
+        if required.is_empty() {
+            node.metadata.remove(NODE_REQUIRED_INPUTS_META_KEY);
+        } else {
+            node.metadata
+                .insert(NODE_REQUIRED_INPUTS_META_KEY.into(), Value::List(required));
+        }
         for port in &desc.inputs {
             let Some(raw) = &port.const_value_json else {
                 continue;

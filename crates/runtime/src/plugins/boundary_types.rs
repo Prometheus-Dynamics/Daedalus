@@ -208,6 +208,14 @@ impl PluginRegistry {
         let rust_type = std::any::type_name::<T>();
         if !declared && key.as_str().starts_with("rust:") && is_foreign(rust_type, port.defined_in)
         {
+            if let Some(external) = &mut self.external_types {
+                external.push(ExternalTypeRef {
+                    owner: port.owner.to_string(),
+                    port: port.port.to_string(),
+                    rust_type,
+                });
+                return Ok(());
+            }
             return Err(PluginError::UnkeyedForeignType {
                 owner: port.owner.to_string(),
                 port: port.port.to_string(),
@@ -216,6 +224,32 @@ impl PluginRegistry {
             });
         }
         self.register_boundary_type::<T>(key)
+    }
+}
+
+/// A port type from another crate with no key in this registry, recorded instead of failing
+/// with [`PluginError::UnkeyedForeignType`] while extracting a dynamic plugin's schema
+/// ([`PluginRegistry::record_external_types`]): typically a type whose key a dependency plugin
+/// that is not linked into the plugin maps.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternalTypeRef {
+    /// Node or adapter id.
+    pub owner: String,
+    pub port: String,
+    pub rust_type: &'static str,
+}
+
+impl PluginRegistry {
+    /// Record unkeyed foreign port types ([`Self::external_types`]) instead of failing with
+    /// [`PluginError::UnkeyedForeignType`]. For schema extraction only: such a port keeps its
+    /// order-dependent `rust:` key, so installing for real still fails.
+    pub fn record_external_types(&mut self) {
+        self.external_types.get_or_insert_with(Vec::new);
+    }
+
+    /// Port types recorded by [`Self::record_external_types`].
+    pub fn external_types(&self) -> &[ExternalTypeRef] {
+        self.external_types.as_deref().unwrap_or_default()
     }
 }
 
@@ -259,5 +293,34 @@ mod tests {
         assert!(!is_foreign("alloc::string::String", "my_plugin"));
         assert!(!is_foreign("(u8, u8)", "my_plugin"));
         assert!(!is_foreign("[u8; 4]", "my_plugin"));
+    }
+
+    #[test]
+    fn schema_extraction_records_unkeyed_foreign_port_types() {
+        type Foreign = daedalus_transport::Payload;
+        let port = PortTypeUse {
+            owner: "my_plugin:node",
+            port: "frame",
+            defined_in: "my_plugin::nodes",
+        };
+        let key = || TypeKey::new("rust:daedalus_transport::Payload");
+        let mut registry = PluginRegistry::new();
+        assert!(matches!(
+            registry.register_port_type::<Foreign>(port, key(), false),
+            Err(PluginError::UnkeyedForeignType { .. })
+        ));
+        registry.record_external_types();
+        registry
+            .register_port_type::<Foreign>(port, key(), false)
+            .expect("recorded");
+        assert_eq!(
+            registry.external_types(),
+            [ExternalTypeRef {
+                owner: "my_plugin:node".into(),
+                port: "frame".into(),
+                rust_type: std::any::type_name::<Foreign>(),
+            }]
+        );
+        assert!(!registry.boundary_types().contains_key(&key()));
     }
 }

@@ -90,6 +90,10 @@ pub(super) fn contract_type_for(ty: &syn::Type) -> Option<&syn::Type> {
         return None;
     }
     let ty = strip_ref(ty);
+    // An optional input carries its inner type.
+    if let Some(inner) = generic_arg(ty, "Option", 0) {
+        return contract_type_for(inner);
+    }
     let ident = last_segment(ty)?.ident.to_string();
     if matches!(
         ident.as_str(),
