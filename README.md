@@ -32,7 +32,7 @@ The facade starts with no default feature set. Enable only the layers your appli
 
 - `engine-full`: recommended for applications; `engine` plus `executor-pool` and `metrics`.
 - `engine`: lean high-level engine facade (serial and scoped-thread execution, no worker pool, no metrics).
-- `executor-pool`: persistent Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive`; without it those modes run ready segments on scoped threads.
+- `executor-pool`: Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive`; without it those modes use a few persistent parked threads of their own.
 - `metrics`: executor telemetry collection; without it `MetricsLevel` settings compile but record nothing.
 - `embedded`: smallest in-process host preset (`engine` + `plugins`, no pool, no metrics).
 - `plugins`: plugin registry and macro-generated plugin installation.

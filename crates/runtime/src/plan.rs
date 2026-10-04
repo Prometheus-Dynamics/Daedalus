@@ -18,6 +18,10 @@ pub use daedalus_registry::capability::{
     NODE_EXECUTION_KIND_META_KEY, NODE_REQUIRED_INPUTS_META_KEY, NodeExecutionKind,
 };
 use daedalus_transport::PressurePolicy;
+
+/// Node metadata hinting a node's per-run cost: `"heavy"` makes adaptive execution treat its
+/// segment as expensive before it has been measured (as it does GPU-affinity nodes).
+pub const NODE_COST_META_KEY: &str = "daedalus.node.cost";
 pub(crate) use demand::active_nodes_mask_for_sinks;
 pub use demand::{DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry};
 pub use explain::{

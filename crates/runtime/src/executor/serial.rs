@@ -21,17 +21,39 @@ pub fn run<H: NodeHandler>(mut exec: Executor<'_, H>) -> Result<ExecutionTelemet
 pub(crate) fn run_with_boundaries<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
+    run_with_boundaries_timed(exec, None)
+}
+
+/// [`run_with_boundaries`], adding each node's wall time to its segment in `costs`.
+pub(crate) fn run_with_boundaries_timed<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    costs: Option<SegmentCosts<'_>>,
+) -> Result<ExecutionTelemetry, ExecuteError> {
     inject_host_inputs(exec)?;
     let order = exec.schedule_order;
-    run_order(exec, order).map(|mut telemetry| {
+    run_order_timed(exec, order, costs).map(|mut telemetry| {
         telemetry.recompute_unattributed_runtime_duration();
         telemetry
     })
 }
 
+/// Per-segment wall-time accumulators (ns) and the segment of each node.
+pub(crate) struct SegmentCosts<'c> {
+    pub(crate) segment_of: &'c [usize],
+    pub(crate) costs: &'c mut [u64],
+}
+
 pub(crate) fn run_order<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
+) -> Result<ExecutionTelemetry, ExecuteError> {
+    run_order_timed(exec, order, None)
+}
+
+fn run_order_timed<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    order: &[daedalus_planner::NodeRef],
+    mut costs: Option<SegmentCosts<'_>>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
     let graph_span = tracing::debug_span!(
         target: "daedalus_runtime::executor",
@@ -49,6 +71,9 @@ pub(crate) fn run_order<H: NodeHandler>(
     let graph_start = (collect_basic_metrics || collect_trace).then(Instant::now);
     let mut first_error = None;
     let nodes = exec.nodes.clone();
+    if collect_basic_metrics {
+        exec.core.telemetry.node_metrics.reserve_nodes(nodes.len());
+    }
 
     for node_ref in order.iter().copied() {
         let node_idx = node_ref.0;
@@ -66,6 +91,7 @@ pub(crate) fn run_order<H: NodeHandler>(
             compute = ?node.compute,
         );
         let _node_span = node_span.enter();
+        let cost_start = costs.is_some().then(Instant::now);
 
         let inputs = collect_inputs(exec, node_idx)?;
         if !required_inputs_ready(exec, node_idx, &inputs) {
@@ -235,6 +261,14 @@ pub(crate) fn run_order<H: NodeHandler>(
             );
         }
         exec.core.telemetry.nodes_executed = exec.core.telemetry.nodes_executed.saturating_add(1);
+        if let (Some(start), Some(costs)) = (cost_start, costs.as_mut())
+            && let Some(cost) = costs
+                .segment_of
+                .get(node_idx)
+                .and_then(|&segment| costs.costs.get_mut(segment))
+        {
+            *cost += start.elapsed().as_nanos() as u64;
+        }
     }
 
     if let Some(graph_start) = graph_start {
@@ -251,12 +285,6 @@ pub(crate) fn run_order<H: NodeHandler>(
         return Err(error);
     }
     Ok(std::mem::take(&mut exec.core.telemetry))
-}
-
-pub(crate) fn run_fused_linear<H: NodeHandler>(
-    exec: Executor<'_, H>,
-) -> Result<ExecutionTelemetry, ExecuteError> {
-    run(exec)
 }
 
 fn node_is_active<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize) -> bool {

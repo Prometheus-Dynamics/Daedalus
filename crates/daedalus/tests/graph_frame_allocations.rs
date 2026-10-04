@@ -165,18 +165,14 @@ const PAYLOAD_ALLOCATIONS: f64 = 10.0 * 2.0 + 4.0 + 2.0 * 2.0 + 2.0 + 1.0;
 /// once and borrowed from a per-node cache) allocate nothing themselves, so everything beyond
 /// the payloads is runtime bookkeeping, which must stay at zero.
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS;
-/// Basic metrics return a fresh per-node metrics map with each tick.
-const BASIC_METRICS_ALLOCATIONS: f64 = 3.0;
-/// Segments a parallel frame schedules (one per node).
-const SEGMENTS: f64 = 16.0;
-/// Parallel modes add one pool task per segment plus result-channel blocks. Without
-/// `executor-pool` every segment runs on a fresh scoped OS thread, which allocates on spawn (how
-/// much depends on the std build and linked crates) and starts with empty per-thread port buffers.
-const PARALLEL_ALLOCATIONS: f64 = if cfg!(feature = "executor-pool") {
-    SEGMENTS + 6.0
-} else {
-    SEGMENTS * 10.0
-};
+/// Basic metrics return each tick's per-node metrics in one fresh vector.
+const BASIC_METRICS_ALLOCATIONS: f64 = 1.0;
+/// Parallel frames fan out to persistent workers (Rayon with `executor-pool`, parked threads
+/// without) that pull segments from one shared queue: no task, channel or thread per frame. What
+/// remains is amortized (Rayon's injector allocates a block every 63 fan-outs, a node's first run
+/// on a worker grows that thread's port buffers). Adaptive mode runs this graph serially in
+/// optimized builds; unoptimized, its nodes are slow enough to go parallel.
+const PARALLEL_ALLOCATIONS: f64 = 1.0;
 
 #[test]
 fn detector_graph_frame_allocation_budget() {
@@ -204,4 +200,19 @@ fn detector_graph_frame_allocation_budget() {
             "{mode:?}/{metrics:?}: {per_frame} allocations per frame, budget {budget}"
         );
     }
+}
+
+#[test]
+fn detector_graph_outputs_match_across_modes() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let reports = |mode: RuntimeMode| {
+        let mut host = compile(mode, MetricsLevel::Off).expect("compile detector graph");
+        (0..8u8)
+            .map(|seed| drive_frame(&mut host, &Arc::new(Frame::new(seed))))
+            .collect::<Vec<_>>()
+    };
+    let serial = reports(RuntimeMode::Serial);
+    assert!(serial.iter().all(Option::is_some), "every frame reports");
+    assert_eq!(reports(RuntimeMode::Parallel), serial);
+    assert_eq!(reports(RuntimeMode::Adaptive), serial);
 }

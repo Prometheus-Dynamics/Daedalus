@@ -486,7 +486,7 @@ fn node_can_publish_custom_metrics_into_telemetry() {
         .with_metrics_level(daedalus_runtime::MetricsLevel::Detailed)
         .run()
         .expect("exec ok");
-    let node = telemetry.node_metrics.get(&0).expect("node metrics");
+    let node = telemetry.node_metrics.get(0).expect("node metrics");
 
     assert_eq!(
         node.custom.get("detections"),
