@@ -48,9 +48,7 @@ for member in "${members[@]}"; do
 
             function allowed_exception(dep, line) {
                 return manifest == "crates/engine/Cargo.toml" &&
-                    (dep == "daedalus-runtime" ||
-                     dep == "daedalus-planner" ||
-                     dep == "daedalus-registry") &&
+                    dep == "daedalus-runtime" &&
                     line ~ /path[[:space:]]*=/ &&
                     line ~ /default-features[[:space:]]*=[[:space:]]*false/
             }

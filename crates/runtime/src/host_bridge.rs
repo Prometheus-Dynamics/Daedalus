@@ -502,12 +502,18 @@ impl HostBridgeHandle {
         pop_outbound_locked(&mut guard, self.alias.as_str(), port.as_ref())
     }
 
+    /// Pop an outbound payload from `port`, waiting up to `timeout` for one (without threads,
+    /// `daedalus_core::platform::THREADS`, it returns at once: nothing can arrive meanwhile).
     pub fn recv_payload_timeout(
         &self,
         port: impl AsRef<str>,
         timeout: Duration,
     ) -> Option<Payload> {
         let port = port.as_ref();
+        if !daedalus_core::platform::THREADS {
+            // Nothing can arrive while the only thread waits.
+            return self.try_pop_payload(port);
+        }
         let deadline = Instant::now() + timeout;
         let mut guard = self.shared.buffers.lock();
         loop {

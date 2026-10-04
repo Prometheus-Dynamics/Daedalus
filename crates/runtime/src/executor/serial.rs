@@ -1,4 +1,4 @@
-use std::time::Instant;
+use daedalus_core::platform::Instant;
 
 use daedalus_planner::{ComputeAffinity, NodeRef};
 

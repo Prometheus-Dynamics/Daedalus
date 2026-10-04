@@ -1,4 +1,4 @@
-use std::time::Instant;
+use daedalus_core::platform::Instant;
 
 use daedalus_transport::{
     CorrelationId, DropReason, FeedOutcome, Payload, PolicyValidationError, TypeKey,

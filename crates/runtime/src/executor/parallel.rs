@@ -2,8 +2,8 @@
 //! from, so a frame costs one fan-out to the worker pool plus a lock per segment, with no
 //! per-segment task, channel or executor snapshot.
 
+use daedalus_core::platform::Instant;
 use std::panic::{self, AssertUnwindSafe};
-use std::time::Instant;
 
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use smallvec::SmallVec;
