@@ -35,22 +35,9 @@ impl LayoutHash {
             core::any::type_name::<T>(),
             core::mem::size_of::<T>(),
             core::mem::align_of::<T>(),
-            stable_hash64(schema.to_string().as_bytes())
+            daedalus_core::stable_id::fnv1a64(schema.to_string().as_bytes())
         ))
     }
-}
-
-/// 64-bit FNV-1a, identical to `daedalus_core::stable_id::fnv1a64`; duplicated because this crate
-/// deliberately depends on nothing but serde and thiserror.
-fn stable_hash64(bytes: &[u8]) -> u64 {
-    const OFFSET: u64 = 0xcbf29ce484222325;
-    const PRIME: u64 = 0x100000001b3;
-    let mut hash = OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(PRIME);
-    }
-    hash
 }
 
 crate::define_text_id!(

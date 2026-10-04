@@ -11,8 +11,17 @@ cd "$root_dir"
 readonly CI_FEATURES="engine,plugins"
 readonly AARCH64_TARGET="aarch64-unknown-linux-gnu"
 readonly AARCH64_MUSL_TARGET="aarch64-unknown-linux-musl"
+# Bare-metal Cortex-M4F: no `std`, 32-bit atomics only.
+readonly NOSTD_TARGET="thumbv7em-none-eabihf"
+readonly NOSTD_CRATES=(-p daedalus-core -p daedalus-transport -p daedalus-data -p daedalus-registry
+  -p daedalus-planner)
+readonly WASM_TARGET="wasm32-unknown-unknown"
 
 step() { echo "==> $*"; }
+
+ensure_target() {
+  rustup target list --installed | grep -qx "$1" || rustup target add "$1"
+}
 
 usage() {
   cat <<'EOF'
@@ -29,6 +38,8 @@ usage: scripts/ci.sh [subcommand...]
   smoke       run the CPU-only example binaries
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics)
+  nostd       no_std + alloc check of the tier-1 crates for thumbv7em-none-eabihf
+  wasm        embedded preset check and runtime smoke run for wasm32-unknown-unknown
   bench       host bridge, runtime executor and graph frame criterion benches
 EOF
 }
@@ -107,7 +118,7 @@ cmd_smoke() {
 # The styx camera feature is skipped: it needs target libcamera via pkg-config.
 cmd_aarch64() {
   step "Checking $AARCH64_TARGET"
-  rustup target list --installed | grep -qx "$AARCH64_TARGET" || rustup target add "$AARCH64_TARGET"
+  ensure_target "$AARCH64_TARGET"
   local target=(--target "$AARCH64_TARGET")
   cargo check "${target[@]}" --workspace --all-targets --features "$CI_FEATURES"
   cargo check "${target[@]}" -p daedalus-rs --all-targets --no-default-features --features "embedded"
@@ -115,7 +126,7 @@ cmd_aarch64() {
   # musl: libc signatures differ from glibc (e.g. `ioctl` takes a `c_int` request). Library
   # targets only, so no musl C toolchain is needed for test-only C build scripts.
   step "Checking $AARCH64_MUSL_TARGET"
-  rustup target list --installed | grep -qx "$AARCH64_MUSL_TARGET" || rustup target add "$AARCH64_MUSL_TARGET"
+  ensure_target "$AARCH64_MUSL_TARGET"
   cargo check --target "$AARCH64_MUSL_TARGET" --workspace --features "$CI_FEATURES"
   cargo check --target "$AARCH64_MUSL_TARGET" -p daedalus-runtime --all-features
   cargo check --target "$AARCH64_MUSL_TARGET" -p daedalus-gpu --features "gpu-dmabuf"
@@ -130,6 +141,32 @@ cmd_lean() {
   cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets \
     --no-default-features \
     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"
+}
+
+# The tier-1 crates without `std`, with and without their alloc-only optional features.
+cmd_nostd() {
+  step "Checking no_std + alloc crates for $NOSTD_TARGET"
+  ensure_target "$NOSTD_TARGET"
+  cargo check --target "$NOSTD_TARGET" "${NOSTD_CRATES[@]}" --no-default-features
+  cargo check --target "$NOSTD_TARGET" "${NOSTD_CRATES[@]}" --no-default-features --features \
+    "daedalus-core/metrics,daedalus-data/json,daedalus-data/schema,daedalus-data/proto,daedalus-data/async,daedalus-registry/bundle,daedalus-registry/plugin,daedalus-planner/schema,daedalus-planner/proto"
+}
+
+# `wasm32-unknown-unknown` has `std` but no threads and no clock: check the embedded preset, then
+# run serial/parallel/adaptive frames in Node (skipped without `node`).
+cmd_wasm() {
+  step "Checking the embedded preset for $WASM_TARGET"
+  ensure_target "$WASM_TARGET"
+  local target=(--target "$WASM_TARGET")
+  cargo check "${target[@]}" -p daedalus-rs --no-default-features --features "embedded"
+  cargo build "${target[@]}" -p daedalus-wasm-smoke --release
+  if command -v node >/dev/null; then
+    step "Running the wasm runtime smoke test"
+    node scripts/wasm-smoke.mjs \
+      "${CARGO_TARGET_DIR:-target}/$WASM_TARGET/release/daedalus_wasm_smoke.wasm"
+  else
+    echo "node not found: skipping the wasm runtime smoke run"
+  fi
 }
 
 # Criterion writes to `$CARGO_TARGET_DIR/criterion`; compare two such directories with
@@ -158,7 +195,8 @@ main() {
   for sub in "$@"; do
     case "$sub" in
       -h | --help | help) usage ;;
-      all | lints | check | features | clippy | test | examples | smoke | aarch64 | lean | bench)
+      all | lints | check | features | clippy | test | examples | smoke | aarch64 | lean | nostd | \
+        wasm | bench)
         "cmd_$sub" ;;
       macro-ui) cmd_macro_ui ;;
       *)

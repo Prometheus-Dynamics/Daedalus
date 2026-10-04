@@ -124,6 +124,9 @@ changes.
       workspace with `--all-features`.
 - [x] CI: aarch64 check, lean-preset tests, macro UI and dylib jobs, example smoke runs, and
       `scripts/ci.sh` subcommands.
+- [x] Portability tier 1: `no_std` + `alloc` core/transport/data/registry/planner (default `std`
+      feature), the `embedded` preset running on `wasm32-unknown-unknown` (`platform::THREADS`,
+      `platform::Instant`), and the `portability` CI job (`scripts/ci.sh nostd wasm`).
 - [x] Bugs fixed: schema export/import encoding round trip, unknown wgpu formats silently treated
       as RGBA8, `Coalesce` never shrinking host FIFOs, input and output freshness watermarks
       shared by name, and broken CI feature checks.
@@ -172,10 +175,29 @@ changes.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 
+### Portability (tier 2)
+Tier 1 (`no_std` + `alloc` core/transport/data/registry/planner, and the `embedded` preset on
+`wasm32-unknown-unknown`) is done; see "Portability" in `docs/development.md`. Next: a `no_std`
+serial executor.
+- [ ] **Lock backend for runtime/engine.** Replace direct `parking_lot` use with a
+      `lock_api`-based alias (`parking_lot` with `std`, `spin`/`critical-section` without).
+- [ ] **Clock injection.** Carry a `Clock` in `EngineConfig`/the executor instead of the global
+      `daedalus_core::platform::set_clock`.
+- [ ] **Non-blocking host bridge.** Make the bridge's `Condvar` waits `std`-only; `no_std` hosts
+      push, poll and await `InboundWaiter`.
+- [ ] **`threads` feature.** Gate the worker pool, stream workers and blocking waits at compile
+      time instead of the runtime `platform::THREADS` checks.
+- [ ] **`alloc`-only runtime.** `serde_json` const decoding, `tracing` and telemetry without
+      `std`; `libc` only on Linux; then a `daedalus-runtime` `std` feature and a `thumbv7em`
+      check of the serial executor.
+- [ ] **Targets without compare-and-swap** (`thumbv6m-none-eabi`): `spin` with
+      `portable-atomic`, or a `critical-section` lock.
+- [ ] **wasm host glue.** A `wasm-bindgen` example wiring `set_clock` to `performance.now()` and
+      driving a graph from JS; a `wasm32-wasip1` check.
+
 ### Low priority
 - [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.
       Decide whether Windows matters.
-- [ ] `daedalus-transport` keeps its own FNV-1a copy (it has no dependency on core).
 - [ ] Bench noise on shared CI runners may produce occasional false 15% flags. Consider a median of
       several runs.
 - [ ] `daedalus-rs` has a dev-dependency on the unpublished `daedalus-plugins-example-project`;

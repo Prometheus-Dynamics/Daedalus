@@ -26,6 +26,7 @@ members = [
     "examples/plugins/foreign_consumer",
     "examples/plugins/dependent",
     "examples/plugins/framelease",
+    "examples/wasm_smoke",
 ]
 resolver = "3"
 
