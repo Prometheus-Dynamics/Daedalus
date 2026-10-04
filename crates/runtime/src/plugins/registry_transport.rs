@@ -476,7 +476,6 @@ impl PluginRegistry {
         if let Some(existing) = self.boundary_contracts.get(&contract.type_key) {
             existing.compatible_with(&contract)?;
         }
-        daedalus_transport::register_boundary_contract(contract.clone());
         self.boundary_contracts
             .insert(contract.type_key.clone(), contract);
         Ok(())

@@ -1,6 +1,3 @@
-use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock, PoisonError, RwLock};
-
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -146,92 +143,6 @@ impl BoundaryTypeContract {
     }
 }
 
-/// Explicit registry for boundary contracts keyed by Rust type name.
-///
-/// Use an owned registry when tests or plugin/runtime state need isolation. The global
-/// registration helpers remain as compatibility wrappers for process-wide type registration.
-#[derive(Clone, Debug, Default)]
-pub struct BoundaryContractRegistry {
-    contracts_by_rust_type: Arc<RwLock<BTreeMap<String, BoundaryTypeContract>>>,
-}
-
-impl BoundaryContractRegistry {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn register(&self, contract: BoundaryTypeContract) {
-        if let Some(rust_type_name) = contract.rust_type_name.clone() {
-            self.contracts_by_rust_type
-                .write()
-                .unwrap_or_else(PoisonError::into_inner)
-                .insert(rust_type_name, contract);
-        }
-    }
-
-    /// Capabilities `T` is registered with under `key`, without cloning its contract.
-    pub fn capabilities_for_type<T: 'static>(&self, key: &TypeKey) -> Option<BoundaryCapabilities> {
-        let contracts = self
-            .contracts_by_rust_type
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
-        contracts
-            .get(std::any::type_name::<T>())
-            .filter(|contract| &contract.type_key == key)
-            .map(|contract| contract.capabilities)
-    }
-
-    pub fn contract_for_type<T: 'static>(&self) -> Option<BoundaryTypeContract> {
-        let contracts = self
-            .contracts_by_rust_type
-            .read()
-            .unwrap_or_else(PoisonError::into_inner);
-        if contracts.is_empty() {
-            return None;
-        }
-        contracts.get(std::any::type_name::<T>()).cloned()
-    }
-}
-
-static GLOBAL_BOUNDARY_CONTRACTS: OnceLock<BoundaryContractRegistry> = OnceLock::new();
-
-pub fn global_boundary_contract_registry() -> BoundaryContractRegistry {
-    GLOBAL_BOUNDARY_CONTRACTS
-        .get_or_init(BoundaryContractRegistry::new)
-        .clone()
-}
-
-pub fn register_boundary_contract_in(
-    registry: &BoundaryContractRegistry,
-    contract: BoundaryTypeContract,
-) {
-    registry.register(contract);
-}
-
-pub fn boundary_contract_for_type_in<T: 'static>(
-    registry: &BoundaryContractRegistry,
-) -> Option<BoundaryTypeContract> {
-    registry.contract_for_type::<T>()
-}
-
-pub fn register_boundary_contract(contract: BoundaryTypeContract) {
-    global_boundary_contract_registry().register(contract);
-}
-
-/// Look up `T` in the global registry. Payload construction calls this for every owned value, so
-/// it neither initializes nor clones the registry.
-pub fn boundary_contract_for_type<T: 'static>() -> Option<BoundaryTypeContract> {
-    GLOBAL_BOUNDARY_CONTRACTS.get()?.contract_for_type::<T>()
-}
-
-/// Capabilities of `T`'s global contract when it is registered under `key`; the allocation-free
-/// lookup [`Payload::owned`](crate::Payload::owned) runs for every value.
-pub fn boundary_capabilities_for_type<T: 'static>(key: &TypeKey) -> Option<BoundaryCapabilities> {
-    GLOBAL_BOUNDARY_CONTRACTS
-        .get()?
-        .capabilities_for_type::<T>(key)
-}
-
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum BoundaryContractError {
     #[error("boundary type key mismatch: expected {expected}, found {found}")]
@@ -302,22 +213,5 @@ mod tests {
         );
 
         assert!(producer.compatible_with(&consumer).is_ok());
-    }
-
-    #[test]
-    fn owned_boundary_contract_registries_are_isolated() {
-        let left = BoundaryContractRegistry::new();
-        let right = BoundaryContractRegistry::new();
-        left.register(BoundaryTypeContract::for_type::<Left>(
-            "example:left",
-            BoundaryCapabilities::rust_value(),
-        ));
-
-        assert_eq!(
-            left.contract_for_type::<Left>()
-                .map(|contract| contract.type_key),
-            Some(TypeKey::from("example:left"))
-        );
-        assert!(right.contract_for_type::<Left>().is_none());
     }
 }

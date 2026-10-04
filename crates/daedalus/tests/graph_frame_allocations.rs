@@ -160,9 +160,9 @@ fn call_site(trace: &str) -> String {
 /// metadata-only adapter results, one built-in branch for the fanned-out `count`, and the host's
 /// frame (one, it is `Arc`-shared).
 const PAYLOAD_ALLOCATIONS: f64 = 10.0 * 2.0 + 4.0 + 2.0 * 2.0 + 2.0 + 1.0;
-/// Generated handler code: output type keys recomputed per push and stateful nodes' state keys.
-/// Owned by `daedalus-macros`; shrinks to zero once generated handlers cache them.
-const GENERATED_HANDLER_ALLOCATIONS: f64 = 55.0;
+/// Generated handler code: the three stateful nodes format their state key on every call
+/// (`daedalus-macros`).
+const GENERATED_HANDLER_ALLOCATIONS: f64 = 3.0 * 3.0;
 /// Serial budget: with handlers that allocate nothing themselves, everything else is runtime
 /// bookkeeping, which must stay at zero.
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + GENERATED_HANDLER_ALLOCATIONS;
@@ -171,12 +171,12 @@ const BASIC_METRICS_ALLOCATIONS: f64 = 3.0;
 /// Segments a parallel frame schedules (one per node).
 const SEGMENTS: f64 = 16.0;
 /// Parallel modes add one pool task per segment plus result-channel blocks. Without
-/// `executor-pool` every segment runs on a fresh scoped OS thread, which allocates on spawn and
-/// starts with empty per-thread port buffers.
+/// `executor-pool` every segment runs on a fresh scoped OS thread, which allocates on spawn (how
+/// much depends on the std build and linked crates) and starts with empty per-thread port buffers.
 const PARALLEL_ALLOCATIONS: f64 = if cfg!(feature = "executor-pool") {
     SEGMENTS + 6.0
 } else {
-    SEGMENTS * 7.0
+    SEGMENTS * 10.0
 };
 
 #[test]

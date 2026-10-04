@@ -32,11 +32,7 @@ pub use adapter::{
     AdaptCost, AdaptRequest, AdapterTable, CopyCost, FanoutAction, FanoutConsumer, FanoutPlan,
     TransportAdapter, TransportError, TransportOp, plan_fanout,
 };
-pub use boundary_contract::{
-    BoundaryCapabilities, BoundaryContractError, BoundaryContractRegistry, BoundaryTypeContract,
-    boundary_capabilities_for_type, boundary_contract_for_type, boundary_contract_for_type_in,
-    global_boundary_contract_registry, register_boundary_contract, register_boundary_contract_in,
-};
+pub use boundary_contract::{BoundaryCapabilities, BoundaryContractError, BoundaryTypeContract};
 pub use boundary_storage::{BoundaryStorage, BoundaryTakeError, BoundaryVTable};
 pub use device::{Cpu, Device, DeviceClass, DeviceTransfer, Gpu, TransferFrom, TransferTo};
 pub use foreign::{

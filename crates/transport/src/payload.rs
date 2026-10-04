@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{
     BoundaryCapabilities, BoundaryStorage, BoundaryTypeContract, CorrelationId, Layout,
-    PayloadLineage, ReleaseMode, Residency, TypeKey, boundary_capabilities_for_type,
+    PayloadLineage, ReleaseMode, Residency, TypeKey,
 };
 
 mod boundary;
@@ -79,14 +79,13 @@ impl Payload {
         Self::shared_with(type_key, value, Residency::Cpu, None, None)
     }
 
+    /// A payload owning `value` in typed storage. Boundary contracts are checked when a graph
+    /// is compiled (against its registry's contracts); use [`Self::boundary_owned`] for a value
+    /// whose access a contract must restrict at runtime.
     pub fn owned<T>(type_key: impl Into<TypeKey>, value: T) -> Self
     where
         T: Send + Sync + 'static,
     {
-        let type_key = type_key.into();
-        if let Some(capabilities) = boundary_capabilities_for_type::<T>(&type_key) {
-            return Self::boundary_owned(type_key, value, capabilities);
-        }
         Self::shared(type_key, Arc::new(value))
     }
 
