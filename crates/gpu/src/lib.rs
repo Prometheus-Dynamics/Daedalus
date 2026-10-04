@@ -28,14 +28,14 @@ mod wgpu_backend;
 pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use convert::{Backing, Compute, DeviceBridge};
+pub use external::{
+    AcquireFenceWait, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc,
+    ExternalImportError, ExternalImportSupport, ExternalKeepalive,
+};
 #[cfg(target_os = "linux")]
 pub use external::{
     DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, ExternalFrameDescriptor, ExternalPlane, ValidatedLayout,
     export_dmabuf_fence,
-};
-pub use external::{
-    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalImportError,
-    ExternalImportSupport, ExternalKeepalive,
 };
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
 #[cfg(feature = "gpu-mock")]

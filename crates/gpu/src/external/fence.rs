@@ -2,14 +2,15 @@
 //!
 //! A producer that finishes writing a buffer asynchronously (a GPU, an ISP, a V4L2 driver with
 //! fences) signals a `sync_file`. [`ExternalFrameDescriptor::with_acquire_fence`] hands one to
-//! the import, which waits for it before the GPU can touch the memory. Producers that only attach
-//! implicit fences to the dmabuf itself can be bridged with [`export_dmabuf_fence`].
+//! the import, which makes the GPU wait for it before touching the memory. Producers that only
+//! attach implicit fences to the dmabuf itself can be bridged with [`export_dmabuf_fence`].
 //!
-//! The wait happens on the CPU (`poll(POLLIN)` with a timeout) inside the import call. wgpu-hal 29
-//! offers no way to make a later wgpu submission wait on an imported Vulkan semaphore, so a
-//! GPU-side wait cannot be expressed; see the wgpu backend's `dmabuf/vulkan.rs` for details.
+//! The wgpu backend imports the fence as a Vulkan semaphore its next submission waits on
+//! ([`AcquireFenceWait::Gpu`]); without `VK_KHR_external_semaphore_fd` (and in the mock backend)
+//! the import blocks in [`wait_sync_file`] (`poll(POLLIN)` with a timeout) instead.
 //!
 //! [`ExternalFrameDescriptor::with_acquire_fence`]: super::ExternalFrameDescriptor::with_acquire_fence
+//! [`AcquireFenceWait::Gpu`]: super::AcquireFenceWait::Gpu
 
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
@@ -67,6 +68,12 @@ pub fn export_dmabuf_fence(dmabuf: BorrowedFd<'_>, access: DmabufAccess) -> io::
     }
     // SAFETY: on success the kernel returned a fresh fd owned by the caller.
     Ok(unsafe { OwnedFd::from_raw_fd(arg.fd) })
+}
+
+/// Whether `fence` has already signaled (non-blocking poll; `false` also for non-`sync_file`s).
+#[cfg_attr(not(feature = "gpu-dmabuf"), allow(dead_code))]
+pub(crate) fn sync_file_signaled(fence: BorrowedFd<'_>) -> bool {
+    wait_sync_file(fence, Duration::ZERO).is_ok()
 }
 
 /// Block until `fence` is signaled (readable), failing after `timeout`.

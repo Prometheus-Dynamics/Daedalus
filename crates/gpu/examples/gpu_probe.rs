@@ -26,7 +26,7 @@ mod linux {
     use std::fs::File;
     use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 
-    use ash::{ext, vk};
+    use ash::{ext, khr, vk};
     use daedalus_gpu::wgpu::{self, hal::api::Vulkan, hal::vulkan as hal_vk};
     use daedalus_gpu::{
         DRM_FORMAT_MOD_LINEAR, DmabufAccess, ExternalImportSupport, GpuBackend, WgpuBackend,
@@ -111,7 +111,10 @@ mod linux {
         kv("driver", &info.driver);
         kv("driver_info", &info.driver_info);
         match backend.dmabuf_import_support() {
-            ExternalImportSupport::Supported => kv("dmabuf_import", "supported"),
+            ExternalImportSupport::Supported { acquire_fence } => {
+                kv("dmabuf_import", "supported");
+                kv("dmabuf_acquire_fence_wait", acquire_fence.as_str());
+            }
             ExternalImportSupport::Unsupported { reason } => {
                 kv("dmabuf_import", format!("unsupported: {reason}"))
             }
@@ -120,12 +123,19 @@ mod linux {
             .features()
             .contains(wgpu::Features::TEXTURE_FORMAT_NV12);
         kv("texture_format_nv12", yes_no(nv12));
-        heading("nv12-linear");
         // SAFETY: only read-only queries are made through the hal device.
-        match unsafe { device.as_hal::<Vulkan>() } {
-            Some(hal) => nv12_linear(&hal),
-            None => kv("nv12_linear", "n/a (not a Vulkan device)"),
+        let Some(hal) = (unsafe { device.as_hal::<Vulkan>() }) else {
+            return kv("nv12_linear", "n/a (not a Vulkan device)");
+        };
+        let enabled = hal.enabled_device_extensions();
+        for ext in [
+            khr::external_semaphore_fd::NAME,
+            ext::queue_family_foreign::NAME,
+        ] {
+            kv(&ext.to_string_lossy(), yes_no(enabled.contains(&ext)));
         }
+        heading("nv12-linear");
+        nv12_linear(&hal);
     }
 
     /// What the driver advertises for NV12 with the `LINEAR` DRM modifier, and whether a dmabuf

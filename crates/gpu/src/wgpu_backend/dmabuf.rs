@@ -5,6 +5,9 @@
 //! the capability probe explains why import is unavailable.
 
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+#[path = "dmabuf/acquire.rs"]
+mod acquire;
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 #[path = "dmabuf/image.rs"]
 mod image;
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
@@ -12,7 +15,7 @@ mod image;
 mod vulkan;
 
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
-pub(super) use vulkan::{import, probe_support, request_device};
+pub(super) use vulkan::{ImportState, import, probe, request_device};
 
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
 pub(super) async fn request_device(
@@ -22,18 +25,21 @@ pub(super) async fn request_device(
     adapter.request_device(desc).await
 }
 
+/// No import state without `gpu-dmabuf`.
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
-pub(super) fn probe_support(_device: &wgpu::Device) -> crate::ExternalImportSupport {
-    if cfg!(target_os = "linux") {
-        crate::ExternalImportSupport::unsupported(
-            "daedalus-gpu was built without the `gpu-dmabuf` feature",
-        )
+pub(super) type ImportState = ();
+
+#[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
+pub(super) fn probe(_device: &wgpu::Device) -> (crate::ExternalImportSupport, ImportState) {
+    let reason = if cfg!(target_os = "linux") {
+        "daedalus-gpu was built without the `gpu-dmabuf` feature"
     } else {
-        crate::ExternalImportSupport::unsupported("dmabuf import requires Linux")
-    }
+        "dmabuf import requires Linux"
+    };
+    (crate::ExternalImportSupport::unsupported(reason), ())
 }
 
-/// Only reachable if `probe_support` said `Supported`, which it never does in this build.
+/// Only reachable if `probe` said `Supported`, which it never does in this build.
 #[cfg(all(target_os = "linux", not(feature = "gpu-dmabuf")))]
 pub(super) fn import(
     _backend: &super::WgpuBackend,
