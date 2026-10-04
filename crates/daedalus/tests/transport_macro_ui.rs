@@ -11,12 +11,14 @@ use trybuild::TestCases;
 fn transport_macro_compile_failures() {
     let t = TestCases::new();
     t.pass("tests/ui/transport/ok_transport_plugin.rs");
+    t.pass("tests/ui/transport/ok_foreign_type_keys.rs");
     t.compile_fail("tests/ui/transport/fail_adapt_generic.rs");
     t.compile_fail("tests/ui/transport/fail_adapt_unknown_kind.rs");
     t.compile_fail("tests/ui/transport/fail_device_generic.rs");
     t.compile_fail("tests/ui/transport/fail_device_missing_download.rs");
     t.compile_fail("tests/ui/transport/fail_device_mut_input.rs");
     t.compile_fail("tests/ui/transport/fail_plugin_generic.rs");
+    t.compile_fail("tests/ui/transport/fail_plugin_foreign_types_syntax.rs");
     t.compile_fail("tests/ui/transport/fail_plugin_missing_id.rs");
     t.compile_fail("tests/ui/transport/fail_type_key_generic.rs");
     t.compile_fail("tests/ui/transport/fail_type_key_on_fn.rs");
@@ -29,4 +31,5 @@ fn node_macro_compile_failures() {
     t.pass("tests/ui/node/ok_node.rs");
     t.compile_fail("tests/ui/node/fail_unknown_argument.rs");
     t.compile_fail("tests/ui/node/fail_missing_id.rs");
+    t.compile_fail("tests/ui/node/fail_port_ty_and_type_key.rs");
 }
