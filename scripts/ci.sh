@@ -29,7 +29,7 @@ usage: scripts/ci.sh [subcommand...]
   smoke       run the CPU-only example binaries
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics)
-  bench       host bridge + runtime executor criterion benches
+  bench       host bridge, runtime executor and graph frame criterion benches
 EOF
 }
 
@@ -135,6 +135,7 @@ cmd_bench() {
   step "Running host bridge and executor benches"
   cargo bench -p daedalus-engine --features plugins --bench host_graph_drive
   cargo bench -p daedalus-runtime --bench executor_snapshot
+  cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame
 }
 
 cmd_all() {
