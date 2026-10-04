@@ -1,9 +1,9 @@
-//! Loads `examples/plugins/example_project` as a `cdylib` and checks it installs the same
-//! nodes and boundary contracts as the statically linked plugin, and that a boundary type built
-//! differently on each side is refused; then loads `examples/plugins/foreign_consumer`, built
-//! with a different copy of the example crate, which reads host counters through a foreign
-//! interface instead; and loads `examples/plugins/dependent`, which depends on (and links) the
-//! example plugin.
+//! Loads `examples/plugins/example_project` as a `cdylib` (exported by `example_project_dylib`)
+//! and checks it installs the same nodes and boundary contracts as the statically linked plugin,
+//! and that a boundary type built differently on each side is refused; then loads
+//! `examples/plugins/foreign_consumer`, built with a different copy of the example crate, which
+//! reads host counters through a foreign interface instead; and loads
+//! `examples/plugins/dependent`, which depends on (and links) the example plugin.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -17,8 +17,8 @@ use daedalus::transport::{ForeignInterface, Payload, RustTypeIdentity, TypeKey};
 use daedalus::{PluginLibrary, PluginLibraryError};
 use daedalus_plugins_example_project::{Counter, CounterInterface, ExampleProjectPlugin};
 
-const PACKAGE: &str = "daedalus-plugins-example-project";
-const LIB_NAME: &str = "daedalus_plugins_example_project";
+const PACKAGE: &str = "daedalus-plugins-example-project-dylib";
+const LIB_NAME: &str = "daedalus_plugins_example_project_dylib";
 const CONSUMER_PACKAGE: &str = "daedalus-plugins-foreign-consumer";
 const CONSUMER_LIB_NAME: &str = "daedalus_plugins_foreign_consumer";
 const DEPENDENT_PACKAGE: &str = "daedalus-plugins-dependent";
@@ -191,10 +191,9 @@ fn static_and_dynamic_rust_plugin_install_the_same_nodes() {
     assert_eq!(host_counter, RustTypeIdentity::of::<Counter>());
     assert_eq!(plugin_counter.type_name, host_counter.type_name);
 
-    // This host links the example crate without its `dylib` feature, so Cargo built it
-    // separately from the plugin's copy and `Counter` is another Rust type with the same key
-    // and name (the failure a host hits with a separately built plugin). Install is refused
-    // before anything is registered.
+    // The plugin's copy of the example crate is built with `separate-build` and this host's
+    // without, so `Counter` is another Rust type with the same key and name (the failure a host
+    // hits with a separately built plugin). Install is refused before anything is registered.
     assert!(!plugin_counter.same_type(&host_counter));
     let err = library.install_into(&mut static_registry).unwrap_err();
     assert!(

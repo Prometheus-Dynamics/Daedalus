@@ -411,6 +411,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - The `#[plugin]`, `#[type_key]`, `#[adapt]` and `#[device]` docs describe what they generate.
 - `scripts/ci.sh features` checks the real FFI packages (`daedalus-ffi-core`,
   `daedalus-ffi-host`) instead of a nonexistent `daedalus-ffi`.
+- `cargo build --workspace --all-features` failed to link the example plugin `cdylib`s
+  (duplicate `daedalus_plugin_abi_version`): `examples/plugins/dependent` links
+  `example_project`, whose `dylib` feature (unified on under `--all-features`) put
+  `export_plugin!`'s symbols in its `rlib`. The export moved to a leaf `cdylib` crate,
+  `examples/plugins/example_project_dylib`; `example_project` is a plain `rlib` without a `dylib`
+  feature. `docs/dynamic-plugins.md` explains the rule, and `scripts/ci.sh features` and CI now
+  run `cargo build --workspace --lib --all-features`, which links.
 
 ## [2.0.0] - 2026-04-30
 

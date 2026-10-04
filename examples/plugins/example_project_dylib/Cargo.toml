@@ -1,0 +1,27 @@
+[package]
+name = "daedalus-plugins-example-project-dylib"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Only this `cdylib` exports `ExampleProjectPlugin`: the example crate is an `rlib` other plugins
+# link, so its library must not carry the exported symbols (they would clash with a dependent
+# plugin's own once features unify, e.g. under `--all-features`).
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+[features]
+# Export the plugin (`export_plugin!`). It also builds the example crate with `separate-build`,
+# so this copy of `Counter` is deliberately another Rust type than that of a host linking the
+# example crate without it (the facade's `dylib_plugin` test checks the host refuses it).
+dylib = ["daedalus/dylib-plugins", "daedalus-plugins-example-project/separate-build"]
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins"] }
+daedalus-plugins-example-project = { workspace = true }

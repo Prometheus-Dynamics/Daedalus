@@ -115,6 +115,10 @@ changes.
       graph builders (`NodeInstance::new`, `Edge::new`).
 - [x] Dead code removed (`Outputs` derive, aliases, unused globals); `CapabilityRegistry::remove_plugin`
       added.
+- [x] **`--all-features` workspace builds link.** Example plugins depending on
+      `example_project` duplicated its `export_plugin!` symbols once features unified; the export
+      lives in the leaf `examples/plugins/example_project_dylib`, and CI builds (links) the
+      workspace with `--all-features`.
 - [x] CI: aarch64 check, lean-preset tests, macro UI and dylib jobs, example smoke runs, and
       `scripts/ci.sh` subcommands.
 - [x] Bugs fixed: schema export/import encoding round trip, unknown wgpu formats silently treated

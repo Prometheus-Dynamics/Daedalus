@@ -29,7 +29,12 @@ daedalus::export_plugin!(MathPlugin);
 ```
 
 `export_plugin!` emits two unmangled symbols (`daedalus_plugin_abi_version`,
-`daedalus_plugin_descriptor`), so use it once per final shared library. The plugin's manifest
+`daedalus_plugin_descriptor`), so use it once per final shared library. A plugin crate that other
+crates (hosts, or plugins with `deps`) link must not invoke it in its own library: the symbols
+would end up in every dependent `cdylib` next to that plugin's own and fail to link (a cargo
+feature gate does not help, since features unify, e.g. under `--all-features`). Export it from a
+small leaf crate instead, `crate-type = ["cdylib"]` with one `export_plugin!` line, as
+`examples/plugins/example_project_dylib` does for `examples/plugins/example_project`. The plugin's manifest
 version defaults to the crate version, which graph documents can require
 (`PluginRequirement::new("demo.math").with_version(">=1.0.0")`).
 
@@ -164,9 +169,10 @@ styx:framelease`. Now:
   `styx:framelease`, different Rust type (expected `...`, found `...`); the producer and consumer
   were likely built separately``.
 
-Even a dependency built with an extra feature (for example the plugin crate's own `dylib`
-feature, when the host also links that crate) yields different types; the facade's
-`dylib_plugin` test shows the refusal.
+Even a dependency built with an extra feature (for example the example crate's no-op
+`separate-build` feature, which `examples/plugins/example_project_dylib` enables while the host
+links the example crate without it) yields different types; the facade's `dylib_plugin` test
+shows the refusal.
 
 ## Separately Built Plugins
 
