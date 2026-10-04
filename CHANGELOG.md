@@ -133,6 +133,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- `NodeIo::take_owned` coerces `Value` inputs (graph constants) to `T` like `get_typed`, so owned
+  scalar parameters (`target: f64`) accept const inputs. Builtin branch adapters branch every
+  primitive sharing their key (`i64`/`i32`/`u32` under `Int`, `f64`/`f32` under `Float`) instead
+  of failing when the planner picks another width's adapter. `NodeIo` port lists are `Vec`s
+  (`take_outputs_small` is gone; use `take_outputs`), `BoundaryVTable` gains `layout_hash`, and
+  `BoundaryStorage` gains `holds`, `may_hold`, `capabilities` and contract-free
+  `borrow_ref_as`/`borrow_mut_as`/`take_owned_as`; `boundary_capabilities_for_type` looks up a
+  registered contract's capabilities.
 - Optional inputs: an `Option<T>` (`Option<&T>`, `Option<Arc<T>>`) node parameter is a port with
   `T`'s key and schema marked `PortDecl::optional` (exported as `WirePort::optional`), so
   producers and typed host inputs of `T` connect to it directly; before, its
@@ -229,6 +237,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   and drains host outputs on one snapshot and times edge policies only at `Detailed` metrics.
   `host_graph_drive` benches (including `push_tick_take_metrics_off`) are summarized in
   `docs/development.md`.
+- A 16-node detector-like graph frame (`graph_frame_allocations` facade test, `graph_frame`
+  bench) went from 378 heap allocations to 86 in serial mode (106 with the worker pool), all of
+  them created payloads (31) and generated handler code (55); runtime bookkeeping per frame is
+  zero and pinned by the test. Boundary payloads are checked by `TypeId` instead of formatting a
+  `BoundaryTypeContract` per `get_ref`/`get_mut`/`try_into_owned` (the contract is built lazily),
+  and `Payload::owned` reads registered capabilities without cloning the contract. Const inputs
+  are ready-made payloads, `NodeIo` port lists reuse per-thread buffers and pushes resolve to the
+  node's connected output `PortId`s, fan-out filters target edges in place, adapter edges build
+  lifecycle records and step text only for profile/trace metrics, `StateStore` native values live
+  in reusable slots (per-tick node state), builtin const coercion does not box, and the parallel
+  scheduler keeps its bookkeeping inline and borrows segment orders.
 
 ### Removed
 

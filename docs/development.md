@@ -128,6 +128,56 @@ allocations to two (single `Arc<dyn PayloadStorage>`, no empty residency map, no
 boundary-registry clone). The inbound bench now drains into a reused `Vec`
 (`take_inbound_into`).
 
+### Graph frame allocations
+
+`cargo test -p daedalus-rs --features engine,plugins --test graph_frame_allocations` drives a
+16-node detector-like graph (`crates/daedalus/tests/support/detector_graph.rs`: one frame input
+fanned out, config-struct and const inputs, a five-input node, a metadata-only adapter edge,
+connected and unconnected `Option<T>` inputs, two conditional producers, one of which never
+emits so its consumer is skipped, fan-in, four host outputs) whose handlers allocate nothing,
+and asserts the allocations per frame in serial (metrics off and basic), parallel and adaptive
+modes. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`) to print them per
+call site, grouped by the first Daedalus frame and its callers.
+`cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame` times the same
+frame.
+
+Allocations per frame, before (local `dev` at the optional-inputs merge, plus the two harness
+fixes below) and after:
+
+| Category | Before | After |
+| --- | --- | --- |
+| Boundary contract formatting (`get_ref`/`try_into_owned`/`Payload::owned`) | 180 | 0 |
+| Adapter lifecycle records, step names, path text | 54 | 0 |
+| Output port names (`PortId::new` per push) | 28 | 0 |
+| Const input payloads rebuilt per tick | 14 | 0 |
+| Builtin const coercion boxing | 7 | 0 |
+| `StateStore` take/set of node state | 6 | 0 |
+| Port lists spilling past four entries | 2 | 0 |
+| Host input fan-out target list | 1 | 0 |
+| Payloads created (node outputs, adapter results, branch, host frame) | 31 | 31 |
+| Generated handler code (per-push type keys, state keys; `daedalus-macros`) | 55 | 55 |
+| **Serial, metrics off** | **378** | **86** |
+| Serial, basic metrics (per-node metrics map) | 381 | 89 |
+| Parallel/adaptive with `executor-pool` (one pool task per segment, result channel) | 422 | 106 |
+| Parallel/adaptive without `executor-pool` (a scoped thread per segment) | 458 | 187 |
+
+Timings (x86_64 Linux, shared 24-core machine at load 20-45, criterion medians, back to back):
+
+| Benchmark | Before | After |
+| --- | --- | --- |
+| `graph_frame/serial_metrics_off` | 33.6 µs | 20.5 µs |
+| `graph_frame/serial_metrics_basic` | 40.6 µs | 24.6 µs |
+| `graph_frame/parallel_metrics_off` (pool) | 240 µs | 160 µs |
+| `graph_frame/adaptive_metrics_off` (pool) | 235 µs | 158 µs |
+| `push_tick_take` (one node, basic metrics) | 1.73 µs | 1.57 µs |
+| `push_tick_take_metrics_off` | 1.53 µs | 1.34 µs |
+
+The harness needed two fixes to run at all: owned scalar parameters fed by const inputs
+(`NodeIo::take_owned` now coerces `Value`s) and builtin branch adapters for keys shared by
+several Rust types (a fanned-out `i64` output was branched by the `i32` adapter). For graphs of
+cheap nodes, serial is several times faster than parallel or adaptive (adaptive picks parallel
+whenever the segment graph fans out); parallel pays off only when segments do real work.
+
 ## Troubleshooting
 
 | Symptom | First checks |
