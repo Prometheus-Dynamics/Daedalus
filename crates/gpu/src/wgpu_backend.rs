@@ -12,13 +12,13 @@ use crate::{
 #[cfg(all(feature = "gpu-async", feature = "gpu-wgpu"))]
 use async_trait::async_trait;
 use pollster::FutureExt;
-use wgpu::{Adapter, Backends, Features, Instance, InstanceDescriptor, Limits};
+use wgpu::{Adapter, Backends, Features, Instance, Limits};
 
 mod adapter_select;
 mod capabilities;
 mod copy_limiter;
 mod dmabuf;
-mod driver_lock;
+mod driver;
 mod mapping;
 mod resources;
 mod staging;
@@ -27,7 +27,7 @@ use adapter_select::{preferred_backends, select_best_adapter};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
 pub use dmabuf::texture_plane_views;
-pub(crate) use driver_lock::driver_lock;
+pub(crate) use driver::{driver_lock, instance_descriptor};
 pub(crate) use mapping::{gpu_format_from_wgpu, map_format};
 use mapping::{gpu_usage_from_wgpu, map_texture_usage, map_usage};
 use resources::{ResourceDropToken, ResourceKind, WgpuResources};
@@ -100,9 +100,7 @@ impl WgpuBackend {
         let adapter = {
             let _driver = driver_lock();
             let preferred_backends = preferred_backends();
-            let mut instance_desc = InstanceDescriptor::new_without_display_handle();
-            instance_desc.backends = preferred_backends;
-            let instance = Instance::new(instance_desc);
+            let instance = Instance::new(instance_descriptor(preferred_backends));
             let mut adapters: Vec<Adapter> = instance.enumerate_adapters(preferred_backends).await;
             if adapters.is_empty() && preferred_backends != Backends::all() {
                 adapters = instance.enumerate_adapters(Backends::all()).await;

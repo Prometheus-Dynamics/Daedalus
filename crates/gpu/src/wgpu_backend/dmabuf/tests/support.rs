@@ -123,7 +123,7 @@ pub(super) fn skip(reason: String) {
 
 /// Run hardware tests one at a time: they time GPU work (fence latencies, blocked submissions,
 /// producer jobs) that other tests on the same GPU would skew. Concurrent driver setup is safe on
-/// its own (`driver_lock`).
+/// its own (`wgpu_backend/driver.rs`).
 pub(super) fn exclusive() -> std::sync::MutexGuard<'static, ()> {
     static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
     GPU.lock()
@@ -166,8 +166,7 @@ pub(super) fn consumer_backend() -> (WgpuBackend, bool) {
     };
     let adapter = {
         let _driver = crate::wgpu_backend::driver_lock();
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        desc.backends = wgpu::Backends::VULKAN;
+        let desc = crate::wgpu_backend::instance_descriptor(wgpu::Backends::VULKAN);
         wgpu::Instance::new(desc)
             .enumerate_adapters(wgpu::Backends::VULKAN)
             .block_on()
