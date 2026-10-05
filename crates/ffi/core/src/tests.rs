@@ -4,6 +4,7 @@ use daedalus_data::model::{EnumValue, StructFieldValue, TypeExpr, Value};
 use daedalus_transport::{AccessMode, Layout, Payload, Residency, TypeKey};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+#[cfg(feature = "integrity")]
 use std::fs;
 
 mod fixtures;

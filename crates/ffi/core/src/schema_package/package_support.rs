@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
+#[cfg(feature = "integrity")]
 use std::fs::File;
+#[cfg(feature = "integrity")]
 use std::io::Read;
 use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "integrity")]
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
@@ -148,6 +151,7 @@ fn package_file_name(path: &str) -> Result<String, FfiContractError> {
         .ok_or_else(|| FfiContractError::MissingArtifactFileName { path: path.into() })
 }
 
+#[cfg(feature = "integrity")]
 pub(crate) fn sha256_file_hex(path: impl AsRef<Path>) -> Result<String, FfiContractError> {
     let path = path.as_ref();
     let mut file = File::open(path).map_err(|err| FfiContractError::PackageHashError {
@@ -169,12 +173,14 @@ pub(crate) fn sha256_file_hex(path: impl AsRef<Path>) -> Result<String, FfiContr
     Ok(hex_lower(&hasher.finalize()))
 }
 
+#[cfg(feature = "integrity")]
 pub(crate) fn sha256_bytes_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex_lower(&hasher.finalize())
 }
 
+#[cfg(feature = "integrity")]
 fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);

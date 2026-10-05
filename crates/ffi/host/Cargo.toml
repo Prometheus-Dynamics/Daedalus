@@ -15,7 +15,10 @@ categories = ["api-bindings"]
 workspace = true
 
 [features]
-default = []
+default = ["integrity"]
+# Package integrity hashing (`daedalus-ffi-core/integrity`, pulls `sha2`). The dynamic plugin
+# path in `daedalus-rs` only uses schema export and leaves it off.
+integrity = ["daedalus-ffi-core/integrity"]
 image-payload = ["daedalus-ffi-core/image-payload"]
 
 [dependencies]

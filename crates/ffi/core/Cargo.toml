@@ -15,7 +15,10 @@ categories = ["api-bindings"]
 workspace = true
 
 [features]
-default = []
+default = ["integrity"]
+# SHA-256 package integrity: `PluginPackage::{stamp,verify}_integrity`, manifest hashes and the
+# hashed descriptors `LanguagePackager::build`/`rust_plugin_package` emit (pulls `sha2`).
+integrity = ["dep:sha2"]
 image-payload = []
 
 [dependencies]
@@ -23,7 +26,7 @@ daedalus-data = { workspace = true, features = ["std", "json"] }
 daedalus-transport = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
-sha2 = { workspace = true }
+sha2 = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
