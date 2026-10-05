@@ -98,6 +98,35 @@ fn validate_nv12_plane_layout() {
 }
 
 #[test]
+fn validate_tiled_modifiers_take_aux_planes() {
+    const AMD_DCC: u64 = 0x0200_0000_2096_bb03;
+    let with_planes = |count: usize| {
+        let mut desc = xrgb_frame(64, 4, 256).with_modifier(AMD_DCC);
+        desc.planes
+            .extend((1..count).map(|i| ExternalPlane::new(some_fd(), 4096 * i as u64, 64)));
+        desc
+    };
+    // Main surface plus DCC (and displayable DCC) metadata planes, passed through as given.
+    let layout = with_planes(3).validate().unwrap();
+    assert_eq!(layout.min_len, vec![0, 4096, 8192]);
+    assert!(!layout.is_multi_planar());
+    // Tiled pitches are not row-checked here (the backend checks them against the modifier).
+    let mut tiled = with_planes(1);
+    tiled.planes[0].stride = 16;
+    tiled.validate().unwrap();
+    let err = with_planes(crate::MAX_MEMORY_PLANES + 1)
+        .validate()
+        .unwrap_err();
+    assert!(err.to_string().contains("1 to 4 plane(s)"), "{err}");
+    // LINEAR has no aux planes.
+    let err = with_planes(2)
+        .with_modifier(DRM_FORMAT_MOD_LINEAR)
+        .validate()
+        .unwrap_err();
+    assert!(err.to_string().contains("exactly 1 plane(s)"), "{err}");
+}
+
+#[test]
 fn validate_rejects_bad_descriptors() {
     let err = xrgb_frame(64, 4, 100).validate().unwrap_err();
     assert!(

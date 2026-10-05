@@ -402,8 +402,8 @@ For dmabuf frames that GPU nodes consume, the glue can skip the CPU entirely: wi
 `gpu-dmabuf` feature, `GpuContextHandle::import_dmabuf` turns the buffer (fd, offset, stride, DRM
 fourcc/modifier) into a GPU image that aliases the producer's memory, holding a keepalive (the
 producer's buffer lease) until the GPU is done. A producer `sync_file` passed as the acquire
-fence is waited for on the GPU where the device supports it (`AcquireFenceWait::Gpu`), so the
-import does not block the node. Check `supports_dmabuf_import()` first and fall back to a CPU
+fence is waited for on the GPU where the device supports it (`AcquireFenceWait::Timeline`, with
+the descriptor's timeout, or `SyncFd`), so the import does not wait for the producer. Check `supports_dmabuf_import()` first and fall back to a CPU
 upload otherwise. See "Importing external frames (dmabuf)" in
 [`crates/gpu/README.md`](../crates/gpu/README.md).
 

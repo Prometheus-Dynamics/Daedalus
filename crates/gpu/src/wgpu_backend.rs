@@ -127,7 +127,7 @@ impl WgpuBackend {
         let (device, queue) = dmabuf::request_device(&adapter, &device_desc)
             .await
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
-        let (dmabuf_support, dmabuf) = dmabuf::probe(&device);
+        let (dmabuf_support, dmabuf) = dmabuf::probe(&device, &queue);
 
         let device_key = crate::shader::register_device(&device);
 
@@ -199,18 +199,34 @@ impl WgpuBackend {
         height: u32,
         usage: wgpu::TextureUsages,
     ) -> GpuImageHandle {
+        self.register_gpu_texture_with(texture, gpu_format, width, height, usage, |token| token)
+            .0
+    }
+
+    /// [`register_gpu_texture`](Self::register_gpu_texture) with `wrap` building the handle's drop
+    /// token around the one that untracks the texture; also returns that token.
+    fn register_gpu_texture_with<T: GpuDropToken + 'static>(
+        &self,
+        texture: std::sync::Arc<wgpu::Texture>,
+        gpu_format: GpuFormat,
+        width: u32,
+        height: u32,
+        usage: wgpu::TextureUsages,
+        wrap: impl FnOnce(ResourceDropToken) -> T,
+    ) -> (GpuImageHandle, Arc<T>) {
         let gpu_usage = gpu_usage_from_wgpu(usage);
         let mut handle =
             GpuImageHandle::new(gpu_format, width, height, GpuMemoryLocation::Gpu, gpu_usage);
         self.resources.textures.lock().insert(handle.id, texture);
-        handle.drop_token = Some(Arc::new(ResourceDropToken {
+        let token = Arc::new(wrap(ResourceDropToken {
             kind: ResourceKind::Texture {
                 id: handle.id,
                 recycle: None,
             },
             resources: Arc::downgrade(&self.resources),
-        }) as Arc<dyn GpuDropToken>);
-        handle
+        }));
+        handle.drop_token = Some(token.clone() as Arc<dyn GpuDropToken>);
+        (handle, token)
     }
 }
 

@@ -29,13 +29,13 @@ pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use convert::{Backing, Compute, DeviceBridge};
 pub use external::{
-    AcquireFenceWait, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc,
+    AcquireFenceWait, AcquireStatus, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc,
     ExternalImportError, ExternalImportSupport, ExternalKeepalive,
 };
 #[cfg(target_os = "linux")]
 pub use external::{
-    DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, ExternalFrameDescriptor, ExternalPlane, ValidatedLayout,
-    export_dmabuf_fence,
+    DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, ExternalFrameDescriptor, ExternalPlane,
+    MAX_MEMORY_PLANES, ValidatedLayout, export_dmabuf_fence,
 };
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
 #[cfg(feature = "gpu-mock")]

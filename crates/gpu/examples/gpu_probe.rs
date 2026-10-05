@@ -1,4 +1,5 @@
-//! Paste-friendly report of the GPU, dmabuf import, NV12, and kernel dma-buf support of the host.
+//! Paste-friendly report of the GPU, dmabuf import (fence paths, NV12, DRM format modifiers), and
+//! kernel dma-buf support of the host.
 //!
 //! ```text
 //! cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe   # or ./scripts/ci.sh pi
@@ -134,8 +135,94 @@ mod linux {
         ] {
             kv(&ext.to_string_lossy(), yes_no(enabled.contains(&ext)));
         }
+        let (timeline, sync_fd) = fence_paths(&hal);
+        kv("timeline_semaphore", yes_no(timeline));
+        kv("sync_fd_semaphore_import", yes_no(sync_fd));
         heading("nv12-linear");
         nv12_linear(&hal);
+        heading("modifiers");
+        modifiers(&hal);
+    }
+
+    /// Whether the device has timeline semaphores (the `timeline` fence wait) and imports
+    /// `sync_file`s into semaphores (the `sync_fd` wait).
+    fn fence_paths(hal: &hal_vk::Device) -> (bool, bool) {
+        let instance = hal.shared_instance().raw_instance();
+        let phys = hal.raw_physical_device();
+        let mut v12 = vk::PhysicalDeviceVulkan12Features::default();
+        let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut v12);
+        // SAFETY: `phys` belongs to `instance`; queries only.
+        unsafe { instance.get_physical_device_features2(phys, &mut features) };
+        let info = vk::PhysicalDeviceExternalSemaphoreInfo::default()
+            .handle_type(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD);
+        let mut props = vk::ExternalSemaphoreProperties::default();
+        // SAFETY: as above.
+        unsafe {
+            instance.get_physical_device_external_semaphore_properties(phys, &info, &mut props)
+        };
+        let sync_fd = hal
+            .enabled_device_extensions()
+            .contains(&khr::external_semaphore_fd::NAME)
+            && props
+                .external_semaphore_features
+                .contains(vk::ExternalSemaphoreFeatureFlags::IMPORTABLE);
+        (v12.timeline_semaphore == vk::TRUE, sync_fd)
+    }
+
+    /// The DRM format modifiers advertised per importable format: memory plane count, whether it
+    /// carries aux (compression) planes, the usable features, and whether the hardware tests
+    /// round-trip it (`dmabuf_import_tiled_and_compressed_modifiers`: renderable R8/XRGB8888).
+    fn modifiers(hal: &hal_vk::Device) {
+        if !hal
+            .enabled_device_extensions()
+            .contains(&ext::image_drm_format_modifier::NAME)
+        {
+            return kv(
+                "modifiers",
+                "n/a (VK_EXT_image_drm_format_modifier not enabled)",
+            );
+        }
+        let instance = hal.shared_instance().raw_instance();
+        let phys = hal.raw_physical_device();
+        let tested_features = vk::FormatFeatureFlags::COLOR_ATTACHMENT
+            | vk::FormatFeatureFlags::SAMPLED_IMAGE
+            | vk::FormatFeatureFlags::TRANSFER_SRC;
+        for (name, format, format_planes, tested) in [
+            ("r8", vk::Format::R8_UNORM, 1, true),
+            ("xrgb8888", vk::Format::B8G8R8A8_UNORM, 1, true),
+            ("xbgr8888", vk::Format::R8G8B8A8_UNORM, 1, false),
+            ("nv12", NV12, 2, false),
+        ] {
+            let list: Vec<String> = format_modifiers(instance, phys, format)
+                .iter()
+                .map(|m| {
+                    let features = m.drm_format_modifier_tiling_features;
+                    let planes = m.drm_format_modifier_plane_count;
+                    let mut tags = vec![format!("{planes} plane(s)")];
+                    if planes > format_planes {
+                        tags.push("aux".into());
+                    }
+                    for (flag, tag) in [
+                        (vk::FormatFeatureFlags::SAMPLED_IMAGE, "sample"),
+                        (vk::FormatFeatureFlags::COLOR_ATTACHMENT, "render"),
+                        (vk::FormatFeatureFlags::STORAGE_IMAGE, "storage"),
+                        (vk::FormatFeatureFlags::DISJOINT, "disjoint"),
+                    ] {
+                        if features.contains(flag) {
+                            tags.push(tag.into());
+                        }
+                    }
+                    if tested && features.contains(tested_features) {
+                        tags.push("tested".into());
+                    }
+                    format!("0x{:x} ({})", m.drm_format_modifier, tags.join(", "))
+                })
+                .collect();
+            kv(
+                &format!("{name}_modifiers"),
+                format!("[{}]", list.join("; ")),
+            );
+        }
     }
 
     /// What the driver advertises for NV12 with the `LINEAR` DRM modifier, and whether a dmabuf
@@ -163,7 +250,7 @@ mod linux {
                 "n/a (VK_EXT_image_drm_format_modifier not enabled)",
             );
         }
-        let modifiers = format_modifiers(instance, phys);
+        let modifiers = format_modifiers(instance, phys, NV12);
         let list: Vec<String> = modifiers
             .iter()
             .map(|m| format!("0x{:x}", m.drm_format_modifier))
@@ -205,11 +292,12 @@ mod linux {
     fn format_modifiers(
         instance: &ash::Instance,
         phys: vk::PhysicalDevice,
+        format: vk::Format,
     ) -> Vec<vk::DrmFormatModifierPropertiesEXT> {
         let mut count = vk::DrmFormatModifierPropertiesListEXT::default();
         let mut props = vk::FormatProperties2::default().push_next(&mut count);
         // SAFETY: valid physical device and out-structure chain.
-        unsafe { instance.get_physical_device_format_properties2(phys, NV12, &mut props) };
+        unsafe { instance.get_physical_device_format_properties2(phys, format, &mut props) };
         let mut modifiers = vec![
             vk::DrmFormatModifierPropertiesEXT::default();
             count.drm_format_modifier_count as usize
@@ -218,7 +306,7 @@ mod linux {
             .drm_format_modifier_properties(&mut modifiers);
         let mut props = vk::FormatProperties2::default().push_next(&mut list);
         // SAFETY: as above; `modifiers` has room for the advertised count.
-        unsafe { instance.get_physical_device_format_properties2(phys, NV12, &mut props) };
+        unsafe { instance.get_physical_device_format_properties2(phys, format, &mut props) };
         let written = list.drm_format_modifier_count as usize;
         modifiers.truncate(written);
         modifiers

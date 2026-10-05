@@ -158,8 +158,9 @@ changes.
 
 ### High priority
 - [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Run `./scripts/ci.sh pi` on the device and
-      paste the `gpu_probe` report (LINEAR NV12 modifiers, `DISJOINT`, `TEXTURE_FORMAT_NV12`,
-      the fence export ioctl, dma-heaps); see "Validating on a Raspberry Pi 5" in
+      paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
+      `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
+      measurements of the fence tests; see "Validating on a Raspberry Pi 5" in
       `docs/testing.md`.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
@@ -174,13 +175,23 @@ changes.
 ### Medium priority
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
       `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
-- [x] **dmabuf: GPU-side fence wait.** wgpu 30: the `sync_file` is imported as a `SYNC_FD`
-      semaphore and waited on by the import's acquire submission (`AcquireFenceWait::Gpu`); CPU
-      poll fallback without `VK_KHR_external_semaphore_fd`. Every import does a queue-family-foreign
-      acquire into a known wgpu state (no `UNDEFINED` transition).
-- [ ] **dmabuf: compressed modifiers.** Imports are only validated with modifiers without
-      compression metadata (`LINEAR`, v3dv). Test DCC/CCS modifiers with the foreign acquire
-      (`GENERAL` on arrival), and add a release back to the foreign family if producers need it.
+- [x] **dmabuf: GPU-side fence wait with a timeout.** `AcquireFenceWait::Timeline`: a timeline
+      semaphore host-signaled by one watcher thread per device on fence or `acquire_timeout`,
+      `GpuImageHandle::acquire_status()` reports `TimedOut`; `SyncFd` (no timeout) and `Cpu`
+      fallbacks. Every import does a queue-family-foreign acquire into a known wgpu state and a
+      release back on drop.
+- [x] **dmabuf: compressed modifiers.** Multi-memory-plane modifiers (aux planes) import; on RADV
+      every renderable `R8`/`XRGB8888` modifier including DCC (2 and 3 planes) round-trips between
+      devices (`dmabuf/tests/modifiers.rs`), tiled NV12 imports and samples.
+- [ ] **dmabuf: run the hardware tests under the Vulkan validation layers.** Not installed on the
+      development machine (no `VK_LAYER_KHRONOS_validation`); install it (e.g. the distro's
+      `vulkan-validation-layers`) and run
+      `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf`.
+- [ ] **dmabuf: next submission blocks behind a timeline wait on Mesa.** wgpu-hal chains
+      submissions with binary semaphores, which Mesa only accepts once the previous
+      (wait-before-signal) submission reached the kernel. Revisit if wgpu-hal stops relaying with
+      binary semaphores (then `Timeline` would never block a thread), or make the default path
+      configurable per backend if callers need `SyncFd`'s non-blocking behaviour by default.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 

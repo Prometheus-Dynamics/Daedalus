@@ -95,30 +95,51 @@ if ctx.supports_dmabuf_import() {
   for Y, `GR88` for UV) using its offset and stride. Three-plane `YU12` is always imported per
   plane. Drivers constrain explicit plane layouts (RADV rejects a 128-byte `LINEAR` pitch that
   256 bytes satisfies); a rejected layout surfaces as `UnsupportedFormat` naming
-  `vkCreateImage`.
+  `vkCreateImage`. Tiled NV12 modifiers take two memory planes like `LINEAR`.
+- **Modifiers:** tiled and compressed modifiers import like `LINEAR`: pass one plane per
+  *memory* plane of the modifier (the format planes, then aux planes such as AMD DCC metadata),
+  each with the offset and pitch the producer reported (`vkGetImageSubresourceLayout` with
+  `MEMORY_PLANE_i`, or the GBM/KMS plane list), up to `MAX_MEMORY_PLANES`. They become the
+  explicit Vulkan plane layouts as given. Planes in one dmabuf share one allocation; separate
+  dmabufs need a modifier with `DISJOINT`. On RADV every renderable `R8`/`XRGB8888` modifier,
+  including DCC with 2 and 3 memory planes, round-trips between devices with correct pixels, and
+  the tiled `NV12` modifiers import and sample.
 - **Explicit sync:** `with_acquire_fence(fd)` takes a `sync_file` (from V4L2/libcamera, a GPU
   producer, or `DMA_BUF_IOCTL_EXPORT_SYNC_FILE`). For producers that only fence the dmabuf itself,
   `with_implicit_fence()` exports its implicit fences (`export_dmabuf_fence` is the standalone
-  helper; Linux 6.0+). `dmabuf_import_support()` reports where the fence is waited for
-  (`ExternalImportSupport::Supported { acquire_fence }`, also `acquire_fence_wait()`):
-  - `AcquireFenceWait::Gpu` (wgpu backend on devices with `VK_KHR_external_semaphore_fd` and
-    importable `SYNC_FD` semaphores, e.g. RADV and lavapipe): the fence is imported as a Vulkan
-    semaphore that the import's acquire submission waits on (wgpu-hal 30's
-    `vulkan::Queue::add_wait_semaphore`). The import returns without blocking, and every GPU use of
-    the image (dispatch, sampling, `read_texture`) runs after the producer. Since one queue is
-    shared, all GPU work submitted after the import also waits for the producer. A fence that
-    already signaled is skipped; an fd that is not a `sync_file` falls back to the CPU wait. No
-    timeout applies: a fence that never signals stalls the queue until the kernel's GPU hang
-    handling intervenes.
-  - `AcquireFenceWait::Cpu` (devices without that extension, and `gpu-mock`): the import polls the
-    fence (bounded by `acquire_timeout`, default 1 s, then `ExternalImportError::FenceTimeout`)
-    before creating the Vulkan image, so the calling thread blocks until the producer is done.
+  helper; Linux 6.0+). A fence that already signaled costs nothing. `dmabuf_import_support()`
+  reports where pending fences are waited for (`ExternalImportSupport::Supported {
+  acquire_fence }`, also `acquire_fence_wait()`), in order of preference:
+  - `AcquireFenceWait::Timeline` (devices with Vulkan 1.2 timeline semaphores, e.g. RADV, v3dv,
+    lavapipe): the GPU waits on a timeline semaphore value that one watcher thread per device
+    signals once the fence signals or `acquire_timeout` (default 1 s) passes, so a stuck producer
+    stalls the GPU for at most the timeout. The import does not wait for its fence, and
+    `GpuImageHandle::acquire_status()` reports `Pending`, `Ready`, or `TimedOut` (the GPU went
+    ahead; the contents are undefined). The watcher hop adds about 10 us. On Mesa drivers the
+    *next* submission to the device (another import, a dispatch, a readback) blocks its thread
+    until the wait is released, because Mesa runs wait-before-signal submissions on a submit
+    thread and wgpu chains submissions with binary semaphores: the CPU wait moves from the import
+    to the next submission, still bounded by the timeout.
+  - `AcquireFenceWait::SyncFd` (devices without timeline semaphores but with
+    `VK_KHR_external_semaphore_fd`, and every import with `acquire_timeout = Duration::MAX` on
+    devices that have it): the `sync_file` is imported into a binary semaphore. The kernel orders
+    the GPU work behind it, so no thread blocks on kernel drivers (lavapipe still holds back the
+    next submission), but no timeout applies: a fence that never signals stalls the queue. An fd
+    that is not a `sync_file` falls back to the CPU wait.
+  - `AcquireFenceWait::Cpu` (devices with neither, and `gpu-mock`): the import polls the fence,
+    bounded by `acquire_timeout` (then `ExternalImportError::FenceTimeout`), before creating the
+    Vulkan image.
 - **Layout handoff:** every import submits a queue family ownership acquire from
   `VK_QUEUE_FAMILY_FOREIGN_EXT` (`VK_EXT_queue_family_foreign`, else `VK_QUEUE_FAMILY_EXTERNAL`),
   `GENERAL -> SHADER_READ_ONLY_OPTIMAL`, and registers the texture with wgpu in that state, so wgpu
-  never transitions it from `UNDEFINED`. The image is treated as `GENERAL` on arrival, the
-  convention Mesa-based compositors use for dmabufs. Only modifiers without compression metadata
-  (v3dv, RADV/ANV `LINEAR`) are tested; avoid compressed or aux-plane modifiers.
+  never transitions it from `UNDEFINED` (which would let the driver discard the contents and
+  reinitialize compression metadata). `GENERAL` in the foreign family is the convention of Mesa's
+  WSI and of compositors for dmabufs; RADV keeps compressed modifier images readable that way.
+  When the last handle is dropped, the image is released back to the foreign family
+  (`SHADER_READ_ONLY_OPTIMAL -> GENERAL`) after all GPU work using it, and the keepalive is dropped
+  only once that release executed, so a producer that reuses the buffer (and a Vulkan producer
+  that acquires it from `FOREIGN`) sees a complete handoff. Textures obtained from the backend
+  must not be used after their handle is gone.
 - **Ownership:** planes and the fence take `OwnedFd`s (use `ExternalPlane::from_borrowed` to
   `dup`). The import keeps the dmabuf referenced for the image's lifetime, but that does not stop
   the producer from recycling it, so pass the producer's buffer lease as the keepalive. It is
@@ -128,11 +149,14 @@ if ctx.supports_dmabuf_import() {
   FenceTimeout, ImportFailed}`, convertible to `GpuError`.
 
 Hardware tests (`#[ignore]`d; need a Vulkan GPU and a readable `/dev/dma_heap/*`, e.g. membership
-in the `video` group) cover single-plane import, plane offsets, fences (exported implicit fence,
-timeout, both wait modes), a late fence from a GPU job on another device (the import must return
-before it signals and readback must see the producer's pixels; with lavapipe as the consumer the
-two queues are independent, so a missing wait would show as stale pixels), and NV12 (single
-dmabuf and disjoint), skipping cases the device cannot run:
+in the `video` group) live in `src/wgpu_backend/dmabuf/tests/`: `LINEAR` single-plane import and
+plane offsets (`linear.rs`); fences in every wait mode the device has, never-signaling and late
+fences, the watcher's latency and in-order release, a timeout shorter than a real GPU producer
+job, and dropping the backend with a stuck fence (`fences.rs`; with lavapipe as the consumer the
+queues are independent, so a missing wait shows as stale pixels); NV12 in one dmabuf and disjoint
+(`nv12.rs`); and every renderable modifier exported by a raw Vulkan producer, rendered through
+Daedalus, released, and read back on a second device, plus tiled NV12 imports (`modifiers.rs`).
+Cases the device cannot run print a `skipping:` reason:
 
 ```bash
 CARGO_BUILD_JOBS=4 cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf
@@ -143,9 +167,12 @@ DAEDALUS_DMA_HEAP=/dev/dma_heap/system cargo test -p daedalus-gpu --features gpu
 ### Probing a device
 
 The `gpu_probe` example prints a paste-friendly `key: value` report of the selected adapter and
-driver, `dmabuf_import_support()`, NV12 support (`TEXTURE_FORMAT_NV12`, the `LINEAR` modifier and
-whether it needs disjoint planes), the kernel, the dma-heaps, and whether
-`DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works. It never panics on missing hardware.
+driver, `dmabuf_import_support()` with the active fence path (`timeline`, `sync_fd`, `cpu`) and
+which paths the device has, NV12 support (`TEXTURE_FORMAT_NV12`, the `LINEAR` modifier and whether
+it needs disjoint planes), the modifiers advertised for `R8`, `XRGB8888`, `XBGR8888` and `NV12`
+(memory planes, aux planes, features, and which the hardware tests round-trip), the kernel, the
+dma-heaps, and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works. It never panics on missing
+hardware.
 
 ```bash
 cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe

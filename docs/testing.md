@@ -164,10 +164,19 @@ DAEDALUS_DMA_HEAP=/dev/dma_heap/linux,cma CARGO_BUILD_JOBS=4 ./scripts/ci.sh pi
 ```
 
 It runs `cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf` (the
-`#[ignore]`d hardware tests: single-plane import, plane offsets, fences in both wait modes, a late
-fence from another device's GPU job, NV12 in one dmabuf and disjoint; cases the device cannot run
-print a skip reason) and then
-`cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe`.
+`#[ignore]`d hardware tests: single-plane import, plane offsets, fences in every wait mode the
+device has (timeline with its timeout and watcher, `SYNC_FD`, CPU), a late fence from another
+device's GPU job, NV12 in one dmabuf and disjoint, and every renderable modifier exported by a
+Vulkan producer and read back on a second device; cases the device cannot run print a skip
+reason) and then `cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe`.
+
+Expected on a Pi 5 with current Mesa: all tests pass; `dmabuf_acquire_fence_wait: timeline`
+(v3dv has Vulkan 1.3 timeline semaphores) with `sync_fd_semaphore_import: yes`; the modifier test
+round-trips `LINEAR` plus whichever tiled modifiers v3dv advertises as renderable for `R8` and
+`XRGB8888` (Broadcom `UIF` is `0x700000000000006`); V3D has no compressed modifiers, so no `aux`
+planes are expected. These are expectations, not yet confirmed on a Pi. Without lavapipe installed, a `skipping: no lavapipe consumer` line is
+expected: the fence tests then use a second v3dv device. Run with `-- --nocapture` to see the
+measurements (watcher hop, blocked submission) and the round-tripped modifiers.
 
 **Paste back** the `test result:` line of the dmabuf tests (plus any failure or `skipping` output)
 and the whole probe report, from `daedalus-gpu gpu_probe` to the end. The probe never panics on
@@ -179,8 +188,9 @@ missing hardware; a failed check prints its error in place of the value.
 | `name`, `backend`, `device_type`, `vendor_id`, `device_id` | the adapter `WgpuBackend` selected; on a Pi a V3D adapter on `Vulkan` |
 | `driver`, `driver_info` | Vulkan driver name and Mesa version (e.g. `V3DV Mesa`, `Mesa 25.x`) |
 | `dmabuf_import` | `GpuContextHandle::dmabuf_import_support()`: `supported`, or `unsupported:` with the reason (non-Vulkan adapter, missing extension) |
-| `dmabuf_acquire_fence_wait` | where acquire fences are waited for: `gpu` (imported as a Vulkan semaphore, the import never blocks) or `cpu` (the import polls the `sync_file`) |
-| `VK_KHR_external_semaphore_fd`, `VK_EXT_queue_family_foreign` | whether the device enabled them: the first enables `gpu` fence waits, the second acquires imports from the foreign queue family (otherwise `EXTERNAL`) |
+| `dmabuf_acquire_fence_wait` | where pending acquire fences are waited for by default: `timeline` (GPU waits on a timeline value a watcher thread signals on fence or `acquire_timeout`), `sync_fd` (GPU waits on the imported `sync_file`, no timeout), or `cpu` (the import polls the `sync_file`) |
+| `VK_KHR_external_semaphore_fd`, `VK_EXT_queue_family_foreign` | whether the device enabled them: the first is needed for `sync_fd` waits, the second acquires and releases imports through the foreign queue family (otherwise `EXTERNAL`) |
+| `timeline_semaphore`, `sync_fd_semaphore_import` | which GPU-side fence paths the device has: `timeline` needs the first, `sync_fd` the second (and is used for `acquire_timeout = Duration::MAX`) |
 | `texture_format_nv12` | the device has wgpu `TEXTURE_FORMAT_NV12`; without it NV12 must be imported per plane (`R8` + `GR88`) |
 | `vulkan_api` | Vulkan version the physical device reports |
 | `nv12_modifiers` | DRM modifiers the driver advertises for `G8_B8R8_2PLANE_420_UNORM` (`0x0` is `LINEAR`) |
@@ -188,6 +198,7 @@ missing hardware; a failed check prints its error in place of the value.
 | `nv12_linear_disjoint_feature` | the `LINEAR` NV12 modifier has `DISJOINT`, so Y and UV can live in separate dmabufs |
 | `nv12_linear_import_one_dmabuf`, `nv12_linear_import_disjoint` | `ok`, or `rejected:` with the reason, for the image-format query a sampled NV12 import makes with both planes in one dmabuf / one dmabuf per plane |
 | `nv12_linear_needs_disjoint` | `yes` when only the disjoint import is accepted, so a producer must hand out separate Y and UV dmabufs |
+| `r8_modifiers`, `xrgb8888_modifiers`, `xbgr8888_modifiers`, `nv12_modifiers` | every modifier the driver advertises for the format: memory plane count, `aux` when it has more memory planes than format planes (compression metadata), its usable features (`sample`, `render`, `storage`, `disjoint`), and `tested` when the modifier round-trip test exercises it |
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 

@@ -28,6 +28,8 @@ pub(super) struct TextureRecycleMeta {
     pub(super) usage: wgpu::TextureUsages,
 }
 
+impl crate::handles::GpuDropToken for ResourceDropToken {}
+
 #[derive(Debug)]
 pub(super) struct ResourceDropToken {
     pub(super) kind: ResourceKind,
