@@ -21,11 +21,16 @@ path = "src/lib.rs"
 default = ["gpu-noop"]
 gpu-noop = []
 gpu-mock = []
-gpu-wgpu = ["wgpu", "pollster", "bytemuck", "half", "daedalus-wgsl-infer", "image"]
+# wgpu backend: Vulkan everywhere, plus Metal on Apple and DX12 on Windows.
+gpu-wgpu = ["wgpu", "pollster", "bytemuck", "half", "daedalus-wgsl-infer"]
+# wgpu's OpenGL/GLES backend (glow, EGL, Wayland loaders) for devices without Vulkan.
+gpu-gles = ["gpu-wgpu", "wgpu/gles"]
+# `image` crate bridges: `Compute<DynamicImage>`, `DeviceBridge` for `image` buffers and the
+# `ShaderRunOutput` image readback helpers (pulls `image`/`png`/`flate2`).
+gpu-image = ["gpu-wgpu", "dep:image"]
 gpu-async = ["async-trait"]
 # Zero-copy import of Linux dmabuf frames into wgpu textures (Vulkan only).
 gpu-dmabuf = ["gpu-wgpu", "dep:ash"]
-image = ["dep:image"]
 
 [dependencies]
 parking_lot = { workspace = true }

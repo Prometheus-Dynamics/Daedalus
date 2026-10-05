@@ -1,9 +1,7 @@
 //! Lightweight shader dispatch helper for compute pipelines.
 //! The heavy lifting lives in submodules; this file stitches them together and
 //! keeps a couple of lightweight helpers for WGSL inference.
-use crate::Compute;
 use daedalus_wgsl_infer as wgsl_infer;
-use image::DynamicImage;
 use wgsl_infer::InferredAccess;
 
 mod bindings;
@@ -61,14 +59,6 @@ pub use types::*;
 
 // Needed by gpu_state and inference helpers.
 pub(crate) use fallback::ctx;
-
-impl TextureOut {
-    /// Create a storage texture description using the dimensions of the input payload,
-    /// pulling GPU availability from the shader context.
-    pub fn from_input_ctx(img: &Compute<DynamicImage>, ctx: &ShaderContext) -> Self {
-        Self::from_input(img, ctx.gpu.as_ref())
-    }
-}
 
 /// Extremely lightweight parser to extract @workgroup_size(x[,...]) from WGSL.
 pub(crate) fn infer_workgroup_size(src: &str) -> Option<[u32; 3]> {
