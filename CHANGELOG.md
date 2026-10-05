@@ -50,25 +50,30 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `GpuBackend::{dmabuf_import_support, import_dmabuf}` with typed
   `ExternalImportSupport`/`ExternalImportError`, and `GpuFormat::{Rg8Unorm, Bgra8Unorm, Nv12}`.
   Explicit sync: `with_acquire_fence`/`with_acquire_timeout`/`with_implicit_fence` acquire fences
-  are waited for before GPU access, and `export_dmabuf_fence` exports implicit fences.
-  `ExternalImportSupport::Supported { acquire_fence }` / `acquire_fence_wait()` report the default
-  `AcquireFenceWait`: `Timeline` on devices with timeline semaphores (the GPU waits on a timeline
-  value that one watcher thread per device host-signals when the fence signals or
-  `acquire_timeout` passes, so a stuck producer stalls the GPU for at most the timeout, and
-  `GpuImageHandle::acquire_status()` reports `AcquireStatus::{Ready, Pending, TimedOut}`; on Mesa
-  the next submission to the device blocks until the wait is released), `SyncFd` with
+  are waited for before GPU access, and `export_dmabuf_fence` exports implicit fences. The wait is
+  an `AcquireFenceMode` (`Auto`, `SyncFd`, `Timeline`, `Cpu`): a backend default
+  (`GpuOptions::acquire_fence_mode`, `WgpuBackend::set_acquire_fence_mode`; `Auto`) that
+  `ExternalFrameDescriptor::with_acquire_fence_mode` overrides per import, resolved against the
+  device's `AcquireFenceWaits` to an `AcquireFenceWait`: `SyncFd` with
   `VK_KHR_external_semaphore_fd` (the `sync_file` becomes a binary semaphore via wgpu-hal 30
-  `Queue::add_wait_semaphore`; no timeout; also used for `acquire_timeout = Duration::MAX`), else
-  `Cpu` (the import polls the fence, `FenceTimeout` after `DEFAULT_ACQUIRE_TIMEOUT`; also
-  `gpu-mock`). Every import is acquired from the foreign (or external) queue family,
+  `Queue::add_wait_semaphore`; no thread blocks on kernel drivers, no timeout; `Auto`'s first
+  choice), `Timeline` on devices with timeline semaphores (opt-in hard timeout: the GPU waits on a
+  timeline value that one watcher thread per device host-signals when the fence signals or
+  `acquire_timeout` passes, and `GpuImageHandle::acquire_status()` reports
+  `AcquireStatus::{Ready, Pending, TimedOut}`; on Mesa the next submission to the device blocks
+  until the wait is released), or `Cpu` (the import polls the fence, `FenceTimeout` after
+  `DEFAULT_ACQUIRE_TIMEOUT`; also `gpu-mock`). Explicit modes fall back to `Cpu` on devices
+  without their wait. `ExternalImportSupport::Supported { acquire_fence, acquire_fence_mode,
+  fence_waits }` reports the default mode, the wait it resolves to and every wait the device has.
+  Every import is acquired from the foreign (or external) queue family,
   `GENERAL -> SHADER_READ_ONLY_OPTIMAL`, and registered with wgpu in that state instead of being
   transitioned from `UNDEFINED`; dropping the last handle releases it back to the foreign family
   before the keepalive goes. Tiled and compressed DRM modifiers take one plane per memory plane
   (aux planes after the format planes, up to `MAX_MEMORY_PLANES`); on RADV every renderable
   `R8`/`XRGB8888` modifier including DCC (2 and 3 memory planes) round-trips between devices. NV12
   imports as one texture when the device supports it, otherwise `UnsupportedFormat` for per-plane
-  fallback (`texture_plane_views`, `format_planes`). `gpu_probe` prints the fence paths and the
-  modifiers per format.
+  fallback (`texture_plane_views`, `format_planes`). `gpu_probe` prints the fence mode, the wait
+  it resolves to, the available waits and the modifiers per format.
 - Facade presets `executor-pool`, `metrics`, `engine-full` (`engine` + `executor-pool` +
   `metrics`) and `embedded` (`engine` + `plugins` + `threads`).
 - Keys for types owned by other crates: `inputs(port(name = "...", type_key = "..."))` /
@@ -263,6 +268,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `dmabuf_import_support()`, `TEXTURE_FORMAT_NV12`, LINEAR NV12 modifier support and whether it
   needs `DISJOINT`, the kernel version, `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` and dma-heaps; see
   "Validating on a Raspberry Pi 5" in `docs/testing.md`.
+- `scripts/ci.sh vvl` (not part of `all`) runs those tests and the probe under
+  `VK_LAYER_KHRONOS_validation` with synchronization validation (an installed layer or
+  `VK_LAYER_PATH`) and fails on unexpected messages; see "Vulkan Validation Layers" in
+  `docs/testing.md`.
 - Cross-tick joins: a node's fire mode (`NodeFire`, node metadata `daedalus.node.fire` /
   `NODE_FIRE_META_KEY`) is `any` (default, per-tick readiness) or `all`: wait, popping nothing,
   until every connected required input holds a value, then take one value per edge. Set it with
@@ -274,6 +283,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `docs/node-authoring.md`.
 
 ### Fixed
+
+- `daedalus-gpu` crashed (SIGSEGV in the Vulkan loader) when threads created wgpu backends
+  concurrently with the NVIDIA ICD installed next to Mesa: `vkEnumerateInstanceExtensionProperties`
+  called a null ICD entry point while another thread negotiated with `libGLX_nvidia.so`. Instance
+  creation, adapter enumeration and device requests (`WgpuBackend`, the fallback shader context)
+  now take a process-wide lock. Instances are also created without wgpu's `DEBUG` flag unless
+  `WGPU_DEBUG=1`: the loader's `vkSetDebugUtilsObjectNameEXT` terminator, which wgpu calls on every
+  submission with that flag, walks instance and device lists that other threads' instance and
+  device creation change, and crashed in `loader_get_icd_and_device`.
 
 - Declared host port types were lost when a graph was embedded: the planner's embedded-graph
   expansion and `GraphBuilder::nest` dropped the inner host bridge, so an inner `input_typed`
