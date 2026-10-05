@@ -43,14 +43,15 @@
 //!
 //! # Synchronization
 //!
-//! - **Acquire fence**: an already signaled fence is skipped. A pending one becomes a GPU-side wait
-//!   where possible, see `acquire.rs` and `watcher.rs`:
+//! - **Acquire fence**: an already signaled fence is skipped. A pending one is waited for as the
+//!   import's [`AcquireFenceMode`](crate::AcquireFenceMode) (the descriptor's, else the backend
+//!   default, `Auto`) resolves on this device, see `acquire.rs` and `watcher.rs`:
+//!   [`SyncFd`](crate::AcquireFenceWait::SyncFd) (binary `SYNC_FD` semaphore, no timeout; `Auto`'s
+//!   first choice, with `VK_KHR_external_semaphore_fd`),
 //!   [`Timeline`](crate::AcquireFenceWait::Timeline) (timeline semaphore host-signaled by a
-//!   watcher thread on fence or timeout) on devices with timeline semaphores, else
-//!   [`SyncFd`](crate::AcquireFenceWait::SyncFd) (binary `SYNC_FD` semaphore, no timeout) with
-//!   `VK_KHR_external_semaphore_fd`, else [`Cpu`](crate::AcquireFenceWait::Cpu): the import polls
-//!   the fence, bounded by the descriptor's `acquire_timeout`, before any Vulkan object exists. An
-//!   unbounded `acquire_timeout` (`Duration::MAX`) prefers `SyncFd` over `Timeline`.
+//!   watcher thread on fence or timeout; Vulkan 1.2), or [`Cpu`](crate::AcquireFenceWait::Cpu): the
+//!   import polls the fence, bounded by the descriptor's `acquire_timeout`, before any Vulkan
+//!   object exists.
 //! - **Queue family transfers.** Every import submits a `FOREIGN` (or `EXTERNAL`) -> wgpu family
 //!   ownership acquire, `GENERAL -> SHADER_READ_ONLY_OPTIMAL`, and registers the texture with wgpu
 //!   in that state (`TextureUses::RESOURCE`, wgpu 30's `create_texture_from_hal` initial state), so
@@ -185,10 +186,7 @@ pub(in crate::wgpu_backend) fn probe(
     match probe_support(&hal_dev) {
         Ok(()) => {
             let acquire = Acquire::new(device, queue, &hal_dev);
-            let support = ExternalImportSupport::Supported {
-                acquire_fence: acquire.fence_wait(),
-            };
-            (support, Some(acquire))
+            (acquire.support(), Some(acquire))
         }
         Err(reason) => (ExternalImportSupport::unsupported(reason), None),
     }
@@ -274,7 +272,7 @@ pub(in crate::wgpu_backend) fn import(
     // possible, else the import blocks here (before any Vulkan object exists).
     let gpu_fence = match desc.acquire_fence.take() {
         Some(fence) if !sync_file_signaled(fence.as_fd()) => {
-            match acquire.gpu_fence(fence, desc.acquire_timeout) {
+            match acquire.gpu_fence(fence, desc.acquire_timeout, desc.acquire_fence_mode) {
                 Ok(gpu) => Some(gpu),
                 Err(fence) => {
                     desc.acquire_fence = Some(fence);
@@ -375,23 +373,14 @@ pub(in crate::wgpu_backend) fn import(
     Ok(handle)
 }
 
-#[cfg(test)]
-impl WgpuBackend {
-    /// Switch an import-capable backend to another acquire-fence wait mode; `false` when the
-    /// device does not support it.
-    pub(in crate::wgpu_backend) fn set_fence_wait(
-        &mut self,
-        mode: crate::AcquireFenceWait,
-    ) -> bool {
-        let Some(acquire) = &mut self.dmabuf else {
-            return false;
-        };
-        let available = acquire.set_fence_wait(mode);
-        self.dmabuf_support = ExternalImportSupport::Supported {
-            acquire_fence: acquire.fence_wait(),
-        };
-        available
-    }
+/// Set the default acquire-fence mode; the new import support, `None` without import support.
+pub(in crate::wgpu_backend) fn set_fence_mode(
+    state: &mut ImportState,
+    mode: crate::AcquireFenceMode,
+) -> Option<ExternalImportSupport> {
+    let acquire = state.as_mut()?;
+    acquire.set_mode(mode);
+    Some(acquire.support())
 }
 
 /// The dmabufs backing the planes with their sizes: one when every plane lives in the same dmabuf

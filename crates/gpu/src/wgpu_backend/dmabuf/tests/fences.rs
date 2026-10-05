@@ -7,20 +7,20 @@ use ash::{khr, vk};
 use wgpu::hal::api::Vulkan;
 
 use super::support::{
-    DmaBuf, consumer_backend, device_poll, exclusive, import_backend, note, pixel, skip, validated,
-    wait_until,
+    DmaBuf, consumer_backend, device_poll, exclusive, import_backend, note, pixel, skip,
+    use_fence_wait, validated, wait_until,
 };
 use crate::external::sync_file_signaled;
 use crate::{
-    AcquireFenceWait, AcquireStatus, DmabufAccess, DrmFourcc, ExternalFrameDescriptor,
-    ExternalImportError, ExternalPlane, GpuBackend, GpuImageHandle, GpuUsage, WgpuBackend,
-    export_dmabuf_fence,
+    AcquireFenceMode, AcquireFenceWait, AcquireStatus, DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess,
+    DrmFourcc, ExternalFrameDescriptor, ExternalImportError, ExternalPlane, GpuBackend,
+    GpuImageHandle, GpuUsage, WgpuBackend, export_dmabuf_fence,
 };
 
 const SYNC_FD: vk::ExternalSemaphoreHandleTypeFlags = vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD;
-const MODES: [AcquireFenceWait; 3] = [
-    AcquireFenceWait::Timeline,
+const WAITS: [AcquireFenceWait; 3] = [
     AcquireFenceWait::SyncFd,
+    AcquireFenceWait::Timeline,
     AcquireFenceWait::Cpu,
 ];
 
@@ -66,7 +66,7 @@ fn assert_pattern(backend: &WgpuBackend, handle: &GpuImageHandle, context: &str)
 
 /// A never-signaling stand-in for a fence: the read end of a pipe nobody writes to. The watcher
 /// and the CPU wait only `poll` the fd, so it behaves like a pending `sync_file`; the `SyncFd`
-/// path cannot import it and waits on the CPU.
+/// wait cannot import it, which falls back as `AcquireFenceWaits::non_sync_file_fallback` says.
 fn pipe_fence() -> (OwnedFd, std::io::PipeWriter) {
     let (reader, writer) = std::io::pipe().unwrap();
     (reader.into(), writer)
@@ -81,20 +81,100 @@ fn dmabuf_import_waits_for_fences() {
         return;
     };
     let frame = Frame::new();
-    for mode in MODES {
-        if !backend.set_fence_wait(mode) {
-            skip(format!("{mode:?} fence waits unsupported"));
+    for wait in WAITS {
+        if !use_fence_wait(&mut backend, wait) {
+            skip(format!("{wait:?} fence waits unsupported"));
             continue;
         }
-        assert_eq!(
-            backend.dmabuf_import_support().acquire_fence_wait(),
-            Some(mode)
-        );
-        validated(&backend, || check_fences(&backend, &frame, mode));
+        validated(&backend, || check_fences(&backend, &frame, wait));
     }
 }
 
-fn check_fences(backend: &WgpuBackend, frame: &Frame, mode: AcquireFenceWait) {
+/// The default mode (`Auto`: `SyncFd` first), the per-import override, and where a fence that is
+/// not a `sync_file` goes.
+#[test]
+#[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
+fn dmabuf_fence_mode_selection() {
+    let _gpu = exclusive();
+    let Some(mut backend) = import_backend() else {
+        return;
+    };
+    let support = backend.dmabuf_import_support();
+    let waits = support.fence_waits().unwrap();
+    assert_eq!(support.acquire_fence_mode(), Some(AcquireFenceMode::Auto));
+    assert_eq!(support.acquire_fence_wait(), waits.iter().next());
+    note(format!("fence waits: {waits:?}, default {support:?}"));
+    let frame = Frame::new();
+    let desc = || frame.desc(DrmFourcc::XRGB8888);
+    let timeout = Duration::from_millis(30);
+
+    // A never-signaling pipe is not a sync_file: `Auto` hands it to the timeline watcher (the GPU
+    // goes ahead after the timeout), an explicit `SyncFd` or `Cpu` waits on the CPU.
+    for mode in AcquireFenceMode::ALL {
+        let (never, _writer) = pipe_fence();
+        let start = Instant::now();
+        let result = backend.import_dmabuf(
+            desc()
+                .with_acquire_fence(never)
+                .with_acquire_timeout(timeout)
+                .with_acquire_fence_mode(mode),
+        );
+        let elapsed = start.elapsed();
+        if waits.non_sync_file_fallback(mode) == AcquireFenceWait::Timeline {
+            let handle = result.expect("timeline wait for a non-sync_file fence");
+            assert!(
+                elapsed < timeout,
+                "{mode:?}: the import blocked for {elapsed:?}"
+            );
+            wait_until(Duration::from_secs(2), "timeout", || {
+                handle.acquire_status() != AcquireStatus::Pending
+            });
+            assert_eq!(handle.acquire_status(), AcquireStatus::TimedOut, "{mode:?}");
+        } else {
+            let err = result.unwrap_err();
+            assert!(elapsed >= timeout, "{mode:?}: resolved after {elapsed:?}");
+            assert!(
+                matches!(err, ExternalImportError::FenceTimeout { .. }),
+                "{mode:?}: {err}"
+            );
+        }
+        device_poll(&backend);
+    }
+
+    // The per-import override wins over the backend default (and vice versa).
+    if waits.timeline {
+        backend.set_acquire_fence_mode(AcquireFenceMode::Cpu);
+        let (never, _writer) = pipe_fence();
+        let handle = backend
+            .import_dmabuf(
+                desc()
+                    .with_acquire_fence(never)
+                    .with_acquire_timeout(timeout)
+                    .with_acquire_fence_mode(AcquireFenceMode::Timeline),
+            )
+            .expect("timeline override on a CPU-wait backend");
+        assert_eq!(handle.acquire_status(), AcquireStatus::Pending);
+        drop(handle);
+        device_poll(&backend);
+    }
+    backend.set_acquire_fence_mode(AcquireFenceMode::Timeline);
+    let (never, _writer) = pipe_fence();
+    let err = backend
+        .import_dmabuf(
+            desc()
+                .with_acquire_fence(never)
+                .with_acquire_timeout(timeout)
+                .with_acquire_fence_mode(AcquireFenceMode::Cpu),
+        )
+        .unwrap_err();
+    assert!(matches!(err, ExternalImportError::FenceTimeout { .. }));
+    assert_eq!(
+        backend.dmabuf_import_support().acquire_fence_mode(),
+        Some(AcquireFenceMode::Timeline)
+    );
+}
+
+fn check_fences(backend: &WgpuBackend, frame: &Frame, wait: AcquireFenceWait) {
     let desc = || frame.desc(DrmFourcc::XRGB8888);
     // Explicit fence exported from the dmabuf's implicit fences (DMA_BUF_IOCTL_EXPORT_SYNC_FILE);
     // it may still be pending on the GPU work of the previous mode's imports.
@@ -129,7 +209,7 @@ fn check_fences(backend: &WgpuBackend, frame: &Frame, mode: AcquireFenceWait) {
             .with_acquire_timeout(timeout),
     );
     let elapsed = start.elapsed();
-    if mode == AcquireFenceWait::Timeline {
+    if wait == AcquireFenceWait::Timeline {
         let handle = result.expect("timeline import with a stuck fence");
         assert!(elapsed < timeout, "the import blocked for {elapsed:?}");
         assert_eq!(handle.acquire_status(), AcquireStatus::Pending);
@@ -159,10 +239,10 @@ fn check_fences(backend: &WgpuBackend, frame: &Frame, mode: AcquireFenceWait) {
 #[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
 fn dmabuf_timeline_watcher() {
     let _gpu = exclusive();
-    let Some(backend) = import_backend() else {
+    let Some(mut backend) = import_backend() else {
         return;
     };
-    if backend.dmabuf_import_support().acquire_fence_wait() != Some(AcquireFenceWait::Timeline) {
+    if !use_fence_wait(&mut backend, AcquireFenceWait::Timeline) {
         return skip("no timeline fence waits".into());
     }
     let frame = Frame::new();
@@ -280,8 +360,8 @@ fn dmabuf_import_gpu_waits_for_late_fence() {
     let (mut consumer, independent) = consumer_backend();
     let support = consumer.dmabuf_import_support();
     if support
-        .acquire_fence_wait()
-        .is_none_or(|w| w == AcquireFenceWait::Cpu)
+        .fence_waits()
+        .is_none_or(|waits| !waits.sync_fd && !waits.timeline)
     {
         return skip(format!("no GPU-side fence wait: {support:?}"));
     }
@@ -297,8 +377,8 @@ fn dmabuf_import_gpu_waits_for_late_fence() {
     };
     let writer = LateWriter::new(&producer, &target, Duration::from_millis(300));
 
-    for mode in [AcquireFenceWait::Timeline, AcquireFenceWait::SyncFd] {
-        if !consumer.set_fence_wait(mode) {
+    for mode in [AcquireFenceWait::SyncFd, AcquireFenceWait::Timeline] {
+        if !use_fence_wait(&mut consumer, mode) {
             skip(format!("consumer lacks {mode:?} fence waits"));
             continue;
         }
@@ -347,20 +427,30 @@ fn dmabuf_import_gpu_waits_for_late_fence() {
         assert_eq!(Arc::strong_count(&guard), 1, "keepalive released once idle");
     }
 
-    // An unbounded timeout takes the `SyncFd` wait in timeline mode. On a kernel driver (not
-    // lavapipe, whose queue thread holds back the next submission either way) the imported
-    // sync_file is a kernel fence the next submission does not wait for on the CPU.
+    // The default (`Auto` with a bounded timeout) and `Timeline` with an unbounded timeout take the
+    // `SyncFd` wait. On a kernel driver (not lavapipe, whose queue thread holds back the next
+    // submission either way) the imported sync_file is a kernel fence the next submission does not
+    // wait for on the CPU.
     let mut hardware = WgpuBackend::new().expect("wgpu backend");
-    if hardware.set_fence_wait(AcquireFenceWait::SyncFd)
-        && hardware.set_fence_wait(AcquireFenceWait::Timeline)
-    {
+    let both = hardware
+        .dmabuf_import_support()
+        .fence_waits()
+        .is_some_and(|waits| waits.sync_fd && waits.timeline);
+    for (mode, timeout) in [
+        (AcquireFenceMode::Auto, DEFAULT_ACQUIRE_TIMEOUT),
+        (AcquireFenceMode::Timeline, Duration::MAX),
+    ] {
+        if !both {
+            break;
+        }
+        hardware.set_acquire_fence_mode(mode);
         let fence = writer.write();
         let probe = fence.try_clone().unwrap();
         let handle = hardware
             .import_dmabuf(
                 desc()
                     .with_acquire_fence(fence)
-                    .with_acquire_timeout(Duration::MAX),
+                    .with_acquire_timeout(timeout),
             )
             .expect("import");
         let start = Instant::now();
@@ -368,14 +458,18 @@ fn dmabuf_import_gpu_waits_for_late_fence() {
         let blocked = start.elapsed();
         assert!(
             !sync_file_signaled(probe.as_fd()),
-            "the next submission waited for the producer ({blocked:?})"
+            "{mode:?}: the next submission waited for the producer ({blocked:?})"
         );
         drop(next);
-        assert_pattern(&hardware, &handle, "unbounded timeout");
+        assert_pattern(
+            &hardware,
+            &handle,
+            &format!("{mode:?}, timeout {timeout:?}"),
+        );
     }
 
     // A real sync_file that misses a short timeout: the consumer goes ahead without the producer.
-    if consumer.set_fence_wait(AcquireFenceWait::Timeline) {
+    if use_fence_wait(&mut consumer, AcquireFenceWait::Timeline) {
         let fence = writer.write();
         let probe = fence.try_clone().unwrap();
         let timeout = Duration::from_millis(50);
@@ -401,7 +495,7 @@ fn dmabuf_import_gpu_waits_for_late_fence() {
         device_poll(&producer);
     }
 
-    consumer.set_fence_wait(AcquireFenceWait::Cpu);
+    use_fence_wait(&mut consumer, AcquireFenceWait::Cpu);
     let fence = writer.write();
     let probe = fence.try_clone().unwrap();
     let handle = consumer

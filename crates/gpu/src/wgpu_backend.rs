@@ -165,6 +165,16 @@ impl WgpuBackend {
         })
     }
 
+    /// Set the default [`AcquireFenceMode`](crate::AcquireFenceMode) of dmabuf imports
+    /// (`Auto` unless changed; `select_backend` applies `GpuOptions::acquire_fence_mode`).
+    /// [`dmabuf_import_support`](GpuBackend::dmabuf_import_support) reports the wait it resolves
+    /// to. Has no effect on a backend that cannot import.
+    pub fn set_acquire_fence_mode(&mut self, mode: crate::AcquireFenceMode) {
+        if let Some(support) = dmabuf::set_fence_mode(&mut self.dmabuf, mode) {
+            self.dmabuf_support = support;
+        }
+    }
+
     pub(crate) fn device_queue(&self) -> (&wgpu::Device, &wgpu::Queue) {
         (&self.device, &self.queue)
     }

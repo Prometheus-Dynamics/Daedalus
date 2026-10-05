@@ -15,9 +15,10 @@
 //!   encoder): wgpu records no barrier for it, but tracks the texture in this submission, so a
 //!   texture dropped before its acquire executed is not destroyed (nor the dmabuf released) early.
 //! - The fence wait is staged with wgpu-hal 30's `vulkan::Queue::add_wait_semaphore`
-//!   (`ALL_COMMANDS`): a timeline value the watcher (`watcher.rs`) signals
-//!   ([`AcquireFenceWait::Timeline`]), or the `sync_file` imported (temporarily) into a pooled
-//!   binary semaphore ([`AcquireFenceWait::SyncFd`]).
+//!   (`ALL_COMMANDS`): the `sync_file` imported (temporarily) into a pooled binary semaphore
+//!   ([`AcquireFenceWait::SyncFd`]), or a timeline value the watcher (`watcher.rs`) signals
+//!   ([`AcquireFenceWait::Timeline`]). Which one is the import's [`AcquireFenceMode`] (the
+//!   descriptor's, else the backend default) resolved against the device's [`AcquireFenceWaits`].
 //!
 //! When the last handle is dropped, [`ImportDropToken`] submits the mirror image: wgpu transitions
 //! the texture back to `RESOURCE`, then a raw barrier releases it `SHADER_READ_ONLY_OPTIMAL ->
@@ -46,7 +47,10 @@ use wgpu::hal::vulkan as hal_vk;
 use super::watcher::Watcher;
 use crate::handles::GpuDropToken;
 use crate::wgpu_backend::resources::ResourceDropToken;
-use crate::{AcquireFenceWait, AcquireStatus, ExternalImportError};
+use crate::{
+    AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, ExternalImportError,
+    ExternalImportSupport,
+};
 
 /// Device extensions enabled when available: `SYNC_FD` fence waits and foreign queue ownership.
 pub(super) const OPTIONAL_EXTENSIONS: [&CStr; 2] = [
@@ -60,7 +64,9 @@ const ALL_COMMANDS: vk::PipelineStageFlags = vk::PipelineStageFlags::ALL_COMMAND
 /// Per-device state for handing imported images to wgpu.
 pub(in crate::wgpu_backend) struct Acquire {
     handoff: Arc<Handoff>,
-    mode: AcquireFenceWait,
+    /// The backend's default mode.
+    mode: AcquireFenceMode,
+    waits: AcquireFenceWaits,
     /// Present when the device has timeline semaphores.
     timeline: Option<Watcher>,
     /// Present when the device imports `SYNC_FD` semaphores.
@@ -101,13 +107,6 @@ impl Acquire {
             })
         });
         let timeline = Watcher::new(hal_dev, device);
-        let mode = if timeline.is_some() {
-            AcquireFenceWait::Timeline
-        } else if semaphores.is_some() {
-            AcquireFenceWait::SyncFd
-        } else {
-            AcquireFenceWait::Cpu
-        };
         Self {
             handoff: Arc::new(Handoff {
                 device: device.clone(),
@@ -116,62 +115,55 @@ impl Acquire {
                 foreign,
                 family: hal_dev.queue_family_index(),
             }),
-            mode,
+            mode: AcquireFenceMode::default(),
+            waits: AcquireFenceWaits {
+                sync_fd: semaphores.is_some(),
+                timeline: timeline.is_some(),
+            },
             timeline,
             semaphores,
             cells: Mutex::new(Vec::new()),
         }
     }
 
-    pub(in crate::wgpu_backend) fn fence_wait(&self) -> AcquireFenceWait {
-        self.mode
+    /// Import support with the current default mode.
+    pub(in crate::wgpu_backend) fn support(&self) -> ExternalImportSupport {
+        ExternalImportSupport::supported(self.mode, self.waits)
     }
 
-    /// Switch to another wait mode the device supports (tests exercise every path on one device).
-    #[cfg(test)]
-    pub(in crate::wgpu_backend) fn set_fence_wait(&mut self, mode: AcquireFenceWait) -> bool {
-        let available = match mode {
-            AcquireFenceWait::Timeline => self.timeline.is_some(),
-            AcquireFenceWait::SyncFd => self.semaphores.is_some(),
-            AcquireFenceWait::Cpu => true,
-        };
-        if available {
-            self.mode = mode;
-        }
-        available
+    pub(in crate::wgpu_backend) fn set_mode(&mut self, mode: AcquireFenceMode) {
+        self.mode = mode;
     }
 
-    /// Turn a pending fence into a GPU-side wait.
+    /// Turn a pending fence into a GPU-side wait under `mode` (`None`: the backend default).
     ///
-    /// An unbounded `timeout` (`Duration::MAX`) prefers the `SyncFd` wait where the device has one:
-    /// no deadline to enforce, and on kernel drivers a wait on the fence itself blocks no thread.
-    /// Returns the fd back when the GPU cannot wait for it (CPU-wait mode, a `SyncFd` device given
-    /// an fd that is not a `sync_file`, or no watcher thread) so the caller waits on the CPU.
+    /// Returns the fd back when the GPU does not wait for it (the mode resolved to the CPU wait, an
+    /// fd that is not a `sync_file` with no timeline fallback, or no watcher thread) so the caller
+    /// waits on the CPU.
     pub(super) fn gpu_fence(
         &self,
         mut fence: OwnedFd,
         timeout: Duration,
+        mode: Option<AcquireFenceMode>,
     ) -> Result<GpuFence, OwnedFd> {
-        if self.mode == AcquireFenceWait::Timeline
-            && timeout == Duration::MAX
+        let mode = mode.unwrap_or(self.mode);
+        let mut wait = self.waits.resolve(mode, timeout);
+        if wait == AcquireFenceWait::SyncFd
             && let Some(pool) = &self.semaphores
         {
             match pool.import(fence) {
                 Ok(semaphore) => return Ok(GpuFence::SyncFd(semaphore)),
-                // Not a sync_file: the watcher can still wait for it (without a deadline).
-                Err(returned) => fence = returned,
+                Err(returned) => {
+                    fence = returned;
+                    wait = self.waits.non_sync_file_fallback(mode);
+                }
             }
         }
-        match self.mode {
-            AcquireFenceWait::Timeline => match self.timeline.as_ref().map(Watcher::start) {
-                Some(Ok(())) => Ok(GpuFence::Timeline(fence, timeout)),
-                _ => Err(fence),
-            },
-            AcquireFenceWait::SyncFd => match &self.semaphores {
-                Some(pool) => pool.import(fence).map(GpuFence::SyncFd),
-                None => Err(fence),
-            },
-            AcquireFenceWait::Cpu => Err(fence),
+        match (wait, &self.timeline) {
+            (AcquireFenceWait::Timeline, Some(watcher)) if watcher.start().is_ok() => {
+                Ok(GpuFence::Timeline(fence, timeout))
+            }
+            _ => Err(fence),
         }
     }
 

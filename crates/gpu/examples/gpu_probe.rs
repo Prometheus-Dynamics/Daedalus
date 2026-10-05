@@ -112,9 +112,16 @@ mod linux {
         kv("driver", &info.driver);
         kv("driver_info", &info.driver_info);
         match backend.dmabuf_import_support() {
-            ExternalImportSupport::Supported { acquire_fence } => {
+            ExternalImportSupport::Supported {
+                acquire_fence,
+                acquire_fence_mode,
+                fence_waits,
+            } => {
                 kv("dmabuf_import", "supported");
+                kv("dmabuf_acquire_fence_mode", acquire_fence_mode.as_str());
                 kv("dmabuf_acquire_fence_wait", acquire_fence.as_str());
+                let waits: Vec<_> = fence_waits.iter().map(|wait| wait.as_str()).collect();
+                kv("dmabuf_acquire_fence_waits", waits.join(", "));
             }
             ExternalImportSupport::Unsupported { reason } => {
                 kv("dmabuf_import", format!("unsupported: {reason}"))

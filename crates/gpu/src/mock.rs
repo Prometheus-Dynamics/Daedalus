@@ -3,9 +3,9 @@ use parking_lot::Mutex;
 use crate::handles::{GpuBufferHandle, GpuImageHandle};
 use crate::traits::GpuBackend;
 use crate::{
-    AcquireFenceWait, ExternalImportSupport, GpuAdapterInfo, GpuBackendKind, GpuCapabilities,
-    GpuError, GpuFormat, GpuFormatFeatures, GpuImageRequest, GpuMemoryLocation, GpuOptions,
-    GpuRequest, GpuUsage,
+    AcquireFenceMode, AcquireFenceWaits, ExternalImportSupport, GpuAdapterInfo, GpuBackendKind,
+    GpuCapabilities, GpuError, GpuFormat, GpuFormatFeatures, GpuImageRequest, GpuMemoryLocation,
+    GpuOptions, GpuRequest, GpuUsage,
     buffer::{BufferPool, SimpleBufferPool, TransferStats},
 };
 #[cfg(target_os = "linux")]
@@ -248,9 +248,7 @@ impl GpuBackend for MockBackend {
         if !cfg!(target_os = "linux") {
             ExternalImportSupport::unsupported("dmabuf import requires Linux")
         } else if self.dmabuf_import {
-            ExternalImportSupport::Supported {
-                acquire_fence: AcquireFenceWait::Cpu,
-            }
+            ExternalImportSupport::supported(AcquireFenceMode::Auto, AcquireFenceWaits::CPU)
         } else {
             ExternalImportSupport::unsupported("mock backend configured without dmabuf import")
         }

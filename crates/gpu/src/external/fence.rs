@@ -5,13 +5,15 @@
 //! the import, which makes the GPU wait for it before touching the memory. Producers that only
 //! attach implicit fences to the dmabuf itself can be bridged with [`export_dmabuf_fence`].
 //!
-//! The wgpu backend makes the GPU wait for it ([`AcquireFenceWait::Timeline`] or
-//! [`AcquireFenceWait::SyncFd`]); devices without either (and the mock backend) block the import
-//! in [`wait_sync_file`] (`poll(POLLIN)` with a timeout) instead.
+//! The wgpu backend makes the GPU wait for it ([`AcquireFenceWait::SyncFd`] by default, or
+//! [`AcquireFenceWait::Timeline`]; see [`AcquireFenceMode`]); the CPU wait (devices without either,
+//! the `Cpu` mode, and the mock backend) blocks the import in [`wait_sync_file`] (`poll(POLLIN)`
+//! with a timeout) instead.
 //!
 //! [`ExternalFrameDescriptor::with_acquire_fence`]: super::ExternalFrameDescriptor::with_acquire_fence
 //! [`AcquireFenceWait::Timeline`]: super::AcquireFenceWait::Timeline
 //! [`AcquireFenceWait::SyncFd`]: super::AcquireFenceWait::SyncFd
+//! [`AcquireFenceMode`]: super::AcquireFenceMode
 
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};

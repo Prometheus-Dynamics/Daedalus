@@ -24,18 +24,22 @@
 //!
 //! If the producer may still be writing when it hands the buffer over, pass its `sync_file` with
 //! [`ExternalFrameDescriptor::with_acquire_fence`] (or [`ExternalFrameDescriptor::with_implicit_fence`]
-//! for producers that only fence the dmabuf itself). Where the fence is waited for is reported by
-//! [`ExternalImportSupport::acquire_fence_wait`]:
+//! for producers that only fence the dmabuf itself). How a pending fence is waited for is an
+//! [`AcquireFenceMode`]: a backend default ([`GpuOptions::acquire_fence_mode`](crate::GpuOptions),
+//! `WgpuBackend::set_acquire_fence_mode`) that one import can override with
+//! [`ExternalFrameDescriptor::with_acquire_fence_mode`]. The mode resolves to one of the waits the
+//! device has ([`AcquireFenceWaits`]); [`ExternalImportSupport::acquire_fence_wait`] reports the
+//! one the backend default resolves to:
 //!
-//! - [`AcquireFenceWait::Timeline`]: the GPU waits on a timeline semaphore that a watcher thread
-//!   signals once the fence signals or [`ExternalFrameDescriptor::acquire_timeout`] passes. The
-//!   import returns without waiting for its own fence;
+//! - [`AcquireFenceWait::SyncFd`] (the default where available): the fence is imported as a
+//!   binary Vulkan semaphore the GPU waits on; nothing blocks on kernel drivers, but no timeout
+//!   applies.
+//! - [`AcquireFenceWait::Timeline`] (opt in with [`AcquireFenceMode::Timeline`] for a hard
+//!   timeout): the GPU waits on a timeline semaphore that a watcher thread signals once the fence
+//!   signals or [`ExternalFrameDescriptor::acquire_timeout`] passes.
 //!   [`GpuImageHandle::acquire_status`](crate::GpuImageHandle::acquire_status) reports
 //!   [`AcquireStatus::TimedOut`] when the GPU went ahead without the producer. On Mesa drivers the
 //!   *next* submission to the device blocks until the wait is released (see the variant docs).
-//! - [`AcquireFenceWait::SyncFd`]: the fence is imported as a binary Vulkan semaphore the GPU
-//!   waits on; nothing blocks on kernel drivers, but no timeout applies. Imports with an unbounded
-//!   timeout (`Duration::MAX`) take this path whenever the device has it.
 //! - [`AcquireFenceWait::Cpu`]: the import blocks until the fence signals, bounded by
 //!   [`ExternalFrameDescriptor::acquire_timeout`].
 //!
@@ -47,6 +51,8 @@
 
 use std::fmt;
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 use crate::{GpuBackendKind, GpuError, GpuFormat};
 
@@ -126,26 +132,26 @@ impl fmt::Debug for DrmFourcc {
 /// Opaque guard kept alive until the imported GPU image is destroyed and idle.
 pub type ExternalKeepalive = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
-/// Where an import waits for the descriptor's acquire fence.
+/// Where an import waits for the descriptor's acquire fence (the wait an [`AcquireFenceMode`]
+/// resolved to).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AcquireFenceWait {
+    /// The `sync_file` is imported as a binary Vulkan semaphore the GPU waits on. On kernel drivers
+    /// nothing blocks (the kernel orders the GPU work behind the fence; lavapipe still holds back
+    /// the next submission), but no timeout applies: a fence that never signals stalls the queue.
+    /// An fd that is not a `sync_file` cannot be imported and falls back (see [`AcquireFenceMode`]).
+    SyncFd,
     /// The GPU waits on a per-device timeline semaphore that a watcher thread signals once the
     /// fence signals or the descriptor's `acquire_timeout` passes, whichever comes first, so a
     /// stuck producer delays the GPU by at most the timeout. The import does not wait for its own
     /// fence. On Mesa drivers (measured on RADV and lavapipe; v3dv shares Mesa's common submit
     /// code) a submission waiting for an unsignaled timeline value goes to a submit thread, and
-    /// because wgpu chains submissions with binary
-    /// semaphores the *next* submission to the device (another import, a dispatch, a readback)
-    /// blocks its thread until the wait is released: the CPU wait moves from the import to the
-    /// next submission, still bounded by the timeout.
+    /// because wgpu chains submissions with binary semaphores the *next* submission to the device
+    /// (another import, a dispatch, a readback) blocks its thread until the wait is released: the
+    /// CPU wait moves from the import to the next submission, still bounded by the timeout. That
+    /// chaining is also what the Khronos validation layer reports as
+    /// `VUID-vkQueueSubmit-pWaitSemaphores-03238` while a wait is pending.
     Timeline,
-    /// The `sync_file` is imported as a binary Vulkan semaphore the GPU waits on. On kernel drivers
-    /// nothing blocks (the kernel orders the GPU work behind the fence; lavapipe still holds back
-    /// the next submission), but no timeout applies: a fence that never signals stalls the queue.
-    /// Chosen on devices without timeline semaphores, and for imports with an unbounded
-    /// `acquire_timeout` (`Duration::MAX`). An fd that is not a `sync_file` falls back to the CPU
-    /// wait.
-    SyncFd,
     /// The import call blocks (`poll`) until the fence signals or the descriptor's
     /// `acquire_timeout` passes.
     Cpu,
@@ -154,8 +160,8 @@ pub enum AcquireFenceWait {
 impl AcquireFenceWait {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Timeline => "timeline",
             Self::SyncFd => "sync_fd",
+            Self::Timeline => "timeline",
             Self::Cpu => "cpu",
         }
     }
@@ -163,6 +169,111 @@ impl AcquireFenceWait {
     /// Whether the descriptor's `acquire_timeout` bounds the wait.
     pub fn has_timeout(self) -> bool {
         !matches!(self, Self::SyncFd)
+    }
+}
+
+/// How pending acquire fences are waited for: a backend default
+/// ([`GpuOptions::acquire_fence_mode`](crate::GpuOptions)) or a per-import override
+/// ([`ExternalFrameDescriptor::with_acquire_fence_mode`]).
+///
+/// An explicit mode the device does not have falls back to [`AcquireFenceWait::Cpu`], which
+/// keeps the timeout. A fence fd that is not a `sync_file` (the `SyncFd` wait cannot import it)
+/// goes to the timeline watcher in `Auto` and `Timeline` mode when the device has one, else to
+/// the CPU wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AcquireFenceMode {
+    /// [`AcquireFenceWait::SyncFd`], else [`AcquireFenceWait::Timeline`], else
+    /// [`AcquireFenceWait::Cpu`]: no thread blocks where the device can import `sync_file`s, at
+    /// the price of no timeout.
+    #[default]
+    Auto,
+    /// [`AcquireFenceWait::SyncFd`] or the CPU wait.
+    SyncFd,
+    /// [`AcquireFenceWait::Timeline`] or the CPU wait: the `acquire_timeout` is always enforced.
+    /// An unbounded timeout (`Duration::MAX`) has nothing to enforce and takes the `SyncFd` wait
+    /// where the device has it.
+    Timeline,
+    /// Always [`AcquireFenceWait::Cpu`].
+    Cpu,
+}
+
+impl AcquireFenceMode {
+    pub const ALL: [Self; 4] = [Self::Auto, Self::SyncFd, Self::Timeline, Self::Cpu];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::SyncFd => "sync_fd",
+            Self::Timeline => "timeline",
+            Self::Cpu => "cpu",
+        }
+    }
+}
+
+/// The GPU-side acquire-fence waits a device has; [`AcquireFenceWait::Cpu`] is always available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct AcquireFenceWaits {
+    /// `VK_KHR_external_semaphore_fd` with importable `SYNC_FD` semaphores.
+    pub sync_fd: bool,
+    /// Vulkan 1.2 timeline semaphores.
+    pub timeline: bool,
+}
+
+impl AcquireFenceWaits {
+    /// Only the CPU wait (mock backend, devices without GPU-side waits).
+    pub const CPU: Self = Self {
+        sync_fd: false,
+        timeline: false,
+    };
+
+    pub fn contains(self, wait: AcquireFenceWait) -> bool {
+        match wait {
+            AcquireFenceWait::SyncFd => self.sync_fd,
+            AcquireFenceWait::Timeline => self.timeline,
+            AcquireFenceWait::Cpu => true,
+        }
+    }
+
+    /// The available waits, in [`AcquireFenceMode::Auto`] preference order.
+    pub fn iter(self) -> impl Iterator<Item = AcquireFenceWait> {
+        [
+            AcquireFenceWait::SyncFd,
+            AcquireFenceWait::Timeline,
+            AcquireFenceWait::Cpu,
+        ]
+        .into_iter()
+        .filter(move |&wait| self.contains(wait))
+    }
+
+    /// The wait `mode` resolves to on this device for a fence with `timeout`.
+    pub fn resolve(self, mode: AcquireFenceMode, timeout: Duration) -> AcquireFenceWait {
+        let or_cpu = |wait| {
+            if self.contains(wait) {
+                wait
+            } else {
+                AcquireFenceWait::Cpu
+            }
+        };
+        match mode {
+            AcquireFenceMode::Auto => self.iter().next().unwrap_or(AcquireFenceWait::Cpu),
+            AcquireFenceMode::SyncFd => or_cpu(AcquireFenceWait::SyncFd),
+            AcquireFenceMode::Timeline if timeout == Duration::MAX && self.sync_fd => {
+                AcquireFenceWait::SyncFd
+            }
+            AcquireFenceMode::Timeline => or_cpu(AcquireFenceWait::Timeline),
+            AcquireFenceMode::Cpu => AcquireFenceWait::Cpu,
+        }
+    }
+
+    /// Where a fence goes under `mode` when it resolved to `SyncFd` but is not a `sync_file`.
+    pub fn non_sync_file_fallback(self, mode: AcquireFenceMode) -> AcquireFenceWait {
+        match mode {
+            AcquireFenceMode::Auto | AcquireFenceMode::Timeline if self.timeline => {
+                AcquireFenceWait::Timeline
+            }
+            _ => AcquireFenceWait::Cpu,
+        }
     }
 }
 
@@ -183,11 +294,29 @@ pub enum AcquireStatus {
 /// Whether a backend can import dmabuf frames (and how it waits for acquire fences), and why not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExternalImportSupport {
-    Supported { acquire_fence: AcquireFenceWait },
-    Unsupported { reason: String },
+    Supported {
+        /// The wait the backend's default mode resolves to (for a bounded timeout).
+        acquire_fence: AcquireFenceWait,
+        /// The backend's default mode; imports may override it.
+        acquire_fence_mode: AcquireFenceMode,
+        /// Every wait the device has.
+        fence_waits: AcquireFenceWaits,
+    },
+    Unsupported {
+        reason: String,
+    },
 }
 
 impl ExternalImportSupport {
+    /// Import is supported, with `mode` as the default on a device with `waits`.
+    pub fn supported(mode: AcquireFenceMode, waits: AcquireFenceWaits) -> Self {
+        Self::Supported {
+            acquire_fence: waits.resolve(mode, Duration::from_secs(1)),
+            acquire_fence_mode: mode,
+            fence_waits: waits,
+        }
+    }
+
     pub fn unsupported(reason: impl Into<String>) -> Self {
         Self::Unsupported {
             reason: reason.into(),
@@ -206,10 +335,28 @@ impl ExternalImportSupport {
         }
     }
 
-    /// Where acquire fences are waited for, or `None` when import is unsupported.
+    /// Where acquire fences are waited for by default, or `None` when import is unsupported.
     pub fn acquire_fence_wait(&self) -> Option<AcquireFenceWait> {
         match self {
-            Self::Supported { acquire_fence } => Some(*acquire_fence),
+            Self::Supported { acquire_fence, .. } => Some(*acquire_fence),
+            Self::Unsupported { .. } => None,
+        }
+    }
+
+    /// The backend's default fence mode, or `None` when import is unsupported.
+    pub fn acquire_fence_mode(&self) -> Option<AcquireFenceMode> {
+        match self {
+            Self::Supported {
+                acquire_fence_mode, ..
+            } => Some(*acquire_fence_mode),
+            Self::Unsupported { .. } => None,
+        }
+    }
+
+    /// The waits the device has, or `None` when import is unsupported.
+    pub fn fence_waits(&self) -> Option<AcquireFenceWaits> {
+        match self {
+            Self::Supported { fence_waits, .. } => Some(*fence_waits),
             Self::Unsupported { .. } => None,
         }
     }

@@ -605,11 +605,13 @@ impl Engine {
                 preferred_backend: Some(GpuBackendKind::Mock),
                 adapter_label: None,
                 allow_software: true,
+                ..Default::default()
             },
             GpuBackend::Device => GpuOptions {
                 preferred_backend: Some(GpuBackendKind::Wgpu),
                 adapter_label: None,
                 allow_software: false,
+                ..Default::default()
             },
         };
         let handle = Arc::new(select_backend(&opts)?);
