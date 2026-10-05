@@ -22,6 +22,7 @@ default = ["config-env", "executor-pool", "metrics", "threads"]
 # Host OS facilities: the runtime's `std` (lock backend, hash maps), `EngineConfig::from_env`.
 # Without it the crate is `no_std` + `alloc` (see "Portability" in docs/development.md).
 std = [
+    "tracing",
     "daedalus-runtime/std",
     "daedalus-core/std",
     "daedalus-data/std",
@@ -31,8 +32,10 @@ std = [
     "serde?/std",
     "serde_json?/std",
     "thiserror/std",
-    "tracing/std",
+    "tracing?/std",
 ]
+# `tracing` spans and events (implied by `std`; see `daedalus-runtime`'s `tracing` feature).
+tracing = ["dep:tracing", "daedalus-runtime/tracing"]
 # Worker threads for `RuntimeMode::Parallel`/`Adaptive`, stream workers and blocking waits
 # (`HostGraph::drive_blocking`, ...). Without it those modes run serially.
 threads = ["std", "daedalus-runtime/threads"]
@@ -58,7 +61,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
 spin = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 # Targets without 64-bit atomics (`thumbv7em`, ...): `portable-atomic`'s `AtomicU64` (`portable`).
 [target.'cfg(not(target_has_atomic = "64"))'.dependencies]

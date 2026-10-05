@@ -46,6 +46,7 @@ host-only-features = [
     "engine-full",
     "embedded",
     "threads",
+    "tracing",
 ]
 
 [features]
@@ -101,6 +102,9 @@ executor-pool = ["threads", "daedalus-runtime/executor-pool", "daedalus-engine?/
 # Collect executor telemetry (`MetricsLevel` other than `Off`). Without it the telemetry APIs
 # still compile but record nothing.
 metrics = ["daedalus-runtime/metrics", "daedalus-engine?/metrics"]
+# Runtime and engine `tracing` spans and events. Implied by `threads` (through `std`); enable it
+# explicitly to keep them in builds without `threads` (wasm).
+tracing = ["daedalus-runtime/tracing", "daedalus-engine?/tracing"]
 # Recommended preset for applications: engine with worker pool and metrics.
 engine-full = ["engine", "executor-pool", "metrics"]
 # Smallest in-process host: engine + static plugins, no worker pool, no metrics. Keeps

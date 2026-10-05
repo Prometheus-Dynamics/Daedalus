@@ -431,7 +431,7 @@ impl<H: NodeHandler> StreamGraph<H> {
             };
             let pending_after = handle.pending_inbound();
             if pending_after >= pending_before {
-                tracing::warn!(
+                crate::trace::warn!(
                     target: "daedalus_runtime::stream",
                     host_alias = %self.host_alias,
                     pending_before,

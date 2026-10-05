@@ -12,6 +12,7 @@ extern crate std;
 
 mod portable;
 mod prelude;
+mod trace;
 
 mod cache;
 mod compiled_run;

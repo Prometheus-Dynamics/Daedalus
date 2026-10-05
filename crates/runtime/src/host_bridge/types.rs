@@ -19,7 +19,7 @@ pub struct HostBridgeConfig {
     ///
     /// Off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING`): recording allocates one event per
     /// push and delivery. Enable it while debugging dropped or missing host payloads. Stats and
-    /// `tracing` pressure warnings are always available.
+    /// `tracing` pressure warnings (with the `tracing` feature) are always available.
     pub event_recording: bool,
     /// Maximum retained event snapshots per host bridge handle.
     ///

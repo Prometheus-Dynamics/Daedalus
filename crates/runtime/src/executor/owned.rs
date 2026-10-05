@@ -172,6 +172,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     /// Enable demand-driven execution by selecting a set of sink nodes/ports and computing the
     /// upstream closure.
+    #[cfg_attr(not(feature = "tracing"), allow(unused_variables))]
     pub fn with_demand_sinks(mut self, sinks: Vec<crate::plan::RuntimeSink>) -> Self {
         match crate::plan::active_nodes_mask_for_sinks(
             self.nodes.as_ref(),
@@ -182,7 +183,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                 self.core.run_config.active_nodes = Some(Arc::new(mask));
             }
             Err(err) => {
-                tracing::warn!(
+                crate::trace::warn!(
                     target: "daedalus_runtime::executor",
                     error = %err,
                     "demand-driven sink selection failed"

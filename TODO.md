@@ -187,7 +187,7 @@ changes.
 ### Portability (tier 2)
 Tier 1 (`no_std` + `alloc` core/transport/data/registry/planner, and the `embedded` preset on
 `wasm32-unknown-unknown`) and tier 2 (`no_std` + `alloc` runtime and engine with the serial
-executor, checked on `thumbv7em`) are done; see "Portability" in `docs/development.md`.
+executor, checked on `thumbv7em` and `thumbv6m`) are done; see "Portability" in `docs/development.md`.
 - [x] **Lock backend for runtime/engine.** `daedalus_runtime::sync`: `parking_lot` with `std`,
       `spin` (`lock_api`) without; the engine has no direct `parking_lot` dependency.
 - [x] **`threads` feature.** Worker pool, stream workers and blocking waits (`InboundWaiter::wait`,
@@ -207,9 +207,10 @@ executor, checked on `thumbv7em`) are done; see "Portability" in `docs/developme
 - [x] **Targets without compare-and-swap** (`thumbv6m-none-eabi`, `riscv32imc`): tier-1 crates
       build there; atomics, `spin` and `Arc` via `portable-atomic(-util)` (`critical-section`),
       target-specific; `ci.sh nostd` checks `thumbv6m`.
-- [ ] **Runtime and engine without compare-and-swap.** They take `Arc`/atomics from `portable`
-      already; left: `tracing` (needs CAS: make it optional or route through a no-op macro) and
-      the `Arc<dyn _>`/`Arc<[_]>` coercions (`arc_dyn!`), then a `thumbv6m` check.
+- [x] **Runtime and engine without compare-and-swap.** `tracing` is an optional feature
+      (implied by `std`) behind the crate-private `trace` macros; `Arc<dyn _>` coercions go
+      through `arc_dyn!`; `lockfree-queues` falls back to locked queues; `ci.sh nostd` checks
+      runtime, engine and `nostd_smoke` for `thumbv6m` (`riscv32imc` checked locally).
 - [x] **wasm host glue.** `examples/wasm_bindgen_host` (`Clock::new` on
       `performance.now()`, `push`/`tick`/`take` from JS, Node-driven), a `wasm32-wasip1` check and
       WASI smoke run (`ci.sh wasm`).

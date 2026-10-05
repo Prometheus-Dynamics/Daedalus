@@ -30,7 +30,7 @@ impl RuntimeDebugConfig {
         let (config, warnings) =
             Self::from_lookup_with_diagnostics(|name| std::env::var(name).ok());
         for warning in warnings {
-            tracing::warn!(
+            crate::trace::warn!(
                 target: "daedalus_runtime::config",
                 env = warning.name,
                 value = %warning.value,
@@ -195,9 +195,10 @@ pub trait NodeConfig: Clone + Send + Sync + 'static {
 
 /// Emit warnings for config changes applied by sanitization.
 ///
+#[cfg_attr(not(feature = "tracing"), allow(unused_variables))]
 pub fn log_config_changes(node_id: &str, changes: &[ConfigChange]) {
     for change in changes {
-        tracing::warn!(
+        crate::trace::warn!(
             target: "daedalus_runtime::config",
             node = node_id,
             port = change.port,

@@ -65,7 +65,7 @@ impl ExecutorCore {
             parallel_workers: init.parallel_workers,
             #[cfg(feature = "threads")]
             worker_pool: Arc::default(),
-            host_nodes: Arc::new([]),
+            host_nodes: Arc::from(Vec::new()),
             const_coercers: None,
             type_index: None,
             runtime_transport: None,
