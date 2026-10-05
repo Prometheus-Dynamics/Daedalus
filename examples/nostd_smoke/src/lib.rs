@@ -1,5 +1,6 @@
 //! `no_std` + `alloc` smoke test of the serial runtime and engine (`scripts/ci.sh nostd`):
-//! checked for `thumbv7em-none-eabihf`, and its tests run the same code natively with `std` off.
+//! checked for `thumbv7em-none-eabihf` and `thumbv6m-none-eabi` (no compare-and-swap), and its
+//! tests run the same code natively with `std` off.
 //!
 //! Both entry points run `host.in -> inc -> host.out` once, timed by an injected counter
 //! [`Clock`] (there is no OS clock): [`runtime_increment`] plans the graph, feeds the host
@@ -12,8 +13,14 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::Ordering;
 use core::time::Duration;
+
+#[cfg(target_has_atomic = "ptr")]
+use core::sync::atomic::AtomicU32;
+// No compare-and-swap (`thumbv6m`): `fetch_add` from `portable-atomic`, as in the runtime.
+#[cfg(not(target_has_atomic = "ptr"))]
+use portable_atomic::AtomicU32;
 
 use daedalus_core::platform::Clock;
 use daedalus_data::model::{TypeExpr, Value, ValueType};
