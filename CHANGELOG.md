@@ -50,16 +50,25 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `GpuBackend::{dmabuf_import_support, import_dmabuf}` with typed
   `ExternalImportSupport`/`ExternalImportError`, and `GpuFormat::{Rg8Unorm, Bgra8Unorm, Nv12}`.
   Explicit sync: `with_acquire_fence`/`with_acquire_timeout`/`with_implicit_fence` acquire fences
-  are waited for before GPU access, and `export_dmabuf_fence` exports implicit fences. On devices
-  with `VK_KHR_external_semaphore_fd` the wgpu backend waits on the GPU: the `sync_file` becomes a
-  semaphore the import's submission waits on (wgpu-hal 30 `Queue::add_wait_semaphore`), so the
-  import never blocks; elsewhere (and in `gpu-mock`) the import polls the fence on the CPU
-  (`FenceTimeout` after `DEFAULT_ACQUIRE_TIMEOUT`). `ExternalImportSupport::Supported {
-  acquire_fence }` / `acquire_fence_wait()` report the active `AcquireFenceWait::{Gpu, Cpu}`, and
-  `gpu_probe` prints it. Every import is acquired from the foreign (or external) queue family,
+  are waited for before GPU access, and `export_dmabuf_fence` exports implicit fences.
+  `ExternalImportSupport::Supported { acquire_fence }` / `acquire_fence_wait()` report the default
+  `AcquireFenceWait`: `Timeline` on devices with timeline semaphores (the GPU waits on a timeline
+  value that one watcher thread per device host-signals when the fence signals or
+  `acquire_timeout` passes, so a stuck producer stalls the GPU for at most the timeout, and
+  `GpuImageHandle::acquire_status()` reports `AcquireStatus::{Ready, Pending, TimedOut}`; on Mesa
+  the next submission to the device blocks until the wait is released), `SyncFd` with
+  `VK_KHR_external_semaphore_fd` (the `sync_file` becomes a binary semaphore via wgpu-hal 30
+  `Queue::add_wait_semaphore`; no timeout; also used for `acquire_timeout = Duration::MAX`), else
+  `Cpu` (the import polls the fence, `FenceTimeout` after `DEFAULT_ACQUIRE_TIMEOUT`; also
+  `gpu-mock`). Every import is acquired from the foreign (or external) queue family,
   `GENERAL -> SHADER_READ_ONLY_OPTIMAL`, and registered with wgpu in that state instead of being
-  transitioned from `UNDEFINED`. NV12 imports as one texture when the device supports it,
-  otherwise `UnsupportedFormat` for per-plane fallback (`texture_plane_views`, `format_planes`).
+  transitioned from `UNDEFINED`; dropping the last handle releases it back to the foreign family
+  before the keepalive goes. Tiled and compressed DRM modifiers take one plane per memory plane
+  (aux planes after the format planes, up to `MAX_MEMORY_PLANES`); on RADV every renderable
+  `R8`/`XRGB8888` modifier including DCC (2 and 3 memory planes) round-trips between devices. NV12
+  imports as one texture when the device supports it, otherwise `UnsupportedFormat` for per-plane
+  fallback (`texture_plane_views`, `format_planes`). `gpu_probe` prints the fence paths and the
+  modifiers per format.
 - Facade presets `executor-pool`, `metrics`, `engine-full` (`engine` + `executor-pool` +
   `metrics`) and `embedded` (`engine` + `plugins` + `threads`).
 - Keys for types owned by other crates: `inputs(port(name = "...", type_key = "..."))` /
