@@ -23,6 +23,7 @@ The facade crate is published as `daedalus-rs` and imported as `daedalus`.
 - `crates/gpu`: GPU handle types, backend selection, mock/noop/wgpu backends, and shader dispatch helpers.
 - `crates/macros`: node, config, transport, type-key, value, and GPU derive macros.
 - `crates/ffi`: shared FFI contract, host runner, and Python/Node/Java/C++ SDK targets.
+- `crates/mcu`: MCU profile: graphs planned on the host at build time (`daedalus-mcu-build`) and run allocation-free on microcontrollers from generated code (`daedalus-mcu`, `#![no_std]`, no heap); see [docs/mcu.md](docs/mcu.md).
 - `examples`: runnable graph, runtime, GPU, metrics, and FFI examples.
 - `testing`: local and CI validation notes.
 
@@ -79,6 +80,7 @@ fixes and the full CI loop), focused feature checks, GPU checks, and Docker-back
 - [docs/node-authoring.md](docs/node-authoring.md): node authoring, adapters, payload residency, and host integration.
 - [docs/development.md](docs/development.md): development rules, features, observability, and production API guidance.
 - [docs/testing.md](docs/testing.md): supported validation surface.
+- [docs/mcu.md](docs/mcu.md): MCU profile (host-planned graphs on microcontrollers, no heap).
 - [crates/ffi/README.md](crates/ffi/README.md): FFI contract, package, worker, and SDK direction.
 - [testing/README.md](testing/README.md): quick local testing reference.
 

@@ -23,12 +23,12 @@ fn examples_use_only_facade() {
 
     for path in examples {
         // FFI examples exercise the split FFI crates and package builders, and the `no_std` smoke
-        // crate the `no_std` runtime and engine (the facade needs `std`), rather than the
-        // end-user graph facade.
+        // crate the `no_std` runtime and engine (the facade needs `std`), and the MCU example the
+        // `daedalus-mcu` crates (no facade on the device), rather than the end-user graph facade.
         let uses_internal_crates = path.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
-                Some("08_ffi" | "nostd_smoke")
+                Some("08_ffi" | "nostd_smoke" | "mcu_blink")
             )
         });
         let content = fs::read_to_string(&path).expect("read example");

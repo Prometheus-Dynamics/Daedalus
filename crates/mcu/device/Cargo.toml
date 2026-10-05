@@ -1,0 +1,28 @@
+[package]
+name = "daedalus-mcu"
+version.workspace = true
+edition.workspace = true
+description = "Allocation-free microcontroller executor for Daedalus graphs planned on the host."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-mcu"
+keywords = ["dataflow", "embedded", "no-std"]
+categories = ["embedded", "no-std"]
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+# `McuType` keys for `String` and `Vec<u8>` (heap payloads). The executor itself never allocates.
+alloc = []
+# `defmt::Format` for the error types.
+defmt = ["dep:defmt"]
+
+[dependencies]
+daedalus-mcu-macros = { workspace = true }
+defmt = { workspace = true, optional = true }

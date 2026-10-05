@@ -8,6 +8,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- MCU profile (`docs/mcu.md`): `daedalus-mcu-build` plans a graph (a `GraphDocument` or
+  `Graph`) on the host from a `build.rs` with the regular planner and runtime builtins, and
+  writes a Rust module: a `Graph` struct with one fixed-capacity typed queue per edge (sized from
+  its policy) and one state slot per node, `push_*`/`pop_*` host ports and a `tick` calling the
+  node functions in schedule order. `daedalus-mcu` (`#![no_std]`, no `alloc`; `alloc` and
+  `defmt` features) holds the queues, `McuType` keys (the runtime's builtin keys), `NodeState`,
+  `Ctx`/`Clock`, `McuError`, and `#[daedalus_mcu::node]` for plain node functions (optional
+  inputs, conditional outputs, state, fire mode `all`). `examples/mcu_blink` runs a five-node
+  graph on Cortex-M4F/M0+ in 3.1/3.6 KiB of flash and 160 B of RAM with no heap;
+  `scripts/ci.sh mcu` (in the `portability` job) builds it, enforces flash/RAM budgets and runs
+  the native tests. The workspace gains an `mcu` size profile.
 - Typed host ports: `GraphBuilder::{input_as, input_typed, output_as, output_typed}` declare a
   host port's type (stored as `HOST_INPUT_TYPES_KEY`/`HOST_OUTPUT_TYPES_KEY` bridge metadata,
   read through `daedalus_planner::HostPortTypes`), so one host input can feed ports of different

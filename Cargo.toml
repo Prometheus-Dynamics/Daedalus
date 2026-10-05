@@ -19,6 +19,9 @@ members = [
     "crates/ffi/node",
     "crates/ffi/java",
     "crates/ffi/cpp",
+    "crates/mcu/device",
+    "crates/mcu/macros",
+    "crates/mcu/build",
     "examples",
     "examples/plugins/math",
     "examples/plugins/example_project",
@@ -29,6 +32,8 @@ members = [
     "examples/plugins/stable_abi",
     "examples/wasm_smoke",
     "examples/nostd_smoke",
+    "examples/mcu_blink",
+    "examples/mcu_blink/nodes",
     "examples/wasm_bindgen_host",
 ]
 resolver = "3"
@@ -64,6 +69,10 @@ daedalus-ffi-python = { path = "crates/ffi/python", version = "2.0.0" }
 daedalus-ffi-node = { path = "crates/ffi/node", version = "2.0.0" }
 daedalus-ffi-java = { path = "crates/ffi/java", version = "2.0.0" }
 daedalus-ffi-cpp = { path = "crates/ffi/cpp", version = "2.0.0" }
+daedalus-mcu = { path = "crates/mcu/device", version = "2.0.0" }
+daedalus-mcu-macros = { path = "crates/mcu/macros", version = "2.0.0" }
+daedalus-mcu-build = { path = "crates/mcu/build", version = "2.0.0" }
+daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "2.0.0" }
 daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "2.0.0" }
 daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi", version = "2.0.0" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
@@ -72,13 +81,18 @@ base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 bitflags = { version = "2.11.1", features = ["serde"] }
 bytemuck = { version = "1.25.0", features = ["derive"] }
 criterion = "0.8.2"
+# MCU firmware (`examples/mcu_blink`, built only for `target_os = "none"`).
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.5"
 crossbeam-queue = { version = "0.3.12", default-features = false, features = ["alloc"] }
+defmt = "1.0.1"
 glob = "0.3.3"
 hashbrown = "0.17.0"
 half = "2"
 libc = "0.2"
 libloading = "0.8.9"
 once_cell = "1.21.4"
+panic-halt = "1.0.0"
 paste = "1.0.15"
 pollster = "0.4.0"
 # Atomics and `Arc` on targets without (64-bit) compare-and-swap; only pulled in there (see
@@ -157,3 +171,12 @@ strip = "debuginfo"
 [profile.dev.package.daedalus-plugins-stable-abi]
 debug = 0
 strip = "debuginfo"
+
+# Firmware size profile (`scripts/ci.sh mcu`, docs/mcu.md).
+[profile.mcu]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false

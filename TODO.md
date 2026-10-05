@@ -240,6 +240,20 @@ executor, checked on `thumbv7em` and `thumbv6m`) are done; see "Portability" in 
       `performance.now()`, `push`/`tick`/`take` from JS, Node-driven), a `wasm32-wasip1` check and
       WASI smoke run (`ci.sh wasm`).
 
+### MCU profile
+`daedalus-mcu` + `daedalus-mcu-build` (host-planned graphs, generated code, no heap; 3.1-3.6 KiB
+flash and 160 B RAM for `examples/mcu_blink`); see `docs/mcu.md`.
+- [x] Host plan compiler, device crate, `#[daedalus_mcu::node]`, blink example with firmware for
+      `thumbv7em`/`thumbv6m`, `scripts/ci.sh mcu` size budgets in the `portability` job.
+- [ ] **Flash the firmware** on a real board (with a HAL: ADC input, GPIO output) and measure
+      stack use and tick time.
+- [ ] **Runtime-loaded plans** (postcard tables over a fixed node set) for updating a graph
+      without reflashing, if a use case needs it.
+- [ ] **Fan-in and user adapters** on the device (generate adapter calls for `#[adapt]` functions
+      that are plain `no_std` code).
+- [ ] **Shared nodes with the full runtime:** generate both a `#[node]` handler and the device
+      glue from one function, so a node crate serves both.
+
 ### Low priority
 - [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.
       Decide whether Windows matters.

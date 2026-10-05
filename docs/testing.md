@@ -43,6 +43,7 @@ cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 | `aarch64` | `cargo check --target aarch64-unknown-linux-gnu` (see below) |
 | `lean` | lean-preset tests (see below) |
 | `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS), the runtime and engine, and the no_std smoke graph; wasm and WASI `engine,plugins` checks and Node runs (see below) |
+| `mcu` | MCU profile firmware for `thumbv7em` and `thumbv6m`, flash/RAM budgets, native tests (see below) |
 | `bench` | host bridge and executor criterion benches (see below) |
 | `pi` | on-device dmabuf hardware tests and the `gpu_probe` report; not part of `all` (see [Validating on a Raspberry Pi 5](#validating-on-a-raspberry-pi-5)) |
 | `vvl` | the `pi` tests and probe under the Khronos validation layer; not part of `all` (see [Vulkan Validation Layers](#vulkan-validation-layers)) |
@@ -112,6 +113,20 @@ and `wasm32-wasip1`, builds the wasm modules in release mode and runs them in No
 Without `node` the runs are skipped after the builds. The script adds the rustup targets if
 missing; the `portability` CI job runs both subcommands. See
 [development.md](development.md#portability) for what each target supports.
+
+### MCU profile
+
+```bash
+scripts/ci.sh mcu
+```
+
+Builds the `examples/mcu_blink` firmware with the `mcu` size profile for `thumbv7em-none-eabihf`
+and `thumbv6m-none-eabi` (its `build.rs` plans `graph.json` on the host), prints its flash
+(`.vector_table + .text + .rodata + .data`) and static RAM (`.data + .bss + .uninit`) from
+`readelf -S`, and fails above `MCU_FLASH_BUDGET`/`MCU_RAM_BUDGET` in `scripts/ci.sh`. It also
+checks `daedalus-mcu` with `alloc,defmt` for both targets and runs the native tests: the
+compiler's unit tests and the blink graph checked against its node functions with an allocation
+counter. The `portability` CI job runs it. See [mcu.md](mcu.md).
 
 ### Benchmarks
 
