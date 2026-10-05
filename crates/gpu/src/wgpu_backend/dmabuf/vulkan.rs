@@ -325,6 +325,7 @@ pub(in crate::wgpu_backend) fn import(
             disjoint,
             wgpu_format,
             vk_format,
+            view_formats: view_formats(wgpu_format, vk_format),
             vk_usage: usage.vk,
             format_features: usage.format_features,
             hal_usage: usage.hal,
@@ -516,6 +517,21 @@ impl UsageSet {
             },
         )
     }
+}
+
+/// Formats the image is viewed with: for a multi-planar format the format itself and its plane
+/// formats (the per-plane views), declared up front because `MUTABLE_FORMAT` images with a DRM
+/// format modifier need a `VkImageFormatListCreateInfo`; empty otherwise.
+fn view_formats(format: wgpu::TextureFormat, vk_format: vk::Format) -> Vec<vk::Format> {
+    let Some(planes) = format.planes() else {
+        return Vec::new();
+    };
+    let plane_formats = (0..planes)
+        .filter_map(wgpu::TextureAspect::from_plane)
+        .filter_map(|aspect| format.aspect_specific_format(aspect))
+        .filter_map(crate::wgpu_backend::gpu_format_from_wgpu)
+        .filter_map(map_vk_format);
+    std::iter::once(vk_format).chain(plane_formats).collect()
 }
 
 /// Vulkan format of the importable formats (those a `DrmFourcc` maps to).
