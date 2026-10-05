@@ -16,6 +16,11 @@ readonly AARCH64_MUSL_TARGET="aarch64-unknown-linux-musl"
 readonly NOSTD_TARGETS=("thumbv7em-none-eabihf" "thumbv6m-none-eabi")
 readonly NOSTD_CRATES=(-p daedalus-core -p daedalus-transport -p daedalus-data -p daedalus-registry
   -p daedalus-planner)
+# MCU profile firmware (`examples/mcu_blink`, `--profile mcu`) budgets, in bytes, per target in
+# NOSTD_TARGETS: flash (.vector_table + .text + .rodata + .data) and static RAM (.data + .bss +
+# .uninit). Measured 3.1 KiB / 3.6 KiB flash and 160 B RAM; see docs/mcu.md.
+readonly MCU_FLASH_BUDGET=8192
+readonly MCU_RAM_BUDGET=512
 readonly WASM_TARGET="wasm32-unknown-unknown"
 readonly WASI_TARGET="wasm32-wasip1"
 
@@ -42,6 +47,8 @@ usage: scripts/ci.sh [subcommand...]
   lean        tests for the lean preset (no executor pool, no metrics) and without threads
   nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
               serial runtime and engine, and the no_std smoke graph
+  mcu         MCU profile: build the blink firmware for thumbv7em and thumbv6m, check its flash
+              and static RAM against budgets (readelf), and run the MCU crates' native tests
   wasm        engine,plugins (embedded without threads) checks and Node runs for wasm32 and WASI
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
@@ -180,6 +187,40 @@ cmd_nostd() {
   cargo test -p daedalus-nostd-smoke
 }
 
+# The MCU profile (docs/mcu.md): the blink graph is planned on the host by its build script and
+# runs from generated code on the device. Builds the firmware per bare-metal target with the
+# `mcu` size profile, prints its flash and static RAM (section sizes from `readelf`) and fails
+# above the budgets; checks the device crate's optional features; runs the native tests (the
+# same generated graph checked against its node functions, with an allocation counter).
+cmd_mcu() {
+  local out="${CARGO_TARGET_DIR:-target}" target elf name size flash ram failed=0
+  for target in "${NOSTD_TARGETS[@]}"; do
+    step "Building the MCU blink firmware for $target"
+    ensure_target "$target"
+    cargo build --target "$target" --profile mcu -p daedalus-mcu-blink --bin daedalus-mcu-blink
+    cargo check --target "$target" -p daedalus-mcu --features "alloc,defmt"
+    elf="$out/$target/mcu/daedalus-mcu-blink"
+    flash=0
+    ram=0
+    while read -r name size; do
+      size=$((16#$size))
+      case "$name" in
+        .vector_table | .text | .rodata) flash=$((flash + size)) ;;
+        .data) flash=$((flash + size)) ram=$((ram + size)) ;;
+        .bss | .uninit) ram=$((ram + size)) ;;
+      esac
+    done < <(readelf -S -W "$elf" | sed -n 's/^ *\[ *[0-9]*\] *\(\.[^ ]*\) *[A-Z_]* *[0-9a-f]* *[0-9a-f]* *\([0-9a-f]*\) .*/\1 \2/p')
+    echo "  $target: flash $flash B (budget $MCU_FLASH_BUDGET), static RAM $ram B (budget $MCU_RAM_BUDGET)"
+    if ((flash > MCU_FLASH_BUDGET || ram > MCU_RAM_BUDGET)); then
+      echo "  $target: MCU firmware over budget" >&2
+      failed=1
+    fi
+  done
+  step "Testing the MCU crates and the blink graph natively"
+  cargo test -p daedalus-mcu -p daedalus-mcu-build -p daedalus-mcu-blink
+  return "$failed"
+}
+
 # `wasm32-unknown-unknown` has `std` but no threads and no clock; `wasm32-wasip1` has a clock but
 # no threads. Check the embedded preset without `threads` (`engine,plugins`) for both, then run in
 # Node: serial/parallel/adaptive frames (an import-free module, and a WASI command on the platform
@@ -305,7 +346,7 @@ main() {
     case "$sub" in
       -h | --help | help) usage ;;
       all | lints | check | features | clippy | test | examples | smoke | aarch64 | lean | nostd | \
-        wasm | bench | pi | vvl)
+        mcu | wasm | bench | pi | vvl)
         "cmd_$sub" ;;
       macro-ui) cmd_macro_ui ;;
       *)

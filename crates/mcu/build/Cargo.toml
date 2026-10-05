@@ -1,0 +1,26 @@
+[package]
+name = "daedalus-mcu-build"
+version.workspace = true
+edition.workspace = true
+description = "Host-side plan compiler for daedalus-mcu: plans a graph and emits allocation-free device code."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-mcu-build"
+keywords = ["dataflow", "embedded", "codegen"]
+categories = ["embedded", "development-tools::build-utils"]
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+daedalus-data = { workspace = true, features = ["std"] }
+daedalus-mcu = { workspace = true }
+daedalus-planner = { workspace = true, features = ["std"] }
+daedalus-registry = { workspace = true, features = ["std"] }
+daedalus-runtime = { workspace = true, features = ["std", "plugins"] }
+daedalus-transport = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }

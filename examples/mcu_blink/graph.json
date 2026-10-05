@@ -1,0 +1,234 @@
+{
+  "format": "daedalus.graph",
+  "schema_version": 1,
+  "requires": [],
+  "graph": {
+    "nodes": [
+      {
+        "id": "io.host_bridge",
+        "bundle": null,
+        "label": "host",
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": [],
+        "metadata": {
+          "daedalus.host_input_types": {
+            "type": "Map",
+            "value": [
+              [
+                {
+                  "type": "String",
+                  "value": "sample"
+                },
+                {
+                  "type": "String",
+                  "value": "{\"Scalar\":\"U16\"}"
+                }
+              ]
+            ]
+          },
+          "host_bridge": {
+            "type": "Bool",
+            "value": true
+          }
+        }
+      },
+      {
+        "id": "blink.scale",
+        "bundle": null,
+        "label": "scale",
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": [
+          [
+            "volts_per_count",
+            {
+              "type": "Float",
+              "value": 0.0008
+            }
+          ]
+        ]
+      },
+      {
+        "id": "blink.lowpass",
+        "bundle": null,
+        "label": "lowpass",
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": [
+          [
+            "alpha",
+            {
+              "type": "Float",
+              "value": 0.25
+            }
+          ]
+        ]
+      },
+      {
+        "id": "blink.threshold",
+        "bundle": null,
+        "label": "threshold",
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": [
+          [
+            "on",
+            {
+              "type": "Float",
+              "value": 2.0
+            }
+          ],
+          [
+            "off",
+            {
+              "type": "Float",
+              "value": 1.0
+            }
+          ]
+        ]
+      },
+      {
+        "id": "blink.rising",
+        "bundle": null,
+        "label": "rising",
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": []
+      },
+      {
+        "id": "blink.blink",
+        "bundle": null,
+        "label": "blink",
+        "inputs": [],
+        "outputs": [],
+        "compute": "CpuOnly",
+        "const_inputs": [
+          [
+            "period",
+            {
+              "type": "Int",
+              "value": 4
+            }
+          ]
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "node": 0,
+          "port": "sample"
+        },
+        "to": {
+          "node": 1,
+          "port": "raw"
+        },
+        "metadata": {
+          "daedalus.edge.pressure": {
+            "type": "String",
+            "value": "latest_only"
+          }
+        }
+      },
+      {
+        "from": {
+          "node": 1,
+          "port": "volts"
+        },
+        "to": {
+          "node": 2,
+          "port": "x"
+        }
+      },
+      {
+        "from": {
+          "node": 2,
+          "port": "y"
+        },
+        "to": {
+          "node": 3,
+          "port": "level"
+        }
+      },
+      {
+        "from": {
+          "node": 2,
+          "port": "y"
+        },
+        "to": {
+          "node": 0,
+          "port": "level"
+        },
+        "metadata": {
+          "daedalus.edge.pressure": {
+            "type": "String",
+            "value": "latest_only"
+          }
+        }
+      },
+      {
+        "from": {
+          "node": 3,
+          "port": "active"
+        },
+        "to": {
+          "node": 4,
+          "port": "active"
+        }
+      },
+      {
+        "from": {
+          "node": 3,
+          "port": "active"
+        },
+        "to": {
+          "node": 5,
+          "port": "active"
+        }
+      },
+      {
+        "from": {
+          "node": 4,
+          "port": "count"
+        },
+        "to": {
+          "node": 0,
+          "port": "rises"
+        },
+        "metadata": {
+          "daedalus.edge.capacity": {
+            "type": "Int",
+            "value": 8
+          },
+          "daedalus.edge.pressure": {
+            "type": "String",
+            "value": "bounded"
+          }
+        }
+      },
+      {
+        "from": {
+          "node": 5,
+          "port": "led"
+        },
+        "to": {
+          "node": 0,
+          "port": "led"
+        },
+        "metadata": {
+          "daedalus.edge.pressure": {
+            "type": "String",
+            "value": "latest_only"
+          }
+        }
+      }
+    ],
+    "metadata": {}
+  }
+}

@@ -129,7 +129,7 @@ jobs:
       - *cache
 
       - name: Validate package surface
-        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi --allow-dirty --no-verify
+        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi --allow-dirty --no-verify
 
   # Type-check only (no linking): the C cross compiler is for build scripts that compile C.
   aarch64:
@@ -160,12 +160,13 @@ jobs:
         run: ./scripts/ci.sh lean
 
   # no_std + alloc check of the tier-1 crates on bare metal (with and without compare-and-swap)
-  # and of the serial runtime and engine (plus the no_std smoke graph run natively), and the
-  # embedded preset on wasm32-unknown-unknown and wasm32-wasip1: type-checked, then run in Node
-  # (preinstalled on the runner), including the wasm-bindgen host example.
+  # and of the serial runtime and engine (plus the no_std smoke graph run natively), the MCU
+  # profile firmware against its size budgets, and the embedded preset on wasm32-unknown-unknown
+  # and wasm32-wasip1: type-checked, then run in Node (preinstalled on the runner), including the
+  # wasm-bindgen host example.
   portability:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - *checkout
       - name: Install Rust toolchain
@@ -183,3 +184,8 @@ jobs:
       - *cache
       - name: Check no_std crates and the wasm embedded preset
         run: ./scripts/ci.sh nostd wasm
+
+      # Builds the MCU blink firmware for both bare-metal targets, fails above its flash/RAM
+      # budgets (`readelf`), and runs the MCU crates' native tests (docs/mcu.md).
+      - name: Build and measure the MCU profile firmware
+        run: ./scripts/ci.sh mcu
