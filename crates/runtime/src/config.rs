@@ -29,6 +29,7 @@ impl RuntimeDebugConfig {
     pub fn from_env() -> Self {
         let (config, warnings) =
             Self::from_lookup_with_diagnostics(|name| std::env::var(name).ok());
+        #[cfg(feature = "tracing")]
         for warning in warnings {
             crate::trace::warn!(
                 target: "daedalus_runtime::config",
@@ -38,6 +39,8 @@ impl RuntimeDebugConfig {
                 "runtime debug env value ignored"
             );
         }
+        #[cfg(not(feature = "tracing"))]
+        drop(warnings);
         config
     }
 

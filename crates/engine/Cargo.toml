@@ -18,11 +18,10 @@ workspace = true
 path = "src/lib.rs"
 
 [features]
-default = ["config-env", "executor-pool", "metrics", "threads"]
+default = ["config-env", "executor-pool", "metrics", "threads", "tracing"]
 # Host OS facilities: the runtime's `std` (lock backend, hash maps), `EngineConfig::from_env`.
 # Without it the crate is `no_std` + `alloc` (see "Portability" in docs/development.md).
 std = [
-    "tracing",
     "daedalus-runtime/std",
     "daedalus-core/std",
     "daedalus-data/std",
@@ -34,7 +33,7 @@ std = [
     "thiserror/std",
     "tracing?/std",
 ]
-# `tracing` spans and events (implied by `std`; see `daedalus-runtime`'s `tracing` feature).
+# `tracing` spans and events (default; see `daedalus-runtime`'s `tracing` feature).
 tracing = ["dep:tracing", "daedalus-runtime/tracing"]
 # Worker threads for `RuntimeMode::Parallel`/`Adaptive`, stream workers and blocking waits
 # (`HostGraph::drive_blocking`, ...). Without it those modes run serially.

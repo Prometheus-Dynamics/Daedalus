@@ -340,13 +340,29 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   contracts are listed in the exported `PluginSchema::boundary_contracts`; `StrView` (and with it
   `PluginInfo`, `PluginDescriptor` and `PluginLibrary`) is `Send + Sync`.
 - `serde`'s `rc` feature is no longer on workspace-wide: `daedalus-core` enables it on targets with
-  compare-and-swap (it needs `alloc::sync`). `daedalus-planner`'s `tracing` dependency is
-  `std`-only (only `std` builds read `DAEDALUS_TRACE_EMBEDDED_EXPAND`).
-- `tracing` is an optional dependency of `daedalus-runtime` and `daedalus-engine`, behind a new
-  host-only `tracing` feature that `std` implies (so `threads`, the default, keeps every span and
-  event). Without it their spans and events compile to nothing (`crates/trace.rs`, arguments
-  unevaluated). The facade's `tracing` feature enables both, for builds without `threads`
-  (wasm), which no longer emit runtime events by default.
+  compare-and-swap (it needs `alloc::sync`).
+- `tracing` is an optional dependency of `daedalus-runtime`, `daedalus-engine`,
+  `daedalus-planner` (`std`-only: its `tracing` feature implies `std` and gates
+  `DAEDALUS_TRACE_EMBEDDED_EXPAND`) and `daedalus-nodes`, behind a host-only `tracing` feature
+  that is on by default and independent of `std`/`threads`. Without it their spans and events
+  compile to nothing (`crates/trace.rs`, arguments unevaluated). The facade's `tracing` feature
+  (default) enables all four, so default builds keep every span and event; `default-features =
+  false` builds, including the `embedded` preset and wasm, no longer link `tracing` unless they
+  add the feature.
+- Lighter optional dependencies (see "Dependency weight" in docs/development.md):
+  - `daedalus-ffi-core` gains a default `integrity` feature (`sha2`: package artifact and
+    manifest hashes, `PluginPackage::{stamp,verify}_integrity`, `compute_manifest_hash`,
+    `read_descriptor_and_verify`, `LanguagePackager::build`, `rust_plugin_package`);
+    `daedalus-ffi-host` forwards it by default. The facade's `dylib-plugins` uses the FFI crates
+    without it (7 fewer crates). Both are workspace dependencies without default features; the
+    language crates request `integrity`.
+  - `gpu-wgpu` builds wgpu's Vulkan backend (plus Metal on Apple and DX12 on Windows, which the
+    workspace now enables) without GLES and without the `image` crate (15 fewer crates). The new
+    `gpu-gles` feature (boundary: it changes wgpu internals) adds the OpenGL/GLES backend; the new
+    `gpu-image` feature (host-only; `daedalus-gpu`'s `image` feature is renamed to it) adds
+    `Compute<DynamicImage>`, the `image` `DeviceBridge`s, `TextureOut::from_input{,_ctx}` and the
+    `ShaderRunOutput` image readbacks (`texture_rgba8*`, `*_image`, `into_payload*`).
+    `renderdoc-sys` remains: wgpu enables `wgpu-core/renderdoc` on every native target.
 - Workspace dependencies shared with the `no_std` crates (`serde`, `serde_json`, `thiserror`,
   `tracing`, `base64`, `crossbeam-queue`) and the five tier-1 crates are declared without
   default features; `std` members request `features = ["std"]` (`daedalus-data`:

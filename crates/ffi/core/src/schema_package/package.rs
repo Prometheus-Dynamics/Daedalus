@@ -255,6 +255,7 @@ pub struct PluginPackage {
 }
 
 /// Package the Rust backend: compiled modules first, then source files.
+#[cfg(feature = "integrity")]
 pub fn rust_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
@@ -343,6 +344,7 @@ impl PluginPackage {
         Ok(())
     }
 
+    #[cfg(feature = "integrity")]
     pub fn stamp_integrity(&mut self, base_dir: impl AsRef<Path>) -> Result<(), FfiContractError> {
         self.validate_artifact_files(base_dir.as_ref())?;
         let base_dir = base_dir.as_ref();
@@ -353,6 +355,7 @@ impl PluginPackage {
         Ok(())
     }
 
+    #[cfg(feature = "integrity")]
     pub fn verify_integrity(&self, base_dir: impl AsRef<Path>) -> Result<(), FfiContractError> {
         self.validate_artifact_files(base_dir.as_ref())?;
         let base_dir = base_dir.as_ref();
@@ -382,6 +385,7 @@ impl PluginPackage {
         Ok(())
     }
 
+    #[cfg(feature = "integrity")]
     pub fn compute_manifest_hash(&self) -> Result<String, FfiContractError> {
         let mut package = self.clone();
         package.manifest_hash = None;
@@ -418,6 +422,7 @@ impl PluginPackage {
         })
     }
 
+    #[cfg(feature = "integrity")]
     pub fn read_descriptor_and_verify(
         path: impl AsRef<Path>,
         base_dir: impl AsRef<Path>,

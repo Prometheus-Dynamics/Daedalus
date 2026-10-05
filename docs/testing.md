@@ -269,12 +269,13 @@ cargo check -p daedalus-rs --no-default-features
 cargo check -p daedalus-rs --all-targets --features "engine,plugins"
 cargo check -p daedalus-rs --all-targets --features "gpu-mock,plugins,engine"
 cargo check -p daedalus-runtime --features "metrics,executor-pool,lockfree-queues"
-cargo check -p daedalus-ffi-core --no-default-features
+cargo check -p daedalus-ffi-core --no-default-features   # without `integrity` (sha2)
 cargo check -p daedalus-ffi-core --features "image-payload"
 cargo check -p daedalus-ffi-host --no-default-features
 cargo check -p daedalus-ffi-host --features "image-payload"
 cargo check -p daedalus-gpu --no-default-features --features gpu-wgpu
 cargo check -p daedalus-gpu --no-default-features --features gpu-wgpu,gpu-async
+cargo check -p daedalus-gpu --all-targets --no-default-features --features gpu-gles,gpu-image
 ```
 
 Use `gpu-wgpu` only where hardware and drivers are available. Use `gpu-mock` for CI-stable GPU-path coverage.

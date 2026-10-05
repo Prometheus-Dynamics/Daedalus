@@ -25,6 +25,8 @@ registry-adapter = []
 planner-adapter = []
 bundle-utils = []
 plugins = ["daedalus-runtime/plugins"]
+# `tracing` output of the demo bundle's sink node.
+tracing = ["dep:tracing"]
 
 [dependencies]
 daedalus-macros = { workspace = true }
@@ -35,5 +37,5 @@ daedalus-data = { workspace = true, features = ["std", "json"] }
 daedalus-core = { workspace = true, features = ["std"] }
 paste = { workspace = true }
 serde = { workspace = true, features = ["derive", "std"] }
-tracing = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"], optional = true }
 

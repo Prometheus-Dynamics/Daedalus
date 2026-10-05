@@ -13,11 +13,11 @@ use super::{
     node_metadata_value,
 };
 
-/// Runs its body only with `std`, the only build that reads `DAEDALUS_TRACE_EMBEDDED_EXPAND`
-/// (`tracing` is a `std` dependency here: it needs compare-and-swap).
+/// Runs its body only with the `tracing` feature (`std` only: it reads
+/// `DAEDALUS_TRACE_EMBEDDED_EXPAND`).
 macro_rules! traced {
     ($($body:tt)*) => {
-        #[cfg(feature = "std")]
+        #[cfg(feature = "tracing")]
         {
             $($body)*
         }
@@ -29,7 +29,7 @@ pub(super) fn expand_embedded_graphs(
     catalog: &PlannerCatalog,
     diags: &mut Vec<Diagnostic>,
 ) {
-    #[cfg(feature = "std")]
+    #[cfg(feature = "tracing")]
     let trace = std::env::var_os("DAEDALUS_TRACE_EMBEDDED_EXPAND").is_some();
     #[derive(Clone)]
     struct EmbeddedSpec {
@@ -436,7 +436,7 @@ pub(super) fn expand_embedded_graphs(
                             });
                         }
                     }
-                } else if cfg!(feature = "std") {
+                } else if cfg!(feature = "tracing") {
                     traced! {
                         if trace {
                             let out_keys: Vec<&String> = from.outputs.keys().collect();

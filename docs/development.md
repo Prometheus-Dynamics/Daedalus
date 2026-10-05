@@ -42,9 +42,9 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 
 ## Observability
 
-- Initialize a `tracing` subscriber in binaries and integration tests. The runtime's and engine's
-  spans and events need their `tracing` feature, which `std` (and so the default `threads`)
-  implies; builds without `threads` (wasm) enable the facade's `tracing` feature to keep them.
+- Initialize a `tracing` subscriber in binaries and integration tests. The runtime's, engine's
+  and planner's spans and events need the facade's `tracing` feature: on by default, so
+  `default-features = false` builds (`embedded`, wasm) list it explicitly to keep them.
 - Useful targets include `daedalus_runtime::executor`, `daedalus_runtime::executor::queue`, `daedalus_runtime::host_bridge`, `daedalus_runtime::stream`, `daedalus_runtime::config`, `daedalus_planner::passes`, `daedalus_gpu::wgpu`, `daedalus_gpu::dispatch`, `daedalus_gpu::readback`, and `daedalus_gpu::poll_driver`.
 - Metrics levels are `Off`, `Basic`, `Timing`, `Detailed`, `Hardware`, `Profile`, and `Trace`.
 - `Detailed` is the normal level for transport and allocation debugging.
@@ -70,12 +70,13 @@ For constrained hosts (embedded boards, sidecar engines), depend on the facade w
 daedalus = { package = "daedalus-rs", version = "2.0.0", default-features = false, features = ["embedded"] }
 ```
 
-`embedded` is `engine` + `plugins`: the facade's `engine` feature no longer enables the Rayon
-executor pool or metrics collection. Add `dylib-plugins` only if the host loads native plugin
-libraries. Leave every `gpu*` feature off; `EngineConfig`'s default `GpuBackend::Cpu` and
-`planner.enable_gpu = false` need no GPU feature. This set links no `wgpu`, `image`, `tokio`,
-`styx`, `rayon`, or `crossbeam`; its heaviest runtime dependencies are `serde_json` and
-`tracing`.
+`embedded` is `engine` + `plugins` + `threads`: the facade's `engine` feature does not enable the
+Rayon executor pool or metrics collection, and with default features off `tracing` is off too
+(add the `tracing` feature to keep the runtime's spans and events). Add `dylib-plugins` only if
+the host loads native plugin libraries. Leave every `gpu*` feature off; `EngineConfig`'s default
+`GpuBackend::Cpu` and `planner.enable_gpu = false` need no GPU feature. This set links no
+`wgpu`, `image`, `tokio`, `styx`, `rayon`, `crossbeam` or `tracing`; its heaviest runtime
+dependency is `serde_json`.
 
 Feature semantics without the extras:
 
@@ -89,18 +90,40 @@ Feature semantics without the extras:
 Applications that do not need to minimize dependencies should use `engine-full`
 (`engine` + `executor-pool` + `metrics`).
 
-Reference measurement (x86_64 Linux, rustc 1.97.1, `lto = "thin"`, `codegen-units = 1`,
-`strip = true`): a binary that installs one plugin, compiles a one-node host graph, and runs it
-10,000 times.
+### Dependency weight
 
-| Features | Crates (normal deps) | Stripped binary | Peak RSS | Threads |
+A probe binary depends on the facade with `default-features = false` and the features below,
+installs one plugin, compiles a one-node host graph and runs it 10,000 times (x86_64 Linux,
+rustc 1.94.0, release, `lto = "thin"`, `codegen-units = 1`, `strip = true`, each preset built cold
+in its own target directory). Crates counts the distinct packages of `cargo tree -e normal` for
+x86_64 Linux, the probe included; peak RSS is the median `VmHWM` of three runs. Measured with
+the machine at load 18-54, which affects build time only.
+
+| Preset (facade features) | Crates | Stripped binary | Peak RSS | Threads |
 | --- | --- | --- | --- | --- |
-| `embedded` | 66 | 2.6 MiB | ~4.4 MiB | 1 |
-| `engine-full,plugins` | 71 | 2.7 MiB | ~4.5 MiB | 1 |
+| `engine,plugins` (no `threads`) | 48 | 3.2 MiB | ~4.9 MiB | 1 |
+| `embedded` | 48 | 3.2 MiB | ~5.0 MiB | 1 |
+| `embedded,tracing` | 52 | 3.3 MiB | ~5.1 MiB | 1 |
+| `engine-full,plugins` + defaults (`threads,tracing`) | 57 | 3.3 MiB | ~5.1 MiB | 1 |
+| ... + `dylib-plugins` | 60 | 3.3 MiB | ~5.2 MiB | 1 |
+| ... + `gpu-wgpu` | 94 | 7.0 MiB | ~6.2 MiB | 1 |
+| ... + `dylib-plugins,gpu-dmabuf,gpu-async,gpu-gles,gpu-image,schema,proto` | 112 | 8.0 MiB | ~6.4 MiB | 1 |
 
-Linear graphs stay on the serial execution path, so neither profile starts worker threads for
-this workload; the pool mainly costs crates and binary size. Re-measure on the target board
-before budgeting.
+What the optional features add on top of `engine-full,plugins`:
+
+- `tracing`: `tracing`, `tracing-core`, `pin-project-lite`, `once_cell` (4 crates).
+- `dylib-plugins`: `daedalus-ffi-host`, `daedalus-ffi-core` and `libloading`. The FFI crates'
+  `integrity` feature (`sha2` and six helper crates, package hashing) stays off.
+- `gpu-wgpu`: wgpu with its Vulkan backend (`wgpu-core`/`-hal`/`-types`, `naga`, `ash`,
+  `gpu-allocator`, `renderdoc-sys`, which wgpu always enables on native targets, ...) and
+  `half`/`bytemuck`. `gpu-gles` adds `glow`, `khronos-egl`, `wayland-sys` and `dlib`;
+  `gpu-image` adds `image`, `png`, `flate2`, `miniz_oxide`, `fdeflate`, `moxcms`, `pxfm`,
+  `crc32fast`, `simd-adler32`, `adler2` and `byteorder-lite`.
+
+Linear graphs stay on the serial execution path, so no preset starts worker threads for this
+workload; the pool mainly costs crates and binary size. Code a binary does not call (the plugin
+loader, GPU backends) is mostly removed by LTO, so crates track build time more than binary
+size. Re-measure on the target board before budgeting.
 
 ## Portability
 
@@ -149,8 +172,8 @@ What `std` switches:
   `std::time::Instant` wherever the target has an OS clock and otherwise a portable instant whose
   platform reading (`Instant::now`) is zero, and `Clock`, the injectable clock (see "Tier 2"
   below). There is no process-wide clock to install.
-- `std`-only: the planner's `DAEDALUS_TRACE_EMBEDDED_EXPAND` variable (and its `tracing`
-  dependency) and its two binaries.
+- `std`-only: the planner's `DAEDALUS_TRACE_EMBEDDED_EXPAND` variable (its `tracing` feature,
+  default on, implies `std`) and its two binaries.
 
 Workspace wiring: shared dependencies that the tier is built from (`serde`, `serde_json`,
 `thiserror`, `tracing`, `base64`, `crossbeam-queue`) and the five crates themselves are declared
@@ -219,12 +242,12 @@ fingerprint; `dylib-plugins` turns it on):
   `EngineConfig::from_env` (`config-env` without `std` keeps the serde config types only), and
   the host bridge's `Condvar`. `libc` is a Linux-only optional dependency.
 - `std` forwards `std` to core, transport, data, registry, planner, `serde`, `serde_json`,
-  `thiserror` and `tracing`, and implies `tracing`; without it the whole tree is `alloc`-only.
+  `thiserror` and (when enabled) `tracing`; without it the whole tree is `alloc`-only.
 
 The other switches:
 
-- Tracing: the `tracing` feature (implied by `std`, host-only in the fingerprint; the engine's
-  enables the runtime's, the facade's both) keeps the `tracing` spans and events. Without it the
+- Tracing: the `tracing` feature (default on, independent of `std`, host-only in the
+  fingerprint; the engine's enables the runtime's, the facade's also the planner's) keeps the `tracing` spans and events. Without it the
   crate's `trace` module (`crates/trace.rs`, symlinked into each crate's `src/` like
   `portable.rs`) expands `trace!`/`debug!`/`warn!`/`error!` to nothing, without evaluating their
   arguments, and `debug_span!` to an inert span, so `tracing` is not a dependency. It builds

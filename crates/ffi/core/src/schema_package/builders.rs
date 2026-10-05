@@ -286,6 +286,7 @@ impl LanguagePackager {
     }
 
     /// Validate the input against this backend and emit a hashed package descriptor.
+    #[cfg(feature = "integrity")]
     pub fn build(&self, input: LanguagePackageInput) -> Result<PluginPackage, FfiContractError> {
         validate_language_backends(&input.schema, &input.backends, self.backend.clone())?;
         let mut metadata = input.metadata;

@@ -1,8 +1,12 @@
 use std::collections::HashMap;
 
-use crate::{Compute, GpuContextHandle, GpuError, GpuImageHandle};
+use crate::GpuImageHandle;
+#[cfg(feature = "gpu-image")]
+use crate::{Compute, GpuContextHandle, GpuError};
+#[cfg(feature = "gpu-image")]
 use image::DynamicImage;
 
+#[cfg(feature = "gpu-image")]
 use super::ShaderContext;
 
 /// Result buffers keyed by binding slot.
@@ -11,6 +15,50 @@ pub struct ShaderRunOutput {
     pub textures: HashMap<u32, GpuImageHandle>,
 }
 
+impl ShaderRunOutput {
+    /// Interpret an r32float texture readback into raw f32 values (row-major).
+    pub fn texture_r32f(&self, binding: u32, width: u32, height: u32) -> Option<Vec<f32>> {
+        self.buffers.get(&binding).and_then(|bytes| {
+            let expected = (width as usize) * (height as usize) * 4;
+            if bytes.len() < expected || bytes.len() % 4 != 0 {
+                return None;
+            }
+            let mut out = Vec::with_capacity(bytes.len() / 4);
+            for chunk in bytes.chunks_exact(4) {
+                out.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            }
+            Some(out)
+        })
+    }
+
+    /// Interpret an rgba16float texture readback into raw f32 RGBA values (row-major).
+    pub fn texture_rgba16f(&self, binding: u32, width: u32, height: u32) -> Option<Vec<f32>> {
+        self.buffers.get(&binding).and_then(|bytes| {
+            if bytes.len() < (width as usize) * (height as usize) * 8 {
+                return None;
+            }
+            let mut out = Vec::with_capacity((width as usize) * (height as usize) * 4);
+            for chunk in bytes.chunks_exact(2) {
+                let half = u16::from_le_bytes([chunk[0], chunk[1]]);
+                let f = half::f16::from_bits(half).to_f32();
+                out.push(f);
+            }
+            Some(out)
+        })
+    }
+
+    pub fn storage_r32f(&self, binding: u32, width: u32, height: u32) -> Option<Vec<f32>> {
+        self.texture_r32f(binding, width, height)
+    }
+
+    /// Get a GPU image handle for a bound texture (when available).
+    pub fn texture_handle(&self, binding: u32) -> Option<GpuImageHandle> {
+        self.textures.get(&binding).cloned()
+    }
+}
+
+/// `image` crate views of the readbacks.
+#[cfg(feature = "gpu-image")]
 impl ShaderRunOutput {
     /// Interpret a texture readback (RGBA8) into an ImageBuffer if possible.
     pub fn texture_rgba8(
@@ -33,21 +81,6 @@ impl ShaderRunOutput {
     ) -> Option<DynamicImage> {
         self.texture_rgba8(binding, width, height)
             .map(DynamicImage::ImageRgba8)
-    }
-
-    /// Interpret an r32float texture readback into raw f32 values (row-major).
-    pub fn texture_r32f(&self, binding: u32, width: u32, height: u32) -> Option<Vec<f32>> {
-        self.buffers.get(&binding).and_then(|bytes| {
-            let expected = (width as usize) * (height as usize) * 4;
-            if bytes.len() < expected || bytes.len() % 4 != 0 {
-                return None;
-            }
-            let mut out = Vec::with_capacity(bytes.len() / 4);
-            for chunk in bytes.chunks_exact(4) {
-                out.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-            }
-            Some(out)
-        })
     }
 
     /// Interpret an r32float texture readback into a grayscale `ImageBuffer<u8>` (clamped 0..1 -> 0..255).
@@ -82,22 +115,6 @@ impl ShaderRunOutput {
         })
     }
 
-    /// Interpret an rgba16float texture readback into raw f32 RGBA values (row-major).
-    pub fn texture_rgba16f(&self, binding: u32, width: u32, height: u32) -> Option<Vec<f32>> {
-        self.buffers.get(&binding).and_then(|bytes| {
-            if bytes.len() < (width as usize) * (height as usize) * 8 {
-                return None;
-            }
-            let mut out = Vec::with_capacity((width as usize) * (height as usize) * 4);
-            for chunk in bytes.chunks_exact(2) {
-                let half = u16::from_le_bytes([chunk[0], chunk[1]]);
-                let f = half::f16::from_bits(half).to_f32();
-                out.push(f);
-            }
-            Some(out)
-        })
-    }
-
     /// Interpret an rgba16float texture into `ImageBuffer<Rgba<f32>>`.
     pub fn texture_rgba16f_image(
         &self,
@@ -121,10 +138,6 @@ impl ShaderRunOutput {
         self.texture_rgba8_image(binding, width, height)
     }
 
-    pub fn storage_r32f(&self, binding: u32, width: u32, height: u32) -> Option<Vec<f32>> {
-        self.texture_r32f(binding, width, height)
-    }
-
     pub fn storage_rgba16f_image(
         &self,
         binding: u32,
@@ -132,11 +145,6 @@ impl ShaderRunOutput {
         height: u32,
     ) -> Option<image::ImageBuffer<image::Rgba<f32>, Vec<f32>>> {
         self.texture_rgba16f_image(binding, width, height)
-    }
-
-    /// Get a GPU image handle for a bound texture (when available).
-    pub fn texture_handle(&self, binding: u32) -> Option<GpuImageHandle> {
-        self.textures.get(&binding).cloned()
     }
 
     /// Convert a texture output into a `Compute<DynamicImage>`, preferring GPU handles and falling back to readback.
