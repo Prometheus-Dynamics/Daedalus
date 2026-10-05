@@ -241,14 +241,25 @@ executor, checked on `thumbv7em` and `thumbv6m`) are done; see "Portability" in 
       WASI smoke run (`ci.sh wasm`).
 
 ### MCU profile
-`daedalus-mcu` + `daedalus-mcu-build` (host-planned graphs, generated code, no heap; 3.1-3.6 KiB
-flash and 160 B RAM for `examples/mcu_blink`); see `docs/mcu.md`.
+`daedalus-mcu` + `daedalus-mcu-build` (host-planned graphs, no heap) in three modes per firmware:
+compiled (3.1-3.6 KiB flash, 160 B RAM for `examples/mcu_blink`), compiled + tunable (6.0-6.9
+KiB, 176 B) and loaded (11.3-12.4 KiB, 584 B); see `docs/mcu.md`.
 - [x] Host plan compiler, device crate, `#[daedalus_mcu::node]`, blink example with firmware for
       `thumbv7em`/`thumbv6m`, `scripts/ci.sh mcu` size budgets in the `portability` job.
-- [ ] **Flash the firmware** on a real board (with a HAL: ADC input, GPIO output) and measure
-      stack use and tick time.
-- [ ] **Runtime-loaded plans** (postcard tables over a fixed node set) for updating a graph
-      without reflashing, if a use case needs it.
+- [x] **Live parameters**: constants marked in `daedalus.mcu.params` become a `Tunable` parameter
+      table (typed setters, range and type checks with the planner's constant rules, postcard
+      `ParamUpdate` messages, a JSON manifest and `daedalus-mcu param`); `freeze_params` and
+      unmarked graphs compile to the same code as before (byte-exact size check in `ci.sh mcu`).
+- [x] **Runtime-loaded plans**: `daedalus_mcu_build::library` generates a node library,
+      `compile_loaded`/`to_blob` compile plans for it (same lowering as compiled mode),
+      `loaded::Interpreter` validates and swaps them in a fixed arena (feature `loaded`), with
+      parameters; plan A/B swap, validation failures and per-mode budgets tested.
+- [ ] **Flash the firmwares** on a real board (with a HAL: ADC input, GPIO output) and measure
+      stack use and tick time in each mode.
+- [ ] **Chunked blob receive helper** (feature-gated framing + CRC32 into a buffer or flash
+      partition) if applications keep writing the same transport code.
+- [ ] **Smaller tunable/loaded code**: the generic `Scalar` conversion pulls in `f64` soft-float
+      even for `f32`-only graphs; a per-kind conversion could drop it.
 - [ ] **Fan-in and user adapters** on the device (generate adapter calls for `#[adapt]` functions
       that are plain `no_std` code).
 - [ ] **Shared nodes with the full runtime:** generate both a `#[node]` handler and the device

@@ -19,6 +19,25 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   graph on Cortex-M4F/M0+ in 3.1/3.6 KiB of flash and 160 B of RAM with no heap;
   `scripts/ci.sh mcu` (in the `portability` job) builds it, enforces flash/RAM budgets and runs
   the native tests. The workspace gains an `mcu` size profile.
+- MCU profile modes: **compiled + tunable** and **loaded** next to compiled. Graph node
+  metadata `daedalus.mcu.params` marks constants as parameters (with ranges); the compiled module
+  then gets `PARAM_NAMES`/`PARAMS`, typed `set_<node>_<input>` setters and a
+  `daedalus_mcu::Tunable` impl (`set_param`/`param`/`apply_update`) checking types with the
+  planner's constant rules (`Scalar::coerce`) and ranges; updates are postcard
+  `ParamUpdate { id, value: Scalar }` messages; `CompileOptions::freeze_params` keeps constants
+  literal. Loaded mode (`daedalus-mcu` feature `loaded`): `daedalus_mcu_build::library` generates
+  a node library (`LIBRARY`: port type ids, state layout, type-erased `run` adapters, interface
+  hash) and a JSON `LibraryManifest`; `compile_loaded`/`McuPlan::to_blob` compile graphs into
+  deterministic postcard plan blobs (format version 1) with the compiled mode's lowering;
+  `loaded::Interpreter<ARENA>` validates a blob (version, library hash, entries, types per edge,
+  schedule order, parameters, arena size) and swaps it in at a tick boundary, keeping the running
+  plan on error, then ticks allocation-free over a fixed arena with typed host ports by name and
+  parameters. `McuPlan::manifest` (`PlanManifest`) names node, edge, port and parameter ids, and
+  the `daedalus-mcu` host tool compiles blobs (`plan`) and encodes parameter updates (`param`).
+  `examples/mcu_blink` builds all three firmwares (the loaded one swaps from plan A to plan B);
+  `scripts/ci.sh mcu` measures each mode against its own budget and checks the compiled
+  firmware's size to the byte. `daedalus_mcu::{Ring, Scalar, ScalarKind, wire, name_hash}` are
+  shared by both modes; `McuError::Port` reports misused loaded-mode host ports.
 - Typed host ports: `GraphBuilder::{input_as, input_typed, output_as, output_typed}` declare a
   host port's type (stored as `HOST_INPUT_TYPES_KEY`/`HOST_OUTPUT_TYPES_KEY` bridge metadata,
   read through `daedalus_planner::HostPortTypes`), so one host input can feed ports of different

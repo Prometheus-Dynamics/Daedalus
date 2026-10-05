@@ -2,7 +2,7 @@
 name = "daedalus-mcu-build"
 version.workspace = true
 edition.workspace = true
-description = "Host-side plan compiler for daedalus-mcu: plans a graph and emits allocation-free device code."
+description = "Host-side plan compiler for daedalus-mcu: plans a graph into allocation-free device code or a loadable plan blob."
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
@@ -16,11 +16,18 @@ workspace = true
 [lib]
 path = "src/lib.rs"
 
+# Host tool: compile loaded-mode plan blobs and encode parameter updates.
+[[bin]]
+name = "daedalus-mcu"
+path = "src/main.rs"
+
 [dependencies]
 daedalus-data = { workspace = true, features = ["std"] }
-daedalus-mcu = { workspace = true }
+daedalus-mcu = { workspace = true, features = ["loaded"] }
 daedalus-planner = { workspace = true, features = ["std"] }
 daedalus-registry = { workspace = true, features = ["std"] }
 daedalus-runtime = { workspace = true, features = ["std", "plugins"] }
 daedalus-transport = { workspace = true, features = ["std"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }

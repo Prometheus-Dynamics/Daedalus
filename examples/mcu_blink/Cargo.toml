@@ -20,9 +20,27 @@ path = "src/main.rs"
 test = false
 bench = false
 
+# The same firmware in compiled + tunable mode.
+[[bin]]
+name = "daedalus-mcu-blink-tunable"
+path = "src/bin/tunable.rs"
+test = false
+bench = false
+
+# The same firmware in loaded mode (interpreter, plans A and B).
+[[bin]]
+name = "daedalus-mcu-blink-loaded"
+path = "src/bin/loaded.rs"
+test = false
+bench = false
+
 [dependencies]
-daedalus-mcu = { workspace = true }
+daedalus-mcu = { workspace = true, features = ["loaded"] }
 daedalus-mcu-blink-nodes = { workspace = true }
+
+# The native tests compile blobs and parameter updates as a host tool would.
+[dev-dependencies]
+daedalus-mcu-build = { workspace = true }
 
 # The build script plans `graph.json` against the same node crate, compiled for the host.
 [build-dependencies]

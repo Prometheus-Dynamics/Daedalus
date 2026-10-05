@@ -12,33 +12,27 @@ pub enum Overflow {
     Error,
 }
 
+impl Overflow {
+    pub const ALL: [Self; 3] = [Self::DropOldest, Self::DropNewest, Self::Error];
+}
+
 /// A push refused by a full queue whose policy is [`Overflow::Error`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct QueueFull;
 
-/// A ring buffer of at most `N` values (`1..=u16::MAX`), stored inline: an edge's storage is
-/// exactly `N` slots, sized by the host plan compiler from the edge policy.
-pub struct Queue<T, const N: usize> {
-    slots: [Option<T>; N],
+/// The head and length of a ring of slots: the index arithmetic shared by the typed [`Queue`]
+/// of compiled graphs and the byte queues of the loaded-plan interpreter, which store the
+/// values themselves.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Ring {
     head: u16,
     len: u16,
 }
 
-impl<T, const N: usize> Queue<T, N> {
-    const CAPACITY_OK: () = assert!(N > 0 && N <= u16::MAX as usize, "queue capacity");
-
+impl Ring {
     pub const fn new() -> Self {
-        let () = Self::CAPACITY_OK;
-        Self {
-            slots: [const { None }; N],
-            head: 0,
-            len: 0,
-        }
-    }
-
-    pub const fn capacity(&self) -> usize {
-        N
+        Self { head: 0, len: 0 }
     }
 
     pub const fn len(&self) -> usize {
@@ -49,37 +43,105 @@ impl<T, const N: usize> Queue<T, N> {
         self.len == 0
     }
 
+    /// The oldest slot.
+    pub const fn head(&self) -> usize {
+        self.head as usize
+    }
+
+    /// The slot to write a new value to, applying `overflow` when all `capacity` slots are used
+    /// (`Ok(None)`: the value is dropped). With [`Overflow::DropOldest`] the returned slot is the
+    /// oldest one, which the caller overwrites.
+    #[inline]
+    pub fn push(
+        &mut self,
+        capacity: usize,
+        overflow: Overflow,
+    ) -> Result<Option<usize>, QueueFull> {
+        if self.len() == capacity {
+            match overflow {
+                Overflow::DropOldest => self.advance(capacity),
+                Overflow::DropNewest => return Ok(None),
+                Overflow::Error => return Err(QueueFull),
+            }
+        }
+        let tail = wrap(self.head as usize + self.len(), capacity);
+        self.len += 1;
+        Ok(Some(tail))
+    }
+
+    /// Remove the oldest slot and return it (its value stays in place until overwritten).
+    #[inline]
+    pub fn pop(&mut self, capacity: usize) -> Option<usize> {
+        if self.len == 0 {
+            return None;
+        }
+        let head = self.head as usize;
+        self.advance(capacity);
+        Some(head)
+    }
+
+    /// Forget every slot (the values stay in place until overwritten).
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    #[inline]
+    fn advance(&mut self, capacity: usize) {
+        self.head = wrap(self.head as usize + 1, capacity) as u16;
+        self.len -= 1;
+    }
+}
+
+/// A ring buffer of at most `N` values (`1..=u16::MAX`), stored inline: an edge's storage is
+/// exactly `N` slots, sized by the host plan compiler from the edge policy.
+pub struct Queue<T, const N: usize> {
+    slots: [Option<T>; N],
+    ring: Ring,
+}
+
+impl<T, const N: usize> Queue<T, N> {
+    const CAPACITY_OK: () = assert!(N > 0 && N <= u16::MAX as usize, "queue capacity");
+
+    pub const fn new() -> Self {
+        let () = Self::CAPACITY_OK;
+        Self {
+            slots: [const { None }; N],
+            ring: Ring::new(),
+        }
+    }
+
+    pub const fn capacity(&self) -> usize {
+        N
+    }
+
+    pub const fn len(&self) -> usize {
+        self.ring.len()
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.ring.is_empty()
+    }
+
     /// The oldest value, without removing it.
     pub fn peek(&self) -> Option<&T> {
-        self.slots[self.head as usize].as_ref()
+        self.slots[self.ring.head()].as_ref()
     }
 
     /// Append `value`, applying `overflow` when the queue is full.
     #[inline]
     pub fn push(&mut self, value: T, overflow: Overflow) -> Result<(), QueueFull> {
-        if self.len() == N {
-            match overflow {
-                Overflow::DropOldest => drop(self.pop()),
-                Overflow::DropNewest => return Ok(()),
-                Overflow::Error => return Err(QueueFull),
-            }
+        if let Some(slot) = self.ring.push(N, overflow)? {
+            // Replaces (drops) the oldest value when the queue was full.
+            self.slots[slot] = Some(value);
         }
-        let tail = wrap::<N>(self.head as usize + self.len());
-        self.slots[tail] = Some(value);
-        self.len += 1;
         Ok(())
     }
 
     /// Remove and return the oldest value.
     #[inline]
     pub fn pop(&mut self) -> Option<T> {
-        if self.len == 0 {
-            return None;
-        }
-        let value = self.slots[self.head as usize].take();
-        self.head = wrap::<N>(self.head as usize + 1) as u16;
-        self.len -= 1;
-        value
+        let slot = self.ring.pop(N)?;
+        self.slots[slot].take()
     }
 
     /// Remove every value and return the oldest: what a node in fire mode `any` receives from
@@ -102,10 +164,14 @@ impl<T, const N: usize> Default for Queue<T, N> {
     }
 }
 
-/// `index mod N` for `index < 2 * N`, without a division (Cortex-M0 has none).
+/// `index mod capacity` for `index < 2 * capacity`, without a division (Cortex-M0 has none).
 #[inline(always)]
-const fn wrap<const N: usize>(index: usize) -> usize {
-    if index >= N { index - N } else { index }
+const fn wrap(index: usize, capacity: usize) -> usize {
+    if index >= capacity {
+        index - capacity
+    } else {
+        index
+    }
 }
 
 #[cfg(test)]
@@ -141,5 +207,15 @@ mod tests {
         assert_eq!(keep.peek(), Some(&1));
         assert_eq!(keep.take_oldest(), Some(1));
         assert!(keep.is_empty());
+
+        let mut ring = Ring::new();
+        assert_eq!(ring.push(2, Overflow::DropOldest), Ok(Some(0)));
+        assert_eq!(ring.push(2, Overflow::DropOldest), Ok(Some(1)));
+        // Full: the oldest slot is reused.
+        assert_eq!(ring.push(2, Overflow::DropOldest), Ok(Some(0)));
+        assert_eq!(
+            (ring.pop(2), ring.pop(2), ring.pop(2)),
+            (Some(1), Some(0), None)
+        );
     }
 }

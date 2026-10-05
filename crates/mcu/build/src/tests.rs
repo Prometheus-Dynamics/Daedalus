@@ -140,7 +140,8 @@ fn plans_schedule_queues_constants_and_host_ports() {
                 required: true
             },
             InputSource::Const {
-                expr: "2_f32".into(),
+                value: Some(Scalar::F32(2.0)),
+                expr: "2.0_f32".into(),
                 required: true
             },
         ]
@@ -151,6 +152,7 @@ fn plans_schedule_queues_constants_and_host_ports() {
         [HostPort {
             name: "x".into(),
             ty: "f32".into(),
+            key: f32::KEY.into(),
             edges: vec![0]
         }]
     );
@@ -162,7 +164,7 @@ fn plans_schedule_queues_constants_and_host_ports() {
         "e0: ::daedalus_mcu::Queue<f32, 1>,",
         "pub fn push_x(&mut self, value: f32)",
         "pub fn pop_over(&mut self) -> Option<f32>",
-        "::run(&mut self.s0, &ctx, i0, 2_f32)",
+        "::run(&mut self.s0, &ctx, i0, 2.0_f32)",
         "::run(&mut self.s1, &ctx, i0, None)",
     ] {
         assert!(
@@ -246,4 +248,234 @@ fn rejects_what_the_device_cannot_run() {
     graph.edges.push(Edge::new(3, "sum", 1, "k"));
     graph.nodes[1].const_inputs.clear();
     assert!(unsupported(plan(graph, &NODES, &opts)).contains("ConverterMissing"));
+}
+
+/// `pipeline()` with `gain.k` tunable in `0..=10`.
+fn tunable_pipeline() -> Graph {
+    let mut graph = pipeline();
+    let range = Value::List(vec![Value::Int(0), Value::Int(10)]);
+    graph.nodes[1].metadata.insert(
+        PARAMS_META_KEY.into(),
+        Value::Map(vec![(Value::String("k".into()), range)]),
+    );
+    graph
+}
+
+#[test]
+fn constants_rules_match_the_planner() {
+    let values = [
+        Value::Int(0),
+        Value::Int(-1),
+        Value::Int(255),
+        Value::Int(256),
+        Value::Int(1 << 24),
+        Value::Int((1 << 24) + 1),
+        Value::Int(i64::MAX),
+        Value::Float(0.5),
+        Value::Float(-3.0),
+        Value::Float(1e300),
+        Value::Float(f64::INFINITY),
+    ];
+    for kind in ScalarKind::ALL
+        .into_iter()
+        .filter(|k| *k != ScalarKind::Bool)
+    {
+        let key = typeexpr_transport_key(&TypeExpr::Scalar(match kind {
+            ScalarKind::I8 => ValueType::I8,
+            ScalarKind::I16 => ValueType::I16,
+            ScalarKind::I32 => ValueType::I32,
+            ScalarKind::I64 => ValueType::Int,
+            ScalarKind::U8 => ValueType::U8,
+            ScalarKind::U16 => ValueType::U16,
+            ScalarKind::U32 => ValueType::U32,
+            ScalarKind::U64 => ValueType::U64,
+            ScalarKind::F32 => ValueType::F32,
+            _ => ValueType::Float,
+        }));
+        let TypeExpr::Scalar(value_type) = daedalus_registry::transport_key_typeexpr(&key) else {
+            unreachable!()
+        };
+        for value in &values {
+            assert_eq!(
+                scalar_value(kind, value).is_ok(),
+                value_type.check_value(value).is_ok(),
+                "{kind:?} {value:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn widening_table_matches_the_runtime() {
+    let registry = registry(&[]).unwrap();
+    let adapters = registry.transport_capabilities.adapters();
+    for from in ScalarKind::ALL {
+        for to in ScalarKind::ALL {
+            let id = format!(
+                "daedalus.builtin.widen.{}_to_{}",
+                from.rust_name(),
+                to.rust_name()
+            );
+            let id = daedalus_transport::AdapterId::new(id);
+            assert_eq!(from.widens_to(to), adapters.contains_key(&id), "{id:?}");
+        }
+    }
+}
+
+#[test]
+fn tunable_constants_become_parameters() {
+    let plan = plan(tunable_pipeline(), &NODES, &CompileOptions::default()).unwrap();
+    assert_eq!(
+        plan.params,
+        [PlanParam {
+            name: "t.gain.k".into(),
+            node: 0,
+            input: 1,
+            value: Scalar::F32(2.0),
+            min: Scalar::F32(0.0),
+            max: Scalar::F32(10.0),
+        }]
+    );
+    assert_eq!(
+        plan.nodes[0].inputs[1],
+        InputSource::Param {
+            param: 0,
+            required: true
+        }
+    );
+    let source = plan.to_rust(&CompileOptions::default());
+    for expected in [
+        "pub const PARAM_NAMES: [&str; 1] = [\"t.gain.k\"];",
+        "p0: 2.0_f32,",
+        "::run(&mut self.s0, &ctx, i0, self.p0)",
+        "pub fn set_t_gain_k(&mut self, value: f32)",
+        "impl ::daedalus_mcu::Tunable for Graph {",
+    ] {
+        assert!(
+            source.contains(expected),
+            "missing `{expected}` in:\n{source}"
+        );
+    }
+    let manifest = plan.manifest(None);
+    assert_eq!(manifest.params[0].max, Some(serde_json::json!(10.0)));
+    // `(id 0, F32 tag 9, 2.5 LE)`, checked against the range on the host.
+    let update = manifest
+        .param_update("t.gain.k", &Value::Float(2.5))
+        .unwrap();
+    assert_eq!(update, [0, 9, 0x00, 0x00, 0x20, 0x40]);
+    assert!(manifest.param_update("t.gain.k", &Value::Int(11)).is_err());
+    assert!(manifest.param_update("t.gain.x", &Value::Int(1)).is_err());
+
+    // Frozen: the same code as without markers (the plan hash covers the metadata).
+    let frozen = CompileOptions {
+        freeze_params: true,
+        ..Default::default()
+    };
+    let body = |graph| {
+        let source = compile(graph, &NODES, &frozen).unwrap();
+        source.split_once("NODE_IDS").unwrap().1.to_string()
+    };
+    assert_eq!(body(tunable_pipeline()), body(pipeline()));
+}
+
+#[test]
+fn rejects_invalid_parameters() {
+    let opts = CompileOptions::default();
+    let with = |port: &str, range: Value| {
+        let mut graph = pipeline();
+        graph.nodes[1].metadata.insert(
+            PARAMS_META_KEY.into(),
+            Value::Map(vec![(Value::String(port.to_string().into()), range)]),
+        );
+        unsupported(plan(graph, &NODES, &opts))
+    };
+    let range = |min, max| Value::List(vec![Value::Float(min), Value::Float(max)]);
+    assert!(with("x", Value::Unit).contains("connected to an edge"));
+    assert!(with("nope", Value::Unit).contains("no such input"));
+    assert!(with("k", range(3.0, 4.0)).contains("outside its range"));
+    assert!(with("k", Value::Int(3)).contains("not [min, max]"));
+}
+
+#[test]
+fn library_manifest_hashes_interfaces() {
+    let library = library(&NODES).unwrap();
+    assert_eq!(library.types, Vec::<String>::new());
+    assert_eq!(library.type_id(f32::KEY), Some(ScalarKind::F32 as u16));
+    assert_eq!(
+        LibraryManifest::from_json(&library.to_json()).unwrap(),
+        library
+    );
+
+    // The hash covers interfaces, not code locations.
+    let mut moved = specs(&NODES);
+    moved[0].path = "elsewhere::gain".into();
+    assert_eq!(
+        LibraryManifest::new(moved.clone()).unwrap().hash,
+        library.hash
+    );
+    moved[0].inputs[1].optional = true;
+    assert_ne!(LibraryManifest::new(moved).unwrap().hash, library.hash);
+    let mut tampered = library.clone();
+    tampered.hash ^= 1;
+    assert!(LibraryManifest::from_json(&tampered.to_json()).is_err());
+
+    let source = library.to_rust().unwrap();
+    for expected in [
+        "pub static LIBRARY: ::daedalus_mcu::loaded::Library",
+        "state: ::daedalus_mcu::loaded::StateEntry::of::<",
+        "unsafe fn run_1(",
+        "let out = ::",
+        "io.input(0), io.input_opt(1))?;",
+        "io.output(1, out.1);",
+    ] {
+        assert!(
+            source.contains(expected),
+            "missing `{expected}` in:\n{source}"
+        );
+    }
+}
+
+#[test]
+fn blobs_are_deterministic_and_name_their_library() {
+    let library = library(&NODES).unwrap();
+    let plan = compile_loaded(tunable_pipeline(), &library, &CompileOptions::default()).unwrap();
+    let blob = plan.to_blob(&library).unwrap();
+    let again = compile_loaded(tunable_pipeline(), &library, &CompileOptions::default())
+        .unwrap()
+        .to_blob(&library)
+        .unwrap();
+    assert_eq!(blob, again);
+    assert_eq!(
+        blob[..5],
+        [b'D', b'M', b'C', b'U', daedalus_mcu::loaded::FORMAT_VERSION]
+    );
+    let mut header = daedalus_mcu::wire::Reader::new(&blob[5..]);
+    assert_eq!(header.varint(), Ok(library.hash));
+    assert_eq!(header.varint(), Ok(plan.hash));
+
+    let manifest = plan.manifest(Some(&library));
+    assert_eq!(manifest.library_hash, Some(library.hash));
+    // Blob edge order: node inputs in schedule order, then host outputs.
+    assert_eq!(
+        manifest.edges,
+        [
+            "host.x -> t.gain.x",
+            "t.gain.y -> t.check.x",
+            "t.check.ok -> host.ok",
+            "t.check.over -> host.over"
+        ]
+    );
+    assert_eq!(
+        PlanManifest::from_json(&manifest.to_json()).unwrap(),
+        manifest
+    );
+
+    // Constants of non-scalar types only exist in compiled mode.
+    let mut plan = plan;
+    plan.nodes[0].inputs[1] = InputSource::Const {
+        value: None,
+        expr: "()".into(),
+        required: true,
+    };
+    assert!(plan.to_blob(&library).is_err());
 }
