@@ -40,7 +40,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "2.0.0"
+version = "3.0.0"
 authors = ["Mathias Petersen"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Prometheus-Dynamics/Daedalus"
@@ -50,31 +50,31 @@ rust-version = "1.90"
 [workspace.dependencies]
 # Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared
 # without default features; `std` consumers enable `features = ["std"]` themselves.
-daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "2.0.0", default-features = false }
-daedalus-core = { path = "crates/core", version = "2.0.0", default-features = false }
-daedalus-transport = { path = "crates/transport", version = "2.0.0", default-features = false }
-daedalus-data = { path = "crates/data", version = "2.0.0", default-features = false }
-daedalus-wgsl-infer = { path = "crates/wgsl-infer", version = "2.0.0" }
-daedalus-gpu = { path = "crates/gpu", version = "2.0.0" }
-daedalus-registry = { path = "crates/registry", version = "2.0.0", default-features = false }
-daedalus-planner = { path = "crates/planner", version = "2.0.0", default-features = false }
-daedalus-runtime = { path = "crates/runtime", version = "2.0.0", default-features = false }
-daedalus-macros = { path = "crates/macros", version = "2.0.0" }
-daedalus-nodes = { path = "crates/nodes", version = "2.0.0" }
-daedalus-engine = { path = "crates/engine", version = "2.0.0", default-features = false }
-daedalus-daemon = { path = "crates/daemon", version = "2.0.0" }
-daedalus-ffi-core = { path = "crates/ffi/core", version = "2.0.0", default-features = false }
-daedalus-ffi-host = { path = "crates/ffi/host", version = "2.0.0", default-features = false }
-daedalus-ffi-python = { path = "crates/ffi/python", version = "2.0.0" }
-daedalus-ffi-node = { path = "crates/ffi/node", version = "2.0.0" }
-daedalus-ffi-java = { path = "crates/ffi/java", version = "2.0.0" }
-daedalus-ffi-cpp = { path = "crates/ffi/cpp", version = "2.0.0" }
-daedalus-mcu = { path = "crates/mcu/device", version = "2.0.0" }
-daedalus-mcu-macros = { path = "crates/mcu/macros", version = "2.0.0" }
-daedalus-mcu-build = { path = "crates/mcu/build", version = "2.0.0" }
-daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "2.0.0" }
-daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "2.0.0" }
-daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi", version = "2.0.0" }
+daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.0", default-features = false }
+daedalus-core = { path = "crates/core", version = "3.0.0", default-features = false }
+daedalus-transport = { path = "crates/transport", version = "3.0.0", default-features = false }
+daedalus-data = { path = "crates/data", version = "3.0.0", default-features = false }
+daedalus-wgsl-infer = { path = "crates/wgsl-infer", version = "3.0.0" }
+daedalus-gpu = { path = "crates/gpu", version = "3.0.0" }
+daedalus-registry = { path = "crates/registry", version = "3.0.0", default-features = false }
+daedalus-planner = { path = "crates/planner", version = "3.0.0", default-features = false }
+daedalus-runtime = { path = "crates/runtime", version = "3.0.0", default-features = false }
+daedalus-macros = { path = "crates/macros", version = "3.0.0" }
+daedalus-nodes = { path = "crates/nodes", version = "3.0.0" }
+daedalus-engine = { path = "crates/engine", version = "3.0.0", default-features = false }
+daedalus-daemon = { path = "crates/daemon", version = "3.0.0" }
+daedalus-ffi-core = { path = "crates/ffi/core", version = "3.0.0", default-features = false }
+daedalus-ffi-host = { path = "crates/ffi/host", version = "3.0.0", default-features = false }
+daedalus-ffi-python = { path = "crates/ffi/python", version = "3.0.0" }
+daedalus-ffi-node = { path = "crates/ffi/node", version = "3.0.0" }
+daedalus-ffi-java = { path = "crates/ffi/java", version = "3.0.0" }
+daedalus-ffi-cpp = { path = "crates/ffi/cpp", version = "3.0.0" }
+daedalus-mcu = { path = "crates/mcu/device", version = "3.0.0" }
+daedalus-mcu-macros = { path = "crates/mcu/macros", version = "3.0.0" }
+daedalus-mcu-build = { path = "crates/mcu/build", version = "3.0.0" }
+daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "3.0.0" }
+daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "3.0.0" }
+daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi", version = "3.0.0" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
 async-trait = "0.1.89"
 base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }

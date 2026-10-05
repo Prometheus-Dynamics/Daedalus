@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-transport"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2024"
 description = "Generic payload transport primitives for Daedalus."
 license.workspace = true

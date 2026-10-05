@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-engine"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2024"
 description = "High-level engine facade for planning and running Daedalus graphs."
 license.workspace = true

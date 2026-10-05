@@ -54,7 +54,7 @@ The facade's default features are `threads` and `tracing`. Enable the layers you
 
 ```toml
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine-full", "plugins"] }
+daedalus = { package = "daedalus-rs", version = "3.0.0", features = ["engine-full", "plugins"] }
 ```
 
 Useful examples:

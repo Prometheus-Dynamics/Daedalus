@@ -11,7 +11,7 @@ other languages (Python, Node, Java, C/C++) use the package and worker model in
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["dylib-plugins"] }
+daedalus = { package = "daedalus-rs", version = "3.0.0", features = ["dylib-plugins"] }
 ```
 
 ```rust

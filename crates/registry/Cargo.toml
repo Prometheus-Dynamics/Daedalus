@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-registry"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2024"
 description = "Node registry and plugin bundle loader for Daedalus graphs."
 license.workspace = true

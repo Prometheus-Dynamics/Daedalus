@@ -67,7 +67,7 @@ For constrained hosts (embedded boards, sidecar engines), depend on the facade w
 `embedded` preset:
 
 ```toml
-daedalus = { package = "daedalus-rs", version = "2.0.0", default-features = false, features = ["embedded"] }
+daedalus = { package = "daedalus-rs", version = "3.0.0", default-features = false, features = ["embedded"] }
 ```
 
 `embedded` is `engine` + `plugins` + `threads`: the facade's `engine` feature does not enable the

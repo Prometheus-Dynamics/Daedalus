@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-runtime"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2024"
 description = "Runtime executor for Daedalus plans with backpressure and plugins."
 license.workspace = true

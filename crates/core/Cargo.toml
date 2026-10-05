@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-core"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2024"
 description = "Core types and shared utilities for the Daedalus dataflow stack."
 license.workspace = true
