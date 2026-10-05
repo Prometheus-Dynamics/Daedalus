@@ -6,666 +6,269 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-05
+
+### Breaking changes
+
+3.0.0 is a major release; [`docs/migration-3.0.md`](docs/migration-3.0.md) has before/after code
+for every item below, for upgrades from 2.0.0 and from pre-release `dev` commits.
+
+- **Features:** `engine` no longer includes the Rayon pool or metrics (use `engine-full`);
+  `threads` and `tracing` are default facade features that `default-features = false` builds must
+  request; `gpu-wgpu` no longer builds GLES or the `image` bridges (`gpu-gles`, `gpu-image`).
+- **Type keys:** every builtin number has its own key (`i32` is no longer `Int`) with lossless
+  widening adapters; types from other crates need an owner-declared key, a port `type_key` or
+  `foreign_types` (`UnkeyedForeignType` otherwise); key registration is strict.
+- **No process-global registries:** the global typing registry, boundary contract registry,
+  `type_key_of` and `platform::set_clock` are gone; generic pushes resolve through the registry's
+  `TypeIndex`, so `bind_input`, `bind_lane`, `input_typed`/`output_typed` and `NodeIo::push*`
+  return `Result`.
+- **Node semantics:** `Option<T>` inputs are optional ports carrying `T`'s key, nodes are skipped
+  (not failed) until their required inputs have values, and `NodeConfig` requires `Clone`.
+- **Host bridge:** event recording is off by default, ports are `PortId`s, and
+  `take_inbound` became `take_inbound_into`.
+- **Dynamic plugins:** `PLUGIN_ABI_VERSION` 8 (rebuild every plugin), and `export_plugin!` belongs
+  in a leaf `cdylib` crate.
+- **GPU:** wgpu 30; `ExternalImportSupport::Supported` gained fence fields.
+- **FFI SDKs:** width-exact scalars, `WireValue::UInt`, C++ `DAEDALUS_NODE(fn, ...)`, Java records
+  for multi-output nodes; the untyped `Outputs` helpers are gone.
+- **Removed aliases and dead APIs** (see Removed).
+
 ### Added
 
-- MCU profile (`docs/mcu.md`): `daedalus-mcu-build` plans a graph (a `GraphDocument` or
-  `Graph`) on the host from a `build.rs` with the regular planner and runtime builtins, and
-  writes a Rust module: a `Graph` struct with one fixed-capacity typed queue per edge (sized from
-  its policy) and one state slot per node, `push_*`/`pop_*` host ports and a `tick` calling the
-  node functions in schedule order. `daedalus-mcu` (`#![no_std]`, no `alloc`; `alloc` and
-  `defmt` features) holds the queues, `McuType` keys (the runtime's builtin keys), `NodeState`,
-  `Ctx`/`Clock`, `McuError`, and `#[daedalus_mcu::node]` for plain node functions (optional
-  inputs, conditional outputs, state, fire mode `all`). `examples/mcu_blink` runs a five-node
-  graph on Cortex-M4F/M0+ in 3.1/3.6 KiB of flash and 160 B of RAM with no heap;
-  `scripts/ci.sh mcu` (in the `portability` job) builds it, enforces flash/RAM budgets and runs
-  the native tests. The workspace gains an `mcu` size profile.
-- MCU profile modes: **compiled + tunable** and **loaded** next to compiled. Graph node
-  metadata `daedalus.mcu.params` marks constants as parameters (with ranges); the compiled module
-  then gets `PARAM_NAMES`/`PARAMS`, typed `set_<node>_<input>` setters and a
-  `daedalus_mcu::Tunable` impl (`set_param`/`param`/`apply_update`) checking types with the
-  planner's constant rules (`Scalar::coerce`) and ranges; updates are postcard
-  `ParamUpdate { id, value: Scalar }` messages; `CompileOptions::freeze_params` keeps constants
-  literal. Loaded mode (`daedalus-mcu` feature `loaded`): `daedalus_mcu_build::library` generates
-  a node library (`LIBRARY`: port type ids, state layout, type-erased `run` adapters, interface
-  hash) and a JSON `LibraryManifest`; `compile_loaded`/`McuPlan::to_blob` compile graphs into
-  deterministic postcard plan blobs (format version 1) with the compiled mode's lowering;
-  `loaded::Interpreter<ARENA>` validates a blob (version, library hash, entries, types per edge,
-  schedule order, parameters, arena size) and swaps it in at a tick boundary, keeping the running
-  plan on error, then ticks allocation-free over a fixed arena with typed host ports by name and
-  parameters. `McuPlan::manifest` (`PlanManifest`) names node, edge, port and parameter ids, and
-  the `daedalus-mcu` host tool compiles blobs (`plan`) and encodes parameter updates (`param`).
-  `examples/mcu_blink` builds all three firmwares (the loaded one swaps from plan A to plan B);
-  `scripts/ci.sh mcu` measures each mode against its own budget and checks the compiled
-  firmware's size to the byte. `daedalus_mcu::{Ring, Scalar, ScalarKind, wire, name_hash}` are
-  shared by both modes; `McuError::Port` reports misused loaded-mode host ports.
-- Typed host ports: `GraphBuilder::{input_as, input_typed, output_as, output_typed}` declare a
-  host port's type (stored as `HOST_INPUT_TYPES_KEY`/`HOST_OUTPUT_TYPES_KEY` bridge metadata,
-  read through `daedalus_planner::HostPortTypes`), so one host input can feed ports of different
-  types with adapters inserted per edge.
-- Host graph introspection and driving: `RuntimePlan::host_ports*` and
-  `HostGraph::{host_inputs, host_outputs}` return typed `HostPortDescriptor`s;
-  `HostGraph::inspect_payload`, `HostGraph::inspect_outputs` (take and inspect every queued
-  output) and `inspect_payload` render payloads through registered value serializers, falling
-  back to a `PayloadSummary`; `daedalus_data::json::to_plain_json` renders `Value`s as plain JSON.
-  `HostBridgeHandle::inbound_waiter` (blocking and `Future`),
-  `HostGraph::{wait_for_input, tick_on_input, drive_blocking, drive}` and `HostGraphStopHandle`
-  drive a graph on input.
-- Per-port host bridge counters: `HostBridgeHandle::{input_port_stats, output_port_stats}` return
-  `HostPortStats` (accepted, replaced, dropped, delivered, pending).
-- Type registration: `#[plugin(values(...))]` for `DaedalusTypeExpr + ToValue` types
-  (`register_daedalus_value`); `DaedalusTypeExpr::visit_dependencies`/`DaedalusTypeVisitor`, so
-  `register_daedalus_type`/`_value` register nested field types first. `#[type_key]`,
-  `#[adapt(from, to)]` and `#[daedalus(type_key = ...)]` accept a path to a string constant.
-- `GraphDocument`, a versioned strict graph format (`format: "daedalus.graph"`,
-  `schema_version`, `requires`, `metadata`, `graph`; unknown fields are rejected with their JSON
-  path) with plugin requirement checks on `PluginRegistry` and
-  `Engine::{check,prepare,compile}_document*`. `GraphDocument::json_schema()` (planner `schema`
-  feature) is checked in at `docs/schema/daedalus.graph.v1.schema.json`, regenerated by the
-  `graph_document_schema` binary; `daedalus_data::schema::value_json_schema` describes `Value`.
-- Native Rust `cdylib` plugins behind the `dylib-plugins` facade feature: `export_plugin!` exports
-  `daedalus_plugin_abi_version` and a `#[repr(C)]` `PluginDescriptor` (C types only).
-  `PluginLibrary::load` reads the descriptor and schema from any build; `install_into` requires a
-  matching Daedalus version, rustc version and build fingerprint (`check_rust_abi`) and otherwise
-  fails with `PluginLibraryError::Incompatible`. `discover_plugin_libraries` scans directories.
-  `ENABLED_FEATURES`/`CARGO_MANIFEST` constants (facade, core, data, registry, planner, runtime)
-  and `daedalus::dylib::{boundary_features, describe_fingerprint_mismatch}` feed the fingerprint;
-  each crate classifies its features in `[package.metadata.daedalus]`.
-- `FfiHost` in `daedalus-ffi-host`: `install_package`/`add_package` install packages into one
-  runner pool and telemetry and start their persistent-worker runners (`FfiHostBuilder`,
-  `PersistentWorkerRunnerFactory`), and `invoke(node_id, request)` returns typed `FfiHostError`s.
-- `CapabilityRegistry::remove_plugin` removes a plugin manifest and the capabilities its
-  `provided_*` lists record, keeping entries another installed plugin also provides.
-- Zero-copy dmabuf import in `daedalus-gpu` (`gpu-dmabuf` feature, implies `gpu-wgpu`; Vulkan via
-  wgpu-hal): `ExternalFrameDescriptor`/`ExternalPlane`, `DrmFourcc`,
-  `GpuBackend::{dmabuf_import_support, import_dmabuf}` with typed
-  `ExternalImportSupport`/`ExternalImportError`, and `GpuFormat::{Rg8Unorm, Bgra8Unorm, Nv12}`.
-  Explicit sync: `with_acquire_fence`/`with_acquire_timeout`/`with_implicit_fence` acquire fences
-  are waited for before GPU access, and `export_dmabuf_fence` exports implicit fences. The wait is
-  an `AcquireFenceMode` (`Auto`, `SyncFd`, `Timeline`, `Cpu`): a backend default
-  (`GpuOptions::acquire_fence_mode`, `WgpuBackend::set_acquire_fence_mode`; `Auto`) that
-  `ExternalFrameDescriptor::with_acquire_fence_mode` overrides per import, resolved against the
-  device's `AcquireFenceWaits` to an `AcquireFenceWait`: `SyncFd` with
-  `VK_KHR_external_semaphore_fd` (the `sync_file` becomes a binary semaphore via wgpu-hal 30
-  `Queue::add_wait_semaphore`; no thread blocks on kernel drivers, no timeout; `Auto`'s first
-  choice), `Timeline` on devices with timeline semaphores (opt-in hard timeout: the GPU waits on a
-  timeline value that one watcher thread per device host-signals when the fence signals or
-  `acquire_timeout` passes, and `GpuImageHandle::acquire_status()` reports
-  `AcquireStatus::{Ready, Pending, TimedOut}`; on Mesa the next submission to the device blocks
-  until the wait is released), or `Cpu` (the import polls the fence, `FenceTimeout` after
-  `DEFAULT_ACQUIRE_TIMEOUT`; also `gpu-mock`). Explicit modes fall back to `Cpu` on devices
-  without their wait. `ExternalImportSupport::Supported { acquire_fence, acquire_fence_mode,
-  fence_waits }` reports the default mode, the wait it resolves to and every wait the device has.
-  Every import is acquired from the foreign (or external) queue family,
-  `GENERAL -> SHADER_READ_ONLY_OPTIMAL`, and registered with wgpu in that state instead of being
-  transitioned from `UNDEFINED`; dropping the last handle releases it back to the foreign family
-  before the keepalive goes. Tiled and compressed DRM modifiers take one plane per memory plane
-  (aux planes after the format planes, up to `MAX_MEMORY_PLANES`); on RADV every renderable
-  `R8`/`XRGB8888` modifier including DCC (2 and 3 memory planes) round-trips between devices. NV12
-  imports as one texture when the device supports it, otherwise `UnsupportedFormat` for per-plane
-  fallback (`texture_plane_views`, `format_planes`). `gpu_probe` prints the fence mode, the wait
-  it resolves to, the available waits and the modifiers per format.
-- Facade presets `executor-pool`, `metrics`, `engine-full` (`engine` + `executor-pool` +
-  `metrics`) and `embedded` (`engine` + `plugins` + `threads`).
-- Keys for types owned by other crates: `inputs(port(name = "...", type_key = "..."))` /
-  `outputs(port(...))` set a port's key, `#[plugin(foreign_types(Type = "key"))]` and
-  `PluginRegistry::register_foreign_type::<T>(key)` map a foreign type that declares no key.
-- Boundary types: `PluginRegistry::{register_boundary_type, boundary_types}` record the Rust type
-  (`daedalus::transport::RustTypeIdentity`: `TypeId` hash, size, align, name) behind each key,
-  filled by node/adapter macros, `register_daedalus_type`, foreign types and the typed
-  adapter/device registrations. `PluginError::BoundaryTypeConflict(BoundaryTypeConflict)`
-  (key, registered and new Rust type) rejects one key used for two Rust types.
-- Dylib boundary type check: the descriptor (`PLUGIN_ABI_VERSION` 6) exports a C-safe
-  `BoundaryTypeTable` of the plugin's boundary types (`PluginLibrary::boundary_types`), and
-  `install_into` fails with `PluginLibraryError::BoundaryTypeConflict` (every differing key as a
-  `BoundaryTypeConflict`, via `PluginRegistry::boundary_type_conflicts`) before installing
-  anything when the host maps a key to another Rust type; after installing it records the table
-  (`PluginRegistry::register_boundary_identities`).
-- Registry type index: `PluginRegistry::type_index()` freezes a `daedalus_runtime::TypeIndex`
-  (`TypeId → TypeKey`: builtins and `Option`/`Vec` of them, the key a type owns, else the single
-  key its ports use; `TypeKey → RustTypeIdentity`). `registry.graph_builder()`
-  (`GraphBuilder::with_type_index`) and graphs compiled from a registry
-  (`HostBridgeManager::set_type_index`, `Executor`/`OwnedExecutor::with_type_index`,
-  `NodeIo::with_type_index`, `HostGraph::type_index`) resolve generic pushes through it.
-  `daedalus_transport::TypeKeyError` (`Unkeyed`, `Ambiguous`, `RustTypeMismatch`), carried by
-  `FeedOutcome::Rejected`, `EngineError::TypeKey`, `GraphBuildError::TypeKey` and `NodeError`.
-- Fed-payload check: the host bridge (`feed_payload` and every `push*`) and `HostGraph`'s direct
-  entry points refuse a payload whose key the registry records for another Rust type than it
-  holds (`TypeIndex::check_payload`, `Payload::storage_rust_type_id`,
-  `PayloadStorage::rust_type_id`, `BoundaryVTable::rust_type_id`); bytes and foreign handles
-  pass.
-- `daedalus_registry::transport_key_typeexpr` (inverse of `typeexpr_transport_key`) and
-  `daedalus_data::typing::builtin_type_exprs`; `TypeRegistry::registered_types`.
-- Foreign interfaces for separately built plugins: `daedalus_transport::foreign_interface!`
-  declares a `#[repr(C)]` accessor vtable with a key, version and layout hash
-  (`ForeignInterface`, `ForeignInterfaceInfo`, `foreign_layout_hash`); owners implement
-  `ProvideForeign<I>`; `ForeignHandle` (data, vtable, interface, `ForeignOwner` keepalive with
-  retain/release) and `ForeignRef<'_, I>` read a value without sharing its Rust type, and
-  `Payload::foreign`/`Payload::foreign_handle` carry handles. `daedalus:frame` v1
-  (`FrameInterface`, `FrameVTable`, `FrameView`, the safe owner trait `FrameSource`,
-  `FramePlane`, `FrameResidency`, `fourcc`; spec in `docs/foreign-frame-interface.md`) is the
-  standard camera-free frame interface. `PluginRegistry::{register_foreign_provider,
-  register_foreign_provider_as, register_foreign_interface, foreign_interfaces}` and
-  `#[plugin(foreign_providers(Owner => Interface))]` register a zero-copy `View` adapter from the
-  owner key to the interface key; node inputs typed `FrameView<'_>`/`ForeignRef<'_, I>` take the
-  interface key (`NodeIo::get_foreign`). `PluginError::ForeignInterfaceConflict` rejects two
-  versions or layouts of one interface key.
-- Dylib foreign interface check: the descriptor (`PLUGIN_ABI_VERSION` 7) exports a
-  `ForeignInterfaceTable` (`PluginLibrary::foreign_interfaces`), and `install_into` fails with
-  `PluginLibraryError::ForeignInterfaceMismatch` when the host uses an interface key with another
-  version or layout. `examples/plugins/foreign_consumer` is a plugin built separately from the
-  type it reads; "Foreign Interfaces" in `docs/node-authoring.md` and "Separately Built Plugins"
-  in `docs/dynamic-plugins.md` describe the rules.
-- Stable dylib handler path: plugins built with another rustc or Daedalus patch release (same
-  `PLUGIN_ABI_VERSION`) install and run. The descriptor (`PLUGIN_ABI_VERSION` 8) carries
-  `StableHandlers` (`STABLE_ABI_VERSION` 1): a C-ABI `invoke` running a schema node with
-  `StableValue` inputs and outputs (scalars inline, strings/bytes/nested values borrowed, `u64`
-  beyond `i64::MAX`, frames and other host-owned values as `ForeignHandle`s read in place) and
-  `release` for the per-instance node state kept in the plugin. `install_into` uses the Rust-ABI
-  path for same-build plugins and otherwise registers the schema's nodes with handlers calling
-  `invoke`; `PluginLibrary::{install_mode, install_into_as, stable_abi_version}` and
-  `InstallPath { RustAbi, Stable }` report or force the path, and
-  `PluginLibraryError::StableAbiMismatch` refuses a plugin neither path accepts. Node macros
-  record per-port codecs (`PluginRegistry::{record_stable_codecs, stable_codec}`,
-  `StableCodec`) for the plugin side; panics inside plugin nodes become `NodeError`s.
-  `plugin_descriptor!` builds the descriptor without exporting symbols. See "Install Paths" in
-  `docs/dynamic-plugins.md` (about 1 µs per call for scalar nodes);
-  `examples/plugins/stable_abi` and the facade's `dylib_stable` test cover it.
-- `PluginRegistry::register_foreign_interface_info`, `ExecutionContext::detached` and
-  `RuntimeNode::new` (running handlers outside an executor).
-- `TransportError::RustTypeMismatch` (built by `TransportError::type_mismatch::<T>`): a payload
-  with the expected key but another Rust type reports both type names and that producer and
-  consumer were likely built separately, instead of `expected k, found k`.
-- "How Port Keys Resolve" and "Library-Owned Integration Features" in `docs/node-authoring.md`;
-  "Types Owned By Other Crates" and the same-cargo-build rule in `docs/dynamic-plugins.md`.
-- The `external_frame_source` example (`examples/04_async`), `docs/node-authoring.md`,
-  `docs/dynamic-plugins.md`, and a measured minimal CPU-only profile in `docs/development.md`.
-- Shared building blocks: `NodeInstance::new(id)` with `with_*` builders, `Edge::new(from,
-  from_port, to, to_port)` and `From<usize> for NodeRef`; `Value::{field, as_str, as_bool,
-  as_u64, as_list, as_string_list, as_string_map}` and `TypeExpr::from_json_value`;
-  `daedalus_transport::{PolicyQueue, PushOutcome}`, `FeedOutcome::from_push` and
-  `PressurePolicy::{bounded_capacity, is_single_slot}`; `daedalus_planner::{edge_explanations,
-  host_bridge_metadata, is_generic_marker}`, `RuntimeNode::host_alias`,
-  `HostBridgeConfig::validate` and a public `daedalus_runtime::executor::panic_message`.
-
-- Dynamic plugin dependencies: `export_plugin!(P, deps [Dep, ..])` (also with
-  `boundary_contracts [..]`) links dependency plugins, which the descriptor's `schema`,
-  `boundary_types` and `foreign_interfaces` entry points install before `P` into their private
-  registry, so keys a dependency owns or maps resolve; the schema's `dependencies` include them.
-  `PluginLibrary::install_into` fails with `PluginLibraryError::MissingDependencies` when the
-  host registry has not installed a dependency the schema lists. Introspection is lenient:
-  unkeyed foreign port types are recorded (`PluginRegistry::{record_external_types,
-  external_types}`, `ExternalTypeRef`) and exported as `plugin.metadata.external_types` instead
-  of failing the schema. New example `examples/plugins/dependent`; the example plugin maps a
-  key-less `Lease` type.
-- Constants and port defaults convert to non-builtin port types without manual registration
-  (Eidos): the node macros register a const coercer for every input and `NodeConfig` field type
-  at install (`daedalus_runtime::const_coerce`, `NodeConfig::register_const_coercers`). Unit
-  enums deriving `DaedalusTypeExpr` take a variant name or index
-  (`DaedalusTypeExpr::from_value`); other `Deserialize` types deserialize from the `Value`.
-  Explicit `register_const_coercer`/`register_enum` coercers win. `NodeIo::coerce_input`.
-- `#[node]`, `#[adapt]`, `#[plugin]` and `#[node_handler]` accept any expression evaluating to a
-  `&'static str` constant as `id` (`concat!(..)`, a user macro, a `const`); `#[type_key]`,
-  `#[adapt(from, to)]` and `foreign_types` keys accept the same.
-- `TypeRegistry::empty()`, a shared empty typing registry.
-- Adaptive tuning: `Executor`/`OwnedExecutor::with_adaptive_dispatch_overhead`,
-  `EngineConfig::with_adaptive_dispatch_overhead` (`RuntimeSection::adaptive_dispatch_overhead`)
-  and `executor::DEFAULT_DISPATCH_OVERHEAD` set the per-segment dispatch cost adaptive mode
-  assumes before it has measured one; node metadata `NODE_COST_META_KEY`
-  (`"daedalus.node.cost"`) = `"heavy"` marks a node as expensive before it is measured.
-- Builtin numeric widening: the `daedalus.builtin.numeric_widening` provider
-  (`BuiltinCapability::NumericWidening`) registers an adapter
-  (`daedalus.builtin.widen.<from>_to_<to>`) for every lossless `From` conversion between
-  builtin numbers (`i32 -> i64`, `u32 -> i64`, `i32 -> f64`, `f32 -> f64`, ...), which the planner
-  inserts on its own; it also serves `move`/`modify` inputs without a branch.
-- `ValueType::{rust_name, int_range, is_float, is_numeric, check_value}`; `check_value` tells
-  whether a graph value converts to the type exactly.
-- `StateStore::{take_node_state, set_node_state}`: typed per-node state keyed by node id and
-  type, allocation-free per tick.
-- `daedalus_runtime::const_cache::{ConfigCache, DecodedInputs}` (per-node decoded configs and
-  `&T` constants), `NodeConfig::port_names` and `Payload::shares_storage`.
-- Portability tier 1 (see "Portability" in `docs/development.md`): `daedalus-core`,
-  `daedalus-transport`, `daedalus-data`, `daedalus-registry` and `daedalus-planner` have a default
-  `std` feature and build `no_std` + `alloc` without it (checked on `thumbv7em-none-eabihf`).
-  `daedalus_core::platform` exports `OS_CLOCK` and `Instant` (`std::time::Instant` where the
-  target has an OS clock, else a portable instant).
-  The `embedded` preset without `threads` (`engine,plugins`) runs on `wasm32-unknown-unknown`.
-  `scripts/ci.sh nostd` / `wasm` and a `portability` CI job check both, the latter by running
-  `examples/wasm_smoke` in Node.
-- Portability tier 2, first steps:
-  - `threads` feature (default) on `daedalus-runtime`, `daedalus-engine` and the facade (kept by
-    `embedded`; host-only in the plugin fingerprint). Without it `Parallel`/`Adaptive` run
-    serially and the worker pool, `StreamGraph::spawn_continuous*`/`StreamGraphWorker`,
-    `InboundWaiter::wait`, `HostBridgeHandle::{wait_inbound, recv_payload_timeout}`,
-    `GraphOutput::recv_timeout`, `prewarm_worker_pool` and
-    `HostGraph::{wait_for_input, tick_on_input, drive_blocking}` do not exist. Enabling it on a
-    wasm target without threads is a compile error.
-  - `daedalus_runtime::sync`: the runtime's and engine's `lock_api` locks, `parking_lot` with the
-    runtime's new `std` feature (implied by `threads`; a boundary feature) and `spin` without.
-  - `daedalus_core::platform::Clock` (platform clock by default, or `Clock::new(fn -> Duration)`),
-    set per engine with `EngineConfig::with_clock` (re-exported as `daedalus_engine::Clock`) or
-    on `Executor`/`OwnedExecutor`/`StreamGraph::with_clock`; executor telemetry, adaptive costs,
-    edge timings, stream and `HostGraph` step timings read it.
-  - Targets without compare-and-swap (`thumbv6m-none-eabi`, `riscv32imc-unknown-none-elf`): the
-    tier-1 crates build there without `std`. Atomics, `spin` locks and `Arc` go through
-    `portable-atomic` (its `critical-section` feature; the final binary provides the
-    implementation) and `portable-atomic-util::Arc`, named `daedalus_core::platform::Arc`;
-    `daedalus-core` channels fall back to locked queues. These dependencies are target-specific,
-    so other targets compile what they did. `scripts/ci.sh nostd` also checks `thumbv6m-none-eabi`.
-  - wasm host glue: `examples/wasm_bindgen_host`, a `wasm-bindgen` module whose engine `Clock`
-    reads `performance.now()` and whose `Pipeline` exposes `push`/`tick`/`take` to JavaScript,
-    driven in Node by `scripts/wasm-bindgen-host.mjs`; a `wasm32-wasip1` check of the embedded
-    preset and a WASI smoke command (`daedalus-wasi-smoke`, run under Node's WASI by
-    `scripts/wasi-smoke.mjs`). `scripts/ci.sh wasm` and the `portability` job run all three.
-- Portability tier 2: `daedalus-runtime` and `daedalus-engine` are `#![no_std]` + `alloc` without
-  their `std` feature (implied by `threads`): the serial executor, host bridges (push, poll,
-  drain, the `InboundWaiter` future), `StreamGraph` polling, `Engine` and `HostGraph` build for
-  `thumbv7em-none-eabihf`. `std` now forwards `std` to the tier-1 crates, `serde`, `serde_json`,
-  `thiserror` and `tracing`; without it the runtime's hash maps are `hashbrown`'s
-  (`daedalus_runtime::collections`, the types in runtime signatures), the port buffer pool is one
-  `spin`-locked pool instead of a `thread_local!`, and Linux perf counters, thread CPU time and
-  the `from_env` constructors are absent. `examples/nostd_smoke` (`#![no_std]`) runs a one-node
-  graph through `Executor::run_in_place` and through `Engine`/`HostGraph`; `scripts/ci.sh nostd`
-  checks runtime, engine and the smoke crate for `thumbv7em-none-eabihf` and runs its tests
-  natively with `std` off.
-- Runtime and engine without compare-and-swap: `daedalus-runtime`, `daedalus-engine` (with
-  `plugins`, `metrics`, `snapshots`, `lockfree-queues`, `config-env`) and `examples/nostd_smoke`
-  build for `thumbv6m-none-eabi` and `riscv32imc-unknown-none-elf`; `scripts/ci.sh nostd` checks
-  them for `thumbv6m`. Internal `Arc<dyn Fn>` handlers and plugin codecs go through
-  `portable::arc_dyn!` (std `Arc` and no extra allocation elsewhere), and `lockfree-queues` keeps
-  locked edge queues there. As for the tier-1 crates, the final binary provides a
-  `critical-section` implementation.
-- Lineage on the engine clock: `Payload::stamp(&Clock)` (re)stamps `created_at` (a no-op on the
-  platform clock) and `PayloadLineage::age(&Clock)` measures it. `NodeIo` pushes (`NodeIo::clock`,
-  `with_clock`; executors pass theirs), host bridge `push*`, `GraphInput::feed_typed`,
-  `HostGraphInput::push` and `HostGraph` direct lanes stamp the payloads they build;
-  `HostBridgeManager::set_clock`/`HostBridgeHandle::clock` give bridges a clock that timestamps
-  `HostBridgeEvent::at` and ages payloads for `FreshnessPolicy::MaxAge`. Engines and
-  `StreamGraph::with_clock` set it on their bridges.
-- `WireValue::UInt(u64)` (JSON kind `"uint"`) carries unsigned integers above `i64::MAX` across
-  the FFI wire. `check_type` range-checks it against the port width; `into_payload` stores a
-  top-level value above `i64::MAX` as a native `u64` payload (graph `Value::Int` is `i64`) and
-  `from_payload` maps native `u64` payloads back; inside a list or record such a value is
-  `WireValueConversionError::IntegerOutOfRange`.
-- FFI SDK wire encoders that write `u64` port values as `uint`: Python `to_wire`/`from_wire` and
-  the `daedalus_ffi.u64` port annotation; Node `toWire`/`fromWire` (BigInt to and from `uint`)
-  with `stringifyWire`/`parseWire`, which keep integers beyond 2^53 exact (Node 22+); Java
-  `Wire.encode`/`decode`/`write`/`read` (`@Scalar("u64") long` bits with unsigned semantics,
-  `BigInteger` above `Long.MAX_VALUE`); C++ `daedalus::to_wire`/`from_wire<T>` (`uint64_t`,
-  range-checked decoding). The language crates' tests run each SDK's own tests and decode its
-  encoder output with serde.
-- `scripts/ci.sh pi` (not part of `all`) runs the ignored dmabuf hardware tests and the
-  `daedalus-gpu` `gpu_probe` example, a paste-friendly report of the adapter and driver,
-  `dmabuf_import_support()`, `TEXTURE_FORMAT_NV12`, LINEAR NV12 modifier support and whether it
-  needs `DISJOINT`, the kernel version, `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` and dma-heaps; see
-  "Validating on a Raspberry Pi 5" in `docs/testing.md`.
-- `scripts/ci.sh vvl` (not part of `all`) runs those tests and the probe under
-  `VK_LAYER_KHRONOS_validation` with synchronization validation (an installed layer or
-  `VK_LAYER_PATH`) and fails on unexpected messages; see "Vulkan Validation Layers" in
-  `docs/testing.md`.
-- Cross-tick joins: a node's fire mode (`NodeFire`, node metadata `daedalus.node.fire` /
-  `NODE_FIRE_META_KEY`) is `any` (default, per-tick readiness) or `all`: wait, popping nothing,
-  until every connected required input holds a value, then take one value per edge. Set it with
-  `#[node(fire = "all")]`, `GraphBuilder::{fire_all, fire}` or graph-document node metadata.
-  Optional inputs never block; edge policies decide what is held (FIFO edges pair values in
-  arrival order, latest-only edges replace a held value). The planner lint warns about unknown
-  modes and `all` nodes joining producers that may not produce; `#[node]` records `Option`
-  returns as `outputs.<port>.conditional` metadata for it. See "Cross-Tick Joins" in
-  `docs/node-authoring.md`.
-
-### Fixed
-
-- `daedalus-gpu` crashed (SIGSEGV in the Vulkan loader) when threads created wgpu backends
-  concurrently with the NVIDIA ICD installed next to Mesa: `vkEnumerateInstanceExtensionProperties`
-  called a null ICD entry point while another thread negotiated with `libGLX_nvidia.so`. Instance
-  creation, adapter enumeration and device requests (`WgpuBackend`, the fallback shader context)
-  now take a process-wide lock. Instances are also created without wgpu's `DEBUG` flag unless
-  `WGPU_DEBUG=1`: the loader's `vkSetDebugUtilsObjectNameEXT` terminator, which wgpu calls on every
-  submission with that flag, walks instance and device lists that other threads' instance and
-  device creation change, and crashed in `loader_get_icd_and_device`.
-
-- Declared host port types were lost when a graph was embedded: the planner's embedded-graph
-  expansion and `GraphBuilder::nest` dropped the inner host bridge, so an inner `input_typed`
-  port fanned into differently typed nodes left the outer host port generic (a type conflict).
-  An undeclared outer host port wired to a declared inner one now takes its type
-  (`NestedGraphHandle::host_types`); `try_connect_to_nested`/`try_connect_from_nested` also
-  accept a bare host port name and create the bridge port, like `try_connect`.
-- Per-edge pressure and freshness policies (`edge_latest_only`, `edge_bounded`, edge metadata in
-  graph documents) were overwritten by `SchedulerConfig::default_policy`; the default now applies
-  only to edges without a policy of their own.
-
-- `#[node]` and `#[node_handler]` treated any fn with three reference parameters as the
-  low-level `(node, ctx, io)` form, so `fn(&A, &B, &mut State)` did not compile. The low-level
-  form is now recognized by its parameter types (`&RuntimeNode`, `&ExecutionContext`,
-  `&mut NodeIo`).
-- A host input of `i64` fanned out to two `i64` node inputs failed with `payload type mismatch`
-  (the fan-out branch adapter for the shared `Int` key was the `i32` one), and plugins with
-  `i64` and `i32` ports could conflict on that key; builtin numbers now have distinct keys (see
-  Changed).
-- Enum `NodeConfig` fields and enum handler inputs failed at runtime with `missing <port>`: the
-  engine never passed `PluginRegistry::const_coercers` to its executors (so even `register_enum`
-  had no effect), and owned (`T`, `&mut T`) and borrowed (`&T`) handler inputs never converted
-  `Value` constants. `Engine` executors now get the coercers (and, in `execute_*` with a plugin
-  registry, the type index), and `NodeIo::take_owned` and `&T` inputs fall back to coercion.
-- Single-node direct host routes (`HostGraph::run_direct_once`, `run_lane*`,
-  `tick_direct_*` on a graph with one node between the host ports) never delivered const inputs,
-  so a node with a constant, a port default or a config field failed with `missing <port>`
-  there while `run_once` worked. They now append the node's const inputs exactly as a scheduled
-  tick does; `DirectHostRoute::is_single_node` reports whether a route takes that path.
+- **Graph documents.** `GraphDocument` (`format: "daedalus.graph"`, `schema_version`, `requires`,
+  `metadata`, `graph`): strict parsing with JSON-path errors, plugin requirement checks
+  (`PluginRegistry`, `Engine::{check,prepare,compile}_document*`) and a checked-in JSON Schema
+  (`docs/schema/daedalus.graph.v1.schema.json`, `GraphDocument::json_schema()` with the planner's
+  `schema` feature, regenerated by the `graph_document_schema` binary; enum lists come from
+  `ComputeAffinity::ALL`, `SyncPolicy::ALL` and `BackpressureStrategy::ALL`).
+  `daedalus_data::schema::value_json_schema` describes `Value`.
+- **Typed host ports and host driving.** `GraphBuilder::{input_as, input_typed, output_as,
+  output_typed}` declare host port types (`HostPortTypes`), so one host input feeds ports of
+  different types with adapters per edge; nested graphs carry them
+  (`NestedGraphHandle::host_types`).
+  `RuntimePlan::host_ports*` and `HostGraph::{host_inputs, host_outputs}` describe ports;
+  `HostGraph::{inspect_payload, inspect_outputs}` render payloads through value serializers
+  (`PayloadSummary` otherwise) and `daedalus_data::json::to_plain_json` renders `Value`s.
+  `HostBridgeHandle::inbound_waiter` (blocking and `Future`), `HostGraph::{wait_for_input,
+  tick_on_input, drive_blocking, drive}` and `HostGraphStopHandle` drive a graph on input;
+  `HostBridgeHandle::{input_port_stats, output_port_stats}` return `HostPortStats`.
+- **Native Rust `cdylib` plugins** (`dylib-plugins` facade feature): `export_plugin!` exports a
+  `#[repr(C)]` `PluginDescriptor` (`PLUGIN_ABI_VERSION` 8) with the schema, boundary type table,
+  foreign interface table and `StableHandlers`; `PluginLibrary::load` reads it from any build,
+  `discover_plugin_libraries` scans directories. `install_into` takes the Rust-ABI path
+  (`InstallPath::RustAbi`: same Daedalus version, rustc and build fingerprint, identical boundary
+  types) or the stable path (`InstallPath::Stable`, `STABLE_ABI_VERSION` 1: schema nodes run
+  through a C-ABI `invoke` with `StableValue`s, about 1 µs per call; other rustc versions and
+  Daedalus patch releases) and returns which; `install_mode`/`install_into_as` report or force it.
+  Typed refusals: `PluginLibraryError::{Incompatible, BoundaryTypeConflict,
+  ForeignInterfaceMismatch, MissingDependencies, StableAbiMismatch}`. `export_plugin!(P, deps
+  [Dep], boundary_contracts [..])` links dependency plugins into the introspection registry;
+  unkeyed foreign port types are listed as `external_types`. `plugin_descriptor!` builds the
+  descriptor without exporting symbols. Feature classification lives in
+  `[package.metadata.daedalus]` (generated `ENABLED_FEATURES`/`CARGO_MANIFEST`). See
+  `docs/dynamic-plugins.md`; examples `stable_abi`, `foreign_consumer`, `dependent`,
+  `example_project_dylib`.
+- **Type keys for types owned by other crates.** Port `type_key = "..."`,
+  `#[plugin(foreign_types(Type = "key"))]` and `PluginRegistry::register_foreign_type::<T>(key)`;
+  boundary type records (`register_boundary_type`, `boundary_types`, `RustTypeIdentity`);
+  `PluginRegistry::type_index()` (`daedalus_runtime::TypeIndex`, `TypeKeyError`) used by graph
+  builders, executors, `NodeIo` and `HostGraph` for generic pushes; fed payloads are checked
+  against it (`FeedOutcome::Rejected`). `TransportError::RustTypeMismatch` names both Rust types
+  when a key matches but the type does not.
+- **Foreign interfaces.** `foreign_interface!` (`#[repr(C)]` accessor vtable, key, version,
+  layout hash), `ProvideForeign`, `ForeignHandle`, `ForeignRef<'_, I>`, and the standard
+  `daedalus:frame` v1 interface (`FrameView`, `FrameSource`; `docs/foreign-frame-interface.md`).
+  `register_foreign_provider{,_as}` / `#[plugin(foreign_providers(Owner => Interface))]` register
+  a zero-copy `View` adapter; nodes take `FrameView<'_>`/`ForeignRef<'_, I>` inputs.
+- **Optional inputs and joins.** `Option<T>` inputs (`PortDecl::optional`,
+  `NODE_REQUIRED_INPUTS_META_KEY`), conditional outputs from `Result<Option<T>, _>`, and fire mode
+  `all` (`#[node(fire = "all")]`, `GraphBuilder::{fire_all, fire}`, `NODE_FIRE_META_KEY`): wait,
+  popping nothing, until every connected required input holds a value. See "Optional Inputs And
+  Readiness" and "Cross-Tick Joins" in `docs/node-authoring.md`.
+- **Builtin numbers.** `ValueType::{I8, I16, ISize, U8, U16, U64, USize}` next to `I32`, `U32`,
+  `F32`, `Int` (`i64`) and `Float` (`f64`); the `daedalus.builtin.numeric_widening` provider adds
+  lossless widening adapters (`daedalus.builtin.widen.<from>_to_<to>`); `ValueType::{rust_name,
+  int_range, is_float, is_numeric, check_value}`.
+- **Constants.** Node macros register a const coercer for every input and `NodeConfig` field type
+  (`daedalus_runtime::const_coerce`, `NodeConfig::register_const_coercers`): unit enums deriving
+  `DaedalusTypeExpr` take a variant name or index (`DaedalusTypeExpr::from_value`), other types
+  deserialize. `NodeIo::coerce_input`, `daedalus_runtime::const_cache::{ConfigCache,
+  DecodedInputs}`, `NodeConfig::port_names`.
+- **Macros.** `id` (and `#[type_key]`, `#[adapt(from, to)]`, `foreign_types` keys) accept any
+  `&'static str` constant expression; `#[plugin(values(...))]` for `DaedalusTypeExpr + ToValue`
+  types; `DaedalusTypeExpr::visit_dependencies` registers nested types first.
+- **Presets and features.** Facade `executor-pool`, `metrics`, `engine-full` (`engine` +
+  `executor-pool` + `metrics`), `embedded` (`engine` + `plugins` + `threads`), `threads`,
+  `tracing`, `gpu-gles`, `gpu-image`, `gpu-dmabuf`; `daedalus-ffi-core`/`-host` `integrity`.
+- **Portability** (see "Portability" in `docs/development.md`). `no_std` + `alloc` builds of core,
+  transport, data, registry and planner (tier 1) and of the runtime and engine with the serial
+  executor (tier 2), including targets without compare-and-swap (`thumbv6m-none-eabi`,
+  `riscv32imc`, via `portable-atomic`; `daedalus_core::platform::Arc`). `daedalus_runtime::sync`
+  (`parking_lot` with `std`, `spin` without), `daedalus_core::platform::{Clock, Instant,
+  OS_CLOCK}`, `EngineConfig::with_clock` and `with_clock` on executors and `StreamGraph`; lineage
+  is stamped on the engine clock (`Payload::stamp`, `PayloadLineage::age`,
+  `HostBridgeManager::set_clock`). The `embedded` preset runs on `wasm32-unknown-unknown` and
+  `wasm32-wasip1`; `examples/wasm_smoke`, `examples/wasm_bindgen_host`, `examples/nostd_smoke`.
+- **MCU profile** (`docs/mcu.md`): `daedalus-mcu-build` plans a graph on the host (in `build.rs`)
+  and generates a heap-free Rust module (fixed-capacity typed queues per edge, a state slot per
+  node, `push_*`/`pop_*` host ports, `tick`) for `daedalus-mcu` (`#![no_std]`, no `alloc`;
+  `#[daedalus_mcu::node]`). Three modes: compiled, compiled + tunable (`daedalus.mcu.params`
+  constants become a `Tunable` parameter table updated by postcard `ParamUpdate`s) and loaded
+  (`loaded::Interpreter` validates and swaps postcard plan blobs for a generated node library at
+  a tick boundary). `examples/mcu_blink` (Cortex-M4F/M0+, 3.1 KiB flash and 160 B RAM compiled)
+  and the `daedalus-mcu` host tool (`plan`, `param`); `scripts/ci.sh mcu` enforces size budgets.
+- **dmabuf import** in `daedalus-gpu` (`gpu-dmabuf`; Vulkan via wgpu-hal):
+  `ExternalFrameDescriptor`/`ExternalPlane`, `DrmFourcc`, `GpuBackend::{dmabuf_import_support,
+  import_dmabuf}`, `GpuFormat::{Rg8Unorm, Bgra8Unorm, Nv12}`, explicit sync
+  (`with_acquire_fence`, `with_acquire_timeout`, `with_implicit_fence`, `export_dmabuf_fence`).
+  The fence wait is an `AcquireFenceMode` (`Auto` = `SyncFd` -> `Timeline` -> `Cpu`) set per
+  backend (`GpuOptions::acquire_fence_mode`) or per import, resolved against the device's
+  `AcquireFenceWaits`; `Timeline` adds a GPU-side timeout (`GpuImageHandle::acquire_status()`).
+  Imports do a queue-family-foreign acquire and release; tiled and compressed (DCC) modifiers
+  with aux planes import (`MAX_MEMORY_PLANES`); NV12 imports as one texture or per plane.
+  `gpu_probe` example; `scripts/ci.sh pi` and `scripts/ci.sh vvl` (validation layers).
+- **FFI.** `FfiHost` (`FfiHostBuilder`, `install_package`/`add_package`, `invoke`) runs packages on
+  one runner pool with rollback; `WireValue::UInt` (`"uint"`) carries `u64` above `i64::MAX`, and
+  every SDK's wire encoder writes `u64` ports as `uint`.
+- **Other APIs.** `CapabilityRegistry::remove_plugin`; `StateStore::{take_node_state,
+  set_node_state}`; `ExecutionContext::detached`, `RuntimeNode::new`; `NodeInstance::new` and
+  `Edge::new` builders; `Value` accessors (`field`, `as_str`, `as_bool`, `as_u64`, `as_list`,
+  ...); `daedalus_transport::{PolicyQueue, PushOutcome}`; `daedalus_planner::{edge_explanations,
+  host_bridge_metadata}`; `TypeRegistry::{empty, registered_types}`;
+  `daedalus_registry::transport_key_typeexpr`; adaptive tuning
+  (`with_adaptive_dispatch_overhead`, `NODE_COST_META_KEY`).
+- **Docs.** `docs/node-authoring.md`, `docs/dynamic-plugins.md`, `docs/foreign-frame-interface.md`,
+  `docs/mcu.md`, `docs/migration-3.0.md`, a minimal CPU-only profile and the
+  `external_frame_source` example.
 
 ### Changed
 
-- wgpu 30 (from 29): `get_mapped_range{,_mut}` failures surface as `GpuError::Internal`.
-- `PluginLibrary::install_into` returns the `InstallPath` it took; `export_plugin!` boundary
-  contracts are listed in the exported `PluginSchema::boundary_contracts`; `StrView` (and with it
-  `PluginInfo`, `PluginDescriptor` and `PluginLibrary`) is `Send + Sync`.
-- `serde`'s `rc` feature is no longer on workspace-wide: `daedalus-core` enables it on targets with
-  compare-and-swap (it needs `alloc::sync`).
-- `tracing` is an optional dependency of `daedalus-runtime`, `daedalus-engine`,
-  `daedalus-planner` (`std`-only: its `tracing` feature implies `std` and gates
-  `DAEDALUS_TRACE_EMBEDDED_EXPAND`) and `daedalus-nodes`, behind a host-only `tracing` feature
-  that is on by default and independent of `std`/`threads`. Without it their spans and events
-  compile to nothing (`crates/trace.rs`, arguments unevaluated). The facade's `tracing` feature
-  (default) enables all four, so default builds keep every span and event; `default-features =
-  false` builds, including the `embedded` preset and wasm, no longer link `tracing` unless they
-  add the feature.
-- Lighter optional dependencies (see "Dependency weight" in docs/development.md):
-  - `daedalus-ffi-core` gains a default `integrity` feature (`sha2`: package artifact and
-    manifest hashes, `PluginPackage::{stamp,verify}_integrity`, `compute_manifest_hash`,
-    `read_descriptor_and_verify`, `LanguagePackager::build`, `rust_plugin_package`);
-    `daedalus-ffi-host` forwards it by default. The facade's `dylib-plugins` uses the FFI crates
-    without it (7 fewer crates). Both are workspace dependencies without default features; the
-    language crates request `integrity`.
-  - `gpu-wgpu` builds wgpu's Vulkan backend (plus Metal on Apple and DX12 on Windows, which the
-    workspace now enables) without GLES and without the `image` crate (15 fewer crates). The new
-    `gpu-gles` feature (boundary: it changes wgpu internals) adds the OpenGL/GLES backend; the new
-    `gpu-image` feature (host-only; `daedalus-gpu`'s `image` feature is renamed to it) adds
-    `Compute<DynamicImage>`, the `image` `DeviceBridge`s, `TextureOut::from_input{,_ctx}` and the
-    `ShaderRunOutput` image readbacks (`texture_rgba8*`, `*_image`, `into_payload*`).
-    `renderdoc-sys` remains: wgpu enables `wgpu-core/renderdoc` on every native target.
-- Workspace dependencies shared with the `no_std` crates (`serde`, `serde_json`, `thiserror`,
-  `tracing`, `base64`, `crossbeam-queue`) and the five tier-1 crates are declared without
-  default features; `std` members request `features = ["std"]` (`daedalus-data`:
-  `["std", "json"]`), so what they compile is unchanged. `std` is a boundary feature of those
-  crates, and `daedalus-transport` (which now depends on `daedalus-core`) joins the plugin build
-  fingerprint (`features.transport`). `daedalus-engine` inherits planner and registry from the
-  workspace. Planner-internal hash maps are `BTreeMap`s.
-- `daedalus-runtime` and the facade are declared in `[workspace.dependencies]` without default
-  features (members enable `threads`/`std` themselves), so `daedalus-engine` inherits the
-  runtime from the workspace. `dylib-plugins` enables the runtime's `std`, so plugin and host
-  agree on the lock backend. Engines take their own `Clock`.
-- `RuntimeDebugConfig::from_env` and `EngineConfig::from_env` need `std` (and `config-env`);
-  `daedalus-macros` no longer depends on `daedalus-runtime`.
-- The Java and C++ FFI SDKs declare width-exact scalar ports like the Rust and Node SDKs (they
-  mapped every integer to `Int`). Java: `byte`/`short`/`char`/`int`/`long`/`float`/`double` map to
-  `I8`/`I16`/`U16`/`I32`/`Int`/`F32`/`Float`; Java has no unsigned types, so `@Scalar("u32")`
-  (on a parameter, or on the method for its output) declares unsigned and pointer-sized widths;
-  other `Number` types (`BigInteger`, ...) are rejected, and a single output is typed by the return
-  type. C++: `daedalus::TypeExprOf<T>` and the `daedalus::signature<F>()` registration option type
-  ports from the function signature (fixed-width integers, `float`/`double`, strings, bytes,
-  `optional`/`vector`/`map`/`tuple`, `daedalus_type_key` opaque types); nodes without a signature
-  keep the name-based `Bytes`/`Int` fallback. On the host, `WireValue::check_type` range-checks
-  worker outputs against the exact width and `DecodedInvokeResponse::payload_output` takes the
-  `WirePort` (keyed by its transport key, `ResponseDecodeError::OutputType` on a misfit).
-- One transport key per builtin Rust number. `ValueType` gains `I8`, `I16`, `ISize`, `U8`,
-  `U16`, `U64` and `USize` (`Int` is `i64`, `Float` is `f64`, next to the existing `I32`, `U32`
-  and `F32`), and every builtin integer and float maps to its own value type, so
-  `typeexpr:{"Scalar":"I32"}` names `i32` only (before, `i8`..`u64` all shared `Int` and `f32`
-  shared `Float`). Lossless conversions are inserted as builtin widening adapters; narrowing (and
-  `isize`/`usize` conversions) never is, and fails at plan time with a `ConverterMissing`
-  diagnostic saying the conversion is not lossless. Builtin branch adapters take only their own
-  Rust type again. `i128`/`u128` are no longer builtins (they keep `rust:` keys and convert
-  through serde). The node SDK maps `i32`, `u32`, `u64` and `f32` to their value types.
-- Graph constants convert to the port's exact Rust type: the planner checks numeric constants
-  and port defaults against the port's width (a `TypeMismatch` diagnostic such as "300 is out of
-  range for u8 (0..=255)"), and float ports also take integer
-  constants they represent exactly (an `f32` rejects values beyond its range).
-- Generated handlers decode configs and `&T` constants once per change instead of every call: a
-  node's `NodeConfig` is built (`from_io`, `sanitize`, `validate`) when one of its input payloads
-  changes and kept in the node's state slot; `&Config` parameters borrow it and by-value ones
-  clone it. Sanitization warnings are logged once per change. `NodeConfig` requires
-  `Clone + Send + Sync + 'static` and `port_names()` (the derive generates it).
-- Generated stateful handlers keep their state in `StateStore::take_node_state` slots instead of
-  native values under a formatted `macro_state:<node>:<type>` key.
-- `NodeIo::take_owned` coerces `Value` inputs (graph constants) to `T` like `get_typed`, so owned
-  scalar parameters (`target: f64`) accept const inputs. `NodeIo` port lists are `Vec`s
-  (`take_outputs_small` is gone; use `take_outputs`), `BoundaryVTable` gains `layout_hash`, and
-  `BoundaryStorage` gains `holds`, `may_hold`, `capabilities` and contract-free
-  `borrow_ref_as`/`borrow_mut_as`/`take_owned_as`.
-- `Payload::owned` always builds typed storage. Boundary contracts live only in the
-  `PluginRegistry` that registered them (checked when a graph is compiled):
-  `register_boundary_contract` no longer fills a process-wide table that switched every owned
-  payload of a registered type, in every registry, to boundary storage.
-- Optional inputs: an `Option<T>` (`Option<&T>`, `Option<Arc<T>>`) node parameter is a port with
-  `T`'s key and schema marked `PortDecl::optional` (exported as `WirePort::optional`), so
-  producers and typed host inputs of `T` connect to it directly; before, its
-  `typeexpr:Optional(..)` key had no converter from `T` and the edge failed to plan. A
-  `Result<Option<T>, _>` return (or tuple element) is a conditional output of `T` that pushes
-  only `Some`. Readiness: a node runs on a tick only when each connected required input has a
-  value (the planner lists them in `NODE_REQUIRED_INPUTS_META_KEY` node metadata) and is skipped
-  otherwise instead of failing with `missing <port>`; optional inputs never block and are
-  `None` without a value. `NodeIo` nodes declare optional ports. The planner's
-  unconnected-inputs lint ignores optional ports.
-- Macro port keys for types without a key of their own (`foreign_types` mappings) resolve through
-  the registry the plugin installs into, never through process-global state, so one registry's
-  mappings no longer leak into (or conflict with) another's. Generated code reads a
-  `&TypeRegistry`: `node_decl_in`, `boundary_contracts_in` and `handler_registry_in` take it
-  (install passes `PluginRegistry::type_registry`; `node_decl()`, `boundary_contracts()` and
-  `handler_registry()` use `TypeRegistry::empty()`), generic nodes' `node_decl_for`,
-  `boundary_contracts_for` and `handler_registry_for` take it as an extra argument,
-  `NodeConfig::ports` takes it, and so does the macro-support probe's `leaf_type_expr`. `DaedalusTypeExpr::type_expr()` resolves key-less field types
-  through `TypeRegistry::empty()` (builtins, else `rust:`).
-- Port keys no longer depend on registration order. `#[node]`/`#[adapt]` resolve a type's own
-  key (`#[type_key]`, `DaedalusTypeExpr`) at compile time before the typing registry, handlers
-  push outputs under the key the port declares, and `Arc<T>` ports use `T`'s key. A type from
-  another crate that would get the `rust:` fallback key fails install with
-  `PluginError::UnkeyedForeignType` (node, port, Rust type and the fixes). An owner's type
-  declaration replaces the placeholder a consumer plugin left when it installed first.
-- Generic pushes no longer read the process-global typing registry. `HostGraph::push`,
-  `bind_input` (now `Result<HostGraphInput<T>, EngineError>`), `bind_lane` (now
-  `Result<HostGraphLane<I>, EngineError>`, also failing when there is no direct route),
-  `run_once`/`run_direct_once`, `HostBridgeHandle::push`, `NodeIo::push_to`/`push`/`push_default`
-  (now `Result<(), NodeError>`) and `GraphBuilder::input_typed`/`output_typed` (now
-  `Result<Self, GraphBuildError>`) resolve `T` through the graph's registry and fail with
-  `TypeKeyError` instead of using an order-dependent `rust:` key. `HostGraphRunInput::into_parts`
-  takes the `TypeIndex`. `run_once` and `profiled_feed_tick_drain_owned` return rejected feeds
-  as errors.
-- Key registration is strict: registering the same type under the same key again is a no-op,
-  placeholders and built-in declarations are replaced, and another Rust type for a key
-  (`BoundaryTypeConflict`), another key for a type (`PluginError::TypeKeyedTwice`) or another
-  schema or export policy for a key (`PluginError::TypeDeclarationConflict`) fails instead of the
-  later declaration replacing the earlier one. `daedalus_data::typing::TypeRegistry::register_type`
-  / `register_enum` and the global `register_type` / `register_enum` return
-  `Result<(), TypeConflict>` and no longer overwrite.
-- `RustTypeIdentity::type_id_hash` uses `RustTypeIdentity::hash_type_id`, a few-instruction fold
-  of the `TypeId`, so fed-payload checks can afford it.
-- `daedalus_data::typing::builtin_type_expr` also covers `Option`/`Vec` of the builtin scalars.
-- Shared runtime locks use `parking_lot` (`Mutex`, `RwLock`, `Condvar`) instead of `std::sync`,
-  so there is no lock poisoning. `StateStore`, `ExecutionContext`, `RuntimeResources` and the
-  executors' resource-lifecycle methods (`set`, `set_native`, `record_*`, `*_metric`,
-  `snapshot*`, `apply_*_lifecycle`, `on_*`, `release_*`, `shutdown_resources`) are infallible
-  where lock poisoning was their only error. `daedalus-core` and `daedalus-transport` stay on
-  `std::sync`.
-- The `DaedalusTypeExpr` and `DaedalusToValue` derives resolve through the `daedalus` facade;
-  `#[plugin(types(...))]` registers any `DaedalusTypeExpr` type and accepts paths;
-  `register_value_serializer`, `register_daedalus_value` and `register_to_value_serializer` no
-  longer require `T: Clone`.
-- `#[node]` rejects the `compute(...)` and `bundle = "..."` arguments, which were parsed and
-  ignored; set compute affinity per graph node.
-- FFI installs are atomic: every package/schema installer leaves the registry untouched on
-  failure, `install_plan_runners` stops the runners it started when a later one fails, and
-  `FfiHost::start_runners(&mut registry, &factory)` rolls back a package whose runners fail
-  (registry entries via `remove_plugin`, routes, started runners). `RunnerPool::shutdown_all`
-  attempts every runner and returns a `RunnerShutdownError` (`FfiHostError::Shutdown`).
-- The facade `engine` feature no longer enables the Rayon executor pool or metrics (use
-  `engine-full`); without `executor-pool`, parallel/adaptive modes run on scoped threads. The
-  workspace `daedalus-engine` dependency sets `default-features = false`, and `gpu-runtime` also
-  enables `daedalus-engine/gpu`, fixing the `engine,plugins,gpu-mock` build.
-- The dynamic plugin build fingerprint covers the boundary-relevant features of every Daedalus
-  crate whose types cross the plugin boundary and the size/alignment of the boundary types;
-  `RustAbiMismatch::BuildFingerprint` names the differing segments. `#[plugin]` and
-  `declare_plugin!` manifests record the plugin crate version. `BoundaryVTable` gained
-  `value_any`.
-- Dynamic plugin nodes run in hosts built with other dependencies: `smallvec` always enables
-  `union` (wgpu-hal enabling it on one side only changed `NodeIo`'s layout, and plugin handlers
-  crashed), `NodeIo` and `ForeignHandle` are part of the fingerprint layouts, `Payload::get_ref`
-  falls back to the value's own `Any` when the storage was built by another copy of
-  `daedalus-transport` (other `TypeId`s), and a plugin's exported schema no longer fails on its
-  `deps(...)`.
-- Host bridge: event recording is off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING`); each
-  port keeps one state (queue, policy overrides, freshness watermarks, close flag, counters) per
-  direction, and replace-style capacity-one policies (including the default) use an in-place slot.
-  Write paths (`push*`, `feed_payload`, `set_*_policy`, `set_latest_*`, `close_input`) take
-  `impl Into<PortId>`; lookups (`take*`, `try_pop*`, `drain*`, `latest`, `is_input_closed`,
-  `direct_host_route`, `bind_lane`, `tick_direct_payload`, `run_direct_once`) take
-  `impl AsRef<str>` without allocating. `HostBridgeManager::take_inbound` became
-  `take_inbound_into(alias, &mut Vec)`, and `with_host_bridges` resolves host-bridge nodes to
-  their handles once instead of per tick.
-- `TypeKey`, `PortId` and the other text ids wrap `daedalus_transport::IdStr` (a `&'static str`
-  or shared `Arc<str>`; `From<&'static str>` does not allocate). `NodeIo` ports are `PortId`s
-  (`&[NodePort]`, `push*` take `impl Into<PortId>`), and `NodeConstInputs` is keyed by `PortId`.
-- `CorrelatedPayload::correlation_id` is the payload's lineage id and `enqueued_at` is an
-  `Option<Instant>` set only with basic metrics. `Payload` stores `Arc<dyn PayloadStorage>`
-  (recovered in place by `try_into_owned`) and an unallocated empty residency cache.
-- The host bridge port queues and executor edge queues are both `PolicyQueue`s (the executor
-  `EdgeQueue` is now `PolicyQueue<CorrelatedPayload>`): queued items survive an edge's
-  bounded-capacity change, and `Coalesce` clears a multi-item host FIFO like `LatestOnly`. The
-  runtime reads planner edge explanations through `daedalus_planner::edge_explanations` instead
-  of its own parser. `HostGraphRunInput` is implemented for `(P, I)` and `(P, K, I)` with any
-  `P: Into<PortId>`. Panic payloads that are not strings report "non-string panic payload".
-
-- `run_adaptive_in_place` (and `RuntimeMode::Adaptive` in compiled engines and host graphs)
-  decides per frame from measured costs instead of graph shape: it times segments (per segment
-  in parallel frames, one `Instant` read per node on every fourth serial frame) and runs in
-  parallel only when the predicted gain over serial
-  (`max(critical path, work / workers) + segments × dispatch overhead`, the overhead refined by
-  parallel frames) exceeds 25% of the serial time, with hysteresis and an 8-frame dwell. Until a
-  frame is measured, only heavy-hinted (GPU affinity or `NODE_COST_META_KEY`) segments count, so
-  graphs of cheap nodes run serially. One-shot `Executor::run_adaptive` keeps the shape rule.
-- Without `executor-pool`, parallel runs fan out to persistent threads parked between frames
-  instead of a scoped OS thread per segment; `prewarm_worker_pool` exists in both builds. Parallel
-  runs use at most one worker per segment on the widest dependency level.
-- `ExecutionTelemetry::node_metrics` is a `NodeMetricsMap` (dense by node index; `get`/`entry`
-  take the index by value, `iter` yields `(usize, &NodeMetrics)`), serialized, printed and
-  reported like the former `BTreeMap<usize, NodeMetrics>`.
-- C++ FFI SDK: `DAEDALUS_NODE(fn, inputs(...), outputs(...))` (and the stateful, capability and
-  GPU variants) now names the node function, goes after it, and types every port from
-  `decltype(&fn)`; the node id is the function name. Unmapped port types, more inputs than
-  parameters and output counts that do not match the return type are `static_assert`s instead of
-  the name-based `Int`/`Bytes` fallback. Several outputs are returned as a `std::tuple`;
-  `std::span<T>` maps to `List`, and `DAEDALUS_TYPE_KEY(T, key)` (after the type) gives structs
-  and enums their `Opaque` key.
-- Java FFI SDK: a node with several outputs returns a record whose components are named after
-  them, and each component (with its `@Scalar`) types its output port; other return types fail
-  the build instead of leaving the outputs `Opaque("Object")`.
-
-### Performance
-
-- Owned handler parameters (`T`, `mut T`, `Option<T>`) fed a non-builtin constant (an enum, a
-  serde struct, a `String`) no longer convert it on every call: the generated handler converts
-  it once per constant into the node's `const_cache::DecodedInputs` slot and hands out a clone
-  (`T: Clone`, detected by the macro; other types still convert per call). The detector graph
-  frame benchmark now includes such a node and stays at its payload allocations plus the one
-  `String` clone.
-- Parallel frames no longer spawn a task (or, without `executor-pool`, a thread) per segment or
-  send results through a channel: workers pull ready segments from one locked queue, reuse one
-  executor snapshot each and merge telemetry in place, and the Rayon fan-out splits with `join` on
-  the stack. On the 16-node `graph_frame` graph a parallel frame allocates nothing beyond serial
-  (was 20 with the pool, 101 without); basic metrics return node metrics in one vector instead
-  of a three-node tree. Parallel frames of that graph went from 157 to 74 µs (659 to 69 µs
-  without the pool) and adaptive ones from 136 µs to serial speed; numbers and mode guidance in
-  `docs/development.md`.
-- Macro-generated handlers resolve their output keys once per registry instead of building a
-  `TypeExpr`, a JSON key string and an `Arc<str>` on every push, and push to static `PortId`s;
-  the single-input direct path no longer caches its key in a process-wide `static`. The
-  `macro_hot_path_allocations` facade test checks a typed `#[node]` allocates no more per round
-  trip than a hand-written one.
-
-- Host graph push/tick/take with metrics off went from 31 heap allocations per round trip to 4
-  (the two payloads), covered by the `hot_path_allocations` engine test; the serial executor runs
-  and drains host outputs on one snapshot and times edge policies only at `Detailed` metrics.
-  `host_graph_drive` benches (including `push_tick_take_metrics_off`) are summarized in
-  `docs/development.md`.
-- A 16-node detector-like graph frame (`graph_frame_allocations` facade test, `graph_frame`
-  bench) went from 290 heap allocations to 31 in serial mode, the payloads it creates: generated
-  stateful handlers no longer format a state key per call (9) and configs, including a serde
-  enum and a `String` field the harness now has, are decoded once instead of per frame. Runtime
-  bookkeeping per frame is zero and pinned by the test (`docs/development.md` has the breakdown).
-  Boundary payloads are checked by `TypeId` instead of formatting a `BoundaryTypeContract` per
-  `get_ref`/`get_mut`/`try_into_owned` (the contract is built lazily). Const inputs are
-  ready-made payloads, `NodeIo` port lists reuse per-thread buffers and pushes resolve to the
-  node's connected output `PortId`s, fan-out filters target edges in place, adapter edges build
-  lifecycle records and step text only for profile/trace metrics, `StateStore` native values live
-  in reusable slots (per-tick node state), builtin const coercion does not box, and the parallel
-  scheduler keeps its bookkeeping inline and borrows segment orders.
+- **Features.** The facade `engine` feature no longer enables the Rayon executor pool or metrics
+  (`engine-full` does); without `executor-pool`, parallel frames run on persistent threads parked
+  between frames. The facade's default features are `threads` and `tracing`; without `threads`
+  `Parallel`/`Adaptive` run serially and the worker pool, stream workers and blocking waits do not
+  exist. `tracing` is optional in runtime, engine, planner and nodes (spans compile to nothing
+  without it). `gpu-wgpu` builds Vulkan (plus Metal/DX12) only: `gpu-gles` adds GLES and
+  `gpu-image` (formerly `daedalus-gpu`'s `image`) the `image` crate bridges. `dylib-plugins` uses
+  the FFI crates without `integrity`. Workspace dependencies of the `no_std`-capable crates are
+  declared without default features.
+- **Builtin numbers have distinct keys.** `typeexpr:{"Scalar":"I32"}` names `i32` only; lossless
+  conversions are inserted as widening adapters, narrowing fails at plan time
+  (`ConverterMissing`), constants are range-checked against the port's exact width, and
+  `i128`/`u128` are no longer builtins.
+- **Port keys are deterministic.** Macros resolve a type's own key (`#[type_key]`,
+  `DaedalusTypeExpr`) at compile time, outputs push under the declared key, `Arc<T>` ports use
+  `T`'s key, and `foreign_types` mappings resolve through the installing registry
+  (`node_decl_in`, `boundary_contracts_in`, `handler_registry_in`; generic `*_for` functions and
+  `NodeConfig::ports` take a `&TypeRegistry`). A foreign type without a key fails install with
+  `PluginError::UnkeyedForeignType`.
+- **Key registration is strict.** Re-registering the same type under the same key is a no-op;
+  another Rust type (`BoundaryTypeConflict`), another key (`TypeKeyedTwice`) or another
+  declaration (`TypeDeclarationConflict`) for a key fails. `TypeRegistry::register_type`/
+  `register_enum` return `Result<(), TypeConflict>`.
+- **Generic pushes are fallible.** `bind_input` and `bind_lane` return `Result<_, EngineError>`,
+  `GraphBuilder::input_typed`/`output_typed` return `Result<Self, GraphBuildError>`,
+  `NodeIo::push_to`/`push`/`push_default` return `Result<(), NodeError>`, and `run_once` returns
+  rejected feeds as errors. `HostGraphRunInput::into_parts` takes the `TypeIndex`.
+- **Readiness.** A node runs only when each connected required input has a value and is skipped
+  otherwise; optional inputs are `None` without one. Per-edge policies are no longer overwritten
+  by `SchedulerConfig::default_policy`.
+- **Configs.** `NodeConfig` requires `Clone + Send + Sync + 'static` and `port_names()` (the
+  derive generates it); generated handlers decode configs and `&T` constants once per change.
+  `NodeIo::take_owned` coerces `Value` constants. `#[node]` rejects the ignored `compute(...)`
+  and `bundle` arguments.
+- **Host bridge.** Event recording is off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING`);
+  ports keep one state per direction with in-place single-slot queues; write paths take
+  `impl Into<PortId>`, lookups `impl AsRef<str>`; `HostBridgeManager::take_inbound` became
+  `take_inbound_into(alias, &mut Vec)`. Host and edge queues are `PolicyQueue`s, so `Coalesce`
+  clears a multi-item FIFO like `LatestOnly`.
+- **Ids and payloads.** `TypeKey`, `PortId` and the other text ids wrap `IdStr`; `NodeIo` ports
+  are `PortId`s and `NodeConstInputs` is keyed by them. `Payload::owned` always builds typed
+  storage; boundary contracts are registry-scoped. `CorrelatedPayload::correlation_id` is the
+  lineage id and `enqueued_at` an `Option<Instant>`.
+- **Locks.** The runtime uses `parking_lot` (no poisoning; `spin` without `std`), and state,
+  context and resource APIs whose only error was poisoning are infallible.
+- **Runtime modes.** `RuntimeMode::Adaptive` decides per frame from measured costs (parallel only
+  when the predicted gain exceeds 25%, with hysteresis); `ExecutionTelemetry::node_metrics` is a
+  `NodeMetricsMap`.
+- **GPU.** wgpu 30 (from 29); `get_mapped_range{,_mut}` failures are `GpuError::Internal`.
+  `ExternalImportSupport::Supported` reports `acquire_fence`, `acquire_fence_mode` and
+  `fence_waits`.
+- **FFI.** Installs are atomic and roll back on failure; `RunnerPool::shutdown_all` returns a
+  `RunnerShutdownError`. Java and C++ SDKs declare width-exact scalars (Java `@Scalar("u32")` for
+  unsigned widths) and the host range-checks worker outputs. C++ `DAEDALUS_NODE(fn, inputs(...),
+  outputs(...))` goes after the function and types every port from `decltype(&fn)`
+  (`static_assert`s for unmapped types; `std::tuple` for several outputs; `DAEDALUS_TYPE_KEY`).
+  Java multi-output nodes return a record whose components name and type the outputs.
+- **Misc.** `RuntimeDebugConfig::from_env`/`EngineConfig::from_env` need `std`; the
+  `DaedalusTypeExpr`/`DaedalusToValue` derives resolve through the facade; value serializer
+  registration no longer requires `T: Clone`; `StrView`, `PluginInfo`, `PluginDescriptor` and
+  `PluginLibrary` are `Send + Sync`; `smallvec` always enables `union`.
 
 ### Removed
 
-- `daedalus_transport::{BoundaryContractRegistry, global_boundary_contract_registry,
-  register_boundary_contract, register_boundary_contract_in, boundary_contract_for_type,
-  boundary_contract_for_type_in}` (contracts are registry-scoped; use
-  `PluginRegistry::{register_boundary_contract, boundary_contract}`).
-- The process-global typing registry: `daedalus_data::typing::{register_type, register_enum,
-  lookup_type, lookup_type_by_rust_name, override_type_expr, type_expr, snapshot_by_rust_name,
-  register_type_capability, register_type_capabilities, type_capabilities, has_type_capability,
-  snapshot_type_capabilities, snapshot_global_registry, restore_global_registry,
-  reset_global_registry}` and the unused global named-type helpers
-  (`NamedTypeRegistry::global`, `named_types::{register_named_type, lookup_named_type,
-  resolve_opaque, export_policy_for, snapshot}`). Use a `TypeRegistry`/`NamedTypeRegistry`
-  (`PluginRegistry::{type_registry, named_type_registry}`); `register_foreign_type`/
-  `foreign_types` no longer write process-global state.
-- The no-op `Outputs` derive.
-- The untyped multi-output helpers of the FFI SDKs: Java `Outputs` (return a record) and C++
-  `daedalus::Outputs`/`daedalus::outputs` (return a `std::tuple`), and the C++
-  `daedalus::signature<F>()` registration option (registrations always use the function type).
-- `daedalus_registry::type_key_of` (and its `daedalus_runtime::transport` re-export): generic
-  pushes resolve through `PluginRegistry::type_index`. `NodeIo::{push_any, push_output,
-  push_output_default}` (use `push`/`push_to`/`push_default`).
-- `daedalus::dylib::BoundaryTypeMismatch` and `PluginLibraryError::BoundaryTypeMismatch`
-  (`PluginLibraryError::BoundaryTypeConflict` with `daedalus_runtime::plugins::BoundaryTypeConflict`).
-- `StateError::LockPoisoned`, `RunnerPoolError::LockPoisoned` and `StateStore::get_result`.
-- `HostBridgeHandle::feed_payload_ref` (use `feed_payload`), `next_correlation_id`, and
-  `PayloadStorage::{into_any, into_any_arc}` (a `self: Arc<Self>` receiver, which
-  `portable-atomic-util::Arc` cannot be).
-- `register_<snake_case>_type` generated by `#[type_key]` (use `#[plugin(types(...))]` or
-  `PluginRegistry::register_daedalus_type`).
-- `daedalus_core::platform::set_clock`: the engine's `Clock` stamps lineage and bridge events,
-  so nothing reads a process-wide clock; without an OS clock `Instant::now` reads zero.
-- `daedalus_runtime::config::runtime_debug_config` (an unused process-global env snapshot) and
-  the never-constructed `EngineError::Io`/`EngineError::io`.
-- `daedalus_runtime::GPU_FEATURE_ENABLED` and `daedalus_registry::GPU_FEATURE_ENABLED` (use
-  `ENABLED_FEATURES`).
-- Duplicate aliases and dead helpers: `HostBridgeHandle::{push_payload, push_any}` (use
-  `feed_payload`/`push`), `TypeKey::opaque` (use `TypeKey::new`),
-  `daedalus_runtime::host_bridge::value_serializer_map`, `HostGraph::set_value_serializers`,
-  `InboundWait::is_ready`, `RuntimePlan::host_bridge_aliases`, `StrSink::discard` and the
-  `daedalus_planner::helpers` module (use `NodeInstance::new`).
+- Process-global state: the typing registry (`daedalus_data::typing::{register_type,
+  register_enum, lookup_type, type_expr, snapshot_global_registry, restore_global_registry,
+  reset_global_registry, ...}`, `NamedTypeRegistry::global`, `named_types::*` globals), the
+  boundary contract registry (`daedalus_transport::{BoundaryContractRegistry,
+  register_boundary_contract, boundary_contract_for_type, ...}`),
+  `daedalus_core::platform::{set_clock, THREADS}` and
+  `daedalus_runtime::config::runtime_debug_config`.
+- `daedalus_registry::type_key_of` (and its runtime re-export), `NodeIo::{push_any, push_output,
+  push_output_default, take_outputs_small}`.
+- Aliases and dead code: `HostBridgeHandle::{push_payload, push_any, feed_payload_ref,
+  next_correlation_id}`, `TypeKey::opaque`, `value_serializer_map`,
+  `HostGraph::set_value_serializers`, `InboundWait::is_ready`, `RuntimePlan::host_bridge_aliases`,
+  `StrSink::discard`, `daedalus_planner::helpers`, the no-op `Outputs` derive, the
+  `register_<type>_type` functions generated by `#[type_key]`, `PayloadStorage::{into_any,
+  into_any_arc}`, `StateError::LockPoisoned`, `RunnerPoolError::LockPoisoned`,
+  `StateStore::get_result`, `EngineError::Io`, `GPU_FEATURE_ENABLED` (use `ENABLED_FEATURES`).
+- FFI SDK helpers: Java `Outputs`, C++ `daedalus::Outputs`/`daedalus::outputs` and the
+  `daedalus::signature<F>()` registration option.
+
+### Fixed
+
+- Plugins with `i64` and `i32` ports no longer conflict, and an `i64` host input fanned out to two
+  `i64` inputs no longer fails with `payload type mismatch`.
+- Enum `NodeConfig` fields and enum handler inputs no longer fail with `missing <port>` (the
+  engine now passes the registry's const coercers to its executors).
+- Single-node direct host routes (`run_direct_once`, lanes, `tick_direct_*`) deliver const
+  inputs.
+- `fn(&A, &B, &mut State)` nodes compile (the low-level form is recognized by parameter types).
+- Declared host port types survive embedding and `nest`.
+- Per-edge pressure and freshness policies are no longer replaced by the scheduler default.
+- Dynamic plugin nodes no longer crash in hosts built with other dependencies (`smallvec`
+  `union`, `NodeIo` in the fingerprint, `Any` fallback for payloads from another
+  `daedalus-transport` copy).
+- `daedalus-gpu` no longer segfaults in the Vulkan loader when threads create backends
+  concurrently (driver setup is serialized; wgpu's `DEBUG` flag only with `WGPU_DEBUG=1`).
+- Schema export/import encoding round trip, unknown wgpu formats silently treated as RGBA8,
+  `Coalesce` never shrinking host FIFOs, shared input/output freshness watermarks, and the
+  `engine,plugins,gpu-mock` build.
+
+### Performance
+
+- Host graph push/tick/take with metrics off: 31 heap allocations per round trip down to 4 (the
+  two payloads), pinned by `crates/engine/tests/hot_path_allocations.rs`.
+- A 16-node detector-like frame: 290 allocations down to its 31 payloads (generated handlers keep
+  state in `StateStore` slots, decode configs and constants once, resolve output keys once per
+  registry); parallel frames allocate nothing beyond serial and went from 157 to 74 µs (659 to
+  69 µs without the pool). Numbers in `docs/development.md`.
+- Owned non-builtin constants decode once per change and are cloned per call.
+- Benchmarks: `host_graph_drive`, `graph_frame` and the `bench` workflow flagging >15% median
+  regressions.
 
 ### Maintenance
 
-- `scripts/check-file-sizes.sh` scans `crates/`, `examples/` and `testing/` and fails on any file
-  over the limit or a stale baseline entry (the baseline is empty); the largest source files were
-  split into submodules.
-- `docs/host-bridge-lock-granularity.md` documents the verified lock order.
-- `scripts/ci.sh` is organized into subcommands (`lints`, `test`, `macro-ui`, `aarch64`, `lean`,
-  `smoke`, `bench`, ...) that CI calls. CI runs the trybuild macro UI tests (`#[node]` and
-  transport macros, `#[ignore]`d by default) and dynamic plugin tests in their own jobs, an
-  `aarch64` check job, a `lean-preset` test job, and the CPU-only example binaries. A `bench`
-  workflow runs the host bridge and executor criterion benches and flags >15% median regressions
-  (`scripts/bench-compare.py`).
-- The `#[plugin]`, `#[type_key]`, `#[adapt]` and `#[device]` docs describe what they generate.
-- `scripts/ci.sh features` checks the real FFI packages (`daedalus-ffi-core`,
-  `daedalus-ffi-host`) instead of a nonexistent `daedalus-ffi`.
-- `cargo build --workspace --all-features` failed to link the example plugin `cdylib`s
-  (duplicate `daedalus_plugin_abi_version`): `examples/plugins/dependent` links
-  `example_project`, whose `dylib` feature (unified on under `--all-features`) put
-  `export_plugin!`'s symbols in its `rlib`. The export moved to a leaf `cdylib` crate,
-  `examples/plugins/example_project_dylib`; `example_project` is a plain `rlib` without a `dylib`
-  feature. `docs/dynamic-plugins.md` explains the rule, and `scripts/ci.sh features` and CI now
-  run `cargo build --workspace --lib --all-features`, which links.
-- The graph JSON Schema's enum lists (`compute`, sync group `policy` and `backpressure`) are
-  generated from `ComputeAffinity::ALL`, `SyncPolicy::ALL` and `BackpressureStrategy::ALL`
-  (new in `daedalus-core`; an exhaustive match next to each fails to compile until a new variant
-  is listed), and a planner test validates a document using every variant against the schema.
+- `scripts/ci.sh` subcommands (`lints`, `test`, `macro-ui`, `aarch64`, `lean`, `features`,
+  `nostd`, `wasm`, `mcu`, `smoke`, `bench`, `pi`, `vvl`) and matching CI jobs; CI builds the
+  workspace with `--all-features` (the `example_project` export moved to the leaf
+  `example_project_dylib` crate).
+- `scripts/check-file-sizes.sh` fails on any oversized file (empty baseline); large files split.
+- Duplicate code consolidated across macros, FFI language crates and builtins;
+  `docs/host-bridge-lock-granularity.md` documents the lock order.
+- The optional Styx examples track Styx `dev` and key `FrameLease` as `styx:framelease`.
 
 ## [2.0.0] - 2026-04-30
 
