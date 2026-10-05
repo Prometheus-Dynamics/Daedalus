@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use daedalus_mcu::Overflow;
 
 use crate::CompileOptions;
-use crate::lower::{InputSource, McuPlan, PlanNode};
+use crate::lower::{InputSource, McuPlan, PlanNode, literal};
 
 const MCU: &str = "::daedalus_mcu";
 
@@ -44,6 +44,7 @@ impl McuPlan {
             edge_labels.len(),
             edge_labels.join(", ")
         );
+        self.emit_param_tables(&mut out);
 
         let _ = writeln!(
             out,
@@ -59,6 +60,14 @@ impl McuPlan {
         }
         for (i, node) in self.nodes.iter().enumerate() {
             let _ = writeln!(out, "    s{i}: ::{}::State,", node.path);
+        }
+        for (i, param) in self.params.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "    /// {}\n    p{i}: {},",
+                param.name,
+                param.value.kind().rust_name()
+            );
         }
         out.push_str("}\n\n");
 
@@ -81,6 +90,9 @@ impl McuPlan {
                 "            s{i}: <::{}::State as {MCU}::NodeState>::INIT,",
                 node.path
             );
+        }
+        for (i, param) in self.params.iter().enumerate() {
+            let _ = writeln!(out, "            p{i}: {},", literal(param.value));
         }
         out.push_str("        }\n    }\n");
 
@@ -123,8 +135,89 @@ impl McuPlan {
         for (i, node) in self.nodes.iter().enumerate() {
             self.emit_node(&mut out, i, node);
         }
-        out.push_str("        Ok(())\n    }\n}\n");
+        out.push_str("        Ok(())\n    }\n");
+        self.emit_setters(&mut out);
+        out.push_str("}\n");
+        self.emit_tunable(&mut out, name);
         out
+    }
+
+    /// `PARAM_NAMES` and `PARAMS`, when the plan has parameters.
+    fn emit_param_tables(&self, out: &mut String) {
+        if self.params.is_empty() {
+            return;
+        }
+        let names: Vec<String> = self
+            .params
+            .iter()
+            .map(|p| format!("{:?}", p.name))
+            .collect();
+        let specs: Vec<String> = self
+            .params
+            .iter()
+            .map(|p| {
+                let kind = format!("{:?}", p.value.kind());
+                format!(
+                    "{MCU}::ParamSpec {{ kind: {MCU}::ScalarKind::{kind}, min: {MCU}::Scalar::{kind}({}), \
+                     max: {MCU}::Scalar::{kind}({}) }}",
+                    literal(p.min),
+                    literal(p.max)
+                )
+            })
+            .collect();
+        let _ = writeln!(
+            out,
+            "/// Tunable parameters by id (`daedalus_mcu::Tunable`).\n\
+             pub const PARAM_NAMES: [&str; {n}] = [{}];\n\
+             /// Type and range of each parameter.\n\
+             pub const PARAMS: [{MCU}::ParamSpec; {n}] = [\n    {},\n];\n",
+            names.join(", "),
+            specs.join(",\n    "),
+            n = self.params.len(),
+        );
+    }
+
+    /// A typed setter per parameter.
+    fn emit_setters(&self, out: &mut String) {
+        for (i, param) in self.params.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "\n    /// Set parameter `{}` (id {i}) from the next tick on.\n    \
+                 pub fn set_{}(&mut self, value: {}) -> Result<(), {MCU}::ParamError> {{\n        \
+                 {MCU}::Tunable::set_param(self, {i}, value.into())\n    }}",
+                param.name,
+                ident(&param.name),
+                param.value.kind().rust_name()
+            );
+        }
+    }
+
+    /// `impl Tunable`, when the plan has parameters.
+    fn emit_tunable(&self, out: &mut String, name: &str) {
+        if self.params.is_empty() {
+            return;
+        }
+        let _ = writeln!(
+            out,
+            "\nimpl {MCU}::Tunable for {name} {{\n    \
+             fn set_param(&mut self, id: u16, value: {MCU}::Scalar) -> Result<(), {MCU}::ParamError> {{\n        \
+             match id {{"
+        );
+        for i in 0..self.params.len() {
+            let _ = writeln!(
+                out,
+                "            {i} => self.p{i} = {MCU}::param::checked(&PARAMS[{i}], value)?,"
+            );
+        }
+        let _ = writeln!(
+            out,
+            "            _ => return Err({MCU}::ParamError::UnknownId),\n        }}\n        Ok(())\n    }}\n\n    \
+             fn param(&self, id: u16) -> Option<{MCU}::Scalar> {{\n        Some(match id {{"
+        );
+        for i in 0..self.params.len() {
+            let _ = writeln!(out, "            {i} => {MCU}::Scalar::from(self.p{i}),");
+        }
+        out.push_str("            _ => return None,\n        })\n    }\n}\n");
     }
 
     fn emit_node(&self, out: &mut String, index: usize, node: &PlanNode) {
@@ -161,14 +254,10 @@ impl McuPlan {
                     }
                     args.push(format!("i{k}"));
                 }
-                InputSource::Const {
-                    expr,
-                    required: true,
-                } => args.push(expr.clone()),
-                InputSource::Const {
-                    expr,
-                    required: false,
-                } => args.push(format!("Some({expr})")),
+                InputSource::Const { expr, required, .. } => args.push(optional(expr, *required)),
+                InputSource::Param { param, required } => {
+                    args.push(optional(&format!("self.p{param}"), *required));
+                }
                 InputSource::Absent => args.push("None".into()),
             }
         }
@@ -237,6 +326,15 @@ impl McuPlan {
                 writeln!(out, "{pad}let _ = {push};")
             };
         }
+    }
+}
+
+/// `expr` for a required input, `Some(expr)` for an optional one.
+fn optional(expr: &str, required: bool) -> String {
+    if required {
+        expr.to_string()
+    } else {
+        format!("Some({expr})")
     }
 }
 
