@@ -18,5 +18,4 @@ styx-framelease = ["plugins", "dep:styx"]
 
 [dependencies]
 daedalus = { workspace = true, features = ["plugins"] }
-paste = { workspace = true }
 styx = { workspace = true, optional = true }

@@ -51,7 +51,7 @@ use daedalus::runtime::plugins::RegistryPluginExt;
 let mut registry = PluginRegistry::new();
 // Types the host shares with plugins first (e.g. the frame library's own Daedalus plugin), so
 // `install_into` can check the plugins use the same Rust types for those keys.
-registry.install_plugin(&styx_core::daedalus_integration::StyxPlugin::new())?;
+registry.install_plugin(&styx_core::daedalus::StyxFramesPlugin::new())?;
 let mut libraries = Vec::new();
 for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plugins"])? {
     // Safety: plugins are trusted Daedalus plugins.
@@ -142,7 +142,7 @@ it can, links that plugin into its library:
 #[plugin(id = "eidos", deps("styx.frames"), nodes(to_gray))]
 pub struct EidosPlugin;
 
-daedalus::export_plugin!(EidosPlugin, deps [styx_core::daedalus_integration::StyxPlugin]);
+daedalus::export_plugin!(EidosPlugin, deps [styx_core::daedalus::StyxFramesPlugin]);
 ```
 
 - **Declared** (`#[plugin(deps(...))]`, plus every linked plugin): the schema lists the

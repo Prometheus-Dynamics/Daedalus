@@ -414,14 +414,15 @@ by an image-processing library's nodes and by an application's plugins), **the c
 defines the type owns its type key and its Daedalus registration**, behind an optional `daedalus`
 feature. Daedalus never depends on that crate; the crate optionally depends on Daedalus.
 
-The owning crate (here `styx-core`):
+The owning crate (here a simplified `styx-core`; Styx's real integration is `styx_core::daedalus`
+with `StyxFramesPlugin`, id `styx.frames`, see Styx's `docs/daedalus.md`):
 
 ```toml
 [features]
 daedalus = ["dep:daedalus"]
 
 [dependencies]
-daedalus = { package = "daedalus-rs", version = "2", optional = true, features = ["plugins"] }
+daedalus = { package = "daedalus-rs", version = "3", optional = true, features = ["plugins"] }
 ```
 
 ```rust

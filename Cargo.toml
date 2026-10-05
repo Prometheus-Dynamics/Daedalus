@@ -126,7 +126,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = { version = "0.1.44", default-features = false }
 wasm-bindgen = "0.2.117"
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "std"] }
-styx = { version = "2.0.0", git = "https://github.com/Prometheus-Dynamics/Styx.git", branch = "main", default-features = false }
+styx = { version = "2.0.0", git = "https://github.com/Prometheus-Dynamics/Styx.git", branch = "dev", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

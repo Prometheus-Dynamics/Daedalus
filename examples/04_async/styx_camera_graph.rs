@@ -46,7 +46,13 @@ fn mark(mut frame: FrameLease) -> Result<FrameLease, NodeError> {
 }
 
 #[cfg(feature = "styx-camera-example")]
-#[plugin(id = "example.async.styx_camera", nodes(rotate180, mirror, mark))]
+// `FrameLease` belongs to Styx, which declares no Daedalus key without its own `daedalus`
+// feature, so the plugin maps it to the key that feature uses (`styx:framelease`).
+#[plugin(
+    id = "example.async.styx_camera",
+    nodes(rotate180, mirror, mark),
+    foreign_types(FrameLease = "styx:framelease")
+)]
 struct StyxCameraPlugin;
 
 #[cfg(feature = "styx-camera-example")]
@@ -109,6 +115,8 @@ fn selected_mode<'a>(device: &'a ProbedDevice, selected: &SelectedCamera) -> Opt
 
 #[cfg(feature = "styx-camera-example")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Build the graph first: plugin and graph errors show up before a camera is opened.
+    let mut runtime = build_runtime()?;
     let selected = CameraRequest::new()
         .backend_priority([BackendKind::V4l2, BackendKind::Libcamera])
         .format_priority([FourCc::new(*b"YUYV"), FourCc::new(*b"RGB4")])
@@ -124,7 +132,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .cloned()
         .ok_or("selected camera mode was not found in descriptor")?;
     let handle = selected.start()?;
-    let mut runtime = build_runtime()?;
     let mut preview = PreviewWindow::for_mode("daedalus styx graph", &mode).ok();
 
     let mut frames = 0usize;

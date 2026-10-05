@@ -56,7 +56,12 @@ mod real_gpu {
         Ok(rgba)
     }
 
-    #[plugin(id = "example.gpu_frame_lease", nodes(contrast_boost))]
+    // `FrameLease` has no Daedalus key without Styx's `daedalus` feature; map it to that key.
+    #[plugin(
+        id = "example.gpu_frame_lease",
+        nodes(contrast_boost),
+        foreign_types(FrameLease = "styx:framelease")
+    )]
     struct GpuFrameLeasePlugin;
 
     fn packed_rgba(frame: &FrameLease, width: u32, height: u32) -> Result<Vec<u8>, NodeError> {
@@ -169,6 +174,8 @@ mod real_gpu {
     }
 
     pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+        // Build the graph first: plugin and graph errors show up before a camera is opened.
+        let mut runtime = build_runtime()?;
         let selected = CameraRequest::new()
             .backend_priority([BackendKind::V4l2, BackendKind::Libcamera])
             .format_priority([
@@ -188,7 +195,6 @@ mod real_gpu {
             .cloned()
             .ok_or("selected camera mode was not found in descriptor")?;
         let handle = selected.start()?;
-        let mut runtime = build_runtime()?;
         let mut preview = PreviewWindow::for_mode("daedalus gpu frame lease", &mode).ok();
 
         let mut frames = 0usize;

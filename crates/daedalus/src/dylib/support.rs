@@ -170,7 +170,7 @@ pub unsafe fn foreign_interfaces<P: Plugin + Default>(
 ///
 /// daedalus::export_plugin!(DemoPlugin);
 /// // or, linking the plugin of a library whose types the nodes use:
-/// daedalus::export_plugin!(DemoPlugin, deps [styx_core::daedalus_integration::StyxPlugin]);
+/// daedalus::export_plugin!(DemoPlugin, deps [styx_core::daedalus::StyxFramesPlugin]);
 /// // or, with extra boundary contracts:
 /// daedalus::export_plugin!(DemoPlugin, boundary_contracts [my_contract()]);
 /// daedalus::export_plugin!(DemoPlugin, deps [Dep], boundary_contracts [my_contract()]);
