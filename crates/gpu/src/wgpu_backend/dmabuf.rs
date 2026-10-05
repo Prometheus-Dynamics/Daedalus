@@ -13,6 +13,9 @@ mod image;
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 #[path = "dmabuf/vulkan.rs"]
 mod vulkan;
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+#[path = "dmabuf/watcher.rs"]
+mod watcher;
 
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 pub(super) use vulkan::{ImportState, import, probe, request_device};
@@ -30,7 +33,10 @@ pub(super) async fn request_device(
 pub(super) type ImportState = ();
 
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
-pub(super) fn probe(_device: &wgpu::Device) -> (crate::ExternalImportSupport, ImportState) {
+pub(super) fn probe(
+    _device: &wgpu::Device,
+    _queue: &wgpu::Queue,
+) -> (crate::ExternalImportSupport, ImportState) {
     let reason = if cfg!(target_os = "linux") {
         "daedalus-gpu was built without the `gpu-dmabuf` feature"
     } else {

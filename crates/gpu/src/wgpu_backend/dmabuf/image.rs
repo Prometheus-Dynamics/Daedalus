@@ -8,9 +8,11 @@ use wgpu::hal::vulkan as hal_vk;
 use crate::{DrmFourcc, ExternalImportError, ExternalKeepalive};
 
 const DMA_BUF: vk::ExternalMemoryHandleTypeFlags = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
-const MEMORY_PLANES: [vk::ImageAspectFlags; 2] = [
+const MEMORY_PLANES: [vk::ImageAspectFlags; crate::MAX_MEMORY_PLANES] = [
     vk::ImageAspectFlags::MEMORY_PLANE_0_EXT,
     vk::ImageAspectFlags::MEMORY_PLANE_1_EXT,
+    vk::ImageAspectFlags::MEMORY_PLANE_2_EXT,
+    vk::ImageAspectFlags::MEMORY_PLANE_3_EXT,
 ];
 
 /// Everything the Vulkan side needs, resolved from the descriptor.
@@ -19,7 +21,7 @@ pub(super) struct ImportRequest {
     pub height: u32,
     pub fourcc: DrmFourcc,
     pub modifier: u64,
-    /// One layout per memory plane (per format plane for `LINEAR`).
+    /// One layout per memory plane of the modifier (format planes, then aux planes).
     pub plane_layouts: Vec<vk::SubresourceLayout>,
     /// Bind each memory plane to its own dmabuf (`VK_IMAGE_CREATE_DISJOINT_BIT`).
     pub disjoint: bool,

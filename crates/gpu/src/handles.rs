@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{GpuFormat, GpuMemoryLocation, GpuUsage};
+use crate::{AcquireStatus, GpuFormat, GpuMemoryLocation, GpuUsage};
 
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
@@ -38,9 +38,13 @@ fn next_image_id() -> GpuImageId {
     GpuImageId(NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed))
 }
 
-pub(crate) trait GpuDropToken: Send + Sync + fmt::Debug {}
-
-impl<T: Send + Sync + fmt::Debug> GpuDropToken for T {}
+/// Backend state a handle keeps alive; dropped with the last clone of the handle.
+pub(crate) trait GpuDropToken: Send + Sync + fmt::Debug {
+    /// Acquire-fence state of an imported image; plain resources have nothing to wait for.
+    fn acquire_status(&self) -> AcquireStatus {
+        AcquireStatus::Ready
+    }
+}
 
 /// Opaque buffer handle (no backend types).
 ///
@@ -135,6 +139,19 @@ impl GpuImageHandle {
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
+    }
+
+    /// Acquire-fence state of an image imported with
+    /// [`import_dmabuf`](crate::GpuBackend::import_dmabuf); always
+    /// [`Ready`](AcquireStatus::Ready) for other images and for clones that lost their backend
+    /// state (deserialized handles).
+    ///
+    /// [`TimedOut`](AcquireStatus::TimedOut) means the GPU used the image without waiting for the
+    /// producer, so its contents are undefined.
+    pub fn acquire_status(&self) -> AcquireStatus {
+        self.drop_token
+            .as_ref()
+            .map_or(AcquireStatus::Ready, |token| token.acquire_status())
     }
 }
 

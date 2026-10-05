@@ -27,10 +27,23 @@
 //! for producers that only fence the dmabuf itself). Where the fence is waited for is reported by
 //! [`ExternalImportSupport::acquire_fence_wait`]:
 //!
-//! - [`AcquireFenceWait::Gpu`]: the fence is imported as a Vulkan semaphore and the GPU waits for
-//!   it; the import returns immediately and the CPU never blocks. No timeout applies.
+//! - [`AcquireFenceWait::Timeline`]: the GPU waits on a timeline semaphore that a watcher thread
+//!   signals once the fence signals or [`ExternalFrameDescriptor::acquire_timeout`] passes. The
+//!   import returns without waiting for its own fence;
+//!   [`GpuImageHandle::acquire_status`](crate::GpuImageHandle::acquire_status) reports
+//!   [`AcquireStatus::TimedOut`] when the GPU went ahead without the producer. On Mesa drivers the
+//!   *next* submission to the device blocks until the wait is released (see the variant docs).
+//! - [`AcquireFenceWait::SyncFd`]: the fence is imported as a binary Vulkan semaphore the GPU
+//!   waits on; nothing blocks on kernel drivers, but no timeout applies. Imports with an unbounded
+//!   timeout (`Duration::MAX`) take this path whenever the device has it.
 //! - [`AcquireFenceWait::Cpu`]: the import blocks until the fence signals, bounded by
 //!   [`ExternalFrameDescriptor::acquire_timeout`].
+//!
+//! # Handing the buffer back
+//!
+//! When the last handle of an image is dropped, the wgpu backend releases it to the foreign queue
+//! family (`SHADER_READ_ONLY_OPTIMAL -> GENERAL`) after all GPU work using it, and drops the
+//! keepalive once that release has executed.
 
 use std::fmt;
 use std::time::Duration;
@@ -116,10 +129,23 @@ pub type ExternalKeepalive = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 /// Where an import waits for the descriptor's acquire fence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AcquireFenceWait {
-    /// The `sync_file` becomes a Vulkan semaphore the GPU waits on before touching the memory; the
-    /// import call returns without blocking. An already signaled fence costs nothing; a fence that
-    /// is not a `sync_file` falls back to the CPU wait.
-    Gpu,
+    /// The GPU waits on a per-device timeline semaphore that a watcher thread signals once the
+    /// fence signals or the descriptor's `acquire_timeout` passes, whichever comes first, so a
+    /// stuck producer delays the GPU by at most the timeout. The import does not wait for its own
+    /// fence. On Mesa drivers (measured on RADV and lavapipe; v3dv shares Mesa's common submit
+    /// code) a submission waiting for an unsignaled timeline value goes to a submit thread, and
+    /// because wgpu chains submissions with binary
+    /// semaphores the *next* submission to the device (another import, a dispatch, a readback)
+    /// blocks its thread until the wait is released: the CPU wait moves from the import to the
+    /// next submission, still bounded by the timeout.
+    Timeline,
+    /// The `sync_file` is imported as a binary Vulkan semaphore the GPU waits on. On kernel drivers
+    /// nothing blocks (the kernel orders the GPU work behind the fence; lavapipe still holds back
+    /// the next submission), but no timeout applies: a fence that never signals stalls the queue.
+    /// Chosen on devices without timeline semaphores, and for imports with an unbounded
+    /// `acquire_timeout` (`Duration::MAX`). An fd that is not a `sync_file` falls back to the CPU
+    /// wait.
+    SyncFd,
     /// The import call blocks (`poll`) until the fence signals or the descriptor's
     /// `acquire_timeout` passes.
     Cpu,
@@ -128,10 +154,30 @@ pub enum AcquireFenceWait {
 impl AcquireFenceWait {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Gpu => "gpu",
+            Self::Timeline => "timeline",
+            Self::SyncFd => "sync_fd",
             Self::Cpu => "cpu",
         }
     }
+
+    /// Whether the descriptor's `acquire_timeout` bounds the wait.
+    pub fn has_timeout(self) -> bool {
+        !matches!(self, Self::SyncFd)
+    }
+}
+
+/// Acquire-fence state of an imported image, from
+/// [`GpuImageHandle::acquire_status`](crate::GpuImageHandle::acquire_status).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AcquireStatus {
+    /// Nothing left to wait for: no fence, an already signaled one, a completed CPU wait, or a GPU
+    /// wait released because the fence signaled.
+    Ready,
+    /// The GPU still waits for the fence; work using the image is queued behind it.
+    Pending,
+    /// The fence did not signal within `acquire_timeout` (or reported an error instead of
+    /// signaling) and the GPU went ahead without it: the image contents are undefined.
+    TimedOut,
 }
 
 /// Whether a backend can import dmabuf frames (and how it waits for acquire fences), and why not.

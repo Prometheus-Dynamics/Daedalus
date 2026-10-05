@@ -47,8 +47,11 @@ pub struct ExternalFrameDescriptor {
     /// DRM format modifier. `None` means the implicit layout, treated as
     /// [`DRM_FORMAT_MOD_LINEAR`](super::DRM_FORMAT_MOD_LINEAR) (what V4L2/libcamera buffers use).
     pub modifier: Option<u64>,
-    /// One entry per format plane, in order (NV12: Y then interleaved UV). Planes may share one
-    /// dmabuf (same or `dup`ed fd, different offsets) or live in separate dmabufs.
+    /// One entry per memory plane of the modifier, in order: for `LINEAR` one per format plane
+    /// (NV12: Y then interleaved UV); tiled modifiers with compression metadata add their aux
+    /// planes after the format planes, exactly as the producer exported them (e.g.
+    /// `vkGetImageSubresourceLayout` with `MEMORY_PLANE_i`, or the KMS/GBM plane list). Planes may
+    /// share one dmabuf (same or `dup`ed fd, different offsets) or live in separate dmabufs.
     pub planes: Vec<ExternalPlane>,
     /// Extra usages beyond the implied sampling + copy-source (`UPLOAD` = copy destination,
     /// `STORAGE`, `RENDER_TARGET` write into the producer's buffer). Multi-planar formats (NV12)
@@ -60,6 +63,8 @@ pub struct ExternalFrameDescriptor {
     /// `sync_file` signaled when the producer's writes are complete; the import waits for it.
     pub acquire_fence: Option<OwnedFd>,
     /// Upper bound for the acquire-fence wait ([`DEFAULT_ACQUIRE_TIMEOUT`] by default).
+    /// `Duration::MAX` asks for no bound: the wgpu backend then waits on the kernel fence itself
+    /// ([`AcquireFenceWait::SyncFd`](crate::AcquireFenceWait::SyncFd)) where the device can.
     pub acquire_timeout: Duration,
 }
 
@@ -141,8 +146,9 @@ impl ExternalFrameDescriptor {
     }
 
     /// Backend-independent checks shared by every backend: non-zero extent (even for subsampled
-    /// formats), one plane per format plane, a known fourcc, a valid modifier, and strides that
-    /// fit a row.
+    /// formats), a known fourcc, a valid modifier, one plane per format plane (plus up to
+    /// [`MAX_MEMORY_PLANES`] aux planes for non-linear modifiers), and, for linear layouts, strides
+    /// that fit a row. Tiled layouts are left to the backend, which knows the modifier.
     pub fn validate(&self) -> Result<ValidatedLayout, ExternalImportError> {
         if self.width == 0 || self.height == 0 {
             return Err(ExternalImportError::invalid(format!(
@@ -177,15 +183,27 @@ impl ExternalFrameDescriptor {
                 reason: format!("{format:?} images are sample-only, not {:?}", self.usage),
             });
         }
-        if self.planes.len() != formats.len() {
+        let linear = self
+            .modifier
+            .is_none_or(|m| m == super::DRM_FORMAT_MOD_LINEAR);
+        let max_planes = if linear {
+            formats.len()
+        } else {
+            MAX_MEMORY_PLANES
+        };
+        if !(formats.len()..=max_planes).contains(&self.planes.len()) {
+            let expected = if linear {
+                format!("exactly {}", formats.len())
+            } else {
+                format!("{} to {MAX_MEMORY_PLANES}", formats.len())
+            };
             return Err(ExternalImportError::invalid(format!(
-                "{} expects exactly {} plane(s), got {}",
+                "{} expects {expected} plane(s), got {}",
                 self.fourcc,
-                formats.len(),
                 self.planes.len()
             )));
         }
-        let mut min_len = Vec::with_capacity(formats.len());
+        let mut min_len: Vec<u64> = self.planes.iter().map(|p| p.offset).collect();
         for (index, (plane_format, plane)) in formats.iter().zip(&self.planes).enumerate() {
             let sub = plane_format.subsampling;
             if !self.width.is_multiple_of(sub) || !self.height.is_multiple_of(sub) {
@@ -193,6 +211,9 @@ impl ExternalFrameDescriptor {
                     "{} needs an extent divisible by {sub}, got {}x{}",
                     self.fourcc, self.width, self.height
                 )));
+            }
+            if !linear {
+                continue;
             }
             let (width, height) = plane_format.extent(self.width, self.height);
             let row_bytes = u64::from(width) * u64::from(plane_format.bytes_per_texel);
@@ -211,7 +232,7 @@ impl ExternalFrameDescriptor {
                 .ok_or_else(|| {
                     ExternalImportError::invalid(format!("plane {index}: layout overflows u64"))
                 })?;
-            min_len.push(end);
+            min_len[index] = end;
         }
         Ok(ValidatedLayout { format, min_len })
     }
@@ -241,16 +262,20 @@ impl fmt::Debug for ExternalFrameDescriptor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedLayout {
     pub format: GpuFormat,
-    /// Minimum dmabuf length each plane needs (its offset + last row end), in plane order.
+    /// Minimum dmabuf length each plane needs, in plane order: offset + last row end for linear
+    /// layouts, the offset alone for tiled and aux planes (the backend checks those).
     pub min_len: Vec<u64>,
 }
 
 impl ValidatedLayout {
     /// Multi-planar images (NV12) are sample-only: no copies, storage, or render targets.
     pub fn is_multi_planar(&self) -> bool {
-        self.min_len.len() > 1
+        format_planes(self.format).len() > 1
     }
 }
+
+/// Most memory planes a DRM format modifier can have (`VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT`).
+pub const MAX_MEMORY_PLANES: usize = 4;
 
 /// Drop token holding an import's fds and keepalive for as long as the handle lives (mock
 /// backend; the wgpu backend hands both to the Vulkan image instead).
@@ -269,3 +294,6 @@ impl fmt::Debug for ExternalImageToken {
             .finish()
     }
 }
+
+#[cfg(feature = "gpu-mock")]
+impl crate::handles::GpuDropToken for ExternalImageToken {}
