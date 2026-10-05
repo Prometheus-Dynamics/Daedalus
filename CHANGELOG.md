@@ -223,6 +223,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   graph through `Executor::run_in_place` and through `Engine`/`HostGraph`; `scripts/ci.sh nostd`
   checks runtime, engine and the smoke crate for `thumbv7em-none-eabihf` and runs its tests
   natively with `std` off.
+- Runtime and engine without compare-and-swap: `daedalus-runtime`, `daedalus-engine` (with
+  `plugins`, `metrics`, `snapshots`, `lockfree-queues`, `config-env`) and `examples/nostd_smoke`
+  build for `thumbv6m-none-eabi` and `riscv32imc-unknown-none-elf`; `scripts/ci.sh nostd` checks
+  them for `thumbv6m`. Internal `Arc<dyn Fn>` handlers and plugin codecs go through
+  `portable::arc_dyn!` (std `Arc` and no extra allocation elsewhere), and `lockfree-queues` keeps
+  locked edge queues there. As for the tier-1 crates, the final binary provides a
+  `critical-section` implementation.
 - Lineage on the engine clock: `Payload::stamp(&Clock)` (re)stamps `created_at` (a no-op on the
   platform clock) and `PayloadLineage::age(&Clock)` measures it. `NodeIo` pushes (`NodeIo::clock`,
   `with_clock`; executors pass theirs), host bridge `push*`, `GraphInput::feed_typed`,
@@ -297,6 +304,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `serde`'s `rc` feature is no longer on workspace-wide: `daedalus-core` enables it on targets with
   compare-and-swap (it needs `alloc::sync`). `daedalus-planner`'s `tracing` dependency is
   `std`-only (only `std` builds read `DAEDALUS_TRACE_EMBEDDED_EXPAND`).
+- `tracing` is an optional dependency of `daedalus-runtime` and `daedalus-engine`, behind a new
+  host-only `tracing` feature that `std` implies (so `threads`, the default, keeps every span and
+  event). Without it their spans and events compile to nothing (`crates/trace.rs`, arguments
+  unevaluated). The facade's `tracing` feature enables both, for builds without `threads`
+  (wasm), which no longer emit runtime events by default.
 - Workspace dependencies shared with the `no_std` crates (`serde`, `serde_json`, `thiserror`,
   `tracing`, `base64`, `crossbeam-queue`) and the five tier-1 crates are declared without
   default features; `std` members request `features = ["std"]` (`daedalus-data`:

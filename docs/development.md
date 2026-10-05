@@ -25,7 +25,8 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 
 - Workspace crates should inherit common dependencies from root `workspace.dependencies`.
 - Library error types should be typed and use `thiserror`.
-- Runtime instrumentation should use `tracing`.
+- Runtime instrumentation should use `tracing`, through the crate's `trace` module in the
+  runtime and engine (see [Portability](#portability)).
 - Avoid adding dependencies to `core` and `transport` unless the owning contract truly requires them.
 - Dependencies of the `no_std` crates must support `no_std` (see [Portability](#portability)).
 - Keep backend variants behind stable feature names.
@@ -41,7 +42,9 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 
 ## Observability
 
-- Initialize a `tracing` subscriber in binaries and integration tests.
+- Initialize a `tracing` subscriber in binaries and integration tests. The runtime's and engine's
+  spans and events need their `tracing` feature, which `std` (and so the default `threads`)
+  implies; builds without `threads` (wasm) enable the facade's `tracing` feature to keep them.
 - Useful targets include `daedalus_runtime::executor`, `daedalus_runtime::executor::queue`, `daedalus_runtime::host_bridge`, `daedalus_runtime::stream`, `daedalus_runtime::config`, `daedalus_planner::passes`, `daedalus_gpu::wgpu`, `daedalus_gpu::dispatch`, `daedalus_gpu::readback`, and `daedalus_gpu::poll_driver`.
 - Metrics levels are `Off`, `Basic`, `Timing`, `Detailed`, `Hardware`, `Profile`, and `Trace`.
 - `Detailed` is the normal level for transport and allocation debugging.
@@ -53,7 +56,7 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 ## Runtime Defaults
 
 - Stream workers use `DEFAULT_STREAM_IDLE_SLEEP` unless configured through `EngineConfig`, `RuntimeSection`, or `StreamWorkerConfig`.
-- Host bridge event recording is off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING = false`) because it allocates one event per push and delivery. Enable it with `EngineConfig::with_host_event_recording(true)`, `HostBridgeConfig::with_event_recording(true)`, `HostBridgeHandle::set_event_recording(true)`, or `DAEDALUS_HOST_EVENT_RECORDING=1`; when enabled it retains `DEFAULT_HOST_BRIDGE_EVENT_LIMIT` events per bridge. Stats counters and `daedalus_runtime::host_bridge` tracing warnings for drops/replacements are always on.
+- Host bridge event recording is off by default (`DEFAULT_HOST_BRIDGE_EVENT_RECORDING = false`) because it allocates one event per push and delivery. Enable it with `EngineConfig::with_host_event_recording(true)`, `HostBridgeConfig::with_event_recording(true)`, `HostBridgeHandle::set_event_recording(true)`, or `DAEDALUS_HOST_EVENT_RECORDING=1`; when enabled it retains `DEFAULT_HOST_BRIDGE_EVENT_LIMIT` events per bridge. Stats counters and `daedalus_runtime::host_bridge` tracing warnings for drops/replacements (with the `tracing` feature) are always on.
 - Host ports with a replace-style capacity-one policy (the default `Bounded { capacity: 1, overflow: DropOldest }`, `LatestOnly`, `DropOldest`, `Coalesce`) store their value in a single slot that is overwritten in place.
 - Internal edge queues preserve compatibility defaults; streaming, camera, daemon, and interactive workloads should set explicit bounded/latest-only policies.
 - WGPU staging behavior is configured through `WgpuStagingPoolConfig` or `DAEDALUS_WGPU_STAGING_*` before backend construction.
@@ -105,6 +108,19 @@ Daedalus targets hosted operating systems, but keeps two smaller targets buildab
 grow: microcontrollers (`no_std`) and WebAssembly. CI checks both (`scripts/ci.sh nostd wasm`,
 see [testing.md](testing.md#no_std-and-wasm)). Nothing changes for `std` users: every crate
 keeps `std` in its default features, and a native build compiles the same types as before.
+
+What builds where (CI-checked unless noted):
+
+| Crates | Hosted (`std`) | `thumbv7em-none-eabihf` (CAS) | `thumbv6m-none-eabi`, `riscv32imc-unknown-none-elf` (no CAS) | `wasm32-unknown-unknown`, `wasm32-wasip1` |
+| --- | --- | --- | --- | --- |
+| core, transport, data, registry, planner | yes | `no_std` + alloc features | `no_std` + alloc features | yes (via the facade) |
+| runtime, engine | yes | serial, `no_std`; `plugins`, `metrics`, `snapshots`, `lockfree-queues`, `config-env`, `tracing` | serial, `no_std`; same features except `tracing` | serial (`embedded` without `threads`) |
+| `examples/nostd_smoke` | tests run natively | yes | yes | - |
+| facade `daedalus-rs` | yes | - | - | `engine,plugins` (+ `tracing`) |
+| gpu, nodes, ffi, daemon | yes | - | - | - |
+
+`riscv32imc` is checked locally, not in CI; it needs the same `portable-atomic` backend as
+`thumbv6m`.
 
 ### Tier 1: `no_std` + `alloc`
 
@@ -160,8 +176,16 @@ module's other backend:
 The final binary must provide a `critical-section` implementation, e.g. `cortex-m`'s
 `critical-section-single-core` or `riscv`'s `critical-section-single-hart` feature, or a HAL's.
 The dependencies are target-specific, so every other target compiles exactly what it did
-before. The runtime and engine take the same backend there (`daedalus_runtime::sync`, their
-`portable` module), but do not build without compare-and-swap yet (see the roadmap below).
+before. The runtime and engine take the same backend there (their `portable` module and
+`daedalus_runtime::sync`'s `spin` locks), so an application linking them for such a target
+needs that `critical-section` implementation too. Also on those targets only:
+
+- `tracing` is unavailable (`tracing-core` needs compare-and-swap); leave the runtime's and
+  engine's `tracing` feature off (see "Tier 2");
+- `lockfree-queues` keeps bounded edges on locked queues (`crossbeam-queue` has no
+  `ArrayQueue` there), so the feature compiles but changes nothing;
+- the runtime's internal `Arc<dyn Fn>` handlers and plugin codecs go through `arc_dyn!` (one
+  extra allocation per registration, none per run).
 
 ### Tier 2: `no_std` serial runtime and engine
 
@@ -172,7 +196,8 @@ through host bridges or a `HostGraph` on a microcontroller. CI checks both for
 and `config-env`, and [`examples/nostd_smoke`](../examples/nostd_smoke/src/lib.rs) (a
 `#![no_std]` crate) runs `host.in -> inc -> host.out` through `Executor::run_in_place` and
 through `Engine`/`HostGraph`, checked for that target and tested natively with every Daedalus
-crate's `std` off.
+crate's `std` off. The same checks run for `thumbv6m-none-eabi` (no compare-and-swap, see
+above), without `tracing`.
 
 What the runtime's and engine's `std` switches (`std` is a boundary feature in the plugin
 fingerprint; `dylib-plugins` turns it on):
@@ -190,10 +215,16 @@ fingerprint; `dylib-plugins` turns it on):
   `EngineConfig::from_env` (`config-env` without `std` keeps the serde config types only), and
   the host bridge's `Condvar`. `libc` is a Linux-only optional dependency.
 - `std` forwards `std` to core, transport, data, registry, planner, `serde`, `serde_json`,
-  `thiserror` and `tracing`; without it the whole tree is `alloc`-only.
+  `thiserror` and `tracing`, and implies `tracing`; without it the whole tree is `alloc`-only.
 
 The other switches:
 
+- Tracing: the `tracing` feature (implied by `std`, host-only in the fingerprint; the engine's
+  enables the runtime's, the facade's both) keeps the `tracing` spans and events. Without it the
+  crate's `trace` module (`crates/trace.rs`, symlinked into each crate's `src/` like
+  `portable.rs`) expands `trace!`/`debug!`/`warn!`/`error!` to nothing, without evaluating their
+  arguments, and `debug_span!` to an inert span, so `tracing` is not a dependency. It builds
+  without `std` where the target has compare-and-swap (`thumbv7em`).
 - Threads: the `threads` feature (default on `daedalus-runtime`, `daedalus-engine` and the facade,
   implies `std`, host-only in the fingerprint, kept by the `embedded` preset) compiles the worker
   pool and persistent workers, stream workers (`StreamGraph::spawn_continuous*`,
@@ -277,17 +308,17 @@ graph on the platform clock) under Node's WASI. A WASI runtime such as `wasmtime
   `std::collections`), `Arc` and atomics from `crate::portable`.
 - A new dependency of a tier-1 crate must support `no_std`: declare it in the workspace without
   default features and enable its `std` feature from the crate's `std` feature.
+- Runtime and engine emit spans and events through `crate::trace::{trace, debug, warn, error,
+  debug_span}!`, never `tracing::` directly. Parameters used only by an event get
+  `#[cfg_attr(not(feature = "tracing"), allow(unused_variables))]`.
 - Run `scripts/ci.sh nostd wasm` after touching these crates or the executor.
 
 ### Roadmap
 
-Tier 2 (a `no_std` serial runtime and engine) is done for targets with compare-and-swap. Open
-items are tracked in [TODO.md](../TODO.md) under "Portability (tier 2)":
-
-- Runtime and engine without compare-and-swap (`thumbv6m-none-eabi`): `tracing` does not build
-  there (make it optional, or route events through a no-op macro without it), and the few
-  `Arc<dyn _>`/`Arc<[_]>` coercions need `portable::arc_dyn!`/explicit conversions; `Arc` and
-  atomics already come from `crate::portable`.
+Tier 2 (a `no_std` serial runtime and engine) is done, with and without compare-and-swap. The
+tracking list is in [TODO.md](../TODO.md) under "Portability (tier 2)". Not covered: `tracing` on
+targets without compare-and-swap, and a linked, flashed firmware image (CI type-checks the
+bare-metal targets and runs the smoke graph natively).
 
 ## Performance
 
