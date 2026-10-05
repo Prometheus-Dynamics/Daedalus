@@ -162,6 +162,8 @@ pub(super) fn apply_planner_lowerings(
 
 #[cfg(test)]
 mod tests {
+    use alloc::{string::String, vec::Vec};
+
     use daedalus_data::model::Value;
 
     use crate::graph::Graph;

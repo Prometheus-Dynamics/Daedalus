@@ -172,6 +172,9 @@ cmd_nostd() {
   step "Checking the no_std runtime and engine with tracing for ${NOSTD_TARGETS[0]}"
   cargo check --target "${NOSTD_TARGETS[0]}" -p daedalus-runtime -p daedalus-engine \
     --no-default-features --features "daedalus-engine/tracing,daedalus-engine/plugins"
+  step "Linting and testing the tier-1 crates natively without std"
+  cargo clippy "${NOSTD_CRATES[@]}" --all-targets --no-default-features -- -D warnings
+  cargo test "${NOSTD_CRATES[@]}" --no-default-features
   step "Running the no_std smoke test natively"
   cargo test -p daedalus-nostd-smoke
 }

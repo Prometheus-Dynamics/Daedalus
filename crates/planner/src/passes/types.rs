@@ -268,6 +268,7 @@ pub struct PlanExplanation {
 #[cfg(test)]
 mod tests {
     use super::{AdapterResolutionMode, EdgeResolutionKind};
+    use alloc::string::ToString;
     use core::str::FromStr;
 
     #[test]

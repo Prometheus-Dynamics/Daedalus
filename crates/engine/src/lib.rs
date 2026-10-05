@@ -3,7 +3,7 @@
 //!
 //! `no_std` + `alloc` without the `std` feature (implied by the default `threads`): plan, run
 //! and drive graphs serially (see "Portability" in docs/development.md).
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
 
 #[cfg_attr(not(feature = "std"), macro_use)]
 extern crate alloc;
