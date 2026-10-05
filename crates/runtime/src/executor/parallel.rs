@@ -173,7 +173,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
     fn finish(self) -> (ExecutionTelemetry, Option<ExecuteError>) {
         let state = self.state.into_inner();
         if state.error.is_none() && state.completed < self.graph.total_segments {
-            tracing::debug!(
+            crate::trace::debug!(
                 target: "daedalus_runtime::executor",
                 completed = state.completed,
                 total_segments = self.graph.total_segments,
@@ -210,7 +210,7 @@ fn run_segment(
     segment: usize,
     run: &mut impl FnMut(usize) -> Result<ExecutionTelemetry, ExecuteError>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
-    let _span = tracing::debug_span!(
+    let _span = crate::trace::debug_span!(
         target: "daedalus_runtime::executor",
         "runtime_segment_run",
         segment,

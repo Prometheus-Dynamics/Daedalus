@@ -40,8 +40,8 @@ usage: scripts/ci.sh [subcommand...]
   smoke       run the CPU-only example binaries
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics) and without threads
-  nostd       no_std + alloc checks: tier-1 crates for thumbv7em and thumbv6m (no CAS), the
-              serial runtime and engine for thumbv7em, and the no_std smoke graph
+  nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
+              serial runtime and engine, and the no_std smoke graph
   wasm        engine,plugins (embedded without threads) checks and Node runs for wasm32 and WASI
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
@@ -151,9 +151,10 @@ cmd_lean() {
     --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
 }
 
-# The tier-1 crates without `std` on each bare-metal target, with and without their alloc-only
-# optional features; then (tier 2) the serial runtime and engine and the `examples/nostd_smoke`
-# graph for thumbv7em, whose tests also run natively with `std` off everywhere.
+# On each bare-metal target: the tier-1 crates without `std`, with and without their alloc-only
+# optional features; then (tier 2) the serial runtime and engine, likewise, and the
+# `examples/nostd_smoke` graph. `tracing` is checked only where it builds (it needs
+# compare-and-swap). The smoke tests also run natively with `std` off everywhere.
 cmd_nostd() {
   local target
   for target in "${NOSTD_TARGETS[@]}"; do
@@ -162,13 +163,18 @@ cmd_nostd() {
     cargo check --target "$target" "${NOSTD_CRATES[@]}" --no-default-features
     cargo check --target "$target" "${NOSTD_CRATES[@]}" --no-default-features --features \
       "daedalus-core/metrics,daedalus-data/json,daedalus-data/schema,daedalus-data/proto,daedalus-data/async,daedalus-registry/bundle,daedalus-registry/plugin,daedalus-planner/schema,daedalus-planner/proto"
+    step "Checking the no_std serial runtime and engine for $target"
+    cargo check --target "$target" -p daedalus-runtime -p daedalus-engine --no-default-features
+    cargo check --target "$target" -p daedalus-runtime -p daedalus-engine --no-default-features \
+      --features "daedalus-runtime/plugins,daedalus-runtime/metrics,daedalus-runtime/snapshots,daedalus-runtime/lockfree-queues,daedalus-engine/plugins,daedalus-engine/config-env"
+    cargo check --target "$target" -p daedalus-nostd-smoke
   done
-  target="${NOSTD_TARGETS[0]}"
-  step "Checking the no_std serial runtime and engine for $target"
-  cargo check --target "$target" -p daedalus-runtime -p daedalus-engine --no-default-features
-  cargo check --target "$target" -p daedalus-runtime -p daedalus-engine --no-default-features \
-    --features "daedalus-runtime/plugins,daedalus-runtime/metrics,daedalus-runtime/snapshots,daedalus-runtime/lockfree-queues,daedalus-engine/plugins,daedalus-engine/config-env"
-  cargo check --target "$target" -p daedalus-nostd-smoke
+  step "Checking the no_std runtime and engine with tracing for ${NOSTD_TARGETS[0]}"
+  cargo check --target "${NOSTD_TARGETS[0]}" -p daedalus-runtime -p daedalus-engine \
+    --no-default-features --features "daedalus-engine/tracing,daedalus-engine/plugins"
+  step "Linting and testing the tier-1 crates natively without std"
+  cargo clippy "${NOSTD_CRATES[@]}" --all-targets --no-default-features -- -D warnings
+  cargo test "${NOSTD_CRATES[@]}" --no-default-features
   step "Running the no_std smoke test natively"
   cargo test -p daedalus-nostd-smoke
 }

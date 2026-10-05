@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::const_coerce::CoerceFn;
-use crate::portable::Arc;
+use crate::portable::{Arc, arc_dyn};
 use core::any::TypeId;
 use daedalus_data::model::Value;
 
@@ -72,9 +72,9 @@ impl PluginRegistry {
             return;
         };
         let encode = to_value.map(|to_value| -> StableEncodeFn {
-            Arc::new(move |any| any.downcast_ref::<T>().map(to_value))
+            arc_dyn!(move |any: &(dyn Any + Send + Sync)| any.downcast_ref::<T>().map(to_value))
         });
-        let decode: StableDecodeFn = Arc::new(move |key, value| {
+        let decode: StableDecodeFn = arc_dyn!(move |key: TypeKey, value: &Value| {
             let typed = daedalus_data::typing::coerce_builtin_const_value::<T>(value)
                 .or_else(|| schema.and_then(|coerce| coerce(value)))
                 .or_else(|| serde.and_then(|coerce| coerce(value)))?;

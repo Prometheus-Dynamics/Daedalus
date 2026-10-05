@@ -129,7 +129,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     where
         F: FnMut(&Self, &HostGraphTurn) -> Result<(), EngineError>,
     {
-        tracing::debug!(
+        crate::trace::debug!(
             target: "daedalus_engine::host_graph",
             host_alias = self.host.alias(),
             "host graph drive loop started"
@@ -215,7 +215,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     where
         F: FnMut(&Self, &HostGraphTurn) -> Result<(), EngineError>,
     {
-        tracing::debug!(
+        crate::trace::debug!(
             target: "daedalus_engine::host_graph",
             host_alias = self.host.alias(),
             "async host graph drive loop started"
@@ -249,7 +249,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
                 let telemetry = self.tick_if_ready()?;
                 let turn = HostGraphTurn { wait, telemetry };
                 if turn.ticked() {
-                    tracing::trace!(
+                    crate::trace::trace!(
                         target: "daedalus_engine::host_graph",
                         host_alias = self.host.alias(),
                         "host graph drive tick complete"
@@ -264,7 +264,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     }
 
     fn drive_exit(&self, exit: HostGraphDriveExit) -> HostGraphDriveExit {
-        tracing::debug!(
+        crate::trace::debug!(
             target: "daedalus_engine::host_graph",
             host_alias = self.host.alias(),
             ?exit,

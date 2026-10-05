@@ -1,6 +1,8 @@
 #[cfg(feature = "metrics")]
 use super::{ExecutionTelemetry, MetricsLevel};
 #[cfg(feature = "metrics")]
+use crate::prelude::*;
+#[cfg(feature = "metrics")]
 use core::time::Duration;
 
 #[test]

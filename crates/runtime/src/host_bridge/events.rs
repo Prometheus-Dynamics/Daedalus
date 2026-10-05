@@ -74,6 +74,7 @@ pub(super) fn record_host_event(
     outcome: Option<FeedOutcome>,
     reason: Option<DropReason>,
 ) {
+    #[cfg(feature = "tracing")]
     if matches!(
         kind,
         HostBridgeEventKind::SourceDrop
@@ -81,7 +82,7 @@ pub(super) fn record_host_event(
             | HostBridgeEventKind::SourceReplace
     ) || reason.is_some()
     {
-        tracing::warn!(
+        crate::trace::warn!(
             target: "daedalus_runtime::host_bridge",
             alias,
             port,
@@ -93,7 +94,7 @@ pub(super) fn record_host_event(
             "host bridge payload pressure event",
         );
     } else {
-        tracing::trace!(
+        crate::trace::trace!(
             target: "daedalus_runtime::host_bridge",
             alias,
             port,

@@ -84,14 +84,16 @@ should only appear under criterion.
 scripts/ci.sh nostd wasm
 ```
 
-`nostd` checks `daedalus-core`, `-transport`, `-data`, `-registry` and `-planner` with
-`--no-default-features` for `thumbv7em-none-eabihf` and `thumbv6m-none-eabi` (no
-compare-and-swap), once bare and once with their alloc-only optional features. It then checks
-`daedalus-runtime` and `daedalus-engine` for `thumbv7em-none-eabihf` without default features,
-bare and with `plugins`, `metrics`, `snapshots`, `lockfree-queues` and `config-env`, checks
-`examples/nostd_smoke` (a `#![no_std]` crate driving a one-node graph through the serial
-executor and through `Engine`/`HostGraph` on an injected counter clock) for that target, and runs
-its tests natively, where every Daedalus crate builds without `std`. `wasm` checks the
+`nostd` checks, for `thumbv7em-none-eabihf` and `thumbv6m-none-eabi` (no compare-and-swap):
+`daedalus-core`, `-transport`, `-data`, `-registry` and `-planner` with
+`--no-default-features`, once bare and once with their alloc-only optional features;
+`daedalus-runtime` and `daedalus-engine` without default features, bare and with `plugins`,
+`metrics`, `snapshots`, `lockfree-queues` and `config-env`; and `examples/nostd_smoke` (a
+`#![no_std]` crate driving a one-node graph through the serial executor and through
+`Engine`/`HostGraph` on an injected counter clock). It also checks the runtime and engine with
+`tracing` for `thumbv7em` (it needs compare-and-swap) and runs the smoke tests natively, where
+every Daedalus crate builds without `std`. `riscv32imc-unknown-none-elf` (also without
+compare-and-swap) is not in CI; check it locally with the same commands. `wasm` checks the
 facade's `engine,plugins` (the `embedded` preset without `threads`) for `wasm32-unknown-unknown`
 and `wasm32-wasip1`, builds the wasm modules in release mode and runs them in Node:
 

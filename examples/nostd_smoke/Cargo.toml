@@ -8,7 +8,7 @@ description = "no_std + alloc smoke test of the serial runtime and engine (scrip
 [lints]
 workspace = true
 
-# `#![no_std]` library: checked for `thumbv7em-none-eabihf`; its tests run the same code natively
+# `#![no_std]` library: checked for `thumbv7em-none-eabihf` and `thumbv6m-none-eabi`; its tests run the same code natively
 # with every Daedalus crate's `std` off.
 [lib]
 path = "src/lib.rs"
@@ -21,3 +21,7 @@ daedalus-engine = { workspace = true, features = ["plugins"] }
 daedalus-planner = { workspace = true }
 daedalus-registry = { workspace = true }
 daedalus-runtime = { workspace = true, features = ["plugins"] }
+
+# Targets without compare-and-swap (`thumbv6m`): the counter clock's `fetch_add`.
+[target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]
+portable-atomic = { workspace = true, features = ["critical-section"] }

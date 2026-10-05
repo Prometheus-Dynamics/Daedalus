@@ -436,7 +436,7 @@ pub(super) fn expand_embedded_graphs(
                             });
                         }
                     }
-                } else {
+                } else if cfg!(feature = "std") {
                     traced! {
                         if trace {
                             let out_keys: Vec<&String> = from.outputs.keys().collect();

@@ -163,7 +163,7 @@ fn adapt_edge_payload<H: NodeHandler>(
             .then(|| adapter_path_detail(edge_transport))
             .flatten(),
     );
-    tracing::debug!(
+    crate::trace::debug!(
         target: "daedalus_runtime::transport",
         edge_index = edge_idx,
         node_index = node_idx,
@@ -198,7 +198,7 @@ fn adapt_edge_payload<H: NodeHandler>(
                     .then(|| adapter_path_detail(edge_transport))
                     .flatten(),
             );
-            tracing::debug!(
+            crate::trace::debug!(
                 target: "daedalus_runtime::transport",
                 edge_index = edge_idx,
                 node_index = node_idx,
@@ -214,7 +214,7 @@ fn adapt_edge_payload<H: NodeHandler>(
         }
         Err(error) => {
             exec.core.telemetry.record_edge_adapter_error(edge_idx);
-            tracing::warn!(
+            crate::trace::warn!(
                 target: "daedalus_runtime::transport",
                 edge_index = edge_idx,
                 node_index = node_idx,

@@ -4,7 +4,7 @@ use crate::prelude::*;
 use crate::sync::Mutex;
 use core::sync::atomic::Ordering;
 
-#[cfg(feature = "lockfree-queues")]
+#[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
 use crossbeam_queue::ArrayQueue;
 
 use daedalus_transport::PolicyQueue;
@@ -90,7 +90,7 @@ pub enum EdgeStorage {
         queue: Arc<Mutex<EdgeQueue>>,
         metrics: Arc<EdgeStorageMetrics>,
     },
-    #[cfg(feature = "lockfree-queues")]
+    #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
     BoundedLf {
         queue: Arc<ArrayQueue<CorrelatedPayload>>,
         metrics: Arc<EdgeStorageMetrics>,
@@ -106,7 +106,7 @@ pub fn build_queues(plan: &crate::plan::RuntimePlan) -> Vec<EdgeStorage> {
             // Lock-free queues only help bounded hot edges where the runtime can avoid a mutex in
             // parallel/streaming paths. Unbounded/latest/coalesced edges stay on the locked queue
             // because their semantics need replacement/inspection behavior.
-            #[cfg(feature = "lockfree-queues")]
+            #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
             if let Some(cap) = policy.bounded_capacity() {
                 return EdgeStorage::BoundedLf {
                     queue: Arc::new(ArrayQueue::new(cap)),
@@ -127,7 +127,7 @@ pub fn build_queues(plan: &crate::plan::RuntimePlan) -> Vec<EdgeStorage> {
 pub(crate) fn edge_has_payload(edge_idx: usize, queues: &[EdgeStorage]) -> bool {
     match queues.get(edge_idx) {
         Some(EdgeStorage::Locked { queue, .. }) => !queue.lock().is_empty(),
-        #[cfg(feature = "lockfree-queues")]
+        #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
         Some(EdgeStorage::BoundedLf { queue, .. }) => !queue.is_empty(),
         None => false,
     }
@@ -151,7 +151,7 @@ pub fn pop_edge(
             }
             payload
         }
-        #[cfg(feature = "lockfree-queues")]
+        #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
         EdgeStorage::BoundedLf { queue, metrics } => {
             let payload = queue.pop();
             if let Some(payload) = payload.as_ref() {

@@ -218,7 +218,7 @@ pub(crate) fn reset_run_storage(
                 q.clear();
                 metrics.set_current_bytes(0);
             }
-            #[cfg(feature = "lockfree-queues")]
+            #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
             EdgeStorage::BoundedLf { queue, metrics } => {
                 while queue.pop().is_some() {}
                 metrics.set_current_bytes(0);
@@ -401,6 +401,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     ///
     /// This is the core "responsiveness" knob: it prevents unrelated slow branches from dragging
     /// down outputs the UI is currently watching.
+    #[cfg_attr(not(feature = "tracing"), allow(unused_variables))]
     pub fn with_demand_sinks(mut self, sinks: Vec<crate::plan::RuntimeSink>) -> Self {
         match crate::plan::active_nodes_mask_for_sinks(self.nodes.as_ref(), self.edges, &sinks) {
             Ok(mask) => {
@@ -409,7 +410,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             Err(err) => {
                 // If the selector can't be resolved, keep the graph running rather than silently
                 // disabling everything. Callers that need strictness can validate up-front.
-                tracing::warn!(
+                crate::trace::warn!(
                     target: "daedalus_runtime::executor",
                     error = %err,
                     "demand-driven sink selection failed"
