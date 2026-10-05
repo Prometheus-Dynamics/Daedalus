@@ -9,7 +9,10 @@ GPU-facing handles, backend selection, and shader helpers.
 - noop, mock, and `wgpu` backend selection,
 - buffer pools and transfer statistics,
 - optional async backend trait,
-- WGSL shader dispatch, staging, readback, and resource helpers behind `gpu-wgpu`.
+- WGSL shader dispatch, staging, readback, and resource helpers behind `gpu-wgpu` (Vulkan, plus
+  Metal on Apple and DX12 on Windows; `gpu-gles` adds the OpenGL/GLES backend),
+- `image` crate bridges (`Compute<DynamicImage>`, `DeviceBridge` for `image` buffers,
+  `ShaderRunOutput` image readbacks) behind `gpu-image`.
 
 Use `gpu-mock` for deterministic tests. Use `gpu-wgpu` only where hardware and drivers are available. Planner/runtime GPU behavior is enabled from facade/runtime/engine features, not by this crate alone.
 

@@ -14,15 +14,18 @@ Use this crate when an application wants the public Daedalus API from one depend
 - `metrics`: executor telemetry collection.
 - `threads` (default): worker threads for parallel/adaptive modes, stream workers and blocking
   host waits; without it those modes run serially and the thread-only APIs do not exist.
-- `embedded`: `engine` + `plugins` + `threads` without pool or metrics, for constrained hosts
-  (`engine,plugins` with default features off on targets without threads).
+- `tracing` (default): `tracing` spans and events of the runtime, engine and planner.
+- `embedded`: `engine` + `plugins` + `threads` without pool, metrics or `tracing`, for
+  constrained hosts (`engine,plugins` with default features off on targets without threads).
 - `plugins`: plugin registry and `#[plugin]`/`declare_plugin!` installation.
 - `dylib-plugins`: native Rust plugin `cdylib`s: `export_plugin!` on the plugin side,
   `PluginLibrary` to load them at runtime; see `docs/dynamic-plugins.md`.
 - `gpu-types`: GPU handles and type surface.
 - `gpu-runtime`: registry/planner/runtime GPU wiring.
 - `gpu-engine`: engine GPU wiring.
-- `gpu-wgpu`: real `wgpu` backend.
+- `gpu-wgpu`: real `wgpu` backend (Vulkan; Metal on Apple, DX12 on Windows).
+- `gpu-gles`: adds wgpu's OpenGL/GLES backend for devices without Vulkan.
+- `gpu-image`: `image` crate bridges (`Compute<DynamicImage>`, `ShaderRunOutput` image readbacks).
 - `gpu-async`: async `wgpu` shader dispatch/readback helpers.
 - `gpu-mock`: deterministic mock GPU backend.
 - `schema` and `proto`: optional export surfaces.
