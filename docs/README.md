@@ -25,6 +25,8 @@ This directory is the repository-level documentation index. Crate-specific detai
 
 ## Optional Layers
 
+- [mcu.md](mcu.md): MCU profile, graphs planned on the host and run allocation-free on microcontrollers.
+
 - [../crates/gpu/README.md](../crates/gpu/README.md): GPU backends, handles, shader helpers, and async dispatch.
 - [../crates/wgsl-infer/README.md](../crates/wgsl-infer/README.md): lightweight WGSL metadata inference.
 - [../crates/macros/README.md](../crates/macros/README.md): proc macro surface.

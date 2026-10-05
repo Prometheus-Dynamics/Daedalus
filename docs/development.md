@@ -108,6 +108,9 @@ Daedalus targets hosted operating systems, but keeps two smaller targets buildab
 grow: microcontrollers (`no_std`) and WebAssembly. CI checks both (`scripts/ci.sh nostd wasm`,
 see [testing.md](testing.md#no_std-and-wasm)). Nothing changes for `std` users: every crate
 keeps `std` in its default features, and a native build compiles the same types as before.
+For small microcontrollers there is also the [MCU profile](mcu.md): graphs planned on the host at
+build time and run from generated code without a heap, in a few KiB of flash (`scripts/ci.sh
+mcu` links the firmware and checks its size).
 
 What builds where (CI-checked unless noted):
 
@@ -116,6 +119,7 @@ What builds where (CI-checked unless noted):
 | core, transport, data, registry, planner | yes | `no_std` + alloc features | `no_std` + alloc features | yes (via the facade) |
 | runtime, engine | yes | serial, `no_std`; `plugins`, `metrics`, `snapshots`, `lockfree-queues`, `config-env`, `tracing` | serial, `no_std`; same features except `tracing` | serial (`embedded` without `threads`) |
 | `examples/nostd_smoke` | tests run natively | yes | yes | - |
+| MCU profile: `daedalus-mcu`, `examples/mcu_blink` ([mcu.md](mcu.md)) | tests run natively | `no_std`, no `alloc`; firmware linked and size-checked | same | - |
 | facade `daedalus-rs` | yes | - | - | `engine,plugins` (+ `tracing`) |
 | gpu, nodes, ffi, daemon | yes | - | - | - |
 
@@ -317,8 +321,9 @@ graph on the platform clock) under Node's WASI. A WASI runtime such as `wasmtime
 
 Tier 2 (a `no_std` serial runtime and engine) is done, with and without compare-and-swap. The
 tracking list is in [TODO.md](../TODO.md) under "Portability (tier 2)". Not covered: `tracing` on
-targets without compare-and-swap, and a linked, flashed firmware image (CI type-checks the
-bare-metal targets and runs the smoke graph natively).
+targets without compare-and-swap, and a linked, flashed firmware image of the tier-2 runtime (CI
+type-checks the bare-metal targets and runs the smoke graph natively; the [MCU profile](mcu.md)
+firmware is linked and measured, not flashed).
 
 ## Performance
 
