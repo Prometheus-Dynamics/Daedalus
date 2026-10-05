@@ -45,6 +45,7 @@ usage: scripts/ci.sh [subcommand...]
   wasm        engine,plugins (embedded without threads) checks and Node runs for wasm32 and WASI
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
+  vvl         the dmabuf hardware tests and gpu_probe under the Khronos validation layer
 EOF
 }
 
@@ -235,6 +236,57 @@ cmd_pi() {
   cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe
 }
 
+# The `pi` tests and probe under VK_LAYER_KHRONOS_validation with synchronization validation; see
+# "Vulkan Validation Layers" in docs/testing.md. Uses an installed layer, or the manifests under
+# $VK_LAYER_PATH (an unpacked package: the library is looked up in ../../../lib64 and ../../../lib
+# of each manifest directory). Implicit layers (overlays, capture tools) are disabled unless
+# VK_LOADER_LAYERS_DISABLE says otherwise. Fails on any validation message except the known
+# timeline-wait one (VUID-vkQueueSubmit-pWaitSemaphores-03238, from wgpu's binary semaphore chain
+# behind a pending timeline wait, which only the opt-in `Timeline` fence mode creates).
+readonly VVL_KNOWN='VUID-vkQueueSubmit-pWaitSemaphores-03238'
+
+cmd_vvl() {
+  local dir lib log="${CARGO_TARGET_DIR:-target}/vvl.log"
+  if [[ -n "${VK_LAYER_PATH:-}" ]]; then
+    local -a dirs
+    IFS=: read -r -a dirs <<<"$VK_LAYER_PATH"
+    for dir in "${dirs[@]}"; do
+      for lib in "$dir/../../../lib64" "$dir/../../../lib"; do
+        if [[ -d "$lib" ]]; then
+          LD_LIBRARY_PATH="$(cd "$lib" && pwd)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        fi
+      done
+    done
+    export LD_LIBRARY_PATH
+  fi
+  export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+  export VK_LOADER_LAYERS_DISABLE="${VK_LOADER_LAYERS_DISABLE-~implicit~}"
+  export VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true
+  export VK_KHRONOS_VALIDATION_DEBUG_ACTION=VK_DBG_LAYER_ACTION_LOG_MSG
+  export VK_KHRONOS_VALIDATION_REPORT_FLAGS=error,warn,perf
+  export VK_KHRONOS_VALIDATION_LOG_FILENAME=stdout
+  step "Checking that the validation layer loads"
+  local loaded
+  loaded="$(VK_LOADER_DEBUG=layer cargo run -q -p daedalus-gpu --features gpu-dmabuf \
+    --example gpu_probe 2>&1 || true)"
+  if ! grep -q 'Insert instance layer "VK_LAYER_KHRONOS_validation"' <<<"$loaded"; then
+    echo "VK_LAYER_KHRONOS_validation not found: install it or set VK_LAYER_PATH" >&2
+    return 1
+  fi
+  mkdir -p "$(dirname "$log")"
+  step "Running dmabuf hardware tests and gpu_probe under the validation layer (log: $log)"
+  {
+    cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf --test-threads=1
+    cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe
+  } 2>&1 | tee "$log"
+  step "Validation messages"
+  grep -E '^Validation (Error|Warning|Performance)' "$log" | sed 's/ | MessageID.*//' | sort | uniq -c || true
+  if grep -E '^Validation (Error|Warning)' "$log" | grep -qv "$VVL_KNOWN"; then
+    echo "unexpected validation messages; see $log" >&2
+    return 1
+  fi
+}
+
 cmd_all() {
   cmd_lints
   cmd_check
@@ -253,7 +305,7 @@ main() {
     case "$sub" in
       -h | --help | help) usage ;;
       all | lints | check | features | clippy | test | examples | smoke | aarch64 | lean | nostd | \
-        wasm | bench | pi)
+        wasm | bench | pi | vvl)
         "cmd_$sub" ;;
       macro-ui) cmd_macro_ui ;;
       *)
