@@ -45,6 +45,7 @@ cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 | `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS), the runtime and engine, and the no_std smoke graph; wasm and WASI `engine,plugins` checks and Node runs (see below) |
 | `bench` | host bridge and executor criterion benches (see below) |
 | `pi` | on-device dmabuf hardware tests and the `gpu_probe` report; not part of `all` (see [Validating on a Raspberry Pi 5](#validating-on-a-raspberry-pi-5)) |
+| `vvl` | the `pi` tests and probe under the Khronos validation layer; not part of `all` (see [Vulkan Validation Layers](#vulkan-validation-layers)) |
 
 ### aarch64
 
@@ -165,13 +166,15 @@ DAEDALUS_DMA_HEAP=/dev/dma_heap/linux,cma CARGO_BUILD_JOBS=4 ./scripts/ci.sh pi
 
 It runs `cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf` (the
 `#[ignore]`d hardware tests: single-plane import, plane offsets, fences in every wait mode the
-device has (timeline with its timeout and watcher, `SYNC_FD`, CPU), a late fence from another
+device has (`SYNC_FD`, timeline with its timeout and watcher, CPU) and the fence-mode selection
+(default, per-import override, non-`sync_file` fallback), a late fence from another
 device's GPU job, NV12 in one dmabuf and disjoint, and every renderable modifier exported by a
 Vulkan producer and read back on a second device; cases the device cannot run print a skip
 reason) and then `cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe`.
 
-Expected on a Pi 5 with current Mesa: all tests pass; `dmabuf_acquire_fence_wait: timeline`
-(v3dv has Vulkan 1.3 timeline semaphores) with `sync_fd_semaphore_import: yes`; the modifier test
+Expected on a Pi 5 with current Mesa: all tests pass; `dmabuf_acquire_fence_mode: auto`,
+`dmabuf_acquire_fence_wait: sync_fd` and `dmabuf_acquire_fence_waits: sync_fd, timeline, cpu`
+(v3dv imports `SYNC_FD` semaphores and has Vulkan 1.3 timeline semaphores); the modifier test
 round-trips `LINEAR` plus whichever tiled modifiers v3dv advertises as renderable for `R8` and
 `XRGB8888` (Broadcom `UIF` is `0x700000000000006`); V3D has no compressed modifiers, so no `aux`
 planes are expected. These are expectations, not yet confirmed on a Pi. Without lavapipe installed, a `skipping: no lavapipe consumer` line is
@@ -188,9 +191,11 @@ missing hardware; a failed check prints its error in place of the value.
 | `name`, `backend`, `device_type`, `vendor_id`, `device_id` | the adapter `WgpuBackend` selected; on a Pi a V3D adapter on `Vulkan` |
 | `driver`, `driver_info` | Vulkan driver name and Mesa version (e.g. `V3DV Mesa`, `Mesa 25.x`) |
 | `dmabuf_import` | `GpuContextHandle::dmabuf_import_support()`: `supported`, or `unsupported:` with the reason (non-Vulkan adapter, missing extension) |
-| `dmabuf_acquire_fence_wait` | where pending acquire fences are waited for by default: `timeline` (GPU waits on a timeline value a watcher thread signals on fence or `acquire_timeout`), `sync_fd` (GPU waits on the imported `sync_file`, no timeout), or `cpu` (the import polls the `sync_file`) |
+| `dmabuf_acquire_fence_mode` | the backend's default `AcquireFenceMode` (`auto` unless `GpuOptions::acquire_fence_mode` says otherwise) |
+| `dmabuf_acquire_fence_wait` | the wait that mode resolves to on this device: `sync_fd` (GPU waits on the imported `sync_file`, no timeout; the `auto` choice where available), `timeline` (GPU waits on a timeline value a watcher thread signals on fence or `acquire_timeout`), or `cpu` (the import polls the `sync_file`) |
+| `dmabuf_acquire_fence_waits` | every wait the device has; imports can pick another one with `with_acquire_fence_mode` |
 | `VK_KHR_external_semaphore_fd`, `VK_EXT_queue_family_foreign` | whether the device enabled them: the first is needed for `sync_fd` waits, the second acquires and releases imports through the foreign queue family (otherwise `EXTERNAL`) |
-| `timeline_semaphore`, `sync_fd_semaphore_import` | which GPU-side fence paths the device has: `timeline` needs the first, `sync_fd` the second (and is used for `acquire_timeout = Duration::MAX`) |
+| `timeline_semaphore`, `sync_fd_semaphore_import` | the device features behind the `timeline` and `sync_fd` waits |
 | `texture_format_nv12` | the device has wgpu `TEXTURE_FORMAT_NV12`; without it NV12 must be imported per plane (`R8` + `GR88`) |
 | `vulkan_api` | Vulkan version the physical device reports |
 | `nv12_modifiers` | DRM modifiers the driver advertises for `G8_B8R8_2PLANE_420_UNORM` (`0x0` is `LINEAR`) |
@@ -201,6 +206,46 @@ missing hardware; a failed check prints its error in place of the value.
 | `r8_modifiers`, `xrgb8888_modifiers`, `xbgr8888_modifiers`, `nv12_modifiers` | every modifier the driver advertises for the format: memory plane count, `aux` when it has more memory planes than format planes (compression metadata), its usable features (`sample`, `render`, `storage`, `disjoint`), and `tested` when the modifier round-trip test exercises it |
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
+
+## Vulkan Validation Layers
+
+The dmabuf path drives Vulkan directly (image creation over dmabuf memory, queue family ownership
+transfers, semaphore waits), so run its hardware tests and `gpu_probe` under the Khronos
+validation layer (`VK_LAYER_KHRONOS_validation`) after changing it:
+
+```bash
+# With the layer installed (Fedora: vulkan-validation-layers, Debian/Ubuntu:
+# vulkan-validationlayers, or the LunarG SDK):
+./scripts/ci.sh vvl
+# Without root: unpack the distro package (or an official Vulkan-ValidationLayers release) and
+# point VK_LAYER_PATH at its manifest directory; the library is found in ../../../lib64 or lib:
+dnf download vulkan-validation-layers --destdir /tmp/vvl
+(cd /tmp/vvl && rpm2cpio vulkan-validation-layers-*.rpm | cpio -idm)
+VK_LAYER_PATH=/tmp/vvl/usr/share/vulkan/explicit_layer.d ./scripts/ci.sh vvl
+```
+
+`vvl` sets `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`, turns on synchronization validation
+(`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`), and has the layer print errors, warnings and
+performance warnings to stdout (`VK_KHRONOS_VALIDATION_DEBUG_ACTION=VK_DBG_LAYER_ACTION_LOG_MSG`,
+`..._LOG_FILENAME=stdout`, so the messages do not depend on a `log` subscriber for wgpu's debug
+messenger). It disables implicit layers (`VK_LOADER_LAYERS_DISABLE=~implicit~`): overlay and
+capture layers such as OBS `vkcapture` inject device extensions of their own (seen as
+`WARNING-CreateDevice-extension-wrong-type` for `VK_KHR_get_physical_device_properties2`). It
+checks that the layer actually loads, runs the dmabuf tests with `--test-threads=1` and the
+probe, prints a count per message ID, keeps the log in `$CARGO_TARGET_DIR/vvl.log`, and fails on
+any error or warning other than the known one below. Set the same variables by hand to validate
+other commands.
+
+Known message: `VUID-vkQueueSubmit-pWaitSemaphores-03238` from the tests that opt into the
+`Timeline` fence mode. wgpu-hal orders submissions with a chain of binary semaphores; a
+submission after one that waits for a not-yet-signaled timeline value waits on a binary semaphore
+whose signal depends on that timeline value, which the spec only allows once the timeline signal
+was submitted (the watcher signals it from the host later). Mesa copes by holding back the next
+submission's thread (the documented `Timeline` caveat). It cannot be fixed outside wgpu-hal, and
+the default `Auto` mode (`SyncFd` first) does not produce it.
+
+Last run (RADV, RX 6800 XT, Mesa 26.2, validation layer 1.4.341): no other errors, warnings or
+performance warnings, with synchronization validation on.
 
 ## Release Feature Surface
 

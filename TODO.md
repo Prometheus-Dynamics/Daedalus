@@ -180,18 +180,32 @@ changes.
       `GpuImageHandle::acquire_status()` reports `TimedOut`; `SyncFd` (no timeout) and `Cpu`
       fallbacks. Every import does a queue-family-foreign acquire into a known wgpu state and a
       release back on drop.
+- [x] **dmabuf: configurable fence wait, `SyncFd` by default.** `AcquireFenceMode`
+      (`Auto` = `SyncFd` -> `Timeline` -> `Cpu`, or an explicit mode falling back to `Cpu`) as a
+      backend default (`GpuOptions::acquire_fence_mode`) with a per-import override;
+      `ExternalImportSupport` and `gpu_probe` report the mode, its wait and the available waits.
+- [x] **dmabuf: hardware tests under the Vulkan validation layers.** `scripts/ci.sh vvl`
+      (`docs/testing.md`); on RADV the NV12 view-format list was the one error in our code, and the
+      only remaining message is the `Timeline` mode's `VUID-vkQueueSubmit-pWaitSemaphores-03238`
+      (wgpu-hal's binary semaphore chain behind a pending timeline wait).
+- [x] **Parallel test runs segfaulted** in the Vulkan loader (concurrent instance creation with
+      the NVIDIA ICD installed; debug-utils terminators racing with instance/device creation).
+      `daedalus-gpu` serializes driver setup and creates instances without wgpu's `DEBUG` flag
+      unless `WGPU_DEBUG=1`.
 - [x] **dmabuf: compressed modifiers.** Multi-memory-plane modifiers (aux planes) import; on RADV
       every renderable `R8`/`XRGB8888` modifier including DCC (2 and 3 planes) round-trips between
       devices (`dmabuf/tests/modifiers.rs`), tiled NV12 imports and samples.
-- [ ] **dmabuf: run the hardware tests under the Vulkan validation layers.** Not installed on the
-      development machine (no `VK_LAYER_KHRONOS_validation`); install it (e.g. the distro's
-      `vulkan-validation-layers`) and run
-      `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf`.
-- [ ] **dmabuf: next submission blocks behind a timeline wait on Mesa.** wgpu-hal chains
-      submissions with binary semaphores, which Mesa only accepts once the previous
-      (wait-before-signal) submission reached the kernel. Revisit if wgpu-hal stops relaying with
-      binary semaphores (then `Timeline` would never block a thread), or make the default path
-      configurable per backend if callers need `SyncFd`'s non-blocking behaviour by default.
+- [ ] **dmabuf: `Timeline` mode blocks the next submission on Mesa** and trips
+      `VUID-vkQueueSubmit-pWaitSemaphores-03238`: wgpu-hal chains submissions with binary
+      semaphores, which Mesa only accepts once the previous (wait-before-signal) submission
+      reached the kernel. It is opt-in now (`SyncFd` is the default); revisit if wgpu-hal relays
+      with timeline semaphores (then `Timeline` would neither block nor violate the VUID).
+- [ ] **dmabuf: validation layers on the Pi.** Run `./scripts/ci.sh vvl` on v3dv alongside the
+      `pi` report (only RADV has been validated).
+- [ ] **Host-created Vulkan instances.** The driver lock only covers instances `daedalus-gpu`
+      creates; a host that creates wgpu/Vulkan instances on other threads at the same time can
+      still hit the loader race. Expose the lock (or document a creation order) if a host needs
+      it.
 - [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
       frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 

@@ -25,8 +25,11 @@
 //! `SYNC_FD` payloads cannot be imported into timeline semaphores; host-set `VkEvent`s must be set
 //! before the waiting submission; a thread (or a blocking wait) per import costs more than one
 //! shared `poll` loop, and the CPU wait blocks the importing thread. The watcher only polls fds, so
-//! it also works on devices without `VK_KHR_external_semaphore_fd`. Imports that need no bound
-//! (`acquire_timeout == Duration::MAX`) use `SyncFd` where available.
+//! it also works on devices without `VK_KHR_external_semaphore_fd`, and for fence fds that are not
+//! `sync_file`s. Because of the Mesa caveat, `SyncFd` is the default
+//! ([`AcquireFenceMode::Auto`](crate::AcquireFenceMode::Auto)); this path is opt-in
+//! ([`AcquireFenceMode::Timeline`](crate::AcquireFenceMode::Timeline)), and even then imports that
+//! need no bound (`acquire_timeout == Duration::MAX`) use `SyncFd` where available.
 //!
 //! Lifetime: the watcher thread holds the shared state and the images' status cells, never the
 //! backend or a drop token (dropping the last token submits a release, which could wait for a

@@ -29,8 +29,9 @@ pub use async_api::GpuAsyncBackend;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use convert::{Backing, Compute, DeviceBridge};
 pub use external::{
-    AcquireFenceWait, AcquireStatus, DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, DrmFourcc,
-    ExternalImportError, ExternalImportSupport, ExternalKeepalive,
+    AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, DRM_FORMAT_MOD_INVALID,
+    DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalImportError, ExternalImportSupport,
+    ExternalKeepalive,
 };
 #[cfg(target_os = "linux")]
 pub use external::{
@@ -195,6 +196,10 @@ pub struct GpuOptions {
     pub preferred_backend: Option<GpuBackendKind>,
     pub adapter_label: Option<String>,
     pub allow_software: bool,
+    /// Default wait for dmabuf acquire fences on the selected backend; imports can override it
+    /// ([`ExternalFrameDescriptor::with_acquire_fence_mode`](crate::ExternalFrameDescriptor)).
+    #[serde(default)]
+    pub acquire_fence_mode: AcquireFenceMode,
 }
 
 /// Request shape for resource creation.

@@ -59,6 +59,7 @@ fn gpu_segments_execute_with_mock_backend() {
         preferred_backend: Some(daedalus_gpu::GpuBackendKind::Mock),
         adapter_label: None,
         allow_software: true,
+        ..Default::default()
     })
     .expect("mock gpu backend");
 

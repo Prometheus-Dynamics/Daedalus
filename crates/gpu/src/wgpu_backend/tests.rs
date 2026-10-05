@@ -1,7 +1,6 @@
 use super::*;
 #[cfg(feature = "gpu-async")]
 use std::sync::Arc;
-#[cfg(feature = "gpu-async")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "gpu-async")]
 use std::task::Poll;
@@ -503,4 +502,37 @@ fn async_texture_readback_completes_without_blocking_caller_thread() {
         Ok(Err(err)) => panic!("async texture readback failed: {err}"),
         Err(_) => panic!("async texture readback stalled"),
     }
+}
+
+/// Backends created and dropped from several threads while another backend keeps submitting.
+/// Without the driver lock instance creation crashes in the Vulkan loader on machines with the
+/// NVIDIA ICD installed next to Mesa; with wgpu's debug labels on, the loader's debug-utils
+/// terminators (called on every submission) race with device creation and destruction.
+#[test]
+fn concurrent_backend_lifecycles() {
+    let Ok(busy) = WgpuBackend::new() else {
+        return;
+    };
+    let req = GpuImageRequest {
+        format: GpuFormat::Rgba8Unorm,
+        width: 4,
+        height: 4,
+        samples: 1,
+        usage: GpuUsage::UPLOAD | GpuUsage::DOWNLOAD,
+    };
+    let image = busy.upload_texture(&req, &[7; 64]).expect("upload");
+    let running = AtomicUsize::new(4);
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                for _ in 0..4 {
+                    drop(WgpuBackend::new());
+                }
+                running.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
+        while running.load(Ordering::SeqCst) > 0 {
+            assert_eq!(busy.read_texture(&image).expect("readback"), [7; 64]);
+        }
+    });
 }

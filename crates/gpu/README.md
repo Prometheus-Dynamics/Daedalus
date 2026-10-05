@@ -107,28 +107,42 @@ if ctx.supports_dmabuf_import() {
 - **Explicit sync:** `with_acquire_fence(fd)` takes a `sync_file` (from V4L2/libcamera, a GPU
   producer, or `DMA_BUF_IOCTL_EXPORT_SYNC_FILE`). For producers that only fence the dmabuf itself,
   `with_implicit_fence()` exports its implicit fences (`export_dmabuf_fence` is the standalone
-  helper; Linux 6.0+). A fence that already signaled costs nothing. `dmabuf_import_support()`
-  reports where pending fences are waited for (`ExternalImportSupport::Supported {
-  acquire_fence }`, also `acquire_fence_wait()`), in order of preference:
-  - `AcquireFenceWait::Timeline` (devices with Vulkan 1.2 timeline semaphores, e.g. RADV, v3dv,
-    lavapipe): the GPU waits on a timeline semaphore value that one watcher thread per device
-    signals once the fence signals or `acquire_timeout` (default 1 s) passes, so a stuck producer
-    stalls the GPU for at most the timeout. The import does not wait for its fence, and
-    `GpuImageHandle::acquire_status()` reports `Pending`, `Ready`, or `TimedOut` (the GPU went
-    ahead; the contents are undefined). The watcher hop adds about 10 us. On Mesa drivers the
-    *next* submission to the device (another import, a dispatch, a readback) blocks its thread
-    until the wait is released, because Mesa runs wait-before-signal submissions on a submit
+  helper; Linux 6.0+). A fence that already signaled costs nothing. How a pending one is waited
+  for is an `AcquireFenceMode`: the backend default (`GpuOptions::acquire_fence_mode` through
+  `select_backend`, or `WgpuBackend::set_acquire_fence_mode`; `Auto` unless set), which one import
+  can override with `with_acquire_fence_mode(mode)`. The mode resolves to one of the waits the
+  device has (`AcquireFenceWait`):
+  - `SyncFd` (devices with `VK_KHR_external_semaphore_fd`; RADV, v3dv, lavapipe): the `sync_file`
+    is imported into a binary semaphore the GPU waits on. The kernel orders the GPU work behind
+    it, so no thread blocks on kernel drivers (lavapipe still holds back the next submission), but
+    no timeout applies: a fence that never signals stalls the queue.
+  - `Timeline` (devices with Vulkan 1.2 timeline semaphores): the GPU waits on a timeline
+    semaphore value that one watcher thread per device signals once the fence signals or
+    `acquire_timeout` (default 1 s) passes, so a stuck producer stalls the GPU for at most the
+    timeout. The import does not wait for its fence, and `GpuImageHandle::acquire_status()`
+    reports `Pending`, `Ready`, or `TimedOut` (the GPU went ahead; the contents are undefined).
+    The watcher hop adds about 10 us. On Mesa drivers the *next* submission to the device
+    (another import, a dispatch, a readback) blocks its thread until the wait is released (100 ms
+    measured with a 100 ms timeout), because Mesa runs wait-before-signal submissions on a submit
     thread and wgpu chains submissions with binary semaphores: the CPU wait moves from the import
-    to the next submission, still bounded by the timeout.
-  - `AcquireFenceWait::SyncFd` (devices without timeline semaphores but with
-    `VK_KHR_external_semaphore_fd`, and every import with `acquire_timeout = Duration::MAX` on
-    devices that have it): the `sync_file` is imported into a binary semaphore. The kernel orders
-    the GPU work behind it, so no thread blocks on kernel drivers (lavapipe still holds back the
-    next submission), but no timeout applies: a fence that never signals stalls the queue. An fd
-    that is not a `sync_file` falls back to the CPU wait.
-  - `AcquireFenceWait::Cpu` (devices with neither, and `gpu-mock`): the import polls the fence,
-    bounded by `acquire_timeout` (then `ExternalImportError::FenceTimeout`), before creating the
-    Vulkan image.
+    to the next submission, still bounded by the timeout. The validation layer reports that chain
+    as `VUID-vkQueueSubmit-pWaitSemaphores-03238`.
+  - `Cpu` (always available; the only wait of `gpu-mock`): the import polls the fence, bounded by
+    `acquire_timeout` (then `ExternalImportError::FenceTimeout`), before creating the Vulkan
+    image.
+
+  | Mode | Wait | Without it |
+  |---|---|---|
+  | `Auto` (default) | `SyncFd`, else `Timeline`, else `Cpu` | |
+  | `SyncFd` | `SyncFd` | `Cpu` |
+  | `Timeline` (hard timeout) | `Timeline`; `SyncFd` when `acquire_timeout` is `Duration::MAX` | `Cpu` |
+  | `Cpu` | `Cpu` | |
+
+  A fence fd that is not a `sync_file` cannot be imported for `SyncFd`; `Auto` and `Timeline` hand
+  it to the timeline watcher where the device has one, otherwise it is waited for on the CPU.
+  `dmabuf_import_support()` reports the default mode, the wait it resolves to, and every wait the
+  device has (`ExternalImportSupport::Supported { acquire_fence, acquire_fence_mode, fence_waits }`,
+  also `acquire_fence_wait()`, `acquire_fence_mode()`, `fence_waits()`).
 - **Layout handoff:** every import submits a queue family ownership acquire from
   `VK_QUEUE_FAMILY_FOREIGN_EXT` (`VK_EXT_queue_family_foreign`, else `VK_QUEUE_FAMILY_EXTERNAL`),
   `GENERAL -> SHADER_READ_ONLY_OPTIMAL`, and registers the texture with wgpu in that state, so wgpu
@@ -152,7 +166,8 @@ Hardware tests (`#[ignore]`d; need a Vulkan GPU and a readable `/dev/dma_heap/*`
 in the `video` group) live in `src/wgpu_backend/dmabuf/tests/`: `LINEAR` single-plane import and
 plane offsets (`linear.rs`); fences in every wait mode the device has, never-signaling and late
 fences, the watcher's latency and in-order release, a timeout shorter than a real GPU producer
-job, and dropping the backend with a stuck fence (`fences.rs`; with lavapipe as the consumer the
+job, the mode selection (default, per-import override, non-`sync_file` fallback), and dropping
+the backend with a stuck fence (`fences.rs`; with lavapipe as the consumer the
 queues are independent, so a missing wait shows as stale pixels); NV12 in one dmabuf and disjoint
 (`nv12.rs`); and every renderable modifier exported by a raw Vulkan producer, rendered through
 Daedalus, released, and read back on a second device, plus tiled NV12 imports (`modifiers.rs`).
@@ -167,8 +182,8 @@ DAEDALUS_DMA_HEAP=/dev/dma_heap/system cargo test -p daedalus-gpu --features gpu
 ### Probing a device
 
 The `gpu_probe` example prints a paste-friendly `key: value` report of the selected adapter and
-driver, `dmabuf_import_support()` with the active fence path (`timeline`, `sync_fd`, `cpu`) and
-which paths the device has, NV12 support (`TEXTURE_FORMAT_NV12`, the `LINEAR` modifier and whether
+driver, `dmabuf_import_support()` with the default fence mode, the wait it resolves to (`sync_fd`,
+`timeline`, `cpu`) and which waits the device has, NV12 support (`TEXTURE_FORMAT_NV12`, the `LINEAR` modifier and whether
 it needs disjoint planes), the modifiers advertised for `R8`, `XRGB8888`, `XBGR8888` and `NV12`
 (memory planes, aux planes, features, and which the hardware tests round-trip), the kernel, the
 dma-heaps, and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works. It never panics on missing
@@ -180,4 +195,16 @@ cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe
 ```
 
 See "Validating on a Raspberry Pi 5" in [docs/testing.md](../../docs/testing.md) for setup and
-what each line means.
+what each line means, and "Vulkan Validation Layers" there for `./scripts/ci.sh vvl`, which runs
+the hardware tests and the probe under `VK_LAYER_KHRONOS_validation` with synchronization
+validation.
+
+### Concurrency
+
+Creating wgpu instances, enumerating adapters and opening devices is serialized process-wide
+inside `daedalus-gpu`: the Vulkan loader crashes when two threads set up instances at once with
+some ICD combinations (seen with the NVIDIA ICD installed next to Mesa). Instances are also
+created without wgpu's `DEBUG` flag (object names and labels) unless `WGPU_DEBUG=1`: the loader's
+`VK_EXT_debug_utils` terminators, which wgpu calls on every submission with that flag, race with
+instance and device creation in other threads. Applications that create their own wgpu or Vulkan
+instances on other threads are not covered by the lock.

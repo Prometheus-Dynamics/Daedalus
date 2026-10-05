@@ -12,12 +12,13 @@ use crate::{
 #[cfg(all(feature = "gpu-async", feature = "gpu-wgpu"))]
 use async_trait::async_trait;
 use pollster::FutureExt;
-use wgpu::{Adapter, Backends, Features, Instance, InstanceDescriptor, Limits};
+use wgpu::{Adapter, Backends, Features, Instance, Limits};
 
 mod adapter_select;
 mod capabilities;
 mod copy_limiter;
 mod dmabuf;
+mod driver;
 mod mapping;
 mod resources;
 mod staging;
@@ -26,6 +27,7 @@ use adapter_select::{preferred_backends, select_best_adapter};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
 pub use dmabuf::texture_plane_views;
+pub(crate) use driver::{driver_lock, instance_descriptor};
 pub(crate) use mapping::{gpu_format_from_wgpu, map_format};
 use mapping::{gpu_usage_from_wgpu, map_texture_usage, map_usage};
 use resources::{ResourceDropToken, ResourceKind, WgpuResources};
@@ -95,15 +97,17 @@ impl WgpuBackend {
     pub async fn new_with_staging_pool_config_async(
         staging_config: WgpuStagingPoolConfig,
     ) -> Result<Self, GpuError> {
-        let preferred_backends = preferred_backends();
-        let mut instance_desc = InstanceDescriptor::new_without_display_handle();
-        instance_desc.backends = preferred_backends;
-        let instance = Instance::new(instance_desc);
-        let mut adapters: Vec<Adapter> = instance.enumerate_adapters(preferred_backends).await;
-        if adapters.is_empty() && preferred_backends != Backends::all() {
-            adapters = instance.enumerate_adapters(Backends::all()).await;
-        }
-        let adapter = select_best_adapter(adapters).ok_or(GpuError::AdapterUnavailable)?;
+        let adapter = {
+            let _driver = driver_lock();
+            let preferred_backends = preferred_backends();
+            let instance = Instance::new(instance_descriptor(preferred_backends));
+            let mut adapters: Vec<Adapter> = instance.enumerate_adapters(preferred_backends).await;
+            if adapters.is_empty() && preferred_backends != Backends::all() {
+                adapters = instance.enumerate_adapters(Backends::all()).await;
+            }
+            select_best_adapter(adapters)
+        };
+        let adapter = adapter.ok_or(GpuError::AdapterUnavailable)?;
         Self::with_adapter(adapter, staging_config).await
     }
 
@@ -124,9 +128,11 @@ impl WgpuBackend {
             trace: wgpu::Trace::default(),
         };
         // With `gpu-dmabuf` on Linux/Vulkan this also enables the dmabuf import extensions.
+        let driver = driver_lock();
         let (device, queue) = dmabuf::request_device(&adapter, &device_desc)
             .await
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
+        drop(driver);
         let (dmabuf_support, dmabuf) = dmabuf::probe(&device, &queue);
 
         let device_key = crate::shader::register_device(&device);
@@ -157,6 +163,16 @@ impl WgpuBackend {
             device_key,
             dmabuf_support,
         })
+    }
+
+    /// Set the default [`AcquireFenceMode`](crate::AcquireFenceMode) of dmabuf imports
+    /// (`Auto` unless changed; `select_backend` applies `GpuOptions::acquire_fence_mode`).
+    /// [`dmabuf_import_support`](GpuBackend::dmabuf_import_support) reports the wait it resolves
+    /// to. Has no effect on a backend that cannot import.
+    pub fn set_acquire_fence_mode(&mut self, mode: crate::AcquireFenceMode) {
+        if let Some(support) = dmabuf::set_fence_mode(&mut self.dmabuf, mode) {
+            self.dmabuf_support = support;
+        }
     }
 
     pub(crate) fn device_queue(&self) -> (&wgpu::Device, &wgpu::Queue) {

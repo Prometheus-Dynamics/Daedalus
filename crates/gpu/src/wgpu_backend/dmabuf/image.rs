@@ -27,6 +27,8 @@ pub(super) struct ImportRequest {
     pub disjoint: bool,
     pub wgpu_format: wgpu::TextureFormat,
     pub vk_format: vk::Format,
+    /// Formats of the views wgpu creates (multi-planar formats only; see `create_flags`).
+    pub view_formats: Vec<vk::Format>,
     pub vk_usage: vk::ImageUsageFlags,
     pub format_features: vk::FormatFeatureFlags,
     pub hal_usage: wgpu::wgt::TextureUses,
@@ -44,9 +46,10 @@ impl ImportRequest {
 
     fn create_flags(&self) -> vk::ImageCreateFlags {
         let mut flags = vk::ImageCreateFlags::empty();
-        if self.wgpu_format.is_multi_planar_format() {
+        if !self.view_formats.is_empty() {
             // wgpu views each plane with a plane-compatible format (R8/RG8), like its own NV12
-            // textures.
+            // textures. With a DRM format modifier the view formats must be listed
+            // (`VkImageFormatListCreateInfo`, VUID-VkImageCreateInfo-tiling-02353).
             flags |= vk::ImageCreateFlags::MUTABLE_FORMAT | vk::ImageCreateFlags::EXTENDED_USAGE;
         }
         if self.disjoint {
@@ -105,7 +108,8 @@ pub(super) unsafe fn create_imported_texture(
         .drm_format_modifier(req.modifier)
         .plane_layouts(&req.plane_layouts);
     let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(DMA_BUF);
-    let image_info = vk::ImageCreateInfo::default()
+    let mut format_list = vk::ImageFormatListCreateInfo::default().view_formats(&req.view_formats);
+    let mut image_info = vk::ImageCreateInfo::default()
         .flags(req.create_flags())
         .image_type(vk::ImageType::TYPE_2D)
         .format(req.vk_format)
@@ -123,6 +127,9 @@ pub(super) unsafe fn create_imported_texture(
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .push_next(&mut external)
         .push_next(&mut explicit);
+    if !req.view_formats.is_empty() {
+        image_info = image_info.push_next(&mut format_list);
+    }
     // SAFETY: valid create info; the owner below destroys the image on every path.
     let image = unsafe { device.create_image(&image_info, None) }.map_err(|err| {
         req.format_error(format!("vkCreateImage rejected the plane layout: {err}"))
@@ -346,7 +353,8 @@ unsafe fn check_image_format(
     let mut modifier_info = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::default()
         .drm_format_modifier(req.modifier)
         .sharing_mode(vk::SharingMode::EXCLUSIVE);
-    let info = vk::PhysicalDeviceImageFormatInfo2::default()
+    let mut format_list = vk::ImageFormatListCreateInfo::default().view_formats(&req.view_formats);
+    let mut info = vk::PhysicalDeviceImageFormatInfo2::default()
         .format(req.vk_format)
         .ty(vk::ImageType::TYPE_2D)
         .tiling(vk::ImageTiling::DRM_FORMAT_MODIFIER_EXT)
@@ -354,6 +362,9 @@ unsafe fn check_image_format(
         .flags(req.create_flags())
         .push_next(&mut external_info)
         .push_next(&mut modifier_info);
+    if !req.view_formats.is_empty() {
+        info = info.push_next(&mut format_list);
+    }
     let mut external_props = vk::ExternalImageFormatProperties::default();
     let mut props = vk::ImageFormatProperties2::default().push_next(&mut external_props);
     // SAFETY: valid physical device and structure chains.

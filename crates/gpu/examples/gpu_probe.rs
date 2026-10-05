@@ -112,9 +112,16 @@ mod linux {
         kv("driver", &info.driver);
         kv("driver_info", &info.driver_info);
         match backend.dmabuf_import_support() {
-            ExternalImportSupport::Supported { acquire_fence } => {
+            ExternalImportSupport::Supported {
+                acquire_fence,
+                acquire_fence_mode,
+                fence_waits,
+            } => {
                 kv("dmabuf_import", "supported");
+                kv("dmabuf_acquire_fence_mode", acquire_fence_mode.as_str());
                 kv("dmabuf_acquire_fence_wait", acquire_fence.as_str());
+                let waits: Vec<_> = fence_waits.iter().map(|wait| wait.as_str()).collect();
+                kv("dmabuf_acquire_fence_waits", waits.join(", "));
             }
             ExternalImportSupport::Unsupported { reason } => {
                 kv("dmabuf_import", format!("unsupported: {reason}"))
@@ -323,6 +330,10 @@ mod linux {
         let mut modifier = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::default()
             .drm_format_modifier(DRM_FORMAT_MOD_LINEAR)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        // The import lists its view formats (the format and its plane formats), as required for a
+        // `MUTABLE_FORMAT` image with a DRM format modifier.
+        let view_formats = [NV12, vk::Format::R8_UNORM, vk::Format::R8G8_UNORM];
+        let mut format_list = vk::ImageFormatListCreateInfo::default().view_formats(&view_formats);
         let info = vk::PhysicalDeviceImageFormatInfo2::default()
             .format(NV12)
             .ty(vk::ImageType::TYPE_2D)
@@ -332,7 +343,8 @@ mod linux {
                 vk::ImageCreateFlags::MUTABLE_FORMAT | vk::ImageCreateFlags::EXTENDED_USAGE | extra,
             )
             .push_next(&mut external)
-            .push_next(&mut modifier);
+            .push_next(&mut modifier)
+            .push_next(&mut format_list);
         let mut external_props = vk::ExternalImageFormatProperties::default();
         let mut props = vk::ImageFormatProperties2::default().push_next(&mut external_props);
         // SAFETY: valid physical device and structure chains.

@@ -18,7 +18,7 @@ mod vulkan;
 mod watcher;
 
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
-pub(super) use vulkan::{ImportState, import, probe, request_device};
+pub(super) use vulkan::{ImportState, import, probe, request_device, set_fence_mode};
 
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
 pub(super) async fn request_device(
@@ -31,6 +31,15 @@ pub(super) async fn request_device(
 /// No import state without `gpu-dmabuf`.
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
 pub(super) type ImportState = ();
+
+/// Nothing to configure without import support.
+#[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
+pub(super) fn set_fence_mode(
+    _state: &mut ImportState,
+    _mode: crate::AcquireFenceMode,
+) -> Option<crate::ExternalImportSupport> {
+    None
+}
 
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
 pub(super) fn probe(

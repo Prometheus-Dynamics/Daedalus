@@ -5,7 +5,9 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::time::Duration;
 
 use super::fence::{DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, export_dmabuf_fence, wait_sync_file};
-use super::{DRM_FORMAT_MOD_INVALID, DrmFourcc, ExternalImportError, ExternalKeepalive};
+use super::{
+    AcquireFenceMode, DRM_FORMAT_MOD_INVALID, DrmFourcc, ExternalImportError, ExternalKeepalive,
+};
 use crate::{GpuFormat, GpuUsage, format_planes};
 
 /// One plane of an external frame: a dmabuf fd plus the plane layout inside it.
@@ -62,10 +64,12 @@ pub struct ExternalFrameDescriptor {
     pub keepalive: Option<ExternalKeepalive>,
     /// `sync_file` signaled when the producer's writes are complete; the import waits for it.
     pub acquire_fence: Option<OwnedFd>,
-    /// Upper bound for the acquire-fence wait ([`DEFAULT_ACQUIRE_TIMEOUT`] by default).
-    /// `Duration::MAX` asks for no bound: the wgpu backend then waits on the kernel fence itself
-    /// ([`AcquireFenceWait::SyncFd`](crate::AcquireFenceWait::SyncFd)) where the device can.
+    /// Upper bound for the acquire-fence wait ([`DEFAULT_ACQUIRE_TIMEOUT`] by default) where the
+    /// wait has one (not [`AcquireFenceWait::SyncFd`](crate::AcquireFenceWait::SyncFd)).
+    /// `Duration::MAX` asks for no bound.
     pub acquire_timeout: Duration,
+    /// How to wait for the acquire fence; `None` uses the backend's default mode.
+    pub acquire_fence_mode: Option<AcquireFenceMode>,
 }
 
 impl ExternalFrameDescriptor {
@@ -81,6 +85,7 @@ impl ExternalFrameDescriptor {
             keepalive: None,
             acquire_fence: None,
             acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
+            acquire_fence_mode: None,
         }
     }
 
@@ -117,6 +122,13 @@ impl ExternalFrameDescriptor {
 
     pub fn with_acquire_timeout(mut self, timeout: Duration) -> Self {
         self.acquire_timeout = timeout;
+        self
+    }
+
+    /// Override the backend's default [`AcquireFenceMode`] for this import, e.g.
+    /// [`AcquireFenceMode::Timeline`] to enforce `acquire_timeout` on the GPU.
+    pub fn with_acquire_fence_mode(mut self, mode: AcquireFenceMode) -> Self {
+        self.acquire_fence_mode = Some(mode);
         self
     }
 
@@ -254,6 +266,7 @@ impl fmt::Debug for ExternalFrameDescriptor {
                 &self.acquire_fence.as_ref().map(AsRawFd::as_raw_fd),
             )
             .field("acquire_timeout", &self.acquire_timeout)
+            .field("acquire_fence_mode", &self.acquire_fence_mode)
             .finish()
     }
 }

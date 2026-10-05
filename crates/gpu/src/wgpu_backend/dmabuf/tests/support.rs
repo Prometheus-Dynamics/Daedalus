@@ -3,7 +3,7 @@
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
-use crate::{AcquireFenceWait, GpuBackend, WgpuBackend};
+use crate::{AcquireFenceMode, AcquireFenceWait, GpuBackend, WgpuBackend};
 
 const DMA_HEAP_IOCTL_ALLOC: u64 = 0xC018_4800; // _IOWR('H', 0, dma_heap_allocation_data)
 const DMA_BUF_IOCTL_SYNC: u64 = 0x4008_6200; // _IOW('b', 0, dma_buf_sync)
@@ -121,9 +121,9 @@ pub(super) fn skip(reason: String) {
     note(format!("skipping: {reason}"));
 }
 
-/// Run hardware tests one at a time: they time GPU work on a shared GPU, and creating Vulkan
-/// instances concurrently crashes in some loader/ICD setups (seen with the NVIDIA ICD installed
-/// next to Mesa).
+/// Run hardware tests one at a time: they time GPU work (fence latencies, blocked submissions,
+/// producer jobs) that other tests on the same GPU would skew. Concurrent driver setup is safe on
+/// its own (`wgpu_backend/driver.rs`).
 pub(super) fn exclusive() -> std::sync::MutexGuard<'static, ()> {
     static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
     GPU.lock()
@@ -139,6 +139,17 @@ pub(super) fn import_backend() -> Option<WgpuBackend> {
         return None;
     }
     Some(backend)
+}
+
+/// Make `wait` the backend's default through the mode that selects it; `false` when the device
+/// lacks it.
+pub(super) fn use_fence_wait(backend: &mut WgpuBackend, wait: AcquireFenceWait) -> bool {
+    backend.set_acquire_fence_mode(match wait {
+        AcquireFenceWait::SyncFd => AcquireFenceMode::SyncFd,
+        AcquireFenceWait::Timeline => AcquireFenceMode::Timeline,
+        AcquireFenceWait::Cpu => AcquireFenceMode::Cpu,
+    });
+    backend.dmabuf_import_support().acquire_fence_wait() == Some(wait)
 }
 
 /// Spin on `done` until it holds, failing after `limit`; returns how long it took.
@@ -161,16 +172,19 @@ pub(super) fn consumer_backend() -> (WgpuBackend, bool) {
     let gpu_wait = |backend: &WgpuBackend| {
         backend
             .dmabuf_import_support()
-            .acquire_fence_wait()
-            .is_some_and(|wait| wait != AcquireFenceWait::Cpu)
+            .fence_waits()
+            .is_some_and(|waits| waits.sync_fd || waits.timeline)
     };
-    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-    desc.backends = wgpu::Backends::VULKAN;
-    let lavapipe = wgpu::Instance::new(desc)
-        .enumerate_adapters(wgpu::Backends::VULKAN)
-        .block_on()
-        .into_iter()
-        .find(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu)
+    let adapter = {
+        let _driver = crate::wgpu_backend::driver_lock();
+        let desc = crate::wgpu_backend::instance_descriptor(wgpu::Backends::VULKAN);
+        wgpu::Instance::new(desc)
+            .enumerate_adapters(wgpu::Backends::VULKAN)
+            .block_on()
+            .into_iter()
+            .find(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu)
+    };
+    let lavapipe = adapter
         .and_then(|adapter| {
             WgpuBackend::with_adapter(adapter, Default::default())
                 .block_on()

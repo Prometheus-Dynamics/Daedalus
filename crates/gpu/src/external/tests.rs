@@ -242,6 +242,67 @@ fn sync_file_signaled_is_a_non_blocking_check() {
     assert!(sync_file_signaled(fence.as_fd()));
 }
 
+/// Selection logic of every fence mode against every combination of device waits.
+#[test]
+fn acquire_fence_modes_resolve_per_device() {
+    use AcquireFenceMode as M;
+    use AcquireFenceWait::{Cpu, SyncFd, Timeline};
+    let bounded = DEFAULT_ACQUIRE_TIMEOUT;
+    let waits = |sync_fd, timeline| AcquireFenceWaits { sync_fd, timeline };
+    // (device waits, mode, bounded timeout, unbounded timeout, non-sync_file fallback)
+    let cases = [
+        (waits(true, true), M::Auto, SyncFd, SyncFd, Timeline),
+        (waits(true, true), M::SyncFd, SyncFd, SyncFd, Cpu),
+        (waits(true, true), M::Timeline, Timeline, SyncFd, Timeline),
+        (waits(true, true), M::Cpu, Cpu, Cpu, Cpu),
+        (waits(false, true), M::Auto, Timeline, Timeline, Timeline),
+        (waits(false, true), M::SyncFd, Cpu, Cpu, Cpu),
+        (
+            waits(false, true),
+            M::Timeline,
+            Timeline,
+            Timeline,
+            Timeline,
+        ),
+        (waits(true, false), M::Auto, SyncFd, SyncFd, Cpu),
+        (waits(true, false), M::Timeline, Cpu, SyncFd, Cpu),
+        (AcquireFenceWaits::CPU, M::Auto, Cpu, Cpu, Cpu),
+        (AcquireFenceWaits::CPU, M::Timeline, Cpu, Cpu, Cpu),
+    ];
+    for (device, mode, finite, unbounded, fallback) in cases {
+        let context = format!("{device:?} {mode:?}");
+        assert_eq!(device.resolve(mode, bounded), finite, "{context}");
+        assert_eq!(device.resolve(mode, Duration::MAX), unbounded, "{context}");
+        assert_eq!(device.non_sync_file_fallback(mode), fallback, "{context}");
+        assert!(device.contains(device.resolve(mode, bounded)));
+    }
+    assert_eq!(
+        waits(true, true).iter().collect::<Vec<_>>(),
+        [SyncFd, Timeline, Cpu]
+    );
+    assert_eq!(AcquireFenceWaits::CPU.iter().collect::<Vec<_>>(), [Cpu]);
+    assert_eq!(AcquireFenceMode::default(), M::Auto);
+
+    // Support reports the default mode, the wait it resolves to, and every available wait.
+    let support = ExternalImportSupport::supported(M::Timeline, waits(true, true));
+    assert_eq!(support.acquire_fence_mode(), Some(M::Timeline));
+    assert_eq!(support.acquire_fence_wait(), Some(Timeline));
+    assert_eq!(support.fence_waits(), Some(waits(true, true)));
+    let support = ExternalImportSupport::supported(M::Auto, waits(true, true));
+    assert_eq!(support.acquire_fence_wait(), Some(SyncFd));
+    let unsupported = ExternalImportSupport::unsupported("none");
+    assert_eq!(unsupported.acquire_fence_mode(), None);
+    assert_eq!(unsupported.fence_waits(), None);
+
+    // Per-import override.
+    let frame = xrgb_frame(64, 4, 256);
+    assert_eq!(frame.acquire_fence_mode, None);
+    let frame = frame.with_acquire_fence_mode(M::Cpu);
+    assert_eq!(frame.acquire_fence_mode, Some(M::Cpu));
+    let names: Vec<_> = AcquireFenceMode::ALL.map(AcquireFenceMode::as_str).into();
+    assert_eq!(names, ["auto", "sync_fd", "timeline", "cpu"]);
+}
+
 #[test]
 fn noop_backend_reports_unsupported() {
     let backend = NoopBackend::default();
@@ -277,6 +338,7 @@ mod mock {
         let support = backend.dmabuf_import_support();
         assert!(support.is_supported() && support.reason().is_none());
         assert_eq!(support.acquire_fence_wait(), Some(AcquireFenceWait::Cpu));
+        assert_eq!(support.fence_waits(), Some(crate::AcquireFenceWaits::CPU));
         let handle = backend
             .import_dmabuf(
                 xrgb_frame(640, 480, 2560)
