@@ -52,49 +52,6 @@
         ]
       },
       {
-        "id": "blink.lowpass",
-        "bundle": null,
-        "label": "lowpass",
-        "inputs": [],
-        "outputs": [],
-        "compute": "CpuOnly",
-        "const_inputs": [
-          [
-            "alpha",
-            {
-              "type": "Float",
-              "value": 0.25
-            }
-          ]
-        ],
-        "metadata": {
-          "daedalus.mcu.params": {
-            "type": "Map",
-            "value": [
-              [
-                {
-                  "type": "String",
-                  "value": "alpha"
-                },
-                {
-                  "type": "List",
-                  "value": [
-                    {
-                      "type": "Float",
-                      "value": 0.0
-                    },
-                    {
-                      "type": "Float",
-                      "value": 1.0
-                    }
-                  ]
-                }
-              ]
-            ]
-          }
-        }
-      },
-      {
         "id": "blink.threshold",
         "bundle": null,
         "label": "threshold",
@@ -116,52 +73,7 @@
               "value": 1.0
             }
           ]
-        ],
-        "metadata": {
-          "daedalus.mcu.params": {
-            "type": "Map",
-            "value": [
-              [
-                {
-                  "type": "String",
-                  "value": "on"
-                },
-                {
-                  "type": "List",
-                  "value": [
-                    {
-                      "type": "Float",
-                      "value": 0.0
-                    },
-                    {
-                      "type": "Float",
-                      "value": 3.3
-                    }
-                  ]
-                }
-              ],
-              [
-                {
-                  "type": "String",
-                  "value": "off"
-                },
-                {
-                  "type": "List",
-                  "value": [
-                    {
-                      "type": "Float",
-                      "value": 0.0
-                    },
-                    {
-                      "type": "Float",
-                      "value": 3.3
-                    }
-                  ]
-                }
-              ]
-            ]
-          }
-        }
+        ]
       },
       {
         "id": "blink.rising",
@@ -184,36 +96,10 @@
             "period",
             {
               "type": "Int",
-              "value": 4
+              "value": 2
             }
           ]
-        ],
-        "metadata": {
-          "daedalus.mcu.params": {
-            "type": "Map",
-            "value": [
-              [
-                {
-                  "type": "String",
-                  "value": "period"
-                },
-                {
-                  "type": "List",
-                  "value": [
-                    {
-                      "type": "Int",
-                      "value": 1
-                    },
-                    {
-                      "type": "Int",
-                      "value": 1000
-                    }
-                  ]
-                }
-              ]
-            ]
-          }
-        }
+        ]
       }
     ],
     "edges": [
@@ -240,23 +126,13 @@
         },
         "to": {
           "node": 2,
-          "port": "x"
-        }
-      },
-      {
-        "from": {
-          "node": 2,
-          "port": "y"
-        },
-        "to": {
-          "node": 3,
           "port": "level"
         }
       },
       {
         "from": {
-          "node": 2,
-          "port": "y"
+          "node": 1,
+          "port": "volts"
         },
         "to": {
           "node": 0,
@@ -271,7 +147,17 @@
       },
       {
         "from": {
+          "node": 2,
+          "port": "active"
+        },
+        "to": {
           "node": 3,
+          "port": "active"
+        }
+      },
+      {
+        "from": {
+          "node": 2,
           "port": "active"
         },
         "to": {
@@ -282,16 +168,6 @@
       {
         "from": {
           "node": 3,
-          "port": "active"
-        },
-        "to": {
-          "node": 5,
-          "port": "active"
-        }
-      },
-      {
-        "from": {
-          "node": 4,
           "port": "count"
         },
         "to": {
@@ -311,7 +187,7 @@
       },
       {
         "from": {
-          "node": 5,
+          "node": 4,
           "port": "led"
         },
         "to": {
