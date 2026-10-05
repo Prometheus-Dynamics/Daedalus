@@ -42,6 +42,9 @@ fn decode(frame: Frame) -> Result<Vec<Detection>, NodeError> {
 
 #[node(id = "demo:sink", inputs("detections"))]
 fn sink(detections: Vec<Detection>) -> Result<(), NodeError> {
+    #[cfg(feature = "tracing")]
     tracing::info!(target: "daedalus_nodes::demo", ?detections, "demo detections");
+    #[cfg(not(feature = "tracing"))]
+    let _ = detections;
     Ok(())
 }

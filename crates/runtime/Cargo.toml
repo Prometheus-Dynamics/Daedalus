@@ -32,12 +32,11 @@ host-only-features = [
 ]
 
 [features]
-default = ["threads"]
+default = ["threads", "tracing"]
 # Host OS facilities: `parking_lot` locks (`spin` without, see `daedalus_runtime::sync`), `std`
 # hash maps, `Condvar` waits, Linux perf counters. Without it the crate is `no_std` + `alloc`
 # (see "Portability" in docs/development.md).
 std = [
-    "tracing",
     "dep:parking_lot",
     "dep:libc",
     "daedalus-core/std",
@@ -51,8 +50,8 @@ std = [
     "thiserror/std",
     "tracing?/std",
 ]
-# `tracing` spans and events (implied by `std`). Without it they compile to nothing: `tracing-core`
-# needs compare-and-swap (`thumbv6m`), so it is opt-in on `no_std` targets that have it.
+# `tracing` spans and events (default). Without it they compile to nothing. Independent of `std`:
+# `tracing-core` needs compare-and-swap (`thumbv6m`), so `no_std` targets that have it may opt in.
 tracing = ["dep:tracing"]
 # Worker threads: the parallel worker pool, stream workers (`spawn_continuous*`) and blocking
 # waits. Without it `Parallel`/`Adaptive` run serially and the thread-only APIs do not exist.
