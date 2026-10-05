@@ -98,7 +98,7 @@ impl HandlerRegistry {
             + 'static,
     {
         let key = Self::key_for_id(id);
-        tracing::trace!(
+        crate::trace::trace!(
             target: "daedalus_runtime::handler_registry",
             node_id = id,
             stable_id = format_args!("{key:x}"),
@@ -106,7 +106,7 @@ impl HandlerRegistry {
             "register handler"
         );
         self.record_id(key, id)?;
-        self.stateless.insert(key, Arc::new(f));
+        self.stateless.insert(key, crate::portable::arc_dyn!(f));
         Ok(())
     }
 
@@ -140,7 +140,7 @@ impl HandlerRegistry {
             + 'static,
     {
         let key = Self::key_for_id(id);
-        tracing::trace!(
+        crate::trace::trace!(
             target: "daedalus_runtime::handler_registry",
             node_id = id,
             stable_id = format_args!("{key:x}"),
@@ -185,7 +185,7 @@ impl HandlerRegistry {
             + 'static,
     {
         let key = Self::key_for_id(id);
-        tracing::trace!(
+        crate::trace::trace!(
             target: "daedalus_runtime::handler_registry",
             node_id = id,
             stable_id = format_args!("{key:x}"),
@@ -193,7 +193,8 @@ impl HandlerRegistry {
             "register handler"
         );
         self.record_id(key, id)?;
-        self.direct_payload.insert(key, Arc::new(f));
+        self.direct_payload
+            .insert(key, crate::portable::arc_dyn!(f));
         Ok(())
     }
 
@@ -290,7 +291,7 @@ impl crate::executor::NodeHandler for HandlerRegistry {
         io: &mut NodeIo,
     ) -> Result<(), NodeError> {
         if let Some(f) = self.stateless.get(&node.stable_id) {
-            tracing::trace!(
+            crate::trace::trace!(
                 target: "daedalus_runtime::handler_registry",
                 node_id = %node.id,
                 stable_id = format_args!("{:x}", node.stable_id),
@@ -300,7 +301,7 @@ impl crate::executor::NodeHandler for HandlerRegistry {
             return f(node, ctx, io);
         }
         if let Some(f) = self.stateful.get(&node.stable_id) {
-            tracing::trace!(
+            crate::trace::trace!(
                 target: "daedalus_runtime::handler_registry",
                 node_id = %node.id,
                 stable_id = format_args!("{:x}", node.stable_id),
@@ -316,7 +317,7 @@ impl crate::executor::NodeHandler for HandlerRegistry {
             return handler(node, ctx, io);
         }
 
-        tracing::warn!(
+        crate::trace::warn!(
             target: "daedalus_runtime::handler_registry",
             node_id = %node.id,
             stable_id = format_args!("{:x}", node.stable_id),

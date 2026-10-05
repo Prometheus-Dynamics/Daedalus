@@ -54,7 +54,7 @@ fn run_order_timed<H: NodeHandler>(
     order: &[daedalus_planner::NodeRef],
     mut costs: Option<SegmentCosts<'_>>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
-    let graph_span = tracing::debug_span!(
+    let graph_span = crate::trace::debug_span!(
         target: "daedalus_runtime::executor",
         "runtime_graph_run",
         nodes = order.len(),
@@ -83,7 +83,7 @@ fn run_order_timed<H: NodeHandler>(
         let Some(node) = nodes.get(node_idx) else {
             continue;
         };
-        let node_span = tracing::debug_span!(
+        let node_span = crate::trace::debug_span!(
             target: "daedalus_runtime::executor",
             "runtime_node_run",
             node_index = node_idx,
@@ -100,14 +100,14 @@ fn run_order_timed<H: NodeHandler>(
             .is_some_and(|required| required.wait_all);
         if wait_all && !required_inputs_held(exec, node_idx) {
             // `fire = "all"`: wait without popping, so what arrived stays queued for a later tick.
-            tracing::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node waiting for inputs");
+            crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node waiting for inputs");
             continue;
         }
         let inputs = collect_inputs(exec, node_idx, wait_all)?;
         if !required_inputs_ready(exec, node_idx, &inputs) {
             // Not ready this tick: a connected required input has no value (its producer was
             // skipped or pushed nothing). Optional inputs never block.
-            tracing::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node not ready");
+            crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node not ready");
             crate::io::recycle_ports(inputs);
             continue;
         }
@@ -175,7 +175,7 @@ fn run_order_timed<H: NodeHandler>(
         }
 
         let handler_start = collect_detailed_metrics.then(|| clock.now());
-        let handler_span = tracing::debug_span!(
+        let handler_span = crate::trace::debug_span!(
             target: "daedalus_runtime::executor",
             "runtime_handler_call",
             node_index = node_idx,

@@ -5,7 +5,7 @@ use crate::prelude::*;
 use crate::sync::Mutex;
 use daedalus_core::platform::{Clock, Instant};
 
-#[cfg(feature = "lockfree-queues")]
+#[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
 use crossbeam_queue::ArrayQueue;
 
 use crate::plan::{BackpressureStrategy, RuntimeEdgePolicy};
@@ -18,8 +18,9 @@ use crate::executor::{
 
 use super::{EdgeStorage, payload_size_bytes, queue_transport_bytes};
 
+#[cfg_attr(not(feature = "tracing"), allow(unused_variables))]
 fn trace_edge_enqueue(edge_idx: usize, policy: &RuntimeEdgePolicy, payload: &CorrelatedPayload) {
-    tracing::trace!(
+    crate::trace::trace!(
         target: "daedalus_runtime::executor::queue",
         edge_idx,
         policy = ?policy.pressure,
@@ -30,6 +31,7 @@ fn trace_edge_enqueue(edge_idx: usize, policy: &RuntimeEdgePolicy, payload: &Cor
     );
 }
 
+#[cfg_attr(not(feature = "tracing"), allow(unused_variables))]
 fn warn_edge_backpressure(
     edge_idx: usize,
     policy: &RuntimeEdgePolicy,
@@ -38,7 +40,7 @@ fn warn_edge_backpressure(
     payload_type: &daedalus_transport::TypeKey,
     correlation_id: u64,
 ) {
-    tracing::warn!(
+    crate::trace::warn!(
         target: "daedalus_runtime::executor::queue",
         edge_idx,
         policy = ?policy.pressure,
@@ -92,7 +94,7 @@ fn elapsed_since(clock: &Clock, start: Option<Instant>) -> core::time::Duration 
 fn payload_lifecycle_desc(payload: &daedalus_transport::Payload) -> String {
     format!("Payload({})", payload.type_key())
 }
-#[cfg(feature = "lockfree-queues")]
+#[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
 fn push_lockfree_with_policy(
     queue: &ArrayQueue<CorrelatedPayload>,
     policy: &RuntimeEdgePolicy,
@@ -242,7 +244,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                 let (current_queue_bytes, _) = metrics.snapshot();
                 telem.record_edge_queue_bytes(edge_idx, current_queue_bytes);
             }
-            #[cfg(feature = "lockfree-queues")]
+            #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
             EdgeStorage::BoundedLf { queue, metrics } => {
                 let mut dropped = false;
                 let mut pressure_reason = None;

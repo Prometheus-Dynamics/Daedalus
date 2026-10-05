@@ -22,7 +22,14 @@ path = "src/lib.rs"
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
 boundary-features = ["gpu", "gpu-mock", "plugins", "std"]
-host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots", "threads"]
+host-only-features = [
+    "executor-pool",
+    "lockfree-queues",
+    "metrics",
+    "snapshots",
+    "threads",
+    "tracing",
+]
 
 [features]
 default = ["threads"]
@@ -30,6 +37,7 @@ default = ["threads"]
 # hash maps, `Condvar` waits, Linux perf counters. Without it the crate is `no_std` + `alloc`
 # (see "Portability" in docs/development.md).
 std = [
+    "tracing",
     "dep:parking_lot",
     "dep:libc",
     "daedalus-core/std",
@@ -41,14 +49,19 @@ std = [
     "serde/std",
     "serde_json/std",
     "thiserror/std",
-    "tracing/std",
+    "tracing?/std",
 ]
+# `tracing` spans and events (implied by `std`). Without it they compile to nothing: `tracing-core`
+# needs compare-and-swap (`thumbv6m`), so it is opt-in on `no_std` targets that have it.
+tracing = ["dep:tracing"]
 # Worker threads: the parallel worker pool, stream workers (`spawn_continuous*`) and blocking
 # waits. Without it `Parallel`/`Adaptive` run serially and the thread-only APIs do not exist.
 threads = ["std"]
 gpu = ["std", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
 executor-pool = ["threads", "rayon"]
+# Bounded edges on `crossbeam-queue`'s `ArrayQueue`; locked queues on targets without
+# compare-and-swap, where it has none.
 lockfree-queues = ["crossbeam-queue"]
 metrics = []
 snapshots = []
@@ -70,7 +83,7 @@ smallvec = { workspace = true }
 parking_lot = { workspace = true, optional = true }
 spin = { workspace = true, features = ["lock_api", "mutex"] }
 serde_json = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 # Hardware perf counters (`RuntimeDebugConfig::node_perf_counters`), Linux with `std` only.
 [target.'cfg(target_os = "linux")'.dependencies]

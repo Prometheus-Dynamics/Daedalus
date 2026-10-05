@@ -26,6 +26,7 @@ compile_error!(
 
 mod portable;
 mod prelude;
+mod trace;
 
 /// The hash maps in the runtime's API: `std`'s with `std`, `hashbrown`'s without.
 pub mod collections {

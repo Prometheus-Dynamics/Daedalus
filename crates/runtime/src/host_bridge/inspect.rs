@@ -159,7 +159,7 @@ pub fn inspect_payload(payload: &Payload, serializers: &ValueSerializerMap) -> P
     match serialize_payload_value(payload, serializers) {
         Some(value) => PayloadInspection::Value { value, summary },
         None => {
-            tracing::trace!(
+            crate::trace::trace!(
                 target: "daedalus_runtime::host_bridge",
                 type_key = %summary.type_key,
                 rust_type = summary.rust_type.unwrap_or("unknown"),

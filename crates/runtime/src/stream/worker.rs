@@ -119,7 +119,7 @@ impl StreamGraphWorker {
         };
         if !handle.is_finished() && !self.done.wait_timeout(timeout) {
             let diagnostics = self.diagnostics();
-            tracing::warn!(
+            crate::trace::warn!(
                 target: "daedalus_runtime::stream",
                 ?timeout,
                 stop_requested_elapsed = ?diagnostics.stop_requested_elapsed,
@@ -170,7 +170,7 @@ impl Drop for StreamGraphWorker {
         {
             let _ = handle.join();
         } else if self.handle.is_some() {
-            tracing::warn!(
+            crate::trace::warn!(
                 target: "daedalus_runtime::stream",
                 stop_requested_elapsed = ?self
                     .stop_requested_at
@@ -253,7 +253,7 @@ where
                         guard.executor = Some(executor);
                     } else {
                         let message = "stream executor returned while another executor was present";
-                        tracing::error!(
+                        crate::trace::error!(
                             target: "daedalus_runtime::stream",
                             host_alias = %guard.host_alias,
                             "stream worker stopped after executor ownership violation"
@@ -272,7 +272,7 @@ where
                                 .pending_inbound();
                             should_sleep = pending_after == 0 || pending_after >= pending_before;
                             if pending_after >= pending_before && pending_after > 0 {
-                                tracing::warn!(
+                                crate::trace::warn!(
                                     target: "daedalus_runtime::stream",
                                     host_alias = %guard.host_alias,
                                     pending_before,
@@ -288,7 +288,7 @@ where
                         }
                         Err(err) => {
                             let error = err.to_string();
-                            tracing::error!(
+                            crate::trace::error!(
                                 target: "daedalus_runtime::stream",
                                 host_alias = %guard.host_alias,
                                 error = %error,
