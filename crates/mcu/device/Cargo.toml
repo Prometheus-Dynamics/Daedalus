@@ -20,6 +20,8 @@ path = "src/lib.rs"
 default = []
 # `McuType` keys for `String` and `Vec<u8>` (heap payloads). The executor itself never allocates.
 alloc = []
+# The loaded-plan interpreter (`loaded::Interpreter`) and node library types.
+loaded = []
 # `defmt::Format` for the error types.
 defmt = ["dep:defmt"]
 

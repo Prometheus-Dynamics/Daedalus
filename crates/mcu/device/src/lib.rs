@@ -1,12 +1,20 @@
 //! Allocation-free executor for Daedalus graphs on microcontrollers (see docs/mcu.md).
 //!
 //! Graphs are planned on the host by `daedalus-mcu-build` (the regular planner: type checks,
-//! adapter resolution, schedule), which emits a Rust module with one `Graph` struct per plan:
-//! a typed [`Queue`] per edge sized from its policy, a state slot per node, `push_*`/`pop_*`
-//! methods per host port and a `tick` that calls the node functions directly in schedule
-//! order. This crate holds what that code and the node functions use: queues, the node
-//! descriptor types read by the host compiler, [`McuType`] keys, [`NodeState`], [`Ctx`] and the
-//! error enums. It is `#![no_std]` without `alloc`; nothing here allocates.
+//! adapter resolution, schedule). Three modes share that planning:
+//!
+//! - **Compiled**: the plan becomes a Rust module with one `Graph` struct: a typed [`Queue`]
+//!   per edge sized from its policy, a state slot per node, `push_*`/`pop_*` methods per host
+//!   port and a `tick` that calls the node functions directly in schedule order.
+//! - **Compiled + tunable**: the same, plus graph constants marked as parameters, set at run
+//!   time through [`Tunable`] (by id, typed setters or [`ParamUpdate`] messages).
+//! - **Loaded** (feature `loaded`): plans compiled on the host into a blob and run by the
+//!   [`loaded::Interpreter`] over a node library generated from the firmware's nodes.
+//!
+//! This crate holds what the generated code, the interpreter and the node functions use:
+//! queues, the node descriptor types read by the host compiler, [`McuType`] keys,
+//! [`NodeState`], [`Ctx`], [`Scalar`] values, the [`wire`] codec and the error enums. It is
+//! `#![no_std]` without `alloc`; nothing here allocates.
 //!
 //! Nodes are plain functions annotated with [`node`]:
 //!
@@ -16,10 +24,18 @@
 //! ```
 #![cfg_attr(not(test), no_std)]
 
+#[cfg(feature = "loaded")]
+pub mod loaded;
+pub mod param;
 mod queue;
+mod scalar;
+pub mod wire;
 
 pub use daedalus_mcu_macros::node;
-pub use queue::{Overflow, Queue, QueueFull};
+pub use param::{ParamError, ParamSpec, ParamUpdate, Tunable};
+pub use queue::{Overflow, Queue, QueueFull, Ring};
+pub(crate) use scalar::for_each_scalar;
+pub use scalar::{Scalar, ScalarKind, ScalarType};
 
 /// Per-tick context a node function receives when it takes a `&Ctx` parameter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,6 +64,20 @@ pub enum McuError {
     QueueFull { edge: u16 },
     /// A node function returned an error; the tick stopped there.
     Node { node: u16, error: NodeError },
+    /// A loaded plan has no host port with this id, or it has another type.
+    Port { port: u16 },
+}
+
+/// 32-bit FNV-1a hash of `name`: host port names and type keys in loaded plans.
+pub const fn name_hash(name: &str) -> u32 {
+    let bytes = name.as_bytes();
+    let mut hash: u32 = 0x811c_9dc5;
+    let mut i = 0;
+    while i < bytes.len() {
+        hash = (hash ^ bytes[i] as u32).wrapping_mul(0x0100_0193);
+        i += 1;
+    }
+    hash
 }
 
 /// The Daedalus transport key of a port type: the planner type checks edges by key. Builtin
