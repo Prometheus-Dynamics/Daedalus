@@ -1,4 +1,6 @@
+#[cfg(feature = "gpu-image")]
 use crate::{Compute, GpuContextHandle};
+#[cfg(feature = "gpu-image")]
 use image::DynamicImage;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -271,6 +273,7 @@ impl TextureOut {
 
     /// Create a storage texture description using the dimensions of the input payload.
     /// If no GPU context is present, readback is enabled so the caller can pull bytes.
+    #[cfg(feature = "gpu-image")]
     pub fn from_input(img: &Compute<DynamicImage>, gpu: Option<&GpuContextHandle>) -> Self {
         let (width, height) = img.dimensions();
         Self {
@@ -278,5 +281,11 @@ impl TextureOut {
             height,
             readback: gpu.is_none(),
         }
+    }
+
+    /// [`TextureOut::from_input`] with the GPU taken from the shader context.
+    #[cfg(feature = "gpu-image")]
+    pub fn from_input_ctx(img: &Compute<DynamicImage>, ctx: &super::ShaderContext) -> Self {
+        Self::from_input(img, ctx.gpu.as_ref())
     }
 }

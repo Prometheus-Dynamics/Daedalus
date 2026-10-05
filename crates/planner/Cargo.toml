@@ -22,7 +22,7 @@ path = "src/lib.rs"
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
 boundary-features = ["std", "gpu", "proto", "schema"]
-host-only-features = []
+host-only-features = ["tracing"]
 
 [[bin]]
 name = "graph_document_schema"
@@ -35,7 +35,7 @@ path = "src/bin/plan_dump.rs"
 required-features = ["std"]
 
 [features]
-default = ["std"]
+default = ["std", "tracing"]
 # Host OS facilities: `std` locks and collections, clocks, threads. Without it the crate is
 # `no_std` + `alloc` (see "Portability" in docs/development.md).
 std = [
@@ -47,9 +47,9 @@ std = [
     "serde/std",
     "serde_json/std",
     "thiserror/std",
-    "dep:tracing",
-    "tracing/std",
 ]
+# `tracing` debug events of the embedded-graph expansion (`DAEDALUS_TRACE_EMBEDDED_EXPAND`).
+tracing = ["std", "dep:tracing", "tracing/std"]
 gpu = ["std", "daedalus-gpu"]
 proto = []
 schema = ["daedalus-data/schema"]
@@ -66,7 +66,6 @@ serde_json = { workspace = true }
 serde_path_to_error = { workspace = true }
 spin = { workspace = true }
 thiserror = { workspace = true }
-# Only `std` builds trace (`DAEDALUS_TRACE_EMBEDDED_EXPAND`); `tracing` needs compare-and-swap.
 tracing = { workspace = true, optional = true }
 
 # Targets without 64-bit atomics (`thumbv7em`, ...): `portable-atomic`'s `AtomicU64`.

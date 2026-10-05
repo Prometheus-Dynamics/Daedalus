@@ -27,6 +27,7 @@ boundary-features = [
     "gpu-types",
     "gpu-runtime",
     "gpu-wgpu",
+    "gpu-gles",
     "gpu-async",
     "gpu-mock",
     "schema",
@@ -37,6 +38,7 @@ host-only-features = [
     "gpu-engine",
     "gpu",
     "gpu-dmabuf",
+    "gpu-image",
     "dylib-plugins",
     "examples",
     "styx-camera-example",
@@ -50,7 +52,7 @@ host-only-features = [
 ]
 
 [features]
-default = ["threads"]
+default = ["threads", "tracing"]
 # Worker threads: `RuntimeMode::Parallel`/`Adaptive` on a worker pool, stream workers and
 # blocking host waits (`HostGraph::drive_blocking`, ...). Without it (e.g. on
 # `wasm32-unknown-unknown`) those modes run serially and the thread-only APIs do not exist.
@@ -70,7 +72,14 @@ gpu-engine = [
     "daedalus-engine/gpu",
 ]
 gpu = ["gpu-engine"]
+# wgpu backend: Vulkan, plus Metal on Apple and DX12 on Windows.
 gpu-wgpu = ["gpu-engine", "daedalus-gpu/gpu-wgpu"]
+# wgpu's OpenGL/GLES backend for devices without Vulkan (changes wgpu internals, so a boundary
+# feature).
+gpu-gles = ["gpu-wgpu", "daedalus-gpu/gpu-gles"]
+# `image` crate bridges in `daedalus::gpu` (`Compute<DynamicImage>`, `ShaderRunOutput` image
+# readbacks).
+gpu-image = ["gpu-wgpu", "daedalus-gpu/gpu-image"]
 gpu-async = ["gpu-wgpu", "daedalus-gpu/gpu-async"]
 gpu-dmabuf = ["gpu-wgpu", "daedalus-gpu/gpu-dmabuf"]
 gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
@@ -102,13 +111,19 @@ executor-pool = ["threads", "daedalus-runtime/executor-pool", "daedalus-engine?/
 # Collect executor telemetry (`MetricsLevel` other than `Off`). Without it the telemetry APIs
 # still compile but record nothing.
 metrics = ["daedalus-runtime/metrics", "daedalus-engine?/metrics"]
-# Runtime and engine `tracing` spans and events. Implied by `threads` (through `std`); enable it
-# explicitly to keep them in builds without `threads` (wasm).
-tracing = ["daedalus-runtime/tracing", "daedalus-engine?/tracing"]
+# `tracing` spans and events of the runtime, engine, planner and demo nodes (default). Separate
+# from `threads`/`std`: `default-features = false` builds (`embedded`, wasm) opt in explicitly.
+tracing = [
+    "daedalus-runtime/tracing",
+    "daedalus-engine?/tracing",
+    "daedalus-planner/tracing",
+    "daedalus-nodes/tracing",
+]
 # Recommended preset for applications: engine with worker pool and metrics.
 engine-full = ["engine", "executor-pool", "metrics"]
-# Smallest in-process host: engine + static plugins, no worker pool, no metrics. Keeps
-# `threads`; for targets without threads use `engine,plugins` with default features off.
+# Smallest in-process host: engine + static plugins, no worker pool, no metrics, no `tracing`
+# (add the `tracing` feature to keep spans). Keeps `threads`; for targets without threads use
+# `engine,plugins` with default features off.
 embedded = ["engine", "plugins", "threads"]
 
 [dependencies]

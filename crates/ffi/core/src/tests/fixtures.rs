@@ -296,6 +296,7 @@ fn fixture_schema_and_backend_snapshots_are_stable() {
     }
 }
 
+#[cfg(feature = "integrity")]
 #[test]
 fn generated_package_fixtures_validate_and_stamp_integrity_for_all_languages() {
     let fixtures = generate_scalar_add_package_fixtures().expect("package fixtures");

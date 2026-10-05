@@ -118,14 +118,17 @@ impl StreamGraphWorker {
             return Ok(self.last_error());
         };
         if !handle.is_finished() && !self.done.wait_timeout(timeout) {
-            let diagnostics = self.diagnostics();
-            crate::trace::warn!(
-                target: "daedalus_runtime::stream",
-                ?timeout,
-                stop_requested_elapsed = ?diagnostics.stop_requested_elapsed,
-                last_error = ?diagnostics.last_error,
-                "stream worker stop timed out"
-            );
+            #[cfg(feature = "tracing")]
+            {
+                let diagnostics = self.diagnostics();
+                crate::trace::warn!(
+                    target: "daedalus_runtime::stream",
+                    ?timeout,
+                    stop_requested_elapsed = ?diagnostics.stop_requested_elapsed,
+                    last_error = ?diagnostics.last_error,
+                    "stream worker stop timed out"
+                );
+            }
             return Err(StreamWorkerStopError::Timeout { timeout });
         }
 

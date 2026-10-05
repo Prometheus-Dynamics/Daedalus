@@ -1,7 +1,7 @@
 use crate::{GpuContextHandle, GpuError};
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 use crate::{GpuImageHandle, upload_rgba8_texture};
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 use image::{DynamicImage, GenericImageView, GrayImage, RgbImage, RgbaImage};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -231,7 +231,7 @@ impl<T: DeviceBridge> Compute<T> {
     }
 }
 
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 impl Compute<DynamicImage> {
     /// Return image dimensions without forcing the caller to pattern match.
     pub fn dimensions(&self) -> (u32, u32) {
@@ -255,7 +255,7 @@ impl Compute<DynamicImage> {
     }
 }
 
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 impl DeviceBridge for DynamicImage {
     type Device = GpuImageHandle;
 
@@ -273,7 +273,7 @@ impl DeviceBridge for DynamicImage {
     }
 }
 
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 impl DeviceBridge for RgbaImage {
     type Device = GpuImageHandle;
 
@@ -289,7 +289,7 @@ impl DeviceBridge for RgbaImage {
     }
 }
 
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 impl DeviceBridge for RgbImage {
     type Device = GpuImageHandle;
 
@@ -317,7 +317,7 @@ impl DeviceBridge for RgbImage {
     }
 }
 
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 impl DeviceBridge for GrayImage {
     type Device = GpuImageHandle;
 
@@ -363,7 +363,7 @@ impl DeviceBridge for GrayImage {
     }
 }
 
-#[cfg(feature = "image")]
+#[cfg(feature = "gpu-image")]
 impl Compute<DynamicImage> {
     /// Get RGBA8 bytes + dimensions, downloading from GPU if needed.
     pub fn to_rgba_bytes(

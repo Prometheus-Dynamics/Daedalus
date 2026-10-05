@@ -1,5 +1,6 @@
-//! The crate's `tracing` instrumentation, compiled out without the `tracing` feature (implied by
-//! `std`; see "Portability" in docs/development.md): `tracing-core` needs compare-and-swap.
+//! The crate's `tracing` instrumentation, compiled out without the `tracing` feature (on by
+//! default, separate from `std`; see "Portability" in docs/development.md): `tracing-core` needs
+//! compare-and-swap.
 //!
 //! With the feature these are `tracing`'s macros. Without it the event macros expand to nothing
 //! (their arguments are not evaluated) and `debug_span!` to an inert [`Span`].

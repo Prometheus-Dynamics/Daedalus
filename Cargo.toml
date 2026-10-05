@@ -58,8 +58,8 @@ daedalus-macros = { path = "crates/macros", version = "2.0.0" }
 daedalus-nodes = { path = "crates/nodes", version = "2.0.0" }
 daedalus-engine = { path = "crates/engine", version = "2.0.0", default-features = false }
 daedalus-daemon = { path = "crates/daemon", version = "2.0.0" }
-daedalus-ffi-core = { path = "crates/ffi/core", version = "2.0.0" }
-daedalus-ffi-host = { path = "crates/ffi/host", version = "2.0.0" }
+daedalus-ffi-core = { path = "crates/ffi/core", version = "2.0.0", default-features = false }
+daedalus-ffi-host = { path = "crates/ffi/host", version = "2.0.0", default-features = false }
 daedalus-ffi-python = { path = "crates/ffi/python", version = "2.0.0" }
 daedalus-ffi-node = { path = "crates/ffi/node", version = "2.0.0" }
 daedalus-ffi-java = { path = "crates/ffi/java", version = "2.0.0" }
@@ -106,7 +106,7 @@ tempfile = "3.27.0"
 thiserror = { version = "2.0.18", default-features = false }
 tokio = { version = "1.52.1", features = ["rt", "macros", "sync"] }
 trybuild = "1.0.116"
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "gles"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12"] }
 futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = { version = "0.1.44", default-features = false }

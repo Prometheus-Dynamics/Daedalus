@@ -132,6 +132,7 @@ fn plugin_package_records_physical_artifacts_separately() {
     assert!(json.get("runtime_model").is_none());
 }
 
+#[cfg(feature = "integrity")]
 #[test]
 fn rust_package_emits_backend_artifacts_lockfile_and_manifest_hash() {
     let spec = scalar_add_fixture_spec();
@@ -299,6 +300,7 @@ fn package_rewrites_artifact_paths_for_bundle_layout() {
     assert_eq!(package.artifacts[1].path, "_bundle/java/main");
 }
 
+#[cfg(feature = "integrity")]
 #[test]
 fn package_integrity_stamps_and_verifies_artifact_hashes() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -326,6 +328,7 @@ fn package_integrity_stamps_and_verifies_artifact_hashes() {
         .expect("integrity verifies");
 }
 
+#[cfg(feature = "integrity")]
 #[test]
 fn package_integrity_rejects_tampered_artifacts() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -354,6 +357,7 @@ fn package_integrity_rejects_tampered_artifacts() {
     ));
 }
 
+#[cfg(feature = "integrity")]
 #[test]
 fn package_descriptor_loads_from_unpacked_root_without_repo_paths() {
     let root = tempfile::tempdir().expect("tempdir");

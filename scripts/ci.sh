@@ -78,6 +78,7 @@ cmd_features() {
   cargo check -p daedalus-ffi-core -p daedalus-ffi-host \
     --features "daedalus-ffi-core/image-payload,daedalus-ffi-host/image-payload"
   cargo check -p daedalus-gpu --no-default-features --features "gpu-wgpu"
+  cargo check -p daedalus-gpu --all-targets --no-default-features --features "gpu-gles,gpu-image"
   # Needs libcamera-dev + pkg-config for the styx camera example feature.
   cargo check --workspace --all-targets --all-features
   # Links every library, so `cdylib` plugins whose exported symbols clash once features unify
