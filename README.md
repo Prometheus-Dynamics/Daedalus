@@ -57,6 +57,9 @@ The facade's default features are `threads` and `tracing`. Enable the layers you
 daedalus = { package = "daedalus-rs", version = "3.0.0", features = ["engine-full", "plugins"] }
 ```
 
+Upgrading from 2.0.0 or a pre-release `dev` commit: see
+[docs/migration-3.0.md](docs/migration-3.0.md).
+
 Useful examples:
 
 ```bash
@@ -77,6 +80,7 @@ fixes and the full CI loop), focused feature checks, GPU checks, and Docker-back
 ## Documentation
 
 - [docs/README.md](docs/README.md): documentation map.
+- [docs/migration-3.0.md](docs/migration-3.0.md): upgrading to 3.0 from 2.0.0 or pre-release `dev`.
 - [docs/node-authoring.md](docs/node-authoring.md): node authoring, adapters, payload residency, and host integration.
 - [docs/development.md](docs/development.md): development rules, features, observability, and production API guidance.
 - [docs/testing.md](docs/testing.md): supported validation surface.
