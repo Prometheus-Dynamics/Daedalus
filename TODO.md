@@ -1,8 +1,8 @@
 # TODO
 
-Status of the 2.x maturity pass (branch `helios-integration`, merged into `dev`). It was driven by
-the Daedalus ↔ HeliOS integration review. See `CHANGELOG.md` `[Unreleased]` for the full list of
-changes.
+Status of the maturity pass after 2.0.0 (branch `helios-integration`, merged into `dev`), released
+as 3.0.0. It was driven by the Daedalus ↔ HeliOS integration review. See `CHANGELOG.md` `[3.0.0]`
+for the full list of changes and `docs/migration-3.0.md` for upgrading.
 
 ## Done
 
@@ -164,11 +164,15 @@ changes.
       `docs/testing.md`.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
-- [ ] **Tag `v2.0.0`.** There are no tags yet; downstream projects pin a commit hash.
-- [ ] **HeliOS migration** (in the HeliOS repo): bump the pin, drop the `ffi`/`gpu` features, switch
-      the loader to `PluginLibrary`, use styx-core's `daedalus` feature for `FrameLease` (or write
-      the frame glue following `examples/04_async/external_frame_source.rs` until it exists),
-      install the styx plugin in the host before loading plugins, build host and plugins in one
+- [ ] **Tags** (coordinator): `v2.0.0` at `8946223` (the April release) and `v3.0.0` at the 3.0.0
+      release commit on `dev`. Downstream (HeliOS, Styx, Eidos) then pins `tag = "v3.0.0"`; Styx
+      `dev` and Eidos `main` still lock `75dc4c1`, and Styx's `daedalus` feature asks for
+      `daedalus-rs` 2.0.0, so it must move to 3.0.0 before Daedalus's examples can use it.
+- [ ] **HeliOS migration** (HeliOS-owned, in the HeliOS repo; see `docs/migration-3.0.md`): pin
+      `v3.0.0`, drop the `ffi`/`gpu` features, switch the loader to `PluginLibrary`, use Styx's
+      `daedalus` feature (`StyxFramesPlugin`, once it requires Daedalus 3.0.0) for `FrameLease`
+      (or write the frame glue following `examples/04_async/external_frame_source.rs`), install
+      the Styx plugin in the host before loading plugins, build host and plugins in one
       `cargo build`, replace the 250 ms tick with `drive_blocking`, and rewrite `AGENTS.md`
       against `docs/node-authoring.md`.
 
