@@ -504,3 +504,18 @@ fn async_texture_readback_completes_without_blocking_caller_thread() {
         Err(_) => panic!("async texture readback stalled"),
     }
 }
+
+/// Backends created and dropped from several threads at once: without the driver lock this
+/// crashes in the Vulkan loader on machines with the NVIDIA ICD installed next to Mesa.
+#[test]
+fn concurrent_backend_lifecycles() {
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                for _ in 0..4 {
+                    drop(WgpuBackend::new());
+                }
+            });
+        }
+    });
+}

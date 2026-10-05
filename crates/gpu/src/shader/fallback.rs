@@ -175,6 +175,8 @@ struct GpuCtxInitWaiter {
 }
 
 async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
+    // Released when the function returns, after the instance handle is gone.
+    let _driver = crate::wgpu_backend::driver_lock();
     let instance = wgpu::Instance::default();
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {

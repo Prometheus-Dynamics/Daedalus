@@ -121,9 +121,9 @@ pub(super) fn skip(reason: String) {
     note(format!("skipping: {reason}"));
 }
 
-/// Run hardware tests one at a time: they time GPU work on a shared GPU, and creating Vulkan
-/// instances concurrently crashes in some loader/ICD setups (seen with the NVIDIA ICD installed
-/// next to Mesa).
+/// Run hardware tests one at a time: they time GPU work (fence latencies, blocked submissions,
+/// producer jobs) that other tests on the same GPU would skew. Concurrent driver setup is safe on
+/// its own (`driver_lock`).
 pub(super) fn exclusive() -> std::sync::MutexGuard<'static, ()> {
     static GPU: std::sync::Mutex<()> = std::sync::Mutex::new(());
     GPU.lock()
@@ -164,13 +164,17 @@ pub(super) fn consumer_backend() -> (WgpuBackend, bool) {
             .acquire_fence_wait()
             .is_some_and(|wait| wait != AcquireFenceWait::Cpu)
     };
-    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-    desc.backends = wgpu::Backends::VULKAN;
-    let lavapipe = wgpu::Instance::new(desc)
-        .enumerate_adapters(wgpu::Backends::VULKAN)
-        .block_on()
-        .into_iter()
-        .find(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu)
+    let adapter = {
+        let _driver = crate::wgpu_backend::driver_lock();
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::VULKAN;
+        wgpu::Instance::new(desc)
+            .enumerate_adapters(wgpu::Backends::VULKAN)
+            .block_on()
+            .into_iter()
+            .find(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu)
+    };
+    let lavapipe = adapter
         .and_then(|adapter| {
             WgpuBackend::with_adapter(adapter, Default::default())
                 .block_on()
