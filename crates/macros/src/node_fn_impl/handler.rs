@@ -454,24 +454,15 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             quote! { #call; Ok(()) }
         };
 
+        // The node's state lives in its state slot between calls, together with the decoded
+        // config and constant caches below: one tuple, taken and stored once per call.
+        let mut slot_parts: Vec<(syn::Ident, TokenStream)> = Vec::new();
         let state_binding = if let (Some(sty), Some(id)) = (state_ty.clone(), state_param.clone()) {
-            Some(quote! {
-                let mut __state_value: #sty = ctx
-                    .take_node_state::<#sty>()
-                    .unwrap_or_default();
-                let #id: &mut #sty = &mut __state_value;
-            })
+            let value = syn::Ident::new("__state_value", Span::call_site());
+            slot_parts.push((value.clone(), quote! { #sty }));
+            Some(quote! { let #id: &mut #sty = &mut #value; })
         } else {
             None
-        };
-        let ret_handling = if state_binding.is_some() {
-            quote! {
-                let __state_result = { #ret_handling };
-                ctx.set_node_state(__state_value);
-                __state_result
-            }
-        } else {
-            ret_handling
         };
 
         if let Some(cap_str) = capability_attr.cloned() {
@@ -513,23 +504,16 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             // Decoded configs and `Value` constants live in the node's state slot between calls
             // (`daedalus_runtime::const_cache`) and are decoded again only when an input changes.
             let mut config_fetch_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
-            let mut cache_restores: Vec<proc_macro2::TokenStream> = Vec::new();
-            let mut take_cache = |ident: &syn::Ident, cache_ty: TokenStream| {
-                cache_restores.push(quote! { ctx.set_node_state(#ident); });
-                quote! {
-                    let mut #ident = ctx.take_node_state::<#cache_ty>().unwrap_or_default();
-                }
-            };
             for (idx, cfg) in config_args.iter().enumerate() {
                 let ident = &cfg.ident;
                 let ty = &cfg.ty;
                 let cache_ident = syn::Ident::new(&format!("__cfg_cache_{idx}"), Span::call_site());
                 let owned_ident = syn::Ident::new(&format!("__cfg_owned_{idx}"), Span::call_site());
                 let ref_ident = syn::Ident::new(&format!("__cfg_ref_{idx}"), Span::call_site());
-                let take = take_cache(
-                    &cache_ident,
+                slot_parts.push((
+                    cache_ident.clone(),
                     quote! { #runtime_crate::const_cache::ConfigCache<#ty> },
-                );
+                ));
                 let assign = match (cfg.is_ref, cfg.is_mut) {
                     (true, false) => quote! { let #ident = #ref_ident; },
                     (true, true) => quote! {
@@ -539,7 +523,6 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                     (false, _) => quote! { let #ident = ::core::clone::Clone::clone(#ref_ident); },
                 };
                 config_fetch_stmts.push(quote! {
-                    #take
                     let #ref_ident: &#ty = #cache_ident.get(io, &node.id)?;
                     #assign
                 });
@@ -551,22 +534,30 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 port_names: &port_names,
                 runtime_crate,
             });
-            let decoded_take = fetch.uses_decoded.then(|| {
-                take_cache(
-                    &syn::Ident::new(handler_fetch::DECODED, Span::call_site()),
+            if fetch.uses_decoded {
+                slot_parts.push((
+                    syn::Ident::new(handler_fetch::DECODED, Span::call_site()),
                     quote! { #runtime_crate::const_cache::DecodedInputs },
-                )
-            });
+                ));
+            }
             let (arg_fetch_mut_stmts, arg_decode_stmts, arg_fetch_ref_stmts) =
                 (fetch.mutable, fetch.decode, fetch.borrowed);
-            let ret_handling = if cache_restores.is_empty() {
-                ret_handling
+            let (slot_take, ret_handling) = if slot_parts.is_empty() {
+                (None, ret_handling)
             } else {
-                quote! {
-                    let __result = { #ret_handling };
-                    #(#cache_restores)*
-                    __result
-                }
+                let (idents, types): (Vec<_>, Vec<_>) = slot_parts.into_iter().unzip();
+                (
+                    Some(quote! {
+                        let (#(mut #idents,)*) = ctx
+                            .take_node_state::<(#(#types,)*)>()
+                            .unwrap_or_default();
+                    }),
+                    quote! {
+                        let __result = { #ret_handling };
+                        ctx.set_node_state((#(#idents,)*));
+                        __result
+                    },
+                )
             };
 
             let shader_gpu_init = if shader_tokens.is_some() {
@@ -576,8 +567,8 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             };
 
             quote! {
+                #slot_take
                 #(#config_fetch_stmts)*
-                #decoded_take
                 #(#arg_fetch_mut_stmts)*
                 #(#arg_decode_stmts)*
                 #(#arg_fetch_ref_stmts)*
