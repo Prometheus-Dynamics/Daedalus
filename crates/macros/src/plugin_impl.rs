@@ -19,6 +19,8 @@ struct PluginArgs {
     devices: Vec<syn::Ident>,
     parts: Vec<Path>,
     install: Option<Path>,
+    /// `crate_build`: register the plugin crate's `crate_build_info!()`.
+    crate_build: bool,
 }
 
 fn collect_ident_list(list: &MetaList) -> Result<Vec<syn::Ident>, proc_macro2::TokenStream> {
@@ -84,9 +86,13 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
     let mut devices = Vec::new();
     let mut parts = Vec::new();
     let mut install = None;
+    let mut crate_build = false;
 
     for arg in args {
         match arg {
+            NestedMeta::Meta(Meta::Path(path)) if path.is_ident("crate_build") => {
+                crate_build = true;
+            }
             NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. }))
                 if path.is_ident("id") =>
             {
@@ -134,7 +140,7 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
             }
             _ => {
                 return Err(compile_error(
-                    "plugin arguments must use `id = \"...\", install = setup, deps(...), parts(...), types(...), foreign_types(Type = \"key\", ...), foreign_providers(Owner => Interface, ...), values(...), nodes(...), adapters(...), devices(...)`"
+                    "plugin arguments must use `id = \"...\", install = setup, crate_build, deps(...), parts(...), types(...), foreign_types(Type = \"key\", ...), foreign_providers(Owner => Interface, ...), values(...), nodes(...), adapters(...), devices(...)`"
                         .into(),
                 ));
             }
@@ -153,6 +159,7 @@ fn parse_args(args: AttributeArgs) -> Result<PluginArgs, proc_macro2::TokenStrea
         devices,
         parts,
         install,
+        crate_build,
     })
 }
 
@@ -206,6 +213,11 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
         .as_ref()
         .map(|path| quote! { #path(registry)?; })
         .unwrap_or_default();
+    let crate_build = if parsed.crate_build {
+        quote! { registry.register_crate_build(#runtime_crate::crate_build_info!())?; }
+    } else {
+        quote! {}
+    };
 
     let expanded = quote! {
         #[derive(Clone, Debug)]
@@ -233,6 +245,7 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
                 #(
                     registry.dependency(#deps);
                 )*
+                #crate_build
                 #(
                     registry.register_foreign_type::<#foreign_types>(#foreign_keys)?;
                 )*

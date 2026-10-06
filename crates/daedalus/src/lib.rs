@@ -47,12 +47,13 @@ pub use daedalus_runtime::graph_builder;
 pub use daedalus_runtime::handles::{NodeHandle, NodeHandleLike, PortHandle};
 #[cfg(feature = "plugins")]
 pub use daedalus_runtime::plugins::{
-    NodeInstall, Plugin, PluginGroup, PluginInstallContext, PluginInstallable, PluginPart,
-    PluginRegistry, TransportAdapterOptions,
+    CrateBuildDiff, CrateBuildInfo, NodeInstall, Plugin, PluginGroup, PluginInstallContext,
+    PluginInstallable, PluginPart, PluginRegistry, TransportAdapterOptions,
 };
 #[cfg(feature = "plugins")]
 pub use daedalus_runtime::{
-    register_daedalus_types, register_daedalus_values, register_to_value_serializers,
+    crate_build_info, register_daedalus_types, register_daedalus_values,
+    register_to_value_serializers,
 };
 pub use daedalus_transport as transport;
 /// Host-bridge helpers for wiring host-side inputs/outputs.

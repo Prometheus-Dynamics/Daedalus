@@ -42,6 +42,21 @@ impl RustTypeIdentity {
         hasher.0
     }
 
+    /// The crate that defines the type: the first path segment of `type_name`, or for a generic
+    /// such as `alloc::sync::Arc<styx_core::frame::FrameLease>` the innermost crate other than
+    /// the standard library (`styx_core`). `None` when the name only mentions `core`, `alloc`,
+    /// `std` or primitive types.
+    ///
+    /// When a plugin's type differs from the host's under the same key and name, this crate was
+    /// almost always resolved differently in the plugin's build (features, version or
+    /// dependency graph).
+    pub fn defining_crate(&self) -> Option<&'static str> {
+        self.type_name
+            .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+            .filter_map(|path| path.split_once("::").map(|(krate, _)| krate))
+            .rfind(|krate| !krate.is_empty() && !["core", "alloc", "std"].contains(krate))
+    }
+
     /// Whether both identities describe the same Rust type (the name is informational).
     pub fn same_type(&self, other: &Self) -> bool {
         (self.type_id_hash, self.size, self.align) == (other.type_id_hash, other.size, other.align)
@@ -136,5 +151,34 @@ mod tests {
             RustTypeIdentity::hash_type_id(TypeId::of::<A>())
         );
         assert!(a.to_string().contains("::A`"), "{a}");
+        assert_eq!(a.defining_crate(), Some("daedalus_transport"));
+    }
+
+    #[test]
+    fn defining_crate_is_the_innermost_non_std_crate() {
+        let named = |type_name: &'static str| RustTypeIdentity {
+            type_name,
+            ..RustTypeIdentity::of::<u8>()
+        };
+        let cases = [
+            ("styx_core::frame::FrameLease", Some("styx_core")),
+            (
+                "alloc::sync::Arc<styx_core::frame::FrameLease>",
+                Some("styx_core"),
+            ),
+            (
+                "core::option::Option<&[styx_core::Plane; 4]>",
+                Some("styx_core"),
+            ),
+            (
+                "app::Wrapper<alloc::vec::Vec<styx_core::X>>",
+                Some("styx_core"),
+            ),
+            ("(u8, alloc::string::String)", None),
+            ("u32", None),
+        ];
+        for (type_name, krate) in cases {
+            assert_eq!(named(type_name).defining_crate(), krate, "{type_name}");
+        }
     }
 }

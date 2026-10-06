@@ -44,6 +44,9 @@ pub fn node(
 ///   context.
 /// - `install = path::to::fn`: extra `fn(&mut PluginInstallContext<'_>) -> PluginResult<()>`
 ///   hook, run before everything else.
+/// - `crate_build`: register the plugin crate's build (`crate_build_info!()`: name, version,
+///   features; needs the one-line build script in its docs), so hosts name the exact feature
+///   differences of a dynamic plugin built with another copy of this crate.
 /// - `parts(path, ...)`: values implementing `PluginPart`, installed in order.
 /// - `types(Ty, ...)`: `DaedalusTypeExpr` types (`#[type_key]` or derived), registered as named
 ///   types with `HostExportPolicy::None`.

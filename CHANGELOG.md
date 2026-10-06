@@ -6,8 +6,28 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Changed
+
+- **Dynamic plugins: `PLUGIN_ABI_VERSION` 9** (rebuild every plugin): the descriptor gained a
+  `crate_builds` entry point (`CrateBuildTable`).
+- **Boundary type conflicts name the crate.** `PluginLibraryError::BoundaryTypeConflict` groups
+  the conflicting keys by the crate defining the plugin's type
+  (`RustTypeIdentity::defining_crate`, innermost non-std crate of generics) and says that crate
+  resolved differently in the plugin's build; it gained `crate_builds`, `same_crate_builds` and
+  `stable_compatible`. When no node port uses a conflicting key it suggests
+  `install_into_as(InstallPath::Stable)`; it never falls back to the stable path on its own.
+
 ### Added
 
+- **Crate build info.** `CrateBuildInfo { name, version, features }`, captured in the owning
+  crate with `crate_build_info!()` (plus a two-line `build.rs` exporting `CARGO_CFG_FEATURE`) and
+  registered with `#[plugin(.., crate_build)]` or `PluginRegistry::register_crate_build`. Dynamic
+  plugins export theirs; `PluginLibrary::crate_builds` / `crate_build_diff(&registry)`
+  (`CrateBuildDiff`: version and missing/extra features) compare them with the host's, and
+  boundary type conflict errors include the difference, e.g. ``crate `styx_core` 0.4.0: host
+  features `framelease,v4l2`, plugin features `framelease` (missing in plugin: v4l2)``. The
+  example plugin registers its build as the reference. See "Diagnosing Boundary Type Conflicts"
+  in `docs/dynamic-plugins.md`.
 - **Frame-path overhead.** `HostGraph::enable_frame_overhead(window)` (or
   `EngineConfig::with_frame_overhead`, `DAEDALUS_FRAME_OVERHEAD`) records every tick at any
   metrics level, allocation-free, into a rolling window; `HostGraph::frame_overhead()` returns a

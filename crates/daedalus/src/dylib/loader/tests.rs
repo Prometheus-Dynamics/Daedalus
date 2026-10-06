@@ -3,7 +3,7 @@ use crate::data::model::{TypeExpr, ValueType};
 use crate::dylib::{RUSTC_VERSION, STABLE_ABI_VERSION, build_fingerprint};
 use crate::registry::capability::{NodeDecl, PortDecl};
 use crate::runtime::NodeError;
-use crate::runtime::plugins::{Plugin, PluginInstallContext, PluginResult};
+use crate::runtime::plugins::{CrateBuildInfo, Plugin, PluginInstallContext, PluginResult};
 use crate::transport::{ForeignInterface, FrameInterface};
 
 #[derive(Default)]
@@ -16,6 +16,7 @@ impl Plugin for LoaderTestPlugin {
 
     fn install(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()> {
         ctx.register_boundary_type::<LoaderFrame>(FRAME_KEY)?;
+        ctx.register_crate_build(PLUGIN_STYX)?;
         ctx.register_foreign_interface::<FrameInterface>()?;
         ctx.register_node_decl(
             NodeDecl::new("add")
@@ -319,9 +320,17 @@ fn boundary_type_conflict_refuses_install_before_anything_is_installed() {
         .unwrap();
     let err = library.install_into(&mut registry).unwrap_err();
     let message = err.to_string();
-    let PluginLibraryError::BoundaryTypeConflict { plugin, conflicts } = err else {
+    let PluginLibraryError::BoundaryTypeConflict {
+        plugin,
+        conflicts,
+        crate_builds,
+        same_crate_builds,
+        stable_compatible,
+    } = err
+    else {
         panic!("unexpected error: {err:?}");
     };
+    assert!(same_crate_builds.is_empty());
     assert_eq!(plugin, "loader_test");
     assert_eq!(conflicts.len(), 1);
     assert_eq!(conflicts[0].key, TypeKey::new(FRAME_KEY));
@@ -330,12 +339,170 @@ fn boundary_type_conflict_refuses_install_before_anything_is_installed() {
         RustTypeIdentity::of::<LoaderFrame>()
     );
     assert_ne!(conflicts[0].new, conflicts[0].registered);
+    // The host registered no build of the defining crate (`daedalus`): named only.
+    assert!(crate_builds.is_empty());
     assert!(
-        message.contains("`loader:frame`: registered `"),
+        message.contains(
+            "crate `daedalus` resolved differently in the plugin's build (different features, \
+             version or dependency graph) — key `loader:frame`: host `daedalus::"
+        ),
         "{message}"
     );
-    assert!(message.contains("same cargo build"), "{message}");
+    assert!(message.contains("one cargo invocation"), "{message}");
+    // No node port uses `loader:frame`, so the stable path would not carry it.
+    assert!(stable_compatible);
+    assert!(
+        message.contains("install_into_as(InstallPath::Stable)"),
+        "{message}"
+    );
     assert!(!registry.plugin_manifests.contains_key("loader_test"));
+}
+
+/// The plugin's build of `styx_core`, registered by the test plugin.
+const PLUGIN_STYX: CrateBuildInfo = CrateBuildInfo {
+    name: "styx_core",
+    version: "0.4.0",
+    features: "framelease",
+};
+
+/// Types of two third-party crates as a separately built plugin reports them.
+const FORGED: [(&str, &str); 3] = [
+    ("styx:framelease", "styx_core::frame::FrameLease"),
+    ("styx:planes", "alloc::sync::Arc<styx_core::frame::Plane>"),
+    ("other:thing", "other_crate::Thing"),
+];
+
+fn forged_identity(type_name: &'static str, type_id_hash: u64) -> RustTypeIdentity {
+    RustTypeIdentity {
+        type_name,
+        type_id_hash,
+        size: 8,
+        align: 8,
+    }
+}
+
+unsafe extern "C" fn third_party_boundary_types(table: *mut BoundaryTypeTable, _: StrSink) -> bool {
+    let entries: Vec<_> = FORGED
+        .iter()
+        .map(|(key, name)| super::super::BoundaryTypeEntry {
+            type_key: StrView::from_static(key),
+            type_name: StrView::from_static(name),
+            type_id_hash: 1,
+            size: 8,
+            align: 8,
+        })
+        .collect();
+    let entries = entries.leak();
+    // Safety: the host passes a writable table.
+    unsafe {
+        *table = BoundaryTypeTable {
+            entries: entries.as_ptr(),
+            len: entries.len(),
+        }
+    };
+    true
+}
+
+#[test]
+fn boundary_conflicts_name_crates_and_their_build_differences() {
+    let library =
+        load_with(|descriptor| descriptor.boundary_types = third_party_boundary_types).unwrap();
+    assert_eq!(library.crate_builds(), [PLUGIN_STYX]);
+    let mut registry = PluginRegistry::new();
+    let host_styx = CrateBuildInfo {
+        features: "v4l2,framelease",
+        ..PLUGIN_STYX
+    };
+    registry.register_crate_build(host_styx).unwrap();
+    // Proactive: the difference shows before any install attempt.
+    let diff = library.crate_build_diff(&registry);
+    assert_eq!(diff.len(), 1);
+    assert_eq!(diff[0].missing_in_plugin(), ["v4l2"]);
+    let host_types: Vec<_> = FORGED
+        .iter()
+        .map(|(key, name)| (TypeKey::new(*key), forged_identity(name, 2)))
+        .collect();
+    registry.register_boundary_identities(&host_types).unwrap();
+
+    let err = library.install_into(&mut registry).unwrap_err();
+    let message = err.to_string();
+    let host = |name| forged_identity(name, 2);
+    let plugin = |name| forged_identity(name, 1);
+    let expected = format!(
+        "plugin `loader_test` uses type keys for different Rust types than the host: crate \
+         `styx_core` 0.4.0: host features `framelease,v4l2`, plugin features `framelease` \
+         (missing in plugin: v4l2) — key `styx:framelease`: host {} vs plugin {}, key \
+         `styx:planes`: host {} vs plugin {}; crate `other_crate` resolved differently in the \
+         plugin's build (different features, version or dependency graph) — key `other:thing`: \
+         host {} vs plugin {}. Rust-ABI plugins",
+        host(FORGED[0].1),
+        plugin(FORGED[0].1),
+        host(FORGED[1].1),
+        plugin(FORGED[1].1),
+        host(FORGED[2].1),
+        plugin(FORGED[2].1),
+    );
+    assert!(message.starts_with(&expected), "{message}\n{expected}");
+    assert!(
+        matches!(err, PluginLibraryError::BoundaryTypeConflict { ref crate_builds, .. }
+            if *crate_builds == diff),
+        "{err:?}"
+    );
+    assert!(!registry.plugin_manifests.contains_key("loader_test"));
+    // As the error suggests: none of these types reaches a node port, so the stable path works.
+    library
+        .install_into_as(&mut registry, InstallPath::Stable)
+        .unwrap();
+}
+
+/// The `add` node's input type as another build would see it.
+unsafe extern "C" fn conflicting_port_boundary_types(
+    table: *mut BoundaryTypeTable,
+    _: StrSink,
+) -> bool {
+    let real = RustTypeIdentity::of::<i64>();
+    let entries = vec![super::super::BoundaryTypeEntry {
+        type_key: StrView::from_static("i64"),
+        type_name: StrView::from_static(real.type_name),
+        type_id_hash: real.type_id_hash ^ 1,
+        size: real.size,
+        align: real.align,
+    }]
+    .leak();
+    // Safety: the host passes a writable table.
+    unsafe {
+        *table = BoundaryTypeTable {
+            entries: entries.as_ptr(),
+            len: entries.len(),
+        }
+    };
+    true
+}
+
+#[test]
+fn conflicts_on_node_ports_do_not_suggest_the_stable_path() {
+    let library =
+        load_with(|descriptor| descriptor.boundary_types = conflicting_port_boundary_types)
+            .unwrap();
+    let mut registry = PluginRegistry::new();
+    registry.register_boundary_type::<i64>("i64").unwrap();
+    let err = library.install_into(&mut registry).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            PluginLibraryError::BoundaryTypeConflict {
+                stable_compatible: false,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let message = err.to_string();
+    // A standard library type names no crate.
+    assert!(
+        message.contains("than the host: key `i64`: host `i64` (") && !message.contains("Stable"),
+        "{message}"
+    );
 }
 
 #[test]

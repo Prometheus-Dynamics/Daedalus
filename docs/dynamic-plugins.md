@@ -89,7 +89,7 @@ with `PluginLibraryError::StableAbiMismatch`, naming the Rust ABI mismatch too.
 
 ### The stable handler path
 
-The descriptor (`PLUGIN_ABI_VERSION` 8) carries `StableHandlers { version, invoke, release }`,
+The descriptor (since `PLUGIN_ABI_VERSION` 8) carries `StableHandlers { version, invoke, release }`,
 versioned on its own by `STABLE_ABI_VERSION`, so the value encoding can evolve without breaking
 loading and introspection.
 
@@ -227,10 +227,13 @@ styx:framelease`. Now:
 
 - if the host registered the type (it installed the owner's plugin, or called
   `registry.register_boundary_type::<FrameLease>("styx:framelease")`), `install_into` refuses the
-  plugin up front:
-  ``plugin `helios_cv` uses type keys for different Rust types than the host (`styx:framelease`:
-  host `styx_core::frame::FrameLease` (type id ..., size 48, align 8), plugin ...); Rust-ABI
-  plugins must come from the same cargo build as the host, ...``;
+  plugin up front, naming the crate that resolved differently (see
+  [Diagnosing Boundary Type Conflicts](#diagnosing-boundary-type-conflicts)):
+  ``plugin `helios_cv` uses type keys for different Rust types than the host: crate `styx_core`
+  resolved differently in the plugin's build (different features, version or dependency graph) —
+  key `styx:framelease`: host `styx_core::frame::FrameLease` (type id ..., size 48, align 8) vs
+  plugin ... . Rust-ABI plugins must come from the same cargo build as the host: build the host
+  and its plugins in one cargo invocation, ...``;
 - a payload the host feeds under a registered key but built with another Rust type (say, by a
   separately built frame source) is refused at the host bridge, before any node runs:
   `FeedOutcome::Rejected` with ``payload for `styx:framelease` holds `...` but this graph
@@ -243,6 +246,74 @@ Even a dependency built with an extra feature (for example the example crate's n
 `separate-build` feature, which `examples/plugins/example_project_dylib` enables while the host
 links the example crate without it) yields different types; the facade's `dylib_plugin` test
 shows the refusal.
+
+### Diagnosing Boundary Type Conflicts
+
+`PluginLibraryError::BoundaryTypeConflict` groups the conflicting keys by the crate defining the
+plugin's type (`RustTypeIdentity::defining_crate`: the first path segment of the type name, or
+for a generic such as `alloc::sync::Arc<styx_core::frame::Plane>` the innermost crate outside
+`core`/`alloc`/`std`). That crate was resolved differently in the plugin's cargo build: other
+features, another version, or other features or versions of one of its own dependencies.
+
+To name the exact difference, the crate registers its build (name, version, enabled features),
+which the dynamic plugin's descriptor exports (`PLUGIN_ABI_VERSION` 9 added the `crate_builds`
+table) and the host compares with its own. The recipe for a library author (styx-core, say),
+three lines of build script plus one plugin argument:
+
+```rust
+// build.rs (any existing build script: add the two lines)
+fn main() {
+    let features = std::env::var("CARGO_CFG_FEATURE").unwrap_or_default();
+    println!("cargo:rustc-env=DAEDALUS_CRATE_FEATURES={features}");
+}
+
+// the crate's Daedalus plugin
+#[daedalus::plugin(id = "styx", crate_build, /* types, nodes, ... */)]
+pub struct StyxPlugin;
+// or, from an install hook / `declare_plugin!(.., install = ..)`:
+registry.register_crate_build(daedalus::crate_build_info!())?;
+```
+
+`crate_build_info!()` reads `CARGO_CRATE_NAME` (the name as it appears in type paths),
+`CARGO_PKG_VERSION` and the exported features, all from the invoking crate; it fails to compile
+with the build script line in its message when the build script is missing. The first
+registration of a crate name in a registry wins. With both sides registered, the conflict reads:
+
+```text
+plugin `helios_cv` uses type keys for different Rust types than the host: crate `styx_core`
+0.4.0: host features `daedalus,framelease,v4l2`, plugin features `daedalus,framelease` (missing
+in plugin: v4l2) — key `styx:framelease`: host `styx_core::frame::FrameLease` (type id ...) vs
+plugin `styx_core::frame::FrameLease` (type id ...). Rust-ABI plugins must come from the same
+cargo build as the host: ...
+```
+
+Versions are shown per side when they differ (``crate `styx_core`: host 0.4.0 features `...`,
+plugin 0.5.0 features `...` ``). When both builds have the same version and features, the message
+says so: the crate's types differ through its dependency graph (one of its dependencies has other
+features or versions), so look at the dependencies they share. A crate only one side registered
+is named without details.
+
+`PluginLibrary::crate_builds()` lists the plugin's registered builds (its own and its linked
+dependencies'), and `PluginLibrary::crate_build_diff(&registry)` returns every crate both sides
+registered with another version or feature set (`CrateBuildDiff`: `host`, `plugin`,
+`missing_in_plugin()`, `extra_in_plugin()`), even when no boundary type conflicts (the plugin
+shares none of the crate's types yet). It is not an error; log it as a warning before
+`install_into` to see a build mismatch before it fails:
+
+```rust
+for diff in library.crate_build_diff(&registry) {
+    tracing::warn!(plugin = %library.schema().plugin.name, "{diff}");
+}
+```
+
+**No automatic stable fallback.** A plugin refused for boundary types is not silently installed
+through the stable path instead: that would hide the build problem and change what each node
+call costs. When none of the plugin's node ports uses a conflicting key (the conflicting types
+are only registered, e.g. by a linked dependency plugin, and would not cross the stable path),
+the error says so (`stable_compatible: true`) and suggests
+`install_into_as(&mut registry, InstallPath::Stable)`. When a port uses one (a node taking
+`&FrameLease`), the stable path would deliver it as a `Value`, so the fix is one cargo build, or
+a `FrameView<'_>` port (see below).
 
 ## Separately Built Plugins
 

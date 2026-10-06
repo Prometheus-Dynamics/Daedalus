@@ -141,11 +141,28 @@ fn static_and_dynamic_rust_plugin_install_the_same_nodes() {
     // without, so `Counter` is another Rust type with the same key and name (the failure a host
     // hits with a separately built plugin). Install is refused before anything is registered.
     assert!(!plugin_counter.same_type(&host_counter));
+    // Both copies of the example crate register their build, so the host names the difference
+    // even before installing.
+    let diff = library.crate_build_diff(&static_registry);
+    assert_eq!(diff.len(), 1, "{diff:?}");
+    assert_eq!(diff[0].host.name, "daedalus_plugins_example_project");
+    assert_eq!(diff[0].extra_in_plugin(), ["separate-build"]);
+    assert!(diff[0].missing_in_plugin().is_empty());
     let err = library.install_into(&mut static_registry).unwrap_err();
     assert!(
-        matches!(err, PluginLibraryError::BoundaryTypeConflict { ref conflicts, .. }
-            if conflicts.iter().any(|conflict| conflict.key == counter)),
+        matches!(err, PluginLibraryError::BoundaryTypeConflict { ref conflicts, ref crate_builds, .. }
+            if conflicts.iter().any(|conflict| conflict.key == counter) && *crate_builds == diff),
         "unexpected error: {err}"
+    );
+    let message = err.to_string();
+    assert!(
+        message.contains(&format!(
+            "crate `daedalus_plugins_example_project` {}: host features `default,plugins`, plugin \
+             features `default,plugins,separate-build` (only in plugin: separate-build) — key \
+             `example:counter`: host `daedalus_plugins_example_project::Counter` (",
+            daedalus::version()
+        )),
+        "{message}"
     );
 }
 
@@ -274,4 +291,39 @@ fn dependent_plugin_links_its_dependency_and_requires_the_host_to_install_it() {
             if conflicts.iter().any(|conflict| conflict.key == lease)),
         "unexpected error: {err}"
     );
+    // Both builds of the example crate have the same features: its types differ through its
+    // dependencies (the plugin's build enables other features of the facade), which the
+    // message says.
+    assert!(
+        err.to_string().contains(&format!(
+            "crate `daedalus_plugins_example_project` {} has the same features on both sides \
+             (`default,plugins`) but resolved differently in the plugin's build through its \
+             dependency graph",
+            daedalus::version()
+        )),
+        "{err}"
+    );
+
+    // `#[plugin(crate_build)]` registered the plugin crate's build; the linked dependency's
+    // is exported too.
+    let mut names: Vec<_> = library
+        .crate_builds()
+        .iter()
+        .map(|info| info.name)
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "daedalus_plugins_dependent",
+            "daedalus_plugins_example_project"
+        ]
+    );
+    let dependent = library
+        .crate_builds()
+        .iter()
+        .find(|info| info.name == "daedalus_plugins_dependent")
+        .unwrap();
+    assert_eq!(dependent.version, daedalus::version());
+    assert!(dependent.feature_list().contains(&"dylib"), "{dependent:?}");
 }
