@@ -6,7 +6,6 @@ use super::{
 };
 use crate::portable::Arc;
 use crate::prelude::*;
-use crate::state::ExecutionContext;
 use alloc::collections::BTreeMap;
 use daedalus_transport::Payload;
 
@@ -236,15 +235,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         if is_host_bridge_node(node) {
             return None;
         }
-        let ctx = ExecutionContext {
-            state: self.core.state.clone(),
-            node_id: self.core.node_ids[input_node.0].clone(),
-            metadata: self.core.node_metadata[input_node.0].clone(),
-            graph_metadata: self.core.graph_metadata.clone(),
-            capabilities: self.core.capabilities.clone(),
-            #[cfg(feature = "gpu")]
-            gpu: self.core.gpu.clone(),
-        };
+        let ctx = self.core.contexts.get(input_node.0)?.clone();
         Some(DirectHostSingleNodeRoute {
             node: node.clone(),
             node_idx: input_node.0,

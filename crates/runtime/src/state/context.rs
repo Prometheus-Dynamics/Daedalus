@@ -4,7 +4,7 @@ use alloc::collections::BTreeMap;
 use core::time::Duration;
 
 use super::{
-    ManagedByteBuffer, ManagedResource, NodeResourceSnapshot, ResourceClass,
+    ManagedByteBuffer, ManagedResource, NodeResourceSnapshot, NodeStateSlot, ResourceClass,
     ResourceLifecycleEvent, StateError, StateStore,
 };
 
@@ -19,6 +19,8 @@ pub struct ExecutionContext {
     pub capabilities: Arc<crate::capabilities::CapabilityRegistry>,
     #[cfg(feature = "gpu")]
     pub gpu: Option<GpuContextHandle>,
+    /// `node_id`'s slot in `state`, resolved when the context is built.
+    node_state: Arc<NodeStateSlot>,
 }
 
 #[cfg(feature = "gpu")]
@@ -177,15 +179,44 @@ impl ExecutionContext {
     /// A context for running a handler outside an executor (a dynamic plugin's stable `invoke`
     /// entry point): `state` and `node_id`, no metadata, capabilities or GPU.
     pub fn detached(state: StateStore, node_id: Arc<str>) -> Self {
-        Self {
+        Self::new(
             state,
             node_id,
-            metadata: Arc::default(),
-            graph_metadata: Arc::default(),
-            capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
+            Arc::default(),
+            Arc::default(),
+            Arc::new(crate::capabilities::CapabilityRegistry::new()),
+        )
+    }
+
+    /// A context for node `node_id` (no GPU; set [`Self::gpu`] after), resolving its state slot.
+    pub fn new(
+        state: StateStore,
+        node_id: Arc<str>,
+        metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
+        graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
+        capabilities: Arc<crate::capabilities::CapabilityRegistry>,
+    ) -> Self {
+        Self {
+            node_state: state.node_state_slot(&node_id),
+            state,
+            node_id,
+            metadata,
+            graph_metadata,
+            capabilities,
             #[cfg(feature = "gpu")]
             gpu: None,
         }
+    }
+
+    /// Move this node's state of type `T` out (`StateStore::take_node_state` without the
+    /// lookup).
+    pub fn take_node_state<T: Send + Sync + 'static>(&self) -> Option<T> {
+        self.node_state.take()
+    }
+
+    /// Store this node's state of type `T` (`StateStore::set_node_state` without the lookup).
+    pub fn set_node_state<T: Send + Sync + 'static>(&self, value: T) {
+        self.node_state.set(value)
     }
 
     pub fn resources(&self) -> RuntimeResources<'_> {

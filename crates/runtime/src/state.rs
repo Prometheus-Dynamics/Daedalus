@@ -17,8 +17,38 @@ use alloc::collections::BTreeMap;
 use core::any::{Any, TypeId};
 use resources::{ResourceEntry, ResourceStorage, SharedNodeResources};
 
-/// A node's typed state slot: node id and state type.
-type NodeStateKey = (Arc<str>, TypeId);
+/// One node's typed state (`#[node(state(..))]`, decoded-constant caches): a value slot per
+/// state type. Executors resolve each node's slot once ([`StateStore::node_state_slot`]) and hand
+/// it out with the node's [`ExecutionContext`], so a call's take/set cycle neither hashes the node
+/// id nor allocates.
+#[derive(Default)]
+pub struct NodeStateSlot(crate::sync::Mutex<Vec<(TypeId, Box<dyn Any + Send + Sync>)>>);
+
+impl NodeStateSlot {
+    /// Move the state of type `T` out (`None` before the first [`Self::set`]).
+    pub fn take<T: Send + Sync + 'static>(&self) -> Option<T> {
+        let mut slots = self.0.lock();
+        let (_, slot) = slots.iter_mut().find(|(id, _)| *id == TypeId::of::<T>())?;
+        slot.downcast_mut::<Option<T>>()?.take()
+    }
+
+    /// Store the state of type `T`; the slot made by the first call is reused afterwards.
+    pub fn set<T: Send + Sync + 'static>(&self, value: T) {
+        let mut slots = self.0.lock();
+        match slots
+            .iter_mut()
+            .find(|(id, _)| *id == TypeId::of::<T>())
+            .and_then(|(_, slot)| slot.downcast_mut::<Option<T>>())
+        {
+            Some(slot) => *slot = Some(value),
+            None => slots.push((TypeId::of::<T>(), Box::new(Some(value)))),
+        }
+    }
+
+    fn clear(&self) {
+        self.0.lock().clear();
+    }
+}
 
 /// Shared runtime state store keyed by node id.
 #[derive(Default, Clone)]
@@ -26,7 +56,7 @@ pub struct StateStore {
     inner: Arc<RwLock<HashMap<String, serde_json::Value>>>,
     native: Arc<RwLock<HashMap<String, Box<dyn Any + Send + Sync>>>>,
     /// Per-node typed state (`#[node(state(..))]`), keyed by node id and state type.
-    node_state: Arc<RwLock<HashMap<NodeStateKey, Box<dyn Any + Send + Sync>>>>,
+    node_state: Arc<RwLock<HashMap<Arc<str>, Arc<NodeStateSlot>>>>,
     resources: Arc<RwLock<HashMap<String, SharedNodeResources>>>,
     custom_metrics:
         Arc<RwLock<HashMap<String, BTreeMap<String, crate::executor::CustomMetricValue>>>>,
@@ -181,25 +211,26 @@ impl StateStore {
     /// [`Self::set_node_state`]). Keyed by node id and type, so the per-tick take/set cycle of a
     /// stateful node neither builds a key nor allocates.
     pub fn take_node_state<T: Send + Sync + 'static>(&self, node_id: &Arc<str>) -> Option<T> {
-        let key = (node_id.clone(), TypeId::of::<T>());
-        let mut guard = self.node_state.write();
-        guard.get_mut(&key)?.downcast_mut::<Option<T>>()?.take()
+        self.node_state.read().get(node_id)?.take()
     }
 
     /// Store node `node_id`'s state of type `T` (see [`Self::take_node_state`]); the slot made
     /// by the first call is reused afterwards.
     pub fn set_node_state<T: Send + Sync + 'static>(&self, node_id: &Arc<str>, value: T) {
-        let key = (node_id.clone(), TypeId::of::<T>());
-        let mut guard = self.node_state.write();
-        match guard
-            .get_mut(&key)
-            .and_then(|slot| slot.downcast_mut::<Option<T>>())
-        {
-            Some(slot) => *slot = Some(value),
-            None => {
-                guard.insert(key, Box::new(Some(value)));
-            }
+        self.node_state_slot(node_id).set(value);
+    }
+
+    /// Node `node_id`'s state slot, made on first use; the slot behind
+    /// [`Self::take_node_state`] and [`Self::set_node_state`].
+    pub fn node_state_slot(&self, node_id: &Arc<str>) -> Arc<NodeStateSlot> {
+        if let Some(slot) = self.node_state.read().get(node_id) {
+            return slot.clone();
         }
+        self.node_state
+            .write()
+            .entry(node_id.clone())
+            .or_default()
+            .clone()
     }
 
     pub fn record_node_resource_usage(
@@ -457,7 +488,11 @@ impl StateStore {
         *guard = map;
         drop(guard);
         self.native.write().clear();
-        self.node_state.write().clear();
+        // Executors hold the slots: empty them in place.
+        self.node_state
+            .read()
+            .values()
+            .for_each(|slot| slot.clear());
         self.resources.write().clear();
         Ok(())
     }

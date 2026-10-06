@@ -1,8 +1,6 @@
 use crate::prelude::*;
 use daedalus_planner::{ComputeAffinity, NodeRef};
 
-use crate::state::ExecutionContext;
-
 use super::{
     ExecuteError, ExecutionTelemetry, Executor, NodeFailure, NodeHandler, ProbeCount, ProbeTime,
 };
@@ -85,6 +83,7 @@ fn run_order_timed<H: NodeHandler>(
     let graph_start = (collect_basic_metrics || collect_trace).then(|| clock.now());
     let mut first_error = None;
     let nodes = exec.nodes.clone();
+    let contexts = exec.core.contexts.clone();
     if collect_basic_metrics {
         exec.core.telemetry.node_metrics.reserve_nodes(nodes.len());
     }
@@ -180,15 +179,7 @@ fn run_order_timed<H: NodeHandler>(
             None
         };
         let mut io = exec.core.node_io(node_idx, inputs);
-        let ctx = ExecutionContext {
-            state: exec.core.state.clone(),
-            node_id: exec.core.node_ids[node_idx].clone(),
-            metadata: exec.core.node_metadata[node_idx].clone(),
-            graph_metadata: exec.core.graph_metadata.clone(),
-            capabilities: exec.core.capabilities.clone(),
-            #[cfg(feature = "gpu")]
-            gpu: exec.core.gpu.clone(),
-        };
+        let ctx = &contexts[node_idx];
         if collect_basic_metrics {
             exec.core.state.clear_node_custom_metrics(&node.id);
         }
@@ -203,7 +194,7 @@ fn run_order_timed<H: NodeHandler>(
         let run_result = {
             let _handler_span = handler_span.enter();
             let _scope = super::node_alloc_scope();
-            exec.handler.run(node, &ctx, &mut io)
+            exec.handler.run(node, ctx, &mut io)
         };
         if let Some(handler_start) = handler_start {
             let handler_duration = clock.elapsed(handler_start);

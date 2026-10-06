@@ -83,11 +83,15 @@ pub(crate) trait ExecutorConfigTarget {
     }
 
     fn apply_capabilities(&mut self, capabilities: crate::capabilities::CapabilityRegistry) {
-        self.core_mut().capabilities = Arc::new(capabilities);
+        let core = self.core_mut();
+        core.capabilities = Arc::new(capabilities);
+        core.refresh_contexts();
     }
 
     fn apply_state(&mut self, state: StateStore) {
-        self.core_mut().state = state;
+        let core = self.core_mut();
+        core.state = state;
+        core.refresh_contexts();
     }
 
     fn apply_pool_size(&mut self, size: Option<usize>) {
@@ -123,6 +127,7 @@ pub(crate) trait ExecutorConfigTarget {
         let core = self.core_mut();
         core.gpu_available = true;
         core.gpu = Some(gpu);
+        core.refresh_contexts();
     }
 
     #[cfg(not(feature = "gpu"))]

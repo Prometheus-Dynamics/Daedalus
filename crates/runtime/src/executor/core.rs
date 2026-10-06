@@ -4,7 +4,7 @@ use super::{
 };
 use crate::portable::Arc;
 use crate::prelude::*;
-use crate::state::StateStore;
+use crate::state::{ExecutionContext, StateStore};
 use crate::sync::Mutex;
 use alloc::collections::BTreeMap;
 use daedalus_core::platform::Clock;
@@ -46,6 +46,9 @@ pub(crate) struct ExecutorCore {
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
     /// Clock behind every timing this executor records (`Executor::with_clock`).
     pub(crate) clock: Clock,
+    /// Each node's `ExecutionContext`, built when the state, capabilities or GPU change rather
+    /// than per call.
+    pub(crate) contexts: Arc<[ExecutionContext]>,
 }
 
 impl ExecutorCore {
@@ -53,7 +56,7 @@ impl ExecutorCore {
         init: &ExecutorInit,
         graph_metadata: &BTreeMap<String, daedalus_data::model::Value>,
     ) -> Self {
-        Self {
+        let mut core = Self {
             state: StateStore::default(),
             gpu_available: false,
             #[cfg(feature = "gpu")]
@@ -87,7 +90,34 @@ impl ExecutorCore {
             required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
             clock: Clock::default(),
-        }
+            contexts: Arc::from(Vec::new()),
+        };
+        core.refresh_contexts();
+        core
+    }
+
+    /// Rebuild [`Self::contexts`] from the current state, capabilities and GPU.
+    pub(crate) fn refresh_contexts(&mut self) {
+        self.contexts = self
+            .node_ids
+            .iter()
+            .zip(self.node_metadata.iter())
+            .map(|(node_id, metadata)| {
+                #[allow(unused_mut)]
+                let mut ctx = ExecutionContext::new(
+                    self.state.clone(),
+                    node_id.clone(),
+                    metadata.clone(),
+                    self.graph_metadata.clone(),
+                    self.capabilities.clone(),
+                );
+                #[cfg(feature = "gpu")]
+                {
+                    ctx.gpu = self.gpu.clone();
+                }
+                ctx
+            })
+            .collect();
     }
 
     /// A `NodeIo` for node `node_idx` over `inputs` (a port buffer), wired to this executor's
@@ -136,6 +166,7 @@ impl ExecutorCore {
             required_inputs: self.required_inputs.clone(),
             capabilities: self.capabilities.clone(),
             clock: self.clock.clone(),
+            contexts: self.contexts.clone(),
         }
     }
 }

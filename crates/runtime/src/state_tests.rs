@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use alloc::collections::BTreeMap;
 use core::time::Duration;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{
@@ -141,15 +140,7 @@ impl ManagedResource for EmptyManagedResource {
 }
 
 fn test_context(state: StateStore) -> ExecutionContext {
-    ExecutionContext {
-        state,
-        node_id: Arc::<str>::from("node"),
-        metadata: Arc::new(BTreeMap::new()),
-        graph_metadata: Arc::new(BTreeMap::new()),
-        capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
-        #[cfg(feature = "gpu")]
-        gpu: None,
-    }
+    ExecutionContext::detached(state, Arc::<str>::from("node"))
 }
 
 #[test]

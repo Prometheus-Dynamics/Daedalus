@@ -366,15 +366,10 @@ mod tests {
     }
 
     fn test_context() -> ExecutionContext {
-        ExecutionContext {
-            state: crate::state::StateStore::default(),
-            node_id: Arc::<str>::from("node"),
-            metadata: Arc::new(Default::default()),
-            graph_metadata: Arc::new(Default::default()),
-            capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
-            #[cfg(feature = "gpu")]
-            gpu: None,
-        }
+        ExecutionContext::detached(
+            crate::state::StateStore::default(),
+            Arc::<str>::from("node"),
+        )
     }
 
     #[test]

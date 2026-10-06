@@ -456,8 +456,8 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
 
         let state_binding = if let (Some(sty), Some(id)) = (state_ty.clone(), state_param.clone()) {
             Some(quote! {
-                let mut __state_value: #sty = ctx.state
-                    .take_node_state::<#sty>(&ctx.node_id)
+                let mut __state_value: #sty = ctx
+                    .take_node_state::<#sty>()
                     .unwrap_or_default();
                 let #id: &mut #sty = &mut __state_value;
             })
@@ -467,7 +467,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
         let ret_handling = if state_binding.is_some() {
             quote! {
                 let __state_result = { #ret_handling };
-                ctx.state.set_node_state(&ctx.node_id, __state_value);
+                ctx.set_node_state(__state_value);
                 __state_result
             }
         } else {
@@ -515,9 +515,9 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             let mut config_fetch_stmts: Vec<proc_macro2::TokenStream> = Vec::new();
             let mut cache_restores: Vec<proc_macro2::TokenStream> = Vec::new();
             let mut take_cache = |ident: &syn::Ident, cache_ty: TokenStream| {
-                cache_restores.push(quote! { ctx.state.set_node_state(&ctx.node_id, #ident); });
+                cache_restores.push(quote! { ctx.set_node_state(#ident); });
                 quote! {
-                    let mut #ident = ctx.state.take_node_state::<#cache_ty>(&ctx.node_id).unwrap_or_default();
+                    let mut #ident = ctx.take_node_state::<#cache_ty>().unwrap_or_default();
                 }
             };
             for (idx, cfg) in config_args.iter().enumerate() {

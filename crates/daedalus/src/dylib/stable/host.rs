@@ -123,11 +123,10 @@ impl Drop for Instance {
 impl HostNode {
     fn run(&self, ctx: &ExecutionContext, io: &mut NodeIo) -> Result<(), NodeError> {
         let instance = ctx
-            .state
-            .take_node_state::<Instance>(&ctx.node_id)
+            .take_node_state::<Instance>()
             .unwrap_or_else(|| Instance::new(self.handlers.release));
         let result = self.call(instance.id, io);
-        ctx.state.set_node_state(&ctx.node_id, instance);
+        ctx.set_node_state(instance);
         result
     }
 
