@@ -9,8 +9,8 @@ use daedalus::{
     macros::{node, plugin},
     runtime::{NodeError, plugins::PluginRegistry},
     transport::{
-        ForeignInterface, ForeignRef, FrameInterface, FramePlane, FrameResidency, FrameSource,
-        FrameView, Payload, Residency, TypeKey, fourcc,
+        ForeignInterface, ForeignRef, FrameFormatKind, FrameInterface, FramePlane, FrameResidency,
+        FrameSource, FrameView, Payload, Residency, TypeKey, fourcc,
     },
     type_key,
 };
@@ -38,14 +38,20 @@ impl FrameSource for GrayFrame {
     fn sequence(&self) -> u64 {
         self.sequence
     }
+    fn format_kind(&self) -> FrameFormatKind {
+        FrameFormatKind::Pixel
+    }
     fn residency(&self) -> FrameResidency {
         FrameResidency::Cpu
     }
     fn plane_count(&self) -> u32 {
         1
     }
-    fn plane(&self, index: u32) -> Option<FramePlane<'_>> {
-        (index == 0).then(|| FramePlane::mapped(&self.pixels, self.width))
+    fn plane(&self, index: u32) -> Option<FramePlane> {
+        (index == 0).then(|| FramePlane::cpu(&self.pixels, self.width.into()))
+    }
+    fn plane_data(&self, index: u32) -> Option<&[u8]> {
+        (index == 0).then_some(&self.pixels[..])
     }
 }
 
@@ -59,12 +65,9 @@ struct OwnerPlugin;
 
 #[node(id = "test.foreign.sum", inputs("frame"), outputs("sum", "ptr"))]
 fn sum(frame: FrameView<'_>) -> Result<(i64, i64), NodeError> {
-    let plane = frame
-        .plane(0)
-        .ok_or(NodeError::InvalidInput("no plane".into()))?;
-    let pixels = plane
-        .data
-        .ok_or(NodeError::InvalidInput("not mapped".into()))?;
+    let pixels = frame
+        .plane_bytes(0)
+        .ok_or(NodeError::InvalidInput("plane 0 not CPU-readable".into()))?;
     Ok((
         pixels.iter().map(|&p| i64::from(p)).sum(),
         pixels.as_ptr() as i64,

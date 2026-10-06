@@ -8,6 +8,28 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- **Breaking: `daedalus:frame` v2** (`FrameInterface` version 2, new vtable layout hash; v1
+  plugins are refused with `PluginLibraryError::ForeignInterfaceMismatch`, and a registry
+  holding one version refuses the other with `PluginError::ForeignInterfaceConflict`;
+  `FRAME_INTERFACE_V1` names the retired identity). Plane metadata no longer touches pixel
+  memory: the vtable splits `plane_fd` / `plane_offset` / `plane_stride` / `plane_len` /
+  `plane_mapping` from `plane_data` (begin CPU access: map lazily, sync for reads) and
+  `plane_end_cpu_access`, so an fd-only consumer (a GPU dma-buf importer) makes the provider
+  neither `mmap` nor `DMA_BUF_IOCTL_SYNC`. Offsets, strides and lengths are `u64`. New
+  `format_kind` (`FrameFormatKind::{Unknown, Pixel, Bayer, Compressed}`) and per-plane
+  `PlaneMapping::{Cached, Uncached, WriteCombined, Unmapped}`; `MIPI_FORMAT_MOD_CSI2_PACKED`
+  and `FrameView::is_csi2_packed` disambiguate libcamera's CSI-2 modifier from MediaTek's (same
+  vendor byte). `FrameSource::plane` returns metadata (`FramePlane` lost its lifetime and
+  `data`), CPU bytes come from `plane_data` + `end_cpu_access`; consumers read
+  `FrameView::plane_bytes(i)` / `cpu_planes()` (a `PlaneBytes` guard that ends the access on
+  drop) and `planes()` is metadata only. `ExternalFrameDescriptor::from_frame_view` (Linux,
+  `daedalus-gpu`) builds a dma-buf import from a `FrameView` without CPU access. Spec,
+  migration table and a lazily mapped dma-buf provider sketch in
+  `docs/foreign-frame-interface.md`.
+- `daedalus-frame-bench`: memfd and dma-heap frames are mapped on the first CPU access instead
+  of at creation, and count it (`SyntheticFrame::map_count`, `cpu_access_count`); tests prove a
+  metadata/fd-only consumer never maps and a CPU consumer maps each buffer once and begins one
+  access per frame and plane.
 - **Dynamic plugins: `PLUGIN_ABI_VERSION` 9** (rebuild every plugin): the descriptor gained a
   `crate_builds` entry point (`CrateBuildTable`).
 - **Boundary type conflicts name the crate.** `PluginLibraryError::BoundaryTypeConflict` groups

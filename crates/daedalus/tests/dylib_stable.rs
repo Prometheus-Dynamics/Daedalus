@@ -22,7 +22,8 @@ use daedalus::runtime::NODE_FIRE_META_KEY;
 use daedalus::runtime::handler_registry::HandlerRegistry;
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
 use daedalus::transport::{
-    FrameInterface, FramePlane, FrameResidency, FrameSource, Payload, Residency, fourcc,
+    FrameFormatKind, FrameInterface, FramePlane, FrameResidency, FrameSource, Payload, Residency,
+    fourcc,
 };
 use daedalus::{PluginLibrary, type_key};
 use daedalus_plugins_stable_abi::{Point, SIMULATED_RUSTC, StableAbiPlugin};
@@ -46,14 +47,20 @@ impl FrameSource for GrayFrame {
     fn format(&self) -> u32 {
         fourcc(b"R8  ")
     }
+    fn format_kind(&self) -> FrameFormatKind {
+        FrameFormatKind::Pixel
+    }
     fn residency(&self) -> FrameResidency {
         FrameResidency::Cpu
     }
     fn plane_count(&self) -> u32 {
         1
     }
-    fn plane(&self, index: u32) -> Option<FramePlane<'_>> {
-        (index == 0).then(|| FramePlane::mapped(&self.pixels, self.width))
+    fn plane(&self, index: u32) -> Option<FramePlane> {
+        (index == 0).then(|| FramePlane::cpu(&self.pixels, self.width.into()))
+    }
+    fn plane_data(&self, index: u32) -> Option<&[u8]> {
+        (index == 0).then_some(&self.pixels[..])
     }
 }
 

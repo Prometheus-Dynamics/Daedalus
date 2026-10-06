@@ -1,13 +1,16 @@
-//! `daedalus:frame` v1: the standard foreign interface for image frames.
+//! `daedalus:frame` v2: the standard foreign interface for image frames.
 //!
 //! Camera-free and dependency-free: frame owners (camera stacks, decoders, image libraries)
 //! implement [`FrameSource`] for their frame type in their `daedalus` integration feature, and
-//! any node, including one in a separately built plugin, reads it as a [`FrameView`]. The
-//! public contract is specified in `docs/foreign-frame-interface.md`.
+//! any node, including one in a separately built plugin, reads it as a [`FrameView`]. Plane
+//! metadata (fd, offset, stride, length, mapping kind) never touches pixel memory; CPU bytes are
+//! mapped only when a consumer asks for them ([`FrameView::plane_bytes`]). The public contract
+//! is specified in `docs/foreign-frame-interface.md`.
 
 use core::ffi::c_void;
+use core::ops::Deref;
 
-use crate::{ForeignRef, ProvideForeign, foreign_interface};
+use crate::{ForeignInterfaceInfo, ForeignRef, ProvideForeign, foreign_interface};
 
 /// Key of the frame interface.
 pub const FRAME_INTERFACE_KEY: &str = "daedalus:frame";
@@ -16,6 +19,10 @@ pub const FRAME_INTERFACE_KEY: &str = "daedalus:frame";
 pub const DRM_FORMAT_MOD_LINEAR: u64 = 0;
 /// DRM format modifier meaning "no explicit modifier".
 pub const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
+/// libcamera's MIPI CSI-2 packed Bayer modifier (`fourcc_mod_code(MIPI, 1)`). Its vendor byte
+/// (0x0b) is MediaTek's in upstream `drm_fourcc.h`: it only means CSI-2 packing when the frame's
+/// [`FrameFormatKind`] is [`FrameFormatKind::Bayer`] (see [`FrameView::is_csi2_packed`]).
+pub const MIPI_FORMAT_MOD_CSI2_PACKED: u64 = (0x0b << 56) | 1;
 
 /// DRM fourcc code of a four-character format name, e.g. `fourcc(b"NV12")`.
 pub const fn fourcc(code: &[u8; 4]) -> u32 {
@@ -23,15 +30,19 @@ pub const fn fourcc(code: &[u8; 4]) -> u32 {
 }
 
 foreign_interface! {
-    /// The `daedalus:frame` v1 interface (see [`FrameView`] and [`FrameSource`]).
-    pub interface FrameInterface("daedalus:frame", version = 1);
+    /// The `daedalus:frame` v2 interface (see [`FrameView`] and [`FrameSource`]).
+    pub interface FrameInterface("daedalus:frame", version = 2);
 
-    /// Accessors of `daedalus:frame` v1. Every function takes the handle's data pointer first.
+    /// Accessors of `daedalus:frame` v2. Every function takes the handle's data pointer first;
+    /// per-plane functions are only called with `index < plane_count`. Everything but
+    /// `plane_data` is metadata and never maps or syncs plane memory.
     pub struct FrameVTable {
         pub width: unsafe extern "C" fn(data: *const c_void) -> u32,
         pub height: unsafe extern "C" fn(data: *const c_void) -> u32,
-        /// DRM fourcc.
+        /// DRM fourcc (or V4L2 fourcc for compressed formats, see [`FrameFormatKind`]).
         pub format: unsafe extern "C" fn(data: *const c_void) -> u32,
+        /// [`FrameFormatKind`] as `u32`.
+        pub format_kind: unsafe extern "C" fn(data: *const c_void) -> u32,
         /// DRM format modifier.
         pub modifier: unsafe extern "C" fn(data: *const c_void) -> u64,
         pub timestamp_ns: unsafe extern "C" fn(data: *const c_void) -> u64,
@@ -39,25 +50,56 @@ foreign_interface! {
         /// [`FrameResidency`] as `u32`.
         pub residency: unsafe extern "C" fn(data: *const c_void) -> u32,
         pub plane_count: unsafe extern "C" fn(data: *const c_void) -> u32,
-        /// Mapped bytes of plane `index`, or null when the plane is not CPU-mapped.
-        pub plane_data: unsafe extern "C" fn(data: *const c_void, index: u32) -> *const u8,
-        pub plane_len: unsafe extern "C" fn(data: *const c_void, index: u32) -> usize,
-        pub plane_stride: unsafe extern "C" fn(data: *const c_void, index: u32) -> u32,
-        pub plane_offset: unsafe extern "C" fn(data: *const c_void, index: u32) -> u32,
-        /// dmabuf file descriptor of plane `index`, or -1.
+        /// dma-buf file descriptor of plane `index` (borrowed), or -1.
         pub plane_fd: unsafe extern "C" fn(data: *const c_void, index: u32) -> i32,
+        /// Offset of plane `index` in its dma-buf (or buffer).
+        pub plane_offset: unsafe extern "C" fn(data: *const c_void, index: u32) -> u64,
+        pub plane_stride: unsafe extern "C" fn(data: *const c_void, index: u32) -> u64,
+        pub plane_len: unsafe extern "C" fn(data: *const c_void, index: u32) -> u64,
+        /// [`PlaneMapping`] as `u32`.
+        pub plane_mapping: unsafe extern "C" fn(data: *const c_void, index: u32) -> u32,
+        /// Begin CPU access to plane `index`: map it if needed, sync it for CPU reads and return
+        /// its bytes (`*len` set to their length), or null when the CPU cannot read it. Every
+        /// non-null result is paired with exactly one `plane_end_cpu_access(index)`.
+        pub plane_data:
+            unsafe extern "C" fn(data: *const c_void, index: u32, len: *mut u64) -> *const u8,
+        /// End a CPU access begun by a non-null `plane_data(index)`.
+        pub plane_end_cpu_access: unsafe extern "C" fn(data: *const c_void, index: u32),
     }
 }
+
+/// Identity of the retired `daedalus:frame` v1 (13 accessors, `u32` offsets and strides, plane
+/// bytes fetched with every field). No v1 vtable exists any more; hosts can use this to explain
+/// a refused v1 plugin, and tests to check that v1 and v2 never mix.
+pub static FRAME_INTERFACE_V1: ForeignInterfaceInfo = ForeignInterfaceInfo::new(
+    FRAME_INTERFACE_KEY,
+    1,
+    "width: unsafe extern \"C\" fn(data: *const c_void) -> u32;\
+     height: unsafe extern \"C\" fn(data: *const c_void) -> u32;\
+     format: unsafe extern \"C\" fn(data: *const c_void) -> u32;\
+     modifier: unsafe extern \"C\" fn(data: *const c_void) -> u64;\
+     timestamp_ns: unsafe extern \"C\" fn(data: *const c_void) -> u64;\
+     sequence: unsafe extern \"C\" fn(data: *const c_void) -> u64;\
+     residency: unsafe extern \"C\" fn(data: *const c_void) -> u32;\
+     plane_count: unsafe extern \"C\" fn(data: *const c_void) -> u32;\
+     plane_data: unsafe extern \"C\" fn(data: *const c_void, index: u32) -> *const u8;\
+     plane_len: unsafe extern \"C\" fn(data: *const c_void, index: u32) -> usize;\
+     plane_stride: unsafe extern \"C\" fn(data: *const c_void, index: u32) -> u32;\
+     plane_offset: unsafe extern \"C\" fn(data: *const c_void, index: u32) -> u32;\
+     plane_fd: unsafe extern \"C\" fn(data: *const c_void, index: u32) -> i32;",
+    13 * core::mem::size_of::<usize>(),
+    core::mem::align_of::<usize>(),
+);
 
 /// Where a frame's memory lives.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FrameResidency {
-    /// Host memory; every plane is mapped.
+    /// Host memory; `plane_data` succeeds for every plane.
     Cpu = 0,
-    /// Memory owned outside Daedalus (e.g. dmabuf); planes may or may not be mapped.
+    /// Memory owned outside Daedalus (e.g. dma-buf); planes may or may not be mappable.
     External = 1,
-    /// GPU memory; planes are usually not mapped.
+    /// GPU memory; planes are usually not mappable.
     Gpu = 2,
 }
 
@@ -72,62 +114,127 @@ impl FrameResidency {
     }
 }
 
-/// One plane of a frame.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FramePlane<'a> {
-    /// The plane's bytes when CPU-mapped.
-    pub data: Option<&'a [u8]>,
-    /// Plane size in bytes (also when not mapped).
-    pub len: usize,
-    pub stride: u32,
-    /// Offset of the plane in its dmabuf.
-    pub offset: u32,
-    /// dmabuf file descriptor, borrowed from the frame (duplicate it to keep it).
-    pub dmabuf_fd: Option<i32>,
+/// What `format` encodes. Providers should always set it: format 0, Bayer codes and colliding
+/// modifier vendors are only unambiguous with an explicit kind.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FrameFormatKind {
+    /// Not stated: consumers guess from `format` and `modifier` (as v1 did).
+    #[default]
+    Unknown = 0,
+    /// Pixels: `format` is a DRM fourcc with its DRM modifier.
+    Pixel = 1,
+    /// Raw sensor data: `format` is a (libcamera) Bayer or mono raw DRM code, `modifier` may be
+    /// [`MIPI_FORMAT_MOD_CSI2_PACKED`] or a vendor compression modifier.
+    Bayer = 2,
+    /// A compressed bitstream (MJPEG, H.264, ...): `format` is its V4L2 fourcc (`MJPG`, `H264`,
+    /// `HEVC`), plane 0 holds the payload (`len` = payload bytes, `stride` 0).
+    Compressed = 3,
 }
 
-impl<'a> FramePlane<'a> {
-    /// A CPU-mapped plane.
-    pub fn mapped(data: &'a [u8], stride: u32) -> Self {
-        Self {
-            data: Some(data),
-            len: data.len(),
-            stride,
-            offset: 0,
-            dmabuf_fd: None,
+impl FrameFormatKind {
+    /// Decode the vtable value; unknown values are treated as [`Self::Unknown`].
+    pub fn from_raw(raw: u32) -> Self {
+        match raw {
+            1 => Self::Pixel,
+            2 => Self::Bayer,
+            3 => Self::Compressed,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// How CPU reads of a plane through `plane_data` perform (whether or not it is mapped yet).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PlaneMapping {
+    /// Cached memory: CPU reads are fast.
+    #[default]
+    Cached = 0,
+    /// Uncached memory: readable, but every CPU read goes to DRAM; copy it out once or use the
+    /// GPU instead of repeated reads.
+    Uncached = 1,
+    /// Write-combined memory: fine to write sequentially, very slow to read.
+    WriteCombined = 2,
+    /// Not CPU-accessible: `plane_data` returns null.
+    Unmapped = 3,
+}
+
+impl PlaneMapping {
+    /// Decode the vtable value; unknown values are treated as [`Self::Uncached`].
+    pub fn from_raw(raw: u32) -> Self {
+        match raw {
+            0 => Self::Cached,
+            2 => Self::WriteCombined,
+            3 => Self::Unmapped,
+            _ => Self::Uncached,
         }
     }
 
-    /// A dmabuf plane (add its mapping with [`Self::with_data`] when it has one).
-    pub fn dmabuf(fd: i32, offset: u32, stride: u32, len: usize) -> Self {
+    /// Whether the CPU can read the plane at all.
+    pub fn is_cpu_readable(self) -> bool {
+        self != Self::Unmapped
+    }
+}
+
+/// Metadata of one plane; reading it never maps or syncs the plane's memory.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FramePlane {
+    /// dma-buf file descriptor, borrowed from the frame (duplicate it to keep it).
+    pub dmabuf_fd: Option<i32>,
+    /// Offset of the plane in its dma-buf (or buffer).
+    pub offset: u64,
+    /// Bytes per row (0 for compressed payloads).
+    pub stride: u64,
+    /// Plane size in bytes.
+    pub len: u64,
+    pub mapping: PlaneMapping,
+}
+
+impl FramePlane {
+    /// A plane in cached host memory (`bytes` are what `plane_data` returns).
+    pub fn cpu(bytes: &[u8], stride: u64) -> Self {
         Self {
-            data: None,
-            len,
+            len: bytes.len() as u64,
             stride,
-            offset,
+            ..Self::default()
+        }
+    }
+
+    /// A dma-buf plane, [`PlaneMapping::Unmapped`] until [`Self::with_mapping`] says how the
+    /// provider maps it.
+    pub fn dmabuf(fd: i32, offset: u64, stride: u64, len: u64) -> Self {
+        Self {
             dmabuf_fd: Some(fd),
+            offset,
+            stride,
+            len,
+            mapping: PlaneMapping::Unmapped,
         }
     }
 
-    pub fn with_data(mut self, data: &'a [u8]) -> Self {
-        self.len = data.len();
-        self.data = Some(data);
+    pub fn with_mapping(mut self, mapping: PlaneMapping) -> Self {
+        self.mapping = mapping;
         self
     }
 }
 
-/// Safe owner-side implementation of `daedalus:frame` v1.
+/// Safe owner-side implementation of `daedalus:frame` v2.
 ///
 /// Implementing it provides the interface (`ProvideForeign<FrameInterface>`), so the owner's
 /// Daedalus integration registers it with
-/// `registry.register_foreign_provider::<MyFrame, FrameInterface>()`. Plane memory must stay
-/// valid and unchanged while the frame is shared. Methods must not panic: they are called
-/// through `extern "C"` functions, where a panic aborts.
+/// `registry.register_foreign_provider::<MyFrame, FrameInterface>()`. Metadata stays unchanged
+/// while the frame is shared. Methods must not panic: they are called through `extern "C"`
+/// functions, where a panic aborts.
 pub trait FrameSource: Send + Sync + 'static {
     fn width(&self) -> u32;
     fn height(&self) -> u32;
-    /// DRM fourcc (see [`fourcc`]).
+    /// DRM fourcc (see [`fourcc`] and [`FrameFormatKind`]).
     fn format(&self) -> u32;
+    /// What [`Self::format`] encodes; set it explicitly.
+    fn format_kind(&self) -> FrameFormatKind {
+        FrameFormatKind::Unknown
+    }
     fn modifier(&self) -> u64 {
         DRM_FORMAT_MOD_LINEAR
     }
@@ -140,8 +247,25 @@ pub trait FrameSource: Send + Sync + 'static {
     }
     fn residency(&self) -> FrameResidency;
     fn plane_count(&self) -> u32;
-    /// Plane `index`, `None` when out of range.
-    fn plane(&self, index: u32) -> Option<FramePlane<'_>>;
+    /// Metadata of plane `index`, `None` when out of range. Must not map or sync plane memory:
+    /// fd-only consumers (GPU importers) read nothing else.
+    fn plane(&self, index: u32) -> Option<FramePlane>;
+    /// Begin CPU access to plane `index` and return its bytes, mapping lazily on first use (keep
+    /// the mapping until the frame drops) and syncing for CPU reads (`DMA_BUF_IOCTL_SYNC` with
+    /// `SYNC_START | SYNC_READ` for dma-bufs). `None` when the CPU cannot read the plane.
+    ///
+    /// Every `Some` is followed by exactly one [`Self::end_cpu_access`] for the same plane, and
+    /// accesses may overlap (several consumers read one frame), so count them when syncing. The
+    /// bytes must stay valid and unchanged until that end call.
+    fn plane_data(&self, index: u32) -> Option<&[u8]> {
+        let _ = index;
+        None
+    }
+    /// End a CPU access begun by [`Self::plane_data`] (`SYNC_END | SYNC_READ` once the last
+    /// overlapping access ends).
+    fn end_cpu_access(&self, index: u32) {
+        let _ = index;
+    }
 }
 
 mod thunks {
@@ -170,7 +294,7 @@ mod thunks {
                 data: *const c_void,
                 index: u32,
             ) -> $ret {
-                let f: fn(Option<FramePlane<'_>>) -> $ret = $body;
+                let f: fn(Option<FramePlane>) -> $ret = $body;
                 // Safety: the vtable is only used with data pointers to `T`.
                 f(unsafe { source::<T>(data) }.plane(index))
             }
@@ -181,6 +305,7 @@ mod thunks {
         width -> u32 = T::width;
         height -> u32 = T::height;
         format -> u32 = T::format;
+        format_kind -> u32 = |frame| frame.format_kind() as u32;
         modifier -> u64 = T::modifier;
         timestamp_ns -> u64 = T::timestamp_ns;
         sequence -> u64 = T::sequence;
@@ -189,13 +314,37 @@ mod thunks {
     }
 
     plane! {
-        plane_data -> *const u8 = |plane| {
-            plane.and_then(|plane| plane.data).map_or(core::ptr::null(), <[u8]>::as_ptr)
-        };
-        plane_len -> usize = |plane| plane.map_or(0, |plane| plane.len);
-        plane_stride -> u32 = |plane| plane.map_or(0, |plane| plane.stride);
-        plane_offset -> u32 = |plane| plane.map_or(0, |plane| plane.offset);
         plane_fd -> i32 = |plane| plane.and_then(|plane| plane.dmabuf_fd).unwrap_or(-1);
+        plane_offset -> u64 = |plane| plane.map_or(0, |plane| plane.offset);
+        plane_stride -> u64 = |plane| plane.map_or(0, |plane| plane.stride);
+        plane_len -> u64 = |plane| plane.map_or(0, |plane| plane.len);
+        plane_mapping -> u32 = |plane| {
+            plane.map_or(PlaneMapping::Unmapped, |plane| plane.mapping) as u32
+        };
+    }
+
+    pub(super) unsafe extern "C" fn plane_data<T: FrameSource>(
+        data: *const c_void,
+        index: u32,
+        len: *mut u64,
+    ) -> *const u8 {
+        // Safety: the vtable is only used with data pointers to `T`.
+        let Some(bytes) = unsafe { source::<T>(data) }.plane_data(index) else {
+            return core::ptr::null();
+        };
+        if !len.is_null() {
+            // Safety: a non-null `len` points to a writable `u64` (the caller's contract).
+            unsafe { *len = bytes.len() as u64 };
+        }
+        bytes.as_ptr()
+    }
+
+    pub(super) unsafe extern "C" fn plane_end_cpu_access<T: FrameSource>(
+        data: *const c_void,
+        index: u32,
+    ) {
+        // Safety: the vtable is only used with data pointers to `T`.
+        unsafe { source::<T>(data) }.end_cpu_access(index)
     }
 }
 
@@ -208,23 +357,26 @@ unsafe impl<T: FrameSource> ProvideForeign<FrameInterface> for T {
                 width: thunks::width::<T>,
                 height: thunks::height::<T>,
                 format: thunks::format::<T>,
+                format_kind: thunks::format_kind::<T>,
                 modifier: thunks::modifier::<T>,
                 timestamp_ns: thunks::timestamp_ns::<T>,
                 sequence: thunks::sequence::<T>,
                 residency: thunks::residency::<T>,
                 plane_count: thunks::plane_count::<T>,
-                plane_data: thunks::plane_data::<T>,
-                plane_len: thunks::plane_len::<T>,
-                plane_stride: thunks::plane_stride::<T>,
-                plane_offset: thunks::plane_offset::<T>,
                 plane_fd: thunks::plane_fd::<T>,
+                plane_offset: thunks::plane_offset::<T>,
+                plane_stride: thunks::plane_stride::<T>,
+                plane_len: thunks::plane_len::<T>,
+                plane_mapping: thunks::plane_mapping::<T>,
+                plane_data: thunks::plane_data::<T>,
+                plane_end_cpu_access: thunks::plane_end_cpu_access::<T>,
             }
         }
     }
 }
 
-/// A frame seen through `daedalus:frame` v1. Take it as a node input (`frame: FrameView<'_>`);
-/// it borrows the input payload, so plane slices live as long as the view.
+/// A frame seen through `daedalus:frame` v2. Take it as a node input (`frame: FrameView<'_>`);
+/// it borrows the input payload, which keeps the frame alive for `'a`.
 pub type FrameView<'a> = ForeignRef<'a, FrameInterface>;
 
 impl<'a> ForeignRef<'a, FrameInterface> {
@@ -238,13 +390,24 @@ impl<'a> ForeignRef<'a, FrameInterface> {
         unsafe { (self.vtable().height)(self.data()) }
     }
 
-    /// DRM fourcc (see [`fourcc`]).
+    /// DRM fourcc (see [`fourcc`] and [`Self::format_kind`]).
     pub fn format(&self) -> u32 {
         unsafe { (self.vtable().format)(self.data()) }
     }
 
+    pub fn format_kind(&self) -> FrameFormatKind {
+        FrameFormatKind::from_raw(unsafe { (self.vtable().format_kind)(self.data()) })
+    }
+
     pub fn modifier(&self) -> u64 {
         unsafe { (self.vtable().modifier)(self.data()) }
+    }
+
+    /// Raw Bayer data in libcamera's MIPI CSI-2 packing (not a MediaTek-tiled pixel format,
+    /// whose modifiers share the vendor byte).
+    pub fn is_csi2_packed(&self) -> bool {
+        self.format_kind() == FrameFormatKind::Bayer
+            && self.modifier() == MIPI_FORMAT_MOD_CSI2_PACKED
     }
 
     pub fn timestamp_ns(&self) -> u64 {
@@ -263,91 +426,97 @@ impl<'a> ForeignRef<'a, FrameInterface> {
         unsafe { (self.vtable().plane_count)(self.data()) }
     }
 
-    /// Plane `index`, `None` when out of range.
-    pub fn plane(&self, index: u32) -> Option<FramePlane<'a>> {
+    /// Metadata of plane `index` (never maps it), `None` when out of range.
+    pub fn plane(&self, index: u32) -> Option<FramePlane> {
         if index >= self.plane_count() {
             return None;
         }
         let (vtable, data) = (self.vtable(), self.data());
-        let len = unsafe { (vtable.plane_len)(data, index) };
-        let ptr = unsafe { (vtable.plane_data)(data, index) };
         let fd = unsafe { (vtable.plane_fd)(data, index) };
         Some(FramePlane {
-            // Safety: a non-null pointer maps `len` bytes that stay valid and unchanged while
-            // the frame is shared, which the borrowed handle guarantees for `'a`.
-            data: (!ptr.is_null()).then(|| unsafe { core::slice::from_raw_parts(ptr, len) }),
-            len,
-            stride: unsafe { (vtable.plane_stride)(data, index) },
-            offset: unsafe { (vtable.plane_offset)(data, index) },
             dmabuf_fd: (fd >= 0).then_some(fd),
+            offset: unsafe { (vtable.plane_offset)(data, index) },
+            stride: unsafe { (vtable.plane_stride)(data, index) },
+            len: unsafe { (vtable.plane_len)(data, index) },
+            mapping: PlaneMapping::from_raw(unsafe { (vtable.plane_mapping)(data, index) }),
         })
     }
 
-    pub fn planes(&self) -> impl Iterator<Item = FramePlane<'a>> + 'a {
+    /// Metadata of every plane (never maps them).
+    pub fn planes(&self) -> impl Iterator<Item = FramePlane> + 'a {
         let view = *self;
         (0..view.plane_count()).filter_map(move |index| view.plane(index))
+    }
+
+    /// Map plane `index` for CPU reads; the access ends when the guard drops. `None` when out of
+    /// range or not CPU-readable. Check [`FramePlane::mapping`] first to avoid slow reads.
+    pub fn plane_bytes(&self, index: u32) -> Option<PlaneBytes<'a>> {
+        if index >= self.plane_count() {
+            return None;
+        }
+        let mut len = 0u64;
+        let ptr = unsafe { (self.vtable().plane_data)(self.data(), index, &mut len) };
+        if ptr.is_null() {
+            return None;
+        }
+        Some(PlaneBytes {
+            // Safety: a non-null pointer maps `len` bytes that stay valid and unchanged until
+            // the matching end call, which only the guard's drop makes.
+            bytes: unsafe { core::slice::from_raw_parts(ptr, len as usize) },
+            frame: *self,
+            index,
+        })
+    }
+
+    /// [`Self::plane_bytes`] of every plane, in order (`None` for one the CPU cannot read).
+    pub fn cpu_planes(&self) -> impl Iterator<Item = Option<PlaneBytes<'a>>> + 'a {
+        let view = *self;
+        (0..view.plane_count()).map(move |index| view.plane_bytes(index))
+    }
+}
+
+/// CPU bytes of one plane, from [`FrameView::plane_bytes`]. Dropping it ends the CPU access.
+pub struct PlaneBytes<'a> {
+    bytes: &'a [u8],
+    frame: FrameView<'a>,
+    index: u32,
+}
+
+impl PlaneBytes<'_> {
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+}
+
+impl Deref for PlaneBytes<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.bytes
+    }
+}
+
+impl AsRef<[u8]> for PlaneBytes<'_> {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes
+    }
+}
+
+impl core::fmt::Debug for PlaneBytes<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PlaneBytes")
+            .field("index", &self.index)
+            .field("len", &self.bytes.len())
+            .finish()
+    }
+}
+
+impl Drop for PlaneBytes<'_> {
+    fn drop(&mut self) {
+        // Safety: ends the access this guard's non-null `plane_data` began, exactly once.
+        unsafe { (self.frame.vtable().plane_end_cpu_access)(self.frame.data(), self.index) }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{ForeignHandle, ForeignInterface};
-    use alloc::sync::Arc;
-
-    struct Nv12 {
-        luma: Vec<u8>,
-        chroma: Vec<u8>,
-    }
-
-    impl FrameSource for Nv12 {
-        fn width(&self) -> u32 {
-            4
-        }
-        fn height(&self) -> u32 {
-            2
-        }
-        fn format(&self) -> u32 {
-            fourcc(b"NV12")
-        }
-        fn sequence(&self) -> u64 {
-            7
-        }
-        fn residency(&self) -> FrameResidency {
-            FrameResidency::Cpu
-        }
-        fn plane_count(&self) -> u32 {
-            3
-        }
-        fn plane(&self, index: u32) -> Option<FramePlane<'_>> {
-            match index {
-                0 => Some(FramePlane::mapped(&self.luma, 4)),
-                1 => Some(FramePlane::mapped(&self.chroma, 4)),
-                2 => Some(FramePlane::dmabuf(9, 16, 4, 4)),
-                _ => None,
-            }
-        }
-    }
-
-    #[test]
-    fn frame_view_reads_the_owner_without_copying() {
-        let frame = Arc::new(Nv12 {
-            luma: vec![1; 8],
-            chroma: vec![2; 4],
-        });
-        let handle = ForeignHandle::from_arc::<_, FrameInterface>(frame.clone());
-        let view = handle.view::<FrameInterface>().unwrap();
-        assert_eq!((view.width(), view.height()), (4, 2));
-        assert_eq!(view.format(), u32::from_le_bytes(*b"NV12"));
-        assert_eq!(view.modifier(), DRM_FORMAT_MOD_LINEAR);
-        assert_eq!((view.sequence(), view.timestamp_ns()), (7, 0));
-        assert_eq!(view.residency(), FrameResidency::Cpu);
-        let planes: Vec<_> = view.planes().collect();
-        assert_eq!(planes.len(), 3);
-        assert_eq!(planes[0].data.unwrap().as_ptr(), frame.luma.as_ptr());
-        assert_eq!(planes[1].data, Some(&[2u8; 4][..]));
-        assert_eq!(planes[2], FramePlane::dmabuf(9, 16, 4, 4));
-        assert!(view.plane(3).is_none());
-        assert_eq!(FrameInterface::info().key(), FRAME_INTERFACE_KEY);
-    }
-}
+mod tests;

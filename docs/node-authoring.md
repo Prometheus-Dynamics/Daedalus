@@ -470,7 +470,7 @@ fn install(registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
     Ok(())
 }
 
-// The `daedalus:frame` v1 accessors (docs/foreign-frame-interface.md).
+// The `daedalus:frame` v2 accessors (docs/foreign-frame-interface.md).
 impl daedalus::transport::FrameSource for crate::FrameLease { /* width, height, planes, ... */ }
 ```
 
@@ -543,7 +543,7 @@ host's values anyway, zero-copy, without sharing the Rust type:
 
 - **Interface**: a `#[repr(C)]` vtable of `extern "C"` accessors with a key, a version and a
   layout hash of its declaration, declared with `daedalus::transport::foreign_interface!`.
-  Daedalus ships `daedalus:frame` v1 ([spec](foreign-frame-interface.md)); libraries can declare
+  Daedalus ships `daedalus:frame` v2 ([spec](foreign-frame-interface.md)); libraries can declare
   their own.
 - **Provider**: the owner implements `ProvideForeign<I>` for its type (for frames, the safe
   `FrameSource` trait) and registers it once with `#[plugin(foreign_providers(Owner =>

@@ -4,7 +4,7 @@ use crate::dylib::{RUSTC_VERSION, STABLE_ABI_VERSION, build_fingerprint};
 use crate::registry::capability::{NodeDecl, PortDecl};
 use crate::runtime::NodeError;
 use crate::runtime::plugins::{CrateBuildInfo, Plugin, PluginInstallContext, PluginResult};
-use crate::transport::{ForeignInterface, FrameInterface};
+use crate::transport::{FRAME_INTERFACE_V1, ForeignInterface, FrameInterface};
 
 #[derive(Default)]
 struct LoaderTestPlugin;
@@ -68,19 +68,9 @@ unsafe extern "C" fn forged_boundary_types(table: *mut BoundaryTypeTable, _: Str
     true
 }
 
-crate::transport::foreign_interface! {
-    /// `daedalus:frame` as a plugin built against a newer, incompatible copy would declare it.
-    interface FrameV2("daedalus:frame", version = 2);
-    struct FrameV2VTable {
-        width: unsafe extern "C" fn(data: *const c_void) -> u64,
-    }
-}
-
-unsafe extern "C" fn newer_foreign_interfaces(
-    table: *mut ForeignInterfaceTable,
-    _: StrSink,
-) -> bool {
-    let entries = vec![*FrameV2::info()].leak();
+/// A plugin built against the retired `daedalus:frame` v1.
+unsafe extern "C" fn v1_foreign_interfaces(table: *mut ForeignInterfaceTable, _: StrSink) -> bool {
+    let entries = vec![FRAME_INTERFACE_V1].leak();
     // Safety: the host passes a writable table.
     unsafe {
         *table = ForeignInterfaceTable {
@@ -515,15 +505,15 @@ fn foreign_interfaces_are_exported_and_checked_against_the_host() {
         .unwrap();
     library.install_into(&mut registry).unwrap();
 
-    let newer =
-        load_with(|descriptor| descriptor.foreign_interfaces = newer_foreign_interfaces).unwrap();
+    let stale =
+        load_with(|descriptor| descriptor.foreign_interfaces = v1_foreign_interfaces).unwrap();
     // Unknown to the host: fine.
-    newer.install_into(&mut PluginRegistry::new()).unwrap();
+    stale.install_into(&mut PluginRegistry::new()).unwrap();
     let mut registry = PluginRegistry::new();
     registry
         .register_foreign_interface::<FrameInterface>()
         .unwrap();
-    let err = newer.install_into(&mut registry).unwrap_err();
+    let err = stale.install_into(&mut registry).unwrap_err();
     let message = err.to_string();
     let PluginLibraryError::ForeignInterfaceMismatch { plugin, mismatches } = err else {
         panic!("unexpected error: {err:?}");
@@ -531,10 +521,10 @@ fn foreign_interfaces_are_exported_and_checked_against_the_host() {
     assert_eq!(plugin, "loader_test");
     assert_eq!(mismatches.len(), 1);
     assert_eq!(mismatches[0].host, *FrameInterface::info());
-    assert_eq!(mismatches[0].plugin, *FrameV2::info());
+    assert_eq!(mismatches[0].plugin, FRAME_INTERFACE_V1);
     assert!(
-        message.contains("`daedalus:frame`: host v1 (layout ")
-            && message.contains("plugin v2 (layout "),
+        message.contains("`daedalus:frame`: host v2 (layout ")
+            && message.contains("plugin v1 (layout "),
         "{message}"
     );
     assert!(!registry.plugin_manifests.contains_key("loader_test"));

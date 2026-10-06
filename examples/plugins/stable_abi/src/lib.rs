@@ -59,12 +59,9 @@ fn accumulate(step: i64, state: &mut Total) -> Result<i64, NodeError> {
 /// The frame's pixel sum and the address it read them from (to check nothing was copied).
 #[node(id = "frame_sum", inputs("frame"), outputs("sum", "ptr"))]
 fn frame_sum(frame: FrameView<'_>) -> Result<(i64, i64), NodeError> {
-    let plane = frame
-        .plane(0)
-        .ok_or_else(|| NodeError::InvalidInput("no plane".into()))?;
-    let pixels = plane
-        .data
-        .ok_or_else(|| NodeError::InvalidInput("plane not mapped".into()))?;
+    let pixels = frame
+        .plane_bytes(0)
+        .ok_or_else(|| NodeError::InvalidInput("plane 0 not CPU-readable".into()))?;
     Ok((
         pixels.iter().map(|&p| i64::from(p)).sum(),
         pixels.as_ptr() as i64,
