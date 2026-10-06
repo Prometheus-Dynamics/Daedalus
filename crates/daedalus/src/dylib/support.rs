@@ -1,7 +1,7 @@
 //! Support code for [`export_plugin!`](crate::export_plugin) and
 //! [`plugin_descriptor!`](crate::plugin_descriptor); not a public API.
 
-use super::{BoundaryTypeTable, ForeignInterfaceTable, StrSink, extract};
+use super::{BoundaryTypeTable, CrateBuildTable, ForeignInterfaceTable, StrSink, extract};
 use crate::runtime::plugins::{Plugin, PluginRegistry, PluginResult, RegistryPluginExt};
 use crate::transport::BoundaryTypeContract;
 use std::ffi::c_void;
@@ -105,8 +105,30 @@ pub unsafe fn schema<P: Plugin + Default>(
     }
 }
 
-/// Hand the extraction registry's [`boundary_types`](PluginRegistry::boundary_types) (`P`'s and
-/// its linked dependencies') to the host as a `'static` table.
+/// Build the extraction registry (`P` and its linked dependencies) and write `leak(registry)`
+/// to `table`.
+///
+/// # Safety
+/// `table` must be valid for writes and `sink` valid for the call.
+unsafe fn table<P: Plugin + Default, T>(
+    deps: &[LinkedDep],
+    table: *mut T,
+    sink: StrSink,
+    leak: fn(&PluginRegistry) -> T,
+) -> bool {
+    // Safety: forwarded from the caller.
+    unsafe {
+        guarded(sink, || {
+            let table = table.as_mut().ok_or("table pointer was null")?;
+            let (registry, _) = extract::registry::<P>(deps, false)?;
+            *table = leak(&registry);
+            Ok(())
+        })
+    }
+}
+
+/// Hand the extraction registry's [`boundary_types`](PluginRegistry::boundary_types) to the
+/// host as a `'static` table.
 ///
 /// # Safety
 /// `table` must be valid for writes and `sink` valid for the call.
@@ -116,14 +138,7 @@ pub unsafe fn boundary_types<P: Plugin + Default>(
     sink: StrSink,
 ) -> bool {
     // Safety: forwarded from the caller.
-    unsafe {
-        guarded(sink, || {
-            let table = table.as_mut().ok_or("table pointer was null")?;
-            let (registry, _) = extract::registry::<P>(deps, false)?;
-            *table = super::boundary::leak_table(&registry);
-            Ok(())
-        })
-    }
+    unsafe { self::table::<P, _>(deps, table, sink, super::boundary::leak_table) }
 }
 
 /// Hand the extraction registry's [`foreign_interfaces`](PluginRegistry::foreign_interfaces)
@@ -137,14 +152,21 @@ pub unsafe fn foreign_interfaces<P: Plugin + Default>(
     sink: StrSink,
 ) -> bool {
     // Safety: forwarded from the caller.
-    unsafe {
-        guarded(sink, || {
-            let table = table.as_mut().ok_or("table pointer was null")?;
-            let (registry, _) = extract::registry::<P>(deps, false)?;
-            *table = super::foreign::leak_table(&registry);
-            Ok(())
-        })
-    }
+    unsafe { self::table::<P, _>(deps, table, sink, super::foreign::leak_table) }
+}
+
+/// Hand the extraction registry's [`crate_builds`](PluginRegistry::crate_builds) to the host
+/// as a `'static` table.
+///
+/// # Safety
+/// `table` must be valid for writes and `sink` valid for the call.
+pub unsafe fn crate_builds<P: Plugin + Default>(
+    deps: &[LinkedDep],
+    table: *mut CrateBuildTable,
+    sink: StrSink,
+) -> bool {
+    // Safety: forwarded from the caller.
+    unsafe { self::table::<P, _>(deps, table, sink, super::crate_builds::leak_table) }
 }
 
 /// Export a [`Plugin`](crate::Plugin) implementor (which must also implement `Default`) for
@@ -248,6 +270,14 @@ macro_rules! plugin_descriptor {
             unsafe { __support::foreign_interfaces::<$ty>(DEPS, table, sink) }
         }
 
+        unsafe extern "C" fn crate_builds(
+            table: *mut $crate::dylib::CrateBuildTable,
+            sink: StrSink,
+        ) -> bool {
+            // Safety: the host passes a writable table and a sink valid for the call.
+            unsafe { __support::crate_builds::<$ty>(DEPS, table, sink) }
+        }
+
         unsafe extern "C" fn register_boundary_contracts(
             registry: *mut c_void,
             sink: StrSink,
@@ -291,6 +321,7 @@ macro_rules! plugin_descriptor {
             schema,
             boundary_types,
             foreign_interfaces,
+            crate_builds,
             register_boundary_contracts,
             register,
             stable: $crate::dylib::StableHandlers {

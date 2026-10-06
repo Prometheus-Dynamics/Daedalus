@@ -65,6 +65,16 @@
 //! not know are accepted, so the host should register the types it wraps in payloads itself
 //! (install the owning crate's Daedalus plugin, or `register_boundary_type::<T>(key)`).
 //!
+//! The error groups the conflicts by the crate defining each type
+//! ([`RustTypeIdentity::defining_crate`](crate::transport::RustTypeIdentity::defining_crate)).
+//! Crates that register their build ([`CrateBuildInfo`](crate::CrateBuildInfo): name, version,
+//! features; `#[plugin(.., crate_build)]` or
+//! [`PluginRegistry::register_crate_build`](crate::PluginRegistry::register_crate_build)) are
+//! also exported by the descriptor's `crate_builds` entry point
+//! ([`CrateBuildTable`](crate::dylib::CrateBuildTable)); the error then names the exact version
+//! and feature differences, and [`PluginLibrary::crate_build_diff`] lists them even when no type
+//! conflicts.
+//!
 //! **Foreign interfaces.** A plugin that has to be built separately reads host-owned types
 //! through a foreign interface instead of sharing them (node inputs typed `FrameView<'_>` or
 //! `ForeignRef<'_, I>`; see [`crate::transport::ForeignInterface`]). Its ports carry the
@@ -132,6 +142,7 @@
 //!   Unloading Rust `cdylib`s is also unreliable in general (thread-locals with destructors).
 
 mod boundary;
+mod crate_builds;
 mod extract;
 mod fingerprint;
 mod foreign;
@@ -139,6 +150,7 @@ mod loader;
 pub mod stable;
 
 pub use boundary::{BoundaryTypeEntry, BoundaryTypeTable, BoundaryTypesFn};
+pub use crate_builds::{CrateBuildEntry, CrateBuildTable, CrateBuildsFn};
 pub use daedalus_ffi_host::core::PluginSchema;
 pub use fingerprint::{boundary_features, build_fingerprint, describe_fingerprint_mismatch};
 pub use foreign::{ForeignInterfaceMismatch, ForeignInterfaceTable, ForeignInterfacesFn};
@@ -160,8 +172,9 @@ pub const PLUGIN_DESCRIPTOR_SYMBOL: &str = "daedalus_plugin_descriptor";
 /// Bumped whenever the descriptor (or anything it contains) changes shape.
 /// Version 5 introduced the descriptor and its stable `schema` entry point; version 6 added
 /// `boundary_types`; version 7 added `foreign_interfaces`; version 8 added `stable` (the stable
-/// handler path, versioned on its own by [`STABLE_ABI_VERSION`]).
-pub const PLUGIN_ABI_VERSION: u32 = 8;
+/// handler path, versioned on its own by [`STABLE_ABI_VERSION`]); version 9 added
+/// `crate_builds`.
+pub const PLUGIN_ABI_VERSION: u32 = 9;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
 
@@ -264,9 +277,9 @@ pub type InstallFn = unsafe extern "C" fn(registry: *mut c_void, sink: StrSink) 
 /// Everything a dynamic plugin exports, returned by `daedalus_plugin_descriptor`.
 ///
 /// Built only from C types, so a host can read it whatever toolchain built the plugin (once the
-/// ABI version matches). `schema`, `boundary_types` and `foreign_interfaces` are always safe to
-/// call; `register_boundary_contracts` and `register` only once [`check_rust_abi`] accepted
-/// `info`; `stable` once its version matches.
+/// ABI version matches). `schema`, `boundary_types`, `foreign_interfaces` and `crate_builds` are
+/// always safe to call; `register_boundary_contracts` and `register` only once
+/// [`check_rust_abi`] accepted `info`; `stable` once its version matches.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct PluginDescriptor {
@@ -274,6 +287,7 @@ pub struct PluginDescriptor {
     pub schema: SchemaFn,
     pub boundary_types: BoundaryTypesFn,
     pub foreign_interfaces: ForeignInterfacesFn,
+    pub crate_builds: CrateBuildsFn,
     pub register_boundary_contracts: InstallFn,
     pub register: InstallFn,
     /// The stable handler entry points, callable once [`StableHandlers::version`] matches the

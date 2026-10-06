@@ -446,6 +446,9 @@ pub const FRAME_LEASE_KEY: &str = "styx:framelease";
 
 #[daedalus::plugin(
     id = "styx",
+    // Registers this crate's name, version and features (needs the build.rs line below), so a
+    // host refusing a plugin with another build of styx-core names the feature difference.
+    crate_build,
     types(crate::FrameLease),
     values(crate::FrameMeta),
     adapters(lease_to_meta),
@@ -469,6 +472,14 @@ fn install(registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
 
 // The `daedalus:frame` v1 accessors (docs/foreign-frame-interface.md).
 impl daedalus::transport::FrameSource for crate::FrameLease { /* width, height, planes, ... */ }
+```
+
+```rust
+// build.rs: the enabled features for `crate_build` (`daedalus::crate_build_info!()`).
+fn main() {
+    let features = std::env::var("CARGO_CFG_FEATURE").unwrap_or_default();
+    println!("cargo:rustc-env=DAEDALUS_CRATE_FEATURES={features}");
+}
 ```
 
 Every other crate enables that feature instead of registering the type again:
@@ -515,6 +526,12 @@ Rules:
   registers the provider (`foreign_providers(...)` above), so nodes that only need pixels and
   metadata take `FrameView<'_>` and work with any frame library and in plugins built separately
   from it. Nodes that need the library's own API keep taking `&FrameLease`.
+- **Register the crate's build.** With `crate_build` (or
+  `registry.register_crate_build(daedalus::crate_build_info!())` in an install hook) and the
+  `build.rs` line above, a host refusing a separately built dynamic plugin whose copy of the crate
+  differs says how: ``crate `styx_core` 0.4.0: host features `daedalus,framelease,v4l2`, plugin
+  features `daedalus,framelease` (missing in plugin: v4l2)``. Without it the error still names the
+  crate (see [Diagnosing Boundary Type Conflicts](dynamic-plugins.md#diagnosing-boundary-type-conflicts)).
 
 ## Foreign Interfaces
 
