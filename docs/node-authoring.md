@@ -1,6 +1,6 @@
 # Node Authoring And Payload Residency
 
-This is the authoritative guide for writing Daedalus 2.x nodes and for reasoning about what
+This is the authoritative guide for writing Daedalus 3.x nodes and for reasoning about what
 actually moves between them at runtime. Downstream projects should link here instead of
 restating runtime internals.
 

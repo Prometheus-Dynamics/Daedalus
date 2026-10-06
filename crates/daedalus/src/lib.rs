@@ -68,9 +68,9 @@ pub use host_bridge::{
 pub mod dylib;
 #[cfg(feature = "dylib-plugins")]
 pub use dylib::{
-    PLUGIN_ABI_VERSION, PluginDescriptor, PluginInfo, PluginLibrary, PluginLibraryError,
-    PluginSchema, RUSTC_VERSION, RustAbiMismatch, StrSink, StrView, build_fingerprint,
-    check_rust_abi, discover_plugin_libraries,
+    InstallPath, PLUGIN_ABI_VERSION, PluginDescriptor, PluginInfo, PluginLibrary,
+    PluginLibraryError, PluginSchema, RUSTC_VERSION, RustAbiMismatch, StrSink, StrView,
+    build_fingerprint, check_rust_abi, discover_plugin_libraries,
 };
 
 daedalus_core::build_facts!();
