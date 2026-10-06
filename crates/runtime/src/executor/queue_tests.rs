@@ -54,6 +54,7 @@ fn apply_lockfree(values: &[u8], policy: &RuntimeEdgePolicy) -> (Vec<u8>, Execut
             warning_label: Some("lockfree_parity".to_string()),
             backpressure: BackpressureStrategy::None,
             data_size_inspectors: &inspectors,
+            stamp_enqueue: false,
         })
         .expect("lock-free policy application");
     }
@@ -89,6 +90,7 @@ fn apply_locked_pressure_event(
             warning_label: Some(format!("pressure_{strategy:?}")),
             backpressure: strategy.clone(),
             data_size_inspectors: &inspectors,
+            stamp_enqueue: false,
         });
         if matches!(&strategy, BackpressureStrategy::ErrorOnOverflow) && value == 2 {
             assert!(result.is_err());
@@ -155,6 +157,7 @@ fn locked_queue_applies_policy_then_pops() {
         warning_label: None,
         backpressure: BackpressureStrategy::None,
         data_size_inspectors: &inspectors,
+        stamp_enqueue: false,
     })
     .expect("policy application");
 
@@ -396,6 +399,7 @@ fn backpressure_strategies_cover_all_pressure_policies() {
                     warning_label: Some(format!("{name}_{strategy:?}")),
                     backpressure: strategy.clone(),
                     data_size_inspectors: &inspectors,
+                    stamp_enqueue: false,
                 });
                 if matches!(&strategy, BackpressureStrategy::ErrorOnOverflow)
                     && policy.bounded_capacity().is_some()

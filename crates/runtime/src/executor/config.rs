@@ -12,6 +12,8 @@ pub(crate) struct ExecutorRunConfig {
     pub(crate) metrics_level: MetricsLevel,
     pub(crate) debug_config: crate::config::RuntimeDebugConfig,
     pub(crate) pool_size: Option<usize>,
+    /// Frame-path overhead counters to fill, independent of `metrics_level`.
+    pub(crate) frame_probe: Option<Arc<super::FrameProbe>>,
 }
 
 impl Default for ExecutorRunConfig {
@@ -26,6 +28,7 @@ impl Default for ExecutorRunConfig {
             metrics_level: MetricsLevel::default(),
             debug_config,
             pool_size: debug_config.pool_size,
+            frame_probe: None,
         }
     }
 }

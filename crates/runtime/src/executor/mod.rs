@@ -52,13 +52,15 @@ pub(crate) use schedule_compile::{
 };
 pub use telemetry::{
     AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
-    DataLifecycleStage, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, ExecutionTelemetry,
-    FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry,
-    FfiTelemetryReport, FfiWorkerTelemetry, InternalTransferMetrics, MetricsLevel,
-    NodeAllocationSpikeExplanation, NodeFailure, NodeMetrics, NodeMetricsMap, NodeResourceMetrics,
-    OwnershipReport, ProfileLevel, Profiler, ResourceMetrics, TelemetryReport,
-    TelemetryReportFilter,
+    DataLifecycleStage, EdgeAdapterClass, EdgeMetrics, EdgeOverheadStats, EdgePressureMetrics,
+    EdgePressureReason, EdgeTickSample, ExecutionTelemetry, FfiAdapterTelemetry,
+    FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry, FfiTelemetryReport,
+    FfiWorkerTelemetry, FrameOverheadReport, FrameOverheadWindow, FrameProbe, FrameStat,
+    FrameTickSample, InternalTransferMetrics, MetricsLevel, NodeAllocationSpikeExplanation,
+    NodeFailure, NodeMetrics, NodeMetricsMap, NodeResourceMetrics, OwnershipReport, ProfileLevel,
+    Profiler, ResourceMetrics, TelemetryReport, TelemetryReportFilter,
 };
+pub(crate) use telemetry::{ProbeCount, ProbeTime};
 pub use telemetry_size::{
     RuntimeDataSizeInspector, RuntimeDataSizeInspectors, estimate_payload_bytes,
     register_runtime_data_size_inspector,
@@ -731,6 +733,26 @@ fn collect_data_edges(nodes: &[RuntimeNode], edges: &[EdgeSpec]) -> HashSet<usiz
     // through device materialization eagerly clones CPU images on GPU-enabled builds, which turns
     // host publication into a hidden hot-path tax.
     HashSet::new()
+}
+
+/// Attribute this thread's allocations to the runtime until the guard drops (`alloc-probe`;
+/// nothing otherwise).
+#[inline]
+pub(crate) fn runtime_alloc_scope() -> impl Sized {
+    #[cfg(feature = "alloc-probe")]
+    {
+        crate::alloc_probe::enter(crate::alloc_probe::AllocScope::Runtime)
+    }
+}
+
+/// Attribute this thread's allocations to a node handler until the guard drops (`alloc-probe`;
+/// nothing otherwise).
+#[inline]
+pub(crate) fn node_alloc_scope() -> impl Sized {
+    #[cfg(feature = "alloc-probe")]
+    {
+        crate::alloc_probe::enter(crate::alloc_probe::AllocScope::Node)
+    }
 }
 
 pub(crate) fn thread_cpu_time() -> Option<Duration> {

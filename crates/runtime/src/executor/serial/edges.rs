@@ -9,7 +9,7 @@ use crate::executor::queue::{ApplyPolicyOwnedArgs, apply_policy_owned, pop_edge}
 use crate::executor::serial_direct_slot::{pop_direct_edge, push_direct_edge};
 use crate::executor::{
     CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, ExecuteError, Executor, NodeError,
-    NodeHandler,
+    NodeHandler, ProbeCount,
 };
 
 use super::{edge_is_active, edge_uses_direct_slot};
@@ -69,6 +69,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
         while let Some(mut payload) =
             pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors)
         {
+            record_queue_wait(exec, edge_idx, &payload, collect_detailed_metrics);
             if collect_lifecycle {
                 let mut lifecycle = DataLifecycleRecord::new(
                     payload.correlation_id,
@@ -99,6 +100,29 @@ pub(super) fn collect_inputs<H: NodeHandler>(
 
     crate::executor::push_const_inputs(&exec.const_inputs, node_idx, &mut inputs);
     Ok(inputs)
+}
+
+/// Enqueue-to-dequeue time of a queued payload (stamped with basic metrics or a frame probe).
+fn record_queue_wait<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    edge_idx: usize,
+    payload: &CorrelatedPayload,
+    detailed: bool,
+) {
+    let Some(enqueued_at) = payload.enqueued_at else {
+        return;
+    };
+    let probe = exec.core.run_config.frame_probe.as_deref();
+    if !detailed && probe.is_none() {
+        return;
+    }
+    let waited = exec.core.clock.elapsed(enqueued_at);
+    if detailed {
+        exec.core.telemetry.record_edge_wait(edge_idx, waited);
+    }
+    if let Some(probe) = probe {
+        probe.record_queue_wait(edge_idx, waited);
+    }
 }
 
 fn adapt_edge_payload<H: NodeHandler>(
@@ -176,19 +200,27 @@ fn adapt_edge_payload<H: NodeHandler>(
         adapter_steps = ?edge_transport.adapter_steps,
         "adapter path started"
     );
-    let adapter_start = exec
-        .core
-        .run_config
-        .metrics_level
-        .is_detailed()
-        .then(|| exec.core.clock.now());
+    let collect_detailed_metrics =
+        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
+    let probe = exec.core.run_config.frame_probe.clone();
+    let adapter_start =
+        (collect_detailed_metrics || probe.is_some()).then(|| exec.core.clock.now());
     let source = collect_lifecycle.then(|| inner.clone());
     match runtime_transport.execute_adapter_path(inner, &edge_transport.adapter_steps, &request) {
         Ok(adapted) => {
             if let Some(start) = adapter_start {
-                exec.core
-                    .telemetry
-                    .record_edge_adapter_duration(edge_idx, exec.core.clock.elapsed(start));
+                let duration = exec.core.clock.elapsed(start);
+                if collect_detailed_metrics {
+                    exec.core
+                        .telemetry
+                        .record_edge_adapter_duration(edge_idx, duration);
+                }
+                if let Some(probe) = &probe {
+                    let inspectors = &exec.core.data_size_inspectors;
+                    probe.record_adapter(edge_idx, duration, || {
+                        inspectors.estimate_payload_bytes(&adapted)
+                    });
+                }
             }
             record(
                 exec,
@@ -322,6 +354,9 @@ fn deliver<H: NodeHandler>(
     payload: CorrelatedPayload,
     cloned_payload: bool,
 ) -> Result<(), NodeError> {
+    if cloned_payload && let Some(probe) = &exec.core.run_config.frame_probe {
+        probe.add_count(ProbeCount::SharedClones, 1);
+    }
     if cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed() {
         exec.core.telemetry.record_edge_handoff(
             edge_idx,
@@ -346,5 +381,6 @@ fn deliver<H: NodeHandler>(
         warning_label: None,
         backpressure: exec.backpressure.clone(),
         data_size_inspectors: &core.data_size_inspectors,
+        stamp_enqueue: core.run_config.frame_probe.is_some(),
     })
 }

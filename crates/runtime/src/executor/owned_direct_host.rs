@@ -1,8 +1,8 @@
 use super::owned::OwnedExecutor;
 use super::{
     CorrelatedPayload, CustomMetricValue, DirectHostRoute, DirectHostSingleNodeRoute,
-    DirectSlotAccess, ExecuteError, ExecutionTelemetry, NodeError, NodeHandler,
-    is_host_bridge_node, push_const_inputs, queue, serial,
+    DirectSlotAccess, ExecuteError, ExecutionTelemetry, NodeError, NodeHandler, ProbeCount,
+    ProbeTime, is_host_bridge_node, push_const_inputs, queue, serial,
 };
 use crate::portable::Arc;
 use crate::prelude::*;
@@ -55,6 +55,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         route: &DirectHostRoute,
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), ExecuteError> {
+        let _scope = super::runtime_alloc_scope();
         if let Some(single_node) = route.single_node.as_ref() {
             return self.run_direct_host_single_node(single_node, payload);
         }
@@ -85,6 +86,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                 warning_label: None,
                 backpressure,
                 data_size_inspectors: &data_size_inspectors,
+                stamp_enqueue: self.core.run_config.frame_probe.is_some(),
             })
             .map_err(|error| ExecuteError::HandlerFailed {
                 node: "host".into(),
@@ -168,15 +170,24 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         route: &DirectHostSingleNodeRoute,
         payload: Payload,
     ) -> Result<(Option<Payload>, BTreeMap<String, CustomMetricValue>), ExecuteError> {
+        let _scope = super::runtime_alloc_scope();
         let failed = |error| ExecuteError::HandlerFailed {
             node: route.node.id.clone(),
             error,
         };
+        let probe = self.core.run_config.frame_probe.clone();
+        let clock = self.core.clock.clone();
+        let node_start = probe.is_some().then(|| clock.now());
         self.core.state.clear_node_custom_metrics(&route.node.id);
         // Direct payload handlers exist only for nodes with a single input, which the route's
         // edge feeds, so they have no const input to deliver.
         let output = if let Some(handler) = &route.direct_payload {
-            handler(&route.node, &route.ctx, payload).map_err(failed)?
+            let _scope = super::node_alloc_scope();
+            let output = handler(&route.node, &route.ctx, payload).map_err(failed)?;
+            if let (Some(probe), Some(start)) = (&probe, node_start) {
+                probe.add_time(ProbeTime::Handlers, clock.elapsed(start));
+            }
+            output
         } else {
             if self.storage_needs_reset {
                 self.reset_for_run();
@@ -188,13 +199,24 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             ));
             push_const_inputs(&self.const_inputs, route.node_idx, &mut inputs);
             let mut io = self.core.node_io(route.node_idx, inputs);
-            self.handler
-                .run(&route.node, &route.ctx, &mut io)
-                .map_err(failed)?;
+            let handler_start = probe.is_some().then(|| clock.now());
+            {
+                let _scope = super::node_alloc_scope();
+                self.handler
+                    .run(&route.node, &route.ctx, &mut io)
+                    .map_err(failed)?;
+            }
+            if let (Some(probe), Some(start)) = (&probe, handler_start) {
+                probe.add_time(ProbeTime::Handlers, clock.elapsed(start));
+            }
             io.flush().map_err(failed)?;
             io.take_output(&route.output_port)
         };
         let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
+        if let (Some(probe), Some(start)) = (&probe, node_start) {
+            probe.add_time(ProbeTime::NodeRuns, clock.elapsed(start));
+            probe.add_count(ProbeCount::Nodes, 1);
+        }
         Ok((output, metrics))
     }
 

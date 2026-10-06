@@ -398,6 +398,17 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.apply_selected_host_output_ports(ports);
     }
 
+    /// Fill `probe` with every run's frame-path overhead (any metrics level); `None` stops.
+    /// Build it with [`FrameProbe::for_plan`](super::FrameProbe::for_plan) for this plan.
+    pub fn set_frame_probe(&mut self, probe: Option<Arc<super::FrameProbe>>) {
+        self.apply_frame_probe(probe);
+    }
+
+    /// The attached frame probe.
+    pub fn frame_probe(&self) -> Option<&Arc<super::FrameProbe>> {
+        self.core.run_config.frame_probe.as_ref()
+    }
+
     pub(super) fn snapshot<'a>(&'a self, direct_slot_access: DirectSlotAccess) -> Executor<'a, H> {
         Executor {
             nodes: self.nodes.clone(),
@@ -428,6 +439,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     }
 
     pub fn run_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError> {
+        let _scope = super::runtime_alloc_scope();
         self.reset_for_run();
         let mut exec = self.snapshot(DirectSlotAccess::Serial);
         let res = serial::run_with_boundaries(&mut exec);
@@ -447,6 +459,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     where
         H: Send + Sync + 'static,
     {
+        let _scope = super::runtime_alloc_scope();
         self.reset_for_run();
         let mut exec = self.snapshot(DirectSlotAccess::Shared);
         let res = run_parallel_on(&mut exec);
@@ -465,6 +478,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     where
         H: Send + Sync + 'static,
     {
+        let _scope = super::runtime_alloc_scope();
         self.reset_for_run();
         let mut adaptive = core::mem::take(&mut self.adaptive);
         let workers = self.parallel_workers();

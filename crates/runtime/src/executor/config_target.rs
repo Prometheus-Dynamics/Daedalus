@@ -49,6 +49,10 @@ pub(crate) trait ExecutorConfigTarget {
             .set_selected_host_output_ports(ports);
     }
 
+    fn apply_frame_probe(&mut self, probe: Option<Arc<super::FrameProbe>>) {
+        self.core_mut().run_config.frame_probe = probe;
+    }
+
     fn apply_fail_fast(&mut self, enabled: bool) {
         self.core_mut().run_config.set_fail_fast(enabled);
     }
