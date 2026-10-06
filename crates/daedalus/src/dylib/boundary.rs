@@ -3,7 +3,9 @@
 //! from the host's for the same `TypeKey`.
 
 use super::{StrSink, StrView};
-use crate::runtime::plugins::{BoundaryTypeConflict, PluginRegistry};
+use crate::runtime::plugins::{
+    BoundaryTypeConflict, CrateBuildDiff, CrateBuildInfo, PluginRegistry,
+};
 use crate::transport::{RustTypeIdentity, TypeKey};
 
 /// One `TypeKey` a plugin consumes, produces or registers, with the Rust type behind it in the
@@ -32,11 +34,58 @@ pub struct BoundaryTypeTable {
 pub type BoundaryTypesFn =
     unsafe extern "C" fn(table: *mut BoundaryTypeTable, sink: StrSink) -> bool;
 
-/// Join conflicts for an error message.
-pub(super) fn describe(conflicts: &[BoundaryTypeConflict]) -> String {
-    conflicts
-        .iter()
-        .map(ToString::to_string)
+/// Describe conflicts for an error message, grouped by the crate defining the plugin's type
+/// ([`RustTypeIdentity::defining_crate`]), each group led by that crate's build difference when
+/// both sides registered one ([`PluginRegistry::register_crate_build`]), e.g. ``crate
+/// `styx_core` 0.4.0: host features `framelease,v4l2`, plugin features `framelease` (missing in
+/// plugin: v4l2) — key `styx:framelease`: host `...` (...) vs plugin `...` (...)``. A crate
+/// built identically on both sides (`same`) differs through its dependencies.
+pub(super) fn describe(
+    conflicts: &[BoundaryTypeConflict],
+    crate_builds: &[CrateBuildDiff],
+    same: &[CrateBuildInfo],
+) -> String {
+    let crate_of = |conflict: &BoundaryTypeConflict| {
+        conflict
+            .new
+            .defining_crate()
+            .or_else(|| conflict.registered.defining_crate())
+    };
+    let mut crates: Vec<Option<&str>> = Vec::new();
+    for krate in conflicts.iter().map(crate_of) {
+        if !crates.contains(&krate) {
+            crates.push(krate);
+        }
+    }
+    crates
+        .into_iter()
+        .map(|krate| {
+            let keys = conflicts
+                .iter()
+                .filter(|conflict| crate_of(conflict) == krate)
+                .map(|c| format!("key `{}`: host {} vs plugin {}", c.key, c.registered, c.new))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let Some(krate) = krate else {
+                return keys;
+            };
+            if let Some(diff) = crate_builds.iter().find(|diff| diff.host.name == krate) {
+                return format!("{diff} — {keys}");
+            }
+            match same.iter().find(|info| info.name == krate) {
+                Some(info) => format!(
+                    "crate `{krate}` {} has the same features on both sides (`{}`) but resolved \
+                     differently in the plugin's build through its dependency graph (one of its \
+                     dependencies has other features or versions) — {keys}",
+                    info.version,
+                    info.feature_list().join(",")
+                ),
+                None => format!(
+                    "crate `{krate}` resolved differently in the plugin's build (different \
+                     features, version or dependency graph) — {keys}"
+                ),
+            }
+        })
         .collect::<Vec<_>>()
         .join("; ")
 }

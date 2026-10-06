@@ -12,6 +12,8 @@
 //! - `Lease` declares no key; the plugin maps it (`register_foreign_type`), as a library's
 //!   integration plugin keys a type it cannot annotate. Plugins using it depend on this plugin
 //!   (see `examples/plugins/dependent`).
+//! - The plugin registers the crate's build (`crate_build_info!()`, features exported by
+//!   `build.rs`), so a host refusing a separately built copy names the feature difference.
 
 use std::ffi::c_void;
 
@@ -155,6 +157,9 @@ declare_plugin!(
         cap_add
     ],
     install = |registry| {
+        // How this crate was built (version, features; see `build.rs`), so a host names the
+        // exact difference when a plugin's copy of `Counter` is another Rust type.
+        registry.register_crate_build(daedalus::crate_build_info!())?;
         register_capabilities(registry);
         registry.register_foreign_type::<Lease>(LEASE_KEY)?;
         registry.register_foreign_provider::<Counter, CounterInterface>()?;

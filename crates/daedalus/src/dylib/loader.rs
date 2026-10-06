@@ -1,4 +1,5 @@
 use super::boundary::{self, BoundaryTypeTable};
+use super::crate_builds::{self, CrateBuildTable};
 use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::stable::{STABLE_ABI_VERSION, StablePlugin};
 use super::{
@@ -6,7 +7,8 @@ use super::{
     PluginInfo, PluginSchema, StrSink, StrView,
 };
 use crate::runtime::plugins::{
-    BoundaryTypeConflict, PluginError, PluginRegistry, RegistryPluginExt,
+    BoundaryTypeConflict, CrateBuildDiff, CrateBuildInfo, PluginError, PluginRegistry,
+    RegistryPluginExt,
 };
 use crate::transport::{ForeignInterfaceInfo, RustTypeIdentity, TypeKey};
 use daedalus_ffi_host::core::BackendKind;
@@ -100,17 +102,33 @@ pub enum PluginLibraryError {
     },
     /// The plugin maps type keys the host registry also uses to different Rust types
     /// (typically a dependency such as a frame library resolved with other features in a
-    /// separate build); `registered` is the host's type, `new` the plugin's. Nothing was
-    /// installed.
+    /// separate build); `registered` is the host's type, `new` the plugin's. The message groups
+    /// them by the crate defining the types. Nothing was installed.
     #[error(
-        "plugin `{plugin}` uses type keys for different Rust types than the host ({}); Rust-ABI \
-         plugins must come from the same cargo build as the host, with every shared dependency \
-         resolved identically",
-        boundary::describe(conflicts)
+        "plugin `{plugin}` uses type keys for different Rust types than the host: {}. Rust-ABI \
+         plugins must come from the same cargo build as the host: build the host and its plugins \
+         in one cargo invocation, so every shared dependency resolves with one feature set{}",
+        boundary::describe(conflicts, crate_builds, same_crate_builds),
+        if *stable_compatible {
+            "; or install it with `install_into_as(InstallPath::Stable)`: no node port of the \
+             plugin uses these keys, so none of these types crosses the stable path"
+        } else {
+            ""
+        }
     )]
     BoundaryTypeConflict {
         plugin: String,
         conflicts: Vec<BoundaryTypeConflict>,
+        /// How the crates behind `conflicts` were built differently, for crates both the host
+        /// and the plugin registered ([`PluginLibrary::crate_build_diff`]).
+        crate_builds: Vec<CrateBuildDiff>,
+        /// Crates both sides registered with the same version and features: their types
+        /// differ through the crates' own dependencies.
+        same_crate_builds: Vec<CrateBuildInfo>,
+        /// The plugin installs through [`InstallPath::Stable`] without any of these types
+        /// crossing: its stable ABI matches and no node port uses a conflicting key (the
+        /// conflicting types are only registered, e.g. by a linked dependency plugin).
+        stable_compatible: bool,
     },
     /// The plugin uses a foreign interface key with another version or vtable layout than the
     /// host. Nothing was installed.
@@ -141,6 +159,7 @@ pub struct PluginLibrary {
     schema: PluginSchema,
     boundary_types: Vec<(TypeKey, RustTypeIdentity)>,
     foreign_interfaces: Vec<ForeignInterfaceInfo>,
+    crate_builds: Vec<CrateBuildInfo>,
     rust_abi: Result<(), RustAbiMismatch>,
 }
 
@@ -241,6 +260,16 @@ impl PluginLibrary {
         // Safety: the plugin returned a `'static` table of `len` entries.
         let foreign_interfaces = unsafe { foreign::read_table(table) }
             .map_err(|message| schema_error(format!("foreign interfaces: {message}")))?;
+        let mut table = CrateBuildTable {
+            entries: std::ptr::null(),
+            len: 0,
+        };
+        // Safety: as for `boundary_types`.
+        call(|sink| unsafe { (descriptor.crate_builds)(&mut table, sink) })
+            .map_err(|message| schema_error(format!("crate builds: {message}")))?;
+        // Safety: the plugin returned a `'static` table of `len` entries.
+        let crate_builds = unsafe { crate_builds::read_table(table) }
+            .map_err(|message| schema_error(format!("crate builds: {message}")))?;
         Ok(Self {
             path,
             rust_abi: check_rust_abi(info),
@@ -248,6 +277,7 @@ impl PluginLibrary {
             schema,
             boundary_types,
             foreign_interfaces,
+            crate_builds,
         })
     }
 
@@ -365,14 +395,52 @@ impl PluginLibrary {
         }
     }
 
+    /// [`PluginLibraryError::BoundaryTypeConflict`] for `conflicts` with `registry`.
+    fn boundary_type_conflict(
+        &self,
+        registry: &PluginRegistry,
+        conflicts: Vec<BoundaryTypeConflict>,
+    ) -> PluginLibraryError {
+        let quoted: Vec<String> = conflicts
+            .iter()
+            .map(|conflict| format!("\"{}\"", conflict.key))
+            .collect();
+        let uses_conflicting_key = |port: &daedalus_ffi_host::core::WirePort| {
+            let ty = serde_json::to_string(&port.ty).unwrap_or_default();
+            conflicts
+                .iter()
+                .any(|conflict| port.type_key.as_ref() == Some(&conflict.key))
+                || quoted.iter().any(|key| ty.contains(key.as_str()))
+        };
+        let stable_compatible = self.descriptor.stable.version == STABLE_ABI_VERSION
+            && !self
+                .schema
+                .nodes
+                .iter()
+                .flat_map(|node| node.inputs.iter().chain(&node.outputs))
+                .any(uses_conflicting_key);
+        let same_crate_builds = self
+            .crate_builds
+            .iter()
+            .filter(|info| {
+                let host = registry.crate_builds().get(info.name);
+                host.is_some_and(|host| CrateBuildDiff::new(*host, **info).is_none())
+            })
+            .copied()
+            .collect();
+        PluginLibraryError::BoundaryTypeConflict {
+            plugin: self.schema.plugin.name.clone(),
+            conflicts,
+            crate_builds: self.crate_build_diff(registry),
+            same_crate_builds,
+            stable_compatible,
+        }
+    }
+
     fn install_rust_abi(&self, registry: &mut PluginRegistry) -> Result<(), PluginLibraryError> {
-        let plugin = || self.schema.plugin.name.clone();
         let conflicts = registry.boundary_type_conflicts(&self.boundary_types);
         if !conflicts.is_empty() {
-            return Err(PluginLibraryError::BoundaryTypeConflict {
-                plugin: plugin(),
-                conflicts,
-            });
+            return Err(self.boundary_type_conflict(registry, conflicts));
         }
         let install = |entry: InstallFn, registry: &mut PluginRegistry| {
             let registry = (registry as *mut PluginRegistry).cast::<c_void>();
@@ -386,19 +454,15 @@ impl PluginLibrary {
             .map_err(|message| PluginLibraryError::RegisterFailed { message })?;
         // Record every exported boundary type, including any the install did not touch, so later
         // plugins and fed payloads are checked against them.
-        registry
-            .register_boundary_identities(&self.boundary_types)
-            .map_err(|error| match error {
-                PluginError::BoundaryTypeConflict(conflict) => {
-                    PluginLibraryError::BoundaryTypeConflict {
-                        plugin: plugin(),
-                        conflicts: vec![conflict],
-                    }
-                }
-                other => PluginLibraryError::RegisterFailed {
-                    message: other.to_string(),
-                },
-            })
+        match registry.register_boundary_identities(&self.boundary_types) {
+            Ok(()) => Ok(()),
+            Err(PluginError::BoundaryTypeConflict(conflict)) => {
+                Err(self.boundary_type_conflict(registry, vec![conflict]))
+            }
+            Err(other) => Err(PluginLibraryError::RegisterFailed {
+                message: other.to_string(),
+            }),
+        }
     }
 
     /// Metadata reported by the plugin.
@@ -422,6 +486,21 @@ impl PluginLibrary {
     /// vtable layout hash). Comparable with the host's whatever built the plugin.
     pub fn foreign_interfaces(&self) -> &[ForeignInterfaceInfo] {
         &self.foreign_interfaces
+    }
+
+    /// The builds of third-party crates the plugin registered (its own crate build, those of
+    /// its linked dependency plugins; see [`PluginRegistry::register_crate_build`]).
+    pub fn crate_builds(&self) -> &[CrateBuildInfo] {
+        &self.crate_builds
+    }
+
+    /// Every crate the plugin and `registry` both registered a build of, built differently
+    /// (version or features). Not an error by itself (a plugin that shares none of the crate's
+    /// types installs fine), but the likely cause of a [`PluginLibraryError::BoundaryTypeConflict`]
+    /// (whose message includes it) or of payload type mismatches: worth logging as a warning
+    /// before [`install_into`](Self::install_into).
+    pub fn crate_build_diff(&self, registry: &PluginRegistry) -> Vec<CrateBuildDiff> {
+        registry.crate_build_diffs(&self.crate_builds)
     }
 
     /// Whether the plugin can be installed into this host through the Rust ABI.

@@ -27,6 +27,7 @@ impl PluginRegistry {
             boundary_types: BTreeMap::new(),
             type_key_uses: Default::default(),
             foreign_interfaces: BTreeMap::new(),
+            crate_builds: BTreeMap::new(),
             external_types: None,
             stable_codecs: None,
             current_prefix: None,
