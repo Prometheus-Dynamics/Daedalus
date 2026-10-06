@@ -178,7 +178,8 @@ fn run_order_timed<H: NodeHandler>(
         } else {
             None
         };
-        let mut io = exec.core.node_io(node_idx, inputs);
+        let consts = super::node_consts(&exec.const_inputs, node_idx);
+        let mut io = exec.core.node_io(node_idx, inputs, consts.as_ref());
         let ctx = &contexts[node_idx];
         if collect_basic_metrics {
             exec.core.state.clear_node_custom_metrics(&node.id);

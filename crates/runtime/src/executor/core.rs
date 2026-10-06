@@ -2,6 +2,7 @@ use super::{
     DirectSlot, EdgeStorage, ExecutionTelemetry, ExecutorInit, ExecutorRunConfig, MaybeGpu,
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
 };
+use crate::io::{NodeConstInputs, NodeIo, NodeIoEnv, NodePort};
 use crate::portable::Arc;
 use crate::prelude::*;
 use crate::state::{ExecutionContext, StateStore};
@@ -49,6 +50,8 @@ pub(crate) struct ExecutorCore {
     /// Each node's `ExecutionContext`, built when the state, capabilities or GPU change rather
     /// than per call.
     pub(crate) contexts: Arc<[ExecutionContext]>,
+    /// Each node's `NodeIo` environment, built when the coercers, type index or clock change.
+    pub(crate) io_envs: Arc<[Arc<NodeIoEnv>]>,
 }
 
 impl ExecutorCore {
@@ -91,9 +94,27 @@ impl ExecutorCore {
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
             clock: Clock::default(),
             contexts: Arc::from(Vec::new()),
+            io_envs: Arc::from(Vec::new()),
         };
         core.refresh_contexts();
+        core.refresh_io_envs();
         core
+    }
+
+    /// Rebuild [`Self::io_envs`] from the current coercers, type index and clock.
+    pub(crate) fn refresh_io_envs(&mut self) {
+        self.io_envs = self
+            .output_ports
+            .iter()
+            .map(|ports| {
+                Arc::new(NodeIoEnv::new(
+                    self.const_coercers.clone(),
+                    self.type_index.clone(),
+                    Some(ports.clone()),
+                    self.clock.clone(),
+                ))
+            })
+            .collect();
     }
 
     /// Rebuild [`Self::contexts`] from the current state, capabilities and GPU.
@@ -120,18 +141,17 @@ impl ExecutorCore {
             .collect();
     }
 
-    /// A `NodeIo` for node `node_idx` over `inputs` (a port buffer), wired to this executor's
-    /// coercers, type index, clock and the node's output ports.
+    /// A `NodeIo` for node `node_idx` over its edge `inputs` (a port buffer) and `consts`, wired
+    /// to the node's environment (this executor's coercers, type index and clock, and the node's
+    /// output ports).
     pub(crate) fn node_io(
         &self,
         node_idx: usize,
-        inputs: Vec<crate::io::NodePort>,
-    ) -> crate::io::NodeIo {
-        crate::io::NodeIo::from_port_buffer(inputs)
-            .with_const_coercers(self.const_coercers.clone())
-            .with_type_index(self.type_index.clone())
-            .with_output_ports(self.output_ports.get(node_idx).cloned())
-            .with_clock(self.clock.clone())
+        inputs: Vec<NodePort>,
+        consts: Option<&Arc<NodeConstInputs>>,
+    ) -> NodeIo {
+        let env = self.io_envs.get(node_idx).cloned().unwrap_or_default();
+        NodeIo::for_call(inputs, env, consts)
     }
 
     pub(crate) fn snapshot(&self) -> Self {
@@ -167,6 +187,7 @@ impl ExecutorCore {
             capabilities: self.capabilities.clone(),
             clock: self.clock.clone(),
             contexts: self.contexts.clone(),
+            io_envs: self.io_envs.clone(),
         }
     }
 }

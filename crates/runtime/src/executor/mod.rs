@@ -164,32 +164,37 @@ type MaybeGpu = Option<daedalus_gpu::GpuContextHandle>;
 #[cfg(not(feature = "gpu"))]
 type MaybeGpu = Option<()>;
 
-/// A node's const inputs as ready-made `Value` payloads: ticks hand out shared clones instead of
-/// rebuilding a payload per port.
-pub type NodeConstInputs = Vec<(crate::handles::PortId, daedalus_transport::Payload)>;
-pub type ConstInputs = Vec<NodeConstInputs>;
+/// A node's const inputs as ready-made `Value` payloads, shared with each call's `NodeIo`.
+pub use crate::io::NodeConstInputs;
+/// Each node's const inputs; a patch replaces (copy-on-write) the node's list.
+pub type ConstInputs = Vec<Arc<NodeConstInputs>>;
 pub type ConstInputStore = Arc<RwLock<ConstInputs>>;
 type EdgeSpec = RuntimeEdge;
 
 /// Const inputs keyed by pre-built port ids so ticks do not allocate port names or payloads.
-pub(crate) fn node_const_inputs(node: &RuntimeNode) -> NodeConstInputs {
-    node.const_inputs
-        .iter()
-        .map(|(port, value)| (port.into(), const_payload(value.clone())))
-        .collect()
+pub(crate) fn node_const_inputs(node: &RuntimeNode) -> Arc<NodeConstInputs> {
+    Arc::new(
+        node.const_inputs
+            .iter()
+            .map(|(port, value)| {
+                let payload = CorrelatedPayload::from_edge(const_payload(value.clone()));
+                (port.into(), payload)
+            })
+            .collect(),
+    )
 }
 
-/// Append node `node_idx`'s const inputs to `inputs`, as every tick (scheduled or direct)
-/// delivers them after the edge inputs.
-pub(crate) fn push_const_inputs(
+/// Node `node_idx`'s const inputs (one `Arc` clone; `None` without any), which every call
+/// (scheduled or direct) sees after its edge inputs.
+pub(crate) fn node_consts(
     store: &ConstInputStore,
     node_idx: usize,
-    inputs: &mut Vec<crate::io::NodePort>,
-) {
-    let consts = store.read();
-    for (port, payload) in consts.get(node_idx).into_iter().flatten() {
-        inputs.push((port.clone(), CorrelatedPayload::from_edge(payload.clone())));
-    }
+) -> Option<Arc<NodeConstInputs>> {
+    store
+        .read()
+        .get(node_idx)
+        .filter(|consts| !consts.is_empty())
+        .cloned()
 }
 
 /// The payload a const input delivers on every tick.

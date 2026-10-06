@@ -157,6 +157,11 @@ impl Clock {
         })))
     }
 
+    /// The platform clock (also `Clock::default()`), usable in constants and statics.
+    pub const fn platform() -> Self {
+        Self(None)
+    }
+
     /// Whether this is the platform clock.
     pub fn is_platform(&self) -> bool {
         self.0.is_none()

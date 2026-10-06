@@ -2,12 +2,12 @@ use crate::plan::RuntimeNode;
 use crate::prelude::*;
 use daedalus_planner::{GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
 
-use super::{NodeConstInputs, const_payload};
+use super::{CorrelatedPayload, NodeConstInputs, const_payload};
 
 pub(crate) fn apply_patch_to_const_inputs(
     patch: &GraphPatch,
     nodes: &[RuntimeNode],
-    const_inputs: &mut [NodeConstInputs],
+    const_inputs: &mut [crate::portable::Arc<NodeConstInputs>],
 ) -> PatchReport {
     let mut report = PatchReport::default();
     for op in &patch.ops {
@@ -21,6 +21,8 @@ pub(crate) fn apply_patch_to_const_inputs(
                 let normalized_port = normalize_port(port);
                 for idx in indices {
                     if let Some(entry) = const_inputs.get_mut(idx) {
+                        // Copy-on-write: calls holding the old list keep it.
+                        let entry = crate::portable::Arc::make_mut(entry);
                         apply_const_override(entry, &normalized_port, port, value);
                         report.matched_nodes += 1;
                     }
@@ -96,7 +98,7 @@ fn apply_const_override(
 
     match (matched, value) {
         (Some(idx), Some(next)) => {
-            const_inputs[idx].1 = const_payload(next.clone());
+            const_inputs[idx].1 = CorrelatedPayload::from_edge(const_payload(next.clone()));
         }
         (Some(idx), None) => {
             const_inputs.remove(idx);
@@ -107,7 +109,8 @@ fn apply_const_override(
             } else {
                 port.trim().to_string()
             };
-            const_inputs.push((key.into(), const_payload(next.clone())));
+            let payload = CorrelatedPayload::from_edge(const_payload(next.clone()));
+            const_inputs.push((key.into(), payload));
         }
         (None, None) => {}
     }

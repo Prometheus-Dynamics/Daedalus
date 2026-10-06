@@ -2,7 +2,7 @@ use super::owned::OwnedExecutor;
 use super::{
     CorrelatedPayload, CustomMetricValue, DirectHostRoute, DirectHostSingleNodeRoute,
     DirectSlotAccess, ExecuteError, ExecutionTelemetry, NodeError, NodeHandler, ProbeCount,
-    ProbeTime, is_host_bridge_node, push_const_inputs, queue, serial,
+    ProbeTime, is_host_bridge_node, node_consts, queue, serial,
 };
 use crate::portable::Arc;
 use crate::prelude::*;
@@ -195,8 +195,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
                 route.input_port.clone(),
                 CorrelatedPayload::from_edge(payload),
             ));
-            push_const_inputs(&self.const_inputs, route.node_idx, &mut inputs);
-            let mut io = self.core.node_io(route.node_idx, inputs);
+            let consts = node_consts(&self.const_inputs, route.node_idx);
+            let mut io = self.core.node_io(route.node_idx, inputs, consts.as_ref());
             let handler_start = probe.is_some().then(|| clock.now());
             {
                 let _scope = super::node_alloc_scope();

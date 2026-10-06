@@ -67,11 +67,15 @@ pub(crate) trait ExecutorConfigTarget {
     }
 
     fn apply_const_coercers(&mut self, coercers: crate::io::ConstCoercerMap) {
-        self.core_mut().const_coercers = Some(coercers);
+        let core = self.core_mut();
+        core.const_coercers = Some(coercers);
+        core.refresh_io_envs();
     }
 
     fn apply_type_index(&mut self, types: crate::type_index::TypeIndex) {
-        self.core_mut().type_index = Some(types);
+        let core = self.core_mut();
+        core.type_index = Some(types);
+        core.refresh_io_envs();
     }
 
     fn apply_data_size_inspectors(&mut self, inspectors: RuntimeDataSizeInspectors) {
@@ -109,6 +113,7 @@ pub(crate) trait ExecutorConfigTarget {
         let core = self.core_mut();
         core.telemetry = core::mem::take(&mut core.telemetry).with_clock(&clock);
         core.clock = clock;
+        core.refresh_io_envs();
     }
 
     fn apply_metrics_level(&mut self, level: MetricsLevel) {

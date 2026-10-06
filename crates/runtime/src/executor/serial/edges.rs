@@ -14,7 +14,7 @@ use crate::executor::{
 
 use super::{edge_is_active, edge_uses_direct_slot};
 
-/// Pop what the incoming edges of `node_idx` hold (plus its const inputs): everything, or with
+/// Pop what the incoming edges of `node_idx` hold: everything, or with
 /// `one_per_edge` (a `fire = "all"` node) only the oldest value of each edge.
 pub(super) fn collect_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
@@ -99,7 +99,6 @@ pub(super) fn collect_inputs<H: NodeHandler>(
         }
     }
 
-    crate::executor::push_const_inputs(&exec.const_inputs, node_idx, &mut inputs);
     Ok(inputs)
 }
 

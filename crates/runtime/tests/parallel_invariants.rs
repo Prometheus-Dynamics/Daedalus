@@ -64,7 +64,6 @@ impl NodeHandler for PayloadBranchHandler {
             "sink" => {
                 let mut values = io
                     .inputs()
-                    .iter()
                     .filter_map(|(_, payload)| payload.inner.get_ref::<i32>().copied())
                     .collect::<Vec<_>>();
                 values.sort_unstable();
@@ -106,7 +105,6 @@ impl NodeHandler for BoundedFanoutHandler {
             "bounded_sink" | "side_sink" => {
                 let mut values = io
                     .inputs()
-                    .iter()
                     .filter_map(|(_, payload)| payload.inner.get_ref::<i32>().copied())
                     .collect::<Vec<_>>();
                 values.sort_unstable();

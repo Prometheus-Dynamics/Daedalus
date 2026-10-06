@@ -86,17 +86,55 @@ pub fn new_const_coercer_map() -> ConstCoercerMap {
     Arc::new(RwLock::new(HashMap::new()))
 }
 
-/// A node's inputs and outputs for one call. Its port lists reuse per-thread buffers, so a
-/// steady-state tick does not allocate them however many ports a node has.
-pub struct NodeIo {
-    inputs: Vec<NodePort>,
-    outputs: Vec<NodePort>,
+/// A node's const inputs as ready-made payloads, shared by its calls (see [`NodeIo`]).
+pub type NodeConstInputs = Vec<NodePort>;
+
+/// What every call of one node shares: the executor's const coercers, type index and clock, and
+/// the node's connected output ports. The executor builds one per node, so a call clones one
+/// `Arc` instead of each part.
+#[derive(Clone, Default)]
+pub struct NodeIoEnv {
     const_coercers: Option<ConstCoercerMap>,
     types: Option<TypeIndex>,
     /// The node's connected output ports, so pushes by name reuse their ids.
     output_ports: Option<Arc<[PortId]>>,
     /// Stamps the payloads pushes build (the executor's clock).
     clock: Clock,
+}
+
+impl NodeIoEnv {
+    pub(crate) fn new(
+        const_coercers: Option<ConstCoercerMap>,
+        types: Option<TypeIndex>,
+        output_ports: Option<Arc<[PortId]>>,
+        clock: Clock,
+    ) -> Self {
+        Self {
+            const_coercers,
+            types,
+            output_ports,
+            clock,
+        }
+    }
+}
+
+/// The clock of a `NodeIo` without an environment.
+static PLATFORM_CLOCK: Clock = Clock::platform();
+
+/// Most const inputs a call shares instead of copying (one bit each in `NodeIo::consts_taken`).
+const SHARED_CONSTS: usize = 64;
+
+/// A node's inputs and outputs for one call. Its port lists reuse per-thread buffers, so a
+/// steady-state tick does not allocate them however many ports a node has, and its const inputs
+/// are the node's shared list rather than per-call copies.
+pub struct NodeIo {
+    /// Edge inputs.
+    inputs: Vec<NodePort>,
+    outputs: Vec<NodePort>,
+    env: Option<Arc<NodeIoEnv>>,
+    /// Const inputs, after the edge inputs; taken ones are marked in `consts_taken`.
+    consts: Option<Arc<NodeConstInputs>>,
+    consts_taken: u64,
 }
 
 impl NodeIo {
@@ -119,22 +157,53 @@ impl NodeIo {
         Self {
             inputs,
             outputs: port_buffer(),
-            const_coercers: None,
-            types: None,
-            output_ports: None,
-            clock: Clock::default(),
+            env: None,
+            consts: None,
+            consts_taken: 0,
         }
     }
 
+    /// A call's io: edge `inputs` (a [`port_buffer`]), the node's environment and its const
+    /// inputs (copied into the inputs when there are too many to track as shared).
+    pub(crate) fn for_call(
+        mut inputs: Vec<NodePort>,
+        env: Arc<NodeIoEnv>,
+        consts: Option<&Arc<NodeConstInputs>>,
+    ) -> Self {
+        let consts = consts.filter(|consts| !consts.is_empty());
+        let consts = match consts {
+            Some(consts) if consts.len() > SHARED_CONSTS => {
+                inputs.extend(consts.iter().cloned());
+                None
+            }
+            consts => consts.cloned(),
+        };
+        Self {
+            inputs,
+            outputs: port_buffer(),
+            env: Some(env),
+            consts,
+            consts_taken: 0,
+        }
+    }
+
+    fn env(&self) -> Option<&NodeIoEnv> {
+        self.env.as_deref()
+    }
+
+    fn env_mut(&mut self) -> &mut NodeIoEnv {
+        Arc::make_mut(self.env.get_or_insert_with(Default::default))
+    }
+
     pub fn with_const_coercers(mut self, const_coercers: Option<ConstCoercerMap>) -> Self {
-        self.const_coercers = const_coercers;
+        self.env_mut().const_coercers = const_coercers;
         self
     }
 
     /// Resolve pushes to these output port names to the given ids instead of allocating new
     /// ones (the executor passes each node's connected output ports).
     pub fn with_output_ports(mut self, ports: Option<Arc<[PortId]>>) -> Self {
-        self.output_ports = ports;
+        self.env_mut().output_ports = ports;
         self
     }
 
@@ -144,9 +213,10 @@ impl NodeIo {
         let Some(name) = port else {
             return PortId::from_static(DEFAULT_OUTPUT_PORT);
         };
-        self.output_ports
-            .iter()
-            .flat_map(|ports| ports.iter())
+        self.env()
+            .and_then(|env| env.output_ports.as_deref())
+            .into_iter()
+            .flatten()
             .find(|known| known.as_str() == name)
             .cloned()
             .unwrap_or_else(|| PortId::new(name))
@@ -155,31 +225,54 @@ impl NodeIo {
     /// Stamp the payloads pushes build with `clock` (see `Payload::stamp`); the executor passes
     /// its own.
     pub fn with_clock(mut self, clock: Clock) -> Self {
-        self.clock = clock;
+        self.env_mut().clock = clock;
         self
     }
 
     /// The clock pushes stamp payloads with; stamp payloads a handler builds itself with it
     /// before [`Self::push_payload`].
     pub fn clock(&self) -> &Clock {
-        &self.clock
+        self.env().map_or(&PLATFORM_CLOCK, |env| &env.clock)
     }
 
     /// Resolve generic pushes ([`Self::push_to`]) through `types`.
     pub fn with_type_index(mut self, types: Option<TypeIndex>) -> Self {
-        self.types = types;
+        self.env_mut().types = types;
         self
     }
 
-    pub fn inputs(&self) -> &[NodePort] {
-        &self.inputs
+    /// The const inputs not taken yet, with their index in the node's list.
+    fn untaken_consts(&self) -> impl Iterator<Item = (usize, &NodePort)> {
+        let taken = self.consts_taken;
+        self.consts
+            .as_deref()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter(move |(idx, _)| taken & (1 << idx) == 0)
+    }
+
+    /// Every input: the edge inputs, then the const inputs not taken yet.
+    pub fn inputs(&self) -> impl Iterator<Item = &NodePort> {
+        self.inputs
+            .iter()
+            .chain(self.untaken_consts().map(|(_, port)| port))
     }
 
     pub fn inputs_for<'a>(&'a self, port: &'a str) -> impl Iterator<Item = &'a CorrelatedPayload> {
-        self.inputs
-            .iter()
+        self.inputs()
             .filter(move |(name, _)| name == port)
             .map(|(_, payload)| payload)
+    }
+
+    /// The node's shared const inputs when no call has taken one, and whether an edge input
+    /// feeds `port` (for caches keyed by the const list: see `const_cache`).
+    pub(crate) fn shared_consts(&self) -> Option<&Arc<NodeConstInputs>> {
+        self.consts.as_ref().filter(|_| self.consts_taken == 0)
+    }
+
+    pub(crate) fn has_edge_input(&self, port: &str) -> bool {
+        self.inputs.iter().any(|(name, _)| name == port)
     }
 
     pub fn outputs(&self) -> &[NodePort] {
@@ -224,7 +317,7 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        let payload = Payload::owned(type_key, value).stamp(&self.clock);
+        let payload = Payload::owned(type_key, value).stamp(self.clock());
         self.push_payload(port, payload);
     }
 
@@ -254,7 +347,7 @@ impl NodeIo {
     ) where
         T: Send + Sync + 'static,
     {
-        let payload = Payload::shared(type_key, value).stamp(&self.clock);
+        let payload = Payload::shared(type_key, value).stamp(self.clock());
         self.push_payload(port, payload);
     }
 
@@ -295,7 +388,9 @@ impl NodeIo {
 
     /// The type index generic pushes resolve through.
     pub fn type_index(&self) -> &TypeIndex {
-        self.types.as_ref().unwrap_or_else(|| TypeIndex::builtin())
+        self.env()
+            .and_then(|env| env.types.as_ref())
+            .unwrap_or_else(|| TypeIndex::builtin())
     }
 
     pub fn push_value(&mut self, port: Option<&str>, value: Value) {
@@ -303,7 +398,7 @@ impl NodeIo {
     }
 
     pub fn push_value_to(&mut self, port: impl Into<PortId>, value: Value) {
-        let payload = Payload::owned("value", value).stamp(&self.clock);
+        let payload = Payload::owned("value", value).stamp(self.clock());
         self.push_payload(port, payload);
     }
 
@@ -315,14 +410,20 @@ impl NodeIo {
         self.outputs.push((port.into(), payload));
     }
 
+    /// Take the input on `port`: an edge input moves out; a const input is a shared clone, marked
+    /// taken for this call.
     pub fn take_input_payload(&mut self, port: &str) -> Option<CorrelatedPayload> {
-        let idx = self.inputs.iter().position(|(name, _)| name == port)?;
-        Some(self.inputs.remove(idx).1)
+        if let Some(idx) = self.inputs.iter().position(|(name, _)| name == port) {
+            return Some(self.inputs.remove(idx).1);
+        }
+        let (idx, (_, payload)) = self.untaken_consts().find(|(_, (name, _))| name == port)?;
+        let payload = payload.clone();
+        self.consts_taken |= 1 << idx;
+        Some(payload)
     }
 
     pub fn get_payload(&self, port: &str) -> Option<&Payload> {
-        self.inputs
-            .iter()
+        self.inputs()
             .find(|(name, _)| name == port)
             .map(|(_, payload)| &payload.inner)
     }
@@ -368,8 +469,7 @@ impl NodeIo {
     where
         T: Clone + Send + Sync + 'static,
     {
-        self.inputs
-            .iter()
+        self.inputs()
             .filter_map(|(port, payload)| {
                 let index = crate::fanin::parse_indexed_port(prefix, port.as_str())?;
                 let value = payload.inner.get_ref::<T>()?.clone();
@@ -427,7 +527,7 @@ impl NodeIo {
     where
         T: Send + Sync + 'static,
     {
-        if let Some(map) = self.const_coercers.as_ref()
+        if let Some(map) = self.env().and_then(|env| env.const_coercers.as_ref())
             && let Some(coercer) = map.read().get(core::any::type_name::<T>())
             && let Some(any) = coercer(value)
             && let Ok(typed) = any.downcast::<T>()

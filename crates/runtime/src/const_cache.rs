@@ -15,11 +15,15 @@ use daedalus_transport::Payload;
 
 use crate::NodeError;
 use crate::config::{NodeConfig, log_config_changes};
-use crate::io::NodeIo;
+use crate::io::{NodeConstInputs, NodeIo};
+use crate::portable::Arc;
 
 /// A node's decoded, sanitized and validated config, with the payloads it was built from.
 pub struct ConfigCache<C> {
     sources: Vec<Option<Payload>>,
+    /// The node's const list the config was decoded from, when it fed every config port: while
+    /// a call shares the same list and no edge feeds a config port, nothing changed.
+    consts: Option<Arc<NodeConstInputs>>,
     value: Option<C>,
 }
 
@@ -27,6 +31,7 @@ impl<C> Default for ConfigCache<C> {
     fn default() -> Self {
         Self {
             sources: Vec::new(),
+            consts: None,
             value: None,
         }
     }
@@ -37,14 +42,23 @@ impl<C: NodeConfig> ConfigCache<C> {
     /// only when one of their payloads differs from the last call's.
     pub fn get(&mut self, io: &NodeIo, node_id: &str) -> Result<&C, NodeError> {
         let names = C::port_names();
+        let from_consts = |io: &NodeIo| !names.iter().any(|name| io.has_edge_input(name));
+        let same_consts = match (&self.consts, io.shared_consts()) {
+            (Some(cached), Some(now)) => Arc::ptr_eq(cached, now),
+            _ => false,
+        };
         let unchanged = self.value.is_some()
-            && self.sources.len() == names.len()
-            && names.iter().zip(&self.sources).all(|(name, cached)| {
-                match (io.get_payload(name), cached) {
-                    (Some(now), Some(cached)) => now.shares_storage(cached),
-                    (now, cached) => now.is_none() && cached.is_none(),
-                }
-            });
+            && if same_consts {
+                from_consts(io)
+            } else {
+                self.sources.len() == names.len()
+                    && names.iter().zip(&self.sources).all(|(name, cached)| {
+                        match (io.get_payload(name), cached) {
+                            (Some(now), Some(cached)) => now.shares_storage(cached),
+                            (now, cached) => now.is_none() && cached.is_none(),
+                        }
+                    })
+            };
         if !unchanged {
             self.value = None;
             let invalid =
@@ -57,6 +71,7 @@ impl<C: NodeConfig> ConfigCache<C> {
             self.sources.clear();
             self.sources
                 .extend(names.iter().map(|name| io.get_payload(name).cloned()));
+            self.consts = io.shared_consts().filter(|_| from_consts(io)).cloned();
             self.value = Some(sanitized.value);
         }
         Ok(self.value.as_ref().expect("config decoded above"))
@@ -217,6 +232,77 @@ mod tests {
         assert_eq!(label(&mut cache, &io_with("label", &second)).unwrap(), "b");
         assert_eq!(decodes(), 2);
         assert!(label(&mut cache, &NodeIo::empty()).is_err());
+    }
+
+    static CONST_DECODES: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct ConstCfg(i64);
+
+    impl NodeConfig for ConstCfg {
+        fn ports(
+            _: &daedalus_data::typing::TypeRegistry,
+        ) -> Vec<daedalus_registry::capability::PortDecl> {
+            Vec::new()
+        }
+        fn port_names() -> &'static [&'static str] {
+            &["level"]
+        }
+        fn from_io(io: &NodeIo) -> Result<Self, NodeError> {
+            CONST_DECODES.fetch_add(1, Ordering::SeqCst);
+            let level = io.get_typed::<i64>("level");
+            Ok(Self(level.ok_or_else(|| {
+                NodeError::InvalidInput("missing level".into())
+            })?))
+        }
+        fn sanitize(self) -> Result<Sanitized<Self>, ConfigError> {
+            Ok(Sanitized {
+                value: self,
+                changes: Vec::new(),
+            })
+        }
+        fn validate(&self) -> Result<(), ConfigError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shared_const_lists_skip_the_per_port_check_until_replaced() {
+        let consts = |level: i64| {
+            let payload = CorrelatedPayload::from_edge(Payload::owned("value", Value::Int(level)));
+            Arc::new(vec![(PortId::from_static("level"), payload)])
+        };
+        let call = |consts: &Arc<NodeConstInputs>, edge: Option<i64>| {
+            let inputs = edge.map(|level| {
+                let payload = Payload::owned("value", Value::Int(level));
+                (
+                    PortId::from_static("level"),
+                    CorrelatedPayload::from_edge(payload),
+                )
+            });
+            let mut buffer = crate::io::port_buffer();
+            buffer.extend(inputs);
+            NodeIo::for_call(buffer, Arc::default(), Some(consts))
+        };
+        let mut cache = ConfigCache::<ConstCfg>::default();
+        let decodes = || CONST_DECODES.load(Ordering::SeqCst);
+        let (one, two) = (consts(1), consts(2));
+
+        assert_eq!(cache.get(&call(&one, None), "node").unwrap().0, 1);
+        assert_eq!(cache.get(&call(&one, None), "node").unwrap().0, 1);
+        assert_eq!(decodes(), 1, "same const list: decoded once");
+        // An edge input on a config port wins over the const and is decoded.
+        assert_eq!(cache.get(&call(&one, Some(5)), "node").unwrap().0, 5);
+        assert_eq!(cache.get(&call(&one, None), "node").unwrap().0, 1);
+        // A patched node gets a new list.
+        assert_eq!(cache.get(&call(&two, None), "node").unwrap().0, 2);
+        assert_eq!(decodes(), 4);
+
+        // Taking a const input marks it taken for the call only.
+        let mut io = call(&one, None);
+        assert!(io.take_input_payload("level").is_some());
+        assert!(io.get_payload("level").is_none() && io.inputs().next().is_none());
+        assert_eq!(call(&one, None).inputs().count(), 1);
     }
 
     #[test]
