@@ -112,13 +112,14 @@ fn record_queue_wait<H: NodeHandler>(
     let Some(enqueued_at) = payload.enqueued_at else {
         return;
     };
-    let probe = exec.core.run_config.frame_probe.as_deref();
+    let core = &mut *exec.core;
+    let probe = core.run_config.frame_probe.as_deref();
     if !detailed && probe.is_none() {
         return;
     }
-    let waited = exec.core.clock.elapsed(enqueued_at);
+    let waited = core.clock.elapsed(enqueued_at);
     if detailed {
-        exec.core.telemetry.record_edge_wait(edge_idx, waited);
+        core.telemetry.record_edge_wait(edge_idx, waited);
     }
     if let Some(probe) = probe {
         probe.record_queue_wait(edge_idx, waited);
@@ -370,7 +371,7 @@ fn deliver<H: NodeHandler>(
         return Ok(());
     }
     let edges = exec.edges;
-    let core = &mut exec.core;
+    let core = &mut *exec.core;
     apply_policy_owned(ApplyPolicyOwnedArgs {
         edge_idx,
         policy: edges[edge_idx].policy(),

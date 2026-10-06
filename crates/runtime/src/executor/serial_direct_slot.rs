@@ -59,9 +59,10 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
             .telemetry
             .record_edge_queue_bytes(edge_idx, bytes.unwrap_or(0));
         if let Some(start) = start {
+            let elapsed = exec.core.clock.elapsed(start);
             exec.core
                 .telemetry
-                .record_edge_transport_apply_duration(edge_idx, exec.core.clock.elapsed(start));
+                .record_edge_transport_apply_duration(edge_idx, elapsed);
         }
     }
 }

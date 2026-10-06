@@ -35,7 +35,7 @@ pub(crate) use adaptive::{AdaptiveState, run_adaptive_on};
 
 pub(crate) use config::ExecutorRunConfig;
 pub(crate) use config_target::ExecutorConfigTarget;
-pub(crate) use core::ExecutorCore;
+pub(crate) use core::{CoreRef, ExecutorCore};
 pub(crate) use direct_slot::{DirectSlot, DirectSlotAccess};
 pub use errors::{ExecuteError, ExecutorBuildError, ExecutorMaskError, NodeError};
 pub use handler::{DirectPayloadFn, NodeHandler};
@@ -117,7 +117,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) const_inputs: ConstInputStore,
     pub(crate) backpressure: BackpressureStrategy,
     pub(crate) handler: Arc<H>,
-    pub(crate) core: ExecutorCore,
+    pub(crate) core: CoreRef<'a>,
     /// Optional execution scope: when set, nodes with `false` are skipped.
     pub(crate) direct_slot_access: DirectSlotAccess,
     /// Measured costs behind `run_adaptive_in_place`.
@@ -309,7 +309,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             )),
             backpressure: plan.backpressure.clone(),
             handler: Arc::new(handler),
-            core,
+            core: CoreRef::Owned(core),
             direct_slot_access: DirectSlotAccess::Shared,
             adaptive: AdaptiveState::default(),
         })
@@ -617,7 +617,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             const_inputs: self.const_inputs.clone(),
             backpressure: self.backpressure.clone(),
             handler: self.handler.clone(),
-            core: self.core.snapshot(),
+            core: CoreRef::Owned(self.core.snapshot()),
             direct_slot_access,
             adaptive: AdaptiveState::default(),
         }

@@ -108,6 +108,11 @@ impl ExecutionTelemetry {
         self
     }
 
+    /// Read timestamps from `clock` from now on.
+    pub(crate) fn set_clock(&mut self, clock: Clock) {
+        self.clock = clock;
+    }
+
     /// The clock timings are read from.
     pub fn clock(&self) -> &Clock {
         &self.clock

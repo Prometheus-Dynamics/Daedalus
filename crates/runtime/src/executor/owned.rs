@@ -337,6 +337,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     pub(super) fn reset_for_run(&mut self) {
         let metrics_level = self.core.run_config.metrics_level;
+        // A serial run hands its telemetry (this one) to the caller and leaves a default behind.
+        let clock = self.core.clock.clone();
+        self.core.telemetry.set_clock(clock);
         self.core.telemetry.reset_for_reuse(metrics_level);
         self.core.warnings_seen.lock().clear();
         if self.storage_needs_reset {
@@ -423,6 +426,62 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         }
     }
 
+    /// An executor for one serial run that works on this executor's own core (its queues,
+    /// telemetry and per-node tables) instead of a snapshot of it: nothing is cloned per tick.
+    fn serial_view(&mut self) -> Executor<'_, H> {
+        let Self {
+            nodes,
+            edges,
+            edge_transports,
+            incoming_edges,
+            outgoing_edges,
+            schedule,
+            #[cfg(feature = "gpu")]
+            gpu_entries,
+            #[cfg(feature = "gpu")]
+            gpu_exits,
+            #[cfg(feature = "gpu")]
+            gpu_entry_set,
+            #[cfg(feature = "gpu")]
+            gpu_exit_set,
+            #[cfg(feature = "gpu")]
+            data_edges,
+            segments,
+            schedule_order,
+            const_inputs,
+            backpressure,
+            handler,
+            core,
+            ..
+        } = self;
+        Executor {
+            nodes: nodes.clone(),
+            edges: edges.as_slice(),
+            edge_transports: edge_transports.as_slice(),
+            incoming_edges: incoming_edges.clone(),
+            outgoing_edges: outgoing_edges.clone(),
+            schedule: schedule.clone(),
+            #[cfg(feature = "gpu")]
+            gpu_entries: gpu_entries.as_slice(),
+            #[cfg(feature = "gpu")]
+            gpu_exits: gpu_exits.as_slice(),
+            #[cfg(feature = "gpu")]
+            gpu_entry_set: gpu_entry_set.clone(),
+            #[cfg(feature = "gpu")]
+            gpu_exit_set: gpu_exit_set.clone(),
+            #[cfg(feature = "gpu")]
+            data_edges: data_edges.clone(),
+            segments: segments.as_slice(),
+            schedule_order: schedule_order.as_slice(),
+            const_inputs: const_inputs.clone(),
+            backpressure: backpressure.clone(),
+            handler: handler.clone(),
+            core: super::CoreRef::Borrowed(core),
+            direct_slot_access: DirectSlotAccess::Serial,
+            adaptive: AdaptiveState::default(),
+        }
+    }
+
     pub(super) fn snapshot<'a>(&'a self, direct_slot_access: DirectSlotAccess) -> Executor<'a, H> {
         Executor {
             nodes: self.nodes.clone(),
@@ -446,7 +505,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             const_inputs: self.const_inputs.clone(),
             backpressure: self.backpressure.clone(),
             handler: self.handler.clone(),
-            core: self.core.snapshot(),
+            core: super::CoreRef::Owned(self.core.snapshot()),
             direct_slot_access,
             adaptive: AdaptiveState::default(),
         }
@@ -456,9 +515,10 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let _scope = super::runtime_alloc_scope();
         let tick = self.begin_probe_tick();
         self.reset_for_run();
-        let mut exec = self.snapshot(DirectSlotAccess::Serial);
+        let mut exec = self.serial_view();
         let res = serial::run_with_boundaries(&mut exec);
         serial::drain_host_outputs(&mut exec);
+        drop(exec);
         self.end_probe_tick(tick);
         if res.is_err() {
             self.storage_needs_reset = true;

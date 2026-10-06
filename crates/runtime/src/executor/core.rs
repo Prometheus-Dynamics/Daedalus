@@ -10,6 +10,35 @@ use crate::sync::Mutex;
 use alloc::collections::BTreeMap;
 use daedalus_core::platform::Clock;
 
+/// An executor's core: its own (a snapshot, or a borrowed executor's) or borrowed from an
+/// [`OwnedExecutor`](super::OwnedExecutor) for a serial run.
+pub(crate) enum CoreRef<'a> {
+    Owned(ExecutorCore),
+    Borrowed(&'a mut ExecutorCore),
+}
+
+impl core::ops::Deref for CoreRef<'_> {
+    type Target = ExecutorCore;
+
+    #[inline]
+    fn deref(&self) -> &ExecutorCore {
+        match self {
+            Self::Owned(core) => core,
+            Self::Borrowed(core) => core,
+        }
+    }
+}
+
+impl core::ops::DerefMut for CoreRef<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut ExecutorCore {
+        match self {
+            Self::Owned(core) => core,
+            Self::Borrowed(core) => core,
+        }
+    }
+}
+
 pub(crate) struct ExecutorCore {
     pub(crate) state: StateStore,
     pub(crate) gpu_available: bool,
