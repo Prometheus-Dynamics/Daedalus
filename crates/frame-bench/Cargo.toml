@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 daedalus = { workspace = true, features = ["engine", "plugins", "threads", "alloc-probe"] }
 libc = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

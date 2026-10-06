@@ -674,6 +674,7 @@ dependencies = [
  "criterion",
  "daedalus-rs",
  "libc",
+ "serde",
 ]
 
 [[package]]

@@ -21,7 +21,7 @@ pub const CHAIN_INPUT: &str = "frame";
 /// Host output of a compiled chain (the frame, after the last stage).
 pub const CHAIN_OUTPUT: &str = "out";
 
-type BenchError = Box<dyn std::error::Error + Send + Sync>;
+pub(crate) type BenchError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Reads the frame's metadata through `daedalus:frame` (like a detector checking its input),
 /// then forwards the same payload: no copy, no allocation.
@@ -114,7 +114,7 @@ fn input(builder: GraphBuilder, feed: FrameFeed) -> Result<GraphBuilder, BenchEr
     })
 }
 
-fn prepare(
+pub(crate) fn prepare(
     registry: &PluginRegistry,
     graph: Graph,
     config: EngineConfig,

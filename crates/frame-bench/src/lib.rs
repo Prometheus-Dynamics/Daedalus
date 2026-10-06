@@ -36,6 +36,8 @@
 
 mod buffer;
 mod chain;
+mod detector;
+mod perf;
 mod source;
 
 use core::fmt;
@@ -48,6 +50,11 @@ pub use chain::{
 };
 pub use daedalus::alloc_probe::{AllocCounts, CountingAllocator};
 pub use daedalus::transport::FRAME_INTERFACE_KEY;
+pub use detector::{
+    DETECTOR_GROUP_ID, DETECTOR_OUTPUTS, DetectorPlugin, DetectorShape, compile_detector,
+    detector_graph, detector_registry, register_detector_group,
+};
+pub use perf::InstructionCounter;
 pub use source::{
     FrameFeed, FrameSourceConfig, SYNTHETIC_FRAME_KEY, SyntheticFrame, SyntheticFrameSource,
 };
@@ -99,6 +106,9 @@ pub struct FrameBenchRun {
     /// Allocations during the measured frames, per frame; `None` without the
     /// [`CountingAllocator`] installed.
     pub allocs_per_frame: Option<[f64; 4]>,
+    /// User-space instructions per frame (push + tick + take and the timing around them);
+    /// `None` where no instruction counter opens ([`InstructionCounter`]).
+    pub instructions_per_frame: Option<f64>,
 }
 
 impl FrameBenchRun {
@@ -120,6 +130,9 @@ impl fmt::Display for FrameBenchRun {
             "frame (push + tick + take): p50 {} ns, p99 {} ns, mean {:.0} ns over {} frames",
             self.frame_p50_ns, self.frame_p99_ns, self.frame_mean_ns, self.ticks
         )?;
+        if let Some(instructions) = self.instructions_per_frame {
+            writeln!(f, "instructions per frame: {instructions:.0}")?;
+        }
         if let Some([runtime, node, host, other]) = self.allocs_per_frame {
             writeln!(
                 f,
@@ -156,11 +169,13 @@ pub fn run_frame_bench<H: NodeHandler + Send + Sync + 'static>(
     host.reset_frame_overhead();
     let mut wall = vec![0u64; config.ticks.max(1)];
     let before = daedalus::alloc_probe::counts();
+    let counter = InstructionCounter::start();
     for slot in wall.iter_mut() {
         let start = Instant::now();
         frame(host, source)?;
         *slot = start.elapsed().as_nanos() as u64;
     }
+    let instructions = counter.as_ref().map(InstructionCounter::read);
     let during = daedalus::alloc_probe::counts().since(&before);
     let ticks = wall.len();
     let mean = wall.iter().sum::<u64>() as f64 / ticks as f64;
@@ -172,6 +187,7 @@ pub fn run_frame_bench<H: NodeHandler + Send + Sync + 'static>(
         frame_p99_ns: percentile(&wall, 99),
         frame_mean_ns: mean,
         overhead: host.frame_overhead(),
+        instructions_per_frame: instructions.map(|count| count as f64 / ticks as f64),
         allocs_per_frame: daedalus::alloc_probe::is_installed().then(|| {
             [
                 per(during.runtime),
