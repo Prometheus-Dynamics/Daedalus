@@ -8,7 +8,7 @@ use daedalus_registry::typeexpr_transport_key;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
-use crate::metadata::PLAN_EDGE_EXPLANATIONS_KEY;
+use crate::metadata::{PLAN_EDGE_EXPLANATIONS_KEY, host_held_inputs};
 
 use super::{
     AdapterResolutionMode, EdgeResolutionExplanation, EdgeResolutionKind, PlannerCatalog,
@@ -51,14 +51,18 @@ pub(super) fn convert(
             .unwrap_or_else(|| {
                 daedalus_transport::AdaptRequest::new(typeexpr_transport_key(&in_ty))
             });
+        // A held host input is delivered again every tick, so it is shared like a fan-out.
+        let held = host_held_inputs(&from_node.metadata)
+            .any(|port| port.eq_ignore_ascii_case(&edge.from.port));
         let target_exclusive = matches!(
             request.access,
             daedalus_transport::AccessMode::Move | daedalus_transport::AccessMode::Modify
-        ) && source_fanout
-            .get(&(edge.from.node.0, edge.from.port.clone()))
-            .copied()
-            .unwrap_or(0)
-            > 1;
+        ) && (held
+            || source_fanout
+                .get(&(edge.from.node.0, edge.from.port.clone()))
+                .copied()
+                .unwrap_or(0)
+                > 1);
         request.exclusive = target_exclusive;
         request.residency = target_residency_for_node(to_node, config);
         let target_access = request.access;

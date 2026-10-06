@@ -8,11 +8,11 @@ use daedalus_registry::capability::NodeDecl;
 pub use daedalus_core::metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_INPUTS_KEY,
     DYNAMIC_OUTPUT_LABELS_KEY, DYNAMIC_OUTPUT_TYPES_KEY, DYNAMIC_OUTPUTS_KEY, EMBEDDED_GROUP_KEY,
-    GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, HOST_INPUT_TYPES_KEY,
-    HOST_OUTPUT_TYPES_KEY, PLAN_APPLIED_LOWERINGS_KEY, PLAN_CONVERTER_METADATA_PREFIX,
-    PLAN_EDGE_EXPLANATIONS_KEY, PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY,
-    PLAN_OVERLOAD_RESOLUTIONS_KEY, PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY,
-    PLAN_TOPO_ORDER_KEY,
+    GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, HOST_HELD_INPUTS_KEY,
+    HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, PLAN_APPLIED_LOWERINGS_KEY,
+    PLAN_CONVERTER_METADATA_PREFIX, PLAN_EDGE_EXPLANATIONS_KEY, PLAN_GPU_SEGMENTS_KEY,
+    PLAN_GPU_WHY_KEY, PLAN_OVERLOAD_RESOLUTIONS_KEY, PLAN_SCHEDULE_ORDER_KEY,
+    PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY,
 };
 
 /// Opaque type name the planner treats as a type variable, inferred from connected edges.
@@ -62,6 +62,16 @@ pub fn descriptor_metadata_string(desc: &NodeDecl, key: &str) -> Option<String> 
 
 pub fn is_host_bridge_metadata(metadata: &BTreeMap<String, Value>) -> bool {
     metadata_bool(metadata, HOST_BRIDGE_META_KEY)
+}
+
+/// The held host inputs a host-bridge node declares (`HOST_HELD_INPUTS_KEY`, a list of port
+/// names).
+pub fn host_held_inputs(metadata: &BTreeMap<String, Value>) -> impl Iterator<Item = &str> {
+    let ports = match metadata.get(HOST_HELD_INPUTS_KEY) {
+        Some(Value::List(ports)) => ports.as_slice(),
+        _ => &[],
+    };
+    ports.iter().filter_map(Value::as_str)
 }
 
 pub fn descriptor_dynamic_port_type(desc: &NodeDecl, is_input: bool) -> Option<String> {
