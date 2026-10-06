@@ -2,6 +2,7 @@
 name = "daedalus-mcu-blink-nodes"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish = false
 description = "Device nodes of the MCU blink example: compiled into the firmware and read by its build script."
 

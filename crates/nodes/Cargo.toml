@@ -2,6 +2,7 @@
 name = "daedalus-nodes"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Demo node implementations and fixtures for Daedalus."
 license.workspace = true
 repository.workspace = true

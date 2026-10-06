@@ -2,6 +2,7 @@
 name = "daedalus-runtime"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Runtime executor for Daedalus plans with backpressure and plugins."
 license.workspace = true
 repository.workspace = true

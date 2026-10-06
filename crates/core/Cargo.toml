@@ -2,6 +2,7 @@
 name = "daedalus-core"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Core types and shared utilities for the Daedalus dataflow stack."
 license.workspace = true
 repository.workspace = true

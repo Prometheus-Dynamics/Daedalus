@@ -184,7 +184,7 @@ impl GpuBackend for MockBackend {
             .find(|f| f.format == req.format)
             .ok_or(GpuError::Unsupported)?;
         let bpp = crate::format_bytes_per_pixel(req.format).ok_or(GpuError::Unsupported)?;
-        let bytes_per_row = (req.width * bpp) as u32;
+        let bytes_per_row = req.width * bpp;
         if !bytes_per_row.is_multiple_of(self.caps.bytes_per_row_alignment) {
             return Err(GpuError::AllocationFailed);
         }

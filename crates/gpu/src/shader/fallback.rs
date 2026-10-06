@@ -72,9 +72,9 @@ mod tests {
     use super::*;
     use crate::shader::BindingKind;
     #[cfg(feature = "gpu-async")]
-    use std::task::{Context, Poll, Wake, Waker};
+    use std::pin::Pin;
     #[cfg(feature = "gpu-async")]
-    use std::{pin::Pin, sync::Arc};
+    use std::task::{Context, Poll, Waker};
 
     const STORAGE_SHADER: &str = r#"
         @group(0) @binding(0)
@@ -117,14 +117,6 @@ mod tests {
     }
 
     #[cfg(feature = "gpu-async")]
-    struct NoopWake;
-
-    #[cfg(feature = "gpu-async")]
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
-    #[cfg(feature = "gpu-async")]
     #[test]
     fn ctx_async_init_waiter_unregisters_on_cancel() {
         if GPU_CTX.get().is_some() {
@@ -136,8 +128,7 @@ mod tests {
         assert!(try_start_ctx_async_init().is_none());
 
         let mut wait = Box::pin(GpuCtxInitWaitFuture::new());
-        let waker = Waker::from(Arc::new(NoopWake));
-        let mut cx = Context::from_waker(&waker);
+        let mut cx = Context::from_waker(Waker::noop());
 
         assert!(matches!(Pin::new(&mut wait).poll(&mut cx), Poll::Pending));
         assert_eq!(ctx_async_waiter_count(), 1);
@@ -275,7 +266,7 @@ impl GpuCtxInitLeader {
         let waiters = {
             let mut state = ctx_async_init_state().lock();
             state.in_progress = false;
-            state.waiters.drain(..).collect::<Vec<_>>()
+            std::mem::take(&mut state.waiters)
         };
         for waiter in waiters {
             waiter.waker.wake();

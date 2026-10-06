@@ -23,9 +23,11 @@ jobs:
         name: Checkout
         uses: actions/checkout@v5
 
+      # The same release as rust-toolchain.toml (and the MSRV): installing it here gives the
+      # pinned toolchain the components and targets below.
       - &toolchain-lint
         name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
 
@@ -86,7 +88,7 @@ jobs:
       - *checkout
       - &toolchain
         name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
       - *cache
 
       - name: Run macro UI (trybuild) tests
@@ -129,7 +131,7 @@ jobs:
       - *cache
 
       - name: Validate package surface
-        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi --allow-dirty --no-verify
+        run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi --exclude daedalus-frame-bench --allow-dirty --no-verify
 
   # Type-check only (no linking): the C cross compiler is for build scripts that compile C.
   aarch64:
@@ -138,7 +140,7 @@ jobs:
     steps:
       - *checkout
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl
       - *cache
@@ -170,7 +172,7 @@ jobs:
     steps:
       - *checkout
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: thumbv7em-none-eabihf,thumbv6m-none-eabi,wasm32-unknown-unknown,wasm32-wasip1
       # The CLI must match the `wasm-bindgen` version in Cargo.lock (`scripts/ci.sh wasm` checks).

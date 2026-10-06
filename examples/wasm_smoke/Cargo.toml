@@ -2,6 +2,7 @@
 name = "daedalus-wasm-smoke"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish = false
 description = "wasm32 runtime smoke modules for the embedded preset (scripts/ci.sh wasm)."
 

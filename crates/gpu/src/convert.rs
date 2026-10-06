@@ -353,9 +353,7 @@ impl DeviceBridge for GrayImage {
             _ => {
                 let mut gray =
                     Vec::with_capacity((gpu.width as usize).saturating_mul(gpu.height as usize));
-                for rgba in bytes.chunks_exact(4) {
-                    gray.push(rgba[0]);
-                }
+                gray.extend(bytes.as_chunks::<4>().0.iter().map(|rgba| rgba[0]));
                 image::ImageBuffer::from_raw(gpu.width, gpu.height, gray)
                     .ok_or(GpuError::AllocationFailed)
             }

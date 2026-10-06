@@ -38,12 +38,11 @@ impl Frame {
         let buf = DmaBuf::alloc((Self::STRIDE * u64::from(Self::HEIGHT)) as usize)
             .expect("dma-heap alloc");
         buf.write(|bytes| {
-            for (y, row) in bytes.chunks_exact_mut(Self::STRIDE as usize).enumerate() {
-                for (x, px) in row[..Self::WIDTH as usize * 4]
-                    .chunks_exact_mut(4)
-                    .enumerate()
-                {
-                    px.copy_from_slice(&pixel(x as u32, y as u32));
+            let rows = bytes.as_chunks_mut::<{ Self::STRIDE as usize }>().0;
+            for (y, row) in rows.iter_mut().enumerate() {
+                let pixels = row[..Self::WIDTH as usize * 4].as_chunks_mut::<4>().0;
+                for (x, px) in pixels.iter_mut().enumerate() {
+                    *px = pixel(x as u32, y as u32);
                 }
             }
         });
@@ -58,7 +57,7 @@ impl Frame {
 
 fn assert_pattern(backend: &WgpuBackend, handle: &GpuImageHandle, context: &str) {
     let read = backend.read_texture(handle).expect("readback");
-    for (index, px) in read.chunks_exact(4).enumerate() {
+    for (index, px) in read.as_chunks::<4>().0.iter().enumerate() {
         let (x, y) = (index as u32 % handle.width, index as u32 / handle.width);
         assert_eq!(px, &pixel(x, y), "pixel ({x},{y}), {context}");
     }

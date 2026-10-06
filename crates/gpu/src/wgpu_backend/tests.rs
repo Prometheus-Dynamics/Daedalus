@@ -10,14 +10,6 @@ use std::task::{Wake, Waker};
 use std::{future::Future, pin::Pin, task::Context};
 
 #[cfg(feature = "gpu-async")]
-struct NoopWake;
-
-#[cfg(feature = "gpu-async")]
-impl Wake for NoopWake {
-    fn wake(self: Arc<Self>) {}
-}
-
-#[cfg(feature = "gpu-async")]
 struct CountingWake {
     wakes: Arc<AtomicUsize>,
 }
@@ -66,8 +58,7 @@ fn copy_limiter_async_acquire_yields_when_full() {
     let limiter = CopyLimiter::new(1);
     let guard = limiter.acquire();
     let mut future = Box::pin(limiter.acquire_async());
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(Waker::noop());
 
     assert!(matches!(Pin::new(&mut future).poll(&mut cx), Poll::Pending));
     assert_eq!(limiter.in_flight(), 1);

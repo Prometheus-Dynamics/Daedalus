@@ -61,7 +61,7 @@ impl CopyLimiter {
             let waiters = {
                 let mut state = self.state.lock();
                 state.in_flight = state.in_flight.saturating_sub(1);
-                state.waiters.drain(..).collect::<Vec<_>>()
+                std::mem::take(&mut state.waiters)
             };
             for waiter in waiters {
                 waiter.waker.wake();

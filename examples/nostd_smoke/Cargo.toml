@@ -2,6 +2,7 @@
 name = "daedalus-nostd-smoke"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish = false
 description = "no_std + alloc smoke test of the serial runtime and engine (scripts/ci.sh nostd)."
 

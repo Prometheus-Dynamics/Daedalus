@@ -2,6 +2,7 @@
 name = "daedalus-ffi-java"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Java FFI worker and packaging integration for Daedalus plugins."
 license.workspace = true
 repository.workspace = true

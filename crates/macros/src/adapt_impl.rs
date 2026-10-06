@@ -393,7 +393,7 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
         .unwrap_or_default();
     let adapter_options = quote! {{
         let mut __options = #runtime_crate::plugins::TransportAdapterOptions::default();
-        __options.cost.cpu_ns = (#cost as u64).min(::core::u32::MAX as u64) as u32;
+        __options.cost.cpu_ns = (#cost as u64).min(::core::primitive::u32::MAX as u64) as u32;
         __options.cost.kind = #transport_crate::AdaptKind::#kind;
         __options.access = #transport_crate::AccessMode::#access;
         #residency_option

@@ -2,6 +2,7 @@
 name = "daedalus-gpu"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "GPU backends and WGSL dispatch helpers for the Daedalus runtime."
 license.workspace = true
 repository.workspace = true

@@ -322,11 +322,11 @@ pub unsafe fn to_value(value: &StableValue) -> Result<Value, String> {
             let items = unsafe { raw_slice(value.ptr.cast::<StableValue>(), value.len * 2) };
             Value::Map(
                 items
-                    .chunks_exact(2)
-                    .map(|pair| {
-                        Ok((unsafe { to_value(&pair[0]) }?, unsafe {
-                            to_value(&pair[1])
-                        }?))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|[key, value]| {
+                        Ok((unsafe { to_value(key) }?, unsafe { to_value(value) }?))
                     })
                     .collect::<Result<_, String>>()?,
             )

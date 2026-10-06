@@ -2,6 +2,7 @@
 name = "daedalus-rs"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Facade crate for the Daedalus dataflow runtime (CPU/GPU node graphs)."
 license.workspace = true
 repository.workspace = true

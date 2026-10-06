@@ -2,6 +2,7 @@
 name = "daedalus-wgsl-infer"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "WGSL binding/workgroup inference helpers for Daedalus GPU tooling."
 license.workspace = true
 repository.workspace = true

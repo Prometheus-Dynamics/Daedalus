@@ -2,6 +2,7 @@
 name = "daedalus-mcu-macros"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "The #[node] attribute of daedalus-mcu (device node functions)."
 license.workspace = true
 repository.workspace = true

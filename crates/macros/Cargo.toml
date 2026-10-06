@@ -2,6 +2,7 @@
 name = "daedalus-macros"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Proc macros for Daedalus nodes and GPU binding helpers."
 license.workspace = true
 repository.workspace = true

@@ -2,6 +2,7 @@
 name = "daedalus-mcu"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Allocation-free microcontroller executor for Daedalus graphs planned on the host."
 license.workspace = true
 repository.workspace = true

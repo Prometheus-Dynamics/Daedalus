@@ -2,6 +2,7 @@
 name = "daedalus-mcu-build"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Host-side plan compiler for daedalus-mcu: plans a graph into allocation-free device code or a loadable plan blob."
 license.workspace = true
 repository.workspace = true

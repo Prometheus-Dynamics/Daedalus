@@ -208,8 +208,8 @@ fn branch_plan() -> ExecutionPlan {
     ] {
         graph.nodes.push(
             NodeInstance::new(id)
-                .with_inputs(inputs.into_iter())
-                .with_outputs(outputs.into_iter()),
+                .with_inputs(inputs)
+                .with_outputs(outputs),
         );
     }
     for (from, from_port, to, to_port) in [
@@ -232,8 +232,8 @@ fn bounded_fanout_plan() -> ExecutionPlan {
     ] {
         graph.nodes.push(
             NodeInstance::new(id)
-                .with_inputs(inputs.into_iter())
-                .with_outputs(outputs.into_iter()),
+                .with_inputs(inputs)
+                .with_outputs(outputs),
         );
     }
     for (from_port, to, to_port) in [("bounded", 1, "in"), ("side", 2, "in")] {
@@ -442,8 +442,8 @@ fn retained_executor_can_switch_direct_slots_between_serial_and_parallel_ticks()
 
     let seen = seen.lock();
     assert_eq!(seen.len(), 64);
-    for pair in seen.chunks_exact(2) {
-        assert_eq!(pair, [41, 42]);
+    for pair in seen.as_chunks::<2>().0 {
+        assert_eq!(pair, &[41, 42]);
     }
 }
 

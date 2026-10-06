@@ -2,6 +2,7 @@
 name = "daedalus-mcu-blink"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish = false
 description = "MCU profile example: a five-node graph planned on the host and run allocation-free on Cortex-M (scripts/ci.sh mcu)."
 

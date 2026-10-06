@@ -2,6 +2,7 @@
 name = "daedalus-daemon"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Optional long-lived daemon and CLI for warm Daedalus engine workflows."
 license.workspace = true
 repository.workspace = true

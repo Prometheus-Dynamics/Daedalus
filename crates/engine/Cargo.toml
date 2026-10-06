@@ -2,6 +2,7 @@
 name = "daedalus-engine"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "High-level engine facade for planning and running Daedalus graphs."
 license.workspace = true
 repository.workspace = true

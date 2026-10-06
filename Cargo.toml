@@ -46,7 +46,7 @@ authors = ["Mathias Petersen"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Prometheus-Dynamics/Daedalus"
 homepage = "https://github.com/Prometheus-Dynamics/Daedalus"
-rust-version = "1.90"
+rust-version = "1.99"
 
 [workspace.dependencies]
 # Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared

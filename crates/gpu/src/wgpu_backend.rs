@@ -439,7 +439,7 @@ impl GpuBackend for WgpuBackend {
         validate_texture_bytes(req, &self.caps)?;
         let handle = self.create_image(req)?;
         if let Some(tex) = self.resources.textures.lock().get(&handle.id).cloned() {
-            let bpp = format_bytes_per_pixel(req.format).ok_or(GpuError::Unsupported)? as u32;
+            let bpp = format_bytes_per_pixel(req.format).ok_or(GpuError::Unsupported)?;
             let bytes_per_row = req.width.saturating_mul(bpp);
             let expected = (bytes_per_row as usize).saturating_mul(req.height as usize);
             if data.len() != expected {

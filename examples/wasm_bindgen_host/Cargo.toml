@@ -2,6 +2,7 @@
 name = "daedalus-wasm-bindgen-host"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 publish = false
 description = "wasm-bindgen host glue for the embedded preset: a graph driven from JavaScript (scripts/ci.sh wasm)."
 

@@ -2,6 +2,7 @@
 name = "daedalus-ffi-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Core FFI contracts, schemas, and package descriptors for Daedalus plugins."
 license.workspace = true
 repository.workspace = true

@@ -2,6 +2,7 @@
 name = "daedalus-data"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Type/value model and serialization helpers for Daedalus node ports."
 license.workspace = true
 repository.workspace = true

@@ -2,6 +2,7 @@
 name = "daedalus-ffi-node"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Node.js FFI worker and packaging integration for Daedalus plugins."
 license.workspace = true
 repository.workspace = true

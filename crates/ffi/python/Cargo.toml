@@ -2,6 +2,7 @@
 name = "daedalus-ffi-python"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Python FFI worker and packaging integration for Daedalus plugins."
 license.workspace = true
 repository.workspace = true

@@ -2,6 +2,7 @@
 name = "daedalus-registry"
 version = "3.0.0"
 edition = "2024"
+rust-version.workspace = true
 description = "Node registry and plugin bundle loader for Daedalus graphs."
 license.workspace = true
 repository.workspace = true
