@@ -162,6 +162,12 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
       measurements of the fence tests; see "Validating on a Raspberry Pi 5" in
       `docs/testing.md`.
+- [ ] **Frame-path overhead on the CM5 (requires the board).** Run
+      `cargo run --release -p daedalus-frame-bench --example frame_chain` (and
+      `cargo bench -p daedalus-frame-bench --bench frame_chain`) on the CM5, record the fixed and
+      per-stage cost, the overhead table and whether frames came from `/dev/dma_heap`, and add
+      them next to the host x86_64 numbers in `docs/development.md` ("Frame-path overhead");
+      then run Eidos's `eidos:detectors.aruco` through `run_frame_bench` on the same board.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
 - [ ] **Tags** (coordinator): `v2.0.0` at `8946223` (the April release) and `v3.0.0` at the 3.0.0

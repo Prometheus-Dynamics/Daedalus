@@ -6,6 +6,40 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- **Frame-path overhead.** `HostGraph::enable_frame_overhead(window)` (or
+  `EngineConfig::with_frame_overhead`, `DAEDALUS_FRAME_OVERHEAD`) records every tick at any
+  metrics level, allocation-free, into a rolling window; `HostGraph::frame_overhead()` returns a
+  `FrameOverheadReport` (p50/p99/max/mean and a `Histogram` per row, a text table via `Display`,
+  JSON) breaking each tick into host-bridge push and take time, inject, input collection,
+  zero-copy vs copying adapters, handlers, node framing, output drain and dispatch, plus
+  `graph_overhead = tick - handlers`, per-edge queue and adapter time, and per-tick counters
+  (zero-copy/copying adapter runs, copied bytes, fan-out `Arc` clones, GPU uploads/downloads).
+  `last_frame_tick()` returns one tick's `FrameTickSample`. The runtime side is
+  `daedalus_runtime::FrameProbe` (`OwnedExecutor::set_frame_probe`) and `FrameOverheadWindow`;
+  host bridges time feeds and takes with `HostBridgeHandle::set_io_timing`/`take_io_time`.
+- **Allocation probe** (feature `alloc-probe`): `daedalus::alloc_probe::CountingAllocator`, a
+  global allocator wrapper counting allocations per scope; the executor marks runtime work and
+  node handler calls, host-bridge feeds and takes are host work, and the frame-overhead report
+  shows runtime, node and host allocations per tick.
+- **`explain_plan` copy flags.** `RuntimeEdgeExplanation::copies_frame` (a frame-like payload whose
+  adapter path copies or changes residency) and `crosses_residency`, the plan-level
+  `copying_edges`/`crossing_edges` lists, and a `Display` for `RuntimePlanExplanation` (one line
+  per node and edge plus the flagged edges). `RuntimeEdgeTransport::copies_data`,
+  `crosses_residency`, `device_transfers`, `carries_frame` and `AdaptKind::copies_data` /
+  `is_device_transfer` expose the classification.
+- **`daedalus-frame-bench`** (`crates/frame-bench`, unpublished): synthetic `daedalus:frame`
+  sources in external memory (dma-heap or memfd), a chain of no-op `FrameView` stages,
+  `run_frame_bench` for any host graph, the `frame_chain` criterion bench and example, and a test
+  that the steady-state external frame chain makes no copies and no runtime, node or host
+  allocations per tick.
+
+### Fixed
+
+- Queue edges record their enqueue-to-dequeue wait in `EdgeMetrics` at `Detailed` (only direct
+  slots did).
+
 ## [3.0.0] - 2026-10-05
 
 ### Breaking changes

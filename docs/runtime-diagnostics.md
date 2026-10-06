@@ -60,6 +60,129 @@ Use the lowest level that answers the question:
 The `metrics_levels`, `runtime_metrics`, `transport_metrics`, `ownership_metrics`,
 `lifecycle_trace`, and `stream_diagnostics` examples show the expected release-facing output shapes.
 
+## Frame-Path Overhead
+
+For camera-style hosts (a frame arrives, the graph ticks, results are taken) the question is how
+much of each frame goes to the nodes and how much to everything around them. Frame-overhead
+recording answers it per tick, at any metrics level (including `Off`), without allocating per
+tick:
+
+```rust
+use daedalus::engine::{EngineConfig, MetricsLevel};
+
+// Every host graph compiled with this config records its last 1024 ticks
+// (`DAEDALUS_FRAME_OVERHEAD=1024` does the same; `=1` keeps the default 512).
+let config = EngineConfig::default()
+    .with_metrics_level(MetricsLevel::Off)
+    .with_frame_overhead(1024);
+let mut host = engine.compile_registry(&registry, graph)?;
+// ... or on a compiled graph: host.enable_frame_overhead(1024);
+
+// warm up, then start the window over
+host.reset_frame_overhead();
+// ... push / tick / take frames ...
+println!("{}", host.frame_overhead().unwrap()); // table; `.to_json()` for logs
+let last = host.last_frame_tick();               // one tick's `FrameTickSample`
+```
+
+`frame_overhead()` returns a `FrameOverheadReport`: p50/p99/max/mean (exact, over the window,
+plus a log2 `Histogram` per row) of each stage in nanoseconds, the per-tick counters, and per-edge
+queue and adapter time. The stages of one tick:
+
+| Row | What it measures |
+| --- | --- |
+| `push` | Host-bridge feeds (`push*`, bound inputs, a camera thread's `feed_payload`) since the previous tick, attributed to the tick they feed. |
+| `tick` | Wall time of `HostGraph::tick*` (direct routes included). |
+| `  inject` | Host inputs fanned out to graph edges. |
+| `  inputs` | Per-node input collection: queue and direct-slot pops (adapters excluded). |
+| `  adapters_zero_copy` / `adapters_copying` | Adapter paths, split by the path's kinds: identity, reinterpret, view, shared/cow view, metadata-only and in-place are zero-copy; copy-on-write, branch, materialize, device transfers, (de)serialization and custom adapters count as copying. |
+| `  handlers` | Node handler calls. |
+| `  node_io` | Framing around each handler: `NodeIo` setup, flush, output publishing and fan-out. |
+| `  drain` | Graph outputs handed to the host bridge. |
+| `  dispatch` | The rest of the tick: run setup, scheduling, readiness checks. |
+| `take` | Host takes after the tick: `take*`, `drain*`, bound outputs, `inspect_payload`/`inspect_outputs`. |
+| `graph_overhead` | `tick - handlers`: everything the runtime adds to the handlers' own work. |
+| `queue_wait` | Enqueue to dequeue summed over edges; latency that overlaps the stages above. |
+
+In a serial tick the nested rows add up to `tick`; parallel node runs overlap, so `dispatch`
+saturates at zero there. Per-tick counters: `nodes`, `zero_copy_adapts`, `copies` (copying adapter
+runs) and `copied_bytes` (their estimated output size), `shared_clones` (fan-out payload clones,
+an `Arc` increment each), `gpu_uploads`/`gpu_downloads` (device-transfer steps run), and with the
+allocation probe `runtime_allocs`, `node_allocs`, `host_allocs` and their bytes. Edge rows list
+every edge that queued or adapted a payload in the window: adapter class, wait and adapter p50/p99,
+adapter runs per tick.
+
+Reading it:
+
+- **`graph_overhead` against `handlers`** is the headline. For heavy nodes (a 1 ms detector) a
+  few microseconds of overhead is noise; for a chain of cheap nodes it dominates.
+- **Per-node cost** shows in `inputs`, `node_io` and `dispatch` growing with the node count. The
+  `frame_chain` example fits `fixed + per_node × N` over 1, 4 and 16 no-op stages.
+- **A copy on the frame path** shows as `copies`/`copied_bytes` above zero and an edge with
+  adapter class `copying`; `explain_plan()` names it ahead of time (`copies_frame` below).
+- **Allocations at steady state** (`runtime_allocs` above zero after warm-up) are runtime
+  bookkeeping or adapter outputs: an owner-type frame fed to `FrameView` inputs allocates one
+  `ForeignHandle` payload per consumer edge per frame (the provider's `View` adapter), while a
+  host that feeds `daedalus:frame` payloads directly allocates nothing.
+
+Recording costs two clock reads per node and per edge plus a few relaxed atomic adds (about
+0.3 µs per stage on the x86_64 host in [development.md](development.md#frame-path-overhead));
+`HostGraph::disable_frame_overhead` turns it off. Without it, each recording site is one `None`
+check and the bridge's feed/take paths one relaxed load. Push and take times read the platform
+clock; everything else reads the executor's clock.
+
+### Allocation probe
+
+Feature `alloc-probe` (`daedalus` or `daedalus-engine`) adds `daedalus::alloc_probe`: a counting
+global allocator and per-thread scopes. Install it in the binary that should be measured:
+
+```rust
+#[global_allocator]
+static ALLOC: daedalus::alloc_probe::CountingAllocator =
+    daedalus::alloc_probe::CountingAllocator::system();
+```
+
+The executor marks its threads `Runtime` while a tick runs and `Node` around each handler call;
+host-bridge feeds and takes are `Host`; anything else is `Other`. `alloc_probe::counts()` reads
+the process-wide counters, and the frame-overhead report fills `runtime_allocs`/`node_allocs`
+(during the tick) and `host_allocs` (since the previous tick) once the allocator is installed.
+Without the feature the scope switches compile to nothing; with it but without the allocator
+installed they cost one relaxed load per handler call. The counters are process-wide, so measure
+one graph at a time.
+
+### Copying and residency-crossing edges
+
+`HostGraph::explain_plan()` flags each edge: `crosses_residency` when its adapter path moves the
+payload between CPU, GPU and external memory (a device transfer, or a step whose residency differs
+from the previous step or the target port), and `copies_frame` when the edge carries a frame-like
+payload (the `daedalus:frame` interface or a key naming a frame or image) and its path copies it
+or crosses residency. `RuntimePlanExplanation::copying_edges` / `crossing_edges` list them, and
+its `Display` prints one line per node and edge plus a summary:
+
+```text
+runtime plan: 3 nodes, 3 edges, backpressure=None
+  node 0: io.host_bridge (CpuOnly) label=host
+  node 1: daedalus.frame_bench:stage (CpuOnly) label=stage_0
+  node 2: daedalus.frame_bench:stage (CpuOnly) label=stage_1
+  edge 0: io.host_bridge.frame -> daedalus.frame_bench:stage.frame [queue] adapters=daedalus.foreign:daedalus.frame_bench:synthetic_frame->daedalus:frame:view
+  edge 1: daedalus.frame_bench:stage.frame -> daedalus.frame_bench:stage.frame [direct_slot]
+  edge 2: daedalus.frame_bench:stage.frame -> io.host_bridge.out [direct_slot]
+copies_frame: none
+crosses_residency: none
+```
+
+### Frame bench harness
+
+`crates/frame-bench` (`daedalus-frame-bench`, not published; use it as a path or git
+dev-dependency) packages the measurement: `SyntheticFrameSource` hands out 640x480 frames in a
+dma-buf from `/dev/dma_heap` (else a `memfd` mapping) through `daedalus:frame`, either as
+interface payloads or as its own type with a provider; `compile_frame_chain(n, feed, config)`
+builds `host -> n no-op FrameView stages -> host`; `run_frame_bench` warms up, drives push, tick
+and take per frame and returns the wall time per frame, the overhead report and allocations per
+frame. Its crate docs show how to run your own nodes (e.g. a detector taking `FrameView<'_>`)
+through the same harness, and
+`cargo run --release -p daedalus-frame-bench --example frame_chain` prints the reference numbers.
+
 ## Tracing Targets
 
 Enable tracing in host applications with `tracing_subscriber` and a runtime filter. Start broad for release debugging:
