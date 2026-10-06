@@ -4,7 +4,7 @@
 //! [`PortState`], so a push resolves everything it needs with a single map lookup. State lives
 //! under the bridge's single buffer lock (see `docs/host-bridge-lock-granularity.md`).
 
-use crate::prelude::HashMap;
+use crate::collections::FastHashMap as HashMap;
 
 use daedalus_transport::{FreshnessPolicy, Payload, PolicyQueue, PressurePolicy};
 

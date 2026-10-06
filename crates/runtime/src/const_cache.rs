@@ -99,7 +99,11 @@ impl DecodedInputs {
         let idx = self.entries.iter().position(|entry| entry.port == port);
         let value = io
             .get_payload(port)
-            .filter(|_| TypeId::of::<T>() != TypeId::of::<Value>())
+            // A typed payload (the usual edge input) is read as it is: one downcast, not the
+            // `Value` probe's.
+            .filter(|payload| {
+                TypeId::of::<T>() != TypeId::of::<Value>() && payload.get_ref::<T>().is_none()
+            })
             .and_then(|payload| Some((payload, payload.get_ref::<Value>()?)));
         let Some((payload, value)) = value else {
             if let Some(idx) = idx {

@@ -1,3 +1,4 @@
+use crate::collections::FastHashMap;
 use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::Mutex;
@@ -21,10 +22,10 @@ type StatefulFn = Arc<
 
 #[derive(Clone)]
 pub struct HandlerRegistry {
-    // Hot path: keyed by stable numeric ids, not strings.
-    stateless: HashMap<u128, StatelessFn>,
-    stateful: HashMap<u128, StatefulFn>,
-    direct_payload: HashMap<u128, DirectPayloadFn>,
+    // Hot path: keyed by stable numeric ids, not strings, with a fast hasher.
+    stateless: FastHashMap<u128, StatelessFn>,
+    stateful: FastHashMap<u128, StatefulFn>,
+    direct_payload: FastHashMap<u128, DirectPayloadFn>,
     // Collision detection + support for prefixing.
     ids: HashMap<u128, String>,
 }
@@ -43,9 +44,9 @@ pub enum HandlerRegistryError {
 impl HandlerRegistry {
     pub fn new() -> Self {
         Self {
-            stateless: HashMap::new(),
-            stateful: HashMap::new(),
-            direct_payload: HashMap::new(),
+            stateless: FastHashMap::new(),
+            stateful: FastHashMap::new(),
+            direct_payload: FastHashMap::new(),
             ids: HashMap::new(),
         }
     }

@@ -37,6 +37,10 @@ pub mod collections {
     pub use hashbrown::{HashMap, HashSet, hash_map};
     #[cfg(feature = "std")]
     pub use std::collections::{HashMap, HashSet, hash_map};
+
+    /// A map with hashbrown's default (fast, not DoS-resistant) hasher, for hot-path maps keyed
+    /// by ids the runtime itself assigns (stable node ids, port names).
+    pub type FastHashMap<K, V> = hashbrown::HashMap<K, V>;
 }
 
 pub mod capabilities;
