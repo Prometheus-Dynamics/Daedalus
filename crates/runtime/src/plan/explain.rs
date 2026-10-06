@@ -111,6 +111,13 @@ impl RuntimePlan {
                 compute: node.compute,
             })
             .collect();
+        let full_direct = slice.is_none().then(|| {
+            super::direct_edge_mask_for_active_edges(&self.edges, &self.edge_transports, |_| true)
+        });
+        let overridden = |policy: &super::RuntimeEdgePolicy| {
+            self.backpressure != super::BackpressureStrategy::None
+                && policy.bounded_capacity().is_some()
+        };
         let edges = self
             .edges
             .iter()
@@ -130,18 +137,28 @@ impl RuntimePlan {
                     .get(&edge.target_key())
                     .copied()
                     .unwrap_or(0);
-                let direct_candidate = slice
-                    .and_then(|slice| slice.direct_edges.get(index).copied())
-                    .unwrap_or(source_count == 1 && target_count == 1 && adapter_steps.is_empty());
+                let overridden = overridden(edge.policy());
+                let direct_candidate = !overridden
+                    && slice
+                        .map(|slice| &slice.direct_edges)
+                        .or(full_direct.as_ref())
+                        .and_then(|mask| mask.get(index).copied())
+                        .unwrap_or(false);
                 let (handoff, handoff_reason) = if direct_candidate {
                     (
                         RuntimeEdgeHandoff::DirectSlot,
-                        "single producer, single consumer, no adapter path".to_string(),
+                        "sole producer of its target port, newest-only policy, no adapter path"
+                            .to_string(),
                     )
                 } else {
                     (
                         RuntimeEdgeHandoff::Queue,
-                        explain_queue_reason(source_count, target_count, &adapter_steps),
+                        explain_queue_reason(
+                            target_count,
+                            &adapter_steps,
+                            super::direct_slot_policy(&edge.policy().pressure),
+                            overridden,
+                        ),
                     )
                 };
                 let branch = branch_explanation(transport.as_ref(), source_count, target_count);
@@ -196,13 +213,17 @@ impl RuntimePlan {
 }
 
 fn explain_queue_reason(
-    source_count: usize,
     target_count: usize,
     adapter_steps: &[daedalus_transport::AdapterId],
+    newest_only: bool,
+    backpressure_override: bool,
 ) -> String {
     let mut reasons = Vec::new();
-    if source_count != 1 {
-        reasons.push(format!("source fanout={source_count}"));
+    if !newest_only {
+        reasons.push("pressure policy keeps more than the newest payload".to_string());
+    }
+    if backpressure_override {
+        reasons.push("graph backpressure strategy overrides bounded edges".to_string());
     }
     if target_count != 1 {
         reasons.push(format!("target fanin={target_count}"));

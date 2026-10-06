@@ -141,13 +141,13 @@ pub(crate) fn direct_edge_mask_for_active_edges(
     edge_transports: &[Option<RuntimeEdgeTransport>],
     mut edge_active: impl FnMut(usize) -> bool,
 ) -> Vec<bool> {
-    let mut source_port_counts: BTreeMap<(usize, PortId), usize> = BTreeMap::new();
+    // Each edge has its own slot, so a fanned-out output port (one clone per edge) qualifies;
+    // a port fed by several edges keeps its queue, which collects them all.
     let mut target_port_counts: BTreeMap<(usize, PortId), usize> = BTreeMap::new();
     for (idx, edge) in edges.iter().enumerate() {
         if !edge_active(idx) {
             continue;
         }
-        *source_port_counts.entry(edge.source_key()).or_default() += 1;
         *target_port_counts.entry(edge.target_key()).or_default() += 1;
     }
 
@@ -165,11 +165,6 @@ pub(crate) fn direct_edge_mask_for_active_edges(
                 .unwrap_or(true);
             adapter_steps_empty
                 && direct_slot_policy(&edge.policy().pressure)
-                && source_port_counts
-                    .get(&edge.source_key())
-                    .copied()
-                    .unwrap_or(0)
-                    == 1
                 && target_port_counts
                     .get(&edge.target_key())
                     .copied()
@@ -179,8 +174,8 @@ pub(crate) fn direct_edge_mask_for_active_edges(
         .collect()
 }
 
-/// Whether an edge with `pressure` keeps only its newest payload, so a single-producer,
-/// single-consumer edge can hand payloads over through a one-payload direct slot: latest-only,
+/// Whether an edge with `pressure` keeps only its newest payload, so an edge that alone feeds
+/// its target port can hand payloads over through a one-payload direct slot: latest-only,
 /// coalescing, and the default bounded queue of one that drops the oldest (unless a graph-level
 /// `BackpressureStrategy` overrides bounded edges; see `ExecutorInit`).
 pub(crate) fn direct_slot_policy(pressure: &PressurePolicy) -> bool {
