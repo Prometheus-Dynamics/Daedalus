@@ -14,7 +14,9 @@ use daedalus_transport::{
 use crate::handles::{HostAlias, PortId};
 use crate::type_index::TypeIndex;
 
+mod batch;
 mod events;
+mod held;
 mod inspect;
 mod io_timing;
 mod manager;
@@ -24,10 +26,12 @@ mod serializers;
 mod takes;
 mod types;
 mod wait;
+pub use batch::{HostBatchOutcomes, HostBatchRejected, HostInputBatch};
 use events::{
     EventLog, EventSubject, outcome_drop_reason, record_drop_reason, record_host_event,
     replacement_reason,
 };
+pub(crate) use held::InboundTake;
 pub use inspect::{PayloadInspection, PayloadSummary, inspect_payload, serialize_payload_value};
 pub use io_timing::HostIoTime;
 pub use manager::{HostBridgeManager, bridge_handler};
@@ -52,6 +56,8 @@ pub const DEFAULT_HOST_BRIDGE_EVENT_RECORDING: bool = false;
 
 /// Metadata key attached to host-bridge descriptors to mark them for runtime wiring.
 pub const HOST_BRIDGE_META_KEY: &str = daedalus_core::metadata::HOST_BRIDGE_META_KEY;
+/// Host-bridge node metadata key listing held host inputs ([`HostBridgeHandle::set_held_input`]).
+pub use daedalus_core::metadata::HOST_HELD_INPUTS_KEY;
 /// Canonical registry id for the host-bridge node.
 pub const HOST_BRIDGE_ID: &str = "io.host_bridge";
 
@@ -221,15 +227,16 @@ impl Direction {
     }
 }
 
-/// Apply freshness and pressure policy for one payload on one port, update stats, and record
-/// diagnostics. Performs a single port-state lookup.
+/// Apply freshness and pressure policy for one payload on one port (or replace a held port's
+/// value), update stats, and record diagnostics. Performs a single port-state lookup. The flag is
+/// whether the payload was queued, which wakes waiters; a held value never does.
 fn enqueue_locked(
     buffers: &mut HostBridgeBuffers,
     direction: Direction,
     alias: &str,
     port: PortKey<'_>,
     payload: Payload,
-) -> FeedOutcome {
+) -> (FeedOutcome, bool) {
     let HostBridgeBuffers {
         inbound,
         outbound,
@@ -266,7 +273,7 @@ fn enqueue_locked(
             Some(outcome.clone()),
             Some(DropReason::Closed),
         );
-        return outcome;
+        return (outcome, false);
     }
 
     let freshness = state.freshness.as_ref().unwrap_or(default_freshness);
@@ -287,27 +294,33 @@ fn enqueue_locked(
             Some(outcome.clone()),
             Some(reason),
         );
-        return outcome;
+        return (outcome, false);
     }
 
-    let pressure = state.pressure.as_ref().unwrap_or(default_pressure);
-    let replacement = replacement_reason(pressure);
     // Capture only the event identity; cloning the payload would make a unique payload shared.
     let subject: Option<(CorrelationId, TypeKey)> = events
         .enabled
         .then(|| (payload.correlation_id(), payload.type_key().clone()));
     let incoming = payload.correlation_id();
-    let outcome = FeedOutcome::from_push(
-        state.queue.push(
-            pressure,
-            HostBridgePayload {
-                port: state.id.clone(),
-                payload,
-            },
-        ),
-        incoming,
-        |old| old.payload.correlation_id(),
-    );
+    let (outcome, replacement, queued) = match state.held.as_mut() {
+        // A held port keeps only its current value and ignores pressure policy.
+        Some(held) => (held::replace(held, payload), None, false),
+        None => {
+            let pressure = state.pressure.as_ref().unwrap_or(default_pressure);
+            let outcome = FeedOutcome::from_push(
+                state.queue.push(
+                    pressure,
+                    HostBridgePayload {
+                        port: state.id.clone(),
+                        payload,
+                    },
+                ),
+                incoming,
+                |old| old.payload.correlation_id(),
+            );
+            (outcome, replacement_reason(pressure), true)
+        }
+    };
     state.stats.record_enqueue(&outcome);
     let reason = match outcome {
         FeedOutcome::Accepted { .. } => {
@@ -342,14 +355,12 @@ fn enqueue_locked(
             reason,
         );
     }
-    outcome
-}
-
-fn is_enqueued(outcome: &FeedOutcome) -> bool {
-    matches!(
-        outcome,
-        FeedOutcome::Accepted { .. } | FeedOutcome::Replaced { .. }
-    )
+    let queued = queued
+        && matches!(
+            outcome,
+            FeedOutcome::Accepted { .. } | FeedOutcome::Replaced { .. }
+        );
+    (outcome, queued)
 }
 
 /// Host-side handle to one host bridge.
@@ -516,20 +527,25 @@ impl HostBridgeHandle {
             Ok(payload) => payload,
             Err(error) => return FeedOutcome::Rejected(Box::new(error)),
         };
-        let outcome = enqueue_locked(
+        let (outcome, queued) = enqueue_locked(
             &mut guard,
             Direction::Inbound,
             self.alias.as_str(),
             PortKey::Id(port),
             payload,
         );
-        if is_enqueued(&outcome) {
-            self.shared.notify_all();
-            let wakers = wait::take_inbound_wakers(&mut guard);
-            drop(guard);
-            wait::wake_all(wakers);
+        if queued {
+            self.wake_after_feed(guard);
         }
         outcome
+    }
+
+    /// Wake blocking and async inbound waiters after new input was queued under `guard`.
+    fn wake_after_feed(&self, mut guard: crate::sync::MutexGuard<'_, HostBridgeBuffers>) {
+        self.shared.notify_all();
+        let wakers = wait::take_inbound_wakers(&mut guard);
+        drop(guard);
+        wait::wake_all(wakers);
     }
 
     pub fn push_as<T>(
@@ -611,12 +627,13 @@ impl HostBridgeHandle {
         wait::wake_all(wakers);
     }
 
-    /// Close one inbound port: queued input is discarded and later feeds are dropped as closed.
+    /// Close one inbound port: queued (or held) input is discarded and later feeds are dropped as
+    /// closed.
     pub fn close_input(&self, port: impl Into<PortId>) {
         let mut guard = self.shared.buffers.lock();
         let state = guard.inbound.port(port.into());
         state.closed = true;
-        state.queue.clear();
+        state.discard_input();
         self.shared.notify_all();
     }
 
@@ -678,32 +695,31 @@ impl HostBridgeHandle {
     /// Queue a graph output for the host. Allocates a `PortId` only the first time a port is seen.
     pub(crate) fn push_outbound_ref(&self, port: &str, payload: Payload) {
         let mut guard = self.shared.buffers.lock();
-        let outcome = enqueue_locked(
+        let (_, queued) = enqueue_locked(
             &mut guard,
             Direction::Outbound,
             self.alias.as_str(),
             PortKey::Name(port),
             payload,
         );
-        if is_enqueued(&outcome) {
+        if queued {
             self.shared.notify_all();
         }
     }
 
-    /// Move every queued inbound payload into `out` (oldest first per port). Reuse `out` across
-    /// calls to keep draining allocation-free.
+    /// Move every queued inbound payload into `out` (oldest first per port), plus a clone of each
+    /// held input's current value ([`Self::set_held_input`]). Reuse `out` across calls to keep
+    /// draining allocation-free.
     pub fn take_inbound_into(&self, out: &mut Vec<HostBridgePayload>) {
         let mut guard = self.shared.buffers.lock();
         for state in guard.inbound.ports.values_mut() {
-            state.drain_into(|entry| out.push(entry));
-        }
-    }
-
-    /// Hand every queued payload of one inbound port to `sink` while the bridge lock is held.
-    /// `sink` must not call back into this bridge.
-    pub(crate) fn drain_inbound_port(&self, port: &str, sink: impl FnMut(HostBridgePayload)) {
-        if let Some(state) = self.shared.buffers.lock().inbound.get_mut(port) {
-            state.drain_into(sink);
+            match state.take_held() {
+                Some(held) => out.extend(held.map(|payload| HostBridgePayload {
+                    port: state.id.clone(),
+                    payload,
+                })),
+                None => state.drain_into(|entry| out.push(entry)),
+            }
         }
     }
 

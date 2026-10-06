@@ -6,7 +6,7 @@
 
 use crate::prelude::HashMap;
 
-use daedalus_transport::{FreshnessPolicy, PolicyQueue, PressurePolicy};
+use daedalus_transport::{FreshnessPolicy, Payload, PolicyQueue, PressurePolicy};
 
 use crate::handles::PortId;
 use crate::plan::RuntimeEdgePolicy;
@@ -31,6 +31,9 @@ pub(super) struct PortState {
     pub(super) marks: FreshnessMarks,
     /// Set by `close_input`; only meaningful for inbound ports.
     pub(super) closed: bool,
+    /// `Some` for a held inbound port (`set_held_input`): its current value, re-delivered to
+    /// every tick until replaced or cleared. Held ports never queue.
+    pub(super) held: Option<Option<Payload>>,
     /// Lifetime counters; `pending` is filled in from the queue when snapshotted.
     pub(super) stats: HostPortStats,
 }
@@ -44,6 +47,7 @@ impl PortState {
             freshness: None,
             marks: FreshnessMarks::default(),
             closed: false,
+            held: None,
             stats: HostPortStats::default(),
         }
     }
@@ -62,6 +66,24 @@ impl PortState {
             *delivered = delivered.saturating_add(1);
             sink(entry);
         });
+    }
+
+    /// For a held port, a clone of its current value (`Some(None)` when it has none), counted as
+    /// delivered; `None` for a queued port.
+    pub(super) fn take_held(&mut self) -> Option<Option<Payload>> {
+        let held = self.held.as_ref()?.clone();
+        if held.is_some() {
+            self.stats.delivered = self.stats.delivered.saturating_add(1);
+        }
+        Some(held)
+    }
+
+    /// Drop queued payloads and a held port's value; the port keeps its mode.
+    pub(super) fn discard_input(&mut self) {
+        self.queue.clear();
+        if let Some(held) = self.held.as_mut() {
+            *held = None;
+        }
     }
 
     pub(super) fn stats(&self) -> HostPortStats {

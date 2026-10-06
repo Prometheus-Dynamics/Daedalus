@@ -58,6 +58,13 @@ pub fn render_error(err: &EngineError) -> Value {
             "message": e.to_string(),
             "error": e,
         }),
+        EngineError::HostBatch(e) => json!({
+            "code": "host_batch",
+            "message": e.to_string(),
+            "index": e.index,
+            "port": e.port.as_str(),
+            "error": e.error,
+        }),
         EngineError::FeatureDisabled(flag) => json!({
             "code": "feature_disabled",
             "feature": flag,

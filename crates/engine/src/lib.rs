@@ -36,7 +36,8 @@ pub use config::{
 pub use daedalus_core::platform::Clock;
 pub use daedalus_runtime::MetricsLevel;
 pub use daedalus_runtime::host_bridge::{
-    InboundWait, InboundWaiter, PayloadInspection, PayloadSummary,
+    HostBatchOutcomes, HostBatchRejected, HostInputBatch, InboundWait, InboundWaiter,
+    PayloadInspection, PayloadSummary,
 };
 pub use daedalus_runtime::{FrameOverheadReport, FrameTickSample};
 pub use daedalus_runtime::{HostPortConnection, HostPortDescriptor, HostPortDirection};

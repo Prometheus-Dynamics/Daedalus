@@ -11,13 +11,13 @@ use daedalus_planner::NodeRef;
 use smallvec::SmallVec;
 
 use crate::handles::PortId;
-use crate::host_bridge::{HostBridgeHandle, HostBridgeManager};
+use crate::host_bridge::{HostBridgeHandle, HostBridgeManager, InboundTake};
 use crate::plan::{RuntimeEdge, RuntimeNode};
 
 use crate::executor::queue::pop_edge;
 use crate::executor::serial_direct_slot::pop_direct_edge;
 use crate::executor::{
-    CorrelatedPayload, ExecuteError, Executor, NodeError, NodeHandler, ProbeTime,
+    CorrelatedPayload, ExecuteError, Executor, NodeError, NodeHandler, ProbeCount, ProbeTime,
 };
 
 use super::edges::fan_out;
@@ -33,7 +33,8 @@ pub(crate) struct HostNodeIo {
     outbound: Box<[usize]>,
 }
 
-/// Resolve every host-bridge node against `bridges`, creating missing bridges.
+/// Resolve every host-bridge node against `bridges`, creating missing bridges and making the
+/// inputs its metadata declares held (`HOST_HELD_INPUTS_KEY`).
 pub(crate) fn resolve_host_nodes(
     bridges: &HostBridgeManager,
     nodes: &[RuntimeNode],
@@ -54,9 +55,13 @@ pub(crate) fn resolve_host_nodes(
                     None => inbound.push((port.clone(), SmallVec::from_elem(edge_idx, 1))),
                 }
             }
+            let handle = bridges.ensure_handle(node.host_alias());
+            for port in daedalus_planner::host_held_inputs(&node.metadata) {
+                handle.set_held_input(PortId::new(port));
+            }
             Some(HostNodeIo {
                 node_idx: node_ref.0,
-                handle: bridges.ensure_handle(node.host_alias()),
+                handle,
                 inbound: inbound.into(),
                 outbound: incoming.get(node_ref.0).cloned().unwrap_or_default().into(),
             })
@@ -64,32 +69,64 @@ pub(crate) fn resolve_host_nodes(
         .collect()
 }
 
+/// Move each host bridge's inbound input into the edges it feeds, taking every port of a bridge
+/// under one bridge lock so a batch push lands in one tick whole. A held port's edges are emptied
+/// and refilled with its current value (an `Arc` clone) each tick, so they hold exactly that.
 pub(crate) fn inject_host_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
 ) -> Result<(), ExecuteError> {
     let host_nodes = exec.core.host_nodes.clone();
     for host in host_nodes.iter() {
-        for (port, group) in host.inbound.iter() {
-            let routes = |exec: &Executor<'_, H>, edge_idx: usize| {
-                edge_is_active(exec, edge_idx) && node_is_active(exec, exec.edges[edge_idx].to().0)
-            };
-            if !group.iter().any(|&edge_idx| routes(exec, edge_idx)) {
-                continue;
-            }
-            let mut result: Result<(), NodeError> = Ok(());
-            host.handle.drain_inbound_port(port.as_str(), |entry| {
-                if result.is_ok() {
-                    let payload = CorrelatedPayload::from_edge(entry.payload);
-                    result = fan_out(exec, group, routes, payload);
+        let result = host.handle.with_inbound(|inbound| {
+            for (port, group) in host.inbound.iter() {
+                if !group.iter().any(|&edge_idx| routes(exec, edge_idx)) {
+                    continue;
                 }
-            });
-            result.map_err(|error| ExecuteError::HandlerFailed {
-                node: exec.nodes[host.node_idx].id.clone(),
-                error,
-            })?;
-        }
+                let mut result: Result<(), NodeError> = Ok(());
+                let taken = inbound.take(port.as_str(), |payload| {
+                    if result.is_ok() {
+                        result =
+                            fan_out(exec, group, routes, CorrelatedPayload::from_edge(payload));
+                    }
+                });
+                result?;
+                if let InboundTake::Held(held) = taken {
+                    for &edge_idx in group.iter() {
+                        if routes(exec, edge_idx) {
+                            clear_edge(exec, edge_idx);
+                        }
+                    }
+                    if let Some(payload) = held {
+                        // The re-delivered value is an `Arc` clone of the held one.
+                        if let Some(probe) = &exec.core.run_config.frame_probe {
+                            probe.add_count(ProbeCount::SharedClones, 1);
+                        }
+                        fan_out(exec, group, routes, CorrelatedPayload::from_edge(payload))?;
+                    }
+                }
+            }
+            Ok(())
+        });
+        result.map_err(|error| ExecuteError::HandlerFailed {
+            node: exec.nodes[host.node_idx].id.clone(),
+            error,
+        })?;
     }
     Ok(())
+}
+
+/// Whether a host input edge delivers this tick: it and its target node are active.
+fn routes<H: NodeHandler>(exec: &Executor<'_, H>, edge_idx: usize) -> bool {
+    edge_is_active(exec, edge_idx) && node_is_active(exec, exec.edges[edge_idx].to().0)
+}
+
+/// Drop whatever an edge still holds (a held input's previous value its consumer did not take).
+fn clear_edge<H: NodeHandler>(exec: &mut Executor<'_, H>, edge_idx: usize) {
+    if edge_uses_direct_slot(exec, edge_idx) {
+        while pop_direct_edge(exec, edge_idx).is_some() {}
+    } else {
+        while pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors).is_some() {}
+    }
 }
 
 pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
