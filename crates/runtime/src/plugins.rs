@@ -33,6 +33,7 @@ mod adapters;
 mod boundary_types;
 mod builtins;
 mod context;
+mod crate_builds;
 mod foreign;
 mod install;
 mod registry_admin;
@@ -43,6 +44,7 @@ mod stable_codecs;
 pub use adapters::{SmartAdapter, TransportAdapterOptions};
 pub use boundary_types::{BoundaryTypeConflict, ExternalTypeRef, PortTypeUse};
 pub use context::{PluginGroup, PluginInstallContext, PluginInstallable};
+pub use crate_builds::{CrateBuildDiff, CrateBuildInfo};
 pub use install::install_all;
 use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
 pub use stable_codecs::{StableCodec, StableDecodeFn, StableEncodeFn};
@@ -340,6 +342,8 @@ pub struct PluginRegistry {
     /// Keys each Rust type was recorded under (see `PluginRegistry::type_index`).
     type_key_uses: HashMap<core::any::TypeId, BTreeSet<TypeKey>>,
     foreign_interfaces: BTreeMap<TypeKey, daedalus_transport::ForeignInterfaceInfo>,
+    /// Builds of third-party crates (see `PluginRegistry::register_crate_build`).
+    crate_builds: BTreeMap<&'static str, CrateBuildInfo>,
     /// `Some` while extracting a dynamic plugin's schema: unkeyed foreign port types are
     /// recorded here instead of failing (see [`PluginRegistry::record_external_types`]).
     external_types: Option<Vec<ExternalTypeRef>>,
