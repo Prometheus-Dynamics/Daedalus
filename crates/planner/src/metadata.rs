@@ -1,6 +1,7 @@
 use alloc::borrow::{Cow, ToOwned};
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_registry::capability::NodeDecl;
@@ -64,6 +65,21 @@ pub fn is_host_bridge_metadata(metadata: &BTreeMap<String, Value>) -> bool {
     metadata_bool(metadata, HOST_BRIDGE_META_KEY)
 }
 
+/// How a host input delivers the values the host pushes.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum HostInputPolicy {
+    /// Each push is queued and consumed once by the tick that takes it, under the port's
+    /// pressure and freshness policy.
+    #[default]
+    Queued,
+    /// The last pushed value persists and is delivered to every tick until a push replaces it
+    /// (`HostBridgeHandle::set_held_input`). Held pushes never trigger a tick by themselves.
+    Held,
+}
+
 /// The held host inputs a host-bridge node declares (`HOST_HELD_INPUTS_KEY`, a list of port
 /// names).
 pub fn host_held_inputs(metadata: &BTreeMap<String, Value>) -> impl Iterator<Item = &str> {
@@ -72,6 +88,44 @@ pub fn host_held_inputs(metadata: &BTreeMap<String, Value>) -> impl Iterator<Ite
         _ => &[],
     };
     ports.iter().filter_map(Value::as_str)
+}
+
+/// The policy of host input `port` in a host-bridge node's metadata (ports match
+/// case-insensitively, as the planner matches them).
+pub fn host_input_policy(metadata: &BTreeMap<String, Value>, port: &str) -> HostInputPolicy {
+    if host_held_inputs(metadata).any(|held| held.eq_ignore_ascii_case(port)) {
+        HostInputPolicy::Held
+    } else {
+        HostInputPolicy::Queued
+    }
+}
+
+/// Record host input `port`'s policy in a host-bridge node's metadata (`HOST_HELD_INPUTS_KEY`,
+/// the single source of truth) and return the previous one. The key is removed once no input is
+/// held. Ports are not validated here; see `Graph::set_host_input_policy`.
+pub fn set_host_input_policy(
+    metadata: &mut BTreeMap<String, Value>,
+    port: &str,
+    policy: HostInputPolicy,
+) -> HostInputPolicy {
+    let previous = host_input_policy(metadata, port);
+    if previous == policy {
+        return previous;
+    }
+    let mut held = match metadata.remove(HOST_HELD_INPUTS_KEY) {
+        Some(Value::List(ports)) => ports,
+        _ => Vec::new(),
+    };
+    match policy {
+        HostInputPolicy::Held => held.push(Value::String(Cow::Owned(port.to_string()))),
+        HostInputPolicy::Queued => {
+            held.retain(|value| !value.as_str().is_some_and(|p| p.eq_ignore_ascii_case(port)));
+        }
+    }
+    if !held.is_empty() {
+        metadata.insert(HOST_HELD_INPUTS_KEY.to_string(), Value::List(held));
+    }
+    previous
 }
 
 pub fn descriptor_dynamic_port_type(desc: &NodeDecl, is_input: bool) -> Option<String> {

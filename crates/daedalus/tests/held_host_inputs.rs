@@ -10,7 +10,7 @@ use daedalus::{
     GraphDocument,
     engine::{Engine, EngineConfig, HostGraph, HostGraphDriveExit, InboundWait, MetricsLevel},
     macros::{node, plugin},
-    planner::Graph,
+    planner::{Graph, HostInputError, HostInputPolicy},
     runtime::{
         HOST_HELD_INPUTS_KEY, NodeError, PortId, handler_registry::HandlerRegistry,
         plugins::PluginRegistry,
@@ -325,6 +325,39 @@ fn held_inputs_round_trip_through_graph_documents() {
     host.push("ctx", 3_i64);
     assert_eq!(frame_out(&mut host, 1), Some(1003));
     assert_eq!(frame_out(&mut host, 2), Some(2003));
+}
+
+#[test]
+fn held_policy_set_on_a_loaded_document_plans_by_value_consumers() {
+    let (registry, graph) = graph("fuse", false);
+    let json = registry.graph_document(graph).to_json().unwrap();
+    let mut document = GraphDocument::from_json(&json).expect("parse");
+    assert_eq!(
+        document.host_input_policy("host", "ctx"),
+        Ok(HostInputPolicy::Queued)
+    );
+    assert!(matches!(
+        document.set_host_input_policy("host", "gps", HostInputPolicy::Held),
+        Err(HostInputError::UnknownPort { .. })
+    ));
+    assert_eq!(
+        document.set_host_input_policy("host", "ctx", HostInputPolicy::Held),
+        Ok(HostInputPolicy::Queued)
+    );
+    let document = GraphDocument::from_json(&document.to_json().unwrap()).expect("reparse");
+    assert_eq!(
+        document.host_input_policy("host", "ctx"),
+        Ok(HostInputPolicy::Held)
+    );
+    let mut host = Engine::new(EngineConfig::default())
+        .unwrap()
+        .compile_document(&registry, document)
+        .expect("compile document");
+    assert!(host.host().is_input_held("ctx"));
+    host.push("ctx", 4_i64);
+    // `fuse` takes the context by value: each tick gets its own copy of the held value.
+    assert_eq!(frame_out(&mut host, 1), Some(1004));
+    assert_eq!(frame_out(&mut host, 2), Some(2004));
 }
 
 #[test]

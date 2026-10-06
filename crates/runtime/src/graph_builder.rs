@@ -20,8 +20,8 @@ use crate::handles::{NodeHandleLike, PortHandle};
 use alloc::collections::BTreeMap;
 use daedalus_data::model::{TypeExpr, Value};
 use daedalus_planner::{
-    ComputeAffinity, Edge, Graph, HOST_HELD_INPUTS_KEY, HostPortTypes, NodeInstance, NodeRef,
-    PortRef,
+    ComputeAffinity, Edge, Graph, HostInputPolicy, HostPortTypes, NodeInstance, NodeRef, PortRef,
+    set_host_input_policy,
 };
 use daedalus_registry::{capability::CapabilityRegistry, ids::NodeId};
 
@@ -418,22 +418,15 @@ impl GraphBuilder {
     /// Make host input `name` held: the last value the host pushed persists across ticks until
     /// replaced, so consumers see it every tick without re-pushing (see
     /// `HostBridgeHandle::set_held_input`). Recorded on the host bridge node as
-    /// `HOST_HELD_INPUTS_KEY`, so graph documents carry it.
+    /// `HOST_HELD_INPUTS_KEY` (as `Graph::set_host_input_policy` does on a built or loaded
+    /// graph), so graph documents carry it.
     pub fn held_input(self, name: impl AsRef<str>) -> Self {
         let name = name.as_ref();
         let mut builder = self
             .ensure_host_bridge(None)
             .ensure_host_bridge_port(true, name);
         if let Some(host) = builder.host_bridge_node_mut() {
-            let held = host
-                .metadata
-                .entry(HOST_HELD_INPUTS_KEY.to_string())
-                .or_insert_with(|| Value::List(Vec::new()));
-            if let Value::List(ports) = held
-                && !ports.iter().any(|port| port.as_str() == Some(name))
-            {
-                ports.push(Value::String(name.to_string().into()));
-            }
+            set_host_input_policy(&mut host.metadata, name, HostInputPolicy::Held);
         }
         builder
     }
