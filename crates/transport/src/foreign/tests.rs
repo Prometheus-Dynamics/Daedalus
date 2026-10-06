@@ -209,12 +209,13 @@ fn provided_payloads_lend_the_owner_value_without_a_handle() {
             .is_err()
     );
     assert_eq!(provided.get_ref::<Counter>().unwrap().value, 9);
-    assert_eq!(Arc::strong_count(&value), 2, "borrowing retains nothing");
+    // `value`, `owner` and `provided` share the value's own allocation.
+    assert_eq!(Arc::strong_count(&value), 3, "borrowing retains nothing");
     let handle = provided.to_foreign_handle().unwrap();
-    assert_eq!((read(&handle), Arc::strong_count(&value)), (9, 3));
+    assert_eq!((read(&handle), Arc::strong_count(&value)), (9, 4));
     drop((handle, owner));
 
-    // The storage is still the typed `Counter` storage: unique payloads give it back.
+    // The storage is still the `Counter` itself: unique payloads give it back.
     drop(value);
     let mut provided = provided;
     provided.get_mut::<Counter>().unwrap().value = 10;

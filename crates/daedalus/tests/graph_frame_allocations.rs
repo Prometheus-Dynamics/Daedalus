@@ -155,11 +155,12 @@ fn call_site(trace: &str) -> String {
     chain.join("\n            <- ")
 }
 
-/// Payloads one frame creates, two allocations each unless noted: 14 node outputs (four reuse an
-/// `Arc` and wrap it in one allocation; `alarm` emits nothing and `escalate` is skipped), two
-/// metadata-only adapter results, one built-in branch for the fanned-out `count`, and the host's
-/// frame (one, it is `Arc`-shared).
-const PAYLOAD_ALLOCATIONS: f64 = 10.0 * 2.0 + 4.0 + 2.0 * 2.0 + 2.0 + 1.0;
+/// Payloads one frame creates, one allocation each (the value's `Arc`, which is the payload's
+/// storage) unless noted: 14 node outputs (four return an `Arc` they already hold, wrapped
+/// without allocating; `alarm` emits nothing and `escalate` is skipped), two metadata-only
+/// adapter results, one built-in branch for the fanned-out `count`, and the host's frame (none,
+/// it is `Arc`-shared).
+const PAYLOAD_ALLOCATIONS: f64 = 10.0 + 2.0 + 1.0;
 /// The one allocation a handler makes: `exposure` takes its `String` constant by value, so it
 /// gets a clone of the decoded string (its serde enum constant is decoded once and copied).
 const OWNED_STRING_CLONE: f64 = 1.0;

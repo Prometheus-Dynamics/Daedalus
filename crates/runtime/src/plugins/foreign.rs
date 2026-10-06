@@ -174,7 +174,8 @@ mod tests {
         );
         let handle = adapted.to_foreign_handle().unwrap();
         assert_eq!(handle.data(), view.data());
-        assert_eq!(Arc::strong_count(&frame), 3, "the handle retains the frame");
+        // `frame`, `source`, `adapted` (one allocation: the frame's own) and the handle.
+        assert_eq!(Arc::strong_count(&frame), 4, "the handle retains the frame");
         drop(handle);
 
         let wrong = Payload::owned("test:gray", 7u32);

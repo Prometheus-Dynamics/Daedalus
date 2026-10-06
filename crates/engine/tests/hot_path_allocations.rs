@@ -158,10 +158,10 @@ fn metrics_off_round_trip_allocation_budget() {
     let allocations = allocations_during(|| {
         assert_eq!(round_trip(&mut graph, 41), Some(42));
     });
-    // Only the two payloads (host input + node output) allocate, two allocations each (value
-    // Arc + storage Arc). Anything above this budget is per-tick bookkeeping.
+    // Only the two payloads (host input + node output) allocate, one allocation each (the
+    // value's Arc is the payload's storage). Anything above this budget is per-tick bookkeeping.
     assert!(
-        allocations <= 4,
+        allocations <= 2,
         "metrics-off round trip allocated {allocations} times"
     );
 }

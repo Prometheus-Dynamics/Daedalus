@@ -250,7 +250,8 @@ mod tests {
         let frame = Arc::new(Frame { bytes: vec![4] });
         let mut payload = Payload::shared("demo:frame", frame.clone());
 
-        assert!(payload.is_storage_unique());
+        // The payload's storage is the producer's allocation: the producer's `Arc` shares it.
+        assert!(!payload.is_storage_unique());
         assert_eq!(payload.typed_strong_count::<Frame>(), Some(2));
         assert!(!payload.is_typed_unique::<Frame>());
         assert!(payload.get_mut::<Frame>().is_none());

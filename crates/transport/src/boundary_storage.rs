@@ -269,10 +269,6 @@ impl PayloadStorage for BoundaryStorage {
         self
     }
 
-    fn type_key(&self) -> &TypeKey {
-        &self.type_key
-    }
-
     fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
         BoundaryStorage::value_any_sync(self)
     }

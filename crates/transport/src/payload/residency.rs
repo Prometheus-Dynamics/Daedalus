@@ -6,7 +6,7 @@ use core::fmt;
 
 use crate::{Layout, PayloadLineage, Residency, TypeKey};
 
-use super::{Payload, PayloadStorage, TypedStorage};
+use super::{Payload, PayloadStorage, typed_arc, typed_ref};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResidencyCacheKey {
@@ -209,8 +209,7 @@ impl Payload {
         }
         self.residency_cache
             .get(&key)
-            .and_then(|resident| resident.storage.as_any().downcast_ref::<TypedStorage<T>>())
-            .map(|storage| storage.value.as_ref())
+            .and_then(|resident| typed_ref::<T>(resident.storage.as_ref()))
     }
 
     pub fn resident_arc<T>(
@@ -228,7 +227,6 @@ impl Payload {
         }
         self.residency_cache
             .get(&key)
-            .and_then(|resident| resident.storage.as_any().downcast_ref::<TypedStorage<T>>())
-            .map(|storage| storage.value.clone())
+            .and_then(|resident| typed_arc::<T>(&resident.storage))
     }
 }
