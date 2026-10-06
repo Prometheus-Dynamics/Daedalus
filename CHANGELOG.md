@@ -54,6 +54,25 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `HostBatchOutcomes` holds each value's `FeedOutcome`. Batches of up to four values do not
   allocate beyond their payloads, and commits count as host pushes in frame-overhead reports.
   See "Context Inputs: Held Ports And Batched Pushes" in `docs/node-authoring.md`.
+- **Host input policies on built and loaded graphs.** `HostInputPolicy { Queued, Held }` with
+  `Graph::set_host_input_policy(host, port, policy)` / `host_input_policy(host, port)` and the
+  same on `GraphDocument`, so a loaded document can mark inputs held before it is compiled
+  (needed for by-value consumers, which only get the planner's branch when held is declared
+  before planning). `host` is an alias or a `NodeRef` (`HostNode`); unknown bridges and ports are
+  typed `HostInputError`s (`UnknownHost`, `NotAHostBridge`, `UnknownPort` listing the bridge's
+  inputs). `Graph::host_bridges()` and `host_input_ports(host)` list them. The policy is stored in
+  `daedalus.host_held_inputs` through `set_host_input_policy(&mut metadata, port, policy)`, which
+  `GraphBuilder::held_input` now uses too; the document schema is unchanged.
+- **Pollable inbound fd (Linux, `std`).** `HostBridgeHandle::inbound_fd()` /
+  `HostGraph::inbound_fd()` return an `InboundFd` (`AsFd + AsRawFd`, an `eventfd` created on
+  first request) that becomes readable when non-held input is queued (a batch signals once), the
+  bridge closes, or waiters are woken (`HostGraphStopHandle::stop`), so hosts can wait on
+  Daedalus input in the same `poll(2)`/`epoll` as their own descriptors (a Styx `FrameClient`).
+  `InboundFd::clear()` resets it before draining, `rearm()` signals it again while input is still
+  pending, and `HostGraph::tick_ready()` does one clear/tick/rearm turn without losing wakeups.
+  Without a requested fd a push pays one atomic load; with one, a burst costs one `write(2)`
+  until cleared. `EngineError::Io` reports fd creation failures. Elsewhere `InboundWaiter`
+  remains the hook: it is a `Future` any waker can poll.
 - **Crate build info.** `CrateBuildInfo { name, version, features }`, captured in the owning
   crate with `crate_build_info!()` (plus a two-line `build.rs` exporting `CARGO_CFG_FEATURE`) and
   registered with `#[plugin(.., crate_build)]` or `PluginRegistry::register_crate_build`. Dynamic

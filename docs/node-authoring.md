@@ -621,7 +621,9 @@ than queued.
   runtime-agnostic `async fn drive`) waits for inbound payloads, ticks, and calls `on_outputs`
   after each turn; `HostGraphStopHandle::stop()` ends it. For custom loops use
   `wait_for_input(timeout)` / `tick_on_input(timeout)`, or `HostBridgeHandle::inbound_waiter()`,
-  which is both a blocking waiter and a `Future`.
+  which is both a blocking waiter and a `Future`. Hosts with their own `poll(2)`/`epoll` loop
+  wait on `HostGraph::inbound_fd()` instead (see
+  [Waiting With `poll(2)` / `epoll`](#waiting-with-poll2--epoll)).
 - **Async hosts (tokio):** `async fn drive` waits without blocking, but each graph tick runs
   inline on the polling task. For anything CPU-heavy, move the `HostGraph` into
   `tokio::task::spawn_blocking(move || graph.drive_blocking(&stop, on_outputs))`, keep a cloned
@@ -662,7 +664,10 @@ re-push context before every tick:
 - **Held inputs** keep their last value. Declare one in the graph with
   `GraphBuilder::held_input("imu")` (stored on the host bridge node as
   `daedalus.host_held_inputs`, `HOST_HELD_INPUTS_KEY`, a list of port names, so graph documents
-  carry it), or at runtime with `HostGraph::set_held_input("imu")`. Then:
+  carry it), on a built or loaded graph with
+  `graph.set_host_input_policy("host", "imu", HostInputPolicy::Held)` (also on `GraphDocument`;
+  `host_input_policy` reads it back, and an unknown bridge or port is a typed `HostInputError`),
+  or at runtime with `HostGraph::set_held_input("imu")`. Then:
   - Every tick delivers the current value to the port's consumers without a re-push: an `Arc`
     clone, no copy, no allocation (frame-overhead reports count it as a `shared_clone`). The
     consumer's edge holds exactly that value, so a `fire = "all"` join sees it as present and
@@ -677,7 +682,15 @@ re-push context before every tick:
   - Read held values by reference (`&T`, `Arc<T>`, `Option<&T>`). A consumer taking `T` by
     value (`move`/`modify` access) gets a copy through the planned branch adapter, which the
     planner inserts only for inputs declared held in the graph; a runtime-only
-    `set_held_input` cannot plan one, so such a consumer gets no value.
+    `set_held_input` cannot plan one, so such a consumer gets no value. For a document loaded
+    from disk, set the policy on the `GraphDocument` before compiling it:
+
+```rust
+let mut document = GraphDocument::from_json(&json)?;
+document.set_host_input_policy("host", "imu", HostInputPolicy::Held)?;
+let graph = engine.compile_document(&registry, document)?;
+```
+
 - **Batched pushes** land in one tick whole. `HostGraph::batch()` stages values,
   `commit()` enqueues them under one bridge lock and wakes waiters once, and a tick takes all
   host inputs under that lock, so no tick sees part of a batch:
@@ -698,6 +711,53 @@ graph.drive_blocking(&stop, |graph, _turn| { /* drain outputs */ Ok(()) })?;
   port's own outcome (accepted, replaced, or dropped by freshness or a closed port). Batches of
   up to four values allocate nothing beyond their payloads. Batch commits count in the `push`
   row of frame-overhead reports.
+
+### Waiting With `poll(2)` / `epoll`
+
+Hosts that already wait on file descriptors (a Styx `FrameClient`, sockets, timers) can wait on
+Daedalus input in the same call instead of running `drive_blocking` on its own thread or `drive`
+on an async runtime. On Linux with `std`, `HostGraph::inbound_fd()` (or
+`HostBridgeHandle::inbound_fd()`) returns an `InboundFd`, an `eventfd` (`AsFd`, `AsRawFd`)
+created on first request and shared by later calls:
+
+- It becomes readable when non-held input is queued (a batch signals once), the bridge closes,
+  or waiters are woken (`HostGraphStopHandle::stop`, `wake_inbound_waiters`). Held pushes never
+  signal it, as they never trigger a tick.
+- Never `read` it yourself. `HostGraph::tick_ready()` runs one turn: `clear()` the fd, tick if
+  input is pending, then `rearm()` (signal again if input is still pending or the bridge is
+  closed). Input pushed at any point lands in that tick or leaves the fd readable, so no wakeup
+  is lost, and an idle graph leaves it unreadable, so the loop sleeps in `poll`.
+- Draining by hand: `clear()` first, then take everything (`tick_until_idle`,
+  `HostBridgeHandle::take_inbound_into`).
+- Cost: without a requested fd a push pays one atomic load; with one, a burst of pushes costs one
+  `write(2)` until the next `clear()`.
+
+```rust
+use std::os::fd::AsRawFd;
+
+let inbound = graph.inbound_fd()?;
+let stop = graph.stop_handle(); // stop() from any thread wakes the poll
+let mut fds = [camera.as_raw_fd(), inbound.as_raw_fd()]
+    .map(|fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 });
+loop {
+    unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, -1) };
+    if fds[0].revents & libc::POLLIN != 0 {
+        while let Some(frame) = camera.try_recv()? {
+            graph.push("frame", frame); // makes the inbound fd readable
+        }
+    }
+    if fds[1].revents & libc::POLLIN != 0 {
+        if stop.is_stopped() || graph.host().is_closed() {
+            break;
+        }
+        graph.tick_ready()?;
+        for out in graph.drain_owned::<Detections>("detections")? { /* ... */ }
+    }
+}
+```
+
+Off Linux there is no fd; an `InboundWaiter` is a `Future`, so an event loop can poll it with any
+`Waker` (the bridge wakes it on input, close or `wake_inbound_waiters`).
 
 ## Migrating From Pre-2.0 Names
 
