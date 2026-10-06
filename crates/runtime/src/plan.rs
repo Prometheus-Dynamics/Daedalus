@@ -2,6 +2,7 @@ use crate::prelude::*;
 
 mod demand;
 mod explain;
+mod explain_flags;
 mod host_ports;
 mod policy;
 mod transports;

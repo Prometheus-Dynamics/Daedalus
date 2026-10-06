@@ -16,6 +16,14 @@ pub struct RuntimePlanExplanation {
     pub backpressure: BackpressureStrategy,
     pub nodes: Vec<RuntimeNodeExplanation>,
     pub edges: Vec<RuntimeEdgeExplanation>,
+    /// Edges whose adapter path copies a frame-like payload
+    /// ([`RuntimeEdgeExplanation::copies_frame`]).
+    #[serde(default)]
+    pub copying_edges: Vec<usize>,
+    /// Edges whose adapter path changes residency
+    /// ([`RuntimeEdgeExplanation::crosses_residency`]).
+    #[serde(default)]
+    pub crossing_edges: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -42,6 +50,14 @@ pub struct RuntimeEdgeExplanation {
     pub branch: Option<RuntimeBranchExplanation>,
     pub handoff: RuntimeEdgeHandoff,
     pub handoff_reason: String,
+    /// The edge carries a frame-like payload ([`RuntimeEdgeTransport::carries_frame`]) and its
+    /// adapter path copies it ([`RuntimeEdgeTransport::copies_data`]) or changes its residency.
+    #[serde(default)]
+    pub copies_frame: bool,
+    /// The adapter path moves the payload between residencies
+    /// ([`RuntimeEdgeTransport::crosses_residency`]).
+    #[serde(default)]
+    pub crosses_residency: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +145,12 @@ impl RuntimePlan {
                     )
                 };
                 let branch = branch_explanation(transport.as_ref(), source_count, target_count);
+                let crosses_residency = transport
+                    .as_ref()
+                    .is_some_and(RuntimeEdgeTransport::crosses_residency);
+                let copies_frame = transport.as_ref().is_some_and(|transport| {
+                    transport.carries_frame() && (transport.copies_data() || crosses_residency)
+                });
                 RuntimeEdgeExplanation {
                     index,
                     from_node: edge.from().0,
@@ -151,12 +173,23 @@ impl RuntimePlan {
                     branch,
                     handoff,
                     handoff_reason,
+                    copies_frame,
+                    crosses_residency,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let flagged = |flag: fn(&RuntimeEdgeExplanation) -> bool| {
+            edges
+                .iter()
+                .filter(|edge| flag(edge))
+                .map(|edge| edge.index)
+                .collect()
+        };
         RuntimePlanExplanation {
             backpressure: self.backpressure.clone(),
             nodes,
+            copying_edges: flagged(|edge| edge.copies_frame),
+            crossing_edges: flagged(|edge| edge.crosses_residency),
             edges,
         }
     }

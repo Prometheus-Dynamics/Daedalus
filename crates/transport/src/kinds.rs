@@ -156,6 +156,30 @@ impl AdaptKind {
             AdaptKind::Custom => "custom",
         }
     }
+
+    /// Whether the step may copy payload data. Zero-copy kinds (identity, reinterpret, views,
+    /// metadata-only, in-place mutation) do not; copy-on-write, branches, materialization,
+    /// device transfers, (de)serialization and custom adapters (unknown) count as copying.
+    pub fn copies_data(self) -> bool {
+        !matches!(
+            self,
+            AdaptKind::Identity
+                | AdaptKind::Reinterpret
+                | AdaptKind::View
+                | AdaptKind::SharedView
+                | AdaptKind::CowView
+                | AdaptKind::MetadataOnly
+                | AdaptKind::MutateInPlace
+        )
+    }
+
+    /// Whether the step moves the payload between devices (CPU, GPU, external memory).
+    pub fn is_device_transfer(self) -> bool {
+        matches!(
+            self,
+            AdaptKind::DeviceTransfer | AdaptKind::DeviceUpload | AdaptKind::DeviceDownload
+        )
+    }
 }
 
 impl fmt::Display for AdaptKind {

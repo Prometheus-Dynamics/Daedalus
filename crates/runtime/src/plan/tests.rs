@@ -101,3 +101,112 @@ fn graph_with_single_edge() -> Graph {
     });
     graph
 }
+
+fn step(
+    kind: daedalus_transport::AdaptKind,
+    from: &str,
+    to: &str,
+    residency: Option<daedalus_transport::Residency>,
+) -> daedalus_registry::capability::AdapterPathStep {
+    daedalus_registry::capability::AdapterPathStep {
+        adapter: daedalus_transport::AdapterId::new(format!("{from}.to.{to}")),
+        from: daedalus_transport::TypeKey::new(from),
+        to: daedalus_transport::TypeKey::new(to),
+        kind,
+        access: daedalus_transport::AccessMode::Read,
+        cost: daedalus_transport::AdaptCost::new(kind),
+        requires_gpu: false,
+        residency,
+        layout: None,
+    }
+}
+
+fn transport(path: Vec<daedalus_registry::capability::AdapterPathStep>) -> RuntimeEdgeTransport {
+    RuntimeEdgeTransport {
+        from_type: daedalus_data::model::TypeExpr::opaque("a"),
+        to_type: daedalus_data::model::TypeExpr::opaque("b"),
+        source_transport: None,
+        target_transport: None,
+        target_access: daedalus_transport::AccessMode::Read,
+        target_exclusive: false,
+        target_residency: None,
+        transport_target: None,
+        adapter_steps: path.iter().map(|step| step.adapter.clone()).collect(),
+        adapter_path: path,
+        expected_adapter_cost: None,
+    }
+}
+
+#[test]
+fn edge_transports_classify_copies_and_residency_changes() {
+    use daedalus_transport::{AdaptKind, Residency};
+    let view = transport(vec![step(
+        AdaptKind::View,
+        "cam:frame",
+        "daedalus:frame",
+        None,
+    )]);
+    assert!(!view.copies_data() && !view.crosses_residency() && view.carries_frame());
+    assert_eq!(view.device_transfers(), (0, 0));
+
+    let upload = transport(vec![
+        step(
+            AdaptKind::View,
+            "cam:frame",
+            "cam:frame_view",
+            Some(Residency::External),
+        ),
+        step(
+            AdaptKind::DeviceUpload,
+            "cam:frame_view",
+            "gpu:image",
+            Some(Residency::Gpu),
+        ),
+    ]);
+    assert!(upload.copies_data() && upload.crosses_residency());
+    assert_eq!(upload.device_transfers(), (1, 0));
+
+    let materialize = transport(vec![step(AdaptKind::Materialize, "bytes", "blob", None)]);
+    assert!(materialize.copies_data() && !materialize.carries_frame());
+
+    let mut reinterpret = transport(vec![step(
+        AdaptKind::Reinterpret,
+        "a",
+        "b",
+        Some(Residency::External),
+    )]);
+    assert!(!reinterpret.crosses_residency());
+    reinterpret.target_residency = Some(Residency::Cpu);
+    assert!(reinterpret.crosses_residency());
+}
+
+#[test]
+fn explanation_flags_copying_and_crossing_frame_edges() {
+    use daedalus_transport::{AdaptKind, Residency};
+    let mut plan =
+        RuntimePlan::try_from_execution(&ExecutionPlan::new(graph_with_single_edge(), vec![]))
+            .expect("plan");
+    plan.edge_transports = vec![Some(transport(vec![step(
+        AdaptKind::DeviceUpload,
+        "cam:frame",
+        "gpu:frame",
+        Some(Residency::Gpu),
+    )]))];
+    let explanation = plan.explain();
+    let edge = &explanation.edges[0];
+    assert!(edge.copies_frame && edge.crosses_residency);
+    assert_eq!(explanation.copying_edges, vec![0]);
+    assert_eq!(explanation.crossing_edges, vec![0]);
+    let text = explanation.to_string();
+    assert!(
+        text.contains("copies_frame: edge 0 (src.out -> sink.in)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("adapters=cam:frame.to.gpu:frame:device_upload"),
+        "{text}"
+    );
+    let json = serde_json::to_value(&explanation).expect("json");
+    assert_eq!(json["edges"][0]["copies_frame"], true);
+    assert_eq!(json["crossing_edges"][0], 0);
+}
