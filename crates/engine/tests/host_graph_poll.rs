@@ -1,6 +1,6 @@
 //! A Styx-style host loop: one `poll(2)` over the host's own descriptor (a pipe standing in for a
 //! camera) and the graph's inbound fd, driving ticks without a waiter thread or async runtime.
-#![cfg(all(feature = "plugins", target_os = "linux"))]
+#![cfg(all(feature = "plugins", feature = "std", target_os = "linux"))]
 
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
