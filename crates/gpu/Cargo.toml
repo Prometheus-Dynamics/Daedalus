@@ -50,6 +50,8 @@ tracing = { workspace = true, features = ["std"] }
 ash = { workspace = true, optional = true }
 # poll/ioctl for dmabuf acquire fences.
 libc = { workspace = true }
+# `daedalus:frame` views as import descriptors (`ExternalFrameDescriptor::from_frame_view`).
+daedalus-transport = { workspace = true }
 
 [dev-dependencies]
 bytemuck = { workspace = true }
