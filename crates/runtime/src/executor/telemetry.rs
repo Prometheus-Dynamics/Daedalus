@@ -50,9 +50,9 @@ pub struct ExecutionTelemetry {
     pub gpu_segments: usize,
     pub gpu_fallbacks: usize,
     pub backpressure_events: usize,
-    pub warnings: smallvec::SmallVec<[String; 8]>,
-    #[serde(default, skip_serializing_if = "smallvec::SmallVec::is_empty")]
-    pub errors: smallvec::SmallVec<[NodeFailure; 4]>,
+    pub warnings: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<NodeFailure>,
     pub graph_duration: Duration,
     #[serde(default)]
     pub unattributed_runtime_duration: Duration,
@@ -213,8 +213,13 @@ impl ExecutionTelemetry {
             trace.clear();
         }
         self.data_lifecycle.clear();
-        self.demand = crate::plan::DemandTelemetry::default();
-        self.ffi = FfiTelemetryReport::default();
+        // Usually empty: skip rebuilding them.
+        if !self.demand.is_empty() {
+            self.demand = crate::plan::DemandTelemetry::default();
+        }
+        if !self.ffi.is_empty() {
+            self.ffi = FfiTelemetryReport::default();
+        }
         self.in_flight_node_transport_metrics.clear();
     }
 
