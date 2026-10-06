@@ -494,29 +494,42 @@ impl HostBridgeHandle {
         port: PortId,
         payload: impl FnOnce(&TypeIndex, &Clock) -> Result<Payload, TypeKeyError>,
     ) -> FeedOutcome {
-        self.shared.io_timing.timed_push(|| {
-            let mut guard = self.shared.buffers.lock();
-            let payload = match payload(&guard.types, &guard.clock)
-                .and_then(|payload| guard.types.check_payload(&payload).map(|()| payload))
-            {
-                Ok(payload) => payload,
-                Err(error) => return FeedOutcome::Rejected(Box::new(error)),
-            };
-            let outcome = enqueue_locked(
-                &mut guard,
-                Direction::Inbound,
-                self.alias.as_str(),
-                PortKey::Id(port),
-                payload,
-            );
-            if is_enqueued(&outcome) {
-                self.shared.notify_all();
-                let wakers = wait::take_inbound_wakers(&mut guard);
-                drop(guard);
-                wait::wake_all(wakers);
-            }
-            outcome
-        })
+        let _scope = io_timing::host_alloc_scope();
+        if self.shared.io_timing.enabled() {
+            return io_timing::timed(&self.shared.io_timing.push_ns, || {
+                self.feed_locked(port, payload)
+            });
+        }
+        self.feed_locked(port, payload)
+    }
+
+    #[inline(always)]
+    fn feed_locked(
+        &self,
+        port: PortId,
+        payload: impl FnOnce(&TypeIndex, &Clock) -> Result<Payload, TypeKeyError>,
+    ) -> FeedOutcome {
+        let mut guard = self.shared.buffers.lock();
+        let payload = match payload(&guard.types, &guard.clock)
+            .and_then(|payload| guard.types.check_payload(&payload).map(|()| payload))
+        {
+            Ok(payload) => payload,
+            Err(error) => return FeedOutcome::Rejected(Box::new(error)),
+        };
+        let outcome = enqueue_locked(
+            &mut guard,
+            Direction::Inbound,
+            self.alias.as_str(),
+            PortKey::Id(port),
+            payload,
+        );
+        if is_enqueued(&outcome) {
+            self.shared.notify_all();
+            let wakers = wait::take_inbound_wakers(&mut guard);
+            drop(guard);
+            wait::wake_all(wakers);
+        }
+        outcome
     }
 
     pub fn push_as<T>(
@@ -546,12 +559,16 @@ impl HostBridgeHandle {
     }
 
     pub fn try_pop_payload(&self, port: impl AsRef<str>) -> Option<Payload> {
-        self.shared
-            .io_timing
-            .timed_take(|| self.pop_payload(port.as_ref()))
+        let _scope = io_timing::host_alloc_scope();
+        let port = port.as_ref();
+        if self.shared.io_timing.enabled() {
+            return io_timing::timed(&self.shared.io_timing.take_ns, || self.pop_payload(port));
+        }
+        self.pop_payload(port)
     }
 
-    pub(super) fn pop_payload(&self, port: &str) -> Option<Payload> {
+    #[inline(always)]
+    fn pop_payload(&self, port: &str) -> Option<Payload> {
         let mut guard = self.shared.buffers.lock();
         pop_outbound_locked(&mut guard, self.alias.as_str(), port)
     }
@@ -691,12 +708,16 @@ impl HostBridgeHandle {
     }
 
     pub fn drain_payloads(&self, port: impl AsRef<str>) -> Vec<Payload> {
-        self.shared
-            .io_timing
-            .timed_take(|| self.drain_port(port.as_ref()))
+        let _scope = io_timing::host_alloc_scope();
+        let port = port.as_ref();
+        if self.shared.io_timing.enabled() {
+            return io_timing::timed(&self.shared.io_timing.take_ns, || self.drain_port(port));
+        }
+        self.drain_port(port)
     }
 
-    pub(super) fn drain_port(&self, port: &str) -> Vec<Payload> {
+    #[inline(always)]
+    fn drain_port(&self, port: &str) -> Vec<Payload> {
         let mut guard = self.shared.buffers.lock();
         let buffers = &mut *guard;
         let mut payloads = Vec::new();
