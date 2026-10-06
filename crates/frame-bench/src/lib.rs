@@ -38,6 +38,7 @@ mod buffer;
 mod chain;
 mod detector;
 mod perf;
+mod pin;
 mod source;
 
 use core::fmt;
@@ -55,6 +56,7 @@ pub use detector::{
     detector_graph, detector_registry, register_detector_group,
 };
 pub use perf::InstructionCounter;
+pub use pin::{PIN_CPU_ENV, pin_from_env};
 pub use source::{
     FrameFeed, FrameSourceConfig, SYNTHETIC_FRAME_KEY, SyntheticFrame, SyntheticFrameSource,
 };

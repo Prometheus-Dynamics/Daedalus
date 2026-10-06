@@ -21,6 +21,9 @@ static ALLOC: CountingAllocator = CountingAllocator::system();
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
 fn main() -> Result<(), Error> {
+    if let Some(cpu) = daedalus_frame_bench::pin_from_env()? {
+        println!("pinned to CPU {cpu}");
+    }
     let ticks = std::env::var("FRAME_CHAIN_TICKS")
         .ok()
         .and_then(|value| value.parse().ok())

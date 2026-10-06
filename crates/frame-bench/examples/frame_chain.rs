@@ -48,6 +48,9 @@ fn run(
 }
 
 fn main() -> Result<(), Error> {
+    if let Some(cpu) = daedalus_frame_bench::pin_from_env()? {
+        println!("pinned to CPU {cpu}");
+    }
     let ticks = env_usize("FRAME_CHAIN_TICKS", 5000);
     let bench = FrameBenchConfig::new([CHAIN_OUTPUT]).with_ticks(ticks / 5, ticks);
     let source = SyntheticFrameSource::new(FrameSourceConfig::default())?;
