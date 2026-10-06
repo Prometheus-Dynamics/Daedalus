@@ -328,9 +328,11 @@ fn run_order_timed<H: NodeHandler>(
 
 fn node_is_active<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize) -> bool {
     if exec
-        .nodes
+        .core
+        .host_bridges
         .get(node_idx)
-        .is_some_and(super::is_host_bridge_node)
+        .copied()
+        .unwrap_or(false)
     {
         return false;
     }
@@ -394,7 +396,13 @@ fn edge_uses_direct_slot<H: NodeHandler>(exec: &Executor<'_, H>, edge_idx: usize
         .active_direct_edges
         .as_deref()
         .and_then(|mask| mask.get(edge_idx).copied())
-        .unwrap_or_else(|| exec.core.direct_edges.contains(&edge_idx))
+        .unwrap_or_else(|| {
+            exec.core
+                .direct_edges
+                .get(edge_idx)
+                .copied()
+                .unwrap_or(false)
+        })
 }
 
 fn record_failure(

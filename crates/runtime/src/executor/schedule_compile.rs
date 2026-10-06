@@ -65,12 +65,8 @@ fn build_segment_of(nodes_len: usize, segments: &[RuntimeSegment]) -> Vec<usize>
 pub(crate) fn direct_edge_set(
     edges: &[RuntimeEdge],
     edge_transports: &[Option<crate::plan::RuntimeEdgeTransport>],
-) -> HashSet<usize> {
+) -> Vec<bool> {
     direct_edge_mask_for_active_edges(edges, edge_transports, |_| true)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, direct)| direct.then_some(idx))
-        .collect()
 }
 
 pub(crate) fn direct_slots(edge_count: usize) -> Arc<Vec<DirectSlot>> {

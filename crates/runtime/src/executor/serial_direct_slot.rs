@@ -30,9 +30,27 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
         lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
         exec.core.telemetry.record_data_lifecycle(lifecycle);
     }
-    if let Some(slot) = exec.core.direct_slots.get(edge_idx) {
-        slot.access(exec.direct_slot_access).put(payload);
+    let replaced = exec
+        .core
+        .direct_slots
+        .get(edge_idx)
+        .and_then(|slot| slot.access(exec.direct_slot_access).put(payload));
+    if replaced.is_some() && collect_basic_metrics {
+        // The slot keeps the newest payload, as the edge's policy does in a queue.
+        let reason = match exec.edges.get(edge_idx).map(|edge| &edge.policy().pressure) {
+            Some(daedalus_transport::PressurePolicy::LatestOnly) => {
+                super::EdgePressureReason::LatestReplace
+            }
+            Some(daedalus_transport::PressurePolicy::Coalesce { .. }) => {
+                super::EdgePressureReason::CoalesceReplace
+            }
+            _ => super::EdgePressureReason::DropOldest,
+        };
+        exec.core
+            .telemetry
+            .record_edge_pressure_event(edge_idx, reason, 1);
     }
+    drop(replaced);
     if collect_detailed_metrics {
         exec.core.telemetry.record_edge_transport(edge_idx, bytes);
         exec.core.telemetry.record_edge_capacity(edge_idx, Some(1));

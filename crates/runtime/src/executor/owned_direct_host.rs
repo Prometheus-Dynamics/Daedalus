@@ -30,12 +30,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     ) -> Option<DirectHostRoute> {
         let input_edge = self.direct_host_input_edge(input_port)?;
         let output_edge = self.direct_host_output_edge(output_port)?;
-        let mut direct_edges = vec![false; self.edges.len()];
-        for edge_idx in self.core.direct_edges.iter().copied() {
-            if let Some(slot) = direct_edges.get_mut(edge_idx) {
-                *slot = true;
-            }
-        }
+        let mut direct_edges = self.core.direct_edges.to_vec();
+        direct_edges.resize(self.edges.len(), false);
         if let Some(slot) = direct_edges.get_mut(input_edge) {
             *slot = true;
         }

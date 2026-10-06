@@ -21,7 +21,7 @@ pub use daedalus_registry::capability::{
     NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_REQUIRED_INPUTS_META_KEY,
     NodeExecutionKind, NodeFire,
 };
-use daedalus_transport::PressurePolicy;
+use daedalus_transport::{OverflowPolicy, PressurePolicy};
 
 /// Node metadata hinting a node's per-run cost: `"heavy"` makes adaptive execution treat its
 /// segment as expensive before it has been measured (as it does GPU-affinity nodes).
@@ -163,12 +163,8 @@ pub(crate) fn direct_edge_mask_for_active_edges(
                 .and_then(Option::as_ref)
                 .map(|transport| transport.adapter_steps.is_empty())
                 .unwrap_or(true);
-            let direct_policy = matches!(
-                edge.policy().pressure,
-                PressurePolicy::LatestOnly | PressurePolicy::Coalesce { .. }
-            );
             adapter_steps_empty
-                && direct_policy
+                && direct_slot_policy(&edge.policy().pressure)
                 && source_port_counts
                     .get(&edge.source_key())
                     .copied()
@@ -181,6 +177,22 @@ pub(crate) fn direct_edge_mask_for_active_edges(
                     == 1
         })
         .collect()
+}
+
+/// Whether an edge with `pressure` keeps only its newest payload, so a single-producer,
+/// single-consumer edge can hand payloads over through a one-payload direct slot: latest-only,
+/// coalescing, and the default bounded queue of one that drops the oldest (unless a graph-level
+/// `BackpressureStrategy` overrides bounded edges; see `ExecutorInit`).
+pub(crate) fn direct_slot_policy(pressure: &PressurePolicy) -> bool {
+    matches!(
+        pressure,
+        PressurePolicy::LatestOnly
+            | PressurePolicy::Coalesce { .. }
+            | PressurePolicy::Bounded {
+                capacity: 1,
+                overflow: OverflowPolicy::DropOldest,
+            }
+    )
 }
 
 /// Runtime node with policy hints.

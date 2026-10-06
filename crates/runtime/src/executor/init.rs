@@ -5,7 +5,7 @@ use super::collect_data_edges;
 use super::{
     CompiledSchedule, DirectSlot, EdgeStorage, ExecutorBuildError, NodeMetadataStore,
     build_compiled_schedule, build_node_execution_metadata, direct_edge_set, direct_slots,
-    edge_maps, normalize_runtime_nodes, queue, resolve_parallel_workers,
+    edge_maps, is_host_bridge_node, normalize_runtime_nodes, queue, resolve_parallel_workers,
 };
 use crate::handles::PortId;
 use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, NodeFire, RuntimeEdge, RuntimeNode, RuntimePlan};
@@ -17,7 +17,13 @@ pub(crate) struct ExecutorInit {
     pub(crate) outgoing_edges: Arc<Vec<Vec<usize>>>,
     pub(crate) schedule: Arc<CompiledSchedule>,
     pub(crate) queues: Arc<Vec<EdgeStorage>>,
-    pub(crate) direct_edges: Arc<HashSet<usize>>,
+    /// Per edge, whether it hands payloads over through a direct slot.
+    pub(crate) direct_edges: Arc<[bool]>,
+    /// Per edge, whether it must stay a queue although its policy allows a direct slot: bounded
+    /// edges under a graph-level `BackpressureStrategy`, which rejects rather than replaces.
+    pub(crate) queued_edges: Option<Arc<[bool]>>,
+    /// Per node, whether it is a host-bridge node (never run by the scheduler).
+    pub(crate) host_bridges: Arc<[bool]>,
     pub(crate) direct_slots: Arc<Vec<DirectSlot>>,
     pub(crate) node_metadata: NodeMetadataStore,
     /// Each node's connected output port ids, handed to its `NodeIo`.
@@ -48,7 +54,14 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         })
         .collect();
     let required_inputs = required_input_edges(&nodes, &plan.edges, &incoming_edges);
-    let direct_edges = Arc::new(direct_edge_set(&plan.edges, &plan.edge_transports));
+    let queued_edges = backpressure_queued_edges(plan);
+    let mut direct_edges = direct_edge_set(&plan.edges, &plan.edge_transports);
+    if let Some(queued) = &queued_edges {
+        for (direct, queued) in direct_edges.iter_mut().zip(queued.iter()) {
+            *direct &= !queued;
+        }
+    }
+    let host_bridges = nodes.iter().map(is_host_bridge_node).collect();
     let direct_slots = direct_slots(plan.edges.len());
     let schedule = Arc::new(build_compiled_schedule(
         &nodes,
@@ -66,7 +79,9 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         outgoing_edges: Arc::new(outgoing_edges),
         schedule,
         queues,
-        direct_edges,
+        direct_edges: direct_edges.into(),
+        queued_edges,
+        host_bridges,
         direct_slots,
         node_metadata,
         output_ports,
@@ -74,6 +89,16 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         parallel_workers,
         #[cfg(feature = "gpu")]
         data_edges,
+    })
+}
+
+/// [`ExecutorInit::queued_edges`]: `None` without a backpressure override.
+fn backpressure_queued_edges(plan: &RuntimePlan) -> Option<Arc<[bool]>> {
+    (plan.backpressure != crate::plan::BackpressureStrategy::None).then(|| {
+        plan.edges
+            .iter()
+            .map(|edge| edge.policy().bounded_capacity().is_some())
+            .collect()
     })
 }
 

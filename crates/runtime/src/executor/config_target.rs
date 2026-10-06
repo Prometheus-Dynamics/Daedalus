@@ -38,8 +38,17 @@ pub(crate) trait ExecutorConfigTarget {
         active_direct_edges: Option<Arc<Vec<bool>>>,
     ) -> Result<(), ExecutorMaskError> {
         let expected = self.edges_len();
-        self.core_mut()
-            .run_config
+        let core = self.core_mut();
+        let active_direct_edges = match (active_direct_edges, &core.queued_edges) {
+            (Some(mask), Some(queued)) => Some(Arc::new(
+                mask.iter()
+                    .enumerate()
+                    .map(|(idx, &direct)| direct && !queued.get(idx).copied().unwrap_or(false))
+                    .collect(),
+            )),
+            (mask, _) => mask,
+        };
+        core.run_config
             .set_active_direct_edges_mask(active_direct_edges, expected)
     }
 

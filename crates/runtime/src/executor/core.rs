@@ -14,7 +14,12 @@ pub(crate) struct ExecutorCore {
     pub(crate) gpu_available: bool,
     pub(crate) gpu: MaybeGpu,
     pub(crate) queues: Arc<Vec<EdgeStorage>>,
-    pub(crate) direct_edges: Arc<HashSet<usize>>,
+    /// Per edge, whether it uses a direct slot (unless `run_config` masks override it).
+    pub(crate) direct_edges: Arc<[bool]>,
+    /// Edges that stay queues under the graph's backpressure strategy (see `ExecutorInit`).
+    pub(crate) queued_edges: Option<Arc<[bool]>>,
+    /// Per node, whether it is a host-bridge node.
+    pub(crate) host_bridges: Arc<[bool]>,
     pub(crate) direct_slots: Arc<Vec<DirectSlot>>,
     pub(crate) warnings_seen: Arc<Mutex<HashSet<String>>>,
     pub(crate) telemetry: ExecutionTelemetry,
@@ -57,6 +62,8 @@ impl ExecutorCore {
             gpu: None,
             queues: init.queues.clone(),
             direct_edges: init.direct_edges.clone(),
+            queued_edges: init.queued_edges.clone(),
+            host_bridges: init.host_bridges.clone(),
             direct_slots: init.direct_slots.clone(),
             warnings_seen: Arc::new(Mutex::new(HashSet::new())),
             telemetry: ExecutionTelemetry::with_level(MetricsLevel::default()),
@@ -107,6 +114,8 @@ impl ExecutorCore {
             gpu: self.gpu,
             queues: self.queues.clone(),
             direct_edges: self.direct_edges.clone(),
+            queued_edges: self.queued_edges.clone(),
+            host_bridges: self.host_bridges.clone(),
             direct_slots: self.direct_slots.clone(),
             warnings_seen: self.warnings_seen.clone(),
             telemetry: ExecutionTelemetry::with_level(self.run_config.metrics_level)

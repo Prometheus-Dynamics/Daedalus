@@ -62,7 +62,8 @@ pub(crate) enum DirectSlotHandle<'a> {
 }
 
 impl DirectSlotHandle<'_> {
-    pub(crate) fn put(self, payload: CorrelatedPayload) {
+    /// Store `payload`, returning the one it replaces.
+    pub(crate) fn put(self, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
         match self {
             DirectSlotHandle::Serial(slot) => slot.put(payload),
             DirectSlotHandle::Shared(slot) => slot.put(payload),
@@ -95,12 +96,10 @@ pub(crate) struct SerialDirectSlot<'a> {
 }
 
 impl SerialDirectSlot<'_> {
-    pub(crate) fn put(self, payload: CorrelatedPayload) {
+    pub(crate) fn put(self, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
         // SAFETY: serial execution owns the graph tick and accesses each direct slot in schedule
         // order, so no shared segment can concurrently touch this slot.
-        unsafe {
-            *self.slot.payload.get() = Some(payload);
-        }
+        unsafe { (*self.slot.payload.get()).replace(payload) }
     }
 
     pub(crate) fn take(self) -> Option<CorrelatedPayload> {
@@ -114,12 +113,10 @@ pub(crate) struct SharedDirectSlot<'a> {
 }
 
 impl SharedDirectSlot<'_> {
-    pub(crate) fn put(self, payload: CorrelatedPayload) {
+    pub(crate) fn put(self, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
         let _guard = self.slot.lock.lock();
         // SAFETY: shared execution holds the slot mutex for the whole mutation.
-        unsafe {
-            *self.slot.payload.get() = Some(payload);
-        }
+        unsafe { (*self.slot.payload.get()).replace(payload) }
     }
 
     pub(crate) fn take(self) -> Option<CorrelatedPayload> {
