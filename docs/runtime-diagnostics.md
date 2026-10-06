@@ -168,7 +168,7 @@ runtime plan: 3 nodes, 3 edges, backpressure=None
   node 0: io.host_bridge (CpuOnly) label=host
   node 1: daedalus.frame_bench:stage (CpuOnly) label=stage_0
   node 2: daedalus.frame_bench:stage (CpuOnly) label=stage_1
-  edge 0: io.host_bridge.frame -> daedalus.frame_bench:stage.frame [queue] adapters=daedalus.foreign:daedalus.frame_bench:synthetic_frame->daedalus:frame:view
+  edge 0: io.host_bridge.frame -> daedalus.frame_bench:stage.frame [direct_slot] adapters=daedalus.foreign:daedalus.frame_bench:synthetic_frame->daedalus:frame:view
   edge 1: daedalus.frame_bench:stage.frame -> daedalus.frame_bench:stage.frame [direct_slot]
   edge 2: daedalus.frame_bench:stage.frame -> io.host_bridge.out [direct_slot]
 copies_frame: none

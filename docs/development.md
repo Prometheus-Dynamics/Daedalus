@@ -369,8 +369,9 @@ firmware is linked and measured, not flashed).
 `cargo bench -p daedalus-engine --features plugins --bench host_graph_drive` measures the host
 bridge and a one-node `HostGraph` (`host.in -> inc -> host.out`, serial mode). Save a baseline
 with `-- --save-baseline <name>` and compare with `-- --baseline <name>`. The
-`hot_path_allocations` engine test pins the metrics-off round trip at 4 heap allocations (the
-input and output payloads); it was 31 before the hot-path pass.
+`hot_path_allocations` engine test pins the metrics-off round trip at 2 heap allocations (the
+input and output payloads, one each); it was 31 before the hot-path pass and 4 before the
+tick-cost pass below.
 
 Hot-path pass (x86_64 Linux, shared 24-core machine at load ~6-8, criterion medians; before is
 the `helios-integration` tree benched back to back with after, so treat differences under ~10%
@@ -441,10 +442,12 @@ one allocation per frame for amortized growth (Rayon's injector blocks, a node's
 worker growing that thread's port buffers). The test binary is unoptimized, where the graph's
 nodes are slow enough that adaptive mode runs it in parallel; optimized, it runs serially.
 
-Each created payload is two allocations (value `Arc` and storage), one when a handler returns an
-`Arc` it already holds. `Payload::owned` always builds typed storage: boundary contracts are
-registry-scoped and checked when a graph is compiled, and only `Payload::boundary_owned` builds
-contract-restricted storage.
+Each created payload is one allocation, the value's own `Arc`, which is the payload's storage
+(`ArcValue<T>`, retyped in place); a handler returning an `Arc` it already holds allocates
+nothing (until the tick-cost pass, two and one: a `TypedStorage` wrapper around the value's
+`Arc`, which made the serial metrics-off frame 31 allocations; it is 14 now). Boundary contracts
+are registry-scoped and checked when a graph is compiled, and only `Payload::boundary_owned`
+builds contract-restricted storage.
 
 Timings, B against C (x86_64 Linux, shared 24-core machine at load 20-30, criterion medians, back
 to back):
@@ -514,6 +517,86 @@ inject 150 + inputs 480 + handlers 330 + node_io 830 + drain 190 + dispatch 670,
 takes about 80 (reading the frame through the vtable, timed). Against the Eidos stages
 (about 0.96 ms p50 each on the CM5) that is well under 1%; the absolute numbers on the CM5's
 Cortex-A76 cores will be higher.
+
+### Detector-shaped frame (tick-cost pass)
+
+`cargo run --release -p daedalus-frame-bench --example detector` drives a graph shaped like a
+staged marker detector (`crates/frame-bench/src/detector.rs`, the parameter shapes of Eidos's
+ArUco/AprilTag stages): five typed `#[node]` stages (mask prep, quads, decode, validate, refine)
+with `Copy` config structs fed by constants (enum, integer, float and bool fields, 34 const
+ports), state, the `ExecutionContext` and `Arc`'d struct outputs (validate returns two), the
+owner frame fanned out to four stages (mask prep reads pixels through
+`FrameView::plane_bytes`), three host outputs. It runs as the flat per-stage graph and as one
+group node (an `EMBEDDED_GRAPH_KEY` node declaration the planner expands into the same stages).
+`crates/frame-bench/tests/detector_overhead.rs` asserts, for both, no copies and zero runtime,
+node and host allocations per frame, and that the group expands to the flat graph's edges.
+`run_frame_bench` reports user-space instructions per frame (`perf_event_open`, push + tick +
+take including the five handlers).
+
+**x86_64 numbers (AMD Ryzen 9 5900X, shared 24-core machine at load 25-35, pinned to one core,
+20000 frames, median of three interleaved runs per build), not the CM5.** Before is `dev` at
+the `daedalus:frame` v2 merge (ed7ddde) with this bench. Instructions per frame with recording
+off; stage rows are frame-overhead p50 / p99 in ns with recording on:
+
+| | flat before | flat after | group before | group after |
+| --- | --- | --- | --- | --- |
+| instructions per frame | 66 033 | 33 117 | 67 455 | 33 167 |
+| node allocations per frame | 6 (384 B) | 0 | 6 (384 B) | 0 |
+| push + tick + take, recording off | 8 190 / 18 291 | 4 730 / 9 550 | 8 340 / 19 280 | 4 650 / 9 581 |
+| inject | 460 / 790 | 350 / 490 | 510 / 910 | 350 / 500 |
+| inputs | 1 690 / 2 550 | 890 / 1 120 | 1 700 / 2 600 | 890 / 1 180 |
+| handlers (generated code included) | 3 510 / 6 310 | 2 120 / 3 430 | 3 530 / 6 460 | 2 090 / 3 630 |
+| node_io | 1 640 / 2 510 | 1 160 / 1 580 | 1 710 / 2 630 | 1 170 / 1 710 |
+| drain | 520 / 890 | 410 / 630 | 540 / 890 | 410 / 620 |
+| dispatch | 880 / 1 620 | 550 / 920 | 970 / 1 800 | 550 / 930 |
+| `graph_overhead` (tick - handlers) | 5 310 / 10 320 | 3 490 / 4 880 | 5 550 / 11 290 | 3 510 / 5 310 |
+
+What the tick no longer does, in the order the pass removed it:
+
+- **Payload wrapper allocations.** Wrapping a handler's `Arc<T>` output allocated a 64-byte
+  `TypedStorage`: the six allocations per frame the node scope reported. A payload's storage is
+  now the value's own allocation.
+- **Hash lookups per node and edge.** The direct-edge set (a `HashSet` probed per edge) and the
+  host-bridge test (a metadata `BTreeMap` lookup per node, slower in group nodes, whose metadata
+  has more keys) are per-index masks; handler dispatch and host-port maps use an unseeded Fx
+  hash instead of SipHash.
+- **Queues for edges that never hold more than they are given.** Edges whose target port has
+  one producer use direct slots for every slot-compatible policy: the default buffer-all (the
+  slot keeps every payload in order, one inline), latest-only, coalescing and a bounded queue of
+  one dropping the oldest, fanned-out ports and adapter edges included (adapters run when the
+  consumer collects).
+- **Per-call clones.** Each node's `ExecutionContext` and `NodeIo` environment are built once
+  (rebuilt when the state store, capabilities, GPU, coercers, type index or clock change); a
+  call borrows the context and clones two `Arc`s for its io instead of about a dozen.
+- **Per-call node-state hashing.** Generated handlers keep state and decoded configs/constants
+  as one tuple in a per-node `NodeStateSlot` the context resolves once: one slot lock to take
+  and one to store, instead of a SipHash of the node id and a write lock per part.
+- **Const copies.** A node's const inputs are one shared list read by each call's `NodeIo`
+  (34 `PortId` and payload clones per frame before), and `ConfigCache` skips its per-port check
+  while a call shares the list the config was decoded from.
+- **Per-tick snapshots.** `OwnedExecutor::run_in_place` borrows its own core instead of cloning
+  ~25 handles and building fresh telemetry; `ExecutionTelemetry` is several hundred bytes
+  smaller (plain vectors for warnings and errors).
+
+**Group node against the per-stage template.** On the CM5 the group measured 35 µs against the
+template's 27 µs. Runtime overhead explained little of it: the expanded group runs the same five
+nodes and eleven edges (asserted) and cost 2% more instructions before this pass (the per-node
+host-bridge metadata lookup over the group's larger metadata maps, now a mask), the same after.
+The rest is measurement order: the Eidos bench ticks the group right after the bare stages
+(about 1 ms of image processing that evicts the runtime's code and data from L1/L2) and the
+template right after the group, warm. Replaying that loop on x86 (a 8 MiB memory sweep, then
+graph A, then graph B, per frame) gave, before this pass, 6.4 µs for whichever graph ran first
+against 5.5-5.8 µs for the second (5.2 / 5.0 µs without the sweep); after it, 4.0-4.2 µs first
+against 3.8-4.0 µs second (3.5 / 3.5 µs without). Fewer instructions and less data touched per
+tick shrink the cold-cache penalty with them; on the CM5's smaller caches the first-run graph
+still pays more, so compare graphs in alternating order or one per run.
+
+**CM5 projection (an estimate, not a measurement).** Scaling the CM5 rows by the x86 ratios
+(`graph_overhead` p50 x0.66, p99 x0.47; instructions x0.50), the per-stage template's 27 µs
+`graph_overhead` p50 would be about 14-18 µs and its 36-41 µs p99 about 17-20 µs, and the
+group, run cold-first as in the Eidos bench, about 3-5 µs above that rather than 8; with no
+node allocations (the 384 B per frame are gone), the CM5 should gain at least as much as x86
+does. Measure on the device to confirm.
 
 ### Choosing a runtime mode
 

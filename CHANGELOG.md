@@ -55,6 +55,37 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Typed nodes returning `Result<(), _>` without outputs no longer push a unit payload to a
   nonexistent `out` port (two allocations per call). `Payload::resident` builds no cache key
   when the payload has no cached residents.
+- **Tick-cost pass** (detector-shaped frame bench: instructions per frame 66 000 -> 33 100,
+  `graph_overhead` p50 / p99 5.3 / 10.3 -> 3.5 / 4.9 µs on x86, zero node allocations; numbers
+  and a CM5 estimate in docs/development.md "Detector-shaped frame"):
+  - **Payload storage is the value's own `Arc`.** `Payload::shared`/`owned`/`shared_with`
+    (without a bytes estimate) retype the value's allocation as payload storage instead of
+    wrapping it, so returning an `Arc`'d output allocates nothing and an owned payload is one
+    allocation (the serial metrics-off detector graph frame: 31 -> 14 allocations, the host
+    round trip 4 -> 2). `PayloadStorage` lost `type_key()` (the payload carries it), and a
+    payload's storage strong count now includes other holders of the value
+    (`is_storage_unique` is false while the producer keeps its `Arc`).
+  - **Direct slots for more edges.** An edge that alone feeds its target port uses a direct slot
+    for the default buffer-all policy (every payload kept in order, one inline), latest-only,
+    coalescing and bounded-of-one-drop-oldest, also when its source port fans out or it has an
+    adapter path (adapters run when the consumer collects, also from a slot; direct host routes
+    used to skip them). Bounded edges stay queues under a graph `BackpressureStrategy`. A
+    replaced slot payload records the policy's pressure event; direct-slot edges record waits at
+    `Detailed`, as queues do. `explain_plan` reports the executor's own choice.
+  - **Per-node contexts and state slots.** The executor builds each node's `ExecutionContext`
+    and `NodeIo` environment once (rebuilt when the state store, capabilities, GPU, coercers,
+    type index or clock change). Node state lives in a per-node `NodeStateSlot`;
+    `ExecutionContext::take_node_state` / `set_node_state` use it without a map lookup, and
+    `ExecutionContext::new` builds a context (it gained a private field). Generated handlers
+    keep their state and decoded configs/constants as one tuple in the slot.
+  - **Shared const inputs.** A node's const inputs are one list (`NodeConstInputs`, now
+    `Vec<NodePort>`, copy-on-write on patch) each call's `NodeIo` reads after its edge inputs;
+    `NodeIo::inputs()` returns an iterator over both. `ConfigCache` skips its per-port check
+    while the list is unchanged.
+  - `OwnedExecutor::run_in_place` borrows its core instead of snapshotting it each tick;
+    `ExecutionTelemetry::warnings`/`errors` are `Vec`s. Handler dispatch and host bridge ports
+    hash with an unseeded Fx hasher (`collections::FastHashMap`). `Clock::platform()` is a
+    `const fn`.
 
 ### Added
 
@@ -130,6 +161,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `run_frame_bench` for any host graph, the `frame_chain` criterion bench and example, and a test
   that the steady-state external frame chain makes no copies and no runtime, node or host
   allocations per tick.
+- `daedalus-frame-bench` detector graph (`compile_detector`, `DetectorShape::{Flat, Group}`,
+  the `detector` example): five typed stages with the parameter shapes of a staged marker
+  detector, as a flat graph and as an embedded-graph group node, with a test asserting zero
+  runtime, node and host allocations per frame and identical expanded edges.
+  `FrameBenchRun::instructions_per_frame` (user-space instructions through `perf_event_open`,
+  `InstructionCounter`).
 
 ### Fixed
 

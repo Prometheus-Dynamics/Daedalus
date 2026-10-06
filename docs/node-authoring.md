@@ -174,8 +174,9 @@ A function taking exactly `(&RuntimeNode, &ExecutionContext, &mut NodeIo)` is a 
 handler that reads and pushes ports itself; the form is recognized by those parameter types, so
 any other signature, including one of three references such as
 `fn(frame: &Frame, roi: &Roi, state: &mut Tracker)` with `state(Tracker)`, is a typed node. A
-`state(T)` value lives in the node instance's slot (`StateStore::take_node_state`), starting
-from `T::default()`.
+`state(T)` value lives in the node instance's state slot (`ExecutionContext::take_node_state`,
+which the context resolves once), together with the handler's decoded configs and constants,
+starting from `T::default()`.
 
 ### Optional Inputs And Readiness
 
