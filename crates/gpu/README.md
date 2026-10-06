@@ -72,6 +72,10 @@ if ctx.supports_dmabuf_import() {
 }
 ```
 
+- **From a `daedalus:frame`:** `ExternalFrameDescriptor::from_frame_view(&frame)` takes a
+  `FrameView`'s plane fds (duplicated), `u64` offsets and strides, fourcc and modifier from its
+  metadata alone, so the frame's provider never maps or syncs the buffer; add the payload as
+  keepalive. Bayer and compressed frames are refused.
 - **Capability query:** `dmabuf_import_support()` / `supports_dmabuf_import()` on
   `GpuContextHandle` and `GpuBackend` never panic and give a reason when unsupported (no GPU,
   non-Vulkan adapter, missing extensions, non-Linux, or `gpu-dmabuf` not built).

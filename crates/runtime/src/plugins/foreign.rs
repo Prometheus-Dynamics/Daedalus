@@ -101,7 +101,9 @@ impl PluginRegistry {
 mod tests {
     use super::*;
     use crate::portable::Arc;
-    use daedalus_transport::{FrameInterface, FramePlane, FrameResidency, FrameSource};
+    use daedalus_transport::{
+        FRAME_INTERFACE_V1, FrameInterface, FramePlane, FrameResidency, FrameSource,
+    };
 
     struct Gray(Vec<u8>);
 
@@ -121,15 +123,11 @@ mod tests {
         fn plane_count(&self) -> u32 {
             1
         }
-        fn plane(&self, index: u32) -> Option<FramePlane<'_>> {
-            (index == 0).then(|| FramePlane::mapped(&self.0, self.0.len() as u32))
+        fn plane(&self, index: u32) -> Option<FramePlane> {
+            (index == 0).then(|| FramePlane::cpu(&self.0, self.0.len() as u64))
         }
-    }
-
-    daedalus_transport::foreign_interface! {
-        interface OtherFrame("daedalus:frame", version = 2);
-        struct OtherFrameVTable {
-            width: unsafe extern "C" fn(data: *const core::ffi::c_void) -> u32,
+        fn plane_data(&self, index: u32) -> Option<&[u8]> {
+            (index == 0).then_some(&self.0[..])
         }
     }
 
@@ -168,10 +166,7 @@ mod tests {
             .view::<FrameInterface>()
             .unwrap();
         assert_eq!(view.data(), Arc::as_ptr(&frame).cast());
-        assert_eq!(
-            view.plane(0).unwrap().data.unwrap().as_ptr(),
-            frame.0.as_ptr()
-        );
+        assert_eq!(view.plane_bytes(0).unwrap().as_ptr(), frame.0.as_ptr());
         let handle = adapted.to_foreign_handle().unwrap();
         assert_eq!(handle.data(), view.data());
         // `frame`, `source`, `adapted` (one allocation: the frame's own) and the handle.
@@ -189,12 +184,13 @@ mod tests {
             "{err}"
         );
 
+        // A `daedalus:frame` v1 user (a stale plugin or library) conflicts with v2.
         let err = registry
-            .register_foreign_interface::<OtherFrame>()
+            .register_foreign_interface_info(FRAME_INTERFACE_V1)
             .unwrap_err();
-        assert!(
-            matches!(err, PluginError::ForeignInterfaceConflict { .. }),
-            "{err}"
-        );
+        let PluginError::ForeignInterfaceConflict { existing, new } = err else {
+            panic!("unexpected error: {err}");
+        };
+        assert_eq!((existing.version, new.version), (2, 1));
     }
 }

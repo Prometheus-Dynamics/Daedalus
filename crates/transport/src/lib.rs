@@ -48,8 +48,9 @@ pub use foreign::{
     ForeignOwner, ForeignRef, ForeignView, ProvideForeign, foreign_layout_hash,
 };
 pub use foreign_frame::{
-    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, FRAME_INTERFACE_KEY, FrameInterface, FramePlane,
-    FrameResidency, FrameSource, FrameVTable, FrameView, fourcc,
+    DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, FRAME_INTERFACE_KEY, FRAME_INTERFACE_V1,
+    FrameFormatKind, FrameInterface, FramePlane, FrameResidency, FrameSource, FrameVTable,
+    FrameView, MIPI_FORMAT_MOD_CSI2_PACKED, PlaneBytes, PlaneMapping, fourcc,
 };
 pub use id_str::IdStr;
 pub use ids::{AdapterId, Layout, LayoutHash, SourceId, TypeKey};

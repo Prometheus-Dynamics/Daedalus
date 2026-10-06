@@ -3,6 +3,13 @@ use std::io::Write;
 use std::os::fd::{AsFd, OwnedFd};
 use std::time::Duration;
 
+use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+
+use daedalus_transport::{
+    ForeignBorrow, FrameFormatKind, FrameInterface, FramePlane, FrameResidency, FrameSource,
+    PlaneMapping,
+};
+
 use super::*;
 use crate::{GpuBackend, GpuError, NoopBackend};
 
@@ -231,6 +238,95 @@ fn from_borrowed_dups_the_fd() {
         std::os::fd::AsRawFd::as_raw_fd(&file)
     );
     assert_eq!((plane.offset, plane.stride), (16, 256));
+}
+
+/// NV12 in one dma-buf (any fd here) as a `daedalus:frame`; counts CPU accesses.
+struct ViewNv12 {
+    fd: OwnedFd,
+    uv_offset: u64,
+    kind: FrameFormatKind,
+    cpu_accesses: AtomicU32,
+}
+
+impl ViewNv12 {
+    fn new(uv_offset: u64, kind: FrameFormatKind) -> Self {
+        Self {
+            fd: some_fd(),
+            uv_offset,
+            kind,
+            cpu_accesses: AtomicU32::new(0),
+        }
+    }
+}
+
+impl FrameSource for ViewNv12 {
+    fn width(&self) -> u32 {
+        64
+    }
+    fn height(&self) -> u32 {
+        4
+    }
+    fn format(&self) -> u32 {
+        DrmFourcc::NV12.0
+    }
+    fn format_kind(&self) -> FrameFormatKind {
+        self.kind
+    }
+    fn residency(&self) -> FrameResidency {
+        FrameResidency::External
+    }
+    fn plane_count(&self) -> u32 {
+        2
+    }
+    fn plane(&self, index: u32) -> Option<FramePlane> {
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&self.fd);
+        let offset = *[0, self.uv_offset].get(index as usize)?;
+        Some(FramePlane::dmabuf(fd, offset, 128, 512).with_mapping(PlaneMapping::Uncached))
+    }
+    fn plane_data(&self, _index: u32) -> Option<&[u8]> {
+        self.cpu_accesses.fetch_add(1, Relaxed);
+        None
+    }
+}
+
+fn view_descriptor(frame: &ViewNv12) -> Result<ExternalFrameDescriptor, ExternalImportError> {
+    let view = ForeignBorrow::of::<_, FrameInterface>(frame)
+        .view::<FrameInterface>()
+        .unwrap();
+    ExternalFrameDescriptor::from_frame_view(&view)
+}
+
+#[test]
+fn frame_views_describe_imports_without_cpu_access() {
+    let far = 5 << 30;
+    let frame = ViewNv12::new(far, FrameFormatKind::Pixel);
+    let descriptor = view_descriptor(&frame).unwrap();
+    assert_eq!((descriptor.width, descriptor.height), (64, 4));
+    assert_eq!(descriptor.fourcc, DrmFourcc::NV12);
+    assert_eq!(descriptor.modifier, Some(DRM_FORMAT_MOD_LINEAR));
+    let layout: Vec<_> = descriptor
+        .planes
+        .iter()
+        .map(|p| (p.offset, p.stride))
+        .collect();
+    assert_eq!(layout, [(0, 128), (far, 128)], "u64 offsets kept");
+    let source = std::os::fd::AsRawFd::as_raw_fd(&frame.fd);
+    assert!(
+        descriptor
+            .planes
+            .iter()
+            .all(|p| std::os::fd::AsRawFd::as_raw_fd(&p.fd) != source),
+        "fds are duplicated"
+    );
+    assert_eq!(frame.cpu_accesses.load(Relaxed), 0, "no plane_data calls");
+
+    for kind in [FrameFormatKind::Bayer, FrameFormatKind::Compressed] {
+        let err = view_descriptor(&ViewNv12::new(512, kind)).unwrap_err();
+        assert!(
+            matches!(err, ExternalImportError::UnsupportedFormat { .. }),
+            "{err}"
+        );
+    }
 }
 
 #[cfg(feature = "gpu-dmabuf")]
@@ -462,6 +558,21 @@ mod mock {
         assert_eq!(handle.format, GpuFormat::Bgra8Unorm);
         // Readback works through the regular texture path.
         assert_eq!(ctx.read_texture(&handle).unwrap().len(), 64 * 4 * 4);
+    }
+
+    #[test]
+    fn mock_imports_frame_views() {
+        let backend = MockBackend::default();
+        let frame = ViewNv12::new(512, FrameFormatKind::Pixel);
+        let handle = backend
+            .import_dmabuf(view_descriptor(&frame).unwrap())
+            .unwrap();
+        assert_eq!(handle.format, GpuFormat::Nv12);
+        assert_eq!(
+            backend.imported_frames()[0].planes,
+            vec![(0, 128), (512, 128)]
+        );
+        assert_eq!(frame.cpu_accesses.load(Relaxed), 0);
     }
 
     /// CPU-wait backends block the import until a late fence signals, and no longer.

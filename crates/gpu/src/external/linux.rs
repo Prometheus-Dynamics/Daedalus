@@ -4,6 +4,8 @@ use std::fmt;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::time::Duration;
 
+use daedalus_transport::{FrameFormatKind, FrameView};
+
 use super::fence::{DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, export_dmabuf_fence, wait_sync_file};
 use super::{
     AcquireFenceMode, DRM_FORMAT_MOD_INVALID, DrmFourcc, ExternalImportError, ExternalKeepalive,
@@ -87,6 +89,45 @@ impl ExternalFrameDescriptor {
             acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
             acquire_fence_mode: None,
         }
+    }
+
+    /// Describe a `daedalus:frame` for import from its plane metadata alone: every plane's
+    /// dma-buf fd (`dup`ed), offset and stride, the fourcc and the modifier
+    /// (`DRM_FORMAT_MOD_INVALID` becomes the implicit layout). Never maps or syncs the frame's
+    /// memory. The fds keep the dma-bufs alive but not the producer's buffer: attach the frame
+    /// payload (or lease) with [`Self::with_keepalive`] before importing.
+    pub fn from_frame_view(frame: &FrameView<'_>) -> Result<Self, ExternalImportError> {
+        let (fourcc, modifier) = (DrmFourcc(frame.format()), frame.modifier());
+        let modifier = (modifier != DRM_FORMAT_MOD_INVALID).then_some(modifier);
+        let kind = frame.format_kind();
+        if matches!(kind, FrameFormatKind::Bayer | FrameFormatKind::Compressed) {
+            return Err(ExternalImportError::UnsupportedFormat {
+                fourcc,
+                modifier,
+                reason: format!("{kind:?} frames are not GPU images"),
+            });
+        }
+        let planes = frame
+            .planes()
+            .enumerate()
+            .map(|(index, plane)| {
+                let fd = plane.dmabuf_fd.ok_or_else(|| {
+                    ExternalImportError::invalid(format!("plane {index} has no dma-buf fd"))
+                })?;
+                // Safety: `fd` is non-negative and the frame keeps it open while viewed.
+                let fd = unsafe { BorrowedFd::borrow_raw(fd) };
+                ExternalPlane::from_borrowed(fd, plane.offset, plane.stride).map_err(|error| {
+                    ExternalImportError::ImportFailed {
+                        reason: format!("dup of plane {index}'s fd: {error}"),
+                    }
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let descriptor = Self::new(frame.width(), frame.height(), fourcc, planes);
+        Ok(match modifier {
+            Some(modifier) => descriptor.with_modifier(modifier),
+            None => descriptor,
+        })
     }
 
     /// Convenience for the common single-plane case.

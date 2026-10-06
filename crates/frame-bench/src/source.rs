@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::Instant;
 
 use daedalus::transport::{
-    FRAME_INTERFACE_KEY, ForeignHandle, FrameInterface, FramePlane, FrameResidency, FrameSource,
-    Payload, Residency, fourcc,
+    FRAME_INTERFACE_KEY, ForeignHandle, FrameFormatKind, FrameInterface, FramePlane,
+    FrameResidency, FrameSource, Payload, PlaneMapping, Residency, fourcc,
 };
 use daedalus::type_key;
 
@@ -31,11 +31,24 @@ impl SyntheticFrame {
         self.buffer.backing()
     }
 
-    pub fn bytes(&self) -> &[u8] {
+    /// The pixels, mapping an fd-backed frame on first use (see [`FrameBuffer::bytes`]).
+    pub fn bytes(&self) -> Option<&[u8]> {
         self.buffer.bytes()
+    }
+
+    /// `mmap` calls made for CPU reads: 0 while every consumer reads only metadata or fds.
+    pub fn map_count(&self) -> u64 {
+        self.buffer.map_count()
+    }
+
+    /// `plane_data` calls (CPU accesses begun) so far.
+    pub fn cpu_access_count(&self) -> u64 {
+        self.buffer.cpu_access_count()
     }
 }
 
+/// One GRAY8 plane. Metadata never maps the buffer; `plane_data` maps it lazily (once per
+/// buffer) and brackets dma-buf reads with `DMA_BUF_IOCTL_SYNC`.
 impl FrameSource for SyntheticFrame {
     fn width(&self) -> u32 {
         self.width
@@ -45,6 +58,9 @@ impl FrameSource for SyntheticFrame {
     }
     fn format(&self) -> u32 {
         fourcc(b"R8  ")
+    }
+    fn format_kind(&self) -> FrameFormatKind {
+        FrameFormatKind::Pixel
     }
     fn timestamp_ns(&self) -> u64 {
         self.timestamp_ns.load(Relaxed)
@@ -61,12 +77,22 @@ impl FrameSource for SyntheticFrame {
     fn plane_count(&self) -> u32 {
         1
     }
-    fn plane(&self, index: u32) -> Option<FramePlane<'_>> {
+    fn plane(&self, index: u32) -> Option<FramePlane> {
+        let (stride, len) = (u64::from(self.width), self.buffer.len() as u64);
         (index == 0).then(|| match self.buffer.dmabuf_fd() {
-            Some(fd) => FramePlane::dmabuf(fd, 0, self.width, self.buffer.len())
-                .with_data(self.buffer.bytes()),
-            None => FramePlane::mapped(self.buffer.bytes(), self.width),
+            Some(fd) => FramePlane::dmabuf(fd, 0, stride, len).with_mapping(PlaneMapping::Cached),
+            None => FramePlane {
+                stride,
+                len,
+                ..FramePlane::default()
+            },
         })
+    }
+    fn plane_data(&self, index: u32) -> Option<&[u8]> {
+        (index == 0).then(|| self.buffer.begin_cpu_access())?
+    }
+    fn end_cpu_access(&self, _index: u32) {
+        self.buffer.end_cpu_access();
     }
 }
 

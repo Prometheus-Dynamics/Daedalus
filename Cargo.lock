@@ -685,6 +685,7 @@ dependencies = [
  "async-trait",
  "bitflags 2.13.2",
  "bytemuck",
+ "daedalus-transport",
  "daedalus-wgsl-infer",
  "half",
  "image",

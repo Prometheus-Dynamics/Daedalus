@@ -12,6 +12,8 @@
 //! - Every plane carries an [`OwnedFd`](std::os::fd::OwnedFd). The descriptor is consumed by the
 //!   import, so ownership of the file descriptors moves into the backend. Use
 //!   [`ExternalPlane::from_borrowed`] to `dup` a descriptor the frame source keeps owning.
+//! - [`ExternalFrameDescriptor::from_frame_view`] describes a `daedalus:frame` from its plane
+//!   metadata (fds are `dup`ed; the frame's bytes are never mapped).
 //! - The dmabuf itself is reference counted by the kernel, so the imported memory stays valid for
 //!   as long as the GPU image exists. That does *not* stop the producer from recycling the buffer
 //!   (a camera re-queues it and overwrites it). Attach an [`ExternalKeepalive`] (for example the
