@@ -470,28 +470,29 @@ handles; `owner` feeds the frame type, so the provider's `View` adapter runs on 
 (see "Frame-Path Overhead" in [runtime-diagnostics.md](runtime-diagnostics.md) for the report
 rows).
 
-**Host numbers: x86_64 (AMD Ryzen 9 5900X, shared 24-core machine at load ~20-30), not the
-CM5.** On-device numbers are a TODO. Push + tick + take per frame, p50 of 20000 frames
+**Host numbers: x86_64 (AMD Ryzen 9 5900X, shared 24-core machine at load ~40), not the CM5.**
+On-device numbers are a TODO. Push + tick + take per frame, p50 of 20000 frames
 (`FRAME_CHAIN_TICKS=20000`), frame-overhead recording off:
 
 | Stages | `interface` | `owner` |
 | --- | --- | --- |
-| 1 | 1.23 µs | 1.53 µs |
-| 4 | 2.21 µs | 2.76 µs |
-| 16 | 6.08 µs | 7.93 µs |
-| fit | 0.91 µs + 0.32 µs per stage | 1.08 µs + 0.43 µs per stage |
+| 1 | 1.25 µs | 1.57 µs |
+| 4 | 2.24 µs | 2.55 µs |
+| 16 | 5.95 µs | 6.27 µs |
+| fit | 0.96 µs + 0.31 µs per stage | 1.28 µs + 0.31 µs per stage |
 
-Criterion medians on the same machine: `interface` 1.29 / 2.61 / 6.75 µs, `owner` 1.68 / 2.66 /
-6.82 µs, `interface+overhead` (recording on) 1.88 / 3.44 / 10.16 µs for 1 / 4 / 16 stages, so
-recording costs about 0.5 µs plus 0.2 µs per stage. Per-frame counters at steady state: no
-copies, no GPU transfers, no node or host allocations; `interface` makes no runtime allocations
-either (asserted by `crates/frame-bench/tests/frame_chain_overhead.rs`), `owner` makes one (the
-`View` adapter's 88-byte `ForeignHandle` payload, per consumer edge).
+Criterion medians on the same machine: `interface` 1.32 / 2.35 / 9.2 µs (the 16-stage run was
+noisy, 8.5-10.1 µs), `owner` 1.67 / 2.67 / 6.72 µs, `interface+overhead` (recording on) 1.85 /
+3.54 / 10.19 µs for 1 / 4 / 16 stages, so recording costs about 0.5 µs plus 0.2 µs per stage.
+Per-frame counters at steady state: no copies, no GPU transfers, no node or host allocations;
+`interface` makes no runtime allocations either (asserted by
+`crates/frame-bench/tests/frame_chain_overhead.rs`), `owner` makes one (the `View` adapter's
+88-byte `ForeignHandle` payload, per consumer edge).
 
-Breakdown of the 4-stage `interface` chain with recording on (p50, ns): push 110, tick 2830 =
-inject 170 + inputs 510 + handlers 330 + node_io 870 + drain 180 + dispatch 780, take 130,
-`graph_overhead` 2510, queue wait 850 (about 165 per edge). Per stage the runtime adds roughly
-130 of input collection, 220 of node framing and 200 of dispatch around a handler that itself
+Breakdown of the 4-stage `interface` chain with recording on (p50, ns): push 110, tick 2650 =
+inject 150 + inputs 480 + handlers 330 + node_io 830 + drain 190 + dispatch 670, take 120,
+`graph_overhead` 2320, queue wait 820 (about 165 per edge). Per stage the runtime adds roughly
+120 of input collection, 210 of node framing and 170 of dispatch around a handler that itself
 takes about 80 (reading the frame through the vtable, timed). Against the Eidos stages
 (about 0.96 ms p50 each on the CM5) that is well under 1%; the absolute numbers on the CM5's
 Cortex-A76 cores will be higher.
