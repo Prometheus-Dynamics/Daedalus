@@ -247,6 +247,11 @@ path = "tests/dylib_export_macro.rs"
 required-features = ["dylib-plugins"]
 
 [[test]]
+name = "held_host_inputs"
+path = "tests/held_host_inputs.rs"
+required-features = ["engine", "plugins", "threads"]
+
+[[test]]
 name = "graph_frame_allocations"
 path = "tests/graph_frame_allocations.rs"
 required-features = ["engine", "plugins"]
