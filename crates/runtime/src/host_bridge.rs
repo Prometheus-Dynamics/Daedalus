@@ -17,6 +17,8 @@ use crate::type_index::TypeIndex;
 mod batch;
 mod events;
 mod held;
+#[cfg(all(feature = "std", target_os = "linux"))]
+mod inbound_fd;
 mod inspect;
 mod io_timing;
 mod manager;
@@ -32,6 +34,8 @@ use events::{
     replacement_reason,
 };
 pub(crate) use held::InboundTake;
+#[cfg(all(feature = "std", target_os = "linux"))]
+pub use inbound_fd::InboundFd;
 pub use inspect::{PayloadInspection, PayloadSummary, inspect_payload, serialize_payload_value};
 pub use io_timing::HostIoTime;
 pub use manager::{HostBridgeManager, bridge_handler};
@@ -88,6 +92,9 @@ pub(super) struct HostBridgeShared {
     /// Wakes blocking waits (`threads`); kept with `std` so the layout follows the lock backend.
     #[cfg(feature = "std")]
     pub(super) ready: Condvar,
+    /// Pollable inbound readiness, created on request (`HostBridgeHandle::inbound_fd`).
+    #[cfg(all(feature = "std", target_os = "linux"))]
+    pub(super) inbound_fd: std::sync::OnceLock<inbound_fd::Readiness>,
 }
 
 impl HostBridgeShared {
@@ -97,8 +104,15 @@ impl HostBridgeShared {
             io_timing: io_timing::HostIoTiming::default(),
             #[cfg(feature = "std")]
             ready: Condvar::new(),
+            #[cfg(all(feature = "std", target_os = "linux"))]
+            inbound_fd: std::sync::OnceLock::new(),
         }
     }
+
+    /// No pollable fd off Linux; inbound waits go through [`InboundWaiter`].
+    #[cfg(not(all(feature = "std", target_os = "linux")))]
+    #[inline(always)]
+    pub(super) fn signal_inbound_fd(&self) {}
 
     /// Wake blocking waiters after a change to `buffers`.
     #[inline]
@@ -540,12 +554,10 @@ impl HostBridgeHandle {
         outcome
     }
 
-    /// Wake blocking and async inbound waiters after new input was queued under `guard`.
-    fn wake_after_feed(&self, mut guard: crate::sync::MutexGuard<'_, HostBridgeBuffers>) {
-        self.shared.notify_all();
-        let wakers = wait::take_inbound_wakers(&mut guard);
-        drop(guard);
-        wait::wake_all(wakers);
+    /// Wake blocking and async inbound waiters, and signal the inbound fd, after new input was
+    /// queued under `guard`.
+    fn wake_after_feed(&self, guard: crate::sync::MutexGuard<'_, HostBridgeBuffers>) {
+        wait::wake_inbound(&self.shared, guard);
     }
 
     pub fn push_as<T>(
@@ -621,10 +633,7 @@ impl HostBridgeHandle {
         let mut guard = self.shared.buffers.lock();
         guard.closed = true;
         guard.stats.closed = true;
-        self.shared.notify_all();
-        let wakers = wait::take_inbound_wakers(&mut guard);
-        drop(guard);
-        wait::wake_all(wakers);
+        wait::wake_inbound(&self.shared, guard);
     }
 
     /// Close one inbound port: queued (or held) input is discarded and later feeds are dropped as

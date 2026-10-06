@@ -82,6 +82,10 @@ tempfile = { workspace = true }
 serde_json = { workspace = true }
 criterion = { workspace = true }
 
+# `poll(2)` in the inbound fd integration test.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = { workspace = true }
+
 [[bench]]
 name = "host_graph_drive"
 harness = false

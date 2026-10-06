@@ -69,6 +69,11 @@ pub fn render_error(err: &EngineError) -> Value {
             "code": "feature_disabled",
             "feature": flag,
         }),
+        #[cfg(feature = "std")]
+        EngineError::Io(e) => json!({
+            "code": "io",
+            "message": e.to_string(),
+        }),
     }
 }
 

@@ -569,6 +569,7 @@ dependencies = [
  "daedalus-registry",
  "daedalus-runtime",
  "daedalus-transport",
+ "libc",
  "portable-atomic",
  "portable-atomic-util",
  "serde",

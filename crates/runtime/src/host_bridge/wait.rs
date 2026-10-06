@@ -13,6 +13,8 @@ use core::task::{Context, Poll, Waker};
 #[cfg(feature = "threads")]
 use std::time::{Duration, Instant};
 
+use crate::sync::MutexGuard;
+
 use super::{HostBridgeBuffers, HostBridgeHandle, HostBridgeShared, has_pending_inbound_locked};
 
 /// Why an inbound wait finished.
@@ -35,7 +37,10 @@ pub enum InboundWait {
 /// check its own stop flag, then wait, without missing a stop signal raised in between.
 ///
 /// `.await` it from any async runtime (it never blocks the executor thread), or, with `threads`,
-/// block a dedicated thread in [`InboundWaiter::wait`].
+/// block a dedicated thread in [`InboundWaiter::wait`]. Hosts with their own event loop can
+/// poll it by hand with any [`Waker`] (`Future::poll` registers it; the bridge wakes it on input,
+/// close or [`HostBridgeHandle::wake_inbound_waiters`]), and on Linux can `poll(2)`/`epoll` on
+/// `HostBridgeHandle::inbound_fd` instead.
 #[must_use = "an InboundWaiter does nothing until waited on or awaited"]
 pub struct InboundWaiter {
     shared: Arc<HostBridgeShared>,
@@ -64,18 +69,24 @@ fn inbound_state_locked(guard: &HostBridgeBuffers, epoch: u64) -> Option<Inbound
     }
 }
 
-pub(super) fn take_inbound_wakers(guard: &mut HostBridgeBuffers) -> Vec<Waker> {
-    if guard.inbound_wakers.is_empty() {
-        return Vec::new();
-    }
-    guard
-        .inbound_wakers
-        .drain(..)
-        .map(|(_, waker)| waker)
-        .collect()
-}
-
-pub(super) fn wake_all(wakers: Vec<Waker>) {
+/// Wake every blocking and async inbound waiter and signal the inbound fd after a change made
+/// under `guard`; wakers and the fd are signalled after the lock is released.
+pub(super) fn wake_inbound(
+    shared: &HostBridgeShared,
+    mut guard: MutexGuard<'_, HostBridgeBuffers>,
+) {
+    shared.notify_all();
+    let wakers: Vec<Waker> = if guard.inbound_wakers.is_empty() {
+        Vec::new()
+    } else {
+        guard
+            .inbound_wakers
+            .drain(..)
+            .map(|(_, waker)| waker)
+            .collect()
+    };
+    drop(guard);
+    shared.signal_inbound_fd();
     for waker in wakers {
         waker.wake();
     }
@@ -192,10 +203,7 @@ impl HostBridgeHandle {
     pub fn wake_inbound_waiters(&self) {
         let mut guard = self.shared.buffers.lock();
         guard.wake_epoch = guard.wake_epoch.wrapping_add(1);
-        self.shared.notify_all();
-        let wakers = take_inbound_wakers(&mut guard);
-        drop(guard);
-        wake_all(wakers);
+        wake_inbound(&self.shared, guard);
     }
 
     /// Whether the whole bridge has been closed.

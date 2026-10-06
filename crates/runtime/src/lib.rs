@@ -138,6 +138,8 @@ pub use fanin::FanIn;
 pub use handles::{
     CapabilityId, FeatureFlag, HostAlias, NodeAlias, NodeHandle, NodeHandleId, PortHandle, PortId,
 };
+#[cfg(all(feature = "std", target_os = "linux"))]
+pub use host_bridge::InboundFd;
 pub use host_bridge::{
     DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING, HOST_BRIDGE_META_KEY,
     HOST_HELD_INPUTS_KEY, HostBatchOutcomes, HostBatchRejected, HostBridgeConfig, HostBridgeHandle,

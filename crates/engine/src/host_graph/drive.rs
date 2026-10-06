@@ -101,6 +101,30 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.host.wait_inbound(timeout)
     }
 
+    /// The host bridge's pollable inbound fd (see
+    /// [`InboundFd`](daedalus_runtime::host_bridge::InboundFd)): readable when host input is
+    /// pending, the bridge closes, or waiters are woken (`HostGraphStopHandle::stop`). Wait on it
+    /// with `poll(2)`/`epoll` next to the host's own descriptors and call [`Self::tick_ready`]
+    /// when it is readable.
+    #[cfg(all(feature = "std", target_os = "linux"))]
+    pub fn inbound_fd(&self) -> std::io::Result<daedalus_runtime::host_bridge::InboundFd> {
+        self.host.inbound_fd()
+    }
+
+    /// One turn of a `poll(2)` loop on [`Self::inbound_fd`]: clear the fd, run one tick if host
+    /// input is pending, then signal the fd again if input is still pending (or the bridge is
+    /// closed), so the next `poll` returns at once. Input pushed at any point either lands in
+    /// this tick or leaves the fd readable: no wakeup is lost, and an idle graph leaves it
+    /// unreadable, so the loop never spins.
+    #[cfg(all(feature = "std", target_os = "linux"))]
+    pub fn tick_ready(&mut self) -> Result<Option<ExecutionTelemetry>, EngineError> {
+        let fd = self.host.inbound_fd()?;
+        fd.clear();
+        let telemetry = self.tick_if_ready();
+        fd.rearm();
+        telemetry
+    }
+
     /// Wait for host input (see [`HostGraph::wait_for_input`]) and run one graph tick if any input
     /// is pending. Outputs produced by the tick are left on the bridge for the caller to drain.
     #[cfg(feature = "threads")]

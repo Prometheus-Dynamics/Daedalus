@@ -35,7 +35,7 @@ pub use daedalus_nodes::declare_plugin;
 pub use daedalus_planner as planner;
 pub use daedalus_planner::{
     GRAPH_DOCUMENT_FORMAT, GRAPH_DOCUMENT_SCHEMA_VERSION, GraphDocument, GraphDocumentError,
-    MissingPlugins, PluginRequirement,
+    HostInputError, HostInputPolicy, MissingPlugins, PluginRequirement,
 };
 pub use daedalus_registry as registry;
 pub use daedalus_runtime as runtime;
@@ -117,7 +117,10 @@ pub mod prelude {
         GpuBindings, GpuStateful, NodeConfig, NodeHandle, NodeHandleLike, PortHandle, SyncGroup,
         SyncPolicy, adapt, device, node, node_handler, type_key,
     };
-    pub use crate::{GraphDocument, GraphDocumentError, MissingPlugins, PluginRequirement};
+    pub use crate::{
+        GraphDocument, GraphDocumentError, HostInputError, HostInputPolicy, MissingPlugins,
+        PluginRequirement,
+    };
     #[cfg(feature = "plugins")]
     pub use crate::{
         HostBridgeInstallError, NodeInstall, Plugin, PluginGroup, PluginInstallContext,

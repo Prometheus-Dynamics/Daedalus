@@ -39,4 +39,8 @@ pub enum EngineError {
     HostBatch(#[from] daedalus_runtime::host_bridge::HostBatchRejected),
     #[error("feature '{0}' is disabled at compile time")]
     FeatureDisabled(&'static str),
+    /// An OS call failed (creating `HostGraph::inbound_fd`, ...).
+    #[cfg(feature = "std")]
+    #[error("i/o error: {0}")]
+    Io(#[from] std::io::Error),
 }
