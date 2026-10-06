@@ -677,6 +677,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-frame-bench"
+version = "3.0.0"
+dependencies = [
+ "criterion",
+ "daedalus-rs",
+ "libc",
+]
+
+[[package]]
 name = "daedalus-gpu"
 version = "3.0.0"
 dependencies = [
