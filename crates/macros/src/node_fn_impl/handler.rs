@@ -411,6 +411,15 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         Err(e) => Err(e),
                     }
                 }
+            } else if outputs_len == 0 && ok_ty.is_some_and(is_unit_type) {
+                // `Result<(), _>` without outputs: nothing to push (a unit payload would cost an
+                // allocation per call for a port that does not exist).
+                quote! {
+                    match #call {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(e),
+                    }
+                }
             } else {
                 let push_stmt = ok_ty
                     .as_ref()
