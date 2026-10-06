@@ -44,7 +44,7 @@ use std::time::Instant;
 pub use buffer::{FrameBacking, FrameBuffer};
 pub use chain::{
     CHAIN_INPUT, CHAIN_OUTPUT, FrameBenchPlugin, STAGE_NODE_ID, compile_frame_chain,
-    frame_bench_registry,
+    compile_frame_fanout, frame_bench_registry,
 };
 pub use daedalus::alloc_probe::{AllocCounts, CountingAllocator};
 pub use daedalus::transport::FRAME_INTERFACE_KEY;

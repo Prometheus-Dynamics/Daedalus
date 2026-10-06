@@ -181,7 +181,8 @@ crosses_residency: none
 dev-dependency) packages the measurement: `SyntheticFrameSource` hands out 640x480 frames in a
 dma-buf from `/dev/dma_heap` (else a `memfd` mapping) through `daedalus:frame`, either as
 interface payloads or as its own type with a provider; `compile_frame_chain(n, feed, config)`
-builds `host -> n no-op FrameView stages -> host`; `run_frame_bench` warms up, drives push, tick
+builds `host -> n no-op FrameView stages -> host` (`compile_frame_fanout(n, ..)` feeds n
+parallel stages instead); `run_frame_bench` warms up, drives push, tick
 and take per frame and returns the wall time per frame, the overhead report and allocations per
 frame. Its crate docs show how to run your own nodes (e.g. a detector taking `FrameView<'_>`)
 through the same harness, and

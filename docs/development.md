@@ -476,18 +476,21 @@ On-device numbers are a TODO. Push + tick + take per frame, p50 of 20000 frames
 
 | Stages | `interface` | `owner` |
 | --- | --- | --- |
-| 1 | 1.25 µs | 1.57 µs |
-| 4 | 2.24 µs | 2.55 µs |
-| 16 | 5.95 µs | 6.27 µs |
-| fit | 0.96 µs + 0.31 µs per stage | 1.28 µs + 0.31 µs per stage |
+| 1 | 1.25 µs | 1.43 µs |
+| 4 | 2.24 µs | 2.42 µs |
+| 16 | 5.95 µs | 6.29 µs |
+| fit | 0.96 µs + 0.31 µs per stage | 1.12 µs + 0.32 µs per stage |
 
 Criterion medians on the same machine: `interface` 1.32 / 2.35 / 9.2 µs (the 16-stage run was
-noisy, 8.5-10.1 µs), `owner` 1.67 / 2.67 / 6.72 µs, `interface+overhead` (recording on) 1.85 /
-3.54 / 10.19 µs for 1 / 4 / 16 stages, so recording costs about 0.5 µs plus 0.2 µs per stage.
-Per-frame counters at steady state: no copies, no GPU transfers, no node or host allocations;
-`interface` makes no runtime allocations either (asserted by
-`crates/frame-bench/tests/frame_chain_overhead.rs`), `owner` makes one (the `View` adapter's
-88-byte `ForeignHandle` payload, per consumer edge).
+noisy, 8.5-10.1 µs), `interface+overhead` (recording on) 1.85 / 3.54 / 10.19 µs for 1 / 4 / 16
+stages, so recording costs about 0.5 µs plus 0.2 µs per stage. Per-frame counters at steady
+state: no copies, no GPU transfers and no runtime, node or host allocations for either feed
+(asserted by `crates/frame-bench/tests/frame_chain_overhead.rs`, also for an owner feed fanned
+out to 16 consumers and for typed `FrameView` + `&T` nodes). The `owner` feed's extra ~0.18 µs
+is the `View` adapter path on the first edge (about 130 ns p50 with recording on); the adapter
+retypes the payload in place (`Payload::provide_foreign`). It used to build an 88-byte
+`ForeignHandle` payload per consumer edge per tick (`owner` p50 1.50 / 2.47 / 6.26 µs then,
+measured alongside the numbers above, with the adapter at about 220 ns).
 
 Breakdown of the 4-stage `interface` chain with recording on (p50, ns): push 110, tick 2650 =
 inject 150 + inputs 480 + handlers 330 + node_io 830 + drain 190 + dispatch 670, take 120,

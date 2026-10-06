@@ -16,6 +16,23 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   resolved differently in the plugin's build; it gained `crate_builds`, `same_crate_builds` and
   `stable_compatible`. When no node port uses a conflicting key it suggests
   `install_into_as(InstallPath::Stable)`; it never falls back to the stable path on its own.
+- **Foreign providers no longer allocate per frame.** The provider's `View` adapter retypes the
+  owner payload under the interface key with the provider attached
+  (`Payload::provide_foreign::<O, I>`: the same typed storage seen through a provider vtable)
+  instead of building a `ForeignHandle` payload, so feeding the owner type (e.g. Styx's
+  `FrameLease`) into `FrameView<'_>` / `ForeignRef<'_, I>` nodes costs no allocation and no
+  reference-count change per consumer edge (it was one 88-byte allocation per edge per tick;
+  the adapter's p50 went from about 220 to 130 ns). Nodes borrow the owner value through the
+  vtable (`Payload::foreign_borrow` -> `ForeignBorrow<'_>`, `PayloadStorage::foreign_borrow`);
+  the retyped payload keeps its provider when forwarded and still answers `get_ref::<O>()`.
+  Handles are built only at the stable plugin boundary (`Payload::to_foreign_handle`) and for
+  owners in boundary storage. `ForeignView::from_handle` became `from_borrow(ForeignBorrow)`,
+  and `ForeignRef` no longer exposes `handle()` (it may not have one). `daedalus-frame-bench`
+  asserts zero runtime allocations for the owner feed at 1/4/16 stages, fanned out to 1/4/16
+  consumers (`compile_frame_fanout`), and for typed `FrameView` + `&T` nodes.
+- Typed nodes returning `Result<(), _>` without outputs no longer push a unit payload to a
+  nonexistent `out` port (two allocations per call). `Payload::resident` builds no cache key
+  when the payload has no cached residents.
 
 ### Added
 
