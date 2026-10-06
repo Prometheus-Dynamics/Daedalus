@@ -32,6 +32,21 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 - Dependencies of the `no_std` crates must support `no_std` (see [Portability](#portability)).
 - Keep backend variants behind stable feature names.
 - Use `cargo tree -d --workspace` during release review and treat new duplicate dependency roots as review input.
+- Toolchain and MSRV: `rust-toolchain.toml` pins Rust 1.99.0, and `rust-version` in
+  `[workspace.package]` is 1.99, the same release: the workspace is built, linted and measured
+  (MCU sizes, allocation budgets) only with the pinned toolchain, so that is the oldest one it
+  supports. The CI workflows and `testing/docker/daedalus-examples.Dockerfile` pin the same
+  version; raise all of them together. The upgraded dependencies alone need 1.90
+  (`ordered-float`).
+- Dependencies track their newest releases, majors included (`cargo upgrade --incompatible
+  --recursive`, then `cargo update`; `styx` follows its `dev` branch through `Cargo.lock`). A
+  newest major is kept back only when it cannot meet a requirement (for example it drops
+  `no_std` or a supported target); record the reason here. Nothing is kept back at present.
+  Duplicate roots that remain because a dependency has not moved yet: `libloading` 0.8 (`ash`,
+  `wgpu-hal`) beside 0.9, `spin` 0.10 (Styx) beside 0.12, and `syn` 2 (most derive crates)
+  beside 3.
+- The `wasm-bindgen` CLI used by `scripts/ci.sh wasm` and CI must match the `wasm-bindgen`
+  version in `Cargo.lock`; CI reads it from there.
 
 ## Public API Policy
 
@@ -95,7 +110,7 @@ Applications that do not need to minimize dependencies should use `engine-full`
 
 A probe binary depends on the facade with `default-features = false` and the features below,
 installs one plugin, compiles a one-node host graph and runs it 10,000 times (x86_64 Linux,
-rustc 1.94.0, release, `lto = "thin"`, `codegen-units = 1`, `strip = true`, each preset built cold
+rustc 1.94.0 (not re-measured on 1.99.0), release, `lto = "thin"`, `codegen-units = 1`, `strip = true`, each preset built cold
 in its own target directory). Crates counts the distinct packages of `cargo tree -e normal` for
 x86_64 Linux, the probe included; peak RSS is the median `VmHWM` of three runs. Measured with
 the machine at load 18-54, which affects build time only.
@@ -114,7 +129,7 @@ What the optional features add on top of `engine-full,plugins`:
 
 - `tracing`: `tracing`, `tracing-core`, `pin-project-lite`, `once_cell` (4 crates).
 - `dylib-plugins`: `daedalus-ffi-host`, `daedalus-ffi-core` and `libloading`. The FFI crates'
-  `integrity` feature (`sha2` and six helper crates, package hashing) stays off.
+  `integrity` feature (`sha2` and seven helper crates, package hashing) stays off.
 - `gpu-wgpu`: wgpu with its Vulkan backend (`wgpu-core`/`-hal`/`-types`, `naga`, `ash`,
   `gpu-allocator`, `renderdoc-sys`, which wgpu always enables on native targets, ...) and
   `half`/`bytemuck`. `gpu-gles` adds `glow`, `khronos-egl`, `wayland-sys` and `dlib`;

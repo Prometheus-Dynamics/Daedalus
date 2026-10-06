@@ -164,7 +164,7 @@ Linux machine with a Vulkan GPU.
 
 ```bash
 sudo apt install build-essential pkg-config git mesa-vulkan-drivers vulkan-tools
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # stable toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # rustup; the first cargo run installs the pinned toolchain
 sudo usermod -aG video "$USER"   # read/write access to /dev/dma_heap/*; log in again afterwards
 ```
 

@@ -340,20 +340,21 @@ tests compare them):
 
 `examples/mcu_blink` (five nodes, eight edges: `host.sample` (u16, widened) -> scale -> lowpass
 -> threshold -> rising/blink -> three host outputs), built with the workspace's `mcu` profile
-(`opt-level = "z"`, fat LTO, `panic = "abort"`, one codegen unit) by `scripts/ci.sh mcu`. Flash
+(`opt-level = "z"`, fat LTO, `panic = "abort"`, one codegen unit) by `scripts/ci.sh mcu` with
+the pinned Rust 1.99.0 (the exact compiled size moves with the toolchain). Flash
 is `.vector_table + .text + .rodata + .data`, static RAM `.data + .bss`; no heap in any mode
 (no allocator linked).
 
 | Mode (firmware) | `thumbv7em-none-eabihf` (M4F) flash | `thumbv6m-none-eabi` (M0+) flash | Static RAM | Budget (flash / RAM) |
 | --- | --- | --- | --- | --- |
-| Compiled (`daedalus-mcu-blink`) | 3168 B | 3716 B | 160 B | 8 KiB / 512 B, and exactly these sizes |
-| Compiled + tunable, 4 parameters (`-tunable`) | 6104 B | 7096 B | 176 B | 10 KiB / 512 B |
-| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11524 B | 12692 B | 584 B | 16 KiB / 1 KiB |
+| Compiled (`daedalus-mcu-blink`) | 3072 B | 3392 B | 160 B | 8 KiB / 512 B, and exactly these sizes |
+| Compiled + tunable, 4 parameters (`-tunable`) | 5932 B | 6764 B | 176 B | 10 KiB / 512 B |
+| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11516 B | 12396 B | 584 B | 16 KiB / 1 KiB |
 
 - **Compiled**: 1024 B (M4F) / 192 B (M0+) of vector table; the M0+ code includes soft-float.
   The 160 B of RAM are the whole `Graph` (eight queues, five state slots, the tick counter) plus
   the `singleton!` flag; the stack adds what a tick's node calls need.
-- **Tunable**: +2.9 KiB (M4F) / +3.3 KiB (M0+): the type conversion and range check (with `f64`
+- **Tunable**: +2.8 KiB (M4F) / +3.3 KiB (M0+): the type conversion and range check (with `f64`
   soft-float for `f64` values and parameters), the update decoder and the setters; +16 B of RAM
   for the four parameter fields.
 - **Loaded**: +8.2 KiB (M4F) / +8.8 KiB (M0+): the blob validator (about 2 KiB), the

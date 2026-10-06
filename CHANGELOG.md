@@ -95,6 +95,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Queue edges record their enqueue-to-dequeue wait in `EdgeMetrics` at `Detailed` (only direct
   slots did).
 
+### Maintenance
+
+- **Toolchain 1.99.0, MSRV 1.99.** `rust-toolchain.toml`, the CI workflows and the examples
+  Docker image pin Rust 1.99.0; `rust-version` is 1.99 and every crate now inherits it (it was
+  declared for the workspace but not applied to the packages).
+- **Dependencies on their newest releases** (`cargo upgrade --incompatible --recursive`,
+  `cargo update`). New majors: `syn` 3 (the proc-macro crates), `spin` 0.12 (same `no_std`
+  features, `portable_atomic` on targets without compare-and-swap), `libloading` 0.9,
+  `sha2` 0.11, `base64` 0.23, `pollster` 1.0 and `pyo3` 0.29 (declared, unused). `wgpu`/`naga`
+  30, `ash` 0.38, `criterion` 0.8, `proptest` 1.11, `image` 0.25 and `tracing` 0.1 were already
+  current; Styx follows `dev`. Nothing is kept back (docs/development.md, "Dependency Policy").
+- New Rust 1.99 / clippy lints fixed in code: `as_chunks` instead of constant-size
+  `chunks_exact`, `Waker::noop()` in tests, `mem::take` for drained waiter lists, no deprecated
+  `core::u32::MAX` in `#[adapt]` expansions.
+- The MCU blink firmware's compiled size dropped with the toolchain: 3168 -> 3072 B
+  (`thumbv7em`), 3716 -> 3392 B (`thumbv6m`); RAM unchanged (`MCU_COMPILED_SIZE`,
+  docs/mcu.md).
+
 ## [3.0.0] - 2026-10-05
 
 ### Breaking changes

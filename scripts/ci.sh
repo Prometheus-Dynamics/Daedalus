@@ -23,7 +23,7 @@ readonly NOSTD_CRATES=(-p daedalus-core -p daedalus-transport -p daedalus-data -
 readonly MCU_MODES=("compiled::8192:512" "tunable:-tunable:10240:512" "loaded:-loaded:16384:1024")
 # The compiled firmware's exact flash:RAM per target (NOSTD_TARGETS order): the tunable and
 # loaded modes cost a compiled firmware nothing, and constants without parameters stay literals.
-readonly MCU_COMPILED_SIZE=("3168:160" "3716:160")
+readonly MCU_COMPILED_SIZE=("3072:160" "3392:160")
 readonly WASM_TARGET="wasm32-unknown-unknown"
 readonly WASI_TARGET="wasm32-wasip1"
 
