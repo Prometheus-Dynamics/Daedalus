@@ -163,10 +163,6 @@ pub fn is_unit_type(ty: &Type) -> bool {
 }
 
 #[derive(Clone)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "proc-macro parse nodes are short-lived and keeping direct syn patterns avoids boxing churn"
-)]
 pub enum NestedMeta {
     Meta(syn::Meta),
     Lit(Lit),

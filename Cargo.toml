@@ -77,56 +77,56 @@ daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "3.0.0
 daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "3.0.0" }
 daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi", version = "3.0.0" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
-async-trait = "0.1.89"
-base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
-bitflags = { version = "2.11.1", features = ["serde"] }
-bytemuck = { version = "1.25.0", features = ["derive"] }
+async-trait = "0.1.92"
+base64 = { version = "0.23.1", default-features = false, features = ["alloc"] }
+bitflags = { version = "2.13.2", features = ["serde"] }
+bytemuck = { version = "1.25.2", features = ["derive"] }
 criterion = "0.8.2"
 # MCU firmware (`examples/mcu_blink`, built only for `target_os = "none"`).
-cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
-cortex-m-rt = "0.7.5"
-crossbeam-queue = { version = "0.3.12", default-features = false, features = ["alloc"] }
-defmt = "1.0.1"
-glob = "0.3.3"
-hashbrown = "0.17.0"
+cortex-m = { version = "0.7.9", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7.7"
+crossbeam-queue = { version = "0.3.14", default-features = false, features = ["alloc"] }
+defmt = "1.1.1"
+glob = "0.3.4"
+hashbrown = "0.17.1"
 half = "2"
 libc = "0.2"
-libloading = "0.8.9"
+libloading = "0.9.0"
 once_cell = "1.21.4"
 panic-halt = "1.0.0"
 paste = "1.0.15"
-pollster = "0.4.0"
+pollster = "1.0.1"
 # Atomics and `Arc` on targets without (64-bit) compare-and-swap; only pulled in there (see
 # "Portability" in docs/development.md).
-portable-atomic = { version = "1.13.1", default-features = false, features = ["fallback"] }
+portable-atomic = { version = "1.15.0", default-features = false, features = ["fallback"] }
 portable-atomic-util = { version = "0.2.8", default-features = false, features = ["alloc"] }
 proc-macro-crate = "3.5.0"
-proc-macro2 = "1.0.106"
+proc-macro2 = "1.0.107"
 proptest = "1.11.0"
-pyo3 = "0.28"
-quote = "1.0.45"
-rand = "0.10.1"
+pyo3 = "0.29"
+quote = "1.0.47"
+rand = "0.10.3"
 rayon = "1.12.0"
-serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive"] }
-serde_json = { version = "1.0.149", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.229", default-features = false, features = ["alloc", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
 serde_path_to_error = "0.1.20"
-sha2 = "0.10"
-spin = { version = "0.10.0", default-features = false, features = ["once", "rwlock", "spin_mutex"] }
+sha2 = "0.11"
+spin = { version = "0.12.3", default-features = false, features = ["once", "rwlock", "spin_mutex"] }
 parking_lot = "0.12.5"
 # `union` is always on: it changes `SmallVec` layouts, and `NodeIo` crosses the dynamic plugin
 # boundary, so it must not depend on whether another crate in the build (e.g. wgpu-hal) enables it.
-smallvec = { version = "1.15.1", features = ["serde", "union"] }
-syn = { version = "2.0.117", features = ["full"] }
+smallvec = { version = "1.16.2", features = ["serde", "union"] }
+syn = { version = "3.0.6", features = ["full"] }
 tempfile = "3.27.0"
-thiserror = { version = "2.0.18", default-features = false }
-tokio = { version = "1.52.1", features = ["rt", "macros", "sync"] }
-trybuild = "1.0.116"
+thiserror = { version = "2.0.21", default-features = false }
+tokio = { version = "1.53.2", features = ["rt", "macros", "sync"] }
+trybuild = "1.0.121"
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan", "metal", "dx12"] }
-futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = { version = "0.1.44", default-features = false }
-wasm-bindgen = "0.2.117"
-tracing-subscriber = { version = "0.3.20", default-features = false, features = ["env-filter", "fmt", "std"] }
+wasm-bindgen = "0.2.129"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "std"] }
 styx = { version = "2.0.0", git = "https://github.com/Prometheus-Dynamics/Styx.git", branch = "dev", default-features = false }
 
 [workspace.lints.rust]
