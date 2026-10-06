@@ -69,8 +69,19 @@ pub(crate) fn direct_edge_set(
     direct_edge_mask_for_active_edges(edges, edge_transports, |_| true)
 }
 
-pub(crate) fn direct_slots(edge_count: usize) -> Arc<Vec<DirectSlot>> {
-    Arc::new((0..edge_count).map(|_| DirectSlot::empty()).collect())
+/// One slot per edge; a buffer-all edge's slot keeps every payload, others only the newest.
+pub(crate) fn direct_slots(edges: &[RuntimeEdge]) -> Arc<Vec<DirectSlot>> {
+    Arc::new(
+        edges
+            .iter()
+            .map(|edge| {
+                DirectSlot::new(matches!(
+                    edge.policy().pressure,
+                    daedalus_transport::PressurePolicy::BufferAll
+                ))
+            })
+            .collect(),
+    )
 }
 
 fn build_segment_rank(

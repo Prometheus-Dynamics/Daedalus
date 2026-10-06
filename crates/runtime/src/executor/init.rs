@@ -62,7 +62,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         }
     }
     let host_bridges = nodes.iter().map(is_host_bridge_node).collect();
-    let direct_slots = direct_slots(plan.edges.len());
+    let direct_slots = direct_slots(&plan.edges);
     let schedule = Arc::new(build_compiled_schedule(
         &nodes,
         &plan.edges,

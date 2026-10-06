@@ -174,14 +174,16 @@ pub(crate) fn direct_edge_mask_for_active_edges(
         .collect()
 }
 
-/// Whether an edge with `pressure` keeps only its newest payload, so an edge that alone feeds
-/// its target port can hand payloads over through a one-payload direct slot: latest-only,
-/// coalescing, and the default bounded queue of one that drops the oldest (unless a graph-level
-/// `BackpressureStrategy` overrides bounded edges; see `ExecutorInit`).
+/// Whether an edge with `pressure` can hand payloads over through a direct slot (when it alone
+/// feeds its target port): buffer-all edges (the slot keeps every payload in order, one inline),
+/// and the policies that keep only the newest payload: latest-only, coalescing, and a bounded
+/// queue of one that drops the oldest (unless a graph-level `BackpressureStrategy` overrides
+/// bounded edges; see `ExecutorInit`).
 pub(crate) fn direct_slot_policy(pressure: &PressurePolicy) -> bool {
     matches!(
         pressure,
-        PressurePolicy::LatestOnly
+        PressurePolicy::BufferAll
+            | PressurePolicy::LatestOnly
             | PressurePolicy::Coalesce { .. }
             | PressurePolicy::Bounded {
                 capacity: 1,

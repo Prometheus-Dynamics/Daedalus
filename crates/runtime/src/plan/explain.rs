@@ -147,7 +147,7 @@ impl RuntimePlan {
                 let (handoff, handoff_reason) = if direct_candidate {
                     (
                         RuntimeEdgeHandoff::DirectSlot,
-                        "sole producer of its target port, newest-only policy, no adapter path"
+                        "sole producer of its target port, slot-compatible policy, no adapter path"
                             .to_string(),
                     )
                 } else {
@@ -220,7 +220,7 @@ fn explain_queue_reason(
 ) -> String {
     let mut reasons = Vec::new();
     if !newest_only {
-        reasons.push("pressure policy keeps more than the newest payload".to_string());
+        reasons.push("pressure policy needs a queue".to_string());
     }
     if backpressure_override {
         reasons.push("graph backpressure strategy overrides bounded edges".to_string());

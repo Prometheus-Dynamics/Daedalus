@@ -20,7 +20,7 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
                 .estimate_payload_bytes(&payload.inner)
         })
         .flatten();
-    if collect_basic_metrics || exec.core.run_config.frame_probe.is_some() {
+    if collect_detailed_metrics || exec.core.run_config.frame_probe.is_some() {
         payload.enqueued_at = Some(exec.core.clock.now());
     }
     if collect_lifecycle {
@@ -70,8 +70,6 @@ pub(crate) fn pop_direct_edge<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     edge_idx: usize,
 ) -> Option<CorrelatedPayload> {
-    let collect_basic_metrics =
-        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_basic();
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
     let payload = exec
@@ -81,7 +79,8 @@ pub(crate) fn pop_direct_edge<H: NodeHandler>(
         .and_then(|slot| slot.access(exec.direct_slot_access).take())?;
     if let Some(enqueued_at) = payload.enqueued_at {
         let waited = exec.core.clock.elapsed(enqueued_at);
-        if collect_basic_metrics {
+        // Edge waits are detailed metrics, as for queued edges.
+        if collect_detailed_metrics {
             exec.core.telemetry.record_edge_wait(edge_idx, waited);
         }
         if let Some(probe) = &exec.core.run_config.frame_probe {
