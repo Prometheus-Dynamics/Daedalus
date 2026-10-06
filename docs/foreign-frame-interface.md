@@ -111,7 +111,10 @@ pub struct StyxPlugin;
 The host keeps wrapping frames as before
 (`Payload::shared_with("styx:framelease", Arc::new(lease), Residency::External, ..)`). A node
 anywhere takes `frame: FrameView<'_>`; the planner inserts the provider's `View` adapter, which
-hands the node a handle to the same `Arc` (one reference count increment, no pixel copy).
+retypes the payload as `daedalus:frame` with the provider attached, and the node reads the
+lease itself through the vtable: no pixel copy, no allocation and no reference count change per
+frame or per consumer. Payloads crossing into a stable-ABI plugin are wrapped in a handle to the
+same `Arc` (one reference count increment).
 
 ## Reading it
 

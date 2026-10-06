@@ -4,7 +4,7 @@ use crate::portable::Arc;
 use core::any::{Any, TypeId};
 use core::fmt;
 
-use crate::{ForeignHandle, ReleaseMode, TypeKey};
+use crate::{ForeignBorrow, ForeignHandle, ReleaseMode, TypeKey};
 
 /// Type-erased payload storage.
 pub trait PayloadStorage: Send + Sync + fmt::Debug {
@@ -38,6 +38,15 @@ pub trait PayloadStorage: Send + Sync + fmt::Debug {
     /// The [`ForeignHandle`] the payload carries (see [`Payload::foreign`](crate::Payload::foreign)).
     fn foreign_handle(&self) -> Option<&ForeignHandle> {
         None
+    }
+    /// The value lent through a foreign interface: the carried handle's, or an owner value its
+    /// provider exposes (see [`Payload::provide_foreign`](crate::Payload::provide_foreign)).
+    fn foreign_borrow(&self) -> Option<ForeignBorrow<'_>> {
+        self.foreign_handle().map(ForeignHandle::borrow)
+    }
+    /// An owning handle of [`Self::foreign_borrow`]'s value.
+    fn to_foreign_handle(&self) -> Option<ForeignHandle> {
+        self.foreign_handle().cloned()
     }
 }
 

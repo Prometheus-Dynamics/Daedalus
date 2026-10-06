@@ -150,11 +150,16 @@ impl Payload {
         residency: Residency,
         layout: Option<&Layout>,
     ) -> Option<Payload> {
-        let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        if self.key() == key {
+        if &self.type_key == type_key
+            && self.residency == residency
+            && self.layout.as_ref() == layout
+        {
             return Some(self.clone());
         }
-        self.residency_cache
+        // Per-edge adapter paths ask this every tick: build no key while the cache is empty.
+        let cache = self.residency_cache.map()?;
+        let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
+        cache
             .get(&key)
             .cloned()
             .map(|resident| resident.into_payload(self.residency_cache.clone()))

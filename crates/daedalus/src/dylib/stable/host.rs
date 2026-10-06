@@ -211,8 +211,8 @@ impl HostNode {
         payload: &Payload,
         arena: &mut Arena,
     ) -> Result<StableValue, NodeError> {
-        if let Some(handle) = payload.foreign_handle() {
-            return Ok(StableValue::handle(handle, payload.residency()));
+        if let Some(value) = arena.encode_foreign(payload) {
+            return Ok(value);
         }
         if let Some(any) = payload.value_any_sync() {
             if let Some(value) = any.downcast_ref::<Value>() {

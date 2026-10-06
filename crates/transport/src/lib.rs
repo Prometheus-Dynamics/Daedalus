@@ -44,8 +44,8 @@ pub use boundary_contract::{BoundaryCapabilities, BoundaryContractError, Boundar
 pub use boundary_storage::{BoundaryStorage, BoundaryTakeError, BoundaryVTable};
 pub use device::{Cpu, Device, DeviceClass, DeviceTransfer, Gpu, TransferFrom, TransferTo};
 pub use foreign::{
-    ForeignHandle, ForeignInterface, ForeignInterfaceInfo, ForeignInterfaceMismatch, ForeignOwner,
-    ForeignRef, ForeignView, ProvideForeign, foreign_layout_hash,
+    ForeignBorrow, ForeignHandle, ForeignInterface, ForeignInterfaceInfo, ForeignInterfaceMismatch,
+    ForeignOwner, ForeignRef, ForeignView, ProvideForeign, foreign_layout_hash,
 };
 pub use foreign_frame::{
     DRM_FORMAT_MOD_INVALID, DRM_FORMAT_MOD_LINEAR, FRAME_INTERFACE_KEY, FrameInterface, FramePlane,
