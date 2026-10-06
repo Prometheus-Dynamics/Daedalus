@@ -409,6 +409,20 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.core.run_config.frame_probe.as_ref()
     }
 
+    /// Start timing a run for the frame probe, if one is attached.
+    #[inline]
+    pub(super) fn begin_probe_tick(&self) -> Option<super::TickStart> {
+        let probe = self.core.run_config.frame_probe.as_ref()?;
+        Some(probe.begin_tick(&self.core.clock))
+    }
+
+    #[inline]
+    pub(super) fn end_probe_tick(&self, tick: Option<super::TickStart>) {
+        if let (Some(probe), Some(tick)) = (&self.core.run_config.frame_probe, tick) {
+            probe.end_tick(&self.core.clock, tick);
+        }
+    }
+
     pub(super) fn snapshot<'a>(&'a self, direct_slot_access: DirectSlotAccess) -> Executor<'a, H> {
         Executor {
             nodes: self.nodes.clone(),
@@ -440,10 +454,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     pub fn run_in_place(&mut self) -> Result<ExecutionTelemetry, ExecuteError> {
         let _scope = super::runtime_alloc_scope();
+        let tick = self.begin_probe_tick();
         self.reset_for_run();
         let mut exec = self.snapshot(DirectSlotAccess::Serial);
         let res = serial::run_with_boundaries(&mut exec);
         serial::drain_host_outputs(&mut exec);
+        self.end_probe_tick(tick);
         if res.is_err() {
             self.storage_needs_reset = true;
         }
@@ -460,11 +476,13 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         H: Send + Sync + 'static,
     {
         let _scope = super::runtime_alloc_scope();
+        let tick = self.begin_probe_tick();
         self.reset_for_run();
         let mut exec = self.snapshot(DirectSlotAccess::Shared);
         let res = run_parallel_on(&mut exec);
         serial::drain_host_outputs(&mut exec);
         drop(exec);
+        self.end_probe_tick(tick);
         if res.is_err() {
             self.storage_needs_reset = true;
         }
@@ -479,6 +497,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         H: Send + Sync + 'static,
     {
         let _scope = super::runtime_alloc_scope();
+        let tick = self.begin_probe_tick();
         self.reset_for_run();
         let mut adaptive = core::mem::take(&mut self.adaptive);
         let workers = self.parallel_workers();
@@ -492,6 +511,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let res = run_adaptive_on(&mut exec, &mut adaptive, parallel, workers);
         serial::drain_host_outputs(&mut exec);
         drop(exec);
+        self.end_probe_tick(tick);
         self.adaptive = adaptive;
         if res.is_err() {
             self.storage_needs_reset = true;

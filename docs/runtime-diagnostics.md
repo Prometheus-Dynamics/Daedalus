@@ -92,7 +92,7 @@ queue and adapter time. The stages of one tick:
 | Row | What it measures |
 | --- | --- |
 | `push` | Host-bridge feeds (`push*`, bound inputs, a camera thread's `feed_payload`) since the previous tick, attributed to the tick they feed. |
-| `tick` | Wall time of `HostGraph::tick*` (direct routes included). |
+| `tick` | Wall time of the executor run behind `HostGraph::tick*` (direct routes included), output drain included. |
 | `  inject` | Host inputs fanned out to graph edges. |
 | `  inputs` | Per-node input collection: queue and direct-slot pops (adapters excluded). |
 | `  adapters_zero_copy` / `adapters_copying` | Adapter paths, split by the path's kinds: identity, reinterpret, view, shared/cow view, metadata-only and in-place are zero-copy; copy-on-write, branch, materialize, device transfers, (de)serialization and custom adapters count as copying. |
@@ -126,10 +126,13 @@ Reading it:
   host that feeds `daedalus:frame` payloads directly allocates nothing.
 
 Recording costs two clock reads per node and per edge plus a few relaxed atomic adds (about
-0.3 µs per stage on the x86_64 host in [development.md](development.md#frame-path-overhead));
+0.5 µs per tick plus 0.2 µs per stage on the x86_64 host in
+[development.md](development.md#frame-path-overhead));
 `HostGraph::disable_frame_overhead` turns it off. Without it, each recording site is one `None`
-check and the bridge's feed/take paths one relaxed load. Push and take times read the platform
-clock; everything else reads the executor's clock.
+check, the bridge's feed/take paths one relaxed load, and `HostGraph::tick*` one check: the
+executor times the run into the probe and the graph moves it into the window when the next tick
+starts (`frame_overhead()` and `last_frame_tick()` include the latest tick). Push and take times
+read the platform clock; everything else reads the executor's clock.
 
 ### Allocation probe
 
@@ -145,7 +148,8 @@ static ALLOC: daedalus::alloc_probe::CountingAllocator =
 The executor marks its threads `Runtime` while a tick runs and `Node` around each handler call;
 host-bridge feeds and takes are `Host`; anything else is `Other`. `alloc_probe::counts()` reads
 the process-wide counters, and the frame-overhead report fills `runtime_allocs`/`node_allocs`
-(during the tick) and `host_allocs` (since the previous tick) once the allocator is installed.
+(during the tick) and `host_allocs` (between the tick and the next: its takes and the next
+feeds) once the allocator is installed.
 Without the feature the scope switches compile to nothing; with it but without the allocator
 installed they cost one relaxed load per handler call. The counters are process-wide, so measure
 one graph at a time.

@@ -345,7 +345,8 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     /// Execute one graph tick. Pair with `push`/`drain_*` for advanced multi-input workflows.
     pub fn tick(&mut self) -> Result<ExecutionTelemetry, EngineError> {
-        self.frame_tick(|graph| graph.runner.run_telemetry())
+        self.frame_commit();
+        self.runner.run_telemetry()
     }
 
     pub fn tick_direct_payload(
@@ -355,13 +356,11 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         output_port: impl AsRef<str>,
     ) -> Result<Option<(ExecutionTelemetry, Option<Payload>)>, EngineError> {
         self.types.check_payload(&payload)?;
-        self.frame_tick(|graph| {
-            graph
-                .runner
-                .executor
-                .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
-                .map_err(EngineError::Runtime)
-        })
+        self.frame_commit();
+        self.runner
+            .executor
+            .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
+            .map_err(EngineError::Runtime)
     }
 
     pub fn direct_host_route(
@@ -412,13 +411,11 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), EngineError> {
         self.types.check_payload(&payload)?;
-        self.frame_tick(|graph| {
-            graph
-                .runner
-                .executor
-                .run_direct_host_route(route, payload)
-                .map_err(EngineError::Runtime)
-        })
+        self.frame_commit();
+        self.runner
+            .executor
+            .run_direct_host_route(route, payload)
+            .map_err(EngineError::Runtime)
     }
 
     pub fn tick_direct_route_payload(
@@ -427,13 +424,11 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<Option<Payload>, EngineError> {
         self.types.check_payload(&payload)?;
-        self.frame_tick(|graph| {
-            graph
-                .runner
-                .executor
-                .run_direct_host_route_payload(route, payload)
-                .map_err(EngineError::Runtime)
-        })
+        self.frame_commit();
+        self.runner
+            .executor
+            .run_direct_host_route_payload(route, payload)
+            .map_err(EngineError::Runtime)
     }
 
     /// Run a previously bound direct lane and return the raw output payload.

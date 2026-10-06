@@ -134,19 +134,10 @@ impl FrameOverheadWindow {
     }
 
     /// Percentiles over the window. `edge_labels[i]` names edge `i` (missing labels print the
-    /// index); `pending_take_ns` adds takes not yet folded into the latest tick.
-    pub fn report(&self, edge_labels: &[String], pending_take_ns: u64) -> FrameOverheadReport {
-        let latest = self.latest_slot();
+    /// index).
+    pub fn report(&self, edge_labels: &[String]) -> FrameOverheadReport {
         let column = |field: Field| -> Vec<u64> {
-            self.slots()
-                .map(|slot| {
-                    let mut sample = self.ticks[slot];
-                    if Some(slot) == latest {
-                        sample.take_ns += pending_take_ns;
-                    }
-                    field(&sample)
-                })
-                .collect()
+            self.slots().map(|slot| field(&self.ticks[slot])).collect()
         };
         let stages = STAGES
             .iter()

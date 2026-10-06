@@ -21,9 +21,14 @@ fn window_keeps_the_last_ticks_and_derives_the_remainder() {
         probe.add_time(ProbeTime::Handlers, Duration::from_nanos(tick * 10));
         probe.add_time(ProbeTime::NodeRuns, Duration::from_nanos(tick * 30));
         probe.add_count(ProbeCount::Nodes, 2);
+        probe.add_time(ProbeTime::Tick, Duration::from_nanos(tick * 100));
+        probe.add_count(ProbeCount::Ticks, 1);
+        assert!(probe.has_tick());
         window.record(|sample, edges| {
-            probe.finish_tick(Duration::from_nanos(tick * 100), sample, edges);
+            probe.take_tick(sample, edges);
+            sample.take_ns = tick;
         });
+        assert!(!probe.has_tick());
     }
     assert_eq!((window.len(), window.recorded()), (4, 6));
     let latest = window.latest().expect("latest");
@@ -32,12 +37,12 @@ fn window_keeps_the_last_ticks_and_derives_the_remainder() {
     assert_eq!(latest.dispatch_ns, 600 - 30 - 180);
     assert_eq!(latest.graph_overhead_ns, 600 - 60);
 
-    let report = window.report(&[], 7);
+    let report = window.report(&[]);
     let tick = report.stage("tick").expect("tick");
     // Ticks 3..=6 remain: 300, 400, 500, 600 ns.
     assert_eq!((tick.p50, tick.p99, tick.max), (400, 600, 600));
     assert!((tick.mean - 450.0).abs() < f64::EPSILON);
-    assert_eq!(report.stage("take").expect("take").max, 7);
+    assert_eq!(report.stage("take").expect("take").max, 6);
     assert_eq!(report.counter("nodes").expect("nodes").p50, 2);
     assert!(report.to_table().contains("graph_overhead"));
 
@@ -46,13 +51,15 @@ fn window_keeps_the_last_ticks_and_derives_the_remainder() {
 }
 
 #[test]
-fn finish_tick_resets_the_probe() {
+fn take_tick_resets_the_probe_and_peek_does_not() {
     let probe = FrameProbe::for_plan(&empty_plan());
     probe.add_time(ProbeTime::Inject, Duration::from_nanos(50));
     probe.add_count(ProbeCount::SharedClones, 3);
     let mut sample = super::FrameTickSample::default();
-    probe.finish_tick(Duration::from_nanos(100), &mut sample, &mut []);
+    probe.peek_tick(&mut sample, &mut []);
     assert_eq!((sample.inject_ns, sample.shared_clones), (50, 3));
-    probe.finish_tick(Duration::from_nanos(100), &mut sample, &mut []);
+    probe.take_tick(&mut sample, &mut []);
+    assert_eq!((sample.inject_ns, sample.shared_clones), (50, 3));
+    probe.take_tick(&mut sample, &mut []);
     assert_eq!((sample.inject_ns, sample.shared_clones), (0, 0));
 }

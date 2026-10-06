@@ -67,18 +67,6 @@ pub(crate) fn resolve_host_nodes(
 pub(crate) fn inject_host_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
 ) -> Result<(), ExecuteError> {
-    let probe = exec.core.run_config.frame_probe.clone();
-    let start = probe.is_some().then(|| exec.core.clock.now());
-    let result = inject_host_inputs_untimed(exec);
-    if let (Some(probe), Some(start)) = (probe, start) {
-        probe.add_time(ProbeTime::Inject, exec.core.clock.elapsed(start));
-    }
-    result
-}
-
-fn inject_host_inputs_untimed<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
-) -> Result<(), ExecuteError> {
     let host_nodes = exec.core.host_nodes.clone();
     for host in host_nodes.iter() {
         for (port, group) in host.inbound.iter() {
@@ -106,15 +94,12 @@ fn inject_host_inputs_untimed<H: NodeHandler>(
 
 pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
     let _scope = crate::executor::runtime_alloc_scope();
-    let probe = exec.core.run_config.frame_probe.clone();
-    let start = probe.is_some().then(|| exec.core.clock.now());
-    drain_host_outputs_untimed(exec);
-    if let (Some(probe), Some(start)) = (probe, start) {
-        probe.add_time(ProbeTime::Drain, exec.core.clock.elapsed(start));
-    }
-}
-
-fn drain_host_outputs_untimed<H: NodeHandler>(exec: &mut Executor<'_, H>) {
+    let start = exec
+        .core
+        .run_config
+        .frame_probe
+        .is_some()
+        .then(|| exec.core.clock.now());
     let edges = exec.edges;
     let host_nodes = exec.core.host_nodes.clone();
     for host in host_nodes.iter() {
@@ -147,5 +132,8 @@ fn drain_host_outputs_untimed<H: NodeHandler>(exec: &mut Executor<'_, H>) {
                 host.handle.push_outbound_ref(port, payload.inner);
             }
         }
+    }
+    if let (Some(probe), Some(start)) = (&exec.core.run_config.frame_probe, start) {
+        probe.add_time(ProbeTime::Drain, exec.core.clock.elapsed(start));
     }
 }

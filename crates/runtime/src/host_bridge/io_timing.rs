@@ -27,41 +27,30 @@ pub struct HostIoTime {
     pub take: Duration,
 }
 
-/// Adds its lifetime to a timing slot when dropped; marks the thread's allocations as host
-/// allocations (`alloc-probe`).
-pub(super) struct IoTimer<'a> {
-    slot: Option<(&'a AtomicU64, Instant)>,
-    #[cfg(feature = "alloc-probe")]
-    _scope: crate::alloc_probe::ScopeGuard,
-}
-
 impl HostIoTiming {
+    /// Run a feed, timing it when enabled.
     #[inline]
-    pub(super) fn push_timer(&self) -> IoTimer<'_> {
-        self.timer(&self.push_ns)
+    pub(super) fn timed_push<T>(&self, feed: impl FnOnce() -> T) -> T {
+        self.timed(&self.push_ns, feed)
+    }
+
+    /// Run a take, timing it when enabled.
+    #[inline]
+    pub(super) fn timed_take<T>(&self, take: impl FnOnce() -> T) -> T {
+        self.timed(&self.take_ns, take)
     }
 
     #[inline]
-    pub(super) fn take_timer(&self) -> IoTimer<'_> {
-        self.timer(&self.take_ns)
-    }
-
-    #[inline]
-    fn timer<'a>(&'a self, slot: &'a AtomicU64) -> IoTimer<'a> {
-        IoTimer {
-            slot: self.enabled.load(Relaxed).then(|| (slot, Instant::now())),
-            #[cfg(feature = "alloc-probe")]
-            _scope: crate::alloc_probe::enter(crate::alloc_probe::AllocScope::Host),
+    fn timed<T>(&self, slot: &AtomicU64, run: impl FnOnce() -> T) -> T {
+        #[cfg(feature = "alloc-probe")]
+        let _scope = crate::alloc_probe::enter(crate::alloc_probe::AllocScope::Host);
+        if !self.enabled.load(Relaxed) {
+            return run();
         }
-    }
-}
-
-impl Drop for IoTimer<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        if let Some((slot, start)) = self.slot {
-            slot.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
-        }
+        let start = Instant::now();
+        let result = run();
+        slot.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
+        result
     }
 }
 

@@ -31,7 +31,16 @@ pub(crate) fn run_with_boundaries_timed<H: NodeHandler>(
     costs: Option<SegmentCosts<'_>>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
     let _scope = super::runtime_alloc_scope();
+    let inject_start = exec
+        .core
+        .run_config
+        .frame_probe
+        .is_some()
+        .then(|| exec.core.clock.now());
     inject_host_inputs(exec)?;
+    if let (Some(probe), Some(start)) = (&exec.core.run_config.frame_probe, inject_start) {
+        probe.add_time(ProbeTime::Inject, exec.core.clock.elapsed(start));
+    }
     let order = exec.schedule_order;
     run_order_timed(exec, order, costs).map(|mut telemetry| {
         telemetry.recompute_unattributed_runtime_duration();

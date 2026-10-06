@@ -1,14 +1,19 @@
 //! Frame-path overhead recording for [`HostGraph`]: where each tick's time goes between frame
 //! arrival and results (see "Frame-path overhead" in `docs/runtime-diagnostics.md`).
+//!
+//! The executor times each run into the [`FrameProbe`]; the graph moves a finished run into the
+//! window when the next tick starts (and folds it in when reporting), so the tick paths only gain
+//! one check while recording is off.
 
 use crate::portable::Arc;
 use crate::prelude::*;
 
 use daedalus_runtime::executor::NodeHandler;
-use daedalus_runtime::{FrameOverheadReport, FrameOverheadWindow, FrameProbe, FrameTickSample};
+use daedalus_runtime::{
+    EdgeTickSample, FrameOverheadReport, FrameOverheadWindow, FrameProbe, FrameTickSample,
+};
 
 use super::HostGraph;
-use crate::error::EngineError;
 
 /// Ticks [`HostGraph::enable_frame_overhead`] keeps when configured without a size.
 pub const DEFAULT_FRAME_OVERHEAD_WINDOW: usize = 512;
@@ -16,9 +21,46 @@ pub const DEFAULT_FRAME_OVERHEAD_WINDOW: usize = 512;
 pub(crate) struct FrameOverheadState {
     probe: Arc<FrameProbe>,
     window: FrameOverheadWindow,
-    /// Counters at the end of the previous tick, to attribute host allocations in between.
+    host: HostSide,
+}
+
+/// Host-side values of the run the probe holds.
+#[derive(Clone, Copy, Default)]
+struct HostSide {
+    /// Feeds since the previous tick, taken from the bridge when the run started.
+    push_ns: u64,
+    /// Host-scope allocation count when the run started.
     #[cfg(feature = "alloc-probe")]
-    allocs: daedalus_runtime::alloc_probe::AllocCounts,
+    allocs: u64,
+}
+
+impl HostSide {
+    #[cfg(feature = "alloc-probe")]
+    fn alloc_count() -> u64 {
+        daedalus_runtime::alloc_probe::counts().host
+    }
+
+    /// The probe's run (taken when `reset`, else peeked) plus the host-side values.
+    fn fill(
+        self,
+        probe: &FrameProbe,
+        reset: bool,
+        take_ns: u64,
+        sample: &mut FrameTickSample,
+        edges: &mut [EdgeTickSample],
+    ) {
+        if reset {
+            probe.take_tick(sample, edges);
+        } else {
+            probe.peek_tick(sample, edges);
+        }
+        sample.push_ns = self.push_ns;
+        sample.take_ns = take_ns;
+        #[cfg(feature = "alloc-probe")]
+        {
+            sample.host_allocs = Self::alloc_count().saturating_sub(self.allocs);
+        }
+    }
 }
 
 impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
@@ -36,8 +78,11 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.frame_overhead = Some(Box::new(FrameOverheadState {
             probe,
             window,
-            #[cfg(feature = "alloc-probe")]
-            allocs: daedalus_runtime::alloc_probe::counts(),
+            host: HostSide {
+                push_ns: 0,
+                #[cfg(feature = "alloc-probe")]
+                allocs: HostSide::alloc_count(),
+            },
         }));
     }
 
@@ -60,35 +105,44 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.frame_overhead.is_some()
     }
 
-    /// Clear the recorded window (e.g. after warm-up), keeping recording on.
+    /// Start the window over (e.g. after warm-up), keeping recording on.
     pub fn reset_frame_overhead(&mut self) {
-        if let Some(state) = self.frame_overhead.as_mut() {
-            state.window.clear();
-            let _ = self.host.take_io_time();
-            #[cfg(feature = "alloc-probe")]
-            {
-                state.allocs = daedalus_runtime::alloc_probe::counts();
-            }
+        if let Some(window) = self
+            .frame_overhead
+            .as_ref()
+            .map(|state| state.window.capacity())
+        {
+            self.enable_frame_overhead(window);
         }
     }
 
-    /// p50/p99/max/mean of every stage and counter over the recorded window, plus per-edge
-    /// queue and adapter time; `None` unless [`Self::enable_frame_overhead`] was called. Print it
-    /// with `{}` (a table) or serialize it.
+    /// p50/p99/max/mean of every stage and counter over the recorded window (the latest tick
+    /// included), plus per-edge queue and adapter time; `None` unless
+    /// [`Self::enable_frame_overhead`] was called. Print it with `{}` (a table) or serialize it.
     pub fn frame_overhead(&self) -> Option<FrameOverheadReport> {
         let state = self.frame_overhead.as_ref()?;
         let labels = self.edge_labels();
-        Some(
-            state
-                .window
-                .report(&labels, self.host.pending_take_time().as_nanos() as u64),
-        )
+        if !state.probe.has_tick() {
+            return Some(state.window.report(&labels));
+        }
+        let mut window = state.window.clone();
+        let take_ns = self.host.pending_take_time().as_nanos() as u64;
+        window.record(|sample, edges| state.host.fill(&state.probe, false, take_ns, sample, edges));
+        Some(window.report(&labels))
     }
 
     /// The most recent tick's breakdown (its take time so far included).
     pub fn last_frame_tick(&self) -> Option<FrameTickSample> {
-        let mut sample = *self.frame_overhead.as_ref()?.window.latest()?;
-        sample.take_ns += self.host.pending_take_time().as_nanos() as u64;
+        let state = self.frame_overhead.as_ref()?;
+        if !state.probe.has_tick() {
+            return state.window.latest().copied();
+        }
+        let mut sample = FrameTickSample::default();
+        let mut edges = vec![EdgeTickSample::default(); state.probe.edge_count()];
+        let take_ns = self.host.pending_take_time().as_nanos() as u64;
+        state
+            .host
+            .fill(&state.probe, false, take_ns, &mut sample, &mut edges);
         Some(sample)
     }
 
@@ -110,47 +164,35 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
             .collect()
     }
 
-    /// Run one tick through `run`, recording it when frame overhead is enabled.
-    pub(super) fn frame_tick<T>(
-        &mut self,
-        run: impl FnOnce(&mut Self) -> Result<T, EngineError>,
-    ) -> Result<T, EngineError> {
-        let Some(state) = self.frame_overhead.as_mut() else {
-            return run(self);
-        };
-        // Feeds since the last tick feed this one; takes since then belong to the last tick.
+    /// Before a tick: move the previous run into the window and claim the feeds since then for
+    /// the coming one. One check while recording is off.
+    #[inline]
+    pub(super) fn frame_commit(&mut self) {
+        if self.frame_overhead.is_some() {
+            self.frame_commit_recorded();
+        }
+    }
+
+    // Out of line so the tick paths keep their size.
+    #[inline(never)]
+    fn frame_commit_recorded(&mut self) {
         let io = self.host.take_io_time();
-        if let Some(latest) = state.window.latest_mut() {
-            latest.take_ns += io.take.as_nanos() as u64;
+        let Some(state) = self.frame_overhead.as_deref_mut() else {
+            return;
+        };
+        let FrameOverheadState {
+            probe,
+            window,
+            host,
+        } = state;
+        if probe.has_tick() {
+            let take_ns = io.take.as_nanos() as u64;
+            window.record(|sample, edges| host.fill(probe, true, take_ns, sample, edges));
         }
-        #[cfg(feature = "alloc-probe")]
-        let before = daedalus_runtime::alloc_probe::counts();
-        let clock = self.runner.executor.clock().clone();
-        let start = clock.now();
-        let result = run(self);
-        let tick = clock.elapsed(start);
-        #[cfg(feature = "alloc-probe")]
-        let after = daedalus_runtime::alloc_probe::counts();
-        if let Some(state) = self.frame_overhead.as_mut() {
-            let FrameOverheadState { probe, window, .. } = &mut **state;
-            window.record(|sample, edges| {
-                probe.finish_tick(tick, sample, edges);
-                sample.push_ns = io.push.as_nanos() as u64;
-            });
+        *host = HostSide {
+            push_ns: io.push.as_nanos() as u64,
             #[cfg(feature = "alloc-probe")]
-            {
-                let host = before.since(&state.allocs).host;
-                let during = after.since(&before);
-                if let Some(sample) = state.window.latest_mut() {
-                    sample.runtime_allocs = during.runtime;
-                    sample.node_allocs = during.node;
-                    sample.runtime_alloc_bytes = during.runtime_bytes;
-                    sample.node_alloc_bytes = during.node_bytes;
-                    sample.host_allocs = host;
-                }
-                state.allocs = after;
-            }
-        }
-        result
+            allocs: HostSide::alloc_count(),
+        };
     }
 }

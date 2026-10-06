@@ -59,6 +59,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         if let Some(single_node) = route.single_node.as_ref() {
             return self.run_direct_host_single_node(single_node, payload);
         }
+        let tick = self.begin_probe_tick();
         self.reset_for_run();
         let payload = CorrelatedPayload::from_edge(payload);
         if route
@@ -125,6 +126,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             )
             .map(|payload| payload.inner)
         };
+        self.end_probe_tick(tick);
         Ok((telemetry, output))
     }
 
@@ -175,6 +177,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             node: route.node.id.clone(),
             error,
         };
+        let tick = self.begin_probe_tick();
         let probe = self.core.run_config.frame_probe.clone();
         let clock = self.core.clock.clone();
         let node_start = probe.is_some().then(|| clock.now());
@@ -217,6 +220,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             probe.add_time(ProbeTime::NodeRuns, clock.elapsed(start));
             probe.add_count(ProbeCount::Nodes, 1);
         }
+        self.end_probe_tick(tick);
         Ok((output, metrics))
     }
 

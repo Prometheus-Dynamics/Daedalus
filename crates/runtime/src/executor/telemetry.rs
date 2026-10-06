@@ -19,7 +19,7 @@ mod summary;
 
 pub use basics::{Histogram, MetricsLevel, ProfileLevel, Profiler};
 pub use frame::{EdgeAdapterClass, EdgeTickSample, FrameProbe, FrameTickSample};
-pub(crate) use frame::{ProbeCount, ProbeTime};
+pub(crate) use frame::{ProbeCount, ProbeTime, TickStart};
 pub use frame_report::{EdgeOverheadStats, FrameOverheadReport, FrameOverheadWindow, FrameStat};
 pub use lifecycle::{
     DataLifecycleEvent, DataLifecycleRecord, DataLifecycleStage, NodeFailure, TraceEvent,

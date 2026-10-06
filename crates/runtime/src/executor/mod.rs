@@ -60,7 +60,7 @@ pub use telemetry::{
     NodeFailure, NodeMetrics, NodeMetricsMap, NodeResourceMetrics, OwnershipReport, ProfileLevel,
     Profiler, ResourceMetrics, TelemetryReport, TelemetryReportFilter,
 };
-pub(crate) use telemetry::{ProbeCount, ProbeTime};
+pub(crate) use telemetry::{ProbeCount, ProbeTime, TickStart};
 pub use telemetry_size::{
     RuntimeDataSizeInspector, RuntimeDataSizeInspectors, estimate_payload_bytes,
     register_runtime_data_size_inspector,

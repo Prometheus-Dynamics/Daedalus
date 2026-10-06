@@ -1,7 +1,8 @@
 //! Frame-path overhead probe: per-tick counters the executor fills while a probe is attached
 //! (`OwnedExecutor::set_frame_probe`, `HostGraph::enable_frame_overhead`), independent of the
 //! metrics level. Recording is a few relaxed atomic adds per node and edge and never allocates;
-//! without a probe each site is one `None` check.
+//! without a probe each site is one `None` check. The owner moves each finished run out with
+//! [`FrameProbe::take_tick`].
 
 use crate::portable::AtomicU64;
 use crate::prelude::*;
@@ -9,11 +10,15 @@ use core::fmt;
 use core::sync::atomic::Ordering::Relaxed;
 use core::time::Duration;
 
+use daedalus_core::platform::{Clock, Instant};
+
 use crate::plan::RuntimePlan;
 
 /// Executor time a probe sums per tick.
 #[derive(Clone, Copy)]
 pub(crate) enum ProbeTime {
+    /// Wall time of the executor run (`OwnedExecutor::run_*`), drain included.
+    Tick,
     /// Host inputs fanned out to graph edges.
     Inject,
     /// Input collection per node: queue pops and adapters.
@@ -30,11 +35,13 @@ pub(crate) enum ProbeTime {
     QueueWait,
 }
 
-const TIMES: usize = 8;
+const TIMES: usize = 9;
 
 /// Executor events a probe counts per tick.
 #[derive(Clone, Copy)]
 pub(crate) enum ProbeCount {
+    /// Executor runs since the last [`FrameProbe::take_tick`].
+    Ticks,
     Nodes,
     ZeroCopyAdapts,
     Copies,
@@ -43,9 +50,13 @@ pub(crate) enum ProbeCount {
     SharedClones,
     GpuUploads,
     GpuDownloads,
+    RuntimeAllocs,
+    NodeAllocs,
+    RuntimeAllocBytes,
+    NodeAllocBytes,
 }
 
-const COUNTS: usize = 7;
+const COUNTS: usize = 12;
 
 /// What an edge's adapter path does to the payload (see `RuntimeEdgeTransport::copies_data`).
 #[derive(
@@ -145,7 +156,8 @@ pub struct FrameTickSample {
     pub runtime_allocs: u64,
     /// Allocations inside node handlers during the tick (`alloc-probe`).
     pub node_allocs: u64,
-    /// Allocations by host-bridge feeds and takes since the previous tick (`alloc-probe`).
+    /// Allocations by host-bridge feeds and takes between this tick and the next (its takes and
+    /// the next tick's feeds; `alloc-probe`).
     pub host_allocs: u64,
     pub runtime_alloc_bytes: u64,
     pub node_alloc_bytes: u64,
@@ -255,20 +267,62 @@ impl FrameProbe {
         }
     }
 
-    /// Move the counters recorded since the last call into `sample` (runtime fields; the host
-    /// fills `push_ns`, `take_ns` and the allocation counts) and `edges` (one per plan edge),
-    /// deriving the remainder stages from the `tick` wall time.
-    pub fn finish_tick(
-        &self,
-        tick: Duration,
-        sample: &mut FrameTickSample,
-        edges: &mut [EdgeTickSample],
-    ) {
-        let time = |time: ProbeTime| self.times[time as usize].swap(0, Relaxed);
-        let count = |count: ProbeCount| self.counts[count as usize].swap(0, Relaxed);
-        let tick_ns = tick.as_nanos() as u64;
+    /// Start timing an executor run (and counting its allocations with `alloc-probe`).
+    #[inline]
+    pub(crate) fn begin_tick(&self, clock: &Clock) -> TickStart {
+        TickStart {
+            at: clock.now(),
+            #[cfg(feature = "alloc-probe")]
+            allocs: crate::alloc_probe::counts(),
+        }
+    }
+
+    /// Finish the run [`Self::begin_tick`] started.
+    #[inline]
+    pub(crate) fn end_tick(&self, clock: &Clock, start: TickStart) {
+        self.add_time(ProbeTime::Tick, clock.elapsed(start.at));
+        self.add_count(ProbeCount::Ticks, 1);
+        #[cfg(feature = "alloc-probe")]
+        {
+            let during = crate::alloc_probe::counts().since(&start.allocs);
+            self.add_count(ProbeCount::RuntimeAllocs, during.runtime);
+            self.add_count(ProbeCount::NodeAllocs, during.node);
+            self.add_count(ProbeCount::RuntimeAllocBytes, during.runtime_bytes);
+            self.add_count(ProbeCount::NodeAllocBytes, during.node_bytes);
+        }
+    }
+
+    /// Whether a run finished since the last [`Self::take_tick`].
+    pub fn has_tick(&self) -> bool {
+        self.counts[ProbeCount::Ticks as usize].load(Relaxed) > 0
+    }
+
+    /// Move what the runs since the last call recorded into `sample` (every field but
+    /// `push_ns`, `take_ns` and `host_allocs`, which the host fills) and `edges` (one per plan
+    /// edge), deriving the remainder stages from the tick wall time.
+    pub fn take_tick(&self, sample: &mut FrameTickSample, edges: &mut [EdgeTickSample]) {
+        self.read_tick(true, sample, edges);
+    }
+
+    /// [`Self::take_tick`] without resetting the counters.
+    pub fn peek_tick(&self, sample: &mut FrameTickSample, edges: &mut [EdgeTickSample]) {
+        self.read_tick(false, sample, edges);
+    }
+
+    fn read_tick(&self, reset: bool, sample: &mut FrameTickSample, edges: &mut [EdgeTickSample]) {
+        let read = |cell: &AtomicU64| {
+            if reset {
+                cell.swap(0, Relaxed)
+            } else {
+                cell.load(Relaxed)
+            }
+        };
+        let time = |time: ProbeTime| read(&self.times[time as usize]);
+        let count = |count: ProbeCount| read(&self.counts[count as usize]);
+        let tick_ns = time(ProbeTime::Tick);
         let collect = time(ProbeTime::Collect);
         let runs = time(ProbeTime::NodeRuns);
+        let _ = count(ProbeCount::Ticks);
         sample.tick_ns = tick_ns;
         sample.inject_ns = time(ProbeTime::Inject);
         sample.adapters_zero_copy_ns = time(ProbeTime::ZeroCopyAdapters);
@@ -289,12 +343,23 @@ impl FrameProbe {
         sample.shared_clones = count(ProbeCount::SharedClones);
         sample.gpu_uploads = count(ProbeCount::GpuUploads);
         sample.gpu_downloads = count(ProbeCount::GpuDownloads);
+        sample.runtime_allocs = count(ProbeCount::RuntimeAllocs);
+        sample.node_allocs = count(ProbeCount::NodeAllocs);
+        sample.runtime_alloc_bytes = count(ProbeCount::RuntimeAllocBytes);
+        sample.node_alloc_bytes = count(ProbeCount::NodeAllocBytes);
         for (cells, out) in self.edges.iter().zip(edges.iter_mut()) {
             *out = EdgeTickSample {
-                wait_ns: cells.wait_ns.swap(0, Relaxed),
-                adapter_ns: cells.adapter_ns.swap(0, Relaxed),
-                adapts: cells.adapts.swap(0, Relaxed),
+                wait_ns: read(&cells.wait_ns),
+                adapter_ns: read(&cells.adapter_ns),
+                adapts: read(&cells.adapts),
             };
         }
     }
+}
+
+/// An executor run being timed ([`FrameProbe::begin_tick`]).
+pub(crate) struct TickStart {
+    at: Instant,
+    #[cfg(feature = "alloc-probe")]
+    allocs: crate::alloc_probe::AllocCounts,
 }

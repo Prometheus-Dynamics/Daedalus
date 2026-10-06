@@ -21,6 +21,7 @@ mod manager;
 mod policy;
 mod ports;
 mod serializers;
+mod takes;
 mod types;
 mod wait;
 use events::{
@@ -493,28 +494,29 @@ impl HostBridgeHandle {
         port: PortId,
         payload: impl FnOnce(&TypeIndex, &Clock) -> Result<Payload, TypeKeyError>,
     ) -> FeedOutcome {
-        let _timer = self.shared.io_timing.push_timer();
-        let mut guard = self.shared.buffers.lock();
-        let payload = match payload(&guard.types, &guard.clock)
-            .and_then(|payload| guard.types.check_payload(&payload).map(|()| payload))
-        {
-            Ok(payload) => payload,
-            Err(error) => return FeedOutcome::Rejected(Box::new(error)),
-        };
-        let outcome = enqueue_locked(
-            &mut guard,
-            Direction::Inbound,
-            self.alias.as_str(),
-            PortKey::Id(port),
-            payload,
-        );
-        if is_enqueued(&outcome) {
-            self.shared.notify_all();
-            let wakers = wait::take_inbound_wakers(&mut guard);
-            drop(guard);
-            wait::wake_all(wakers);
-        }
-        outcome
+        self.shared.io_timing.timed_push(|| {
+            let mut guard = self.shared.buffers.lock();
+            let payload = match payload(&guard.types, &guard.clock)
+                .and_then(|payload| guard.types.check_payload(&payload).map(|()| payload))
+            {
+                Ok(payload) => payload,
+                Err(error) => return FeedOutcome::Rejected(Box::new(error)),
+            };
+            let outcome = enqueue_locked(
+                &mut guard,
+                Direction::Inbound,
+                self.alias.as_str(),
+                PortKey::Id(port),
+                payload,
+            );
+            if is_enqueued(&outcome) {
+                self.shared.notify_all();
+                let wakers = wait::take_inbound_wakers(&mut guard);
+                drop(guard);
+                wait::wake_all(wakers);
+            }
+            outcome
+        })
     }
 
     pub fn push_as<T>(
@@ -544,11 +546,12 @@ impl HostBridgeHandle {
     }
 
     pub fn try_pop_payload(&self, port: impl AsRef<str>) -> Option<Payload> {
-        let _timer = self.shared.io_timing.take_timer();
-        self.pop_payload(port.as_ref())
+        self.shared
+            .io_timing
+            .timed_take(|| self.pop_payload(port.as_ref()))
     }
 
-    fn pop_payload(&self, port: &str) -> Option<Payload> {
+    pub(super) fn pop_payload(&self, port: &str) -> Option<Payload> {
         let mut guard = self.shared.buffers.lock();
         pop_outbound_locked(&mut guard, self.alias.as_str(), port)
     }
@@ -655,26 +658,6 @@ impl HostBridgeHandle {
         has_pending_inbound_locked(&self.shared.buffers.lock())
     }
 
-    pub fn try_pop<T>(&self, port: impl AsRef<str>) -> Option<T>
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        let _timer = self.shared.io_timing.take_timer();
-        self.pop_payload(port.as_ref())
-            .and_then(|payload| payload.get_ref::<T>().cloned())
-    }
-
-    pub fn try_pop_owned<T>(&self, port: impl AsRef<str>) -> Result<Option<T>, Box<Payload>>
-    where
-        T: Send + Sync + 'static,
-    {
-        let _timer = self.shared.io_timing.take_timer();
-        let Some(payload) = self.pop_payload(port.as_ref()) else {
-            return Ok(None);
-        };
-        payload.try_into_owned::<T>().map(Some)
-    }
-
     /// Queue a graph output for the host. Allocates a `PortId` only the first time a port is seen.
     pub(crate) fn push_outbound_ref(&self, port: &str, payload: Payload) {
         let mut guard = self.shared.buffers.lock();
@@ -707,21 +690,13 @@ impl HostBridgeHandle {
         }
     }
 
-    pub fn try_pop_arc<T>(&self, port: impl AsRef<str>) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        let _timer = self.shared.io_timing.take_timer();
-        self.pop_payload(port.as_ref())
-            .and_then(|payload| payload.get_arc::<T>())
-    }
-
     pub fn drain_payloads(&self, port: impl AsRef<str>) -> Vec<Payload> {
-        let _timer = self.shared.io_timing.take_timer();
-        self.drain_port(port.as_ref())
+        self.shared
+            .io_timing
+            .timed_take(|| self.drain_port(port.as_ref()))
     }
 
-    fn drain_port(&self, port: &str) -> Vec<Payload> {
+    pub(super) fn drain_port(&self, port: &str) -> Vec<Payload> {
         let mut guard = self.shared.buffers.lock();
         let buffers = &mut *guard;
         let mut payloads = Vec::new();
@@ -745,28 +720,6 @@ impl HostBridgeHandle {
             );
         }
         payloads
-    }
-
-    pub fn drain<T>(&self, port: impl AsRef<str>) -> Vec<T>
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        let _timer = self.shared.io_timing.take_timer();
-        self.drain_port(port.as_ref())
-            .into_iter()
-            .filter_map(|payload| payload.get_ref::<T>().cloned())
-            .collect()
-    }
-
-    pub fn drain_arcs<T>(&self, port: impl AsRef<str>) -> Vec<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        let _timer = self.shared.io_timing.take_timer();
-        self.drain_port(port.as_ref())
-            .into_iter()
-            .filter_map(|payload| payload.get_arc::<T>())
-            .collect()
     }
 }
 
