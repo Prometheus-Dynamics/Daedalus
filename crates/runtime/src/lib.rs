@@ -140,8 +140,9 @@ pub use handles::{
 };
 pub use host_bridge::{
     DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING, HOST_BRIDGE_META_KEY,
-    HostBridgeConfig, HostBridgeHandle, HostBridgeManager, HostIoTime, HostPortStats, InboundWait,
-    InboundWaiter, PayloadInspection, PayloadSummary, bridge_handler, inspect_payload,
+    HOST_HELD_INPUTS_KEY, HostBatchOutcomes, HostBatchRejected, HostBridgeConfig, HostBridgeHandle,
+    HostBridgeManager, HostInputBatch, HostIoTime, HostPortStats, InboundWait, InboundWaiter,
+    PayloadInspection, PayloadSummary, bridge_handler, inspect_payload,
 };
 pub use io::{
     DEFAULT_OUTPUT_PORT, NodeIo, NodePort, TypedInputResolution, TypedInputResolutionKind,

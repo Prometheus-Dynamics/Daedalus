@@ -7,7 +7,10 @@ use core::time::Duration;
 use daedalus_runtime::ExecutionTelemetry;
 use daedalus_runtime::executor::{DirectHostRoute, NodeHandler};
 use daedalus_runtime::handles::PortId;
-use daedalus_runtime::host_bridge::{HostBridgeHandle, HostBridgeManager, ValueSerializerMap};
+use daedalus_runtime::host_bridge::{
+    HostBatchOutcomes, HostBatchRejected, HostBridgeHandle, HostBridgeManager, HostInputBatch,
+    ValueSerializerMap,
+};
 use daedalus_runtime::{RuntimePlan, RuntimePlanExplanation, RuntimeSink, TypeIndex};
 use daedalus_transport::{
     FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, TypeKey,
@@ -39,6 +42,9 @@ pub(crate) use frame_overhead::FrameOverheadState;
 ///
 /// Lower-level `push`, `tick`, and `drain_*` methods remain available for multi-input,
 /// demand-selected, or diagnostic workflows.
+///
+/// Context inputs (resource state, IMU, ...) that every tick should see: make them held
+/// (`set_held_input`) and push a frame with its context atomically (`batch`, `push_batch`).
 ///
 /// Port arguments: write/bind paths (`push*`, `set_*_policy`, `set_latest_*`, `bind_input`,
 /// `bind_output`, `subscribe`) take `impl Into<PortId>`, so a reused `PortId` never allocates;
@@ -314,6 +320,34 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
             PressurePolicy::LatestOnly,
             FreshnessPolicy::LatestByTimestamp,
         )
+    }
+
+    /// Make host input `port` held: its last pushed value persists across ticks and reaches its
+    /// consumers every tick until a push replaces it or [`Self::clear_input`] drops it. Held
+    /// pushes never trigger a tick by themselves. See [`HostBridgeHandle::set_held_input`];
+    /// graphs can declare it instead (`GraphBuilder::held_input`).
+    pub fn set_held_input(&self, port: impl Into<PortId>) {
+        self.host.set_held_input(port);
+    }
+
+    /// Drop host input `port`'s held value (or queued payloads) without closing it.
+    pub fn clear_input(&self, port: impl AsRef<str>) {
+        self.host.clear_input(port);
+    }
+
+    /// Start an atomic multi-port push: `graph.batch().push("frame", f).push("imu", s).commit()`.
+    /// See [`HostBridgeHandle::push_batch`].
+    pub fn batch(&self) -> HostInputBatch<'_> {
+        self.host.batch()
+    }
+
+    /// Push several payloads atomically, so no tick sees part of them; a payload failing the type
+    /// check rejects the whole batch. See [`HostBridgeHandle::push_batch`].
+    pub fn push_batch<P: Into<PortId>>(
+        &self,
+        entries: impl IntoIterator<Item = (P, Payload)>,
+    ) -> Result<HostBatchOutcomes, HostBatchRejected> {
+        self.host.push_batch(entries)
     }
 
     /// Low-level typed feed under `T`'s key in the graph's registry; an unknown type is

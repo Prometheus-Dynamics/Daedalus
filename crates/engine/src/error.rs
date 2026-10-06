@@ -35,6 +35,8 @@ pub enum EngineError {
     Gpu(#[from] daedalus_gpu::GpuError),
     #[error(transparent)]
     TypeKey(#[from] daedalus_transport::TypeKeyError),
+    #[error(transparent)]
+    HostBatch(#[from] daedalus_runtime::host_bridge::HostBatchRejected),
     #[error("feature '{0}' is disabled at compile time")]
     FeatureDisabled(&'static str),
 }

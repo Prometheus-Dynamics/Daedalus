@@ -16,6 +16,9 @@ pub const DYNAMIC_OUTPUT_LABELS_KEY: &str = "dynamic_output_labels";
 /// pushes into the graph) and host outputs. Undeclared host ports are generic.
 pub const HOST_INPUT_TYPES_KEY: &str = "daedalus.host_input_types";
 pub const HOST_OUTPUT_TYPES_KEY: &str = "daedalus.host_output_types";
+/// Graph-authored host-bridge metadata key listing the host inputs that are held: their last
+/// pushed value persists across ticks until replaced (`HostBridgeHandle::set_held_input`).
+pub const HOST_HELD_INPUTS_KEY: &str = "daedalus.host_held_inputs";
 
 /// Planner/runtime-owned metadata keys attached when embedded graphs are expanded.
 pub const EMBEDDED_GROUP_KEY: &str = "daedalus.embedded_group";
