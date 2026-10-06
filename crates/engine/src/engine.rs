@@ -381,7 +381,9 @@ impl Engine {
             node_labels,
             value_serializers: daedalus_runtime::host_bridge::primitive_value_serializer_map(),
             types: daedalus_runtime::TypeIndex::default(),
-        })
+            frame_overhead: None,
+        }
+        .with_configured_frame_overhead(self.config.runtime.frame_overhead_window))
     }
 
     /// Compile a graph into the lower-level executor runner.
@@ -521,7 +523,9 @@ impl Engine {
             node_labels,
             value_serializers: plugins.value_serializers.clone(),
             types,
-        })
+            frame_overhead: None,
+        }
+        .with_configured_frame_overhead(self.config.runtime.frame_overhead_window))
     }
 
     /// Compile a plugin-registry graph into the default host-fed streaming runtime.

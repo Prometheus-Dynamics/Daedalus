@@ -38,7 +38,13 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     /// Convert a payload into a `Value` using the registered value serializers, falling back to a
     /// structured summary (type key, rust type, residency, layout, bytes estimate).
     pub fn inspect_payload(&self, payload: &Payload) -> PayloadInspection {
-        inspect_payload(payload, &self.value_serializers)
+        if !self.host.io_timing_enabled() {
+            return inspect_payload(payload, &self.value_serializers);
+        }
+        let start = daedalus_core::platform::Instant::now();
+        let inspection = inspect_payload(payload, &self.value_serializers);
+        self.host.record_take_time(start.elapsed());
+        inspection
     }
 
     /// Take every queued host output and inspect it, in [`HostGraph::host_outputs`] port order

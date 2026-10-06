@@ -45,6 +45,7 @@ host-only-features = [
     "engine",
     "executor-pool",
     "metrics",
+    "alloc-probe",
     "engine-full",
     "embedded",
     "threads",
@@ -111,6 +112,9 @@ executor-pool = ["threads", "daedalus-runtime/executor-pool", "daedalus-engine?/
 # Collect executor telemetry (`MetricsLevel` other than `Off`). Without it the telemetry APIs
 # still compile but record nothing.
 metrics = ["daedalus-runtime/metrics", "daedalus-engine?/metrics"]
+# `daedalus::alloc_probe`: a counting global allocator attributing allocations to node handlers,
+# the runtime and host-bridge calls; `HostGraph::frame_overhead` reports them per tick.
+alloc-probe = ["daedalus-runtime/alloc-probe", "daedalus-engine?/alloc-probe"]
 # `tracing` spans and events of the runtime, engine, planner and demo nodes (default). Separate
 # from `threads`/`std`: `default-features = false` builds (`embedded`, wasm) opt in explicitly.
 tracing = [

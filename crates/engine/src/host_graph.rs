@@ -18,6 +18,7 @@ use crate::error::EngineError;
 
 mod bindings;
 mod drive;
+mod frame_overhead;
 mod introspect;
 
 pub use bindings::{
@@ -25,6 +26,8 @@ pub use bindings::{
     HostGraphRunInput, HostGraphSubscription,
 };
 pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
+pub use frame_overhead::DEFAULT_FRAME_OVERHEAD_WINDOW;
+pub(crate) use frame_overhead::FrameOverheadState;
 
 /// In-process graph runner for host-driven applications.
 ///
@@ -52,6 +55,8 @@ pub struct HostGraph<H: NodeHandler> {
     /// The registry's type index (builtins only without a registry): resolves typed feeds and
     /// checks raw payloads fed into the graph.
     pub(crate) types: TypeIndex,
+    /// Frame-path overhead recording ([`HostGraph::enable_frame_overhead`]).
+    pub(crate) frame_overhead: Option<Box<FrameOverheadState>>,
 }
 
 pub struct HostGraphStep<T> {
@@ -340,7 +345,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     /// Execute one graph tick. Pair with `push`/`drain_*` for advanced multi-input workflows.
     pub fn tick(&mut self) -> Result<ExecutionTelemetry, EngineError> {
-        self.runner.run_telemetry()
+        self.frame_tick(|graph| graph.runner.run_telemetry())
     }
 
     pub fn tick_direct_payload(
@@ -350,10 +355,13 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         output_port: impl AsRef<str>,
     ) -> Result<Option<(ExecutionTelemetry, Option<Payload>)>, EngineError> {
         self.types.check_payload(&payload)?;
-        self.runner
-            .executor
-            .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
-            .map_err(EngineError::Runtime)
+        self.frame_tick(|graph| {
+            graph
+                .runner
+                .executor
+                .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
+                .map_err(EngineError::Runtime)
+        })
     }
 
     pub fn direct_host_route(
@@ -404,10 +412,13 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), EngineError> {
         self.types.check_payload(&payload)?;
-        self.runner
-            .executor
-            .run_direct_host_route(route, payload)
-            .map_err(EngineError::Runtime)
+        self.frame_tick(|graph| {
+            graph
+                .runner
+                .executor
+                .run_direct_host_route(route, payload)
+                .map_err(EngineError::Runtime)
+        })
     }
 
     pub fn tick_direct_route_payload(
@@ -416,10 +427,13 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<Option<Payload>, EngineError> {
         self.types.check_payload(&payload)?;
-        self.runner
-            .executor
-            .run_direct_host_route_payload(route, payload)
-            .map_err(EngineError::Runtime)
+        self.frame_tick(|graph| {
+            graph
+                .runner
+                .executor
+                .run_direct_host_route_payload(route, payload)
+                .map_err(EngineError::Runtime)
+        })
     }
 
     /// Run a previously bound direct lane and return the raw output payload.

@@ -114,6 +114,10 @@ pub struct RuntimeSection {
     pub host_event_recording: bool,
     #[cfg_attr(feature = "config-env", serde(default = "default_host_event_limit"))]
     pub host_event_limit: Option<usize>,
+    /// Record frame-path overhead of host graphs over this many ticks
+    /// (`HostGraph::enable_frame_overhead`); `None` (default) records nothing.
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub frame_overhead_window: Option<usize>,
     /// When true, abort the run on the first node error. When false, keep running and
     /// collect failures in `ExecutionTelemetry.errors`.
     #[cfg_attr(feature = "config-env", serde(default = "default_fail_fast"))]
@@ -181,6 +185,7 @@ impl Default for RuntimeSection {
             metrics_level: MetricsLevel::default(),
             host_event_recording: default_host_event_recording(),
             host_event_limit: default_host_event_limit(),
+            frame_overhead_window: None,
             fail_fast: default_fail_fast(),
             demand_driven: true,
             demand_sinks: Vec::new(),
@@ -288,6 +293,13 @@ impl EngineConfig {
 
     pub fn with_metrics_level(mut self, metrics_level: MetricsLevel) -> Self {
         self.runtime.metrics_level = metrics_level;
+        self
+    }
+
+    /// Record frame-path overhead of compiled host graphs over `window` ticks
+    /// (`HostGraph::enable_frame_overhead`, `HostGraph::frame_overhead`).
+    pub fn with_frame_overhead(mut self, window: usize) -> Self {
+        self.runtime.frame_overhead_window = Some(window);
         self
     }
 
@@ -509,6 +521,22 @@ impl EngineConfig {
                         .parse()
                         .map_err(|_| EngineConfigError::InvalidEnvValue {
                             var: "DAEDALUS_HOST_EVENT_LIMIT",
+                            value: raw.clone(),
+                        })?,
+                ),
+            };
+        }
+        if let Ok(raw) = env::var("DAEDALUS_FRAME_OVERHEAD") {
+            cfg.runtime.frame_overhead_window = match raw.to_ascii_lowercase().as_str() {
+                "0" | "off" | "false" | "no" => None,
+                "1" | "on" | "true" | "yes" => {
+                    Some(crate::host_graph::DEFAULT_FRAME_OVERHEAD_WINDOW)
+                }
+                other => Some(
+                    other
+                        .parse()
+                        .map_err(|_| EngineConfigError::InvalidEnvValue {
+                            var: "DAEDALUS_FRAME_OVERHEAD",
                             value: raw.clone(),
                         })?,
                 ),
