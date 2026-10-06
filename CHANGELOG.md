@@ -19,6 +19,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- **Held host inputs.** A held input keeps its last pushed value across ticks: every tick
+  delivers it to the port's consumers (an `Arc` clone, no copy or allocation) until a push
+  replaces it or `clear_input` drops it, so frame ticks see context such as resource state or an
+  IMU sample without the host re-pushing it. Declare it with `GraphBuilder::held_input(port)`
+  (host bridge metadata `daedalus.host_held_inputs`, `HOST_HELD_INPUTS_KEY`; carried by graph
+  documents) or `HostGraph::set_held_input` / `HostBridgeHandle::set_held_input`
+  (`is_input_held`, `clear_input`). Held pushes never wake inbound waiters, so they never trigger
+  a tick on their own; a held value counts as present for required inputs and `fire = "all"`.
+  The planner branches held inputs for consumers taking them by value, as for fan-out.
+- **Atomic multi-port pushes.** `HostGraph::batch()` / `HostBridgeHandle::batch()`
+  (`HostInputBatch`: `.push(port, value)`, `.push_payload(port, payload)`, `.commit()`) and
+  `push_batch([(port, payload), ...])` enqueue every value under one bridge lock and wake waiters
+  once, and ticks now take all host inputs of a bridge under one lock, so `drive_blocking` never
+  sees part of a batch. A value failing the type check rejects the whole batch before anything is
+  queued (`HostBatchRejected { index, port, error }`, also `EngineError::HostBatch`); otherwise
+  `HostBatchOutcomes` holds each value's `FeedOutcome`. Batches of up to four values do not
+  allocate beyond their payloads, and commits count as host pushes in frame-overhead reports.
+  See "Context Inputs: Held Ports And Batched Pushes" in `docs/node-authoring.md`.
 - **Crate build info.** `CrateBuildInfo { name, version, features }`, captured in the owning
   crate with `crate_build_info!()` (plus a two-line `build.rs` exporting `CARGO_CFG_FEATURE`) and
   registered with `#[plugin(.., crate_build)]` or `PluginRegistry::register_crate_build`. Dynamic

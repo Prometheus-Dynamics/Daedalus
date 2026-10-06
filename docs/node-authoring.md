@@ -644,6 +644,54 @@ than queued.
   [`docs/schema/daedalus.graph.v1.schema.json`](schema/daedalus.graph.v1.schema.json), generated
   by `GraphDocument::json_schema()` (planner `schema` feature).
 
+### Context Inputs: Held Ports And Batched Pushes
+
+A frame often needs context that changes at its own pace: resource state, an IMU sample,
+calibration. Pushed as an ordinary input, a context value is consumed by the first tick that runs
+its consumer, so the next frame's tick has none, and under `drive_blocking` a tick can start
+between the frame push and the context push. Two features replace the custom waiter loops that
+re-push context before every tick:
+
+- **Held inputs** keep their last value. Declare one in the graph with
+  `GraphBuilder::held_input("imu")` (stored on the host bridge node as
+  `daedalus.host_held_inputs`, `HOST_HELD_INPUTS_KEY`, a list of port names, so graph documents
+  carry it), or at runtime with `HostGraph::set_held_input("imu")`. Then:
+  - Every tick delivers the current value to the port's consumers without a re-push: an `Arc`
+    clone, no copy, no allocation (frame-overhead reports count it as a `shared_clone`). The
+    consumer's edge holds exactly that value, so a `fire = "all"` join sees it as present and
+    never accumulates stale copies.
+  - A push replaces the value (`FeedOutcome::Replaced`) and takes effect on the next tick;
+    `clear_input("imu")` drops it (the port stays open; consumers then see no value), and
+    `close_input` drops it and refuses later pushes. Freshness policy and the type check still
+    apply to pushes; pressure policy does not (a held port keeps one value).
+  - Held values are context, not work: they are never pending input, so a held push alone never
+    wakes `drive_blocking`, `tick_on_input` or `tick_if_ready`. Push a non-held input to trigger
+    a tick.
+  - Read held values by reference (`&T`, `Arc<T>`, `Option<&T>`). A consumer taking `T` by
+    value (`move`/`modify` access) gets a copy through the planned branch adapter, which the
+    planner inserts only for inputs declared held in the graph; a runtime-only
+    `set_held_input` cannot plan one, so such a consumer gets no value.
+- **Batched pushes** land in one tick whole. `HostGraph::batch()` stages values,
+  `commit()` enqueues them under one bridge lock and wakes waiters once, and a tick takes all
+  host inputs under that lock, so no tick sees part of a batch:
+
+```rust
+graph.set_held_input("imu");
+let outcomes = graph
+    .batch()
+    .push("frame", frame)
+    .push("imu", imu_sample) // optional: only when a new sample arrived
+    .commit()?; // per-value FeedOutcomes, in push order
+graph.drive_blocking(&stop, |graph, _turn| { /* drain outputs */ Ok(()) })?;
+```
+
+  `push_batch([(port, payload), ...])` does the same for prebuilt payloads. A batch is all or
+  nothing on the type check: if any value is refused (`Rejected` for a single push), nothing is
+  pushed and `HostBatchRejected { index, port, error }` names it. Otherwise each value gets its
+  port's own outcome (accepted, replaced, or dropped by freshness or a closed port). Batches of
+  up to four values allocate nothing beyond their payloads. Batch commits count in the `push`
+  row of frame-overhead reports.
+
 ## Migrating From Pre-2.0 Names
 
 | Pre-2.0 | 2.0 |
