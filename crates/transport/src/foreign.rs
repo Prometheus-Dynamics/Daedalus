@@ -15,10 +15,12 @@
 //!   type), and the runtime wraps a shared value as a [`ForeignHandle`]: data pointer, vtable
 //!   pointer, interface info and a reference-counted [`ForeignOwner`] keepalive. Building one is
 //!   an `Arc` clone; nothing is copied.
+//!   Within one build no handle is needed: [`Payload::provide_foreign`] retypes an owner payload
+//!   in place and consumers borrow the value through the vtable ([`ForeignBorrow`]).
 //! - A consumer checks the handle against its own copy of the interface
-//!   ([`ForeignHandle::view`]) and reads through [`ForeignRef`]. Every field it touches is a C
-//!   type, and every function it calls is the owner's code, so it never depends on how the
-//!   consumer built the owner's crate.
+//!   ([`ForeignHandle::view`], [`ForeignBorrow::view`]) and reads through [`ForeignRef`]. Every
+//!   field it touches is a C type, and every function it calls is the owner's code, so it never
+//!   depends on how the consumer built the owner's crate.
 
 use crate::portable::Arc;
 use core::ffi::c_void;
@@ -274,22 +276,18 @@ impl ForeignHandle {
         self.owner
     }
 
+    /// Borrow the handle's value, interface not yet checked.
+    pub fn borrow(&self) -> ForeignBorrow<'_> {
+        ForeignBorrow {
+            data: self.data,
+            vtable: self.vtable,
+            interface: self.interface(),
+        }
+    }
+
     /// Check the handle against this build's copy of `I` and view it through `I`.
     pub fn view<I: ForeignInterface>(&self) -> Result<ForeignRef<'_, I>, ForeignInterfaceMismatch> {
-        let found = self.interface();
-        // Same build: same static. Otherwise compare the identities.
-        if !core::ptr::eq(found, I::info()) && !found.same_interface(I::info()) {
-            return Err(ForeignInterfaceMismatch {
-                expected: *I::info(),
-                found: *found,
-            });
-        }
-        Ok(ForeignRef {
-            handle: self,
-            // Safety: key, version and layout hash match, so the vtable has `I::VTable`'s layout.
-            vtable: unsafe { &*self.vtable.cast::<I::VTable>() },
-            interface: PhantomData,
-        })
+        self.borrow().view()
     }
 }
 
@@ -330,15 +328,75 @@ pub struct ForeignInterfaceMismatch {
     pub found: ForeignInterfaceInfo,
 }
 
-/// A checked view of a [`ForeignHandle`] through interface `I`.
+/// A value lent through a foreign interface whose identity is not checked yet: data pointer,
+/// vtable pointer and interface. A payload lends one from the [`ForeignHandle`] it carries, or
+/// straight from the owner value when its provider adapted it ([`Payload::provide_foreign`]),
+/// with no handle and no allocation.
+#[derive(Clone, Copy, Debug)]
+pub struct ForeignBorrow<'a> {
+    data: *const c_void,
+    vtable: *const c_void,
+    interface: &'a ForeignInterfaceInfo,
+}
+
+impl<'a> ForeignBorrow<'a> {
+    /// Lend `value` through its provider for `I`.
+    pub fn of<O, I>(value: &'a O) -> Self
+    where
+        I: ForeignInterface,
+        O: ProvideForeign<I>,
+    {
+        Self {
+            data: (value as *const O).cast(),
+            vtable: (O::vtable() as *const I::VTable).cast(),
+            interface: I::info(),
+        }
+    }
+
+    /// The interface the value is lent through.
+    pub fn interface(&self) -> &'a ForeignInterfaceInfo {
+        self.interface
+    }
+
+    /// The opaque data pointer the vtable functions take.
+    pub fn data(&self) -> *const c_void {
+        self.data
+    }
+
+    /// Check the interface against this build's copy of `I` and view the value through `I`.
+    pub fn view<I: ForeignInterface>(self) -> Result<ForeignRef<'a, I>, ForeignInterfaceMismatch> {
+        let found = self.interface;
+        // Same build: same static. Otherwise compare the identities.
+        if !core::ptr::eq(found, I::info()) && !found.same_interface(I::info()) {
+            return Err(ForeignInterfaceMismatch {
+                expected: *I::info(),
+                found: *found,
+            });
+        }
+        Ok(ForeignRef {
+            data: self.data,
+            // Safety: key, version and layout hash match, so the vtable has `I::VTable`'s layout.
+            vtable: unsafe { &*self.vtable.cast::<I::VTable>() },
+            interface: PhantomData,
+        })
+    }
+}
+
+/// A checked view of a foreign value through interface `I`.
 ///
-/// Call the vtable's functions with [`Self::data`]; the handle keeps the value alive for `'a`.
-/// Interfaces add typed accessors on top (see [`FrameView`](crate::FrameView)).
+/// Call the vtable's functions with [`Self::data`]; the borrowed payload or handle keeps the
+/// value alive for `'a`. Interfaces add typed accessors on top (see
+/// [`FrameView`](crate::FrameView)).
 pub struct ForeignRef<'a, I: ForeignInterface> {
-    handle: &'a ForeignHandle,
+    data: *const c_void,
     vtable: &'a I::VTable,
     interface: PhantomData<I>,
 }
+
+// Safety: providers are `Send + Sync` and vtables are immutable statics.
+unsafe impl<I: ForeignInterface> Send for ForeignRef<'_, I> {}
+// Safety: see above.
+unsafe impl<I: ForeignInterface> Sync for ForeignRef<'_, I> {}
 
 impl<I: ForeignInterface> Clone for ForeignRef<'_, I> {
     fn clone(&self) -> Self {
@@ -354,17 +412,16 @@ impl<'a, I: ForeignInterface> ForeignRef<'a, I> {
     }
 
     pub fn data(&self) -> *const c_void {
-        self.handle.data
-    }
-
-    pub fn handle(&self) -> &'a ForeignHandle {
-        self.handle
+        self.data
     }
 }
 
 impl<I: ForeignInterface> fmt::Debug for ForeignRef<'_, I> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.handle.fmt(f)
+        f.debug_struct("ForeignRef")
+            .field("interface", I::info())
+            .field("data", &self.data)
+            .finish()
     }
 }
 
@@ -372,14 +429,14 @@ impl<I: ForeignInterface> fmt::Debug for ForeignRef<'_, I> {
 /// [`FrameView`](crate::FrameView)); the node macros fetch them with `NodeIo::get_foreign`.
 pub trait ForeignView<'a>: Sized {
     type Interface: ForeignInterface;
-    fn from_handle(handle: &'a ForeignHandle) -> Result<Self, ForeignInterfaceMismatch>;
+    fn from_borrow(borrow: ForeignBorrow<'a>) -> Result<Self, ForeignInterfaceMismatch>;
 }
 
 impl<'a, I: ForeignInterface> ForeignView<'a> for ForeignRef<'a, I> {
     type Interface = I;
 
-    fn from_handle(handle: &'a ForeignHandle) -> Result<Self, ForeignInterfaceMismatch> {
-        handle.view::<I>()
+    fn from_borrow(borrow: ForeignBorrow<'a>) -> Result<Self, ForeignInterfaceMismatch> {
+        borrow.view()
     }
 }
 

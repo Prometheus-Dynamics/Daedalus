@@ -173,8 +173,8 @@ impl StableRuntime {
         payload: &Payload,
         arena: &mut Arena,
     ) -> Result<StableValue, String> {
-        if let Some(handle) = payload.foreign_handle() {
-            return Ok(StableValue::handle(handle, payload.residency()));
+        if let Some(value) = arena.encode_foreign(payload) {
+            return Ok(value);
         }
         let unsupported = || {
             format!(

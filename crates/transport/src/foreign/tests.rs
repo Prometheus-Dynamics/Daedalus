@@ -166,3 +166,77 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
     assert!(boundary.is_storage_unique());
     assert!(ForeignHandle::from_payload::<Counter, CounterV1>(&Payload::owned("x", 1u8)).is_none());
 }
+
+#[test]
+fn provided_payloads_lend_the_owner_value_without_a_handle() {
+    let value = Arc::new(Counter {
+        value: 9,
+        tracked: false,
+    });
+    let owner = Payload::shared_with(
+        "test:counter_owner",
+        value.clone(),
+        Residency::External,
+        None,
+        None,
+    );
+    assert!(owner.foreign_borrow().is_none());
+    let provided = owner
+        .clone()
+        .provide_foreign::<Counter, CounterV1>()
+        .unwrap();
+    assert_eq!(provided.type_key().as_str(), "test:counter");
+    assert_eq!(provided.residency(), Residency::External);
+    assert!(provided.shares_storage(&owner) && provided.foreign_handle().is_none());
+    // Clones (fanout) keep the provider; the borrow is the owner value itself.
+    let borrow = provided
+        .clone()
+        .foreign_borrow()
+        .map(|borrow| borrow.data());
+    assert_eq!(borrow, Some(Arc::as_ptr(&value).cast()));
+    let view = provided
+        .foreign_borrow()
+        .unwrap()
+        .view::<CounterV1>()
+        .unwrap();
+    // Safety: the view checked the interface.
+    assert_eq!(unsafe { (view.vtable().value)(view.data()) }, 9);
+    assert!(
+        provided
+            .foreign_borrow()
+            .unwrap()
+            .view::<CounterV2>()
+            .is_err()
+    );
+    assert_eq!(provided.get_ref::<Counter>().unwrap().value, 9);
+    assert_eq!(Arc::strong_count(&value), 2, "borrowing retains nothing");
+    let handle = provided.to_foreign_handle().unwrap();
+    assert_eq!((read(&handle), Arc::strong_count(&value)), (9, 3));
+    drop((handle, owner));
+
+    // The storage is still the typed `Counter` storage: unique payloads give it back.
+    drop(value);
+    let mut provided = provided;
+    provided.get_mut::<Counter>().unwrap().value = 10;
+    let counter = provided.try_into_owned::<Counter>().ok().unwrap();
+    assert_eq!(counter.value, 10);
+
+    // Boundary storage has no shared `Arc`: it is wrapped in a handle payload instead.
+    let before = DROPS.load(Ordering::SeqCst);
+    let boundary = Payload::boundary_owned(
+        "test:counter_owner",
+        Counter {
+            value: 11,
+            tracked: true,
+        },
+        BoundaryCapabilities::rust_value(),
+    )
+    .provide_foreign::<Counter, CounterV1>()
+    .unwrap();
+    assert_eq!(read(boundary.foreign_handle().unwrap()), 11);
+    drop(boundary);
+    assert_eq!(DROPS.load(Ordering::SeqCst), before + 1);
+
+    let wrong = Payload::owned("test:counter_owner", 1u8);
+    assert!(wrong.provide_foreign::<Counter, CounterV1>().is_err());
+}

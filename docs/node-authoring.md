@@ -551,11 +551,18 @@ host's values anyway, zero-copy, without sharing the Rust type:
   `View` adapter (`daedalus.foreign:<owner key>-><interface key>`, cost of a view).
 - **Consumer**: a node takes `FrameView<'_>` (= `ForeignRef<'_, FrameInterface>`) or
   `ForeignRef<'_, I>`. The port's key is the interface key, its access is `read`, and it records
-  no Rust boundary type. The planner inserts the provider's adapter on the edge, which wraps the
-  producer's `Arc` in a `ForeignHandle` (data pointer, vtable, interface identity and a
-  reference-counted keepalive; one `Arc` increment, no copy) carried by a payload under the
-  interface key. The node checks the handle against its own copy of the interface (key, version
-  and layout hash) and reads through the vtable.
+  no Rust boundary type. The planner inserts the provider's adapter on the edge, which retypes
+  the payload under the interface key with the provider attached (`Payload::provide_foreign`:
+  the same storage allocation, seen through the provider; no copy, no allocation, no
+  reference-count change). The node's fetch borrows the owner value through the provider's
+  vtable as a `ForeignRef` (data and vtable pointers on the stack), after checking the interface
+  against its own copy (key, version and layout hash). The retyped payload keeps its provider
+  when a node forwards it, so downstream `FrameView` stages and every consumer of a fan-out read
+  it the same way, and `get_ref::<Owner>()` still works on it. A payload that already carries a
+  `ForeignHandle` (fed as `daedalus:frame`, or from a separately built plugin) is read through
+  the handle. Handles (data pointer, vtable, interface identity and a reference-counted
+  keepalive; one `Arc` increment) are built only where a borrow cannot reach: at the stable
+  plugin boundary, and for an owner held in boundary storage rather than shared typed storage.
 
 ```rust
 use daedalus::transport::{FrameView, ForeignRef};

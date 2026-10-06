@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::ffi::c_void;
 
 use crate::data::model::{EnumValue, StructFieldValue, Value};
-use crate::transport::{ForeignHandle, Residency};
+use crate::transport::{ForeignHandle, Payload, Residency};
 
 /// Kind of a [`StableValue`] (`StableValue::tag`). Plain `u32` constants rather than a Rust
 /// `enum`, so an unknown tag from another build is an error instead of undefined behavior.
@@ -195,9 +195,25 @@ pub struct Arena {
     fields: Vec<Vec<StableField>>,
     enums: Vec<Box<StableEnum>>,
     owned: Vec<Box<Value>>,
+    handles: Vec<Box<ForeignHandle>>,
 }
 
 impl Arena {
+    /// Lend `payload`'s foreign value: its carried handle, or (for an owner payload its
+    /// provider retyped) a handle wrapping the owner value, kept alive with the arena.
+    pub fn encode_foreign(&mut self, payload: &Payload) -> Option<StableValue> {
+        let handle = match payload.foreign_handle() {
+            Some(handle) => handle,
+            None => {
+                self.handles.push(Box::new(payload.to_foreign_handle()?));
+                let handle: *const ForeignHandle = &**self.handles.last()?;
+                // Safety: the box lives (unmoved) as long as the arena.
+                unsafe { &*handle }
+            }
+        };
+        Some(StableValue::handle(handle, payload.residency()))
+    }
+
     /// Keep `value` alive with the arena and encode it.
     pub fn encode_owned(&mut self, value: Value) -> StableValue {
         let value = Box::new(value);

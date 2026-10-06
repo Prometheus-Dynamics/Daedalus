@@ -4,9 +4,10 @@ use daedalus::{
     data::model::TypeExpr,
     engine::{Engine, EngineConfig, HostGraph},
     macros::{node, plugin},
+    planner::Graph,
     runtime::{
-        NodeError, RuntimeNode, handler_registry::HandlerRegistry, io::NodeIo,
-        plugins::PluginRegistry, state::ExecutionContext,
+        NodeError, RuntimeNode, graph_builder::GraphBuilder, handler_registry::HandlerRegistry,
+        io::NodeIo, plugins::PluginRegistry, state::ExecutionContext,
     },
     transport::{FRAME_INTERFACE_KEY, FrameInterface, FrameView},
 };
@@ -66,13 +67,7 @@ pub fn compile_frame_chain(
     let stages: Vec<_> = (0..stages.max(1))
         .map(|idx| daedalus::NodeHandle::new(STAGE_NODE_ID).alias(format!("stage_{idx}")))
         .collect();
-    let mut builder = registry.graph_builder()?;
-    builder = match feed {
-        FrameFeed::Interface => {
-            builder.input_as(CHAIN_INPUT, TypeExpr::opaque(FRAME_INTERFACE_KEY))
-        }
-        FrameFeed::Owner => builder.input_typed::<SyntheticFrame>(CHAIN_INPUT)?,
-    };
+    let mut builder = input(registry.graph_builder()?, feed)?;
     for stage in &stages {
         builder = builder.try_node(stage)?;
     }
@@ -84,8 +79,48 @@ pub fn compile_frame_chain(
     let graph = builder
         .try_connect(&last.output("frame"), CHAIN_OUTPUT)?
         .build();
+    prepare(&registry, graph, config)
+}
+
+/// Compile `host.frame` fanned out to `consumers` parallel stages (`>= 1`), stage `i` feeding
+/// host output `out_<i>`, fed as `feed`, and prepare it. With [`FrameFeed::Owner`] every
+/// consumer edge gets the provider's `View` adapter.
+pub fn compile_frame_fanout(
+    consumers: usize,
+    feed: FrameFeed,
+    config: EngineConfig,
+) -> Result<HostGraph<HandlerRegistry>, BenchError> {
+    let registry = frame_bench_registry()?;
+    let mut builder = input(registry.graph_builder()?, feed)?;
+    for idx in 0..consumers.max(1) {
+        let stage = daedalus::NodeHandle::new(STAGE_NODE_ID).alias(format!("stage_{idx}"));
+        builder = builder
+            .try_node(&stage)?
+            .try_connect(CHAIN_INPUT, &stage.input("frame"))?
+            .try_connect(
+                &stage.output("frame"),
+                format!("{CHAIN_OUTPUT}_{idx}").as_str(),
+            )?;
+    }
+    prepare(&registry, builder.build(), config)
+}
+
+fn input(builder: GraphBuilder, feed: FrameFeed) -> Result<GraphBuilder, BenchError> {
+    Ok(match feed {
+        FrameFeed::Interface => {
+            builder.input_as(CHAIN_INPUT, TypeExpr::opaque(FRAME_INTERFACE_KEY))
+        }
+        FrameFeed::Owner => builder.input_typed::<SyntheticFrame>(CHAIN_INPUT)?,
+    })
+}
+
+fn prepare(
+    registry: &PluginRegistry,
+    graph: Graph,
+    config: EngineConfig,
+) -> Result<HostGraph<HandlerRegistry>, BenchError> {
     let mut host =
-        Engine::new(config.with_host_event_recording(false))?.compile_registry(&registry, graph)?;
+        Engine::new(config.with_host_event_recording(false))?.compile_registry(registry, graph)?;
     host.prepare()?;
     Ok(host)
 }

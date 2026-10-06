@@ -3,9 +3,7 @@
 //! plugin installation compares between host and plugin (see `daedalus_transport::foreign`).
 
 use super::*;
-use daedalus_transport::{
-    ForeignHandle, ForeignInterface, ForeignInterfaceInfo, ForeignView, ProvideForeign,
-};
+use daedalus_transport::{ForeignInterface, ForeignInterfaceInfo, ForeignView, ProvideForeign};
 
 impl PluginRegistry {
     /// Expose the owner type `O`, under its own key, through interface `I`; see
@@ -20,11 +18,13 @@ impl PluginRegistry {
 
     /// Expose payloads of `O` under `owner_key` through interface `I`.
     ///
-    /// Registers a `View` adapter (`daedalus.foreign:<owner_key>-><I::KEY>`, no copy) that wraps
-    /// the payload's `O` in a [`ForeignHandle`] (an `Arc` clone) carried by a payload under the
-    /// interface key, keeping the source residency and lineage. The planner inserts it wherever an
-    /// `O` feeds a port that takes the interface (`FrameView<'_>`, `ForeignRef<'_, I>`).
-    /// Call it in the owner's own Daedalus integration, once.
+    /// Registers a `View` adapter (`daedalus.foreign:<owner_key>-><I::KEY>`) that retypes the
+    /// payload under the interface key and attaches `O`'s provider
+    /// ([`Payload::provide_foreign`]): no copy, no allocation, same storage, residency and
+    /// lineage. The node's `FrameView<'_>` / `ForeignRef<'_, I>` fetch then borrows the `O`
+    /// through the provider's vtable directly. The planner inserts the adapter wherever an `O`
+    /// feeds a port that takes the interface. Call it in the owner's own Daedalus integration,
+    /// once.
     pub fn register_foreign_provider_as<O, I>(
         &mut self,
         owner_key: impl Into<TypeKey>,
@@ -47,10 +47,9 @@ impl PluginRegistry {
             TypeExpr::opaque(I::KEY),
             options,
             move |payload, _request| {
-                let handle = ForeignHandle::from_payload::<O, I>(&payload)
-                    .ok_or_else(|| TransportError::type_mismatch::<O>(from.clone(), &payload))?;
-                Ok(Payload::foreign(I::KEY, handle, payload.residency())
-                    .with_lineage(payload.lineage().clone()))
+                payload
+                    .provide_foreign::<O, I>()
+                    .map_err(|payload| TransportError::type_mismatch::<O>(from.clone(), &payload))
             },
         )
     }
@@ -154,18 +153,39 @@ mod tests {
         let adapted = registry
             .runtime_transport
             .adapters()
-            .adapt(&id, source, &AdaptRequest::new("daedalus:frame"))
+            .adapt(&id, source.clone(), &AdaptRequest::new("daedalus:frame"))
             .unwrap();
         assert_eq!(adapted.type_key().as_str(), "daedalus:frame");
         assert_eq!(adapted.residency(), Residency::External);
+        assert!(
+            adapted.shares_storage(&source),
+            "no handle payload is built"
+        );
+        assert!(adapted.foreign_handle().is_none());
         let view = adapted
-            .foreign_handle()
+            .foreign_borrow()
             .unwrap()
             .view::<FrameInterface>()
             .unwrap();
+        assert_eq!(view.data(), Arc::as_ptr(&frame).cast());
         assert_eq!(
             view.plane(0).unwrap().data.unwrap().as_ptr(),
             frame.0.as_ptr()
+        );
+        let handle = adapted.to_foreign_handle().unwrap();
+        assert_eq!(handle.data(), view.data());
+        assert_eq!(Arc::strong_count(&frame), 3, "the handle retains the frame");
+        drop(handle);
+
+        let wrong = Payload::owned("test:gray", 7u32);
+        let err = registry
+            .runtime_transport
+            .adapters()
+            .adapt(&id, wrong, &AdaptRequest::new("daedalus:frame"))
+            .unwrap_err();
+        assert!(
+            matches!(err, TransportError::RustTypeMismatch { .. }),
+            "{err}"
         );
 
         let err = registry
