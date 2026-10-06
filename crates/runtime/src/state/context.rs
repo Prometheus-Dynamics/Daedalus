@@ -188,7 +188,7 @@ impl ExecutionContext {
         )
     }
 
-    /// A context for node `node_id` (no GPU; set [`Self::gpu`] after), resolving its state slot.
+    /// A context for node `node_id` (no GPU; set its `gpu` field after), resolving its state slot.
     pub fn new(
         state: StateStore,
         node_id: Arc<str>,

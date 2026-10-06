@@ -11,7 +11,9 @@ use core::any::{Any, TypeId};
 use core::fmt;
 use core::marker::PhantomData;
 
-use super::{ArcValue, Payload, PayloadStorage, ResidencyCache, TypedStorage};
+#[cfg(target_has_atomic = "ptr")]
+use super::ArcValue;
+use super::{Payload, PayloadStorage, ResidencyCache, TypedStorage};
 use crate::{
     ForeignBorrow, ForeignHandle, ForeignInterface, PayloadLineage, ProvideForeign, Residency,
     TypeKey,
