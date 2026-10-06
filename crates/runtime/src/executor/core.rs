@@ -12,6 +12,8 @@ use daedalus_core::platform::Clock;
 
 /// An executor's core: its own (a snapshot, or a borrowed executor's) or borrowed from an
 /// [`OwnedExecutor`](super::OwnedExecutor) for a serial run.
+// Boxing the owned core would allocate per snapshot (parallel ticks take one per worker).
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum CoreRef<'a> {
     Owned(ExecutorCore),
     Borrowed(&'a mut ExecutorCore),

@@ -44,9 +44,9 @@ pub enum HandlerRegistryError {
 impl HandlerRegistry {
     pub fn new() -> Self {
         Self {
-            stateless: FastHashMap::new(),
-            stateful: FastHashMap::new(),
-            direct_payload: FastHashMap::new(),
+            stateless: FastHashMap::default(),
+            stateful: FastHashMap::default(),
+            direct_payload: FastHashMap::default(),
             ids: HashMap::new(),
         }
     }
