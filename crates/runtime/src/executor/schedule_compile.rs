@@ -62,11 +62,8 @@ fn build_segment_of(nodes_len: usize, segments: &[RuntimeSegment]) -> Vec<usize>
     segment_of
 }
 
-pub(crate) fn direct_edge_set(
-    edges: &[RuntimeEdge],
-    edge_transports: &[Option<crate::plan::RuntimeEdgeTransport>],
-) -> Vec<bool> {
-    direct_edge_mask_for_active_edges(edges, edge_transports, |_| true)
+pub(crate) fn direct_edge_set(edges: &[RuntimeEdge]) -> Vec<bool> {
+    direct_edge_mask_for_active_edges(edges, |_| true)
 }
 
 /// One slot per edge; a buffer-all edge's slot keeps every payload, others only the newest.

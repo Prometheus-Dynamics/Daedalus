@@ -438,7 +438,7 @@ fn enrich_demand_slice(
     edges: &[RuntimeEdge],
     edge_transports: &[Option<RuntimeEdgeTransport>],
 ) {
-    slice.direct_edges = active_direct_edge_set(edges, edge_transports, slice);
+    slice.direct_edges = direct_edge_mask_for_active_edges(edges, |idx| slice.edge_active(idx));
     slice.adapter_edges = edge_transports
         .iter()
         .enumerate()
@@ -473,14 +473,6 @@ fn enrich_demand_slice(
                 .insert(edge.target_port().to_string());
         }
     }
-}
-
-fn active_direct_edge_set(
-    edges: &[RuntimeEdge],
-    edge_transports: &[Option<RuntimeEdgeTransport>],
-    slice: &DemandSlice,
-) -> Vec<bool> {
-    direct_edge_mask_for_active_edges(edges, edge_transports, |idx| slice.edge_active(idx))
 }
 
 fn fanout_clone_count(edges: &[RuntimeEdge], slice: Option<&DemandSlice>) -> u64 {

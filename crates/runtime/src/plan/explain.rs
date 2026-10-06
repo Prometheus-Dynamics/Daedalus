@@ -111,9 +111,9 @@ impl RuntimePlan {
                 compute: node.compute,
             })
             .collect();
-        let full_direct = slice.is_none().then(|| {
-            super::direct_edge_mask_for_active_edges(&self.edges, &self.edge_transports, |_| true)
-        });
+        let full_direct = slice
+            .is_none()
+            .then(|| super::direct_edge_mask_for_active_edges(&self.edges, |_| true));
         let overridden = |policy: &super::RuntimeEdgePolicy| {
             self.backpressure != super::BackpressureStrategy::None
                 && policy.bounded_capacity().is_some()
@@ -147,15 +147,13 @@ impl RuntimePlan {
                 let (handoff, handoff_reason) = if direct_candidate {
                     (
                         RuntimeEdgeHandoff::DirectSlot,
-                        "sole producer of its target port, slot-compatible policy, no adapter path"
-                            .to_string(),
+                        "sole producer of its target port, slot-compatible policy".to_string(),
                     )
                 } else {
                     (
                         RuntimeEdgeHandoff::Queue,
                         explain_queue_reason(
                             target_count,
-                            &adapter_steps,
                             super::direct_slot_policy(&edge.policy().pressure),
                             overridden,
                         ),
@@ -214,12 +212,11 @@ impl RuntimePlan {
 
 fn explain_queue_reason(
     target_count: usize,
-    adapter_steps: &[daedalus_transport::AdapterId],
-    newest_only: bool,
+    slot_policy: bool,
     backpressure_override: bool,
 ) -> String {
     let mut reasons = Vec::new();
-    if !newest_only {
+    if !slot_policy {
         reasons.push("pressure policy needs a queue".to_string());
     }
     if backpressure_override {
@@ -227,9 +224,6 @@ fn explain_queue_reason(
     }
     if target_count != 1 {
         reasons.push(format!("target fanin={target_count}"));
-    }
-    if !adapter_steps.is_empty() {
-        reasons.push(format!("adapter_steps={adapter_steps:?}"));
     }
     if reasons.is_empty() {
         "queue storage selected by current runtime lowering".to_string()

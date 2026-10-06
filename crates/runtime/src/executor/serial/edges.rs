@@ -38,7 +38,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
             continue;
         }
         if edge_uses_direct_slot(exec, edge_idx) {
-            while let Some(payload) = pop_direct_edge(exec, edge_idx) {
+            while let Some(mut payload) = pop_direct_edge(exec, edge_idx) {
                 if collect_lifecycle {
                     let mut lifecycle = DataLifecycleRecord::new(
                         payload.correlation_id,
@@ -59,6 +59,7 @@ pub(super) fn collect_inputs<H: NodeHandler>(
                         .telemetry
                         .record_node_transport_in(node_idx, bytes);
                 }
+                payload = adapt_edge_payload(exec, edge_idx, payload, node_idx, to_port.as_str())?;
                 inputs.push((to_port.clone(), payload));
                 if one_per_edge {
                     break;

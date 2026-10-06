@@ -55,7 +55,7 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
         .collect();
     let required_inputs = required_input_edges(&nodes, &plan.edges, &incoming_edges);
     let queued_edges = backpressure_queued_edges(plan);
-    let mut direct_edges = direct_edge_set(&plan.edges, &plan.edge_transports);
+    let mut direct_edges = direct_edge_set(&plan.edges);
     if let Some(queued) = &queued_edges {
         for (direct, queued) in direct_edges.iter_mut().zip(queued.iter()) {
             *direct &= !queued;

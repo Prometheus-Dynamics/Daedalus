@@ -138,11 +138,11 @@ impl RuntimeEdge {
 
 pub(crate) fn direct_edge_mask_for_active_edges(
     edges: &[RuntimeEdge],
-    edge_transports: &[Option<RuntimeEdgeTransport>],
     mut edge_active: impl FnMut(usize) -> bool,
 ) -> Vec<bool> {
     // Each edge has its own slot, so a fanned-out output port (one clone per edge) qualifies;
-    // a port fed by several edges keeps its queue, which collects them all.
+    // a port fed by several edges keeps its queue, which collects them all. Adapters run when
+    // the consumer collects its inputs, from a slot as from a queue.
     let mut target_port_counts: BTreeMap<(usize, PortId), usize> = BTreeMap::new();
     for (idx, edge) in edges.iter().enumerate() {
         if !edge_active(idx) {
@@ -158,13 +158,7 @@ pub(crate) fn direct_edge_mask_for_active_edges(
             if !edge_active(idx) {
                 return false;
             }
-            let adapter_steps_empty = edge_transports
-                .get(idx)
-                .and_then(Option::as_ref)
-                .map(|transport| transport.adapter_steps.is_empty())
-                .unwrap_or(true);
-            adapter_steps_empty
-                && direct_slot_policy(&edge.policy().pressure)
+            direct_slot_policy(&edge.policy().pressure)
                 && target_port_counts
                     .get(&edge.target_key())
                     .copied()
@@ -175,7 +169,7 @@ pub(crate) fn direct_edge_mask_for_active_edges(
 }
 
 /// Whether an edge with `pressure` can hand payloads over through a direct slot (when it alone
-/// feeds its target port): buffer-all edges (the slot keeps every payload in order, one inline),
+/// feeds its target port, with or without an adapter path): buffer-all edges (the slot keeps every payload in order, one inline),
 /// and the policies that keep only the newest payload: latest-only, coalescing, and a bounded
 /// queue of one that drops the oldest (unless a graph-level `BackpressureStrategy` overrides
 /// bounded edges; see `ExecutorInit`).

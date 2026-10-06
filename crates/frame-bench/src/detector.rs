@@ -351,7 +351,7 @@ pub fn mask_prep_runs(
     let pixels = frame
         .plane_bytes(0)
         .ok_or_else(|| NodeError::InvalidInput("frame plane is not CPU-readable".into()))?;
-    let row = pixels.get(..width as usize).unwrap_or_default();
+    let row = pixels.get(..64.min(width as usize)).unwrap_or_default();
     let dark = row.iter().filter(|&&pixel| pixel < 128).count() as u32;
     Ok(state.run(config, |runs| {
         runs.level = config.pyramid_level;
