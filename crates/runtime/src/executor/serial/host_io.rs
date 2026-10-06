@@ -16,7 +16,9 @@ use crate::plan::{RuntimeEdge, RuntimeNode};
 
 use crate::executor::queue::pop_edge;
 use crate::executor::serial_direct_slot::pop_direct_edge;
-use crate::executor::{CorrelatedPayload, ExecuteError, Executor, NodeError, NodeHandler};
+use crate::executor::{
+    CorrelatedPayload, ExecuteError, Executor, NodeError, NodeHandler, ProbeTime,
+};
 
 use super::edges::fan_out;
 use super::{edge_is_active, edge_uses_direct_slot, node_is_active};
@@ -91,6 +93,13 @@ pub(crate) fn inject_host_inputs<H: NodeHandler>(
 }
 
 pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
+    let _scope = crate::executor::runtime_alloc_scope();
+    let start = exec
+        .core
+        .run_config
+        .frame_probe
+        .is_some()
+        .then(|| exec.core.clock.now());
     let edges = exec.edges;
     let host_nodes = exec.core.host_nodes.clone();
     for host in host_nodes.iter() {
@@ -115,8 +124,16 @@ pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
             while let Some(payload) =
                 pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors)
             {
+                if let (Some(probe), Some(enqueued_at)) =
+                    (&exec.core.run_config.frame_probe, payload.enqueued_at)
+                {
+                    probe.record_queue_wait(edge_idx, exec.core.clock.elapsed(enqueued_at));
+                }
                 host.handle.push_outbound_ref(port, payload.inner);
             }
         }
+    }
+    if let (Some(probe), Some(start)) = (&exec.core.run_config.frame_probe, start) {
+        probe.add_time(ProbeTime::Drain, exec.core.clock.elapsed(start));
     }
 }

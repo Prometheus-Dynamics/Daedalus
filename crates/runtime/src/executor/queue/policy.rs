@@ -136,6 +136,8 @@ pub struct ApplyPolicyOwnedArgs<'a> {
     pub warning_label: Option<String>,
     pub backpressure: BackpressureStrategy,
     pub data_size_inspectors: &'a RuntimeDataSizeInspectors,
+    /// Stamp the enqueue time for queue-wait timing even below basic metrics (frame probe).
+    pub stamp_enqueue: bool,
 }
 
 pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeError> {
@@ -149,8 +151,10 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
         warning_label,
         backpressure,
         data_size_inspectors,
+        stamp_enqueue,
     } = args;
     let collect_basic = cfg!(feature = "metrics") && telem.metrics_level.is_basic();
+    let stamp = collect_basic || stamp_enqueue;
     let clock = telem.clock().clone();
     let apply_start =
         (cfg!(feature = "metrics") && telem.metrics_level.is_detailed()).then(|| clock.now());
@@ -202,7 +206,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                         )));
                     }
                     _ => {
-                        payload.enqueued_at = collect_basic.then(|| clock.now());
+                        payload.enqueued_at = stamp.then(|| clock.now());
                         trace_edge_enqueue(edge_idx, policy, &payload);
                         let mut lifecycle = DataLifecycleRecord::new(
                             payload.correlation_id,
@@ -265,7 +269,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                             dropped = true;
                             pressure_reason = Some(reason);
                         } else {
-                            payload.enqueued_at = collect_basic.then(|| clock.now());
+                            payload.enqueued_at = stamp.then(|| clock.now());
                             trace_edge_enqueue(edge_idx, policy, &payload);
                             let mut lifecycle = DataLifecycleRecord::new(
                                 payload.correlation_id,
@@ -317,7 +321,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                                 "edge {edge_idx} overflowed bounded lock-free queue"
                             )));
                         } else {
-                            payload.enqueued_at = collect_basic.then(|| clock.now());
+                            payload.enqueued_at = stamp.then(|| clock.now());
                             trace_edge_enqueue(edge_idx, policy, &payload);
                             let mut lifecycle = DataLifecycleRecord::new(
                                 payload.correlation_id,
@@ -356,7 +360,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                         }
                     }
                     BackpressureStrategy::None => {
-                        payload.enqueued_at = collect_basic.then(|| clock.now());
+                        payload.enqueued_at = stamp.then(|| clock.now());
                         trace_edge_enqueue(edge_idx, policy, &payload);
                         let payload_type = payload.inner.type_key().clone();
                         let correlation_id = payload.correlation_id;

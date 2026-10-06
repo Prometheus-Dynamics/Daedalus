@@ -38,11 +38,13 @@ pub use daedalus_runtime::MetricsLevel;
 pub use daedalus_runtime::host_bridge::{
     InboundWait, InboundWaiter, PayloadInspection, PayloadSummary,
 };
+pub use daedalus_runtime::{FrameOverheadReport, FrameTickSample};
 pub use daedalus_runtime::{HostPortConnection, HostPortDescriptor, HostPortDirection};
 pub use engine::Engine;
 pub use error::EngineError;
 pub use host_graph::{
-    HostGraph, HostGraphDriveExit, HostGraphInput, HostGraphLane, HostGraphOutput,
-    HostGraphPayloadInput, HostGraphPayloadOutput, HostGraphStopHandle, HostGraphTurn,
+    DEFAULT_FRAME_OVERHEAD_WINDOW, HostGraph, HostGraphDriveExit, HostGraphInput, HostGraphLane,
+    HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput, HostGraphStopHandle,
+    HostGraphTurn,
 };
 pub use prepared_plan::{PreparedPlan, PreparedRuntimePlan};

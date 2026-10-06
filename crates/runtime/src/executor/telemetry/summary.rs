@@ -109,7 +109,7 @@ impl ExecutionTelemetry {
     }
 }
 
-fn format_compact_duration(duration: Duration) -> String {
+pub(super) fn format_compact_duration(duration: Duration) -> String {
     let nanos = duration.as_nanos();
     if nanos < 1_000 {
         format!("{nanos}ns")

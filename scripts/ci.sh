@@ -128,6 +128,8 @@ cmd_smoke() {
     echo "  -> $bin"
     cargo run -p daedalus-examples --quiet --bin "$bin" >/dev/null
   done
+  echo "  -> frame_chain"
+  FRAME_CHAIN_TICKS=200 cargo run -p daedalus-frame-bench --quiet --example frame_chain >/dev/null
 }
 
 # Type-check only (no linking), so no cross linker or sysroot libraries are needed beyond a C

@@ -20,7 +20,7 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
                 .estimate_payload_bytes(&payload.inner)
         })
         .flatten();
-    if collect_basic_metrics {
+    if collect_basic_metrics || exec.core.run_config.frame_probe.is_some() {
         payload.enqueued_at = Some(exec.core.clock.now());
     }
     if collect_lifecycle {
@@ -61,9 +61,14 @@ pub(crate) fn pop_direct_edge<H: NodeHandler>(
         .direct_slots
         .get(edge_idx)
         .and_then(|slot| slot.access(exec.direct_slot_access).take())?;
-    if collect_basic_metrics && let Some(enqueued_at) = payload.enqueued_at {
+    if let Some(enqueued_at) = payload.enqueued_at {
         let waited = exec.core.clock.elapsed(enqueued_at);
-        exec.core.telemetry.record_edge_wait(edge_idx, waited);
+        if collect_basic_metrics {
+            exec.core.telemetry.record_edge_wait(edge_idx, waited);
+        }
+        if let Some(probe) = &exec.core.run_config.frame_probe {
+            probe.record_queue_wait(edge_idx, waited);
+        }
     }
     if collect_detailed_metrics {
         exec.core.telemetry.record_edge_depth(edge_idx, 0);

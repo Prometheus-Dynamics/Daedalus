@@ -14,6 +14,9 @@ extern crate alloc;
 #[cfg(all(test, not(feature = "std")))]
 extern crate std;
 
+#[cfg(feature = "alloc-probe")]
+pub mod alloc_probe;
+
 #[cfg(all(
     feature = "threads",
     target_family = "wasm",
@@ -122,13 +125,14 @@ pub use config::*;
 pub use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY, NODE_OVERLOADS_KEY};
 pub use executor::{
     AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleStage, DirectPayloadFn,
-    EdgePressureMetrics, EdgePressureReason, ExecuteError, ExecutionTelemetry, Executor,
-    ExecutorMaskError, FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry,
-    FfiPayloadTelemetry, FfiTelemetryReport, FfiWorkerTelemetry, InternalTransferMetrics,
-    MetricsLevel, NodeAllocationSpikeExplanation, NodeError, NodeHandler, NodeMetrics,
-    NodeMetricsMap, NodeResourceMetrics, OwnedExecutor, OwnershipReport, ProfileLevel, Profiler,
-    ResourceMetrics, TelemetryReport, TelemetryReportFilter, estimate_payload_bytes,
-    register_runtime_data_size_inspector,
+    EdgeAdapterClass, EdgeOverheadStats, EdgePressureMetrics, EdgePressureReason, EdgeTickSample,
+    ExecuteError, ExecutionTelemetry, Executor, ExecutorMaskError, FfiAdapterTelemetry,
+    FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry, FfiTelemetryReport,
+    FfiWorkerTelemetry, FrameOverheadReport, FrameOverheadWindow, FrameProbe, FrameStat,
+    FrameTickSample, InternalTransferMetrics, MetricsLevel, NodeAllocationSpikeExplanation,
+    NodeError, NodeHandler, NodeMetrics, NodeMetricsMap, NodeResourceMetrics, OwnedExecutor,
+    OwnershipReport, ProfileLevel, Profiler, ResourceMetrics, TelemetryReport,
+    TelemetryReportFilter, estimate_payload_bytes, register_runtime_data_size_inspector,
 };
 pub use fanin::FanIn;
 pub use handles::{
@@ -136,7 +140,7 @@ pub use handles::{
 };
 pub use host_bridge::{
     DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING, HOST_BRIDGE_META_KEY,
-    HostBridgeConfig, HostBridgeHandle, HostBridgeManager, HostPortStats, InboundWait,
+    HostBridgeConfig, HostBridgeHandle, HostBridgeManager, HostIoTime, HostPortStats, InboundWait,
     InboundWaiter, PayloadInspection, PayloadSummary, bridge_handler, inspect_payload,
 };
 pub use io::{
@@ -147,8 +151,9 @@ pub use plan::{
     HostPortConnection, HostPortDescriptor, HostPortDirection, NODE_COST_META_KEY,
     NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_REQUIRED_INPUTS_META_KEY,
     NodeExecutionKind, NodeFire, RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation,
-    RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeNode, RuntimeNodeExplanation, RuntimePlan,
-    RuntimePlanError, RuntimePlanExplanation, RuntimeSegment, RuntimeSink,
+    RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeEdgeTransport, RuntimeNode,
+    RuntimeNodeExplanation, RuntimePlan, RuntimePlanError, RuntimePlanExplanation, RuntimeSegment,
+    RuntimeSink,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
 pub use state::{

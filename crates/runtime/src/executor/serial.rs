@@ -3,7 +3,9 @@ use daedalus_planner::{ComputeAffinity, NodeRef};
 
 use crate::state::ExecutionContext;
 
-use super::{ExecuteError, ExecutionTelemetry, Executor, NodeFailure, NodeHandler};
+use super::{
+    ExecuteError, ExecutionTelemetry, Executor, NodeFailure, NodeHandler, ProbeCount, ProbeTime,
+};
 
 mod edges;
 mod host_io;
@@ -28,7 +30,17 @@ pub(crate) fn run_with_boundaries_timed<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     costs: Option<SegmentCosts<'_>>,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
+    let _scope = super::runtime_alloc_scope();
+    let inject_start = exec
+        .core
+        .run_config
+        .frame_probe
+        .is_some()
+        .then(|| exec.core.clock.now());
     inject_host_inputs(exec)?;
+    if let (Some(probe), Some(start)) = (&exec.core.run_config.frame_probe, inject_start) {
+        probe.add_time(ProbeTime::Inject, exec.core.clock.elapsed(start));
+    }
     let order = exec.schedule_order;
     run_order_timed(exec, order, costs).map(|mut telemetry| {
         telemetry.recompute_unattributed_runtime_duration();
@@ -62,6 +74,8 @@ fn run_order_timed<H: NodeHandler>(
         metrics_level = ?exec.core.run_config.metrics_level,
     );
     let _graph_span = graph_span.enter();
+    let _scope = super::runtime_alloc_scope();
+    let probe = exec.core.run_config.frame_probe.clone();
     let collect_basic_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_basic();
     let collect_detailed_metrics =
@@ -103,7 +117,11 @@ fn run_order_timed<H: NodeHandler>(
             crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node waiting for inputs");
             continue;
         }
+        let collect_start = probe.is_some().then(|| clock.now());
         let inputs = collect_inputs(exec, node_idx, wait_all)?;
+        if let (Some(probe), Some(start)) = (&probe, collect_start) {
+            probe.add_time(ProbeTime::Collect, clock.elapsed(start));
+        }
         if !required_inputs_ready(exec, node_idx, &inputs) {
             // Not ready this tick: a connected required input has no value (its producer was
             // skipped or pushed nothing). Optional inputs never block.
@@ -147,7 +165,8 @@ fn run_order_timed<H: NodeHandler>(
         if collect_detailed_metrics {
             exec.core.telemetry.start_node_call(node_idx);
         }
-        let node_start = (collect_basic_metrics || collect_trace).then(|| clock.now());
+        let node_start =
+            (collect_basic_metrics || collect_trace || probe.is_some()).then(|| clock.now());
         let cpu_start = exec
             .core
             .run_config
@@ -174,7 +193,7 @@ fn run_order_timed<H: NodeHandler>(
             exec.core.state.clear_node_custom_metrics(&node.id);
         }
 
-        let handler_start = collect_detailed_metrics.then(|| clock.now());
+        let handler_start = (collect_detailed_metrics || probe.is_some()).then(|| clock.now());
         let handler_span = crate::trace::debug_span!(
             target: "daedalus_runtime::executor",
             "runtime_handler_call",
@@ -183,12 +202,19 @@ fn run_order_timed<H: NodeHandler>(
         );
         let run_result = {
             let _handler_span = handler_span.enter();
+            let _scope = super::node_alloc_scope();
             exec.handler.run(node, &ctx, &mut io)
         };
         if let Some(handler_start) = handler_start {
-            exec.core
-                .telemetry
-                .record_node_handler_duration(node_idx, clock.elapsed(handler_start));
+            let handler_duration = clock.elapsed(handler_start);
+            if collect_detailed_metrics {
+                exec.core
+                    .telemetry
+                    .record_node_handler_duration(node_idx, handler_duration);
+            }
+            if let Some(probe) = &probe {
+                probe.add_time(ProbeTime::Handlers, handler_duration);
+            }
         }
         let flush_result = if run_result.is_ok() {
             io.flush().err()
@@ -240,6 +266,10 @@ fn run_order_timed<H: NodeHandler>(
         let elapsed = node_start
             .map(|start| clock.elapsed(start))
             .unwrap_or_default();
+        if let Some(probe) = &probe {
+            probe.add_time(ProbeTime::NodeRuns, elapsed);
+            probe.add_count(ProbeCount::Nodes, 1);
+        }
         if let Some(cpu_start) = cpu_start
             && let Some(cpu_end) = super::thread_cpu_time()
         {

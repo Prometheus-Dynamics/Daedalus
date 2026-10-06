@@ -18,6 +18,7 @@ use crate::error::EngineError;
 
 mod bindings;
 mod drive;
+mod frame_overhead;
 mod introspect;
 
 pub use bindings::{
@@ -25,6 +26,8 @@ pub use bindings::{
     HostGraphRunInput, HostGraphSubscription,
 };
 pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
+pub use frame_overhead::DEFAULT_FRAME_OVERHEAD_WINDOW;
+pub(crate) use frame_overhead::FrameOverheadState;
 
 /// In-process graph runner for host-driven applications.
 ///
@@ -52,6 +55,8 @@ pub struct HostGraph<H: NodeHandler> {
     /// The registry's type index (builtins only without a registry): resolves typed feeds and
     /// checks raw payloads fed into the graph.
     pub(crate) types: TypeIndex,
+    /// Frame-path overhead recording ([`HostGraph::enable_frame_overhead`]).
+    pub(crate) frame_overhead: Option<Box<FrameOverheadState>>,
 }
 
 pub struct HostGraphStep<T> {
@@ -340,6 +345,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     /// Execute one graph tick. Pair with `push`/`drain_*` for advanced multi-input workflows.
     pub fn tick(&mut self) -> Result<ExecutionTelemetry, EngineError> {
+        self.frame_commit();
         self.runner.run_telemetry()
     }
 
@@ -350,6 +356,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         output_port: impl AsRef<str>,
     ) -> Result<Option<(ExecutionTelemetry, Option<Payload>)>, EngineError> {
         self.types.check_payload(&payload)?;
+        self.frame_commit();
         self.runner
             .executor
             .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
@@ -404,6 +411,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), EngineError> {
         self.types.check_payload(&payload)?;
+        self.frame_commit();
         self.runner
             .executor
             .run_direct_host_route(route, payload)
@@ -416,6 +424,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<Option<Payload>, EngineError> {
         self.types.check_payload(&payload)?;
+        self.frame_commit();
         self.runner
             .executor
             .run_direct_host_route_payload(route, payload)

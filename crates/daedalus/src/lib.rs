@@ -40,6 +40,9 @@ pub use daedalus_planner::{
 pub use daedalus_registry as registry;
 pub use daedalus_runtime as runtime;
 pub use daedalus_runtime::FanIn;
+/// Counting global allocator with node/runtime/host attribution (feature `alloc-probe`).
+#[cfg(feature = "alloc-probe")]
+pub use daedalus_runtime::alloc_probe;
 pub use daedalus_runtime::graph_builder;
 pub use daedalus_runtime::handles::{NodeHandle, NodeHandleLike, PortHandle};
 #[cfg(feature = "plugins")]

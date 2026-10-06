@@ -23,6 +23,7 @@ The facade crate is published as `daedalus-rs` and imported as `daedalus`.
 - `crates/gpu`: GPU handle types, backend selection, mock/noop/wgpu backends, and shader dispatch helpers.
 - `crates/macros`: node, config, transport, type-key, value, and GPU derive macros.
 - `crates/ffi`: shared FFI contract, host runner, and Python/Node/Java/C++ SDK targets.
+- `crates/frame-bench`: frame-path overhead harness (synthetic `daedalus:frame` sources, no-op stage chain, `frame_chain` bench and example); see [docs/runtime-diagnostics.md](docs/runtime-diagnostics.md#frame-path-overhead).
 - `crates/mcu`: MCU profile: graphs planned on the host at build time (`daedalus-mcu-build`) and run allocation-free on microcontrollers from generated code (`daedalus-mcu`, `#![no_std]`, no heap); see [docs/mcu.md](docs/mcu.md).
 - `examples`: runnable graph, runtime, GPU, metrics, and FFI examples.
 - `testing`: local and CI validation notes.

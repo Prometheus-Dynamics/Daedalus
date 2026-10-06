@@ -6,6 +6,8 @@ use daedalus_core::platform::{Clock, Instant};
 use daedalus_planner::GroupMetadata;
 
 mod basics;
+mod frame;
+mod frame_report;
 mod lifecycle;
 mod metrics;
 mod node_map;
@@ -16,6 +18,9 @@ mod resources;
 mod summary;
 
 pub use basics::{Histogram, MetricsLevel, ProfileLevel, Profiler};
+pub use frame::{EdgeAdapterClass, EdgeTickSample, FrameProbe, FrameTickSample};
+pub(crate) use frame::{ProbeCount, ProbeTime, TickStart};
+pub use frame_report::{EdgeOverheadStats, FrameOverheadReport, FrameOverheadWindow, FrameStat};
 pub use lifecycle::{
     DataLifecycleEvent, DataLifecycleRecord, DataLifecycleStage, NodeFailure, TraceEvent,
 };

@@ -45,6 +45,9 @@ gpu-mock = ["gpu", "daedalus-runtime/gpu-mock", "daedalus-gpu/gpu-mock"]
 lockfree-queues = ["daedalus-runtime/lockfree-queues"]
 executor-pool = ["threads", "daedalus-runtime/executor-pool"]
 metrics = ["daedalus-runtime/metrics"]
+# Per-tick runtime/node/host allocation counts in `HostGraph::frame_overhead` when the
+# `daedalus_runtime::alloc_probe::CountingAllocator` is the global allocator.
+alloc-probe = ["std", "daedalus-runtime/alloc-probe"]
 snapshots = ["daedalus-runtime/snapshots"]
 plugins = ["daedalus-runtime/plugins"]
 

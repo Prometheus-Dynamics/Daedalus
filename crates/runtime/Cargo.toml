@@ -23,6 +23,7 @@ path = "src/lib.rs"
 # and plugin; host-only features only change host-side execution.
 boundary-features = ["gpu", "gpu-mock", "plugins", "std"]
 host-only-features = [
+    "alloc-probe",
     "executor-pool",
     "lockfree-queues",
     "metrics",
@@ -63,6 +64,9 @@ executor-pool = ["threads", "rayon"]
 # compare-and-swap, where it has none.
 lockfree-queues = ["crossbeam-queue"]
 metrics = []
+# `alloc_probe`: a counting global allocator and per-thread scopes attributing allocations to
+# node handlers, the runtime or host-bridge calls (`HostGraph::frame_overhead` reports them).
+alloc-probe = ["std"]
 snapshots = []
 plugins = []
 

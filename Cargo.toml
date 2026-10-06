@@ -13,6 +13,7 @@ members = [
     "crates/nodes",
     "crates/engine",
     "crates/daemon",
+    "crates/frame-bench",
     "crates/ffi/core",
     "crates/ffi/host",
     "crates/ffi/python",
