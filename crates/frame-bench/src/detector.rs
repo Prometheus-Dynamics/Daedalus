@@ -3,7 +3,9 @@
 //! only touch their inputs and refill pooled outputs, so the graph's own per-frame cost is what
 //! remains.
 //!
-//! Every stage takes the frame owner type by reference (`&SyntheticFrame`), a `Copy` config
+//! Mask prep reads pixels through `FrameView::plane_bytes` (the owner feed's provider adapter
+//! lends it the frame without a copy); the other stages take the owner type by reference
+//! (`&SyntheticFrame`) and read only its metadata. Every stage takes a `Copy` config
 //! struct by value (`#[derive(NodeConfig)]`, with enum, integer, float and bool fields fed by
 //! graph constants), its state by `&mut` and the [`ExecutionContext`], and returns `Arc`'d
 //! outputs it reuses across frames; validation returns two. The frame fans out to four stages.
@@ -35,7 +37,7 @@ use daedalus::{
         plugins::{PluginError, PluginRegistry},
         state::ExecutionContext,
     },
-    transport::FrameSource,
+    transport::{FrameSource, FrameView},
     type_key,
 };
 use serde::{Deserialize, Serialize};
@@ -338,17 +340,24 @@ fn size(frame: &SyntheticFrame) -> (u32, u32) {
     state(MaskPrepState)
 )]
 pub fn mask_prep_runs(
-    frame: &SyntheticFrame,
+    frame: FrameView<'_>,
     config: MaskPrepConfig,
     state: &mut MaskPrepState,
     ctx: &ExecutionContext,
 ) -> Result<Arc<Runs>, NodeError> {
     let _ = ctx;
-    let (width, height) = size(frame);
+    let (width, height) = (frame.width(), frame.height());
+    // The stage that reads pixels: a CPU access to the plane, ended when the guard drops.
+    let pixels = frame
+        .plane_bytes(0)
+        .ok_or_else(|| NodeError::InvalidInput("frame plane is not CPU-readable".into()))?;
+    let row = pixels.get(..width as usize).unwrap_or_default();
+    let dark = row.iter().filter(|&&pixel| pixel < 128).count() as u32;
     Ok(state.run(config, |runs| {
         runs.level = config.pyramid_level;
         runs.rows.clear();
-        runs.rows.extend((0..4).map(|row| (row, 0, width >> 1)));
+        runs.rows
+            .extend((0..4).map(|row| (row, dark.min(width), width >> 1)));
         std::hint::black_box((height, config.radius, config.invert));
     }))
 }

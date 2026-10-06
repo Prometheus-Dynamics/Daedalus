@@ -45,16 +45,13 @@ fn detector_frames_allocate_nothing() {
         let context = format!("{}\n{run}", shape.as_str());
         assert!(report.alloc_probe, "the counting allocator is installed");
         assert_eq!(report.counter("nodes").expect("nodes").p50, 5, "{context}");
-        for counter in [
-            "copies",
-            "zero_copy_adapts",
-            "runtime_allocs",
-            "node_allocs",
-            "host_allocs",
-        ] {
+        for counter in ["copies", "runtime_allocs", "node_allocs", "host_allocs"] {
             let max = report.counter(counter).expect(counter).max;
             assert_eq!(max, 0, "{counter}: {context}");
         }
+        // Mask prep's `FrameView` is the provider's view of the owner frame, lent in place.
+        let adapts = report.counter("zero_copy_adapts").expect("adapts");
+        assert_eq!((adapts.p50, adapts.max), (1, 1), "{context}");
         let [runtime, node, host, _other] = run.allocs_per_frame.expect("alloc probe");
         assert_eq!((runtime, node, host), (0.0, 0.0, 0.0), "{context}");
     }
