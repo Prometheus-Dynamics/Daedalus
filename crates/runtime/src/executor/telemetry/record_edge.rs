@@ -105,6 +105,20 @@ impl ExecutionTelemetry {
         entry.copied_bytes = entry.copied_bytes.saturating_add(copied_bytes);
     }
 
+    /// A payload handed straight to the consumer of fused edge `edge_idx`.
+    pub fn record_edge_fused_handoff(&mut self, edge_idx: usize, unique: bool) {
+        if !cfg!(feature = "metrics") || !self.metrics_level.is_detailed() {
+            return;
+        }
+        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        if unique {
+            entry.unique_handoffs = entry.unique_handoffs.saturating_add(1);
+        } else {
+            entry.shared_handoffs = entry.shared_handoffs.saturating_add(1);
+        }
+        entry.fused_handoffs = entry.fused_handoffs.saturating_add(1);
+    }
+
     pub fn record_edge_transport_apply_duration(&mut self, edge_idx: usize, duration: Duration) {
         if !cfg!(feature = "metrics") {
             return;

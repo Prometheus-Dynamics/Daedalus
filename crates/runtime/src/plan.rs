@@ -3,6 +3,7 @@ use crate::prelude::*;
 mod demand;
 mod explain;
 mod explain_flags;
+mod fusion;
 mod host_ports;
 mod policy;
 mod transports;
@@ -30,9 +31,11 @@ use alloc::collections::{BTreeMap, BTreeSet};
 pub(crate) use demand::active_nodes_mask_for_sinks;
 pub use demand::{DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry};
 pub use explain::{
-    RuntimeBranchExplanation, RuntimeEdgeExplanation, RuntimeEdgeHandoff, RuntimeNodeExplanation,
-    RuntimePlanExplanation,
+    RuntimeBranchExplanation, RuntimeEdgeExplanation, RuntimeEdgeHandoff,
+    RuntimeFusedUnitExplanation, RuntimeNodeExplanation, RuntimePlanExplanation,
 };
+pub(crate) use fusion::{FusionAnalysis, analyze_fusion};
+pub use fusion::{FusionBlock, NODE_FUSION_META_KEY};
 pub use host_ports::{HostPortConnection, HostPortDescriptor, HostPortDirection};
 use policy::edge_policy_from_metadata;
 pub use policy::{

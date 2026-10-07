@@ -155,6 +155,6 @@ impl<H: NodeHandler> ExecutorConfigTarget for Executor<'_, H> {
     }
 
     fn segments_len(&self) -> usize {
-        self.segments.len()
+        self.schedule.segments.len()
     }
 }

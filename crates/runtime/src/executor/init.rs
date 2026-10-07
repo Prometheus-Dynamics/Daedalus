@@ -4,8 +4,8 @@ use crate::prelude::*;
 use super::collect_data_edges;
 use super::{
     CompiledSchedule, DirectSlot, EdgeStorage, ExecutorBuildError, NodeMetadataStore,
-    build_compiled_schedule, build_node_execution_metadata, direct_edge_set, direct_slots,
-    edge_maps, is_host_bridge_node, normalize_runtime_nodes, queue, resolve_parallel_workers,
+    ScheduleSource, build_compiled_schedule, build_node_execution_metadata, direct_edge_set,
+    direct_slots, is_host_bridge_node, queue, resolve_parallel_workers,
 };
 use crate::handles::PortId;
 use crate::plan::{NODE_REQUIRED_INPUTS_META_KEY, NodeFire, RuntimeEdge, RuntimeNode, RuntimePlan};
@@ -64,12 +64,17 @@ pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, Ex
     let host_bridges = nodes.iter().map(is_host_bridge_node).collect();
     let direct_slots = direct_slots(&plan.edges);
     let schedule = Arc::new(build_compiled_schedule(
-        &nodes,
-        &plan.edges,
-        &plan.segments,
-        &plan.schedule_order,
+        ScheduleSource {
+            nodes: &nodes,
+            edges: &plan.edges,
+            transports: &plan.edge_transports,
+            segments: &plan.segments,
+            schedule_order: &plan.schedule_order,
+            backpressure: &plan.backpressure,
+        },
+        true,
     ));
-    let parallel_workers = resolve_parallel_workers(None, plan.segments.len());
+    let parallel_workers = resolve_parallel_workers(None, schedule.segments.len());
     #[cfg(feature = "gpu")]
     let data_edges = Arc::new(collect_data_edges(&nodes, &plan.edges));
 
@@ -145,4 +150,49 @@ fn required_input_edges(
             }
         })
         .collect()
+}
+
+fn normalize_runtime_nodes(nodes: &[RuntimeNode]) -> Result<Vec<RuntimeNode>, ExecutorBuildError> {
+    let mut nodes_vec = nodes.to_vec();
+    for node in &mut nodes_vec {
+        if node.stable_id == 0 {
+            node.stable_id = daedalus_core::stable_id::stable_id128("node", &node.id);
+        }
+    }
+
+    {
+        let mut seen: HashMap<u128, &str> = HashMap::new();
+        for node in &nodes_vec {
+            if let Some(previous) = seen.insert(node.stable_id, node.id.as_str())
+                && previous != node.id
+            {
+                return Err(ExecutorBuildError::StableIdCollision {
+                    previous: previous.to_string(),
+                    current: node.id.clone(),
+                    stable_id: node.stable_id,
+                });
+            }
+        }
+    }
+    Ok(nodes_vec)
+}
+
+/// Build adjacency maps of incoming/outgoing edge indices per node.
+fn edge_maps(edges: &[RuntimeEdge]) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
+    let mut incoming: Vec<Vec<usize>> = Vec::new();
+    let mut outgoing: Vec<Vec<usize>> = Vec::new();
+    let grow = |v: &mut Vec<Vec<usize>>, idx: usize| {
+        while v.len() <= idx {
+            v.push(Vec::new());
+        }
+    };
+    for (idx, edge) in edges.iter().enumerate() {
+        let f = edge.from().0;
+        let t = edge.to().0;
+        grow(&mut incoming, f.max(t));
+        grow(&mut outgoing, f.max(t));
+        outgoing[f].push(idx);
+        incoming[t].push(idx);
+    }
+    (incoming, outgoing)
 }

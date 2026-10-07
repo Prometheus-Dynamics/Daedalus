@@ -115,7 +115,11 @@ impl fmt::Display for RuntimeEdgeExplanation {
         if self.crosses_residency {
             f.write_str(" crosses_residency")?;
         }
-        Ok(())
+        match &self.fusion_block {
+            None if self.fused => f.write_str(" fused"),
+            Some(block) => write!(f, " unfused: {block}"),
+            None => Ok(()),
+        }
     }
 }
 
@@ -167,6 +171,20 @@ impl fmt::Display for RuntimePlanExplanation {
         }
         self.write_flagged(f, "copies_frame", &self.copying_edges)?;
         writeln!(f)?;
-        self.write_flagged(f, "crosses_residency", &self.crossing_edges)
+        self.write_flagged(f, "crosses_residency", &self.crossing_edges)?;
+        f.write_str("\nfused_units: ")?;
+        if self.fused_units.is_empty() {
+            return f.write_str("none");
+        }
+        for (idx, unit) in self.fused_units.iter().enumerate() {
+            let sep = if idx == 0 { "" } else { "; " };
+            write!(
+                f,
+                "{sep}[{}] edges {:?}",
+                unit.node_ids.join(" -> "),
+                unit.edges
+            )?;
+        }
+        Ok(())
     }
 }

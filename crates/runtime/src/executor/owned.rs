@@ -2,9 +2,9 @@ use super::ExecutorConfigTarget;
 use super::{
     AdaptiveState, CompiledSchedule, ConstInputStore, DirectSlotAccess, ExecuteError,
     ExecutionTelemetry, Executor, ExecutorBuildError, ExecutorCore, ExecutorMaskError,
-    MetricsLevel, NodeHandler, RuntimeDataSizeInspectors, apply_patch_to_const_inputs,
-    build_executor_init, node_const_inputs, reset_run_storage, run_adaptive_on, run_parallel_on,
-    serial,
+    MetricsLevel, NodeHandler, RuntimeDataSizeInspectors, ScheduleSource,
+    apply_patch_to_const_inputs, build_compiled_schedule, build_executor_init, node_const_inputs,
+    reset_run_storage, run_adaptive_on, run_parallel_on, serial,
 };
 use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
 use crate::portable::Arc;
@@ -57,7 +57,7 @@ impl<H: NodeHandler> ExecutorConfigTarget for OwnedExecutor<H> {
     }
 
     fn segments_len(&self) -> usize {
-        self.segments.len()
+        self.schedule.segments.len()
     }
 }
 
@@ -265,6 +265,26 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     #[cfg(not(feature = "gpu"))]
     pub fn without_gpu(mut self) -> Self {
         self.clear_gpu();
+        self
+    }
+
+    /// Run chains of single-consumer CPU nodes as fused units (the default) or, with `false`,
+    /// every node and edge on its own (see "Node fusion" in `docs/development.md`).
+    pub fn with_node_fusion(mut self, enabled: bool) -> Self {
+        self.schedule = Arc::new(build_compiled_schedule(
+            ScheduleSource {
+                nodes: &self.nodes,
+                edges: &self.edges,
+                transports: &self.edge_transports,
+                segments: &self.segments,
+                schedule_order: &self.schedule_order,
+                backpressure: &self.backpressure,
+            },
+            enabled,
+        ));
+        self.adaptive.forget_segments();
+        let pool_size = self.core.run_config.pool_size;
+        self.apply_pool_size(pool_size);
         self
     }
 

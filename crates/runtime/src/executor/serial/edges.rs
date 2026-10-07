@@ -12,14 +12,17 @@ use crate::executor::{
     NodeHandler, ProbeCount,
 };
 
+use super::fused::{Carry, FusedOutputs, take_carried};
 use super::{edge_is_active, edge_uses_direct_slot};
 
 /// Pop what the incoming edges of `node_idx` hold: everything, or with
-/// `one_per_edge` (a `fire = "all"` node) only the oldest value of each edge.
+/// `one_per_edge` (a `fire = "all"` node) only the oldest value of each edge. Fused edges hand
+/// over what `carry` holds for them.
 pub(super) fn collect_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
     one_per_edge: bool,
+    carry: &mut Carry,
 ) -> Result<Vec<NodePort>, ExecuteError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
@@ -35,6 +38,10 @@ pub(super) fn collect_inputs<H: NodeHandler>(
         };
         let to_port = edge.target_port_id();
         if !edge_is_active(exec, edge_idx) {
+            continue;
+        }
+        if !carry.is_empty() && take_carried(exec, node_idx, edge_idx, to_port, carry, &mut inputs)
+        {
             continue;
         }
         if edge_uses_direct_slot(exec, edge_idx) {
@@ -295,10 +302,13 @@ fn adapter_path_detail(edge_transport: &crate::plan::RuntimeEdgeTransport) -> Op
     ))
 }
 
+/// Deliver `node_idx`'s outputs to its edges; `fused` carries those of fused ports to the next
+/// node instead.
 pub(super) fn publish_outputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
     mut outputs: Vec<NodePort>,
+    mut fused: Option<FusedOutputs<'_>>,
 ) -> Result<(), NodeError> {
     let collect_detailed_metrics =
         cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
@@ -318,6 +328,13 @@ pub(super) fn publish_outputs<H: NodeHandler>(
                 .telemetry
                 .record_node_transport_out(node_idx, bytes);
         }
+        let payload = match fused.as_mut() {
+            Some(fused) => match fused.try_carry(exec, &port, payload) {
+                Some(payload) => payload,
+                None => continue,
+            },
+            None => payload,
+        };
         let routes = |exec: &Executor<'_, H>, edge_idx: usize| {
             edges[edge_idx].source_port_id() == &port && edge_is_active(exec, edge_idx)
         };

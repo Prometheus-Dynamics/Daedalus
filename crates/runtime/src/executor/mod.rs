@@ -47,8 +47,9 @@ pub use queue::EdgeStorage;
 #[cfg(feature = "threads")]
 pub(crate) use schedule_compile::CompiledSegmentGraph;
 pub(crate) use schedule_compile::{
-    CompiledSchedule, build_compiled_schedule, build_node_execution_metadata, direct_edge_set,
-    direct_slots, is_host_bridge_node, resolve_parallel_workers,
+    CompiledSchedule, FusionTables, ScheduleSource, build_compiled_schedule,
+    build_node_execution_metadata, direct_edge_set, direct_slots, is_host_bridge_node,
+    resolve_parallel_workers,
 };
 pub use telemetry::{
     AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
@@ -112,6 +113,7 @@ pub struct Executor<'a, H: NodeHandler> {
     pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) data_edges: Arc<HashSet<usize>>,
+    /// The plan's segments (the schedule's merge fused units).
     pub(crate) segments: &'a [RuntimeSegment],
     pub(crate) schedule_order: &'a [NodeRef],
     pub(crate) const_inputs: ConstInputStore,
@@ -241,33 +243,6 @@ pub(crate) fn reset_run_storage(
         }
         slot.clear();
     }
-}
-
-pub(crate) fn normalize_runtime_nodes(
-    nodes: &[RuntimeNode],
-) -> Result<Vec<RuntimeNode>, ExecutorBuildError> {
-    let mut nodes_vec = nodes.to_vec();
-    for node in &mut nodes_vec {
-        if node.stable_id == 0 {
-            node.stable_id = daedalus_core::stable_id::stable_id128("node", &node.id);
-        }
-    }
-
-    {
-        let mut seen: HashMap<u128, &str> = HashMap::new();
-        for node in &nodes_vec {
-            if let Some(previous) = seen.insert(node.stable_id, node.id.as_str())
-                && previous != node.id
-            {
-                return Err(ExecutorBuildError::StableIdCollision {
-                    previous: previous.to_string(),
-                    current: node.id.clone(),
-                    stable_id: node.stable_id,
-                });
-            }
-        }
-    }
-    Ok(nodes_vec)
 }
 
 impl<'a, H: NodeHandler> Executor<'a, H> {
@@ -501,6 +476,26 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     #[cfg(not(feature = "gpu"))]
     pub fn without_gpu(mut self) -> Self {
         self.clear_gpu();
+        self
+    }
+
+    /// Run chains of single-consumer CPU nodes as fused units (the default) or, with `false`,
+    /// every node and edge on its own (see "Node fusion" in `docs/development.md`).
+    pub fn with_node_fusion(mut self, enabled: bool) -> Self {
+        self.schedule = Arc::new(build_compiled_schedule(
+            ScheduleSource {
+                nodes: &self.nodes,
+                edges: self.edges,
+                transports: self.edge_transports,
+                segments: self.segments,
+                schedule_order: self.schedule_order,
+                backpressure: &self.backpressure,
+            },
+            enabled,
+        ));
+        self.adaptive.forget_segments();
+        let pool_size = self.core.run_config.pool_size;
+        self.apply_pool_size(pool_size);
         self
     }
 
@@ -772,26 +767,6 @@ pub(crate) fn thread_cpu_time() -> Option<Duration> {
         }
     }
     None
-}
-
-/// Build adjacency maps of incoming/outgoing edge indices per node.
-pub(crate) fn edge_maps(edges: &[EdgeSpec]) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
-    let mut incoming: Vec<Vec<usize>> = Vec::new();
-    let mut outgoing: Vec<Vec<usize>> = Vec::new();
-    let grow = |v: &mut Vec<Vec<usize>>, idx: usize| {
-        while v.len() <= idx {
-            v.push(Vec::new());
-        }
-    };
-    for (idx, edge) in edges.iter().enumerate() {
-        let f = edge.from().0;
-        let t = edge.to().0;
-        grow(&mut incoming, f.max(t));
-        grow(&mut outgoing, f.max(t));
-        outgoing[f].push(idx);
-        incoming[t].push(idx);
-    }
-    (incoming, outgoing)
 }
 
 #[cfg(test)]

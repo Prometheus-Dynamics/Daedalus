@@ -54,9 +54,11 @@ pub(crate) enum ProbeCount {
     NodeAllocs,
     RuntimeAllocBytes,
     NodeAllocBytes,
+    /// Payloads handed along fused edges, bypassing slots and queues.
+    FusedHandoffs,
 }
 
-const COUNTS: usize = 12;
+const COUNTS: usize = 13;
 
 /// What an edge's adapter path does to the payload (see `RuntimeEdgeTransport::copies_data`).
 #[derive(
@@ -96,6 +98,7 @@ struct EdgeCells {
     wait_ns: AtomicU64,
     adapter_ns: AtomicU64,
     adapts: AtomicU64,
+    fused: AtomicU64,
 }
 
 /// One tick's per-edge overhead.
@@ -107,6 +110,9 @@ pub struct EdgeTickSample {
     pub adapter_ns: u64,
     /// Adapter path runs.
     pub adapts: u64,
+    /// Payloads handed straight to the consumer (a fused edge).
+    #[serde(default)]
+    pub fused: u64,
 }
 
 /// One tick of a host-driven graph, broken down by where its time went (ns) plus its copy and
@@ -161,6 +167,9 @@ pub struct FrameTickSample {
     pub host_allocs: u64,
     pub runtime_alloc_bytes: u64,
     pub node_alloc_bytes: u64,
+    /// Payloads handed along fused edges (no slot or queue).
+    #[serde(default)]
+    pub fused_handoffs: u64,
 }
 
 /// Per-tick overhead counters shared by an executor and its host (see the module docs).
@@ -232,6 +241,14 @@ impl FrameProbe {
     #[inline]
     pub(crate) fn add_count(&self, count: ProbeCount, n: u64) {
         self.counts[count as usize].fetch_add(n, Relaxed);
+    }
+
+    /// One payload handed along fused edge `edge_idx`.
+    pub(crate) fn record_fused(&self, edge_idx: usize) {
+        self.add_count(ProbeCount::FusedHandoffs, 1);
+        if let Some(edge) = self.edges.get(edge_idx) {
+            edge.fused.fetch_add(1, Relaxed);
+        }
     }
 
     pub(crate) fn record_queue_wait(&self, edge_idx: usize, waited: Duration) {
@@ -347,11 +364,13 @@ impl FrameProbe {
         sample.node_allocs = count(ProbeCount::NodeAllocs);
         sample.runtime_alloc_bytes = count(ProbeCount::RuntimeAllocBytes);
         sample.node_alloc_bytes = count(ProbeCount::NodeAllocBytes);
+        sample.fused_handoffs = count(ProbeCount::FusedHandoffs);
         for (cells, out) in self.edges.iter().zip(edges.iter_mut()) {
             *out = EdgeTickSample {
                 wait_ns: read(&cells.wait_ns),
                 adapter_ns: read(&cells.adapter_ns),
                 adapts: read(&cells.adapts),
+                fused: read(&cells.fused),
             };
         }
     }

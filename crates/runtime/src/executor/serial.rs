@@ -6,9 +6,11 @@ use super::{
 };
 
 mod edges;
+mod fused;
 mod host_io;
 
 use edges::{collect_inputs, publish_outputs};
+use fused::{Carry, FusedOutputs};
 pub(crate) use host_io::{HostNodeIo, drain_host_outputs, inject_host_inputs, resolve_host_nodes};
 
 pub fn run<H: NodeHandler>(mut exec: Executor<'_, H>) -> Result<ExecutionTelemetry, ExecuteError> {
@@ -87,8 +89,14 @@ fn run_order_timed<H: NodeHandler>(
     if collect_basic_metrics {
         exec.core.telemetry.node_metrics.reserve_nodes(nodes.len());
     }
+    // Profile and trace levels record each edge's enqueue and dequeue, so they run unfused.
+    let fusion = exec.schedule.fusion.clone().filter(|_| {
+        !(cfg!(feature = "metrics")
+            && (exec.core.run_config.metrics_level.is_profile() || collect_trace))
+    });
+    let mut carry = Carry::new();
 
-    for node_ref in order.iter().copied() {
+    for (pos, node_ref) in order.iter().copied().enumerate() {
         let node_idx = node_ref.0;
         if !node_is_active(exec, node_idx) {
             continue;
@@ -117,7 +125,8 @@ fn run_order_timed<H: NodeHandler>(
             continue;
         }
         let collect_start = probe.is_some().then(|| clock.now());
-        let inputs = collect_inputs(exec, node_idx, wait_all)?;
+        let inputs = collect_inputs(exec, node_idx, wait_all, &mut carry)?;
+        debug_assert!(carry.is_empty(), "fused payloads go to the next node");
         if let (Some(probe), Some(start)) = (&probe, collect_start) {
             probe.add_time(ProbeTime::Collect, clock.elapsed(start));
         }
@@ -240,7 +249,8 @@ fn run_order_timed<H: NodeHandler>(
                 error,
             });
         } else {
-            if let Err(error) = publish_outputs(exec, node_idx, outputs) {
+            let fused = FusedOutputs::of(exec, fusion.as_deref(), node_idx, order, pos, &mut carry);
+            if let Err(error) = publish_outputs(exec, node_idx, outputs, fused) {
                 record_failure(&mut exec.core.telemetry, node_idx, &node.id, &error);
                 if exec.core.run_config.fail_fast {
                     return Err(ExecuteError::HandlerFailed {
@@ -315,7 +325,11 @@ fn run_order_timed<H: NodeHandler>(
     {
         return Err(error);
     }
-    Ok(core::mem::take(&mut exec.core.telemetry))
+    // A parallel worker runs several segments on one snapshot: what it leaves keeps the level.
+    let level = exec.core.telemetry.metrics_level;
+    let telemetry = core::mem::take(&mut exec.core.telemetry);
+    exec.core.telemetry.metrics_level = level;
+    Ok(telemetry)
 }
 
 fn node_is_active<H: NodeHandler>(exec: &Executor<'_, H>, node_idx: usize) -> bool {

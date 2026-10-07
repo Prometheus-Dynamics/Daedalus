@@ -62,6 +62,14 @@ pub(crate) struct AdaptiveState {
 }
 
 impl AdaptiveState {
+    /// Drop what was measured per segment (the segments changed), keeping the dispatch cost.
+    pub(crate) fn forget_segments(&mut self) {
+        *self = Self {
+            dispatch_ns: self.dispatch_ns,
+            ..Self::default()
+        };
+    }
+
     pub(crate) fn set_dispatch_overhead(&mut self, overhead: Duration) {
         self.dispatch_ns = Some(overhead.as_nanos() as f64);
     }

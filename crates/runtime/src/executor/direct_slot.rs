@@ -50,6 +50,11 @@ impl DirectSlot {
         }
     }
 
+    /// Whether the slot keeps every payload rather than only the newest.
+    pub(crate) fn keeps_all(&self) -> bool {
+        self.keep_all
+    }
+
     pub(crate) fn serial(&self) -> SerialDirectSlot<'_> {
         SerialDirectSlot { slot: self }
     }

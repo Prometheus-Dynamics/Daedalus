@@ -45,7 +45,7 @@ where
         pool.fan_out(workers, &|| {
             let mut worker = shared.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
             queue.drain(|segment| {
-                let order = shared
+                let order = schedule
                     .segments
                     .get(segment)
                     .map_or(&[][..], |segment| segment.nodes.as_slice());

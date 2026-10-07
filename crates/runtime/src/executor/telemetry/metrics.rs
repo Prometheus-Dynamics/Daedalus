@@ -474,6 +474,9 @@ pub struct EdgeMetrics {
     pub unique_handoffs: u64,
     #[serde(default)]
     pub shared_handoffs: u64,
+    /// Handoffs straight from producer to consumer inside a fused unit (no slot or queue).
+    #[serde(default)]
+    pub fused_handoffs: u64,
     #[serde(default)]
     pub copied_bytes: u64,
     #[serde(default)]
@@ -515,6 +518,7 @@ impl EdgeMetrics {
             .saturating_add(other.payload_clone_count);
         self.unique_handoffs = self.unique_handoffs.saturating_add(other.unique_handoffs);
         self.shared_handoffs = self.shared_handoffs.saturating_add(other.shared_handoffs);
+        self.fused_handoffs = self.fused_handoffs.saturating_add(other.fused_handoffs);
         self.copied_bytes = self.copied_bytes.saturating_add(other.copied_bytes);
         self.gpu_uploads = self.gpu_uploads.saturating_add(other.gpu_uploads);
         self.gpu_downloads = self.gpu_downloads.saturating_add(other.gpu_downloads);

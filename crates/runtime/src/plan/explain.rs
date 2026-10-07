@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use alloc::collections::BTreeMap;
 
-use daedalus_planner::ComputeAffinity;
+use daedalus_planner::{ComputeAffinity, NodeRef};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -24,6 +24,21 @@ pub struct RuntimePlanExplanation {
     /// ([`RuntimeEdgeExplanation::crosses_residency`]).
     #[serde(default)]
     pub crossing_edges: Vec<usize>,
+    /// Chains of nodes run as one unit, handing payloads along their fused edges directly
+    /// ([`RuntimeEdgeExplanation::fused`]).
+    #[serde(default)]
+    pub fused_units: Vec<RuntimeFusedUnitExplanation>,
+}
+
+/// Nodes that run back to back, each fused edge between them handing its payload straight to
+/// the consumer (see "Node fusion" in `docs/development.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeFusedUnitExplanation {
+    /// Node indices in run order.
+    pub nodes: Vec<usize>,
+    pub node_ids: Vec<String>,
+    /// The fused edges inside the unit.
+    pub edges: Vec<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -58,6 +73,12 @@ pub struct RuntimeEdgeExplanation {
     /// ([`RuntimeEdgeTransport::crosses_residency`]).
     #[serde(default)]
     pub crosses_residency: bool,
+    /// The edge hands its payload straight from producer to consumer inside a fused unit.
+    #[serde(default)]
+    pub fused: bool,
+    /// Why the edge is not fused (`None` when [`Self::fused`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fusion_block: Option<super::FusionBlock>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +97,17 @@ pub enum RuntimeEdgeHandoff {
 }
 
 impl RuntimePlan {
+    /// Which edges [node fusion](super::FusionBlock) joins, and the units they form.
+    pub(crate) fn fusion(&self) -> super::FusionAnalysis {
+        super::analyze_fusion(
+            &self.nodes,
+            &self.edges,
+            &self.edge_transports,
+            &self.schedule_order,
+            &self.backpressure,
+        )
+    }
+
     pub fn explain(&self) -> RuntimePlanExplanation {
         self.explain_with_slice(None)
     }
@@ -118,6 +150,7 @@ impl RuntimePlan {
             self.backpressure != super::BackpressureStrategy::None
                 && policy.bounded_capacity().is_some()
         };
+        let fusion = self.fusion();
         let edges = self
             .edges
             .iter()
@@ -190,6 +223,8 @@ impl RuntimePlan {
                     handoff_reason,
                     copies_frame,
                     crosses_residency,
+                    fused: fusion.fused(index),
+                    fusion_block: fusion.edges.get(index).cloned().flatten(),
                 }
             })
             .collect::<Vec<_>>();
@@ -200,8 +235,26 @@ impl RuntimePlan {
                 .map(|edge| edge.index)
                 .collect()
         };
+        let node_id = |node: NodeRef| {
+            self.nodes
+                .get(node.0)
+                .map_or_else(|| format!("node_{}", node.0), |node| node.id.clone())
+        };
+        let fused_units = fusion
+            .units
+            .iter()
+            .filter(|unit| slice.is_none_or(|slice| unit.iter().all(|n| slice.node_active(n.0))))
+            .map(|unit| RuntimeFusedUnitExplanation {
+                nodes: unit.iter().map(|node| node.0).collect(),
+                node_ids: unit.iter().copied().map(node_id).collect(),
+                edges: (0..self.edges.len())
+                    .filter(|&edge| fusion.fused(edge) && unit.contains(&self.edges[edge].from()))
+                    .collect(),
+            })
+            .collect();
         RuntimePlanExplanation {
             backpressure: self.backpressure.clone(),
+            fused_units,
             nodes,
             copying_edges: flagged(|edge| edge.copies_frame),
             crossing_edges: flagged(|edge| edge.crosses_residency),

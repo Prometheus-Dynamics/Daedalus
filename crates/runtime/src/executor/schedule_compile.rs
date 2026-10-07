@@ -2,8 +2,12 @@ use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::BTreeMap;
 
-use crate::plan::{RuntimeEdge, RuntimeNode, RuntimeSegment, direct_edge_mask_for_active_edges};
-use daedalus_planner::{NodeRef, is_host_bridge_metadata};
+use crate::handles::PortId;
+use crate::plan::{
+    BackpressureStrategy, FusionAnalysis, RuntimeEdge, RuntimeEdgeTransport, RuntimeNode,
+    RuntimeSegment, analyze_fusion, direct_edge_mask_for_active_edges,
+};
+use daedalus_planner::{ComputeAffinity, NodeRef, is_host_bridge_metadata};
 
 use super::{DirectSlot, NodeMetadataStore};
 
@@ -27,6 +31,73 @@ pub(crate) struct CompiledSchedule {
     pub linear_segment_flow: bool,
     /// Segment of each node (`usize::MAX` for nodes outside every segment).
     pub segment_of: Arc<[usize]>,
+    /// The segments runs schedule: the plan's, with each fused unit merged into one.
+    pub segments: Arc<[RuntimeSegment]>,
+    /// Fused edges, `None` with node fusion off.
+    pub fusion: Option<Arc<FusionTables>>,
+}
+
+/// A fused output port: the port, its one edge and that edge's consumer.
+pub(crate) type FusedPort = (PortId, usize, usize);
+
+/// What serial runs need to hand fused edges' payloads straight to their consumer.
+#[derive(Debug)]
+pub(crate) struct FusionTables {
+    /// Per edge, whether it is fused.
+    pub fused_edges: Box<[bool]>,
+    /// Per node, its fused output ports: the port, its one edge and that edge's consumer.
+    pub outputs: Box<[Box<[FusedPort]>]>,
+}
+
+impl FusionTables {
+    fn new(nodes_len: usize, edges: &[RuntimeEdge], analysis: &FusionAnalysis) -> Self {
+        let mut outputs: Vec<Vec<FusedPort>> = vec![Vec::new(); nodes_len];
+        for (idx, edge) in edges.iter().enumerate() {
+            if analysis.fused(idx)
+                && let Some(ports) = outputs.get_mut(edge.from().0)
+            {
+                ports.push((edge.source_port_id().clone(), idx, edge.to().0));
+            }
+        }
+        Self {
+            fused_edges: (0..edges.len()).map(|idx| analysis.fused(idx)).collect(),
+            outputs: outputs.into_iter().map(Vec::into_boxed_slice).collect(),
+        }
+    }
+}
+
+/// `segments` with each fused unit merged into one segment, where the unit's nodes are
+/// consecutive single-node segments (as the plan builds CPU nodes' segments).
+fn fuse_segments(segments: &[RuntimeSegment], units: &[Vec<NodeRef>]) -> Vec<RuntimeSegment> {
+    let single = |node: NodeRef| {
+        segments
+            .iter()
+            .position(|segment| segment.nodes.as_slice() == [node])
+    };
+    let mut merged_from: BTreeMap<usize, (usize, &Vec<NodeRef>)> = BTreeMap::new();
+    for unit in units {
+        let indices: Option<Vec<usize>> = unit.iter().map(|&node| single(node)).collect();
+        if let Some(indices) = indices
+            && indices.windows(2).all(|pair| pair[1] == pair[0] + 1)
+        {
+            merged_from.insert(indices[0], (indices.len(), unit));
+        }
+    }
+    let mut fused = Vec::with_capacity(segments.len());
+    let mut idx = 0;
+    while let Some(segment) = segments.get(idx) {
+        if let Some(&(len, unit)) = merged_from.get(&idx) {
+            fused.push(RuntimeSegment {
+                nodes: unit.clone(),
+                compute: ComputeAffinity::CpuOnly,
+            });
+            idx += len;
+        } else {
+            fused.push(segment.clone());
+            idx += 1;
+        }
+    }
+    fused
 }
 
 pub(crate) fn is_host_bridge_node(node: &RuntimeNode) -> bool {
@@ -245,12 +316,40 @@ pub(crate) fn build_active_host_deferred_graph(
     (segment_rank, graph)
 }
 
-pub(crate) fn build_compiled_schedule(
-    nodes: &[RuntimeNode],
-    edges: &[RuntimeEdge],
-    segments: &[RuntimeSegment],
-    schedule_order: &[NodeRef],
-) -> CompiledSchedule {
+/// What [`build_compiled_schedule`] compiles: a plan's graph and schedule.
+pub(crate) struct ScheduleSource<'p> {
+    pub nodes: &'p [RuntimeNode],
+    pub edges: &'p [RuntimeEdge],
+    pub transports: &'p [Option<RuntimeEdgeTransport>],
+    pub segments: &'p [RuntimeSegment],
+    pub schedule_order: &'p [NodeRef],
+    pub backpressure: &'p BackpressureStrategy,
+}
+
+/// Compile `source`'s schedule, with fused units merged into single segments when `fuse`.
+pub(crate) fn build_compiled_schedule(source: ScheduleSource<'_>, fuse: bool) -> CompiledSchedule {
+    let ScheduleSource {
+        nodes,
+        edges,
+        schedule_order,
+        ..
+    } = source;
+    let (segments, fusion) = if fuse {
+        let analysis = analyze_fusion(
+            nodes,
+            edges,
+            source.transports,
+            schedule_order,
+            source.backpressure,
+        );
+        let segments = fuse_segments(source.segments, &analysis.units);
+        let tables = FusionTables::new(nodes.len(), edges, &analysis);
+        let any = tables.fused_edges.iter().any(|&fused| fused);
+        (segments, any.then(|| Arc::new(tables)))
+    } else {
+        (source.segments.to_vec(), None)
+    };
+    let segments = segments.as_slice();
     let segment_of = build_segment_of(nodes.len(), segments);
     let (_, host_deferred_graph) =
         build_active_host_deferred_graph(nodes, edges, segments, schedule_order, None, &segment_of);
@@ -270,6 +369,8 @@ pub(crate) fn build_compiled_schedule(
         host_nodes: Arc::new(host_nodes),
         host_deferred_graph,
         segment_of: segment_of.into(),
+        segments: segments.into(),
+        fusion,
     }
 }
 

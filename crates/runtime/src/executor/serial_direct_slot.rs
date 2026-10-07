@@ -36,16 +36,7 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
         .get(edge_idx)
         .and_then(|slot| slot.access(exec.direct_slot_access).put(payload));
     if replaced.is_some() && collect_basic_metrics {
-        // The slot keeps the newest payload, as the edge's policy does in a queue.
-        let reason = match exec.edges.get(edge_idx).map(|edge| &edge.policy().pressure) {
-            Some(daedalus_transport::PressurePolicy::LatestOnly) => {
-                super::EdgePressureReason::LatestReplace
-            }
-            Some(daedalus_transport::PressurePolicy::Coalesce { .. }) => {
-                super::EdgePressureReason::CoalesceReplace
-            }
-            _ => super::EdgePressureReason::DropOldest,
-        };
+        let reason = replace_reason(exec.edges.get(edge_idx));
         exec.core
             .telemetry
             .record_edge_pressure_event(edge_idx, reason, 1);
@@ -64,6 +55,19 @@ pub(crate) fn push_direct_edge<H: NodeHandler>(
                 .telemetry
                 .record_edge_transport_apply_duration(edge_idx, elapsed);
         }
+    }
+}
+
+/// Why a slot replaced its payload: it keeps the newest, as the edge's policy does in a queue.
+pub(crate) fn replace_reason(edge: Option<&crate::plan::RuntimeEdge>) -> super::EdgePressureReason {
+    match edge.map(|edge| &edge.policy().pressure) {
+        Some(daedalus_transport::PressurePolicy::LatestOnly) => {
+            super::EdgePressureReason::LatestReplace
+        }
+        Some(daedalus_transport::PressurePolicy::Coalesce { .. }) => {
+            super::EdgePressureReason::CoalesceReplace
+        }
+        _ => super::EdgePressureReason::DropOldest,
     }
 }
 

@@ -25,7 +25,7 @@ const STAGES: [(&str, bool, Field); 13] = [
     ("queue_wait", false, |s| s.queue_wait_ns),
 ];
 
-const COUNTERS: [(&str, Field); 12] = [
+const COUNTERS: [(&str, Field); 13] = [
     ("nodes", |s| s.nodes),
     ("zero_copy_adapts", |s| s.zero_copy_adapts),
     ("copies", |s| s.copies),
@@ -38,6 +38,7 @@ const COUNTERS: [(&str, Field); 12] = [
     ("host_allocs", |s| s.host_allocs),
     ("runtime_alloc_bytes", |s| s.runtime_alloc_bytes),
     ("node_alloc_bytes", |s| s.node_alloc_bytes),
+    ("fused_handoffs", |s| s.fused_handoffs),
 ];
 
 /// The last `capacity` ticks of a host-driven graph, preallocated so recording never allocates.
@@ -154,10 +155,14 @@ impl FrameOverheadWindow {
                     .slots()
                     .map(|slot| self.edges[slot * edge_count + edge])
                     .collect();
-                if rows.iter().all(|row| row.adapts == 0 && row.wait_ns == 0) {
+                if rows
+                    .iter()
+                    .all(|row| row.adapts == 0 && row.wait_ns == 0 && row.fused == 0)
+                {
                     return None;
                 }
                 let adapts: u64 = rows.iter().map(|row| row.adapts).sum();
+                let fused: u64 = rows.iter().map(|row| row.fused).sum();
                 Some(EdgeOverheadStats {
                     edge,
                     label: edge_labels
@@ -176,6 +181,7 @@ impl FrameOverheadWindow {
                         rows.iter().map(|row| row.adapter_ns).collect(),
                     ),
                     adapts_per_tick: adapts as f64 / rows.len().max(1) as f64,
+                    fused_per_tick: fused as f64 / rows.len().max(1) as f64,
                 })
             })
             .collect();
@@ -255,6 +261,9 @@ pub struct EdgeOverheadStats {
     /// Per tick adapter path time.
     pub adapter_time: FrameStat,
     pub adapts_per_tick: f64,
+    /// Payloads handed straight to the consumer per tick: the edge is fused, so it never queues.
+    #[serde(default)]
+    pub fused_per_tick: f64,
 }
 
 /// Frame-path overhead of a host-driven graph over its recent ticks
@@ -343,20 +352,28 @@ impl FrameOverheadReport {
         if !self.edges.is_empty() {
             let _ = writeln!(
                 out,
-                "{:<40} {:>9} {:>10} {:>10} {:>10} {:>10} {:>7}",
-                "edge", "adapter", "wait p50", "wait p99", "adapt p50", "adapt p99", "adapts"
+                "{:<40} {:>9} {:>10} {:>10} {:>10} {:>10} {:>7} {:>6}",
+                "edge",
+                "adapter",
+                "wait p50",
+                "wait p99",
+                "adapt p50",
+                "adapt p99",
+                "adapts",
+                "fused"
             );
             for edge in &self.edges {
                 let label = format!("{} {}", edge.edge, edge.label);
                 let _ = writeln!(
                     out,
-                    "{label:<40} {:>9} {:>10} {:>10} {:>10} {:>10} {:>7.2}",
+                    "{label:<40} {:>9} {:>10} {:>10} {:>10} {:>10} {:>7.2} {:>6.2}",
                     edge.adapter.as_str(),
                     ns(edge.queue_wait.p50),
                     ns(edge.queue_wait.p99),
                     ns(edge.adapter_time.p50),
                     ns(edge.adapter_time.p99),
-                    edge.adapts_per_tick
+                    edge.adapts_per_tick,
+                    edge.fused_per_tick
                 );
             }
         }
