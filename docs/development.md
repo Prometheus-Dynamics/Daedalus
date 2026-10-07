@@ -674,11 +674,13 @@ fuses 15 and gains 11% (`graph_overhead` per stage -26%). What remains per node 
 fusion does not touch: input-list and `NodeIo` setup, the handler call through the registry, and
 the readiness and metrics checks.
 
-**CM5 measurement (Raspberry Pi CM5, kernel 7.2.9-v8-16k, `bcc9f33`, static aarch64-musl,
+**CM5 measurement (Raspberry Pi CM5, kernel 7.2.9 with 4 KiB pages, `bcc9f33`, static aarch64-musl,
 `FRAME_BENCH_CPU=2`, PhotonVision stopped, 2000 frames, fusion off/on alternated and repeated).**
 The tick-cost pass and fusion together beat the projections above: the detector mirror's
 `graph_overhead` p50 is 7.2 µs unfused (27-35 µs before the tick-cost pass), and flat and group
-now cost the same.
+now cost the same. For comparison, Eidos measures about 16-17 µs `graph_overhead` p50 on the
+CM5 for its real AprilTag graph (group about equal to flat), with no copies and about zero
+allocations per tick.
 
 | CM5 detector mirror | flat, unfused | flat, fused | group, unfused | group, fused |
 | --- | --- | --- | --- | --- |
@@ -725,8 +727,9 @@ The bench stages are nearly free, so these rows are runtime cost: sharing adds o
 saves two node runs per extra detector. With real stages the saving is the preprocessing time
 itself: the domain counts it (`stats()`: 1 avoided graph run and 2 avoided node runs per frame
 for 2 detectors, 3 and 6 for 4, with `saved_time` at the measured upstream tick time), so on
-the CM5, where Eidos's mask and quad stages take about 1 ms each, every detector after the
-first should save about 2 ms per frame (an estimate; the bench stages measure only runtime cost).
+the CM5, where Eidos's mask and quad stages take about 0.32 ms and 0.39 ms p50, every detector
+after the first should save about 0.7 ms per frame (an estimate; the bench stages measure only
+runtime cost).
 
 **CM5 measurement (same run as the fusion rows above, fusion on, recording off).** Push + domain
 tick + take p50: 2 detectors 17 666 separate, 17 611 shared, 17 685 structural ns; 4 detectors
