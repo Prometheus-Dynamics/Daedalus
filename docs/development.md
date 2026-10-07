@@ -598,6 +598,35 @@ group, run cold-first as in the Eidos bench, about 3-5 µs above that rather tha
 node allocations (the 384 B per frame are gone), the CM5 should gain at least as much as x86
 does. Measure on the device to confirm.
 
+### Shared preprocessing (execution domains)
+
+`cargo run --release -p daedalus-frame-bench --example shared_detectors` runs N detector graphs
+on one camera (`SHARED_DETECTORS`, default 2, up to 4 dictionaries) three ways in an
+`ExecutionDomain`: `separate` (N full detectors, each running mask prep and quads), `shared`
+(a `preprocess` graph linked to N decode/validate/refine tails) and `structural`
+(`load_shared` on the N full graphs, which finds the same split from the `shareable` stages).
+`crates/frame-bench/tests/shared_preprocessing.rs` asserts that preprocessing runs once per
+frame, that both shared layouts give the separate detectors' outputs, and that a frame copies
+nothing and allocates nothing in the runtime, nodes or host (the forwarding included).
+
+**x86_64 numbers (AMD Ryzen 9 5900X, shared 24-core machine at load ~60-67, pinned, 20000
+frames, recording off), not the CM5.** Push + domain tick + take per frame:
+
+| Detectors | | separate | shared | structural |
+| --- | --- | --- | --- | --- |
+| 2 | instructions | 67 978 | 68 866 | 68 956 |
+| 2 | p50 / p99 (ns) | 9 560 / 15 790 | 8 691 / 14 310 | 8 750 / 14 570 |
+| 4 | instructions | 135 729 | 123 250 | 123 358 |
+| 4 | p50 / p99 (ns) | 27 631 / 36 840 | 17 950 / 28 861 | 15 670 / 29 290 |
+
+The bench stages are nearly free, so these rows are runtime cost: sharing adds one graph tick
+(~1 µs) and the forwarding (taking `quads` and feeding N `Arc` clones, ~0.2 µs per link) and
+saves two node runs per extra detector. With real stages the saving is the preprocessing time
+itself: the domain counts it (`stats()`: 1 avoided graph run and 2 avoided node runs per frame
+for 2 detectors, 3 and 6 for 4, with `saved_time` at the measured upstream tick time), so on
+the CM5, where Eidos's mask and quad stages take about 1 ms each, every detector after the
+first saves about 2 ms per frame.
+
 ### Choosing a runtime mode
 
 A parallel frame still costs about 3-4 µs per segment more than a serial one (waking workers,

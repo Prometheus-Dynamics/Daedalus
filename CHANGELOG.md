@@ -89,6 +89,33 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- **Execution domains: shared upstream graphs across graphs** (`daedalus_engine::ExecutionDomain`).
+  A domain owns several separately compiled `HostGraph`s on one thread and links host outputs
+  to host inputs (`link(from, port, to, port, LinkMode)`): one `tick()` runs each graph with
+  pending input once, upstreams first, and feeds every linked input an `Arc` clone of the output
+  (no copy, no allocation per tick), so a camera's preprocessing runs once per frame for every
+  detector graph. Link modes `Latest` (default, latest-only input), `All` and `Held`; domain
+  inputs fan one push out to several graphs (`route_input`, `push`, `push_payload`); graphs are
+  added, removed, linked and unlinked between ticks without recompiling; a failing graph keeps
+  its error (`last_error`) and only the graphs downstream of it are skipped for that tick, their
+  fed inputs cleared. `explain()` shows tick order, the fan-out links (types, zero-copy) and
+  shared nodes; `stats()` counts runs, failures, skips and the runs, node runs and time sharing
+  avoided; `enable_frame_overhead` / `frame_overhead()` give each graph's report plus domain
+  totals. `GraphBuilder::shared_input` (host-bridge metadata `HOST_SHARED_INPUTS_KEY`) declares
+  a host input whose payload other graphs share, so the planner gives by-value consumers a copy
+  as it does for held inputs.
+- **Structural sharing**: `ExecutionDomain::load_shared(engine, registry, graphs)` (and
+  `load_shared_documents`) finds the node subgraphs several graphs compute identically from the
+  same host inputs (exact structural equality: node id, constants, metadata, wiring, host input
+  types and policy) and compiles them once into a `shared` upstream graph linked to the rest of
+  each graph (`daedalus_planner::split_shared_upstream`). Only nodes marked deterministic and
+  side-effect free are shared: `#[node(shareable)]` or node metadata
+  `NODE_SHAREABLE_META_KEY` (`"daedalus.node.shareable"`). The frame-bench detector's mask prep
+  and quads stages are `shareable`.
+- `daedalus-frame-bench`: shared-preprocessing domains (`compile_shared_detectors`,
+  `compile_structural_detectors`, `compile_separate_detectors`, `run_domain_bench`) and the
+  `shared_detectors` example; tests assert preprocessing runs once per frame, outputs equal
+  separate detectors', and no copies or runtime/node/host allocations per frame.
 - **Held host inputs.** A held input keeps its last pushed value across ticks: every tick
   delivers it to the port's consumers (an `Arc` clone, no copy or allocation) until a push
   replaces it or `clear_input` drops it, so frame ticks see context such as resource state or an
