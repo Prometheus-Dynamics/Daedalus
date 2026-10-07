@@ -299,17 +299,17 @@ fn synchronized_steady_state_ticks_copy_and_allocate_nothing() {
         });
         (pushes, tick, outputs)
     };
-    let payloads = |sequence: usize| frames[sequence].iter().map(payload).collect::<Vec<_>>();
-    for sequence in 0..8 {
-        round(payloads(sequence));
+    let payloads = |group: &[Arc<CamFrame>]| group.iter().map(payload).collect::<Vec<_>>();
+    for group in &frames[..8] {
+        round(payloads(group));
     }
     let (output, _) = allocations_during(|| Payload::owned("i64", 1_i64));
-    for sequence in 8..40 {
-        let (pushes, tick, (out, ptr)) = round(payloads(sequence));
+    for (sequence, group) in frames.iter().enumerate().skip(8) {
+        let (pushes, tick, (out, ptr)) = round(payloads(group));
         assert_eq!(out, Some(sequence as i64 * 10 + 4));
         assert_eq!(
             ptr,
-            Some(frames[sequence][0].pixels.as_ptr() as i64),
+            Some(group[0].pixels.as_ptr() as i64),
             "the node read the camera's buffer in place"
         );
         // Buffering, grouping and committing four frames allocate nothing; a tick allocates only
