@@ -598,6 +598,88 @@ group, run cold-first as in the Eidos bench, about 3-5 µs above that rather tha
 node allocations (the 384 B per frame are gone), the CM5 should gain at least as much as x86
 does. Measure on the device to confirm.
 
+### Node fusion
+
+Chains of single-consumer CPU nodes run as fused units: inside a unit, a producer's output goes
+straight into the input list of the consumer that runs next, without the edge's direct slot (no
+slot put and take, no fan-out routing, no queue-wait or depth bookkeeping), and the unit is one
+segment for the parallel and adaptive schedulers. What every node sees is unchanged.
+
+An edge fuses when all of these hold (`crates/runtime/src/plan/fusion.rs`,
+`RuntimeEdgeExplanation::fusion_block` names the first that fails):
+
+- both ends are `ComputeAffinity::CpuOnly`, neither is a host-bridge node, and neither sets node
+  metadata `daedalus.node.fusion` (`NODE_FUSION_META_KEY`) to `false`;
+- its source port feeds only this edge (no fan-out) and its target port has no other producer
+  (no fan-in);
+- it is a direct-slot edge (a slot-compatible policy that the graph's backpressure strategy does
+  not turn back into a queue) with no adapter steps;
+- the consumer fires on any input (`fire = "all"` consumers keep what arrived queued across
+  ticks, so their inputs stay in slots);
+- the consumer is the next non-host-bridge node of the schedule order after the producer.
+
+Stateful nodes, const and config inputs, optional and required inputs, conditional outputs and
+repeated pushes are all fine. A unit is a maximal run of schedule-order nodes joined by fused
+edges; when its nodes are single-node segments (every CPU node is one), they become one segment.
+
+At run time a fused output is carried only when the consumer really runs next in the order being
+executed (the schedule, or a fused segment on a parallel worker), the edge and the consumer are
+active under the demand masks, the mask still makes the edge a direct slot, and the slot is empty
+(a payload left from an earlier tick, e.g. while the consumer was inactive, must be delivered
+first); otherwise the payload takes the slot as before. The carry keeps the slot's semantics:
+buffer-all edges keep every push in order, the others keep the newest and record the same
+pressure event. Errors and skips behave as before: a failed producer publishes nothing, so the
+consumer sees no value (and is not ready if that input is required); a consumer that is not
+ready drops what it collected, as it drops what it popped. Per-node metrics, handler timing and
+telemetry counters are recorded per node as before; fused edges report `fused_handoffs` instead
+of queue metrics, and `Profile`/`Trace` metrics (per-edge lifecycle events) run unfused.
+
+Opt-outs: `EngineConfig::with_node_fusion(false)` (`DAEDALUS_NODE_FUSION=0` through
+`EngineConfig::from_env` and the frame-bench examples), `Executor`/`OwnedExecutor::
+with_node_fusion(false)`, or the node metadata flag. `crates/runtime/tests/fusion_equivalence.rs`
+runs 60 random DAGs (chains, fan-out, fan-in, conditional and doubled outputs, optional and
+required inputs, `fire = "all"`, latest-only edges, state, failing nodes, opted-out nodes) for six
+ticks in serial (fail-fast on and off), parallel and adaptive mode at `Basic` and `Detailed`
+metrics, fused and unfused, and requires identical node calls (every input in order), run
+results, errors, per-node calls and transport counts and edge pressure events; it also covers a
+slot payload held across ticks while the consumer was masked out.
+
+**x86_64 numbers (AMD Ryzen 9 5900X, shared 24-core machine at load ~20, pinned to one core,
+20000 frames), not the CM5.** Fusion on against `DAEDALUS_NODE_FUSION=0` in the same build (the
+unfused path runs the instructions `dev` does: 33 142 against 33 130 per detector frame). Instructions per frame with
+recording off; stage rows are frame-overhead p50 / p99 in ns with recording on:
+
+| detector mirror | flat, unfused | flat, fused | group, unfused | group, fused |
+| --- | --- | --- | --- | --- |
+| fused edges | 0 | 3 | 0 | 3 |
+| instructions per frame | 33 142 | 32 342 | 33 220 | 32 376 |
+| push + tick + take, recording off | 4 660 / 7 700 | 4 430 / 7 470 | 4 720 / 7 910 | 4 450 / 7 700 |
+| inputs | 830 / 1 160 | 670 / 980 | 840 / 1 160 | 680 / 1 000 |
+| node_io | 1 070 / 1 640 | 950 / 1 510 | 1 090 / 1 660 | 940 / 1 550 |
+| dispatch | 540 / 960 | 540 / 950 | 540 / 950 | 550 / 970 |
+| `graph_overhead` | 3 350 / 5 040 | 3 040 / 4 780 | 3 390 / 5 000 | 3 060 / 4 830 |
+
+| `frame_chain` (`interface` feed) | unfused | fused |
+| --- | --- | --- |
+| instructions per frame, 1 / 4 / 16 stages | 8 115 / 15 075 / 43 019 | 8 115 / 14 160 / 38 176 |
+| frame p50, 1 / 4 / 16 stages | 850 / 1 560 / 4 280 ns | 850 / 1 420 / 3 570 ns |
+| frame p50 fit | 633 ns + 228 ns per stage | 682 ns + 181 ns per stage |
+| `graph_overhead` p50 fit | 472 ns + 327 ns per stage | 550 ns + 242 ns per stage |
+
+Each fused edge saves about 310 instructions (a slot put and take, the fan-out scan, the queue
+bookkeeping around them); the detector mirror fuses three of its eleven edges (mask prep -> quads
+-> decode -> validate; the frame edges cross the host bridge, `validate.detections` fans out), so
+the frame gains 2.4% in instructions and about 9% in `graph_overhead`, while a 16-stage chain
+fuses 15 and gains 11% (`graph_overhead` per stage -26%). What remains per node is the framing
+fusion does not touch: input-list and `NodeIo` setup, the handler call through the registry, and
+the readiness and metrics checks.
+
+**CM5 projection (an estimate, not a measurement).** Applying the x86 ratios (`graph_overhead`
+p50 x0.91, instructions x0.976 on the detector mirror) to the 14-18 µs projected for the
+per-stage template after the tick-cost pass gives about 13-16 µs; per-stage chains gain more
+(x0.74 per fused stage). Measure on the device with `DAEDALUS_NODE_FUSION=0` and `=1` in
+alternating runs (see the cold-cache note above).
+
 ### Choosing a runtime mode
 
 A parallel frame still costs about 3-4 µs per segment more than a serial one (waking workers,

@@ -108,9 +108,10 @@ In a serial tick the nested rows add up to `tick`; parallel node runs overlap, s
 saturates at zero there. Per-tick counters: `nodes`, `zero_copy_adapts`, `copies` (copying adapter
 runs) and `copied_bytes` (their estimated output size), `shared_clones` (fan-out payload clones,
 an `Arc` increment each), `gpu_uploads`/`gpu_downloads` (device-transfer steps run), and with the
-allocation probe `runtime_allocs`, `node_allocs`, `host_allocs` and their bytes. Edge rows list
-every edge that queued or adapted a payload in the window: adapter class, wait and adapter p50/p99,
-adapter runs per tick.
+allocation probe `runtime_allocs`, `node_allocs`, `host_allocs` and their bytes, and
+`fused_handoffs` (payloads handed along fused edges, see below). Edge rows list every edge that
+queued, adapted or fused a payload in the window: adapter class, wait and adapter p50/p99, adapter
+runs and fused handoffs per tick.
 
 Reading it:
 
@@ -133,6 +134,40 @@ check, the bridge's feed/take paths one relaxed load, and `HostGraph::tick*` one
 executor times the run into the probe and the graph moves it into the window when the next tick
 starts (`frame_overhead()` and `last_frame_tick()` include the latest tick). Push and take times
 read the platform clock; everything else reads the executor's clock.
+
+### Fused units
+
+Chains of single-consumer CPU nodes run as fused units ("Node fusion" in
+[development.md](development.md#node-fusion)): a fused edge hands the producer's payload straight
+to the consumer that runs next, so it never queues. In the frame-overhead report a fused edge's row
+shows `wait` 0 and `fused` 1.00 per tick (a conditional output that did not fire counts 0), the
+`fused_handoffs` counter sums them, and the work they skip comes off `inputs` and `node_io`.
+Per-node rows (`nodes`, handler time, `NodeMetrics` calls and durations) are unchanged: every
+node in a unit is still called, timed and counted on its own. At `MetricsLevel::Detailed` a fused
+edge's `EdgeMetrics` count `fused_handoffs` (and unique/shared handoffs) instead of queue depth,
+bytes and wait; `Profile` and `Trace` record each edge's enqueue and dequeue, so those levels run
+unfused.
+
+`explain_plan()` shows what fuses before anything runs. Each `RuntimeEdgeExplanation` has `fused`,
+or `fusion_block` saying why not (`source_fan_out(n)`, `target_fan_in(n)`, `queued`, `adapter(n)`,
+`fire_all`, `opted_out`, `affinity`, `host_bridge`, `not_adjacent`), and
+`RuntimePlanExplanation::fused_units` lists each unit's nodes (run order) and fused edges. The
+`Display` form tags edges ` fused` or ` unfused: <reason>` and ends with the units:
+
+```text
+  edge 0: io.host_bridge.frame -> daedalus.frame_bench:stage.frame [direct_slot] adapters=... unfused: host-bridge boundary
+  edge 1: daedalus.frame_bench:stage.frame -> daedalus.frame_bench:stage.frame [direct_slot] fused
+  edge 2: daedalus.frame_bench:stage.frame -> io.host_bridge.out [direct_slot] unfused: host-bridge boundary
+fused_units: [daedalus.frame_bench:stage -> daedalus.frame_bench:stage] edges [1]
+```
+
+In the detector mirror the unit is mask prep -> quads -> decode -> validate (edges 1, 3 and 5);
+the frame edges cross the host bridge and `validate.detections` fans out to refine and the host.
+
+To rule fusion out while debugging, run with `EngineConfig::with_node_fusion(false)` (or
+`DAEDALUS_NODE_FUSION=0` with `EngineConfig::from_env`, and for the frame-bench examples),
+`Executor`/`OwnedExecutor::with_node_fusion(false)`, or keep one node out of every unit with node
+metadata `daedalus.node.fusion = false` (`NODE_FUSION_META_KEY`).
 
 ### Allocation probe
 
@@ -168,11 +203,12 @@ runtime plan: 3 nodes, 3 edges, backpressure=None
   node 0: io.host_bridge (CpuOnly) label=host
   node 1: daedalus.frame_bench:stage (CpuOnly) label=stage_0
   node 2: daedalus.frame_bench:stage (CpuOnly) label=stage_1
-  edge 0: io.host_bridge.frame -> daedalus.frame_bench:stage.frame [direct_slot] adapters=daedalus.foreign:daedalus.frame_bench:synthetic_frame->daedalus:frame:view
-  edge 1: daedalus.frame_bench:stage.frame -> daedalus.frame_bench:stage.frame [direct_slot]
-  edge 2: daedalus.frame_bench:stage.frame -> io.host_bridge.out [direct_slot]
+  edge 0: io.host_bridge.frame -> daedalus.frame_bench:stage.frame [direct_slot] adapters=daedalus.foreign:daedalus.frame_bench:synthetic_frame->daedalus:frame:view unfused: host-bridge boundary
+  edge 1: daedalus.frame_bench:stage.frame -> daedalus.frame_bench:stage.frame [direct_slot] fused
+  edge 2: daedalus.frame_bench:stage.frame -> io.host_bridge.out [direct_slot] unfused: host-bridge boundary
 copies_frame: none
 crosses_residency: none
+fused_units: [daedalus.frame_bench:stage -> daedalus.frame_bench:stage] edges [1]
 ```
 
 ### Frame bench harness

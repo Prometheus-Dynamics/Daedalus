@@ -89,6 +89,21 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- **Node fusion.** Chains of single-consumer CPU nodes run as fused units: a fused edge (its
+  source port feeds only it, its target port has no other producer, a direct slot without
+  adapters, CPU-only non-host-bridge ends, a consumer that fires on any input and runs right after
+  the producer) hands the payload straight to the consumer instead of through its slot, and each
+  unit is one segment for the parallel and adaptive schedulers. Node calls, errors, skips and
+  per-node metrics are unchanged (`crates/runtime/tests/fusion_equivalence.rs` compares fused and
+  unfused runs over random DAGs). On by default; `EngineConfig::with_node_fusion(false)`
+  (`DAEDALUS_NODE_FUSION=0`), `Executor`/`OwnedExecutor::with_node_fusion(false)` or node metadata
+  `daedalus.node.fusion = false` (`NODE_FUSION_META_KEY`) turn it off. `explain_plan()` shows
+  `RuntimeEdgeExplanation::fused` / `fusion_block` (`FusionBlock`) and
+  `RuntimePlanExplanation::fused_units`; the frame-overhead report counts `fused_handoffs` (per
+  tick and per edge), `EdgeMetrics::fused_handoffs` at `Detailed`. Detector-shaped frame bench:
+  instructions per frame 33 100 -> 32 300, `graph_overhead` p50 3.35 -> 3.04 µs; 16-stage chain
+  43 000 -> 38 200 instructions (x86_64, "Node fusion" in `docs/development.md`).
+
 - **Held host inputs.** A held input keeps its last pushed value across ticks: every tick
   delivers it to the port's consumers (an `Arc` clone, no copy or allocation) until a push
   replaces it or `clear_input` drops it, so frame ticks see context such as resource state or an
@@ -169,6 +184,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `InstructionCounter`).
 
 ### Fixed
+
+- A parallel worker running several segments recorded only the first at the configured metrics
+  level (the rest at the default level, losing `Detailed` node transport metrics).
 
 - Queue edges record their enqueue-to-dequeue wait in `EdgeMetrics` at `Detailed` (only direct
   slots did).
