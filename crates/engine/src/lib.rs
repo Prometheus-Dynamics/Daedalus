@@ -21,6 +21,7 @@ mod config;
 pub mod diagnostics;
 #[cfg(feature = "plugins")]
 mod document;
+mod domain;
 mod engine;
 mod engine_execution;
 mod error;
@@ -43,6 +44,13 @@ pub use daedalus_runtime::host_bridge::{
 };
 pub use daedalus_runtime::{FrameOverheadReport, FrameTickSample};
 pub use daedalus_runtime::{HostPortConnection, HostPortDescriptor, HostPortDirection};
+pub use domain::{
+    DomainExplanation, DomainGraphExplanation, DomainGraphStats, DomainInputExplanation,
+    DomainLinkExplanation, DomainOverhead, DomainSharedNode, DomainStats, DomainTick,
+    ExecutionDomain, LinkMode,
+};
+#[cfg(feature = "plugins")]
+pub use domain::{SHARED_UPSTREAM_GRAPH, is_shareable};
 pub use engine::Engine;
 pub use error::EngineError;
 pub use host_graph::{
