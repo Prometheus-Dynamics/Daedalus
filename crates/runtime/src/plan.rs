@@ -20,7 +20,7 @@ use daedalus_planner::{
 };
 pub use daedalus_registry::capability::{
     NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_REQUIRED_INPUTS_META_KEY,
-    NodeExecutionKind, NodeFire,
+    NODE_SHAREABLE_META_KEY, NodeExecutionKind, NodeFire,
 };
 use daedalus_transport::{OverflowPolicy, PressurePolicy};
 

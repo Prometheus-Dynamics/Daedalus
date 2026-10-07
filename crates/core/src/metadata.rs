@@ -19,6 +19,10 @@ pub const HOST_OUTPUT_TYPES_KEY: &str = "daedalus.host_output_types";
 /// Graph-authored host-bridge metadata key listing the host inputs that are held: their last
 /// pushed value persists across ticks until replaced (`HostBridgeHandle::set_held_input`).
 pub const HOST_HELD_INPUTS_KEY: &str = "daedalus.host_held_inputs";
+/// Graph-authored host-bridge metadata key listing the host inputs whose values may be shared
+/// with other graphs (an execution domain fans one payload out to several graphs): the planner
+/// gives by-value consumers of them a copy, as it does for held inputs.
+pub const HOST_SHARED_INPUTS_KEY: &str = "daedalus.host_shared_inputs";
 
 /// Planner/runtime-owned metadata keys attached when embedded graphs are expanded.
 pub const EMBEDDED_GROUP_KEY: &str = "daedalus.embedded_group";

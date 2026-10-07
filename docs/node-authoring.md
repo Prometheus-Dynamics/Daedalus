@@ -760,6 +760,207 @@ loop {
 Off Linux there is no fd; an `InboundWaiter` is a `Future`, so an event loop can poll it with any
 `Waker` (the bridge wakes it on input, close or `wake_inbound_waiters`).
 
+### Sharing Preprocessing Across Graphs
+
+Several detectors on one camera (AprilTag, ArUco, later an ML model) usually start with the same
+preprocessing: a threshold mask, a pyramid, candidate quads. Compiled as separate `HostGraph`s,
+each recomputes it every frame. An `ExecutionDomain` runs it once and hands its outputs to every
+detector:
+
+```rust
+use daedalus::engine::{ExecutionDomain, LinkMode};
+
+let mut camera = ExecutionDomain::new();
+camera.add_graph("preprocess", engine.compile_registry(&registry, preprocess)?)?; // frame -> quads
+camera.add_graph("apriltag", engine.compile_registry(&registry, apriltag)?)?;     // frame, quads -> ...
+camera.add_graph("aruco", engine.compile_registry(&registry, aruco)?)?;
+for graph in ["preprocess", "apriltag", "aruco"] {
+    camera.route_input("frame", graph, "frame")?; // one push feeds all three (Arc clones)
+}
+camera.link("preprocess", "quads", "apriltag", "quads", LinkMode::Latest)?;
+camera.link("preprocess", "quads", "aruco", "quads", LinkMode::Latest)?;
+
+camera.push_payload("frame", frame)?;
+let tick = camera.tick(); // preprocess once, then apriltag, then aruco
+for detections in camera.graph("apriltag").unwrap().drain_owned::<Detections>("detections")? { /* ... */ }
+```
+
+- **One tick** runs each graph that has pending input once, upstreams first (ties in the order
+  graphs were added), and right after a graph ticks, takes its linked outputs and feeds each
+  linked input an `Arc` clone of the payload: no copy, and no allocation per tick at steady
+  state. The downstream graph's planned adapters still run when its input type differs (a
+  link's `explain()` line says `zero-copy` when the types match).
+- **Read shared values by reference.** Every graph fed by a link, or by a domain input routed to
+  several graphs, gets the same payload, so a node taking it by value (`T`, `&mut T`) cannot
+  take it over. Detector stages read frames and shared results as `&T`, `Arc<T>` or views; for a
+  by-value consumer declare the input shared when building the downstream graph
+  (`GraphBuilder::shared_input("quads")`, `HOST_SHARED_INPUTS_KEY` on the host bridge node, so
+  documents carry it) and the planner gives that consumer a copy, as it does for held inputs.
+  Undeclared, such a node fails with a missing input. `load_shared` declares the inputs it
+  links or routes to several graphs itself.
+- **Backpressure** is per link: `LinkMode::Latest` (default) forwards the tick's newest value
+  and makes the downstream input latest-only, so a detector never works through a backlog;
+  `All` forwards every value in order under the input's own pressure policy; `Held` makes the
+  downstream input held context (calibration, a slowly changing mask), seen every tick.
+- **Failures stay in their graph.** A graph whose tick fails keeps its error
+  (`last_error(name)`, `clear_error`), its linked outputs from that tick are dropped, and every
+  graph downstream of it is skipped for the tick with its fed inputs cleared, so a detector never
+  pairs a frame with shared results from another frame. A failing detector stops nothing else;
+  a failing preprocessing graph skips its detectors for that frame only. `tick()` returns a
+  `DomainTick` (`ran`, `idle`, `failed`, `skipped`) and never stops early.
+- **Graphs come and go between ticks**: `add_graph`, `remove_graph` (hands the graph back),
+  `link`, `unlink` and `route_input` touch no compiled plan, so adding an ML detector to a running
+  camera does not recompile the preprocessing. Link cycles are refused.
+- **Observability**: `explain()` prints the tick order, domain inputs, each graph's nodes and
+  consumers (`shared: runs once for 2 graphs (apriltag, aruco)`) and every fan-out link with its
+  mode and types. `stats()` counts per graph runs, failures, skips and run time, and what sharing
+  saved: `avoided_runs` (a graph linked to `n` consumers saves `n - 1` runs per frame),
+  `avoided_node_runs` and `saved_time`. `enable_frame_overhead(window)` records every graph's
+  frame-path overhead; `frame_overhead()` returns each report plus domain totals.
+
+**Structural sharing.** Instead of splitting graphs by hand, load the complete detector graphs
+(for example from `GraphDocument`s) and let the domain find what they compute identically:
+
+```rust
+let camera = ExecutionDomain::load_shared_documents(&engine, &registry, [
+    ("apriltag", apriltag_document),
+    ("aruco", aruco_document),
+])?;
+println!("{}", camera.explain()); // shared node mask_prep (...) in shared: computed once for apriltag, aruco
+```
+
+Nodes two or more graphs have with the same registry id, constants, metadata and inputs (the
+same host input, with the same declared type and policy, or an equal shared node's same output)
+move into one upstream graph named `shared`, which feeds each graph's remaining nodes through
+latest-only links. Equality is exact (no hashing), and a node is shared only when all its inputs
+are host inputs or shared nodes. Only nodes marked deterministic and side-effect free take part:
+`#[node(shareable)]`, or node metadata `NODE_SHAREABLE_META_KEY` (`"daedalus.node.shareable"`)
+set to `true` on a graph node. Mark a node shareable only when equal inputs and constants always
+give equal outputs and running it fewer times is unobservable (no counters, I/O, or state that
+outlives the frame other than caches). Original host inputs become domain inputs of the same
+name; a host output a shared node produced is served by the upstream, so read outputs through
+`camera.take_payload(graph, port)`, which works for both.
+
+**How HeliOS should lay it out.** One domain per camera, owned by that camera's thread:
+
+- `preprocess` (or the structural `shared` graph): frame -> mask, pyramid, candidate quads.
+  Mark these nodes `shareable` so documents loaded later dedupe on their own.
+- One graph per detector (`apriltag`, `aruco`, `ml`), each reading the raw frame (routed) and
+  the shared outputs (linked latest-only), each with its own host outputs.
+- Per-camera context (calibration, exposure) as held inputs, pushed once and linked or routed to
+  the graphs that need it.
+- Enabling a detector at runtime: compile its graph off the camera thread, then `add_graph` +
+  `route_input` + `link` between two ticks; disabling: `remove_graph`.
+
+**Multi-camera** (see [Multiple Cameras](#multiple-cameras)). Sharing is within one camera's
+frames, so the "one graph per camera" layout becomes one domain per camera (its own
+preprocessing and detectors, since inputs differ), ticked by that camera's thread or `poll`
+loop; cameras never wait on each other. Work that needs several cameras together (stereo,
+multi-view fusion) is a separate graph fed by a multi-camera feeder (`MultiCamera::synchronized`
+or `independent` on that graph's host bridge) with the per-camera domains' outputs or raw
+frames. A domain never mixes frames of different cameras into one shared upstream.
+
+### Multiple Cameras
+
+A host with several cameras (HeliOS: a stereo pair, a ring of four) chooses between two layouts:
+
+- **One graph per camera** when the cameras' pipelines never meet (per-camera detection,
+  recording, exposure control). Each graph has its own bridge, drive loop and latest-only
+  `frame` input; a stalled camera stalls only its own graph, and the graphs can run on separate
+  threads (or one `poll` loop over all their inbound fds). Combine results on the host side.
+- **One graph fed by all cameras** when nodes need several cameras' frames together (stereo
+  depth, multi-view fusion, a panorama). Give the graph one host input per camera
+  (`cam0`, `cam1`, ...) and feed them through a multi-camera feeder, which decides which frames
+  tick together:
+  - `MultiCamera::synchronized` when the frames must be **simultaneous** (stereo, calibrated
+    fusion). It groups frames by capture timestamp into one atomic tick.
+  - `MultiCamera::independent` when the cameras are **loosely coupled** (fusing each camera's
+    latest detections, a dashboard): every arrival ticks on every camera's current frame.
+
+Both feeders are `Clone + Send + Sync`: give each camera thread a clone and call
+`push(camera_index, payload)`. Pushing never waits for the graph, and neither grouping nor
+committing copies frames or allocates per frame (the payloads move into the bridge as they are;
+buffers are preallocated).
+
+**Synchronized.** A frame's stamp is read by `SyncConfig::stamp`: `frame_timestamp` (the
+default) reads `timestamp_ns` from a `daedalus:frame` payload's metadata without touching its
+planes, `source_timestamp::<MyFrame>` reads it from the owner frame type hosts usually push
+(`frame_sequence` / `source_sequence::<MyFrame>` match hardware-triggered cameras by sequence
+instead), any `fn(&Payload) -> Option<u64>` works, and `push_stamped` takes a stamp the host read
+itself.
+
+```rust
+use daedalus::engine::{CameraFeed, MultiCamera, PartialPolicy, SyncConfig};
+use daedalus::runtime::host_bridge::multicam::source_timestamp;
+
+let cameras = MultiCamera::synchronized(
+    graph.host(),
+    ["cam0", "cam1", "cam2", "cam3"],
+    SyncConfig {
+        partial: PartialPolicy::TickPartial, // missing cameras: `Option` inputs see None
+        stamp: source_timestamp::<styx::FrameLease>,
+        max_buffered: 4, // frames per camera, preallocated
+        ..SyncConfig::new(Duration::from_millis(4), Duration::from_millis(40)) // window, timeout
+    },
+);
+cameras.set_offset(2, -1_250_000); // camera 2's clock runs 1.25 ms ahead
+for (index, camera) in camera_streams.into_iter().enumerate() {
+    let cameras = cameras.clone();
+    std::thread::spawn(move || {
+        for frame in camera {
+            cameras.push(index, frame.into_payload());
+        }
+    });
+}
+graph.drive_cameras_blocking(&stop, &cameras, |graph, _turn| { /* drain outputs */ Ok(()) })?;
+```
+
+- Each camera's frames go into a sorted buffer of `max_buffered` frames, so frames may arrive
+  out of order, within and across cameras. Per-camera offsets (`set_offset`, in stamp units)
+  correct clock skew before matching.
+- A group anchors on the oldest buffered frame; every camera whose oldest frame lies within
+  `window` of it contributes. A **complete** group is committed to the camera ports under one
+  bridge lock, like a batch: a tick sees it whole or not at all.
+- An **incomplete** group waits until a missing camera shows it skipped the frame (it buffered a
+  later one), the `timeout` elapses (a stalled camera; measured on the bridge clock from the
+  group's first arrival), or a buffer is full. Then `partial` decides: `Drop` discards it,
+  `TickPartial` commits what arrived (the missing cameras' consumers see `None` on `Option`
+  inputs; a required input skips its node that tick), `HoldLast` adds each missing camera's
+  previous frame again (an `Arc` clone; keeps one extra frame per camera alive).
+- Committing replaces a group still queued from before, so a graph slower than its cameras
+  always ticks on the latest group and nothing queues up. Frames stamped within an already
+  resolved group's window are refused as late. Keep the window well under the frame period.
+- Timeouts need a clock: `drive_cameras_blocking` waits at most until `next_deadline()` and
+  expires due groups before each wait, so a stalled camera resolves on time even when no other
+  frame arrives. In a `poll(2)` loop, use `cameras.poll_timeout()` as the poll timeout and call
+  `graph.tick_ready_cameras(&cameras)` whenever `poll` returns. Without either, a due group
+  resolves on the next push of any camera.
+- `cameras.stats()` (`MultiCameraStats`) counts complete, partial and dropped groups, timeouts,
+  overflows, superseded groups, late and dropped frames and the largest skew; `last_group`
+  (`CameraGroup`) says which cameras the latest committed group carries, which reuse their last
+  frame, its anchor stamp and its skew (largest minus smallest stamp).
+
+**Independent latest.** Every camera port is held: it keeps only the latest frame and every tick
+re-delivers it (an `Arc` clone), so a tick sees all cameras' current frames and nothing queues.
+`IndependentConfig::trigger` picks the cameras whose arrivals tick (all by default; their ports
+are `set_triggering_held_input`, a held port that stays pending until a tick takes it, so a burst
+of arrivals is one tick on the newest frame). Arrivals of the other cameras only replace their
+frame. `max_age` clears a stalled camera's frame after that long, so its consumers see `None`
+instead of an ever older frame; `drive_cameras_blocking` / `tick_ready_cameras` service it like a
+timeout.
+
+```rust
+let cameras = MultiCamera::independent(
+    graph.host(),
+    ["front", "rear"],
+    IndependentConfig { trigger: Some(CameraSet::only(0)), max_age: Some(Duration::from_millis(200)) },
+);
+```
+
+**Combining** with the other host features: context the cameras share (IMU, resource state) goes
+on held inputs pushed independently of the feeder; it rides along with every camera tick. Several
+feeders (or a feeder and plain pushes) can share one bridge as long as each port has one writer.
+
 ## Migrating From Pre-2.0 Names
 
 | Pre-2.0 | 2.0 |

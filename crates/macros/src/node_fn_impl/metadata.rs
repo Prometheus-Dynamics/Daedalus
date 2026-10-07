@@ -12,6 +12,7 @@ pub(super) struct MetadataInputs<'a> {
     pub(super) outputs: &'a [OutputPortMeta],
     pub(super) fallback_attr: Option<&'a LitStr>,
     pub(super) fire_attr: Option<&'a LitStr>,
+    pub(super) shareable: bool,
     /// Per output: an `Option` return, recorded as `outputs.<port>.conditional`.
     pub(super) conditional_outputs: &'a [bool],
     pub(super) config_types: &'a [syn::Type],
@@ -28,6 +29,7 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
         outputs,
         fallback_attr,
         fire_attr,
+        shareable,
         conditional_outputs,
         config_types,
         data_crate,
@@ -110,6 +112,14 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
             __meta.insert(
                 ::std::string::String::from(#runtime_crate::NODE_FIRE_META_KEY),
                 #data_crate::model::Value::String(::std::borrow::Cow::from(#fire)),
+            );
+        });
+    }
+    if shareable {
+        inserts.push(quote! {
+            __meta.insert(
+                ::std::string::String::from(#runtime_crate::NODE_SHAREABLE_META_KEY),
+                #data_crate::model::Value::Bool(true),
             );
         });
     }

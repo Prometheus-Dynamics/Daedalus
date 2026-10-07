@@ -10,8 +10,8 @@ use daedalus_transport::{FeedOutcome, Payload};
 
 use crate::handles::PortId;
 
-use super::HostBridgeHandle;
 use super::ports::PortDirection;
+use super::{HostBridgeHandle, wait};
 
 /// Store `payload` as a held port's value; the replaced value, if any, is reported.
 pub(super) fn replace(held: &mut Option<Payload>, payload: Payload) -> FeedOutcome {
@@ -43,6 +43,23 @@ impl HostBridgeHandle {
             let mut newest = None;
             state.queue.drain_into(|entry| newest = Some(entry.payload));
             state.held = Some(newest);
+        }
+    }
+
+    /// Make inbound `port` held (see [`Self::set_held_input`]) and also a tick trigger: a push
+    /// replaces the value and leaves the port pending (waking waiters and the inbound fd) until a
+    /// tick takes it, so a burst of pushes triggers one tick that sees the newest value. The value
+    /// stays held for later ticks other inputs trigger. Used for independent-latest cameras
+    /// ([`MultiCamera::independent`](super::multicam::MultiCamera::independent)).
+    pub fn set_triggering_held_input(&self, port: impl Into<PortId>) {
+        let port = port.into();
+        self.set_held_input(port.clone());
+        let mut guard = self.shared.buffers.lock();
+        let state = guard.inbound.port(port);
+        state.held_trigger = true;
+        state.held_fresh = matches!(state.held, Some(Some(_)));
+        if state.held_fresh {
+            wait::wake_inbound(&self.shared, guard);
         }
     }
 

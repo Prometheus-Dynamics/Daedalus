@@ -39,6 +39,7 @@ mod chain;
 mod detector;
 mod perf;
 mod pin;
+mod shared;
 mod source;
 
 use core::fmt;
@@ -52,11 +53,17 @@ pub use chain::{
 pub use daedalus::alloc_probe::{AllocCounts, CountingAllocator};
 pub use daedalus::transport::FRAME_INTERFACE_KEY;
 pub use detector::{
-    DETECTOR_GROUP_ID, DETECTOR_OUTPUTS, DetectorPlugin, DetectorShape, compile_detector,
-    detector_graph, detector_registry, register_detector_group,
+    DETECTOR_GROUP_ID, DETECTOR_OUTPUTS, Detections, DetectorPlugin, DetectorShape, Dictionary,
+    Quads, RefinedCorners, RejectedMarkers, compile_detector, detector_graph, detector_graph_for,
+    detector_registry, register_detector_group,
 };
 pub use perf::InstructionCounter;
 pub use pin::{PIN_CPU_ENV, pin_from_env};
+pub use shared::{
+    DomainBenchRun, PREPROCESS_GRAPH, compile_separate_detectors, compile_shared_detectors,
+    compile_structural_detectors, detector_tail_graph, dictionary_name, preprocess_graph,
+    run_domain_bench,
+};
 pub use source::{
     FrameFeed, FrameSourceConfig, SYNTHETIC_FRAME_KEY, SyntheticFrame, SyntheticFrameSource,
 };

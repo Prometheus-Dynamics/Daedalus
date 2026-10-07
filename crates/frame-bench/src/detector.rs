@@ -337,7 +337,8 @@ fn size(frame: &SyntheticFrame) -> (u32, u32) {
     id = "mask_prep_runs",
     inputs("frame", config = MaskPrepConfig),
     outputs("runs"),
-    state(MaskPrepState)
+    state(MaskPrepState),
+    shareable
 )]
 pub fn mask_prep_runs(
     frame: FrameView<'_>,
@@ -366,7 +367,8 @@ pub fn mask_prep_runs(
     id = "quads_from_runs",
     inputs("runs", config = QuadConfig),
     outputs("quads"),
-    state(QuadsState)
+    state(QuadsState),
+    shareable
 )]
 pub fn quads_from_runs(
     runs: &Runs,
@@ -498,11 +500,11 @@ impl Stage {
     }
 }
 
-const MASK_PREP: &str = "daedalus.frame_bench.detector:mask_prep_runs";
-const QUADS: &str = "daedalus.frame_bench.detector:quads_from_runs";
-const DECODE: &str = "daedalus.frame_bench.detector:decode";
-const VALIDATE: &str = "daedalus.frame_bench.detector:validate";
-const REFINE: &str = "daedalus.frame_bench.detector:refine";
+pub(crate) const MASK_PREP: &str = "daedalus.frame_bench.detector:mask_prep_runs";
+pub(crate) const QUADS: &str = "daedalus.frame_bench.detector:quads_from_runs";
+pub(crate) const DECODE: &str = "daedalus.frame_bench.detector:decode";
+pub(crate) const VALIDATE: &str = "daedalus.frame_bench.detector:validate";
+pub(crate) const REFINE: &str = "daedalus.frame_bench.detector:refine";
 
 fn stages() -> [Stage; 5] {
     let types = TypeRegistry::new();
@@ -659,7 +661,16 @@ pub fn detector_graph(
     registry: &PluginRegistry,
     shape: DetectorShape,
 ) -> Result<Graph, BenchError> {
-    let dictionary = Some(Dictionary::AprilTag36h11.to_value());
+    detector_graph_for(registry, shape, Dictionary::AprilTag36h11)
+}
+
+/// [`detector_graph`] decoding `dictionary`.
+pub fn detector_graph_for(
+    registry: &PluginRegistry,
+    shape: DetectorShape,
+    dictionary: Dictionary,
+) -> Result<Graph, BenchError> {
+    let dictionary = Some(dictionary.to_value());
     let builder = registry
         .graph_builder()?
         .input_typed::<SyntheticFrame>("frame")?;

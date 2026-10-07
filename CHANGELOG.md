@@ -103,7 +103,56 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   tick and per edge), `EdgeMetrics::fused_handoffs` at `Detailed`. Detector-shaped frame bench:
   instructions per frame 33 100 -> 32 300, `graph_overhead` p50 3.35 -> 3.04 µs; 16-stage chain
   43 000 -> 38 200 instructions (x86_64, "Node fusion" in `docs/development.md`).
-
+- **Execution domains: shared upstream graphs across graphs** (`daedalus_engine::ExecutionDomain`).
+  A domain owns several separately compiled `HostGraph`s on one thread and links host outputs
+  to host inputs (`link(from, port, to, port, LinkMode)`): one `tick()` runs each graph with
+  pending input once, upstreams first, and feeds every linked input an `Arc` clone of the output
+  (no copy, no allocation per tick), so a camera's preprocessing runs once per frame for every
+  detector graph. Link modes `Latest` (default, latest-only input), `All` and `Held`; domain
+  inputs fan one push out to several graphs (`route_input`, `push`, `push_payload`); graphs are
+  added, removed, linked and unlinked between ticks without recompiling; a failing graph keeps
+  its error (`last_error`) and only the graphs downstream of it are skipped for that tick, their
+  fed inputs cleared. `explain()` shows tick order, the fan-out links (types, zero-copy) and
+  shared nodes; `stats()` counts runs, failures, skips and the runs, node runs and time sharing
+  avoided; `enable_frame_overhead` / `frame_overhead()` give each graph's report plus domain
+  totals. `GraphBuilder::shared_input` (host-bridge metadata `HOST_SHARED_INPUTS_KEY`) declares
+  a host input whose payload other graphs share, so the planner gives by-value consumers a copy
+  as it does for held inputs.
+- **Structural sharing**: `ExecutionDomain::load_shared(engine, registry, graphs)` (and
+  `load_shared_documents`) finds the node subgraphs several graphs compute identically from the
+  same host inputs (exact structural equality: node id, constants, metadata, wiring, host input
+  types and policy) and compiles them once into a `shared` upstream graph linked to the rest of
+  each graph (`daedalus_planner::split_shared_upstream`). Only nodes marked deterministic and
+  side-effect free are shared: `#[node(shareable)]` or node metadata
+  `NODE_SHAREABLE_META_KEY` (`"daedalus.node.shareable"`). The frame-bench detector's mask prep
+  and quads stages are `shareable`.
+- `daedalus-frame-bench`: shared-preprocessing domains (`compile_shared_detectors`,
+  `compile_structural_detectors`, `compile_separate_detectors`, `run_domain_bench`) and the
+  `shared_detectors` example; tests assert preprocessing runs once per frame, outputs equal
+  separate detectors', and no copies or runtime/node/host allocations per frame.
+- **Multiple cameras into one graph** (`daedalus_runtime::host_bridge::multicam`, re-exported
+  by `daedalus-engine`). `MultiCamera::synchronized(host, ports, SyncConfig { window, timeout,
+  partial, max_buffered, stamp })` returns a thread-safe `SynchronizedCameras` feeder: camera
+  threads `push(camera, payload)` (or `push_stamped`), frames are matched by stamp
+  (`frame_timestamp` / `frame_sequence` read `daedalus:frame` metadata without CPU access,
+  `source_timestamp::<Owner>` / `source_sequence::<Owner>` the owner frame type, or any
+  `fn(&Payload) -> Option<u64>`) after per-camera offsets (`set_offset`, clock skew), buffered
+  out of order in a preallocated sorted buffer per camera, and each group is committed to the
+  camera ports under one bridge lock (a tick sees it whole). An incomplete group resolves when a
+  missing camera skipped the frame, its `timeout` elapses or a buffer is full, by
+  `PartialPolicy::{Drop, TickPartial, HoldLast}`; a newer group supersedes an untaken one, and
+  late frames are refused. `MultiCamera::independent(host, ports, IndependentConfig { trigger,
+  max_age })` holds each camera's latest frame and ticks per arrival of the trigger cameras
+  (`IndependentCameras`). Both implement `CameraFeed` (`next_deadline`, `poll_timeout`,
+  `expire`); `HostGraph::drive_cameras_blocking` and `HostGraph::tick_ready_cameras` (Linux)
+  service the deadlines, so a stalled camera resolves without another arrival. Telemetry:
+  `MultiCameraStats` (complete/partial/dropped/superseded groups, timeouts, overflows, late and
+  dropped frames, max skew) with `last_group: CameraGroup` (contributing and reused cameras as a
+  `CameraSet`, anchor stamp, skew). Pushing, grouping and committing allocate nothing and copy
+  no frame. Layout recipe in "Multiple Cameras" in `docs/node-authoring.md`.
+- **Triggering held inputs**: `HostBridgeHandle::set_triggering_held_input(port)` makes a held
+  port that also triggers ticks: a push leaves it pending until a tick takes the value, so a
+  burst of pushes is one tick on the newest value, and the value stays held for later ticks.
 - **Held host inputs.** A held input keeps its last pushed value across ticks: every tick
   delivers it to the port's consumers (an `Arc` clone, no copy or allocation) until a push
   replaces it or `clear_input` drops it, so frame ticks see context such as resource state or an

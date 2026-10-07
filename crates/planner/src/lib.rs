@@ -21,6 +21,7 @@ mod host_inputs;
 mod metadata;
 mod passes;
 mod patch;
+mod sharing;
 
 daedalus_core::build_facts!();
 
@@ -41,10 +42,11 @@ pub use metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_OUTPUT_LABELS_KEY,
     DYNAMIC_OUTPUT_TYPES_KEY, DynamicPortMetadata, EMBEDDED_GROUP_KEY, GROUP_ID_KEY,
     GROUP_LABEL_KEY, GroupMetadata, HOST_BRIDGE_META_KEY, HOST_HELD_INPUTS_KEY,
-    HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, HostInputPolicy, HostPortTypes,
-    descriptor_dynamic_port_type, descriptor_metadata_string, descriptor_metadata_value,
-    host_bridge_metadata, host_held_inputs, host_input_policy, is_generic_marker,
-    is_host_bridge_metadata, metadata_string, set_host_input_policy,
+    HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, HOST_SHARED_INPUTS_KEY, HostInputPolicy,
+    HostPortTypes, descriptor_dynamic_port_type, descriptor_metadata_string,
+    descriptor_metadata_value, host_bridge_metadata, host_held_inputs, host_input_policy,
+    host_shared_inputs, is_generic_marker, is_host_bridge_metadata, metadata_string,
+    set_host_input_policy, set_host_input_shared,
 };
 pub use passes::{
     AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,
@@ -54,3 +56,6 @@ pub use passes::{
     registered_planner_lowerings,
 };
 pub use patch::{GraphMetadataSelector, GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
+pub use sharing::{
+    SHARED_UPSTREAM_HOST, SharedNode, SharedPart, SharedPort, SharedSplit, split_shared_upstream,
+};
