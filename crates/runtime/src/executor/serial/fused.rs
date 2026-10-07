@@ -7,6 +7,7 @@ use crate::executor::schedule_compile::FusedPort;
 use crate::executor::{CorrelatedPayload, Executor, FusionTables, NodeHandler};
 use crate::handles::PortId;
 use crate::io::NodePort;
+use crate::prelude::*;
 
 use super::{edge_is_active, edge_uses_direct_slot, node_is_active};
 
