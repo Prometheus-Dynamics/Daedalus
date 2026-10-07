@@ -23,6 +23,8 @@ mod bindings;
 mod drive;
 mod frame_overhead;
 mod introspect;
+#[cfg(any(feature = "threads", all(feature = "std", target_os = "linux")))]
+mod multicam;
 
 pub use bindings::{
     HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
