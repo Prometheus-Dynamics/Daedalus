@@ -431,6 +431,22 @@ impl GraphBuilder {
         builder
     }
 
+    /// Declare host input `name` shared with other graphs: an `ExecutionDomain` link or a domain
+    /// input routed to several graphs hands every graph the same payload, so the planner gives
+    /// consumers taking it by value (`move`/`modify` access) a copy, as for held inputs;
+    /// by-reference consumers (`&T`, `Arc<T>`, views) still read it in place. Recorded on the
+    /// host bridge node as `HOST_SHARED_INPUTS_KEY`.
+    pub fn shared_input(self, name: impl AsRef<str>) -> Self {
+        let name = name.as_ref();
+        let mut builder = self
+            .ensure_host_bridge(None)
+            .ensure_host_bridge_port(true, name);
+        if let Some(host) = builder.host_bridge_node_mut() {
+            daedalus_planner::set_host_input_shared(&mut host.metadata, name);
+        }
+        builder
+    }
+
     fn declare_host_port(self, is_host_input: bool, name: &str, ty: TypeExpr) -> Self {
         let mut builder = self
             .ensure_host_bridge(None)

@@ -55,6 +55,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         fallback_attr,
         fire_attr,
         same_payload_attr,
+        shareable_attr,
     } = match parse::parse_node_args(args, &data_crate, &gpu_crate) {
         Ok(args) => args,
         Err(err) => return TokenStream::from(err),
@@ -395,6 +396,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
             outputs: &outputs_vec,
             fallback_attr: fallback_attr.as_ref(),
             fire_attr: fire_attr.as_ref(),
+            shareable: shareable_attr,
             conditional_outputs: &conditional_outputs(&input.sig.output, outputs_vec.len()),
             config_types: &config_types,
             data_crate: &data_crate,

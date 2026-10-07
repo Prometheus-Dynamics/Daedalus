@@ -8,7 +8,7 @@ use daedalus_registry::typeexpr_transport_key;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
-use crate::metadata::{PLAN_EDGE_EXPLANATIONS_KEY, host_held_inputs};
+use crate::metadata::{PLAN_EDGE_EXPLANATIONS_KEY, host_held_inputs, host_shared_inputs};
 
 use super::{
     AdapterResolutionMode, EdgeResolutionExplanation, EdgeResolutionKind, PlannerCatalog,
@@ -51,8 +51,10 @@ pub(super) fn convert(
             .unwrap_or_else(|| {
                 daedalus_transport::AdaptRequest::new(typeexpr_transport_key(&in_ty))
             });
-        // A held host input is delivered again every tick, so it is shared like a fan-out.
+        // A held host input is delivered again every tick, and a shared one reaches other
+        // graphs too, so either is shared like a fan-out.
         let held = host_held_inputs(&from_node.metadata)
+            .chain(host_shared_inputs(&from_node.metadata))
             .any(|port| port.eq_ignore_ascii_case(&edge.from.port));
         let target_exclusive = matches!(
             request.access,

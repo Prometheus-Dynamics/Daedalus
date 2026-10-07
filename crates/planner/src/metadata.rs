@@ -10,10 +10,10 @@ pub use daedalus_core::metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_INPUTS_KEY,
     DYNAMIC_OUTPUT_LABELS_KEY, DYNAMIC_OUTPUT_TYPES_KEY, DYNAMIC_OUTPUTS_KEY, EMBEDDED_GROUP_KEY,
     GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, HOST_HELD_INPUTS_KEY,
-    HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, PLAN_APPLIED_LOWERINGS_KEY,
-    PLAN_CONVERTER_METADATA_PREFIX, PLAN_EDGE_EXPLANATIONS_KEY, PLAN_GPU_SEGMENTS_KEY,
-    PLAN_GPU_WHY_KEY, PLAN_OVERLOAD_RESOLUTIONS_KEY, PLAN_SCHEDULE_ORDER_KEY,
-    PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY,
+    HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, HOST_SHARED_INPUTS_KEY,
+    PLAN_APPLIED_LOWERINGS_KEY, PLAN_CONVERTER_METADATA_PREFIX, PLAN_EDGE_EXPLANATIONS_KEY,
+    PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY, PLAN_OVERLOAD_RESOLUTIONS_KEY,
+    PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY,
 };
 
 /// Opaque type name the planner treats as a type variable, inferred from connected edges.
@@ -88,6 +88,30 @@ pub fn host_held_inputs(metadata: &BTreeMap<String, Value>) -> impl Iterator<Ite
         _ => &[],
     };
     ports.iter().filter_map(Value::as_str)
+}
+
+/// The host inputs a host-bridge node declares shared with other graphs
+/// (`HOST_SHARED_INPUTS_KEY`, a list of port names).
+pub fn host_shared_inputs(metadata: &BTreeMap<String, Value>) -> impl Iterator<Item = &str> {
+    let ports = match metadata.get(HOST_SHARED_INPUTS_KEY) {
+        Some(Value::List(ports)) => ports.as_slice(),
+        _ => &[],
+    };
+    ports.iter().filter_map(Value::as_str)
+}
+
+/// Declare host input `port` of a host-bridge node's metadata shared with other graphs
+/// (`HOST_SHARED_INPUTS_KEY`): by-value consumers get a planned copy.
+pub fn set_host_input_shared(metadata: &mut BTreeMap<String, Value>, port: &str) {
+    if host_shared_inputs(metadata).any(|shared| shared.eq_ignore_ascii_case(port)) {
+        return;
+    }
+    let mut ports = match metadata.remove(HOST_SHARED_INPUTS_KEY) {
+        Some(Value::List(ports)) => ports,
+        _ => Vec::new(),
+    };
+    ports.push(Value::String(Cow::Owned(port.to_string())));
+    metadata.insert(HOST_SHARED_INPUTS_KEY.to_string(), Value::List(ports));
 }
 
 /// The policy of host input `port` in a host-bridge node's metadata (ports match

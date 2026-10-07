@@ -433,6 +433,11 @@ pub const NODE_REQUIRED_INPUTS_META_KEY: &str = "daedalus.node.required_inputs";
 /// Node metadata choosing when the node fires ([`NodeFire`]): the string `"any"` (default) or
 /// `"all"`. Set on a declaration (`#[node(fire = "all")]`) or on a graph node (`fire_all`).
 pub const NODE_FIRE_META_KEY: &str = "daedalus.node.fire";
+/// Node metadata marking a node deterministic and side-effect free (`true`): equal inputs and
+/// constants give equal outputs, so graphs loaded together into one execution domain may share
+/// one instance of it (structural sharing). Set on a declaration (`#[node(shareable)]`) or on a
+/// graph node; nodes without it are never shared.
+pub const NODE_SHAREABLE_META_KEY: &str = "daedalus.node.shareable";
 
 /// When a node with [required inputs](NODE_REQUIRED_INPUTS_META_KEY) fires.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
