@@ -34,6 +34,11 @@ pub(super) struct PortState {
     /// `Some` for a held inbound port (`set_held_input`): its current value, re-delivered to
     /// every tick until replaced or cleared. Held ports never queue.
     pub(super) held: Option<Option<Payload>>,
+    /// A held port whose pushes also trigger ticks (`set_triggering_held_input`): a push leaves
+    /// it pending until a tick takes the value.
+    pub(super) held_trigger: bool,
+    /// A triggering held port's value was pushed since the last take.
+    pub(super) held_fresh: bool,
     /// Lifetime counters; `pending` is filled in from the queue when snapshotted.
     pub(super) stats: HostPortStats,
 }
@@ -48,6 +53,8 @@ impl PortState {
             marks: FreshnessMarks::default(),
             closed: false,
             held: None,
+            held_trigger: false,
+            held_fresh: false,
             stats: HostPortStats::default(),
         }
     }
@@ -72,6 +79,7 @@ impl PortState {
     /// delivered; `None` for a queued port.
     pub(super) fn take_held(&mut self) -> Option<Option<Payload>> {
         let held = self.held.as_ref()?.clone();
+        self.held_fresh = false;
         if held.is_some() {
             self.stats.delivered = self.stats.delivered.saturating_add(1);
         }
@@ -81,14 +89,20 @@ impl PortState {
     /// Drop queued payloads and a held port's value; the port keeps its mode.
     pub(super) fn discard_input(&mut self) {
         self.queue.clear();
+        self.held_fresh = false;
         if let Some(held) = self.held.as_mut() {
             *held = None;
         }
     }
 
+    /// Input a tick would take: queued payloads plus a fresh triggering held value.
+    pub(super) fn pending(&self) -> usize {
+        self.queue.len() + usize::from(self.held_fresh)
+    }
+
     pub(super) fn stats(&self) -> HostPortStats {
         HostPortStats {
-            pending: self.queue.len(),
+            pending: self.pending(),
             ..self.stats.clone()
         }
     }
@@ -159,11 +173,11 @@ impl PortDirection {
     }
 
     pub(super) fn pending(&self) -> usize {
-        self.ports.values().map(|state| state.queue.len()).sum()
+        self.ports.values().map(PortState::pending).sum()
     }
 
     pub(super) fn has_pending(&self) -> bool {
-        self.ports.values().any(|state| !state.queue.is_empty())
+        self.ports.values().any(|state| state.pending() > 0)
     }
 
     pub(super) fn set_defaults(&mut self, pressure: PressurePolicy, freshness: FreshnessPolicy) {

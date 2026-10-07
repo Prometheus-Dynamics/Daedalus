@@ -38,6 +38,10 @@ pub use daedalus_core::platform::Clock;
 pub use daedalus_runtime::MetricsLevel;
 #[cfg(all(feature = "std", target_os = "linux"))]
 pub use daedalus_runtime::host_bridge::InboundFd;
+pub use daedalus_runtime::host_bridge::multicam::{
+    CameraFeed, CameraGroup, CameraPush, CameraSet, IndependentCameras, IndependentConfig,
+    MultiCamera, MultiCameraStats, PartialPolicy, SyncConfig, SynchronizedCameras,
+};
 pub use daedalus_runtime::host_bridge::{
     HostBatchOutcomes, HostBatchRejected, HostInputBatch, InboundWait, InboundWaiter,
     PayloadInspection, PayloadSummary,

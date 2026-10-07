@@ -22,6 +22,7 @@ mod inbound_fd;
 mod inspect;
 mod io_timing;
 mod manager;
+pub mod multicam;
 mod policy;
 mod ports;
 mod serializers;
@@ -317,8 +318,12 @@ fn enqueue_locked(
         .then(|| (payload.correlation_id(), payload.type_key().clone()));
     let incoming = payload.correlation_id();
     let (outcome, replacement, queued) = match state.held.as_mut() {
-        // A held port keeps only its current value and ignores pressure policy.
-        Some(held) => (held::replace(held, payload), None, false),
+        // A held port keeps only its current value and ignores pressure policy; a triggering one
+        // stays pending until a tick takes it.
+        Some(held) => {
+            state.held_fresh |= state.held_trigger;
+            (held::replace(held, payload), None, state.held_trigger)
+        }
         None => {
             let pressure = state.pressure.as_ref().unwrap_or(default_pressure);
             let outcome = FeedOutcome::from_push(

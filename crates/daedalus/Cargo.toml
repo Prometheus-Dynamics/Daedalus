@@ -258,6 +258,11 @@ path = "tests/held_host_inputs.rs"
 required-features = ["engine", "plugins", "threads"]
 
 [[test]]
+name = "multi_camera"
+path = "tests/multi_camera.rs"
+required-features = ["engine", "plugins", "threads"]
+
+[[test]]
 name = "graph_frame_allocations"
 path = "tests/graph_frame_allocations.rs"
 required-features = ["engine", "plugins"]
