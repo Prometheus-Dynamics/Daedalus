@@ -144,6 +144,10 @@ pub struct RuntimeSection {
     pub adaptive_dispatch_overhead: Option<Duration>,
     #[cfg_attr(feature = "config-env", serde(default))]
     pub debug_config: RuntimeDebugConfig,
+    /// Run chains of single-consumer CPU nodes as fused units, handing payloads straight from
+    /// producer to consumer (default on; `DAEDALUS_NODE_FUSION=0` turns it off for debugging).
+    #[cfg_attr(feature = "config-env", serde(default = "default_node_fusion"))]
+    pub node_fusion: bool,
     #[cfg_attr(feature = "config-env", serde(default = "default_stream_idle_sleep"))]
     pub stream_idle_sleep: Duration,
     /// Clock behind executor timing (telemetry, adaptive costs, `HostGraph` step metrics),
@@ -155,6 +159,10 @@ pub struct RuntimeSection {
 }
 
 fn default_fail_fast() -> bool {
+    true
+}
+
+fn default_node_fusion() -> bool {
     true
 }
 
@@ -192,6 +200,7 @@ impl Default for RuntimeSection {
             pool_size: None,
             adaptive_dispatch_overhead: None,
             debug_config: RuntimeDebugConfig::default(),
+            node_fusion: default_node_fusion(),
             stream_idle_sleep: default_stream_idle_sleep(),
             clock: Clock::default(),
         }
@@ -293,6 +302,13 @@ impl EngineConfig {
 
     pub fn with_metrics_level(mut self, metrics_level: MetricsLevel) -> Self {
         self.runtime.metrics_level = metrics_level;
+        self
+    }
+
+    /// Fuse chains of single-consumer CPU nodes (the default) or, with `false`, run every node
+    /// and edge on its own (see "Node fusion" in `docs/development.md`).
+    pub fn with_node_fusion(mut self, enabled: bool) -> Self {
+        self.runtime.node_fusion = enabled;
         self
     }
 
@@ -493,6 +509,7 @@ impl EngineConfig {
             };
         }
         cfg.runtime.fail_fast = read_bool("DAEDALUS_RUNTIME_FAIL_FAST", cfg.runtime.fail_fast)?;
+        cfg.runtime.node_fusion = read_bool("DAEDALUS_NODE_FUSION", cfg.runtime.node_fusion)?;
         cfg.runtime.demand_driven =
             read_bool("DAEDALUS_RUNTIME_DEMAND_DRIVEN", cfg.runtime.demand_driven)?;
         if let Ok(raw) = env::var("DAEDALUS_METRICS_LEVEL") {

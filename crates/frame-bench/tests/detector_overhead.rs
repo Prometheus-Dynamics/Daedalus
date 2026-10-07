@@ -52,6 +52,9 @@ fn detector_frames_allocate_nothing() {
         // Mask prep's `FrameView` is the provider's view of the owner frame, lent in place.
         let adapts = report.counter("zero_copy_adapts").expect("adapts");
         assert_eq!((adapts.p50, adapts.max), (1, 1), "{context}");
+        // mask prep -> quads -> decode -> validate run as one fused unit.
+        let fused = report.counter("fused_handoffs").expect("fused");
+        assert_eq!((fused.p50, fused.max), (3, 3), "{context}");
         let [runtime, node, host, _other] = run.allocs_per_frame.expect("alloc probe");
         assert_eq!((runtime, node, host), (0.0, 0.0, 0.0), "{context}");
     }

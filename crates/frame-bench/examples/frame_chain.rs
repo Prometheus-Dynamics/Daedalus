@@ -35,7 +35,9 @@ fn run(
     record: bool,
     bench: &FrameBenchConfig,
 ) -> Result<FrameBenchRun, Error> {
-    let mut config = EngineConfig::default().with_metrics_level(MetricsLevel::Off);
+    let mut config = EngineConfig::default()
+        .with_metrics_level(MetricsLevel::Off)
+        .with_node_fusion(daedalus_frame_bench::node_fusion_from_env());
     if record {
         config = config.with_frame_overhead(bench.ticks);
     }
@@ -68,8 +70,9 @@ fn main() -> Result<(), Error> {
     for feed in [FrameFeed::Interface, FrameFeed::Owner] {
         println!("\n== feed: {} ==", feed.as_str());
         println!(
-            "{:>6} {:>12} {:>12} {:>12} {:>12} {:>14} {:>8} {:>10} {:>10}",
+            "{:>6} {:>12} {:>12} {:>12} {:>12} {:>12} {:>14} {:>8} {:>10} {:>10}",
             "stages",
+            "instructions",
             "frame p50",
             "frame p99",
             "tick p50",
@@ -89,7 +92,8 @@ fn main() -> Result<(), Error> {
             let p50 = |name| recorded.stage_p50(name).unwrap_or(0);
             let [runtime, node, ..] = recorded.allocs_per_frame.unwrap_or_default();
             println!(
-                "{stages:>6} {:>10}ns {:>10}ns {:>10}ns {:>10}ns {:>12}ns {:>8} {:>10.2} {:>10.2}",
+                "{stages:>6} {:>12.0} {:>10}ns {:>10}ns {:>10}ns {:>10}ns {:>12}ns {:>8} {:>10.2} {:>10.2}",
+                plain.instructions_per_frame.unwrap_or(0.0),
                 plain.frame_p50_ns,
                 plain.frame_p99_ns,
                 p50("tick"),

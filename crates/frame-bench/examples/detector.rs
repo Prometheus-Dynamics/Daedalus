@@ -5,6 +5,7 @@
 //! ```text
 //! cargo run --release -p daedalus-frame-bench --example detector
 //! FRAME_CHAIN_TICKS=20000 cargo run --release -p daedalus-frame-bench --example detector
+//! DAEDALUS_NODE_FUSION=0 cargo run --release -p daedalus-frame-bench --example detector
 //! ```
 // The report is this example's output.
 #![allow(clippy::print_stdout)]
@@ -41,7 +42,9 @@ fn main() -> Result<(), Error> {
             if only.as_deref().is_some_and(|only| only != shape.as_str()) {
                 continue;
             }
-            let mut config = EngineConfig::default().with_metrics_level(MetricsLevel::Off);
+            let mut config = EngineConfig::default()
+                .with_metrics_level(MetricsLevel::Off)
+                .with_node_fusion(daedalus_frame_bench::node_fusion_from_env());
             if record {
                 config = config.with_frame_overhead(ticks);
             }

@@ -201,6 +201,17 @@ pub fn run_frame_bench<H: NodeHandler + Send + Sync + 'static>(
     })
 }
 
+/// `DAEDALUS_NODE_FUSION` (`0`/`off` turns node fusion off; on by default), for comparing fused
+/// and unfused runs of the bench examples (`EngineConfig::with_node_fusion`).
+pub fn node_fusion_from_env() -> bool {
+    std::env::var("DAEDALUS_NODE_FUSION").map_or(true, |value| {
+        !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "0" | "off" | "false" | "no"
+        )
+    })
+}
+
 /// Nearest-rank percentile `q` of sorted `values`.
 fn percentile(values: &[u64], q: usize) -> u64 {
     values
