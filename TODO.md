@@ -172,9 +172,9 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 - [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. No further tags or version bumps
       for dev work: changes go under CHANGELOG `[Unreleased]` and downstream pins by commit until a
       hardware-validated release.
-- [ ] **Faster local builds and `ci.sh`** (in progress): parallel `ci.sh -j`, `ci.sh quick`,
-      smoke reusing the test build; then the external-drive vs NVMe target-dir measurement once
-      the drive is free.
+- [x] **Faster local builds and `ci.sh`** (f7edb7d): `ci.sh -j` parallel lanes, `ci.sh quick`,
+      smoke reusing the test build, `ci.sh doc`/`full`; target dirs belong on a local SSD (the
+      external drive made the edit loop ~6x slower).
 - [ ] **HeliOS migration** (HeliOS-owned, in the HeliOS repo; see `docs/migration-3.0.md`): pin
       `v3.0.0`, drop the `ffi`/`gpu` features, switch the loader to `PluginLibrary`, use Styx's
       `daedalus` feature (`StyxFramesPlugin`, once it requires Daedalus 3.0.0) for `FrameLease`
