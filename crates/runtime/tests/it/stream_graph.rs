@@ -259,15 +259,19 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
     );
     let worker = StreamGraph::spawn_continuous(Arc::clone(&graph), Duration::from_millis(1));
 
-    for value in 0..32u32 {
-        input
-            .feed(Payload::owned("demo:u32", value))
-            .expect("feed should succeed");
+    {
+        // Holding the graph keeps the worker from draining the inputs before the check.
+        let graph = graph.lock();
+        for value in 0..32u32 {
+            input
+                .feed(Payload::owned("demo:u32", value))
+                .expect("feed should succeed");
+        }
+        assert!(matches!(
+            graph.diagnostics().worker_state,
+            StreamWorkerState::Running | StreamWorkerState::BlockedInExecution
+        ));
     }
-    assert!(matches!(
-        graph.lock().diagnostics().worker_state,
-        StreamWorkerState::Running | StreamWorkerState::BlockedInExecution
-    ));
     let first_batch: Vec<_> = (0..32).map(|_| recv_u32(&output)).collect();
     assert_eq!(first_batch, (0..32u32).collect::<Vec<_>>());
 
