@@ -259,6 +259,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Maintenance
 
+- **Removed the planner's orphaned plan goldens** (`crates/planner/tests/goldens`): no test has
+  read them since the planner rebuild (509283e), so they had drifted from real plans. The runtime
+  plan goldens and the planner's pass unit tests cover plan structure.
 - **Removed the Docker example suite** (`ci-docker` workflow, `testing/docker`, the
   `docker_examples` test): it ran facade examples that no longer exist, and the
   `daedalus-examples` binaries already run natively in `scripts/ci.sh smoke` (CI workspace job)
