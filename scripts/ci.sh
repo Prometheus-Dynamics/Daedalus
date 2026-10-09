@@ -44,7 +44,8 @@ usage: scripts/ci.sh [subcommand...]
   link        build (and link) every library with all features
   test        workspace tests (default CI features) and dylib plugin tests
   macro-ui    trybuild macro UI tests
-  smoke       run the CPU-only example binaries (built by `test` as unit-test targets)
+  smoke       run the CPU-only example binaries (sharing the `test` build)
+  doc         rustdoc for the workspace with -D warnings
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics) and without threads
   nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
@@ -113,17 +114,26 @@ cmd_macro_ui() {
   cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
 }
 
+# Builds with the `test` step's crate graph (`--workspace`, CI features, examples pull in the
+# dev-dependencies), so after `test` only the binaries themselves compile; `cargo run -p` would
+# resolve features for one package and rebuild about 30 crates.
 cmd_smoke() {
   step "Running CPU-only example binaries"
-  local bin
-  for bin in runtime_metrics transport_metrics ownership_metrics lifecycle_trace plan_debug \
-    overhead_floor observability backpressure_diagnostics external_frame_source; do
+  local bins=(runtime_metrics transport_metrics ownership_metrics lifecycle_trace plan_debug
+    overhead_floor observability backpressure_diagnostics external_frame_source frame_chain)
+  local args=(--examples) bin exes exe
+  for bin in "${bins[@]::${#bins[@]}-1}"; do args+=(--bin "$bin"); done
+  exes="$(cargo build --workspace --features "$CI_FEATURES" "${args[@]}" \
+    --message-format=json-render-diagnostics | json_field executable)"
+  for bin in "${bins[@]}"; do
     echo "  -> $bin"
-    cargo run -p daedalus-examples --quiet --bin "$bin" >/dev/null
+    exe="$(grep -m1 "/$bin\$" <<<"$exes")" || { echo "no executable for $bin" >&2 && return 1; }
+    FRAME_CHAIN_TICKS=200 "$exe" >/dev/null
   done
-  echo "  -> frame_chain"
-  FRAME_CHAIN_TICKS=200 cargo run -p daedalus-frame-bench --quiet --example frame_chain >/dev/null
 }
+
+# Prints string field $1 of each JSON message on stdin that has it (cargo's --message-format=json).
+json_field() { sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p"; }
 
 # Type-check only (no linking), so no cross linker or sysroot libraries are needed beyond a C
 # cross compiler for build scripts that compile C (criterion's `alloca`). On Debian/Ubuntu that
@@ -346,6 +356,11 @@ cmd_vvl() {
   fi
 }
 
+cmd_doc() {
+  step "Building docs"
+  RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-Dwarnings" cargo doc --workspace --no-deps
+}
+
 cmd_all() {
   cmd_lints
   cmd_features
@@ -362,8 +377,8 @@ main() {
   for sub in "$@"; do
     case "$sub" in
       -h | --help | help) usage ;;
-      all | lints | features | clippy | link | test | smoke | aarch64 | lean | nostd | mcu | wasm | \
-        bench | pi | vvl)
+      all | lints | features | clippy | link | test | smoke | doc | aarch64 | lean | nostd | mcu | \
+        wasm | bench | pi | vvl)
         "cmd_$sub" ;;
       macro-ui) cmd_macro_ui ;;
       *)

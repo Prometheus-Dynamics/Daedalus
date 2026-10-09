@@ -95,10 +95,8 @@ jobs:
       - name: Check feature surfaces
         run: ./scripts/ci.sh features
 
-      - name: Build docs
-        env:
-          RUSTDOCFLAGS: -Dwarnings
-        run: cargo doc --workspace --no-deps
+      - name: Build docs (-D warnings)
+        run: ./scripts/ci.sh doc
 
   # `cargo package --no-verify` compiles nothing, so this job has no Rust cache.
   package-surface:
