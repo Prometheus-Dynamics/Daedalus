@@ -37,15 +37,13 @@ usage() {
   cat <<'EOF'
 usage: scripts/ci.sh [subcommand...]
 
-  all         lints check features clippy test macro-ui examples smoke (default)
+  all         lints features clippy test macro-ui smoke (default)
   lints       file-size, workspace-deps, GPU async lints and rustfmt
-  check       cargo check of the workspace
-  features    release feature-surface checks
-  clippy      clippy with -D warnings
+  features    release feature-surface checks and the all-features library build
+  clippy      clippy with -D warnings: default CI features, dylib plugins, all features
   test        workspace tests (default CI features) and dylib plugin tests
   macro-ui    trybuild macro UI tests
-  examples    build facade examples and run their tests
-  smoke       run the CPU-only example binaries
+  smoke       run the CPU-only example binaries (built by `test` as unit-test targets)
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
   lean        tests for the lean preset (no executor pool, no metrics) and without threads
   nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
@@ -53,7 +51,7 @@ usage: scripts/ci.sh [subcommand...]
   mcu         MCU profile: build the blink firmwares (compiled, tunable, loaded) for thumbv7em
               and thumbv6m, check flash and static RAM against per-mode budgets (readelf), and
               run the MCU crates' native tests
-  wasm        engine,plugins (embedded without threads) checks and Node runs for wasm32 and WASI
+  wasm        engine,plugins (embedded, no threads) dev builds and Node runs for wasm32 and WASI
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
   vvl         the dmabuf hardware tests and gpu_probe under the Khronos validation layer
@@ -71,11 +69,6 @@ cmd_lints() {
   cargo fmt --all -- --check
 }
 
-cmd_check() {
-  step "Checking workspace"
-  cargo check --workspace --all-targets
-}
-
 cmd_features() {
   step "Checking feature surfaces"
   cargo check -p daedalus-rs --no-default-features
@@ -90,8 +83,6 @@ cmd_features() {
     --features "daedalus-ffi-core/image-payload,daedalus-ffi-host/image-payload"
   cargo check -p daedalus-gpu --no-default-features --features "gpu-wgpu"
   cargo check -p daedalus-gpu --all-targets --no-default-features --features "gpu-gles,gpu-image"
-  # Needs libcamera-dev + pkg-config for the styx camera example feature.
-  cargo check --workspace --all-targets --all-features
   # Links every library, so `cdylib` plugins whose exported symbols clash once features unify
   # fail here (`check` does not link).
   cargo build --workspace --lib --all-features
@@ -101,6 +92,9 @@ cmd_clippy() {
   step "Running clippy"
   cargo clippy --workspace --all-targets --features "$CI_FEATURES" -- -D warnings
   cargo clippy -p daedalus-rs --all-targets --features "$CI_FEATURES,dylib-plugins" -- -D warnings
+  # Type-checks every target with every feature (the all-features `cargo check`) and lints it.
+  # Needs libcamera-dev + pkg-config for the styx camera example feature.
+  cargo clippy --workspace --all-targets --all-features -- -D warnings
 }
 
 cmd_test() {
@@ -112,12 +106,6 @@ cmd_test() {
 cmd_macro_ui() {
   step "Running macro UI (trybuild) tests"
   cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
-}
-
-cmd_examples() {
-  step "Building examples"
-  cargo check -p daedalus-rs --features "$CI_FEATURES" --examples
-  cargo test -p daedalus-rs --features "$CI_FEATURES" --examples
 }
 
 cmd_smoke() {
@@ -245,29 +233,31 @@ mcu_size() {
 }
 
 # `wasm32-unknown-unknown` has `std` but no threads and no clock; `wasm32-wasip1` has a clock but
-# no threads. Check the embedded preset without `threads` (`engine,plugins`) for both, then run in
+# no threads. Build the embedded preset without `threads` (`engine,plugins`) for both, then run in
 # Node: serial/parallel/adaptive frames (an import-free module, and a WASI command on the platform
 # clock) and the wasm-bindgen host example driven from JS. Runs are skipped without `node`; the
 # wasm-bindgen one without a `wasm-bindgen` CLI matching Cargo.lock (required when `$CI` is set).
+# Dev profile: the smoke runs check behavior (with overflow checks and debug assertions on), not
+# optimized code, and a release build of the graph costs about four times as much.
 cmd_wasm() {
   local out="${CARGO_TARGET_DIR:-target}" target
   for target in "$WASM_TARGET" "$WASI_TARGET"; do
-    step "Checking the embedded preset for $target"
     ensure_target "$target"
-    cargo check --target "$target" -p daedalus-rs --no-default-features --features "engine,plugins"
   done
-  # Separate builds, so the smoke module keeps the preset's features (the host example adds
-  # `metrics`).
-  cargo build --target "$WASM_TARGET" --release -p daedalus-wasm-smoke --lib
-  cargo build --target "$WASM_TARGET" --release -p daedalus-wasm-bindgen-host
-  cargo build --target "$WASI_TARGET" --release -p daedalus-wasm-smoke --bin daedalus-wasi-smoke
+  # Separate builds, so the smoke module keeps the preset's features (`daedalus` with exactly
+  # `engine,plugins`; this also type-checks the preset for both targets); the host example adds
+  # `metrics`.
+  step "Building the embedded preset for $WASM_TARGET and $WASI_TARGET"
+  cargo build --target "$WASM_TARGET" -p daedalus-wasm-smoke --lib
+  cargo build --target "$WASM_TARGET" -p daedalus-wasm-bindgen-host
+  cargo build --target "$WASI_TARGET" -p daedalus-wasm-smoke --bin daedalus-wasi-smoke
   if ! command -v node >/dev/null; then
     echo "node not found: skipping the wasm smoke runs"
     return
   fi
   step "Running the wasm and WASI runtime smoke tests"
-  node scripts/wasm-smoke.mjs "$out/$WASM_TARGET/release/daedalus_wasm_smoke.wasm"
-  node --no-warnings scripts/wasi-smoke.mjs "$out/$WASI_TARGET/release/daedalus-wasi-smoke.wasm"
+  node scripts/wasm-smoke.mjs "$out/$WASM_TARGET/debug/daedalus_wasm_smoke.wasm"
+  node --no-warnings scripts/wasi-smoke.mjs "$out/$WASI_TARGET/debug/daedalus-wasi-smoke.wasm"
   local version
   version="$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"$/\1/p}' Cargo.lock)"
   if [[ "$(wasm-bindgen --version 2>/dev/null)" != "wasm-bindgen $version" ]]; then
@@ -278,7 +268,7 @@ cmd_wasm() {
   fi
   step "Running the wasm-bindgen host example"
   wasm-bindgen --target nodejs --out-dir "$out/wasm-bindgen-host" \
-    "$out/$WASM_TARGET/release/daedalus_wasm_bindgen_host.wasm"
+    "$out/$WASM_TARGET/debug/daedalus_wasm_bindgen_host.wasm"
   node scripts/wasm-bindgen-host.mjs "$out/wasm-bindgen-host/daedalus_wasm_bindgen_host.js"
 }
 
@@ -353,12 +343,10 @@ cmd_vvl() {
 
 cmd_all() {
   cmd_lints
-  cmd_check
   cmd_features
   cmd_clippy
   cmd_test
   cmd_macro_ui
-  cmd_examples
   cmd_smoke
 }
 
@@ -368,8 +356,8 @@ main() {
   for sub in "$@"; do
     case "$sub" in
       -h | --help | help) usage ;;
-      all | lints | check | features | clippy | test | examples | smoke | aarch64 | lean | nostd | \
-        mcu | wasm | bench | pi | vvl)
+      all | lints | features | clippy | test | smoke | aarch64 | lean | nostd | mcu | wasm | bench | \
+        pi | vvl)
         "cmd_$sub" ;;
       macro-ui) cmd_macro_ui ;;
       *)

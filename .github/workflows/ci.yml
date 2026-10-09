@@ -10,11 +10,13 @@ on:
 env:
   # CI builds are one-shot: incremental artifacts only cost time and cache space.
   CARGO_INCREMENTAL: 0
-  # Line tables keep backtraces useful while shrinking debug binaries and link times.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
   CARGO_TERM_COLOR: always
 
+# Jobs are grouped by the crate graph they compile: each job builds one feature set in one mode
+# (build or check), so its cache holds one graph and no two jobs build the same one.
 jobs:
+  # Lints, then the workspace tests (`engine,plugins`, dev build) and the CPU-only example
+  # binaries, which reuse that graph.
   workspace:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -31,57 +33,26 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install native camera dependencies
-        run: sudo apt-get update && sudo apt-get install -y libcamera-dev pkg-config
-
+      # Pull requests restore the newest cache of the default branch but do not save their own,
+      # so they cannot evict it (one cache per job).
       - &cache
         name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run file-size lint
-        run: ./scripts/check-file-sizes.sh
-
-      - name: Run workspace dependency centralization lint
-        run: ./scripts/check-workspace-deps.sh
-
-      - name: Run GPU async blocking lint
-        run: ./scripts/check-gpu-async-blocking.sh
+      - name: Run lints (file sizes, workspace deps, GPU async, rustfmt)
+        run: ./scripts/ci.sh lints
 
       - name: Run workspace tests
         run: cargo test --workspace --all-targets --features "engine,plugins"
 
-      - name: Check all features
-        run: cargo check --workspace --all-targets --all-features
-
-      # `check` does not link: this catches `cdylib` plugins whose exported symbols clash under
-      # feature unification.
-      - name: Build all features
-        run: cargo build --workspace --lib --all-features
-
-      - name: Check minimal facade surface
-        run: cargo check -p daedalus-rs --no-default-features
-
-      - name: Check lean and full engine presets
-        run: |
-          cargo check -p daedalus-rs --no-default-features --features "embedded"
-          cargo check -p daedalus-rs --no-default-features --features "engine,plugins"
-          cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
-
-      - name: Build examples
-        run: cargo check -p daedalus-rs --features "engine,plugins" --examples
-
-      - name: Run example tests
-        run: cargo test -p daedalus-rs --features "engine,plugins" --examples
-
       - name: Run CPU-only example binaries
         run: ./scripts/ci.sh smoke
 
-  # trybuild compiles its own project per UI test run, so it gets a job that runs in parallel
-  # with the workspace tests (the test is `#[ignore]`d in the regular test run).
-  macro-ui:
+  # The facade alone: native `cdylib` plugin loading, then the trybuild macro UI tests (`plugins`
+  # only, ignored in the regular test run; trybuild compiles its own project).
+  facade:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -91,44 +62,45 @@ jobs:
         uses: dtolnay/rust-toolchain@1.99.0
       - *cache
 
-      - name: Run macro UI (trybuild) tests
-        run: cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
-
-  dylib-plugins:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - *checkout
-      - *toolchain
-      - *cache
-
       - name: Test dynamic plugin loading
         run: cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 
+      - name: Run macro UI (trybuild) tests
+        run: ./scripts/ci.sh macro-ui
+
+  # Everything in check mode (clippy for `engine,plugins`, dylib plugins and all features; the
+  # per-package feature surfaces; rustdoc), plus the all-features library build.
   docs-and-lints:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - *checkout
       - *toolchain-lint
+
+      # For the styx camera example feature (`--all-features`).
+      - name: Install native camera dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcamera-dev pkg-config
+
       - *cache
 
-      - name: Run clippy
-        run: cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
+      - name: Run clippy (engine,plugins; dylib plugins; all features)
+        run: ./scripts/ci.sh clippy
 
-      - name: Run clippy (dynamic plugin loading)
-        run: cargo clippy -p daedalus-rs --all-targets --features "engine,plugins,dylib-plugins" -- -D warnings
+      - name: Check feature surfaces and build all features
+        run: ./scripts/ci.sh features
 
       - name: Build docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
         run: cargo doc --workspace --no-deps
 
+  # `cargo package --no-verify` compiles nothing, so this job has no Rust cache.
   package-surface:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - *checkout
       - *toolchain
-      - *cache
 
       - name: Validate package surface
         run: cargo package --workspace --exclude daedalus-rs --exclude daedalus-examples --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project --exclude daedalus-plugins-framelease --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi --exclude daedalus-frame-bench --allow-dirty --no-verify
@@ -164,8 +136,8 @@ jobs:
   # no_std + alloc check of the tier-1 crates on bare metal (with and without compare-and-swap)
   # and of the serial runtime and engine (plus the no_std smoke graph run natively), the MCU
   # profile firmware against its size budgets, and the embedded preset on wasm32-unknown-unknown
-  # and wasm32-wasip1: type-checked, then run in Node (preinstalled on the runner), including the
-  # wasm-bindgen host example.
+  # and wasm32-wasip1: built (dev profile), then run in Node (preinstalled on the runner),
+  # including the wasm-bindgen host example.
   portability:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -184,7 +156,7 @@ jobs:
         with:
           tool: wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }}
       - *cache
-      - name: Check no_std crates and the wasm embedded preset
+      - name: Check no_std crates; build and run the wasm embedded preset
         run: ./scripts/ci.sh nostd wasm
 
       # Builds the MCU blink firmware for both bare-metal targets, fails above its flash/RAM

@@ -13,20 +13,32 @@ cargo fmt --all -- --check
 ./scripts/check-file-sizes.sh
 ./scripts/check-workspace-deps.sh
 ./scripts/check-gpu-async-blocking.sh
-cargo check --workspace --all-targets
 cargo test --workspace --all-targets --features "engine,plugins"
 cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
-cargo doc --workspace --no-deps
+cargo clippy --workspace --all-targets --all-features -- -D warnings   # needs libcamera-dev
+RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
 ```
 
-Slower suites run as separate CI jobs so they overlap with the workspace tests:
+Clippy type-checks everything `cargo check` would (the default-feature workspace graph is the
+`engine,plugins` one: `daedalus-examples` turns those features on for the facade anyway), so
+there is no separate `cargo check` step.
+
+The facade-only suites run in their own CI job (`facade`), in parallel with the workspace tests:
 
 ```bash
-# trybuild macro UI tests (ignored in the default test run)
-cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
 # native Rust cdylib plugin loading
 cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
+# trybuild macro UI tests (ignored in the default test run; `plugins` only, so the `#[node]`
+# expansions are checked without the engine)
+cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --ignored
 ```
+
+Integration tests share one binary per crate (`tests/it/main.rs`, one module per area): run one
+area with `cargo test -p <crate> --test it -- <module>::`. Tests that install a counting
+`#[global_allocator]`, the `dylib-plugins` tests (`export_plugin!` exports fixed symbols), the
+trybuild and the Docker tests keep their own binaries. The tests run under `cargo test`, not
+cargo-nextest: process-per-test tripled the CPU time of the test run and made the timing
+assertions (`adaptive_mode`) fail under load, for about 15 s of wall time.
 
 ## Local CI Runner
 
@@ -37,9 +49,9 @@ cargo test -p daedalus-rs --features "engine,plugins,dylib-plugins"
 | Subcommand | What it runs |
 |---|---|
 | `lints` | file-size, workspace-deps, GPU async lints, `cargo fmt --check` |
-| `check`, `features` | workspace check; release feature-surface checks (incl. `--all-features`, needs `libcamera-dev`) |
-| `clippy`, `test`, `macro-ui`, `examples` | clippy `-D warnings`; workspace + dylib tests; trybuild; facade examples |
-| `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`) |
+| `features` | release feature-surface checks and `cargo build --workspace --lib --all-features` (needs `libcamera-dev`) |
+| `clippy`, `test`, `macro-ui` | clippy `-D warnings` (`engine,plugins`, dylib plugins, all features; needs `libcamera-dev`); workspace + dylib tests; trybuild |
+| `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`); `test` already built every `daedalus-examples` binary |
 | `aarch64` | `cargo check --target aarch64-unknown-linux-gnu` (see below) |
 | `lean` | lean-preset tests (see below) |
 | `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS), the runtime and engine, and the no_std smoke graph; wasm and WASI `engine,plugins` checks and Node runs (see below) |
@@ -95,9 +107,10 @@ scripts/ci.sh nostd wasm
 `Engine`/`HostGraph` on an injected counter clock). It also checks the runtime and engine with
 `tracing` for `thumbv7em` (it needs compare-and-swap) and runs the smoke tests natively, where
 every Daedalus crate builds without `std`. `riscv32imc-unknown-none-elf` (also without
-compare-and-swap) is not in CI; check it locally with the same commands. `wasm` checks the
+compare-and-swap) is not in CI; check it locally with the same commands. `wasm` builds the
 facade's `engine,plugins` (the `embedded` preset without `threads`) for `wasm32-unknown-unknown`
-and `wasm32-wasip1`, builds the wasm modules in release mode and runs them in Node:
+and `wasm32-wasip1` as the smoke modules (dev profile: overflow checks and debug assertions on, at
+about a quarter of the release build's cost) and runs them in Node:
 
 - `node scripts/wasm-smoke.mjs`: `examples/wasm_smoke` as a `cdylib` with no imports. Serial,
   parallel and adaptive runs of a fan-out graph, timed by an injected `Clock`, must match. A
@@ -282,9 +295,11 @@ Use `gpu-wgpu` only where hardware and drivers are available. Use `gpu-mock` for
 
 ## Examples
 
+The runnable examples are the `daedalus-examples` binaries (`examples/0*`); the workspace test
+run builds all of them, and `scripts/ci.sh smoke` runs the CPU-only ones:
+
 ```bash
-cargo check -p daedalus-examples --features "engine,plugins"
-cargo test -p daedalus-rs --features "engine,plugins" --examples
+cargo check -p daedalus-examples --all-targets
 cargo run -p daedalus-examples --quiet --bin runtime_metrics
 cargo run -p daedalus-examples --quiet --bin transport_metrics
 cargo run -p daedalus-examples --quiet --bin ownership_metrics
