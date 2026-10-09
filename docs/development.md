@@ -20,6 +20,9 @@ Daedalus is a layered Rust workspace. Keep changes inside the layer that owns th
 ## Validation Loop
 
 Run the default loop in [testing.md](testing.md#default-surface) before sending broad changes.
+While iterating, `scripts/ci.sh quick` lints and tests only the changed packages and their
+dependents ([inner loop](testing.md#inner-loop)), and `scripts/ci.sh -j` runs the full loop as
+parallel lanes ([parallel runs](testing.md#parallel-runs)).
 Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines with a real backend available.
 
 ### Build profile
@@ -30,7 +33,19 @@ dependencies. Against full debug info, a clean `cargo test --workspace --all-tar
 engine,plugins --no-run` takes 22% less CPU time (334 s to 259 s) and half the disk (4.9 GB to
 2.4 GB). For a debugger session, `CARGO_PROFILE_DEV_DEBUG=true` restores full debug
 info. Dependencies stay at `opt-level = 0`: `opt-level = 1` cost 65% more build CPU and did not
-speed up the test run. The linker is Rust's default `rust-lld` on x86-64 Linux.
+speed up the test run. The linker is Rust's default `rust-lld` on x86-64 Linux. Proc macros and
+build scripts stay unoptimized too: macro expansion is under 5% of a crate's compile time
+(`daedalus-runtime`: 0.19 s of about 4 s; 0.14 s with an optimized `syn`/`serde_derive`/
+`daedalus-macros`), while `[profile.dev.build-override] opt-level = 3` raised a clean test build
+from 264 to 432 CPU s (331 s with only the proc-macro crates optimized), and it would also
+optimize the workspace crates `examples/mcu_blink`'s build script plans with.
+
+Keep the target directory on a fast local disk. With the checkout on a USB hard disk, a clean
+workspace test build took about as long with `target/` there as on an NVMe SSD (54 s against
+50 s wall, the same CPU), but rebuilding after a one-line edit in `daedalus-runtime` took 172 s
+against 28 s (69 and 62 CPU s): incremental builds write and sync many small files. Point
+`CARGO_TARGET_DIR` (or `build.target-dir` in `~/.cargo/config.toml`) at a local SSD; the
+checkout itself can stay where it is.
 
 ## Dependency Policy
 

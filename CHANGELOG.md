@@ -282,6 +282,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   smoke modules build in the dev profile. CI groups jobs by crate graph (macro UI and dylib
   tests in one `facade` job, all check-mode work in `docs-and-lints`) and saves caches only on
   the default branch. Details and measurements in docs/testing.md and docs/development.md.
+- **Faster local loop.** `scripts/ci.sh -j` runs the subcommands as parallel lanes (one target
+  directory each, one shared jobserver, timing-sensitive tests run last), `quick` lints and tests
+  only the packages changed since the upstream branch and their dependents (sharing the full
+  `clippy` and `test` builds), `full` runs everything CI runs, and `doc` builds rustdoc with
+  `-D warnings` (CI calls it). `smoke` builds the example binaries with the workspace test graph
+  instead of rebuilding about 30 crates per `cargo run -p` feature set. Two tests that failed
+  under load are fixed: two transport tests shared a drop counter (4 failures in 200 runs), and
+  a runtime stream test checked the worker state after the worker could already have drained
+  its inputs. docs/development.md recommends a target directory on a local SSD (an incremental
+  rebuild took 172 s with it on a USB hard disk, 28 s on NVMe).
 - **Toolchain 1.99.0, MSRV 1.99.** `rust-toolchain.toml`, the CI workflows and the examples
   Docker image pin Rust 1.99.0; `rust-version` is 1.99 and every crate now inherits it (it was
   declared for the workspace but not applied to the packages).

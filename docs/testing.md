@@ -53,7 +53,10 @@ failed the `adaptive_mode` timing assertions under load, to save about 17 s of w
 | `features` | release feature-surface checks |
 | `clippy`, `link` | clippy `-D warnings` (`engine,plugins`, dylib plugins, all features); `cargo build --workspace --lib --all-features` (links every `cdylib`); both need `libcamera-dev` |
 | `test`, `macro-ui` | workspace + dylib tests; trybuild |
-| `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`); `test` already built every `daedalus-examples` binary |
+| `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`, `frame_chain`), built with the `test` crate graph (see [Examples](#examples)) |
+| `doc` | `cargo doc --workspace --no-deps` with `-D warnings` |
+| `all`, `full` | `lints features clippy link test macro-ui smoke` (the default); `all`, then `doc lean aarch64 nostd mcu wasm` (everything CI runs) |
+| `quick` | pre-push subset: `lints`, clippy (`engine,plugins`) and the tests of the changed packages (see [Inner loop](#inner-loop)) |
 | `aarch64` | `cargo check --target aarch64-unknown-linux-gnu` (see below) |
 | `lean` | lean-preset tests (see below) |
 | `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS), the runtime and engine, and the no_std smoke graph; wasm and WASI `engine,plugins` dev builds and Node runs (see below) |
@@ -64,9 +67,54 @@ failed the `adaptive_mode` timing assertions under load, to save about 17 s of w
 
 CI (`.github/workflows/ci.yml`) groups its jobs by the crate graphs they compile, so no two jobs
 build the same one: `workspace` (`lints`, the workspace tests, `smoke`, `link`), `facade` (the
-dylib tests, `macro-ui`), `docs-and-lints` (`clippy`, `features`, rustdoc with `-Dwarnings`),
+dylib tests, `macro-ui`), `docs-and-lints` (`clippy`, `features`, `doc`),
 `aarch64`, `lean-preset`, `portability` (`nostd`, `wasm`, `mcu`) and `package-surface`. Pull
 requests restore the default branch's Rust caches but do not save their own.
+
+### Inner loop
+
+```bash
+scripts/ci.sh quick                 # changes since the upstream branch (else HEAD)
+CI_BASE=dev scripts/ci.sh quick     # changes since another base
+```
+
+`quick` is the pre-push subset: `lints`, clippy with `engine,plugins`, and the tests of the
+packages with changes since `$CI_BASE` (committed, staged, unstaged and untracked files), plus
+every package depending on them. Clippy and the test build still cover the whole workspace, so
+they reuse the `clippy` and `test` crate graphs and recompile only what changed (selecting
+packages with `-p` resolves features for those packages alone and rebuilt 16 to 25 shared
+crates, 14 to 88 CPU s); a test runner skips the test binaries of the packages not selected. A
+change outside every package (`Cargo.toml`, `Cargo.lock`, `scripts/`) tests everything; `docs/`,
+`.github/` and Markdown files test nothing. It leaves out the dylib, trybuild, feature-surface,
+all-features and cross-target checks: run `all` (or `-j full`) before a broad change. After a
+one-line edit in `daedalus-runtime`, `quick` took 33 s (106 CPU s) where `clippy test` took 58 s
+(173 CPU s); after one in `daedalus-ffi-core` (six packages tested), 27 s (40 CPU s).
+
+### Parallel runs
+
+```bash
+scripts/ci.sh -j            # all
+scripts/ci.sh -j full       # everything CI runs
+scripts/ci.sh -j test lean  # any subcommands
+```
+
+`-j` runs the lints first, then one lane per crate graph at once: `test` + `smoke`, `clippy` +
+`doc`, and each other subcommand alone. Each lane builds in its own target directory,
+`$CARGO_TARGET_DIR/ci/<lane>` (the `test` lane uses `$CARGO_TARGET_DIR` itself, so plain `cargo
+test` shares it), and logs to `$CARGO_TARGET_DIR/ci/<lane>.log`; the script prints each lane's
+result as it finishes, with the end of the log on failure, and exits non-zero if any failed. The
+lanes share one jobserver, so together they run at most `$CARGO_BUILD_JOBS` (default: every core)
+compiler processes, plus one per lane. The `test` and `lean` lanes only build until every lane is
+done, then run their tests one lane at a time: runtime tests (`adaptive_mode`, `stream_graph`)
+assert on wall-clock times and failed when they ran beside the other lanes' compilers.
+Separate target directories cost CPU (crates every lane needs are compiled once per lane) and
+disk (24 GB for `full`) for the wall time. Measured on a shared 24-core machine
+(`CARGO_BUILD_JOBS=12`, other load 60 to 130, so the numbers are rough):
+
+| `full` | serial | `-j` |
+|---|---|---|
+| clean | 2359 s wall, 2619 CPU s | 858 s wall, 3665 CPU s |
+| after a one-line edit in `daedalus-runtime` | 309 s wall, 565 CPU s | 192 s wall, 744 CPU s |
 
 ### aarch64
 
@@ -304,7 +352,11 @@ Use `gpu-wgpu` only where hardware and drivers are available. Use `gpu-mock` for
 ## Examples
 
 The runnable examples are the `daedalus-examples` binaries (`examples/0*`); the workspace test
-run builds all of them, and `scripts/ci.sh smoke` runs the CPU-only ones:
+run compiles all of them (as unit-test harnesses), and `scripts/ci.sh smoke` builds and runs the
+CPU-only ones with the workspace test graph (`cargo build --workspace --features engine,plugins
+--examples --bin ...`), so after the tests only the binaries compile. `cargo run -p
+daedalus-examples` works too, but resolves features for that package alone and rebuilds about 30
+crates:
 
 ```bash
 cargo check -p daedalus-examples --all-targets

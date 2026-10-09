@@ -35,9 +35,14 @@ ensure_target() {
 
 usage() {
   cat <<'EOF'
-usage: scripts/ci.sh [subcommand...]
+usage: scripts/ci.sh [-j] [subcommand...]
 
+  -j          run the subcommands concurrently, grouped into lanes by crate graph, each lane in
+              its own target directory and log ($CARGO_TARGET_DIR/ci/), under one jobserver
   all         lints features clippy link test macro-ui smoke (default)
+  full        every CI subcommand: all, then doc lean aarch64 nostd mcu wasm
+  quick       pre-push subset: lints, clippy (CI features), and the tests of the packages changed
+              since $CI_BASE (default: the upstream branch, else HEAD) and their dependents
   lints       file-size, workspace-deps, GPU async lints and rustfmt
   features    release feature-surface checks
   clippy      clippy with -D warnings: default CI features, dylib plugins, all features
@@ -105,8 +110,8 @@ cmd_link() {
 
 cmd_test() {
   step "Running tests"
-  cargo test --workspace --all-targets --features "$CI_FEATURES"
-  cargo test -p daedalus-rs --features "$CI_FEATURES,dylib-plugins"
+  cargo test --workspace --all-targets --features "$CI_FEATURES" ${CI_NO_RUN:+--no-run}
+  cargo test -p daedalus-rs --features "$CI_FEATURES,dylib-plugins" ${CI_NO_RUN:+--no-run}
 }
 
 cmd_macro_ui() {
@@ -125,6 +130,7 @@ cmd_smoke() {
   for bin in "${bins[@]::${#bins[@]}-1}"; do args+=(--bin "$bin"); done
   exes="$(cargo build --workspace --features "$CI_FEATURES" "${args[@]}" \
     --message-format=json-render-diagnostics | json_field executable)"
+  [[ -z ${CI_NO_RUN:-} ]] || return 0
   for bin in "${bins[@]}"; do
     echo "  -> $bin"
     exe="$(grep -m1 "/$bin\$" <<<"$exes")" || { echo "no executable for $bin" >&2 && return 1; }
@@ -162,11 +168,11 @@ cmd_aarch64() {
 cmd_lean() {
   step "Testing lean preset (no executor-pool, no metrics)"
   cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets \
-    --no-default-features \
+    --no-default-features ${CI_NO_RUN:+--no-run} \
     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"
   step "Testing without threads (serial-only runtime and engine)"
   cargo test -p daedalus-runtime -p daedalus-engine --all-targets --no-default-features \
-    --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
+    --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env" ${CI_NO_RUN:+--no-run}
 }
 
 # On each bare-metal target: the tier-1 crates without `std`, with and without their alloc-only
@@ -361,33 +367,170 @@ cmd_doc() {
   RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-Dwarnings" cargo doc --workspace --no-deps
 }
 
-cmd_all() {
+# Pre-push subset: lints, clippy with the CI features, and the tests of the packages changed since
+# $CI_BASE (default: the upstream branch, else HEAD; uncommitted and untracked files count) and of
+# the packages depending on them. Both cargo runs cover the whole workspace, so they share the
+# `clippy` and `test` crate graphs and recompile only what changed (`-p` would resolve features
+# differently and rebuild shared crates); a test runner skips the other packages' test binaries.
+# A change outside every package (Cargo.toml, Cargo.lock, scripts) selects all packages; docs/,
+# .github/ and Markdown files select none.
+cmd_quick() {
   cmd_lints
-  cmd_features
-  cmd_clippy
-  cmd_link
-  cmd_test
-  cmd_macro_ui
-  cmd_smoke
+  step "Running clippy (CI features)"
+  cargo clippy --workspace --all-targets --features "$CI_FEATURES" -- -D warnings
+  local base="${CI_BASE:-$(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || echo HEAD)}"
+  local members file name dir owner owner_dir changed=() selected
+  members="$(cargo tree --workspace --depth 0 --prefix none -e normal |
+    sed -n 's/^\([^ ]*\) .*(\(\/[^)]*\))$/\1 \2/p')"
+  while read -r file; do
+    owner="" owner_dir=""
+    while read -r name dir; do
+      if [[ $root_dir/$file == "$dir"/* && ${#dir} -gt ${#owner_dir} ]]; then
+        owner=$name owner_dir=$dir
+      fi
+    done <<<"$members"
+    case "$owner:$file" in
+      :docs/* | :.github/* | :*.md) ;;
+      :*) changed=(all) && break ;;
+      *) changed+=("$owner") ;;
+    esac
+  done < <({ git diff --name-only "$(git merge-base "$base" HEAD)" &&
+    git ls-files --others --exclude-standard; } | sort -u)
+  if [[ ${changed[0]:-} == all ]]; then
+    step "Testing every package (a change outside the packages since $base)"
+    cargo test --workspace --all-targets --features "$CI_FEATURES"
+    return
+  elif ((${#changed[@]} == 0)); then
+    echo "no package changed since $base"
+    return
+  fi
+  selected="$(cargo tree --workspace -e normal,build,dev --features "$CI_FEATURES" --target all \
+    --prefix none $(printf -- '-i %s ' "${changed[@]}") | awk 'NF { print $1 }' | sort -u)"
+  step "Testing packages changed since $base and their dependents:" $selected
+  CI_QUICK_PACKAGES=" ${selected//$'\n'/ } " cargo test --workspace --all-targets \
+    --features "$CI_FEATURES" --config "target.'cfg(all())'.runner = ['bash', '-c', \
+    '[[ \$CI_QUICK_PACKAGES == *\" \$CARGO_PKG_NAME \"* ]] || exit 0; exec \"\$@\"', 'runner']"
+}
+
+readonly ALL=(lints features clippy link test macro-ui smoke)
+readonly FULL=("${ALL[@]}" doc lean aarch64 nostd mcu wasm)
+readonly SUBCOMMANDS=" all full ${FULL[*]} quick bench pi vvl "
+
+run() { "cmd_${1//-/_}"; }
+cmd_all() { local sub; for sub in "${ALL[@]}"; do run "$sub"; done; }
+cmd_full() { local sub; for sub in "${FULL[@]}"; do run "$sub"; done; }
+
+# `-j`: lints first, then one lane per crate graph, all lanes at once. A lane runs its subcommands
+# in order in its own target directory, $CARGO_TARGET_DIR/ci/<lane> (the `test` lane uses
+# $CARGO_TARGET_DIR itself, which plain `cargo test` shares), and logs to
+# $CARGO_TARGET_DIR/ci/<lane>.log. The lanes share one jobserver: together they run at most
+# $CARGO_BUILD_JOBS (default: every core) compiler jobs, plus one per lane. The `test` and `lean`
+# lanes only build (CI_NO_RUN) until every lane is done, then run their tests one lane at a time:
+# runtime tests assert on wall-clock times and fail on a machine busy compiling.
+readonly DEFERRED_LANES=" test lean "
+
+lane_of() {
+  case "$1" in
+    test | smoke) echo test ;;
+    clippy | doc) echo check ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# Runs lane $1's subcommands in its target directory.
+run_lane() {
+  [[ ${lanes[$1]} == test ]] || export CARGO_TARGET_DIR="$target/ci/${lanes[$1]}"
+  local sub
+  for sub in ${subs[$1]}; do run "$sub"; done
+}
+
+run_parallel() {
+  local target="${CARGO_TARGET_DIR:-target}" sub lane i expanded=() lanes=() subs=() pids=() built=()
+  [[ $target == /* ]] || target="$root_dir/$target"
+  for sub in "$@"; do
+    case "$sub" in
+      all) expanded+=("${ALL[@]}") ;;
+      full) expanded+=("${FULL[@]}") ;;
+      *) expanded+=("$sub") ;;
+    esac
+  done
+  for sub in "${expanded[@]}"; do
+    [[ $sub == lints ]] && { cmd_lints; continue; }
+    lane="$(lane_of "$sub")"
+    for ((i = 0; i < ${#lanes[@]}; i++)); do [[ ${lanes[i]} == "$lane" ]] && break; done
+    lanes[i]=$lane
+    subs[i]="${subs[i]:-} $sub"
+  done
+  mkdir -p "$target/ci"
+  local fifo="$target/ci/jobserver" jobs="${CARGO_BUILD_JOBS:-$(nproc)}"
+  rm -f "$fifo" && mkfifo "$fifo" && exec 3<>"$fifo"
+  printf "%${jobs}s" "" | tr ' ' + >&3
+  export MAKEFLAGS="-j$jobs --jobserver-auth=fifo:$fifo"
+  trap 'trap - INT TERM; kill 0' INT TERM
+  for i in "${!lanes[@]}"; do
+    lane=${lanes[i]}
+    if [[ $DEFERRED_LANES == *" $lane "* ]]; then
+      step "$lane:${subs[i]}, building (tests run last; log: $target/ci/$lane.log)"
+      (export CI_NO_RUN=1; run_lane "$i") >"$target/ci/$lane.log" 2>&1 &
+    else
+      step "$lane:${subs[i]} (log: $target/ci/$lane.log)"
+      (run_lane "$i") >"$target/ci/$lane.log" 2>&1 &
+    fi
+    pids[i]=$!
+  done
+  local start=$SECONDS failed=0 running=${#lanes[@]}
+  while ((running)); do
+    sleep 1
+    for i in "${!lanes[@]}"; do
+      [[ -n ${pids[i]} ]] && ! kill -0 "${pids[i]}" 2>/dev/null || continue
+      if lane_done "$i" "${pids[i]}"; then built[i]=1; else failed=1; fi
+      pids[i]="" running=$((running - 1))
+    done
+  done
+  for i in "${!lanes[@]}"; do
+    [[ $DEFERRED_LANES == *" ${lanes[i]} "* && -n ${built[i]:-} ]] || continue
+    step "${lanes[i]}: running the tests (log: $target/ci/${lanes[i]}.log)"
+    (run_lane "$i") >>"$target/ci/${lanes[i]}.log" 2>&1 &
+    lane_done "$i" $! || failed=1
+  done
+  return "$failed"
+}
+
+# Waits for lane $1's process $2 and reports it.
+lane_done() {
+  if wait "$2"; then
+    echo "  ok     ${lanes[$1]} ($((SECONDS - start)) s)"
+  else
+    echo "  FAILED ${lanes[$1]} ($((SECONDS - start)) s); end of $target/ci/${lanes[$1]}.log:"
+    tail -n 30 "$target/ci/${lanes[$1]}.log" | sed 's/^/    /'
+    return 1
+  fi
 }
 
 main() {
+  local parallel=0 sub
+  [[ ${1:-} == -j ]] && parallel=1 && shift
   [[ $# -eq 0 ]] && set -- all
-  local sub
   for sub in "$@"; do
     case "$sub" in
-      -h | --help | help) usage ;;
-      all | lints | features | clippy | link | test | smoke | doc | aarch64 | lean | nostd | mcu | \
-        wasm | bench | pi | vvl)
-        "cmd_$sub" ;;
-      macro-ui) cmd_macro_ui ;;
+      -h | --help | help) usage && exit ;;
       *)
-        echo "unknown subcommand: $sub" >&2
-        usage >&2
-        exit 2
+        if [[ $SUBCOMMANDS != *" $sub "* ]]; then
+          echo "unknown subcommand: $sub" >&2
+          usage >&2
+          exit 2
+        elif ((parallel)) && [[ $sub == quick ]]; then
+          echo "quick runs serially (it is one crate graph): drop -j" >&2
+          exit 2
+        fi
         ;;
     esac
   done
+  if ((parallel)); then
+    run_parallel "$@"
+  else
+    for sub in "$@"; do run "$sub"; done
+  fi
 }
 
 main "$@"
