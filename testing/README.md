@@ -12,16 +12,11 @@ See [the default surface](../docs/testing.md#default-surface); `./scripts/ci.sh`
 cargo test -p daedalus-runtime --features "plugins"
 cargo test -p daedalus-ffi-core
 cargo test -p daedalus-ffi-host
-cargo test -p daedalus-rs --features "engine,plugins" --examples
 ```
 
-## Docker
+## Examples
 
-```bash
-cargo test -p daedalus-rs --test docker_examples -- --ignored --nocapture
-```
-
-The Docker suite uses [`docker/daedalus-examples.Dockerfile`](docker/daedalus-examples.Dockerfile).
+`./scripts/ci.sh smoke` runs the CPU-only `daedalus-examples` binaries and `frame_chain`.
 
 ## Notes
 

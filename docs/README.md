@@ -6,7 +6,7 @@ This directory is the repository-level documentation index. Crate-specific detai
 
 - [../README.md](../README.md): workspace overview, feature sets, examples, and validation commands.
 - [development.md](development.md): repo layout, dependency policy, runtime defaults, observability, and production API conventions.
-- [testing.md](testing.md): local, feature, release, Docker, and extended test surfaces.
+- [testing.md](testing.md): local, feature, release, and extended test surfaces.
 - [migration-3.0.md](migration-3.0.md): upgrading to 3.0 from 2.0.0 or pre-release `dev` commits.
 - [../CHANGELOG.md](../CHANGELOG.md): release notes.
 - [../testing/README.md](../testing/README.md): short testing checklist.

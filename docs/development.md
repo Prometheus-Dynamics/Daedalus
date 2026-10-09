@@ -45,7 +45,7 @@ speed up the test run. The linker is Rust's default `rust-lld` on x86-64 Linux.
 - Toolchain and MSRV: `rust-toolchain.toml` pins Rust 1.99.0, and `rust-version` in
   `[workspace.package]` is 1.99, the same release: the workspace is built, linted and measured
   (MCU sizes, allocation budgets) only with the pinned toolchain, so that is the oldest one it
-  supports. The CI workflows and `testing/docker/daedalus-examples.Dockerfile` pin the same
+  supports. The CI workflows pin the same
   version; raise all of them together. The upgraded dependencies alone need 1.90
   (`ordered-float`).
 - Dependencies track their newest releases, majors included (`cargo upgrade --incompatible

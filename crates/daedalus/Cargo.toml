@@ -161,7 +161,7 @@ criterion = { workspace = true }
 # Integration tests share one binary (`tests/it`) where they can, so the crate graph is linked
 # and its generic code instantiated once. Separate binaries: tests with their own counting
 # `#[global_allocator]` (one per binary), the `dylib-plugins` tests (`export_plugin!` exports
-# fixed symbols, once per binary), trybuild and Docker.
+# fixed symbols, once per binary) and trybuild.
 [[test]]
 name = "it"
 path = "tests/it/main.rs"

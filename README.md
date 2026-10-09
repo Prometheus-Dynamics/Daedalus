@@ -76,7 +76,7 @@ cargo run -p daedalus-examples --features gpu-wgpu --bin gpu_node
 ## Validation
 
 See [docs/testing.md](docs/testing.md) for the validation loop (`./scripts/repo-clean.sh` runs the
-fixes and the full CI loop), focused feature checks, GPU checks, and Docker-backed example tests.
+fixes and the full CI loop), focused feature checks, GPU checks, and example smoke runs.
 
 ## Documentation
 

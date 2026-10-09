@@ -251,6 +251,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Maintenance
 
+- **Removed the Docker example suite** (`ci-docker` workflow, `testing/docker`, the
+  `docker_examples` test): it ran facade examples that no longer exist, and the
+  `daedalus-examples` binaries already run natively in `scripts/ci.sh smoke` (CI workspace job)
+  on the pinned toolchain.
 - **Leaner builds and CI.** The `dev` profile keeps line tables only and no dependency debug
   info (a clean workspace test build: 22% less CPU, half the disk). The facade dropped its
   unused `wgpu`, `pollster`, `bytemuck` and `paste` dependencies (wgpu/naga/ash were compiled
@@ -531,6 +535,10 @@ for every item below, for upgrades from 2.0.0 and from pre-release `dev` commits
 
 ### Maintenance
 
+- **Removed the Docker example suite** (`ci-docker` workflow, `testing/docker`, the
+  `docker_examples` test): it ran facade examples that no longer exist, and the
+  `daedalus-examples` binaries already run natively in `scripts/ci.sh smoke` (CI workspace job)
+  on the pinned toolchain.
 - `scripts/ci.sh` subcommands (`lints`, `test`, `macro-ui`, `aarch64`, `lean`, `features`,
   `nostd`, `wasm`, `mcu`, `smoke`, `bench`, `pi`, `vvl`) and matching CI jobs; CI builds the
   workspace with `--all-features` (the `example_project` export moved to the leaf

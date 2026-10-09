@@ -1,6 +1,6 @@
 # Testing
 
-Daedalus validation is split into a default workspace loop, focused feature checks, FFI fixture checks, GPU checks, and Docker-backed example validation.
+Daedalus validation is split into a default workspace loop, focused feature checks, FFI fixture checks, GPU checks, and example smoke runs (`scripts/ci.sh smoke`).
 
 ## Default Surface
 
@@ -37,7 +37,7 @@ Integration tests share one binary per crate (`tests/it/main.rs`, one module per
 area with `cargo test -p <crate> --test it -- <module>::`. Tests that install a counting
 `#[global_allocator]`, the runtime's `adaptive_mode` (wall-clock timing assertions, which must
 not share the binary's threads), the `dylib-plugins` tests (`export_plugin!` exports fixed
-symbols), the trybuild and the Docker tests keep their own binaries. The tests run under
+symbols) and the trybuild tests keep their own binaries. The tests run under
 `cargo test`, not cargo-nextest: process-per-test tripled the CPU time of the test run and
 failed the `adaptive_mode` timing assertions under load, to save about 17 s of wall time.
 
@@ -338,14 +338,6 @@ cargo test -p daedalus-ffi-node
 cargo test -p daedalus-ffi-java
 cargo test -p daedalus-ffi-cpp
 ```
-
-## Docker
-
-```bash
-cargo test -p daedalus-rs --test docker_examples -- --ignored --nocapture
-```
-
-The Docker suite uses [`testing/docker/daedalus-examples.Dockerfile`](../testing/docker/daedalus-examples.Dockerfile) and validates real facade examples in a controlled image.
 
 ## Other Coverage
 
