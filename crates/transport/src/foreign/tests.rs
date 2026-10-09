@@ -2,18 +2,17 @@ use super::*;
 use crate::{BoundaryCapabilities, Residency};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-static DROPS: AtomicUsize = AtomicUsize::new(0);
-
 struct Counter {
     value: i64,
-    /// Count drops only for this test's values (tests run in parallel).
-    tracked: bool,
+    /// The drop counter of the test that tracks this value (tests run in parallel, so each
+    /// tracking test has its own).
+    drops: Option<&'static AtomicUsize>,
 }
 
 impl Drop for Counter {
     fn drop(&mut self) {
-        if self.tracked {
-            DROPS.fetch_add(1, Ordering::SeqCst);
+        if let Some(drops) = self.drops {
+            drops.fetch_add(1, Ordering::SeqCst);
         }
     }
 }
@@ -62,10 +61,10 @@ fn read(handle: &ForeignHandle) -> i64 {
 
 #[test]
 fn handles_share_the_owner_and_balance_retain_release() {
-    let before = DROPS.load(Ordering::SeqCst);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
     let value = Arc::new(Counter {
         value: 41,
-        tracked: true,
+        drops: Some(&DROPS),
     });
     let handle = ForeignHandle::from_arc::<_, CounterV1>(value.clone());
     assert_eq!(handle.data(), Arc::as_ptr(&value).cast());
@@ -78,23 +77,19 @@ fn handles_share_the_owner_and_balance_retain_release() {
     drop(value);
     assert_eq!(
         DROPS.load(Ordering::SeqCst),
-        before,
+        0,
         "the handle keeps the owner alive"
     );
     assert_eq!(read(&handle), 41);
     drop(handle);
-    assert_eq!(
-        DROPS.load(Ordering::SeqCst),
-        before + 1,
-        "dropped exactly once"
-    );
+    assert_eq!(DROPS.load(Ordering::SeqCst), 1, "dropped exactly once");
 }
 
 #[test]
 fn views_reject_other_versions_and_layouts() {
     let handle = ForeignHandle::from_arc::<_, CounterV1>(Arc::new(Counter {
         value: 1,
-        tracked: false,
+        drops: None,
     }));
     let edited = handle.view::<CounterEdited>().unwrap_err();
     assert_eq!(edited.expected, *CounterEdited::info());
@@ -128,7 +123,7 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
         "test:counter_owner",
         Arc::new(Counter {
             value: 5,
-            tracked: false,
+            drops: None,
         }),
     );
     let handle = ForeignHandle::from_payload::<Counter, CounterV1>(&shared).unwrap();
@@ -155,7 +150,7 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
         "test:counter_owner",
         Counter {
             value: 6,
-            tracked: false,
+            drops: None,
         },
         BoundaryCapabilities::rust_value(),
     );
@@ -171,7 +166,7 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
 fn provided_payloads_lend_the_owner_value_without_a_handle() {
     let value = Arc::new(Counter {
         value: 9,
-        tracked: false,
+        drops: None,
     });
     let owner = Payload::shared_with(
         "test:counter_owner",
@@ -223,12 +218,12 @@ fn provided_payloads_lend_the_owner_value_without_a_handle() {
     assert_eq!(counter.value, 10);
 
     // Boundary storage has no shared `Arc`: it is wrapped in a handle payload instead.
-    let before = DROPS.load(Ordering::SeqCst);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
     let boundary = Payload::boundary_owned(
         "test:counter_owner",
         Counter {
             value: 11,
-            tracked: true,
+            drops: Some(&DROPS),
         },
         BoundaryCapabilities::rust_value(),
     )
@@ -236,7 +231,7 @@ fn provided_payloads_lend_the_owner_value_without_a_handle() {
     .unwrap();
     assert_eq!(read(boundary.foreign_handle().unwrap()), 11);
     drop(boundary);
-    assert_eq!(DROPS.load(Ordering::SeqCst), before + 1);
+    assert_eq!(DROPS.load(Ordering::SeqCst), 1);
 
     let wrong = Payload::owned("test:counter_owner", 1u8);
     assert!(wrong.provide_foreign::<Counter, CounterV1>().is_err());
