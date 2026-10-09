@@ -8,7 +8,7 @@ use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::{ComputeAffinity, Graph};
 use crate::metadata::{
     PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY, PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY,
-    PLAN_TOPO_ORDER_KEY,
+    PLAN_TOPO_ORDER_KEY, metadata_node_indices, node_index_list,
 };
 
 use super::{PlannerConfig, diagnostic_node_id};
@@ -21,17 +21,13 @@ fn string_list(values: impl IntoIterator<Item = String>) -> Value {
     Value::List(values.into_iter().map(string_value).collect())
 }
 
-fn string_matrix(values: impl IntoIterator<Item = Vec<String>>) -> Value {
-    Value::List(
-        values
-            .into_iter()
-            .map(|items| Value::List(items.into_iter().map(string_value).collect()))
-            .collect(),
-    )
+fn node_index_matrix(segments: impl IntoIterator<Item = Vec<usize>>) -> Value {
+    Value::List(segments.into_iter().map(node_index_list).collect())
 }
 
-fn priority_value(id: String, priority: u8) -> Value {
+fn priority_value(node: usize, id: String, priority: u8) -> Value {
     Value::Map(vec![
+        (string_value("node"), Value::Int(node as i64)),
         (string_value("id"), string_value(id)),
         (string_value("priority"), Value::Int(i64::from(priority))),
     ])
@@ -42,10 +38,10 @@ pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Dia
     // If GPU is disabled, flag required nodes.
     if !config.enable_gpu {
         gpu_reasons.push("gpu-disabled".into());
-        let mut gpu_nodes: Vec<String> = Vec::new();
-        for node in &graph.nodes {
+        let mut gpu_nodes: Vec<usize> = Vec::new();
+        for (idx, node) in graph.nodes.iter().enumerate() {
             if matches!(node.compute, ComputeAffinity::GpuRequired) {
-                gpu_nodes.push(node.id.0.clone());
+                gpu_nodes.push(idx);
                 diags.push(
                     Diagnostic::new(
                         DiagnosticCode::GpuUnsupported,
@@ -59,7 +55,7 @@ pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Dia
         if !gpu_nodes.is_empty() {
             graph
                 .metadata
-                .insert(PLAN_GPU_SEGMENTS_KEY.into(), string_matrix(vec![gpu_nodes]));
+                .insert(PLAN_GPU_SEGMENTS_KEY.into(), node_index_matrix([gpu_nodes]));
             graph
                 .metadata
                 .insert(PLAN_GPU_WHY_KEY.into(), string_list(gpu_reasons));
@@ -118,7 +114,7 @@ pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Dia
     if !segments.is_empty() {
         graph
             .metadata
-            .insert(PLAN_GPU_SEGMENTS_KEY.into(), string_matrix(segments));
+            .insert(PLAN_GPU_SEGMENTS_KEY.into(), node_index_matrix(segments));
     }
     if !gpu_reasons.is_empty() {
         gpu_reasons.sort();
@@ -164,7 +160,7 @@ impl Dsu {
     }
 }
 
-fn gpu_dependency_segments(graph: &Graph) -> Vec<Vec<String>> {
+fn gpu_dependency_segments(graph: &Graph) -> Vec<Vec<usize>> {
     let mut dsu = Dsu::new(graph.nodes.len());
     for edge in &graph.edges {
         let from = edge.from.node.0;
@@ -193,49 +189,46 @@ fn gpu_dependency_segments(graph: &Graph) -> Vec<Vec<String>> {
         .map(|mut indices| {
             indices.sort_unstable();
             indices
-                .into_iter()
-                .map(|idx| graph.nodes[idx].id.0.clone())
-                .collect()
         })
         .collect()
 }
 
 pub(super) fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
-    // If topo_order exists, use it; else declared order. Attach basic priority info.
+    // If topo_order exists, use it; else declared order. Both are node indices: several
+    // instances of one node id are told apart only by index. Attach basic priority info.
     let order = graph
         .metadata
         .get(PLAN_TOPO_ORDER_KEY)
-        .and_then(Value::as_string_list)
-        .unwrap_or_else(|| {
-            graph
-                .nodes
-                .iter()
-                .map(|n| n.id.0.clone())
-                .collect::<Vec<_>>()
-        });
+        .and_then(metadata_node_indices)
+        .unwrap_or_else(|| (0..graph.nodes.len()).collect());
     graph
         .metadata
-        .insert(PLAN_SCHEDULE_ORDER_KEY.into(), string_list(order));
+        .insert(PLAN_SCHEDULE_ORDER_KEY.into(), node_index_list(order));
 
     // Prefer GPU-required nodes first within same topo layer (simple heuristic).
-    let mut priorities: Vec<(String, u8)> = graph
+    let mut priorities: Vec<(usize, u8)> = graph
         .nodes
         .iter()
-        .map(|n| {
+        .enumerate()
+        .map(|(idx, n)| {
             let p = match n.compute {
                 ComputeAffinity::GpuPreferred => 1,
                 ComputeAffinity::GpuRequired | ComputeAffinity::CpuOnly => 2,
             };
-            (n.id.0.clone(), p)
+            (idx, p)
         })
         .collect();
-    priorities.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    priorities.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then_with(|| graph.nodes[a.0].id.0.cmp(&graph.nodes[b.0].id.0))
+            .then_with(|| a.0.cmp(&b.0))
+    });
     graph.metadata.insert(
         PLAN_SCHEDULE_PRIORITY_KEY.into(),
         Value::List(
             priorities
                 .into_iter()
-                .map(|(id, priority)| priority_value(id, priority))
+                .map(|(idx, priority)| priority_value(idx, graph.nodes[idx].id.0.clone(), priority))
                 .collect(),
         ),
     );
@@ -259,19 +252,15 @@ mod tests {
         graph
             .nodes
             .push(node("gpu:node", ComputeAffinity::GpuRequired));
-        graph.metadata.insert(
-            PLAN_TOPO_ORDER_KEY.into(),
-            Value::List(vec![string_value("gpu:node"), string_value("a,with,comma")]),
-        );
+        graph
+            .metadata
+            .insert(PLAN_TOPO_ORDER_KEY.into(), node_index_list([1, 0]));
 
         schedule(&mut graph, &mut Vec::new());
 
         assert_eq!(
             graph.metadata.get(PLAN_SCHEDULE_ORDER_KEY),
-            Some(&Value::List(vec![
-                string_value("gpu:node"),
-                string_value("a,with,comma"),
-            ]))
+            Some(&node_index_list([1, 0]))
         );
         assert!(matches!(
             graph.metadata.get(PLAN_SCHEDULE_PRIORITY_KEY),
@@ -301,10 +290,7 @@ mod tests {
 
         assert_eq!(
             graph.metadata.get(PLAN_GPU_SEGMENTS_KEY),
-            Some(&Value::List(vec![
-                Value::List(vec![string_value("gpu-a")]),
-                Value::List(vec![string_value("gpu-b")]),
-            ]))
+            Some(&node_index_matrix([vec![1], vec![2]]))
         );
     }
 
@@ -369,11 +355,7 @@ mod tests {
 
         assert_eq!(
             graph.metadata.get(PLAN_GPU_SEGMENTS_KEY),
-            Some(&Value::List(vec![
-                Value::List(vec![string_value("gpu-a")]),
-                Value::List(vec![string_value("gpu-b")]),
-                Value::List(vec![string_value("gpu-c"), string_value("gpu-d")]),
-            ]))
+            Some(&node_index_matrix([vec![1], vec![2], vec![3, 4]]))
         );
     }
 }

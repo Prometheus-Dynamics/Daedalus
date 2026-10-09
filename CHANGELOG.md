@@ -243,6 +243,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- **Several instances of one node id ran in index order, not dependency order.** The planner's
+  `topo_order`, `schedule_order` and `gpu_segments` metadata named nodes by id, and the runtime
+  bound each id to the first unused instance with that id, so an instance fed by a later-index
+  instance of the same node ran first on missing inputs (empty outputs, no error; e.g. two
+  detector groups in one graph). The metadata now holds node indices (`node_index_list`,
+  `metadata_node_indices`; `schedule_priority` entries gain a `node` index), and `build_runtime`
+  keeps the dependency-resolved order of `RuntimePlan::from_execution`. Plans or tools that wrote
+  these keys as id strings must write indices.
 - A parallel worker running several segments recorded only the first at the configured metrics
   level (the rest at the default level, losing `Detailed` node transport metrics).
 

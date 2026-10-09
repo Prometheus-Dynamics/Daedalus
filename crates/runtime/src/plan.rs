@@ -16,7 +16,7 @@ pub use daedalus_core::policy::BackpressureStrategy;
 use daedalus_data::model::Value;
 use daedalus_planner::{
     ComputeAffinity, EdgeBufferInfo, ExecutionPlan, GpuSegment, GraphNodeSelector, NodeRef,
-    is_host_bridge_metadata,
+    is_host_bridge_metadata, metadata_node_indices,
 };
 pub use daedalus_registry::capability::{
     NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_REQUIRED_INPUTS_META_KEY,
@@ -59,13 +59,14 @@ pub fn runtime_node_execution_kind(node: &RuntimeNode) -> NodeExecutionKind {
     node_execution_kind_from_metadata(&node.metadata)
 }
 
-fn metadata_string_matrix(value: Option<&Value>) -> Option<Vec<Vec<String>>> {
+/// Reads the planner's `gpu_segments`: one list of node indices per segment.
+fn metadata_segment_indices(value: Option<&Value>) -> Option<Vec<Vec<usize>>> {
     let Value::List(rows) = value? else {
         return None;
     };
     Some(
         rows.iter()
-            .filter_map(|row| row.as_string_list())
+            .filter_map(metadata_node_indices)
             .filter(|row| !row.is_empty())
             .collect(),
     )
@@ -450,34 +451,17 @@ impl RuntimePlan {
             &transports::EdgeExplanations::from_metadata(&plan.graph.metadata),
         );
 
-        let mut order: Vec<NodeRef> = Vec::new();
-        if let Some(order_ids) = plan
+        // The planner's schedule order holds node indices (a graph may hold several instances
+        // of one node id); it only ranks nodes, `dependency_order` below decides.
+        let mut order: Vec<NodeRef> = plan
             .graph
             .metadata
             .get(PLAN_SCHEDULE_ORDER_KEY)
-            .and_then(Value::as_string_list)
-        {
-            let mut by_id: HashMap<&str, usize> = HashMap::new();
-            for (idx, node) in plan.graph.nodes.iter().enumerate() {
-                by_id.insert(node.id.0.as_str(), idx);
-            }
-            let mut seen = vec![false; plan.graph.nodes.len()];
-            for id in order_ids {
-                if let Some(idx) = by_id.get(id.as_str()).copied()
-                    && !seen[idx]
-                {
-                    seen[idx] = true;
-                    order.push(NodeRef(idx));
-                }
-            }
-            for (idx, was_seen) in seen.iter().enumerate() {
-                if !*was_seen {
-                    order.push(NodeRef(idx));
-                }
-            }
-        } else {
-            order = (0..plan.graph.nodes.len()).map(NodeRef).collect();
-        }
+            .and_then(metadata_node_indices)
+            .unwrap_or_else(|| (0..plan.graph.nodes.len()).collect())
+            .into_iter()
+            .map(NodeRef)
+            .collect();
         // Runtime execution must respect data dependencies. Declaration order can run consumers
         // before producers and cause widespread "sync_groups + no inputs" stalls in grouped graphs.
         //
@@ -543,11 +527,6 @@ fn is_gpu_compute(compute: ComputeAffinity) -> bool {
 }
 
 fn runtime_segments_from_planner(plan: &ExecutionPlan, order: &[NodeRef]) -> Vec<RuntimeSegment> {
-    let mut by_id: HashMap<&str, usize> = HashMap::new();
-    for (idx, node) in plan.graph.nodes.iter().enumerate() {
-        by_id.insert(node.id.0.as_str(), idx);
-    }
-
     let mut order_rank = vec![usize::MAX; plan.graph.nodes.len()];
     for (rank, node_ref) in order.iter().enumerate() {
         if let Some(slot) = order_rank.get_mut(node_ref.0) {
@@ -557,18 +536,16 @@ fn runtime_segments_from_planner(plan: &ExecutionPlan, order: &[NodeRef]) -> Vec
 
     let mut node_to_planner_segment: Vec<Option<usize>> = vec![None; plan.graph.nodes.len()];
     let mut planner_segments: Vec<RuntimeSegment> = Vec::new();
-    let planner_segment_ids =
-        metadata_string_matrix(plan.graph.metadata.get(PLAN_GPU_SEGMENTS_KEY))
-            .unwrap_or_else(|| dependency_gpu_segment_ids(plan));
-    for ids in planner_segment_ids {
+    let planner_segments_indices =
+        metadata_segment_indices(plan.graph.metadata.get(PLAN_GPU_SEGMENTS_KEY))
+            .unwrap_or_else(|| dependency_gpu_segments(plan));
+    for indices in planner_segments_indices {
         let mut refs: Vec<NodeRef> = Vec::new();
-        for id in ids {
-            let Some(idx) = by_id.get(id.as_str()).copied() else {
+        for idx in indices {
+            let Some(node) = plan.graph.nodes.get(idx) else {
                 continue;
             };
-            if !is_gpu_compute(plan.graph.nodes[idx].compute)
-                || node_to_planner_segment[idx].is_some()
-            {
+            if !is_gpu_compute(node.compute) || node_to_planner_segment[idx].is_some() {
                 continue;
             }
             refs.push(NodeRef(idx));
@@ -660,7 +637,7 @@ impl SegmentDsu {
     }
 }
 
-fn dependency_gpu_segment_ids(plan: &ExecutionPlan) -> Vec<Vec<String>> {
+fn dependency_gpu_segments(plan: &ExecutionPlan) -> Vec<Vec<usize>> {
     let mut dsu = SegmentDsu::new(plan.graph.nodes.len());
     for edge in &plan.graph.edges {
         let from = edge.from.node.0;
@@ -684,15 +661,7 @@ fn dependency_gpu_segment_ids(plan: &ExecutionPlan) -> Vec<Vec<String>> {
         }
     }
 
-    by_root
-        .into_values()
-        .map(|indices| {
-            indices
-                .into_iter()
-                .map(|idx| plan.graph.nodes[idx].id.0.clone())
-                .collect()
-        })
-        .collect()
+    by_root.into_values().collect()
 }
 
 fn dependency_order(

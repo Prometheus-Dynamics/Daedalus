@@ -1,11 +1,9 @@
-use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
-use daedalus_data::model::Value;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
-use crate::metadata::PLAN_TOPO_ORDER_KEY;
+use crate::metadata::{PLAN_TOPO_ORDER_KEY, node_index_list};
 
 use super::is_host_bridge;
 
@@ -60,14 +58,8 @@ pub(super) fn align(graph: &mut Graph, diags: &mut Vec<Diagnostic>) {
             .in_pass("align"),
         );
     } else {
-        graph.metadata.insert(
-            PLAN_TOPO_ORDER_KEY.into(),
-            Value::List(
-                order
-                    .iter()
-                    .map(|&idx| Value::String(Cow::Owned(graph.nodes[idx].id.0.clone())))
-                    .collect(),
-            ),
-        );
+        graph
+            .metadata
+            .insert(PLAN_TOPO_ORDER_KEY.into(), node_index_list(order));
     }
 }

@@ -35,6 +35,32 @@ pub fn host_bridge_metadata() -> BTreeMap<String, Value> {
     ])
 }
 
+/// A list of node indices, as the order and segment plan metadata (`topo_order`,
+/// `schedule_order`, `gpu_segments`) store them. Indices, not node ids: a graph may hold several
+/// instances of one node id, and only the index tells them apart.
+pub fn node_index_list(indices: impl IntoIterator<Item = usize>) -> Value {
+    Value::List(
+        indices
+            .into_iter()
+            .map(|idx| Value::Int(idx as i64))
+            .collect(),
+    )
+}
+
+/// Reads a [`node_index_list`]; `None` unless every item is a non-negative integer.
+pub fn metadata_node_indices(value: &Value) -> Option<Vec<usize>> {
+    let Value::List(items) = value else {
+        return None;
+    };
+    items
+        .iter()
+        .map(|item| match item {
+            Value::Int(idx) => usize::try_from(*idx).ok(),
+            _ => None,
+        })
+        .collect()
+}
+
 pub fn metadata_bool(metadata: &BTreeMap<String, Value>, key: &str) -> bool {
     matches!(metadata.get(key), Some(Value::Bool(true)))
 }

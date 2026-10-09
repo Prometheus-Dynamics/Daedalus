@@ -45,8 +45,8 @@ pub use metadata::{
     HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, HOST_SHARED_INPUTS_KEY, HostInputPolicy,
     HostPortTypes, descriptor_dynamic_port_type, descriptor_metadata_string,
     descriptor_metadata_value, host_bridge_metadata, host_held_inputs, host_input_policy,
-    host_shared_inputs, is_generic_marker, is_host_bridge_metadata, metadata_string,
-    set_host_input_policy, set_host_input_shared,
+    host_shared_inputs, is_generic_marker, is_host_bridge_metadata, metadata_node_indices,
+    metadata_string, node_index_list, set_host_input_policy, set_host_input_shared,
 };
 pub use passes::{
     AdapterResolutionMode, AppliedPlannerLowering, EdgeResolutionExplanation, EdgeResolutionKind,

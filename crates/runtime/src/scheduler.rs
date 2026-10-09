@@ -3,10 +3,6 @@ use crate::plan::{
     RuntimePlan,
 };
 use crate::prelude::*;
-use alloc::collections::BinaryHeap;
-use core::cmp::Reverse;
-use daedalus_core::metadata::PLAN_SCHEDULE_ORDER_KEY;
-use daedalus_data::model::Value;
 use daedalus_planner::{ExecutionPlan, StableHash};
 
 /// Scheduler configuration for edge policies and backpressure.
@@ -69,101 +65,7 @@ pub fn build_runtime(plan: &ExecutionPlan, config: &SchedulerConfig) -> RuntimeP
         }
     }
 
-    if let Some(order) = plan
-        .graph
-        .metadata
-        .get(PLAN_SCHEDULE_ORDER_KEY)
-        .and_then(Value::as_string_list)
-    {
-        let mut used = vec![false; runtime.nodes.len()];
-        let schedule: Vec<daedalus_planner::NodeRef> = order
-            .iter()
-            .filter_map(|id| {
-                let idx = runtime.nodes.iter().enumerate().position(|(idx, node)| {
-                    !used[idx]
-                        && (node.label.as_deref() == Some(id.as_str()) || node.id.as_str() == id)
-                })?;
-                used[idx] = true;
-                Some(daedalus_planner::NodeRef(idx))
-            })
-            .collect();
-        if !schedule.is_empty() {
-            runtime.schedule_order = schedule;
-            return runtime;
-        }
-    }
-
-    if let Some(order) = topo_order(&runtime) {
-        runtime.schedule_order = order;
-        return runtime;
-    }
-
-    // Fallback scheduler: order nodes by compute priority, then original index.
-    let mut idxs: Vec<(usize, u8)> = runtime
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| {
-            let p = match n.compute {
-                daedalus_planner::ComputeAffinity::GpuRequired => 0,
-                daedalus_planner::ComputeAffinity::GpuPreferred => 1,
-                daedalus_planner::ComputeAffinity::CpuOnly => 2,
-            };
-            (i, p)
-        })
-        .collect();
-    idxs.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-    runtime.schedule_order = idxs
-        .into_iter()
-        .map(|(i, _)| daedalus_planner::NodeRef(i))
-        .collect();
-
+    // `schedule_order` is already final: `RuntimePlan::from_execution` ranks the nodes by the
+    // planner's schedule order (node indices) and resolves it into a dependency order.
     runtime
-}
-
-fn topo_order(runtime: &RuntimePlan) -> Option<Vec<daedalus_planner::NodeRef>> {
-    let node_count = runtime.nodes.len();
-    if node_count == 0 {
-        return Some(Vec::new());
-    }
-    let mut indegree = vec![0usize; node_count];
-    let mut adj = vec![Vec::new(); node_count];
-    for edge in &runtime.edges {
-        let from_idx = edge.from().0;
-        let to_idx = edge.to().0;
-        adj[from_idx].push(to_idx);
-        indegree[to_idx] += 1;
-    }
-
-    let mut heap: BinaryHeap<Reverse<(u8, usize)>> = BinaryHeap::new();
-    for (idx, &count) in indegree.iter().enumerate() {
-        if count == 0 {
-            heap.push(Reverse((node_priority(runtime, idx), idx)));
-        }
-    }
-
-    let mut order = Vec::with_capacity(node_count);
-    while let Some(Reverse((_prio, idx))) = heap.pop() {
-        order.push(daedalus_planner::NodeRef(idx));
-        for &next in &adj[idx] {
-            indegree[next] = indegree[next].saturating_sub(1);
-            if indegree[next] == 0 {
-                heap.push(Reverse((node_priority(runtime, next), next)));
-            }
-        }
-    }
-
-    if order.len() == node_count {
-        Some(order)
-    } else {
-        None
-    }
-}
-
-fn node_priority(runtime: &RuntimePlan, idx: usize) -> u8 {
-    match runtime.nodes[idx].compute {
-        daedalus_planner::ComputeAffinity::GpuRequired => 0,
-        daedalus_planner::ComputeAffinity::GpuPreferred => 1,
-        daedalus_planner::ComputeAffinity::CpuOnly => 2,
-    }
 }

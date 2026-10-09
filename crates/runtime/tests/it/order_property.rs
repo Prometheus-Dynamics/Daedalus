@@ -4,39 +4,107 @@ use daedalus_runtime::{
 };
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
-use std::borrow::Cow;
 
 struct LogHandler {
     order: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
 }
 
-#[test]
-fn schedule_order_preserves_duplicate_node_ids_by_alias() {
-    let mut graph = Graph::default();
-    for alias in ["a,one", "b:two", "c|three"] {
-        graph
-            .nodes
-            .push(NodeInstance::new("same.node").with_label(alias));
-    }
-    graph.metadata.insert(
-        "schedule_order".into(),
-        daedalus_data::model::Value::List(
-            ["a,one", "b:two", "c|three"]
-                .into_iter()
-                .map(|id| daedalus_data::model::Value::String(Cow::Borrowed(id)))
-                .collect(),
-        ),
-    );
-
-    let rt = build_runtime(
+fn runtime_for(graph: Graph) -> daedalus_runtime::RuntimePlan {
+    build_runtime(
         &ExecutionPlan::new(graph, vec![]),
         &SchedulerConfig {
             default_policy: RuntimeEdgePolicy::default(),
             backpressure: daedalus_runtime::BackpressureStrategy::None,
         },
+    )
+}
+
+/// Two instances of one node id where the higher-index instance feeds the lower-index one: the
+/// schedule must follow the edge, not the instances' index order.
+fn same_id_instances_wired_backwards(schedule: Option<&[usize]>) -> Graph {
+    let mut graph = Graph::default();
+    for label in ["consumer", "producer"] {
+        graph.nodes.push(
+            NodeInstance::new("same.node")
+                .with_label(label)
+                .with_inputs(["in"])
+                .with_outputs(["out"]),
+        );
+    }
+    graph.edges.push(Edge::new(1, "out", 0, "in"));
+    if let Some(order) = schedule {
+        graph.metadata.insert(
+            "schedule_order".into(),
+            daedalus_planner::node_index_list(order.iter().copied()),
+        );
+    }
+    graph
+}
+
+#[test]
+fn same_id_instances_run_in_dependency_order() {
+    // Planner order (indices), a misleading order, and none at all: the producer runs first.
+    for schedule in [Some(&[1, 0][..]), Some(&[0, 1][..]), None] {
+        let rt = runtime_for(same_id_instances_wired_backwards(schedule));
+        assert_eq!(
+            rt.schedule_order,
+            vec![NodeRef(1), NodeRef(0)],
+            "schedule {schedule:?}"
+        );
+
+        let order = std::sync::Arc::new(daedalus_runtime::sync::Mutex::new(Vec::new()));
+        let telemetry = Executor::new(
+            &rt,
+            LabelLogHandler {
+                order: order.clone(),
+            },
+        )
+        .run()
+        .expect("serial run");
+        assert_eq!(telemetry.nodes_executed, 2);
+        assert_eq!(
+            *order.lock(),
+            ["producer", "consumer"],
+            "schedule {schedule:?}"
+        );
+    }
+}
+
+#[test]
+fn schedule_order_ranks_independent_same_id_instances_by_index() {
+    let mut graph = Graph::default();
+    for label in ["a", "b", "c"] {
+        graph
+            .nodes
+            .push(NodeInstance::new("same.node").with_label(label));
+    }
+    graph.metadata.insert(
+        "schedule_order".into(),
+        daedalus_planner::node_index_list([2, 0, 1]),
     );
 
-    assert_eq!(rt.schedule_order, vec![NodeRef(0), NodeRef(1), NodeRef(2)]);
+    assert_eq!(
+        runtime_for(graph).schedule_order,
+        vec![NodeRef(2), NodeRef(0), NodeRef(1)]
+    );
+}
+
+struct LabelLogHandler {
+    order: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
+}
+
+impl NodeHandler for LabelLogHandler {
+    fn run(
+        &self,
+        node: &RuntimeNode,
+        _ctx: &daedalus_runtime::state::ExecutionContext,
+        _io: &mut daedalus_runtime::io::NodeIo,
+    ) -> Result<(), daedalus_runtime::NodeError> {
+        self.order
+            .lock()
+            .push(node.label.clone().unwrap_or_default());
+        Ok(())
+    }
 }
 
 impl NodeHandler for LogHandler {

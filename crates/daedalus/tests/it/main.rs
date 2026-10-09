@@ -16,5 +16,6 @@ mod host_graph_introspection;
 mod numeric_keys;
 mod optional_inputs;
 mod registry_type_index;
+mod same_id_instances;
 mod stateful_node_isolation;
 mod typed_host_ports;
