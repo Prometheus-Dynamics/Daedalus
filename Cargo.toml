@@ -151,7 +151,7 @@ implementation_variants = [
 allowed_manifest_exceptions = []
 
 # Line tables keep panics and backtraces readable while halving the debug target directory and
-# cutting a quarter of the CPU time of a debug build (`cargo test --workspace --all-targets`);
+# cutting a fifth of the CPU time of a debug build (`cargo test --workspace --all-targets`);
 # dependencies get no debug info. `CARGO_PROFILE_DEV_DEBUG=true` brings full debug info back for
 # a debugger session. Optimizing dependencies (`opt-level = 1`) was measured too: +65% build CPU
 # for no faster test run, so they stay at `opt-level = 0`.

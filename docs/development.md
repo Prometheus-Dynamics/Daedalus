@@ -27,8 +27,8 @@ Use `gpu-mock` for deterministic GPU-path tests and `gpu-wgpu` only on machines 
 The `dev` profile (also used by `cargo test`) keeps line tables only (`debug =
 "line-tables-only"`, enough for panic locations and backtraces) and no debug info for
 dependencies. Against full debug info, a clean `cargo test --workspace --all-targets --features
-engine,plugins --no-run` takes about a quarter less CPU time (334 s to 255 s) and half the disk
-(4.9 GB to 2.4 GB). For a debugger session, `CARGO_PROFILE_DEV_DEBUG=true` restores full debug
+engine,plugins --no-run` takes 22% less CPU time (334 s to 259 s) and half the disk (4.9 GB to
+2.4 GB). For a debugger session, `CARGO_PROFILE_DEV_DEBUG=true` restores full debug
 info. Dependencies stay at `opt-level = 0`: `opt-level = 1` cost 65% more build CPU and did not
 speed up the test run. The linker is Rust's default `rust-lld` on x86-64 Linux.
 

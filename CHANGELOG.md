@@ -252,7 +252,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Maintenance
 
 - **Leaner builds and CI.** The `dev` profile keeps line tables only and no dependency debug
-  info (a clean workspace test build: 25% less CPU, half the disk). The facade dropped its
+  info (a clean workspace test build: 22% less CPU, half the disk). The facade dropped its
   unused `wgpu`, `pollster`, `bytemuck` and `paste` dependencies (wgpu/naga/ash were compiled
   into every non-GPU facade test build and the trybuild project). Integration tests share one
   binary per crate (`tests/it`). `scripts/ci.sh` lost `check` (the same graph as clippy's) and
