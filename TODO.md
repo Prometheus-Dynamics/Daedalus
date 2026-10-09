@@ -157,23 +157,24 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 ## Remaining
 
 ### High priority
-- [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Run `./scripts/ci.sh pi` on the device and
+- [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Blocked: the CM5 PhotonVision image has no
+      Vulkan loader or v3dv yet (needs `BR2_PACKAGE_VULKAN_LOADER` and
+      `BR2_PACKAGE_MESA3D_VULKAN_DRIVER_BROADCOM`). Then run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
       `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
       measurements of the fence tests; see "Validating on a Raspberry Pi 5" in
       `docs/testing.md`.
-- [ ] **Frame-path overhead on the CM5 (requires the board).** Run
-      `cargo run --release -p daedalus-frame-bench --example frame_chain` (and
-      `cargo bench -p daedalus-frame-bench --bench frame_chain`) on the CM5, record the fixed and
-      per-stage cost, the overhead table and whether frames came from `/dev/dma_heap`, and add
-      them next to the host x86_64 numbers in `docs/development.md` ("Frame-path overhead");
-      then run Eidos's `eidos:detectors.aruco` through `run_frame_bench` on the same board.
+- [x] **Frame-path overhead on the CM5.** Measured `detector`, `frame_chain` and
+      `shared_detectors` at `bcc9f33` (4939e42, 3367fb2; `docs/development.md`): detector
+      `graph_overhead` p50 7.2 µs unfused / 6.8 µs fused, Eidos's real AprilTag graph 16-17 µs.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
-- [ ] **Tags** (coordinator): `v2.0.0` at `8946223` (the April release) and `v3.0.0` at the 3.0.0
-      release commit on `dev`. Downstream (HeliOS, Styx, Eidos) then pins `tag = "v3.0.0"`; Styx
-      `dev` and Eidos `main` still lock `75dc4c1`, and Styx's `daedalus` feature asks for
-      `daedalus-rs` 2.0.0, so it must move to 3.0.0 before Daedalus's examples can use it.
+- [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. No further tags or version bumps
+      for dev work: changes go under CHANGELOG `[Unreleased]` and downstream pins by commit until a
+      hardware-validated release.
+- [ ] **Faster local builds and `ci.sh`** (in progress): parallel `ci.sh -j`, `ci.sh quick`,
+      smoke reusing the test build; then the external-drive vs NVMe target-dir measurement once
+      the drive is free.
 - [ ] **HeliOS migration** (HeliOS-owned, in the HeliOS repo; see `docs/migration-3.0.md`): pin
       `v3.0.0`, drop the `ffi`/`gpu` features, switch the loader to `PluginLibrary`, use Styx's
       `daedalus` feature (`StyxFramesPlugin`, once it requires Daedalus 3.0.0) for `FrameLease`
