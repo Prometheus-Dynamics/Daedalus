@@ -45,12 +45,8 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
             .iter()
             .map(|port| {
                 let name = &port.name;
-                let source = option_string(&port.source);
-                let default = if let Some(ts) = &port.default_value {
-                    quote! { ::core::option::Option::Some(#ts) }
-                } else {
-                    quote! { ::core::option::Option::<#data_crate::model::Value>::None }
-                };
+                let source = source_setter(&port.source);
+                let default = default_setter(&port.default_value);
                 let ty_expr = if let Some(ty) = port.ty_override.as_ref() {
                     quote! { (#ty) }
                 } else {
@@ -103,12 +99,8 @@ pub(super) fn node_input_port_decl_tokens(inputs: InputDeclInputs<'_>) -> Vec<To
             }
 
             let name = &port.name;
-            let source = option_string(&port.source);
-            let default = if let Some(ts) = &port.default_value {
-                quote! { ::core::option::Option::Some(#ts) }
-            } else {
-                quote! { ::core::option::Option::<#data_crate::model::Value>::None }
-            };
+            let source = source_setter(&port.source);
+            let default = default_setter(&port.default_value);
             let foreign = crate::foreign_type::is_foreign_view(raw_aty);
             let access = if foreign {
                 quote! { #runtime_crate::transport_types::AccessMode::Read }
@@ -174,12 +166,8 @@ fn port_decl_token(input: PortDeclToken<'_>) -> TokenStream {
             .access(#access);
             #residency
             #optional
-            if let Some(__source) = #source {
-                __port = __port.source(__source.as_str());
-            }
-            if let Some(__default) = #default {
-                __port = __port.const_value(__default);
-            }
+            #source
+            #default
             __port
         }
     }
@@ -305,18 +293,35 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
             .collect()
     };
 
-    let boundary_input_contracts = if has_fn_generics {
+    // Ports of the same type produce the same contract: emit it once.
+    let mut seen = ::std::collections::HashSet::new();
+    let boundary_contracts_for: Vec<TokenStream> = boundary_input_contracts_for
+        .into_iter()
+        .chain(boundary_output_contracts_for)
+        .filter(|push| seen.insert(push.to_string()))
+        .collect();
+    let boundary_contracts = if has_fn_generics {
         Vec::new()
     } else {
-        boundary_input_contracts_for.clone()
-    };
-    let boundary_output_contracts = if has_fn_generics {
-        Vec::new()
-    } else {
-        boundary_output_contracts_for.clone()
+        boundary_contracts_for.clone()
     };
 
     let types_ty = quote! { &#data_crate::typing::TypeRegistry };
+    // Generic nodes resolve their contracts per instantiation (`register_for`); for the others it
+    // would repeat `boundary_contracts_in`.
+    let contracts_for = has_fn_generics.then(|| {
+        quote! {
+            pub fn boundary_contracts_for #fn_impl_generics (
+                __types: #types_ty,
+            ) -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> #fn_where_clause {
+                let mut __contracts: Vec<#runtime_crate::transport_types::BoundaryTypeContract> = Vec::new();
+                #(#boundary_contracts_for)*
+                __contracts.sort_by(|a, b| a.type_key.cmp(&b.type_key));
+                __contracts.dedup_by(|a, b| a.type_key == b.type_key);
+                Ok(__contracts)
+            }
+        }
+    });
     quote! {
         /// [`Self::boundary_contracts_in`] resolving through no registry.
         pub fn boundary_contracts() -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> {
@@ -328,23 +333,13 @@ pub(super) fn boundary_contracts_fn(inputs: BoundaryInputs<'_>) -> TokenStream {
             __types: #types_ty,
         ) -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> {
             let mut __contracts: Vec<#runtime_crate::transport_types::BoundaryTypeContract> = Vec::new();
-            #(#boundary_input_contracts)*
-            #(#boundary_output_contracts)*
+            #(#boundary_contracts)*
             __contracts.sort_by(|a, b| a.type_key.cmp(&b.type_key));
             __contracts.dedup_by(|a, b| a.type_key == b.type_key);
             Ok(__contracts)
         }
 
-        pub fn boundary_contracts_for #fn_impl_generics (
-            __types: #types_ty,
-        ) -> Result<Vec<#runtime_crate::transport_types::BoundaryTypeContract>, &'static str> #fn_where_clause {
-            let mut __contracts: Vec<#runtime_crate::transport_types::BoundaryTypeContract> = Vec::new();
-            #(#boundary_input_contracts_for)*
-            #(#boundary_output_contracts_for)*
-            __contracts.sort_by(|a, b| a.type_key.cmp(&b.type_key));
-            __contracts.dedup_by(|a, b| a.type_key == b.type_key);
-            Ok(__contracts)
-        }
+        #contracts_for
     }
 }
 
@@ -539,9 +534,7 @@ fn node_decl_body(input: NodeDeclBody<'_>) -> TokenStream {
                 )
                 .schema(__ty)
                 .access(#runtime_crate::transport_types::AccessMode::Read);
-                if let Some(__source) = #output_sources {
-                    __port = __port.source(__source.as_str());
-                }
+                #output_sources
                 __node = __node.output(__port);
             }
         )*
@@ -552,12 +545,20 @@ fn node_decl_body(input: NodeDeclBody<'_>) -> TokenStream {
     }
 }
 
-fn option_string(value: &Option<LitStr>) -> TokenStream {
-    if let Some(value) = value {
-        quote! { ::core::option::Option::Some(::std::string::String::from(#value)) }
-    } else {
-        quote! { ::core::option::Option::<::std::string::String>::None }
-    }
+/// `__port = __port.source(..)` when the port names a source, otherwise nothing.
+fn source_setter(value: &Option<LitStr>) -> TokenStream {
+    value
+        .as_ref()
+        .map(|value| quote! { __port = __port.source(#value); })
+        .unwrap_or_default()
+}
+
+/// `__port = __port.const_value(..)` when the port has a default, otherwise nothing.
+fn default_setter(value: &Option<TokenStream>) -> TokenStream {
+    value
+        .as_ref()
+        .map(|value| quote! { __port = __port.const_value(#value); })
+        .unwrap_or_default()
 }
 
 fn residency_for_ty(ty: &syn::Type, runtime_crate: &TokenStream) -> Option<TokenStream> {

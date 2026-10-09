@@ -96,7 +96,7 @@ pub fn node_handler(args: TokenStream, item: TokenStream) -> TokenStream {
                 reg.on(#id, |_, _, io| {
                     #(let #arg_idents = {
                         io.take_owned::<#arg_types>(#arg_names)
-                            .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #arg_names)))?
+                            .ok_or_else(|| #runtime_crate::NodeError::missing_input(#arg_names))?
                     }; )*
                     #ret_handling
                 });

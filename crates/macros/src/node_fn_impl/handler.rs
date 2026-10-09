@@ -474,7 +474,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                 let mut args_any: Vec<&dyn ::std::any::Any> = Vec::new();
                 #(args_any.push(
                     io.payload_raw(#port_idents)
-                        .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port_idents)))?
+                        .ok_or_else(|| #runtime_crate::NodeError::missing_input(#port_idents))?
                 );)*
                 {
                     let entries = ctx.capabilities

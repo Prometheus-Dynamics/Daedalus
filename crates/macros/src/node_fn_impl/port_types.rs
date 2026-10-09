@@ -119,6 +119,9 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
                 .collect(),
         }
     });
+    // One registration per coerced type: the coercer map is keyed by type.
+    let mut seen = HashSet::new();
+    coercions.retain(|coercion| seen.insert(coercion.to_string()));
     quote! {
         #[doc(hidden)]
         pub fn register_port_types(

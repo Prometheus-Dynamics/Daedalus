@@ -40,6 +40,13 @@ impl From<daedalus_transport::TypeKeyError> for NodeError {
 }
 
 impl NodeError {
+    /// `InvalidInput("missing <port>")`: a required input had no value (what `#[node]` handlers
+    /// return; one out-of-line constructor instead of a `format!` per port).
+    #[cold]
+    pub fn missing_input(port: &str) -> Self {
+        NodeError::InvalidInput(format!("missing {port}"))
+    }
+
     /// Return a stable string code for this error.
     pub fn code(&self) -> &'static str {
         match self {

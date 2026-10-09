@@ -111,7 +111,7 @@ pub fn node_config(item: TokenStream) -> TokenStream {
             quote! {
                 let #ident = io
                     .get_typed::<#ty>(#name)
-                    .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #name)))?;
+                    .ok_or_else(|| #runtime_crate::NodeError::missing_input(#name))?;
             }
         })
         .collect();

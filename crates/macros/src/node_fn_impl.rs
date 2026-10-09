@@ -90,11 +90,10 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
     let output_sources: Vec<proc_macro2::TokenStream> = outputs_vec
         .iter()
         .map(|p| {
-            if let Some(s) = &p.source {
-                quote! { ::core::option::Option::Some(::std::string::String::from(#s)) }
-            } else {
-                quote! { ::core::option::Option::<::std::string::String>::None }
-            }
+            p.source
+                .as_ref()
+                .map(|s| quote! { __port = __port.source(#s); })
+                .unwrap_or_default()
         })
         .collect();
     let output_type_keys: Vec<Option<LitStr>> =

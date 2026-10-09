@@ -102,7 +102,7 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
             Some(quote! {
                 let __input = payload
                     .get_ref::<#inner>()
-                    .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #input_port)))?;
+                    .ok_or_else(|| #runtime_crate::NodeError::missing_input(#input_port))?;
                 #inner_fn_ident(__input)
             })
         }
@@ -110,7 +110,7 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
         Some(quote! {
             let __input = payload
                 .try_into_owned::<#input_ty>()
-                .map_err(|_| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #input_port)))?;
+                .map_err(|_| #runtime_crate::NodeError::missing_input(#input_port))?;
             #inner_fn_ident(__input)
         })
     };

@@ -74,7 +74,7 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
             let method = syn::Ident::new(method, Span::call_site());
             quote! {
                 io.#method::<#ty>(#port)
-                    .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?
+                    .ok_or_else(|| #runtime_crate::NodeError::missing_input(#port))?
             }
         };
         // Bind `value` to the argument directly, or through a `{prefix}_{idx}` temporary
@@ -147,7 +147,7 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
                         let #ident = match io.get_ref::<#ty_core>(#port) {
                             Some(value) => value,
                             None => #decoded.get::<#ty_core>(#port).ok_or_else(|| {
-                                #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port))
+                                #runtime_crate::NodeError::missing_input(#port)
                             })?,
                         };
                     }
@@ -164,7 +164,7 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
                             let __probe = &#support::Probe::<#ty_core>(::core::marker::PhantomData);
                             #decoded.take_owned::<#ty_core>(io, #port, __probe.cloner())
                         }
-                        .ok_or_else(|| #runtime_crate::NodeError::InvalidInput(format!("missing {}", #port)))?;
+                        .ok_or_else(|| #runtime_crate::NodeError::missing_input(#port))?;
                     }
                 }
                 _ => bind(get("take_owned", ty_core), None),
