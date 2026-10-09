@@ -80,6 +80,3 @@ portable-atomic = { workspace = true }
 portable-atomic = { workspace = true, features = ["critical-section"] }
 portable-atomic-util = { workspace = true }
 spin = { workspace = true, features = ["portable_atomic"] }
-
-[dev-dependencies]
-once_cell = { workspace = true }

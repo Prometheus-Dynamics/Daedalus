@@ -23,4 +23,3 @@ separate-build = []
 
 [dependencies]
 daedalus = { workspace = true, features = ["plugins"] }
-paste = { workspace = true }

@@ -21,6 +21,7 @@ pub mod __macro_support {
     pub use daedalus_runtime::plugins::{
         NodeInstall, Plugin, PluginError, PluginInstallContext, PluginRegistry, PluginResult,
     };
+    pub use paste::paste;
 }
 
 /// Declare a plugin struct that installs a set of node declarations and handlers
@@ -32,7 +33,7 @@ pub mod __macro_support {
 macro_rules! declare_plugin {
     // Basic form with transport adapters.
     ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ], adapters [ $( $adapter:ident ),+ $(,)? ]) => {
-        paste::paste! {
+        $crate::__macro_support::paste! {
             #[derive(Clone, Debug)]
             pub struct $plugin {
                 $(pub $node: [<$node:camel Node Handle>]),+
@@ -101,7 +102,7 @@ macro_rules! declare_plugin {
 
     // Basic form (no hook).
     ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ]) => {
-        paste::paste! {
+        $crate::__macro_support::paste! {
             #[derive(Clone, Debug)]
             pub struct $plugin {
                 $(pub $node: [<$node:camel Node Handle>]),+
@@ -167,7 +168,7 @@ macro_rules! declare_plugin {
 
     // Form with an install hook and transport adapters.
     ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ], adapters [ $( $adapter:ident ),+ $(,)? ], install = |$reg:ident| $body:block) => {
-        paste::paste! {
+        $crate::__macro_support::paste! {
             #[derive(Clone, Debug)]
             pub struct $plugin {
                 $(pub $node: [<$node:camel Node Handle>]),+
@@ -239,7 +240,7 @@ macro_rules! declare_plugin {
     // Form with an install hook: the block runs before node merges and can return
     // an error. Binding name is provided by the caller.
     ($plugin:ident, $id:expr, [ $( $node:ident ),+ $(,)? ], install = |$reg:ident| $body:block) => {
-        paste::paste! {
+        $crate::__macro_support::paste! {
             #[derive(Clone, Debug)]
             pub struct $plugin {
                 $(pub $node: [<$node:camel Node Handle>]),+

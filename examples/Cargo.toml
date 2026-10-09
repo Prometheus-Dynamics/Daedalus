@@ -19,7 +19,6 @@ gpu-styx = ["gpu-wgpu", "styx-camera-example"]
 [dependencies]
 parking_lot = { workspace = true }
 daedalus = { workspace = true, features = ["engine-full", "plugins"] }
-paste = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 tracing-subscriber = { workspace = true }
 styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }

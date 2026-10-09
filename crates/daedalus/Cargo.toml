@@ -143,7 +143,6 @@ daedalus-macros = { workspace = true }
 daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
 styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
-paste = { workspace = true }
 daedalus-ffi-host = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true, features = ["std"] }
@@ -153,9 +152,6 @@ thiserror = { workspace = true, optional = true, features = ["std"] }
 parking_lot = { workspace = true }
 daedalus-plugins-example-project = { workspace = true }
 daedalus-plugins-stable-abi = { workspace = true }
-wgpu = { workspace = true }
-pollster = { workspace = true }
-bytemuck = { workspace = true }
 image = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
