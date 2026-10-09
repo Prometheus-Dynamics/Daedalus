@@ -87,6 +87,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
     hash with an unseeded Fx hasher (`collections::FastHashMap`). `Clock::platform()` is a
     `const fn`.
 
+- **Smaller `#[node]` expansions** (what every plugin crate compiles per node: 20% fewer
+  expanded lines and 18% less build CPU for a 50-node crate). Generated node types keep
+  `boundary_contracts_for` only when the node function is generic (it duplicated
+  `boundary_contracts_in` otherwise); call `boundary_contracts_in` on the others. A missing
+  required input fails through the new `NodeError::missing_input(port)` (same
+  `InvalidInput("missing <port>")` error).
+- `declare_plugin!` no longer needs `paste` in the calling crate (it goes through
+  `daedalus-nodes`); plugin crates can drop that dependency.
+
 ### Added
 
 - **Node fusion.** Chains of single-consumer CPU nodes run as fused units: a fused edge (its
@@ -242,6 +251,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Maintenance
 
+- **Leaner builds and CI.** The `dev` profile keeps line tables only and no dependency debug
+  info (a clean workspace test build: 25% less CPU, half the disk). The facade dropped its
+  unused `wgpu`, `pollster`, `bytemuck` and `paste` dependencies (wgpu/naga/ash were compiled
+  into every non-GPU facade test build and the trybuild project). Integration tests share one
+  binary per crate (`tests/it`). `scripts/ci.sh` lost `check` (the same graph as clippy's) and
+  `examples` (it tested a facade without examples); `clippy` lints `--all-features`; the wasm
+  smoke modules build in the dev profile. CI groups jobs by crate graph (macro UI and dylib
+  tests in one `facade` job, all check-mode work in `docs-and-lints`) and saves caches only on
+  the default branch. Details and measurements in docs/testing.md and docs/development.md.
 - **Toolchain 1.99.0, MSRV 1.99.** `rust-toolchain.toml`, the CI workflows and the examples
   Docker image pin Rust 1.99.0; `rust-version` is 1.99 and every crate now inherits it (it was
   declared for the workspace but not applied to the packages).
