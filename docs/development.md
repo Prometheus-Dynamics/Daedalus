@@ -636,7 +636,7 @@ of queue metrics, and `Profile`/`Trace` metrics (per-edge lifecycle events) run 
 
 Opt-outs: `EngineConfig::with_node_fusion(false)` (`DAEDALUS_NODE_FUSION=0` through
 `EngineConfig::from_env` and the frame-bench examples), `Executor`/`OwnedExecutor::
-with_node_fusion(false)`, or the node metadata flag. `crates/runtime/tests/fusion_equivalence.rs`
+with_node_fusion(false)`, or the node metadata flag. `crates/runtime/tests/it/fusion_equivalence.rs`
 runs 60 random DAGs (chains, fan-out, fan-in, conditional and doubled outputs, optional and
 required inputs, `fire = "all"`, latest-only edges, state, failing nodes, opted-out nodes) for six
 ticks in serial (fail-fast on and off), parallel and adaptive mode at `Basic` and `Detailed`

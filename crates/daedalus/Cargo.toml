@@ -158,44 +158,13 @@ serde_json = { workspace = true }
 trybuild = { workspace = true }
 criterion = { workspace = true }
 
+# Integration tests share one binary (`tests/it`) where they can, so the crate graph is linked
+# and its generic code instantiated once. Separate binaries: tests with their own counting
+# `#[global_allocator]` (one per binary), the `dylib-plugins` tests (`export_plugin!` exports
+# fixed symbols, once per binary), trybuild and Docker.
 [[test]]
-name = "adapt_macro"
-path = "tests/adapt_macro.rs"
-required-features = ["plugins"]
-
-[[test]]
-name = "foreign_interfaces"
-path = "tests/foreign_interfaces.rs"
-required-features = ["engine", "plugins"]
-
-[[test]]
-name = "foreign_type_keys"
-path = "tests/foreign_type_keys.rs"
-required-features = ["plugins"]
-
-[[test]]
-name = "fanin_inputs_macro"
-path = "tests/fanin_inputs_macro.rs"
-required-features = ["plugins"]
-
-[[test]]
-name = "stateful_node_isolation"
-path = "tests/stateful_node_isolation.rs"
-required-features = ["engine", "plugins"]
-
-[[test]]
-name = "host_graph_introspection"
-path = "tests/host_graph_introspection.rs"
-required-features = ["engine", "plugins"]
-
-[[test]]
-name = "typed_host_ports"
-path = "tests/typed_host_ports.rs"
-required-features = ["engine", "plugins"]
-
-[[test]]
-name = "enum_config_ports"
-path = "tests/enum_config_ports.rs"
+name = "it"
+path = "tests/it/main.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
@@ -204,13 +173,18 @@ path = "tests/macro_hot_path_allocations.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
-name = "registry_type_index"
-path = "tests/registry_type_index.rs"
-required-features = ["engine", "plugins"]
+name = "held_host_inputs"
+path = "tests/held_host_inputs.rs"
+required-features = ["engine", "plugins", "threads"]
 
 [[test]]
-name = "optional_inputs"
-path = "tests/optional_inputs.rs"
+name = "multi_camera"
+path = "tests/multi_camera.rs"
+required-features = ["engine", "plugins", "threads"]
+
+[[test]]
+name = "graph_frame_allocations"
+path = "tests/graph_frame_allocations.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
@@ -242,26 +216,6 @@ required-features = ["dylib-plugins"]
 name = "dylib_export_macro"
 path = "tests/dylib_export_macro.rs"
 required-features = ["dylib-plugins"]
-
-[[test]]
-name = "execution_domain"
-path = "tests/execution_domain.rs"
-required-features = ["engine", "plugins"]
-
-[[test]]
-name = "held_host_inputs"
-path = "tests/held_host_inputs.rs"
-required-features = ["engine", "plugins", "threads"]
-
-[[test]]
-name = "multi_camera"
-path = "tests/multi_camera.rs"
-required-features = ["engine", "plugins", "threads"]
-
-[[test]]
-name = "graph_frame_allocations"
-path = "tests/graph_frame_allocations.rs"
-required-features = ["engine", "plugins"]
 
 [[bench]]
 name = "graph_frame"

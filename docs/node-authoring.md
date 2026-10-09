@@ -597,7 +597,7 @@ Rules and limits:
 - Accessors run the owner's code through `extern "C"` functions: they must not panic (that
   aborts), and the owner keeps shared values immutable.
 
-[`crates/daedalus/tests/foreign_interfaces.rs`](../crates/daedalus/tests/foreign_interfaces.rs)
+[`crates/daedalus/tests/it/foreign_interfaces.rs`](../crates/daedalus/tests/it/foreign_interfaces.rs)
 shows a host frame type with a provider feeding `FrameView` and `ForeignRef` nodes, and
 [`examples/plugins/foreign_consumer`](../examples/plugins/foreign_consumer/src/lib.rs) a plugin
 built separately from the type it reads.

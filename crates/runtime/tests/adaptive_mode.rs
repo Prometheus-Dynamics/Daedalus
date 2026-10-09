@@ -1,6 +1,7 @@
 //! `run_adaptive_in_place` goes parallel only when measured (or hinted) work pays for dispatch.
 //!
-//! A frame counts as serial when every handler ran on the calling thread.
+//! A frame counts as serial when every handler ran on the calling thread. These tests assert on
+//! wall-clock frame times, so they keep their own binary instead of sharing `tests/it`'s threads.
 #![cfg(feature = "threads")]
 
 use std::sync::Arc;

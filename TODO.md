@@ -74,7 +74,7 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       codecs registered by the node macros convert to and from the handlers' Rust types, and
       `install_into` picks `InstallPath::RustAbi` or `InstallPath::Stable`
       (`install_into_as` forces one). `examples/plugins/stable_abi` and the facade's
-      `dylib_stable` test cover it.
+      `dylib` test (`stable` module) cover it.
 - [x] **`export_plugin!` boundary contracts in the schema.** `PluginSchema::boundary_contracts`
       lists them next to the plugin's own.
 - [x] **Graph JSON Schema drift.** Enum lists come from each core type's `ALL` (guarded by an
@@ -106,7 +106,7 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       against the port's exact width. See "Builtin Numbers" in `docs/node-authoring.md`.
 - [x] **Direct routes deliver const inputs.** The single-node direct route (`run_direct_once`,
       lanes, `tick_direct_*`) skipped const inputs, so constants, port defaults and config fields
-      were `missing`; it now delivers them like a scheduled tick (`tests/direct_const_inputs.rs`).
+      were `missing`; it now delivers them like a scheduled tick (`tests/it/direct_const_inputs.rs`).
 - [x] **Typed nodes with three reference parameters.** `fn(&A, &B, &mut State)` was taken for
       the low-level `(node, ctx, io)` form; the form is now recognized by parameter types.
 

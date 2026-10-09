@@ -30,7 +30,7 @@ pub(crate) struct DirectSlot {
 // retained parallel ticks, while `Serial` is only constructed for single-owner serial ticks and
 // direct-host fast paths. `reset_run_storage` clears slots before retained ticks can switch access
 // modes. Regression coverage lives in `executor::tests::direct_slot_*` and
-// `runtime/tests/parallel_invariants.rs` tests for retained serial/parallel ticks, latest-only
+// `runtime/tests/it/parallel_invariants.rs` tests for retained serial/parallel ticks, latest-only
 // direct-slot transfer, and serial-to-parallel access switching.
 unsafe impl Sync for DirectSlot {}
 

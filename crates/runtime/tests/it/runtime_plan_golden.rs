@@ -18,7 +18,7 @@ fn runtime_plan_cpu_golden() {
 
     let actual: Value = serde_json::from_str(&debug::to_pretty_json(&runtime)).unwrap();
     let expected: Value =
-        serde_json::from_str(include_str!("goldens/runtime_plan_cpu.json")).unwrap();
+        serde_json::from_str(include_str!("../goldens/runtime_plan_cpu.json")).unwrap();
     assert_eq!(actual, expected);
 }
 
@@ -51,6 +51,6 @@ fn runtime_plan_gpu_segment_golden() {
 
     let actual: Value = serde_json::from_str(&debug::to_pretty_json(&runtime)).unwrap();
     let expected: Value =
-        serde_json::from_str(include_str!("goldens/runtime_plan_gpu_segment.json")).unwrap();
+        serde_json::from_str(include_str!("../goldens/runtime_plan_gpu_segment.json")).unwrap();
     assert_eq!(actual, expected);
 }
