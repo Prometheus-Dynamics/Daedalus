@@ -12,6 +12,9 @@ use super::{
 #[derive(Clone)]
 pub struct ExecutionContext {
     pub state: StateStore,
+    /// This node instance's key in `state` (typed state, resources, custom metrics): the node id,
+    /// or `id@label` / `id#index` when several nodes of the graph share the id
+    /// ([`crate::plan::node_instance_keys`]). The node's type id is `RuntimeNode::id`.
     pub node_id: Arc<str>,
     pub metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
     /// Graph-level metadata (typed values) shared by all nodes in the graph.

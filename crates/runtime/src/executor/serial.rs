@@ -191,7 +191,7 @@ fn run_order_timed<H: NodeHandler>(
         let mut io = exec.core.node_io(node_idx, inputs, consts.as_ref());
         let ctx = &contexts[node_idx];
         if collect_basic_metrics {
-            exec.core.state.clear_node_custom_metrics(&node.id);
+            exec.core.state.clear_node_custom_metrics(&ctx.node_id);
         }
 
         let handler_start = (collect_detailed_metrics || probe.is_some()).then(|| clock.now());
@@ -285,7 +285,7 @@ fn run_order_timed<H: NodeHandler>(
             exec.core.telemetry.record_node_perf(node_idx, sample);
         }
         if collect_basic_metrics {
-            let metrics = exec.core.state.drain_node_custom_metrics(&node.id);
+            let metrics = exec.core.state.drain_node_custom_metrics(&ctx.node_id);
             exec.core
                 .telemetry
                 .record_node_custom_metrics(node_idx, metrics);

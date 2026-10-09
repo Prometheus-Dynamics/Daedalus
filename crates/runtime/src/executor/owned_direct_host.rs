@@ -176,7 +176,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let probe = self.core.run_config.frame_probe.clone();
         let clock = self.core.clock.clone();
         let node_start = probe.is_some().then(|| clock.now());
-        self.core.state.clear_node_custom_metrics(&route.node.id);
+        self.core
+            .state
+            .clear_node_custom_metrics(&route.ctx.node_id);
         // Direct payload handlers exist only for nodes with a single input, which the route's
         // edge feeds, so they have no const input to deliver.
         let output = if let Some(handler) = &route.direct_payload {
@@ -210,7 +212,10 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             io.flush().map_err(failed)?;
             io.take_output(&route.output_port)
         };
-        let metrics = self.core.state.drain_node_custom_metrics(&route.node.id);
+        let metrics = self
+            .core
+            .state
+            .drain_node_custom_metrics(&route.ctx.node_id);
         if let (Some(probe), Some(start)) = (&probe, node_start) {
             probe.add_time(ProbeTime::NodeRuns, clock.elapsed(start));
             probe.add_count(ProbeCount::Nodes, 1);

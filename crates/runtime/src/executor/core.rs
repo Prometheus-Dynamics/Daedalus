@@ -71,7 +71,8 @@ pub(crate) struct ExecutorCore {
     pub(crate) graph_metadata: Arc<BTreeMap<String, daedalus_data::model::Value>>,
     pub(crate) node_metadata: NodeMetadataStore,
     pub(crate) output_ports: Arc<[Arc<[crate::handles::PortId]>]>,
-    /// Node ids shared with `ExecutionContext::node_id` so ticks do not allocate them.
+    /// Node instance keys (`node_instance_keys`), shared with `ExecutionContext::node_id` so ticks
+    /// do not allocate them.
     pub(crate) node_ids: Arc<[Arc<str>]>,
     /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
     pub(crate) required_inputs: Arc<[super::init::RequiredInputs]>,
@@ -116,10 +117,9 @@ impl ExecutorCore {
             graph_metadata: Arc::new(graph_metadata.clone()),
             node_metadata: init.node_metadata.clone(),
             output_ports: init.output_ports.clone(),
-            node_ids: init
-                .nodes
-                .iter()
-                .map(|node| Arc::from(node.id.as_str()))
+            node_ids: crate::plan::node_instance_keys(&init.nodes)
+                .into_iter()
+                .map(Arc::from)
                 .collect(),
             required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),

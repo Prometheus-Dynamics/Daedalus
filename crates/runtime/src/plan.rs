@@ -215,6 +215,33 @@ pub struct RuntimeNode {
     pub metadata: alloc::collections::BTreeMap<String, daedalus_data::model::Value>,
 }
 
+/// Per node, its instance key: the key of its typed state, resources and custom metrics in the
+/// [`StateStore`](crate::state::StateStore), and its
+/// [`ExecutionContext::node_id`](crate::state::ExecutionContext::node_id). A node whose id is unique in the plan keys by its
+/// id; nodes sharing an id (two instances of one node) key by `id@label` when their labels tell
+/// them apart, else by `id#index`, so each instance keeps its own state.
+pub fn node_instance_keys(nodes: &[RuntimeNode]) -> Vec<String> {
+    let mut by_id: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        by_id.entry(node.id.as_str()).or_default().push(idx);
+    }
+    let mut keys: Vec<String> = nodes.iter().map(|node| node.id.clone()).collect();
+    for (id, indices) in by_id.into_iter().filter(|(_, indices)| indices.len() > 1) {
+        let labels: BTreeSet<&str> = indices
+            .iter()
+            .filter_map(|&idx| nodes[idx].label.as_deref())
+            .collect();
+        let by_label = labels.len() == indices.len();
+        for idx in indices {
+            keys[idx] = match nodes[idx].label.as_deref() {
+                Some(label) if by_label => format!("{id}@{label}"),
+                _ => format!("{id}#{idx}"),
+            };
+        }
+    }
+    keys
+}
+
 impl RuntimeNode {
     /// A CPU node `id` with its stable id and nothing else (for running a handler outside a
     /// compiled plan).

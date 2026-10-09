@@ -116,3 +116,37 @@ fn three_reference_parameters_are_a_typed_node() {
     let out = host.run_direct_once::<_, i64>("in", "out", 2_i64);
     assert_eq!(out.expect("direct tick"), Some(18));
 }
+
+/// Two instances of one `#[node(state(..))]` in one graph count independently (they shared one
+/// state slot when state was keyed by node id).
+#[test]
+fn same_id_stateful_instances_in_one_graph_count_independently() {
+    let mut registry = PluginRegistry::new();
+    let plugin = StatefulPlugin::new();
+    registry.install(&plugin).expect("install plugin");
+    let a = plugin.stateful_counter.clone().alias("a");
+    let b = plugin.stateful_counter.alias("b");
+    let graph = registry
+        .graph_builder()
+        .expect("graph builder")
+        .try_node(&a)
+        .and_then(|g| g.try_node(&b))
+        .and_then(|g| g.try_connect("a_in", &a.inputs.step))
+        .and_then(|g| g.try_connect("b_in", &b.inputs.step))
+        .and_then(|g| g.try_connect(&a.outputs.value, "a_out"))
+        .and_then(|g| g.try_connect(&b.outputs.value, "b_out"))
+        .expect("wire")
+        .build();
+    let mut host = Engine::new(EngineConfig::default())
+        .expect("engine")
+        .compile_registry(&registry, graph)
+        .expect("compile graph");
+
+    for tick in 1..=3_i64 {
+        host.push("a_in", 1_i64);
+        host.push("b_in", 10_i64);
+        host.tick().expect("tick");
+        assert_eq!(host.take::<i64>("a_out"), Some(tick), "a, tick {tick}");
+        assert_eq!(host.take::<i64>("b_out"), Some(10 * tick), "b, tick {tick}");
+    }
+}

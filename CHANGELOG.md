@@ -243,6 +243,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- **Several instances of one stateful node shared one state.** `#[node(state(..))]` state,
+  `ExecutionContext` resources and custom metrics were keyed by node id, so two instances of a
+  node in one graph (two tracked groups' `track_plan`, two frame-difference nodes) shared one
+  tracker or previous frame, and their metrics were attributed to each other. They are now keyed
+  per instance (`node_instance_keys`): by node id when it is unique in the graph (unchanged), else
+  by `id@label`, or `id#index` when the labels don't tell the instances apart.
+  `ExecutionContext::node_id` is that instance key; a node's type id is `RuntimeNode::id`.
 - **Several instances of one node id ran in index order, not dependency order.** The planner's
   `topo_order`, `schedule_order` and `gpu_segments` metadata named nodes by id, and the runtime
   bound each id to the first unused instance with that id, so an instance fed by a later-index

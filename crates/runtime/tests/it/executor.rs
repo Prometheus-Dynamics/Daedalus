@@ -530,3 +530,92 @@ fn node_can_publish_custom_metrics_into_telemetry() {
     assert!(table.contains("node\t0\tcustom.detections"));
     assert!(table.contains("counter"));
 }
+
+/// Counts its calls in its typed state, publishes the count as a metric and records it as
+/// persistent-state bytes: everything a node keeps per instance.
+struct InstanceCounter;
+
+impl NodeHandler for InstanceCounter {
+    fn run(
+        &self,
+        _node: &RuntimeNode,
+        ctx: &daedalus_runtime::state::ExecutionContext,
+        _io: &mut daedalus_runtime::io::NodeIo,
+    ) -> Result<(), NodeError> {
+        let calls = ctx.take_node_state::<u64>().unwrap_or(0) + 1;
+        ctx.set_node_state(calls);
+        ctx.increment_metric("calls", calls);
+        ctx.record_persistent_state_bytes("buffer", calls, calls);
+        Ok(())
+    }
+}
+
+#[test]
+fn same_id_instances_keep_their_own_state_resources_and_metrics() {
+    let mut graph = Graph::default();
+    for label in ["a", "b"] {
+        graph
+            .nodes
+            .push(NodeInstance::new("same.node").with_label(label));
+    }
+    graph.nodes.push(NodeInstance::new("unique.node"));
+    let rt = build_runtime(
+        &ExecutionPlan::new(graph, vec![]),
+        &SchedulerConfig::default(),
+    );
+    assert_eq!(
+        daedalus_runtime::node_instance_keys(&rt.nodes),
+        ["same.node@a", "same.node@b", "unique.node"]
+    );
+
+    let state = StateStore::default();
+    let run = || {
+        Executor::new(&rt, InstanceCounter)
+            .with_state(state.clone())
+            .with_metrics_level(daedalus_runtime::MetricsLevel::Detailed)
+            .run()
+            .expect("run")
+    };
+    run();
+    let telemetry = run();
+    // Shared state would count 1..=6 across the three nodes; each instance has counted twice.
+    for idx in (0..3).filter(|_| cfg!(feature = "metrics")) {
+        assert_eq!(
+            telemetry
+                .node_metrics
+                .get(idx)
+                .expect("node metrics")
+                .custom
+                .get("calls"),
+            Some(&daedalus_runtime::CustomMetricValue::Counter(2)),
+            "node {idx}"
+        );
+    }
+    for key in ["same.node@a", "same.node@b", "unique.node"] {
+        assert_eq!(
+            state
+                .snapshot_node_resources(key)
+                .persistent_state
+                .live_bytes,
+            2,
+            "{key}"
+        );
+    }
+    assert_eq!(
+        state.snapshot_node_resources("same.node"),
+        daedalus_runtime::NodeResourceSnapshot::default()
+    );
+}
+
+#[test]
+fn same_id_instances_without_distinct_labels_key_by_index() {
+    let nodes = [
+        RuntimeNode::new("x"),
+        RuntimeNode::new("x"),
+        RuntimeNode::new("y"),
+    ];
+    assert_eq!(
+        daedalus_runtime::node_instance_keys(&nodes),
+        ["x#0", "x#1", "y"]
+    );
+}

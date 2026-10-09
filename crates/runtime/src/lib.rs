@@ -218,7 +218,7 @@ pub use plan::{
     RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation, RuntimeEdgeHandoff,
     RuntimeEdgePolicy, RuntimeEdgeTransport, RuntimeFusedUnitExplanation, RuntimeNode,
     RuntimeNodeExplanation, RuntimePlan, RuntimePlanError, RuntimePlanExplanation, RuntimeSegment,
-    RuntimeSink,
+    RuntimeSink, node_instance_keys,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
 pub use state::{
