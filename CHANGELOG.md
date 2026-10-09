@@ -266,6 +266,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Maintenance
 
+- **`examples/mcu_blink` no longer plans in its build script.** Its `build.rs` planned the graph
+  with `daedalus-mcu-build` as a build dependency, which compiled the planner, registry, runtime
+  and transport a second time for the host (a cold `cargo build --workspace --all-targets`
+  dropped from 381 to 322 CPU s, and `scripts/ci.sh mcu` from 85 to 68). The planner output is now checked in under
+  `examples/mcu_blink/generated/`, written by `cargo run -p daedalus-mcu-blink --example generate`
+  and compared by `tests/generated.rs` (run by `scripts/ci.sh mcu`). The firmware sources are
+  byte-identical; `docs/mcu.md` describes the pattern.
 - **Removed the planner's orphaned plan goldens** (`crates/planner/tests/goldens`): no test has
   read them since the planner rebuild (509283e), so they had drifted from real plans. The runtime
   plan goldens and the planner's pass unit tests cover plan structure.

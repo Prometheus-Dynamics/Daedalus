@@ -1,0 +1,80 @@
+{
+  "format": "daedalus.mcu.plan",
+  "plan_hash": 2065531800937359969,
+  "library_hash": null,
+  "nodes": [
+    "scale",
+    "lowpass",
+    "threshold",
+    "blink",
+    "rising"
+  ],
+  "edges": [
+    "host.sample -> scale.raw",
+    "scale.volts -> lowpass.x",
+    "lowpass.y -> threshold.level",
+    "lowpass.y -> host.level",
+    "threshold.active -> rising.active",
+    "threshold.active -> blink.active",
+    "rising.count -> host.rises",
+    "blink.led -> host.led"
+  ],
+  "inputs": [
+    {
+      "id": 0,
+      "name": "sample",
+      "ty": "u16"
+    }
+  ],
+  "outputs": [
+    {
+      "id": 0,
+      "name": "level",
+      "ty": "f32"
+    },
+    {
+      "id": 1,
+      "name": "rises",
+      "ty": "u32"
+    },
+    {
+      "id": 2,
+      "name": "led",
+      "ty": "bool"
+    }
+  ],
+  "params": [
+    {
+      "id": 0,
+      "name": "lowpass.alpha",
+      "ty": "f32",
+      "default": 0.25,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "id": 1,
+      "name": "threshold.on",
+      "ty": "f32",
+      "default": 2.0,
+      "min": 0.0,
+      "max": 3.299999952316284
+    },
+    {
+      "id": 2,
+      "name": "threshold.off",
+      "ty": "f32",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 3.299999952316284
+    },
+    {
+      "id": 3,
+      "name": "blink.period",
+      "ty": "u32",
+      "default": 4,
+      "min": 1,
+      "max": 1000
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "format": "daedalus.mcu.plan",
+  "plan_hash": 8870091512979777151,
+  "library_hash": 2372013240643918266,
+  "nodes": [
+    "scale",
+    "threshold",
+    "blink",
+    "rising"
+  ],
+  "edges": [
+    "host.sample -> scale.raw",
+    "scale.volts -> threshold.level",
+    "threshold.active -> blink.active",
+    "threshold.active -> rising.active",
+    "scale.volts -> host.level",
+    "rising.count -> host.rises",
+    "blink.led -> host.led"
+  ],
+  "inputs": [
+    {
+      "id": 0,
+      "name": "sample",
+      "ty": "u16"
+    }
+  ],
+  "outputs": [
+    {
+      "id": 0,
+      "name": "level",
+      "ty": "f32"
+    },
+    {
+      "id": 1,
+      "name": "rises",
+      "ty": "u32"
+    },
+    {
+      "id": 2,
+      "name": "led",
+      "ty": "bool"
+    }
+  ],
+  "params": []
+}

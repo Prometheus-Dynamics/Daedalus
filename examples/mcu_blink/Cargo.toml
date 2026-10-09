@@ -39,13 +39,9 @@ bench = false
 daedalus-mcu = { workspace = true, features = ["loaded"] }
 daedalus-mcu-blink-nodes = { workspace = true }
 
-# The native tests compile blobs and parameter updates as a host tool would.
+# The generator (`examples/generate.rs`) plans the graphs into `generated/`, and the native tests
+# compile blobs and parameter updates as a host tool would. Nothing here runs at build time.
 [dev-dependencies]
-daedalus-mcu-build = { workspace = true }
-
-# The build script plans `graph.json` against the same node crate, compiled for the host.
-[build-dependencies]
-daedalus-mcu-blink-nodes = { workspace = true }
 daedalus-mcu-build = { workspace = true }
 
 [target.'cfg(target_os = "none")'.dependencies]

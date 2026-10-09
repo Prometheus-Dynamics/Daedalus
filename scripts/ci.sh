@@ -203,9 +203,9 @@ cmd_nostd() {
   cargo test -p daedalus-nostd-smoke
 }
 
-# The MCU profile (docs/mcu.md): the blink graph is planned on the host by its build script and
-# runs on the device as generated code (compiled, compiled + tunable) or as a plan blob loaded by
-# the interpreter (loaded). Builds the three firmwares per bare-metal target with the `mcu` size
+# The MCU profile (docs/mcu.md): the blink graph is planned on the host into the checked-in
+# examples/mcu_blink/generated/ (its freshness is a native test below) and runs on the device as
+# generated code (compiled, compiled + tunable) or as a plan blob loaded by the interpreter (loaded). Builds the three firmwares per bare-metal target with the `mcu` size
 # profile, prints their flash and static RAM (section sizes from `readelf`), fails above each
 # mode's budgets or if the compiled firmware changed size; checks the device crate's optional
 # features; runs the native tests (every mode checked against the node functions, with an

@@ -1,0 +1,127 @@
+{
+  "format": "daedalus.mcu.library",
+  "hash": 2372013240643918266,
+  "nodes": [
+    {
+      "id": "blink.scale",
+      "path": "daedalus_mcu_blink_nodes::scale",
+      "inputs": [
+        {
+          "name": "raw",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "volts_per_count",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "volts",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "blink.lowpass",
+      "path": "daedalus_mcu_blink_nodes::lowpass",
+      "inputs": [
+        {
+          "name": "x",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "alpha",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "blink.threshold",
+      "path": "daedalus_mcu_blink_nodes::threshold",
+      "inputs": [
+        {
+          "name": "level",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "on",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "off",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "active",
+          "key": "typeexpr:{\"Scalar\":\"Bool\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "blink.rising",
+      "path": "daedalus_mcu_blink_nodes::rising",
+      "inputs": [
+        {
+          "name": "active",
+          "key": "typeexpr:{\"Scalar\":\"Bool\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "count",
+          "key": "typeexpr:{\"Scalar\":\"U32\"}",
+          "optional": true
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "blink.blink",
+      "path": "daedalus_mcu_blink_nodes::blink",
+      "inputs": [
+        {
+          "name": "active",
+          "key": "typeexpr:{\"Scalar\":\"Bool\"}",
+          "optional": false
+        },
+        {
+          "name": "period",
+          "key": "typeexpr:{\"Scalar\":\"U32\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "led",
+          "key": "typeexpr:{\"Scalar\":\"Bool\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    }
+  ],
+  "types": []
+}

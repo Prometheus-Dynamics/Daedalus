@@ -16,7 +16,7 @@ fn plan_follows_the_graph_document() {
     );
     assert_eq!(EDGES.len(), 8);
     // Frozen parameters: constants are literals and the graph has no parameter table.
-    let source = include_str!(concat!(env!("OUT_DIR"), "/graph.rs"));
+    let source = include_str!("../generated/graph.rs");
     assert!(!source.contains("Tunable") && source.contains("0.25_f32"));
 }
 

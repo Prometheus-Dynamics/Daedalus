@@ -12,9 +12,9 @@ use daedalus_mcu_blink::{Graph, TunableGraph, tunable};
 use daedalus_mcu_build::{Endpoint, LibraryManifest, McuPlan, PlanManifest, Value};
 
 const GRAPH: &str = include_str!("../graph.json");
-const LIBRARY_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/library.json"));
-const PLAN_A_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/plan_a.json"));
-const TUNABLE_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/tunable.json"));
+const LIBRARY_JSON: &str = include_str!("../generated/library.json");
+const PLAN_A_JSON: &str = include_str!("../generated/plan_a.json");
+const TUNABLE_JSON: &str = include_str!("../generated/tunable.json");
 
 /// The blink graph in loaded mode, by port name.
 struct Loaded {

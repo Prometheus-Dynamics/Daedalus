@@ -22,7 +22,9 @@ Crates:
   device nodes and renders it as a compiled module, a node library or a plan blob, from a
   `build.rs` or the `daedalus-mcu` command line tool.
 - [`examples/mcu_blink`](../examples/mcu_blink): a five-node graph in all three modes, with
-  firmware for Cortex-M4F and Cortex-M0+ and native tests of the same code.
+  firmware for Cortex-M4F and Cortex-M0+ and native tests of the same code. Its planner output is
+  checked in under `examples/mcu_blink/generated/`, regenerated with
+  `cargo run -p daedalus-mcu-blink --example generate` and checked by its `tests/generated.rs`.
 
 ## Which Runtime
 
@@ -97,6 +99,13 @@ and a few KiB more flash and an arena of RAM are acceptable.
 
    Planning errors (unknown nodes, type mismatches, missing converters, unconnected inputs) and
    unsupported features fail the build with the planner's diagnostics.
+
+   A build script that plans compiles `daedalus-mcu-build` (the planner, registry and runtime) a
+   second time for the host, and reruns on every change to the nodes or the runtime. A larger
+   project can avoid that: keep the output of `compile_document` and the other generators in the
+   repository (for example by a small example like `examples/mcu_blink/examples/generate.rs`),
+   and have a test regenerate it and compare, so CI catches a stale file. `examples/mcu_blink`
+   does this, and its `build.rs` only writes the linker layout.
 
 4. **The device crate** includes it, `mod graph { include!(concat!(env!("OUT_DIR"),
    "/graph.rs")); }`, and drives it:
