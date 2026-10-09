@@ -37,10 +37,11 @@ usage() {
   cat <<'EOF'
 usage: scripts/ci.sh [subcommand...]
 
-  all         lints features clippy test macro-ui smoke (default)
+  all         lints features clippy link test macro-ui smoke (default)
   lints       file-size, workspace-deps, GPU async lints and rustfmt
-  features    release feature-surface checks and the all-features library build
+  features    release feature-surface checks
   clippy      clippy with -D warnings: default CI features, dylib plugins, all features
+  link        build (and link) every library with all features
   test        workspace tests (default CI features) and dylib plugin tests
   macro-ui    trybuild macro UI tests
   smoke       run the CPU-only example binaries (built by `test` as unit-test targets)
@@ -83,9 +84,6 @@ cmd_features() {
     --features "daedalus-ffi-core/image-payload,daedalus-ffi-host/image-payload"
   cargo check -p daedalus-gpu --no-default-features --features "gpu-wgpu"
   cargo check -p daedalus-gpu --all-targets --no-default-features --features "gpu-gles,gpu-image"
-  # Links every library, so `cdylib` plugins whose exported symbols clash once features unify
-  # fail here (`check` does not link).
-  cargo build --workspace --lib --all-features
 }
 
 cmd_clippy() {
@@ -95,6 +93,13 @@ cmd_clippy() {
   # Type-checks every target with every feature (the all-features `cargo check`) and lints it.
   # Needs libcamera-dev + pkg-config for the styx camera example feature.
   cargo clippy --workspace --all-targets --all-features -- -D warnings
+}
+
+# Links every library, so `cdylib` plugins whose exported symbols clash once features unify fail
+# here (`check` and clippy do not link). Needs libcamera-dev + pkg-config (styx camera example).
+cmd_link() {
+  step "Building every library with all features"
+  cargo build --workspace --lib --all-features
 }
 
 cmd_test() {
@@ -345,6 +350,7 @@ cmd_all() {
   cmd_lints
   cmd_features
   cmd_clippy
+  cmd_link
   cmd_test
   cmd_macro_ui
   cmd_smoke
@@ -356,8 +362,8 @@ main() {
   for sub in "$@"; do
     case "$sub" in
       -h | --help | help) usage ;;
-      all | lints | features | clippy | test | smoke | aarch64 | lean | nostd | mcu | wasm | bench | \
-        pi | vvl)
+      all | lints | features | clippy | link | test | smoke | aarch64 | lean | nostd | mcu | wasm | \
+        bench | pi | vvl)
         "cmd_$sub" ;;
       macro-ui) cmd_macro_ui ;;
       *)

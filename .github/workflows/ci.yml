@@ -12,11 +12,11 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
 
-# Jobs are grouped by the crate graph they compile: each job builds one feature set in one mode
-# (build or check), so its cache holds one graph and no two jobs build the same one.
+# Jobs are grouped by the crate graphs they compile (feature set and mode), so no two jobs build
+# the same graph and each job's cache holds only its own.
 jobs:
-  # Lints, then the workspace tests (`engine,plugins`, dev build) and the CPU-only example
-  # binaries, which reuse that graph.
+  # Lints, the workspace tests (`engine,plugins`, dev build) and the CPU-only example binaries,
+  # which reuse that graph, then the all-features library build (linking every `cdylib`).
   workspace:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -32,6 +32,11 @@ jobs:
         uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
+
+      # For the styx camera example feature (`--all-features`).
+      - &libcamera
+        name: Install native camera dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcamera-dev pkg-config
 
       # Pull requests restore the newest cache of the default branch but do not save their own,
       # so they cannot evict it (one cache per job).
@@ -49,6 +54,11 @@ jobs:
 
       - name: Run CPU-only example binaries
         run: ./scripts/ci.sh smoke
+
+      # `check` and clippy do not link: this catches `cdylib` plugins whose exported symbols clash
+      # under feature unification.
+      - name: Build all features
+        run: ./scripts/ci.sh link
 
   # The facade alone: native `cdylib` plugin loading, then the trybuild macro UI tests (`plugins`
   # only, ignored in the regular test run; trybuild compiles its own project).
@@ -68,25 +78,21 @@ jobs:
       - name: Run macro UI (trybuild) tests
         run: ./scripts/ci.sh macro-ui
 
-  # Everything in check mode (clippy for `engine,plugins`, dylib plugins and all features; the
-  # per-package feature surfaces; rustdoc), plus the all-features library build.
+  # Everything in check mode: clippy for `engine,plugins`, dylib plugins and all features, the
+  # per-package feature surfaces and rustdoc.
   docs-and-lints:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - *checkout
       - *toolchain-lint
-
-      # For the styx camera example feature (`--all-features`).
-      - name: Install native camera dependencies
-        run: sudo apt-get update && sudo apt-get install -y libcamera-dev pkg-config
-
+      - *libcamera
       - *cache
 
       - name: Run clippy (engine,plugins; dylib plugins; all features)
         run: ./scripts/ci.sh clippy
 
-      - name: Check feature surfaces and build all features
+      - name: Check feature surfaces
         run: ./scripts/ci.sh features
 
       - name: Build docs

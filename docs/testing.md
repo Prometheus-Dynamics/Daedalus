@@ -35,10 +35,11 @@ cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --igno
 
 Integration tests share one binary per crate (`tests/it/main.rs`, one module per area): run one
 area with `cargo test -p <crate> --test it -- <module>::`. Tests that install a counting
-`#[global_allocator]`, the `dylib-plugins` tests (`export_plugin!` exports fixed symbols), the
-trybuild and the Docker tests keep their own binaries. The tests run under `cargo test`, not
-cargo-nextest: process-per-test tripled the CPU time of the test run and made the timing
-assertions (`adaptive_mode`) fail under load, for about 15 s of wall time.
+`#[global_allocator]`, the runtime's `adaptive_mode` (wall-clock timing assertions, which must
+not share the binary's threads), the `dylib-plugins` tests (`export_plugin!` exports fixed
+symbols), the trybuild and the Docker tests keep their own binaries. The tests run under
+`cargo test`, not cargo-nextest: process-per-test tripled the CPU time of the test run and
+failed the `adaptive_mode` timing assertions under load, to save about 17 s of wall time.
 
 ## Local CI Runner
 
@@ -49,16 +50,23 @@ assertions (`adaptive_mode`) fail under load, for about 15 s of wall time.
 | Subcommand | What it runs |
 |---|---|
 | `lints` | file-size, workspace-deps, GPU async lints, `cargo fmt --check` |
-| `features` | release feature-surface checks and `cargo build --workspace --lib --all-features` (needs `libcamera-dev`) |
-| `clippy`, `test`, `macro-ui` | clippy `-D warnings` (`engine,plugins`, dylib plugins, all features; needs `libcamera-dev`); workspace + dylib tests; trybuild |
+| `features` | release feature-surface checks |
+| `clippy`, `link` | clippy `-D warnings` (`engine,plugins`, dylib plugins, all features); `cargo build --workspace --lib --all-features` (links every `cdylib`); both need `libcamera-dev` |
+| `test`, `macro-ui` | workspace + dylib tests; trybuild |
 | `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`); `test` already built every `daedalus-examples` binary |
 | `aarch64` | `cargo check --target aarch64-unknown-linux-gnu` (see below) |
 | `lean` | lean-preset tests (see below) |
-| `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS), the runtime and engine, and the no_std smoke graph; wasm and WASI `engine,plugins` checks and Node runs (see below) |
+| `nostd`, `wasm` | `no_std` check of the tier-1 crates (with and without CAS), the runtime and engine, and the no_std smoke graph; wasm and WASI `engine,plugins` dev builds and Node runs (see below) |
 | `mcu` | MCU profile firmware for `thumbv7em` and `thumbv6m`, flash/RAM budgets, native tests (see below) |
 | `bench` | host bridge and executor criterion benches (see below) |
 | `pi` | on-device dmabuf hardware tests and the `gpu_probe` report; not part of `all` (see [Validating on a Raspberry Pi 5](#validating-on-a-raspberry-pi-5)) |
 | `vvl` | the `pi` tests and probe under the Khronos validation layer; not part of `all` (see [Vulkan Validation Layers](#vulkan-validation-layers)) |
+
+CI (`.github/workflows/ci.yml`) groups its jobs by the crate graphs they compile, so no two jobs
+build the same one: `workspace` (`lints`, the workspace tests, `smoke`, `link`), `facade` (the
+dylib tests, `macro-ui`), `docs-and-lints` (`clippy`, `features`, rustdoc with `-Dwarnings`),
+`aarch64`, `lean-preset`, `portability` (`nostd`, `wasm`, `mcu`) and `package-surface`. Pull
+requests restore the default branch's Rust caches but do not save their own.
 
 ### aarch64
 
