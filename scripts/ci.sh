@@ -426,7 +426,8 @@ cmd_full() { local sub; for sub in "${FULL[@]}"; do run "$sub"; done; }
 # $CARGO_TARGET_DIR/ci/<lane>.log. The lanes share one jobserver: together they run at most
 # $CARGO_BUILD_JOBS (default: every core) compiler jobs, plus one per lane. The `test` and `lean`
 # lanes only build (CI_NO_RUN) until every lane is done, then run their tests one lane at a time:
-# runtime tests assert on wall-clock times and fail on a machine busy compiling.
+# the runtime's stream_graph tests assert on wall-clock times and fail on a machine busy compiling
+# (adaptive_mode runs on a virtual clock and is not timing-sensitive).
 readonly DEFERRED_LANES=" test lean "
 
 lane_of() {

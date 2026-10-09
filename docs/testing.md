@@ -35,11 +35,17 @@ cargo test -p daedalus-rs --features plugins --test transport_macro_ui -- --igno
 
 Integration tests share one binary per crate (`tests/it/main.rs`, one module per area): run one
 area with `cargo test -p <crate> --test it -- <module>::`. Tests that install a counting
-`#[global_allocator]`, the runtime's `adaptive_mode` (wall-clock timing assertions, which must
-not share the binary's threads), the `dylib-plugins` tests (`export_plugin!` exports fixed
-symbols) and the trybuild tests keep their own binaries. The tests run under
-`cargo test`, not cargo-nextest: process-per-test tripled the CPU time of the test run and
-failed the `adaptive_mode` timing assertions under load, to save about 17 s of wall time.
+`#[global_allocator]`, the runtime's `adaptive_mode` (its parallel frames need worker threads
+of their own), the `dylib-plugins` tests (`export_plugin!` exports fixed symbols) and the
+trybuild tests keep their own binaries. The tests run under `cargo test`, not cargo-nextest:
+process-per-test tripled the CPU time of the test run, to save about 17 s of wall time.
+
+`adaptive_mode` is deterministic under load: its executors read time from an injected virtual
+clock (handlers advance it instead of sleeping), and its parallel frames gather a gang of
+handlers so every run has one segment per thread. The one real-time check (parallel frames beat
+serial ones) is `#[ignore]`d; run it with
+`cargo test -p daedalus-runtime --test adaptive_mode -- --ignored` on a quiet machine. The
+watchdog in the gang only prevents a deadlock on a serial frame; it is not an assertion.
 
 ## Local CI Runner
 
@@ -105,8 +111,8 @@ test` shares it), and logs to `$CARGO_TARGET_DIR/ci/<lane>.log`; the script prin
 result as it finishes, with the end of the log on failure, and exits non-zero if any failed. The
 lanes share one jobserver, so together they run at most `$CARGO_BUILD_JOBS` (default: every core)
 compiler processes, plus one per lane. The `test` and `lean` lanes only build until every lane is
-done, then run their tests one lane at a time: runtime tests (`adaptive_mode`, `stream_graph`)
-assert on wall-clock times and failed when they ran beside the other lanes' compilers.
+done, then run their tests one lane at a time: the runtime's `stream_graph` tests assert on
+wall-clock times and failed when they ran beside the other lanes' compilers.
 Separate target directories cost CPU (crates every lane needs are compiled once per lane) and
 disk (24 GB for `full`) for the wall time. Measured on a shared 24-core machine
 (`CARGO_BUILD_JOBS=12`, other load 60 to 130, so the numbers are rough):

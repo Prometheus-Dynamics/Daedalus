@@ -243,6 +243,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- **`adaptive_mode` tests were flaky under load.** Their mode decisions depended on real sleeps
+  and wall-clock timings, and on which thread happened to drain the queue. They now run on an
+  injected per-thread virtual clock, and the parallel frames gather their gang of handlers so
+  every run has one segment per thread. The real-time speed check is `#[ignore]`d. Test-only:
+  no runtime behaviour changed.
 - **Several instances of one stateful node shared one state.** `#[node(state(..))]` state,
   `ExecutionContext` resources and custom metrics were keyed by node id, so two instances of a
   node in one graph (two tracked groups' `track_plan`, two frame-difference nodes) shared one
