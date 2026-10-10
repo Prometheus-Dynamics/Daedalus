@@ -4,6 +4,7 @@ use std::future::Future;
 use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 use std::time::Duration;
@@ -23,6 +24,10 @@ use daedalus_runtime::plugins::PluginRegistry;
 use daedalus_transport::{DropReason, FeedOutcome, FreshnessPolicy, Payload, PressurePolicy};
 
 const INT_KEY: &str = "typeexpr:{\"Scalar\":\"Int\"}";
+
+/// Safety bound on the feeder threads' waits. The drive loops stop themselves, so this only keeps a
+/// broken build from hanging the run.
+const SAFETY_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct IncrementHandler;
 
@@ -259,22 +264,30 @@ fn drive_blocking_processes_inputs_until_stopped() {
     graph.set_latest_input("in").unwrap();
     let stop = graph.stop_handle();
     let input = graph.bind_payload_input("in");
+    let (done_tx, done_rx) = mpsc::channel::<()>();
     let feeder_stop = stop.clone();
     let feeder = thread::spawn(move || {
         for value in 0..3 {
             input.push(Payload::owned(INT_KEY, Value::Int(value)));
-            thread::sleep(Duration::from_millis(10));
         }
-        thread::sleep(Duration::from_millis(20));
-        feeder_stop.stop();
+        // Safety net for a broken build only: the loop stops itself once the last value is out.
+        if done_rx.recv_timeout(SAFETY_TIMEOUT).is_err() {
+            feeder_stop.stop();
+        }
     });
 
+    // Stop from the loop once the last value has come out, not on a timer: a timer could stop
+    // the driver before it reaches the last input.
     let mut seen = Vec::new();
     let exit = graph
         .drive_blocking(&stop, |graph, turn| {
             assert!(turn.ticked());
             for payload in graph.drain_payloads("out") {
                 seen.push(graph.inspect_payload(&payload).into_value());
+            }
+            if seen.last() == Some(&Some(Value::Int(3))) {
+                let _ = done_tx.send(());
+                stop.stop();
             }
             Ok(())
         })
@@ -331,17 +344,25 @@ fn async_drive_wakes_on_input_and_stop() {
     let (_plugins, mut graph) = compile_increment_graph();
     let stop = graph.stop_handle();
     let input = graph.bind_payload_input("in");
+    let (done_tx, done_rx) = mpsc::channel::<()>();
     let feeder_stop = stop.clone();
     let feeder = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(10));
         input.push(Payload::owned(INT_KEY, Value::Int(41)));
-        thread::sleep(Duration::from_millis(20));
-        feeder_stop.stop();
+        // Safety net for a broken build only: the loop stops itself once the output is in.
+        if done_rx.recv_timeout(SAFETY_TIMEOUT).is_err() {
+            feeder_stop.stop();
+        }
     });
 
+    // Stop from the loop once the output is in, not on a timer: a timer could stop the driver
+    // before it reaches the input.
     let mut seen = Vec::new();
     let exit = block_on(graph.drive(&stop, |graph, _turn| {
         seen.extend(graph.drain_payloads("out"));
+        if !seen.is_empty() {
+            let _ = done_tx.send(());
+            stop.stop();
+        }
         Ok(())
     }))
     .unwrap();

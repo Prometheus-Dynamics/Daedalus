@@ -283,7 +283,11 @@ impl NodeHandler for LogHandler {
 struct ConcurrencyProbeHandler {
     active: Arc<AtomicUsize>,
     max_active: Arc<AtomicUsize>,
-    sleep: Duration,
+    /// Handlers that have started so far.
+    started: Arc<AtomicUsize>,
+    /// Whether handlers must overlap: each waits until a second handler has started. Set for the
+    /// parallel mode only, since a serial run never starts a second handler while one is waiting.
+    rendezvous: bool,
 }
 
 #[cfg(feature = "threads")]
@@ -296,7 +300,15 @@ impl NodeHandler for ConcurrencyProbeHandler {
     ) -> Result<(), NodeError> {
         let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
         self.max_active.fetch_max(active, Ordering::AcqRel);
-        std::thread::sleep(self.sleep);
+        if self.rendezvous {
+            self.started.fetch_add(1, Ordering::AcqRel);
+            // Safety bound only: a parallel run starts a second handler at once, so this wait
+            // ends on that start, not on a clock.
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while self.started.load(Ordering::Acquire) < 2 && std::time::Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+        }
         self.active.fetch_sub(1, Ordering::AcqRel);
         Ok(())
     }
@@ -306,6 +318,8 @@ impl NodeHandler for ConcurrencyProbeHandler {
 fn run_concurrency_probe(mode: RuntimeMode, runtime_plan: daedalus_runtime::RuntimePlan) -> usize {
     let active = Arc::new(AtomicUsize::new(0));
     let max_active = Arc::new(AtomicUsize::new(0));
+    let started = Arc::new(AtomicUsize::new(0));
+    let rendezvous = !matches!(mode, RuntimeMode::Serial);
     let engine = Engine::new(
         EngineConfig::default()
             .with_runtime_mode(mode)
@@ -318,7 +332,8 @@ fn run_concurrency_probe(mode: RuntimeMode, runtime_plan: daedalus_runtime::Runt
             ConcurrencyProbeHandler {
                 active,
                 max_active: max_active.clone(),
-                sleep: Duration::from_millis(25),
+                started,
+                rendezvous,
             },
         )
         .unwrap();
