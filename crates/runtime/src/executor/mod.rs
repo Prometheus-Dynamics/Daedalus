@@ -720,7 +720,7 @@ where
 {
     #[cfg(feature = "threads")]
     if !exec.schedule.linear_segment_flow {
-        return parallel::run(exec, None);
+        return parallel::run(exec, None).map(|(telemetry, _)| telemetry);
     }
     serial::run_with_boundaries(exec)
 }

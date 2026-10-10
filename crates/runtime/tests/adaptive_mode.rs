@@ -36,6 +36,10 @@ const GANG: usize = 4;
 /// a serial frame, which has no gang, waits it out once per handler. Not an assertion.
 const GANG_WATCHDOG: Duration = Duration::from_millis(200);
 
+/// Deadlock guard for the late-worker frames. Generous, so load cannot make it fire on a correct
+/// run: those frames are released by the counters in [`Probe`], not by this deadline.
+const LATE_WATCHDOG: Duration = Duration::from_secs(5);
+
 thread_local! {
     /// This thread's virtual time in nanoseconds. Handlers advance the time of the thread they
     /// run on, so a segment's measured cost is exactly the work it models.
@@ -64,6 +68,16 @@ struct Probe {
     arrivals: AtomicUsize,
     /// The current round and its watchdog deadline, shared by the round's handlers.
     watchdog: Mutex<(usize, Option<Instant>)>,
+    /// Late-worker frames (see [`late_executor`]): the calling thread, whose handlers wait for the
+    /// worker. `None` in every other test.
+    late_caller: Option<ThreadId>,
+    /// Late frames: a worker has taken its segment.
+    worker_started: AtomicBool,
+    /// Late frames: segments the calling thread has entered.
+    caller_segments: AtomicUsize,
+    /// Whether `late_caller` applies. Off during warm-up, so no frame waits for a worker before the
+    /// model has chosen parallel.
+    late_active: AtomicBool,
 }
 
 impl Probe {
@@ -72,6 +86,31 @@ impl Probe {
         let caller = thread::current().id();
         let threads = std::mem::take(&mut *self.threads.lock());
         threads.iter().any(|&id| id != caller)
+    }
+
+    /// Clear the late-frame counters before a frame.
+    fn begin_late_frame(&self) {
+        self.worker_started.store(false, Ordering::SeqCst);
+        self.caller_segments.store(0, Ordering::SeqCst);
+    }
+
+    /// In a late frame, hold the calling thread until the worker has taken its segment (or the
+    /// watchdog expires), so the worker is in the frame before the calling thread runs.
+    fn await_worker(&self) {
+        let deadline = Instant::now() + LATE_WATCHDOG;
+        while !self.worker_started.load(Ordering::SeqCst) && Instant::now() < deadline {
+            thread::yield_now();
+        }
+    }
+
+    /// In a late frame, hold the worker's segment until the calling thread has entered `count`
+    /// segments (or the watchdog expires). The worker then takes no more than the one segment, and
+    /// the calling thread takes the rest.
+    fn await_caller(&self, count: usize) {
+        let deadline = Instant::now() + LATE_WATCHDOG;
+        while self.caller_segments.load(Ordering::SeqCst) < count && Instant::now() < deadline {
+            thread::yield_now();
+        }
     }
 
     /// Wait until this handler's gang of [`GANG`] has arrived, or the watchdog expires.
@@ -111,7 +150,22 @@ impl NodeHandler for ProbeHandler {
         if probe.gang.load(Ordering::SeqCst) {
             probe.rendezvous();
         }
-        let work = Duration::from_micros(probe.work_us.load(Ordering::SeqCst));
+        let late = probe.late_caller.filter(|_| probe.late_active.load(Ordering::SeqCst));
+        let work = match late {
+            // A late frame: the worker's segment is free, and it keeps that one segment until the
+            // calling thread has entered the other GANG - 1.
+            Some(caller) if thread::current().id() != caller => {
+                probe.worker_started.store(true, Ordering::SeqCst);
+                probe.await_caller(GANG - 1);
+                Duration::ZERO
+            }
+            Some(_) => {
+                probe.await_worker();
+                probe.caller_segments.fetch_add(1, Ordering::SeqCst);
+                Duration::from_micros(probe.work_us.load(Ordering::SeqCst))
+            }
+            None => Duration::from_micros(probe.work_us.load(Ordering::SeqCst)),
+        };
         if probe.real_time {
             thread::sleep(work);
         } else {
@@ -154,6 +208,31 @@ fn executor_with(
     let exec = OwnedExecutor::new(Arc::new(plan), ProbeHandler(probe.clone()))
         .with_pool_size(Some(GANG))
         .with_clock(clock);
+    (exec, probe)
+}
+
+/// The late-worker graph: [`GANG`] independent heavy nodes on a two-worker pool, so one worker
+/// and the calling thread share each frame. The caller starts first and waits in its first
+/// handler until the worker has started, so the worker always takes exactly one segment, and that
+/// segment is free. The calling thread runs the other three, 9 ms of work: the frame's wall time
+/// is that caller share, which the ideal two-worker split (4.5 ms) does not predict.
+fn late_executor() -> (OwnedExecutor<ProbeHandler>, Arc<Probe>) {
+    let mut graph = Graph::default();
+    for idx in 0..GANG {
+        graph.nodes.push(NodeInstance::new(format!("n{idx}")));
+    }
+    let plan = build_runtime(
+        &ExecutionPlan::new(graph, vec![]),
+        &SchedulerConfig::default(),
+    );
+    let probe = Arc::new(Probe {
+        late_caller: Some(thread::current().id()),
+        ..Probe::default()
+    });
+    probe.work_us.store(3_000, Ordering::SeqCst);
+    let exec = OwnedExecutor::new(Arc::new(plan), ProbeHandler(probe.clone()))
+        .with_pool_size(Some(2))
+        .with_clock(virtual_clock());
     (exec, probe)
 }
 
@@ -203,10 +282,27 @@ fn heavy_hint_runs_the_first_frame_in_parallel() {
 }
 
 #[test]
-/// Real clock: going back to serial needs measured dispatch overhead to outweigh the cheap work,
-/// and a virtual clock charges no overhead, so once the work is free the model (correctly) has no
-/// reason to leave parallel. The heavy phase still uses the gang, so its frames are deterministic.
-fn stays_parallel_while_heavy_and_returns_to_serial_once_cheap() {
+fn stays_parallel_while_heavy() {
+    let (mut exec, probe) = executor_with(Duration::from_millis(2), false, false);
+    let mut modes = Vec::new();
+    for frame in 0..12 {
+        // Frame 0 is the unmeasured serial one. Its gang would wait out the watchdog inside the
+        // timed segment, and a serial frame has no gang to wait for.
+        probe.gang.store(frame > 0, Ordering::SeqCst);
+        exec.run_adaptive_in_place().expect("heavy frame");
+        modes.push(probe.take_parallel());
+    }
+    assert!(!modes[0], "unmeasured frame ran in parallel");
+    assert!(modes[1..].iter().all(|&parallel| parallel), "{modes:?}");
+}
+
+/// Real clock, so `#[ignore]`d: run with `cargo test -p daedalus-runtime --test adaptive_mode --
+/// --ignored`. Going back to serial needs measured dispatch overhead to outweigh the cheap work,
+/// and the real overhead of a parallel frame is load-sensitive: a loaded machine can keep the
+/// model parallel. The unit tests in `executor::adaptive` cover the decision deterministically.
+#[test]
+#[ignore = "real clock: returns to serial once cheap; measured overhead is load-sensitive"]
+fn returns_to_serial_once_cheap_in_real_time() {
     let (mut exec, probe) = executor_with(Duration::from_millis(2), false, true);
     let mut modes = Vec::new();
     for frame in 0..12 {
@@ -232,6 +328,29 @@ fn stays_parallel_while_heavy_and_returns_to_serial_once_cheap() {
         modes.ends_with(&[false; 40]),
         "still parallel after the work got cheap: {modes:?}"
     );
+}
+
+/// Workers that start late leave most of a frame to the calling thread. That time is segment
+/// work, not dispatch overhead, so the model keeps parallel: the ideal two-worker split (4.5 ms)
+/// still beats serial (9 ms). Counting the caller's share as overhead (wall minus an ideal split)
+/// reads 1.1 ms of dispatch per segment and switches back to serial.
+#[test]
+fn late_workers_do_not_count_as_dispatch_overhead() {
+    let (mut exec, probe) = late_executor();
+    // Warm-up with the late workers off: the model measures the heavy segments and goes parallel
+    // (serial first frame, then parallel), and no frame waits on a worker that never comes.
+    for _ in 0..3 {
+        exec.run_adaptive_in_place().expect("warm-up frame");
+    }
+    probe.take_parallel();
+    probe.late_active.store(true, Ordering::SeqCst);
+    let mut modes = Vec::new();
+    for _ in 0..40 {
+        probe.begin_late_frame();
+        exec.run_adaptive_in_place().expect("late frame");
+        modes.push(probe.take_parallel());
+    }
+    assert!(modes.ends_with(&[true; 8]), "{modes:?}");
 }
 
 #[test]

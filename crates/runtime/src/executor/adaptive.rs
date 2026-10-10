@@ -12,7 +12,11 @@
 //! ```
 //!
 //! `dispatch` starts at [`DEFAULT_DISPATCH_OVERHEAD`] (or the configured value) and tracks the
-//! overhead parallel frames actually show. Parallel needs a predicted gain of at least
+//! overhead parallel frames actually show. A frame's overhead is its wall time minus what its
+//! segments already forced: the critical path `L` of the frame's measured segment times, or the
+//! busiest thread's segment time, whichever is larger, divided over the frame's `S` segments. The
+//! calling thread's segments are segment work, so when late workers leave it most of a frame that
+//! time is not counted as dispatch. Parallel needs a predicted gain of at least
 //! [`ENTER_GAIN`] of `T`; it is kept while the gain stays above [`EXIT_GAIN`], and no switch
 //! happens within [`MIN_DWELL`] frames of the last one. Before the first measurement, segments
 //! with a heavy hint (GPU affinity or [`NODE_COST_META_KEY`] `"heavy"`) count as
@@ -25,6 +29,7 @@ use crate::plan::{NODE_COST_META_KEY, RuntimeNode};
 use daedalus_planner::ComputeAffinity;
 
 use super::CompiledSchedule;
+use super::schedule_compile::CompiledSegmentGraph;
 
 /// Initial estimate of what parallel dispatch costs per segment.
 pub const DEFAULT_DISPATCH_OVERHEAD: Duration = Duration::from_micros(4);
@@ -87,13 +92,20 @@ impl AdaptiveState {
         if self.cost_ns.is_empty() {
             self.init(schedule, nodes);
         }
+        self.decide(&schedule.host_deferred_graph, workers)
+    }
+
+    /// The mode hysteresis: switch to parallel when the predicted gain exceeds [`ENTER_GAIN`] of
+    /// serial time, back to serial below [`EXIT_GAIN`], and hold each mode for [`MIN_DWELL`]
+    /// frames. Re-decides only after a fresh measurement.
+    fn decide(&mut self, graph: &CompiledSegmentGraph, workers: usize) -> bool {
         if self.dwell < MIN_DWELL {
             self.dwell += 1;
         }
         if self.dwell < MIN_DWELL || !core::mem::take(&mut self.fresh) {
             return self.parallel;
         }
-        let (serial, parallel) = self.estimate(schedule, workers, false);
+        let (serial, parallel) = self.estimate(graph, workers, None);
         let gain = serial - parallel;
         let threshold = if self.parallel { EXIT_GAIN } else { ENTER_GAIN };
         let parallel = gain > serial * threshold;
@@ -117,12 +129,13 @@ impl AdaptiveState {
         Some(&mut self.frame_ns)
     }
 
-    /// Fold this frame's measurements in; `wall` is the parallel run's wall time.
+    /// Fold this frame's measurements in. `timing` is a parallel run's wall time and the segment
+    /// time of its busiest thread; serial frames pass `None` and leave the dispatch cost alone.
     pub(crate) fn observe(
         &mut self,
-        schedule: &CompiledSchedule,
+        graph: &CompiledSegmentGraph,
         workers: usize,
-        wall: Option<Duration>,
+        timing: Option<(Duration, u64)>,
     ) {
         for (avg, &frame) in self.cost_ns.iter_mut().zip(&self.frame_ns) {
             let frame = frame as f64;
@@ -134,9 +147,9 @@ impl AdaptiveState {
         }
         self.measured = true;
         self.fresh = true;
-        if let Some(wall) = wall {
-            let (_, span) = self.estimate(schedule, workers, true);
-            let segments = schedule.host_deferred_graph.total_segments.max(1) as f64;
+        if let Some((wall, busiest)) = timing {
+            let (_, span) = self.estimate(graph, workers, Some(busiest as f64));
+            let segments = graph.total_segments.max(1) as f64;
             let observed = (wall.as_nanos() as f64 - span).max(0.0) / segments;
             let dispatch = self.dispatch();
             self.dispatch_ns = Some(dispatch + ALPHA * (observed - dispatch));
@@ -165,12 +178,17 @@ impl AdaptiveState {
             .unwrap_or(DEFAULT_DISPATCH_OVERHEAD.as_nanos() as f64)
     }
 
-    /// Predicted `(serial, parallel)` frame time from the averages, or from this frame's
-    /// measurements without dispatch overhead when `frame`.
-    fn estimate(&mut self, schedule: &CompiledSchedule, workers: usize, frame: bool) -> (f64, f64) {
-        let graph = &schedule.host_deferred_graph;
+    /// Predicted `(serial, parallel)` frame time. From the averages when `busiest` is `None`,
+    /// with dispatch overhead added. Otherwise from this frame's measurements, with `busiest` the
+    /// busiest thread's segment time (ns) and no overhead: see [`AdaptiveState::observe`].
+    fn estimate(
+        &mut self,
+        graph: &CompiledSegmentGraph,
+        workers: usize,
+        busiest: Option<f64>,
+    ) -> (f64, f64) {
         let cost = |segment: usize| -> f64 {
-            if frame {
+            if busiest.is_some() {
                 self.frame_ns.get(segment).map_or(0.0, |&ns| ns as f64)
             } else {
                 self.cost_ns.get(segment).copied().unwrap_or(0.0)
@@ -186,11 +204,15 @@ impl AdaptiveState {
                 self.finish_ns[next] = self.finish_ns[next].max(finish);
             }
         }
-        let workers = workers.min(graph.width).max(1) as f64;
-        let mut parallel = critical.max(total / workers);
-        if !frame {
-            parallel += graph.total_segments as f64 * self.dispatch();
-        }
+        let parallel = match busiest {
+            // The frame's wall time covers at least its critical path and its busiest thread.
+            Some(busiest) => critical.max(busiest),
+            // An ideal split of the work over the workers, plus what dispatch costs.
+            None => {
+                let workers = workers.min(graph.width).max(1) as f64;
+                critical.max(total / workers) + graph.total_segments as f64 * self.dispatch()
+            }
+        };
         (total, parallel)
     }
 }
@@ -231,13 +253,17 @@ where
         return super::serial::run_with_boundaries(exec);
     };
     // Without threads `choose` never picks parallel (one worker).
-    let (result, wall) = match parallel {
+    let (result, timing) = match parallel {
         #[cfg(feature = "threads")]
         true => {
             let clock = exec.core.clock.clone();
             let start = clock.now();
             let result = super::parallel::run(exec, Some(costs));
-            (result, Some(clock.elapsed(start)))
+            let wall = clock.elapsed(start);
+            match result {
+                Ok((telemetry, busiest)) => (Ok(telemetry), Some((wall, busiest))),
+                Err(error) => (Err(error), None),
+            }
         }
         _ => {
             let costs = super::serial::SegmentCosts {
@@ -251,7 +277,108 @@ where
         }
     };
     if result.is_ok() {
-        adaptive.observe(&schedule, workers, wall);
+        adaptive.observe(&schedule.host_deferred_graph, workers, timing);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::portable::Arc;
+
+    const MS: u64 = 1_000_000;
+
+    /// `n` independent segments, all ready at once.
+    fn independent(n: usize) -> CompiledSegmentGraph {
+        CompiledSegmentGraph {
+            adjacency: Arc::new(vec![Vec::new(); n]),
+            indegree: Arc::new(vec![0; n]),
+            ready_segments: Arc::new((0..n).collect()),
+            total_segments: n,
+            topo_order: Arc::new((0..n).collect()),
+            width: n,
+        }
+    }
+
+    /// State with `avg` (ns) as each segment's average and `frame` as this frame's measurements.
+    fn state(avg: &[f64], frame: &[u64]) -> AdaptiveState {
+        AdaptiveState {
+            measured: true,
+            cost_ns: avg.to_vec(),
+            frame_ns: frame.to_vec(),
+            finish_ns: vec![0.0; avg.len()],
+            ..AdaptiveState::default()
+        }
+    }
+
+    #[test]
+    fn late_worker_frame_has_no_dispatch_overhead() {
+        let graph = independent(4);
+        // The calling thread ran three 3 ms segments and the late worker one free segment. The
+        // wall time (9 ms) is the caller's own work, not dispatch.
+        let frame = [3 * MS, 3 * MS, 3 * MS, 0];
+        let mut state = state(&[0.0; 4], &frame);
+        for _ in 0..40 {
+            state.observe(&graph, 2, Some((Duration::from_nanos(9 * MS), 9 * MS)));
+        }
+        assert!(state.dispatch() < 1.0, "dispatch {} ns", state.dispatch());
+    }
+
+    #[test]
+    fn wall_beyond_critical_path_and_busiest_thread_is_overhead() {
+        let graph = independent(4);
+        // Four 3 ms segments, the busiest thread ran 9 ms, the frame took 15 ms: 6 ms is not
+        // covered by any thread's segment work, so it is 1.5 ms of dispatch per segment.
+        let frame = [3 * MS; 4];
+        let mut state = state(&[0.0; 4], &frame);
+        for _ in 0..60 {
+            state.observe(&graph, 2, Some((Duration::from_nanos(15 * MS), 9 * MS)));
+        }
+        let expected = 1.5 * MS as f64;
+        assert!(
+            (state.dispatch() - expected).abs() < 1_000.0,
+            "dispatch {} ns, expected {expected} ns",
+            state.dispatch()
+        );
+    }
+
+    /// The decision for four segments of `per_segment` ns each, on two workers, starting in
+    /// `mode`, with `overhead` per segment.
+    fn decision(mode: bool, per_segment: u64, overhead: Duration) -> bool {
+        let graph = independent(4);
+        let mut state = state(&[per_segment as f64; 4], &[per_segment; 4]);
+        state.parallel = mode;
+        state.dwell = MIN_DWELL;
+        state.fresh = true;
+        state.set_dispatch_overhead(overhead);
+        state.decide(&graph, 2)
+    }
+
+    #[test]
+    fn switches_to_parallel_when_the_gain_clears_enter_gain() {
+        // Serial 12 ms; parallel max(3, 12 / 2) = 6 ms with no overhead: a 50% gain.
+        assert!(decision(false, 3 * MS, Duration::ZERO));
+    }
+
+    #[test]
+    fn hysteresis_holds_the_mode_between_the_thresholds() {
+        // Overhead 1 ms per segment: parallel 6 + 4 = 10 ms, a gain of 2 of 12 ms (16.7%). Below
+        // ENTER_GAIN (25%) serial stays serial; above EXIT_GAIN (5%) parallel stays parallel.
+        let overhead = Duration::from_millis(1);
+        assert!(
+            !decision(false, 3 * MS, overhead),
+            "entered parallel below ENTER_GAIN"
+        );
+        assert!(
+            decision(true, 3 * MS, overhead),
+            "left parallel above EXIT_GAIN"
+        );
+    }
+
+    #[test]
+    fn returns_to_serial_once_segments_are_cheap_and_overhead_dominates() {
+        // 0.1 ms segments: serial 0.4 ms; parallel max(0.1, 0.2) + 4 x 1 ms = 4.2 ms.
+        assert!(!decision(true, MS / 10, Duration::from_millis(1)));
+    }
 }

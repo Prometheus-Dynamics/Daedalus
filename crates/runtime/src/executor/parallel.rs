@@ -19,12 +19,15 @@ type SegmentList = SmallVec<[usize; 32]>;
 /// Run `exec`'s segments on the worker pool, independent ones concurrently. With `costs`, each
 /// executed segment's wall time in nanoseconds is written at its index.
 ///
+/// Also returns the segment time of the busiest thread (the one that ran the most segment work
+/// this frame, the calling thread included), which bounds the frame's wall time from below.
+///
 /// With fail-fast, the first segment error stops further scheduling; segments already running
 /// finish before the error is returned.
 pub(crate) fn run<H>(
     exec: &mut Executor<'_, H>,
     costs: Option<&mut [u64]>,
-) -> Result<ExecutionTelemetry, ExecuteError>
+) -> Result<(ExecutionTelemetry, u64), ExecuteError>
 where
     H: NodeHandler + Send + Sync + 'static,
 {
@@ -34,7 +37,7 @@ where
     let workers = exec.core.parallel_workers.min(graph.width);
     if graph.ready_segments.is_empty() || workers <= 1 {
         let order = exec.schedule_order;
-        return serial::run_order(exec, order);
+        return serial::run_order(exec, order).map(|telemetry| (telemetry, 0));
     }
 
     let pool = WorkerPool::get_or_init(&exec.core.worker_pool, workers)?;
@@ -53,7 +56,7 @@ where
             });
         });
     }
-    let (telemetry, error) = queue.finish();
+    let (telemetry, error, busiest) = queue.finish();
     if let Some(error) = error {
         return Err(error);
     }
@@ -63,7 +66,7 @@ where
         .recompute_unattributed_runtime_duration();
     let nodes = exec.nodes.clone();
     exec.core.telemetry.aggregate_groups(&nodes);
-    Ok(core::mem::take(&mut exec.core.telemetry))
+    Ok((core::mem::take(&mut exec.core.telemetry), busiest))
 }
 
 struct SegmentQueue<'g, 'c> {
@@ -88,6 +91,8 @@ struct QueueState<'c> {
     error: Option<ExecuteError>,
     telemetry: ExecutionTelemetry,
     costs: Option<&'c mut [u64]>,
+    /// Largest segment time (ns) any one thread's [`SegmentQueue::drain`] ran.
+    busiest_ns: u64,
 }
 
 impl<'g, 'c> SegmentQueue<'g, 'c> {
@@ -111,18 +116,21 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 error: None,
                 telemetry: ExecutionTelemetry::default(),
                 costs,
+                busiest_ns: 0,
             }),
             wake: Condvar::new(),
         }
     }
 
-    /// Pull and run ready segments until the run drains or fails fast.
+    /// Pull and run ready segments until the run drains or fails fast. The segment time this
+    /// thread runs is folded into `busiest_ns` on the way out.
     fn drain(&self, mut run: impl FnMut(usize) -> Result<ExecutionTelemetry, ExecuteError>) {
         let mut state = self.state.lock();
+        let mut busy = 0u64;
         loop {
             let Some(segment) = state.pop() else {
                 if state.running == 0 || state.error.is_some() {
-                    return;
+                    break;
                 }
                 state.idle += 1;
                 self.wake.wait(&mut state);
@@ -136,6 +144,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 let nanos = start.map_or(0, |(clock, start)| clock.elapsed(start).as_nanos());
                 (result, nanos as u64)
             });
+            busy += nanos;
             state.running -= 1;
             state.completed += 1;
             if let Some(cost) = state
@@ -150,7 +159,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 Err(error) if self.fail_fast => {
                     state.error.get_or_insert(error);
                     self.wake.notify_all();
-                    return;
+                    break;
                 }
                 Err(error) => state
                     .telemetry
@@ -168,9 +177,10 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 }
             }
         }
+        state.busiest_ns = state.busiest_ns.max(busy);
     }
 
-    fn finish(self) -> (ExecutionTelemetry, Option<ExecuteError>) {
+    fn finish(self) -> (ExecutionTelemetry, Option<ExecuteError>, u64) {
         let state = self.state.into_inner();
         if state.error.is_none() && state.completed < self.graph.total_segments {
             crate::trace::debug!(
@@ -180,7 +190,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 "daedalus-runtime: parallel executor: incomplete schedule"
             );
         }
-        (state.telemetry, state.error)
+        (state.telemetry, state.error, state.busiest_ns)
     }
 }
 
