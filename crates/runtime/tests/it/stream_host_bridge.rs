@@ -279,7 +279,8 @@ fn host_bridge_outbound_push_wakes_waiting_receiver() {
 
     let waiter = thread::spawn(move || {
         receiver
-            .recv_payload_timeout("output", Duration::from_secs(1))
+            // Safety bound only: the push below is what ends this wait.
+            .recv_payload_timeout("output", Duration::from_secs(30))
             .and_then(|payload| payload.get_ref::<u32>().copied())
     });
 

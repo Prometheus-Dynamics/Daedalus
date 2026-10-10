@@ -229,8 +229,10 @@ fn independent_node_resource_callbacks_can_run_concurrently() {
     drop(entered);
 
     let mut entered_count = 0;
+    // Safety bound only. A serialized registry leaves the second callback parked until `release`,
+    // so its `recv` times out and the count comes up short.
     for _ in 0..2 {
-        if entered_rx.recv_timeout(Duration::from_secs(1)).is_ok() {
+        if entered_rx.recv_timeout(Duration::from_secs(30)).is_ok() {
             entered_count += 1;
         }
     }

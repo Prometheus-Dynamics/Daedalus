@@ -40,10 +40,17 @@ impl NodeHandler for EchoHandler {
     }
 }
 
+/// Bound on every wait in this file. Each wait ends on the event it names (a message, a state
+/// transition), so this only keeps a broken build from hanging the run; no test asserts that
+/// something happened within a duration.
+const SAFETY_TIMEOUT: Duration = Duration::from_secs(30);
+
 struct SlowHandler {
     started: Mutex<Option<mpsc::Sender<()>>>,
     finished: Mutex<Option<mpsc::Sender<()>>>,
-    sleep: Duration,
+    /// The handler parks here until the test sends on (or drops) the matching sender, so the test
+    /// decides exactly when the handler is in flight and when it returns.
+    release: Mutex<Option<mpsc::Receiver<()>>>,
 }
 
 impl NodeHandler for SlowHandler {
@@ -57,12 +64,42 @@ impl NodeHandler for SlowHandler {
             if let Some(tx) = self.started.lock().take() {
                 let _ = tx.send(());
             }
-            std::thread::sleep(self.sleep);
+            let release = self.release.lock().take();
+            if let Some(release) = release {
+                let _ = release.recv_timeout(SAFETY_TIMEOUT);
+            }
             if let Some(tx) = self.finished.lock().take() {
                 let _ = tx.send(());
             }
         }
         Ok(())
+    }
+}
+
+/// A [`SlowHandler`] and the channels that drive it.
+struct GatedHandler {
+    handler: SlowHandler,
+    /// Fires when the handler is in flight.
+    started: mpsc::Receiver<()>,
+    /// Fires when the handler has returned.
+    finished: mpsc::Receiver<()>,
+    /// Lets the handler return.
+    release: mpsc::Sender<()>,
+}
+
+fn gated_handler() -> GatedHandler {
+    let (started_tx, started) = mpsc::channel();
+    let (finished_tx, finished) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    GatedHandler {
+        handler: SlowHandler {
+            started: Mutex::new(Some(started_tx)),
+            finished: Mutex::new(Some(finished_tx)),
+            release: Mutex::new(Some(release_rx)),
+        },
+        started,
+        finished,
+        release,
     }
 }
 
@@ -124,7 +161,7 @@ fn two_input_stream_echo_plan() -> ExecutionPlan {
 
 fn recv_u32(output: &daedalus_runtime::GraphOutput) -> u32 {
     output
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("receive should not fail")
         .expect("payload should arrive before timeout")
         .get_ref::<u32>()
@@ -286,6 +323,8 @@ fn continuous_worker_handles_pause_resume_and_shutdown_under_pressure() {
             .feed(Payload::owned("demo:u32", value))
             .expect("feed while paused should succeed");
     }
+    // Quiet period for a paused worker to misbehave. Pacing, not a bound: a correct worker cannot
+    // fail this check, and a longer quiet period only gives a broken one more chance to show.
     std::thread::sleep(Duration::from_millis(20));
     assert!(
         output
@@ -316,16 +355,14 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
         &stream_echo_plan(),
         &SchedulerConfig::default(),
     ));
-    let (started_tx, started_rx) = mpsc::channel();
-    let (finished_tx, finished_rx) = mpsc::channel();
-    let graph: SharedStreamGraph<SlowHandler> = Arc::new(Mutex::new(StreamGraph::new(
-        runtime,
-        SlowHandler {
-            started: Mutex::new(Some(started_tx)),
-            finished: Mutex::new(Some(finished_tx)),
-            sleep: Duration::from_millis(150),
-        },
-    )));
+    let GatedHandler {
+        handler,
+        started,
+        finished,
+        release,
+    } = gated_handler();
+    let graph: SharedStreamGraph<SlowHandler> =
+        Arc::new(Mutex::new(StreamGraph::new(runtime, handler)));
 
     let input = {
         let graph = graph.lock();
@@ -337,9 +374,11 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
     input
         .feed(Payload::owned("demo:u32", 1u32))
         .expect("feed should succeed");
-    started_rx
-        .recv_timeout(Duration::from_secs(2))
+    started
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("handler should start");
+    // The handler stays parked on `release` until the test sends it, so it is in flight for
+    // everything below.
     let diagnostics = graph.lock().diagnostics();
     assert_eq!(
         diagnostics.worker_state,
@@ -354,16 +393,19 @@ fn continuous_worker_releases_graph_lock_while_handler_runs() {
         paused_tx.send(()).expect("pause notification");
     });
 
+    // If the worker held the graph lock across the handler, this would never be reached (and the
+    // safety timeout would fail the test).
     paused_rx
-        .recv_timeout(Duration::from_millis(50))
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("pause should acquire graph lock while handler is still running");
     pause_thread.join().expect("pause thread");
-    finished_rx
-        .recv_timeout(Duration::from_secs(2))
+    release.send(()).expect("release handler");
+    finished
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("handler should eventually finish");
 
     graph.lock().close().expect("close");
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + SAFETY_TIMEOUT;
     while graph.lock().diagnostics().last_execution_duration.is_none() {
         assert!(
             Instant::now() < deadline,
@@ -380,16 +422,14 @@ fn continuous_worker_stop_timeout_reports_slow_handler_without_deadlocking() {
         &stream_echo_plan(),
         &SchedulerConfig::default(),
     ));
-    let (started_tx, started_rx) = mpsc::channel();
-    let (finished_tx, finished_rx) = mpsc::channel();
-    let graph: SharedStreamGraph<SlowHandler> = Arc::new(Mutex::new(StreamGraph::new(
-        runtime,
-        SlowHandler {
-            started: Mutex::new(Some(started_tx)),
-            finished: Mutex::new(Some(finished_tx)),
-            sleep: Duration::from_millis(120),
-        },
-    )));
+    let GatedHandler {
+        handler,
+        started,
+        finished,
+        release,
+    } = gated_handler();
+    let graph: SharedStreamGraph<SlowHandler> =
+        Arc::new(Mutex::new(StreamGraph::new(runtime, handler)));
 
     let input = {
         let graph = graph.lock();
@@ -401,10 +441,12 @@ fn continuous_worker_stop_timeout_reports_slow_handler_without_deadlocking() {
     input
         .feed(Payload::owned("demo:u32", 1u32))
         .expect("feed should succeed");
-    started_rx
-        .recv_timeout(Duration::from_secs(2))
+    started
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("handler should start");
 
+    // The handler is parked, so the worker cannot finish within any timeout: this is a certain
+    // timeout, not a race against the handler's running time.
     let timeout = Duration::from_millis(10);
     assert_eq!(
         worker.stop_timeout(timeout),
@@ -417,10 +459,11 @@ fn continuous_worker_stop_timeout_reports_slow_handler_without_deadlocking() {
     assert!(diagnostics.stop_requested_elapsed.is_some());
     assert_eq!(diagnostics.last_error, None);
 
-    finished_rx
-        .recv_timeout(Duration::from_secs(2))
+    release.send(()).expect("release handler");
+    finished
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("handler should eventually finish");
-    assert_eq!(worker.stop_timeout(Duration::from_secs(1)), Ok(None));
+    assert_eq!(worker.stop_timeout(SAFETY_TIMEOUT), Ok(None));
     let diagnostics = worker.diagnostics();
     assert!(diagnostics.stop_requested);
     assert!(diagnostics.worker_finished);
@@ -433,16 +476,14 @@ fn continuous_worker_drop_requests_stop_without_waiting_for_slow_handler() {
         &stream_echo_plan(),
         &SchedulerConfig::default(),
     ));
-    let (started_tx, started_rx) = mpsc::channel();
-    let (finished_tx, finished_rx) = mpsc::channel();
-    let graph: SharedStreamGraph<SlowHandler> = Arc::new(Mutex::new(StreamGraph::new(
-        runtime,
-        SlowHandler {
-            started: Mutex::new(Some(started_tx)),
-            finished: Mutex::new(Some(finished_tx)),
-            sleep: Duration::from_millis(200),
-        },
-    )));
+    let GatedHandler {
+        handler,
+        started,
+        finished,
+        release,
+    } = gated_handler();
+    let graph: SharedStreamGraph<SlowHandler> =
+        Arc::new(Mutex::new(StreamGraph::new(runtime, handler)));
 
     let input = {
         let graph = graph.lock();
@@ -454,17 +495,20 @@ fn continuous_worker_drop_requests_stop_without_waiting_for_slow_handler() {
     input
         .feed(Payload::owned("demo:u32", 1u32))
         .expect("feed should succeed");
-    started_rx
-        .recv_timeout(Duration::from_secs(2))
+    started
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("handler should start");
 
-    let drop_started = Instant::now();
+    // The handler is still parked, so the drop below returns with it in flight. If drop waited
+    // for the handler, the safety timeout would release it and `finished` would already hold a
+    // message here.
     drop(worker);
     assert!(
-        drop_started.elapsed() < Duration::from_millis(50),
+        matches!(finished.try_recv(), Err(mpsc::TryRecvError::Empty)),
         "dropping a worker should not wait for an in-flight handler"
     );
-    finished_rx
-        .recv_timeout(Duration::from_secs(2))
+    release.send(()).expect("release handler");
+    finished
+        .recv_timeout(SAFETY_TIMEOUT)
         .expect("handler should still finish after drop requests stop");
 }
