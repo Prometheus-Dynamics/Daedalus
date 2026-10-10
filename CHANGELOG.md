@@ -281,6 +281,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 - Queue edges record their enqueue-to-dequeue wait in `EdgeMetrics` at `Detailed` (only direct
   slots did).
+- Runtime and engine tests no longer assert on wall-clock time, so a loaded machine cannot fail
+  them: `stream_graph` gates its slow handler instead of sleeping, the engine's concurrency probe
+  waits for overlap instead of a deadline, and the stalled-camera test
+  runs on a manual clock. Waits that remain carry a 30 s safety bound. `scripts/ci.sh -j` runs
+  the `test` and `lean` lanes as soon as they are built.
 
 ### Maintenance
 

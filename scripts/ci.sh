@@ -110,8 +110,8 @@ cmd_link() {
 
 cmd_test() {
   step "Running tests"
-  cargo test --workspace --all-targets --features "$CI_FEATURES" ${CI_NO_RUN:+--no-run}
-  cargo test -p daedalus-rs --features "$CI_FEATURES,dylib-plugins" ${CI_NO_RUN:+--no-run}
+  cargo test --workspace --all-targets --features "$CI_FEATURES"
+  cargo test -p daedalus-rs --features "$CI_FEATURES,dylib-plugins"
 }
 
 cmd_macro_ui() {
@@ -130,7 +130,6 @@ cmd_smoke() {
   for bin in "${bins[@]::${#bins[@]}-1}"; do args+=(--bin "$bin"); done
   exes="$(cargo build --workspace --features "$CI_FEATURES" "${args[@]}" \
     --message-format=json-render-diagnostics | json_field executable)"
-  [[ -z ${CI_NO_RUN:-} ]] || return 0
   for bin in "${bins[@]}"; do
     echo "  -> $bin"
     exe="$(grep -m1 "/$bin\$" <<<"$exes")" || { echo "no executable for $bin" >&2 && return 1; }
@@ -168,11 +167,11 @@ cmd_aarch64() {
 cmd_lean() {
   step "Testing lean preset (no executor-pool, no metrics)"
   cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets \
-    --no-default-features ${CI_NO_RUN:+--no-run} \
+    --no-default-features \
     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"
   step "Testing without threads (serial-only runtime and engine)"
   cargo test -p daedalus-runtime -p daedalus-engine --all-targets --no-default-features \
-    --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env" ${CI_NO_RUN:+--no-run}
+    --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
 }
 
 # On each bare-metal target: the tier-1 crates without `std`, with and without their alloc-only
@@ -424,11 +423,9 @@ cmd_full() { local sub; for sub in "${FULL[@]}"; do run "$sub"; done; }
 # in order in its own target directory, $CARGO_TARGET_DIR/ci/<lane> (the `test` lane uses
 # $CARGO_TARGET_DIR itself, which plain `cargo test` shares), and logs to
 # $CARGO_TARGET_DIR/ci/<lane>.log. The lanes share one jobserver: together they run at most
-# $CARGO_BUILD_JOBS (default: every core) compiler jobs, plus one per lane. The `test` and `lean`
-# lanes only build (CI_NO_RUN) until every lane is done, then run their tests one lane at a time:
-# the runtime's stream_graph tests assert on wall-clock times and fail on a machine busy compiling
-# (adaptive_mode runs on a virtual clock and is not timing-sensitive).
-readonly DEFERRED_LANES=" test lean "
+# $CARGO_BUILD_JOBS (default: every core) compiler jobs, plus one per lane. Each lane runs its tests
+# as soon as it is built, beside the other lanes' compilers: no test asserts on wall-clock time
+# (see docs/testing.md, "Parallel runs").
 
 lane_of() {
   case "$1" in
@@ -446,7 +443,7 @@ run_lane() {
 }
 
 run_parallel() {
-  local target="${CARGO_TARGET_DIR:-target}" sub lane i expanded=() lanes=() subs=() pids=() built=()
+  local target="${CARGO_TARGET_DIR:-target}" sub lane i expanded=() lanes=() subs=() pids=()
   [[ $target == /* ]] || target="$root_dir/$target"
   for sub in "$@"; do
     case "$sub" in
@@ -470,13 +467,8 @@ run_parallel() {
   trap 'trap - INT TERM; kill 0' INT TERM
   for i in "${!lanes[@]}"; do
     lane=${lanes[i]}
-    if [[ $DEFERRED_LANES == *" $lane "* ]]; then
-      step "$lane:${subs[i]}, building (tests run last; log: $target/ci/$lane.log)"
-      (export CI_NO_RUN=1; run_lane "$i") >"$target/ci/$lane.log" 2>&1 &
-    else
-      step "$lane:${subs[i]} (log: $target/ci/$lane.log)"
-      (run_lane "$i") >"$target/ci/$lane.log" 2>&1 &
-    fi
+    step "$lane:${subs[i]} (log: $target/ci/$lane.log)"
+    (run_lane "$i") >"$target/ci/$lane.log" 2>&1 &
     pids[i]=$!
   done
   local start=$SECONDS failed=0 running=${#lanes[@]}
@@ -484,15 +476,9 @@ run_parallel() {
     sleep 1
     for i in "${!lanes[@]}"; do
       [[ -n ${pids[i]} ]] && ! kill -0 "${pids[i]}" 2>/dev/null || continue
-      if lane_done "$i" "${pids[i]}"; then built[i]=1; else failed=1; fi
+      lane_done "$i" "${pids[i]}" || failed=1
       pids[i]="" running=$((running - 1))
     done
-  done
-  for i in "${!lanes[@]}"; do
-    [[ $DEFERRED_LANES == *" ${lanes[i]} "* && -n ${built[i]:-} ]] || continue
-    step "${lanes[i]}: running the tests (log: $target/ci/${lanes[i]}.log)"
-    (run_lane "$i") >>"$target/ci/${lanes[i]}.log" 2>&1 &
-    lane_done "$i" $! || failed=1
   done
   return "$failed"
 }

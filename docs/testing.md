@@ -50,6 +50,17 @@ overhead from the busiest thread, return to serial) are also unit-tested without
 `returns_to_serial_once_cheap_in_real_time` (measured overhead returns the model to serial; load
 can keep it parallel). The watchdogs only prevent a deadlock; they are not assertions.
 
+No test asserts on wall-clock time, so a loaded machine can slow a test but not fail it. Rules
+for new tests:
+
+- A wait ends on the event it names: a channel message, a state transition, a handler gated by
+  the test (`stream_graph`'s `SlowHandler` parks until the test releases it). A timeout on such a
+  wait is a safety bound (30 s) that only stops a broken build from hanging.
+- A test whose point is a timeout firing (a stalled camera group) uses a manual clock
+  (`Clock::new`, `EngineConfig::with_clock`) and advances it itself.
+- Do not assert that something took less than a duration on the wall clock. If that is the point
+  of a test, mark it `#[ignore]` with a note on how to run it.
+
 ## Local CI Runner
 
 `scripts/ci.sh` runs the same commands as CI. With no arguments it runs the full default loop
@@ -113,9 +124,9 @@ scripts/ci.sh -j test lean  # any subcommands
 test` shares it), and logs to `$CARGO_TARGET_DIR/ci/<lane>.log`; the script prints each lane's
 result as it finishes, with the end of the log on failure, and exits non-zero if any failed. The
 lanes share one jobserver, so together they run at most `$CARGO_BUILD_JOBS` (default: every core)
-compiler processes, plus one per lane. The `test` and `lean` lanes only build until every lane is
-done, then run their tests one lane at a time: the runtime's `stream_graph` tests assert on
-wall-clock times and failed when they ran beside the other lanes' compilers.
+compiler processes, plus one per lane. Each lane runs its tests as soon as it is built, beside the
+other lanes' compilers: no test asserts on wall-clock time (see above), so the load they add can
+slow a test but not fail it.
 Separate target directories cost CPU (crates every lane needs are compiled once per lane) and
 disk (24 GB for `full`) for the wall time. Measured on a shared 24-core machine
 (`CARGO_BUILD_JOBS=12`, other load 60 to 130, so the numbers are rough):
