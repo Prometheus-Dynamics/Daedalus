@@ -39,6 +39,9 @@ impl WorkerPool {
                 node: "pool_init".into(),
                 error: NodeError::Handler(err.to_string()),
             })?;
+        // `broadcast` returns once every thread has run this, so each thread is started and
+        // its port-buffer pool stocked before any frame runs.
+        pool.broadcast(|_| crate::io::prewarm_port_buffers());
         Ok(Self { pool })
     }
 
@@ -50,6 +53,8 @@ impl WorkerPool {
                 node: "pool_init".into(),
                 error: NodeError::Handler(err.to_string()),
             })?;
+        // Returns once every helper has started and stocked its port-buffer pool, then parked.
+        helpers.warm_all(&crate::io::prewarm_port_buffers);
         Ok(Self { helpers })
     }
 
@@ -131,6 +136,25 @@ mod parked {
                 helpers.threads.push(handle);
             }
             Ok(helpers)
+        }
+
+        /// Run `warm` once on every helper thread and on this one, returning only when all of
+        /// them have run it: each helper is started and parked again before this returns.
+        pub(super) fn warm_all(&self, warm: &(dyn Fn() + Sync)) {
+            let total = self.threads.len() + 1;
+            let arrived = Mutex::new(0usize);
+            let everyone = Condvar::new();
+            self.run(self.threads.len(), &|| {
+                warm();
+                let mut count = arrived.lock();
+                *count += 1;
+                if *count == total {
+                    everyone.notify_all();
+                }
+                while *count < total {
+                    everyone.wait(&mut count);
+                }
+            });
         }
 
         /// Run `work` here and on up to `helpers` parked threads; return once all calls return.

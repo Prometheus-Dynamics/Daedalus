@@ -67,17 +67,31 @@ pub(crate) fn port_buffer() -> Vec<NodePort> {
     with_port_buffers(Vec::pop).flatten().unwrap_or_default()
 }
 
+/// Port buffers one thread keeps for reuse.
+const POOLED_PORT_BUFFERS: usize = 16;
+
 /// Clear `ports` and keep its capacity for [`port_buffer`] (a few modest buffers per thread).
 pub(crate) fn recycle_ports(mut ports: Vec<NodePort>) {
-    const MAX_POOLED: usize = 16;
     const MAX_CAPACITY: usize = 256;
     ports.clear();
     if ports.capacity() == 0 || ports.capacity() > MAX_CAPACITY {
         return;
     }
     with_port_buffers(|pool| {
-        if pool.len() < MAX_POOLED {
+        if pool.len() < POOLED_PORT_BUFFERS {
             pool.push(ports);
+        }
+    });
+}
+
+/// Stock this thread's port-buffer pool with empty buffers, so the first nodes it runs take
+/// their buffers from the pool instead of allocating (worker threads call this at pool start).
+pub(crate) fn prewarm_port_buffers() {
+    const PREWARM_CAPACITY: usize = 8;
+    with_port_buffers(|pool| {
+        pool.reserve(POOLED_PORT_BUFFERS.saturating_sub(pool.len()));
+        while pool.len() < POOLED_PORT_BUFFERS {
+            pool.push(Vec::with_capacity(PREWARM_CAPACITY));
         }
     });
 }
