@@ -5,12 +5,13 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use daedalus::{
     engine::{
-        CameraFeed, CameraSet, Engine, EngineConfig, HostGraph, HostGraphDriveExit,
+        CameraFeed, CameraSet, Clock, Engine, EngineConfig, HostGraph, HostGraphDriveExit,
         IndependentConfig, MetricsLevel, MultiCamera, PartialPolicy, SyncConfig,
     },
     macros::{node, plugin},
@@ -124,7 +125,18 @@ struct MultiCamPlugin;
 
 const PORTS: [&str; 4] = ["cam0", "cam1", "cam2", "cam3"];
 
+/// A clock that moves only when the test moves it, so group timeouts cannot fire on wall time.
+/// Advance it by a whole second to expire every pending group deadline at once.
+fn manual_clock(now_ns: &Arc<AtomicU64>) -> Clock {
+    let now_ns = Arc::clone(now_ns);
+    Clock::new(move || Duration::from_nanos(now_ns.load(Ordering::SeqCst)))
+}
+
 fn compile() -> HostGraph<HandlerRegistry> {
+    compile_on(Clock::default())
+}
+
+fn compile_on(clock: Clock) -> HostGraph<HandlerRegistry> {
     let mut registry = PluginRegistry::new();
     let plugin = MultiCamPlugin::new();
     registry.install(&plugin).expect("install");
@@ -151,10 +163,14 @@ fn compile() -> HostGraph<HandlerRegistry> {
         .and_then(|b| b.try_connect(&fuse.outputs.ptr, "ptr"))
         .expect("wire")
         .build();
-    Engine::new(EngineConfig::default().with_metrics_level(MetricsLevel::Off))
-        .expect("engine")
-        .compile_registry(&registry, graph)
-        .expect("compile")
+    Engine::new(
+        EngineConfig::default()
+            .with_metrics_level(MetricsLevel::Off)
+            .with_clock(clock),
+    )
+    .expect("engine")
+    .compile_registry(&registry, graph)
+    .expect("compile")
 }
 
 const PERIOD_NS: u64 = 33_000_000;
@@ -240,7 +256,8 @@ fn buffered(cameras: &daedalus::engine::SynchronizedCameras) -> u64 {
 
 #[test]
 fn a_stalled_camera_ticks_partially_once_the_drive_loop_times_out() {
-    let mut graph = compile();
+    let now_ns = Arc::new(AtomicU64::new(0));
+    let mut graph = compile_on(manual_clock(&now_ns));
     let cameras = MultiCamera::synchronized(
         graph.host(),
         PORTS,
@@ -251,6 +268,8 @@ fn a_stalled_camera_ticks_partially_once_the_drive_loop_times_out() {
         cameras.push(camera, payload(&cam_frame(5, 0)));
     }
     assert!(!graph.host().has_pending_inbound(), "the group waits");
+    // The 30 ms group timeout expires on the manual clock, after all three frames are in.
+    now_ns.fetch_add(1_000_000_000, Ordering::SeqCst);
     assert!(cameras.poll_timeout().is_some());
     let stop = graph.stop_handle();
     let mut seen = Vec::new();
@@ -274,7 +293,8 @@ fn a_stalled_camera_ticks_partially_once_the_drive_loop_times_out() {
 
 #[test]
 fn synchronized_steady_state_ticks_copy_and_allocate_nothing() {
-    let mut graph = compile();
+    // Frozen clock: the 1 s group timeout never fires, so every group completes on its frames.
+    let mut graph = compile_on(manual_clock(&Arc::new(AtomicU64::new(0))));
     graph.host().set_event_recording(false);
     let cameras = MultiCamera::synchronized(
         graph.host(),
