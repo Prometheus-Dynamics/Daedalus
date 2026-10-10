@@ -581,11 +581,12 @@ mod mock {
         let backend = MockBackend::default();
         let (fence, mut writer) = pipe_fence();
         let delay = Duration::from_millis(50);
+        // Taken before the signaller starts, so the signal cannot land before `start`.
+        let start = std::time::Instant::now();
         let signal = std::thread::spawn(move || {
             std::thread::sleep(delay);
             writer.write_all(&[1]).unwrap();
         });
-        let start = std::time::Instant::now();
         backend
             .import_dmabuf(xrgb_frame(64, 4, 256).with_acquire_fence(fence))
             .unwrap();
