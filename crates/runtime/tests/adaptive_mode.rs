@@ -150,7 +150,9 @@ impl NodeHandler for ProbeHandler {
         if probe.gang.load(Ordering::SeqCst) {
             probe.rendezvous();
         }
-        let late = probe.late_caller.filter(|_| probe.late_active.load(Ordering::SeqCst));
+        let late = probe
+            .late_caller
+            .filter(|_| probe.late_active.load(Ordering::SeqCst));
         let work = match late {
             // A late frame: the worker's segment is free, and it keeps that one segment until the
             // calling thread has entered the other GANG - 1.
