@@ -32,9 +32,10 @@ use daedalus_runtime::{
 /// Segments per frame in every test graph; the gang size of [`Probe::rendezvous`].
 const GANG: usize = 4;
 
-/// Deadlock guard for [`Probe::rendezvous`]. A parallel frame gathers its gang well within this;
-/// a serial frame, which has no gang, waits it out once per handler. Not an assertion.
-const GANG_WATCHDOG: Duration = Duration::from_millis(200);
+/// Deadlock guard for [`Probe::rendezvous`], not an assertion: a parallel frame gathers its gang
+/// well within it, and the tests turn the gang off for frames that run serially (a serial frame
+/// has no gang and would wait it out), so no correct run ever waits on it.
+const GANG_WATCHDOG: Duration = Duration::from_secs(5);
 
 /// Deadlock guard for the late-worker frames. Generous, so load cannot make it fire on a correct
 /// run: those frames are released by the counters in [`Probe`], not by this deadline.
@@ -262,13 +263,12 @@ fn cheap_graph_stays_serial() {
 #[test]
 fn heavy_fan_out_goes_parallel() {
     let (mut exec, probe) = executor_with(Duration::from_millis(3), false, false);
-    // Nothing measured yet: the first frame runs serially and times the segments. The gang is on
-    // for every frame, so a frame that goes parallel always shows it, and a serial one waits out
-    // the watchdog once.
-    probe.gang.store(true, Ordering::SeqCst);
+    // Nothing measured yet: the first frame runs serially and times the segments. It has no gang
+    // to form; every later frame does, so a frame that goes parallel always shows it.
     exec.run_adaptive_in_place().expect("first frame");
     assert!(!probe.take_parallel(), "unmeasured frame ran in parallel");
 
+    probe.gang.store(true, Ordering::SeqCst);
     for frame in 0..6 {
         exec.run_adaptive_in_place().expect("adaptive frame");
         assert!(probe.take_parallel(), "frame {frame} ran serially");
@@ -362,13 +362,13 @@ fn switches_to_parallel_when_work_gets_heavy() {
         exec.run_adaptive_in_place().expect("cheap frame");
         assert!(!probe.take_parallel());
     }
-    // Serial frames are timed every few frames, so the switch takes a handful of frames. The gang
-    // is on throughout: the serial frames before the switch time out on the watchdog, which is
-    // slow but harmless.
-    probe.gang.store(true, Ordering::SeqCst);
+    // Serial frames are timed every few frames, so the switch takes a handful of frames; on the
+    // virtual clock that number is fixed. The gang (which serial frames would wait out) is off
+    // until frame 8, by which the switch must have happened, and frames 8..12 must be parallel.
     probe.work_us.store(2_000, Ordering::SeqCst);
     let modes: Vec<bool> = (0..12)
-        .map(|_| {
+        .map(|frame| {
+            probe.gang.store(frame >= 8, Ordering::SeqCst);
             exec.run_adaptive_in_place().expect("heavy frame");
             probe.take_parallel()
         })
