@@ -137,7 +137,7 @@ impl Engine {
             if let Some(overhead) = self.config.runtime.adaptive_dispatch_overhead {
                 exec = exec.with_adaptive_dispatch_overhead(overhead);
             }
-            #[cfg(feature = "executor-pool")]
+            #[cfg(feature = "threads")]
             exec.prewarm_worker_pool()?;
         }
         #[cfg(feature = "gpu")]
@@ -178,7 +178,7 @@ impl Engine {
             if let Some(overhead) = self.config.runtime.adaptive_dispatch_overhead {
                 exec = exec.with_adaptive_dispatch_overhead(overhead);
             }
-            #[cfg(feature = "executor-pool")]
+            #[cfg(feature = "threads")]
             exec.prewarm_worker_pool()?;
         }
         #[cfg(feature = "gpu")]

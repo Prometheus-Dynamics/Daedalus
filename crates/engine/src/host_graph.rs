@@ -206,7 +206,7 @@ fn format_duration(duration: Duration) -> String {
 
 impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     pub fn prepare(&mut self) -> Result<(), EngineError> {
-        #[cfg(feature = "executor-pool")]
+        #[cfg(feature = "threads")]
         self.runner.executor.prewarm_worker_pool()?;
         self.runner.executor.reset();
         Ok(())

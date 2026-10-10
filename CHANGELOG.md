@@ -243,6 +243,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- **The first parallel frame allocated and spawned threads.** The worker pool was created lazily
+  on the first parallel run, and only with `executor-pool` was it created when the graph was
+  configured. Under `Adaptive`, which switches modes on measured timings, that first run could
+  land mid-stream, so `Adaptive` frames spiked by about 2 allocations under load (the
+  `graph_frame_allocations` budget flaked). The pool is now started and warmed when a graph is
+  configured for `Parallel` or `Adaptive` in every threaded build: each helper runs its
+  port-buffer warm-up and is parked before the configure call returns.
 - **`adaptive_mode` tests were flaky under load.** Their mode decisions depended on real sleeps
   and wall-clock timings, and on which thread happened to drain the queue. They now run on an
   injected per-thread virtual clock, and the parallel frames gather their gang of handlers so
