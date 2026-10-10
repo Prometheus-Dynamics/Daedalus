@@ -250,6 +250,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `graph_frame_allocations` budget flaked). The pool is now started and warmed when a graph is
   configured for `Parallel` or `Adaptive` in every threaded build: each helper runs its
   port-buffer warm-up and is parked before the configure call returns.
+- **Adaptive mode no longer reads the calling thread's work as dispatch overhead.** A parallel
+  frame's overhead was its wall time minus the segment time spread evenly over the workers, so
+  when late workers left the calling thread most of the queue, its own segments were booked as
+  dispatch, and the model fell back to serial. Overhead is now the wall time minus the larger of
+  the frame's critical path and its busiest thread's segment time, which each worker sums
+  without allocating. Late-worker regression test in `adaptive_mode`.
 - **`adaptive_mode` tests were flaky under load.** Their mode decisions depended on real sleeps
   and wall-clock timings, and on which thread happened to drain the queue. They now run on an
   injected per-thread virtual clock, and the parallel frames gather their gang of handlers so

@@ -42,10 +42,13 @@ process-per-test tripled the CPU time of the test run, to save about 17 s of wal
 
 `adaptive_mode` is deterministic under load: its executors read time from an injected virtual
 clock (handlers advance it instead of sleeping), and its parallel frames gather a gang of
-handlers so every run has one segment per thread. The one real-time check (parallel frames beat
-serial ones) is `#[ignore]`d; run it with
-`cargo test -p daedalus-runtime --test adaptive_mode -- --ignored` on a quiet machine. The
-watchdog in the gang only prevents a deadlock on a serial frame; it is not an assertion.
+handlers so every run has one segment per thread. The model's decisions (ENTER/EXIT hysteresis,
+overhead from the busiest thread, return to serial) are also unit-tested without threads in
+`executor::adaptive::tests`. Two real-time checks are `#[ignore]`d and run with
+`cargo test -p daedalus-runtime --test adaptive_mode -- --ignored` on a quiet machine:
+`heavy_fan_out_is_faster_in_real_time` (parallel frames beat serial ones) and
+`returns_to_serial_once_cheap_in_real_time` (measured overhead returns the model to serial; load
+can keep it parallel). The watchdogs only prevent a deadlock; they are not assertions.
 
 ## Local CI Runner
 

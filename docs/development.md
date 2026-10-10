@@ -778,7 +778,13 @@ the queue lock, cross-thread payload handoff): for the 16 cheap nodes above that
   saves at least 25% of `T`, back to serial when the saving drops under 5%, and stays at least 8
   frames in a mode. `dispatch` starts at `DEFAULT_DISPATCH_OVERHEAD` (4 µs, set with
   `EngineConfig::with_adaptive_dispatch_overhead` or `with_adaptive_dispatch_overhead` on an
-  executor) and follows what parallel frames measure. Unmeasured graphs start serial unless a node
+  executor) and follows what parallel frames measure. A parallel frame's overhead is its wall
+  time minus `max(critical path, busiest thread's segment time)`, per segment, where the critical
+  path and each thread's time are the frame's own measured segment times and the busiest thread is
+  the one that ran the most segment work, the calling thread included (each worker sums the
+  segments it ran; no per-frame allocation or extra clock read). Segment work the calling thread
+  does is not overhead: when workers wake late and the caller drains most of the queue, that time
+  does not push the model back to serial. Unmeasured graphs start serial unless a node
   is hinted heavy: GPU compute affinity, or node metadata `NODE_COST_META_KEY`
   (`"daedalus.node.cost"`) set to `"heavy"`, which makes the first frame parallel. Cheap graphs
   run at serial speed (the detector frame above: 16.6 µs against 16.0 µs). A one-shot
