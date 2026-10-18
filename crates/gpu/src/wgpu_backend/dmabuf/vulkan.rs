@@ -76,11 +76,12 @@ use wgpu::hal::api::Vulkan;
 use wgpu::hal::vulkan as hal_vk;
 
 use super::acquire::{Acquire, OPTIONAL_EXTENSIONS};
-use super::image::{ImportRequest, create_imported_texture};
+use super::image::{ImportRequest, QueryCache, create_imported_texture};
 use crate::{
     DRM_FORMAT_MOD_LINEAR, ExternalFrameDescriptor, ExternalImportError, ExternalImportSupport,
     ExternalPlane, GpuFormat, GpuImageHandle, GpuUsage, WgpuBackend, external::sync_file_signaled,
 };
+use parking_lot::Mutex;
 
 /// Device extensions an import needs. The first two are enabled by wgpu-hal itself when present.
 const REQUIRED_EXTENSIONS: [&std::ffi::CStr; 3] = [
@@ -170,8 +171,14 @@ fn open_with_modifier_extension(
     }
 }
 
+/// Per-device import state: the acquire machinery and the cached Vulkan format queries.
+pub(in crate::wgpu_backend) struct ImportContext {
+    acquire: Acquire,
+    queries: Mutex<QueryCache>,
+}
+
 /// Per-device import state; `None` when import is unsupported.
-pub(in crate::wgpu_backend) type ImportState = Option<Acquire>;
+pub(in crate::wgpu_backend) type ImportState = Option<ImportContext>;
 
 /// Decide whether the created device can import dmabufs, and how acquire fences are waited for.
 pub(in crate::wgpu_backend) fn probe(
@@ -186,7 +193,12 @@ pub(in crate::wgpu_backend) fn probe(
     match probe_support(&hal_dev) {
         Ok(()) => {
             let acquire = Acquire::new(device, queue, &hal_dev);
-            (acquire.support(), Some(acquire))
+            let support = acquire.support();
+            let context = ImportContext {
+                acquire,
+                queries: Mutex::new(QueryCache::default()),
+            };
+            (support, Some(context))
         }
         Err(reason) => (ExternalImportSupport::unsupported(reason), None),
     }
@@ -215,12 +227,13 @@ pub(in crate::wgpu_backend) fn import(
     backend: &WgpuBackend,
     mut desc: ExternalFrameDescriptor,
 ) -> Result<GpuImageHandle, ExternalImportError> {
-    let acquire = backend
+    let context = backend
         .dmabuf
         .as_ref()
         .ok_or_else(|| ExternalImportError::Unsupported {
             reason: "dmabuf import is unavailable on this device".into(),
         })?;
+    let acquire = &context.acquire;
     let layout = desc.validate()?;
     let max = backend.caps.max_texture_dimension;
     if desc.width > max || desc.height > max {
@@ -329,8 +342,9 @@ pub(in crate::wgpu_backend) fn import(
             hal_usage: usage.hal,
             label: label.clone(),
         };
+        let mut queries = context.queries.lock();
         // SAFETY: `hal_dev` is the device the wgpu device wraps; see `create_imported_texture`.
-        unsafe { create_imported_texture(&hal_dev, &request, fds, keepalive)? }
+        unsafe { create_imported_texture(&hal_dev, &request, fds, keepalive, &mut queries)? }
     };
 
     let wgpu_desc = wgpu::TextureDescriptor {
@@ -378,9 +392,9 @@ pub(in crate::wgpu_backend) fn set_fence_mode(
     state: &mut ImportState,
     mode: crate::AcquireFenceMode,
 ) -> Option<ExternalImportSupport> {
-    let acquire = state.as_mut()?;
-    acquire.set_mode(mode);
-    Some(acquire.support())
+    let context = state.as_mut()?;
+    context.acquire.set_mode(mode);
+    Some(context.acquire.support())
 }
 
 /// The dmabufs backing the planes with their sizes: one when every plane lives in the same dmabuf

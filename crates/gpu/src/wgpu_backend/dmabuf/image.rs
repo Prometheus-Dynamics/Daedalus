@@ -1,5 +1,6 @@
 //! Creating a `VkImage` over dmabuf memory and wrapping it as a wgpu-hal texture.
 
+use std::collections::HashMap;
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 
 use ash::{khr, vk};
@@ -93,6 +94,7 @@ pub(super) unsafe fn create_imported_texture(
     req: &ImportRequest,
     fds: Vec<(OwnedFd, u64)>,
     keepalive: Option<ExternalKeepalive>,
+    queries: &mut QueryCache,
 ) -> Result<hal_vk::Texture, ExternalImportError> {
     let device = hal_dev.raw_device();
     let instance = hal_dev.shared_instance().raw_instance();
@@ -100,8 +102,8 @@ pub(super) unsafe fn create_imported_texture(
 
     // SAFETY: `phys` belongs to `instance`; queries only.
     unsafe {
-        check_modifier(instance, phys, req)?;
-        check_image_format(instance, phys, req)?;
+        check_modifier(instance, phys, req, queries)?;
+        check_image_format(instance, phys, req, queries)?;
     }
 
     let mut explicit = vk::ImageDrmFormatModifierExplicitCreateInfoEXT::default()
@@ -289,20 +291,14 @@ unsafe fn check_modifier(
     instance: &ash::Instance,
     phys: vk::PhysicalDevice,
     req: &ImportRequest,
+    queries: &mut QueryCache,
 ) -> Result<(), ExternalImportError> {
-    let mut count_list = vk::DrmFormatModifierPropertiesListEXT::default();
-    let mut props = vk::FormatProperties2::default().push_next(&mut count_list);
-    // SAFETY: valid physical device and out-structure chain.
-    unsafe { instance.get_physical_device_format_properties2(phys, req.vk_format, &mut props) };
-    let count = count_list.drm_format_modifier_count as usize;
-    let mut modifiers = vec![vk::DrmFormatModifierPropertiesEXT::default(); count];
-    let mut list = vk::DrmFormatModifierPropertiesListEXT::default()
-        .drm_format_modifier_properties(&mut modifiers);
-    let mut props = vk::FormatProperties2::default().push_next(&mut list);
-    // SAFETY: as above; `modifiers` has room for `count` entries.
-    unsafe { instance.get_physical_device_format_properties2(phys, req.vk_format, &mut props) };
-    let written = list.drm_format_modifier_count as usize;
-    modifiers.truncate(written);
+    if !queries.modifiers.contains_key(&req.vk_format) {
+        // SAFETY: `phys` belongs to `instance` (see caller).
+        let list = unsafe { query_modifiers(instance, phys, req.vk_format) };
+        queries.modifiers.insert(req.vk_format, list);
+    }
+    let modifiers = &queries.modifiers[&req.vk_format];
 
     let Some(entry) = modifiers
         .iter()
@@ -347,7 +343,69 @@ unsafe fn check_image_format(
     instance: &ash::Instance,
     phys: vk::PhysicalDevice,
     req: &ImportRequest,
+    queries: &mut QueryCache,
 ) -> Result<(), ExternalImportError> {
+    let key = ImageQueryKey::new(req);
+    let result = match queries.images.get(&key).copied() {
+        Some(result) => result,
+        None => {
+            // SAFETY: `phys` belongs to `instance` (see caller).
+            let result = unsafe { query_image_format(instance, phys, req) }?;
+            queries.images.insert(key, result);
+            result
+        }
+    };
+    if req.width > result.max_extent.width || req.height > result.max_extent.height {
+        return Err(req.format_error(format!(
+            "extent {}x{} exceeds {}x{} for this modifier",
+            req.width, req.height, result.max_extent.width, result.max_extent.height
+        )));
+    }
+    if !result
+        .memory_features
+        .contains(vk::ExternalMemoryFeatureFlags::IMPORTABLE)
+    {
+        return Err(req.format_error("dmabuf memory is not importable for this image"));
+    }
+    Ok(())
+}
+
+/// Format and modifier properties for `req.vk_format`, as reported by the instance.
+///
+/// # Safety
+///
+/// `phys` must belong to `instance`.
+unsafe fn query_modifiers(
+    instance: &ash::Instance,
+    phys: vk::PhysicalDevice,
+    format: vk::Format,
+) -> Vec<vk::DrmFormatModifierPropertiesEXT> {
+    let mut count_list = vk::DrmFormatModifierPropertiesListEXT::default();
+    let mut props = vk::FormatProperties2::default().push_next(&mut count_list);
+    // SAFETY: valid physical device and out-structure chain.
+    unsafe { instance.get_physical_device_format_properties2(phys, format, &mut props) };
+    let count = count_list.drm_format_modifier_count as usize;
+    let mut modifiers = vec![vk::DrmFormatModifierPropertiesEXT::default(); count];
+    let mut list = vk::DrmFormatModifierPropertiesListEXT::default()
+        .drm_format_modifier_properties(&mut modifiers);
+    let mut props = vk::FormatProperties2::default().push_next(&mut list);
+    // SAFETY: as above; `modifiers` has room for `count` entries.
+    unsafe { instance.get_physical_device_format_properties2(phys, format, &mut props) };
+    let written = list.drm_format_modifier_count as usize;
+    modifiers.truncate(written);
+    modifiers
+}
+
+/// Ask the instance what an image with this format/modifier/usage can be imported as.
+///
+/// # Safety
+///
+/// `phys` must belong to `instance`.
+unsafe fn query_image_format(
+    instance: &ash::Instance,
+    phys: vk::PhysicalDevice,
+    req: &ImportRequest,
+) -> Result<ImageQueryResult, ExternalImportError> {
     let mut external_info =
         vk::PhysicalDeviceExternalImageFormatInfo::default().handle_type(DMA_BUF);
     let mut modifier_info = vk::PhysicalDeviceImageDrmFormatModifierInfoEXT::default()
@@ -374,18 +432,47 @@ unsafe fn check_image_format(
                 "vkGetPhysicalDeviceImageFormatProperties2 rejected the import: {err}"
             ))
         })?;
-    let max_extent = props.image_format_properties.max_extent;
-    let memory_features = external_props
-        .external_memory_properties
-        .external_memory_features;
-    if req.width > max_extent.width || req.height > max_extent.height {
-        return Err(req.format_error(format!(
-            "extent {}x{} exceeds {}x{} for this modifier",
-            req.width, req.height, max_extent.width, max_extent.height
-        )));
+    Ok(ImageQueryResult {
+        max_extent: props.image_format_properties.max_extent,
+        memory_features: external_props
+            .external_memory_properties
+            .external_memory_features,
+    })
+}
+
+/// Results of Vulkan format and modifier queries, cached per device.
+///
+/// The answers depend only on the format, modifier, usage, create flags and view formats, so an
+/// import that repeats them does not have to query the instance again.
+#[derive(Default)]
+pub(in crate::wgpu_backend) struct QueryCache {
+    modifiers: HashMap<vk::Format, Vec<vk::DrmFormatModifierPropertiesEXT>>,
+    images: HashMap<ImageQueryKey, ImageQueryResult>,
+}
+
+#[derive(Clone, Copy)]
+struct ImageQueryResult {
+    max_extent: vk::Extent3D,
+    memory_features: vk::ExternalMemoryFeatureFlags,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ImageQueryKey {
+    format: vk::Format,
+    modifier: u64,
+    usage: vk::ImageUsageFlags,
+    flags: vk::ImageCreateFlags,
+    view_formats: Vec<vk::Format>,
+}
+
+impl ImageQueryKey {
+    fn new(req: &ImportRequest) -> Self {
+        Self {
+            format: req.vk_format,
+            modifier: req.modifier,
+            usage: req.vk_usage,
+            flags: req.create_flags(),
+            view_formats: req.view_formats.clone(),
+        }
     }
-    if !memory_features.contains(vk::ExternalMemoryFeatureFlags::IMPORTABLE) {
-        return Err(req.format_error("dmabuf memory is not importable for this image"));
-    }
-    Ok(())
 }
