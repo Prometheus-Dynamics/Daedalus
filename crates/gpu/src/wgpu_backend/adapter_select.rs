@@ -1,17 +1,7 @@
 use wgpu::{Adapter, Backends};
 
 pub(super) fn preferred_backends() -> Backends {
-    Backends::from_env().unwrap_or_else(|| {
-        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-        {
-            // Headless Linux ARM targets (CM5) are significantly more stable with Vulkan.
-            Backends::VULKAN
-        }
-        #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
-        {
-            Backends::all()
-        }
-    })
+    Backends::from_env().unwrap_or_else(Backends::all)
 }
 
 pub(super) fn select_best_adapter(adapters: Vec<Adapter>) -> Option<Adapter> {

@@ -14,7 +14,12 @@ GPU-facing handles, backend selection, and shader helpers.
 - `image` crate bridges (`Compute<DynamicImage>`, `DeviceBridge` for `image` buffers,
   `ShaderRunOutput` image readbacks) behind `gpu-image`.
 
-Use `gpu-mock` for deterministic tests. Use `gpu-wgpu` only where hardware and drivers are available. Planner/runtime GPU behavior is enabled from facade/runtime/engine features, not by this crate alone.
+Use `gpu-mock` for deterministic tests. Use `gpu-wgpu` only where hardware and drivers are available.
+
+The `wgpu` backend list comes from `wgpu::Backends::from_env()`: `WGPU_BACKEND` (for example
+`vulkan`, `gl`, `metal`, `dx12`) narrows it, and when it is unset every backend is considered on
+every target, including aarch64 Linux. Headless Pi/CM5 hosts that want Vulkan must set
+`WGPU_BACKEND=vulkan`; there is no Vulkan-only default. Planner/runtime GPU behavior is enabled from facade/runtime/engine features, not by this crate alone.
 
 ## Sync and async GPU paths
 

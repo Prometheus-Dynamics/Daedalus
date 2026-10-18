@@ -28,6 +28,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- **GPU: the aarch64 Linux Vulkan-only default is gone.** `wgpu` backend selection now falls
+  back to all backends on every target when `WGPU_BACKEND` is unset, so CM5 and other aarch64
+  Linux hosts that want Vulkan must select it explicitly with `WGPU_BACKEND=vulkan`.
+
 - **FFI bytes travel as base64.** `BytePayload` serializes as `{"data":"<base64>","encoding":"base64"}`
   and the Rust, Python, Node and Java SDKs emit that form. Every decoder still accepts the older JSON
   number array (`"encoding":"raw"`). C++ keeps its pointer and length ABI and is unchanged.
