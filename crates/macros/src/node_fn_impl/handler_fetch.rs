@@ -167,7 +167,17 @@ pub(super) fn input_fetch_stmts(inputs: FetchInputs<'_>) -> FetchStmts {
                         .ok_or_else(|| #runtime_crate::NodeError::missing_input(#port))?;
                     }
                 }
-                _ => bind(get("take_owned", ty_core), None),
+                // By value: moved out, or cloned when shared (a `NodeRecovery::Retry` copy).
+                _ => quote! {
+                    let #ident = {
+                        // Only the trait matching the probe is used.
+                        #[allow(unused_imports)]
+                        use #support::{CloneProbe as _, NoCloneProbe as _};
+                        let __probe = &#support::Probe::<#ty_core>(::core::marker::PhantomData);
+                        io.take_owned_with::<#ty_core>(#port, __probe.cloner())
+                    }
+                    .ok_or_else(|| #runtime_crate::NodeError::missing_input(#port))?;
+                },
             }
         };
         let needs_immut_borrow = mode == "borrowed" && !is_payload;

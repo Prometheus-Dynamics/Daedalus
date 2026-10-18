@@ -143,7 +143,9 @@ impl DecodedInputs {
                 io.take_input_payload(port);
                 self.get::<T>(port).map(clone)
             }
-            _ => io.take_owned::<T>(port),
+            // Not a decoded constant: moved out, or cloned when shared (a `NodeRecovery::Retry`
+            // copy of the input).
+            _ => io.take_owned_with::<T>(port, clone),
         }
     }
 

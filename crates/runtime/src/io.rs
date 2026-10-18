@@ -543,6 +543,26 @@ impl NodeIo {
         }
     }
 
+    /// [`Self::take_owned`] with an optional `cloner`: a shared input (one the executor keeps a
+    /// copy of for [`NodeRecovery::Retry`](crate::executor::NodeRecovery::Retry)) is cloned with
+    /// it instead of failing. `#[node]` passes `Some(T::clone)` for `Clone` inputs and `None`
+    /// otherwise, so by-value inputs of `Clone` types survive retries.
+    pub fn take_owned_with<T>(&mut self, port: &str, cloner: Option<fn(&T) -> T>) -> Option<T>
+    where
+        T: Send + Sync + 'static,
+    {
+        let payload = self.take_input_payload(port)?.inner;
+        if core::any::TypeId::of::<T>() != core::any::TypeId::of::<Value>()
+            && let Some(value) = payload.get_ref::<Value>()
+        {
+            return self.coerce_value::<T>(value);
+        }
+        match payload.try_into_owned::<T>() {
+            Ok(value) => Some(value),
+            Err(shared) => shared.get_ref::<T>().map(cloner?),
+        }
+    }
+
     /// Coerce a `Value` input (a graph constant) to `T` through the builtin conversions and the
     /// registered const coercers ([`crate::const_coerce`]).
     pub fn coerce_input<T>(&self, port: &str) -> Option<T>

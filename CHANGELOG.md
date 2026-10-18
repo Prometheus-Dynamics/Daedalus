@@ -396,6 +396,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- **`NodeRecovery::Retry` works for `#[node]` inputs taken by value.** The executor keeps a copy of
+  each input for later attempts, so the input is shared and a plain move failed with "missing
+  <port>". Generated handlers now take by-value inputs through `NodeIo::take_owned_with`, which
+  moves an unshared input as before and clones a shared one of a `Clone` type.
 - **`daedalus-gpu` readback and throttling waits.** Sync shader readbacks issue every map before a
   single GPU wait (N bindings cost one round trip, not N). Submission throttling waits on the oldest
   submission directly instead of adding a 5 ms timed poll to each throttle event. Sync and async
