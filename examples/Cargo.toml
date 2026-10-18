@@ -117,6 +117,10 @@ name = "plan_explain"
 path = "03_transport/plan_explain.rs"
 
 [[bin]]
+name = "node_fusion"
+path = "03_transport/node_fusion.rs"
+
+[[bin]]
 name = "async_event_driven"
 path = "04_async/async_event_driven.rs"
 
@@ -173,5 +177,26 @@ name = "mixed_cpu_gpu"
 path = "07_gpu/mixed_cpu_gpu.rs"
 
 [[bin]]
-name = "gpu_fallback"
-path = "07_gpu/gpu_fallback.rs"
+name = "execution_domain"
+path = "09_hosts/execution_domain.rs"
+
+[[bin]]
+name = "held_inputs"
+path = "09_hosts/held_inputs.rs"
+
+[[bin]]
+name = "multicam_feeders"
+path = "09_hosts/multicam_feeders.rs"
+
+[[bin]]
+name = "graph_document"
+path = "09_hosts/graph_document.rs"
+
+[[bin]]
+name = "graph_hot_reload"
+path = "09_hosts/graph_hot_reload.rs"
+
+[[bin]]
+name = "node_recovery"
+path = "09_hosts/node_recovery.rs"
+

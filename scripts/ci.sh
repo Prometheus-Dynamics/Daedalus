@@ -128,7 +128,8 @@ cmd_smoke() {
     quickstart_strict_builder_roundtrip hello_graph typed_ports typed_handle_graph
     mutable_payload fanout runtime_metrics transport_metrics ownership_metrics lifecycle_trace
     plan_debug overhead_floor observability backpressure_diagnostics external_frame_source
-    frame_chain)
+    node_fusion execution_domain held_inputs multicam_feeders graph_document graph_hot_reload
+    node_recovery frame_chain)
   local args=(--examples) bin exes exe
   for bin in "${bins[@]::${#bins[@]}-1}"; do args+=(--bin "$bin"); done
   exes="$(cargo build --workspace --features "$CI_FEATURES" "${args[@]}" \
