@@ -43,6 +43,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   a handler-free `SerialView` of the executor instead of `&mut Executor<H>`, so each is compiled
   once rather than once per handler type. The handler-calling loop, `retry` and `run_handler` stay
   generic.
+- Runtime: `RuntimeNode::metadata` is an `Arc<BTreeMap<String, Value>>`, so building an executor
+  shares each node's metadata with its execution context instead of copying it. Only a node whose
+  label or bundle is not already in its metadata still gets a copy of the map. The serialized
+  `RuntimePlan` is unchanged. Code that builds a `RuntimeNode` wraps its map in `Arc::new`.
 - Runtime: an edge push that evicts a backlog adds every evicted item to the edge's `drops`
   and pressure count (it counted one). A `KeepOldest` coalesce edge that refuses an arrival in
   its window records `EdgePressureReason::CoalesceReject` (`coalesce_reject`,

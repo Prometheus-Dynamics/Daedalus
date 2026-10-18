@@ -436,13 +436,21 @@ fn has_only_linear_segment_flow(
     indegree.iter().filter(|degree| **degree == 0).count() <= 1
 }
 
+/// Each node's metadata as its execution context sees it. The plan's map is shared as is, unless
+/// the node's label or bundle must join it: only then is the map copied.
 pub(crate) fn build_node_execution_metadata(nodes: &[RuntimeNode]) -> NodeMetadataStore {
     Arc::new(
         nodes
             .iter()
             .map(|node| {
+                let joins = |key: &str, value: &Option<String>| {
+                    value.is_some() && !node.metadata.contains_key(key)
+                };
+                if !joins("label", &node.label) && !joins("bundle", &node.bundle) {
+                    return Arc::clone(&node.metadata);
+                }
                 let mut metadata: BTreeMap<String, daedalus_data::model::Value> =
-                    node.metadata.clone();
+                    (*node.metadata).clone();
                 if let Some(label) = &node.label {
                     metadata.entry("label".to_string()).or_insert_with(|| {
                         daedalus_data::model::Value::String(label.clone().into())

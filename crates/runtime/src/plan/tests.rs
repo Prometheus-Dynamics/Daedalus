@@ -10,7 +10,7 @@ fn test_node(id: &str, stable_id: u128) -> RuntimeNode {
         compute: ComputeAffinity::CpuOnly,
         const_inputs: Vec::new(),
         sync_groups: Vec::new(),
-        metadata: BTreeMap::new(),
+        metadata: Default::default(),
     }
 }
 

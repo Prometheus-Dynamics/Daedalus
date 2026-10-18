@@ -6,11 +6,13 @@ mod explain_flags;
 mod fusion;
 mod host_ports;
 mod policy;
+mod shared_metadata;
 mod transports;
 
 use serde::{Deserialize, Serialize};
 
 use crate::handles::PortId;
+use crate::portable::Arc;
 use daedalus_core::metadata::{PLAN_GPU_SEGMENTS_KEY, PLAN_SCHEDULE_ORDER_KEY};
 pub use daedalus_core::policy::BackpressureStrategy;
 use daedalus_data::model::Value;
@@ -208,11 +210,14 @@ pub struct RuntimeNode {
     pub const_inputs: Vec<(String, daedalus_data::model::Value)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sync_groups: Vec<daedalus_core::sync::SyncGroup>,
+    /// Node metadata, shared: the executor's per-node metadata and the execution contexts
+    /// reference this map rather than copying it.
     #[serde(
         default,
-        skip_serializing_if = "alloc::collections::BTreeMap::is_empty"
+        skip_serializing_if = "shared_metadata::is_empty",
+        with = "shared_metadata"
     )]
-    pub metadata: alloc::collections::BTreeMap<String, daedalus_data::model::Value>,
+    pub metadata: Arc<alloc::collections::BTreeMap<String, daedalus_data::model::Value>>,
 }
 
 /// Per node, its instance key: the key of its typed state, resources and custom metrics in the
@@ -255,7 +260,7 @@ impl RuntimeNode {
             compute: ComputeAffinity::CpuOnly,
             const_inputs: Vec::new(),
             sync_groups: Vec::new(),
-            metadata: Default::default(),
+            metadata: Arc::default(),
         }
     }
 
@@ -445,7 +450,7 @@ impl RuntimePlan {
                 compute: n.compute,
                 const_inputs: n.const_inputs.clone(),
                 sync_groups: n.sync_groups.clone(),
-                metadata: n.metadata.clone(),
+                metadata: Arc::new(n.metadata.clone()),
             })
             .collect();
         ensure_unique_stable_ids(&nodes)?;
