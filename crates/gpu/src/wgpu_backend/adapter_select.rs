@@ -1,7 +1,27 @@
 use wgpu::{Adapter, Backends};
 
-pub(super) fn preferred_backends() -> Backends {
-    Backends::from_env().unwrap_or_else(Backends::all)
+use crate::GpuBackends;
+use crate::backends::resolve_backends;
+
+/// The `wgpu` backends to enumerate: `WGPU_BACKEND`, then `requested`, then every backend.
+pub(super) fn preferred_backends(requested: Option<GpuBackends>) -> Backends {
+    let env = std::env::var("WGPU_BACKEND")
+        .ok()
+        .map(|raw| GpuBackends::from_names(&raw));
+    to_wgpu(resolve_backends(env, requested))
+}
+
+fn to_wgpu(backends: GpuBackends) -> Backends {
+    let mut out = Backends::empty();
+    out.set(Backends::VULKAN, backends.contains(GpuBackends::VULKAN));
+    out.set(Backends::METAL, backends.contains(GpuBackends::METAL));
+    out.set(Backends::DX12, backends.contains(GpuBackends::DX12));
+    out.set(Backends::GL, backends.contains(GpuBackends::GL));
+    out.set(
+        Backends::BROWSER_WEBGPU,
+        backends.contains(GpuBackends::BROWSER_WEBGPU),
+    );
+    out
 }
 
 pub(super) fn select_best_adapter(adapters: Vec<Adapter>) -> Option<Adapter> {

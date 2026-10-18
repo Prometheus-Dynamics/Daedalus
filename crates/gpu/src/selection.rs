@@ -89,8 +89,8 @@ fn try_build_backend(
         GpuBackendKind::Wgpu => {
             #[cfg(feature = "gpu-wgpu")]
             {
-                let mut backend =
-                    WgpuBackend::new().map_err(|e| BackendSkipReason::Error(e.to_string()))?;
+                let mut backend = WgpuBackend::new_with_backends(opts.backends)
+                    .map_err(|e| BackendSkipReason::Error(e.to_string()))?;
                 backend.set_acquire_fence_mode(opts.acquire_fence_mode);
                 let adapter = backend
                     .select_adapter(opts)
@@ -135,7 +135,7 @@ async fn try_build_backend_async(
         GpuBackendKind::Wgpu => {
             #[cfg(feature = "gpu-wgpu")]
             {
-                let mut backend = WgpuBackend::new_async()
+                let mut backend = WgpuBackend::new_with_backends_async(opts.backends)
                     .await
                     .map_err(|e| BackendSkipReason::Error(e.to_string()))?;
                 backend.set_acquire_fence_mode(opts.acquire_fence_mode);

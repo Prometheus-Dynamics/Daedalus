@@ -5,8 +5,8 @@ use crate::handles::{GpuBufferHandle, GpuDropToken, GpuImageHandle};
 use crate::shader::SubmissionTracker;
 use crate::traits::GpuBackend;
 use crate::{
-    GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError, GpuFormat, GpuImageRequest,
-    GpuMemoryLocation, GpuOptions, GpuRequest, GpuUsage, buffer::TransferStats,
+    GpuAdapterInfo, GpuBackendKind, GpuBackends, GpuCapabilities, GpuError, GpuFormat,
+    GpuImageRequest, GpuMemoryLocation, GpuOptions, GpuRequest, GpuUsage, buffer::TransferStats,
     format_bytes_per_pixel, validate_texture_bytes,
 };
 #[cfg(all(feature = "gpu-async", feature = "gpu-wgpu"))]
@@ -67,7 +67,12 @@ impl WgpuBackend {
     /// This blocks while wgpu enumerates adapters and requests a device. Async callers should use
     /// [`WgpuBackend::new_async`] to avoid blocking executor threads.
     pub fn new() -> Result<Self, GpuError> {
-        let res = std::panic::catch_unwind(|| Self::new_async().block_on());
+        Self::new_with_backends(None)
+    }
+
+    /// Synchronous [`WgpuBackend::new_with_backends_async`] (same blocking caveat as `new`).
+    pub(crate) fn new_with_backends(requested: Option<GpuBackends>) -> Result<Self, GpuError> {
+        let res = std::panic::catch_unwind(|| Self::new_with_backends_async(requested).block_on());
 
         match res {
             Ok(ok) => ok,
@@ -93,16 +98,31 @@ impl WgpuBackend {
 
     /// Create a wgpu backend without blocking the current thread on async wgpu operations.
     pub async fn new_async() -> Result<Self, GpuError> {
+        Self::new_with_backends_async(None).await
+    }
+
+    /// Create a wgpu backend that enumerates the `requested` graphics APIs (see
+    /// [`GpuOptions::backends`](crate::GpuOptions)); `WGPU_BACKEND` takes precedence when set.
+    pub(crate) async fn new_with_backends_async(
+        requested: Option<GpuBackends>,
+    ) -> Result<Self, GpuError> {
         let staging_config = WgpuStagingPoolConfig::from_env().map_err(GpuError::Internal)?;
-        Self::new_with_staging_pool_config_async(staging_config).await
+        Self::new_selected_async(staging_config, requested).await
     }
 
     pub async fn new_with_staging_pool_config_async(
         staging_config: WgpuStagingPoolConfig,
     ) -> Result<Self, GpuError> {
+        Self::new_selected_async(staging_config, None).await
+    }
+
+    async fn new_selected_async(
+        staging_config: WgpuStagingPoolConfig,
+        requested: Option<GpuBackends>,
+    ) -> Result<Self, GpuError> {
         let adapter = {
             let _driver = driver_lock();
-            let preferred_backends = preferred_backends();
+            let preferred_backends = preferred_backends(requested);
             let instance = Instance::new(instance_descriptor(preferred_backends));
             let mut adapters: Vec<Adapter> = instance.enumerate_adapters(preferred_backends).await;
             if adapters.is_empty() && preferred_backends != Backends::all() {

@@ -16,10 +16,18 @@ GPU-facing handles, backend selection, and shader helpers.
 
 Use `gpu-mock` for deterministic tests. Use `gpu-wgpu` only where hardware and drivers are available.
 
-The `wgpu` backend list comes from `wgpu::Backends::from_env()`: `WGPU_BACKEND` (for example
-`vulkan`, `gl`, `metal`, `dx12`) narrows it, and when it is unset every backend is considered on
-every target, including aarch64 Linux. Headless Pi/CM5 hosts that want Vulkan must set
-`WGPU_BACKEND=vulkan`; there is no Vulkan-only default. Planner/runtime GPU behavior is enabled from facade/runtime/engine features, not by this crate alone.
+The `wgpu` backend list is chosen in this order:
+
+1. `WGPU_BACKEND` (for example `vulkan`, `gl`, `metal`, `dx12`, `webgpu`; comma-separated, with
+   the aliases `vk`, `gles`, `mtl` and `d3d12`). A value that names no backend is ignored.
+2. `GpuOptions::backends` (a `GpuBackends` set), when it names at least one backend. Hosts that
+   want Vulkan on headless Pi/CM5 boards can set `backends: Some(GpuBackends::VULKAN)` instead of
+   the environment variable.
+3. Every backend, on every target, including aarch64 Linux. There is no Vulkan-only default.
+
+`GpuBackends` is this crate's own type, so `wgpu` types stay out of the options. The engine's
+`EngineConfig` does not carry GPU options; hosts that build `GpuOptions` themselves set the field.
+Planner/runtime GPU behavior is enabled from facade/runtime/engine features, not by this crate alone.
 
 ## Sync and async GPU paths
 

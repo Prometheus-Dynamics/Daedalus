@@ -78,7 +78,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   its graphs are named after those markers, and the graph shape is unchanged.
 - **GPU: the aarch64 Linux Vulkan-only default is gone.** `wgpu` backend selection now falls
   back to all backends on every target when `WGPU_BACKEND` is unset, so CM5 and other aarch64
-  Linux hosts that want Vulkan must select it explicitly with `WGPU_BACKEND=vulkan`.
+  Linux hosts that want Vulkan must select it. Either set `WGPU_BACKEND=vulkan`, or set the new
+  `GpuOptions::backends: Option<GpuBackends>` field to `GpuBackends::VULKAN`. Precedence is
+  `WGPU_BACKEND` (when it names a backend), then `GpuOptions::backends`, then every backend.
 
 - **FFI bytes travel as base64.** `BytePayload` serializes as `{"data":"<base64>","encoding":"base64"}`
   and the Rust, Python, Node and Java SDKs emit that form. Every decoder still accepts the older JSON

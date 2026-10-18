@@ -10,6 +10,7 @@
 
 #[cfg(feature = "gpu-async")]
 mod async_api;
+mod backends;
 mod buffer;
 mod convert;
 mod external;
@@ -26,6 +27,7 @@ mod wgpu_backend;
 
 #[cfg(feature = "gpu-async")]
 pub use async_api::GpuAsyncBackend;
+pub use backends::GpuBackends;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use convert::{Backing, Compute, DeviceBridge};
 pub use external::{
@@ -196,6 +198,10 @@ pub struct GpuOptions {
     pub preferred_backend: Option<GpuBackendKind>,
     pub adapter_label: Option<String>,
     pub allow_software: bool,
+    /// Graphics APIs the `wgpu` backend enumerates. The `WGPU_BACKEND` environment variable
+    /// takes precedence when it names a backend; with neither set, every backend is enumerated.
+    #[serde(default)]
+    pub backends: Option<GpuBackends>,
     /// Default wait for dmabuf acquire fences on the selected backend; imports can override it
     /// ([`ExternalFrameDescriptor::with_acquire_fence_mode`](crate::ExternalFrameDescriptor)).
     #[serde(default)]
