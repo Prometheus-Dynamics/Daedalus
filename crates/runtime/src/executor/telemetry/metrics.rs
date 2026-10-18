@@ -552,6 +552,9 @@ pub struct EdgePressureMetrics {
     pub error_overflow: u64,
     pub latest_replace: u64,
     pub coalesce_replace: u64,
+    /// Arrivals a `KeepOldest` coalesce edge refused inside its window.
+    #[serde(default)]
+    pub coalesce_reject: u64,
 }
 
 impl EdgePressureMetrics {
@@ -564,6 +567,7 @@ impl EdgePressureMetrics {
         self.error_overflow = self.error_overflow.saturating_add(other.error_overflow);
         self.latest_replace = self.latest_replace.saturating_add(other.latest_replace);
         self.coalesce_replace = self.coalesce_replace.saturating_add(other.coalesce_replace);
+        self.coalesce_reject = self.coalesce_reject.saturating_add(other.coalesce_reject);
     }
 }
 
@@ -577,6 +581,7 @@ pub enum EdgePressureReason {
     ErrorOverflow,
     LatestReplace,
     CoalesceReplace,
+    CoalesceReject,
 }
 
 impl EdgePressureReason {
@@ -589,6 +594,7 @@ impl EdgePressureReason {
             EdgePressureReason::ErrorOverflow => "error_overflow",
             EdgePressureReason::LatestReplace => "latest_replace",
             EdgePressureReason::CoalesceReplace => "coalesce_replace",
+            EdgePressureReason::CoalesceReject => "coalesce_reject",
         }
     }
 }

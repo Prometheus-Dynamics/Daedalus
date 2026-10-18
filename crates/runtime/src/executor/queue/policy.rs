@@ -9,7 +9,7 @@ use daedalus_core::platform::{Clock, Instant};
 use crossbeam_queue::ArrayQueue;
 
 use crate::plan::{BackpressureStrategy, RuntimeEdgePolicy};
-use daedalus_transport::{OverflowPolicy, PressurePolicy};
+use daedalus_transport::{CoalesceStrategy, OverflowPolicy, PressurePolicy, PushOutcome};
 
 use crate::executor::{
     CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, EdgePressureReason,
@@ -74,6 +74,38 @@ fn pressure_reason_for_policy(
             },
             PressurePolicy::BufferAll => EdgePressureReason::DropIncoming,
         },
+    }
+}
+
+/// Pressure a push caused, as `(reason, dropped items)`; `None` when it queued without displacing
+/// anything. Every evicted item counts, and a refused arrival counts once.
+fn push_pressure<T>(
+    outcome: &PushOutcome<T>,
+    policy: &RuntimeEdgePolicy,
+    strategy: &BackpressureStrategy,
+) -> Option<(EdgePressureReason, u64)> {
+    match outcome {
+        PushOutcome::Accepted => None,
+        PushOutcome::Replaced { dropped, .. } => Some((
+            pressure_reason_for_policy(policy, strategy),
+            *dropped as u64,
+        )),
+        PushOutcome::Rejected(..) => Some((rejected_pressure_reason(policy, strategy), 1)),
+    }
+}
+
+/// Why a push was refused. A `KeepOldest` coalesce edge refuses arrivals inside its window, which
+/// is not a replacement, so it has a reason of its own.
+fn rejected_pressure_reason(
+    policy: &RuntimeEdgePolicy,
+    strategy: &BackpressureStrategy,
+) -> EdgePressureReason {
+    match &policy.pressure {
+        PressurePolicy::Coalesce {
+            strategy: CoalesceStrategy::KeepOldest,
+            ..
+        } => EdgePressureReason::CoalesceReject,
+        _ => pressure_reason_for_policy(policy, strategy),
     }
 }
 
@@ -177,10 +209,12 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                 telem.record_edge_capacity(edge_idx, q.capacity());
                 let payload_type = payload.inner.type_key().clone();
                 let correlation_id = payload.correlation_id;
-                let dropped = match (policy.bounded_capacity(), &backpressure) {
+                let displaced = match (policy.bounded_capacity(), &backpressure) {
                     // Runtime-level bounded pressure is nonblocking: keep the queued payload
                     // and reject the incoming one so graph ticks never park on queue capacity.
-                    (Some(_), BackpressureStrategy::BoundedQueues) if q.is_full() => true,
+                    (Some(_), BackpressureStrategy::BoundedQueues) if q.is_full() => {
+                        Some((pressure_reason_for_policy(policy, &backpressure), 1))
+                    }
                     (Some(_), BackpressureStrategy::ErrorOnOverflow) if q.is_full() => {
                         let reason = EdgePressureReason::ErrorOverflow;
                         warn_edge_backpressure(
@@ -218,30 +252,26 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                         lifecycle.edge_idx = Some(edge_idx);
                         lifecycle.payload = payload_desc.clone();
                         telem.record_data_lifecycle(lifecycle);
-                        !q.push(&policy.pressure, payload).is_accepted()
+                        let outcome = q.push(&policy.pressure, payload);
+                        push_pressure(&outcome, policy, &backpressure)
                     }
                 };
-                if dropped {
+                if displaced.is_some() {
                     metrics.set_current_bytes(queue_transport_bytes(&q, data_size_inspectors));
                 } else {
                     metrics.adjust_bytes(transport_bytes.unwrap_or(0), 0);
                 }
-                if dropped {
+                if let Some((reason, dropped)) = displaced {
                     warn_edge_backpressure(
                         edge_idx,
                         policy,
                         &backpressure,
-                        pressure_reason_for_policy(policy, &backpressure),
+                        reason,
                         &payload_type,
                         correlation_id,
                     );
                     telem.backpressure_events += 1;
-                    record_pressure_event(
-                        telem,
-                        edge_idx,
-                        pressure_reason_for_policy(policy, &backpressure),
-                        1,
-                    );
+                    record_pressure_event(telem, edge_idx, reason, dropped);
                     record_edge_warning(
                         warning_label.as_ref(),
                         "bounded_drop_edge_",

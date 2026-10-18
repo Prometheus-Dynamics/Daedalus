@@ -30,6 +30,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: an edge push that evicts a backlog adds every evicted item to the edge's `drops`
+  and pressure count (it counted one). A `KeepOldest` coalesce edge that refuses an arrival in
+  its window records `EdgePressureReason::CoalesceReject` (`coalesce_reject`,
+  `EdgePressureMetrics::coalesce_reject`) instead of `coalesce_replace`.
 - Runtime: the executor builds its node table in one pass (one copy of the plan's nodes instead
   of a `Vec` copy plus its `Arc` copy).
 - Runtime: `OwnedExecutor` holds its `Arc<RuntimePlan>` and reads edges, edge transports,

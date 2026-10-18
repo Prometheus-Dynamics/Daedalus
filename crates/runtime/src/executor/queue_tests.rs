@@ -424,3 +424,90 @@ fn backpressure_strategies_cover_all_pressure_policies() {
         }
     }
 }
+
+/// Apply each `(policy, value)` step in turn to one locked edge; returns the telemetry and what
+/// the edge holds afterwards.
+fn apply_locked_steps(steps: &[(&RuntimeEdgePolicy, u8)]) -> (ExecutionTelemetry, Vec<u8>) {
+    let queues = Arc::new(vec![EdgeStorage::Locked {
+        queue: Arc::new(Mutex::new(EdgeQueue::default())),
+        metrics: Arc::new(EdgeStorageMetrics::default()),
+    }]);
+    let warnings_seen = Arc::new(Mutex::new(HashSet::new()));
+    #[cfg(feature = "metrics")]
+    let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Detailed);
+    #[cfg(not(feature = "metrics"))]
+    let mut telemetry = ExecutionTelemetry::default();
+    let inspectors = RuntimeDataSizeInspectors::default();
+    for (policy, value) in steps {
+        super::apply_policy_owned(ApplyPolicyOwnedArgs {
+            edge_idx: 0,
+            policy,
+            payload: payload(*value),
+            queues: &queues,
+            warnings_seen: &warnings_seen,
+            telem: &mut telemetry,
+            warning_label: None,
+            backpressure: BackpressureStrategy::None,
+            data_size_inspectors: &inspectors,
+            stamp_enqueue: false,
+        })
+        .expect("locked policy application");
+    }
+    let mut retained = Vec::new();
+    while let Some(payload) = super::pop_edge(0, &queues, &inspectors) {
+        retained.push(payload.inner.get_ref::<Vec<u8>>().unwrap()[0]);
+    }
+    (telemetry, retained)
+}
+
+#[test]
+fn replacing_a_backlog_counts_every_evicted_item() {
+    let buffer_all = RuntimeEdgePolicy {
+        pressure: PressurePolicy::BufferAll,
+        freshness: FreshnessPolicy::PreserveAll,
+    };
+    let latest = RuntimeEdgePolicy {
+        pressure: PressurePolicy::LatestOnly,
+        freshness: FreshnessPolicy::PreserveAll,
+    };
+    // Three buffered items, then one LatestOnly push that evicts all of them.
+    let (telemetry, retained) = apply_locked_steps(&[
+        (&buffer_all, 1),
+        (&buffer_all, 2),
+        (&buffer_all, 3),
+        (&latest, 4),
+    ]);
+
+    assert_eq!(retained, vec![4]);
+    assert_eq!(telemetry.backpressure_events, 1);
+    #[cfg(feature = "metrics")]
+    {
+        let metrics = &telemetry.edge_metrics[&0];
+        assert_eq!(metrics.pressure_events.total, 1);
+        assert_eq!(metrics.pressure_events.latest_replace, 1);
+        assert_eq!(metrics.drops, 3);
+    }
+}
+
+#[test]
+fn keep_oldest_refusals_have_their_own_reason() {
+    let policy = RuntimeEdgePolicy {
+        pressure: PressurePolicy::Coalesce {
+            window: Duration::from_secs(60),
+            strategy: CoalesceStrategy::KeepOldest,
+        },
+        freshness: FreshnessPolicy::PreserveAll,
+    };
+    let (telemetry, retained) = apply_locked_steps(&[(&policy, 1), (&policy, 2), (&policy, 3)]);
+
+    // The first value opened the window and is kept; the two arrivals inside it are refused.
+    assert_eq!(retained, vec![1]);
+    assert_eq!(telemetry.backpressure_events, 2);
+    #[cfg(feature = "metrics")]
+    {
+        let metrics = &telemetry.edge_metrics[&0];
+        assert_eq!(metrics.pressure_events.coalesce_reject, 2);
+        assert_eq!(metrics.pressure_events.coalesce_replace, 0);
+        assert_eq!(metrics.drops, 2);
+    }
+}

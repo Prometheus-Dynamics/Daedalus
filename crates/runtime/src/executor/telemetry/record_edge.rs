@@ -235,6 +235,10 @@ impl ExecutionTelemetry {
                 entry.pressure_events.coalesce_replace =
                     entry.pressure_events.coalesce_replace.saturating_add(1);
             }
+            EdgePressureReason::CoalesceReject => {
+                entry.pressure_events.coalesce_reject =
+                    entry.pressure_events.coalesce_reject.saturating_add(1);
+            }
         }
         entry.drops = entry.drops.saturating_add(dropped_count);
     }
