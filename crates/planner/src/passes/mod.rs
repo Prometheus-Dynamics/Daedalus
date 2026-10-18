@@ -71,7 +71,9 @@ pub(super) fn is_host_bridge(node: &NodeInstance) -> bool {
 }
 
 pub(super) fn diagnostic_node_id(node: &NodeInstance) -> String {
-    if let Some(daedalus_data::model::Value::String(value)) = node.metadata.get(UI_NODE_ID_KEY) {
+    if let Some(daedalus_data::model::Value::String(value)) =
+        crate::metadata::metadata_get_with_legacy(&node.metadata, UI_NODE_ID_KEY)
+    {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();

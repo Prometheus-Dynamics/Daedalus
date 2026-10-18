@@ -26,7 +26,7 @@ use crate::metadata::{
     HostInputPolicy, HostPortTypes, host_bridge_metadata, host_input_policy,
     is_host_bridge_metadata, set_host_input_policy,
 };
-use daedalus_core::metadata::UI_NODE_ID_KEY;
+use daedalus_core::metadata::{LEGACY_UI_NODE_ID_KEY, UI_NODE_ID_KEY};
 
 /// Host-bridge label of the upstream graph [`split_shared_upstream`] builds.
 pub const SHARED_UPSTREAM_HOST: &str = "host";
@@ -453,6 +453,7 @@ fn class_of(
     let mut canonical = instance.clone();
     canonical.label = None;
     canonical.metadata.remove(UI_NODE_ID_KEY);
+    canonical.metadata.remove(LEGACY_UI_NODE_ID_KEY);
     canonical.const_inputs.sort_by(|a, b| a.0.cmp(&b.0));
     let key = serde_json::to_vec(&ClassKey {
         node: &canonical,

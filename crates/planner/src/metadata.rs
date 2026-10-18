@@ -10,11 +10,28 @@ pub use daedalus_core::metadata::{
     DYNAMIC_INPUT_LABELS_KEY, DYNAMIC_INPUT_TYPES_KEY, DYNAMIC_INPUTS_KEY,
     DYNAMIC_OUTPUT_LABELS_KEY, DYNAMIC_OUTPUT_TYPES_KEY, DYNAMIC_OUTPUTS_KEY, EMBEDDED_GROUP_KEY,
     GROUP_ID_KEY, GROUP_LABEL_KEY, HOST_BRIDGE_META_KEY, HOST_HELD_INPUTS_KEY,
-    HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, HOST_SHARED_INPUTS_KEY,
+    HOST_INPUT_TYPES_KEY, HOST_OUTPUT_TYPES_KEY, HOST_SHARED_INPUTS_KEY, LEGACY_UI_NODE_ID_KEY,
     PLAN_APPLIED_LOWERINGS_KEY, PLAN_CONVERTER_METADATA_PREFIX, PLAN_EDGE_EXPLANATIONS_KEY,
     PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY, PLAN_OVERLOAD_RESOLUTIONS_KEY,
-    PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY,
+    PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY, PLAN_TOPO_ORDER_KEY, UI_NODE_ID_KEY,
 };
+
+/// Reads metadata `key`. The UI node id also falls back to its legacy spelling, so graphs saved
+/// before the rename keep their diagnostic ids and patch selectors.
+pub(crate) fn metadata_get_with_legacy<'a>(
+    metadata: &'a BTreeMap<String, Value>,
+    key: &str,
+) -> Option<&'a Value> {
+    if let Some(value) = metadata.get(key) {
+        return Some(value);
+    }
+    let other = match key {
+        UI_NODE_ID_KEY => LEGACY_UI_NODE_ID_KEY,
+        LEGACY_UI_NODE_ID_KEY => UI_NODE_ID_KEY,
+        _ => return None,
+    };
+    metadata.get(other)
+}
 
 /// Opaque type name the planner treats as a type variable, inferred from connected edges.
 pub const GENERIC_TYPE_NAME: &str = "generic";
@@ -453,5 +470,33 @@ mod tests {
 
         metadata.insert(HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true));
         assert!(is_host_bridge_metadata(&metadata));
+    }
+}
+
+#[cfg(test)]
+mod ui_node_id_key_tests {
+    use super::*;
+
+    #[test]
+    fn ui_node_id_prefers_new_key_and_reads_legacy_spelling() {
+        assert_eq!(UI_NODE_ID_KEY, "daedalus.ui.node_id");
+        assert_eq!(LEGACY_UI_NODE_ID_KEY, "helios.ui.node_id");
+
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            LEGACY_UI_NODE_ID_KEY.to_string(),
+            Value::String("old".into()),
+        );
+        assert_eq!(
+            metadata_get_with_legacy(&metadata, UI_NODE_ID_KEY),
+            Some(&Value::String("old".into()))
+        );
+
+        metadata.insert(UI_NODE_ID_KEY.to_string(), Value::String("new".into()));
+        assert_eq!(
+            metadata_get_with_legacy(&metadata, UI_NODE_ID_KEY),
+            Some(&Value::String("new".into()))
+        );
+        assert_eq!(metadata_get_with_legacy(&metadata, "unrelated.key"), None);
     }
 }

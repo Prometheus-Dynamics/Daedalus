@@ -236,8 +236,7 @@ fn resolve_graph_indices(graph: &Graph, selector: &GraphNodeSelector) -> Vec<usi
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, node)| {
-                    node.metadata
-                        .get(key)
+                    crate::metadata::metadata_get_with_legacy(&node.metadata, key)
                         .filter(|value| *value == &meta.value)
                         .map(|_| idx)
                 })
@@ -301,6 +300,36 @@ fn apply_const_override(
 mod tests {
     use super::*;
     use crate::graph::NodeInstance;
+
+    #[test]
+    fn apply_patch_selects_nodes_by_legacy_ui_node_id() {
+        let mut graph = Graph::default();
+        let mut node = NodeInstance::new("demo.node");
+        node.metadata.insert(
+            daedalus_core::metadata::LEGACY_UI_NODE_ID_KEY.to_string(),
+            DaedalusValue::String("node-1".into()),
+        );
+        graph.nodes.push(node);
+
+        let patch = GraphPatch {
+            version: 1,
+            ops: vec![GraphPatchOp::SetNodeConst {
+                node: GraphNodeSelector {
+                    metadata: Some(GraphMetadataSelector {
+                        key: daedalus_core::metadata::UI_NODE_ID_KEY.to_string(),
+                        value: DaedalusValue::String("node-1".into()),
+                    }),
+                    ..Default::default()
+                },
+                port: "threshold".to_string(),
+                value: Some(DaedalusValue::Int(5)),
+            }],
+        };
+
+        let report = patch.apply_to_graph(&mut graph);
+        assert_eq!(report.applied_ops, 1);
+        assert_eq!(graph.nodes[0].const_inputs[0].0, "threshold");
+    }
 
     #[test]
     fn apply_patch_sets_const_by_metadata() {
