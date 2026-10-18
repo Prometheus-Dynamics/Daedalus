@@ -28,6 +28,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: multicam sync checks each pushed payload against a clone of the type index outside the
+  bridge lock, and keeps each camera ring in a `VecDeque`, so a group commit pops its oldest
+  frame in O(1) instead of shifting the ring.
 - Engine: `HostGraph::tick_selected` caches the demand slice and masks of the last sink set and
   reuses them while the same sinks repeat. The telemetry demand summary is built only with
   metrics on (`OwnedExecutor::metrics_level`). Metrics-off ticks drop about half their overhead

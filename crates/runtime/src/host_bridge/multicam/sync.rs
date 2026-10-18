@@ -2,6 +2,7 @@
 
 use crate::portable::Arc;
 use crate::prelude::*;
+use alloc::collections::VecDeque;
 use core::time::Duration;
 
 use daedalus_core::platform::{Clock, Instant};
@@ -103,8 +104,9 @@ struct Slot {
 struct Camera {
     port: PortId,
     offset: i64,
-    /// Buffered frames, sorted by stamp; capacity `max_buffered`, never grown.
-    ring: Vec<Slot>,
+    /// Buffered frames, sorted by stamp; capacity `max_buffered`, never grown. A deque, so the
+    /// oldest frame leaves in O(1) when a group commits.
+    ring: VecDeque<Slot>,
     /// Last committed frame ([`PartialPolicy::HoldLast`] only).
     last: Option<Payload>,
 }
@@ -137,7 +139,7 @@ impl SynchronizedCameras {
             .map(|port| Camera {
                 port,
                 offset: 0,
-                ring: Vec::with_capacity(config.max_buffered),
+                ring: VecDeque::with_capacity(config.max_buffered),
                 last: None,
             })
             .collect();
@@ -183,7 +185,8 @@ impl SynchronizedCameras {
         let Some(port) = state.cameras.get(camera).map(|camera| &camera.port) else {
             return CameraPush::UnknownCamera;
         };
-        {
+        // The payload check runs on a clone of the (shared) type index, outside the bridge lock.
+        let types = {
             let bridge = inner.host.shared.buffers.lock();
             if bridge.closed
                 || bridge
@@ -193,9 +196,10 @@ impl SynchronizedCameras {
             {
                 return CameraPush::Closed;
             }
-            if let Err(error) = bridge.types.check_payload(&payload) {
-                return CameraPush::Rejected(Box::new(error));
-            }
+            bridge.types.clone()
+        };
+        if let Err(error) = types.check_payload(&payload) {
+            return CameraPush::Rejected(Box::new(error));
         }
         let stamp = stamp.saturating_add_signed(state.cameras[camera].offset);
         let is_late = |state: &State| state.watermark.is_some_and(|mark| stamp <= mark);
@@ -300,14 +304,14 @@ impl State {
         let stamp = self
             .cameras
             .iter()
-            .filter_map(|camera| camera.ring.first())
+            .filter_map(|camera| camera.ring.front())
             .map(|slot| slot.stamp)
             .min()?;
         let mut cameras = CameraSet::EMPTY;
         let mut arrived: Option<Instant> = None;
         let mut decided = true;
         for (index, camera) in self.cameras.iter().enumerate() {
-            match camera.ring.first() {
+            match camera.ring.front() {
                 Some(slot) if slot.stamp - stamp <= window => {
                     cameras = cameras.with(index);
                     arrived = Some(arrived.map_or(slot.arrived, |at| at.min(slot.arrived)));
@@ -353,7 +357,7 @@ impl Inner {
         state.watermark = Some(state.watermark.map_or(watermark, |w| w.max(watermark)));
         if !complete && self.config.partial == PartialPolicy::Drop {
             for index in pending.cameras.iter() {
-                state.cameras[index].ring.remove(0);
+                state.cameras[index].ring.pop_front();
             }
             state.stats.dropped_groups += 1;
             state.stats.dropped_frames += pending.cameras.len() as u64;
@@ -385,7 +389,7 @@ impl Inner {
         let mut superseded = false;
         for (index, camera) in state.cameras.iter_mut().enumerate() {
             let payload = if pending.cameras.contains(index) {
-                let slot = camera.ring.remove(0);
+                let slot = camera.ring.pop_front().expect("a group member is buffered");
                 group.skew = group.skew.max(slot.stamp - pending.stamp);
                 Some(slot.payload)
             } else if hold_last && camera.last.is_some() {
