@@ -6,7 +6,7 @@ use daedalus_registry::capability::{NodeDecl, PortDecl};
 use crate::graph::{ComputeAffinity, NodeInstance};
 use crate::metadata::{dynamic_port_type, is_generic_marker};
 
-use super::PlannerConfig;
+use super::{PlannerCatalog, PlannerConfig};
 
 /// The type of a node port. Borrowed from the declaration when the declaration has the type,
 /// owned when it is resolved from node metadata or derived from a type key.
@@ -80,11 +80,11 @@ pub(super) fn input_access_for(desc: &NodeDecl, name: &str) -> daedalus_transpor
 }
 
 pub(super) fn adapt_request_for_input(
+    catalog: &PlannerCatalog,
     access: daedalus_transport::AccessMode,
     ty: &TypeExpr,
 ) -> daedalus_transport::AdaptRequest {
-    let mut request =
-        daedalus_transport::AdaptRequest::new(daedalus_registry::typeexpr_transport_key(ty));
+    let mut request = daedalus_transport::AdaptRequest::new(catalog.transport_key(ty));
     request.access = access;
     request
 }

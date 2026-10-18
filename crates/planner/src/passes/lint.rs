@@ -65,7 +65,7 @@ pub(super) fn lint(
                     .and_then(|desc| port_type(from_node, desc, &e.from.port, false));
                 let to_ty = port_type(to_node, desc, &e.to.port, true);
                 if let (Some(out_ty), Some(in_ty)) = (from_ty, to_ty) {
-                    let mut request = adapt_request_for_input(access, &in_ty);
+                    let mut request = adapt_request_for_input(catalog, access, &in_ty);
                     request.exclusive = true;
                     request.residency = target_residency_for_node(to_node, config);
                     let features = config.active_features.clone();

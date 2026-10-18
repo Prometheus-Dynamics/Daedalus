@@ -104,7 +104,7 @@ pub(super) fn resolve_node_overloads(
                     break;
                 };
                 let request =
-                    adapt_request_for_input(input_access_for(desc, &edge.to.port), &to_ty);
+                    adapt_request_for_input(catalog, input_access_for(desc, &edge.to.port), &to_ty);
 
                 let Some(resolved) = resolve_edge_adapter_request(
                     config,

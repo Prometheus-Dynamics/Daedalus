@@ -3,8 +3,6 @@ use alloc::vec::Vec;
 use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::AdapterPathStep;
 
-use daedalus_registry::typeexpr_transport_key;
-
 use super::{AdapterResolutionMode, EdgeResolutionKind, PlannerCatalog, PlannerConfig};
 
 #[derive(Clone, Debug)]
@@ -88,7 +86,7 @@ pub(super) fn resolve_edge_adapter_request(
             capabilities
                 .resolve_adapter_path_indexed(
                     index,
-                    &typeexpr_transport_key(from),
+                    &catalog.transport_key(from),
                     &request,
                     active_features,
                     allow_gpu,

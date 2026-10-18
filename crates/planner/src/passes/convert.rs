@@ -4,7 +4,6 @@ use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use daedalus_data::model::{TypeExpr, Value};
-use daedalus_registry::typeexpr_transport_key;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
@@ -47,9 +46,11 @@ pub(super) fn convert(
             continue;
         };
         let mut request = to_desc
-            .map(|desc| adapt_request_for_input(input_access_for(desc, &edge.to.port), &in_ty))
+            .map(|desc| {
+                adapt_request_for_input(catalog, input_access_for(desc, &edge.to.port), &in_ty)
+            })
             .unwrap_or_else(|| {
-                daedalus_transport::AdaptRequest::new(typeexpr_transport_key(&in_ty))
+                daedalus_transport::AdaptRequest::new(catalog.transport_key(&in_ty))
             });
         // A held host input is delivered again every tick, and a shared one reaches other
         // graphs too, so either is shared like a fan-out.
