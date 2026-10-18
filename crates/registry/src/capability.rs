@@ -1,6 +1,7 @@
 mod declarations;
 mod registry;
 mod resolution;
+pub use resolution::AdapterIndex;
 mod support;
 
 pub use declarations::{

@@ -484,3 +484,41 @@ fn remove_plugin_drops_only_unshared_capabilities() {
     reg.freeze().expect("remaining registry is consistent");
     assert!(reg.remove_plugin("vision").is_none());
 }
+
+#[test]
+fn adapter_search_breaks_ties_by_path_order_on_many_adapters() {
+    let mut reg = CapabilityRegistry::new();
+    // 200 equal-cost two-hop routes a -> m_i -> c, registered out of id order, plus a direct
+    // materializing adapter that costs more than any of them.
+    for i in (0..200).rev() {
+        reg.register_adapter(
+            AdapterDecl::new(format!("b_{i:03}_out"), format!("m{i:03}"), "c")
+                .cost(AdaptCost::view()),
+        )
+        .unwrap();
+        reg.register_adapter(
+            AdapterDecl::new(format!("a_{i:03}_in"), "a", format!("m{i:03}"))
+                .cost(AdaptCost::view()),
+        )
+        .unwrap();
+    }
+    reg.register_adapter(AdapterDecl::new("direct", "a", "c").cost(AdaptCost::materialize()))
+        .unwrap();
+
+    let index = reg.adapter_index();
+    let request = AdaptRequest::new(TypeKey::new("c"));
+    // Equal-cost arrivals pop greatest path first (the frontier is a max-heap over
+    // `(Reverse(cost), type, path)`); pinned so a change of tie-break is a visible test change.
+    let expected = vec![AdapterId::new("a_199_in"), AdapterId::new("b_199_out")];
+    let expected_cost = 2 * AdaptCost::view().weight();
+    let by_default = reg
+        .resolve_adapter_path(&TypeKey::new("a"), &TypeKey::new("c"))
+        .unwrap();
+    let indexed = reg
+        .resolve_adapter_path_indexed(&index, &TypeKey::new("a"), &request, &[], true)
+        .unwrap();
+    for path in [by_default, indexed] {
+        assert_eq!(path.steps, expected);
+        assert_eq!(path.total_cost, expected_cost);
+    }
+}

@@ -72,12 +72,7 @@ pub(super) fn convert(
         let allow_gpu = config.enable_gpu;
         let features: Vec<String> = config.active_features.clone();
         let resolved = resolve_edge_adapter_request(
-            config.transport_capabilities.as_ref(),
-            &out_ty,
-            &in_ty,
-            request,
-            &features,
-            allow_gpu,
+            config, catalog, &out_ty, &in_ty, request, &features, allow_gpu,
         );
         if let Some(resolved) = resolved {
             edge_explanations.push(EdgeResolutionExplanation {

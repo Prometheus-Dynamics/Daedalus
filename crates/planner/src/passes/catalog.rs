@@ -1,7 +1,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use daedalus_data::model::TypeExpr;
-use daedalus_registry::capability::{NodeDecl, TypeDecl};
+use daedalus_registry::capability::{AdapterIndex, NodeDecl, TypeDecl};
 use daedalus_registry::ids::NodeId;
 
 use super::PlannerConfig;
@@ -10,6 +10,8 @@ use super::PlannerConfig;
 pub struct PlannerCatalog {
     nodes: BTreeMap<NodeId, NodeDecl>,
     types: BTreeMap<daedalus_transport::TypeKey, TypeDecl>,
+    /// The adapter index of the run's registry, built once so every edge's path search reuses it.
+    adapters: Option<AdapterIndex>,
 }
 
 impl PlannerCatalog {
@@ -17,6 +19,7 @@ impl PlannerCatalog {
         let Some(capabilities) = config.transport_capabilities.as_ref() else {
             return Self::default();
         };
+        let adapters = Some(capabilities.adapter_index());
         let nodes = capabilities
             .nodes()
             .snapshot_filtered(&config.active_features)
@@ -29,7 +32,15 @@ impl PlannerCatalog {
             .into_iter()
             .map(|decl| (decl.key.clone(), decl))
             .collect();
-        Self { nodes, types }
+        Self {
+            nodes,
+            types,
+            adapters,
+        }
+    }
+
+    pub(super) fn adapter_index(&self) -> Option<&AdapterIndex> {
+        self.adapters.as_ref()
     }
 
     pub(super) fn node(&self, id: &NodeId) -> Option<&NodeDecl> {

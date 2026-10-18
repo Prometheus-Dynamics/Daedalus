@@ -69,7 +69,8 @@ pub(super) fn lint(
                     request.residency = target_residency_for_node(to_node, config);
                     let features = config.active_features.clone();
                     let resolved = resolve_edge_adapter_request(
-                        config.transport_capabilities.as_ref(),
+                        config,
+                        catalog,
                         &out_ty,
                         &in_ty,
                         request,

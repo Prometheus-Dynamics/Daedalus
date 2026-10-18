@@ -5,7 +5,7 @@ use daedalus_registry::capability::AdapterPathStep;
 
 use daedalus_registry::typeexpr_transport_key;
 
-use super::{AdapterResolutionMode, EdgeResolutionKind};
+use super::{AdapterResolutionMode, EdgeResolutionKind, PlannerCatalog, PlannerConfig};
 
 #[derive(Clone, Debug)]
 pub(super) struct ResolvedEdgeCompatibility {
@@ -60,7 +60,8 @@ fn adapter_mode_from_adapter_path(path: &[AdapterPathStep]) -> AdapterResolution
 }
 
 pub(super) fn resolve_edge_adapter_request(
-    transport_capabilities: Option<&daedalus_registry::capability::CapabilityRegistry>,
+    config: &PlannerConfig,
+    catalog: &PlannerCatalog,
     from: &TypeExpr,
     to: &TypeExpr,
     request: daedalus_transport::AdaptRequest,
@@ -79,16 +80,21 @@ pub(super) fn resolve_edge_adapter_request(
     }
 
     let requested_target = request.target.clone();
-    let adapter_resolution = transport_capabilities.and_then(|capabilities| {
-        capabilities
-            .resolve_adapter_path_for_with_context(
-                &typeexpr_transport_key(from),
-                &request,
-                active_features,
-                allow_gpu,
-            )
-            .ok()
-    });
+    let adapter_resolution = config
+        .transport_capabilities
+        .as_ref()
+        .zip(catalog.adapter_index())
+        .and_then(|(capabilities, index)| {
+            capabilities
+                .resolve_adapter_path_indexed(
+                    index,
+                    &typeexpr_transport_key(from),
+                    &request,
+                    active_features,
+                    allow_gpu,
+                )
+                .ok()
+        });
 
     if let Some(resolution) = adapter_resolution {
         return Some(ResolvedEdgeCompatibility {
