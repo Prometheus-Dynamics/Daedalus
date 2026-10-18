@@ -59,6 +59,8 @@ usage: scripts/ci.sh [-j] [subcommand...]
               and thumbv6m, check flash and static RAM against per-mode budgets (readelf), and
               run the MCU crates' native tests
   wasm        engine,plugins (embedded, no threads) dev builds and Node runs for wasm32 and WASI
+  package     `cargo package` of every publishable crate except the facade and the fixture crates
+              (the package-surface job), then the facade's package listing, which must be warning-free
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
   vvl         the dmabuf hardware tests and gpu_probe under the Khronos validation layer
@@ -295,6 +297,30 @@ cmd_wasm() {
   node scripts/wasm-bindgen-host.mjs "$out/wasm-bindgen-host/daedalus_wasm_bindgen_host.js"
 }
 
+# `cargo package` for every publishable crate, except the facade and the crates that depend on
+# unpublished fixtures (`--no-verify`: verifying a package builds it against crates.io, which has
+# no 3.0.0 crates yet). The facade cannot be packaged alone for the same reason, so its manifest
+# and file list are checked on their own: the listing must print nothing on stderr.
+readonly PACKAGE_EXCLUDES=(--exclude daedalus-rs --exclude daedalus-examples
+  --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project
+  --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke
+  --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes
+  --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer
+  --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi
+  --exclude daedalus-frame-bench)
+
+cmd_package() {
+  step "Validating the package surface"
+  cargo package --workspace "${PACKAGE_EXCLUDES[@]}" --allow-dirty --no-verify
+  step "Listing the facade package (must print no warnings)"
+  local warnings
+  warnings="$(cargo package -p daedalus-rs --list --allow-dirty 2>&1 >/dev/null)"
+  if [[ -n $warnings ]]; then
+    echo "$warnings" >&2
+    return 1
+  fi
+}
+
 # Criterion writes to `$CARGO_TARGET_DIR/criterion`; compare two such directories with
 # `scripts/bench-compare.py BASELINE CURRENT`.
 cmd_bench() {
@@ -415,7 +441,7 @@ cmd_quick() {
 }
 
 readonly ALL=(lints features clippy link test macro-ui smoke)
-readonly FULL=("${ALL[@]}" doc lean aarch64 nostd mcu wasm)
+readonly FULL=("${ALL[@]}" doc lean aarch64 nostd mcu wasm package)
 readonly SUBCOMMANDS=" all full ${FULL[*]} quick bench pi vvl "
 
 run() { "cmd_${1//-/_}"; }
