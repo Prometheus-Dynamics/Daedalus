@@ -12,7 +12,12 @@ fn cpu_filter(frame: Cpu<i64>) -> Result<Cpu<i64>, NodeError> {
     Ok(frame)
 }
 
-#[node(id = "repro.fb.gpu", fallback = "repro.fb.cpu", inputs("frame"), outputs("frame"))]
+#[node(
+    id = "repro.fb.gpu",
+    fallback = "repro.fb.cpu",
+    inputs("frame"),
+    outputs("frame")
+)]
 fn gpu_filter(frame: Gpu<i64>) -> Result<Gpu<i64>, NodeError> {
     Ok(frame)
 }
@@ -59,7 +64,10 @@ fn control_cpu_node_directly() {
     let mut runtime = engine.compile_registry(&registry, graph).unwrap();
     runtime.push("in", 7_i64);
     runtime.tick().unwrap();
-    assert_eq!(runtime.drain_owned::<Cpu<i64>>("out").unwrap(), vec![Cpu::new(7_i64)]);
+    assert_eq!(
+        runtime.drain_owned::<Cpu<i64>>("out").unwrap(),
+        vec![Cpu::new(7_i64)]
+    );
 }
 
 #[test]
@@ -96,5 +104,8 @@ fn gpu_node_with_fallback_runs_on_cpu_backend() {
     let mut runtime = engine.compile_registry(&registry, graph).unwrap();
     runtime.push("in", 7_i64);
     runtime.tick().unwrap();
-    assert_eq!(runtime.drain_owned::<Cpu<i64>>("out").unwrap(), vec![Cpu::new(7_i64)]);
+    assert_eq!(
+        runtime.drain_owned::<Cpu<i64>>("out").unwrap(),
+        vec![Cpu::new(7_i64)]
+    );
 }
