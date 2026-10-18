@@ -493,6 +493,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   access modes) as one static table and one insertion loop per node, not one insertion per entry.
   A 50-node fixture expands to 1.135 MB -> 1.123 MB (-1.1%); the expanded line count and the build
   CPU (about 0.77 s) are unchanged within noise.
+- `starter.print` takes a `value: i32` input and logs it (`tracing` with the `tracing` feature,
+  else stdout). `starter.gpu_copy` is removed: it returned `Ok(())` without copying anything, and
+  this crate has no GPU payload or context to copy with. `utils.add` returns
+  `NodeError::InvalidInput` when the sum overflows `i32`, instead of panicking in debug builds and
+  wrapping in release builds.
 
 ## [3.0.0] - 2026-10-05
 
