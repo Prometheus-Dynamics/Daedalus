@@ -42,7 +42,7 @@ pub use poll_driver::{
     active_async_poll_overflow_threads, async_poll_overflow_thread_limit, async_poll_worker_limit,
     set_async_poll_overflow_thread_limit, set_async_poll_worker_limit,
 };
-pub(crate) use pool::{clear_temp_pool_for_device, temp_pool};
+pub(crate) use pool::{clear_temp_pool_for_device, staging_size, temp_pool};
 pub use pool::{
     set_temp_pool_buffer_limit, set_temp_pool_texture_limit, temp_pool_buffer_limit,
     temp_pool_texture_limit,

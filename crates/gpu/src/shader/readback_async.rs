@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::GpuError;
 
-use super::{readback::ReadbackRequest, temp_pool};
+use super::{pool::staging_size, readback::ReadbackRequest, temp_pool};
 
 static NEXT_ASYNC_MAP_ID: AtomicU64 = AtomicU64::new(1);
 const DEFAULT_ASYNC_READBACK_POLL_INTERVAL_MS: u64 = 10;
@@ -207,7 +207,10 @@ pub(crate) async fn resolve_readbacks_async(
     );
     let pending_maps: Vec<_> = readbacks
         .iter()
-        .map(|readback| begin_map_read_async_with_state(device, readback.buffer.slice(..), false))
+        .map(|readback| {
+            let range = readback.buffer.slice(..staging_size(readback.size));
+            begin_map_read_async_with_state(device, range, false)
+        })
         .collect();
     submit_map_poll_job(
         device.clone(),
@@ -233,8 +236,8 @@ pub(crate) async fn resolve_readbacks_async(
         padded_bpr,
     } in readbacks
     {
-        let slice = buffer.slice(..);
         {
+            let slice = buffer.slice(..staging_size(size));
             let data = slice.get_mapped_range()?;
             if is_texture {
                 let mut trimmed = Vec::with_capacity(row_bytes * height as usize);
@@ -251,7 +254,7 @@ pub(crate) async fn resolve_readbacks_async(
             }
         }
         buffer.unmap();
-        temp_pool().lock().put_buffer(device_key, size, buffer);
+        temp_pool().lock().put_buffer(device_key, buffer);
         tracing::trace!(
             target: "daedalus_gpu::readback",
             binding,

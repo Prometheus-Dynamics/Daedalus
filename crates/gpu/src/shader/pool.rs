@@ -55,8 +55,9 @@ impl TempPool {
         self.pool_mut(device_key).take_buffer(size, usage)
     }
 
-    pub fn put_buffer(&mut self, device_key: usize, size: u64, buffer: wgpu::Buffer) {
-        self.pool_mut(device_key).put_buffer(size, buffer);
+    /// Return a buffer to the pool. It is keyed by its real allocation size.
+    pub fn put_buffer(&mut self, device_key: usize, buffer: wgpu::Buffer) {
+        self.pool_mut(device_key).put_buffer(buffer);
     }
 
     pub fn take_texture(
@@ -89,8 +90,49 @@ impl TempPool {
     }
 }
 
+/// Largest allocation a pooled buffer may be reused for, as a multiple of the requested size.
+/// Keeps a small readback from pinning (and mapping) a much larger buffer.
+const MAX_BUFFER_REUSE_FACTOR: u64 = 2;
+
+/// Alignment of mapped readback ranges (`wgpu` requires map offsets and sizes to be multiples of 8).
+pub(crate) const MAP_ALIGNMENT: u64 = 8;
+
+/// Allocation size for a readback staging buffer that must hold `size` bytes: rounded up so the
+/// whole buffer (and any range mapped from it) is a valid map range.
+pub(crate) fn staging_size(size: u64) -> u64 {
+    size.div_ceil(MAP_ALIGNMENT) * MAP_ALIGNMENT
+}
+
+/// Allocation sizes a pooled buffer may have and still serve a request for `size` bytes.
+fn reuse_range(size: u64) -> std::ops::RangeInclusive<u64> {
+    size..=size.saturating_mul(MAX_BUFFER_REUSE_FACTOR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reuse_range, staging_size};
+
+    #[test]
+    fn staging_size_rounds_up_to_map_alignment() {
+        assert_eq!(staging_size(0), 0);
+        assert_eq!(staging_size(1), 8);
+        assert_eq!(staging_size(8), 8);
+        assert_eq!(staging_size(13), 16);
+    }
+
+    #[test]
+    fn pooled_buffers_are_reused_only_between_one_and_twice_the_request() {
+        let range = reuse_range(256);
+        assert!(range.contains(&256));
+        assert!(range.contains(&512));
+        assert!(!range.contains(&255));
+        // A 16 KiB buffer must not be handed out for a 256-byte readback.
+        assert!(!range.contains(&(16 * 1024)));
+    }
+}
+
 struct DevicePool {
-    buffers: Vec<(u64, wgpu::Buffer)>,
+    buffers: Vec<wgpu::Buffer>,
     textures: Vec<(
         u32,
         u32,
@@ -108,23 +150,21 @@ impl DevicePool {
         }
     }
 
+    /// Take a pooled buffer holding at least `size` bytes, but no more than
+    /// `MAX_BUFFER_REUSE_FACTOR * size`.
     fn take_buffer(&mut self, size: u64, usage: wgpu::BufferUsages) -> Option<wgpu::Buffer> {
-        if let Some(idx) = self
+        let idx = self
             .buffers
             .iter()
-            .position(|(s, b)| *s >= size && b.usage().contains(usage))
-        {
-            let (_, buf) = self.buffers.swap_remove(idx);
-            return Some(buf);
-        }
-        None
+            .position(|b| reuse_range(size).contains(&b.size()) && b.usage().contains(usage))?;
+        Some(self.buffers.swap_remove(idx))
     }
 
-    fn put_buffer(&mut self, size: u64, buffer: wgpu::Buffer) {
+    fn put_buffer(&mut self, buffer: wgpu::Buffer) {
         if self.buffers.len() >= temp_pool_buffer_limit() {
             self.buffers.swap_remove(0);
         }
-        self.buffers.push((size, buffer));
+        self.buffers.push(buffer);
     }
 
     fn take_texture(

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::{GpuError, GpuImageHandle};
 
 use super::prepare::Prepared;
-use super::temp_pool;
+use super::{staging_size, temp_pool};
 
 fn texture_bytes_per_pixel(format: Option<wgpu::TextureFormat>) -> usize {
     // Use wgpu's format footprint to avoid manual byte counts; block_copy_size covers uncompressed formats we support.
@@ -55,9 +55,10 @@ pub(crate) fn enqueue_readbacks(
                 size,
                 readback,
             } if *readback => {
+                let alloc = staging_size(*size);
                 let pooled = temp_pool().lock().take_buffer(
                     device_key,
-                    *size,
+                    alloc,
                     wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 );
                 let staging = if let Some(buf) = pooled {
@@ -65,7 +66,7 @@ pub(crate) fn enqueue_readbacks(
                 } else {
                     device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some("readback"),
-                        size: *size,
+                        size: alloc,
                         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                         mapped_at_creation: false,
                     })
@@ -195,36 +196,51 @@ pub(crate) fn resolve_readbacks(
     device: &wgpu::Device,
     readbacks: Vec<ReadbackRequest>,
 ) -> Result<HashMap<u32, Vec<u8>>, GpuError> {
-    // This is the synchronous compatibility readback path. It waits for each map operation on the
-    // current thread; async callers should use `resolve_readbacks_async` through the async dispatch
-    // helpers so executor worker threads are not blocked by GPU completion.
+    // This is the synchronous compatibility readback path. It waits on the current thread; async
+    // callers should use `resolve_readbacks_async` through the async dispatch helpers so executor
+    // worker threads are not blocked by GPU completion.
     let device_key = super::device_key(device);
-    let mut result = HashMap::new();
-    for ReadbackRequest {
-        binding,
-        buffer,
-        size,
-        is_texture,
-        height,
-        row_bytes,
-        padded_bpr,
-    } in readbacks
-    {
-        let slice = buffer.slice(..);
+
+    // Issue every map first, then wait once. Waiting per buffer would cost one blocking round trip
+    // to the GPU for each binding.
+    let mut receivers = Vec::with_capacity(readbacks.len());
+    for request in &readbacks {
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| {
-            let _ = tx.send(res);
-        });
-        // Block until the GPU completes the map; this is still synchronous but avoids extra copies.
+        request
+            .buffer
+            .slice(..staging_size(request.size))
+            .map_async(wgpu::MapMode::Read, move |res| {
+                let _ = tx.send(res);
+            });
+        receivers.push(rx);
+    }
+    if !receivers.is_empty() {
         let _ = device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
+    }
+
+    let mut result = HashMap::with_capacity(readbacks.len());
+    for (
+        ReadbackRequest {
+            binding,
+            buffer,
+            size,
+            is_texture,
+            height,
+            row_bytes,
+            padded_bpr,
+        },
+        rx,
+    ) in readbacks.into_iter().zip(receivers)
+    {
         rx.recv()
             .map_err(|e| GpuError::Internal(format!("map canceled: {e}")))?
             .map_err(|e| GpuError::Internal(format!("map failed: {e:?}")))?;
 
         {
+            let slice = buffer.slice(..staging_size(size));
             let data = slice.get_mapped_range()?;
             if is_texture {
                 let mut trimmed = Vec::with_capacity(row_bytes * height as usize);
@@ -242,9 +258,60 @@ pub(crate) fn resolve_readbacks(
         }
 
         buffer.unmap();
-        temp_pool().lock().put_buffer(device_key, size, buffer);
+        temp_pool().lock().put_buffer(device_key, buffer);
     }
     Ok(result)
+}
+
+#[cfg(all(test, feature = "gpu-wgpu"))]
+mod tests {
+    use super::*;
+
+    /// Several readbacks resolved together each return their own bytes. Skips without an adapter.
+    #[test]
+    fn batched_readback_returns_every_binding() {
+        let Ok(backend) = crate::WgpuBackend::new() else {
+            return;
+        };
+        let (device, queue) = backend.device_queue();
+        let sizes = [(0u32, 16u64), (1, 40), (2, 8)];
+        let mut requests = Vec::new();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("batched-readback-test"),
+        });
+        for (binding, len) in sizes {
+            let src = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("src"),
+                size: len,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&src, 0, &vec![binding as u8 + 1; len as usize]);
+            let staging = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("staging"),
+                size: staging_size(len),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(&src, 0, &staging, 0, len);
+            requests.push(ReadbackRequest {
+                binding,
+                buffer: staging,
+                size: len,
+                is_texture: false,
+                height: 0,
+                row_bytes: 0,
+                padded_bpr: 0,
+            });
+        }
+        queue.submit(Some(encoder.finish()));
+
+        let out = resolve_readbacks(device, requests).expect("batched readback");
+        assert_eq!(out.len(), sizes.len());
+        for (binding, len) in sizes {
+            assert_eq!(out[&binding], vec![binding as u8 + 1; len as usize]);
+        }
+    }
 }
 
 pub(crate) fn return_pooled_textures(pool_textures_to_return: Vec<PoolReturn>) {
