@@ -317,6 +317,11 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
+    /// The metrics level this executor records at.
+    pub fn metrics_level(&self) -> MetricsLevel {
+        self.core.run_config.metrics_level
+    }
+
     /// Read every timing (telemetry, adaptive costs, edge waits) from `clock` instead of the
     /// platform clock.
     pub fn with_clock(mut self, clock: daedalus_core::platform::Clock) -> Self {

@@ -7,4 +7,5 @@ mod graph_document;
 mod host_graph_events;
 mod host_graph_poll;
 mod host_graph_reload;
+mod host_graph_selected;
 mod transport_run;

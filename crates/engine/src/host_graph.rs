@@ -11,7 +11,10 @@ use daedalus_runtime::host_bridge::{
     HostBatchOutcomes, HostBatchRejected, HostBridgeHandle, HostBridgeManager, HostInputBatch,
     ValueSerializerMap,
 };
-use daedalus_runtime::{RuntimePlan, RuntimePlanExplanation, RuntimeSink, TypeIndex};
+use daedalus_runtime::{
+    DemandSlice, DemandTelemetry, MetricsLevel, RuntimePlan, RuntimePlanExplanation, RuntimeSink,
+    TypeIndex,
+};
 use daedalus_transport::{
     FeedOutcome, FreshnessPolicy, Payload, PolicyValidationError, PressurePolicy, TypeKey,
 };
@@ -67,6 +70,38 @@ pub struct HostGraph<H: NodeHandler> {
     pub(crate) types: TypeIndex,
     /// Frame-path overhead recording ([`HostGraph::enable_frame_overhead`]).
     pub(crate) frame_overhead: Option<Box<FrameOverheadState>>,
+    /// The demand slice of the last [`HostGraph::tick_selected`] sink set. A repeated sink set
+    /// reuses it; a reload replaces the whole graph, so the cache never outlives its plan.
+    pub(crate) selected: Option<Box<SelectedDemand>>,
+}
+
+/// Demand for one sink set, computed once and reused while the same sinks are ticked.
+pub(crate) struct SelectedDemand {
+    sinks: Vec<RuntimeSink>,
+    slice: DemandSlice,
+    active_nodes: Arc<Vec<bool>>,
+    active_edges: Arc<Vec<bool>>,
+    direct_edges: Arc<Vec<bool>>,
+    host_output_ports: Arc<HashSet<String>>,
+    /// The telemetry summary, filled on the first tick with metrics on.
+    summary: Option<DemandTelemetry>,
+}
+
+impl SelectedDemand {
+    fn new(plan: &RuntimePlan, sinks: Vec<RuntimeSink>) -> Result<Self, EngineError> {
+        let slice = plan
+            .demand_slice_for_sinks(&sinks)
+            .map_err(|err| EngineError::Config(err.to_string()))?;
+        Ok(Self {
+            active_nodes: Arc::new(slice.active_nodes.clone()),
+            active_edges: Arc::new(slice.active_edges.clone()),
+            direct_edges: Arc::new(slice.direct_edges.clone()),
+            host_output_ports: Arc::new(slice.host_output_ports.iter().cloned().collect()),
+            sinks,
+            slice,
+            summary: None,
+        })
+    }
 }
 
 pub struct HostGraphStep<T> {
@@ -549,33 +584,39 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         sinks: impl IntoIterator<Item = RuntimeSink>,
     ) -> Result<ExecutionTelemetry, EngineError> {
         let sinks = sinks.into_iter().collect::<Vec<_>>();
-        let slice = self
-            .runtime_plan()
-            .demand_slice_for_sinks(&sinks)
-            .map_err(|err| EngineError::Config(err.to_string()))?;
-        let demand = self.runtime_plan().demand_summary_for_slice(&sinks, &slice);
+        let mut selected = match self.selected.take() {
+            Some(cached) if cached.sinks == sinks => cached,
+            _ => Box::new(SelectedDemand::new(self.runtime_plan(), sinks)?),
+        };
+        let metrics_on = self.runner.executor.metrics_level() != MetricsLevel::Off;
+        let demand = if metrics_on {
+            selected
+                .summary
+                .get_or_insert_with(|| {
+                    self.runtime_plan()
+                        .demand_summary_for_slice(&selected.sinks, &selected.slice)
+                })
+                .clone()
+        } else {
+            DemandTelemetry::default()
+        };
         self.runner
             .executor
-            .try_set_active_nodes_mask(Some(Arc::new(slice.active_nodes.clone())))?;
+            .try_set_active_nodes_mask(Some(selected.active_nodes.clone()))?;
         self.runner
             .executor
-            .try_set_active_edges_mask(Some(Arc::new(slice.active_edges.clone())))?;
+            .try_set_active_edges_mask(Some(selected.active_edges.clone()))?;
         self.runner
             .executor
-            .try_set_active_direct_edges_mask(Some(Arc::new(slice.direct_edges.clone())))?;
+            .try_set_active_direct_edges_mask(Some(selected.direct_edges.clone()))?;
         self.runner
             .executor
-            .set_selected_host_output_ports(Some(Arc::new(
-                slice
-                    .host_output_ports
-                    .iter()
-                    .cloned()
-                    .collect::<HashSet<_>>(),
-            )));
+            .set_selected_host_output_ports(Some(selected.host_output_ports.clone()));
         let result = self.tick().map(|mut telemetry| {
             telemetry.demand = demand;
             telemetry
         });
+        self.selected = Some(selected);
         self.runner.executor.try_set_active_nodes_mask(None)?;
         self.runner.executor.try_set_active_edges_mask(None)?;
         self.runner

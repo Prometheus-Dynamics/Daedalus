@@ -403,6 +403,7 @@ impl Engine {
             value_serializers: daedalus_runtime::host_bridge::primitive_value_serializer_map(),
             types: daedalus_runtime::TypeIndex::default(),
             frame_overhead: None,
+            selected: None,
         }
         .with_configured_frame_overhead(self.config.runtime.frame_overhead_window))
     }
@@ -545,6 +546,7 @@ impl Engine {
             value_serializers: plugins.value_serializers.clone(),
             types,
             frame_overhead: None,
+            selected: None,
         }
         .with_configured_frame_overhead(self.config.runtime.frame_overhead_window))
     }

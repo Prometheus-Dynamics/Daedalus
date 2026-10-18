@@ -28,6 +28,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Engine: `HostGraph::tick_selected` caches the demand slice and masks of the last sink set and
+  reuses them while the same sinks repeat. The telemetry demand summary is built only with
+  metrics on (`OwnedExecutor::metrics_level`). Metrics-off ticks drop about half their overhead
+  in the `tick_selected` micro-bench.
 - Runtime: edge overflow warnings look the label up before allocating it, and the default
   `<prefix>_edge_<idx>` label is built on the stack. `ApplyPolicyOwnedArgs::warning_label` is
   `Option<Arc<str>>`.
