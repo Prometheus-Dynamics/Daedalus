@@ -133,6 +133,20 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 - [x] Benchmarks: `crates/engine/benches/host_graph_drive.rs`, plus `.github/workflows/bench.yml`
       with regression flagging.
 
+### CI, examples and daemon
+- [x] CI runs on pushes to `dev` as well, and `dev` saves the Rust cache, so PRs into `dev`
+      restore it.
+- [x] `ci.sh smoke` runs the quickstart and basics bins and the new `09_hosts` bins.
+- [x] Examples for the host-side features that only had tests: execution domains
+      (`09_hosts/execution_domain`), node fusion (`03_transport/node_fusion`), held inputs and
+      batch pushes (`09_hosts/held_inputs`), multi-camera feeders (`09_hosts/multicam_feeders`),
+      graph documents (`09_hosts/graph_document`), hot reload (`09_hosts/graph_hot_reload`) and
+      node recovery (`09_hosts/node_recovery`).
+- [x] Daemon tests: the stdio protocol through the binary, and the TCP protocol with `serve` and
+      the CLI behind the `tcp` feature (run by `ci.sh test`).
+- [x] Docs match the tree: UI test path, `repo-clean.sh` runs the default CI loop, the facade's
+      feature list, and the duplicate dependency roots from the lock.
+
 ### Code health
 - [x] `parking_lot` everywhere outside `core`/`transport`; poison handling removed.
 - [x] Oversized files split; the strict file-size check now fails on new oversized files.
@@ -157,6 +171,16 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 ## Remaining
 
 ### High priority
+- [ ] **Package surface is red on `dev`.** `./scripts/ci.sh package` (the package-surface job)
+      fails while packaging the workspace: `crates/ffi` has versioned dev-dependencies on
+      `daedalus-ffi-core` and on sibling ffi crates (`8cf806d`, `7526fdb`), and `daedalus-ffi-core`
+      depends on itself, which cargo cannot order while packaging. Restructure those dev-dependencies,
+      then drop the facade from the exclusions. Until the workspace packages, the facade is checked
+      only by its listing (`cargo package -p daedalus-rs --list` must print no warnings), because
+      `cargo package -p daedalus-rs` cannot resolve the unpublished workspace crates. Before
+      publishing the facade, its fixture dev-dependencies (`daedalus-plugins-example-project`,
+      `daedalus-plugins-stable-abi`, declared with `version = "3.0.0"` in the root `Cargo.toml`) must
+      not stay in the published manifest: give them a path-only form, or move them out.
 - [ ] **Validate on a Pi 5 / CM5 with Mesa v3dv.** Run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
       `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
@@ -204,6 +228,14 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       with timeline semaphores (then `Timeline` would neither block nor violate the VUID).
 - [ ] **dmabuf: validation layers on the Pi.** Run `./scripts/ci.sh vvl` on v3dv alongside the
       `pi` report (only RADV has been validated).
+- [ ] **`NodeRecovery::Retry` with by-value inputs.** A retry re-runs the handler on the same
+      inputs, but an input taken by value (`fn f(value: i64)`) is gone after the first attempt, so
+      the retry fails with `invalid input: missing value`. A by-reference input (`&i64`) retries
+      correctly (`examples/09_hosts/node_recovery.rs`).
+- [ ] **GPU fallback with `GpuBackend::Cpu`.** A `Gpu<T>` node with `fallback = "..."` ran its GPU
+      handler on a CPU payload and failed (`missing frame`); the fallback did not run. Observed in
+      a scratch graph, not diagnosed; `docs/node-authoring.md` says the fallback is used when no GPU
+      backend is available.
 - [ ] **Host-created Vulkan instances.** The driver lock only covers instances `daedalus-gpu`
       creates; a host that creates wgpu/Vulkan instances on other threads at the same time can
       still hit the loader race. Expose the lock (or document a creation order) if a host needs
@@ -270,5 +302,3 @@ KiB, 176 B) and loaded (11.3-12.4 KiB, 584 B); see `docs/mcu.md`.
       Decide whether Windows matters.
 - [ ] Bench noise on shared CI runners may produce occasional false 15% flags. Consider a median of
       several runs.
-- [ ] `daedalus-rs` has a dev-dependency on the unpublished `daedalus-plugins-example-project`;
-      strip it before publishing the facade.
