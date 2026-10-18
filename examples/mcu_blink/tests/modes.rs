@@ -5,7 +5,7 @@
 mod common;
 
 use common::{Params, Reference, allocations, signal};
-use daedalus_mcu::loaded::LoadError;
+use daedalus_mcu::loaded::{LoadError, crc32};
 use daedalus_mcu::{McuError, ParamError, Scalar, Tunable};
 use daedalus_mcu_blink::loaded::{ARENA, Interpreter, LIBRARY, PLAN_A, PLAN_B};
 use daedalus_mcu_blink::{Graph, TunableGraph, tunable};
@@ -247,6 +247,11 @@ fn blob_a(library: &LibraryManifest, edit: impl FnOnce(&mut McuPlan)) -> Vec<u8>
     plan.to_blob(library).unwrap()
 }
 
+/// `body` with its CRC-32 appended, as a blob ends.
+fn sealed(body: &[u8]) -> Vec<u8> {
+    [body, &crc32(body).to_le_bytes()].concat()
+}
+
 #[test]
 fn rejects_invalid_blobs_and_keeps_the_running_plan() {
     let library = LibraryManifest::from_json(LIBRARY_JSON).unwrap();
@@ -288,8 +293,12 @@ fn rejects_invalid_blobs_and_keeps_the_running_plan() {
     let cases: [(&[u8], LoadError); 7] = [
         (&version, LoadError::Version { found: 9 }),
         (&PLAN_A[1..], LoadError::Malformed),
-        (&PLAN_A[..PLAN_A.len() - 1], LoadError::Malformed),
-        (&[PLAN_A, &[0]].concat(), LoadError::Malformed),
+        // Re-sealed with a valid checksum, so only the structure is wrong.
+        (&sealed(&PLAN_A[..PLAN_A.len() - 5]), LoadError::Malformed),
+        (
+            &sealed(&[&PLAN_A[..PLAN_A.len() - 4], &[0]].concat()),
+            LoadError::Malformed,
+        ),
         (
             &blob_a(&other, |_| {}),
             LoadError::Library {
@@ -302,6 +311,18 @@ fn rejects_invalid_blobs_and_keeps_the_running_plan() {
     ];
     for (blob, error) in cases {
         assert_eq!(loaded.interp.load(blob), Err(error));
+        assert_eq!(loaded.interp.plan_hash(), running);
+    }
+
+    // Corrupt or truncated transfers fail the checksum, before any structure is read.
+    let mut corrupt = PLAN_A.to_vec();
+    corrupt[40] ^= 0x10;
+    let padded = [PLAN_A, &[0]].concat();
+    for blob in [&corrupt[..], &PLAN_A[..PLAN_A.len() - 1], &padded[..]] {
+        assert!(matches!(
+            loaded.interp.load(blob),
+            Err(LoadError::Checksum { .. })
+        ));
         assert_eq!(loaded.interp.plan_hash(), running);
     }
 

@@ -2,7 +2,7 @@
 //! `daedalus_mcu::loaded`), and the plan manifest that names ports and parameters by id.
 
 use daedalus_data::model::Value;
-use daedalus_mcu::loaded::{FORMAT_VERSION, MAGIC};
+use daedalus_mcu::loaded::{FORMAT_VERSION, MAGIC, crc32};
 use daedalus_mcu::wire::Write;
 use daedalus_mcu::{Overflow, ParamSpec, ParamUpdate, Scalar, ScalarKind, name_hash};
 use serde::{Deserialize, Serialize};
@@ -25,8 +25,8 @@ fn unsupported(message: String) -> CompileError {
 }
 
 impl McuPlan {
-    /// Encode the plan as a blob for a firmware with `library` (deterministic: the same plan
-    /// and library give the same bytes).
+    /// Encode the plan as a blob for a firmware with `library`, ending with its CRC-32
+    /// (deterministic: the same plan and library give the same bytes).
     pub fn to_blob(&self, library: &LibraryManifest) -> Result<Vec<u8>, CompileError> {
         let mut w = Bytes(Vec::new());
         w.put(&MAGIC);
@@ -89,6 +89,8 @@ impl McuPlan {
         for port in &self.host_outputs {
             self.write_edge(&mut w, port.edges[0])?;
         }
+        let crc = crc32(&w.0);
+        w.0.extend_from_slice(&crc.to_le_bytes());
         Ok(w.0)
     }
 

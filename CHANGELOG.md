@@ -478,6 +478,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   (`thumbv7em`), 3716 -> 3392 B (`thumbv6m`); RAM unchanged (`MCU_COMPILED_SIZE`,
   docs/mcu.md).
 
+- **MCU: plan blobs `FORMAT_VERSION` 2, with a CRC-32 trailer.** The last four bytes of a blob
+  are the CRC-32 of the rest; `Interpreter::load` checks it before reading the plan and reports
+  `LoadError::Checksum { expected, found }`, so truncated or corrupt transfers no longer surface as
+  `Malformed`. `daedalus_mcu::loaded::crc32` computes it. Version 1 blobs are refused with
+  `LoadError::Version`; regenerate them with `daedalus-mcu plan`. Loaded firmware grows 164 B
+  (M4F) and 100 B (M0+).
+- **MCU: queues store values without an `Option` tag per slot.** `daedalus_mcu::Queue` keeps
+  `[MaybeUninit<T>; N]` and drops its live values. Compiled firmware drops 48 B of static RAM
+  (160 to 112 B) and 76 to 84 B of flash; tunable firmware drops the same RAM and 0.8 to 0.9 KiB
+  of flash.
+
 ## [3.0.0] - 2026-10-05
 
 ### Breaking changes

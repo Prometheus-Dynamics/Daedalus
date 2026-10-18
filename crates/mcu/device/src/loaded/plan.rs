@@ -13,6 +13,7 @@
 //!   Input = Absent | Edge(Edge) | Const(Scalar) | Param { value, min, max: Scalar }
 //!   Edge  = { from: Host(u16) | Node(u16, u8), capacity: u16, overflow: u8 }
 //! outputs: seq<Edge>                   the edge into each host output
+//! crc: u32 little-endian               CRC-32 of every byte before it
 //! ```
 //!
 //! Edges are numbered in order of appearance (node inputs, then host outputs), parameters
@@ -22,7 +23,7 @@
 use core::mem::{align_of, size_of};
 use core::ptr;
 
-use super::{FORMAT_VERSION, Library, LoadError, MAGIC, MAX_PORTS, NodeEntry, scalar_kind};
+use super::{FORMAT_VERSION, Library, LoadError, MAGIC, MAX_PORTS, NodeEntry, crc32, scalar_kind};
 use crate::param::ParamSpec;
 use crate::queue::{Overflow, Ring};
 use crate::wire::Reader;
@@ -156,7 +157,7 @@ pub(crate) fn walk(
         outputs: 0,
         stride: 0,
     };
-    walk.blob(Reader::new(blob))?;
+    walk.blob(blob)?;
     walk.finish()
 }
 
@@ -177,14 +178,27 @@ struct Walk<'l> {
 }
 
 impl Walk<'_> {
-    fn blob(&mut self, mut r: Reader<'_>) -> Result<(), LoadError> {
-        if r.bytes::<4>()? != MAGIC {
+    fn blob(&mut self, blob: &[u8]) -> Result<(), LoadError> {
+        // The header first: another version is refused whatever its checksum.
+        let mut header = Reader::new(blob);
+        if header.bytes::<4>()? != MAGIC {
             return Err(LoadError::Malformed);
         }
-        let found = r.u8()?;
+        let found = header.u8()?;
         if found != FORMAT_VERSION {
             return Err(LoadError::Version { found });
         }
+        let (body, trailer) = blob.split_last_chunk::<4>().ok_or(LoadError::Malformed)?;
+        // Checked once, when validating: the second walk reads the same bytes, already checked.
+        if self.base.is_null() {
+            let found = u32::from_le_bytes(*trailer);
+            let expected = crc32(body);
+            if expected != found {
+                return Err(LoadError::Checksum { expected, found });
+            }
+        }
+        let mut r = Reader::new(body);
+        r.bytes::<5>()?; // the magic and version, checked above
         let found = r.varint()?;
         if found != self.library.hash {
             return Err(LoadError::Library {

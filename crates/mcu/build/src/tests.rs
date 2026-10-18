@@ -449,6 +449,8 @@ fn blobs_are_deterministic_and_name_their_library() {
         blob[..5],
         [b'D', b'M', b'C', b'U', daedalus_mcu::loaded::FORMAT_VERSION]
     );
+    let (body, trailer) = blob.split_at(blob.len() - 4);
+    assert_eq!(trailer, daedalus_mcu::loaded::crc32(body).to_le_bytes());
     let mut header = daedalus_mcu::wire::Reader::new(&blob[5..]);
     assert_eq!(header.varint(), Ok(library.hash));
     assert_eq!(header.varint(), Ok(plan.hash));

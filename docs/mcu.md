@@ -35,7 +35,7 @@ Crates:
 | Graph changes | patches, hot reload, plugins | rebuild the plan on the device | rebuild the firmware, set parameters, or load a plan blob |
 | Payloads | `Payload` (`Arc<dyn Any>`, type keys, lineage) | same | typed values in typed queues |
 | Adapters | any registered adapter, GPU, foreign interfaces | CPU adapters | builtin numeric widening only |
-| Flash / RAM (measured below) | - | ~236 KiB flash, ~20-29 KB heap (one node) | ~3-13 KiB flash, 160-584 B RAM (five nodes) |
+| Flash / RAM (measured below) | - | ~236 KiB flash, ~20-29 KB heap (one node) | ~3-12 KiB flash, 112-584 B RAM (five nodes) |
 
 Use the MCU profile when the device is small (Cortex-M0+/M4 class, 32 KB of RAM or less) and
 its node set is fixed per firmware. Use the `no_std` runtime
@@ -51,7 +51,7 @@ the full runtime everywhere else.
 | Needs a firmware update for | any change | wiring, unmarked constants | new or changed node code |
 | Code | straight-line `tick`, nodes inlined | + parameter table, setters, update decoder | + interpreter, blob validator, one type-erased adapter per library node |
 | RAM | queues + state | + one field per parameter | a fixed arena (plan tables, queues, state, constants) |
-| Blink example, M0+ | 3.6 KiB flash, 160 B RAM | 6.9 KiB, 176 B | 12.4 KiB, 584 B |
+| Blink example, M0+ | 3.2 KiB flash, 112 B RAM | 5.8 KiB, 128 B | 12.2 KiB, 584 B |
 
 Choose compiled for minimal devices and frozen graphs (a production build of a graph tuned on a
 tunable build is compiled with `freeze_params`). Choose tunable when the structure is settled but
@@ -252,8 +252,8 @@ the host into **plan blobs** and loaded at run time.
    needs. Parameters work as in compiled mode (`Interpreter` implements `Tunable`; ids from the
    plan manifest).
 
-**Validation** (`LoadError`): the `DMCU` magic and the format version (`Version`), the library
-hash (`Library`), library entries and input counts (`Node`), required inputs without a source
+**Validation** (`LoadError`): the `DMCU` magic and the format version (`Version`), the trailing
+CRC-32 (`Checksum`, which also catches truncated or padded blobs), the library hash (`Library`), library entries and input counts (`Node`), required inputs without a source
 and constants of another type than their input (`Input`), edges whose producer does not exist,
 does not run before its consumer, or whose capacity or overflow policy is invalid (`Edge`),
 producer and consumer types that differ and do not widen (`Type`), parameters whose value,
@@ -262,8 +262,9 @@ range or type is invalid (`Param`), host ports of unknown types (`Port`), the ar
 
 **Transport and persistence** are the application's: receive the blob over UART, USB, BLE or
 CAN into a RAM buffer, or write it to a flash partition and pass the `&[u8]` from there, then
-call `load` between ticks. Frame and checksum the transfer (a CRC32 over the blob) and keep the
-last good blob to load at boot; the interpreter checks structure and types, not integrity.
+call `load` between ticks. The blob carries its own CRC-32, which `load` checks; the transport's
+framing and retransmission are the application's, and it should keep the last good blob to load
+at boot.
 
 **Over-the-air updates of node code are out of scope.** A blob can only use nodes the firmware's
 library contains; new or changed node functions need a firmware update (for example with
@@ -276,7 +277,7 @@ at most 8 inputs and outputs; constants and parameters are scalars.
 
 ### Formats and Versioning
 
-- **Plan blob** (`FORMAT_VERSION` 1), postcard encoding:
+- **Plan blob** (`FORMAT_VERSION` 2), postcard encoding:
 
   ```text
   magic [u8; 4] = "DMCU", version u8, library u64, plan u64,
@@ -286,6 +287,7 @@ at most 8 inputs and outputs; constants and parameters are scalars.
     Input = Absent | Edge(Edge) | Const(Scalar) | Param { value, min, max: Scalar }
     Edge  = { from: Host(u16) | Node(u16, u8), capacity: u16, overflow: u8 }
   outputs: seq<Edge>                   the edge into each host output
+  crc: u32 little-endian               CRC-32 (IEEE, `daedalus_mcu::loaded::crc32`) of every byte before it
   ```
 
   Names are 32-bit FNV-1a hashes (`daedalus_mcu::name_hash`); type ids are the `ScalarKind`
@@ -356,19 +358,20 @@ is `.vector_table + .text + .rodata + .data`, static RAM `.data + .bss`; no heap
 
 | Mode (firmware) | `thumbv7em-none-eabihf` (M4F) flash | `thumbv6m-none-eabi` (M0+) flash | Static RAM | Budget (flash / RAM) |
 | --- | --- | --- | --- | --- |
-| Compiled (`daedalus-mcu-blink`) | 3072 B | 3392 B | 160 B | 8 KiB / 512 B, and exactly these sizes |
-| Compiled + tunable, 4 parameters (`-tunable`) | 5932 B | 6764 B | 176 B | 10 KiB / 512 B |
-| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11516 B | 12396 B | 584 B | 16 KiB / 1 KiB |
+| Compiled (`daedalus-mcu-blink`) | 2988 B | 3316 B | 112 B | 8 KiB / 512 B, and exactly these sizes |
+| Compiled + tunable, 4 parameters (`-tunable`) | 5012 B | 5952 B | 128 B | 10 KiB / 512 B |
+| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11672 B | 12488 B | 584 B | 16 KiB / 1 KiB |
 
 - **Compiled**: 1024 B (M4F) / 192 B (M0+) of vector table; the M0+ code includes soft-float.
-  The 160 B of RAM are the whole `Graph` (eight queues, five state slots, the tick counter) plus
-  the `singleton!` flag; the stack adds what a tick's node calls need.
-- **Tunable**: +2.8 KiB (M4F) / +3.3 KiB (M0+): the type conversion and range check (with `f64`
+  The 112 B of RAM are the whole `Graph` (eight queues, five state slots, the tick counter) plus
+  the `singleton!` flag; the stack adds what a tick's node calls need. Queues store only their
+  values (`MaybeUninit`), so a queue costs its slots and its ring indices, not a tag per slot.
+- **Tunable**: +2.0 KiB (M4F) / +2.6 KiB (M0+): the type conversion and range check (with `f64`
   soft-float for `f64` values and parameters), the update decoder and the setters; +16 B of RAM
   for the four parameter fields.
-- **Loaded**: +8.2 KiB (M4F) / +8.8 KiB (M0+): the blob validator (about 2 KiB), the
-  interpreter, five adapters and the conversion code; the blobs are 174 B (plan A) and 123 B
-  (plan B). RAM is the 512 B arena plus the interpreter's state; plan A uses 424 B of the arena
+- **Loaded**: +8.5 KiB (M4F) / +9.0 KiB (M0+): the blob validator (about 2 KiB, with the CRC-32),
+  the interpreter, five adapters and the conversion code; the blobs are 177 B (plan A) and 127 B
+  (plan B), each with its 4-byte checksum. RAM is the 512 B arena plus the interpreter's state; plan A uses 424 B of the arena
   (plan tables about 280 B, queues, states, constants and parameter bounds the rest), plan B 312 B.
 
 For comparison, the `no_std` runtime running a one-node graph on the M4F takes ~213 KiB of code
