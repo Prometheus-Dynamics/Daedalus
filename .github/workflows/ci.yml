@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - dev
   pull_request:
 
 env:
@@ -39,7 +40,7 @@ jobs:
         name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev' }}
 
       - name: Run lints (file sizes, workspace deps, GPU async, rustfmt)
         run: ./scripts/ci.sh lints
