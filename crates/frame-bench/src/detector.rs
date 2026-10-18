@@ -1,17 +1,14 @@
-//! A detector-shaped graph: the parameter shapes, wiring and node group of a staged marker
-//! detector (mask prep into runs, quads from runs, decode, validate, refine), with handlers that
-//! only touch their inputs and refill pooled outputs, so the graph's own per-frame cost is what
-//! remains.
-//!
-//! Mask prep reads pixels through `FrameView::plane_bytes` (the owner feed's provider adapter
-//! lends it the frame without a copy); the other stages take the owner type by reference
-//! (`&SyntheticFrame`) and read only its metadata. Every stage takes a `Copy` config
-//! struct by value (`#[derive(NodeConfig)]`, with enum, integer, float and bool fields fed by
-//! graph constants), its state by `&mut` and the [`ExecutionContext`], and returns `Arc`'d
-//! outputs it reuses across frames; validation returns two. The frame fans out to four stages.
-//! [`compile_detector`] builds it as the flat per-stage graph or as one group node (an embedded
-//! graph registered as a `NodeDecl` with [`EMBEDDED_GRAPH_KEY`], which the planner expands into
-//! the same stages).
+//! A detector-shaped graph: the parameter shapes, wiring and node group of a staged synthetic marker
+//! detector (mask prep into runs, quads from runs, decode, validate, refine), with handlers that only
+//! touch their inputs and refill pooled outputs, so the graph's own per-frame cost is what remains.
+//! Mask prep reads pixels through `FrameView::plane_bytes` (the owner feed's provider adapter lends
+//! it the frame without a copy); the other stages take the owner type by reference
+//! (`&SyntheticFrame`) and read only its metadata. Every stage takes a `Copy` config struct by value
+//! (`#[derive(NodeConfig)]`, with enum, integer, float and bool fields fed by graph constants), its
+//! state by `&mut` and the [`ExecutionContext`], and returns `Arc`'d outputs it reuses across frames;
+//! validation returns two. The frame fans out to four stages. [`compile_detector`] builds it as the
+//! flat per-stage graph or as one group node (an embedded graph registered as a `NodeDecl` with
+//! [`EMBEDDED_GRAPH_KEY`], which the planner expands into the same stages).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -68,7 +65,7 @@ impl DetectorShape {
     }
 }
 
-/// Marker dictionary: a unit enum constant, named by its serde rename.
+/// Marker marker: a unit enum constant, named by its serde rename.
 #[derive(
     Clone,
     Copy,
@@ -81,16 +78,16 @@ impl DetectorShape {
     Serialize,
     Deserialize,
 )]
-#[daedalus(type_key = "daedalus.frame_bench:dictionary")]
-pub enum Dictionary {
-    #[serde(rename = "aruco_4x4_50")]
-    Aruco4x4_50,
-    #[serde(rename = "aruco_6x6_250")]
-    Aruco6x6_250,
-    #[serde(rename = "apriltag_16h5")]
-    AprilTag16h5,
-    #[serde(rename = "apriltag_36h11")]
-    AprilTag36h11,
+#[daedalus(type_key = "daedalus.frame_bench:marker")]
+pub enum Marker {
+    #[serde(rename = "grid_4x4")]
+    Grid4x4,
+    #[serde(rename = "grid_6x6")]
+    Grid6x6,
+    #[serde(rename = "ring_16")]
+    Ring16,
+    #[serde(rename = "ring_36")]
+    Ring36,
 }
 
 /// How bit cells are sampled.
@@ -152,8 +149,8 @@ pub struct QuadConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, NodeConfig, DaedalusToValue)]
 pub struct DecodeConfig {
-    #[port(default = "aruco_4x4_50")]
-    pub dictionary: Dictionary,
+    #[port(default = "grid_4x4")]
+    pub marker: Marker,
     #[port(default = "mean3x3_otsu")]
     pub sampler: Sampler,
     #[port(default = 128, min = 0, max = 255)]
@@ -170,8 +167,8 @@ pub struct DecodeConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, NodeConfig, DaedalusToValue)]
 pub struct ValidateConfig {
-    #[port(default = "aruco_4x4_50")]
-    pub dictionary: Dictionary,
+    #[port(default = "grid_4x4")]
+    pub marker: Marker,
     #[port(default = true)]
     pub require_convex: bool,
     #[port(default = 30, min = 0, max = 4000)]
@@ -405,7 +402,7 @@ pub fn decode(
         detections.items.clear();
         detections.items.extend_from_slice(&quads.items);
         (detections.frame_width, detections.frame_height) = (width, height);
-        std::hint::black_box((config.dictionary, config.sampler, config.threshold));
+        std::hint::black_box((config.marker, config.sampler, config.threshold));
     }))
 }
 
@@ -471,7 +468,7 @@ pub fn refine(
 /// The detector stages, their types and the config enums.
 #[plugin(
     id = "daedalus.frame_bench.detector",
-    types(Runs, Dictionary, Sampler),
+    types(Runs, Marker, Sampler),
     values(Quads, Detections, RejectedMarkers, RefinedCorners),
     nodes(mask_prep_runs, quads_from_runs, decode, validate, refine)
 )]
@@ -527,7 +524,7 @@ fn install_error(error: impl ToString) -> PluginError {
 }
 
 /// Registers [`DETECTOR_GROUP_ID`]: the stages in an embedded graph behind one node whose config
-/// ports are the stages' parameters (a port two stages share, `dictionary`, feeds both).
+/// ports are the stages' parameters (a port two stages share, `marker`, feeds both).
 pub fn register_detector_group(registry: &mut PluginRegistry) -> Result<(), PluginError> {
     let capabilities = registry.combined_transport_capabilities()?;
     let stages = stages();
@@ -604,9 +601,8 @@ pub fn register_detector_group(registry: &mut PluginRegistry) -> Result<(), Plug
         let Some(port) = stage.ports.iter().find(|port| port.name == *name) else {
             continue;
         };
-        let port = if name == "dictionary" {
-            port.clone()
-                .const_value(Dictionary::AprilTag36h11.to_value())
+        let port = if name == "marker" {
+            port.clone().const_value(Marker::Ring36.to_value())
         } else {
             port.clone()
         };
@@ -656,21 +652,21 @@ fn port(alias: &str, port: &str) -> PortHandle {
 }
 
 /// The detector graph for `shape`: host `frame` (the [`SyntheticFrame`] owner type, fed with
-/// [`crate::FrameFeed::Owner`]) in, [`DETECTOR_OUTPUTS`] out, dictionary `apriltag_36h11`.
+/// [`crate::FrameFeed::Owner`]) in, [`DETECTOR_OUTPUTS`] out, marker `ring_36`.
 pub fn detector_graph(
     registry: &PluginRegistry,
     shape: DetectorShape,
 ) -> Result<Graph, BenchError> {
-    detector_graph_for(registry, shape, Dictionary::AprilTag36h11)
+    detector_graph_for(registry, shape, Marker::Ring36)
 }
 
-/// [`detector_graph`] decoding `dictionary`.
+/// [`detector_graph`] decoding `marker`.
 pub fn detector_graph_for(
     registry: &PluginRegistry,
     shape: DetectorShape,
-    dictionary: Dictionary,
+    marker: Marker,
 ) -> Result<Graph, BenchError> {
-    let dictionary = Some(dictionary.to_value());
+    let marker = Some(marker.to_value());
     let builder = registry
         .graph_builder()?
         .input_typed::<SyntheticFrame>("frame")?;
@@ -681,7 +677,7 @@ pub fn detector_graph_for(
             .try_connect(&port("detector", "detections"), "detections")?
             .try_connect(&port("detector", "rejected"), "rejected")?
             .try_connect(&port("detector", "refined_corners"), "refined_corners")?
-            .const_input(&port("detector", "dictionary"), dictionary),
+            .const_input(&port("detector", "marker"), marker),
         DetectorShape::Flat => builder
             .try_node_id(MASK_PREP, "mask_prep")?
             .try_node_id(QUADS, "quads")?
@@ -691,7 +687,7 @@ pub fn detector_graph_for(
             .try_connect("frame", &port("decode", "frame"))?
             .try_connect(&port("quads", "quads"), &port("decode", "quads"))?
             .const_input(&port("mask_prep", "pyramid_level"), Some(Value::Int(1)))
-            .const_input(&port("decode", "dictionary"), dictionary.clone())
+            .const_input(&port("decode", "marker"), marker.clone())
             .const_input(&port("decode", "validate"), Some(Value::Bool(false)))
             .try_node_id(VALIDATE, "validate")?
             .try_connect("frame", &port("validate", "frame"))?
@@ -700,7 +696,7 @@ pub fn detector_graph_for(
                 &port("validate", "detections"),
             )?
             .try_connect(&port("validate", "rejected"), "rejected")?
-            .const_input(&port("validate", "dictionary"), dictionary)
+            .const_input(&port("validate", "marker"), marker)
             .try_connect(&port("validate", "detections"), "detections")?
             .try_node_id(REFINE, "refine")?
             .try_connect("frame", &port("refine", "frame"))?

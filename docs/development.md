@@ -546,7 +546,8 @@ Cortex-A76 cores will be higher.
 ### Detector-shaped frame (tick-cost pass)
 
 `cargo run --release -p daedalus-frame-bench --example detector` drives a graph shaped like a
-staged marker detector (`crates/frame-bench/src/detector.rs`, the stage shapes of a typical marker detector): five typed `#[node]` stages (mask prep, quads, decode, validate, refine)
+staged synthetic marker detector (`crates/frame-bench/src/detector.rs`, the stage shapes of a
+marker detector): five typed `#[node]` stages (mask prep, quads, decode, validate, refine)
 with `Copy` config structs fed by constants (enum, integer, float and bool fields, 34 const
 ports), state, the `ExecutionContext` and `Arc`'d struct outputs (validate returns two), the
 owner frame fanned out to four stages (mask prep reads pixels through
@@ -686,7 +687,7 @@ Raspberry Pi CM5 (aarch64) fusion runs are recorded in [benchmarks-log.md](bench
 ### Shared preprocessing (execution domains)
 
 `cargo run --release -p daedalus-frame-bench --example shared_detectors` runs N detector graphs
-on one camera (`SHARED_DETECTORS`, default 2, up to 4 dictionaries) three ways in an
+on one camera (`SHARED_DETECTORS`, default 2, up to 4 marker families) three ways in an
 `ExecutionDomain`: `separate` (N full detectors, each running mask prep and quads), `shared`
 (a `preprocess` graph linked to N decode/validate/refine tails) and `structural`
 (`load_shared` on the N full graphs, which finds the same split from the `shareable` stages).

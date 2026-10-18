@@ -12,9 +12,9 @@
 
 use daedalus::engine::{EngineConfig, MetricsLevel};
 use daedalus_frame_bench::{
-    CountingAllocator, DETECTOR_OUTPUTS, Dictionary, FrameBenchConfig, FrameFeed,
-    FrameSourceConfig, SyntheticFrameSource, compile_separate_detectors, compile_shared_detectors,
-    compile_structural_detectors, dictionary_name, run_domain_bench,
+    CountingAllocator, DETECTOR_OUTPUTS, FrameBenchConfig, FrameFeed, FrameSourceConfig, Marker,
+    SyntheticFrameSource, compile_separate_detectors, compile_shared_detectors,
+    compile_structural_detectors, marker_name, run_domain_bench,
 };
 
 #[global_allocator]
@@ -22,11 +22,11 @@ static ALLOC: CountingAllocator = CountingAllocator::system();
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
-const ALL: [Dictionary; 4] = [
-    Dictionary::AprilTag36h11,
-    Dictionary::Aruco4x4_50,
-    Dictionary::AprilTag16h5,
-    Dictionary::Aruco6x6_250,
+const ALL: [Marker; 4] = [
+    Marker::Ring36,
+    Marker::Grid4x4,
+    Marker::Ring16,
+    Marker::Grid6x6,
 ];
 
 fn main() -> Result<(), Error> {
@@ -44,7 +44,7 @@ fn main() -> Result<(), Error> {
     let bench = FrameBenchConfig::new(DETECTOR_OUTPUTS).with_ticks(ticks / 5, ticks);
     let outputs: Vec<(&str, &str)> = detectors
         .iter()
-        .flat_map(|&d| DETECTOR_OUTPUTS.map(|port| (dictionary_name(d), port)))
+        .flat_map(|&d| DETECTOR_OUTPUTS.map(|port| (marker_name(d), port)))
         .collect();
     for record in [false, true] {
         for layout in ["separate", "shared", "structural"] {

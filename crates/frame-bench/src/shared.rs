@@ -1,11 +1,11 @@
 //! Shared preprocessing: one camera's mask prep and quads computed once per frame for several
-//! detector graphs (one per dictionary) in an [`ExecutionDomain`], against one full detector
-//! graph per dictionary.
+//! detector graphs (one per marker) in an [`ExecutionDomain`], against one full detector
+//! graph per marker.
 //!
 //! [`compile_shared_detectors`] lays the domain out by hand: a `preprocess` graph
-//! (`frame -> mask_prep -> quads -> host.quads`) linked to one tail graph per dictionary
+//! (`frame -> mask_prep -> quads -> host.quads`) linked to one tail graph per marker
 //! (`frame, quads -> decode -> validate -> refine`), the frame routed to all of them.
-//! [`compile_structural_detectors`] loads the full per-dictionary graphs with
+//! [`compile_structural_detectors`] loads the full per-marker graphs with
 //! [`ExecutionDomain::load_shared`], which finds the same split from the `shareable` stages.
 
 use std::time::Instant;
@@ -20,8 +20,8 @@ use daedalus::{
 
 use crate::chain::BenchError;
 use crate::detector::{
-    DECODE, DetectorShape, Dictionary, MASK_PREP, QUADS, Quads, REFINE, VALIDATE,
-    detector_graph_for, detector_registry,
+    DECODE, DetectorShape, MASK_PREP, Marker, QUADS, Quads, REFINE, VALIDATE, detector_graph_for,
+    detector_registry,
 };
 use crate::source::{SyntheticFrame, SyntheticFrameSource};
 use crate::{FrameBenchConfig, InstructionCounter, percentile};
@@ -29,13 +29,13 @@ use crate::{FrameBenchConfig, InstructionCounter, percentile};
 /// Name of the preprocessing graph [`compile_shared_detectors`] builds.
 pub const PREPROCESS_GRAPH: &str = "preprocess";
 
-/// The graph name of a dictionary's detector in a shared-detector domain.
-pub fn dictionary_name(dictionary: Dictionary) -> &'static str {
-    match dictionary {
-        Dictionary::Aruco4x4_50 => "aruco_4x4_50",
-        Dictionary::Aruco6x6_250 => "aruco_6x6_250",
-        Dictionary::AprilTag16h5 => "apriltag_16h5",
-        Dictionary::AprilTag36h11 => "apriltag_36h11",
+/// The graph name of a marker's detector in a shared-detector domain.
+pub fn marker_name(marker: Marker) -> &'static str {
+    match marker {
+        Marker::Grid4x4 => "grid_4x4",
+        Marker::Grid6x6 => "grid_6x6",
+        Marker::Ring16 => "ring_16",
+        Marker::Ring36 => "ring_36",
     }
 }
 
@@ -57,13 +57,10 @@ pub fn preprocess_graph(registry: &PluginRegistry) -> Result<Graph, BenchError> 
         .build())
 }
 
-/// `frame, quads -> decode -> validate -> refine` decoding `dictionary`, with the flat
+/// `frame, quads -> decode -> validate -> refine` decoding `marker`, with the flat
 /// detector's constants and host outputs.
-pub fn detector_tail_graph(
-    registry: &PluginRegistry,
-    dictionary: Dictionary,
-) -> Result<Graph, BenchError> {
-    let dictionary = Some(dictionary.to_value());
+pub fn detector_tail_graph(registry: &PluginRegistry, marker: Marker) -> Result<Graph, BenchError> {
+    let marker = Some(marker.to_value());
     Ok(registry
         .graph_builder()?
         .input_typed::<SyntheticFrame>("frame")?
@@ -73,14 +70,14 @@ pub fn detector_tail_graph(
         .try_node_id(REFINE, "refine")?
         .try_connect("frame", &port("decode", "frame"))?
         .try_connect("quads", &port("decode", "quads"))?
-        .const_input(&port("decode", "dictionary"), dictionary.clone())
+        .const_input(&port("decode", "marker"), marker.clone())
         .const_input(&port("decode", "validate"), Some(Value::Bool(false)))
         .try_connect("frame", &port("validate", "frame"))?
         .try_connect(
             &port("decode", "detections"),
             &port("validate", "detections"),
         )?
-        .const_input(&port("validate", "dictionary"), dictionary)
+        .const_input(&port("validate", "marker"), marker)
         .try_connect(&port("validate", "detections"), "detections")?
         .try_connect(&port("validate", "rejected"), "rejected")?
         .try_connect("frame", &port("refine", "frame"))?
@@ -103,10 +100,10 @@ fn compile(
 }
 
 /// The hand-laid domain: [`PREPROCESS_GRAPH`] linked (latest-only) to one
-/// [`detector_tail_graph`] per dictionary, named by [`dictionary_name`]; domain input `frame`
+/// [`detector_tail_graph`] per marker, named by [`marker_name`]; domain input `frame`
 /// routed to all of them.
 pub fn compile_shared_detectors(
-    dictionaries: &[Dictionary],
+    markers: &[Marker],
     config: EngineConfig,
 ) -> Result<ExecutionDomain<HandlerRegistry>, BenchError> {
     let registry = detector_registry()?;
@@ -117,13 +114,9 @@ pub fn compile_shared_detectors(
         compile(&engine, &registry, preprocess_graph(&registry)?)?,
     )?;
     domain.route_input("frame", PREPROCESS_GRAPH, "frame")?;
-    for &dictionary in dictionaries {
-        let name = dictionary_name(dictionary);
-        let graph = compile(
-            &engine,
-            &registry,
-            detector_tail_graph(&registry, dictionary)?,
-        )?;
+    for &marker in markers {
+        let name = marker_name(marker);
+        let graph = compile(&engine, &registry, detector_tail_graph(&registry, marker)?)?;
         domain.add_graph(name, graph)?;
         domain.route_input("frame", name, "frame")?;
         domain.link(PREPROCESS_GRAPH, "quads", name, "quads", LinkMode::Latest)?;
@@ -131,36 +124,36 @@ pub fn compile_shared_detectors(
     Ok(domain)
 }
 
-/// One full flat detector per dictionary, compiled separately (the unshared baseline).
+/// One full flat detector per marker, compiled separately (the unshared baseline).
 pub fn compile_separate_detectors(
-    dictionaries: &[Dictionary],
+    markers: &[Marker],
     config: EngineConfig,
 ) -> Result<ExecutionDomain<HandlerRegistry>, BenchError> {
     let registry = detector_registry()?;
     let engine = Engine::new(config.with_host_event_recording(false))?;
     let mut domain = ExecutionDomain::new();
-    for &dictionary in dictionaries {
-        let name = dictionary_name(dictionary);
-        let graph = detector_graph_for(&registry, DetectorShape::Flat, dictionary)?;
+    for &marker in markers {
+        let name = marker_name(marker);
+        let graph = detector_graph_for(&registry, DetectorShape::Flat, marker)?;
         domain.add_graph(name, compile(&engine, &registry, graph)?)?;
         domain.route_input("frame", name, "frame")?;
     }
     Ok(domain)
 }
 
-/// The full per-dictionary detectors loaded with [`ExecutionDomain::load_shared`]: the
+/// The full per-marker detectors loaded with [`ExecutionDomain::load_shared`]: the
 /// `shareable` mask prep and quads stages run once in the shared upstream.
 pub fn compile_structural_detectors(
-    dictionaries: &[Dictionary],
+    markers: &[Marker],
     config: EngineConfig,
 ) -> Result<ExecutionDomain<HandlerRegistry>, BenchError> {
     let registry = detector_registry()?;
     let engine = Engine::new(config.with_host_event_recording(false))?;
-    let graphs = dictionaries
+    let graphs = markers
         .iter()
-        .map(|&dictionary| {
-            let graph = detector_graph_for(&registry, DetectorShape::Flat, dictionary)?;
-            Ok((dictionary_name(dictionary), graph))
+        .map(|&marker| {
+            let graph = detector_graph_for(&registry, DetectorShape::Flat, marker)?;
+            Ok((marker_name(marker), graph))
         })
         .collect::<Result<Vec<_>, BenchError>>()?;
     Ok(ExecutionDomain::load_shared(&engine, &registry, graphs)?)

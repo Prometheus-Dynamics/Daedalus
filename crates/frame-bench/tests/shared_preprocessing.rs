@@ -7,10 +7,10 @@ use std::sync::Mutex;
 use daedalus::engine::{EngineConfig, ExecutionDomain, MetricsLevel};
 use daedalus::runtime::handler_registry::HandlerRegistry;
 use daedalus_frame_bench::{
-    CountingAllocator, DETECTOR_OUTPUTS, Detections, Dictionary, FrameBenchConfig, FrameFeed,
-    FrameSourceConfig, PREPROCESS_GRAPH, RefinedCorners, RejectedMarkers, SyntheticFrameSource,
-    compile_separate_detectors, compile_shared_detectors, compile_structural_detectors,
-    dictionary_name, run_domain_bench,
+    CountingAllocator, DETECTOR_OUTPUTS, Detections, FrameBenchConfig, FrameFeed,
+    FrameSourceConfig, Marker, PREPROCESS_GRAPH, RefinedCorners, RejectedMarkers,
+    SyntheticFrameSource, compile_separate_detectors, compile_shared_detectors,
+    compile_structural_detectors, marker_name, run_domain_bench,
 };
 
 #[global_allocator]
@@ -19,7 +19,7 @@ static ALLOC: CountingAllocator = CountingAllocator::system();
 /// Allocation counters are process-wide: one measurement at a time.
 static SERIAL: Mutex<()> = Mutex::new(());
 
-const DICTIONARIES: [Dictionary; 2] = [Dictionary::Aruco4x4_50, Dictionary::AprilTag36h11];
+const MARKERS: [Marker; 2] = [Marker::Grid4x4, Marker::Ring36];
 
 fn config() -> EngineConfig {
     EngineConfig::default().with_metrics_level(MetricsLevel::Off)
@@ -47,10 +47,10 @@ fn frame(
         .expect("push");
     let tick = domain.tick();
     assert!(tick.is_ok(), "{tick:?}");
-    DICTIONARIES
+    MARKERS
         .iter()
-        .map(|&dictionary| {
-            let name = dictionary_name(dictionary);
+        .map(|&marker| {
+            let name = marker_name(marker);
             let mut take = |port: &str| domain.take_payload(name, port).expect(port);
             let detections = take("detections");
             let rejected = take("rejected");
@@ -76,9 +76,9 @@ fn frame(
 #[test]
 fn shared_preprocessing_matches_separate_detectors() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let mut separate = compile_separate_detectors(&DICTIONARIES, config()).expect("separate");
-    let mut shared = compile_shared_detectors(&DICTIONARIES, config()).expect("shared");
-    let mut structural = compile_structural_detectors(&DICTIONARIES, config()).expect("loaded");
+    let mut separate = compile_separate_detectors(&MARKERS, config()).expect("separate");
+    let mut shared = compile_shared_detectors(&MARKERS, config()).expect("shared");
+    let mut structural = compile_structural_detectors(&MARKERS, config()).expect("loaded");
     let (mut a, mut b, mut c) = (source(), source(), source());
     for _ in 0..32 {
         let expected = frame(&mut separate, &mut a);
@@ -113,7 +113,7 @@ fn shared_preprocessing_matches_separate_detectors() {
         "{explanation}"
     );
     let detector = explanation
-        .graph(dictionary_name(DICTIONARIES[0]))
+        .graph(marker_name(MARKERS[0]))
         .expect("detector");
     assert_eq!(
         detector.nodes,
@@ -131,15 +131,15 @@ fn shared_preprocessing_frames_allocate_and_copy_nothing() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for structural in [false, true] {
         let mut domain = if structural {
-            compile_structural_detectors(&DICTIONARIES, config())
+            compile_structural_detectors(&MARKERS, config())
         } else {
-            compile_shared_detectors(&DICTIONARIES, config())
+            compile_shared_detectors(&MARKERS, config())
         }
         .expect("domain");
         domain.enable_frame_overhead(256);
-        let outputs: Vec<(&str, &str)> = DICTIONARIES
+        let outputs: Vec<(&str, &str)> = MARKERS
             .iter()
-            .flat_map(|&d| DETECTOR_OUTPUTS.map(|port| (dictionary_name(d), port)))
+            .flat_map(|&d| DETECTOR_OUTPUTS.map(|port| (marker_name(d), port)))
             .collect();
         let run = run_domain_bench(
             &mut domain,
