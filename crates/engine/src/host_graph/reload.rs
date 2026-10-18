@@ -2,7 +2,9 @@
 //! state of the nodes and host ports that survive the change.
 
 use crate::prelude::*;
-use daedalus_planner::{Graph, GraphDocument};
+use daedalus_planner::Graph;
+#[cfg(feature = "plugins")]
+use daedalus_planner::GraphDocument;
 use daedalus_runtime::executor::NodeHandler;
 use daedalus_runtime::host_bridge::DroppedHostPorts;
 use daedalus_runtime::node_instance_keys;
