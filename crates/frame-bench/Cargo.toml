@@ -17,6 +17,10 @@ daedalus = { workspace = true, features = ["engine", "plugins", "threads", "allo
 libc = { workspace = true }
 serde = { workspace = true }
 
+[features]
+# Runtime worker pool for the Parallel and Adaptive modes (`FRAME_BENCH_MODE`); see the examples.
+executor-pool = ["daedalus/executor-pool"]
+
 [dev-dependencies]
 criterion = { workspace = true }
 

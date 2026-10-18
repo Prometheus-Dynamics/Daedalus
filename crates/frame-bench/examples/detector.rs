@@ -6,6 +6,7 @@
 //! cargo run --release -p daedalus-frame-bench --example detector
 //! FRAME_CHAIN_TICKS=20000 cargo run --release -p daedalus-frame-bench --example detector
 //! DAEDALUS_NODE_FUSION=0 cargo run --release -p daedalus-frame-bench --example detector
+//! FRAME_BENCH_MODE=parallel cargo run --release -p daedalus-frame-bench --example detector
 //! ```
 // The report is this example's output.
 #![allow(clippy::print_stdout)]
@@ -14,6 +15,7 @@ use daedalus::engine::{EngineConfig, MetricsLevel};
 use daedalus_frame_bench::{
     CountingAllocator, DETECTOR_OUTPUTS, DetectorShape, FrameBenchConfig, FrameFeed,
     FrameSourceConfig, SyntheticFrameSource, compile_detector, run_frame_bench,
+    runtime_mode_from_env,
 };
 
 #[global_allocator]
@@ -44,7 +46,8 @@ fn main() -> Result<(), Error> {
             }
             let mut config = EngineConfig::default()
                 .with_metrics_level(MetricsLevel::Off)
-                .with_node_fusion(daedalus_frame_bench::node_fusion_from_env());
+                .with_node_fusion(daedalus_frame_bench::node_fusion_from_env())
+                .with_runtime_mode(runtime_mode_from_env()?);
             if record {
                 config = config.with_frame_overhead(ticks);
             }

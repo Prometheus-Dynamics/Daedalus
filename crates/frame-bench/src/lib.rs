@@ -219,6 +219,23 @@ pub fn node_fusion_from_env() -> bool {
     })
 }
 
+/// `FRAME_BENCH_MODE` (`serial`, `parallel` or `adaptive`; serial when unset), the runtime mode
+/// the bench examples run, for comparing the worker pools (`daedalus-rs/executor-pool` or not).
+pub fn runtime_mode_from_env() -> Result<daedalus::engine::RuntimeMode, String> {
+    use daedalus::engine::RuntimeMode;
+    let Ok(value) = std::env::var("FRAME_BENCH_MODE") else {
+        return Ok(RuntimeMode::Serial);
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "serial" => Ok(RuntimeMode::Serial),
+        "parallel" => Ok(RuntimeMode::Parallel),
+        "adaptive" => Ok(RuntimeMode::Adaptive),
+        other => Err(format!(
+            "FRAME_BENCH_MODE must be serial, parallel or adaptive, not {other:?}"
+        )),
+    }
+}
+
 /// Nearest-rank percentile `q` of sorted `values`.
 fn percentile(values: &[u64], q: usize) -> u64 {
     values
