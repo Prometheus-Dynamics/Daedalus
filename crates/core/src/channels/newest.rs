@@ -121,7 +121,9 @@ impl<T> core::fmt::Debug for NewestSender<T> {
 
 pub struct NewestReceiver<T> {
     inner: Arc<NewestInner<T>>,
-    last_seen: Mutex<Option<Sequence>>,
+    /// Sequence of the last value this receiver returned, plus one (0: none yet). Only read and
+    /// written while holding the slot lock, so it needs no lock of its own.
+    last_seen: AtomicU64,
 }
 
 impl<T> Clone for NewestReceiver<T> {
@@ -129,7 +131,7 @@ impl<T> Clone for NewestReceiver<T> {
         self.inner.receivers.fetch_add(1, Ordering::Relaxed);
         Self {
             inner: Arc::clone(&self.inner),
-            last_seen: Mutex::new(None),
+            last_seen: AtomicU64::new(0),
         }
     }
 }
@@ -149,7 +151,7 @@ pub fn newest<T>() -> (NewestSender<T>, NewestReceiver<T>) {
         },
         NewestReceiver {
             inner,
-            last_seen: Mutex::new(None),
+            last_seen: AtomicU64::new(0),
         },
     )
 }
@@ -168,7 +170,7 @@ pub fn newest_with_metrics<T>(
         },
         NewestReceiver {
             inner,
-            last_seen: Mutex::new(None),
+            last_seen: AtomicU64::new(0),
         },
     )
 }
@@ -183,7 +185,7 @@ pub fn newest_with_behavior<T>(
         },
         NewestReceiver {
             inner,
-            last_seen: Mutex::new(None),
+            last_seen: AtomicU64::new(0),
         },
     )
 }
@@ -200,7 +202,7 @@ pub fn newest_with_metrics_and_behavior<T>(
         },
         NewestReceiver {
             inner,
-            last_seen: Mutex::new(None),
+            last_seen: AtomicU64::new(0),
         },
     )
 }
@@ -229,7 +231,7 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for NewestSender<T> {
 
 impl<T: Send + Sync> ChannelRecv<Arc<T>> for NewestReceiver<T> {
     fn try_recv(&self) -> RecvOutcome<Arc<T>> {
-        let mut last_seen = crate::lock_recover(&self.last_seen);
+        // One lock per poll: the slot lock also orders the `last_seen` update.
         let guard = crate::lock_recover(&self.inner.slot);
         let Some((seq, value)) = guard.as_ref() else {
             return if self.inner.closed.load(Ordering::Acquire) {
@@ -238,14 +240,17 @@ impl<T: Send + Sync> ChannelRecv<Arc<T>> for NewestReceiver<T> {
                 RecvOutcome::Empty
             };
         };
-        if last_seen.map(|seen| seq <= &seen).unwrap_or(false) {
+        let seen = self.last_seen.load(Ordering::Relaxed);
+        // Stored as "last seen + 1", so `seq <= last seen` is `seq < seen`.
+        if seen != 0 && seq.value() < seen {
             return if self.inner.closed.load(Ordering::Acquire) {
                 RecvOutcome::Closed
             } else {
                 RecvOutcome::Empty
             };
         }
-        *last_seen = Some(*seq);
+        self.last_seen
+            .store(seq.value().saturating_add(1), Ordering::Relaxed);
         self.inner.drained.fetch_add(1, Ordering::Relaxed);
         RecvOutcome::Data(Arc::clone(value))
     }
@@ -257,7 +262,8 @@ impl<T> NewestReceiver<T> {
             enqueued: self.inner.enqueued.load(Ordering::Relaxed),
             dropped: self.inner.dropped.load(Ordering::Relaxed),
             drained: self.inner.drained.load(Ordering::Relaxed),
-            depth: 0,
+            // The slot holds at most one value.
+            depth: usize::from(crate::lock_recover(&self.inner.slot).is_some()),
             closed: self.inner.closed.load(Ordering::Relaxed),
         }
     }
@@ -283,6 +289,17 @@ mod tests {
             rx.try_recv(),
             RecvOutcome::Empty | RecvOutcome::Closed
         ));
+    }
+
+    #[test]
+    fn newest_depth_reports_the_slot() {
+        let (tx, rx) = newest::<u64>();
+        assert_eq!(rx.stats().depth, 0);
+        tx.send(Arc::new(1));
+        tx.send(Arc::new(2));
+        assert_eq!(rx.stats().depth, 1);
+        assert_eq!(rx.try_recv(), RecvOutcome::Data(Arc::new(2)));
+        assert_eq!(rx.stats().depth, 1);
     }
 
     #[test]

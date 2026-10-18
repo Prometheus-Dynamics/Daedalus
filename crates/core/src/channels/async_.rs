@@ -307,6 +307,39 @@ mod tests {
         );
     }
 
+    /// Regression: senders and receivers once shared one `Notify`, so the receive that freed
+    /// space could wake a parked receiver instead of the blocked sender, stranding the sender.
+    #[test]
+    fn bounded_blocked_sender_wakes_when_a_receiver_is_parked() {
+        use core::future::Future;
+        use core::pin::pin;
+        use core::task::{Context, Poll, Waker};
+
+        let (tx, rx1) = bounded_async::<u32>(1);
+        let rx2 = AsyncReceiver {
+            inner: Arc::clone(&rx1.inner),
+            recv_fn: rx1.recv_fn,
+        };
+        let tx2 = AsyncSender {
+            inner: Arc::clone(&tx.inner),
+            send_fn: tx.send_fn,
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        // Both receivers park on the empty channel, in order.
+        let mut r1 = pin!(rx1.recv());
+        let mut r2 = pin!(rx2.recv());
+        assert!(r1.as_mut().poll(&mut cx).is_pending());
+        assert!(r2.as_mut().poll(&mut cx).is_pending());
+        // The send wakes r1; then a second sender blocks on the full channel.
+        let mut s1 = pin!(tx.send(7));
+        assert_eq!(s1.as_mut().poll(&mut cx), Poll::Ready(Backpressure::Ok));
+        let mut s2 = pin!(tx2.send(8));
+        assert!(s2.as_mut().poll(&mut cx).is_pending());
+        // r1 takes the item and frees space: the blocked sender must be the one woken.
+        assert_eq!(r1.as_mut().poll(&mut cx), Poll::Ready(RecvOutcome::Data(7)));
+        assert_eq!(s2.as_mut().poll(&mut cx), Poll::Ready(Backpressure::Ok));
+    }
+
     #[tokio::test]
     async fn broadcast_recv_wakes_on_send() {
         let (tx, rx) = broadcast_async(1);

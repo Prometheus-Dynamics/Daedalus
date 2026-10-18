@@ -9,18 +9,37 @@ use crate::metrics::MetricsSink;
 #[cfg(feature = "async-channels")]
 use tokio::sync::Notify;
 
+/// Aligns its value to a cache line so counters written by different threads (producers update
+/// `enqueued`, consumers `drained`) do not false-share.
+#[repr(align(128))]
+struct CachePadded<T>(T);
+
+impl<T> core::ops::Deref for CachePadded<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
 struct BoundedInner<T> {
     queue: ArrayQueue<T>,
     closed: AtomicBool,
     senders: AtomicUsize,
     receivers: AtomicUsize,
-    enqueued: AtomicU64,
+    enqueued: CachePadded<AtomicU64>,
     dropped: AtomicU64,
-    drained: AtomicU64,
-    depth: AtomicUsize,
+    drained: CachePadded<AtomicU64>,
+    depth: CachePadded<AtomicUsize>,
     close_behavior: CloseBehavior,
+    /// Wakes receivers waiting for an item (signalled by a successful send).
     #[cfg(feature = "async-channels")]
-    notify: Arc<Notify>,
+    data_notify: Arc<Notify>,
+    /// Wakes senders waiting for room (signalled by a successful receive). Kept apart from
+    /// `data_notify`: one shared `Notify` could hand a receive's wakeup to a receiver while the
+    /// blocked sender sleeps on, and no further wakeup would come.
+    #[cfg(feature = "async-channels")]
+    space_notify: Arc<Notify>,
     #[cfg(feature = "metrics")]
     metrics: Option<Arc<dyn MetricsSink>>,
 }
@@ -32,13 +51,15 @@ impl<T> BoundedInner<T> {
             closed: AtomicBool::new(false),
             senders: AtomicUsize::new(1),
             receivers: AtomicUsize::new(1),
-            enqueued: AtomicU64::new(0),
+            enqueued: CachePadded(AtomicU64::new(0)),
             dropped: AtomicU64::new(0),
-            drained: AtomicU64::new(0),
-            depth: AtomicUsize::new(0),
+            drained: CachePadded(AtomicU64::new(0)),
+            depth: CachePadded(AtomicUsize::new(0)),
             close_behavior,
             #[cfg(feature = "async-channels")]
-            notify: Arc::new(Notify::new()),
+            data_notify: Arc::new(Notify::new()),
+            #[cfg(feature = "async-channels")]
+            space_notify: Arc::new(Notify::new()),
             #[cfg(feature = "metrics")]
             metrics: None,
         }
@@ -55,13 +76,15 @@ impl<T> BoundedInner<T> {
             closed: AtomicBool::new(false),
             senders: AtomicUsize::new(1),
             receivers: AtomicUsize::new(1),
-            enqueued: AtomicU64::new(0),
+            enqueued: CachePadded(AtomicU64::new(0)),
             dropped: AtomicU64::new(0),
-            drained: AtomicU64::new(0),
-            depth: AtomicUsize::new(0),
+            drained: CachePadded(AtomicU64::new(0)),
+            depth: CachePadded(AtomicUsize::new(0)),
             close_behavior,
             #[cfg(feature = "async-channels")]
-            notify: Arc::new(Notify::new()),
+            data_notify: Arc::new(Notify::new()),
+            #[cfg(feature = "async-channels")]
+            space_notify: Arc::new(Notify::new()),
             metrics: Some(metrics),
         }
     }
@@ -69,7 +92,10 @@ impl<T> BoundedInner<T> {
     fn mark_closed(&self) {
         self.closed.store(true, Ordering::Release);
         #[cfg(feature = "async-channels")]
-        self.notify.notify_waiters();
+        {
+            self.data_notify.notify_waiters();
+            self.space_notify.notify_waiters();
+        }
     }
 
     fn try_close(&self) {
@@ -187,26 +213,6 @@ pub fn bounded_with_metrics<T>(
     )
 }
 
-#[cfg(feature = "metrics")]
-pub fn bounded_with_metrics_and_behavior<T>(
-    capacity: usize,
-    close_behavior: CloseBehavior,
-    metrics: Arc<dyn MetricsSink>,
-) -> (BoundedSender<T>, BoundedReceiver<T>) {
-    assert!(capacity > 0, "capacity must be greater than zero");
-    let inner = Arc::new(BoundedInner::new_with_metrics(
-        capacity,
-        close_behavior,
-        metrics,
-    ));
-    (
-        BoundedSender {
-            inner: Arc::clone(&inner),
-        },
-        BoundedReceiver { inner },
-    )
-}
-
 impl<T: Send> ChannelSend<T> for BoundedSender<T> {
     fn send(&self, value: T) -> Backpressure {
         match self.try_send_owned(value) {
@@ -240,7 +246,7 @@ impl<T> BoundedSender<T> {
                 self.inner.enqueued.fetch_add(1, Ordering::Relaxed);
                 self.inner.depth.fetch_add(1, Ordering::Relaxed);
                 #[cfg(feature = "async-channels")]
-                self.inner.notify.notify_one();
+                self.inner.data_notify.notify_one();
                 Ok(())
             }
             Err(v) => Err((Backpressure::Full, v)),
@@ -255,7 +261,7 @@ impl<T: Send> ChannelRecv<T> for BoundedReceiver<T> {
                 self.inner.drained.fetch_add(1, Ordering::Relaxed);
                 self.inner.depth.fetch_sub(1, Ordering::Relaxed);
                 #[cfg(feature = "async-channels")]
-                self.inner.notify.notify_one();
+                self.inner.space_notify.notify_one();
                 RecvOutcome::Data(v)
             }
             None if self.inner.closed.load(Ordering::Acquire) => RecvOutcome::Closed,
@@ -277,14 +283,14 @@ impl<T> BoundedReceiver<T> {
 
     #[cfg(feature = "async-channels")]
     pub(crate) fn async_notify(&self) -> Arc<Notify> {
-        Arc::clone(&self.inner.notify)
+        Arc::clone(&self.inner.data_notify)
     }
 }
 
 #[cfg(feature = "async-channels")]
 impl<T> BoundedSender<T> {
     pub(crate) fn async_notify(&self) -> Arc<Notify> {
-        Arc::clone(&self.inner.notify)
+        Arc::clone(&self.inner.space_notify)
     }
 }
 

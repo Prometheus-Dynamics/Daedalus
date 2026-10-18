@@ -216,7 +216,8 @@ pub fn broadcast_with_metrics_and_behavior<T: Send + Sync>(
 
 fn subscribe_inner<T: Send + Sync>(inner: &Arc<BroadcastInner<T>>) -> BroadcastReceiver<T> {
     let subscriber = Arc::new(Subscriber {
-        buffer: Mutex::new(VecDeque::with_capacity(inner.capacity)),
+        // Grows on demand: a subscriber that never falls behind keeps a small buffer.
+        buffer: Mutex::new(VecDeque::new()),
         #[cfg(feature = "async-channels")]
         notify: Arc::new(Notify::new()),
     });
@@ -245,33 +246,29 @@ impl<T: Send + Sync> ChannelSend<Arc<T>> for BroadcastSender<T> {
             return Backpressure::Closed;
         }
 
+        // One pass over the subscriber list: prune dead subscribers and deliver to the live ones,
+        // without collecting them into a temporary list.
         let mut live = 0usize;
-        let mut upgraded = Vec::new();
         {
             let mut subs = crate::lock_recover(&self.inner.subscribers);
             subs.retain(|weak_sub| {
-                if let Some(sub) = weak_sub.upgrade() {
-                    upgraded.push(sub);
-                    true
-                } else {
-                    false
+                let Some(sub) = weak_sub.upgrade() else {
+                    return false;
+                };
+                live += 1;
+                let mut buf = crate::lock_recover(&sub.buffer);
+                if buf.len() >= self.inner.capacity {
+                    buf.pop_front();
+                    #[cfg(feature = "metrics")]
+                    self.inner.inc("channel.broadcast.dropped");
+                    self.inner.dropped.fetch_add(1, Ordering::Relaxed);
                 }
+                buf.push_back(Arc::clone(&value));
+                self.inner.enqueued.fetch_add(1, Ordering::Relaxed);
+                #[cfg(feature = "async-channels")]
+                sub.notify.notify_one();
+                true
             });
-        }
-
-        for sub in upgraded {
-            live += 1;
-            let mut buf = crate::lock_recover(&sub.buffer);
-            if buf.len() >= self.inner.capacity {
-                buf.pop_front();
-                #[cfg(feature = "metrics")]
-                self.inner.inc("channel.broadcast.dropped");
-                self.inner.dropped.fetch_add(1, Ordering::Relaxed);
-            }
-            buf.push_back(Arc::clone(&value));
-            self.inner.enqueued.fetch_add(1, Ordering::Relaxed);
-            #[cfg(feature = "async-channels")]
-            sub.notify.notify_one();
         }
 
         if live == 0 {
