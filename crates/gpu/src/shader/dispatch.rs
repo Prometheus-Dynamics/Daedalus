@@ -133,34 +133,22 @@ impl SubmissionTracker {
                 break;
             };
 
+            // Hard backpressure: block until the oldest submission completes so in-flight GPU work
+            // stays bounded (it can trigger OOM on embedded GPUs). An untimed wait returns as soon
+            // as that submission finishes; a short timed poll first would only add its timeout to
+            // every throttle event.
             let poll_result = device.poll(wgpu::PollType::Wait {
                 submission_index: Some(wait_for.clone()),
-                // Use a short timeout first to avoid blocking indefinitely in normal operation.
-                timeout: Some(std::time::Duration::from_millis(5)),
+                timeout: None,
             });
 
             match poll_result {
-                Ok(status) if status.wait_finished() => {
+                Ok(_) => {
                     tracing::debug!(
                         target: "daedalus_gpu::dispatch",
                         submission = ?wait_for,
-                        "gpu submission retired after throttle poll"
+                        "gpu submission retired after throttle wait"
                     );
-                    self.in_flight.lock().pop_front();
-                }
-                Err(wgpu::PollError::Timeout) => {
-                    // Hard backpressure path: block until this submission completes so we do not allow
-                    // unbounded in-flight GPU work (which can trigger OOM on embedded GPUs).
-                    tracing::warn!(
-                        target: "daedalus_gpu::dispatch",
-                        submission = ?wait_for,
-                        limit = max_inflight_submissions_per_device(),
-                        "gpu submission throttle timed out; waiting for completion"
-                    );
-                    let _ = device.poll(wgpu::PollType::Wait {
-                        submission_index: Some(wait_for),
-                        timeout: None,
-                    });
                     self.in_flight.lock().pop_front();
                 }
                 Err(wgpu::PollError::WrongSubmissionIndex(_, _)) => {
@@ -170,7 +158,16 @@ impl SubmissionTracker {
                     );
                     self.in_flight.lock().clear();
                 }
-                _ => {}
+                Err(error) => {
+                    // Never leave the oldest entry in place: retrying the same wait would spin.
+                    tracing::warn!(
+                        target: "daedalus_gpu::dispatch",
+                        submission = ?wait_for,
+                        error = ?error,
+                        "gpu submission throttle wait failed; retiring submission"
+                    );
+                    self.in_flight.lock().pop_front();
+                }
             }
         }
     }
