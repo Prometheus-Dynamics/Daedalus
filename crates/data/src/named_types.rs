@@ -68,20 +68,16 @@ impl NamedTypeRegistry {
         self.types.read().get(key).cloned()
     }
 
-    pub fn resolve_opaque(&self, expr: &TypeExpr) -> Option<TypeExpr> {
-        if let TypeExpr::Opaque(key) = expr {
-            return self.lookup(key).map(|t| t.expr);
-        }
-        None
-    }
-
     pub fn export_policy_for(&self, expr: &TypeExpr) -> HostExportPolicy {
         use crate::model::{TypeExpr as TE, ValueType};
 
         match expr {
             TE::Scalar(ValueType::Bytes) => HostExportPolicy::Bytes,
+            // Reads the one field under the lock instead of cloning the whole `NamedType`.
             TE::Opaque(key) => self
-                .lookup(key)
+                .types
+                .read()
+                .get(key.as_str())
                 .map(|t| t.export)
                 .unwrap_or(HostExportPolicy::None),
             _ => HostExportPolicy::Value,
