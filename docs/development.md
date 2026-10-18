@@ -67,9 +67,26 @@ checkout itself can stay where it is.
   --recursive`, then `cargo update`). A
   newest major is kept back only when it cannot meet a requirement (for example it drops
   `no_std` or a supported target); record the reason here. Nothing is kept back at present.
-  Duplicate roots that remain because a dependency has not moved yet: `libloading` 0.8 (`ash`,
-  `wgpu-hal`) beside 0.9, `spin` 0.10 beside 0.12, and `syn` 2 (most derive crates)
-  beside 3.
+  Duplicate roots that remain because a dependency has not moved yet, from `cargo tree -d
+  --workspace` (host build, default features; `--all-features` adds the rest):
+  - `getrandom` 0.3 (`rand_core` 0.9, `rand` 0.9 and `proptest`, dev-only) beside 0.4 (`rand`
+    0.10 from `daedalus-runtime`'s dev-dependencies, `tempfile`).
+  - `rand` 0.9 (`proptest`, dev-only) beside 0.10 (`daedalus-runtime`, dev-only); `rand_core`
+    0.9 (`rand`, `rand_chacha`, `rand_xorshift`) beside 0.10 (`chacha20`, `getrandom` 0.4).
+  - `miniz_oxide` 0.8 (`png` 0.18 through `image`, a dev-dependency of `daedalus-rs`) beside 0.9
+    (`flate2`, `png`).
+  - `syn` 2 (`zerocopy-derive` through `criterion`, dev-only) beside 3 (`daedalus-macros`,
+    `daedalus-mcu-macros`, `serde_derive`, `thiserror-impl`, `tokio-macros`, `bytemuck_derive`,
+    `wasm-bindgen-macro-support`).
+  - With `--all-features` (the GPU, MCU and FFI stacks): `hashbrown` 0.16 (`gpu-allocator`,
+    `wgpu-hal`) beside 0.17 (`indexmap` and the workspace crates); `libloading` 0.8 (`ash`,
+    `gpu-allocator`, `khronos-egl`, `dlib`, `wayland-sys`) beside 0.9 (the plugin example
+    crates); `bitflags` 1 (`defmt`, `daedalus-mcu`) beside 2; `bit-set`/`bit-vec` 0.8 (`proptest`)
+    beside 0.10/0.9 (`naga`, `wgpu-core`); `embedded-hal` 0.2 (`cortex-m`) beside 1.0
+    (`cortex-m`, `daedalus-mcu-blink`), and `nb` 0.1 beside 1.1; `jni-sys` 0.3 (`ndk-sys`, `wgpu-hal`) beside 0.4;
+    `r-efi` 5 (`getrandom` 0.3) beside 6 (`getrandom` 0.4).
+  The lock also records optional dependencies no enabled feature pulls in, which `cargo tree`
+  does not show.
 - The `wasm-bindgen` CLI used by `scripts/ci.sh wasm` and CI must match the `wasm-bindgen`
   version in `Cargo.lock`; CI reads it from there.
 
