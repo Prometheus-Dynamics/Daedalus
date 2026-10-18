@@ -15,8 +15,8 @@
 #![cfg(feature = "threads")]
 
 use std::cell::Cell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex as StdMutex};
 use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
@@ -67,18 +67,25 @@ struct Probe {
     gang: AtomicBool,
     /// Gang arrivals so far; a round is complete at each multiple of [`GANG`].
     arrivals: AtomicUsize,
-    /// The current round and its watchdog deadline, shared by the round's handlers.
-    watchdog: Mutex<(usize, Option<Instant>)>,
-    /// Late-worker frames (see [`late_executor`]): the calling thread, whose handlers wait for the
-    /// worker. `None` in every other test.
+    /// Late-worker frames (see [`late_executor`]): the calling thread, which takes the
+    /// non-holder segments. `None` in every other test.
     late_caller: Option<ThreadId>,
-    /// Late frames: a worker has taken its segment.
+    /// Late frames: the holder (the first segment to start, whichever thread runs it) has started.
     worker_started: AtomicBool,
-    /// Late frames: segments the calling thread has entered.
+    /// Late frames: the holder has been claimed this frame.
+    holder_taken: AtomicBool,
+    /// Late frames: segments the others (not the holder) have entered.
     caller_segments: AtomicUsize,
-    /// Whether `late_caller` applies. Off during warm-up, so no frame waits for a worker before the
+    /// Whether the late roles apply. Off during warm-up, so no frame waits for a worker before the
     /// model has chosen parallel.
     late_active: AtomicBool,
+    /// Wakes the waits in [`Probe::wait_for`] when a counter they watch moves. Waiters block on
+    /// it rather than spin, so a starved worker costs no CPU while the thread it holds up sleeps.
+    bell: StdMutex<()>,
+    ready: Condvar,
+    /// Set by the first wait that hit its deadline; later waits then return at once, so a broken
+    /// run costs one deadline in total, not one per frame.
+    gave_up: AtomicBool,
 }
 
 impl Probe {
@@ -91,27 +98,54 @@ impl Probe {
 
     /// Clear the late-frame counters before a frame.
     fn begin_late_frame(&self) {
+        self.holder_taken.store(false, Ordering::SeqCst);
         self.worker_started.store(false, Ordering::SeqCst);
         self.caller_segments.store(0, Ordering::SeqCst);
     }
 
-    /// In a late frame, hold the calling thread until the worker has taken its segment (or the
-    /// watchdog expires), so the worker is in the frame before the calling thread runs.
-    fn await_worker(&self) {
-        let deadline = Instant::now() + LATE_WATCHDOG;
-        while !self.worker_started.load(Ordering::SeqCst) && Instant::now() < deadline {
-            thread::yield_now();
+    /// Block until `ready()` holds or `timeout` passes. Counters are updated before
+    /// [`Probe::signal`] takes `bell`, so a waiter that checked too early is already waiting when
+    /// the signal arrives.
+    fn wait_for(&self, timeout: Duration, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + timeout;
+        let mut guard = self.bell.lock().unwrap_or_else(|err| err.into_inner());
+        while !ready() {
+            if self.gave_up.load(Ordering::SeqCst) {
+                return;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                self.gave_up.store(true, Ordering::SeqCst);
+                self.ready.notify_all();
+                return;
+            }
+            guard = self
+                .ready
+                .wait_timeout(guard, deadline - now)
+                .unwrap_or_else(|err| err.into_inner())
+                .0;
         }
     }
 
-    /// In a late frame, hold the worker's segment until the calling thread has entered `count`
-    /// segments (or the watchdog expires). The worker then takes no more than the one segment, and
-    /// the calling thread takes the rest.
+    /// Wake every [`Probe::wait_for`] to re-check its condition.
+    fn signal(&self) {
+        let _guard = self.bell.lock().unwrap_or_else(|err| err.into_inner());
+        self.ready.notify_all();
+    }
+
+    /// In a late frame, hold a non-holder until the holder has started (or the watchdog expires),
+    /// so the holder is in the frame before the others run.
+    fn await_worker(&self) {
+        self.wait_for(LATE_WATCHDOG, || self.worker_started.load(Ordering::SeqCst));
+    }
+
+    /// In a late frame, hold the holder's segment until the others have entered `count` segments
+    /// (or the watchdog expires). The holder then takes no more than the one segment, and the
+    /// others take the rest.
     fn await_caller(&self, count: usize) {
-        let deadline = Instant::now() + LATE_WATCHDOG;
-        while self.caller_segments.load(Ordering::SeqCst) < count && Instant::now() < deadline {
-            thread::yield_now();
-        }
+        self.wait_for(LATE_WATCHDOG, || {
+            self.caller_segments.load(Ordering::SeqCst) >= count
+        });
     }
 
     /// Wait until this handler's gang of [`GANG`] has arrived, or the watchdog expires.
@@ -122,18 +156,10 @@ impl Probe {
         let ticket = self.arrivals.fetch_add(1, Ordering::SeqCst);
         let round = ticket / GANG;
         let round_end = (round + 1) * GANG;
-        // One deadline per round, so a serial frame (whose gang never forms) waits once, not once
-        // per handler.
-        let deadline = {
-            let mut watchdog = self.watchdog.lock();
-            if watchdog.0 != round || watchdog.1.is_none() {
-                *watchdog = (round, Some(Instant::now() + GANG_WATCHDOG));
-            }
-            watchdog.1.expect("deadline set above")
-        };
-        while self.arrivals.load(Ordering::SeqCst) < round_end && Instant::now() < deadline {
-            thread::yield_now();
-        }
+        self.signal();
+        self.wait_for(GANG_WATCHDOG, || {
+            self.arrivals.load(Ordering::SeqCst) >= round_end
+        });
     }
 }
 
@@ -154,17 +180,23 @@ impl NodeHandler for ProbeHandler {
         let late = probe
             .late_caller
             .filter(|_| probe.late_active.load(Ordering::SeqCst));
+        let me = thread::current().id();
         let work = match late {
-            // A late frame: the worker's segment is free, and it keeps that one segment until the
-            // calling thread has entered the other GANG - 1.
-            Some(caller) if thread::current().id() != caller => {
+            // A late frame: the holder is the first segment a worker (not the calling thread)
+            // starts. Its segment is free, and it keeps that one segment until the others have
+            // entered the other GANG - 1.
+            Some(caller) if me != caller && !probe.holder_taken.swap(true, Ordering::SeqCst) => {
                 probe.worker_started.store(true, Ordering::SeqCst);
+                probe.signal();
                 probe.await_caller(GANG - 1);
                 Duration::ZERO
             }
+            // The other segments, on the calling thread or on the other worker, once the holder
+            // runs. The calling thread's own share is what the frame's wall time measures.
             Some(_) => {
                 probe.await_worker();
                 probe.caller_segments.fetch_add(1, Ordering::SeqCst);
+                probe.signal();
                 Duration::from_micros(probe.work_us.load(Ordering::SeqCst))
             }
             None => Duration::from_micros(probe.work_us.load(Ordering::SeqCst)),
@@ -353,6 +385,10 @@ fn late_workers_do_not_count_as_dispatch_overhead() {
         modes.push(probe.take_parallel());
     }
     assert!(modes.ends_with(&[true; 8]), "{modes:?}");
+    assert!(
+        !probe.gave_up.load(Ordering::SeqCst),
+        "a late-worker wait hit its deadline: a worker or the calling thread stopped making progress"
+    );
 }
 
 #[test]

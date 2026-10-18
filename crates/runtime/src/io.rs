@@ -86,6 +86,7 @@ pub(crate) fn recycle_ports(mut ports: Vec<NodePort>) {
 
 /// Stock this thread's port-buffer pool with empty buffers, so the first nodes it runs take
 /// their buffers from the pool instead of allocating (worker threads call this at pool start).
+#[cfg(feature = "threads")]
 pub(crate) fn prewarm_port_buffers() {
     const PREWARM_CAPACITY: usize = 8;
     with_port_buffers(|pool| {
