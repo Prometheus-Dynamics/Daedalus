@@ -28,6 +28,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- `daedalus-frame-bench`: the detector mirror is a synthetic marker-detector bench. Its marker
+  enum is `Marker` (`grid_4x4`, `grid_6x6`, `ring_16`, `ring_36`, replacing the dictionary names),
+  its graphs are named after those markers, and the graph shape is unchanged.
 - **GPU: the aarch64 Linux Vulkan-only default is gone.** `wgpu` backend selection now falls
   back to all backends on every target when `WGPU_BACKEND` is unset, so CM5 and other aarch64
   Linux hosts that want Vulkan must select it explicitly with `WGPU_BACKEND=vulkan`.
