@@ -22,4 +22,5 @@ serde_json = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+daedalus-ffi-core = { workspace = true, features = ["conformance"] }
 daedalus-data = { workspace = true }

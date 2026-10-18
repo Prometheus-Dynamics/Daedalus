@@ -21,6 +21,8 @@ default = ["integrity"]
 # path in `daedalus-rs` only uses schema export and leaves it off.
 integrity = ["daedalus-ffi-core/integrity"]
 image-payload = ["daedalus-ffi-core/image-payload"]
+# Fixture-driven conformance harness (`run_*_fixture_harness`), which needs the core fixture specs.
+conformance = ["daedalus-ffi-core/conformance"]
 
 [dependencies]
 parking_lot = { workspace = true }
@@ -36,6 +38,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+daedalus-ffi-core = { workspace = true, features = ["conformance"] }
 daedalus-ffi-cpp = { workspace = true }
 daedalus-ffi-java = { workspace = true }
 daedalus-ffi-node = { workspace = true }
