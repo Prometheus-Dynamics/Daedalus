@@ -28,6 +28,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: `StateStore` keeps JSON and native values under one lock, so `set` and `set_native`
+  take one write lock and `set` allocates a key only on first insert.
 - `daedalus-frame-bench`: the detector mirror is a synthetic marker-detector bench. Its marker
   enum is `Marker` (`grid_4x4`, `grid_6x6`, `ring_16`, `ring_36`, replacing the dictionary names),
   its graphs are named after those markers, and the graph shape is unchanged.

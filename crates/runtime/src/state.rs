@@ -50,11 +50,18 @@ impl NodeStateSlot {
     }
 }
 
+#[derive(Default)]
+struct StoredValues {
+    json: HashMap<String, serde_json::Value>,
+    native: HashMap<String, Box<dyn Any + Send + Sync>>,
+}
+
 /// Shared runtime state store keyed by node id.
 #[derive(Default, Clone)]
 pub struct StateStore {
-    inner: Arc<RwLock<HashMap<String, serde_json::Value>>>,
-    native: Arc<RwLock<HashMap<String, Box<dyn Any + Send + Sync>>>>,
+    /// JSON and native values share one lock: a key lives in at most one of the two maps, and
+    /// each write checks and clears the other map under the same guard.
+    values: Arc<RwLock<StoredValues>>,
     /// Per-node typed state (`#[node(state(..))]`), keyed by node id and state type.
     node_state: Arc<RwLock<HashMap<Arc<str>, Arc<NodeStateSlot>>>>,
     resources: Arc<RwLock<HashMap<String, SharedNodeResources>>>,
@@ -125,7 +132,7 @@ impl Drop for ManagedResourceRestore {
 
 impl StateStore {
     pub fn get(&self, key: &str) -> Option<serde_json::Value> {
-        self.inner.read().get(key).cloned()
+        self.values.read().json.get(key).cloned()
     }
 
     /// Fallible getter with error context.
@@ -133,8 +140,8 @@ impl StateStore {
         &self,
         key: &str,
     ) -> Result<Option<T>, StateError> {
-        let guard = self.inner.read();
-        if let Some(val) = guard.get(key) {
+        let guard = self.values.read();
+        if let Some(val) = guard.json.get(key) {
             serde_json::from_value(val.clone())
                 .map(Some)
                 .map_err(Into::into)
@@ -152,8 +159,8 @@ impl StateStore {
         &self,
         key: &str,
     ) -> Result<Option<T>, StateError> {
-        let guard = self.native.read();
-        let Some(value) = guard.get(key) else {
+        let guard = self.values.read();
+        let Some(value) = guard.native.get(key) else {
             return Ok(None);
         };
         value
@@ -167,8 +174,8 @@ impl StateStore {
         &self,
         key: &str,
     ) -> Result<Option<T>, StateError> {
-        let mut guard = self.native.write();
-        let Some(slot) = guard.get_mut(key) else {
+        let mut guard = self.values.write();
+        let Some(slot) = guard.native.get_mut(key) else {
             return Ok(None);
         };
         slot.downcast_mut::<Option<T>>()
@@ -176,9 +183,18 @@ impl StateStore {
             .ok_or_else(|| StateError::state_type_mismatch(key))
     }
 
+    /// Store a JSON value. Overwrites in place, so the key is only allocated on first insert.
     pub fn set(&self, key: &str, value: serde_json::Value) {
-        self.inner.write().insert(key.to_string(), value);
-        self.native.write().remove(key);
+        let mut values = self.values.write();
+        if !values.native.is_empty() {
+            values.native.remove(key);
+        }
+        match values.json.get_mut(key) {
+            Some(slot) => *slot = value,
+            None => {
+                values.json.insert(key.to_string(), value);
+            }
+        }
     }
 
     pub fn set_typed<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), StateError> {
@@ -191,19 +207,19 @@ impl StateStore {
     /// Values live in per-key `Option<T>` slots: [`Self::take_native`] leaves the slot behind,
     /// so a take/set cycle with the same key and type (per-tick node state) does not allocate.
     pub fn set_native<T: Send + Sync + 'static>(&self, key: &str, value: T) {
-        let mut native = self.native.write();
-        match native
+        let mut values = self.values.write();
+        match values
+            .native
             .get_mut(key)
             .and_then(|slot| slot.downcast_mut::<Option<T>>())
         {
             Some(slot) => *slot = Some(value),
             None => {
-                native.insert(key.to_string(), Box::new(Some(value)));
+                values.native.insert(key.to_string(), Box::new(Some(value)));
             }
         }
-        drop(native);
-        if self.inner.read().contains_key(key) {
-            self.inner.write().remove(key);
+        if !values.json.is_empty() {
+            values.json.remove(key);
         }
     }
 
@@ -265,8 +281,7 @@ impl StateStore {
             .write()
             .retain(|key, _| keep(key.as_str()));
         StateStore {
-            inner: previous.inner.clone(),
-            native: previous.native.clone(),
+            values: previous.values.clone(),
             node_state: Arc::new(RwLock::new(node_state)),
             resources: Arc::new(RwLock::new(resources)),
             custom_metrics: previous.custom_metrics.clone(),
@@ -529,16 +544,16 @@ impl StateStore {
     }
 
     pub fn dump_json(&self) -> Result<String, StateError> {
-        let m = self.inner.read();
-        serde_json::to_string(&*m).map_err(Into::into)
+        let m = self.values.read();
+        serde_json::to_string(&m.json).map_err(Into::into)
     }
 
     pub fn load_json(&self, json: &str) -> Result<(), StateError> {
         let map = serde_json::from_str::<HashMap<String, serde_json::Value>>(json)?;
-        let mut guard = self.inner.write();
-        *guard = map;
+        let mut guard = self.values.write();
+        guard.json = map;
+        guard.native.clear();
         drop(guard);
-        self.native.write().clear();
         // Executors hold the slots: empty them in place.
         self.node_state
             .read()
