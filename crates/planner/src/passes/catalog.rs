@@ -89,6 +89,20 @@ impl PlannerCatalog {
     }
 }
 
+pub(super) fn simplify_rust_name(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return raw.to_string();
+    }
+    let outer = trimmed.split('<').next().unwrap_or(trimmed);
+    let simple = outer.rsplit("::").next().unwrap_or(outer);
+    if simple.is_empty() {
+        trimmed.to_string()
+    } else {
+        simple.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,19 +130,5 @@ mod tests {
             1,
             "only structured types are memoized"
         );
-    }
-}
-
-pub(super) fn simplify_rust_name(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return raw.to_string();
-    }
-    let outer = trimmed.split('<').next().unwrap_or(trimmed);
-    let simple = outer.rsplit("::").next().unwrap_or(outer);
-    if simple.is_empty() {
-        trimmed.to_string()
-    } else {
-        simple.to_string()
     }
 }

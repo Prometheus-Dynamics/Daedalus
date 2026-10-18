@@ -218,8 +218,7 @@ pub fn dynamic_port_type(
         .filter_map(|(entry_key, entry_value)| {
             Some((normalize_port(entry_key.as_str()?), entry_value.as_str()?))
         })
-        .filter(|(entry_port, _)| *entry_port == port)
-        .last()
+        .rfind(|(entry_port, _)| *entry_port == port)
         .and_then(|(_, json)| serde_json::from_str::<TypeExpr>(json).ok())
 }
 

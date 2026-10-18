@@ -85,7 +85,7 @@ pub struct AdapterIndex {
 }
 
 impl AdapterIndex {
-    fn from_type(&self, from: &TypeKey) -> &[AdapterDecl] {
+    fn outgoing_from(&self, from: &TypeKey) -> &[AdapterDecl] {
         self.outgoing.get(from).map_or(&[], Vec::as_slice)
     }
 }
@@ -236,7 +236,7 @@ impl CapabilityRegistry {
             }
 
             for adapter in index
-                .from_type(cur)
+                .outgoing_from(cur)
                 .iter()
                 .filter(|adapter| adapter.enabled_in_context(active_features, allow_gpu))
             {

@@ -154,6 +154,17 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `InvalidInput("missing <port>")` error).
 - `declare_plugin!` no longer needs `paste` in the calling crate (it goes through
   `daedalus-nodes`); plugin crates can drop that dependency.
+- **Planner: malformed declaration JSON is reported.** A node's metadata entry or a port's
+  constant that is not valid JSON emits `DiagnosticCode::InvalidDescriptorMetadata` /
+  `InvalidConstInput` (the constant is not applied) instead of being dropped silently.
+  `DiagnosticSpan::pass` is a `Cow<'static, str>` (serializes as before).
+- **Registry: `RegistryError` stores a conflict once.** `conflict_key()` and `conflict_kind()`
+  read the payload; `with_conflict_key` / `with_conflict_kind` are removed.
+- **Planner performance:** edge adapter search runs over a per-run `AdapterIndex`
+  (`CapabilityRegistry::adapter_index`, `resolve_adapter_path_indexed`) with predecessor-linked
+  paths; the same chosen paths and tie-breaks, about 6x faster planning on a 3,300-adapter
+  registry (debug test profile: 1.17 s to 0.19 s per plan). Port types are borrowed, structured
+  transport keys are memoized per run, and the fire-mode lint indexes incoming edges.
 - **Dead APIs removed:** `daedalus_core::channels::policy::{build_async, build_newest, EdgePolicy,
   ChannelAsync}`, `bounded_with_metrics_and_behavior`, and `daedalus_data::NamedTypeRegistry::
   resolve_opaque`. `PushOutcome::Replaced` is now `{ old, dropped }`. `IdStr::new` takes

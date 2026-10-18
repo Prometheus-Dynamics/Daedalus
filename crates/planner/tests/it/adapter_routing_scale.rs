@@ -106,6 +106,7 @@ fn adapter_routing_scale_converts_every_edge() {
 
 #[test]
 #[ignore = "timing: run with --ignored --nocapture"]
+#[allow(clippy::print_stdout)]
 fn adapter_routing_scale_timing() {
     let reg = large_registry();
     const RUNS: u32 = 5;
@@ -125,7 +126,7 @@ fn adapter_routing_scale_timing() {
         std::hint::black_box(out.diagnostics.len());
     }
     let per_run = started.elapsed() / RUNS;
-    eprintln!(
+    println!(
         "adapter_routing_scale: {TYPES} types, {} adapters, {STAGES} nodes, {} edges: {per_run:?} per build_plan",
         reg.adapters().values().count(),
         STAGES - 1
