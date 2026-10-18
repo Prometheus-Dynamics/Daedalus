@@ -20,6 +20,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Removed
 
+- Runtime: `NodeError::retryable` and `ExecuteError::retryable`, which nothing called. Recovery
+  policies (`NodeRecovery`) decide retries from node metadata instead.
 - The Styx camera examples (`04_async/styx_camera_graph`, `07_gpu/gpu_node` and its
   `contrast_boost.wgsl` shader), the `daedalus-plugins-framelease` example plugin, and the `styx`
   dependency with its `styx-camera-example` and `gpu-styx` features. Styx owns its Daedalus

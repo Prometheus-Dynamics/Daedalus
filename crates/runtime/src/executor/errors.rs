@@ -57,11 +57,6 @@ impl NodeError {
             NodeError::BackpressureDrop(_) => "backpressure_drop",
         }
     }
-
-    /// Whether the error is retryable.
-    pub fn retryable(&self) -> bool {
-        matches!(self, NodeError::BackpressureDrop(_))
-    }
 }
 
 /// Execution errors surfaced by the runtime executor.
@@ -126,10 +121,5 @@ impl ExecuteError {
             ExecuteError::HandlerFailed { .. } => "handler_failed",
             ExecuteError::HandlerPanicked { .. } => "handler_panicked",
         }
-    }
-
-    /// Whether the error is retryable.
-    pub fn retryable(&self) -> bool {
-        matches!(self, ExecuteError::GpuUnavailable { .. })
     }
 }
