@@ -220,7 +220,7 @@ pub fn node_fusion_from_env() -> bool {
 }
 
 /// `FRAME_BENCH_MODE` (`serial`, `parallel` or `adaptive`; serial when unset), the runtime mode
-/// the bench examples run, for comparing the worker pools (`daedalus-rs/executor-pool` or not).
+/// the bench examples run (`EngineConfig::with_runtime_mode`).
 pub fn runtime_mode_from_env() -> Result<daedalus::engine::RuntimeMode, String> {
     use daedalus::engine::RuntimeMode;
     let Ok(value) = std::env::var("FRAME_BENCH_MODE") else {

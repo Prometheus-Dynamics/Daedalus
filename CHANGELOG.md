@@ -27,6 +27,16 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   dependency with its `styx-camera-example` and `gpu-styx` features. Styx owns its Daedalus
   integration (`styx_core::daedalus`, Styx's `daedalus` feature). CI no longer installs
   `libcamera-dev`, and `Cargo.lock` no longer contains Styx's crates.
+- The Rayon worker pool and its `executor-pool` feature (facade, engine, runtime, daemon
+  and `engine-full`'s pool), plus the workspace `rayon` dependency. `RuntimeMode::Parallel` and
+  `Adaptive` use the parked worker threads that `threads` enables, and the engine's prewarm
+  (`prewarm_worker_pool`) starts those. `engine-full` is `engine` + `metrics`. Measured on one
+  tree with and without the pool (frame-bench, 15 and 12 interleaved runs, medians): a flat
+  detector in parallel mode took 7.54 µs parked against 7.70 µs on Rayon, and a 16-way fan-out of
+  no-op stages took 31.6 µs against 51.7 µs. The facade's stripped release binary is 1.5% smaller
+  (a clean build of the same example is about 2.6 s faster), and `cargo tree` loses rayon,
+  rayon-core, crossbeam-deque, crossbeam-epoch and either. See "Choosing a runtime mode" in
+  `docs/development.md`.
 
 ### Changed
 
@@ -549,6 +559,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   this crate has no GPU payload or context to copy with. `utils.add` returns
   `NodeError::InvalidInput` when the sum overflows `i32`, instead of panicking in debug builds and
   wrapping in release builds.
+- `daedalus-frame-bench`: the detector and frame_chain examples run the runtime mode named by
+  `FRAME_BENCH_MODE` (`serial`, `parallel`, `adaptive`), and the new `fanout` example runs one
+  frame through `FRAME_BENCH_FANOUT` no-op stages (default 16). The pool comparison in
+  `docs/development.md` used these.
 
 ## [3.0.0] - 2026-10-05
 

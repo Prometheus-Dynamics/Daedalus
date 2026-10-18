@@ -18,7 +18,6 @@ Executor and host integration layer for planner-produced runtime plans.
 - `plugins`: plugin installation and registry integration.
 - `gpu`: GPU-aware execution support.
 - `gpu-mock`: deterministic GPU test backend wiring.
-- `executor-pool`: retained worker pool for parallel execution.
 - `lockfree-queues`: optional lock-free bounded edge queues.
 - `metrics`: runtime metrics hooks.
 

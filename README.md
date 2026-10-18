@@ -32,10 +32,9 @@ The facade crate is published as `daedalus-rs` and imported as `daedalus`.
 
 The facade's default features are `threads` and `tracing`. Enable the layers your application needs.
 
-- `engine-full`: recommended for applications; `engine` plus `executor-pool` and `metrics`.
-- `engine`: lean high-level engine facade (no worker pool, no metrics).
-- `threads` (default): worker threads for `RuntimeMode::Parallel`/`Adaptive`, stream workers and blocking host waits (`HostGraph::drive_blocking`, ...). Without it (e.g. `wasm32-unknown-unknown`) those modes run serially and the thread-only APIs do not exist.
-- `executor-pool`: Rayon worker pool for `RuntimeMode::Parallel`/`Adaptive`; without it those modes use a few persistent parked threads of their own.
+- `engine-full`: recommended for applications; `engine` plus `metrics`.
+- `engine`: lean high-level engine facade (no metrics).
+- `threads` (default): the parked worker threads for `RuntimeMode::Parallel`/`Adaptive`, stream workers and blocking host waits (`HostGraph::drive_blocking`, ...). Without it (e.g. `wasm32-unknown-unknown`) those modes run serially and the thread-only APIs do not exist.
 - `metrics`: executor telemetry collection; without it `MetricsLevel` settings compile but record nothing.
 - `tracing` (default): `tracing` spans and events of the runtime, engine and planner; without it they compile to nothing.
 - `embedded`: smallest in-process host preset (`engine` + `plugins` + `threads`, no pool, no metrics, no `tracing`); targets without threads use `engine,plugins` with default features off.

@@ -271,7 +271,6 @@ mod tests {
             }
         }
         let fingerprint = build_fingerprint();
-        assert!(!fingerprint.contains("executor-pool"));
         assert!(!fingerprint.contains("dylib-plugins"));
         assert!(!fingerprint.contains("engine"));
     }

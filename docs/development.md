@@ -128,25 +128,25 @@ For constrained hosts (embedded boards, sidecar engines), depend on the facade w
 daedalus = { package = "daedalus-rs", version = "3.0.0", default-features = false, features = ["embedded"] }
 ```
 
-`embedded` is `engine` + `plugins` + `threads`: the facade's `engine` feature does not enable the
-Rayon executor pool or metrics collection, and with default features off `tracing` is off too
+`embedded` is `engine` + `plugins` + `threads`: the facade's `engine` feature does not enable
+metrics collection, and with default features off `tracing` is off too
 (add the `tracing` feature to keep the runtime's spans and events). Add `dylib-plugins` only if
 the host loads native plugin libraries. Leave every `gpu*` feature off; `EngineConfig`'s default
 `GpuBackend::Cpu` and `planner.enable_gpu = false` need no GPU feature. This set links no
-`wgpu`, `image`, `tokio`, `rayon`, `crossbeam` or `tracing`; its heaviest runtime
+`wgpu`, `image`, `tokio`, `crossbeam` or `tracing`; its heaviest runtime
 dependency is `serde_json`.
 
 Feature semantics without the extras:
 
-- No `executor-pool`: `RuntimeMode::Parallel` and `RuntimeMode::Adaptive` still work; parallel
-  runs fan out to a few persistent threads (one fewer than the workers, as the calling thread
-  takes part) started on the first parallel run and parked between runs, instead of a Rayon
-  pool. A frame spawns no threads either way.
+- No `threads`: `RuntimeMode::Parallel` and `RuntimeMode::Adaptive` run serially. With `threads`
+  (the default), parallel runs fan out to a few persistent parked threads (one fewer than the
+  workers, as the calling thread takes part), started by the first parallel run or by the
+  executor's `prewarm_worker_pool`, and parked between runs. A frame spawns no threads.
 - No `metrics`: the telemetry APIs (`MetricsLevel`, `ExecutionTelemetry`) still compile, but
   executors record no per-node or transport metrics. Add `metrics` when you read telemetry.
 
 Applications that do not need to minimize dependencies should use `engine-full`
-(`engine` + `executor-pool` + `metrics`).
+(`engine` + `metrics`).
 
 ### Dependency weight
 
@@ -354,7 +354,7 @@ Node. Behavior there:
   Without a clock, durations are zero (telemetry reads zero, adaptive mode stays serial, and
   `MaxAge` never drops).
 - The embedded dependency tree has no `getrandom` or other OS-bound crate. `dylib-plugins`,
-  `gpu*`, `executor-pool` (Rayon) and the FFI crates are not supported on wasm.
+  `gpu*` and the FFI crates are not supported on wasm.
 
 Host glue: `examples/wasm_bindgen_host` is the pattern for a JavaScript host. It imports
 `performance.now()` through `wasm-bindgen` (`#[wasm_bindgen(js_namespace = performance, js_name =
@@ -474,14 +474,13 @@ fixes described below.
 | Generated handler code (`daedalus-macros`: per-push keys in A, state keys until E) | 55 | 9 | 9 | 9 | 0 |
 | **Serial, metrics off** | **378** | **290** | **40** | **40** | **31** |
 | Serial, basic metrics (per-node metrics: a `BTreeMap` until C, one vector in D) | 381 | 293 | 43 | 41 | 32 |
-| Parallel/adaptive with `executor-pool` (C: a pool task per segment and a result channel) | 422 | 334 | 60 | 40 | 31 |
-| Parallel/adaptive without `executor-pool` (C: a scoped OS thread per segment) | 458 | 370 | 141 | 40 | 31 |
+| Parallel/adaptive on the Rayon pool (`executor-pool`, removed since; C: a pool task per segment and a result channel) | 422 | 334 | 60 | 40 | 31 |
+| Parallel/adaptive without the Rayon pool (C: a scoped OS thread per segment; D: parked threads) | 458 | 370 | 141 | 40 | 31 |
 
-In D a parallel frame fans out once to persistent workers (the Rayon pool, or without
-`executor-pool` a few parked threads of the executor's own) that pull ready segments from one
-locked queue, each reusing one executor snapshot, so dispatch allocates nothing; the test allows
-one allocation per frame for amortized growth (Rayon's injector blocks, a node's first run on a
-worker growing that thread's port buffers). The test binary is unoptimized, where the graph's
+In D a parallel frame fans out once to persistent workers (a few parked threads of the
+executor's own) that pull ready segments from one locked queue, each reusing one executor
+snapshot, so dispatch allocates nothing; the test allows one allocation per frame for amortized
+growth (a node's first run on a worker growing that thread's port buffers). The test binary is unoptimized, where the graph's
 nodes are slow enough that adaptive mode runs it in parallel; optimized, it runs serially.
 
 Each created payload is one allocation, the value's own `Arc`, which is the payload's storage
@@ -503,8 +502,9 @@ to back):
 | `push_tick_take` (one node, basic metrics) | 1.90 µs | 1.57 µs |
 | `push_tick_take_metrics_off` | 1.50 µs | 1.32 µs |
 
-C against D, with (`engine-full,plugins`) and without (`engine,plugins`: no pool, no metrics)
-`executor-pool`, same machine at load 17-30, so differences under ~15% are noise:
+C against D, on the Rayon pool (`engine-full,plugins`, before its removal) and on the parked
+threads (`engine,plugins`: no metrics), same machine at load 17-30, so differences under ~15% are
+noise:
 
 | `graph_frame/…` | C pool | D pool | C no pool | D no pool |
 | --- | --- | --- | --- | --- |
@@ -760,6 +760,45 @@ the queue lock, cross-thread payload handoff): for the 16 cheap nodes above that
   run at serial speed (the detector frame above: 16.6 µs against 16.0 µs). A one-shot
   `Executor::run_adaptive` has nothing measured and goes parallel whenever the segment graph has
   independent work.
+
+#### Worker pool: parked threads, not Rayon
+
+`Parallel` and `Adaptive` fan out to one worker pool, the parked-thread pool in
+`crates/runtime/src/executor/workers.rs`. Until this change a Rayon pool (the `executor-pool`
+feature, on by default in the engine) was the alternative. Measured on the same tree with and
+without it (frame-bench, `FRAME_BENCH_MODE`, 20,000 frames per run, runs interleaved between the
+two builds, medians over the runs; x86_64 Linux, 24 cores at a 1-minute load of 150-165 (3-minute 180-220) from other processes,
+so the p99 columns mostly measure scheduling and are not used for the decision):
+
+| Workload (mode) | Runs | Parked p50 | Rayon p50 | Parked p99 (median) | Rayon p99 (median) |
+| --- | --- | --- | --- | --- | --- |
+| Detector, flat (parallel) | 15 | 7.54 µs | 7.70 µs | 194 µs | 155 µs |
+| Detector, flat (adaptive) | 15 | 7.46 µs | 7.58 µs | 134 µs | 114 µs |
+| 16-way fan-out of no-op stages (parallel) | 12 | 31.6 µs | 51.7 µs | 4.36 ms | 6.97 ms |
+| 16-way fan-out of no-op stages (adaptive) | 12 | 15.8 µs | 15.7 µs | 236 µs | 166 µs |
+
+The fan-out's stages do no work, so these numbers are dispatch cost: a parallel frame of 16 no-op
+stages costs about twice a serial one, which is why adaptive stays serial for it. Serial was
+about 14 µs in one 2,000-frame run.
+
+Build cost, for a facade build of the detector example (`engine`, `plugins`, `threads`,
+`alloc-probe`, release, cold target directory, 8 jobs, load 105-155):
+
+| | Without the pool | With `executor-pool` |
+| --- | --- | --- |
+| Clean build, wall time | 69.3 s | 71.9 s |
+| Stripped binary | 4,897,704 B | 4,971,696 B (+1.5%) |
+| `cargo tree -e normal -p daedalus-rs --features engine` (lines / distinct packages) | 126 / 51 | 134 / 56 |
+
+The pool added rayon, rayon-core, crossbeam-deque, crossbeam-epoch and either.
+
+Decision: the parked pool is equal to Rayon within 5% on the detector and the adaptive fan-out,
+and about 40% faster on the parallel fan-out. Rayon is clearly not faster, so the Rayon pool and
+the `executor-pool` feature were removed: the pool is the parked threads that `threads` enables,
+and `prewarm_worker_pool` and the engine's synchronous prewarm (the warm-pool behaviour of
+93f0768) start those threads before the first parallel frame. Keep this section's numbers with
+the build they were taken from. The measured configuration is commit a243724 (the
+`executor-pool` passthrough of `daedalus-frame-bench`) with and without the feature.
 
 ## Troubleshooting
 

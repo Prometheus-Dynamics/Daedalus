@@ -162,11 +162,10 @@ scripts/ci.sh lean
 #     --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
 ```
 
-`cargo test --workspace` unifies features across members, and `daedalus-daemon` enables the
-executor pool and metrics, so workspace tests never exercise the parked-thread worker path, the
-serial-only (no `threads`) build or no-op telemetry. The lean run selects only the facade, engine, and runtime crates (never the
-daemon) with default features off. Verify with `cargo tree -i rayon` using the same flags: rayon
-should only appear under criterion.
+`cargo test --workspace` unifies features across members, and `daedalus-daemon` enables metrics,
+so workspace tests never exercise the serial-only (no `threads`) build or no-op telemetry. The
+lean run selects only the facade, engine, and runtime crates (never the daemon) with default
+features off.
 
 ### no_std and WASM
 
@@ -357,7 +356,7 @@ performance warnings, with synchronization validation on.
 cargo check -p daedalus-rs --no-default-features
 cargo check -p daedalus-rs --all-targets --features "engine,plugins"
 cargo check -p daedalus-rs --all-targets --features "gpu-mock,plugins,engine"
-cargo check -p daedalus-runtime --features "metrics,executor-pool,lockfree-queues"
+cargo check -p daedalus-runtime --features "metrics,lockfree-queues"
 cargo check -p daedalus-ffi-core --no-default-features   # without `integrity` (sha2)
 cargo check -p daedalus-ffi-core --features "image-payload"
 cargo check -p daedalus-ffi-host --no-default-features

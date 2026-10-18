@@ -19,7 +19,7 @@ workspace = true
 path = "src/lib.rs"
 
 [features]
-default = ["config-env", "executor-pool", "metrics", "threads", "tracing"]
+default = ["config-env", "metrics", "threads", "tracing"]
 # Host OS facilities: the runtime's `std` (lock backend, hash maps), `EngineConfig::from_env`.
 # Without it the crate is `no_std` + `alloc` (see "Portability" in docs/development.md).
 std = [
@@ -44,7 +44,6 @@ config-env = ["serde", "serde_json"]
 gpu = ["std", "daedalus-runtime/gpu", "daedalus-planner/gpu", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-runtime/gpu-mock", "daedalus-gpu/gpu-mock"]
 lockfree-queues = ["daedalus-runtime/lockfree-queues"]
-executor-pool = ["threads", "daedalus-runtime/executor-pool"]
 metrics = ["daedalus-runtime/metrics"]
 # Per-tick runtime/node/host allocation counts in `HostGraph::frame_overhead` when the
 # `daedalus_runtime::alloc_probe::CountingAllocator` is the global allocator.

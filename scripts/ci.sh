@@ -52,7 +52,7 @@ usage: scripts/ci.sh [-j] [subcommand...]
   smoke       run the CPU-only example binaries (sharing the `test` build)
   doc         rustdoc for the workspace with -D warnings
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
-  lean        tests for the lean preset (no executor pool, no metrics) and without threads
+  lean        tests for the lean preset (no metrics) and without threads
   nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
               serial runtime and engine, and the no_std smoke graph
   mcu         MCU profile: build the blink firmwares (compiled, tunable, loaded) for thumbv7em
@@ -87,7 +87,7 @@ cmd_features() {
   cargo check -p daedalus-rs --no-default-features --features "engine,plugins"
   cargo check -p daedalus-rs --all-targets --features "engine-full,plugins"
   cargo check -p daedalus-rs --features "dylib-plugins"
-  cargo check -p daedalus-runtime --features "metrics,executor-pool,lockfree-queues"
+  cargo check -p daedalus-runtime --features "metrics,lockfree-queues"
   cargo check -p daedalus-ffi-core -p daedalus-ffi-host --no-default-features
   cargo check -p daedalus-ffi-core -p daedalus-ffi-host \
     --features "daedalus-ffi-core/image-payload,daedalus-ffi-host/image-payload"
@@ -172,7 +172,7 @@ cmd_aarch64() {
 # (never daedalus-daemon) with defaults off, so the parked-thread worker path and the no-op
 # telemetry path are what get tested.
 cmd_lean() {
-  step "Testing lean preset (no executor-pool, no metrics)"
+  step "Testing lean preset (no metrics)"
   cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets \
     --no-default-features \
     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"

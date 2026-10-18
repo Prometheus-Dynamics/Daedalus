@@ -1,6 +1,5 @@
-//! Threads a parallel run fans out to: a Rayon pool with `executor-pool`, otherwise a small set
-//! of persistent threads parked between runs. Either way a frame spawns no threads and allocates
-//! nothing to dispatch work.
+//! Threads a parallel run fans out to: a small set of persistent threads parked between runs. A
+//! frame spawns no threads and allocates nothing to dispatch work.
 
 use crate::prelude::*;
 use std::sync::{Arc, OnceLock};
@@ -10,9 +9,6 @@ use super::{ExecuteError, NodeError};
 /// Calls `work` on up to `workers` threads at once ([`WorkerPool::fan_out`]); each call pulls
 /// segments from a shared queue until the run drains.
 pub(crate) struct WorkerPool {
-    #[cfg(feature = "executor-pool")]
-    pool: rayon::ThreadPool,
-    #[cfg(not(feature = "executor-pool"))]
     helpers: parked::Helpers,
 }
 
@@ -29,23 +25,6 @@ impl WorkerPool {
         Ok(slot.get_or_init(|| pool).clone())
     }
 
-    #[cfg(feature = "executor-pool")]
-    fn new(workers: usize) -> Result<Self, ExecuteError> {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(workers)
-            .thread_name(|idx| format!("daedalus-exec-{idx}"))
-            .build()
-            .map_err(|err| ExecuteError::HandlerFailed {
-                node: "pool_init".into(),
-                error: NodeError::Handler(err.to_string()),
-            })?;
-        // `broadcast` returns once every thread has run this, so each thread is started and
-        // its port-buffer pool stocked before any frame runs.
-        pool.broadcast(|_| crate::io::prewarm_port_buffers());
-        Ok(Self { pool })
-    }
-
-    #[cfg(not(feature = "executor-pool"))]
     fn new(workers: usize) -> Result<Self, ExecuteError> {
         // The calling thread is one of the workers.
         let helpers =
@@ -61,26 +40,10 @@ impl WorkerPool {
     /// Run `work` on `workers` threads concurrently (fewer when the pool is smaller) and return
     /// once every call has returned. `work` must not panic.
     pub(crate) fn fan_out(&self, workers: usize, work: &(dyn Fn() + Sync)) {
-        #[cfg(feature = "executor-pool")]
-        {
-            // Binary `join` splitting keeps the jobs on the stack: no allocation per call.
-            fn split(workers: usize, work: &(dyn Fn() + Sync)) {
-                if workers <= 1 {
-                    work();
-                } else {
-                    let half = workers / 2;
-                    rayon::join(|| split(half, work), || split(workers - half, work));
-                }
-            }
-            let workers = workers.min(self.pool.current_num_threads());
-            self.pool.install(|| split(workers, work));
-        }
-        #[cfg(not(feature = "executor-pool"))]
         self.helpers.run(workers.saturating_sub(1), work);
     }
 }
 
-#[cfg(not(feature = "executor-pool"))]
 mod parked {
     use crate::portable::Arc;
     use crate::sync::{Condvar, Mutex};

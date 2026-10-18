@@ -8,9 +8,8 @@ Use this crate when an application wants the public Daedalus API from one depend
 
 ## Feature Selection
 
-- `engine-full`: `engine` + `executor-pool` + `metrics`; the recommended application preset.
-- `engine`: lean high-level execution facade (no worker pool, no metrics).
-- `executor-pool`: Rayon worker pool for parallel/adaptive runtime modes.
+- `engine-full`: `engine` + `metrics`; the recommended application preset.
+- `engine`: lean high-level execution facade (no metrics).
 - `metrics`: executor telemetry collection.
 - `threads` (default): worker threads for parallel/adaptive modes, stream workers and blocking
   host waits; without it those modes run serially and the thread-only APIs do not exist.

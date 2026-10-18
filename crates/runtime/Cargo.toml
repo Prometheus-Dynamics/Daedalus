@@ -25,7 +25,6 @@ path = "src/lib.rs"
 boundary-features = ["gpu", "gpu-mock", "plugins", "std"]
 host-only-features = [
     "alloc-probe",
-    "executor-pool",
     "lockfree-queues",
     "metrics",
     "snapshots",
@@ -60,7 +59,6 @@ tracing = ["dep:tracing"]
 threads = ["std"]
 gpu = ["std", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
-executor-pool = ["threads", "rayon"]
 # Bounded edges on `crossbeam-queue`'s `ArrayQueue`; locked queues on targets without
 # compare-and-swap, where it has none.
 lockfree-queues = ["crossbeam-queue"]
@@ -82,7 +80,6 @@ crossbeam-queue = { workspace = true, optional = true }
 hashbrown = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
-rayon = { workspace = true, optional = true }
 smallvec = { workspace = true }
 parking_lot = { workspace = true, optional = true }
 spin = { workspace = true, features = ["lock_api", "mutex"] }

@@ -310,7 +310,7 @@ fn parallel_payload_branch_merges_outputs() {
     assert_eq!(*seen.lock(), vec![41, 42]);
 }
 
-#[cfg(feature = "executor-pool")]
+#[cfg(feature = "threads")]
 #[test]
 fn direct_runtime_parallel_path_can_prewarm_worker_pool() {
     let plan = branch_plan();

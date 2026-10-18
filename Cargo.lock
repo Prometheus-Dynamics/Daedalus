@@ -859,7 +859,6 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "rand 0.10.3",
- "rayon",
  "serde",
  "serde_json",
  "smallvec",

@@ -36,7 +36,7 @@
 //!    (`std` included: it swaps lock and map types), listed readably plus a stable hash, and
 //!    the size/alignment of the types that plugin installation touches (`PluginRegistry`,
 //!    `HandlerRegistry`, `Payload`, `TypeKey`, `NodeDecl`, ...). Features classified as `host-only-features` in a crate's
-//!    `[package.metadata.daedalus]` (`engine`, `executor-pool`, `metrics`, ...) are excluded,
+//!    `[package.metadata.daedalus]` (`engine`, `metrics`, ...) are excluded,
 //!    so a plugin built with just `dylib-plugins` installs into a host built with
 //!    `engine-full,dylib-plugins`. On mismatch the error names the differing segments, e.g.
 //!    ``features.runtime: host `gpu,plugins`, plugin `plugins` ``.
@@ -50,7 +50,7 @@
 //! ```toml
 //! [package.metadata.daedalus]
 //! boundary-features = ["gpu", "gpu-mock", "plugins"]
-//! host-only-features = ["executor-pool", "lockfree-queues", "metrics", "snapshots"]
+//! host-only-features = ["lockfree-queues", "metrics", "snapshots"]
 //! ```
 //!
 //! **Boundary types.** The fingerprint only covers Daedalus crates. A payload type from another

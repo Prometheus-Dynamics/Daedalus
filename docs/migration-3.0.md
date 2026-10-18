@@ -42,8 +42,8 @@ started from it, check these items:
 
 | Before | 3.0.0 | Since |
 | --- | --- | --- |
-| `engine` (engine + Rayon pool + plugins) | `engine-full` = `engine` + `executor-pool` + `metrics`; `engine` alone has no pool and no metrics | 2.0.0 |
-| no preset for small hosts | `embedded` = `engine` + `plugins` + `threads`, no pool, metrics or `tracing` | 2.0.0 |
+| `engine` (engine + Rayon pool + plugins) | `engine-full` = `engine` + `metrics`; the Rayon pool is gone, and `threads` (default) gives the parked worker threads for parallel modes | 2.0.0 |
+| no preset for small hosts | `embedded` = `engine` + `plugins` + `threads`, no metrics or `tracing` | 2.0.0 |
 | `ffi` (native plugins) | `dylib-plugins`, in both host and plugin | 2.0.0 |
 | `default = []` | `default = ["threads", "tracing"]` | **75dc4c1** |
 | `embedded` ran on wasm | wasm and other targets without threads: `default-features = false, features = ["engine", "plugins"]` | **75dc4c1** |
@@ -55,7 +55,7 @@ started from it, check these items:
 ```toml
 # Before (2.0.0)
 daedalus = { package = "daedalus-rs", version = "2.0.0", features = ["engine", "plugins", "gpu-wgpu"] }
-# After: same behavior (pool, metrics, GLES, image bridges)
+# After: same behavior (parked worker threads, metrics, GLES, image bridges)
 daedalus = { package = "daedalus-rs", version = "3.0.0", features = ["engine-full", "plugins", "gpu-wgpu", "gpu-gles", "gpu-image"] }
 
 # Before (75dc4c1): lean host

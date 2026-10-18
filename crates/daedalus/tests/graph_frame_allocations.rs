@@ -172,10 +172,9 @@ const OWNED_STRING_CLONE: f64 = 1.0;
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
 /// Basic metrics return each tick's per-node metrics in one fresh vector.
 const BASIC_METRICS_ALLOCATIONS: f64 = 1.0;
-/// Parallel frames fan out to persistent workers (Rayon with `executor-pool`, parked threads
-/// without) that pull segments from one shared queue: no task, channel or thread per frame. What
-/// remains is amortized (Rayon's injector allocates a block every 63 fan-outs, a node's first run
-/// on a worker grows that thread's port buffers). Adaptive mode runs this graph serially in
+/// Parallel frames fan out to persistent parked workers that pull segments from one shared
+/// queue: no task, channel or thread per frame. What remains is amortized (a node's first run on
+/// a worker grows that thread's port buffers). Adaptive mode runs this graph serially in
 /// optimized builds; unoptimized, its nodes are slow enough to go parallel.
 const PARALLEL_ALLOCATIONS: f64 = 1.0;
 
