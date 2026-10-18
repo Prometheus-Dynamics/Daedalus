@@ -73,8 +73,8 @@ daedalus-mcu = { path = "crates/mcu/device", version = "3.0.0" }
 daedalus-mcu-macros = { path = "crates/mcu/macros", version = "3.0.0" }
 daedalus-mcu-build = { path = "crates/mcu/build", version = "3.0.0" }
 daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "3.0.0" }
-daedalus-plugins-example-project = { path = "examples/plugins/example_project", version = "3.0.0" }
-daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi", version = "3.0.0" }
+daedalus-plugins-example-project = { path = "examples/plugins/example_project" }
+daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
 async-trait = "0.1.92"
 base64 = { version = "0.23.1", default-features = false, features = ["alloc"] }

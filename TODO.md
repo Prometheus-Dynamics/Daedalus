@@ -171,16 +171,6 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 ## Remaining
 
 ### High priority
-- [ ] **Package surface is red on `dev`.** `./scripts/ci.sh package` (the package-surface job)
-      fails while packaging the workspace: `crates/ffi` has versioned dev-dependencies on
-      `daedalus-ffi-core` and on sibling ffi crates (`8cf806d`, `7526fdb`), and `daedalus-ffi-core`
-      depends on itself, which cargo cannot order while packaging. Restructure those dev-dependencies,
-      then drop the facade from the exclusions. Until the workspace packages, the facade is checked
-      only by its listing (`cargo package -p daedalus-rs --list` must print no warnings), because
-      `cargo package -p daedalus-rs` cannot resolve the unpublished workspace crates. Before
-      publishing the facade, its fixture dev-dependencies (`daedalus-plugins-example-project`,
-      `daedalus-plugins-stable-abi`, declared with `version = "3.0.0"` in the root `Cargo.toml`) must
-      not stay in the published manifest: give them a path-only form, or move them out.
 - [ ] **Validate on a Pi 5 / CM5 with Mesa v3dv.** Run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
       `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`

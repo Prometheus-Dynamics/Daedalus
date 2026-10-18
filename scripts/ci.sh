@@ -59,8 +59,9 @@ usage: scripts/ci.sh [-j] [subcommand...]
               and thumbv6m, check flash and static RAM against per-mode budgets (readelf), and
               run the MCU crates' native tests
   wasm        engine,plugins (embedded, no threads) dev builds and Node runs for wasm32 and WASI
-  package     `cargo package` of every publishable crate except the facade and the fixture crates
-              (the package-surface job), then the facade's package listing, which must be warning-free
+  package     `cargo package` of every publishable crate, facade included, but not the example and
+              fixture crates (the package-surface job), then the facade's package listing, which
+              must be warning-free
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
   vvl         the dmabuf hardware tests and gpu_probe under the Khronos validation layer
@@ -298,11 +299,12 @@ cmd_wasm() {
   node scripts/wasm-bindgen-host.mjs "$out/wasm-bindgen-host/daedalus_wasm_bindgen_host.js"
 }
 
-# `cargo package` for every publishable crate, except the facade and the crates that depend on
-# unpublished fixtures (`--no-verify`: verifying a package builds it against crates.io, which has
-# no 3.0.0 crates yet). The facade cannot be packaged alone for the same reason, so its manifest
-# and file list are checked on their own: the listing must print nothing on stderr.
-readonly PACKAGE_EXCLUDES=(--exclude daedalus-rs --exclude daedalus-examples
+# `cargo package` for every publishable crate, except the example and fixture crates
+# (`--no-verify`: verifying a package builds it against crates.io, which has no 3.0.0 crates yet).
+# Dev-dependencies on the fixture crates carry no `version`, so they are left out of the published
+# manifests. The facade cannot be packaged alone for the same reason, so its file list is also
+# checked on its own: the listing must print nothing on stderr.
+readonly PACKAGE_EXCLUDES=(--exclude daedalus-examples
   --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project
   --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke
   --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes
