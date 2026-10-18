@@ -30,6 +30,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Engine: without a GPU backend (`GpuBackend::Cpu`), a node declared with
+  `#[node(fallback = "...")]` runs its CPU fallback in place of the GPU node. Before, the GPU
+  handler ran on CPU data and failed.
 - Runtime: `NodeIo::take_owned_or_clone` takes a `Clone` input by value and clones it when the
   executor still shares it. Under `NodeRecovery::Retry` the executor keeps a copy of each input,
   so a plain `take_owned` on a retried node fails on its first attempt; a by-value consumer that

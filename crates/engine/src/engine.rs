@@ -322,9 +322,12 @@ impl Engine {
 
     pub fn prepare_plan_with_config(
         &self,
-        graph: Graph,
+        mut graph: Graph,
         planner_cfg: PlannerConfig,
     ) -> Result<PreparedPlan, EngineError> {
+        if matches!(self.config.gpu, GpuBackend::Cpu) {
+            use_cpu_fallbacks(&mut graph);
+        }
         let cache_key = planner_cache_key(&graph, &planner_cfg);
         let output = if let Some(cached) = self.caches.planner_get(&cache_key) {
             (cached, CacheStatus::Hit)
@@ -750,5 +753,25 @@ mod boundary_tests {
         plugins
             .register_boundary_contract(plugin_contract)
             .expect("layout/capability-compatible contracts should not require identical cargo feature identity");
+    }
+}
+
+/// Without a GPU backend, a node declared with `fallback = "<cpu node>"` runs that CPU node in its
+/// place (same ports, same edges): the GPU node's handler takes device-resident inputs a CPU
+/// payload does not carry. Instances keep their labels; the swap is by node id.
+fn use_cpu_fallbacks(graph: &mut Graph) {
+    for node in &mut graph.nodes {
+        let Some(daedalus_data::model::Value::String(fallback)) = node.metadata.get("fallback")
+        else {
+            continue;
+        };
+        // A bare fallback id names a node of the same plugin (`plugin:node`), as the macro's
+        // `fallback = "..."` is written within the plugin.
+        let node_id = node.id.to_string();
+        let id = match node_id.split_once(':') {
+            Some((plugin, _)) if !fallback.contains(':') => format!("{plugin}:{fallback}"),
+            _ => fallback.to_string(),
+        };
+        node.id = daedalus_registry::ids::NodeId::new(id);
     }
 }
