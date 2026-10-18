@@ -9,8 +9,6 @@ pub(super) fn duplicate_error(kind: ConflictKind, key: impl Into<String>) -> Reg
         RegistryErrorCode::Conflict,
         format!("duplicate {kind:?} {key}"),
     )
-    .with_conflict_key(key.clone())
-    .with_conflict_kind(kind)
     .with_payload(RegistryErrorCompute::Conflict { key, kind })
 }
 

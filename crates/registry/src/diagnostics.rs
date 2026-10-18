@@ -24,8 +24,6 @@ pub enum RegistryErrorCode {
 pub struct RegistryError {
     code: RegistryErrorCode,
     message: String,
-    conflict_key: Option<String>,
-    conflict_kind: Option<ConflictKind>,
     payload: Option<RegistryErrorCompute>,
 }
 
@@ -60,8 +58,6 @@ impl RegistryError {
         Self {
             code,
             message: message.into(),
-            conflict_key: None,
-            conflict_kind: None,
             payload: None,
         }
     }
@@ -74,24 +70,24 @@ impl RegistryError {
         &self.message
     }
 
+    /// The key of the conflicting declaration, when this is a conflict (see [`Self::payload`]).
     pub fn conflict_key(&self) -> Option<&str> {
-        self.conflict_key.as_deref()
+        match &self.payload {
+            Some(RegistryErrorCompute::Conflict { key, .. }) => Some(key),
+            _ => None,
+        }
     }
 
-    pub fn with_conflict_key(mut self, key: impl Into<String>) -> Self {
-        self.conflict_key = Some(key.into());
-        self
-    }
-
+    /// The kind of the conflicting declaration, when this is a conflict (see [`Self::payload`]).
     pub fn conflict_kind(&self) -> Option<ConflictKind> {
-        self.conflict_kind
+        match &self.payload {
+            Some(RegistryErrorCompute::Conflict { kind, .. }) => Some(*kind),
+            _ => None,
+        }
     }
 
-    pub fn with_conflict_kind(mut self, kind: ConflictKind) -> Self {
-        self.conflict_kind = Some(kind);
-        self
-    }
-
+    /// The structured payload: the conflict or missing dependency this error reports. The
+    /// conflict accessors read it, so the key and kind are stored once.
     pub fn payload(&self) -> Option<&RegistryErrorCompute> {
         self.payload.as_ref()
     }

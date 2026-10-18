@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use daedalus_registry::capability::{NODE_FIRE_META_KEY, NodeDecl, NodeFire};
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
+use crate::graph::Edge;
 use crate::metadata::descriptor_metadata_value;
 
 use super::{
@@ -201,6 +202,14 @@ fn lint_fire_modes(input: &PlannerInput, catalog: &PlannerCatalog, diags: &mut V
         }
     }
 
+    // Incoming edges per node, in graph order, so each node's edges are visited once.
+    let mut incoming: Vec<Vec<&Edge>> = vec![Vec::new(); graph.nodes.len()];
+    for edge in &graph.edges {
+        if let Some(list) = incoming.get_mut(edge.to.node.0) {
+            list.push(edge);
+        }
+    }
+
     for (idx, node) in graph.nodes.iter().enumerate() {
         let Some(raw) = node.metadata.get(NODE_FIRE_META_KEY) else {
             continue;
@@ -222,7 +231,7 @@ fn lint_fire_modes(input: &PlannerInput, catalog: &PlannerCatalog, diags: &mut V
         if fire != Some(NodeFire::All) {
             continue;
         }
-        for edge in graph.edges.iter().filter(|edge| edge.to.node.0 == idx) {
+        for edge in incoming[idx].iter().copied() {
             let from = edge.from.node.0;
             if from >= graph.nodes.len()
                 || !is_required(idx, &edge.to.port)

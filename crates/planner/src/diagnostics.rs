@@ -1,5 +1,6 @@
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +8,9 @@ use serde::{Deserialize, Serialize};
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticSpan {
-    pub pass: String,
+    /// The pass that emitted the diagnostic: a static name for every planner pass, so it is
+    /// borrowed rather than allocated per diagnostic. Serializes as a plain string.
+    pub pass: Cow<'static, str>,
     pub node: Option<String>,
     pub port: Option<String>,
 }
@@ -52,7 +55,7 @@ impl Diagnostic {
             code,
             message: message.into(),
             span: DiagnosticSpan {
-                pass: String::new(),
+                pass: Cow::Borrowed(""),
                 node: None,
                 port: None,
             },
@@ -62,7 +65,7 @@ impl Diagnostic {
 
     /// Set the pass name that emitted this diagnostic.
     pub fn in_pass(mut self, pass: &'static str) -> Self {
-        self.span.pass = pass.to_string();
+        self.span.pass = Cow::Borrowed(pass);
         self
     }
 
@@ -235,4 +238,18 @@ pub fn bundle(diagnostics: &[Diagnostic]) -> DiagnosticsBundle {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn span_pass_serializes_as_a_plain_string() {
+        let diag = Diagnostic::new(DiagnosticCode::LintWarning, "unused").in_pass("lint");
+        let json = serde_json::to_value(&diag).unwrap();
+        assert_eq!(json["span"]["pass"], "lint");
+        let back: Diagnostic = serde_json::from_value(json).unwrap();
+        assert_eq!(back, diag);
+    }
 }
