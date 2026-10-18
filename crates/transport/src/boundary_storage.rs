@@ -252,7 +252,10 @@ impl BoundaryStorage {
     }
 
     /// [`Self::try_borrow_mut`] for a `T` required under `key`, without building the contract.
-    pub(crate) fn try_borrow_mut_as<T>(&mut self, key: &TypeKey) -> Result<&mut T, BoundaryTakeError>
+    pub(crate) fn try_borrow_mut_as<T>(
+        &mut self,
+        key: &TypeKey,
+    ) -> Result<&mut T, BoundaryTakeError>
     where
         T: Send + Sync + 'static,
     {
