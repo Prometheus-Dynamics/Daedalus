@@ -154,6 +154,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `InvalidInput("missing <port>")` error).
 - `declare_plugin!` no longer needs `paste` in the calling crate (it goes through
   `daedalus-nodes`); plugin crates can drop that dependency.
+- **Dead APIs removed:** `daedalus_core::channels::policy::{build_async, build_newest, EdgePolicy,
+  ChannelAsync}`, `bounded_with_metrics_and_behavior`, and `daedalus_data::NamedTypeRegistry::
+  resolve_opaque`. `PushOutcome::Replaced` is now `{ old, dropped }`. `IdStr::new` takes
+  `impl AsRef<str>`, so borrowed text is copied with one allocation.
 
 ### Added
 
@@ -399,6 +403,18 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   waits for overlap instead of a deadline, and the stalled-camera test
   runs on a manual clock. Waits that remain carry a 30 s safety bound. `scripts/ci.sh -j` runs
   the `test` and `lean` lanes as soon as they are built.
+
+- **`PressurePolicy::Coalesce` implements its window and `KeepOldest`.** Both were ignored, so
+  every `Coalesce` behaved as `LatestOnly`. `KeepOldest` now keeps the value that opened the group
+  and rejects arrivals within `window` (`DropReason::DropNewest`); `KeepNewest` is unchanged. See
+  `CoalesceStrategy`.
+- **Replacing a multi-item queue reports every dropped item.** `LatestOnly` and `Coalesce` over a
+  FIFO backlog returned one evicted item and hid the rest. `PushOutcome::Replaced` is now
+  `{ old, dropped }`, and `PushOutcome::dropped()` counts every item a push removed.
+- **Async senders could be stranded by a receive.** Bounded senders and receivers shared one
+  notification, so the receive that freed space could wake a parked receiver instead, and the
+  blocked sender waited forever. They now use separate notifications.
+- **`Newest` reports `stats().depth` 1 while its slot holds a value** (it was always 0).
 
 ### Maintenance
 

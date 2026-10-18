@@ -162,8 +162,8 @@ macro_rules! define_text_id {
         pub struct $name($crate::IdStr);
 
         impl $name {
-            pub fn new(value: impl AsRef<str>) -> Self {
-                Self($crate::IdStr::new(value))
+            pub fn new(value: impl Into<$crate::__private::String>) -> Self {
+                Self($crate::IdStr::new(value.into()))
             }
 
             /// Wrap a string literal without allocating.
