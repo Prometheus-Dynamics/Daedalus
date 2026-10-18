@@ -179,7 +179,7 @@ impl WireValue {
         {
             return Ok(WireValue::Bytes(BytePayload {
                 data: bytes.as_ref().to_vec(),
-                encoding: ByteEncoding::Raw,
+                encoding: ByteEncoding::Base64,
             }));
         }
         Err(WireValueConversionError::UnsupportedPayload {
@@ -256,7 +256,7 @@ impl TryFrom<Value> for WireValue {
             Value::String(value) => WireValue::String(value.into_owned()),
             Value::Bytes(value) => WireValue::Bytes(BytePayload {
                 data: value.into_owned(),
-                encoding: ByteEncoding::Raw,
+                encoding: ByteEncoding::Base64,
             }),
             Value::List(items) | Value::Tuple(items) => WireValue::List(
                 items
@@ -319,10 +319,12 @@ pub enum WireValueConversionError {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// Bytes on the wire. `encoding` picks the JSON form: [`ByteEncoding::Base64`] writes `data` as
+/// a base64 string (what Rust emits), [`ByteEncoding::Raw`] writes it as a JSON number array.
+/// Decoding accepts either form, whatever `encoding` says: a string is base64, an array is raw.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BytePayload {
     pub data: Vec<u8>,
-    #[serde(default)]
     pub encoding: ByteEncoding,
 }
 
@@ -332,6 +334,73 @@ pub enum ByteEncoding {
     #[default]
     Raw,
     Base64,
+}
+
+/// The `data` field in either JSON form.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ByteData {
+    Base64(String),
+    Raw(Vec<u8>),
+}
+
+/// Borrowing twin of [`ByteData`] so serializing a payload never copies its bytes into a
+/// `Vec` first; base64 output is encoded straight from the slice.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ByteDataRef<'a> {
+    Base64(String),
+    Raw(&'a [u8]),
+}
+
+#[derive(Serialize)]
+struct BytePayloadRef<'a> {
+    data: ByteDataRef<'a>,
+    encoding: ByteEncoding,
+}
+
+/// Either wire form; `encoding` is not needed to decode, so it is not read.
+#[derive(Deserialize)]
+struct BytePayloadWire {
+    data: ByteData,
+}
+
+impl Serialize for BytePayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use base64::Engine as _;
+        let (data, encoding) = match self.encoding {
+            ByteEncoding::Base64 => (
+                ByteDataRef::Base64(base64::engine::general_purpose::STANDARD.encode(&self.data)),
+                ByteEncoding::Base64,
+            ),
+            ByteEncoding::Raw => (ByteDataRef::Raw(&self.data), ByteEncoding::Raw),
+        };
+        BytePayloadRef { data, encoding }.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BytePayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use base64::Engine as _;
+        let wire = BytePayloadWire::deserialize(deserializer)?;
+        match wire.data {
+            ByteData::Base64(text) => {
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(text.as_bytes())
+                    .map_err(|err| {
+                        serde::de::Error::custom(format!("invalid base64 bytes: {err}"))
+                    })?;
+                Ok(BytePayload {
+                    data,
+                    encoding: ByteEncoding::Base64,
+                })
+            }
+            ByteData::Raw(data) => Ok(BytePayload {
+                data,
+                encoding: ByteEncoding::Raw,
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

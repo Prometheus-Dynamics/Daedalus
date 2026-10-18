@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   adapter, bytes, config, fromWire, gpu, node, parseWire, plugin, state, stringifyWire, toWire, typeKey, validateDescriptor,
+  wireHandle, wireImage,
 } from "../src/index.js";
 
 // What the Rust host serializes for `WireValue::UInt(u64::MAX)`.
@@ -121,4 +122,27 @@ test("node sdk rejects invalid descriptors and unsupported types", () => {
   );
   assert.throws(() => plugin("bad_plugin", []).typeContract("", ["host_read"]), /type_key/);
   assert.throws(() => plugin("bad_plugin", []).typeContract("test.Bad", ["teleport"]), /unsupported boundary/);
+});
+
+test("bytes encode as base64 and decode from base64 or a number array", () => {
+  const wire = toWire(new Uint8Array([1, 2, 255]));
+  assert.deepEqual(wire, { kind: "bytes", value: { data: "AQL/", encoding: "base64" } });
+  assert.deepEqual(fromWire(parseWire(stringifyWire(wire))), new Uint8Array([1, 2, 255]));
+  assert.deepEqual(fromWire({ kind: "bytes", value: { data: [1, 2], encoding: "raw" } }), new Uint8Array([1, 2]));
+  const big = new Uint8Array(1 << 20).map((_, index) => index & 0xff);
+  assert.deepEqual(fromWire(parseWire(stringifyWire(toWire(big)))), big);
+});
+
+test("image and handle wire kinds decode to plain JS values", () => {
+  const image = fromWire(parseWire(stringifyWire(wireImage({ data: [9, 8, 7, 6], width: 1, height: 1, channels: 4 }))));
+  assert.equal(image.width, 1);
+  assert.equal(image.channels, 4);
+  assert.equal(image.dtype, "u8");
+  assert.equal(image.layout, "hwc");
+  assert.deepEqual(image.data, new Uint8Array([9, 8, 7, 6]));
+  assert.deepEqual(
+    fromWire(wireHandle({ id: "h1", type_key: "bytes", access: "view" })),
+    { id: "h1", type_key: "bytes", access: "view" },
+  );
+  assert.deepEqual(fromWire({ kind: "image", value: { data: "CAcG", width: 1, height: 1, channels: 3 } }).data, new Uint8Array([8, 7, 6]));
 });

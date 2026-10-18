@@ -1,7 +1,7 @@
 use super::*;
 use daedalus_ffi_core::{
-    BackendRuntimeModel, FixtureLanguage, NodeSchema, WirePayloadHandle, WireValue,
-    generate_language_fixture, scalar_add_fixture_spec, validate_language_backends,
+    BackendRuntimeModel, ByteEncoding, BytePayload, FixtureLanguage, NodeSchema, WirePayloadHandle,
+    WireValue, generate_language_fixture, scalar_add_fixture_spec, validate_language_backends,
 };
 
 fn validate_java_schema(
@@ -354,7 +354,11 @@ fn java_sdk_package_builder_test_passes() {
             WireValue::UInt(u64::MAX),
             WireValue::UInt(5),
             WireValue::Int(-3),
-            WireValue::List(vec![WireValue::UInt(1 << 63)])
+            WireValue::List(vec![WireValue::UInt(1 << 63)]),
+            WireValue::Bytes(BytePayload {
+                data: vec![1, 255],
+                encoding: ByteEncoding::Base64,
+            }),
         ]
     );
 }

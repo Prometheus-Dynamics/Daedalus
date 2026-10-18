@@ -72,9 +72,10 @@ not rely on long-term semantics without an explicit stability note:
 
 ### JSON-Oriented Fields
 
-`ByteEncoding::Base64` exists for JSON/package descriptors, logs, snapshots, and workers that do not
-support raw transport payloads. Host paths that can carry raw bytes should use `ByteEncoding::Raw`
-and `WireValue::into_payload`.
+`BytePayload` serializes as base64 (`ByteEncoding::Base64`), which is what every JSON wire path
+sends. `ByteEncoding::Raw` writes a JSON number array and is kept so older workers still decode;
+decoding accepts either form. Paths that can carry raw bytes without JSON should use
+`WireValue::into_payload` and `Payload`.
 
 ## Worker Transport Format
 
@@ -128,6 +129,10 @@ diagnostics.
 Inputs and outputs use `WireValue`. JSON workers should support all scalar and
 structured variants. Large bytes and image-shaped values may start with JSON encoding, then upgrade
 to raw `Payload` or future handle-based paths where the host/backend transport supports them.
+
+Bytes are `{"kind":"bytes","value":{"data":"<base64>","encoding":"base64"}}`. Every SDK emits
+base64 and every decoder also accepts the older `"encoding":"raw"` form, where `data` is a JSON
+number array. (C++ does not use this form: its ABI passes a pointer and length.)
 
 Integers are `{"kind":"int","value":<i64>}` or `{"kind":"uint","value":<u64>}`. Workers send `uint`
 for values above `i64::MAX` (and may for any `u64` port value); `check_type` range-checks both

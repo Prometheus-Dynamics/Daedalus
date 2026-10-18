@@ -166,6 +166,9 @@ class PythonSdkTests(unittest.TestCase):
         )
         nested = {"big": [U64_MAX, -1], "raw": b"\x01", "none": None, "ok": True, "f": 0.5}
         self.assertEqual(from_wire(json.loads(json.dumps(to_wire(nested)))), {**nested, "big": [U64_MAX, -1]})
+        self.assertEqual(to_wire(b"\x01\x02"), {"kind": "bytes", "value": {"data": "AQI=", "encoding": "base64"}})
+        self.assertEqual(from_wire(json.loads(json.dumps(to_wire(bytearray(range(256)))))), bytes(range(256)))
+        self.assertEqual(from_wire({"kind": "bytes", "value": {"data": [1, 2], "encoding": "raw"}}), b"\x01\x02")
         for value, ty in [(-1, u64), (U64_MAX + 1, None), (-(1 << 63) - 1, None)]:
             with self.assertRaisesRegex(ValueError, "out of range"):
                 to_wire(value, ty)

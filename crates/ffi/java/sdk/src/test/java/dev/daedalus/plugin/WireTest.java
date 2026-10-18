@@ -34,10 +34,13 @@ public final class WireTest {
     expect(Wire.decode(Wire.read(Wire.write(Wire.encode(nested)))), nested);
     byte[] bytes = (byte[]) Wire.decode(Wire.read(Wire.write(Wire.encode(new byte[] {1, (byte) 255}))));
     expect(bytes[1], (byte) 255);
+    byte[] legacy = (byte[]) Wire.decode(Wire.read("{\"kind\":\"bytes\",\"value\":{\"data\":[1,2],\"encoding\":\"raw\"}}"));
+    expect(legacy[1], (byte) 2);
+    expect(Wire.write(Wire.encode(new byte[] {1, 2, (byte) 255})), "{\"kind\":\"bytes\",\"value\":{\"data\":\"AQL/\",\"encoding\":\"base64\"}}");
 
     System.out.println(Wire.write(List.of(
         Wire.encode(-1L, "u64"), Wire.encode(5L, "u64"), Wire.encode(-3L, null),
-        Wire.encode(List.of(BigInteger.ONE.shiftLeft(63))))));
+        Wire.encode(List.of(BigInteger.ONE.shiftLeft(63))), Wire.encode(new byte[] {1, (byte) 255}))));
   }
 
   private static void expect(Object actual, Object expected) {

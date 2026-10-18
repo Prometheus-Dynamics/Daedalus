@@ -594,6 +594,7 @@ dependencies = [
 name = "daedalus-ffi-core"
 version = "3.0.0"
 dependencies = [
+ "base64",
  "daedalus-data",
  "daedalus-transport",
  "serde",

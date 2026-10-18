@@ -21,8 +21,12 @@ default = ["integrity"]
 # hashed descriptors `LanguagePackager::build`/`rust_plugin_package` emit (pulls `sha2`).
 integrity = ["dep:sha2"]
 image-payload = []
+# Canonical fixture specs and the generators that write per-language conformance fixtures. Off by
+# default; the SDK and host tests and benches turn it on through their dev-dependencies.
+conformance = []
 
 [dependencies]
+base64 = { workspace = true }
 daedalus-data = { workspace = true, features = ["std", "json"] }
 daedalus-transport = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "std"] }

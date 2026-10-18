@@ -19,3 +19,6 @@ workspace = true
 daedalus-ffi-core = { workspace = true, features = ["integrity"] }
 serde_json = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+daedalus-ffi-core = { workspace = true, features = ["conformance"] }

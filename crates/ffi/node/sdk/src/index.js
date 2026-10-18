@@ -70,7 +70,7 @@ export function toWire(value, type) {
     return float ? { kind: "float", value } : wireInt(value, false);
   }
   if (typeof value === "string") return { kind: "string", value };
-  if (value instanceof Uint8Array) return { kind: "bytes", value: { data: [...value], encoding: "raw" } };
+  if (value instanceof Uint8Array) return { kind: "bytes", value: { data: encodeBase64(value), encoding: "base64" } };
   if (Array.isArray(value)) {
     return { kind: "list", value: value.map((item, index) => toWire(item, expr.Tuple?.[index] ?? expr.List)) };
   }
@@ -81,7 +81,34 @@ export function toWire(value, type) {
   throw new TypeError(`no wire encoding for ${typeof value}`);
 }
 
-/** The JS value of a `WireValue` object: `uint` decodes to a BigInt, `int` to a BigInt only beyond 2^53. */
+function encodeBase64(bytes) {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+}
+
+/** Bytes from either wire form: base64 text (what Rust sends) or a JSON number array. */
+function decodeBytes(data) {
+  return typeof data === "string" ? new Uint8Array(Buffer.from(data, "base64")) : Uint8Array.from(data);
+}
+
+/**
+ * The `WireValue` object for an image. `data` is the raw pixel bytes (a Uint8Array or number
+ * array); `dtype` is `u8`, `u16` or `f32` and `layout` is `hwc` or `chw`, matching the Rust
+ * `ImagePayload`, which takes `data` as a number array.
+ */
+export function wireImage({ data, width, height, channels, dtype = "u8", layout = "hwc" }) {
+  return { kind: "image", value: { data: [...data], width, height, channels, dtype, layout } };
+}
+
+/** The `WireValue` object for a payload handle (`{ id, type_key, access, ... }`). */
+export function wireHandle(handle) {
+  return { kind: "handle", value: handle };
+}
+
+/**
+ * The JS value of a `WireValue` object: `uint` decodes to a BigInt, `int` to a BigInt only beyond
+ * 2^53. `bytes` decodes to a Uint8Array; `image` to `{ data, width, height, channels, dtype,
+ * layout }` with `data` as a Uint8Array; `handle` stays the plain handle object.
+ */
 export function fromWire(wire) {
   const { kind, value } = wire;
   switch (kind) {
@@ -89,7 +116,9 @@ export function fromWire(wire) {
     case "bool": case "float": case "string": return value;
     case "uint": return BigInt(value);
     case "int": return Number.isSafeInteger(Number(value)) ? Number(value) : BigInt(value);
-    case "bytes": return Uint8Array.from(value.data);
+    case "bytes": return decodeBytes(value.data);
+    case "image": return { ...value, data: decodeBytes(value.data) };
+    case "handle": return value;
     case "list": return value.map(fromWire);
     case "record": return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fromWire(item)]));
     default: throw new TypeError(`unsupported wire value kind \`${kind}\``);

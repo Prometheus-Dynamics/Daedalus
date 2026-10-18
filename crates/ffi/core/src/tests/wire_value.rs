@@ -366,7 +366,7 @@ fn wire_bytes_convert_to_raw_transport_payload() {
         wire,
         WireValue::Bytes(BytePayload {
             data: vec![1, 2, 3, 4],
-            encoding: ByteEncoding::Raw,
+            encoding: ByteEncoding::Base64,
         })
     );
 }
@@ -391,6 +391,7 @@ fn payload_refs_route_through_transport_payload_metadata() {
     );
 }
 
+#[cfg(feature = "conformance")]
 #[test]
 fn payload_refs_validate_access_residency_layout_and_boundary_contracts() {
     let spec = boundary_contract_fixture_spec();
@@ -533,5 +534,50 @@ fn unsigned_wire_values_cross_json_and_payloads_exactly() {
     assert_eq!(
         WireValue::List(vec![max]).into_value(),
         Err(WireValueConversionError::IntegerOutOfRange { value: u64::MAX })
+    );
+}
+
+#[test]
+fn byte_payloads_serialize_as_base64_and_decode_either_form() {
+    let payload = BytePayload {
+        data: vec![1, 2, 255],
+        encoding: ByteEncoding::Base64,
+    };
+    let json = serde_json::to_value(&payload).expect("serialize base64 bytes");
+    assert_eq!(
+        json,
+        serde_json::json!({"data": "AQL/", "encoding": "base64"})
+    );
+    let back: BytePayload = serde_json::from_value(json).expect("decode base64 bytes");
+    assert_eq!(back, payload);
+
+    let raw: BytePayload =
+        serde_json::from_value(serde_json::json!({"data": [1, 2, 255]})).expect("decode array");
+    assert_eq!(
+        raw,
+        BytePayload {
+            data: vec![1, 2, 255],
+            encoding: ByteEncoding::Raw,
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(&raw).expect("serialize raw bytes"),
+        serde_json::json!({"data": [1, 2, 255], "encoding": "raw"})
+    );
+    assert!(serde_json::from_value::<BytePayload>(serde_json::json!({"data": "!!"})).is_err());
+
+    let megabyte = vec![7_u8; 1 << 20];
+    let wire = serde_json::to_string(&WireValue::Bytes(BytePayload {
+        data: megabyte.clone(),
+        encoding: ByteEncoding::Base64,
+    }))
+    .expect("serialize megabyte");
+    let decoded: WireValue = serde_json::from_str(&wire).expect("decode megabyte");
+    assert_eq!(
+        decoded,
+        WireValue::Bytes(BytePayload {
+            data: megabyte,
+            encoding: ByteEncoding::Base64,
+        })
     );
 }

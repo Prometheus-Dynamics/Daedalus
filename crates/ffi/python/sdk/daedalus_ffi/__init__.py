@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import inspect
 import json
 import types
@@ -120,7 +121,8 @@ def to_wire(value: Any, ty: Any = None) -> dict[str, Any]:
     if isinstance(value, str):
         return {"kind": "string", "value": value}
     if isinstance(value, (bytes, bytearray, memoryview)):
-        return {"kind": "bytes", "value": {"data": list(bytes(value)), "encoding": "raw"}}
+        data = base64.b64encode(value).decode("ascii")
+        return {"kind": "bytes", "value": {"data": data, "encoding": "base64"}}
     expr = expr or {}
     if isinstance(value, (list, tuple)):
         items = expr.get("Tuple") or [expr.get("List")] * len(value)
@@ -139,7 +141,11 @@ def from_wire(wire: dict[str, Any]) -> Any:
     if kind in ("bool", "int", "uint", "float", "string"):
         return value
     if kind == "bytes":
-        return bytes(value["data"])
+        # Rust sends base64 text; a JSON number array (`"encoding": "raw"`) is accepted too.
+        data = value["data"]
+        if isinstance(data, str):
+            return base64.b64decode(data, validate=True)
+        return bytes(data)
     if kind == "list":
         return [from_wire(item) for item in value]
     if kind == "record":

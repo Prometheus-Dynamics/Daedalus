@@ -3,6 +3,7 @@ package dev.daedalus.plugin;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,9 @@ import java.util.Map;
  * a {@code long} holding its bits ({@code @Scalar("u64") long}): {@link #encode(long, String)}
  * writes it as {@code uint} with unsigned semantics and {@link #decode} returns the bits of a
  * {@code uint} as a {@code Long} (print it with {@link Long#toUnsignedString(long)}).
+ *
+ * <p>Bytes travel as base64 text ({@code "encoding": "base64"}), the form Rust sends. {@link #decode}
+ * also accepts the older JSON number array ({@code "encoding": "raw"}).
  */
 public final class Wire {
   private static final BigInteger U64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
@@ -55,7 +59,11 @@ public final class Wire {
     throw new IllegalArgumentException("no wire encoding for " + value.getClass().getName());
   }
 
-  /** The Java value of a wire object: {@code int} and {@code uint} decode to {@code Long}. */
+  /**
+   * The Java value of a wire object: {@code int} and {@code uint} decode to {@code Long}. A
+   * {@code uint} above {@code Long.MAX_VALUE} decodes to the negative {@code long} with the same
+   * bits (u64::MAX is -1L); print it with {@link Long#toUnsignedString(long)}, not as signed.
+   */
   public static Object decode(Map<?, ?> wire) {
     Object value = wire.get("value");
     return switch (String.valueOf(wire.get("kind"))) {
@@ -63,9 +71,13 @@ public final class Wire {
       case "bool", "float", "string" -> value;
       case "int", "uint" -> ((Number) value).longValue();
       case "bytes" -> {
-        List<?> data = (List<?>) ((Map<?, ?>) value).get("data");
-        byte[] bytes = new byte[data.size()];
-        for (int i = 0; i < bytes.length; i++) bytes[i] = ((Number) data.get(i)).byteValue();
+        Object data = ((Map<?, ?>) value).get("data");
+        if (data instanceof String base64) {
+          yield Base64.getDecoder().decode(base64);
+        }
+        List<?> items = (List<?>) data;
+        byte[] bytes = new byte[items.size()];
+        for (int i = 0; i < bytes.length; i++) bytes[i] = ((Number) items.get(i)).byteValue();
         yield bytes;
       }
       case "list" -> {
@@ -102,8 +114,8 @@ public final class Wire {
   }
 
   private static Map<String, Object> bytePayload(ByteBuffer buffer) {
-    List<Object> data = new ArrayList<>();
-    while (buffer.hasRemaining()) data.add(buffer.get() & 0xff);
-    return Map.of("data", data, "encoding", "raw");
+    byte[] bytes = new byte[buffer.remaining()];
+    buffer.get(bytes);
+    return Map.of("data", Base64.getEncoder().encodeToString(bytes), "encoding", "base64");
   }
 }
