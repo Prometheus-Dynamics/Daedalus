@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use core::time::Duration;
 
+use daedalus_core::platform::Instant;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -23,6 +24,7 @@ pub enum PressurePolicy {
         capacity: usize,
         overflow: OverflowPolicy,
     },
+    /// Single-slot coalescing; see [`CoalesceStrategy`] for how `window` applies.
     Coalesce {
         window: Duration,
         strategy: CoalesceStrategy,
@@ -50,6 +52,19 @@ pub enum OverflowPolicy {
 }
 
 /// Coalescing behavior for high-rate input streams.
+///
+/// `Coalesce` keeps a single slot: the value a consumer would see next. `window` bounds how long
+/// the value that opened a coalescing group keeps the slot:
+///
+/// - `KeepNewest`: every arrival replaces the held value (the outcome is `Replaced`), so the
+///   newest value always wins and `window` has no effect.
+/// - `KeepOldest`: the value that opened the group is kept. Arrivals within `window` of when it
+///   was stored are rejected with [`DropReason::DropNewest`]. Once `window` has elapsed, the next
+///   arrival replaces the held value and opens a new group. A zero window replaces on every
+///   arrival.
+///
+/// Windows are read from [`Instant::now`]. Without an OS clock (`no_std` without an injected
+/// clock) they never elapse, so `KeepOldest` keeps its first value until it is popped.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoalesceStrategy {
@@ -119,7 +134,7 @@ impl FeedOutcome {
             PushOutcome::Accepted => Self::Accepted {
                 correlation_id: incoming,
             },
-            PushOutcome::Replaced(old) => Self::Replaced {
+            PushOutcome::Replaced { old, .. } => Self::Replaced {
                 old: id_of(&old),
                 new: incoming,
             },
@@ -159,8 +174,10 @@ impl PressurePolicy {
 pub enum PushOutcome<T> {
     /// The item was queued without displacing anything.
     Accepted,
-    /// The item was queued and the returned (previously queued) item was evicted.
-    Replaced(T),
+    /// The item was queued and previously queued items were evicted. `old` is the newest evicted
+    /// item; `dropped` counts every evicted item (at least one), including `old`. The others are
+    /// discarded without being returned, so this count is their only report.
+    Replaced { old: T, dropped: usize },
     /// The item was not queued. `DropReason::Backpressure` means the caller may retry later.
     Rejected(T, DropReason),
 }
@@ -168,6 +185,22 @@ pub enum PushOutcome<T> {
 impl<T> PushOutcome<T> {
     pub fn is_accepted(&self) -> bool {
         matches!(self, Self::Accepted)
+    }
+
+    /// Items this push removed from the queue or refused, counting every dropped item.
+    pub fn dropped(&self) -> usize {
+        match self {
+            Self::Accepted => 0,
+            Self::Replaced { dropped, .. } => *dropped,
+            Self::Rejected(..) => 1,
+        }
+    }
+}
+
+fn replaced<T>(old: Option<T>, dropped: usize) -> PushOutcome<T> {
+    match old {
+        Some(old) => PushOutcome::Replaced { old, dropped },
+        None => PushOutcome::Accepted,
     }
 }
 
@@ -181,6 +214,8 @@ impl<T> PushOutcome<T> {
 pub struct PolicyQueue<T> {
     storage: Storage<T>,
     capacity: Option<usize>,
+    /// When the value in the `Coalesce` slot opened its `KeepOldest` window.
+    opened: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -194,6 +229,7 @@ impl<T> Default for PolicyQueue<T> {
         Self {
             storage: Storage::Slot(None),
             capacity: None,
+            opened: None,
         }
     }
 }
@@ -289,24 +325,23 @@ impl<T> PolicyQueue<T> {
     #[inline]
     pub fn push(&mut self, pressure: &PressurePolicy, item: T) -> PushOutcome<T> {
         self.set_policy(pressure);
+        if let PressurePolicy::Coalesce { window, strategy } = pressure {
+            return self.push_coalesce(*window, strategy, item);
+        }
         let queue = match &mut self.storage {
-            Storage::Slot(slot) => {
-                return match slot.replace(item) {
-                    Some(old) => PushOutcome::Replaced(old),
-                    None => PushOutcome::Accepted,
-                };
-            }
+            Storage::Slot(slot) => return replaced(slot.replace(item), 1),
             Storage::Fifo(queue) => queue,
         };
         let full = self
             .capacity
             .is_some_and(|capacity| queue.len() >= capacity);
         match pressure {
-            PressurePolicy::LatestOnly | PressurePolicy::Coalesce { .. } => {
+            PressurePolicy::LatestOnly => {
+                let dropped = queue.len();
                 let old = queue.pop_back();
                 queue.clear();
                 queue.push_back(item);
-                old.map_or(PushOutcome::Accepted, PushOutcome::Replaced)
+                replaced(old, dropped)
             }
             PressurePolicy::DropNewest if !queue.is_empty() => {
                 PushOutcome::Rejected(item, DropReason::DropNewest)
@@ -329,12 +364,53 @@ impl<T> PolicyQueue<T> {
             }
         }
     }
+
+    /// `Coalesce` push; the window rules are on [`CoalesceStrategy`]. A FIFO backlog left by a
+    /// buffering policy is replaced wholesale, as `LatestOnly` does.
+    fn push_coalesce(
+        &mut self,
+        window: Duration,
+        strategy: &CoalesceStrategy,
+        item: T,
+    ) -> PushOutcome<T> {
+        let keep_oldest = matches!(strategy, CoalesceStrategy::KeepOldest);
+        match &mut self.storage {
+            Storage::Fifo(queue) => {
+                let dropped = queue.len();
+                let old = queue.pop_back();
+                queue.clear();
+                queue.push_back(item);
+                if keep_oldest {
+                    self.opened = Some(Instant::now());
+                }
+                replaced(old, dropped)
+            }
+            Storage::Slot(slot) => {
+                if slot.is_none() {
+                    if keep_oldest {
+                        self.opened = Some(Instant::now());
+                    }
+                    *slot = Some(item);
+                    return PushOutcome::Accepted;
+                }
+                if keep_oldest {
+                    let now = Instant::now();
+                    let opened = *self.opened.get_or_insert(now);
+                    if now - opened < window {
+                        return PushOutcome::Rejected(item, DropReason::DropNewest);
+                    }
+                    self.opened = Some(now);
+                }
+                replaced(slot.replace(item), 1)
+            }
+        }
+    }
 }
 
 fn evict_oldest<T>(queue: &mut VecDeque<T>, item: T) -> PushOutcome<T> {
     let old = queue.pop_front();
     queue.push_back(item);
-    old.map_or(PushOutcome::Accepted, PushOutcome::Replaced)
+    replaced(old, 1)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -375,7 +451,10 @@ mod tests {
         let mut queue = PolicyQueue::default();
         let policy = PressurePolicy::LatestOnly;
         assert_eq!(queue.push(&policy, 1), PushOutcome::Accepted);
-        assert_eq!(queue.push(&policy, 2), PushOutcome::Replaced(1));
+        assert_eq!(
+            queue.push(&policy, 2),
+            PushOutcome::Replaced { old: 1, dropped: 1 }
+        );
         assert!(matches!(queue.storage, Storage::Slot(Some(2))));
         assert_eq!(queue.pop_front(), Some(2));
         assert!(queue.is_empty());
@@ -406,7 +485,10 @@ mod tests {
         queue.push(&drop_oldest, 1);
         queue.push(&drop_oldest, 2);
         assert!(queue.is_full());
-        assert_eq!(queue.push(&drop_oldest, 3), PushOutcome::Replaced(1));
+        assert_eq!(
+            queue.push(&drop_oldest, 3),
+            PushOutcome::Replaced { old: 1, dropped: 1 }
+        );
         assert_eq!(items(&queue), vec![2, 3]);
 
         for (overflow, reason) in [
@@ -437,11 +519,86 @@ mod tests {
         }
     }
 
+    fn coalesce(window: Duration, strategy: CoalesceStrategy) -> PressurePolicy {
+        PressurePolicy::Coalesce { window, strategy }
+    }
+
+    #[test]
+    fn coalesce_keep_newest_replaces_every_arrival() {
+        let mut queue = PolicyQueue::default();
+        let policy = coalesce(Duration::from_secs(3600), CoalesceStrategy::KeepNewest);
+        assert_eq!(queue.push(&policy, 1), PushOutcome::Accepted);
+        assert_eq!(
+            queue.push(&policy, 2),
+            PushOutcome::Replaced { old: 1, dropped: 1 }
+        );
+        assert_eq!(
+            queue.push(&policy, 3),
+            PushOutcome::Replaced { old: 2, dropped: 1 }
+        );
+        assert_eq!(items(&queue), vec![3]);
+    }
+
+    #[test]
+    fn coalesce_keep_oldest_rejects_arrivals_inside_window() {
+        let mut queue = PolicyQueue::default();
+        let policy = coalesce(Duration::from_secs(3600), CoalesceStrategy::KeepOldest);
+        assert_eq!(queue.push(&policy, 1), PushOutcome::Accepted);
+        let outcome = queue.push(&policy, 2);
+        assert_eq!(outcome, PushOutcome::Rejected(2, DropReason::DropNewest));
+        assert_eq!(outcome.dropped(), 1);
+        assert_eq!(items(&queue), vec![1]);
+    }
+
+    #[test]
+    fn coalesce_keep_oldest_zero_window_replaces_after_window() {
+        let mut queue = PolicyQueue::default();
+        let policy = coalesce(Duration::ZERO, CoalesceStrategy::KeepOldest);
+        assert_eq!(queue.push(&policy, 1), PushOutcome::Accepted);
+        assert_eq!(
+            queue.push(&policy, 2),
+            PushOutcome::Replaced { old: 1, dropped: 1 }
+        );
+        assert_eq!(items(&queue), vec![2]);
+    }
+
+    #[test]
+    fn coalesce_clears_fifo_backlog_and_counts_every_dropped_item() {
+        let mut queue = PolicyQueue::default();
+        for value in 1..=3 {
+            queue.push(&PressurePolicy::BufferAll, value);
+        }
+        let policy = coalesce(Duration::from_secs(3600), CoalesceStrategy::KeepOldest);
+        assert_eq!(
+            queue.push(&policy, 4),
+            PushOutcome::Replaced { old: 3, dropped: 3 }
+        );
+        assert_eq!(items(&queue), vec![4]);
+        // The window opened by the backlog's replacement still coalesces.
+        assert_eq!(
+            queue.push(&policy, 5),
+            PushOutcome::Rejected(5, DropReason::DropNewest)
+        );
+        assert_eq!(items(&queue), vec![4]);
+    }
+
+    #[test]
+    fn latest_only_backlog_reports_every_dropped_item() {
+        let mut queue = PolicyQueue::default();
+        for value in 1..=3 {
+            queue.push(&PressurePolicy::BufferAll, value);
+        }
+        let outcome = queue.push(&PressurePolicy::LatestOnly, 4);
+        assert_eq!(outcome, PushOutcome::Replaced { old: 3, dropped: 3 });
+        assert_eq!(outcome.dropped(), 3);
+        assert_eq!(items(&queue), vec![4]);
+    }
+
     #[test]
     fn feed_outcome_from_push() {
         let id = |value: &u64| *value;
         assert_eq!(
-            FeedOutcome::from_push(PushOutcome::Replaced(7), 8, id),
+            FeedOutcome::from_push(PushOutcome::Replaced { old: 7, dropped: 2 }, 8, id),
             FeedOutcome::Replaced { old: 7, new: 8 }
         );
         assert_eq!(
