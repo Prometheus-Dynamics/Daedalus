@@ -123,7 +123,7 @@ fn routes<H: NodeHandler>(exec: &Executor<'_, H>, edge_idx: usize) -> bool {
 /// Drop whatever an edge still holds (a held input's previous value its consumer did not take).
 fn clear_edge<H: NodeHandler>(exec: &mut Executor<'_, H>, edge_idx: usize) {
     if edge_uses_direct_slot(exec, edge_idx) {
-        while pop_direct_edge(exec, edge_idx).is_some() {}
+        while pop_direct_edge(&mut exec.core, exec.direct_slot_access, edge_idx).is_some() {}
     } else {
         while pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors).is_some() {}
     }
@@ -153,7 +153,9 @@ pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
                 continue;
             }
             if edge_uses_direct_slot(exec, edge_idx) {
-                while let Some(payload) = pop_direct_edge(exec, edge_idx) {
+                while let Some(payload) =
+                    pop_direct_edge(&mut exec.core, exec.direct_slot_access, edge_idx)
+                {
                     host.handle.push_outbound_ref(port, payload.inner);
                 }
                 continue;

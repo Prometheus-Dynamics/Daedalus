@@ -30,6 +30,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: `push_direct_edge` and `pop_direct_edge` take the executor core, edge table and slot
+  access instead of `&mut Executor<H>`, so their bodies are not instantiated per handler type.
 - Runtime: an edge push that evicts a backlog adds every evicted item to the edge's `drops`
   and pressure count (it counted one). A `KeepOldest` coalesce edge that refuses an arrival in
   its window records `EdgePressureReason::CoalesceReject` (`coalesce_reject`,

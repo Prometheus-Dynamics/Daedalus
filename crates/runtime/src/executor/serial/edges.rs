@@ -45,7 +45,9 @@ pub(super) fn collect_inputs<H: NodeHandler>(
             continue;
         }
         if edge_uses_direct_slot(exec, edge_idx) {
-            while let Some(mut payload) = pop_direct_edge(exec, edge_idx) {
+            while let Some(mut payload) =
+                pop_direct_edge(&mut exec.core, exec.direct_slot_access, edge_idx)
+            {
                 if collect_lifecycle {
                     let mut lifecycle = DataLifecycleRecord::new(
                         payload.correlation_id,
@@ -384,7 +386,13 @@ fn deliver<H: NodeHandler>(
         );
     }
     if edge_uses_direct_slot(exec, edge_idx) {
-        push_direct_edge(exec, edge_idx, payload);
+        push_direct_edge(
+            &mut exec.core,
+            exec.edges,
+            exec.direct_slot_access,
+            edge_idx,
+            payload,
+        );
         return Ok(());
     }
     let edges = exec.edges;
