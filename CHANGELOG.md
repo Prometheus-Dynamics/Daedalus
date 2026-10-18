@@ -64,6 +64,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   reuses them while the same sinks repeat. The telemetry demand summary is built only with
   metrics on (`OwnedExecutor::metrics_level`). Metrics-off ticks drop about half their overhead
   in the `tick_selected` micro-bench.
+- Transport: `FeedOutcome::Replaced` carries `dropped`, the number of queued payloads the push
+  evicted (`PushOutcome::Replaced::dropped`), instead of implying one. Host bridge stats and
+  per-port stats count every evicted payload: `replaced` and the drop-reason counters grow by the
+  evicted count (a `LatestOnly` push over a three-item backlog adds three), where they added one.
 - Runtime: edge overflow warnings look the label up before allocating it, and the default
   `<prefix>_edge_<idx>` label is built on the stack. `ApplyPolicyOwnedArgs::warning_label` is
   `Option<Arc<str>>`.

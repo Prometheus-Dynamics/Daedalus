@@ -215,11 +215,13 @@ impl Direction {
         };
         *dropped = dropped.saturating_add(1);
         if let Some(reason) = reason {
-            record_drop_reason(reasons, reason);
+            record_drop_reason(reasons, reason, 1);
         }
     }
 
-    fn count_replaced(self, stats: &mut HostBridgeStats, reason: Option<DropReason>) {
+    /// Count one accepted push that evicted `dropped` queued payloads: each eviction is a
+    /// replacement, and each counts toward the drop reason when one applies.
+    fn count_replaced(self, stats: &mut HostBridgeStats, dropped: u64, reason: Option<DropReason>) {
         let (replaced, reasons) = match self {
             Direction::Inbound => {
                 stats.inbound_accepted = stats.inbound_accepted.saturating_add(1);
@@ -230,9 +232,9 @@ impl Direction {
                 &mut stats.outbound_drop_reasons,
             ),
         };
-        *replaced = replaced.saturating_add(1);
+        *replaced = replaced.saturating_add(dropped);
         if let Some(reason) = reason {
-            record_drop_reason(reasons, reason);
+            record_drop_reason(reasons, reason, dropped);
         }
     }
 
@@ -347,8 +349,8 @@ fn enqueue_locked(
             direction.count_accepted(stats);
             None
         }
-        FeedOutcome::Replaced { .. } => {
-            direction.count_replaced(stats, replacement.clone());
+        FeedOutcome::Replaced { dropped, .. } => {
+            direction.count_replaced(stats, dropped as u64, replacement.clone());
             replacement
         }
         FeedOutcome::Dropped { .. }

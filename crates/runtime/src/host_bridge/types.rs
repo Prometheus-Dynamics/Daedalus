@@ -93,7 +93,8 @@ pub struct HostBridgePayload {
 pub struct HostPortStats {
     /// Payloads queued on the port, including ones that replaced a queued value.
     pub accepted: u64,
-    /// Queued payloads replaced by a newer one before they were taken.
+    /// Queued payloads evicted by a newer one before they were taken: one per evicted payload,
+    /// so a push that evicts a backlog of several counts each of them.
     pub replaced: u64,
     /// Payloads rejected by freshness, pressure, or a closed port.
     pub dropped: u64,
@@ -105,28 +106,29 @@ pub struct HostPortStats {
 
 impl HostPortStats {
     pub(super) fn record_enqueue(&mut self, outcome: &FeedOutcome) {
-        let counter = match outcome {
-            FeedOutcome::Accepted { .. } => &mut self.accepted,
-            FeedOutcome::Replaced { .. } => {
+        match outcome {
+            FeedOutcome::Accepted { .. } => self.accepted = self.accepted.saturating_add(1),
+            FeedOutcome::Replaced { dropped, .. } => {
                 self.accepted = self.accepted.saturating_add(1);
-                &mut self.replaced
+                self.replaced = self.replaced.saturating_add(*dropped as u64);
             }
             FeedOutcome::Dropped { .. }
             | FeedOutcome::Backpressured
             | FeedOutcome::Closed
-            | FeedOutcome::Rejected(_) => &mut self.dropped,
-        };
-        *counter = counter.saturating_add(1);
+            | FeedOutcome::Rejected(_) => self.dropped = self.dropped.saturating_add(1),
+        }
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostBridgeStats {
     pub inbound_accepted: u64,
+    /// Queued inbound payloads evicted by a newer push, one per evicted payload.
     pub inbound_replaced: u64,
     pub inbound_dropped: u64,
     pub inbound_drop_reasons: HostBridgeDropStats,
     pub outbound_delivered: u64,
+    /// Queued outbound payloads evicted by a newer push, one per evicted payload.
     pub outbound_replaced: u64,
     pub outbound_dropped: u64,
     pub outbound_drop_reasons: HostBridgeDropStats,

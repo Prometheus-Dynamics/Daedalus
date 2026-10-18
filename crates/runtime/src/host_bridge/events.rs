@@ -133,18 +133,19 @@ pub(super) fn record_host_event(
     });
 }
 
-pub(super) fn record_drop_reason(stats: &mut HostBridgeDropStats, reason: DropReason) {
+/// Add `count` drops of `reason`; a replacement that evicted several queued payloads counts each.
+pub(super) fn record_drop_reason(stats: &mut HostBridgeDropStats, reason: DropReason, count: u64) {
     match reason {
-        DropReason::Backpressure => stats.backpressure = stats.backpressure.saturating_add(1),
-        DropReason::DropNewest => stats.drop_newest = stats.drop_newest.saturating_add(1),
-        DropReason::DropOldest => stats.drop_oldest = stats.drop_oldest.saturating_add(1),
+        DropReason::Backpressure => stats.backpressure = stats.backpressure.saturating_add(count),
+        DropReason::DropNewest => stats.drop_newest = stats.drop_newest.saturating_add(count),
+        DropReason::DropOldest => stats.drop_oldest = stats.drop_oldest.saturating_add(count),
         DropReason::LatestOnlyReplace => {
-            stats.latest_only_replace = stats.latest_only_replace.saturating_add(1);
+            stats.latest_only_replace = stats.latest_only_replace.saturating_add(count);
         }
-        DropReason::MaxAge => stats.max_age = stats.max_age.saturating_add(1),
-        DropReason::MaxLag => stats.max_lag = stats.max_lag.saturating_add(1),
-        DropReason::Closed => stats.closed = stats.closed.saturating_add(1),
-        DropReason::ErrorOnFull => stats.error_on_full = stats.error_on_full.saturating_add(1),
+        DropReason::MaxAge => stats.max_age = stats.max_age.saturating_add(count),
+        DropReason::MaxLag => stats.max_lag = stats.max_lag.saturating_add(count),
+        DropReason::Closed => stats.closed = stats.closed.saturating_add(count),
+        DropReason::ErrorOnFull => stats.error_on_full = stats.error_on_full.saturating_add(count),
     }
 }
 

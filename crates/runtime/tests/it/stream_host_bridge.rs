@@ -48,7 +48,8 @@ fn host_bridge_latest_only_replaces_inbound_payloads() {
         handle.feed_payload("input", second),
         FeedOutcome::Replaced {
             old: first_id,
-            new: second_id
+            new: second_id,
+            dropped: 1,
         }
     );
 
@@ -479,11 +480,60 @@ fn host_bridge_drop_oldest_replaces_queued_payload() {
         FeedOutcome::Replaced {
             old: first_id,
             new: second_id,
+            dropped: 1,
         }
     );
     let inbound = take_inbound(&manager, "host");
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&2));
+}
+
+#[test]
+fn host_bridge_latest_only_counts_every_evicted_payload() {
+    let manager = HostBridgeManager::new();
+    let handle = manager.ensure_handle("host");
+    // Buffer three payloads, then switch to LatestOnly: one push evicts all three.
+    handle
+        .set_input_policy(
+            "input",
+            PressurePolicy::Bounded {
+                capacity: 8,
+                overflow: OverflowPolicy::Backpressure,
+            },
+            FreshnessPolicy::PreserveAll,
+        )
+        .unwrap();
+    for value in 1..=3u32 {
+        handle.feed_payload("input", Payload::owned("demo:u32", value));
+    }
+    handle
+        .set_input_policy(
+            "input",
+            PressurePolicy::LatestOnly,
+            FreshnessPolicy::LatestBySequence,
+        )
+        .unwrap();
+
+    let outcome = handle.feed_payload("input", Payload::owned("demo:u32", 4u32));
+    assert!(matches!(outcome, FeedOutcome::Replaced { dropped: 3, .. }));
+
+    let stats = handle.stats();
+    assert_eq!(stats.inbound_accepted, 4);
+    assert_eq!(stats.inbound_replaced, 3);
+    assert_eq!(
+        stats
+            .inbound_drop_reasons
+            .count(DropReason::LatestOnlyReplace),
+        3
+    );
+    let port = handle.input_port_stats("input").expect("port was used");
+    assert_eq!(port.accepted, 4);
+    assert_eq!(port.replaced, 3);
+    assert_eq!(port.dropped, 0);
+    assert_eq!(port.pending, 1);
+    let inbound = take_inbound(&manager, "host");
+    assert_eq!(inbound.len(), 1);
+    assert_eq!(inbound[0].payload.get_ref::<u32>(), Some(&4));
 }
 
 #[test]

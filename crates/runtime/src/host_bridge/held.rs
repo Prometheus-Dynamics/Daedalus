@@ -20,6 +20,7 @@ pub(super) fn replace(held: &mut Option<Payload>, payload: Payload) -> FeedOutco
         Some(old) => FeedOutcome::Replaced {
             old: old.correlation_id(),
             new,
+            dropped: 1,
         },
         None => FeedOutcome::Accepted {
             correlation_id: new,

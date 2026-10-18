@@ -107,9 +107,12 @@ pub enum FeedOutcome {
     Accepted {
         correlation_id: CorrelationId,
     },
+    /// The payload was queued and `dropped` previously queued payloads were evicted. `old` is
+    /// the newest evicted payload; `dropped` counts every evicted payload, including `old`.
     Replaced {
         old: CorrelationId,
         new: CorrelationId,
+        dropped: usize,
     },
     Dropped {
         correlation_id: CorrelationId,
@@ -134,9 +137,10 @@ impl FeedOutcome {
             PushOutcome::Accepted => Self::Accepted {
                 correlation_id: incoming,
             },
-            PushOutcome::Replaced { old, .. } => Self::Replaced {
+            PushOutcome::Replaced { old, dropped } => Self::Replaced {
                 old: id_of(&old),
                 new: incoming,
+                dropped,
             },
             PushOutcome::Rejected(_, DropReason::Backpressure) => Self::Backpressured,
             PushOutcome::Rejected(_, reason) => Self::Dropped {
@@ -599,7 +603,11 @@ mod tests {
         let id = |value: &u64| *value;
         assert_eq!(
             FeedOutcome::from_push(PushOutcome::Replaced { old: 7, dropped: 2 }, 8, id),
-            FeedOutcome::Replaced { old: 7, new: 8 }
+            FeedOutcome::Replaced {
+                old: 7,
+                new: 8,
+                dropped: 2,
+            }
         );
         assert_eq!(
             FeedOutcome::from_push(PushOutcome::Rejected(8, DropReason::Backpressure), 8, id),
