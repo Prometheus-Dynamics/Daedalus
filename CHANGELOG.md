@@ -20,6 +20,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- **FFI bytes travel as base64.** `BytePayload` serializes as `{"data":"<base64>","encoding":"base64"}`
+  and the Rust, Python, Node and Java SDKs emit that form. Every decoder still accepts the older JSON
+  number array (`"encoding":"raw"`). C++ keeps its pointer and length ABI and is unchanged.
+- **Persistent-worker invokes encode and read once.** Requests are serialized into a reused buffer
+  and written in one call, responses are read into a reused line buffer, and the byte counts come
+  from those encodings instead of a second serialization. The pool derives the runner key once per
+  call. `BackendRunner::invoke_measured` and `invoke_batch_measured` report sent and received bytes
+  (defaults estimate them without buffering).
 - **Breaking: `daedalus:frame` v2** (`FrameInterface` version 2, new vtable layout hash; v1
   plugins are refused with `PluginLibraryError::ForeignInterfaceMismatch`, and a registry
   holding one version refuses the other with `PluginError::ForeignInterfaceConflict`;
@@ -110,6 +118,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- `conformance` feature on `daedalus-ffi-core` (canonical fixture specs and generators, off by
+  default) and `daedalus-ffi-host` (the fixture harness). SDK crates enable it in dev-dependencies.
+- Node SDK: `wireImage` and `wireHandle`; `fromWire` decodes `image` and `handle` kinds.
+- `daedalus-ffi-host` exports `InvokeWireBytes`.
+- Java SDK: `Wire` decodes base64 bytes; `uint` values above `Long.MAX_VALUE` are documented as
+  the negative `long` with the same bits (print with `Long.toUnsignedString`).
 - **Node fusion.** Chains of single-consumer CPU nodes run as fused units: a fused edge (its
   source port feeds only it, its target port has no other producer, a direct slot without
   adapters, CPU-only non-host-bridge ends, a consumer that fires on any input and runs right after
