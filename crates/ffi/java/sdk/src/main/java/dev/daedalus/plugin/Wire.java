@@ -116,6 +116,10 @@ public final class Wire {
   private static Map<String, Object> bytePayload(ByteBuffer buffer) {
     byte[] bytes = new byte[buffer.remaining()];
     buffer.get(bytes);
-    return Map.of("data", Base64.getEncoder().encodeToString(bytes), "encoding", "base64");
+    // Insertion-ordered (Map.of iterates in an unspecified order), so the wire form is stable.
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("data", Base64.getEncoder().encodeToString(bytes));
+    payload.put("encoding", "base64");
+    return payload;
   }
 }
