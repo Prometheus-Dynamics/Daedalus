@@ -28,6 +28,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: edge overflow warnings look the label up before allocating it, and the default
+  `<prefix>_edge_<idx>` label is built on the stack. `ApplyPolicyOwnedArgs::warning_label` is
+  `Option<Arc<str>>`.
 - Runtime: `StateStore` keeps JSON and native values under one lock, so `set` and `set_native`
   take one write lock and `set` allocates a key only on first insert.
 - `daedalus-frame-bench`: the detector mirror is a synthetic marker-detector bench. Its marker

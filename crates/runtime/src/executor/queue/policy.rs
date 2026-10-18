@@ -133,7 +133,7 @@ pub struct ApplyPolicyOwnedArgs<'a> {
     pub queues: &'a Arc<Vec<EdgeStorage>>,
     pub warnings_seen: &'a Arc<Mutex<HashSet<String>>>,
     pub telem: &'a mut ExecutionTelemetry,
-    pub warning_label: Option<String>,
+    pub warning_label: Option<Arc<str>>,
     pub backpressure: BackpressureStrategy,
     pub data_size_inspectors: &'a RuntimeDataSizeInspectors,
     /// Stamp the enqueue time for queue-wait timing even below basic metrics (frame probe).
@@ -193,10 +193,13 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                         );
                         record_pressure_event(telem, edge_idx, reason, 0);
                         telem.backpressure_events += 1;
-                        let label = warning_label
-                            .clone()
-                            .unwrap_or_else(|| format!("bounded_error_edge_{edge_idx}"));
-                        record_warning(&label, warnings_seen, telem);
+                        record_edge_warning(
+                            warning_label.as_ref(),
+                            "bounded_error_edge_",
+                            edge_idx,
+                            warnings_seen,
+                            telem,
+                        );
                         telem.record_edge_transport_apply_duration(
                             edge_idx,
                             elapsed_since(&clock, apply_start),
@@ -239,10 +242,13 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                         pressure_reason_for_policy(policy, &backpressure),
                         1,
                     );
-                    let label = warning_label
-                        .clone()
-                        .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
-                    record_warning(&label, warnings_seen, telem);
+                    record_edge_warning(
+                        warning_label.as_ref(),
+                        "bounded_drop_edge_",
+                        edge_idx,
+                        warnings_seen,
+                        telem,
+                    );
                 }
                 telem.record_edge_depth(edge_idx, q.len());
                 let (current_queue_bytes, _) = metrics.snapshot();
@@ -309,10 +315,13 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                             );
                             record_pressure_event(telem, edge_idx, reason, 0);
                             telem.backpressure_events += 1;
-                            let label = warning_label
-                                .clone()
-                                .unwrap_or_else(|| format!("bounded_error_edge_{edge_idx}"));
-                            record_warning(&label, warnings_seen, telem);
+                            record_edge_warning(
+                                warning_label.as_ref(),
+                                "bounded_error_edge_",
+                                edge_idx,
+                                warnings_seen,
+                                telem,
+                            );
                             telem.record_edge_transport_apply_duration(
                                 edge_idx,
                                 elapsed_since(&clock, apply_start),
@@ -344,10 +353,13 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                                     );
                                     record_pressure_event(telem, edge_idx, reason, 0);
                                     telem.backpressure_events += 1;
-                                    let label = warning_label.clone().unwrap_or_else(|| {
-                                        format!("bounded_error_edge_{edge_idx}")
-                                    });
-                                    record_warning(&label, warnings_seen, telem);
+                                    record_edge_warning(
+                                        warning_label.as_ref(),
+                                        "bounded_error_edge_",
+                                        edge_idx,
+                                        warnings_seen,
+                                        telem,
+                                    );
                                     telem.record_edge_transport_apply_duration(
                                         edge_idx,
                                         elapsed_since(&clock, apply_start),
@@ -403,10 +415,13 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
                             .unwrap_or_else(|| pressure_reason_for_policy(policy, &backpressure)),
                         1,
                     );
-                    let label = warning_label
-                        .clone()
-                        .unwrap_or_else(|| format!("bounded_drop_edge_{edge_idx}"));
-                    record_warning(&label, warnings_seen, telem);
+                    record_edge_warning(
+                        warning_label.as_ref(),
+                        "bounded_drop_edge_",
+                        edge_idx,
+                        warnings_seen,
+                        telem,
+                    );
                 }
                 telem.record_edge_depth(edge_idx, queue.len());
                 let (current_queue_bytes, _) = metrics.snapshot();
@@ -418,8 +433,64 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
     Ok(())
 }
 
+/// Record an overflow warning once per label. The label is only allocated the first time it is
+/// seen: a repeated overflow costs one lookup under the lock.
 fn record_warning(label: &str, seen: &Arc<Mutex<HashSet<String>>>, telem: &mut ExecutionTelemetry) {
-    if seen.lock().insert(label.to_string()) {
+    let mut seen = seen.lock();
+    if !seen.contains(label) {
+        seen.insert(label.to_string());
         telem.warnings.push(label.to_string());
+    }
+}
+
+/// Record an overflow warning under the edge's label, or `<prefix><edge_idx>` when the edge has
+/// none. The fallback is built on the stack, so a repeated overflow allocates nothing.
+fn record_edge_warning(
+    warning_label: Option<&Arc<str>>,
+    prefix: &str,
+    edge_idx: usize,
+    seen: &Arc<Mutex<HashSet<String>>>,
+    telem: &mut ExecutionTelemetry,
+) {
+    match warning_label {
+        Some(label) => record_warning(label, seen, telem),
+        None => {
+            let fallback = StackLabel::new(prefix, edge_idx);
+            record_warning(fallback.as_str(), seen, telem);
+        }
+    }
+}
+
+/// A `<prefix><edge_idx>` label kept in a fixed stack buffer. The longest edge label is the
+/// 19-byte prefix plus at most 20 digits, so the buffer never overflows.
+struct StackLabel {
+    buf: [u8; 48],
+    len: usize,
+}
+
+impl StackLabel {
+    fn new(prefix: &str, edge_idx: usize) -> Self {
+        let mut label = Self {
+            buf: [0; 48],
+            len: 0,
+        };
+        let _ = core::fmt::Write::write_fmt(&mut label, format_args!("{prefix}{edge_idx}"));
+        label
+    }
+
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
+}
+
+impl core::fmt::Write for StackLabel {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let end = self.len + s.len();
+        self.buf
+            .get_mut(self.len..end)
+            .ok_or(core::fmt::Error)?
+            .copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
     }
 }
