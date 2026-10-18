@@ -6,7 +6,8 @@ Daedalus validation is split into a default workspace loop, focused feature chec
 
 This is the canonical validation loop; the README and development guide link here. Run it before
 sending broad changes. `./scripts/repo-clean.sh` first applies `cargo fmt` and `clippy --fix`,
-then runs the full [local CI runner](#local-ci-runner).
+then runs the default [local CI runner](#local-ci-runner) (`scripts/ci.sh` with no arguments, the
+`all` loop; not `full`).
 
 ```bash
 cargo fmt --all -- --check
@@ -73,7 +74,7 @@ for new tests:
 | `features` | release feature-surface checks |
 | `clippy`, `link` | clippy `-D warnings` (`engine,plugins`, dylib plugins, all features); `cargo build --workspace --lib --all-features` (links every `cdylib`) |
 | `test`, `macro-ui` | workspace + dylib tests; trybuild |
-| `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`, `frame_chain`), built with the `test` crate graph (see [Examples](#examples)) |
+| `smoke` | the CPU-only example binaries (the quickstart and basics bins, `runtime_metrics` ... `frame_chain`, and the `09_hosts` and fusion bins), built with the `test` crate graph (see [Examples](#examples)) |
 | `doc` | `cargo doc --workspace --no-deps` with `-D warnings` |
 | `all`, `full` | `lints features clippy link test macro-ui smoke` (the default); `all`, then `doc lean aarch64 nostd mcu wasm` (everything CI runs) |
 | `quick` | pre-push subset: `lints`, clippy (`engine,plugins`) and the tests of the changed packages (see [Inner loop](#inner-loop)) |
@@ -89,7 +90,7 @@ CI (`.github/workflows/ci.yml`) groups its jobs by the crate graphs they compile
 build the same one: `workspace` (`lints`, the workspace tests, `smoke`, `link`), `facade` (the
 dylib tests, `macro-ui`), `docs-and-lints` (`clippy`, `features`, `doc`),
 `aarch64`, `lean-preset`, `portability` (`nostd`, `wasm`, `mcu`) and `package-surface`. Pull
-requests restore the default branch's Rust caches but do not save their own.
+requests restore the Rust caches of `main`, `master` and `dev`, which those branches' pushes save; pull requests do not save their own.
 
 ### Inner loop
 
@@ -370,7 +371,10 @@ Use `gpu-wgpu` only where hardware and drivers are available. Use `gpu-mock` for
 
 ## Examples
 
-The runnable examples are the `daedalus-examples` binaries (`examples/0*`); the workspace test
+The runnable examples are the `daedalus-examples` binaries (`examples/0*`). The `09_hosts`
+bins cover the host-side features (execution domains, held inputs and batch pushes, multi-camera
+feeders, graph documents, hot reload and node recovery); each file's module comment says what it
+shows. The workspace test
 run compiles all of them (as unit-test harnesses), and `scripts/ci.sh smoke` builds and runs the
 CPU-only ones with the workspace test graph (`cargo build --workspace --features engine,plugins
 --examples --bin ...`), so after the tests only the binaries compile. `cargo run -p
@@ -412,7 +416,7 @@ cargo test -p daedalus-ffi-cpp
 
 ## Other Coverage
 
-- UI and macro diagnostics live under `crates/nodes/tests/ui` and `crates/daedalus/tests/ui`.
+- UI and macro diagnostics live under `crates/daedalus/tests/ui`.
 - Planner/runtime integration tests live under `crates/planner/tests` and `crates/runtime/tests`.
 - Runtime plan goldens live under `crates/runtime/tests/goldens`.
 - File-size linting warns about Rust files over 800 lines that are not listed in

@@ -49,6 +49,9 @@ The facade's default features are `threads` and `tracing`. Enable the layers you
 - `gpu-image`: `image` crate bridges (`Compute<DynamicImage>`, `ShaderRunOutput` image readbacks).
 - `gpu-async`: async shader dispatch/readback helpers for `gpu-wgpu`.
 - `gpu-mock`: deterministic mock GPU backend for tests.
+- `gpu`: the GPU-aware engine, planner, runtime and registry wiring without a backend (`gpu-engine`).
+- `gpu-dmabuf`: zero-copy import of Linux dmabuf frames into wgpu textures (Vulkan only; on `gpu-wgpu`).
+- `alloc-probe`: `daedalus::alloc_probe`, a counting global allocator that attributes allocations to node handlers, the runtime and host-bridge calls; `HostGraph::frame_overhead` reports them per tick.
 - `schema` and `proto`: optional data/planner export surfaces.
 
 ## Getting Started
@@ -70,13 +73,16 @@ cargo run -p daedalus-examples --bin typed_handle_graph
 cargo run -p daedalus-examples --bin adapter_path
 cargo run -p daedalus-examples --bin external_frame_source
 cargo run -p daedalus-examples --bin observability
-cargo run -p daedalus-examples --features gpu-wgpu --bin gpu_node
+cargo run -p daedalus-examples --bin execution_domain
+cargo run -p daedalus-examples --bin graph_hot_reload
+cargo run -p daedalus-examples --features gpu-wgpu --bin upload_download
 ```
 
 ## Validation
 
-See [docs/testing.md](docs/testing.md) for the validation loop (`./scripts/repo-clean.sh` runs the
-fixes and the full CI loop), focused feature checks, GPU checks, and example smoke runs.
+See [docs/testing.md](docs/testing.md) for the validation loop (`./scripts/repo-clean.sh` applies
+the fixes, then runs the default `./scripts/ci.sh` loop), focused feature checks, GPU checks, and
+example smoke runs.
 
 ## Documentation
 
