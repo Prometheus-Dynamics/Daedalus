@@ -108,29 +108,6 @@ fn reuse_range(size: u64) -> std::ops::RangeInclusive<u64> {
     size..=size.saturating_mul(MAX_BUFFER_REUSE_FACTOR)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{reuse_range, staging_size};
-
-    #[test]
-    fn staging_size_rounds_up_to_map_alignment() {
-        assert_eq!(staging_size(0), 0);
-        assert_eq!(staging_size(1), 8);
-        assert_eq!(staging_size(8), 8);
-        assert_eq!(staging_size(13), 16);
-    }
-
-    #[test]
-    fn pooled_buffers_are_reused_only_between_one_and_twice_the_request() {
-        let range = reuse_range(256);
-        assert!(range.contains(&256));
-        assert!(range.contains(&512));
-        assert!(!range.contains(&255));
-        // A 16 KiB buffer must not be handed out for a 256-byte readback.
-        assert!(!range.contains(&(16 * 1024)));
-    }
-}
-
 struct DevicePool {
     buffers: Vec<wgpu::Buffer>,
     textures: Vec<(
@@ -208,4 +185,27 @@ pub fn temp_pool() -> &'static Mutex<TempPool> {
 
 pub(crate) fn clear_temp_pool_for_device(device_key: usize) {
     temp_pool().lock().clear_device(device_key);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reuse_range, staging_size};
+
+    #[test]
+    fn staging_size_rounds_up_to_map_alignment() {
+        assert_eq!(staging_size(0), 0);
+        assert_eq!(staging_size(1), 8);
+        assert_eq!(staging_size(8), 8);
+        assert_eq!(staging_size(13), 16);
+    }
+
+    #[test]
+    fn pooled_buffers_are_reused_only_between_one_and_twice_the_request() {
+        let range = reuse_range(256);
+        assert!(range.contains(&256));
+        assert!(range.contains(&512));
+        assert!(!range.contains(&255));
+        // A 16 KiB buffer must not be handed out for a 256-byte readback.
+        assert!(!range.contains(&(16 * 1024)));
+    }
 }

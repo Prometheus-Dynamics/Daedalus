@@ -263,6 +263,24 @@ pub(crate) fn resolve_readbacks(
     Ok(result)
 }
 
+#[cfg(feature = "gpu-async")]
+pub(crate) use crate::shader::readback_async::resolve_readbacks_async;
+
+pub(crate) fn return_pooled_textures(pool_textures_to_return: Vec<PoolReturn>) {
+    let mut p = temp_pool().lock();
+    for PoolReturn {
+        device_key,
+        width,
+        height,
+        format,
+        usage,
+        texture,
+    } in pool_textures_to_return
+    {
+        p.put_texture(device_key, width, height, format, usage, texture);
+    }
+}
+
 #[cfg(all(test, feature = "gpu-wgpu"))]
 mod tests {
     use super::*;
@@ -313,21 +331,3 @@ mod tests {
         }
     }
 }
-
-pub(crate) fn return_pooled_textures(pool_textures_to_return: Vec<PoolReturn>) {
-    let mut p = temp_pool().lock();
-    for PoolReturn {
-        device_key,
-        width,
-        height,
-        format,
-        usage,
-        texture,
-    } in pool_textures_to_return
-    {
-        p.put_texture(device_key, width, height, format, usage, texture);
-    }
-}
-
-#[cfg(feature = "gpu-async")]
-pub(crate) use crate::shader::readback_async::resolve_readbacks_async;

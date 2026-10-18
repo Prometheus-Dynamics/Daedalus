@@ -293,12 +293,10 @@ unsafe fn check_modifier(
     req: &ImportRequest,
     queries: &mut QueryCache,
 ) -> Result<(), ExternalImportError> {
-    if !queries.modifiers.contains_key(&req.vk_format) {
+    let modifiers = queries.modifiers.entry(req.vk_format).or_insert_with(|| {
         // SAFETY: `phys` belongs to `instance` (see caller).
-        let list = unsafe { query_modifiers(instance, phys, req.vk_format) };
-        queries.modifiers.insert(req.vk_format, list);
-    }
-    let modifiers = &queries.modifiers[&req.vk_format];
+        unsafe { query_modifiers(instance, phys, req.vk_format) }
+    });
 
     let Some(entry) = modifiers
         .iter()
