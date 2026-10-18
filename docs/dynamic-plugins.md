@@ -89,48 +89,144 @@ with `PluginLibraryError::StableAbiMismatch`, naming the Rust ABI mismatch too.
 
 ### The stable handler path
 
-The descriptor (since `PLUGIN_ABI_VERSION` 8) carries `StableHandlers { version, invoke, release }`,
-versioned on its own by `STABLE_ABI_VERSION`, so the value encoding can evolve without breaking
-loading and introspection.
+The descriptor carries `StableHandlers { version, create, invoke, release, unload }` (since
+`PLUGIN_ABI_VERSION` 10; version 8 introduced it), versioned on its own by `STABLE_ABI_VERSION`
+(2), so the value encoding can evolve without breaking loading and introspection.
 
-- **Plugin side.** On its first `invoke` the plugin builds a private registry (linked
+- **Plugin side.** On its first `create` the plugin builds a private registry (linked
   dependencies, then itself) with node port codecs recorded: for every port with a concrete Rust
   type the node macros register how it converts from a `Value` (builtin conversions, then
   `DaedalusTypeExpr::from_value`, then serde) and to one (`ToValue`). Codecs are keyed by node
-  port, not type key, since structural keys (`typeexpr:List(Int)`) name no single Rust type. A
-  call names a node by its index in the schema's `nodes`, decodes the inputs into payloads of the
-  handler's types, runs the handler, and encodes what it pushed (builtins directly, then `Value`s,
-  the port codec, the registry's value serializers). Node state stays in the plugin, one state
-  store per host node instance; the host releases it when the node's state is dropped. Errors
-  and panics come back as a status code (handler error, invalid input, backpressure, panic) and a
-  message; panics are caught in the plugin, so the host gets a `NodeError` and keeps running.
+  port, not type key, since structural keys (`typeexpr:List(Int)`) name no single Rust type.
+  Ports are resolved once there. `create(node)` makes the plugin-side state of one host node
+  instance (its execution context, so its node state) and returns an opaque handle; `invoke`
+  runs a handle with no lookup or lock: inputs name their port by index into the schema node's
+  `inputs` (plus a fan-in index for `in0`, `in1`, ...), the plugin decodes them into payloads of
+  the handler's types, runs the handler, and pushes each output by index into `outputs`
+  (builtins directly, then `Value`s, the port codec, the registry's value serializers). The host
+  frees a handle with `release` when the node's state is dropped, and calls `unload` (drop the
+  private registry) before closing the library. Errors and panics come back as a status code
+  (handler error, invalid input, backpressure, panic) and a message; panics are caught in the
+  plugin, so the host gets a `NodeError` and keeps running.
 - **Values** cross as `StableValue`s, a `#[repr(C)]` mirror of ffi-core's `WireValue` model
   (plus `Tuple`/`Map`, so `Value`s cross unchanged, and `u64` beyond `i64::MAX`): scalars inline
   with no allocation; strings, bytes and nested values borrowed for the call, copied once into
   the receiver's owned Rust value, never serialized; foreign handles by pointer, so a `FrameView`
   input reads the host's frame in place (the plugin clones the handle, which retains through the
-  owner's own functions).
+  owner's own functions). `SharedBytes` crosses the same way (see
+  [Zero-Copy Bytes](#zero-copy-bytes)).
 - **Host side.** The host registers the schema's node declarations
   (`daedalus_ffi_host::node_decl_from_schema`, so fire modes, conditional outputs and other node
-  metadata carry over) with handlers that encode the inputs, call `invoke` and decode the outputs:
-  builtin port types into their Rust types, everything else as a `Value` payload under the port's
-  key (downstream nodes coerce it as they do graph constants). Host inputs must be builtins,
-  `Value`s, types with a registered value serializer, or foreign handles.
+  metadata carry over) with handlers that call the plugin's current generation (see
+  [Reloading](#reloading)): each keeps the instance handle in its node state, with the input
+  port indices cached by position and its input and output buffers reused, encodes the inputs,
+  calls `invoke` and decodes the outputs: builtin port types into their Rust types,
+  `SharedBytes` in place, everything else as a `Value` payload under the port's key (downstream
+  nodes coerce it as they do graph constants). Host inputs must be builtins, `Value`s,
+  `SharedBytes`, types with a registered value serializer, or foreign handles.
 - **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
   schemas, device transports and boundary contracts stay in the plugin. Typed values the host
   lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type converts.
 
 `examples/plugins/stable_abi` is a plugin whose descriptor claims another rustc; the facade's
 `dylib_stable` test installs it through the stable path and compares every node with the static
-install.
+install, and `dylib_reload` rebuilds it between loads.
 
 **Performance** (release, x86-64 desktop, `cargo test -p daedalus-rs --features
 engine,dylib-plugins --release --test dylib_stable -- --ignored --nocapture`): a scalar node
-handler costs about 0.4 µs statically and 1.15 µs through the stable path (+0.75 µs: the input and
-output payloads are rebuilt on the other side, node state is looked up on both sides, plus the
-encode/decode); in a host graph tick, +1.0 µs per stable node with scalars, +1.2 µs with a 4 KiB
-`Vec<u8>` (one copy in, none out), and about +1.5 µs per node for a derived struct, which crosses
-as a `Value` and is rebuilt through serde. Frames cross as handles at the scalar cost.
+handler costs about 0.4-0.5 µs statically and about 0.65 µs more through the stable path (the
+input and output payloads are rebuilt on the other side, the node instance is taken from node
+state, plus the encode/decode); in a host graph tick, about +0.7 µs per stable node with
+scalars, +0.9 µs with a 4 KiB `Vec<u8>` (one copy in, none out; `SharedBytes` crosses without
+the copy), and about +3 µs for a two-node derived struct chain, whose struct crosses as a `Value`
+and is rebuilt through serde. Frames cross as handles at the scalar cost. Stable ABI 2 cut the
+per-call overhead by roughly a fifth to a third against version 1 (no per-call port-name
+search, UTF-8 validation, instance-map lock or context clone; reused call buffers; direct scalar
+decoding).
+
+### Zero-Copy Bytes
+
+A `Vec<u8>` (or `String`) port copies its bytes once into the receiver's allocation: the host and
+a separately built plugin do not share an allocator, so neither can adopt the other's `Vec`. Use
+`daedalus::SharedBytes` (type key `daedalus:shared_bytes`) for buffers that should cross by
+reference: an immutable, reference-counted buffer that derefs to `[u8]`, built from a `Vec<u8>`
+without copying.
+
+```rust
+use daedalus::SharedBytes;
+
+/// Reads the host's buffer in place and returns part of it, still without copying.
+#[node(id = "strip_header", inputs("packet"), outputs("body"))]
+fn strip_header(packet: SharedBytes) -> Result<SharedBytes, NodeError> {
+    Ok(packet.slice(4..))
+}
+```
+
+On the stable path a `SharedBytes` crosses as a `daedalus:bytes` foreign handle
+(`daedalus::dylib::BytesInterface`): the receiver reads the sender's memory in place and keeps it
+alive through the sender's reference count. Lifetime rules:
+
+- The bytes are immutable and stay at one address while any `SharedBytes` (or handle) refers to
+  them, on either side; clones, slices and crossings never copy them.
+- A plugin may keep a received buffer past the call (in node state, say): it holds a reference.
+- A buffer the plugin allocated is freed by the plugin's code, so the host keeps that plugin
+  build loaded while it holds the buffer, across reloads too.
+- Building one from a slice or a `Value::Bytes` constant copies once.
+
+Statically installed and Rust-ABI plugins pass `SharedBytes` as an ordinary shared payload.
+
+### Reloading
+
+For development loops, a plugin installed through the stable path can be rebuilt and reloaded
+into running graphs:
+
+```rust
+use daedalus::dylib::HostGraphReloadExt;
+
+// Opens a private copy, so rebuilding the file never touches the code the host runs.
+let mut library = unsafe { PluginLibrary::load_reloadable(&path)? };
+library.install_into_as(&mut registry, InstallPath::Stable)?;
+let mut graph = engine.compile_registry(&registry, builder.build())?;
+loop {
+    graph.tick()?;
+    if rebuilt(&path) {
+        // Between ticks: tick N ran the old build, tick N+1 runs the new one.
+        unsafe { graph.reload_plugin(&mut library)? };
+    }
+}
+```
+
+- **Generations.** Stable installs call the plugin through a slot holding its current
+  generation (entry points plus the library they live in). `PluginLibrary::reload` loads the
+  file at `path()` again, through a fresh private copy (a process reopening a path it already
+  loaded would get the cached old build), and swaps the new generation in with one atomic
+  store; it returns the new `generation()`. Calls already running finish on the old build.
+  `HostGraphReloadExt::reload_plugin` does it while the graph is between ticks (the `&mut`
+  borrow), so the swap lands on a tick boundary. A graph ticking on another thread meanwhile may
+  run some nodes of one tick on each build; reload such graphs from their own driving thread.
+- **Node state resets.** Plugin-side node state lives in the old build's types, so it is never
+  migrated: each node instance's next call releases its old state (on the old build) and starts
+  fresh on the new one. Host-side graph state (queues, held inputs) is untouched.
+- **Release before close.** The old generation is dropped once its node instances (each moves
+  on at its next call, or when its graph drops) and the `SharedBytes` it produced are gone. Then
+  the plugin's `unload` drops its runtime and the library is closed (`live_generations()` lists
+  the builds still loaded). Strings the host keeps from a plugin (its id, `info()`, boundary
+  types, crate builds, foreign interface keys) are host copies. A foreign handle the plugin
+  created that reaches the host through another port type pins its library for the process (the
+  host cannot track the payload holding it). The OS may keep a closed library mapped until
+  threads that ran its thread-local destructors exit.
+- **What a reload may change.** Node behavior, freely. The installed interface must stay:
+  plugin name, node ids and ports (names, types, keys), dependencies and foreign interfaces;
+  otherwise `reload` fails with `PluginLibraryError::ReloadIncompatible` and the old build keeps
+  running (install the new one into a fresh registry). Other declaration changes (descriptions,
+  node metadata) take effect at the next install.
+- **Rust-ABI installs are not reloadable** (`PluginLibraryError::NotReloadable`): their handlers
+  are the plugin's own closures and statics in the host registry, so a Rust-ABI install pins the
+  library. Install with `install_into_as(InstallPath::Stable)` to reload a plugin from the same
+  build as the host.
+- **Replacing the file.** A build should write a new file and rename it over the old path
+  (Cargo does). With `load_reloadable` even an in-place rewrite is safe, because the host runs a
+  private copy.
 
 ## Plugin Dependencies
 
@@ -205,9 +301,9 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
   `cargo build -p app -p app-plugin-a -p app-plugin-b`), so Cargo resolves Daedalus *and every
   other shared dependency* once, with one feature set. Plugins that share no third-party Rust
   types with the host (they read them through foreign interfaces) can be built separately; see
-  [Separately Built Plugins](#separately-built-plugins). Libraries are never unloaded, plugins must
-  register everything through the `PluginRegistry` they are given, and neither side may install
-  a custom `#[global_allocator]`.
+  [Separately Built Plugins](#separately-built-plugins). Rust-ABI installs keep their library
+  loaded for good, plugins must register everything through the `PluginRegistry` they are given,
+  and neither side may install a custom `#[global_allocator]`.
 
 ## Types Owned By Other Crates
 

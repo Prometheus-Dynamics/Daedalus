@@ -59,6 +59,65 @@ pub fn scalar_of(ty: &TypeExpr, key: &TypeKey) -> Option<ValueType> {
     }
 }
 
+/// The common scalar and text cases, without the `Value` detour (`None`: take it).
+///
+/// # Safety
+/// As [`decode`].
+unsafe fn decode_direct(
+    scalar: ValueType,
+    key: &TypeKey,
+    value: &StableValue,
+) -> Option<Result<Payload, String>> {
+    fn owned<T: Send + Sync + 'static>(key: &TypeKey, value: T) -> Option<Result<Payload, String>> {
+        Some(Ok(Payload::owned(key.clone(), value)))
+    }
+    fn int<T: TryFrom<i64> + Send + Sync + 'static>(
+        key: &TypeKey,
+        scalar: ValueType,
+        value: i64,
+    ) -> Option<Result<Payload, String>> {
+        Some(
+            T::try_from(value)
+                .map(|value| Payload::owned(key.clone(), value))
+                .map_err(|_| format!("expected {}, found {value}", scalar.rust_name())),
+        )
+    }
+    let bits = value.scalar;
+    // Safety (slices): forwarded from the caller.
+    match (scalar, value.tag) {
+        (ValueType::String, tag::STRING) => {
+            Some(unsafe { value.as_str() }.map(|text| Payload::owned(key.clone(), text.to_owned())))
+        }
+        (ValueType::Bytes, tag::BYTES) => owned(key, unsafe { value.as_bytes() }.to_vec()),
+        (ValueType::Bool, tag::BOOL) => owned(key, bits != 0),
+        (ValueType::Float, tag::FLOAT) => owned(key, f64::from_bits(bits)),
+        (ValueType::F32, tag::FLOAT) => owned(key, f64::from_bits(bits) as f32),
+        (ValueType::U64, tag::UINT) => owned(key, bits),
+        (ValueType::USize, tag::UINT) => Some(
+            usize::try_from(bits)
+                .map(|value| Payload::owned(key.clone(), value))
+                .map_err(|err| err.to_string()),
+        ),
+        (_, tag::INT) => {
+            let int_value = bits as i64;
+            match scalar {
+                ValueType::Int => owned(key, int_value),
+                ValueType::I32 => int::<i32>(key, scalar, int_value),
+                ValueType::U32 => int::<u32>(key, scalar, int_value),
+                ValueType::I16 => int::<i16>(key, scalar, int_value),
+                ValueType::U16 => int::<u16>(key, scalar, int_value),
+                ValueType::I8 => int::<i8>(key, scalar, int_value),
+                ValueType::U8 => int::<u8>(key, scalar, int_value),
+                ValueType::U64 => int::<u64>(key, scalar, int_value),
+                ValueType::ISize => int::<isize>(key, scalar, int_value),
+                ValueType::USize => int::<usize>(key, scalar, int_value),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// A payload holding the Rust type of `scalar` under `key`.
 ///
 /// # Safety
@@ -68,20 +127,8 @@ pub unsafe fn decode(
     key: TypeKey,
     value: &StableValue,
 ) -> Result<Payload, String> {
-    // Safety (slices): forwarded from the caller.
-    match (scalar, value.tag) {
-        (ValueType::String, tag::STRING) => {
-            return Ok(Payload::owned(key, unsafe { value.as_str() }?.to_owned()));
-        }
-        (ValueType::Bytes, tag::BYTES) => {
-            return Ok(Payload::owned(key, unsafe { value.as_bytes() }.to_vec()));
-        }
-        (ValueType::U64, tag::UINT) => return Ok(Payload::owned(key, value.scalar)),
-        (ValueType::USize, tag::UINT) => {
-            let value = usize::try_from(value.scalar).map_err(|err| err.to_string())?;
-            return Ok(Payload::owned(key, value));
-        }
-        _ => {}
+    if let Some(payload) = unsafe { decode_direct(scalar, &key, value) } {
+        return payload;
     }
     // Safety: forwarded from the caller.
     let value = unsafe { to_value(value) }?;

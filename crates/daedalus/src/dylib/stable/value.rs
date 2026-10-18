@@ -34,8 +34,14 @@ pub mod tag {
     /// `ptr`: one [`StableEnum`](super::StableEnum).
     pub const ENUM: u32 = 11;
     /// `ptr`: a borrowed [`ForeignHandle`](crate::transport::ForeignHandle); `scalar`: the
-    /// payload's residency (see `residency_code`).
+    /// payload's residency (see `residency_code`) in the low byte, plus
+    /// [`HANDLE_FROM_SENDER`].
     pub const HANDLE: u32 = 12;
+
+    /// Set in a `HANDLE`'s `scalar` when the sender's build created the handle (its vtable,
+    /// interface and owner functions live in the sender's library), rather than passing on one
+    /// it received. A host that keeps such a handle keeps the plugin library loaded for good.
+    pub const HANDLE_FROM_SENDER: u64 = 1 << 32;
 }
 
 /// A value crossing the stable plugin boundary: scalars inline, strings, bytes and nested values
@@ -107,11 +113,17 @@ impl StableValue {
         Self::slice(tag::STRING, text.as_bytes())
     }
 
-    /// Borrow `handle` (valid while the caller keeps it alive).
-    pub fn handle(handle: &ForeignHandle, residency: Residency) -> Self {
+    /// Borrow `handle` (valid while the caller keeps it alive); `from_sender` sets
+    /// [`tag::HANDLE_FROM_SENDER`].
+    pub fn handle(handle: &ForeignHandle, residency: Residency, from_sender: bool) -> Self {
+        let flag = if from_sender {
+            tag::HANDLE_FROM_SENDER
+        } else {
+            0
+        };
         Self {
             tag: tag::HANDLE,
-            scalar: residency_code(residency),
+            scalar: residency_code(residency) | flag,
             ptr: (handle as *const ForeignHandle).cast(),
             len: 0,
         }
@@ -155,9 +167,14 @@ impl StableValue {
             .flatten()
     }
 
+    /// Whether a `HANDLE` value was created by the sender's build ([`tag::HANDLE_FROM_SENDER`]).
+    pub fn from_sender(&self) -> bool {
+        self.tag == tag::HANDLE && self.scalar & tag::HANDLE_FROM_SENDER != 0
+    }
+
     /// The residency of a `HANDLE` value.
     pub fn residency(&self) -> Residency {
-        match self.scalar {
+        match self.scalar & 0xff {
             1 => Residency::Gpu,
             2 => Residency::CpuAndGpu,
             3 => Residency::External,
@@ -199,19 +216,28 @@ pub struct Arena {
 }
 
 impl Arena {
-    /// Lend `payload`'s foreign value: its carried handle, or (for an owner payload its
-    /// provider retyped) a handle wrapping the owner value, kept alive with the arena.
+    /// Lend `payload`'s foreign value: its carried handle (passed on), or (for an owner
+    /// payload its provider retyped) a handle wrapping the owner value, created here and kept
+    /// alive with the arena.
     pub fn encode_foreign(&mut self, payload: &Payload) -> Option<StableValue> {
-        let handle = match payload.foreign_handle() {
-            Some(handle) => handle,
-            None => {
-                self.handles.push(Box::new(payload.to_foreign_handle()?));
-                let handle: *const ForeignHandle = &**self.handles.last()?;
-                // Safety: the box lives (unmoved) as long as the arena.
-                unsafe { &*handle }
-            }
-        };
-        Some(StableValue::handle(handle, payload.residency()))
+        if let Some(handle) = payload.foreign_handle() {
+            return Some(StableValue::handle(handle, payload.residency(), false));
+        }
+        Some(self.lend(payload.to_foreign_handle()?, payload.residency(), true))
+    }
+
+    /// Keep `handle` alive with the arena and lend it.
+    pub fn lend(
+        &mut self,
+        handle: ForeignHandle,
+        residency: Residency,
+        from_sender: bool,
+    ) -> StableValue {
+        let handle = Box::new(handle);
+        let ptr: *const ForeignHandle = &*handle;
+        self.handles.push(handle);
+        // Safety: the box lives (unmoved) as long as the arena.
+        StableValue::handle(unsafe { &*ptr }, residency, from_sender)
     }
 
     /// Keep `value` alive with the arena and encode it.
@@ -369,15 +395,6 @@ unsafe fn values(value: &StableValue) -> Result<Vec<Value>, String> {
         .iter()
         .map(|item| unsafe { to_value(item) })
         .collect()
-}
-
-/// Borrow `len` UTF-8 bytes at `ptr` as text.
-///
-/// # Safety
-/// `ptr` must be valid for `len` bytes for `'a`.
-pub unsafe fn str_at<'a>(ptr: *const u8, len: usize) -> Result<&'a str, String> {
-    // Safety: forwarded from the caller.
-    std::str::from_utf8(unsafe { raw_slice(ptr, len) }).map_err(|err| err.to_string())
 }
 
 /// # Safety

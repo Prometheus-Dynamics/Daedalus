@@ -65,10 +65,16 @@ pub use host_bridge::{
     HostBridgeInstallError, host_port, install_default_host_bridge, install_host_bridge,
 };
 
+#[path = "dylib/bytes.rs"]
+pub mod bytes;
+pub use bytes::SharedBytes;
+
 /// Native Rust plugins shipped as `cdylib`s: the stable descriptor, `export_plugin!`, and the
 /// `PluginLibrary` loader.
 #[cfg(feature = "dylib-plugins")]
 pub mod dylib;
+#[cfg(all(feature = "dylib-plugins", feature = "engine"))]
+pub use dylib::HostGraphReloadExt;
 #[cfg(feature = "dylib-plugins")]
 pub use dylib::{
     InstallPath, PLUGIN_ABI_VERSION, PluginDescriptor, PluginInfo, PluginLibrary,

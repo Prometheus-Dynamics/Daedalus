@@ -25,7 +25,7 @@ use daedalus::transport::{
     FrameFormatKind, FrameInterface, FramePlane, FrameResidency, FrameSource, Payload, Residency,
     fourcc,
 };
-use daedalus::{PluginLibrary, type_key};
+use daedalus::{PluginLibrary, SharedBytes, type_key};
 use daedalus_plugins_stable_abi::{Point, SIMULATED_RUSTC, StableAbiPlugin};
 
 const FRAME_KEY: &str = "test:stable:gray_frame";
@@ -383,6 +383,53 @@ fn a_panicking_plugin_node_fails_the_tick_and_the_host_keeps_running() {
     host.push("value", 5_i64);
     host.tick().unwrap();
     assert_eq!(host.take::<i64>("out"), Some(5));
+}
+
+/// `shared_sum` over a host buffer and `shared_fill`'s buffer: (sum, whether the plugin read the
+/// host's bytes in place, the tail, whether the tail is the same buffer, the filled bytes,
+/// whether the host reads them where the plugin wrote them).
+fn run_shared_bytes(registry: &PluginRegistry) -> (u64, bool, Vec<u8>, bool, Vec<u8>, bool) {
+    let mut host = compile(
+        registry,
+        &[
+            ("bytes", "shared_sum.bytes"),
+            ("shared_sum.sum", "sum"),
+            ("shared_sum.ptr", "ptr"),
+            ("shared_sum.tail", "tail"),
+            ("len", "shared_fill.len"),
+            ("value", "shared_fill.value"),
+            ("shared_fill.bytes", "filled"),
+            ("shared_fill.ptr", "filled_ptr"),
+        ],
+        &[
+            ("bytes", TypeExpr::opaque(daedalus::dylib::SHARED_BYTES_KEY)),
+            ("len", scalar(ValueType::Int)),
+            ("value", scalar(ValueType::Int)),
+        ],
+    );
+    let bytes = SharedBytes::new(vec![1, 2, 250]);
+    host.push("bytes", bytes.clone());
+    host.push("len", 4_i64);
+    host.push("value", 7_i64);
+    host.tick().unwrap();
+    let tail = host.take::<SharedBytes>("tail").expect("tail");
+    let filled = host.take::<SharedBytes>("filled").expect("filled");
+    let filled_ptr = host.take::<i64>("filled_ptr");
+    (
+        host.take::<u64>("sum").expect("sum"),
+        host.take::<i64>("ptr") == Some(bytes.as_ptr() as i64),
+        tail.to_vec(),
+        tail.as_ptr() == bytes.as_ptr().wrapping_add(1),
+        filled.to_vec(),
+        filled_ptr == Some(filled.as_ptr() as i64),
+    )
+}
+
+#[test]
+fn shared_bytes_cross_the_stable_path_by_reference_both_ways() {
+    let expected = (253, true, vec![2, 250], true, vec![7; 4], true);
+    assert_eq!(run_shared_bytes(&static_registry()), expected);
+    assert_eq!(run_shared_bytes(&stable_registry()), expected);
 }
 
 #[test]

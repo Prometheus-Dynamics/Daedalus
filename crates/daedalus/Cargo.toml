@@ -203,6 +203,11 @@ path = "tests/dylib_stable.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_reload"
+path = "tests/dylib_reload.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_linked_deps"
 path = "tests/dylib_linked_deps.rs"
 required-features = ["engine", "dylib-plugins"]

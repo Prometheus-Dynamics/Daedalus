@@ -92,7 +92,7 @@ fn load_with(
     let mut descriptor = daedalus_plugin_descriptor();
     adjust(&mut descriptor);
     // Safety: the descriptor was produced by this crate's `export_plugin!`.
-    unsafe { PluginLibrary::from_descriptor(PathBuf::from("in-process"), descriptor) }
+    unsafe { PluginLibrary::from_descriptor(PathBuf::from("in-process"), descriptor, None) }
 }
 
 #[test]
@@ -640,5 +640,35 @@ fn discovery_sorts_and_dedups_by_file_name() {
             second.join("liba.dylib"),
             first.join("libb.so"),
         ]
+    );
+}
+
+#[test]
+fn rust_abi_installs_are_not_reloadable() {
+    let mut library = load_with(|_| {}).unwrap();
+    let mut registry = PluginRegistry::new();
+    assert_eq!(
+        library.install_into(&mut registry).unwrap(),
+        InstallPath::RustAbi
+    );
+    // Safety: refused before anything is loaded.
+    let err = unsafe { library.reload() }.unwrap_err();
+    assert!(
+        matches!(&err, PluginLibraryError::NotReloadable { plugin, .. } if plugin == "loader_test"),
+        "{err}"
+    );
+    assert_eq!(library.generation(), 1);
+    assert_eq!(library.live_generations(), vec![1]);
+}
+
+#[test]
+fn info_strings_are_host_copies() {
+    let descriptor = daedalus_plugin_descriptor();
+    let library = load_with(|_| {}).unwrap();
+    let (plugin, host) = (descriptor.info.plugin_name, library.info().plugin_name);
+    assert_eq!(plugin.as_str(), host.as_str());
+    assert_ne!(
+        plugin.as_str().unwrap().as_ptr(),
+        host.as_str().unwrap().as_ptr()
     );
 }

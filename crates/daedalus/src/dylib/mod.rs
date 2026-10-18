@@ -6,7 +6,9 @@
 //! [`PluginRegistry`](crate::PluginRegistry) with [`PluginLibrary::install_into`]. Both sides
 //! enable the `dylib-plugins` feature.
 //!
-//! Only load-at-startup is supported: libraries are never unloaded (see below).
+//! Plugins installed through the stable path can be reloaded in place for development loops
+//! ([`PluginLibrary::reload`], see "Reloading" below); a library closes once nothing runs its
+//! code.
 //!
 //! # ABI layers
 //!
@@ -136,19 +138,46 @@
 //!   on the storage wrapper's `TypeId` alone (`Payload::get_ref` falls back to the value's own
 //!   `Any`, foreign handles are reached through a trait method), and shared third-party types
 //!   cross through foreign interfaces.
-//! - **No unloading.** Loaded libraries are intentionally leaked. Registered handlers,
-//!   vtables and `&'static str`s point into the library's code and data for as long as the
-//!   registry (and anything built from it) lives; unloading would leave them dangling.
-//!   Unloading Rust `cdylib`s is also unreliable in general (thread-locals with destructors).
+//! - **Rust-ABI installs pin the library.** Handlers registered through the Rust ABI are the
+//!   plugin's own closures and statics, so a library installed that way is never closed and
+//!   cannot be reloaded.
+//!
+//! # Reloading
+//!
+//! A library stays open while anything may run its code, and closes when the last of these
+//! drops: the [`PluginLibrary`], every stable install made from it (the registries and the
+//! graphs compiled from them), and the [`SharedBytes`](crate::SharedBytes) buffers it produced.
+//! Strings the host keeps from a plugin ([`PluginInfo`], boundary types, crate builds, foreign
+//! interface keys, the plugin id) are host copies. A foreign handle the plugin created that
+//! reaches the host through another port type pins the library (the host cannot track the
+//! payload holding it). The OS may keep a closed library mapped until threads that ran its
+//! thread-local destructors exit.
+//!
+//! Stable installs call the plugin through a generation-counted slot. [`PluginLibrary::reload`]
+//! loads the rebuilt file (through a private copy, as [`PluginLibrary::load_reloadable`] does)
+//! as the next generation, checks it keeps the installed interface (plugin name, node ids and
+//! ports, dependencies, foreign interfaces; otherwise
+//! [`PluginLibraryError::ReloadIncompatible`]) and swaps it in with one atomic store. A node
+//! call in flight finishes on the old generation; each node instance's next call releases its
+//! old plugin-side state and starts on the new generation, so **node state resets across a
+//! reload** (it lives in the old build's types; nothing is migrated).
+//! [`HostGraphReloadExt::reload_plugin`] reloads between two ticks of a graph, so all its nodes
+//! switch at that tick boundary. The old generation is dropped once its instances and buffers
+//! are: the plugin's `unload` entry point drops its runtime, then the library closes. Rust-ABI
+//! installs are not reloadable ([`PluginLibraryError::NotReloadable`]); install a plugin with
+//! `install_into_as(InstallPath::Stable)` to reload it.
 
 mod boundary;
 mod crate_builds;
 mod extract;
 mod fingerprint;
 mod foreign;
+mod intern;
+mod library;
 mod loader;
 pub mod stable;
 
+pub use crate::bytes::{BytesInterface, BytesVTable, SHARED_BYTES_KEY, SharedBytes};
 pub use boundary::{BoundaryTypeEntry, BoundaryTypeTable, BoundaryTypesFn};
 pub use crate_builds::{CrateBuildEntry, CrateBuildTable, CrateBuildsFn};
 pub use daedalus_ffi_host::core::PluginSchema;
@@ -158,7 +187,9 @@ pub use loader::{
     InstallPath, PluginLibrary, PluginLibraryError, RustAbiMismatch, check_rust_abi,
     discover_plugin_libraries,
 };
-pub use stable::{STABLE_ABI_VERSION, StableHandlers, StableInput, StableOutputSink, StableValue};
+pub use stable::{
+    NO_FANIN, STABLE_ABI_VERSION, StableHandlers, StableInput, StableOutputSink, StableValue,
+};
 
 use std::ffi::c_void;
 
@@ -173,15 +204,16 @@ pub const PLUGIN_DESCRIPTOR_SYMBOL: &str = "daedalus_plugin_descriptor";
 /// Version 5 introduced the descriptor and its stable `schema` entry point; version 6 added
 /// `boundary_types`; version 7 added `foreign_interfaces`; version 8 added `stable` (the stable
 /// handler path, versioned on its own by [`STABLE_ABI_VERSION`]); version 9 added
-/// `crate_builds`.
-pub const PLUGIN_ABI_VERSION: u32 = 9;
+/// `crate_builds`; version 10 grew [`StableHandlers`] (`create`, `unload`) for stable ABI 2.
+pub const PLUGIN_ABI_VERSION: u32 = 10;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
 
 /// FFI-safe view of a `'static` UTF-8 string.
 ///
-/// Can only be built from `&'static str`, so views returned by a plugin stay valid for the
-/// process lifetime (plugin libraries are never unloaded).
+/// Can only be built from `&'static str`. Views a plugin returns point into its library, so the
+/// host reads them only while the library is open and keeps host copies
+/// ([`PluginLibrary::info`] returns views of those).
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct StrView {
@@ -209,7 +241,8 @@ impl StrView {
             return None;
         }
         // Safety: `StrView` can only be constructed from a `&'static str` (in this crate or in
-        // a plugin's copy of it), and plugin libraries are never unloaded.
+        // a plugin's copy of it); the host only reads a plugin's views while its library is
+        // open, and keeps copies.
         let bytes = unsafe { std::slice::from_raw_parts(self.ptr, self.len) };
         std::str::from_utf8(bytes).ok()
     }
@@ -293,6 +326,32 @@ pub struct PluginDescriptor {
     /// The stable handler entry points, callable once [`StableHandlers::version`] matches the
     /// host's [`STABLE_ABI_VERSION`] (see [`stable`]).
     pub stable: StableHandlers,
+}
+
+/// Reloading a graph's plugins between its ticks.
+#[cfg(feature = "engine")]
+pub trait HostGraphReloadExt {
+    /// [`PluginLibrary::reload`] while this graph is between ticks (the `&mut` borrow
+    /// guarantees none is running), so every node of the graph runs the old build up to this
+    /// call and the new one from its next tick on, each starting with fresh node state.
+    ///
+    /// # Safety
+    /// As [`PluginLibrary::load`].
+    unsafe fn reload_plugin(
+        &mut self,
+        library: &mut PluginLibrary,
+    ) -> Result<u64, PluginLibraryError>;
+}
+
+#[cfg(feature = "engine")]
+impl<H: crate::runtime::executor::NodeHandler> HostGraphReloadExt for crate::engine::HostGraph<H> {
+    unsafe fn reload_plugin(
+        &mut self,
+        library: &mut PluginLibrary,
+    ) -> Result<u64, PluginLibraryError> {
+        // Safety: forwarded from the caller.
+        unsafe { library.reload() }
+    }
 }
 
 #[doc(hidden)]

@@ -5,11 +5,14 @@
 //! entry points. Its nodes cover what crosses that path: scalars (`u64` beyond `i64::MAX`
 //! included), a derived struct, bytes, an optional input, node state, a frame read through
 //! `daedalus:frame` without copying, a conditional output, a `fire = "all"` join, and a panic. The facade's `dylib_stable` test runs them statically and dynamically and compares.
+//! `SharedBytes` nodes show buffers crossing by reference both ways, and the `generation` node
+//! changes with the `reload-v2` / `reload-incompatible` features, so the `dylib_reload` test can
+//! rebuild the plugin between loads.
 
 use daedalus::macros::{node, plugin};
 use daedalus::runtime::NodeError;
 use daedalus::transport::FrameView;
-use daedalus::{DaedalusToValue, DaedalusTypeExpr};
+use daedalus::{DaedalusToValue, DaedalusTypeExpr, SharedBytes};
 
 /// A derived struct: built from a `Value` through serde, turned into one through `ToValue`.
 #[derive(Clone, Debug, PartialEq, DaedalusTypeExpr, DaedalusToValue, serde::Deserialize)]
@@ -92,11 +95,57 @@ fn join(a: i64, b: i64) -> Result<i64, NodeError> {
     Ok(a * 100 + b)
 }
 
+/// Reads the host's buffer in place: its sum, the address read (to check nothing was copied)
+/// and its tail, returned as a slice of the same buffer.
+#[node(id = "shared_sum", inputs("bytes"), outputs("sum", "ptr", "tail"))]
+fn shared_sum(bytes: SharedBytes) -> Result<(u64, i64, SharedBytes), NodeError> {
+    let sum = bytes.iter().map(|&b| u64::from(b)).sum();
+    let tail = bytes.slice(1.min(bytes.len())..);
+    Ok((sum, bytes.as_ptr() as i64, tail))
+}
+
+/// A buffer the plugin allocates and hands to the host without copying, and its address.
+#[node(id = "shared_fill", inputs("len", "value"), outputs("bytes", "ptr"))]
+fn shared_fill(len: i64, value: i64) -> Result<(SharedBytes, i64), NodeError> {
+    let bytes = SharedBytes::new(vec![value as u8; len.max(0) as usize]);
+    let ptr = bytes.as_ptr() as i64;
+    Ok((bytes, ptr))
+}
+
+/// Which build runs: `tick + 1000 * generation` (generation 2 with `reload-v2`).
+#[cfg(not(feature = "reload-incompatible"))]
+#[node(id = "generation", inputs("tick"), outputs("out"))]
+fn generation(tick: i64) -> Result<i64, NodeError> {
+    Ok(tick + 1000 * GENERATION)
+}
+
+/// The same node with another port: a build a host cannot reload in place.
+#[cfg(feature = "reload-incompatible")]
+#[node(id = "generation", inputs("tick", "extra"), outputs("out"))]
+fn generation(tick: i64, extra: i64) -> Result<i64, NodeError> {
+    Ok(tick + extra + 1000 * GENERATION)
+}
+
+/// The fixture build's generation.
+pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
+
 #[plugin(
     id = "stable_abi",
     nodes(
-        scale, point, describe, checksum, or_default, accumulate, frame_sum, explode, successor,
-        every, join
+        scale,
+        point,
+        describe,
+        checksum,
+        or_default,
+        accumulate,
+        frame_sum,
+        explode,
+        successor,
+        every,
+        join,
+        shared_sum,
+        shared_fill,
+        generation
     )
 )]
 pub struct StableAbiPlugin;

@@ -7,7 +7,10 @@ use crate::transport::BoundaryTypeContract;
 use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-pub use super::stable::{__invoke as invoke, __release as release, StableRuntimeCell};
+pub use super::stable::{
+    __create as create, __invoke as invoke, __release as release, __unload as unload,
+    StableRuntimeCell,
+};
 
 /// A dependency plugin linked into a dynamic plugin (`export_plugin!(P, deps [D])`).
 pub type LinkedDep = fn() -> Box<dyn Plugin>;
@@ -295,8 +298,12 @@ macro_rules! plugin_descriptor {
             unsafe { __support::install(registry, sink, __support::install_plugin::<$ty>) }
         }
 
+        unsafe extern "C" fn create(node: u32, instance: *mut u64, error: StrSink) -> u32 {
+            // Safety: the host follows `CreateFn`'s contract.
+            unsafe { __support::create::<$ty>(&STABLE, DEPS, node, instance, error) }
+        }
+
         unsafe extern "C" fn invoke(
-            node: u32,
             instance: u64,
             inputs: *const $crate::dylib::StableInput,
             len: usize,
@@ -304,13 +311,16 @@ macro_rules! plugin_descriptor {
             error: StrSink,
         ) -> u32 {
             // Safety: the host follows `InvokeFn`'s contract.
-            unsafe {
-                __support::invoke::<$ty>(&STABLE, DEPS, node, instance, inputs, len, outputs, error)
-            }
+            unsafe { __support::invoke(instance, inputs, len, outputs, error) }
         }
 
         unsafe extern "C" fn release(instance: u64) {
-            __support::release(&STABLE, instance)
+            // Safety: the host releases each live handle once.
+            unsafe { __support::release(instance) }
+        }
+
+        unsafe extern "C" fn unload() {
+            __support::unload(&STABLE)
         }
 
         $crate::dylib::PluginDescriptor {
@@ -326,8 +336,10 @@ macro_rules! plugin_descriptor {
             register,
             stable: $crate::dylib::StableHandlers {
                 version: $crate::dylib::STABLE_ABI_VERSION,
+                create,
                 invoke,
                 release,
+                unload,
             },
         }
     }};

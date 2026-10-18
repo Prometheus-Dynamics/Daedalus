@@ -4,39 +4,51 @@
 //! inspected.
 //!
 //! **Plugin side.** [`export_plugin!`](crate::export_plugin) adds [`StableHandlers`] to the
-//! descriptor. On the first [`InvokeFn`] call the plugin builds a private registry (its linked
-//! dependencies, then itself, with port codecs recorded, see
+//! descriptor. The first [`CreateFn`] call builds a private registry (its linked dependencies,
+//! then itself, with port codecs recorded, see
 //! [`PluginRegistry::record_stable_codecs`](crate::PluginRegistry::record_stable_codecs)) and
-//! keeps it for the process. Each call names a node by its index in the plugin's
-//! [`PluginSchema`](super::PluginSchema) `nodes`, decodes the inputs into payloads of the
+//! resolves every schema node's ports once; [`UnloadFn`] drops it again. `create` makes the
+//! state of one host node instance (its execution context, so its node state) and returns an
+//! opaque handle; [`InvokeFn`] runs that instance with no lookup or lock, decoding the inputs
+//! (ports by index into the schema node's `inputs`, plus a fan-in index) into payloads of the
 //! handler's Rust types (builtin scalars directly, other types through the node port codecs the
-//! node macros register: `DaedalusTypeExpr::from_value` or serde), runs the handler and encodes
-//! its outputs (builtins directly, `Value`s, `ToValue` types through the port codecs or the
-//! registry's value serializers). Node state stays in the plugin, in one state store per host
-//! node instance (`instance`, released with [`ReleaseFn`]). Errors and panics come back as a
-//! [`status`] code plus a message through the [`StrSink`].
+//! node macros register: `DaedalusTypeExpr::from_value` or serde), running the handler and
+//! encoding its outputs (by index into `outputs`; builtins directly, `Value`s, `ToValue` types
+//! through the port codecs or the registry's value serializers). [`ReleaseFn`] frees an
+//! instance. Errors and panics come back as a [`status`] code plus a message through the
+//! [`StrSink`].
 //!
 //! **Values.** Inputs and outputs cross as [`StableValue`]s: scalars inline (no allocation),
 //! strings, bytes and nested values borrowed for the duration of the call (one copy into the
-//! receiving side's owned Rust value, no serialization), and frames or other host-owned values
-//! as borrowed [`ForeignHandle`](crate::transport::ForeignHandle)s that the receiver clones
-//! (zero copy: the plugin reads the host's buffer through the owner's vtable).
+//! receiving side's owned Rust value, no serialization), and frames or other foreign values as
+//! borrowed [`ForeignHandle`](crate::transport::ForeignHandle)s that the receiver clones (zero
+//! copy: the receiver reads the sender's buffer through the owner's vtable).
+//! [`SharedBytes`](crate::SharedBytes) ports use that for byte buffers: the host lends its
+//! buffer, and the plugin returns a slice of it or a buffer of its own, all without copying (see
+//! [`crate::bytes`] for the lifetime rules). A handle the sender's own build created carries
+//! [`tag::HANDLE_FROM_SENDER`].
 //!
 //! **Host side.** [`PluginLibrary::install_into`](super::PluginLibrary::install_into) uses this
 //! path when [`rust_abi`](super::PluginLibrary::rust_abi) reports a mismatch and
 //! [`StableHandlers::version`] equals [`STABLE_ABI_VERSION`]: it registers the schema's node
 //! declarations ([`daedalus_ffi_host::node_decl_from_schema`]) and, per node, a handler that
-//! encodes the inputs, calls `invoke` and decodes the outputs (builtin port types into their
-//! Rust types, everything else as a `Value` payload under the port's key).
+//! calls the plugin's current generation (see the [`dylib`](super) docs, "Reloading"). The
+//! handler keeps one instance per host node instance in its node state, with the instance's
+//! input port indices cached by position and its call buffers reused; it encodes the inputs,
+//! calls `invoke` and decodes the outputs (builtin port types into their Rust types,
+//! `SharedBytes` in place, everything else as a `Value` payload under the port's key).
 
 mod builtin;
 mod host;
 mod plugin;
 mod value;
 
-pub(super) use host::StablePlugin;
+pub(super) use host::{Generation, PluginSlot, StablePlugin};
 #[doc(hidden)]
-pub use plugin::{StableRuntimeCell, invoke as __invoke, release as __release};
+pub use plugin::{
+    StableRuntimeCell, create as __create, invoke as __invoke, release as __release,
+    unload as __unload,
+};
 pub use value::{Arena, StableEnum, StableField, StableValue, tag, to_value};
 
 use super::StrSink;
@@ -46,25 +58,29 @@ use std::ffi::c_void;
 /// [`StableOutputSink`], the [`status`] codes and the `#[repr(C)]` layouts of
 /// `ForeignHandle`/`ForeignInterfaceInfo`). A plugin is installed through the stable path only
 /// when its version equals the host's.
-pub const STABLE_ABI_VERSION: u32 = 1;
+///
+/// Version 2: per-instance handles ([`CreateFn`]), ports by index ([`StableInput::port`],
+/// [`OutputPushFn`]), [`UnloadFn`], and the [`tag::HANDLE_FROM_SENDER`] flag.
+pub const STABLE_ABI_VERSION: u32 = 2;
 
-/// One node input: borrowed UTF-8 port name and value.
+/// [`StableInput::fanin`] of an input that is not an indexed fan-in port.
+pub const NO_FANIN: u32 = u32::MAX;
+
+/// One node input, by port index into the schema node's `inputs`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct StableInput {
-    pub port_ptr: *const u8,
-    pub port_len: usize,
+    /// The declared port (index into the schema node's `inputs`).
+    pub port: u32,
+    /// The fan-in index of an indexed port (`in3` of declared `in` is 3), else [`NO_FANIN`].
+    pub fanin: u32,
     pub value: StableValue,
 }
 
-/// Receives one output (port name and value, both borrowed for the call); returns whether the
-/// host accepted it.
-pub type OutputPushFn = unsafe extern "C" fn(
-    ctx: *mut c_void,
-    port_ptr: *const u8,
-    port_len: usize,
-    value: *const StableValue,
-) -> bool;
+/// Receives one output (port index into the schema node's `outputs`, value borrowed for the
+/// call); returns whether the host accepted it.
+pub type OutputPushFn =
+    unsafe extern "C" fn(ctx: *mut c_void, port: u32, value: *const StableValue) -> bool;
 
 /// The host's output callback for one `invoke` call.
 #[repr(C)]
@@ -74,7 +90,7 @@ pub struct StableOutputSink {
     pub push: Option<OutputPushFn>,
 }
 
-/// `invoke` results. Anything but [`OK`](status::OK) comes with a message.
+/// `create` and `invoke` results. Anything but [`OK`](status::OK) comes with a message.
 pub mod status {
     pub const OK: u32 = 0;
     /// The handler failed (`NodeError::Handler`).
@@ -89,10 +105,15 @@ pub mod status {
     pub const FAILED: u32 = 5;
 }
 
-/// Runs schema node `node` for host node instance `instance` with `inputs`, pushing outputs to
-/// `outputs`; returns a [`status`] code, writing a message to `error` unless it is `OK`.
+/// Creates the plugin-side state of one host node instance of schema node `node` (its
+/// execution context and node state) and writes its handle to `instance`; returns a [`status`]
+/// code, writing a message to `error` unless it is `OK`. The host passes the handle to
+/// [`InvokeFn`] (never concurrently for one handle) and frees it with [`ReleaseFn`].
+pub type CreateFn = unsafe extern "C" fn(node: u32, instance: *mut u64, error: StrSink) -> u32;
+
+/// Runs the node of `instance` with `inputs`, pushing outputs to `outputs`; returns a
+/// [`status`] code, writing a message to `error` unless it is `OK`.
 pub type InvokeFn = unsafe extern "C" fn(
-    node: u32,
     instance: u64,
     inputs: *const StableInput,
     len: usize,
@@ -100,8 +121,12 @@ pub type InvokeFn = unsafe extern "C" fn(
     error: StrSink,
 ) -> u32;
 
-/// Drops the plugin-side state of host node instance `instance`.
+/// Drops the plugin-side state of `instance`.
 pub type ReleaseFn = unsafe extern "C" fn(instance: u64);
+
+/// Drops the plugin's stable runtime (its private registry). The host calls it once it released
+/// every instance and is about to close the library; a later `create` builds a new runtime.
+pub type UnloadFn = unsafe extern "C" fn();
 
 /// The stable entry points in a [`PluginDescriptor`](super::PluginDescriptor).
 #[repr(C)]
@@ -109,6 +134,8 @@ pub type ReleaseFn = unsafe extern "C" fn(instance: u64);
 pub struct StableHandlers {
     /// The plugin's [`STABLE_ABI_VERSION`].
     pub version: u32,
+    pub create: CreateFn,
     pub invoke: InvokeFn,
     pub release: ReleaseFn,
+    pub unload: UnloadFn,
 }

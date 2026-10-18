@@ -1,7 +1,9 @@
 use super::boundary::{self, BoundaryTypeTable};
 use super::crate_builds::{self, CrateBuildTable};
 use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
-use super::stable::{STABLE_ABI_VERSION, StablePlugin};
+use super::intern::intern;
+use super::library::{LibraryHandle, OpenError};
+use super::stable::{Generation, PluginSlot, STABLE_ABI_VERSION, StablePlugin};
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
     PluginInfo, PluginSchema, StrSink, StrView,
@@ -12,10 +14,11 @@ use crate::runtime::plugins::{
 };
 use crate::transport::{ForeignInterfaceInfo, RustTypeIdentity, TypeKey};
 use daedalus_ffi_host::core::BackendKind;
-use libloading::Library;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 /// Why a plugin cannot use the Rust-ABI install path of this host (see the [module docs](super)).
@@ -58,6 +61,12 @@ pub enum PluginLibraryError {
         path: PathBuf,
         #[source]
         source: libloading::Error,
+    },
+    #[error("failed to copy plugin library `{}` for loading: {source}", path.display())]
+    ShadowCopy {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
     },
     #[error("plugin library `{}` does not export symbol `{symbol}`", path.display())]
     MissingSymbol { path: PathBuf, symbol: &'static str },
@@ -141,6 +150,21 @@ pub enum PluginLibraryError {
         plugin: String,
         mismatches: Vec<ForeignInterfaceMismatch>,
     },
+    /// [`PluginLibrary::reload`] refused: the plugin was installed through the Rust ABI, whose
+    /// handlers are the plugin's own code in the host registry. Nothing changed.
+    #[error("plugin `{plugin}` cannot be reloaded: {reason}")]
+    NotReloadable { plugin: String, reason: String },
+    /// [`PluginLibrary::reload`] refused: the rebuilt plugin changed what its stable installs
+    /// registered (nodes, ports, dependencies, foreign interfaces). The old build keeps running;
+    /// install the new one into a fresh registry instead.
+    #[error(
+        "plugin `{plugin}` cannot be reloaded in place: {}; install it into a new registry",
+        changes.join("; ")
+    )]
+    ReloadIncompatible {
+        plugin: String,
+        changes: Vec<String>,
+    },
     #[error("plugin failed to register boundary contracts: {message}")]
     BoundaryContractsFailed { message: String },
     #[error("plugin registration failed: {message}")]
@@ -152,31 +176,38 @@ type DescriptorFn = unsafe extern "C" fn() -> PluginDescriptor;
 
 /// A loaded native Rust plugin library (built with [`export_plugin!`](crate::export_plugin)).
 ///
-/// The underlying library is leaked and never unloaded; see the [module docs](super).
+/// The library stays open while anything may run its code: this value, the stable installs made
+/// from it (and the graphs compiled from those registries), and buffers it produced. A Rust-ABI
+/// install keeps it open for good. See [`reload`](Self::reload) and the [module docs](super).
 pub struct PluginLibrary {
     path: PathBuf,
+    /// `None` for a descriptor of this process (tests).
+    library: Option<Arc<LibraryHandle>>,
     descriptor: PluginDescriptor,
+    /// `descriptor.info` with host copies of its strings.
+    info: PluginInfo,
     schema: PluginSchema,
     boundary_types: Vec<(TypeKey, RustTypeIdentity)>,
     foreign_interfaces: Vec<ForeignInterfaceInfo>,
     crate_builds: Vec<CrateBuildInfo>,
     rust_abi: Result<(), RustAbiMismatch>,
-}
-
-/// The plugin id `StablePlugin` needs as `&'static str` (plugin libraries are never unloaded).
-fn leak_id(id: &str) -> &'static str {
-    Box::leak(id.to_owned().into_boxed_str())
+    /// What the stable installs call, created by the first one.
+    slot: Mutex<Option<Arc<PluginSlot>>>,
+    /// Some registry runs the plugin's handlers through the Rust ABI.
+    rust_abi_installed: AtomicBool,
+    generation: u64,
 }
 
 impl std::fmt::Debug for PluginLibrary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let info = &self.descriptor.info;
+        let info = &self.info;
         f.debug_struct("PluginLibrary")
             .field("path", &self.path)
             .field("plugin_name", &info.plugin_name.as_str())
             .field("plugin_version", &info.plugin_version.as_str())
             .field("rust_abi", &self.rust_abi)
             .field("stable_abi", &self.descriptor.stable.version)
+            .field("generation", &self.generation)
             .finish()
     }
 }
@@ -188,45 +219,72 @@ impl PluginLibrary {
     /// fetches and validates the plugin's [`PluginSchema`]. A plugin built with another
     /// toolchain, Daedalus version or feature set still loads, so it can be inspected;
     /// [`rust_abi`](Self::rust_abi) reports whether [`install_into`](Self::install_into) will
-    /// accept it. The library stays loaded for the rest of the process, even when loading fails
-    /// after it was opened.
+    /// accept it. A library that fails to load is closed again.
     ///
     /// # Safety
     /// Loading a library runs its initialisers, and the exported symbols are trusted to have
     /// the signatures generated by `export_plugin!`. The caller must ensure `path` points to a
     /// trusted Daedalus plugin.
     pub unsafe fn load(path: impl AsRef<Path>) -> Result<Self, PluginLibraryError> {
-        let path = path.as_ref().to_path_buf();
         // Safety: forwarded from the caller.
-        let library =
-            unsafe { Library::new(&path) }.map_err(|source| PluginLibraryError::Load {
-                path: path.clone(),
-                source,
-            })?;
-        // Never unload: registered handlers and static data point into the library.
-        let library: &'static Library = Box::leak(Box::new(library));
+        unsafe { Self::open(path.as_ref(), false) }
+    }
 
-        // Safety (symbol lookups and calls): signatures are defined by `export_plugin!`; the
-        // descriptor symbol is only called once the ABI version pins its shape.
-        let abi: AbiFn = unsafe { symbol(library, &path, PLUGIN_ABI_SYMBOL) }?;
-        check_abi_version(unsafe { abi() }, PLUGIN_ABI_VERSION)?;
-        let descriptor: DescriptorFn = unsafe { symbol(library, &path, PLUGIN_DESCRIPTOR_SYMBOL) }?;
-        // Safety: the descriptor comes from a plugin with a matching ABI version.
-        unsafe { Self::from_descriptor(path, descriptor()) }
+    /// [`load`](Self::load) for a development loop: opens a private copy of `path`, so a build
+    /// rewriting the file (even in place) never touches the code this process runs, then
+    /// [`reload`](Self::reload) picks the rebuilt file up.
+    ///
+    /// # Safety
+    /// As [`load`](Self::load).
+    pub unsafe fn load_reloadable(path: impl AsRef<Path>) -> Result<Self, PluginLibraryError> {
+        // Safety: forwarded from the caller.
+        unsafe { Self::open(path.as_ref(), true) }
     }
 
     /// # Safety
-    /// `descriptor` must come from a plugin with ABI version [`PLUGIN_ABI_VERSION`].
+    /// As [`load`](Self::load).
+    unsafe fn open(path: &Path, shadow: bool) -> Result<Self, PluginLibraryError> {
+        let path = path.to_path_buf();
+        // Safety: forwarded from the caller.
+        let library = unsafe { LibraryHandle::open(&path, shadow) }.map_err(|err| match err {
+            OpenError::Load(source) => PluginLibraryError::Load {
+                path: path.clone(),
+                source,
+            },
+            OpenError::Copy(source) => PluginLibraryError::ShadowCopy {
+                path: path.clone(),
+                source,
+            },
+        })?;
+        let library = Arc::new(library);
+
+        // Safety (symbol lookups and calls): signatures are defined by `export_plugin!`; the
+        // descriptor symbol is only called once the ABI version pins its shape.
+        let abi: AbiFn = unsafe { symbol(&library, &path, PLUGIN_ABI_SYMBOL) }?;
+        check_abi_version(unsafe { abi() }, PLUGIN_ABI_VERSION)?;
+        let descriptor: DescriptorFn =
+            unsafe { symbol(&library, &path, PLUGIN_DESCRIPTOR_SYMBOL) }?;
+        // Safety: the descriptor comes from a plugin with a matching ABI version.
+        unsafe { Self::from_descriptor(path, descriptor(), Some(library)) }
+    }
+
+    /// # Safety
+    /// `descriptor` must come from a plugin with ABI version [`PLUGIN_ABI_VERSION`], loaded
+    /// from `library` (or this process).
     unsafe fn from_descriptor(
         path: PathBuf,
         descriptor: PluginDescriptor,
+        library: Option<Arc<LibraryHandle>>,
     ) -> Result<Self, PluginLibraryError> {
         let info = &descriptor.info;
         let plugin = info_field(info.plugin_name, "plugin_name")?.to_string();
-        info_field(info.plugin_version, "plugin_version")?;
-        info_field(info.daedalus_version, "daedalus_version")?;
-        info_field(info.rustc_version, "rustc_version")?;
-        info_field(info.build_fingerprint, "build_fingerprint")?;
+        let info = PluginInfo {
+            plugin_name: interned(info.plugin_name, "plugin_name")?,
+            plugin_version: interned(info.plugin_version, "plugin_version")?,
+            daedalus_version: interned(info.daedalus_version, "daedalus_version")?,
+            rustc_version: interned(info.rustc_version, "rustc_version")?,
+            build_fingerprint: interned(info.build_fingerprint, "build_fingerprint")?,
+        };
 
         let schema_error = |message: String| PluginLibraryError::Schema {
             plugin: plugin.clone(),
@@ -272,12 +330,17 @@ impl PluginLibrary {
             .map_err(|message| schema_error(format!("crate builds: {message}")))?;
         Ok(Self {
             path,
-            rust_abi: check_rust_abi(info),
+            library,
+            rust_abi: check_rust_abi(&info),
+            info,
             descriptor,
             schema,
             boundary_types,
             foreign_interfaces,
             crate_builds,
+            slot: Mutex::default(),
+            rust_abi_installed: AtomicBool::new(false),
+            generation: 1,
         })
     }
 
@@ -384,9 +447,9 @@ impl PluginLibrary {
             InstallPath::RustAbi => self.install_rust_abi(registry),
             InstallPath::Stable => registry
                 .install_plugin(&StablePlugin {
-                    id: leak_id(&self.schema.plugin.name),
+                    id: intern(&self.schema.plugin.name),
                     schema: &self.schema,
-                    handlers: self.descriptor.stable,
+                    slot: self.stable_slot(),
                     foreign_interfaces: &self.foreign_interfaces,
                 })
                 .map_err(|err| PluginLibraryError::RegisterFailed {
@@ -448,6 +511,11 @@ impl PluginLibrary {
             // for the call and the sink outlives it.
             call(|sink| unsafe { entry(registry, sink) })
         };
+        // The registry is about to hold the plugin's own closures and statics.
+        self.rust_abi_installed.store(true, Ordering::Release);
+        if let Some(library) = &self.library {
+            library.pin();
+        }
         install(self.descriptor.register_boundary_contracts, registry)
             .map_err(|message| PluginLibraryError::BoundaryContractsFailed { message })?;
         install(self.descriptor.register, registry)
@@ -465,9 +533,122 @@ impl PluginLibrary {
         }
     }
 
-    /// Metadata reported by the plugin.
+    /// The slot the stable installs share, created (running this build) on first use.
+    fn stable_slot(&self) -> Arc<PluginSlot> {
+        let mut slot = self.slot.lock().unwrap_or_else(|err| err.into_inner());
+        slot.get_or_insert_with(|| {
+            let generation = Generation::new(
+                self.generation,
+                self.descriptor.stable,
+                (0..self.schema.nodes.len() as u32).collect(),
+                self.library.clone(),
+            );
+            Arc::new(PluginSlot::new(&self.schema, generation))
+        })
+        .clone()
+    }
+
+    /// Load the file at [`path`](Self::path) again (through a private copy) and switch every
+    /// stable install of this library to it; returns the new [`generation`](Self::generation).
+    ///
+    /// For a development loop: rebuild the plugin, then reload. Each node instance finishes the
+    /// call it is running on the old build and starts its next call on the new one with fresh
+    /// state: node state is reset, never migrated (it lives in the old build's types). A
+    /// [`HostGraph`](crate::engine::HostGraph) reloaded between ticks
+    /// ([`HostGraphReloadExt::reload_plugin`](super::HostGraphReloadExt::reload_plugin)) therefore
+    /// runs every node of tick N on the old build and every node of tick N+1 on the new one; a
+    /// graph ticking on another thread meanwhile may mix the two within one tick.
+    ///
+    /// The old build is released once nothing uses it: its instances released (each releases on
+    /// its next call or when its graph drops), then its stable runtime unloaded and the library
+    /// closed, unless a foreign handle it created is still referenced
+    /// ([`live_generations`](Self::live_generations) lists the builds still loaded).
+    ///
+    /// Fails, changing nothing, with [`PluginLibraryError::NotReloadable`] after a Rust-ABI
+    /// install, with [`PluginLibraryError::ReloadIncompatible`] when the rebuilt plugin changed
+    /// what the stable installs registered (another plugin name, a node removed, a port added,
+    /// removed or retyped, other dependencies or foreign interfaces), and with the
+    /// [`load`](Self::load) errors. Without stable installs it just replaces the library.
+    ///
+    /// # Safety
+    /// As [`load`](Self::load).
+    pub unsafe fn reload(&mut self) -> Result<u64, PluginLibraryError> {
+        let plugin = self.schema.plugin.name.clone();
+        if self.rust_abi_installed.load(Ordering::Acquire) {
+            return Err(PluginLibraryError::NotReloadable {
+                plugin,
+                reason: "it was installed through the Rust ABI, whose handlers are the \
+                         plugin's own code in the host registry; install it with \
+                         `install_into_as(InstallPath::Stable)` to reload it"
+                    .into(),
+            });
+        }
+        // Safety: forwarded from the caller.
+        let mut next = unsafe { Self::open(&self.path, true) }?;
+        next.generation = self.generation + 1;
+        let slot = self
+            .slot
+            .get_mut()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
+        if let Some(slot) = slot {
+            let found = next.descriptor.stable.version;
+            if found != STABLE_ABI_VERSION {
+                return Err(PluginLibraryError::StableAbiMismatch {
+                    plugin,
+                    expected: STABLE_ABI_VERSION,
+                    found,
+                    rust: None,
+                });
+            }
+            let mut changes = Vec::new();
+            if next.schema.plugin.name != plugin {
+                changes.push(format!("the plugin is now `{}`", next.schema.plugin.name));
+            }
+            let nodes = slot
+                .node_indices(&next.schema)
+                .unwrap_or_else(|node_changes| {
+                    changes.extend(node_changes);
+                    Vec::new()
+                });
+            if next.schema.dependencies != self.schema.dependencies {
+                changes.push("its dependencies changed".into());
+            }
+            if next.foreign_interfaces != self.foreign_interfaces {
+                changes.push("its foreign interfaces changed".into());
+            }
+            if !changes.is_empty() {
+                return Err(PluginLibraryError::ReloadIncompatible { plugin, changes });
+            }
+            slot.publish(Generation::new(
+                next.generation,
+                next.descriptor.stable,
+                nodes,
+                next.library.clone(),
+            ));
+            *next.slot.get_mut().unwrap_or_else(|err| err.into_inner()) = Some(slot);
+        }
+        *self = next;
+        Ok(self.generation)
+    }
+
+    /// How many times this library was loaded: 1, plus one per [`reload`](Self::reload).
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The generations of this library still loaded for its stable installs, current first
+    /// (just the current one when none was installed). An older one stays until its node
+    /// instances and the buffers it produced are dropped.
+    pub fn live_generations(&self) -> Vec<u64> {
+        let slot = self.slot.lock().unwrap_or_else(|err| err.into_inner());
+        slot.as_ref()
+            .map_or_else(|| vec![self.generation], |slot| slot.live_generations())
+    }
+
+    /// Metadata reported by the plugin (host copies of its strings).
     pub fn info(&self) -> PluginInfo {
-        self.descriptor.info
+        self.info
     }
 
     /// The plugin's manifest and node declarations, readable whatever built the plugin.
@@ -523,12 +704,12 @@ impl PluginLibrary {
 /// # Safety
 /// `T` must be the function pointer type matching the exported symbol.
 unsafe fn symbol<T: Copy>(
-    library: &'static Library,
+    library: &LibraryHandle,
     path: &Path,
     name: &'static str,
 ) -> Result<T, PluginLibraryError> {
     // Safety: forwarded from the caller.
-    unsafe { library.get::<T>(name.as_bytes()) }
+    unsafe { library.library().get::<T>(name.as_bytes()) }
         .map(|sym| *sym)
         .map_err(|_| PluginLibraryError::MissingSymbol {
             path: path.to_path_buf(),
@@ -569,6 +750,11 @@ fn call(entry: impl FnOnce(StrSink) -> bool) -> Result<String, String> {
 fn info_field(view: StrView, field: &'static str) -> Result<&'static str, PluginLibraryError> {
     view.as_str()
         .ok_or(PluginLibraryError::InvalidInfo { field })
+}
+
+/// A view of a host copy of the plugin's string.
+fn interned(view: StrView, field: &'static str) -> Result<StrView, PluginLibraryError> {
+    Ok(StrView::from_static(intern(info_field(view, field)?)))
 }
 
 fn check_abi_version(found: u32, expected: u32) -> Result<(), PluginLibraryError> {

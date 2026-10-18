@@ -93,7 +93,7 @@ pub(super) fn describe(
 /// Read a table returned by a plugin's [`BoundaryTypesFn`].
 ///
 /// # Safety
-/// `table` must point to `len` entries that stay valid for the process lifetime.
+/// `table` must point to `len` entries valid for the call (their strings are copied to the host).
 pub(super) unsafe fn read_table(
     table: BoundaryTypeTable,
 ) -> Result<Vec<(TypeKey, RustTypeIdentity)>, String> {
@@ -110,6 +110,7 @@ pub(super) unsafe fn read_table(
         .map(|entry| {
             let text = |view: StrView, field: &str| {
                 view.as_str()
+                    .map(super::intern::intern)
                     .ok_or_else(|| format!("boundary type {field} is null or not valid UTF-8"))
             };
             let identity = RustTypeIdentity {

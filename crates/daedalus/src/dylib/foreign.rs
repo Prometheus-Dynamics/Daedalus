@@ -74,7 +74,7 @@ pub(super) fn mismatches(
 /// Read a table returned by a plugin's [`ForeignInterfacesFn`].
 ///
 /// # Safety
-/// `table` must point to `len` entries that stay valid for the process lifetime.
+/// `table` must point to `len` entries valid for the call (their strings are copied to the host).
 pub(super) unsafe fn read_table(
     table: ForeignInterfaceTable,
 ) -> Result<Vec<ForeignInterfaceInfo>, String> {
@@ -86,7 +86,10 @@ pub(super) unsafe fn read_table(
     }
     // Safety: guaranteed by the caller.
     let entries = unsafe { std::slice::from_raw_parts(table.entries, table.len) };
-    Ok(entries.to_vec())
+    Ok(entries
+        .iter()
+        .map(|info| super::intern::foreign_interface(*info))
+        .collect())
 }
 
 /// Plugin side: leak `registry`'s foreign interfaces as a `'static` table.

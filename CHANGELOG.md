@@ -34,6 +34,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `StreamWorkerConfig` gained an `on_error` field (build it with `StreamWorkerConfig::default()`
   and the `with_*` setters), and `ExecutionTelemetry`/`TelemetryReport` gained
   `backpressure_deferrals` and `recovery`.
+- **Breaking: dynamic plugins `PLUGIN_ABI_VERSION` 10 and `STABLE_ABI_VERSION` 2** (rebuild every
+  plugin; a host refuses older plugins with `PluginLibraryError::AbiMismatch`). `StableHandlers`
+  grew `create` (one plugin-side instance per host node instance, returned as an opaque handle,
+  so `invoke` does no instance-map lookup, lock or context clone) and `unload` (drop the plugin's
+  runtime before its library closes). `StableInput` and the output callback name ports by index
+  into the schema node's ports (`StableInput { port, fanin, value }`, `NO_FANIN`), resolved once
+  instead of searched and UTF-8-validated per call; the host caches each node instance's input
+  indices by position and reuses its input and output buffers, and scalars decode without a
+  `Value` detour. A `HANDLE` value's `scalar` carries `tag::HANDLE_FROM_SENDER` when the sender's
+  build created it.
+- **Dynamic plugin libraries close when unused.** `PluginLibrary` holds its library by
+  reference count instead of leaking it: it closes once the `PluginLibrary`, its stable installs
+  (and the graphs compiled from them) and the `SharedBytes` it produced are gone. A Rust-ABI
+  install, or a plugin-created foreign handle reaching the host through another port type, pins
+  it for good. Plugin ids, `PluginLibrary::info()`, boundary types, crate builds and foreign
+  interface keys are host copies (interned once per distinct string), no longer leaked per load
+  or pointing into the library.
+
 - **Breaking: `daedalus:frame` v2** (`FrameInterface` version 2, new vtable layout hash; v1
   plugins are refused with `PluginLibraryError::ForeignInterfaceMismatch`, and a registry
   holding one version refuses the other with `PluginError::ForeignInterfaceConflict`;
@@ -148,6 +166,23 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Parallel scheduling priority: `with_node_priority` / `try_set_node_priority` or
   `daedalus.node.priority` metadata (`NODE_PRIORITY_META_KEY`) orders ready segments (highest
   first, FIFO among equals) without allocating per frame.
+- **Dynamic plugin hot reload** for development loops: `PluginLibrary::reload` loads the
+  rebuilt file (through a private copy; `PluginLibrary::load_reloadable` loads that way from the
+  start) and swaps every stable install to it through a generation-counted slot;
+  `HostGraphReloadExt::reload_plugin` does it between two ticks of a graph, so all its nodes
+  switch at that tick boundary. Node state resets across a reload (never migrated); the old
+  build is released, then unloaded and closed, once its node instances and buffers are gone
+  (`PluginLibrary::live_generations`, `generation`). A rebuild that changes the installed
+  interface (plugin name, node ids or ports, dependencies, foreign interfaces) is refused with
+  `PluginLibraryError::ReloadIncompatible`, and Rust-ABI installs with
+  `PluginLibraryError::NotReloadable`. `docs/dynamic-plugins.md` ("Reloading"); the facade's
+  `dylib_reload` test rebuilds `examples/plugins/stable_abi` between loads.
+- **`SharedBytes`** (`daedalus::SharedBytes`, type key `daedalus:shared_bytes`): an immutable,
+  reference-counted byte buffer that crosses the stable plugin boundary by reference both ways
+  (as a `daedalus:bytes` foreign handle, `dylib::BytesInterface`): the plugin reads the host's
+  buffer in place and returns slices of it or buffers of its own without a copy; a buffer the
+  plugin produced keeps that build loaded while the host holds it. `Vec<u8>` ports still copy
+  once (no shared allocator). `docs/dynamic-plugins.md` ("Zero-Copy Bytes").
 
 - **Node fusion.** Chains of single-consumer CPU nodes run as fused units: a fused edge (its
   source port feeds only it, its target port has no other producer, a direct slot without

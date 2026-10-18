@@ -18,6 +18,10 @@ doctest = false
 # refuse its Rust ABI and install it through the stable handler path. Nothing links this crate
 # but the facade's tests, so the `rlib` may carry the exported symbols.
 dylib = ["daedalus/dylib-plugins"]
+# Fixture builds for the facade's `dylib_reload` test: `generation` reports 2, or takes another
+# input (a change a host cannot reload in place).
+reload-v2 = []
+reload-incompatible = []
 
 [dependencies]
 daedalus = { workspace = true, features = ["plugins"] }

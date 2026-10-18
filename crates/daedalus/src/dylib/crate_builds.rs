@@ -31,7 +31,7 @@ pub type CrateBuildsFn = unsafe extern "C" fn(table: *mut CrateBuildTable, sink:
 /// Read a table returned by a plugin's [`CrateBuildsFn`].
 ///
 /// # Safety
-/// `table` must point to `len` entries that stay valid for the process lifetime.
+/// `table` must point to `len` entries valid for the call (their strings are copied to the host).
 pub(super) unsafe fn read_table(table: CrateBuildTable) -> Result<Vec<CrateBuildInfo>, String> {
     if table.len == 0 {
         return Ok(Vec::new());
@@ -46,6 +46,7 @@ pub(super) unsafe fn read_table(table: CrateBuildTable) -> Result<Vec<CrateBuild
         .map(|entry| {
             let text = |view: StrView, field: &str| {
                 view.as_str()
+                    .map(super::intern::intern)
                     .ok_or_else(|| format!("crate build {field} is null or not valid UTF-8"))
             };
             Ok(CrateBuildInfo {
