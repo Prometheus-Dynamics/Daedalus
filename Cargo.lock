@@ -596,6 +596,7 @@ version = "3.0.0"
 dependencies = [
  "base64",
  "daedalus-data",
+ "daedalus-ffi-core",
  "daedalus-transport",
  "serde",
  "serde_json",

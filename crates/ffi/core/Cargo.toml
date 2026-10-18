@@ -35,4 +35,6 @@ sha2 = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+# Its own tests cover the conformance fixtures.
+daedalus-ffi-core = { workspace = true, features = ["conformance"] }
 tempfile = { workspace = true }
