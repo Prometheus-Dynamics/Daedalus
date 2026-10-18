@@ -195,7 +195,7 @@ pub unsafe fn crate_builds<P: Plugin + Default>(
 ///
 /// daedalus::export_plugin!(DemoPlugin);
 /// // or, linking the plugin of a library whose types the nodes use:
-/// daedalus::export_plugin!(DemoPlugin, deps [styx_core::daedalus::StyxFramesPlugin]);
+/// daedalus::export_plugin!(DemoPlugin, deps [camera_lib::daedalus::FramesPlugin]);
 /// // or, with extra boundary contracts:
 /// daedalus::export_plugin!(DemoPlugin, boundary_contracts [my_contract()]);
 /// daedalus::export_plugin!(DemoPlugin, deps [Dep], boundary_contracts [my_contract()]);

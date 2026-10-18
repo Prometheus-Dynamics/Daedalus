@@ -730,19 +730,19 @@ mod boundary_tests {
     #[test]
     fn boundary_registry_accepts_compatible_contracts_without_feature_identity() {
         let mut plugins = PluginRegistry::bare();
-        let key = TypeKey::new("styx:framelease");
+        let key = TypeKey::new("example:frame");
         let mut host_contract = BoundaryTypeContract::new(
             key.clone(),
             LayoutHash::new("framelease-layout-v1"),
             BoundaryCapabilities::frame_like(),
         );
-        host_contract.rust_type_name = Some("host_build::FrameLease".to_string());
+        host_contract.rust_type_name = Some("host_build::Frame".to_string());
         let mut plugin_contract = BoundaryTypeContract::new(
             key,
             LayoutHash::new("framelease-layout-v1"),
             BoundaryCapabilities::frame_like(),
         );
-        plugin_contract.rust_type_name = Some("plugin_build::FrameLease".to_string());
+        plugin_contract.rust_type_name = Some("plugin_build::Frame".to_string());
 
         plugins.register_boundary_contract(host_contract).unwrap();
         plugins

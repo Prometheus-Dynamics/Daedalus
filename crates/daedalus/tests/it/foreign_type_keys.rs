@@ -7,30 +7,30 @@ use daedalus::runtime::plugins::{PluginError, RegistryPluginExt};
 use daedalus::transport::{TransportError, TypeKey};
 use daedalus::{PluginRegistry, adapt, macros::node, plugin};
 
-/// Stands in for a library (e.g. `styx-core`) whose optional `daedalus` feature owns its key.
-mod styx {
-    #[daedalus::type_key("styx:framelease")]
-    pub struct FrameLease {
+/// Stands in for a library (e.g. `frame_lib`) whose optional `daedalus` feature owns its key.
+mod frame_lib {
+    #[daedalus::type_key("example:frame")]
+    pub struct Frame {
         pub width: u32,
     }
 
-    #[daedalus::plugin(id = "styx", types(FrameLease))]
-    pub struct StyxPlugin;
+    #[daedalus::plugin(id = "frames", types(Frame))]
+    pub struct FramesPlugin;
 }
 
 #[node(id = "frame_width", inputs("frame"), outputs("width"))]
-fn frame_width(frame: &styx::FrameLease) -> Result<u32, NodeError> {
+fn frame_width(frame: &frame_lib::Frame) -> Result<u32, NodeError> {
     Ok(frame.width)
 }
 
 #[adapt(id = "consumer.frame_to_gray", to = "consumer:gray8")]
-fn frame_to_gray(frame: &styx::FrameLease) -> Result<Vec<u8>, TransportError> {
+fn frame_to_gray(frame: &frame_lib::Frame) -> Result<Vec<u8>, TransportError> {
     Ok(vec![0; frame.width as usize])
 }
 
 #[plugin(
     id = "consumer",
-    deps("styx"),
+    deps("frames"),
     nodes(frame_width),
     adapters(frame_to_gray)
 )]
@@ -56,10 +56,12 @@ fn owner_declared_keys_do_not_depend_on_install_order() {
     let mut registry = PluginRegistry::new();
     // The consumer installs before the library that registers the type.
     registry.install_plugin(&ConsumerPlugin::new()).unwrap();
-    registry.install_plugin(&styx::StyxPlugin::new()).unwrap();
+    registry
+        .install_plugin(&frame_lib::FramesPlugin::new())
+        .unwrap();
     registry.freeze().unwrap();
 
-    let key = TypeKey::new("styx:framelease");
+    let key = TypeKey::new("example:frame");
     assert_eq!(port_key(&registry, "consumer:frame_width", "frame"), key);
     let adapter = registry
         .transport_capabilities
@@ -70,7 +72,7 @@ fn owner_declared_keys_do_not_depend_on_install_order() {
     assert_eq!(adapter.from, key);
     let recorded = registry.boundary_types()[&key];
     assert!(
-        recorded.type_name.ends_with("styx::FrameLease"),
+        recorded.type_name.ends_with("frame_lib::Frame"),
         "{recorded}"
     );
 }

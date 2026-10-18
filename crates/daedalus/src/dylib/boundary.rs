@@ -37,8 +37,8 @@ pub type BoundaryTypesFn =
 /// Describe conflicts for an error message, grouped by the crate defining the plugin's type
 /// ([`RustTypeIdentity::defining_crate`]), each group led by that crate's build difference when
 /// both sides registered one ([`PluginRegistry::register_crate_build`]), e.g. ``crate
-/// `styx_core` 0.4.0: host features `framelease,v4l2`, plugin features `framelease` (missing in
-/// plugin: v4l2) — key `styx:framelease`: host `...` (...) vs plugin `...` (...)``. A crate
+/// `frame_lib` 0.4.0: host features `framelease,v4l2`, plugin features `framelease` (missing in
+/// plugin: v4l2) — key `example:frame`: host `...` (...) vs plugin `...` (...)``. A crate
 /// built identically on both sides (`same`) differs through its dependencies.
 pub(super) fn describe(
     conflicts: &[BoundaryTypeConflict],

@@ -41,11 +41,11 @@ The `id` of `#[node]`, `#[adapt]` and `#[plugin]` is a string literal or any exp
 evaluates to a `&'static str` constant, so a library can prefix its ids in one place:
 
 ```rust
-macro_rules! eidos_id {
-    ($name:ident) => { concat!("eidos.", stringify!($name)) };
+macro_rules! example_id {
+    ($name:ident) => { concat!("example.", stringify!($name)) };
 }
 
-#[node(id = eidos_id!(blur), inputs("frame"), outputs("frame"))] // or id = concat!(..), id = BLUR_ID
+#[node(id = example_id!(blur), inputs("frame"), outputs("frame"))] // or id = concat!(..), id = BLUR_ID
 fn blur(frame: &Frame) -> Result<Frame, NodeError> { /* ... */ }
 ```
 
@@ -53,7 +53,7 @@ fn blur(frame: &Frame) -> Result<Frame, NodeError> { /* ... */ }
 
 `#[node]` and `#[adapt]` give every port (and adapter end) a `TypeKey`, in this order:
 
-1. An explicit key: `inputs(port(name = "frame", type_key = "styx:framelease"))` (same for
+1. An explicit key: `inputs(port(name = "frame", type_key = "example:frame"))` (same for
    `outputs(port(...))`), `#[adapt(from = "...", to = "...")]`, or a full schema with
    `port(name = "...", ty = <TypeExpr>)`.
 2. The key the type owns (`#[type_key]`, `#[derive(DaedalusTypeExpr)]`). It is resolved at compile
@@ -291,7 +291,7 @@ convert directly, which allocates nothing). Take the config as `&Config` and a c
 
 ```rust
 #[derive(Clone, Copy, Debug, daedalus::DaedalusTypeExpr)]
-#[daedalus(type_key = "eidos:border")]
+#[daedalus(type_key = "example:border")]
 enum Border { Reflect, Constant, Wrap }
 
 #[derive(Clone, Debug, NodeConfig)]
@@ -410,13 +410,14 @@ upload otherwise. See "Importing external frames (dmabuf)" in
 
 ## Library-Owned Integration Features
 
-When several crates exchange one type through Daedalus (a camera library's `FrameLease`, consumed
+When several crates exchange one type through Daedalus (a camera library's `Frame`, consumed
 by an image-processing library's nodes and by an application's plugins), **the crate that
 defines the type owns its type key and its Daedalus registration**, behind an optional `daedalus`
 feature. Daedalus never depends on that crate; the crate optionally depends on Daedalus.
 
-The owning crate (here a simplified `styx-core`; Styx's real integration is `styx_core::daedalus`
-with `StyxFramesPlugin`, id `styx.frames`, see Styx's `docs/daedalus.md`):
+The owning crate (here a simplified `camera-lib`; a camera library would keep this integration
+behind its own `daedalus` feature, as `camera_lib::daedalus` with `CameraFramesPlugin`, id
+`camera.frames`):
 
 ```toml
 [features]
@@ -428,11 +429,11 @@ daedalus = { package = "daedalus-rs", version = "3", optional = true, features =
 
 ```rust
 // src/frame.rs: the key is part of the type, so every consumer resolves it the same way.
-#[cfg_attr(feature = "daedalus", daedalus::type_key("styx:framelease"))]
-pub struct FrameLease { /* ... */ }
+#[cfg_attr(feature = "daedalus", daedalus::type_key("example:frame"))]
+pub struct Frame { /* ... */ }
 
 #[cfg_attr(feature = "daedalus", derive(daedalus::DaedalusTypeExpr, daedalus::DaedalusToValue))]
-#[cfg_attr(feature = "daedalus", daedalus(type_key = "styx:frame_meta"))]
+#[cfg_attr(feature = "daedalus", daedalus(type_key = "example:frame_meta"))]
 pub struct FrameMeta { pub width: u32, pub height: u32, /* format, planes, ... */ }
 
 // src/lib.rs
@@ -443,36 +444,36 @@ pub mod daedalus_integration;
 use daedalus::data::to_value::ToValue;
 use daedalus::runtime::plugins::{PluginInstallContext, PluginResult};
 
-pub const FRAME_LEASE_KEY: &str = "styx:framelease";
+pub const FRAME_KEY: &str = "example:frame";
 
 #[daedalus::plugin(
-    id = "styx",
+    id = "camera",
     // Registers this crate's name, version and features (needs the build.rs line below), so a
-    // host refusing a plugin with another build of styx-core names the feature difference.
+    // host refusing a plugin with another build of camera-lib names the feature difference.
     crate_build,
-    types(crate::FrameLease),
+    types(crate::Frame),
     values(crate::FrameMeta),
     adapters(lease_to_meta),
-    // `FrameLease: FrameSource` (below): separately built plugins read leases as `FrameView`.
-    foreign_providers(crate::FrameLease => daedalus::transport::FrameInterface),
+    // `Frame: FrameSource` (below): separately built plugins read leases as `FrameView`.
+    foreign_providers(crate::Frame => daedalus::transport::FrameInterface),
     install = install
 )]
-pub struct StyxPlugin;
+pub struct CameraPlugin;
 
-#[daedalus::adapt(id = "styx.lease_to_meta", kind = daedalus::transport::AdapterKind::MetadataOnly)]
+#[daedalus::adapt(id = "camera.lease_to_meta", kind = daedalus::transport::AdapterKind::MetadataOnly)]
 fn lease_to_meta(
-    lease: &crate::FrameLease,
+    lease: &crate::Frame,
 ) -> Result<crate::FrameMeta, daedalus::transport::TransportError> {
     Ok(lease.meta())
 }
 
 fn install(registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
-    registry.register_value_serializer::<crate::FrameLease, _>(|lease| lease.meta().to_value());
+    registry.register_value_serializer::<crate::Frame, _>(|lease| lease.meta().to_value());
     Ok(())
 }
 
 // The `daedalus:frame` v2 accessors (docs/foreign-frame-interface.md).
-impl daedalus::transport::FrameSource for crate::FrameLease { /* width, height, planes, ... */ }
+impl daedalus::transport::FrameSource for crate::Frame { /* width, height, planes, ... */ }
 ```
 
 ```rust
@@ -486,25 +487,25 @@ fn main() {
 Every other crate enables that feature instead of registering the type again:
 
 ```toml
-# eidos (ships its ops as nodes), or an application's plugin crate
-styx-core = { version = "...", features = ["daedalus"] }
+# an image library that ships its ops as nodes, or an application's plugin crate
+camera-lib = { version = "...", features = ["daedalus"] }
 ```
 
 ```rust
 #[node(id = "to_gray", inputs("frame"), outputs("gray"))]
-fn to_gray(frame: &styx_core::FrameLease) -> Result<Gray8, NodeError> { /* ... */ }
+fn to_gray(frame: &camera_lib::Frame) -> Result<Gray8, NodeError> { /* ... */ }
 
-// `deps` makes the requirement explicit: freezing a registry without the styx plugin fails with a
+// `deps` makes the requirement explicit: freezing a registry without the camera plugin fails with a
 // missing-dependency error. The install order of the two plugins does not matter.
-#[plugin(id = "eidos", deps("styx"), nodes(to_gray))]
-pub struct EidosPlugin;
+#[plugin(id = "example", deps("camera"), nodes(to_gray))]
+pub struct ExamplePlugin;
 ```
 
-The port key of `to_gray`'s `frame` is `styx:framelease` because `FrameLease` owns it, even when
-`EidosPlugin` installs before `StyxPlugin`. A dynamic plugin also links the dependency,
-`export_plugin!(EidosPlugin, deps [StyxPlugin])` (see
-[Plugin Dependencies](dynamic-plugins.md#plugin-dependencies)). The host installs `StyxPlugin` and wraps frames with
-`Payload::shared_with(styx_core::daedalus_integration::FRAME_LEASE_KEY, Arc::new(lease), ...)`.
+The port key of `to_gray`'s `frame` is `example:frame` because `Frame` owns it, even when
+`ExamplePlugin` installs before `CameraPlugin`. A dynamic plugin also links the dependency,
+`export_plugin!(ExamplePlugin, deps [CameraPlugin])` (see
+[Plugin Dependencies](dynamic-plugins.md#plugin-dependencies)). The host installs `CameraPlugin` and wraps frames with
+`Payload::shared_with(camera_lib::daedalus_integration::FRAME_KEY, Arc::new(lease), ...)`.
 
 Rules:
 
@@ -512,9 +513,9 @@ Rules:
   incompatible halves; two types under one key fail with `BoundaryTypeConflict` (or worse, at
   runtime). Enable the owner's `daedalus` feature.
 - **When the owner has no integration yet**, declare a key where you use the type:
-  `#[plugin(foreign_types(styx_core::FrameLease = "styx:framelease"))]` registers the mapping
+  `#[plugin(foreign_types(camera_lib::Frame = "example:frame"))]` registers the mapping
   into the plugin's registry before its nodes install, and
-  `inputs(port(name = "frame", type_key = "styx:framelease"))` sets it for a single port. Pick the
+  `inputs(port(name = "frame", type_key = "example:frame"))` sets it for a single port. Pick the
   key the owner would use and move to the owner's feature once it exists. A type from another
   crate with no key at all fails install (`UnkeyedForeignType`) instead of silently getting an
   order-dependent `rust:` key.
@@ -526,19 +527,19 @@ Rules:
 - **Provide `daedalus:frame` for frame types.** A frame owner implements `FrameSource` and
   registers the provider (`foreign_providers(...)` above), so nodes that only need pixels and
   metadata take `FrameView<'_>` and work with any frame library and in plugins built separately
-  from it. Nodes that need the library's own API keep taking `&FrameLease`.
+  from it. Nodes that need the library's own API keep taking `&Frame`.
 - **Register the crate's build.** With `crate_build` (or
   `registry.register_crate_build(daedalus::crate_build_info!())` in an install hook) and the
   `build.rs` line above, a host refusing a separately built dynamic plugin whose copy of the crate
-  differs says how: ``crate `styx_core` 0.4.0: host features `daedalus,framelease,v4l2`, plugin
+  differs says how: ``crate `camera_lib` 0.4.0: host features `daedalus,framelease,v4l2`, plugin
   features `daedalus,framelease` (missing in plugin: v4l2)``. Without it the error still names the
   crate (see [Diagnosing Boundary Type Conflicts](dynamic-plugins.md#diagnosing-boundary-type-conflicts)).
 
 ## Foreign Interfaces
 
 A Rust type is only the same type in two binaries when Cargo built its crate identically for
-both. A plugin built in its own cargo invocation can resolve a shared crate (say `styx-core`)
-with other features, so its `FrameLease` differs from the host's under the same key; install
+both. A plugin built in its own cargo invocation can resolve a shared crate (say `camera-lib`)
+with other features, so its `Frame` differs from the host's under the same key; install
 refuses such a plugin (`BoundaryTypeConflict`). A **foreign interface** lets it consume the
 host's values anyway, zero-copy, without sharing the Rust type:
 
@@ -812,7 +813,7 @@ unchanged; the reload itself allocates.
 
 ### Waiting With `poll(2)` / `epoll`
 
-Hosts that already wait on file descriptors (a Styx `FrameClient`, sockets, timers) can wait on
+Hosts that already wait on file descriptors (a camera client, sockets, timers) can wait on
 Daedalus input in the same call instead of running `drive_blocking` on its own thread or `drive`
 on an async runtime. On Linux with `std`, `HostGraph::inbound_fd()` (or
 `HostBridgeHandle::inbound_fd()`) returns an `InboundFd`, an `eventfd` (`AsFd`, `AsRawFd`)
@@ -859,7 +860,7 @@ Off Linux there is no fd; an `InboundWaiter` is a `Future`, so an event loop can
 
 ### Sharing Preprocessing Across Graphs
 
-Several detectors on one camera (AprilTag, ArUco, later an ML model) usually start with the same
+Several detectors on one camera (two marker detectors, later a learned model) usually start with the same
 preprocessing: a threshold mask, a pyramid, candidate quads. Compiled as separate `HostGraph`s,
 each recomputes it every frame. An `ExecutionDomain` runs it once and hands its outputs to every
 detector:
@@ -869,17 +870,17 @@ use daedalus::engine::{ExecutionDomain, LinkMode};
 
 let mut camera = ExecutionDomain::new();
 camera.add_graph("preprocess", engine.compile_registry(&registry, preprocess)?)?; // frame -> quads
-camera.add_graph("apriltag", engine.compile_registry(&registry, apriltag)?)?;     // frame, quads -> ...
-camera.add_graph("aruco", engine.compile_registry(&registry, aruco)?)?;
-for graph in ["preprocess", "apriltag", "aruco"] {
+camera.add_graph("detector_a", engine.compile_registry(&registry, detector_a)?)?; // frame, quads -> ...
+camera.add_graph("detector_b", engine.compile_registry(&registry, detector_b)?)?;
+for graph in ["preprocess", "detector_a", "detector_b"] {
     camera.route_input("frame", graph, "frame")?; // one push feeds all three (Arc clones)
 }
-camera.link("preprocess", "quads", "apriltag", "quads", LinkMode::Latest)?;
-camera.link("preprocess", "quads", "aruco", "quads", LinkMode::Latest)?;
+camera.link("preprocess", "quads", "detector_a", "quads", LinkMode::Latest)?;
+camera.link("preprocess", "quads", "detector_b", "quads", LinkMode::Latest)?;
 
 camera.push_payload("frame", frame)?;
-let tick = camera.tick(); // preprocess once, then apriltag, then aruco
-for detections in camera.graph("apriltag").unwrap().drain_owned::<Detections>("detections")? { /* ... */ }
+let tick = camera.tick(); // preprocess once, then detector_a, then detector_b
+for detections in camera.graph("detector_a").unwrap().drain_owned::<Detections>("detections")? { /* ... */ }
 ```
 
 - **One tick** runs each graph that has pending input once, upstreams first (ties in the order
@@ -906,10 +907,10 @@ for detections in camera.graph("apriltag").unwrap().drain_owned::<Detections>("d
   a failing preprocessing graph skips its detectors for that frame only. `tick()` returns a
   `DomainTick` (`ran`, `idle`, `failed`, `skipped`) and never stops early.
 - **Graphs come and go between ticks**: `add_graph`, `remove_graph` (hands the graph back),
-  `link`, `unlink` and `route_input` touch no compiled plan, so adding an ML detector to a running
+  `link`, `unlink` and `route_input` touch no compiled plan, so adding a third detector to a running
   camera does not recompile the preprocessing. Link cycles are refused.
 - **Observability**: `explain()` prints the tick order, domain inputs, each graph's nodes and
-  consumers (`shared: runs once for 2 graphs (apriltag, aruco)`) and every fan-out link with its
+  consumers (`shared: runs once for 2 graphs (detector_a, detector_b)`) and every fan-out link with its
   mode and types. `stats()` counts per graph runs, failures, skips and run time, and what sharing
   saved: `avoided_runs` (a graph linked to `n` consumers saves `n - 1` runs per frame),
   `avoided_node_runs` and `saved_time`. `enable_frame_overhead(window)` records every graph's
@@ -920,10 +921,10 @@ for detections in camera.graph("apriltag").unwrap().drain_owned::<Detections>("d
 
 ```rust
 let camera = ExecutionDomain::load_shared_documents(&engine, &registry, [
-    ("apriltag", apriltag_document),
-    ("aruco", aruco_document),
+    ("detector_a", detector_a_document),
+    ("detector_b", detector_b_document),
 ])?;
-println!("{}", camera.explain()); // shared node mask_prep (...) in shared: computed once for apriltag, aruco
+println!("{}", camera.explain()); // shared node mask_prep (...) in shared: computed once for detector_a, detector_b
 ```
 
 Nodes two or more graphs have with the same registry id, constants, metadata and inputs (the
@@ -938,11 +939,11 @@ outlives the frame other than caches). Original host inputs become domain inputs
 name; a host output a shared node produced is served by the upstream, so read outputs through
 `camera.take_payload(graph, port)`, which works for both.
 
-**How HeliOS should lay it out.** One domain per camera, owned by that camera's thread:
+**Recommended layout for multi-camera hosts.** One domain per camera, owned by that camera's thread:
 
 - `preprocess` (or the structural `shared` graph): frame -> mask, pyramid, candidate quads.
   Mark these nodes `shareable` so documents loaded later dedupe on their own.
-- One graph per detector (`apriltag`, `aruco`, `ml`), each reading the raw frame (routed) and
+- One graph per detector (`detector_a`, `detector_b`, `model_c`), each reading the raw frame (routed) and
   the shared outputs (linked latest-only), each with its own host outputs.
 - Per-camera context (calibration, exposure) as held inputs, pushed once and linked or routed to
   the graphs that need it.
@@ -959,7 +960,7 @@ frames. A domain never mixes frames of different cameras into one shared upstrea
 
 ### Multiple Cameras
 
-A host with several cameras (HeliOS: a stereo pair, a ring of four) chooses between two layouts:
+A host with several cameras (for example a stereo pair, or a ring of four) chooses between two layouts:
 
 - **One graph per camera** when the cameras' pipelines never meet (per-camera detection,
   recording, exposure control). Each graph has its own bridge, drive loop and latest-only
@@ -995,7 +996,7 @@ let cameras = MultiCamera::synchronized(
     ["cam0", "cam1", "cam2", "cam3"],
     SyncConfig {
         partial: PartialPolicy::TickPartial, // missing cameras: `Option` inputs see None
-        stamp: source_timestamp::<styx::FrameLease>,
+        stamp: source_timestamp::<camera_lib::Frame>,
         max_buffered: 4, // frames per camera, preallocated
         ..SyncConfig::new(Duration::from_millis(4), Duration::from_millis(40)) // window, timeout
     },

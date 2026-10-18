@@ -51,7 +51,7 @@ use daedalus::runtime::plugins::RegistryPluginExt;
 let mut registry = PluginRegistry::new();
 // Types the host shares with plugins first (e.g. the frame library's own Daedalus plugin), so
 // `install_into` can check the plugins use the same Rust types for those keys.
-registry.install_plugin(&styx_core::daedalus::StyxFramesPlugin::new())?;
+registry.install_plugin(&camera_lib::daedalus::CameraFramesPlugin::new())?;
 let mut libraries = Vec::new();
 for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plugins"])? {
     // Safety: plugins are trusted Daedalus plugins.
@@ -231,14 +231,14 @@ loop {
 ## Plugin Dependencies
 
 A plugin whose nodes use types another plugin registers (a frame library's integration plugin
-that owns `styx:framelease` and provides `daedalus:frame`, say) declares the dependency and, when
+that owns `example:frame` and provides `daedalus:frame`, say) declares the dependency and, when
 it can, links that plugin into its library:
 
 ```rust
-#[plugin(id = "eidos", deps("styx.frames"), nodes(to_gray))]
-pub struct EidosPlugin;
+#[plugin(id = "example", deps("camera.frames"), nodes(to_gray))]
+pub struct ExamplePlugin;
 
-daedalus::export_plugin!(EidosPlugin, deps [styx_core::daedalus::StyxFramesPlugin]);
+daedalus::export_plugin!(ExamplePlugin, deps [camera_lib::daedalus::CameraFramesPlugin]);
 ```
 
 - **Declared** (`#[plugin(deps(...))]`, plus every linked plugin): the schema lists the
@@ -307,7 +307,7 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
 
 ## Types Owned By Other Crates
 
-A plugin that uses a type from another crate (a camera library's `FrameLease`, say) depends on
+A plugin that uses a type from another crate (a camera library's `Frame`, say) depends on
 the crate that owns the type, with that crate's optional `daedalus` feature, so port keys come
 from the type itself; it never registers the type under a key of its own. When the owner has no
 integration, the plugin declares the key with `#[plugin(foreign_types(Type = "key"))]` or a port
@@ -316,26 +316,26 @@ integration, the plugin declares the key with `#[plugin(foreign_types(Type = "ke
 Integration Features" in [`node-authoring.md`](node-authoring.md#library-owned-integration-features).
 
 The fingerprint only covers Daedalus crates, so a plugin built in a separate cargo invocation that
-resolved the owner crate with different features passes it, yet its `FrameLease` is a different
+resolved the owner crate with different features passes it, yet its `Frame` is a different
 Rust type: same key, same type name, different `TypeId`. Before the boundary type check every
-frame then failed at runtime with `payload type mismatch: expected styx:framelease, found
-styx:framelease`. Now:
+frame then failed at runtime with `payload type mismatch: expected example:frame, found
+example:frame`. Now:
 
 - if the host registered the type (it installed the owner's plugin, or called
-  `registry.register_boundary_type::<FrameLease>("styx:framelease")`), `install_into` refuses the
+  `registry.register_boundary_type::<Frame>("example:frame")`), `install_into` refuses the
   plugin up front, naming the crate that resolved differently (see
   [Diagnosing Boundary Type Conflicts](#diagnosing-boundary-type-conflicts)):
-  ``plugin `helios_cv` uses type keys for different Rust types than the host: crate `styx_core`
+  ``plugin `vision_app` uses type keys for different Rust types than the host: crate `camera_lib`
   resolved differently in the plugin's build (different features, version or dependency graph) —
-  key `styx:framelease`: host `styx_core::frame::FrameLease` (type id ..., size 48, align 8) vs
+  key `example:frame`: host `camera_lib::Frame` (type id ..., size 48, align 8) vs
   plugin ... . Rust-ABI plugins must come from the same cargo build as the host: build the host
   and its plugins in one cargo invocation, ...``;
 - a payload the host feeds under a registered key but built with another Rust type (say, by a
   separately built frame source) is refused at the host bridge, before any node runs:
-  `FeedOutcome::Rejected` with ``payload for `styx:framelease` holds `...` but this graph
-  expects `styx_core::frame::FrameLease` (built separately?)``;
+  `FeedOutcome::Rejected` with ``payload for `example:frame` holds `...` but this graph
+  expects `camera_lib::Frame` (built separately?)``;
 - a downcast that still fails names both Rust types: ``payload type mismatch: same TypeKey
-  `styx:framelease`, different Rust type (expected `...`, found `...`); the producer and consumer
+  `example:frame`, different Rust type (expected `...`, found `...`); the producer and consumer
   were likely built separately``.
 
 Even a dependency built with an extra feature (for example the example crate's no-op
@@ -347,13 +347,13 @@ shows the refusal.
 
 `PluginLibraryError::BoundaryTypeConflict` groups the conflicting keys by the crate defining the
 plugin's type (`RustTypeIdentity::defining_crate`: the first path segment of the type name, or
-for a generic such as `alloc::sync::Arc<styx_core::frame::Plane>` the innermost crate outside
+for a generic such as `alloc::sync::Arc<camera_lib::frame::Plane>` the innermost crate outside
 `core`/`alloc`/`std`). That crate was resolved differently in the plugin's cargo build: other
 features, another version, or other features or versions of one of its own dependencies.
 
 To name the exact difference, the crate registers its build (name, version, enabled features),
 which the dynamic plugin's descriptor exports (`PLUGIN_ABI_VERSION` 9 added the `crate_builds`
-table) and the host compares with its own. The recipe for a library author (styx-core, say),
+table) and the host compares with its own. The recipe for a library author (camera-lib, say),
 three lines of build script plus one plugin argument:
 
 ```rust
@@ -364,8 +364,8 @@ fn main() {
 }
 
 // the crate's Daedalus plugin
-#[daedalus::plugin(id = "styx", crate_build, /* types, nodes, ... */)]
-pub struct StyxPlugin;
+#[daedalus::plugin(id = "camera", crate_build, /* types, nodes, ... */)]
+pub struct CameraPlugin;
 // or, from an install hook / `declare_plugin!(.., install = ..)`:
 registry.register_crate_build(daedalus::crate_build_info!())?;
 ```
@@ -376,14 +376,14 @@ with the build script line in its message when the build script is missing. The 
 registration of a crate name in a registry wins. With both sides registered, the conflict reads:
 
 ```text
-plugin `helios_cv` uses type keys for different Rust types than the host: crate `styx_core`
+plugin `vision_app` uses type keys for different Rust types than the host: crate `camera_lib`
 0.4.0: host features `daedalus,framelease,v4l2`, plugin features `daedalus,framelease` (missing
-in plugin: v4l2) — key `styx:framelease`: host `styx_core::frame::FrameLease` (type id ...) vs
-plugin `styx_core::frame::FrameLease` (type id ...). Rust-ABI plugins must come from the same
+in plugin: v4l2) — key `example:frame`: host `camera_lib::Frame` (type id ...) vs
+plugin `camera_lib::Frame` (type id ...). Rust-ABI plugins must come from the same
 cargo build as the host: ...
 ```
 
-Versions are shown per side when they differ (``crate `styx_core`: host 0.4.0 features `...`,
+Versions are shown per side when they differ (``crate `camera_lib`: host 0.4.0 features `...`,
 plugin 0.5.0 features `...` ``). When both builds have the same version and features, the message
 says so: the crate's types differ through its dependency graph (one of its dependencies has other
 features or versions), so look at the dependencies they share. A crate only one side registered
@@ -408,7 +408,7 @@ call costs. When none of the plugin's node ports uses a conflicting key (the con
 are only registered, e.g. by a linked dependency plugin, and would not cross the stable path),
 the error says so (`stable_compatible: true`) and suggests
 `install_into_as(&mut registry, InstallPath::Stable)`. When a port uses one (a node taking
-`&FrameLease`), the stable path would deliver it as a `Value`, so the fix is one cargo build, or
+`&Frame`), the stable path would deliver it as a `Value`, so the fix is one cargo build, or
 a `FrameView<'_>` port (see below).
 
 ## Separately Built Plugins
@@ -422,7 +422,7 @@ the host) can be installed when:
 - **Shared third-party types cross through foreign interfaces**, never as Rust types. A plugin
   node takes `FrameView<'_>` (the `daedalus:frame` interface, see
   [`foreign-frame-interface.md`](foreign-frame-interface.md)) or `ForeignRef<'_, I>` instead of
-  `&styx_core::FrameLease`; the host installs the owner's plugin, which registers the provider.
+  `&camera_lib::Frame`; the host installs the owner's plugin, which registers the provider.
   The plugin's ports then carry the interface key and no Rust boundary type, so the boundary
   type check has nothing to refuse, while the foreign interface check refuses a plugin built
   against another version of the interface. Frames are not copied: the plugin reads the host's

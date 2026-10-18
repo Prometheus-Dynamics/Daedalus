@@ -43,8 +43,8 @@ impl RustTypeIdentity {
     }
 
     /// The crate that defines the type: the first path segment of `type_name`, or for a generic
-    /// such as `alloc::sync::Arc<styx_core::frame::FrameLease>` the innermost crate other than
-    /// the standard library (`styx_core`). `None` when the name only mentions `core`, `alloc`,
+    /// such as `alloc::sync::Arc<frame_lib::Frame>` the innermost crate other than
+    /// the standard library (`frame_lib`). `None` when the name only mentions `core`, `alloc`,
     /// `std` or primitive types.
     ///
     /// When a plugin's type differs from the host's under the same key and name, this crate was
@@ -161,18 +161,15 @@ mod tests {
             ..RustTypeIdentity::of::<u8>()
         };
         let cases = [
-            ("styx_core::frame::FrameLease", Some("styx_core")),
+            ("frame_lib::Frame", Some("frame_lib")),
+            ("alloc::sync::Arc<frame_lib::Frame>", Some("frame_lib")),
             (
-                "alloc::sync::Arc<styx_core::frame::FrameLease>",
-                Some("styx_core"),
+                "core::option::Option<&[frame_lib::Plane; 4]>",
+                Some("frame_lib"),
             ),
             (
-                "core::option::Option<&[styx_core::Plane; 4]>",
-                Some("styx_core"),
-            ),
-            (
-                "app::Wrapper<alloc::vec::Vec<styx_core::X>>",
-                Some("styx_core"),
+                "app::Wrapper<alloc::vec::Vec<frame_lib::X>>",
+                Some("frame_lib"),
             ),
             ("(u8, alloc::string::String)", None),
             ("u32", None),

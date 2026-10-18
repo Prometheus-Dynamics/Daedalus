@@ -164,7 +164,7 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       `docs/testing.md`.
 - [x] **Frame-path overhead on the CM5.** Measured `detector`, `frame_chain` and
       `shared_detectors` at `bcc9f33` (4939e42, 3367fb2; `docs/development.md`): detector
-      `graph_overhead` p50 7.2 µs unfused / 6.8 µs fused, a real AprilTag graph 16-17 µs.
+      `graph_overhead` p50 7.2 µs unfused / 6.8 µs fused, a real detector graph 16-17 µs.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
 - [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. No further tags or version bumps

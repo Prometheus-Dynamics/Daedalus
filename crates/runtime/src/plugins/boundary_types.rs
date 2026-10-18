@@ -279,10 +279,7 @@ mod tests {
 
     #[test]
     fn foreign_means_another_non_std_crate() {
-        assert!(is_foreign(
-            "styx_core::frame::FrameLease",
-            "my_plugin::nodes"
-        ));
+        assert!(is_foreign("frame_lib::Frame", "my_plugin::nodes"));
         assert!(!is_foreign("my_plugin::Frame", "my_plugin::nodes"));
         assert!(!is_foreign("my_plugin::Frame", "my_plugin"));
         assert!(!is_foreign("alloc::string::String", "my_plugin"));

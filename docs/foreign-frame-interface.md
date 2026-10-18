@@ -1,7 +1,7 @@
 # `daedalus:frame` v2
 
-A C-safe accessor interface for image frames, for library authors (camera stacks such as
-styx-core, image libraries such as Eidos, decoders) who want their frame type consumed by any
+A C-safe accessor interface for image frames, for library authors (a camera stack, an image
+library, a decoder) who want their frame type consumed by any
 Daedalus node, including nodes in plugins built separately from the library. It is defined in
 `daedalus-transport` (`daedalus::transport::{FrameInterface, FrameVTable, FrameSource,
 FrameView}`), has no dependencies, and is a public contract: anything that changes the vtable
@@ -99,8 +99,8 @@ A compressed frame has one plane: `len` is the payload size, `stride` is 0.
 - CSI-2 packing when `format_kind == Bayer` (`FrameView::is_csi2_packed()` checks exactly this);
 - a MediaTek layout when `format_kind == Pixel`;
 - with `Unknown`, decide from `format`: a Bayer/raw code (as listed by libcamera's
-  `formats.yaml`) means CSI-2 packing, else MediaTek. Provider hints (the owner key, e.g.
-  `styx:framelease` from a libcamera pipeline) can settle the rest.
+  `formats.yaml`) means CSI-2 packing, else MediaTek. Provider hints (the owner's type key, see
+  the example below) can settle the rest.
 
 Consumers that do not understand a frame's kind or modifier refuse it rather than guessing a
 layout; `ExternalFrameDescriptor::from_frame_view` refuses `Bayer` and `Compressed` frames.
@@ -180,7 +180,8 @@ Frames in plain host memory return
 the default no-op `end_cpu_access`. `daedalus-frame-bench`'s `SyntheticFrame` is a runnable
 example over memfd and dma-heap buffers, with map and access counters.
 
-Register the provider once, next to the type's other Daedalus registration:
+Register the provider once, next to the type's other Daedalus registration. This is the one
+camera-stack example in this document (Styx); the same shape applies to any frame type:
 
 ```rust
 #[daedalus::plugin(
@@ -193,7 +194,7 @@ pub struct StyxPlugin;
 // registry.register_foreign_provider::<FrameLease, FrameInterface>()?;
 ```
 
-The host keeps wrapping frames as before
+In that example the host keeps wrapping frames as before
 (`Payload::shared_with("styx:framelease", Arc::new(lease), Residency::External, ..)`). A node
 anywhere takes `frame: FrameView<'_>`; the planner inserts the provider's `View` adapter, which
 retypes the payload as `daedalus:frame` with the provider attached, and the node reads the
@@ -234,7 +235,7 @@ v1 and v2 do not interoperate: providers, hosts and plugins move together (rebui
 | `view.plane(i)?.data` | `view.plane_bytes(i)` (a guard; deref to `&[u8]`) |
 | `view.planes()` (fetched bytes too) | `view.planes()` (metadata only) / `view.cpu_planes()` |
 
-For Styx's `FrameLease` provider: move the `plane_at(index).data()` lookup from `plane` into
+For the Styx provider above: move the `plane_at(index).data()` lookup from `plane` into
 `plane_data` (bracketing dma-buf backings with the begin/end sync of
 [CPU access](#cpu-access-and-dma-buf-sync) instead of syncing when the lease is mapped), report
 the CPU mapping kind (uncached mappings as `PlaneMapping::Uncached`, unreadable planes as

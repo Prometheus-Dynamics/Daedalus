@@ -9,7 +9,7 @@ use core::fmt;
 /// Cargo features. Captured in the crate itself with [`crate_build_info!`](crate::crate_build_info).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CrateBuildInfo {
-    /// `CARGO_CRATE_NAME`, e.g. `styx_core` (the first segment of the crate's type names).
+    /// `CARGO_CRATE_NAME`, e.g. `frame_lib` (the first segment of the crate's type names).
     pub name: &'static str,
     /// `CARGO_PKG_VERSION`.
     pub version: &'static str,
@@ -93,7 +93,7 @@ impl CrateBuildDiff {
     }
 }
 
-/// E.g. ``crate `styx_core` 0.4.0: host features `framelease,v4l2`, plugin features `framelease`
+/// E.g. ``crate `frame_lib` 0.4.0: host features `framelease,v4l2`, plugin features `framelease`
 /// (missing in plugin: v4l2)``.
 impl fmt::Display for CrateBuildDiff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -159,7 +159,7 @@ mod tests {
     use super::*;
 
     const HOST: CrateBuildInfo = CrateBuildInfo {
-        name: "styx_core",
+        name: "frame_lib",
         version: "0.4.0",
         features: "v4l2,framelease",
     };
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(diff.missing_in_plugin(), ["v4l2"]);
         assert_eq!(
             diff.to_string(),
-            "crate `styx_core` 0.4.0: host features `framelease,v4l2`, plugin features \
+            "crate `frame_lib` 0.4.0: host features `framelease,v4l2`, plugin features \
              `framelease` (missing in plugin: v4l2)"
         );
         let plugin = CrateBuildInfo {
@@ -184,7 +184,7 @@ mod tests {
         };
         assert_eq!(
             CrateBuildDiff::new(HOST, plugin).unwrap().to_string(),
-            "crate `styx_core`: host 0.4.0 features `framelease,v4l2`, plugin 0.5.0 features \
+            "crate `frame_lib`: host 0.4.0 features `framelease,v4l2`, plugin 0.5.0 features \
              `framelease,mock,v4l2` (only in plugin: mock)"
         );
         let reordered = CrateBuildInfo {
@@ -204,7 +204,7 @@ mod tests {
             ..HOST
         };
         registry.register_crate_build(other).unwrap();
-        assert_eq!(registry.crate_builds()["styx_core"], HOST);
+        assert_eq!(registry.crate_builds()["frame_lib"], HOST);
         let unknown = CrateBuildInfo {
             name: "other",
             ..other
@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(diffs, [CrateBuildDiff::new(HOST, other).unwrap()]);
         assert_eq!(
             diffs[0].to_string(),
-            "crate `styx_core` 0.4.0: host features `framelease,v4l2`, plugin features `` \
+            "crate `frame_lib` 0.4.0: host features `framelease,v4l2`, plugin features `` \
              (missing in plugin: framelease, v4l2)"
         );
     }

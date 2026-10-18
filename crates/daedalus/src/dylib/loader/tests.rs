@@ -16,7 +16,7 @@ impl Plugin for LoaderTestPlugin {
 
     fn install(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()> {
         ctx.register_boundary_type::<LoaderFrame>(FRAME_KEY)?;
-        ctx.register_crate_build(PLUGIN_STYX)?;
+        ctx.register_crate_build(PLUGIN_FRAMES)?;
         ctx.register_foreign_interface::<FrameInterface>()?;
         ctx.register_node_decl(
             NodeDecl::new("add")
@@ -348,17 +348,20 @@ fn boundary_type_conflict_refuses_install_before_anything_is_installed() {
     assert!(!registry.plugin_manifests.contains_key("loader_test"));
 }
 
-/// The plugin's build of `styx_core`, registered by the test plugin.
-const PLUGIN_STYX: CrateBuildInfo = CrateBuildInfo {
-    name: "styx_core",
+/// The plugin's build of `frame_lib`, registered by the test plugin.
+const PLUGIN_FRAMES: CrateBuildInfo = CrateBuildInfo {
+    name: "frame_lib",
     version: "0.4.0",
     features: "framelease",
 };
 
 /// Types of two third-party crates as a separately built plugin reports them.
 const FORGED: [(&str, &str); 3] = [
-    ("styx:framelease", "styx_core::frame::FrameLease"),
-    ("styx:planes", "alloc::sync::Arc<styx_core::frame::Plane>"),
+    ("example:frame", "frame_lib::Frame"),
+    (
+        "example:planes",
+        "alloc::sync::Arc<frame_lib::frame::Plane>",
+    ),
     ("other:thing", "other_crate::Thing"),
 ];
 
@@ -397,13 +400,13 @@ unsafe extern "C" fn third_party_boundary_types(table: *mut BoundaryTypeTable, _
 fn boundary_conflicts_name_crates_and_their_build_differences() {
     let library =
         load_with(|descriptor| descriptor.boundary_types = third_party_boundary_types).unwrap();
-    assert_eq!(library.crate_builds(), [PLUGIN_STYX]);
+    assert_eq!(library.crate_builds(), [PLUGIN_FRAMES]);
     let mut registry = PluginRegistry::new();
-    let host_styx = CrateBuildInfo {
+    let host_frames = CrateBuildInfo {
         features: "v4l2,framelease",
-        ..PLUGIN_STYX
+        ..PLUGIN_FRAMES
     };
-    registry.register_crate_build(host_styx).unwrap();
+    registry.register_crate_build(host_frames).unwrap();
     // Proactive: the difference shows before any install attempt.
     let diff = library.crate_build_diff(&registry);
     assert_eq!(diff.len(), 1);
@@ -420,9 +423,9 @@ fn boundary_conflicts_name_crates_and_their_build_differences() {
     let plugin = |name| forged_identity(name, 1);
     let expected = format!(
         "plugin `loader_test` uses type keys for different Rust types than the host: crate \
-         `styx_core` 0.4.0: host features `framelease,v4l2`, plugin features `framelease` \
-         (missing in plugin: v4l2) — key `styx:framelease`: host {} vs plugin {}, key \
-         `styx:planes`: host {} vs plugin {}; crate `other_crate` resolved differently in the \
+         `frame_lib` 0.4.0: host features `framelease,v4l2`, plugin features `framelease` \
+         (missing in plugin: v4l2) — key `example:frame`: host {} vs plugin {}, key \
+         `example:planes`: host {} vs plugin {}; crate `other_crate` resolved differently in the \
          plugin's build (different features, version or dependency graph) — key `other:thing`: \
          host {} vs plugin {}. Rust-ABI plugins",
         host(FORGED[0].1),

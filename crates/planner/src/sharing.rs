@@ -1,6 +1,6 @@
 //! Common-upstream detection across graphs: structurally identical node subgraphs that several
-//! graphs compute from the same host inputs (a camera's mask and pyramid feeding an ArUco and an
-//! AprilTag detector) are cut out into one upstream graph, and each graph keeps the rest, fed by
+//! graphs compute from the same host inputs (a camera's mask and pyramid feeding detector A and
+//! detector B) are cut out into one upstream graph, and each graph keeps the rest, fed by
 //! the upstream's outputs through new host inputs.
 //!
 //! Two nodes are the same when they have the same registry id, bundle, ports, compute affinity,

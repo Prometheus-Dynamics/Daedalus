@@ -5,13 +5,13 @@ use daedalus::{PluginRegistry, adapt, macros::node, plugin};
 
 macro_rules! my_ids {
     ($name:ident) => {
-        concat!("eidos.", stringify!($name))
+        concat!("example.", stringify!($name))
     };
 }
 
-const SCALE_ID: &str = "eidos.scale";
+const SCALE_ID: &str = "example.scale";
 
-#[node(id = concat!("eidos.", "blur"), inputs("value"), outputs("out"))]
+#[node(id = concat!("example.", "blur"), inputs("value"), outputs("out"))]
 fn blur(value: i32) -> Result<i32, NodeError> {
     Ok(value)
 }
@@ -32,14 +32,14 @@ fn widen(value: &i32) -> Result<i64, TransportError> {
 }
 
 #[plugin(id = my_ids!(plugin), nodes(blur, sharpen, scale), adapters(widen))]
-struct EidosPlugin;
+struct ExamplePlugin;
 
 fn main() {
-    assert_eq!(BlurNode::ID, "eidos.blur");
-    assert_eq!(SharpenNode::node_decl().expect("decl").id.0, "eidos.sharpen");
-    assert_eq!(ScaleNode::ID, "eidos.scale");
+    assert_eq!(BlurNode::ID, "example.blur");
+    assert_eq!(SharpenNode::node_decl().expect("decl").id.0, "example.sharpen");
+    assert_eq!(ScaleNode::ID, "example.scale");
     let mut registry = PluginRegistry::new();
     registry
-        .install_plugin(&EidosPlugin::new())
+        .install_plugin(&ExamplePlugin::new())
         .expect("install plugin");
 }

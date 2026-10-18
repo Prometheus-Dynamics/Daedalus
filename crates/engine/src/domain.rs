@@ -1,7 +1,7 @@
 //! [`ExecutionDomain`]: several separately compiled [`HostGraph`]s ticked together on one thread,
 //! with one graph's host outputs fanned out to other graphs' host inputs, so a shared upstream
-//! (a camera's mask and pyramid) runs once per frame for every downstream graph (AprilTag,
-//! ArUco, ML) instead of once per graph.
+//! (a camera's mask and pyramid) runs once per frame for every downstream graph (detector A,
+//! detector B, ...) instead of once per graph.
 //!
 //! - **One tick** ([`ExecutionDomain::tick`]) visits the graphs in link order (upstreams first,
 //!   ties in the order they were added): a graph with pending host input ticks once, then each of
