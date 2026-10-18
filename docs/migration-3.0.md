@@ -3,8 +3,8 @@
 This guide covers upgrading to 3.0.0 from:
 
 - **2.0.0**, the April release (tag `v2.0.0`): read every section.
-- **`dev` at `75dc4c1`**, the pre-release commit Styx `dev` and Eidos `main` pinned: start with
-  the [checklist](#quick-checklist-from-75dc4c1) and read the items marked **since 75dc4c1**.
+- **`dev` at `75dc4c1`**, a pre-release validated against Styx/Eidos (see the
+  [pre-release note](#pre-release-note-75dc4c1)): read the items marked **since 75dc4c1**.
   Items marked "since 2.0.0" changed after 2.0.0 but were already in that commit.
 
 The full list of changes is in [`CHANGELOG.md`](../CHANGELOG.md#300---2026-10-05).
@@ -16,10 +16,13 @@ daedalus = { package = "daedalus-rs", git = "https://github.com/Prometheus-Dynam
 ```
 
 Everything that links Daedalus (the host, its dynamic plugins, libraries with a `daedalus`
-integration feature such as Styx) must resolve to the same 3.0.0 `daedalus-rs`; a crate still
+integration feature) must resolve to the same 3.0.0 `daedalus-rs`; a crate still
 asking for `version = "2"` pulls in a second, incompatible copy.
 
-## Quick Checklist From 75dc4c1
+## Pre-release Note (75dc4c1)
+
+`75dc4c1` was a pre-release that downstream projects validated against Styx and Eidos. If you
+started from it, check these items:
 
 1. Default features now include `threads` and `tracing`; `default-features = false` builds
    (`embedded`, wasm) add `tracing` if they want spans. See [Features](#features).
@@ -96,14 +99,14 @@ order-dependent `rust:` key; now install fails with `PluginError::UnkeyedForeign
 of preference:
 
 ```rust
-// 1. The owner's integration feature declares the key (e.g. Styx's `daedalus` feature):
-//    styx = { ..., features = ["daedalus"] }, then install `StyxFramesPlugin` in the host.
+// 1. The owner's integration feature declares the key (e.g. a library's `daedalus` feature):
+//    frames = { ..., features = ["daedalus"] }, then install its plugin (`FramesPlugin`) in the host.
 // 2. Map it in your plugin, using the key the owner would use:
-#[plugin(id = "app", nodes(mark), foreign_types(FrameLease = "styx:framelease"))]
+#[plugin(id = "app", nodes(mark), foreign_types(Frame = "example:frame"))]
 struct AppPlugin;
 // 3. Per port:
-#[node(id = "mark", inputs(port(name = "frame", type_key = "styx:framelease")), outputs("frame"))]
-// 4. In code: registry.register_foreign_type::<FrameLease>("styx:framelease")?;
+#[node(id = "mark", inputs(port(name = "frame", type_key = "example:frame")), outputs("frame"))]
+// 4. In code: registry.register_foreign_type::<Frame>("example:frame")?;
 ```
 
 ### Strict key registration (since 2.0.0)
@@ -248,7 +251,7 @@ Native plugins were the `ffi` feature in 2.0.0; see "Coming From The Pre-Release
   See `examples/plugins/example_project_dylib`.
 - **Checks before install (since 2.0.0).** `PluginLibraryError::{BoundaryTypeConflict,
   ForeignInterfaceMismatch, MissingDependencies}`: install the plugins that own shared types
-  (e.g. Styx's `StyxFramesPlugin`) in the host before loading dynamic plugins.
+  (e.g. a library's `FramesPlugin`) in the host before loading dynamic plugins.
   `BoundaryTypeMismatch` became `BoundaryTypeConflict`.
 
 ## GPU

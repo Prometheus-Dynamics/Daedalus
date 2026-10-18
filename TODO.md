@@ -1,12 +1,12 @@
 # TODO
 
-Status of the maturity pass after 2.0.0 (branch `helios-integration`, merged into `dev`), released
-as 3.0.0. It was driven by the Daedalus ↔ HeliOS integration review. See `CHANGELOG.md` `[3.0.0]`
+Status of the maturity pass after 2.0.0 (a feature branch, merged into `dev`), released as 3.0.0.
+It was driven by host-integration reviews. See `CHANGELOG.md` `[3.0.0]`
 for the full list of changes and `docs/migration-3.0.md` for upgrading.
 
 ## Done
 
-### Integration with HeliOS (and other hosts)
+### Host integration
 - [x] Native Rust `cdylib` plugin loading (`dylib-plugins`): stable `#[repr(C)]` descriptor, schema
       introspection, and typed rejection on rustc/version/fingerprint mismatch.
 - [x] Declarative boundary/host-only feature classification (`[package.metadata.daedalus]`) with
@@ -20,8 +20,8 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 - [x] `FfiHost` one-call package host with rollback and aggregated shutdown.
 - [x] dmabuf zero-copy GPU import (`gpu-dmabuf`): acquire fences and single-image NV12.
 - [x] Docs: `docs/node-authoring.md`, `docs/dynamic-plugins.md`, minimal CPU-only profile, and the
-      `external_frame_source` example (camera glue pattern with no Styx dependency).
-- [x] Decision: Daedalus never depends on Styx. The crate that defines a type owns its key and
+      `external_frame_source` example (camera glue pattern with no camera-library dependency).
+- [x] Decision: Daedalus never depends on a camera library. The crate that defines a type owns its key and
       Daedalus registration behind an optional `daedalus` feature (documented in
       `docs/node-authoring.md`, "Library-Owned Integration Features"); without one, the frame
       glue lives in the application.
@@ -29,9 +29,9 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       time; ports take `type_key = "..."`, plugins `foreign_types(Type = "key")`; an unkeyed
       foreign type fails install (`UnkeyedForeignType`) instead of getting an order-dependent
       `rust:` key.
-- [x] **Boundary type check for dylib plugins.** HeliOS found that a plugin built in a separate
+- [x] **Boundary type check for dylib plugins.** A host found that a plugin built in a separate
       cargo invocation passed the fingerprint check but failed on every frame with
-      `payload type mismatch: expected styx:framelease, found styx:framelease`. Now the
+      `payload type mismatch: expected example:frame, found example:frame`. Now the
       descriptor (ABI 6) exports `(TypeKey, TypeId hash, size, align, type_name)` per boundary
       type, `install_into` fails with `BoundaryTypeConflict` naming every differing key before
       installing anything, adapter errors say "same TypeKey, different Rust type", and the
@@ -41,7 +41,7 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       providers registered as zero-copy `View` adapters, `ForeignHandle` payloads with an
       `Arc`-backed keepalive, and node inputs `FrameView<'_>` / `ForeignRef<'_, I>`. The standard
       `daedalus:frame` v1 interface (`docs/foreign-frame-interface.md`) lets owners such as
-      styx-core implement `FrameSource` in their `daedalus` feature. The descriptor (ABI 7)
+      camera-library crates implement `FrameSource` in their `daedalus` feature. The descriptor (ABI 7)
       exports the interfaces a plugin uses and `install_into` refuses version/layout mismatches;
       `examples/plugins/foreign_consumer`, built separately with a different copy of the type's
       crate, reads host values in place.
@@ -55,7 +55,7 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       (`FeedOutcome::Rejected`), and key registration is strict (identical is a no-op, another
       type, key or declaration fails; one `BoundaryTypeConflict` for static and dylib installs).
 
-- [x] **Optional inputs (Eidos).** `Option<T>` inputs carry `T`'s key (producers of `T` connect
+- [x] **Optional inputs.** `Option<T>` inputs carry `T`'s key (producers of `T` connect
       directly; before, the edge had no converter), are marked `PortDecl::optional`, and never
       block: a node runs when each connected required input has a value and is skipped
       otherwise; optional inputs are `None` without one. `Result<Option<T>, _>` returns are
@@ -79,13 +79,13 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       lists them next to the plugin's own.
 - [x] **Graph JSON Schema drift.** Enum lists come from each core type's `ALL` (guarded by an
       exhaustive match), and a test validates every variant against the generated schema.
-- [x] **Enum config ports (Eidos).** `NodeConfig` enum fields and enum handler inputs failed
+- [x] **Enum config ports.** `NodeConfig` enum fields and enum handler inputs failed
       with `missing <port>`: the engine never handed the registry's const coercers to its
       executors and owned/borrowed inputs never coerced `Value` constants. The node macros now
       register a coercer per input and config field type at install (`DaedalusTypeExpr` unit
       enums by name or index, else serde); see "Constants, Defaults And Config Enums" in
       `docs/node-authoring.md`.
-- [x] **Ids from other macros (Eidos).** `#[node]`/`#[adapt]`/`#[plugin]` accept any `&'static
+- [x] **Ids from other macros.** `#[node]`/`#[adapt]`/`#[plugin]` accept any `&'static
       str` constant expression as `id` (`concat!`, a user macro, a `const`).
 - [x] **Macro leaf keys without an owned key.** Port types without a `#[type_key]` (a
       `foreign_types` mapping) resolve through the installing registry's `TypeRegistry`
@@ -93,7 +93,7 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       registry, and the process-global typing registry is gone. Dynamic plugins resolve a
       dependency's mapping through the registry they install into: the introspection registry
       (where `export_plugin!(.., deps [..])` installs linked dependencies first) or the host's.
-- [x] **Dynamic plugin dependencies (Eidos/Styx).** Schemas list a plugin's dependencies and
+- [x] **Dynamic plugin dependencies.** Schemas list a plugin's dependencies and
       `install_into` refuses a plugin whose dependencies the host has not installed
       (`MissingDependencies`). `export_plugin!(P, deps [Dep])` links dependency plugins into
       the library's introspection registry, so keys they map resolve; without the link,
@@ -157,16 +157,14 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 ## Remaining
 
 ### High priority
-- [ ] **Validate on Raspberry Pi 5 / CM5 (v3dv).** Blocked: the CM5 PhotonVision image has no
-      Vulkan loader or v3dv yet (needs `BR2_PACKAGE_VULKAN_LOADER` and
-      `BR2_PACKAGE_MESA3D_VULKAN_DRIVER_BROADCOM`). Then run `./scripts/ci.sh pi` on the device and
+- [ ] **Validate on a Pi 5 / CM5 with Mesa v3dv.** Run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
       `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
       measurements of the fence tests; see "Validating on a Raspberry Pi 5" in
       `docs/testing.md`.
 - [x] **Frame-path overhead on the CM5.** Measured `detector`, `frame_chain` and
       `shared_detectors` at `bcc9f33` (4939e42, 3367fb2; `docs/development.md`): detector
-      `graph_overhead` p50 7.2 µs unfused / 6.8 µs fused, Eidos's real AprilTag graph 16-17 µs.
+      `graph_overhead` p50 7.2 µs unfused / 6.8 µs fused, a real AprilTag graph 16-17 µs.
 - [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
       and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
 - [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. No further tags or version bumps
@@ -175,13 +173,6 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 - [x] **Faster local builds and `ci.sh`** (f7edb7d): `ci.sh -j` parallel lanes, `ci.sh quick`,
       smoke reusing the test build, `ci.sh doc`/`full`; target dirs belong on a local SSD (the
       external drive made the edit loop ~6x slower).
-- [ ] **HeliOS migration** (HeliOS-owned, in the HeliOS repo; see `docs/migration-3.0.md`): pin
-      `v3.0.0`, drop the `ffi`/`gpu` features, switch the loader to `PluginLibrary`, use Styx's
-      `daedalus` feature (`StyxFramesPlugin`, once it requires Daedalus 3.0.0) for `FrameLease`
-      (or write the frame glue following `examples/04_async/external_frame_source.rs`), install
-      the Styx plugin in the host before loading plugins, build host and plugins in one
-      `cargo build`, replace the 250 ms tick with `drive_blocking`, and rewrite `AGENTS.md`
-      against `docs/node-authoring.md`.
 
 ### Medium priority
 - [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
@@ -217,8 +208,6 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       creates; a host that creates wgpu/Vulkan instances on other threads at the same time can
       still hit the loader race. Expose the lock (or document a creation order) if a host needs
       it.
-- [ ] **Generic image nodes** (color convert, resize, blur, threshold, HSV range, morphology, CLAHE),
-      frame-native, rebuilt from the old HeliOS `lib-cv` shaders. On hold by decision.
 
 ### Portability (tier 2)
 Tier 1 (`no_std` + `alloc` core/transport/data/registry/planner, and the `embedded` preset on

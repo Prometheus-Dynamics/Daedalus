@@ -399,7 +399,7 @@ input and output payloads, one each); it was 31 before the hot-path pass and 4 b
 tick-cost pass below.
 
 Hot-path pass (x86_64 Linux, shared 24-core machine at load ~6-8, criterion medians; before is
-the `helios-integration` tree benched back to back with after, so treat differences under ~10%
+the previous build benched back to back with after, so treat differences under ~10%
 as noise):
 
 | Benchmark | Before | After |
@@ -513,7 +513,7 @@ handles; `owner` feeds the frame type, so the provider's `View` adapter runs on 
 (see "Frame-Path Overhead" in [runtime-diagnostics.md](runtime-diagnostics.md) for the report
 rows).
 
-**Host numbers: x86_64 (AMD Ryzen 9 5900X, shared 24-core machine at load ~40), not the CM5.**
+**Host numbers: x86_64 (AMD Ryzen 9 5900X, shared 24-core machine at load ~40), not the Raspberry Pi CM5 (aarch64).**
 On-device numbers are a TODO. Push + tick + take per frame, p50 of 20000 frames
 (`FRAME_CHAIN_TICKS=20000`), frame-overhead recording off:
 
@@ -539,15 +539,14 @@ Breakdown of the 4-stage `interface` chain with recording on (p50, ns): push 110
 inject 150 + inputs 480 + handlers 330 + node_io 830 + drain 190 + dispatch 670, take 120,
 `graph_overhead` 2320, queue wait 820 (about 165 per edge). Per stage the runtime adds roughly
 120 of input collection, 210 of node framing and 170 of dispatch around a handler that itself
-takes about 80 (reading the frame through the vtable, timed). Against the Eidos stages
-(about 0.96 ms p50 each on the CM5) that is well under 1%; the absolute numbers on the CM5's
+takes about 80 (reading the frame through the vtable, timed). Against real detector stages
+(about 0.96 ms p50 each on a Raspberry Pi CM5 (aarch64)) that is well under 1%; the absolute numbers on that device's
 Cortex-A76 cores will be higher.
 
 ### Detector-shaped frame (tick-cost pass)
 
 `cargo run --release -p daedalus-frame-bench --example detector` drives a graph shaped like a
-staged marker detector (`crates/frame-bench/src/detector.rs`, the parameter shapes of Eidos's
-ArUco/AprilTag stages): five typed `#[node]` stages (mask prep, quads, decode, validate, refine)
+staged marker detector (`crates/frame-bench/src/detector.rs`, the stage shapes of a typical marker detector): five typed `#[node]` stages (mask prep, quads, decode, validate, refine)
 with `Copy` config structs fed by constants (enum, integer, float and bool fields, 34 const
 ports), state, the `ExecutionContext` and `Arc`'d struct outputs (validate returns two), the
 owner frame fanned out to four stages (mask prep reads pixels through
@@ -559,7 +558,7 @@ node and host allocations per frame, and that the group expands to the flat grap
 take including the five handlers).
 
 **x86_64 numbers (AMD Ryzen 9 5900X, shared 24-core machine at load 25-35, pinned to one core,
-20000 frames, median of three interleaved runs per build), not the CM5.** Before is `dev` at
+20000 frames, median of three interleaved runs per build), not the Raspberry Pi CM5 (aarch64).** Before is `dev` at
 the `daedalus:frame` v2 merge (ed7ddde) with this bench. Instructions per frame with recording
 off; stage rows are frame-overhead p50 / p99 in ns with recording on:
 
@@ -603,25 +602,8 @@ What the tick no longer does, in the order the pass removed it:
   ~25 handles and building fresh telemetry; `ExecutionTelemetry` is several hundred bytes
   smaller (plain vectors for warnings and errors).
 
-**Group node against the per-stage template.** On the CM5 the group measured 35 µs against the
-template's 27 µs. Runtime overhead explained little of it: the expanded group runs the same five
-nodes and eleven edges (asserted) and cost 2% more instructions before this pass (the per-node
-host-bridge metadata lookup over the group's larger metadata maps, now a mask), the same after.
-The rest is measurement order: the Eidos bench ticks the group right after the bare stages
-(about 1 ms of image processing that evicts the runtime's code and data from L1/L2) and the
-template right after the group, warm. Replaying that loop on x86 (a 8 MiB memory sweep, then
-graph A, then graph B, per frame) gave, before this pass, 6.4 µs for whichever graph ran first
-against 5.5-5.8 µs for the second (5.2 / 5.0 µs without the sweep); after it, 4.0-4.2 µs first
-against 3.8-4.0 µs second (3.5 / 3.5 µs without). Fewer instructions and less data touched per
-tick shrink the cold-cache penalty with them; on the CM5's smaller caches the first-run graph
-still pays more, so compare graphs in alternating order or one per run.
-
-**CM5 projection (an estimate, not a measurement).** Scaling the CM5 rows by the x86 ratios
-(`graph_overhead` p50 x0.66, p99 x0.47; instructions x0.50), the per-stage template's 27 µs
-`graph_overhead` p50 would be about 14-18 µs and its 36-41 µs p99 about 17-20 µs, and the
-group, run cold-first as in the Eidos bench, about 3-5 µs above that rather than 8; with no
-node allocations (the 384 B per frame are gone), the CM5 should gain at least as much as x86
-does. Measure on the device to confirm.
+The group-versus-template measurements, including the Raspberry Pi CM5 (aarch64) runs, are in
+[benchmarks-log.md](benchmarks-log.md).
 
 ### Node fusion
 
@@ -670,11 +652,11 @@ results, errors, per-node calls and transport counts and edge pressure events; i
 slot payload held across ticks while the consumer was masked out.
 
 **x86_64 numbers (AMD Ryzen 9 5900X, shared 24-core machine at load ~20, pinned to one core,
-20000 frames), not the CM5.** Fusion on against `DAEDALUS_NODE_FUSION=0` in the same build (the
+20000 frames), not the Raspberry Pi CM5 (aarch64).** Fusion on against `DAEDALUS_NODE_FUSION=0` in the same build (the
 unfused path runs the instructions `dev` does: 33 142 against 33 130 per detector frame). Instructions per frame with
 recording off; stage rows are frame-overhead p50 / p99 in ns with recording on:
 
-| detector mirror | flat, unfused | flat, fused | group, unfused | group, fused |
+| synthetic marker detector | flat, unfused | flat, fused | group, unfused | group, fused |
 | --- | --- | --- | --- | --- |
 | fused edges | 0 | 3 | 0 | 3 |
 | instructions per frame | 33 142 | 32 342 | 33 220 | 32 376 |
@@ -692,39 +674,14 @@ recording off; stage rows are frame-overhead p50 / p99 in ns with recording on:
 | `graph_overhead` p50 fit | 472 ns + 327 ns per stage | 550 ns + 242 ns per stage |
 
 Each fused edge saves about 310 instructions (a slot put and take, the fan-out scan, the queue
-bookkeeping around them); the detector mirror fuses three of its eleven edges (mask prep -> quads
+bookkeeping around them); the synthetic marker detector fuses three of its eleven edges (mask prep -> quads
 -> decode -> validate; the frame edges cross the host bridge, `validate.detections` fans out), so
 the frame gains 2.4% in instructions and about 9% in `graph_overhead`, while a 16-stage chain
 fuses 15 and gains 11% (`graph_overhead` per stage -26%). What remains per node is the framing
 fusion does not touch: input-list and `NodeIo` setup, the handler call through the registry, and
 the readiness and metrics checks.
 
-**CM5 measurement (Raspberry Pi CM5, kernel 7.2.9 with 4 KiB pages, `bcc9f33`, static aarch64-musl,
-`FRAME_BENCH_CPU=2`, PhotonVision stopped, 2000 frames, fusion off/on alternated and repeated).**
-The tick-cost pass and fusion together beat the projections above: the detector mirror's
-`graph_overhead` p50 is 7.2 µs unfused (27-35 µs before the tick-cost pass), and flat and group
-now cost the same. For comparison, Eidos measures about 16-17 µs `graph_overhead` p50 on the
-CM5 for its real AprilTag graph (group about equal to flat), with no copies and about zero
-allocations per tick.
-
-| CM5 detector mirror | flat, unfused | flat, fused | group, unfused | group, fused |
-| --- | --- | --- | --- | --- |
-| instructions per frame | 32 439 | 32 046 | 32 480 | 32 087 |
-| push + tick + take p50, recording off (repeat) | 8 593 (8 648) | 8 463 (8 611) | 8 611 (8 667) | 8 463 (8 555) |
-| inputs p50 | 1 800 | 1 520 | 1 800 | 1 540 |
-| node_io p50 | 2 260 | 2 170 | 2 280 | 2 190 |
-| dispatch p50 | 1 280 | 1 260 | 1 280 | 1 270 |
-| `graph_overhead` p50 / p99 | 7 220 / 7 410 | 6 830 / 7 040 | 7 240 / 7 520 | 6 850 / 7 020 |
-
-| CM5 `frame_chain` (`interface` feed, 640x480 GRAY8 on dma-heap) | unfused | fused |
-| --- | --- | --- |
-| instructions per frame, 1 / 4 / 16 stages | 7 432 / 13 606 / 38 302 | 7 432 / 13 109 / 35 717 |
-| frame p50, 1 / 4 / 16 stages | 1 871 / 3 222 / 8 241 ns | 1 907 / 3 130 / 7 407 ns |
-| frame p50 fit | 1 485 ns + 423 ns per stage | 1 602 ns + 364 ns per stage |
-| `graph_overhead` p50 fit | 1 194 ns + 655 ns per stage | 1 342 ns + 498 ns per stage |
-
-Fusion saves about 5.5% of the detector's `graph_overhead` and 24% per fused chain stage;
-nothing copies or allocates in either mode.
+Raspberry Pi CM5 (aarch64) fusion runs are recorded in [benchmarks-log.md](benchmarks-log.md#fusion).
 
 ### Shared preprocessing (execution domains)
 
@@ -738,7 +695,7 @@ frame, that both shared layouts give the separate detectors' outputs, and that a
 nothing and allocates nothing in the runtime, nodes or host (the forwarding included).
 
 **x86_64 numbers (AMD Ryzen 9 5900X, shared 24-core machine at load ~60-67, pinned, 20000
-frames, recording off), not the CM5.** Push + domain tick + take per frame:
+frames, recording off), not the Raspberry Pi CM5 (aarch64).** Push + domain tick + take per frame:
 
 | Detectors | | separate | shared | structural |
 | --- | --- | --- | --- | --- |
@@ -752,14 +709,9 @@ The bench stages are nearly free, so these rows are runtime cost: sharing adds o
 saves two node runs per extra detector. With real stages the saving is the preprocessing time
 itself: the domain counts it (`stats()`: 1 avoided graph run and 2 avoided node runs per frame
 for 2 detectors, 3 and 6 for 4, with `saved_time` at the measured upstream tick time), so on
-the CM5, where Eidos's mask and quad stages take about 0.32 ms and 0.39 ms p50, every detector
+a Raspberry Pi CM5 (aarch64), where real mask and quad stages take about 0.32 ms and 0.39 ms p50, every detector
 after the first should save about 0.7 ms per frame (an estimate; the bench stages measure only
 runtime cost).
-
-**CM5 measurement (same run as the fusion rows above, fusion on, recording off).** Push + domain
-tick + take p50: 2 detectors 17 666 separate, 17 611 shared, 17 685 structural ns; 4 detectors
-35 630 separate, 30 852 shared (-13%), 30 944 structural ns. Over 2000 frames with 4 detectors
-the domain avoided 6000 graph runs and 12 000 node runs.
 
 ### Choosing a runtime mode
 
