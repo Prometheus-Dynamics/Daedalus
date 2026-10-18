@@ -88,6 +88,13 @@ pub struct RunnerPoolTelemetry {
     pub released_payload_leases: u64,
 }
 
+/// Bytes that crossed a runner boundary for one invoke (or a batch of them).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InvokeWireBytes {
+    pub sent: u64,
+    pub received: u64,
+}
+
 pub trait BackendRunner: Send + Sync + 'static {
     fn start(&self) -> Result<(), RunnerPoolError> {
         Ok(())
@@ -99,6 +106,19 @@ pub trait BackendRunner: Send + Sync + 'static {
 
     fn invoke(&self, request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError>;
 
+    /// Like [`BackendRunner::invoke`], also reporting the bytes sent and received. Runners that
+    /// encode the request and response measure them while encoding; this default has to
+    /// serialize both to count them.
+    fn invoke_measured(
+        &self,
+        request: InvokeRequest,
+    ) -> Result<(InvokeResponse, InvokeWireBytes), RunnerPoolError> {
+        let sent = estimate_json_bytes(&request);
+        let response = self.invoke(request)?;
+        let received = estimate_json_bytes(&response);
+        Ok((response, InvokeWireBytes { sent, received }))
+    }
+
     fn invoke_batch(
         &self,
         requests: Vec<InvokeRequest>,
@@ -107,6 +127,17 @@ pub trait BackendRunner: Send + Sync + 'static {
             .into_iter()
             .map(|request| self.invoke(request))
             .collect()
+    }
+
+    /// Batch form of [`BackendRunner::invoke_measured`]; see that method for the cost model.
+    fn invoke_batch_measured(
+        &self,
+        requests: Vec<InvokeRequest>,
+    ) -> Result<(Vec<InvokeResponse>, InvokeWireBytes), RunnerPoolError> {
+        let sent = requests.iter().map(estimate_json_bytes).sum();
+        let responses = self.invoke_batch(requests)?;
+        let received = responses.iter().map(estimate_json_bytes).sum();
+        Ok((responses, InvokeWireBytes { sent, received }))
     }
 
     fn supported_nodes(&self) -> Option<Vec<String>> {
@@ -276,18 +307,28 @@ impl RunnerPool {
     }
 
     pub fn get(&self, config: &BackendConfig) -> Result<Arc<dyn BackendRunner>, RunnerPoolError> {
-        let checkout_started = Instant::now();
         let key = RunnerKey::from_backend(config)?;
+        self.get_by_key(config, &key)
+    }
+
+    /// Checkout for a key the caller already derived from `config`, so one invoke serializes
+    /// the backend config once.
+    fn get_by_key(
+        &self,
+        config: &BackendConfig,
+        key: &RunnerKey,
+    ) -> Result<Arc<dyn BackendRunner>, RunnerPoolError> {
+        let checkout_started = Instant::now();
         let entry = self
             .runners
-            .get(&key)
+            .get(key)
             .ok_or(RunnerPoolError::MissingRunner)?;
         entry.touch()?;
         let checkout_wait_duration = checkout_started.elapsed();
         self.telemetry.reuses.fetch_add(1, Ordering::Relaxed);
         if let Some(telemetry) = &self.ffi_telemetry {
             telemetry.record_backend(
-                &key,
+                key,
                 config,
                 FfiBackendTelemetry {
                     backend_key: key.as_str().to_owned(),
@@ -311,22 +352,20 @@ impl RunnerPool {
         config: &BackendConfig,
         request: InvokeRequest,
     ) -> Result<InvokeResponse, RunnerPoolError> {
-        let runner = self.get(config)?;
         let key = RunnerKey::from_backend(config)?;
-        let bytes_sent = estimate_json_bytes(&request);
+        let runner = self.get_by_key(config, &key)?;
         let started = Instant::now();
         match runner.health() {
-            RunnerHealth::Ready => match runner.invoke(request) {
-                Ok(response) => {
+            RunnerHealth::Ready => match runner.invoke_measured(request) {
+                Ok((response, wire)) => {
                     let duration = started.elapsed();
-                    let bytes_received = estimate_json_bytes(&response);
                     self.telemetry.invokes.fetch_add(1, Ordering::Relaxed);
                     self.telemetry
                         .bytes_sent
-                        .fetch_add(bytes_sent, Ordering::Relaxed);
+                        .fetch_add(wire.sent, Ordering::Relaxed);
                     self.telemetry
                         .bytes_received
-                        .fetch_add(bytes_received, Ordering::Relaxed);
+                        .fetch_add(wire.received, Ordering::Relaxed);
                     if let Some(telemetry) = &self.ffi_telemetry {
                         telemetry.record_backend(
                             &key,
@@ -335,8 +374,8 @@ impl RunnerPool {
                                 backend_key: key.as_str().to_owned(),
                                 invokes: 1,
                                 invoke_duration: duration,
-                                bytes_sent,
-                                bytes_received,
+                                bytes_sent: wire.sent,
+                                bytes_received: wire.received,
                                 ..Default::default()
                             },
                         );
@@ -382,24 +421,22 @@ impl RunnerPool {
         config: &BackendConfig,
         requests: Vec<InvokeRequest>,
     ) -> Result<Vec<InvokeResponse>, RunnerPoolError> {
-        let runner = self.get(config)?;
         let key = RunnerKey::from_backend(config)?;
-        let bytes_sent = requests.iter().map(estimate_json_bytes).sum();
+        let runner = self.get_by_key(config, &key)?;
         let started = Instant::now();
         match runner.health() {
-            RunnerHealth::Ready => match runner.invoke_batch(requests) {
-                Ok(responses) => {
+            RunnerHealth::Ready => match runner.invoke_batch_measured(requests) {
+                Ok((responses, wire)) => {
                     let duration = started.elapsed();
-                    let bytes_received = responses.iter().map(estimate_json_bytes).sum();
                     self.telemetry
                         .invokes
                         .fetch_add(responses.len() as u64, Ordering::Relaxed);
                     self.telemetry
                         .bytes_sent
-                        .fetch_add(bytes_sent, Ordering::Relaxed);
+                        .fetch_add(wire.sent, Ordering::Relaxed);
                     self.telemetry
                         .bytes_received
-                        .fetch_add(bytes_received, Ordering::Relaxed);
+                        .fetch_add(wire.received, Ordering::Relaxed);
                     if let Some(telemetry) = &self.ffi_telemetry {
                         telemetry.record_backend(
                             &key,
@@ -408,8 +445,8 @@ impl RunnerPool {
                                 backend_key: key.as_str().to_owned(),
                                 invokes: responses.len() as u64,
                                 invoke_duration: duration,
-                                bytes_sent,
-                                bytes_received,
+                                bytes_sent: wire.sent,
+                                bytes_received: wire.received,
                                 ..Default::default()
                             },
                         );
@@ -697,10 +734,25 @@ impl RunnerTelemetryCounters {
     }
 }
 
+/// Counts the JSON bytes of `value` without buffering them. Only the default
+/// [`BackendRunner::invoke_measured`] needs it; the persistent worker runner measures its own
+/// encode and decode.
 fn estimate_json_bytes<T: serde::Serialize>(value: &T) -> u64 {
-    serde_json::to_vec(value)
-        .map(|bytes| bytes.len() as u64)
-        .unwrap_or(0)
+    struct Counter(u64);
+    impl std::io::Write for Counter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 += buf.len() as u64;
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    match serde_json::to_writer(&mut counter, value) {
+        Ok(()) => counter.0,
+        Err(_) => 0,
+    }
 }
 
 fn format_access_mode(access: AccessMode) -> String {

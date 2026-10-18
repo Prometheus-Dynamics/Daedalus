@@ -14,7 +14,7 @@ use daedalus_ffi_core::{
 use daedalus_runtime::{FfiPayloadTelemetry, FfiWorkerTelemetry};
 
 use crate::{
-    BackendRunner, FfiHostTelemetry, RunnerHealth, RunnerLimits, RunnerPoolError,
+    BackendRunner, FfiHostTelemetry, InvokeWireBytes, RunnerHealth, RunnerLimits, RunnerPoolError,
     RunnerRestartPolicy,
 };
 
@@ -37,6 +37,10 @@ struct PersistentWorkerProcess {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     stderr: StderrDrain,
+    /// Reused encode buffer: each message is serialized here once and written in one call.
+    write_buf: Vec<u8>,
+    /// Reused line buffer for worker messages, so reads do not allocate per line.
+    read_buf: Vec<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -151,38 +155,53 @@ impl PersistentWorkerRunner {
             stdin,
             stdout: BufReader::new(stdout),
             stderr: stderr.unwrap_or_default(),
+            write_buf: Vec::new(),
+            read_buf: Vec::new(),
         })
     }
 
+    /// Serializes `message` once into the process's reused buffer and writes it as one line.
+    /// Returns the number of bytes on the wire.
     fn write_message(
         process: &mut PersistentWorkerProcess,
         message: &WorkerMessage,
-    ) -> Result<(), RunnerPoolError> {
-        serde_json::to_writer(&mut process.stdin, message).map_err(|err| {
+    ) -> Result<u64, RunnerPoolError> {
+        let PersistentWorkerProcess {
+            stdin, write_buf, ..
+        } = process;
+        write_buf.clear();
+        serde_json::to_writer(&mut *write_buf, message).map_err(|err| {
             RunnerPoolError::Runner(format!("failed to encode worker message: {err}"))
         })?;
-        process.stdin.write_all(b"\n").map_err(|err| {
+        write_buf.push(b'\n');
+        stdin.write_all(write_buf).map_err(|err| {
             RunnerPoolError::Runner(format!("failed to write worker message: {err}"))
         })?;
-        process.stdin.flush().map_err(|err| {
+        stdin.flush().map_err(|err| {
             RunnerPoolError::Runner(format!("failed to flush worker message: {err}"))
-        })
+        })?;
+        Ok(write_buf.len() as u64)
     }
 
+    /// Reads one newline-delimited message into the process's reused line buffer. Returns the
+    /// message and the number of bytes it occupied on the wire.
     fn read_message(
         &self,
         process: &mut PersistentWorkerProcess,
         timeout: Option<Duration>,
-    ) -> Result<WorkerMessage, RunnerPoolError> {
+    ) -> Result<(WorkerMessage, u64), RunnerPoolError> {
         if let Some(timeout) = timeout
             && !wait_stdout_readable(&process.stdout, timeout)?
         {
             return Err(RunnerPoolError::RequestTimedOut { timeout });
         }
-        let mut line = String::new();
-        let bytes = process.stdout.read_line(&mut line).map_err(|err| {
-            RunnerPoolError::Runner(format!("failed to read worker message: {err}"))
-        })?;
+        process.read_buf.clear();
+        let bytes = process
+            .stdout
+            .read_until(b'\n', &mut process.read_buf)
+            .map_err(|err| {
+                RunnerPoolError::Runner(format!("failed to read worker message: {err}"))
+            })?;
         if bytes == 0 {
             if wait_child_exit(&mut process.child, Duration::from_millis(50)) {
                 process.stderr.finish();
@@ -199,7 +218,8 @@ impl PersistentWorkerRunner {
                 "persistent worker stdout closed: {stderr}"
             )));
         }
-        let message: WorkerMessage = serde_json::from_str(line.trim_end()).map_err(|err| {
+        let line = process.read_buf.trim_ascii_end();
+        let message: WorkerMessage = serde_json::from_slice(line).map_err(|err| {
             self.record_worker_telemetry(FfiWorkerTelemetry {
                 worker_id: self.worker_id(),
                 malformed_responses: 1,
@@ -215,7 +235,7 @@ impl PersistentWorkerRunner {
             });
             worker_protocol_error(err)
         })?;
-        Ok(message)
+        Ok((message, bytes as u64))
     }
 
     fn start_locked(
@@ -224,7 +244,7 @@ impl PersistentWorkerRunner {
     ) -> Result<(), RunnerPoolError> {
         let handshake_started = Instant::now();
         let mut process = self.spawn_process()?;
-        let hello_message = self.read_message(&mut process, None)?;
+        let (hello_message, _) = self.read_message(&mut process, None)?;
         let WorkerMessagePayload::Hello(hello) = hello_message.payload else {
             self.record_worker_telemetry(FfiWorkerTelemetry {
                 worker_id: self.worker_id(),
@@ -481,6 +501,28 @@ impl BackendRunner for PersistentWorkerRunner {
     }
 
     fn invoke(&self, request: InvokeRequest) -> Result<InvokeResponse, RunnerPoolError> {
+        self.invoke_measured(request).map(|(response, _)| response)
+    }
+
+    fn invoke_batch_measured(
+        &self,
+        requests: Vec<InvokeRequest>,
+    ) -> Result<(Vec<InvokeResponse>, InvokeWireBytes), RunnerPoolError> {
+        let mut responses = Vec::with_capacity(requests.len());
+        let mut wire = InvokeWireBytes::default();
+        for request in requests {
+            let (response, bytes) = self.invoke_measured(request)?;
+            wire.sent += bytes.sent;
+            wire.received += bytes.received;
+            responses.push(response);
+        }
+        Ok((responses, wire))
+    }
+
+    fn invoke_measured(
+        &self,
+        request: InvokeRequest,
+    ) -> Result<(InvokeResponse, InvokeWireBytes), RunnerPoolError> {
         request.validate_protocol().map_err(worker_protocol_error)?;
         let mut slot = self.process.lock();
         let process = slot
@@ -491,12 +533,12 @@ impl BackendRunner for PersistentWorkerRunner {
             WorkerMessagePayload::Invoke(request),
             correlation_id.clone(),
         );
-        let request_bytes = estimate_json_bytes(&request_message);
         if let WorkerMessagePayload::Invoke(request) = &request_message.payload {
             self.record_request_payload_telemetry(request);
         }
         let encode_started = Instant::now();
-        Self::write_message(process, &request_message)?;
+        let request_bytes = Self::write_message(process, &request_message)?;
+        drop(request_message);
         self.record_worker_telemetry(FfiWorkerTelemetry {
             worker_id: self.worker_id(),
             request_bytes,
@@ -507,7 +549,7 @@ impl BackendRunner for PersistentWorkerRunner {
         let mut events = Vec::<InvokeEvent>::new();
         loop {
             let decode_started = Instant::now();
-            let message = match self.read_message(process, self.request_timeout) {
+            let (message, response_bytes) = match self.read_message(process, self.request_timeout) {
                 Ok(message) => message,
                 Err(err @ RunnerPoolError::RequestTimedOut { .. }) => {
                     self.record_worker_telemetry(FfiWorkerTelemetry {
@@ -530,7 +572,6 @@ impl BackendRunner for PersistentWorkerRunner {
                 }
             };
             let decode_duration = decode_started.elapsed();
-            let response_bytes = estimate_json_bytes(&message);
             match message.payload {
                 WorkerMessagePayload::Event(event) => {
                     events.push(event);
@@ -558,7 +599,13 @@ impl BackendRunner for PersistentWorkerRunner {
                         decode_duration,
                         ..Default::default()
                     });
-                    return Ok(response);
+                    return Ok((
+                        response,
+                        InvokeWireBytes {
+                            sent: request_bytes,
+                            received: response_bytes,
+                        },
+                    ));
                 }
                 WorkerMessagePayload::Error(error) => {
                     self.record_worker_telemetry(FfiWorkerTelemetry {
@@ -614,12 +661,6 @@ fn worker_protocol_error(err: WorkerProtocolError) -> RunnerPoolError {
 
 fn worker_error(err: WorkerError) -> RunnerPoolError {
     RunnerPoolError::Runner(format!("worker error {}: {}", err.code, err.message))
-}
-
-fn estimate_json_bytes<T: serde::Serialize>(value: &T) -> u64 {
-    serde_json::to_vec(value)
-        .map(|bytes| bytes.len() as u64)
-        .unwrap_or(0)
 }
 
 impl StderrDrain {
