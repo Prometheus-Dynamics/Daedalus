@@ -713,6 +713,45 @@ graph.drive_blocking(&stop, |graph, _turn| { /* drain outputs */ Ok(()) })?;
   up to four values allocate nothing beyond their payloads. Batch commits count in the `push`
   row of frame-overhead reports.
 
+### Reloading A Graph
+
+A running `HostGraph` can take a recompiled graph without restarting the host. Compile the new
+graph onto the old graph's host bridges and alias, then swap it in between ticks:
+
+```rust
+let report = graph.reload(&engine, new_graph, handler)?; // plain graphs
+let report = graph.reload_document(&engine, &plugins, document, handler)?; // plugin registry
+let next = engine.compile_host_graph_plugin_registry(
+    &plugins, new_graph, handler,
+    graph.bridge_manager().clone(), graph.host().alias().to_string(),
+)?;
+let report = graph.reload_with(next)?; // any graph compiled onto the same bridges
+```
+
+A compile error returns before anything changes, so the running graph keeps ticking. `reload_with`
+refuses a graph on other bridges or another alias. `ExecutionDomain::reload_graph(name, next)`
+does the same for a member graph and refuses, before any change, a graph that lacks a host port
+the domain's links or routes use.
+
+What carries over:
+
+- **Node state.** A node instance keeps its typed state (`ctx.take_node_state` /
+  `set_node_state`) and its managed resources when its instance key (`node_instance_keys`) and
+  node id are both unchanged. Keys of unlabeled, duplicated nodes are `id#index`, so inserting an
+  earlier duplicate renumbers them; give such nodes a label to keep their state stable.
+- **Host ports.** The bridge is shared, so held values, queued payloads and per-port policies
+  stay on every port the new graph still declares. Ports it lacks drop their queued and held
+  values.
+- **Frame overhead.** The frame-overhead window continues across the swap.
+
+Dropped state is reported, not kept: removed nodes (and nodes whose type changed) lose their
+state and have their resources stopped. `HostGraphReload` lists `nodes_kept`, `nodes_added`,
+`nodes_removed`, `host_ports_dropped` and `frame_overhead_kept`. JSON state and native state
+stay with the process and are not touched.
+
+A reload happens between ticks (it takes `&mut self`), so tick code and its allocation budget are
+unchanged; the reload itself allocates.
+
 ### Waiting With `poll(2)` / `epoll`
 
 Hosts that already wait on file descriptors (a Styx `FrameClient`, sockets, timers) can wait on

@@ -38,6 +38,11 @@ impl HostBridgeManager {
         Self::default()
     }
 
+    /// Whether `other` is a clone of this manager, so both reach the same bridges.
+    pub fn is_same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Look up an existing bridge without allocating.
     pub fn handle(&self, alias: impl AsRef<str>) -> Option<HostBridgeHandle> {
         let guard = self.inner.lock();

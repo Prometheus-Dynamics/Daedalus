@@ -35,7 +35,7 @@ use daedalus_runtime::host_bridge::HostBridgeHandle;
 use daedalus_transport::{FeedOutcome, Payload, TypeKey};
 
 use crate::error::EngineError;
-use crate::host_graph::HostGraph;
+use crate::host_graph::{HostGraph, HostGraphReload};
 
 mod explain;
 mod stats;
@@ -190,6 +190,63 @@ impl<H: NodeHandler + Send + Sync + 'static> ExecutionDomain<H> {
             last_error: None,
         });
         self.refresh()
+    }
+
+    /// Swap `next` in for graph `name` in place (see [`HostGraph::reload_with`]), keeping its links,
+    /// routes and taps. `next` must share the graph's host bridges and alias, and must still have
+    /// every host port the links and routes into or out of `name` use; otherwise the domain is
+    /// left as it was.
+    pub fn reload_graph(
+        &mut self,
+        name: &str,
+        next: HostGraph<H>,
+    ) -> Result<HostGraphReload, EngineError> {
+        let index = self.required(name)?;
+        let outputs: HashSet<String> = next
+            .host_outputs()
+            .iter()
+            .map(|port| port.name().to_string())
+            .collect();
+        let inputs: HashSet<String> = next
+            .host_inputs()
+            .iter()
+            .map(|port| port.name().to_string())
+            .collect();
+        let missing_output = self.members[index]
+            .sources
+            .iter()
+            .map(|source| &source.port)
+            .find(|port| !outputs.contains(port.as_str()));
+        let missing_input = self
+            .members
+            .iter()
+            .flat_map(|member| &member.sources)
+            .flat_map(|source| &source.targets)
+            .filter(|target| target.member == index)
+            .map(|target| &target.port)
+            .chain(
+                self.routes
+                    .iter()
+                    .flat_map(|route| &route.targets)
+                    .filter(|target| target.0 == index)
+                    .map(|target| &target.1),
+            )
+            .find(|port| !inputs.contains(port.as_str()));
+        if let Some(port) = missing_output.or(missing_input) {
+            return Err(config(format!(
+                "reloaded graph '{name}' lacks host port '{port}' that links or routes use"
+            )));
+        }
+        let report = self.members[index].graph.reload_with(next)?;
+        let member = &mut self.members[index];
+        member.stats.nodes = member
+            .graph
+            .runtime_plan()
+            .nodes
+            .iter()
+            .filter(|node| !daedalus_planner::is_host_bridge_metadata(&node.metadata))
+            .count();
+        Ok(report)
     }
 
     /// Remove graph `name` with its links, routes and taps, and hand it back. Graphs it fed keep

@@ -353,13 +353,24 @@ impl Engine {
         handler: H,
         host_alias: impl Into<String>,
     ) -> Result<HostGraph<H>, EngineError> {
+        self.compile_host_graph_with_bridges(graph, handler, HostBridgeManager::new(), host_alias)
+    }
+
+    /// [`Self::compile_host_graph`] onto `bridges`, which may already hold the host state of an
+    /// earlier compile (see `HostGraph::reload`).
+    pub(crate) fn compile_host_graph_with_bridges<H: NodeHandler + Send + Sync + 'static>(
+        &self,
+        graph: Graph,
+        handler: H,
+        bridges: HostBridgeManager,
+        host_alias: impl Into<String>,
+    ) -> Result<HostGraph<H>, EngineError> {
         let host_alias = host_alias.into();
         let prepared = self.prepare_plan(graph)?;
         let planner_cache = prepared.cache_status();
         let prepared_runtime = prepared.build()?;
         let runtime_plan_cache = prepared_runtime.cache_status();
         let runtime_plan = Arc::new(prepared_runtime.into_runtime_plan());
-        let bridges = HostBridgeManager::new();
         self.configure_host_bridges(&bridges)?;
         bridges.populate_from_plan(runtime_plan.as_ref());
         let host = bridges.ensure_handle(host_alias);

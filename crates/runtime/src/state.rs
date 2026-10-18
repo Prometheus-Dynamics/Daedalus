@@ -233,6 +233,46 @@ impl StateStore {
             .clone()
     }
 
+    /// The store a reloaded graph runs with (see `OwnedExecutor::set_state_store`).
+    ///
+    /// JSON state, native state and custom metrics are shared with `previous`. Typed node state
+    /// and managed resources carry over only for the node keys `keep` accepts; the resources of
+    /// other nodes are stopped here.
+    pub fn successor_for_reload(
+        previous: &StateStore,
+        mut keep: impl FnMut(&str) -> bool,
+    ) -> StateStore {
+        let mut node_state = HashMap::new();
+        for (key, slot) in previous.node_state.read().iter() {
+            if keep(key.as_ref()) {
+                node_state.insert(key.clone(), slot.clone());
+            }
+        }
+        let mut resources = HashMap::new();
+        let mut stopped = Vec::new();
+        for (key, shared) in previous.resources.read().iter() {
+            if keep(key) {
+                resources.insert(key.clone(), shared.clone());
+            } else {
+                stopped.push(key.clone());
+            }
+        }
+        for key in &stopped {
+            previous.release_node_resources(key);
+        }
+        previous
+            .custom_metrics
+            .write()
+            .retain(|key, _| keep(key.as_str()));
+        StateStore {
+            inner: previous.inner.clone(),
+            native: previous.native.clone(),
+            node_state: Arc::new(RwLock::new(node_state)),
+            resources: Arc::new(RwLock::new(resources)),
+            custom_metrics: previous.custom_metrics.clone(),
+        }
+    }
+
     pub fn record_node_resource_usage(
         &self,
         node_id: &str,

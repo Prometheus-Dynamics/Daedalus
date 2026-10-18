@@ -41,6 +41,7 @@ pub use inspect::{PayloadInspection, PayloadSummary, inspect_payload, serialize_
 pub use io_timing::HostIoTime;
 pub use manager::{HostBridgeManager, bridge_handler};
 use policy::freshness_drop_reason;
+pub use ports::DroppedHostPorts;
 use ports::{PortDirection, PortEntry, PortKey, PortState};
 #[cfg(feature = "plugins")]
 pub(crate) use serializers::for_each_builtin_primitive;

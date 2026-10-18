@@ -6,6 +6,18 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- Hot graph reload for host graphs (`daedalus-engine`): `HostGraph::reload`, `reload_document`
+  and `reload_with` swap a recompiled graph in between ticks onto the same host bridges. Node
+  state and managed resources carry over for node instances whose key and node type are
+  unchanged; host ports the new graph lacks drop their queued and held values; the frame-overhead
+  window continues. A compile error leaves the running graph untouched. Returns a
+  `HostGraphReload` report. `ExecutionDomain::reload_graph` reloads a member in place.
+  Runtime: `OwnedExecutor::{state_store, set_state_store}`, `StateStore::successor_for_reload`,
+  `HostBridgeHandle::retain_ports`, `HostBridgeManager::is_same`. See the Hosts section of
+  `docs/node-authoring.md`.
+
 ### Changed
 
 - **Breaking: `daedalus:frame` v2** (`FrameInterface` version 2, new vtable layout hash; v1

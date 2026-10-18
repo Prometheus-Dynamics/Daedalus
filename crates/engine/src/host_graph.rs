@@ -25,6 +25,7 @@ mod frame_overhead;
 mod introspect;
 #[cfg(any(feature = "threads", all(feature = "std", target_os = "linux")))]
 mod multicam;
+mod reload;
 
 pub use bindings::{
     HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,
@@ -33,6 +34,7 @@ pub use bindings::{
 pub use drive::{HostGraphDriveExit, HostGraphStopHandle, HostGraphTurn};
 pub use frame_overhead::DEFAULT_FRAME_OVERHEAD_WINDOW;
 pub(crate) use frame_overhead::FrameOverheadState;
+pub use reload::HostGraphReload;
 
 /// In-process graph runner for host-driven applications.
 ///

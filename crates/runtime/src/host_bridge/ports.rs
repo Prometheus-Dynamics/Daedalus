@@ -4,6 +4,8 @@
 //! [`PortState`], so a push resolves everything it needs with a single map lookup. State lives
 //! under the bridge's single buffer lock (see `docs/host-bridge-lock-granularity.md`).
 
+use crate::prelude::*;
+
 use crate::collections::FastHashMap as HashMap;
 
 use daedalus_transport::{FreshnessPolicy, Payload, PolicyQueue, PressurePolicy};
@@ -108,6 +110,32 @@ impl PortState {
     }
 }
 
+/// Host ports dropped by `HostBridgeHandle::retain_ports`, by name, sorted.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DroppedHostPorts {
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    /// Queued payloads (and fresh held values) the dropped ports held.
+    pub payloads: usize,
+}
+
+/// Drop the ports of `direction` that `keep` rejects, recording their names and payloads.
+pub(super) fn retain_direction(
+    direction: &mut PortDirection,
+    keep: &mut impl FnMut(&str) -> bool,
+    names: &mut Vec<String>,
+    payloads: &mut usize,
+) {
+    direction.ports.retain(|id, state| {
+        if keep(id.as_str()) {
+            return true;
+        }
+        names.push(id.as_str().to_string());
+        *payloads += state.pending();
+        false
+    });
+}
+
 /// How a caller names a port: an owned id (no allocation on first use) or a borrowed name
 /// (allocates a `PortId` only the first time the port is seen).
 pub(super) enum PortKey<'a> {
@@ -194,5 +222,33 @@ impl PortDirection {
             pressure: self.default_pressure.clone(),
             freshness: self.default_freshness.clone(),
         }
+    }
+}
+
+impl super::HostBridgeHandle {
+    /// Drop the state of host ports whose names `keep_inputs` / `keep_outputs` reject: their
+    /// queued payloads and held values go. Other ports keep theirs, policies included.
+    pub fn retain_ports(
+        &self,
+        mut keep_inputs: impl FnMut(&str) -> bool,
+        mut keep_outputs: impl FnMut(&str) -> bool,
+    ) -> DroppedHostPorts {
+        let mut guard = self.shared.buffers.lock();
+        let mut dropped = DroppedHostPorts::default();
+        retain_direction(
+            &mut guard.inbound,
+            &mut keep_inputs,
+            &mut dropped.inputs,
+            &mut dropped.payloads,
+        );
+        retain_direction(
+            &mut guard.outbound,
+            &mut keep_outputs,
+            &mut dropped.outputs,
+            &mut dropped.payloads,
+        );
+        dropped.inputs.sort();
+        dropped.outputs.sort();
+        dropped
     }
 }

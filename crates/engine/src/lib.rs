@@ -59,7 +59,7 @@ pub use engine::Engine;
 pub use error::EngineError;
 pub use host_graph::{
     DEFAULT_FRAME_OVERHEAD_WINDOW, HostGraph, HostGraphDriveExit, HostGraphInput, HostGraphLane,
-    HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput, HostGraphStopHandle,
-    HostGraphTurn,
+    HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput, HostGraphReload,
+    HostGraphStopHandle, HostGraphTurn,
 };
 pub use prepared_plan::{PreparedPlan, PreparedRuntimePlan};

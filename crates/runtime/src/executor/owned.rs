@@ -329,6 +329,18 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         &self.core.clock
     }
 
+    /// The state store the node contexts run against.
+    pub fn state_store(&self) -> &StateStore {
+        &self.core.state
+    }
+
+    /// Run the node contexts against `state` (e.g. `StateStore::successor_for_reload` of the
+    /// executor a graph reload replaces). Rebuilds the per-node contexts.
+    pub fn set_state_store(&mut self, state: StateStore) {
+        self.core.state = state;
+        self.core.refresh_contexts();
+    }
+
     pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
         self.apply_runtime_debug_config(config);
         self
