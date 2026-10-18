@@ -64,11 +64,11 @@ checkout itself can stay where it is.
   version; raise all of them together. The upgraded dependencies alone need 1.90
   (`ordered-float`).
 - Dependencies track their newest releases, majors included (`cargo upgrade --incompatible
-  --recursive`, then `cargo update`; `styx` follows its `dev` branch through `Cargo.lock`). A
+  --recursive`, then `cargo update`). A
   newest major is kept back only when it cannot meet a requirement (for example it drops
   `no_std` or a supported target); record the reason here. Nothing is kept back at present.
   Duplicate roots that remain because a dependency has not moved yet: `libloading` 0.8 (`ash`,
-  `wgpu-hal`) beside 0.9, `spin` 0.10 (Styx) beside 0.12, and `syn` 2 (most derive crates)
+  `wgpu-hal`) beside 0.9, `spin` 0.10 beside 0.12, and `syn` 2 (most derive crates)
   beside 3.
 - The `wasm-bindgen` CLI used by `scripts/ci.sh wasm` and CI must match the `wasm-bindgen`
   version in `Cargo.lock`; CI reads it from there.
@@ -116,7 +116,7 @@ Rayon executor pool or metrics collection, and with default features off `tracin
 (add the `tracing` feature to keep the runtime's spans and events). Add `dylib-plugins` only if
 the host loads native plugin libraries. Leave every `gpu*` feature off; `EngineConfig`'s default
 `GpuBackend::Cpu` and `planner.enable_gpu = false` need no GPU feature. This set links no
-`wgpu`, `image`, `tokio`, `styx`, `rayon`, `crossbeam` or `tracing`; its heaviest runtime
+`wgpu`, `image`, `tokio`, `rayon`, `crossbeam` or `tracing`; its heaviest runtime
 dependency is `serde_json`.
 
 Feature semantics without the extras:

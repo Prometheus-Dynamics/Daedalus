@@ -97,12 +97,11 @@ cmd_clippy() {
   cargo clippy --workspace --all-targets --features "$CI_FEATURES" -- -D warnings
   cargo clippy -p daedalus-rs --all-targets --features "$CI_FEATURES,dylib-plugins" -- -D warnings
   # Type-checks every target with every feature (the all-features `cargo check`) and lints it.
-  # Needs libcamera-dev + pkg-config for the styx camera example feature.
   cargo clippy --workspace --all-targets --all-features -- -D warnings
 }
 
 # Links every library, so `cdylib` plugins whose exported symbols clash once features unify fail
-# here (`check` and clippy do not link). Needs libcamera-dev + pkg-config (styx camera example).
+# here (`check` and clippy do not link).
 cmd_link() {
   step "Building every library with all features"
   cargo build --workspace --lib --all-features
@@ -143,7 +142,6 @@ json_field() { sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p"; }
 # Type-check only (no linking), so no cross linker or sysroot libraries are needed beyond a C
 # cross compiler for build scripts that compile C (criterion's `alloca`). On Debian/Ubuntu that
 # is `gcc-aarch64-linux-gnu`; see docs/testing.md for hosts without an aarch64 glibc sysroot.
-# The styx camera feature is skipped: it needs target libcamera via pkg-config.
 cmd_aarch64() {
   step "Checking $AARCH64_TARGET"
   ensure_target "$AARCH64_TARGET"

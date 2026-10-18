@@ -12,16 +12,13 @@ publish = false
 [features]
 default = ["plugins"]
 plugins = []
-styx-camera-example = ["daedalus/styx-camera-example", "dep:styx"]
 gpu-wgpu = ["daedalus/gpu-wgpu"]
-gpu-styx = ["gpu-wgpu", "styx-camera-example"]
 
 [dependencies]
 parking_lot = { workspace = true }
 daedalus = { workspace = true, features = ["engine-full", "plugins"] }
 tokio = { workspace = true, features = ["rt", "macros", "sync", "time"] }
 tracing-subscriber = { workspace = true }
-styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
 
 [[bin]]
 name = "quickstart_typed_cpu_graph"
@@ -132,10 +129,6 @@ name = "external_frame_source"
 path = "04_async/external_frame_source.rs"
 
 [[bin]]
-name = "styx_camera_graph"
-path = "04_async/styx_camera_graph.rs"
-
-[[bin]]
 name = "runtime_metrics"
 path = "06_metrics_debugging/runtime_metrics.rs"
 
@@ -170,10 +163,6 @@ path = "06_metrics_debugging/plan_debug.rs"
 [[bin]]
 name = "overhead_floor"
 path = "06_metrics_debugging/overhead_floor.rs"
-
-[[bin]]
-name = "gpu_node"
-path = "07_gpu/gpu_node.rs"
 
 [[bin]]
 name = "upload_download"

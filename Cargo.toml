@@ -29,7 +29,6 @@ members = [
     "examples/plugins/example_project_dylib",
     "examples/plugins/foreign_consumer",
     "examples/plugins/dependent",
-    "examples/plugins/framelease",
     "examples/plugins/stable_abi",
     "examples/wasm_smoke",
     "examples/nostd_smoke",
@@ -127,7 +126,6 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 tracing = { version = "0.1.44", default-features = false }
 wasm-bindgen = "0.2.129"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "std"] }
-styx = { version = "2.0.0", git = "https://github.com/Prometheus-Dynamics/Styx.git", branch = "dev", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

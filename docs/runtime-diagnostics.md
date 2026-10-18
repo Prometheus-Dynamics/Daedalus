@@ -24,7 +24,7 @@ Current documented duplicate roots:
 - `bindgen`, `proc-macro-crate`, `toml_edit`, `toml_datetime`, `winnow`, `regex`, `regex-automata`, `rustc-hash`, and `either`: build/dev/tooling drift through camera bindings, macro support, `trybuild`, `criterion`, and related generator tooling.
 - `bit-set`, `bit-vec`, `hashbrown`, `foldhash`, `getrandom`, `rand`, `rand_core`, `rustix`, `linux-raw-sys`, and `libc`: mixed GPU, property-test, benchmark, tempfile, and platform stacks.
 - `bitflags`, `smallvec`, and `thiserror`: direct workspace versions plus transitive camera/GPU ecosystem versions.
-- `wayland-sys` and related Wayland/X11 support: transitive display/camera backend dependencies through `styx`, `minifb`, and `wgpu`.
+- `wayland-sys` and related Wayland/X11 support: transitive display backend dependencies through `wgpu`.
 
 These are acceptable for the current release as transitive dependencies. New direct workspace dependencies should still be added through `workspace.dependencies`, and new duplicate production roots should be documented here or eliminated.
 

@@ -15,7 +15,7 @@ cargo fmt --all -- --check
 ./scripts/check-gpu-async-blocking.sh
 cargo test --workspace --all-targets --features "engine,plugins"
 cargo clippy --workspace --all-targets --features "engine,plugins" -- -D warnings
-cargo clippy --workspace --all-targets --all-features -- -D warnings   # needs libcamera-dev
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
 ```
 
@@ -71,7 +71,7 @@ for new tests:
 |---|---|
 | `lints` | file-size, workspace-deps, GPU async lints, `cargo fmt --check` |
 | `features` | release feature-surface checks |
-| `clippy`, `link` | clippy `-D warnings` (`engine,plugins`, dylib plugins, all features); `cargo build --workspace --lib --all-features` (links every `cdylib`); both need `libcamera-dev` |
+| `clippy`, `link` | clippy `-D warnings` (`engine,plugins`, dylib plugins, all features); `cargo build --workspace --lib --all-features` (links every `cdylib`) |
 | `test`, `macro-ui` | workspace + dylib tests; trybuild |
 | `smoke` | the CPU-only example binaries (`runtime_metrics` ... `external_frame_source`, `frame_chain`), built with the `test` crate graph (see [Examples](#examples)) |
 | `doc` | `cargo doc --workspace --no-deps` with `-D warnings` |
@@ -148,8 +148,7 @@ The script adds the rustup target if missing. Build scripts that compile C (crit
 `alloca`, pulled in by `--all-targets`) need an aarch64 C compiler with libc headers: on
 Debian/Ubuntu install `gcc-aarch64-linux-gnu` (CI does). On hosts whose cross gcc has no aarch64
 glibc sysroot (e.g. Fedora's `gcc-aarch64-linux-gnu`), set
-`CFLAGS_aarch64_unknown_linux_gnu=-ffreestanding`. The `styx-camera-example` feature is not
-checked: it needs target `libcamera` via pkg-config.
+`CFLAGS_aarch64_unknown_linux_gnu=-ffreestanding`.
 
 ### Lean preset
 

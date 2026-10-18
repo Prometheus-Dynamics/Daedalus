@@ -18,6 +18,14 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   `HostBridgeHandle::retain_ports`, `HostBridgeManager::is_same`. See the Hosts section of
   `docs/node-authoring.md`.
 
+### Removed
+
+- The Styx camera examples (`04_async/styx_camera_graph`, `07_gpu/gpu_node` and its
+  `contrast_boost.wgsl` shader), the `daedalus-plugins-framelease` example plugin, and the `styx`
+  dependency with its `styx-camera-example` and `gpu-styx` features. Styx owns its Daedalus
+  integration (`styx_core::daedalus`, Styx's `daedalus` feature). CI no longer installs
+  `libcamera-dev`, and `Cargo.lock` no longer contains Styx's crates.
+
 ### Changed
 
 - **FFI bytes travel as base64.** `BytePayload` serializes as `{"data":"<base64>","encoding":"base64"}`
@@ -428,7 +436,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   features, `portable_atomic` on targets without compare-and-swap), `libloading` 0.9,
   `sha2` 0.11, `base64` 0.23, `pollster` 1.0 and `pyo3` 0.29 (declared, unused). `wgpu`/`naga`
   30, `ash` 0.38, `criterion` 0.8, `proptest` 1.11, `image` 0.25 and `tracing` 0.1 were already
-  current; Styx follows `dev`. Nothing is kept back (docs/development.md, "Dependency Policy").
+  current. Nothing is kept back (docs/development.md, "Dependency Policy").
 - New Rust 1.99 / clippy lints fixed in code: `as_chunks` instead of constant-size
   `chunks_exact`, `Waker::noop()` in tests, `mem::take` for drained waiter lists, no deprecated
   `core::u32::MAX` in `#[adapt]` expansions.
@@ -702,7 +710,8 @@ for every item below, for upgrades from 2.0.0 and from pre-release `dev` commits
 - `scripts/check-file-sizes.sh` fails on any oversized file (empty baseline); large files split.
 - Duplicate code consolidated across macros, FFI language crates and builtins;
   `docs/host-bridge-lock-granularity.md` documents the lock order.
-- The optional Styx examples track Styx `dev` and key `FrameLease` as `styx:framelease`.
+- The optional Styx examples keyed `FrameLease` as `styx:framelease` (those examples are removed
+  under Unreleased).
 
 ## [2.0.0] - 2026-04-30
 

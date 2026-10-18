@@ -42,7 +42,6 @@ host-only-features = [
     "gpu-image",
     "dylib-plugins",
     "examples",
-    "styx-camera-example",
     "engine",
     "executor-pool",
     "metrics",
@@ -100,7 +99,6 @@ dylib-plugins = [
     "dep:thiserror",
 ]
 examples = []
-styx-camera-example = ["engine", "plugins", "dep:styx"]
 # Lean engine: planner + serial/scoped-thread executor, no Rayon worker pool, no metrics.
 engine = [
     "dep:daedalus-engine",
@@ -142,7 +140,6 @@ daedalus-runtime = { workspace = true }
 daedalus-macros = { workspace = true }
 daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
-styx = { workspace = true, features = ["v4l2", "libcamera", "preview-window"], optional = true }
 daedalus-ffi-host = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true, features = ["std"] }
