@@ -7,15 +7,15 @@ use core::time::Duration;
 
 use crate::executor::queue::edge_is_full;
 use crate::executor::{
-    ExecuteError, ExecutionTelemetry, Executor, FusionTables, NodeConstInputs, NodeError,
-    NodeHandler, NodeRecovery,
+    ExecuteError, ExecutionTelemetry, FusionTables, NodeConstInputs, NodeError, NodeHandler,
+    NodeRecovery,
 };
 use crate::io::{NodeIo, NodePort, port_buffer, recycle_ports};
 use crate::plan::RuntimeNode;
 use crate::portable::Arc;
 use crate::state::ExecutionContext;
 
-use super::{edge_is_active, edge_uses_direct_slot, record_failure};
+use super::{SerialView, edge_is_active, edge_uses_direct_slot, record_failure};
 
 /// Call `handler` for `node`. Under a recovering policy (and with `std`) a panic is caught and
 /// returned as a [`NodeError::Handler`]; under [`NodeRecovery::Fail`] it unwinds as before.
@@ -63,7 +63,8 @@ fn copy_ports(ports: &[NodePort]) -> Vec<NodePort> {
 #[cold]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn retry<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+    v: &mut SerialView<'_>,
+    handler: &H,
     node_idx: usize,
     node: &RuntimeNode,
     ctx: &ExecutionContext,
@@ -91,20 +92,13 @@ pub(super) fn retry<H: NodeHandler>(
         );
         let _ = error;
         backoff_wait(backoff);
-        let telemetry = &mut exec.core.telemetry;
+        let telemetry = &mut v.core.telemetry;
         telemetry.recovery_mut().retries += 1;
-        *io = exec.core.node_io(node_idx, copy_ports(&saved), consts);
-        result = run_handler(
-            &*exec.handler,
-            node,
-            ctx,
-            io,
-            recovery,
-            &mut exec.core.telemetry,
-        );
+        *io = v.core.node_io(node_idx, copy_ports(&saved), consts);
+        result = run_handler(handler, node, ctx, io, recovery, &mut v.core.telemetry);
     }
     if attempts > 0 && result.is_ok() {
-        let telemetry = &mut exec.core.telemetry;
+        let telemetry = &mut v.core.telemetry;
         telemetry.recovery_mut().recovered_retries += 1;
     }
     recycle_ports(saved);
@@ -133,28 +127,28 @@ pub(super) fn after_delivery(recovery: NodeRecovery) -> NodeRecovery {
 /// (fail-fast); otherwise the run continues, with the error kept in `first_error` when the
 /// policy does not recover.
 #[cold]
-pub(super) fn handle_failure<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+pub(super) fn handle_failure(
+    v: &mut SerialView<'_>,
     node_idx: usize,
     node_id: &str,
     error: NodeError,
     recovery: NodeRecovery,
     first_error: &mut Option<ExecuteError>,
 ) -> Result<(), ExecuteError> {
-    record_failure(&mut exec.core.telemetry, node_idx, node_id, &error);
+    record_failure(&mut v.core.telemetry, node_idx, node_id, &error);
     match recovery {
         NodeRecovery::SkipFrame => {
             crate::trace::warn!(target: "daedalus_runtime::executor", node_id, error = %error, "node failed; skipping its frame");
-            let telemetry = &mut exec.core.telemetry;
+            let telemetry = &mut v.core.telemetry;
             telemetry.recovery_mut().skipped_frames += 1;
             Ok(())
         }
         NodeRecovery::Restart => {
             crate::trace::warn!(target: "daedalus_runtime::executor", node_id, error = %error, "node failed; restarting it");
-            if let Some(key) = exec.core.node_ids.get(node_idx).cloned() {
-                exec.core.state.reset_node(&key);
+            if let Some(key) = v.core.node_ids.get(node_idx).cloned() {
+                v.core.state.reset_node(&key);
             }
-            let telemetry = &mut exec.core.telemetry;
+            let telemetry = &mut v.core.telemetry;
             telemetry.recovery_mut().restarts += 1;
             Ok(())
         }
@@ -163,7 +157,7 @@ pub(super) fn handle_failure<H: NodeHandler>(
                 node: node_id.to_string(),
                 error,
             };
-            if exec.core.run_config.fail_fast {
+            if v.core.run_config.fail_fast {
                 return Err(failed);
             }
             first_error.get_or_insert(failed);
@@ -175,27 +169,27 @@ pub(super) fn handle_failure<H: NodeHandler>(
 /// Whether node `node_idx` must wait for a later tick because one of its blocking output
 /// queues is full, or (through `fusion`) one of the nodes its fused outputs feed must.
 #[inline(never)]
-pub(super) fn output_blocked<H: NodeHandler>(
-    exec: &Executor<'_, H>,
+pub(super) fn output_blocked(
+    v: &SerialView<'_>,
     blocking: &[bool],
     fusion: Option<&FusionTables>,
     node_idx: usize,
 ) -> bool {
-    let queued_full = exec
+    let queued_full = v
         .outgoing_edges
         .get(node_idx)
         .into_iter()
         .flatten()
         .any(|&edge_idx| {
             blocking.get(edge_idx).copied().unwrap_or(false)
-                && edge_is_active(exec, edge_idx)
-                && !edge_uses_direct_slot(exec, edge_idx)
-                && edge_is_full(edge_idx, &exec.core.queues)
+                && edge_is_active(v, edge_idx)
+                && !edge_uses_direct_slot(v, edge_idx)
+                && edge_is_full(edge_idx, &v.core.queues)
         });
     queued_full
         || fusion
             .and_then(|fusion| fusion.outputs.get(node_idx))
             .into_iter()
             .flatten()
-            .any(|&(_, _, consumer)| output_blocked(exec, blocking, fusion, consumer))
+            .any(|&(_, _, consumer)| output_blocked(v, blocking, fusion, consumer))
 }

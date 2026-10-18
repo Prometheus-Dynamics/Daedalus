@@ -4,12 +4,12 @@
 use smallvec::SmallVec;
 
 use crate::executor::schedule_compile::FusedPort;
-use crate::executor::{CorrelatedPayload, Executor, FusionTables, NodeHandler};
+use crate::executor::{CorrelatedPayload, FusionTables};
 use crate::handles::PortId;
 use crate::io::NodePort;
 use crate::prelude::*;
 
-use super::{edge_is_active, edge_uses_direct_slot, node_is_active};
+use super::{SerialView, edge_is_active, edge_uses_direct_slot, node_is_active};
 
 /// Payloads on their way along fused edges to the next node: `(edge, payload)` in push order.
 /// Two inline, so a chain allocates nothing.
@@ -26,8 +26,8 @@ pub(crate) struct FusedOutputs<'a> {
 
 impl<'a> FusedOutputs<'a> {
     /// `node_idx`'s fused outputs, when it has any, running at `pos` of `order`.
-    pub(crate) fn of<H: NodeHandler>(
-        exec: &Executor<'_, H>,
+    pub(crate) fn of(
+        v: &SerialView<'_>,
         tables: Option<&'a FusionTables>,
         node_idx: usize,
         order: &[daedalus_planner::NodeRef],
@@ -43,15 +43,15 @@ impl<'a> FusedOutputs<'a> {
             .get(pos + 1..)?
             .iter()
             .map(|node| node.0)
-            .find(|&idx| !exec.core.host_bridges.get(idx).copied().unwrap_or(false));
+            .find(|&idx| !v.core.host_bridges.get(idx).copied().unwrap_or(false));
         Some(Self { ports, next, carry })
     }
 
     /// Carry `payload` from `port` when that port is fused to the next node and its edge is live
     /// this tick; otherwise hand it back for ordinary delivery.
-    pub(crate) fn try_carry<H: NodeHandler>(
+    pub(crate) fn try_carry(
         &mut self,
-        exec: &mut Executor<'_, H>,
+        v: &mut SerialView<'_>,
         port: &PortId,
         payload: CorrelatedPayload,
     ) -> Option<CorrelatedPayload> {
@@ -62,33 +62,28 @@ impl<'a> FusedOutputs<'a> {
         // A slot that already holds a payload (left from an earlier tick, e.g. while the consumer
         // was inactive) must deliver it first, so such ticks go through the slot.
         let slot_empty = || {
-            exec.core
+            v.core
                 .direct_slots
                 .get(edge_idx)
-                .is_some_and(|slot| !slot.access(exec.direct_slot_access).occupied())
+                .is_some_and(|slot| !slot.access(v.direct_slot_access).occupied())
         };
         if self.next != Some(consumer)
-            || !edge_is_active(exec, edge_idx)
-            || !edge_uses_direct_slot(exec, edge_idx)
-            || !node_is_active(exec, consumer)
+            || !edge_is_active(v, edge_idx)
+            || !edge_uses_direct_slot(v, edge_idx)
+            || !node_is_active(v, consumer)
             || !slot_empty()
         {
             return Some(payload);
         }
-        carry(exec, self.carry, edge_idx, payload);
+        carry(v, self.carry, edge_idx, payload);
         None
     }
 }
 
 /// Hold `payload` for fused edge `edge_idx` as its slot would: appended for a buffer-all edge,
 /// replacing the held one otherwise.
-fn carry<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
-    carry: &mut Carry,
-    edge_idx: usize,
-    payload: CorrelatedPayload,
-) {
-    let core = &mut *exec.core;
+fn carry(v: &mut SerialView<'_>, carry: &mut Carry, edge_idx: usize, payload: CorrelatedPayload) {
+    let core = &mut *v.core;
     if cfg!(feature = "metrics") && core.run_config.metrics_level.is_detailed() {
         core.telemetry
             .record_edge_fused_handoff(edge_idx, payload.inner.is_storage_unique());
@@ -106,7 +101,7 @@ fn carry<H: NodeHandler>(
             *held = payload;
             if cfg!(feature = "metrics") && core.run_config.metrics_level.is_basic() {
                 let reason =
-                    crate::executor::serial_direct_slot::replace_reason(exec.edges.get(edge_idx));
+                    crate::executor::serial_direct_slot::replace_reason(v.edges.get(edge_idx));
                 core.telemetry
                     .record_edge_pressure_event(edge_idx, reason, 1);
             }
@@ -117,8 +112,8 @@ fn carry<H: NodeHandler>(
 
 /// Move what `carry` holds for fused edge `edge_idx` into `inputs` at `port`; whether it held
 /// any (the edge's slot is empty then, so the caller skips it).
-pub(crate) fn take_carried<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+pub(crate) fn take_carried(
+    v: &mut SerialView<'_>,
     node_idx: usize,
     edge_idx: usize,
     port: &PortId,
@@ -128,14 +123,12 @@ pub(crate) fn take_carried<H: NodeHandler>(
     let mut taken = false;
     while let Some(at) = carry.iter().position(|(edge, _)| *edge == edge_idx) {
         let (_, payload) = carry.remove(at);
-        if cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed() {
-            let bytes = exec
+        if cfg!(feature = "metrics") && v.core.run_config.metrics_level.is_detailed() {
+            let bytes = v
                 .core
                 .data_size_inspectors
                 .estimate_payload_bytes(&payload.inner);
-            exec.core
-                .telemetry
-                .record_node_transport_in(node_idx, bytes);
+            v.core.telemetry.record_node_transport_in(node_idx, bytes);
         }
         inputs.push((port.clone(), payload));
         taken = true;

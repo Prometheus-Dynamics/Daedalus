@@ -8,46 +8,42 @@ use crate::io::NodePort;
 use crate::executor::queue::{ApplyPolicyOwnedArgs, apply_policy_owned, pop_edge};
 use crate::executor::serial_direct_slot::{pop_direct_edge, push_direct_edge};
 use crate::executor::{
-    CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, ExecuteError, Executor, NodeError,
-    NodeHandler, ProbeCount,
+    CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, ExecuteError, NodeError, ProbeCount,
 };
 
 use super::fused::{Carry, FusedOutputs, take_carried};
-use super::{edge_is_active, edge_uses_direct_slot};
+use super::{SerialView, edge_is_active, edge_uses_direct_slot};
 
 /// Pop what the incoming edges of `node_idx` hold: everything, or with
 /// `one_per_edge` (a `fire = "all"` node) only the oldest value of each edge. Fused edges hand
 /// over what `carry` holds for them.
-pub(super) fn collect_inputs<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+pub(super) fn collect_inputs(
+    v: &mut SerialView<'_>,
     node_idx: usize,
     one_per_edge: bool,
     carry: &mut Carry,
 ) -> Result<Vec<NodePort>, ExecuteError> {
     let collect_detailed_metrics =
-        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
+        cfg!(feature = "metrics") && v.core.run_config.metrics_level.is_detailed();
     let collect_lifecycle = cfg!(feature = "metrics")
-        && (exec.core.run_config.metrics_level.is_profile()
-            || exec.core.run_config.metrics_level.is_trace());
+        && (v.core.run_config.metrics_level.is_profile()
+            || v.core.run_config.metrics_level.is_trace());
     let mut inputs = crate::io::port_buffer();
-    let edges = exec.edges;
-    let incoming = exec.incoming_edges.clone();
+    let edges = v.edges;
+    let incoming = v.incoming_edges;
     for &edge_idx in incoming.get(node_idx).into_iter().flatten() {
         let Some(edge) = edges.get(edge_idx) else {
             continue;
         };
         let to_port = edge.target_port_id();
-        if !edge_is_active(exec, edge_idx) {
+        if !edge_is_active(v, edge_idx) {
             continue;
         }
-        if !carry.is_empty() && take_carried(exec, node_idx, edge_idx, to_port, carry, &mut inputs)
-        {
+        if !carry.is_empty() && take_carried(v, node_idx, edge_idx, to_port, carry, &mut inputs) {
             continue;
         }
-        if edge_uses_direct_slot(exec, edge_idx) {
-            while let Some(mut payload) =
-                pop_direct_edge(&mut exec.core, exec.direct_slot_access, edge_idx)
-            {
+        if edge_uses_direct_slot(v, edge_idx) {
+            while let Some(mut payload) = pop_direct_edge(v.core, v.direct_slot_access, edge_idx) {
                 if collect_lifecycle {
                     let mut lifecycle = DataLifecycleRecord::new(
                         payload.correlation_id,
@@ -57,18 +53,16 @@ pub(super) fn collect_inputs<H: NodeHandler>(
                     lifecycle.edge_idx = Some(edge_idx);
                     lifecycle.port = Some(to_port.to_string());
                     lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
-                    exec.core.telemetry.record_data_lifecycle(lifecycle);
+                    v.core.telemetry.record_data_lifecycle(lifecycle);
                 }
                 if collect_detailed_metrics {
-                    let bytes = exec
+                    let bytes = v
                         .core
                         .data_size_inspectors
                         .estimate_payload_bytes(&payload.inner);
-                    exec.core
-                        .telemetry
-                        .record_node_transport_in(node_idx, bytes);
+                    v.core.telemetry.record_node_transport_in(node_idx, bytes);
                 }
-                payload = adapt_edge_payload(exec, edge_idx, payload, node_idx, to_port.as_str())?;
+                payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
                 inputs.push((to_port.clone(), payload));
                 if one_per_edge {
                     break;
@@ -77,9 +71,9 @@ pub(super) fn collect_inputs<H: NodeHandler>(
             continue;
         }
         while let Some(mut payload) =
-            pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors)
+            pop_edge(edge_idx, &v.core.queues, &v.core.data_size_inspectors)
         {
-            record_queue_wait(exec, edge_idx, &payload, collect_detailed_metrics);
+            record_queue_wait(v, edge_idx, &payload, collect_detailed_metrics);
             if collect_lifecycle {
                 let mut lifecycle = DataLifecycleRecord::new(
                     payload.correlation_id,
@@ -89,18 +83,16 @@ pub(super) fn collect_inputs<H: NodeHandler>(
                 lifecycle.edge_idx = Some(edge_idx);
                 lifecycle.port = Some(to_port.to_string());
                 lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
-                exec.core.telemetry.record_data_lifecycle(lifecycle);
+                v.core.telemetry.record_data_lifecycle(lifecycle);
             }
             if collect_detailed_metrics {
-                let bytes = exec
+                let bytes = v
                     .core
                     .data_size_inspectors
                     .estimate_payload_bytes(&payload.inner);
-                exec.core
-                    .telemetry
-                    .record_node_transport_in(node_idx, bytes);
+                v.core.telemetry.record_node_transport_in(node_idx, bytes);
             }
-            payload = adapt_edge_payload(exec, edge_idx, payload, node_idx, to_port.as_str())?;
+            payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
             inputs.push((to_port.clone(), payload));
             if one_per_edge {
                 break;
@@ -112,8 +104,8 @@ pub(super) fn collect_inputs<H: NodeHandler>(
 }
 
 /// Enqueue-to-dequeue time of a queued payload (stamped with basic metrics or a frame probe).
-fn record_queue_wait<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+fn record_queue_wait(
+    v: &mut SerialView<'_>,
     edge_idx: usize,
     payload: &CorrelatedPayload,
     detailed: bool,
@@ -121,7 +113,7 @@ fn record_queue_wait<H: NodeHandler>(
     let Some(enqueued_at) = payload.enqueued_at else {
         return;
     };
-    let core = &mut *exec.core;
+    let core = &mut *v.core;
     let probe = core.run_config.frame_probe.as_deref();
     if !detailed && probe.is_none() {
         return;
@@ -135,20 +127,20 @@ fn record_queue_wait<H: NodeHandler>(
     }
 }
 
-fn adapt_edge_payload<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+fn adapt_edge_payload(
+    v: &mut SerialView<'_>,
     edge_idx: usize,
     payload: CorrelatedPayload,
     node_idx: usize,
     port: &str,
 ) -> Result<CorrelatedPayload, ExecuteError> {
-    let Some(edge_transport) = exec.edge_transports.get(edge_idx).and_then(Option::as_ref) else {
+    let Some(edge_transport) = v.edge_transports.get(edge_idx).and_then(Option::as_ref) else {
         return Ok(payload);
     };
     if edge_transport.adapter_steps.is_empty() {
         return Ok(payload);
     }
-    let Some(runtime_transport) = exec.core.runtime_transport.clone() else {
+    let Some(runtime_transport) = v.core.runtime_transport.clone() else {
         return Ok(payload);
     };
     let CorrelatedPayload {
@@ -170,9 +162,9 @@ fn adapt_edge_payload<H: NodeHandler>(
 
     // Lifecycle records (profile/trace metrics only) carry formatted step and path text.
     let collect_lifecycle = cfg!(feature = "metrics")
-        && (exec.core.run_config.metrics_level.is_profile()
-            || exec.core.run_config.metrics_level.is_trace());
-    let record = |exec: &mut Executor<'_, H>, stage, payload: &Payload, detail| {
+        && (v.core.run_config.metrics_level.is_profile()
+            || v.core.run_config.metrics_level.is_trace());
+    let record = |v: &mut SerialView<'_>, stage, payload: &Payload, detail| {
         if !collect_lifecycle {
             return;
         }
@@ -187,10 +179,10 @@ fn adapt_edge_payload<H: NodeHandler>(
             .map(ToString::to_string)
             .collect();
         lifecycle.detail = detail;
-        exec.core.telemetry.record_data_lifecycle(lifecycle);
+        v.core.telemetry.record_data_lifecycle(lifecycle);
     };
     record(
-        exec,
+        v,
         DataLifecycleStage::AdapterStart,
         &inner,
         collect_lifecycle
@@ -211,29 +203,28 @@ fn adapt_edge_payload<H: NodeHandler>(
         "adapter path started"
     );
     let collect_detailed_metrics =
-        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
-    let probe = exec.core.run_config.frame_probe.clone();
-    let adapter_start =
-        (collect_detailed_metrics || probe.is_some()).then(|| exec.core.clock.now());
+        cfg!(feature = "metrics") && v.core.run_config.metrics_level.is_detailed();
+    let probe = v.core.run_config.frame_probe.clone();
+    let adapter_start = (collect_detailed_metrics || probe.is_some()).then(|| v.core.clock.now());
     let source = collect_lifecycle.then(|| inner.clone());
     match runtime_transport.execute_adapter_path(inner, &edge_transport.adapter_steps, &request) {
         Ok(adapted) => {
             if let Some(start) = adapter_start {
-                let duration = exec.core.clock.elapsed(start);
+                let duration = v.core.clock.elapsed(start);
                 if collect_detailed_metrics {
-                    exec.core
+                    v.core
                         .telemetry
                         .record_edge_adapter_duration(edge_idx, duration);
                 }
                 if let Some(probe) = &probe {
-                    let inspectors = &exec.core.data_size_inspectors;
+                    let inspectors = &v.core.data_size_inspectors;
                     probe.record_adapter(edge_idx, duration, || {
                         inspectors.estimate_payload_bytes(&adapted)
                     });
                 }
             }
             record(
-                exec,
+                v,
                 DataLifecycleStage::AdapterEnd,
                 &adapted,
                 collect_lifecycle
@@ -255,7 +246,7 @@ fn adapt_edge_payload<H: NodeHandler>(
             })
         }
         Err(error) => {
-            exec.core.telemetry.record_edge_adapter_error(edge_idx);
+            v.core.telemetry.record_edge_adapter_error(edge_idx);
             crate::trace::warn!(
                 target: "daedalus_runtime::transport",
                 edge_index = edge_idx,
@@ -266,14 +257,14 @@ fn adapt_edge_payload<H: NodeHandler>(
             );
             if let Some(source) = &source {
                 record(
-                    exec,
+                    v,
                     DataLifecycleStage::AdapterError,
                     source,
                     Some(error.to_string()),
                 );
             }
             Err(ExecuteError::HandlerFailed {
-                node: exec
+                node: v
                     .nodes
                     .get(node_idx)
                     .map(|node| node.id.clone())
@@ -306,41 +297,39 @@ fn adapter_path_detail(edge_transport: &crate::plan::RuntimeEdgeTransport) -> Op
 
 /// Deliver `node_idx`'s outputs to its edges; `fused` carries those of fused ports to the next
 /// node instead.
-pub(super) fn publish_outputs<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+pub(super) fn publish_outputs(
+    v: &mut SerialView<'_>,
     node_idx: usize,
     mut outputs: Vec<NodePort>,
     mut fused: Option<FusedOutputs<'_>>,
 ) -> Result<(), NodeError> {
     let collect_detailed_metrics =
-        cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed();
-    let edges = exec.edges;
-    let outgoing = exec.outgoing_edges.clone();
-    let outgoing = outgoing
+        cfg!(feature = "metrics") && v.core.run_config.metrics_level.is_detailed();
+    let edges = v.edges;
+    let outgoing = v
+        .outgoing_edges
         .get(node_idx)
         .map(Vec::as_slice)
         .unwrap_or_default();
     for (port, payload) in outputs.drain(..) {
         if collect_detailed_metrics {
-            let bytes = exec
+            let bytes = v
                 .core
                 .data_size_inspectors
                 .estimate_payload_bytes(&payload.inner);
-            exec.core
-                .telemetry
-                .record_node_transport_out(node_idx, bytes);
+            v.core.telemetry.record_node_transport_out(node_idx, bytes);
         }
         let payload = match fused.as_mut() {
-            Some(fused) => match fused.try_carry(exec, &port, payload) {
+            Some(fused) => match fused.try_carry(v, &port, payload) {
                 Some(payload) => payload,
                 None => continue,
             },
             None => payload,
         };
-        let routes = |exec: &Executor<'_, H>, edge_idx: usize| {
-            edges[edge_idx].source_port_id() == &port && edge_is_active(exec, edge_idx)
+        let routes = |v: &SerialView<'_>, edge_idx: usize| {
+            edges[edge_idx].source_port_id() == &port && edge_is_active(v, edge_idx)
         };
-        fan_out(exec, outgoing, routes, payload)?;
+        fan_out(v, outgoing, routes, payload)?;
     }
     crate::io::recycle_ports(outputs);
     Ok(())
@@ -348,55 +337,46 @@ pub(super) fn publish_outputs<H: NodeHandler>(
 
 /// Hand `payload` to every edge of `candidates` that `routes` accepts, cloning it for all but the
 /// last one (no target list is collected, so wide fan-outs do not allocate).
-pub(super) fn fan_out<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+pub(super) fn fan_out(
+    v: &mut SerialView<'_>,
     candidates: &[usize],
-    routes: impl Fn(&Executor<'_, H>, usize) -> bool,
+    routes: impl Fn(&SerialView<'_>, usize) -> bool,
     payload: CorrelatedPayload,
 ) -> Result<(), NodeError> {
-    let Some(last) = candidates
-        .iter()
-        .rposition(|&edge_idx| routes(exec, edge_idx))
-    else {
+    let Some(last) = candidates.iter().rposition(|&edge_idx| routes(v, edge_idx)) else {
         return Ok(());
     };
     for &edge_idx in &candidates[..last] {
-        if routes(exec, edge_idx) {
-            deliver(exec, edge_idx, payload.clone(), true)?;
+        if routes(v, edge_idx) {
+            deliver(v, edge_idx, payload.clone(), true)?;
         }
     }
-    deliver(exec, candidates[last], payload, false)
+    deliver(v, candidates[last], payload, false)
 }
 
-fn deliver<H: NodeHandler>(
-    exec: &mut Executor<'_, H>,
+fn deliver(
+    v: &mut SerialView<'_>,
     edge_idx: usize,
     payload: CorrelatedPayload,
     cloned_payload: bool,
 ) -> Result<(), NodeError> {
-    if cloned_payload && let Some(probe) = &exec.core.run_config.frame_probe {
+    if cloned_payload && let Some(probe) = &v.core.run_config.frame_probe {
         probe.add_count(ProbeCount::SharedClones, 1);
     }
-    if cfg!(feature = "metrics") && exec.core.run_config.metrics_level.is_detailed() {
-        exec.core.telemetry.record_edge_handoff(
+    if cfg!(feature = "metrics") && v.core.run_config.metrics_level.is_detailed() {
+        v.core.telemetry.record_edge_handoff(
             edge_idx,
             payload.inner.is_storage_unique(),
             cloned_payload,
             0,
         );
     }
-    if edge_uses_direct_slot(exec, edge_idx) {
-        push_direct_edge(
-            &mut exec.core,
-            exec.edges,
-            exec.direct_slot_access,
-            edge_idx,
-            payload,
-        );
+    if edge_uses_direct_slot(v, edge_idx) {
+        push_direct_edge(v.core, v.edges, v.direct_slot_access, edge_idx, payload);
         return Ok(());
     }
-    let edges = exec.edges;
-    let core = &mut *exec.core;
+    let edges = v.edges;
+    let core = &mut *v.core;
     apply_policy_owned(ApplyPolicyOwnedArgs {
         edge_idx,
         policy: edges[edge_idx].policy(),
@@ -405,7 +385,7 @@ fn deliver<H: NodeHandler>(
         warnings_seen: &core.warnings_seen,
         telem: &mut core.telemetry,
         warning_label: None,
-        backpressure: exec.backpressure.clone(),
+        backpressure: v.backpressure.clone(),
         data_size_inspectors: &core.data_size_inspectors,
         stamp_enqueue: core.run_config.frame_probe.is_some(),
     })

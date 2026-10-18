@@ -21,7 +21,7 @@ use crate::executor::{
 };
 
 use super::edges::fan_out;
-use super::{edge_is_active, edge_uses_direct_slot, node_is_active};
+use super::{SerialView, edge_is_active, edge_uses_direct_slot, node_is_active};
 
 /// One host-bridge node with its bridge handle and edge wiring.
 pub(crate) struct HostNodeIo {
@@ -72,43 +72,47 @@ pub(crate) fn resolve_host_nodes(
 /// Move each host bridge's inbound input into the edges it feeds, taking every port of a bridge
 /// under one bridge lock so a batch push lands in one tick whole. A held port's edges are emptied
 /// and refilled with its current value (an `Arc` clone) each tick, so they hold exactly that.
+/// Inject the host inputs of `exec` (see [`inject`]).
 pub(crate) fn inject_host_inputs<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
 ) -> Result<(), ExecuteError> {
-    let host_nodes = exec.core.host_nodes.clone();
+    inject(&mut super::view(exec))
+}
+
+fn inject(v: &mut SerialView<'_>) -> Result<(), ExecuteError> {
+    let host_nodes = v.core.host_nodes.clone();
     for host in host_nodes.iter() {
         let result = host.handle.with_inbound(|inbound| {
             for (port, group) in host.inbound.iter() {
-                if !group.iter().any(|&edge_idx| routes(exec, edge_idx)) {
+                if !group.iter().any(|&edge_idx| routes(v, edge_idx)) {
                     continue;
                 }
                 let mut result: Result<(), NodeError> = Ok(());
                 let taken = inbound.take(port.as_str(), |payload| {
                     if result.is_ok() {
-                        result =
-                            fan_out(exec, group, routes, CorrelatedPayload::from_edge(payload));
+                        result = fan_out(v, group, routes, CorrelatedPayload::from_edge(payload));
                     }
                 });
                 result?;
                 if let InboundTake::Held(held) = taken {
                     for &edge_idx in group.iter() {
-                        if routes(exec, edge_idx) {
-                            clear_edge(exec, edge_idx);
+                        if routes(v, edge_idx) {
+                            clear_edge(v, edge_idx);
                         }
                     }
                     if let Some(payload) = held {
                         // The re-delivered value is an `Arc` clone of the held one.
-                        if let Some(probe) = &exec.core.run_config.frame_probe {
+                        if let Some(probe) = &v.core.run_config.frame_probe {
                             probe.add_count(ProbeCount::SharedClones, 1);
                         }
-                        fan_out(exec, group, routes, CorrelatedPayload::from_edge(payload))?;
+                        fan_out(v, group, routes, CorrelatedPayload::from_edge(payload))?;
                     }
                 }
             }
             Ok(())
         });
         result.map_err(|error| ExecuteError::HandlerFailed {
-            node: exec.nodes[host.node_idx].id.clone(),
+            node: v.nodes[host.node_idx].id.clone(),
             error,
         })?;
     }
@@ -116,35 +120,39 @@ pub(crate) fn inject_host_inputs<H: NodeHandler>(
 }
 
 /// Whether a host input edge delivers this tick: it and its target node are active.
-fn routes<H: NodeHandler>(exec: &Executor<'_, H>, edge_idx: usize) -> bool {
-    edge_is_active(exec, edge_idx) && node_is_active(exec, exec.edges[edge_idx].to().0)
+fn routes(v: &SerialView<'_>, edge_idx: usize) -> bool {
+    edge_is_active(v, edge_idx) && node_is_active(v, v.edges[edge_idx].to().0)
 }
 
 /// Drop whatever an edge still holds (a held input's previous value its consumer did not take).
-fn clear_edge<H: NodeHandler>(exec: &mut Executor<'_, H>, edge_idx: usize) {
-    if edge_uses_direct_slot(exec, edge_idx) {
-        while pop_direct_edge(&mut exec.core, exec.direct_slot_access, edge_idx).is_some() {}
+fn clear_edge(v: &mut SerialView<'_>, edge_idx: usize) {
+    if edge_uses_direct_slot(v, edge_idx) {
+        while pop_direct_edge(v.core, v.direct_slot_access, edge_idx).is_some() {}
     } else {
-        while pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors).is_some() {}
+        while pop_edge(edge_idx, &v.core.queues, &v.core.data_size_inspectors).is_some() {}
     }
 }
 
+/// Drain the host outputs of `exec` (see [`drain`]).
 pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
+    drain(&mut super::view(exec));
+}
+
+fn drain(v: &mut SerialView<'_>) {
     let _scope = crate::executor::runtime_alloc_scope();
-    let start = exec
+    let start = v
         .core
         .run_config
         .frame_probe
         .is_some()
-        .then(|| exec.core.clock.now());
-    let edges = exec.edges;
-    let host_nodes = exec.core.host_nodes.clone();
+        .then(|| v.core.clock.now());
+    let edges = v.edges;
+    let host_nodes = v.core.host_nodes.clone();
     for host in host_nodes.iter() {
         for &edge_idx in host.outbound.iter() {
             let port = edges[edge_idx].target_port();
-            if !edge_is_active(exec, edge_idx)
-                || exec
-                    .core
+            if !edge_is_active(v, edge_idx)
+                || v.core
                     .run_config
                     .selected_host_output_ports
                     .as_ref()
@@ -152,27 +160,25 @@ pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
             {
                 continue;
             }
-            if edge_uses_direct_slot(exec, edge_idx) {
-                while let Some(payload) =
-                    pop_direct_edge(&mut exec.core, exec.direct_slot_access, edge_idx)
-                {
+            if edge_uses_direct_slot(v, edge_idx) {
+                while let Some(payload) = pop_direct_edge(v.core, v.direct_slot_access, edge_idx) {
                     host.handle.push_outbound_ref(port, payload.inner);
                 }
                 continue;
             }
             while let Some(payload) =
-                pop_edge(edge_idx, &exec.core.queues, &exec.core.data_size_inspectors)
+                pop_edge(edge_idx, &v.core.queues, &v.core.data_size_inspectors)
             {
                 if let (Some(probe), Some(enqueued_at)) =
-                    (&exec.core.run_config.frame_probe, payload.enqueued_at)
+                    (&v.core.run_config.frame_probe, payload.enqueued_at)
                 {
-                    probe.record_queue_wait(edge_idx, exec.core.clock.elapsed(enqueued_at));
+                    probe.record_queue_wait(edge_idx, v.core.clock.elapsed(enqueued_at));
                 }
                 host.handle.push_outbound_ref(port, payload.inner);
             }
         }
     }
-    if let (Some(probe), Some(start)) = (&exec.core.run_config.frame_probe, start) {
-        probe.add_time(ProbeTime::Drain, exec.core.clock.elapsed(start));
+    if let (Some(probe), Some(start)) = (&v.core.run_config.frame_probe, start) {
+        probe.add_time(ProbeTime::Drain, v.core.clock.elapsed(start));
     }
 }
