@@ -30,6 +30,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: `NodeIo::take_owned_or_clone` takes a `Clone` input by value and clones it when the
+  executor still shares it. Under `NodeRecovery::Retry` the executor keeps a copy of each input,
+  so a plain `take_owned` on a retried node fails on its first attempt; a by-value consumer that
+  uses `take_owned_or_clone` gets its input again on every retry.
 - Runtime: `push_direct_edge` and `pop_direct_edge` take the executor core, edge table and slot
   access instead of `&mut Executor<H>`, so their bodies are not instantiated per handler type.
 - Runtime: an edge push that evicts a backlog adds every evicted item to the edge's `drops`

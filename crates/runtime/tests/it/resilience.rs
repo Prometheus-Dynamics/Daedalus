@@ -442,3 +442,60 @@ mod stream_worker {
         assert!(last_error.expect("error").contains("echo failed"));
     }
 }
+
+/// Like [`Flaky`], but `flaky` takes its input by value (`take_owned_or_clone`), as a consuming
+/// handler does.
+struct OwnedFlaky {
+    failures: u32,
+    calls: AtomicU32,
+    seen: Arc<Mutex<Vec<i32>>>,
+}
+
+impl NodeHandler for OwnedFlaky {
+    fn run(
+        &self,
+        node: &RuntimeNode,
+        _ctx: &daedalus_runtime::state::ExecutionContext,
+        io: &mut daedalus_runtime::io::NodeIo,
+    ) -> Result<(), NodeError> {
+        match node.id.as_str() {
+            "src" => io.push_payload("out", Payload::owned("test:i32", 1_i32)),
+            "flaky" => {
+                let value = io
+                    .take_owned_or_clone::<i32>("in")
+                    .ok_or_else(|| NodeError::InvalidInput("flaky missing value".into()))?;
+                if self.calls.fetch_add(1, Ordering::Relaxed) < self.failures {
+                    return Err(NodeError::Handler("flaky failed".into()));
+                }
+                io.push_payload("out", Payload::owned("test:i32", value + 1));
+            }
+            "sink" => {
+                if let Some(value) = io.get_typed::<i32>("in") {
+                    self.seen.lock().push(value);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn retry_gives_a_by_value_consumer_its_input_again() {
+    let rt = build_runtime(
+        &chain(&["src", "flaky", "sink"]),
+        &SchedulerConfig::default(),
+    );
+    let handler = OwnedFlaky {
+        failures: 1,
+        calls: AtomicU32::new(0),
+        seen: Arc::default(),
+    };
+    let seen = handler.seen.clone();
+    let telemetry = Executor::new(&rt, handler)
+        .with_node_recovery("flaky", NodeRecovery::retry(1))
+        .run()
+        .expect("the retry succeeds");
+    assert_eq!(*seen.lock(), vec![2]);
+    assert_eq!(telemetry.recovery().recovered_retries, 1);
+}
