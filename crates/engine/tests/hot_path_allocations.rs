@@ -43,6 +43,14 @@ unsafe impl GlobalAlloc for CountingAlloc {
 #[global_allocator]
 static GLOBAL: CountingAlloc = CountingAlloc;
 
+/// The allocation tests share one process, so each takes this lock: a test that compiles while
+/// another counts would let shared lazy initialization land in the counted thread.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|error| error.into_inner())
+}
+
 fn allocations_during(f: impl FnOnce()) -> usize {
     let before = ALLOCATIONS.with(Cell::get);
     f();
@@ -139,6 +147,7 @@ fn round_trip(graph: &mut HostGraph<IncrementHandler>, value: i64) -> Option<i64
 
 #[test]
 fn static_port_ids_do_not_allocate() {
+    let _serial = serial();
     let id = PortId::from("frame");
     let cloned = allocations_during(|| {
         let again = PortId::from("frame");
@@ -149,6 +158,7 @@ fn static_port_ids_do_not_allocate() {
 
 #[test]
 fn metrics_off_round_trip_allocation_budget() {
+    let _serial = serial();
     let (_plugins, mut graph) = compile(MetricsLevel::Off);
     graph.host().set_event_recording(false);
     // Warm up: first use of each port and queue creates state once.
@@ -163,5 +173,58 @@ fn metrics_off_round_trip_allocation_budget() {
     assert!(
         allocations <= 2,
         "metrics-off round trip allocated {allocations} times"
+    );
+}
+
+/// The graph `compile` builds, as a definition a reload can recompile.
+fn definition() -> Graph {
+    let host = node(HOST_BRIDGE_ID, &["out"], &["in"])
+        .with_metadata(HOST_BRIDGE_META_KEY, Value::Bool(true));
+    let edges = [(0, "in", 1, "in"), (1, "out", 0, "out")]
+        .into_iter()
+        .map(|(from, from_port, to, to_port)| Edge::new(from, from_port, to, to_port))
+        .collect();
+    Graph {
+        nodes: vec![host, node("inc", &["in"], &["out"])],
+        edges,
+        metadata: Default::default(),
+    }
+}
+
+#[test]
+fn round_trip_after_reload_allocation_budget() {
+    let _serial = serial();
+    let (plugins, mut graph) = compile(MetricsLevel::Off);
+    graph.host().set_event_recording(false);
+    for value in 0..4 {
+        assert_eq!(round_trip(&mut graph, value), Some(value + 1));
+    }
+    let engine =
+        Engine::new(EngineConfig::default().with_metrics_level(MetricsLevel::Off)).expect("engine");
+    let next = engine
+        .compile_host_graph_plugin_registry(
+            &plugins,
+            definition(),
+            IncrementHandler,
+            graph.bridge_manager().clone(),
+            graph.host().alias().to_string(),
+        )
+        .expect("compile reloaded graph");
+    graph.reload_with(next).expect("reload");
+    graph.host().set_event_recording(false);
+    // Warm up the reloaded executor: first use of each port and queue creates state once.
+    for value in 0..4 {
+        assert_eq!(round_trip(&mut graph, value), Some(value + 1));
+    }
+    const TICKS: i64 = 20;
+    let allocations = allocations_during(|| {
+        for value in 0..TICKS {
+            assert_eq!(round_trip(&mut graph, value + 100), Some(value + 101));
+        }
+    });
+    // The same budget as an unreloaded round trip: two payloads per tick, nothing else.
+    assert!(
+        allocations <= 2 * TICKS as usize,
+        "{TICKS} round trips after reload allocated {allocations} times"
     );
 }

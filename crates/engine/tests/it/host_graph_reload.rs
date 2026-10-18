@@ -13,10 +13,10 @@ use daedalus_runtime::io::NodeIo;
 use daedalus_runtime::plugins::PluginRegistry;
 use daedalus_runtime::state::ExecutionContext;
 
-const INT_KEY: &str = "typeexpr:{\"Scalar\":\"Int\"}";
+pub(crate) const INT_KEY: &str = "typeexpr:{\"Scalar\":\"Int\"}";
 
 /// `counter` counts its runs in node state; `relay` forwards its input unchanged.
-struct Nodes;
+pub(crate) struct Nodes;
 
 impl NodeHandler for Nodes {
     fn run(
@@ -44,7 +44,7 @@ impl NodeHandler for Nodes {
     }
 }
 
-fn setup() -> (Engine, PluginRegistry) {
+pub(crate) fn setup() -> (Engine, PluginRegistry) {
     let int_ty = TypeExpr::Scalar(ValueType::Int);
     let mut plugins = PluginRegistry::new();
     plugins
@@ -78,7 +78,7 @@ fn host() -> NodeInstance {
 }
 
 /// Host → each node in `ids` in turn → host.
-fn chain(ids: &[&str]) -> Graph {
+pub(crate) fn chain(ids: &[&str]) -> Graph {
     let mut nodes = vec![host()];
     nodes.extend(ids.iter().map(|id| {
         NodeInstance::new(*id)
@@ -97,7 +97,7 @@ fn chain(ids: &[&str]) -> Graph {
 }
 
 /// Compile `graph` onto `current`'s host bridges and alias, ready for `reload_with`.
-fn next_for(
+pub(crate) fn next_for(
     engine: &Engine,
     plugins: &PluginRegistry,
     graph: Graph,

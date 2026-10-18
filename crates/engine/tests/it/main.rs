@@ -2,6 +2,7 @@
 //! crate graph is linked and its generic code instantiated once rather than once per file.
 
 mod config_validation;
+mod domain_reload;
 mod graph_document;
 mod host_graph_events;
 mod host_graph_poll;
