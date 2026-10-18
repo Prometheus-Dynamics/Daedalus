@@ -545,7 +545,6 @@ version = "3.0.0"
 dependencies = [
  "base64",
  "daedalus-data",
- "daedalus-ffi-core",
  "daedalus-transport",
  "serde",
  "serde_json",
@@ -573,7 +572,6 @@ dependencies = [
  "daedalus-data",
  "daedalus-ffi-core",
  "daedalus-ffi-cpp",
- "daedalus-ffi-host",
  "daedalus-ffi-java",
  "daedalus-ffi-node",
  "daedalus-ffi-python",

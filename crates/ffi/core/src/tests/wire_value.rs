@@ -391,7 +391,6 @@ fn payload_refs_route_through_transport_payload_metadata() {
     );
 }
 
-#[cfg(feature = "conformance")]
 #[test]
 fn payload_refs_validate_access_residency_layout_and_boundary_contracts() {
     let spec = boundary_contract_fixture_spec();

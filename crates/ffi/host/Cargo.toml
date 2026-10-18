@@ -22,6 +22,7 @@ default = ["integrity"]
 integrity = ["daedalus-ffi-core/integrity"]
 image-payload = ["daedalus-ffi-core/image-payload"]
 # Fixture-driven conformance harness (`run_*_fixture_harness`), which needs the core fixture specs.
+# Always compiled into this crate's unit tests (the core specs come from the dev-dependency).
 conformance = ["daedalus-ffi-core/conformance"]
 
 [dependencies]
@@ -39,8 +40,6 @@ libc = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 daedalus-ffi-core = { workspace = true, features = ["conformance"] }
-# Its own tests cover the conformance harness.
-daedalus-ffi-host = { workspace = true, features = ["conformance"] }
 daedalus-ffi-cpp = { workspace = true }
 daedalus-ffi-java = { workspace = true }
 daedalus-ffi-node = { workspace = true }

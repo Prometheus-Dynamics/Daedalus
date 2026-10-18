@@ -132,7 +132,7 @@ fn plugin_package_records_physical_artifacts_separately() {
     assert!(json.get("runtime_model").is_none());
 }
 
-#[cfg(all(feature = "integrity", feature = "conformance"))]
+#[cfg(feature = "integrity")]
 #[test]
 fn rust_package_emits_backend_artifacts_lockfile_and_manifest_hash() {
     let spec = scalar_add_fixture_spec();

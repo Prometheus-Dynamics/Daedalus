@@ -22,7 +22,8 @@ default = ["integrity"]
 integrity = ["dep:sha2"]
 image-payload = []
 # Canonical fixture specs and the generators that write per-language conformance fixtures. Off by
-# default; the SDK and host tests and benches turn it on through their dev-dependencies.
+# default; always compiled into this crate's unit tests, and the SDK and host tests and benches
+# turn it on through their dev-dependencies.
 conformance = []
 
 [dependencies]
@@ -35,6 +36,4 @@ sha2 = { workspace = true, optional = true }
 thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
-# Its own tests cover the conformance fixtures.
-daedalus-ffi-core = { workspace = true, features = ["conformance"] }
 tempfile = { workspace = true }

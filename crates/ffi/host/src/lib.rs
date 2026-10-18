@@ -6,7 +6,7 @@
 //! [`FfiHost`] is the recommended entry point: it installs a `PluginPackage` into a
 //! `CapabilityRegistry`, starts its persistent-worker runners, and invokes nodes by id.
 
-#[cfg(feature = "conformance")]
+#[cfg(any(test, feature = "conformance"))]
 mod conformance;
 mod ffi_host;
 mod installer;
@@ -21,7 +21,7 @@ mod payload_ownership_tests;
 #[cfg(test)]
 mod test_support;
 
-#[cfg(feature = "conformance")]
+#[cfg(any(test, feature = "conformance"))]
 pub use conformance::{
     FixtureHarnessError, FixtureHarnessReport, run_canonical_generated_fixture_harness,
     run_generated_fixture_harness, run_scalar_add_generated_fixture_harness,
