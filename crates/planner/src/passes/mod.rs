@@ -117,7 +117,7 @@ pub fn build_plan(mut input: PlannerInput, config: PlannerConfig) -> PlannerOutp
 
     let mut applied_lowerings = Vec::new();
     expand_embedded_graphs(&mut input, &catalog, &mut diags);
-    apply_descriptor_defaults(&mut input.graph, &catalog);
+    apply_descriptor_defaults(&mut input.graph, &catalog, &mut diags);
     applied_lowerings.extend(apply_planner_lowerings(
         &mut input.graph,
         &catalog,
@@ -174,7 +174,7 @@ pub fn build_plan(mut input: PlannerInput, config: PlannerConfig) -> PlannerOutp
         );
     }
 
-    let plan = ExecutionPlan::new(input.graph.clone(), diags.clone());
+    let plan = ExecutionPlan::new(input.graph, diags.clone());
     PlannerOutput {
         plan,
         diagnostics: diags,

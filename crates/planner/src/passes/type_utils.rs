@@ -1,55 +1,58 @@
+use alloc::borrow::Cow;
 use alloc::string::ToString;
 use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 
 use crate::graph::{ComputeAffinity, NodeInstance};
-use crate::metadata::{DynamicPortMetadata, is_generic_marker};
+use crate::metadata::{dynamic_port_type, is_generic_marker};
 
 use super::PlannerConfig;
 
-pub(super) fn port_type(
+/// The type of a node port. Borrowed from the declaration when the declaration has the type,
+/// owned when it is resolved from node metadata or derived from a type key.
+pub(super) fn port_type<'a>(
     node: &NodeInstance,
-    desc: &NodeDecl,
+    desc: &'a NodeDecl,
     name: &str,
     is_input: bool,
-) -> Option<TypeExpr> {
-    let dynamic_metadata = DynamicPortMetadata::from_node_metadata(&node.metadata);
-
+) -> Option<Cow<'a, TypeExpr>> {
     if is_input {
-        if let Some(ty) = dynamic_metadata.resolved_type(true, name) {
-            return Some(ty);
+        if let Some(ty) = dynamic_port_type(&node.metadata, true, name) {
+            return Some(Cow::Owned(ty));
         }
         if let Some(ty) = input_ty_for(desc, name) {
             if is_generic_marker(&ty)
-                && let Some(solved) = dynamic_metadata.resolved_type(true, name)
+                && let Some(solved) = dynamic_port_type(&node.metadata, true, name)
             {
-                return Some(solved);
+                return Some(Cow::Owned(solved));
             }
             return Some(ty);
         }
-    } else if let Some(ty) = dynamic_metadata.resolved_type(false, name) {
-        return Some(ty);
+    } else if let Some(ty) = dynamic_port_type(&node.metadata, false, name) {
+        return Some(Cow::Owned(ty));
     } else if let Some(port) = desc.outputs.iter().find(|p| p.name == name) {
         let ty = port_schema(port);
         if is_generic_marker(&ty)
-            && let Some(solved) = dynamic_metadata.resolved_type(false, name)
+            && let Some(solved) = dynamic_port_type(&node.metadata, false, name)
         {
-            return Some(solved);
+            return Some(Cow::Owned(solved));
         }
         return Some(ty);
     }
     // Dynamic port declarations are trusted only from the registry descriptor, not per-node
     // graph metadata (which may come from untrusted UI/clients).
-    crate::metadata::descriptor_dynamic_port_type(desc, is_input).map(TypeExpr::Opaque)
+    crate::metadata::descriptor_dynamic_port_type(desc, is_input)
+        .map(|key| Cow::Owned(TypeExpr::Opaque(key)))
 }
 
-pub(super) fn port_schema(port: &PortDecl) -> TypeExpr {
-    port.schema
-        .clone()
-        .unwrap_or_else(|| TypeExpr::Opaque(port.type_key.to_string()))
+pub(super) fn port_schema(port: &PortDecl) -> Cow<'_, TypeExpr> {
+    match &port.schema {
+        Some(schema) => Cow::Borrowed(schema),
+        None => Cow::Owned(TypeExpr::Opaque(port.type_key.to_string())),
+    }
 }
 
-pub(super) fn input_ty_for(desc: &NodeDecl, name: &str) -> Option<TypeExpr> {
+pub(super) fn input_ty_for<'a>(desc: &'a NodeDecl, name: &str) -> Option<Cow<'a, TypeExpr>> {
     if let Some(port) = desc
         .inputs
         .iter()
@@ -61,10 +64,9 @@ pub(super) fn input_ty_for(desc: &NodeDecl, name: &str) -> Option<TypeExpr> {
         name.strip_prefix(&spec.prefix)
             .and_then(|rest| rest.parse::<u32>().ok())
             .filter(|index| *index >= spec.start)
-            .map(|_| {
-                spec.schema
-                    .clone()
-                    .unwrap_or_else(|| TypeExpr::Opaque(spec.type_key.to_string()))
+            .map(|_| match &spec.schema {
+                Some(schema) => Cow::Borrowed(schema),
+                None => Cow::Owned(TypeExpr::Opaque(spec.type_key.to_string())),
             })
     })
 }

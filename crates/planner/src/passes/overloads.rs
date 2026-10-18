@@ -1,3 +1,4 @@
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -94,11 +95,10 @@ pub(super) fn resolve_node_overloads(
                     valid = false;
                     break;
                 };
-                let Some(to_ty) = overload
-                    .inputs
-                    .get(&edge.to.port)
-                    .cloned()
-                    .or_else(|| port_type(&node, desc, &edge.to.port, true))
+                let Some(to_ty) =
+                    overload.inputs.get(&edge.to.port).cloned().or_else(|| {
+                        port_type(&node, desc, &edge.to.port, true).map(Cow::into_owned)
+                    })
                 else {
                     valid = false;
                     break;
@@ -124,7 +124,7 @@ pub(super) fn resolve_node_overloads(
                     port: edge.to.port.clone(),
                     from_node: from_node.id.0.clone(),
                     from_port: edge.from.port.clone(),
-                    from_type: from_ty,
+                    from_type: from_ty.into_owned(),
                     to_type: to_ty,
                     resolution_kind: resolved.resolution_kind,
                     adapter_mode: resolved.adapter_mode,

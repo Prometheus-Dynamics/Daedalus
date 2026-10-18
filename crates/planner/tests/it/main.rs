@@ -4,5 +4,6 @@
 mod adapter_routing_scale;
 mod graph_document;
 mod graph_document_schema;
+mod malformed_declarations;
 mod node_execution_kind;
 mod optional_inputs;

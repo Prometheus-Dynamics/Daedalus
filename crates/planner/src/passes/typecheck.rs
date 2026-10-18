@@ -1,5 +1,6 @@
 //! Port type checking and diagnostic generation for planner graphs.
 
+use alloc::borrow::Cow;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -331,8 +332,8 @@ pub(super) fn typecheck(graph: &mut Graph, catalog: &PlannerCatalog, diags: &mut
         };
 
         let conflict = match (from_term, to_term) {
-            (Some(var), None) => dsu.bind(var, to_ty.clone()).err(),
-            (None, Some(var)) => dsu.bind(var, from_ty.clone()).err(),
+            (Some(var), None) => dsu.bind(var, to_ty.into_owned()).err(),
+            (None, Some(var)) => dsu.bind(var, from_ty.clone().into_owned()).err(),
             (Some(a), Some(b)) => dsu.union(a, b).err(),
             (None, None) => None,
         };
@@ -419,7 +420,7 @@ pub(super) fn check_const_inputs(
             continue;
         };
         for (port, value) in &node.const_inputs {
-            let scalar = match port_type(node, desc, port, true) {
+            let scalar = match port_type(node, desc, port, true).map(Cow::into_owned) {
                 Some(TypeExpr::Scalar(scalar)) => scalar,
                 Some(TypeExpr::Optional(inner)) if !matches!(value, Value::Unit) => match *inner {
                     TypeExpr::Scalar(scalar) => scalar,

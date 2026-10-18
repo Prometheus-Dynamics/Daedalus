@@ -195,6 +195,34 @@ pub fn set_host_input_policy(
     previous
 }
 
+/// The resolved type of dynamic port `port` in a node's metadata. Decodes only that port's entry,
+/// and gives what `DynamicPortMetadata::from_node_metadata(metadata).resolved_type(is_input,
+/// port)` gives: the last well-formed string entry for the port wins, and an entry whose type
+/// JSON does not parse is dropped.
+pub fn dynamic_port_type(
+    metadata: &BTreeMap<String, Value>,
+    is_input: bool,
+    port: &str,
+) -> Option<TypeExpr> {
+    let key = if is_input {
+        DYNAMIC_INPUT_TYPES_KEY
+    } else {
+        DYNAMIC_OUTPUT_TYPES_KEY
+    };
+    let Some(Value::Map(entries)) = metadata.get(key) else {
+        return None;
+    };
+    let port = normalize_port(port);
+    entries
+        .iter()
+        .filter_map(|(entry_key, entry_value)| {
+            Some((normalize_port(entry_key.as_str()?), entry_value.as_str()?))
+        })
+        .filter(|(entry_port, _)| *entry_port == port)
+        .last()
+        .and_then(|(_, json)| serde_json::from_str::<TypeExpr>(json).ok())
+}
+
 pub fn descriptor_dynamic_port_type(desc: &NodeDecl, is_input: bool) -> Option<String> {
     descriptor_metadata_string(
         desc,
@@ -470,6 +498,44 @@ mod tests {
 
         metadata.insert(HOST_BRIDGE_META_KEY.to_string(), Value::Bool(true));
         assert!(is_host_bridge_metadata(&metadata));
+    }
+
+    #[test]
+    fn dynamic_port_type_matches_the_full_decode() {
+        let json = |name: &str| serde_json::to_string(&TypeExpr::Opaque(name.to_string())).unwrap();
+        let mut metadata = BTreeMap::new();
+        metadata.insert(
+            DYNAMIC_INPUT_TYPES_KEY.to_string(),
+            Value::Map(vec![
+                (
+                    Value::String("Frame".into()),
+                    Value::String(json("old").into()),
+                ),
+                (
+                    Value::String("FRAME".into()),
+                    Value::String(json("new").into()),
+                ),
+                (
+                    Value::String("bad".into()),
+                    Value::String("not json".into()),
+                ),
+                (Value::String("ok".into()), Value::String(json("ok").into())),
+                (Value::Int(1), Value::String(json("skipped").into())),
+            ]),
+        );
+        let full = DynamicPortMetadata::from_node_metadata(&metadata);
+        for port in ["frame", "FRAME", "Frame", "bad", "ok", "missing"] {
+            assert_eq!(
+                dynamic_port_type(&metadata, true, port),
+                full.resolved_type(true, port),
+                "port {port}"
+            );
+        }
+        assert_eq!(
+            dynamic_port_type(&metadata, true, "frame"),
+            Some(TypeExpr::Opaque("new".to_string()))
+        );
+        assert_eq!(dynamic_port_type(&metadata, false, "frame"), None);
     }
 }
 

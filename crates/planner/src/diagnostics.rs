@@ -28,6 +28,10 @@ pub enum DiagnosticCode {
     ScheduleConflict,
     AccessViolation,
     LintWarning,
+    /// A node declaration's metadata entry is not valid JSON, so the planner cannot read it.
+    InvalidDescriptorMetadata,
+    /// A port declaration's constant input is not valid JSON, so the constant is not applied.
+    InvalidConstInput,
 }
 
 /// Planner diagnostic entry.

@@ -420,9 +420,16 @@ impl PortDecl {
     }
 
     pub fn const_value(mut self, value: daedalus_data::model::Value) -> Self {
-        self.const_value_json = serde_json::to_string(&value).ok();
+        self.const_value_json = Some(value_json(&value));
         self
     }
+}
+
+/// The JSON a declaration stores for `value`. A value JSON cannot encode (a map with non-string
+/// keys) is stored as its error text instead: that is not JSON, so the planner reports the entry
+/// as malformed rather than the declaration dropping it.
+fn value_json(value: &daedalus_data::model::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|err| format!("unserializable value: {err}"))
 }
 
 pub const NODE_EXECUTION_KIND_META_KEY: &str = "daedalus.node.execution";
@@ -642,9 +649,7 @@ impl NodeDecl {
     }
 
     pub fn metadata(mut self, key: impl Into<String>, value: daedalus_data::model::Value) -> Self {
-        if let Ok(json) = serde_json::to_string(&value) {
-            self.metadata_json.insert(key.into(), json);
-        }
+        self.metadata_json.insert(key.into(), value_json(&value));
         self
     }
 

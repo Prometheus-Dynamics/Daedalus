@@ -80,8 +80,8 @@ pub(super) fn convert(
                 from_port: edge.from.port.clone(),
                 to_node: to_node.id.0.clone(),
                 to_port: edge.to.port.clone(),
-                from_type: out_ty,
-                to_type: in_ty,
+                from_type: out_ty.into_owned(),
+                to_type: in_ty.into_owned(),
                 target_access,
                 target_exclusive,
                 target_residency,
@@ -102,7 +102,7 @@ pub(super) fn convert(
         } else {
             feats.join(",")
         };
-        let numeric_hint = match (&out_ty, &in_ty) {
+        let numeric_hint = match (&*out_ty, &*in_ty) {
             (TypeExpr::Scalar(from), TypeExpr::Scalar(to))
                 if from.is_numeric() && to.is_numeric() =>
             {
@@ -140,8 +140,8 @@ pub(super) fn convert(
             from_port: edge.from.port.clone(),
             to_node: to_node.id.0.clone(),
             to_port: edge.to.port.clone(),
-            from_type: out_ty,
-            to_type: in_ty,
+            from_type: out_ty.into_owned(),
+            to_type: in_ty.into_owned(),
             target_access,
             target_exclusive,
             target_residency,
