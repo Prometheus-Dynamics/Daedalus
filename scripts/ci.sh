@@ -113,6 +113,7 @@ cmd_test() {
   step "Running tests"
   cargo test --workspace --all-targets --features "$CI_FEATURES"
   cargo test -p daedalus-rs --features "$CI_FEATURES,dylib-plugins"
+  cargo test -p daedalus-daemon --features tcp
 }
 
 cmd_macro_ui() {
