@@ -240,9 +240,21 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   runtime, node and host allocations per frame and identical expanded edges.
   `FrameBenchRun::instructions_per_frame` (user-space instructions through `perf_event_open`,
   `InstructionCounter`).
+- **`daedalus-gpu` async texture transfer.** `GpuAsyncBackend::upload_texture_async` and
+  `read_texture_async` (wgpu backend) move texture upload and readback off the calling thread,
+  alongside `upload_buffer`/`read_buffer`; `GpuState::read_async` reads a state value without
+  blocking. `ShaderRunOutput::into_texture_rgba8` returns the RGBA8 image without cloning the bytes.
 
 ### Fixed
 
+- **`daedalus-gpu` readback and throttling waits.** Sync shader readbacks issue every map before a
+  single GPU wait (N bindings cost one round trip, not N). Submission throttling waits on the oldest
+  submission directly instead of adding a 5 ms timed poll to each throttle event. Sync and async
+  texture readback copy rows straight from the mapped slice, and `read_texture` uses the staging
+  pool.
+- **`daedalus-gpu` buffer pools no longer over-reuse.** Temp and staging pools reuse a buffer only
+  when its allocation is between 1x and 2x the request, and readbacks map only the bytes they need.
+  The dmabuf import caches Vulkan format and modifier queries per device.
 - **The first parallel frame allocated and spawned threads.** The worker pool was created lazily
   on the first parallel run, and only with `executor-pool` was it created when the graph was
   configured. Under `Adaptive`, which switches modes on measured timings, that first run could
