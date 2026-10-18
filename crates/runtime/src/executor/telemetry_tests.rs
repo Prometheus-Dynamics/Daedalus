@@ -360,7 +360,6 @@ fn ffi_telemetry_report_json_keeps_stable_sections() {
                     "backend_kind": "c_cpp",
                     "runner_starts": 0,
                     "runner_reuses": 0,
-                    "runner_restarts": 0,
                     "runner_failures": 0,
                     "runner_not_ready": 0,
                     "runner_shutdowns": 0,

@@ -195,6 +195,10 @@ pub use executor::{
     OwnershipReport, ProfileLevel, Profiler, ResourceMetrics, TelemetryReport,
     TelemetryReportFilter, estimate_payload_bytes, register_runtime_data_size_inspector,
 };
+pub use executor::{
+    NODE_PRIORITY_META_KEY, NODE_RECOVERY_META_KEY, NodeRecovery, RecoveryTelemetry,
+    UnknownNodeError,
+};
 pub use fanin::FanIn;
 pub use handles::{
     CapabilityId, FeatureFlag, HostAlias, NodeAlias, NodeHandle, NodeHandleId, PortHandle, PortId,
@@ -228,7 +232,7 @@ pub use state::{
 pub use state_error::StateError;
 pub use stream::{
     DEFAULT_STREAM_IDLE_SLEEP, GraphInput, GraphOutput, InputStats, OutputStats,
-    OutputSubscription, SharedStreamGraph, StreamExecutionMode, StreamGraph,
+    OutputSubscription, SharedStreamGraph, StreamErrorPolicy, StreamExecutionMode, StreamGraph,
     StreamGraphDiagnostics, StreamGraphState, StreamTelemetrySummary, StreamWorkerConfig,
     StreamWorkerState,
 };

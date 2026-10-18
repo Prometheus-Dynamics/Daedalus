@@ -129,6 +129,8 @@ impl ExecutorCore {
         };
         core.refresh_contexts();
         core.refresh_io_envs();
+        let keys = core.node_ids.clone();
+        core.run_config.policies.resolve(&init.nodes, &keys);
         core
     }
 

@@ -602,6 +602,64 @@ shows a host frame type with a provider feeding `FrameView` and `ForeignRef` nod
 [`examples/plugins/foreign_consumer`](../examples/plugins/foreign_consumer/src/lib.rs) a plugin
 built separately from the type it reads.
 
+## Failure Recovery And Scheduling Priority
+
+A failing node fails the run by default (`NodeRecovery::Fail` under fail-fast). A node that can
+fail transiently, such as a camera read, a network call or a decoder fed a corrupt frame, can
+declare how the executor should recover, through node metadata in a declaration or a graph:
+
+```rust
+use daedalus::runtime::{NODE_PRIORITY_META_KEY, NODE_RECOVERY_META_KEY};
+
+let decl = NodeDecl::new("camera.read")
+    .metadata(NODE_RECOVERY_META_KEY, Value::String("retry:3:5".into()))
+    .metadata(NODE_PRIORITY_META_KEY, Value::Int(10));
+```
+
+or on the executor, graph-wide or per node (a node id, or an instance key such as `id@label`):
+
+```rust
+let exec = OwnedExecutor::new(plan, handler)
+    .with_recovery(NodeRecovery::SkipFrame)          // every node without its own policy
+    .with_node_recovery("decode", NodeRecovery::Restart)
+    .with_node_recovery("camera.read", NodeRecovery::Retry { max: 3, backoff: Duration::from_millis(5) })
+    .with_node_priority("pose", 10);
+```
+
+Builder overrides win over metadata; `try_set_node_recovery` / `try_set_node_priority` report an
+unknown node instead of panicking. `EngineConfig::with_recovery` sets the graph-wide policy for
+engine-built executors.
+
+| Policy (`daedalus.node.recovery`) | On failure |
+| --- | --- |
+| `Fail` (`"fail"`, default) | Fails the run under fail-fast; otherwise recorded and the run continues. Panics unwind. |
+| `SkipFrame` (`"skip_frame"`) | The node's outputs are dropped this tick; nodes that needed them are not ready. The run succeeds. |
+| `Retry { max, backoff }` (`"retry:<max>"`, `"retry:<max>:<backoff_ms>"`) | The handler runs again on the same inputs up to `max` times, sleeping `backoff` first (`std` only). Exhausted retries are handled as `Fail`; flush and publish errors are not retried but skipped. |
+| `Restart` (`"restart"`) | The node's typed state (`#[node(state(..))]`), managed resources and custom metrics are dropped, then the frame is skipped: the next tick starts the node fresh. |
+
+What a policy means for the handler:
+
+- Under any policy other than `Fail` a handler panic is caught (with `std`) and handled as a
+  `NodeError::Handler("handler panicked: ..")`.
+- `Retry` keeps a shared copy of the node's inputs for the next attempt, so a handler that takes
+  an input by value sees it shared rather than unique, and a copy-on-write payload it mutates is
+  copied. Return errors before pushing outputs: an attempt's pushes are discarded only when it
+  fails.
+- A handler that keeps state across ticks should set it so that `Restart` (dropping it) is a
+  valid fresh start.
+- Policies apply to scheduled runs (`run*`, `run_*_in_place`, stream graphs, engine host graphs).
+  Direct host routes (`run_direct_host_*`) return the error to their caller.
+
+Every failure lands in `ExecutionTelemetry::errors`; the recoveries taken are counted in
+`ExecutionTelemetry::recovery` (see "Node Recovery" in
+[runtime-diagnostics.md](runtime-diagnostics.md)).
+
+`daedalus.node.priority` (an integer, default 0) orders parallel work: when more segments are
+ready than workers are free, the segment holding the highest-priority node starts first (FIFO
+among equals). It does not change serial order, which follows the schedule, and it never runs a
+segment before its inputs are ready. Give priority to the latency-critical branch of a fan-out
+(the pose estimate a controller waits on) over preview or logging branches.
+
 ## Nodes And Profiling
 
 Prefer several small nodes (or an embedded graph/node-group) over a single "mega node" that

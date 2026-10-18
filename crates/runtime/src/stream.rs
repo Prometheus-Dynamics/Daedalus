@@ -29,11 +29,18 @@ pub(super) const STREAM_NO_PROGRESS_WARNING: &str =
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StreamWorkerConfig {
     pub idle_sleep: Duration,
+    /// What the worker does when a tick fails (an error no node recovery policy handled).
+    pub on_error: StreamErrorPolicy,
 }
 
 impl StreamWorkerConfig {
     pub fn with_idle_sleep(mut self, idle_sleep: Duration) -> Self {
         self.idle_sleep = normalize_idle_sleep(idle_sleep);
+        self
+    }
+
+    pub fn with_error_policy(mut self, on_error: StreamErrorPolicy) -> Self {
+        self.on_error = on_error;
         self
     }
 }
@@ -42,8 +49,25 @@ impl Default for StreamWorkerConfig {
     fn default() -> Self {
         Self {
             idle_sleep: DEFAULT_STREAM_IDLE_SLEEP,
+            on_error: StreamErrorPolicy::default(),
         }
     }
+}
+
+/// What a continuous stream worker does with a failed tick. Node-level failures are handled
+/// first by each node's [`NodeRecovery`](crate::executor::NodeRecovery); this applies to the
+/// errors that still fail the tick (under [`NodeRecovery::Fail`](crate::executor::NodeRecovery::Fail)
+/// with fail-fast, exhausted retries, GPU or input errors).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum StreamErrorPolicy {
+    /// Record the error and stop the worker (the default).
+    #[default]
+    Stop,
+    /// Record the error, drop the failed tick's in-flight edge data and keep running. A
+    /// handler panic is caught and handled the same way.
+    Continue,
 }
 
 fn normalize_idle_sleep(idle_sleep: Duration) -> Duration {
@@ -310,6 +334,14 @@ impl<H: NodeHandler> StreamGraph<H> {
     }
 
     /// The clock executions are timed with.
+    /// Configure the stream's executor, e.g. node recovery
+    /// ([`OwnedExecutor::with_recovery`], [`OwnedExecutor::with_node_recovery`]), blocking
+    /// backpressure or fail-fast.
+    pub fn map_executor(mut self, f: impl FnOnce(OwnedExecutor<H>) -> OwnedExecutor<H>) -> Self {
+        self.executor = self.executor.take().map(f);
+        self
+    }
+
     pub fn clock(&self) -> &Clock {
         &self.clock
     }

@@ -50,6 +50,10 @@ pub struct ExecutionTelemetry {
     pub gpu_segments: usize,
     pub gpu_fallbacks: usize,
     pub backpressure_events: usize,
+    /// Node runs deferred to a later tick because a blocking output queue was full
+    /// (`with_blocking_backpressure`).
+    #[serde(default)]
+    pub backpressure_deferrals: usize,
     pub warnings: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<NodeFailure>,
@@ -75,6 +79,9 @@ pub struct ExecutionTelemetry {
     pub demand: crate::plan::DemandTelemetry,
     #[serde(default, skip_serializing_if = "FfiTelemetryReport::is_empty")]
     pub ffi: FfiTelemetryReport,
+    /// Node failures recovered under a [`NodeRecovery`](super::NodeRecovery) policy.
+    #[serde(default, skip_serializing_if = "super::RecoveryTelemetry::is_empty")]
+    pub recovery: super::RecoveryTelemetry,
     /// The executor's clock, which lifecycle timestamps and edge timings read.
     #[serde(skip)]
     clock: Clock,
@@ -173,6 +180,8 @@ impl ExecutionTelemetry {
             gpu_segments: self.gpu_segments,
             gpu_fallbacks: self.gpu_fallbacks,
             backpressure_events: self.backpressure_events,
+            backpressure_deferrals: self.backpressure_deferrals,
+            recovery: self.recovery,
             node_timing: self.node_metrics.to_btree_map(),
             edge_timing: self.edge_metrics.clone(),
             transport: self.edge_metrics.clone(),
@@ -195,6 +204,8 @@ impl ExecutionTelemetry {
         self.gpu_segments = 0;
         self.gpu_fallbacks = 0;
         self.backpressure_events = 0;
+        self.backpressure_deferrals = 0;
+        self.recovery = super::RecoveryTelemetry::default();
         self.warnings.clear();
         self.errors.clear();
         self.graph_duration = Duration::default();
@@ -229,6 +240,7 @@ impl ExecutionTelemetry {
         self.gpu_segments += other.gpu_segments;
         self.gpu_fallbacks += other.gpu_fallbacks;
         self.backpressure_events += other.backpressure_events;
+        self.backpressure_deferrals += other.backpressure_deferrals;
         self.warnings.extend(other.warnings);
         self.errors.extend(other.errors);
         self.graph_duration = self.graph_duration.max(other.graph_duration);
@@ -251,6 +263,7 @@ impl ExecutionTelemetry {
         }
         self.data_lifecycle.extend(other.data_lifecycle);
         self.ffi.merge(other.ffi);
+        self.recovery.merge(other.recovery);
     }
 
     pub fn record_ffi(&mut self, ffi: FfiTelemetryReport) {

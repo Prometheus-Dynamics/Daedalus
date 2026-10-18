@@ -3,7 +3,7 @@
 use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::{Condvar, Mutex};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};
 use std::thread::{self, JoinHandle};
@@ -11,8 +11,8 @@ use std::thread::{self, JoinHandle};
 use thiserror::Error;
 
 use super::{
-    STREAM_NO_PROGRESS_WARNING, SharedStreamGraph, StreamGraph, StreamGraphState,
-    StreamWorkerConfig, normalize_idle_sleep,
+    STREAM_NO_PROGRESS_WARNING, SharedStreamGraph, StreamErrorPolicy, StreamGraph,
+    StreamGraphState, StreamWorkerConfig, normalize_idle_sleep,
 };
 use crate::executor::NodeHandler;
 use crate::host_bridge::HostBridgeHandle;
@@ -24,6 +24,8 @@ pub struct StreamWorkerDiagnostics {
     pub shutdown_pending: bool,
     pub stop_requested_elapsed: Option<Duration>,
     pub last_error: Option<String>,
+    /// Ticks that failed; under [`StreamErrorPolicy::Continue`] the worker kept running.
+    pub tick_errors: u64,
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
@@ -39,6 +41,7 @@ pub struct StreamGraphWorker {
     /// The graph's clock.
     clock: Clock,
     last_error: Arc<Mutex<Option<String>>>,
+    tick_errors: Arc<AtomicU64>,
     done: Arc<WorkerDone>,
     wake: HostBridgeHandle,
     handle: Option<JoinHandle<()>>,
@@ -158,6 +161,7 @@ impl StreamGraphWorker {
             shutdown_pending: stop_requested && !worker_finished,
             stop_requested_elapsed,
             last_error: self.last_error(),
+            tick_errors: self.tick_errors.load(Ordering::Relaxed),
         }
     }
 }
@@ -195,9 +199,7 @@ where
     ) -> StreamGraphWorker {
         Self::spawn_continuous_with_config(
             graph,
-            StreamWorkerConfig {
-                idle_sleep: normalize_idle_sleep(idle_sleep),
-            },
+            StreamWorkerConfig::default().with_idle_sleep(idle_sleep),
         )
     }
 
@@ -208,6 +210,9 @@ where
         config: StreamWorkerConfig,
     ) -> StreamGraphWorker {
         let idle_sleep = normalize_idle_sleep(config.idle_sleep);
+        let on_error = config.on_error;
+        let tick_errors = Arc::new(AtomicU64::new(0));
+        let worker_tick_errors = tick_errors.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let stop_requested_at = Arc::new(Mutex::new(None));
@@ -246,7 +251,7 @@ where
                     }
                 };
                 if let Some(mut executor) = executor {
-                    let result = executor.run_in_place();
+                    let result = run_tick(&mut executor, on_error);
                     let finished_at = worker_clock.now();
                     let mut guard = graph.lock();
                     if let Some(started) = guard.current_execution_started_at.take() {
@@ -299,7 +304,10 @@ where
                             );
                             *worker_error.lock() = Some(error.clone());
                             guard.last_error = Some(error);
-                            break;
+                            worker_tick_errors.fetch_add(1, Ordering::Relaxed);
+                            if on_error == StreamErrorPolicy::Stop {
+                                break;
+                            }
                         }
                     }
                 }
@@ -320,9 +328,29 @@ where
             stop_requested_at,
             clock,
             last_error,
+            tick_errors,
             done,
             wake,
             handle: Some(handle),
         }
     }
+}
+
+/// One tick. Under [`StreamErrorPolicy::Continue`] a panic is caught and the executor's edge
+/// storage reset, so the next tick starts clean.
+fn run_tick<H: NodeHandler>(
+    executor: &mut crate::executor::OwnedExecutor<H>,
+    on_error: StreamErrorPolicy,
+) -> Result<crate::executor::ExecutionTelemetry, crate::executor::ExecuteError> {
+    if on_error == StreamErrorPolicy::Stop {
+        return executor.run_in_place();
+    }
+    std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| executor.run_in_place()))
+        .unwrap_or_else(|panic| {
+            executor.reset();
+            Err(crate::executor::ExecuteError::HandlerPanicked {
+                node: "stream_tick".into(),
+                message: crate::executor::panic_message(&*panic),
+            })
+        })
 }

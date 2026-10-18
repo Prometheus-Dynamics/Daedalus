@@ -90,6 +90,18 @@ impl ExecutionTelemetry {
             self.errors.len(),
             self.warnings.len()
         );
+        if self.backpressure_deferrals > 0 || !self.recovery.is_empty() {
+            let _ = write!(
+                out,
+                "\n  deferrals={} retries={} recovered_retries={} skipped_frames={} restarts={} caught_panics={}",
+                self.backpressure_deferrals,
+                self.recovery.retries,
+                self.recovery.recovered_retries,
+                self.recovery.skipped_frames,
+                self.recovery.restarts,
+                self.recovery.caught_panics
+            );
+        }
         if !self.demand.is_empty() {
             let _ = write!(
                 out,

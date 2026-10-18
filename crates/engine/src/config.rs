@@ -11,8 +11,8 @@ use daedalus_core::platform::Clock;
 #[cfg(all(feature = "config-env", feature = "std"))]
 use daedalus_runtime::ENV_RUNTIME_POOL_SIZE;
 use daedalus_runtime::{
-    BackpressureStrategy, HostBridgeConfig, MetricsLevel, RuntimeDebugConfig, RuntimeEdgePolicy,
-    StreamWorkerConfig,
+    BackpressureStrategy, HostBridgeConfig, MetricsLevel, NodeRecovery, RuntimeDebugConfig,
+    RuntimeEdgePolicy, StreamErrorPolicy, StreamWorkerConfig,
 };
 use daedalus_runtime::{
     DEFAULT_HOST_BRIDGE_EVENT_LIMIT, DEFAULT_HOST_BRIDGE_EVENT_RECORDING,
@@ -122,6 +122,17 @@ pub struct RuntimeSection {
     /// collect failures in `ExecutionTelemetry.errors`.
     #[cfg_attr(feature = "config-env", serde(default = "default_fail_fast"))]
     pub fail_fast: bool,
+    /// Graph-wide node failure recovery (default [`NodeRecovery::Fail`]); nodes override it with
+    /// `daedalus.node.recovery` metadata.
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub recovery: NodeRecovery,
+    /// Defer producers whose bounded output queue is full instead of overflowing it
+    /// (`Executor::with_blocking_backpressure`).
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub blocking_backpressure: bool,
+    /// What continuous stream workers do with a failed tick (default: stop).
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub stream_error_policy: StreamErrorPolicy,
     /// Demand-driven execution: compute only the subgraph needed for the selected sinks.
     ///
     /// This is useful when a slow preview branch would otherwise drag down unrelated outputs.
@@ -195,6 +206,9 @@ impl Default for RuntimeSection {
             host_event_limit: default_host_event_limit(),
             frame_overhead_window: None,
             fail_fast: default_fail_fast(),
+            recovery: NodeRecovery::default(),
+            blocking_backpressure: false,
+            stream_error_policy: StreamErrorPolicy::default(),
             demand_driven: true,
             demand_sinks: Vec::new(),
             pool_size: None,
@@ -218,9 +232,9 @@ impl RuntimeSection {
     }
 
     pub fn stream_worker_config(&self) -> StreamWorkerConfig {
-        StreamWorkerConfig {
-            idle_sleep: self.stream_idle_sleep,
-        }
+        StreamWorkerConfig::default()
+            .with_idle_sleep(self.stream_idle_sleep)
+            .with_error_policy(self.stream_error_policy)
     }
 }
 
@@ -351,6 +365,22 @@ impl EngineConfig {
 
     pub fn with_fail_fast(mut self, fail_fast: bool) -> Self {
         self.runtime.fail_fast = fail_fast;
+        self
+    }
+
+    /// Graph-wide node failure recovery ([`RuntimeSection::recovery`]).
+    pub fn with_recovery(mut self, recovery: NodeRecovery) -> Self {
+        self.runtime.recovery = recovery;
+        self
+    }
+
+    pub fn with_blocking_backpressure(mut self, enabled: bool) -> Self {
+        self.runtime.blocking_backpressure = enabled;
+        self
+    }
+
+    pub fn with_stream_error_policy(mut self, policy: StreamErrorPolicy) -> Self {
+        self.runtime.stream_error_policy = policy;
         self
     }
 

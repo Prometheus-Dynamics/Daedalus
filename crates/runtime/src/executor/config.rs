@@ -9,6 +9,8 @@ pub(crate) struct ExecutorRunConfig {
     pub(crate) active_direct_edges: Option<Arc<Vec<bool>>>,
     pub(crate) selected_host_output_ports: Option<Arc<HashSet<String>>>,
     pub(crate) fail_fast: bool,
+    /// Per-node recovery, scheduling priority and blocking edges (`node_policy`).
+    pub(crate) policies: super::NodePolicies,
     pub(crate) metrics_level: MetricsLevel,
     pub(crate) debug_config: crate::config::RuntimeDebugConfig,
     pub(crate) pool_size: Option<usize>,
@@ -25,6 +27,7 @@ impl Default for ExecutorRunConfig {
             active_direct_edges: None,
             selected_host_output_ports: None,
             fail_fast: true,
+            policies: super::NodePolicies::default(),
             metrics_level: MetricsLevel::default(),
             debug_config,
             pool_size: debug_config.pool_size,

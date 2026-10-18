@@ -13,6 +13,7 @@ mod order_property;
 mod parallel_invariants;
 mod plugin_system;
 mod policies;
+mod resilience;
 mod runtime_plan;
 mod runtime_plan_golden;
 mod runtime_policy_application;

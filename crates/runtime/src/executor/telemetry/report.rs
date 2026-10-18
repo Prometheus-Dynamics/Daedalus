@@ -35,6 +35,13 @@ pub struct TelemetryReport {
     pub gpu_segments: usize,
     pub gpu_fallbacks: usize,
     pub backpressure_events: usize,
+    #[serde(default)]
+    pub backpressure_deferrals: usize,
+    #[serde(
+        default,
+        skip_serializing_if = "crate::executor::RecoveryTelemetry::is_empty"
+    )]
+    pub recovery: crate::executor::RecoveryTelemetry,
     pub node_timing: BTreeMap<usize, NodeMetrics>,
     pub edge_timing: BTreeMap<usize, EdgeMetrics>,
     pub transport: BTreeMap<usize, EdgeMetrics>,

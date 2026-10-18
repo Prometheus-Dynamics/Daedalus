@@ -101,8 +101,6 @@ pub struct FfiBackendTelemetry {
     #[serde(default)]
     pub runner_reuses: u64,
     #[serde(default)]
-    pub runner_restarts: u64,
-    #[serde(default)]
     pub runner_failures: u64,
     #[serde(default)]
     pub runner_not_ready: u64,
@@ -283,7 +281,6 @@ impl FfiBackendTelemetry {
         self.node_id = self.node_id.take().or(other.node_id);
         self.runner_starts = self.runner_starts.saturating_add(other.runner_starts);
         self.runner_reuses = self.runner_reuses.saturating_add(other.runner_reuses);
-        self.runner_restarts = self.runner_restarts.saturating_add(other.runner_restarts);
         self.runner_failures = self.runner_failures.saturating_add(other.runner_failures);
         self.runner_not_ready = self.runner_not_ready.saturating_add(other.runner_not_ready);
         self.runner_shutdowns = self.runner_shutdowns.saturating_add(other.runner_shutdowns);

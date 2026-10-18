@@ -273,6 +273,17 @@ impl StateStore {
         }
     }
 
+    /// Reset node `node_id`: drop its typed state (keeping the slot executors hold), stop and
+    /// release its resources and clear its custom metrics, so its next call starts fresh
+    /// ([`NodeRecovery::Restart`](crate::executor::NodeRecovery::Restart)).
+    pub fn reset_node(&self, node_id: &str) {
+        if let Some(slot) = self.node_state.read().get(node_id) {
+            slot.clear();
+        }
+        self.release_node_resources(node_id);
+        self.clear_node_custom_metrics(node_id);
+    }
+
     pub fn record_node_resource_usage(
         &self,
         node_id: &str,

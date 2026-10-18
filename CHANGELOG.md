@@ -28,6 +28,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   from those encodings instead of a second serialization. The pool derives the runner key once per
   call. `BackendRunner::invoke_measured` and `invoke_batch_measured` report sent and received bytes
   (defaults estimate them without buffering).
+- **Breaking:** `FfiBackendTelemetry::runner_restarts` is removed. Nothing incremented it: the
+  FFI runner pool rejects automatic restart policies. Node restarts are counted in
+  `ExecutionTelemetry::recovery.restarts`.
+- `StreamWorkerConfig` gained an `on_error` field (build it with `StreamWorkerConfig::default()`
+  and the `with_*` setters), and `ExecutionTelemetry`/`TelemetryReport` gained
+  `backpressure_deferrals` and `recovery`.
 - **Breaking: `daedalus:frame` v2** (`FrameInterface` version 2, new vtable layout hash; v1
   plugins are refused with `PluginLibraryError::ForeignInterfaceMismatch`, and a registry
   holding one version refuses the other with `PluginError::ForeignInterfaceConflict`;
@@ -124,6 +130,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `daedalus-ffi-host` exports `InvokeWireBytes`.
 - Java SDK: `Wire` decodes base64 bytes; `uint` values above `Long.MAX_VALUE` are documented as
   the negative `long` with the same bits (print with `Long.toUnsignedString`).
+- Node failure recovery: `NodeRecovery::{Fail, SkipFrame, Retry { max, backoff }, Restart}`
+  per graph (`Executor`/`OwnedExecutor::with_recovery`, `EngineConfig::with_recovery`) or per
+  node (`with_node_recovery`, `try_set_node_recovery`, or `daedalus.node.recovery` metadata,
+  `NODE_RECOVERY_META_KEY`). `Restart` resets the node's state, resources and custom metrics
+  (`StateStore::reset_node`); recovering policies catch handler panics. Recoveries are counted
+  in `ExecutionTelemetry::recovery` (`RecoveryTelemetry`) and in the telemetry report.
+- Stream workers keep running after a failed tick with `StreamErrorPolicy::Continue`
+  (`StreamWorkerConfig::with_error_policy`, `EngineConfig::with_stream_error_policy`; default
+  `Stop` keeps the old behaviour); `StreamWorkerDiagnostics::tick_errors` counts failed ticks.
+  `StreamGraph::map_executor` configures a stream graph's executor.
+- Blocking backpressure for bounded queue edges: `with_blocking_backpressure(true)`
+  (`EngineConfig::with_blocking_backpressure`) defers a producer whose bounded output queue is
+  full to a later tick instead of dropping or erroring; `ExecutionTelemetry::backpressure_deferrals`
+  counts deferrals. See "Blocking Backpressure" in `docs/runtime-diagnostics.md`.
+- Parallel scheduling priority: `with_node_priority` / `try_set_node_priority` or
+  `daedalus.node.priority` metadata (`NODE_PRIORITY_META_KEY`) orders ready segments (highest
+  first, FIFO among equals) without allocating per frame.
+
 - **Node fusion.** Chains of single-consumer CPU nodes run as fused units: a fused edge (its
   source port feeds only it, its target port has no other producer, a direct slot without
   adapters, CPU-only non-host-bridge ends, a consumer that fires on any input and runs right after

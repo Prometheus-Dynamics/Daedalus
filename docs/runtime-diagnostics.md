@@ -34,6 +34,7 @@ Use `ExecutionTelemetry` from executor runs as the first-level runtime snapshot.
 
 - `nodes_executed`, `warnings`, and `errors` for run health.
 - `backpressure_events` and edge pressure metrics for queue pressure.
+- `backpressure_deferrals` for node runs deferred by blocking backpressure, and `recovery` for node failures recovered under a `NodeRecovery` policy.
 - node metrics and resource lifecycle metrics for expensive handlers or retained state.
 - `ffi` telemetry for package, backend, worker, payload, and adapter behavior.
 
@@ -223,6 +224,65 @@ and take per frame and returns the wall time per frame, the overhead report and 
 frame. Its crate docs show how to run your own nodes (e.g. a detector taking `FrameView<'_>`)
 through the same harness, and
 `cargo run --release -p daedalus-frame-bench --example frame_chain` prints the reference numbers.
+
+## Node Recovery
+
+Node failures follow each node's `NodeRecovery` policy (`Fail`, `SkipFrame`, `Retry`, `Restart`;
+see "Failure Recovery And Scheduling Priority" in [node-authoring.md](node-authoring.md)). A
+recovered failure leaves the run successful and is reported in its telemetry:
+
+- `ExecutionTelemetry::errors`: one `NodeFailure` per failure (node, code, message), recovered or
+  not. Successful retries leave none.
+- `ExecutionTelemetry::recovery` (`RecoveryTelemetry`): `retries` (attempts re-run),
+  `recovered_retries` (nodes a retry rescued), `skipped_frames`, `restarts`, `caught_panics`.
+  It is omitted from serialized telemetry while empty and printed in the compact summary when
+  set.
+- Tracing: `daedalus_runtime::executor` warns on every retry, skip and restart.
+
+Retries run inside the tick, so a `backoff` delays the whole tick (and, in a parallel run, the
+worker running that segment). Keep backoffs short on frame graphs, or prefer `SkipFrame` and let
+the next frame retry.
+
+### Stream workers
+
+Errors a node policy does not recover still fail the tick. A continuous worker
+(`StreamGraph::spawn_continuous_with_config`) then follows `StreamWorkerConfig::on_error`:
+
+- `StreamErrorPolicy::Stop` (default): record the error and stop the worker, as before.
+- `StreamErrorPolicy::Continue`: record the error, drop the failed tick's in-flight edge data
+  and keep ticking. Handler panics are caught and handled the same way.
+
+`StreamGraphWorker::diagnostics()` reports `tick_errors` and `last_error`;
+`StreamGraph::diagnostics()` keeps the last telemetry summary. Configure a stream graph's
+executor (recovery, blocking backpressure, fail-fast) with `StreamGraph::map_executor`, and the
+engine's with `EngineConfig::with_recovery` / `with_stream_error_policy`.
+
+## Blocking Backpressure
+
+Bounded edges overflow by their policy: drop the oldest or newest, or (`ErrorOnOverflow`)
+reject with `NodeError::BackpressureDrop`. `Executor::with_blocking_backpressure(true)`
+(`OwnedExecutor` likewise, `EngineConfig::with_blocking_backpressure`) makes them block instead,
+at tick granularity:
+
+- Before a node runs, the executor checks its bounded output queues. If one is full, the node is
+  deferred: it does not run this tick, its queued inputs stay queued, and
+  `backpressure_deferrals` counts it. Its consumer runs later in the same tick (it is downstream)
+  and drains the queue, so the producer runs on the next tick. Deferring a node also leaves its
+  own input queues full, which defers its producers in turn: pressure propagates upstream to
+  the host inputs, whose own policies then apply.
+- A fused chain is checked at its head, including the queues of every node it feeds directly,
+  so a chain is deferred whole.
+- Only edges that keep a backlog block: queue edges with a bounded capacity. Direct-slot edges
+  (latest-value handoffs) and fused edges hold at most the current tick's value and never block.
+- A single handler call that pushes more values than the queue has room for still overflows by
+  the edge's policy; blocking bounds the backlog between ticks, not within a call.
+
+Blocking never parks a thread. A tick-based executor cannot wait inside a tick for a consumer
+that runs after the producer in the same schedule: the wait would deadlock a serial run and
+stall a parallel worker. Deferring to the next tick gives the same lossless, bounded-memory
+behaviour while each tick still completes. Retained executors (`OwnedExecutor`, stream graphs)
+keep queues across ticks, so blocking matters there; `Executor::run_in_place` clears queues at
+the start of each run.
 
 ## Tracing Targets
 

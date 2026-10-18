@@ -133,6 +133,16 @@ pub(crate) fn edge_has_payload(edge_idx: usize, queues: &[EdgeStorage]) -> bool 
     }
 }
 
+/// Whether edge `edge_idx` is a bounded queue at capacity.
+pub(crate) fn edge_is_full(edge_idx: usize, queues: &[EdgeStorage]) -> bool {
+    match queues.get(edge_idx) {
+        Some(EdgeStorage::Locked { queue, .. }) => queue.lock().is_full(),
+        #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
+        Some(EdgeStorage::BoundedLf { queue, .. }) => queue.is_full(),
+        None => false,
+    }
+}
+
 pub fn pop_edge(
     edge_idx: usize,
     queues: &Arc<Vec<EdgeStorage>>,

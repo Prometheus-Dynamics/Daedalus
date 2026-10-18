@@ -120,6 +120,8 @@ impl Engine {
     ) -> Result<OwnedExecutor<H>, EngineError> {
         exec = exec
             .with_fail_fast(self.config.runtime.fail_fast)
+            .with_recovery(self.config.runtime.recovery)
+            .with_blocking_backpressure(self.config.runtime.blocking_backpressure)
             .with_metrics_level(self.config.runtime.metrics_level)
             .with_clock(self.config.runtime.clock.clone())
             .with_runtime_debug_config(self.config.runtime.debug_config);
@@ -161,6 +163,8 @@ impl Engine {
     ) -> Result<Executor<'a, H>, EngineError> {
         exec = exec
             .with_fail_fast(self.config.runtime.fail_fast)
+            .with_recovery(self.config.runtime.recovery)
+            .with_blocking_backpressure(self.config.runtime.blocking_backpressure)
             .with_metrics_level(self.config.runtime.metrics_level)
             .with_clock(self.config.runtime.clock.clone())
             .with_runtime_debug_config(self.config.runtime.debug_config);
