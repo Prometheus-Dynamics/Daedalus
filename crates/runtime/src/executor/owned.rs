@@ -6,34 +6,29 @@ use super::{
     apply_patch_to_const_inputs, build_compiled_schedule, build_executor_init, node_const_inputs,
     reset_run_storage, run_adaptive_on, run_parallel_on, serial,
 };
-use crate::plan::{BackpressureStrategy, RuntimeEdge, RuntimeNode, RuntimePlan, RuntimeSegment};
+use crate::plan::{BackpressureStrategy, RuntimeNode, RuntimePlan};
 use crate::portable::Arc;
 use crate::prelude::*;
 use crate::state::{ResourceLifecycleEvent, StateStore};
 use crate::sync::RwLock;
 use core::time::Duration;
-use daedalus_planner::{GraphPatch, NodeRef, PatchReport};
+use daedalus_planner::{GraphPatch, PatchReport};
 
 /// Owned executor that can be reused across runs without leaking the plan.
 pub struct OwnedExecutor<H: NodeHandler> {
     pub(crate) nodes: Arc<[RuntimeNode]>,
-    pub(crate) edges: Arc<Vec<RuntimeEdge>>,
-    pub(crate) edge_transports: Arc<Vec<Option<crate::plan::RuntimeEdgeTransport>>>,
+    /// The plan the executor was built from: edges, transports, segments, schedule order and GPU
+    /// entry/exit lists are read from it rather than copied.
+    pub(crate) plan: Arc<RuntimePlan>,
     pub(crate) incoming_edges: Arc<Vec<Vec<usize>>>,
     pub(crate) outgoing_edges: Arc<Vec<Vec<usize>>>,
     pub(crate) schedule: Arc<CompiledSchedule>,
-    #[cfg(feature = "gpu")]
-    pub(crate) gpu_entries: Arc<Vec<usize>>,
-    #[cfg(feature = "gpu")]
-    pub(crate) gpu_exits: Arc<Vec<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) gpu_entry_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) gpu_exit_set: Arc<HashSet<usize>>,
     #[cfg(feature = "gpu")]
     pub(crate) data_edges: Arc<HashSet<usize>>,
-    pub(crate) segments: Arc<Vec<RuntimeSegment>>,
-    pub(crate) schedule_order: Arc<Vec<NodeRef>>,
     pub(crate) const_inputs: ConstInputStore,
     pub(crate) backpressure: BackpressureStrategy,
     pub(crate) handler: Arc<H>,
@@ -53,7 +48,7 @@ impl<H: NodeHandler> ExecutorConfigTarget for OwnedExecutor<H> {
     }
 
     fn edges_len(&self) -> usize {
-        self.edges.len()
+        self.plan.edges.len()
     }
 
     fn segments_len(&self) -> usize {
@@ -76,33 +71,32 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     pub fn try_new(plan: Arc<RuntimePlan>, handler: H) -> Result<Self, ExecutorBuildError> {
         let init = build_executor_init(&plan)?;
         let core = ExecutorCore::from_init(&init, &plan.graph_metadata);
+        #[cfg(feature = "gpu")]
+        let gpu_entry_set = Arc::new(plan.gpu_entries.iter().cloned().collect());
+        #[cfg(feature = "gpu")]
+        let gpu_exit_set = Arc::new(plan.gpu_exits.iter().cloned().collect());
+        let const_inputs = Arc::new(RwLock::new(
+            plan.nodes.iter().map(node_const_inputs).collect(),
+        ));
+        let backpressure = plan.backpressure.clone();
         Ok(Self {
             nodes: init.nodes,
-            edges: Arc::new(plan.edges.clone()),
-            edge_transports: Arc::new(plan.edge_transports.clone()),
             incoming_edges: init.incoming_edges,
             outgoing_edges: init.outgoing_edges,
             schedule: init.schedule,
             #[cfg(feature = "gpu")]
-            gpu_entries: Arc::new(plan.gpu_entries.clone()),
+            gpu_entry_set,
             #[cfg(feature = "gpu")]
-            gpu_exits: Arc::new(plan.gpu_exits.clone()),
-            #[cfg(feature = "gpu")]
-            gpu_entry_set: Arc::new(plan.gpu_entries.iter().cloned().collect()),
-            #[cfg(feature = "gpu")]
-            gpu_exit_set: Arc::new(plan.gpu_exits.iter().cloned().collect()),
+            gpu_exit_set,
             #[cfg(feature = "gpu")]
             data_edges: init.data_edges,
-            segments: Arc::new(plan.segments.clone()),
-            schedule_order: Arc::new(plan.schedule_order.clone()),
-            const_inputs: Arc::new(RwLock::new(
-                plan.nodes.iter().map(node_const_inputs).collect(),
-            )),
-            backpressure: plan.backpressure.clone(),
+            const_inputs,
+            backpressure,
             handler: Arc::new(handler),
             core,
             storage_needs_reset: true,
             adaptive: AdaptiveState::default(),
+            plan,
         })
     }
 
@@ -176,7 +170,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     pub fn with_demand_sinks(mut self, sinks: Vec<crate::plan::RuntimeSink>) -> Self {
         match crate::plan::active_nodes_mask_for_sinks(
             self.nodes.as_ref(),
-            self.edges.as_slice(),
+            self.plan.edges.as_slice(),
             &sinks,
         ) {
             Ok(mask) => {
@@ -274,10 +268,10 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.schedule = Arc::new(build_compiled_schedule(
             ScheduleSource {
                 nodes: &self.nodes,
-                edges: &self.edges,
-                transports: &self.edge_transports,
-                segments: &self.segments,
-                schedule_order: &self.schedule_order,
+                edges: &self.plan.edges,
+                transports: &self.plan.edge_transports,
+                segments: &self.plan.segments,
+                schedule_order: &self.plan.schedule_order,
                 backpressure: &self.backpressure,
             },
             enabled,
@@ -356,7 +350,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.core.host_nodes = serial::resolve_host_nodes(
             &mgr,
             &self.nodes,
-            &self.edges,
+            &self.plan.edges,
             &self.schedule.host_nodes,
             &self.incoming_edges,
             &self.outgoing_edges,
@@ -387,7 +381,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
 
     fn reset_storage(&mut self) {
         reset_run_storage(
-            &self.edges,
+            &self.plan.edges,
             &self.core.queues,
             &self.core.direct_slots,
             self.core
@@ -468,23 +462,16 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     fn serial_view(&mut self) -> Executor<'_, H> {
         let Self {
             nodes,
-            edges,
-            edge_transports,
+            plan,
             incoming_edges,
             outgoing_edges,
             schedule,
-            #[cfg(feature = "gpu")]
-            gpu_entries,
-            #[cfg(feature = "gpu")]
-            gpu_exits,
             #[cfg(feature = "gpu")]
             gpu_entry_set,
             #[cfg(feature = "gpu")]
             gpu_exit_set,
             #[cfg(feature = "gpu")]
             data_edges,
-            segments,
-            schedule_order,
             const_inputs,
             backpressure,
             handler,
@@ -493,23 +480,23 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         } = self;
         Executor {
             nodes: nodes.clone(),
-            edges: edges.as_slice(),
-            edge_transports: edge_transports.as_slice(),
+            edges: plan.edges.as_slice(),
+            edge_transports: plan.edge_transports.as_slice(),
             incoming_edges: incoming_edges.clone(),
             outgoing_edges: outgoing_edges.clone(),
             schedule: schedule.clone(),
             #[cfg(feature = "gpu")]
-            gpu_entries: gpu_entries.as_slice(),
+            gpu_entries: plan.gpu_entries.as_slice(),
             #[cfg(feature = "gpu")]
-            gpu_exits: gpu_exits.as_slice(),
+            gpu_exits: plan.gpu_exits.as_slice(),
             #[cfg(feature = "gpu")]
             gpu_entry_set: gpu_entry_set.clone(),
             #[cfg(feature = "gpu")]
             gpu_exit_set: gpu_exit_set.clone(),
             #[cfg(feature = "gpu")]
             data_edges: data_edges.clone(),
-            segments: segments.as_slice(),
-            schedule_order: schedule_order.as_slice(),
+            segments: plan.segments.as_slice(),
+            schedule_order: plan.schedule_order.as_slice(),
             const_inputs: const_inputs.clone(),
             backpressure: backpressure.clone(),
             handler: handler.clone(),
@@ -522,23 +509,23 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     pub(super) fn snapshot<'a>(&'a self, direct_slot_access: DirectSlotAccess) -> Executor<'a, H> {
         Executor {
             nodes: self.nodes.clone(),
-            edges: self.edges.as_slice(),
-            edge_transports: self.edge_transports.as_slice(),
+            edges: self.plan.edges.as_slice(),
+            edge_transports: self.plan.edge_transports.as_slice(),
             incoming_edges: self.incoming_edges.clone(),
             outgoing_edges: self.outgoing_edges.clone(),
             schedule: self.schedule.clone(),
             #[cfg(feature = "gpu")]
-            gpu_entries: self.gpu_entries.as_slice(),
+            gpu_entries: self.plan.gpu_entries.as_slice(),
             #[cfg(feature = "gpu")]
-            gpu_exits: self.gpu_exits.as_slice(),
+            gpu_exits: self.plan.gpu_exits.as_slice(),
             #[cfg(feature = "gpu")]
             gpu_entry_set: self.gpu_entry_set.clone(),
             #[cfg(feature = "gpu")]
             gpu_exit_set: self.gpu_exit_set.clone(),
             #[cfg(feature = "gpu")]
             data_edges: self.data_edges.clone(),
-            segments: self.segments.as_slice(),
-            schedule_order: self.schedule_order.as_slice(),
+            segments: self.plan.segments.as_slice(),
+            schedule_order: self.plan.schedule_order.as_slice(),
             const_inputs: self.const_inputs.clone(),
             backpressure: self.backpressure.clone(),
             handler: self.handler.clone(),

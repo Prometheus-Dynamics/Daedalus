@@ -30,7 +30,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let input_edge = self.direct_host_input_edge(input_port)?;
         let output_edge = self.direct_host_output_edge(output_port)?;
         let mut direct_edges = self.core.direct_edges.to_vec();
-        direct_edges.resize(self.edges.len(), false);
+        direct_edges.resize(self.plan.edges.len(), false);
         if let Some(slot) = direct_edges.get_mut(input_edge) {
             *slot = true;
         }
@@ -66,7 +66,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             self.core.direct_slots[route.input_edge]
                 .serial()
                 .put(payload);
-        } else if let Some(edge) = self.edges.get(route.input_edge) {
+        } else if let Some(edge) = self.plan.edges.get(route.input_edge) {
             let policy = edge.policy().clone();
             let queues = self.core.queues.clone();
             let warnings_seen = self.core.warnings_seen.clone();
@@ -98,7 +98,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         }
         let mut exec = self.snapshot(DirectSlotAccess::Serial);
         exec.core.run_config.active_direct_edges = Some(route.active_direct_edges.clone());
-        let telemetry = serial::run_order(&mut exec, self.schedule_order.as_slice());
+        let telemetry = serial::run_order(&mut exec, self.plan.schedule_order.as_slice());
         if telemetry.is_err() {
             self.storage_needs_reset = true;
         }
@@ -229,8 +229,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         input_edge: usize,
         output_edge: usize,
     ) -> Option<DirectHostSingleNodeRoute> {
-        let input_edge = self.edges.get(input_edge)?;
-        let output_edge = self.edges.get(output_edge)?;
+        let input_edge = self.plan.edges.get(input_edge)?;
+        let output_edge = self.plan.edges.get(output_edge)?;
         let input_node = input_edge.to();
         let output_node = output_edge.from();
         if input_node != output_node {
@@ -255,7 +255,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let mut matched = None;
         for node_ref in self.schedule.host_nodes.iter().copied() {
             for edge_idx in self.outgoing_edges.get(node_ref.0)?.iter().copied() {
-                let edge = self.edges.get(edge_idx)?;
+                let edge = self.plan.edges.get(edge_idx)?;
                 if edge.source_port() == input_port
                     && !is_host_bridge_node(self.nodes.get(edge.to().0)?)
                     && matched.replace(edge_idx).is_some()
@@ -271,7 +271,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let mut matched = None;
         for node_ref in self.schedule.host_nodes.iter().copied() {
             for edge_idx in self.incoming_edges.get(node_ref.0)?.iter().copied() {
-                let edge = self.edges.get(edge_idx)?;
+                let edge = self.plan.edges.get(edge_idx)?;
                 if edge.target_port() == output_port
                     && !is_host_bridge_node(self.nodes.get(edge.from().0)?)
                     && matched.replace(edge_idx).is_some()

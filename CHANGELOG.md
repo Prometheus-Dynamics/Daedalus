@@ -28,6 +28,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: `OwnedExecutor` holds its `Arc<RuntimePlan>` and reads edges, edge transports,
+  segments, schedule order and GPU entry/exit lists from it, instead of deep-copying them at build.
 - Engine: `HostGraph::frame_overhead` reads edge labels built once when recording starts, and
   `last_frame_tick` no longer allocates a per-edge vector it does not return.
 - Runtime: multicam sync checks each pushed payload against a clone of the type index outside the

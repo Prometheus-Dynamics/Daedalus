@@ -370,7 +370,7 @@ impl<H: NodeHandler> NodePolicyTarget for OwnedExecutor<H> {
     }
 
     fn policy_edges(&self) -> &[RuntimeEdge] {
-        &self.edges
+        &self.plan.edges
     }
 }
 
