@@ -22,6 +22,9 @@ pub(crate) struct FrameOverheadState {
     probe: Arc<FrameProbe>,
     window: FrameOverheadWindow,
     host: HostSide,
+    /// `from.port -> to.port` per plan edge, built once: the plan and node labels of a graph
+    /// never change (a reload replaces the graph).
+    edge_labels: Arc<[String]>,
 }
 
 /// Host-side values of the run the probe holds.
@@ -73,11 +76,13 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     pub fn enable_frame_overhead(&mut self, window: usize) {
         let probe = Arc::new(FrameProbe::for_plan(self.runtime_plan()));
         let window = FrameOverheadWindow::new(window, &probe);
+        let edge_labels = self.edge_labels().into();
         self.runner.executor.set_frame_probe(Some(probe.clone()));
         self.host.set_io_timing(true);
         self.frame_overhead = Some(Box::new(FrameOverheadState {
             probe,
             window,
+            edge_labels,
             host: HostSide {
                 push_ns: 0,
                 #[cfg(feature = "alloc-probe")]
@@ -121,14 +126,15 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     /// [`Self::enable_frame_overhead`] was called. Print it with `{}` (a table) or serialize it.
     pub fn frame_overhead(&self) -> Option<FrameOverheadReport> {
         let state = self.frame_overhead.as_ref()?;
-        let labels = self.edge_labels();
         if !state.probe.has_tick() {
-            return Some(state.window.report(&labels));
+            return Some(state.window.report(&state.edge_labels));
         }
+        // The pending tick is folded in on a copy: reporting takes `&self`, and the window
+        // itself only changes when a tick commits.
         let mut window = state.window.clone();
         let take_ns = self.host.pending_take_time().as_nanos() as u64;
         window.record(|sample, edges| state.host.fill(&state.probe, false, take_ns, sample, edges));
-        Some(window.report(&labels))
+        Some(window.report(&state.edge_labels))
     }
 
     /// The most recent tick's breakdown (its take time so far included).
@@ -137,16 +143,16 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         if !state.probe.has_tick() {
             return state.window.latest().copied();
         }
+        // Per-edge samples are not returned, so none are read (an empty slice reads none).
         let mut sample = FrameTickSample::default();
-        let mut edges = vec![EdgeTickSample::default(); state.probe.edge_count()];
         let take_ns = self.host.pending_take_time().as_nanos() as u64;
         state
             .host
-            .fill(&state.probe, false, take_ns, &mut sample, &mut edges);
+            .fill(&state.probe, false, take_ns, &mut sample, &mut []);
         Some(sample)
     }
 
-    /// `from.port -> to.port` per plan edge, with node labels.
+    /// `from.port -> to.port` per plan edge, with node labels (built once per recording).
     fn edge_labels(&self) -> Vec<String> {
         let label = |idx: usize| self.node_labels.get(idx).map(String::as_str).unwrap_or("?");
         self.runtime_plan()
@@ -184,6 +190,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
             probe,
             window,
             host,
+            edge_labels: _,
         } = state;
         if probe.has_tick() {
             let take_ns = io.take.as_nanos() as u64;

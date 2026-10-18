@@ -28,6 +28,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Engine: `HostGraph::frame_overhead` reads edge labels built once when recording starts, and
+  `last_frame_tick` no longer allocates a per-edge vector it does not return.
 - Runtime: multicam sync checks each pushed payload against a clone of the type index outside the
   bridge lock, and keeps each camera ring in a `VecDeque`, so a group commit pops its oldest
   frame in O(1) instead of shifting the ring.
