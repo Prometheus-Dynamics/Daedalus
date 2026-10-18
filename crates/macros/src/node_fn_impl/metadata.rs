@@ -35,129 +35,90 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
         data_crate,
         runtime_crate,
     } = inputs;
-    let mut inserts: Vec<TokenStream> = Vec::new();
+    let mut entries: Vec<Entry> = Vec::new();
     if let Some(summary) = summary_attr {
-        inserts.push(quote! {
-            __meta.insert(
-                ::std::string::String::from("summary"),
-                #data_crate::model::Value::String(::std::borrow::Cow::from(#summary)),
-            );
-        });
+        entries.push(Entry::text("summary".into(), summary));
     }
     if let Some(description) = description_attr {
-        inserts.push(quote! {
-            __meta.insert(
-                ::std::string::String::from("description"),
-                #data_crate::model::Value::String(::std::borrow::Cow::from(#description)),
-            );
-        });
+        entries.push(Entry::text("description".into(), description));
     }
     for port in inputs {
         if let Some(desc) = &port.description {
-            let key = LitStr::new(
-                &format!("inputs.{}.description", port.name.value()),
-                Span::call_site(),
-            );
-            inserts.push(quote! {
-                __meta.insert(
-                    ::std::string::String::from(#key),
-                    #data_crate::model::Value::String(::std::borrow::Cow::from(#desc)),
-                );
-            });
+            entries.push(Entry::text(
+                format!("inputs.{}.description", port.name.value()),
+                desc,
+            ));
         }
         for (meta_key, meta_value) in &port.meta {
-            let key = LitStr::new(
-                &format!("inputs.{}.{}", port.name.value(), meta_key.value()),
-                Span::call_site(),
-            );
-            let value = lit_to_value(meta_value, data_crate);
-            inserts.push(quote! {
-                __meta.insert(
-                    ::std::string::String::from(#key),
-                    #value,
-                );
-            });
+            let key = format!("inputs.{}.{}", port.name.value(), meta_key.value());
+            entries.push(meta_entry(key, meta_value, data_crate));
         }
     }
     for (name, access) in input_access {
-        let key = LitStr::new(
-            &format!("inputs.{}.access", name.value()),
-            Span::call_site(),
-        );
-        inserts.push(quote! {
-            __meta.insert(
-                ::std::string::String::from(#key),
-                #data_crate::model::Value::String(::std::borrow::Cow::from(#access)),
-            );
-        });
+        entries.push(Entry::text(
+            format!("inputs.{}.access", name.value()),
+            access,
+        ));
     }
     for (port, _) in outputs
         .iter()
         .zip(conditional_outputs)
         .filter(|(_, conditional)| **conditional)
     {
-        let key = LitStr::new(
-            &format!("outputs.{}.conditional", port.name.value()),
-            Span::call_site(),
-        );
-        inserts.push(quote! {
+        let key = format!("outputs.{}.conditional", port.name.value());
+        entries.push(Entry::Raw(quote! {
             __meta.insert(
                 ::std::string::String::from(#key),
                 #data_crate::model::Value::Bool(true),
             );
-        });
+        }));
     }
     if let Some(fire) = fire_attr {
-        inserts.push(quote! {
+        entries.push(Entry::Raw(quote! {
             __meta.insert(
                 ::std::string::String::from(#runtime_crate::NODE_FIRE_META_KEY),
                 #data_crate::model::Value::String(::std::borrow::Cow::from(#fire)),
             );
-        });
+        }));
     }
     if shareable {
-        inserts.push(quote! {
+        entries.push(Entry::Raw(quote! {
             __meta.insert(
                 ::std::string::String::from(#runtime_crate::NODE_SHAREABLE_META_KEY),
                 #data_crate::model::Value::Bool(true),
             );
-        });
+        }));
     }
     for port in outputs {
         if let Some(desc) = &port.description {
-            let key = LitStr::new(
-                &format!("outputs.{}.description", port.name.value()),
-                Span::call_site(),
-            );
-            inserts.push(quote! {
-                __meta.insert(
-                    ::std::string::String::from(#key),
-                    #data_crate::model::Value::String(::std::borrow::Cow::from(#desc)),
-                );
-            });
+            entries.push(Entry::text(
+                format!("outputs.{}.description", port.name.value()),
+                desc,
+            ));
         }
         for (meta_key, meta_value) in &port.meta {
-            let key = LitStr::new(
-                &format!("outputs.{}.{}", port.name.value(), meta_key.value()),
-                Span::call_site(),
-            );
-            let value = lit_to_value(meta_value, data_crate);
-            inserts.push(quote! {
-                __meta.insert(
-                    ::std::string::String::from(#key),
-                    #value,
-                );
-            });
+            let key = format!("outputs.{}.{}", port.name.value(), meta_key.value());
+            entries.push(meta_entry(key, meta_value, data_crate));
         }
     }
     if let Some(fallback) = fallback_attr {
-        inserts.push(quote! {
-            __meta.insert(
-                ::std::string::String::from("fallback"),
-                #data_crate::model::Value::String(::std::borrow::Cow::from(#fallback)),
-            );
-        });
+        entries.push(Entry::text("fallback".into(), fallback));
     }
+
+    // Consecutive string entries become one static table and one loop; the typed ones keep
+    // their own statements. The order of insertion is the order of `entries`.
+    let mut inserts: Vec<TokenStream> = Vec::new();
+    let mut run: Vec<(String, LitStr)> = Vec::new();
+    for entry in entries {
+        match entry {
+            Entry::Text(key, value) => run.push((key, value)),
+            Entry::Raw(tokens) => {
+                inserts.push(text_table(std::mem::take(&mut run), data_crate));
+                inserts.push(tokens);
+            }
+        }
+    }
+    inserts.push(text_table(run, data_crate));
 
     quote! {{
         let mut __meta: ::std::collections::BTreeMap<
@@ -170,6 +131,53 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
         )*
         __meta
     }}
+}
+
+/// One metadata entry: a string, which goes into the node's static text table, or a statement.
+enum Entry {
+    Text(String, LitStr),
+    Raw(TokenStream),
+}
+
+impl Entry {
+    fn text(key: String, value: &LitStr) -> Self {
+        Self::Text(key, value.clone())
+    }
+}
+
+/// A port's metadata entry `key = value`: a string literal joins the text table, other literals
+/// are inserted as their typed values.
+fn meta_entry(key: String, value: &Lit, data_crate: &TokenStream) -> Entry {
+    match value {
+        Lit::Str(s) => Entry::text(key, s),
+        _ => {
+            let key = LitStr::new(&key, Span::call_site());
+            let value = lit_to_value(value, data_crate);
+            Entry::Raw(quote! {
+                __meta.insert(::std::string::String::from(#key), #value);
+            })
+        }
+    }
+}
+
+/// The string entries `run`, in order, as one table of `(key, value)` pairs and one loop that
+/// inserts them (nothing for an empty run).
+fn text_table(run: Vec<(String, LitStr)>, data_crate: &TokenStream) -> TokenStream {
+    if run.is_empty() {
+        return TokenStream::new();
+    }
+    let rows = run.iter().map(|(key, value)| {
+        let key = LitStr::new(key, Span::call_site());
+        quote! { (#key, #value) }
+    });
+    quote! {
+        for (__key, __value) in [#(#rows),*] {
+            __meta.insert(
+                ::std::string::String::from(__key),
+                #data_crate::model::Value::String(::std::borrow::Cow::from(__value)),
+            );
+        }
+    }
 }
 
 fn lit_to_value(lit: &Lit, data_crate: &TokenStream) -> TokenStream {

@@ -489,6 +489,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   (160 to 112 B) and 76 to 84 B of flash; tunable firmware drops the same RAM and 0.8 to 0.9 KiB
   of flash.
 
+- `#[node]` expansions emit the string metadata (`summary`, `description`, port descriptions and
+  access modes) as one static table and one insertion loop per node, not one insertion per entry.
+  A 50-node fixture expands to 1.135 MB -> 1.123 MB (-1.1%); the expanded line count and the build
+  CPU (about 0.77 s) are unchanged within noise.
+
 ## [3.0.0] - 2026-10-05
 
 ### Breaking changes
