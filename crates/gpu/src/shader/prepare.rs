@@ -124,8 +124,17 @@ pub(crate) fn prepare_resources(
                         {
                             // Match the documented behavior for Empty/Zeroed: start zeroed to avoid
                             // undefined contents reaching the shader.
+                            // Zero it in fixed-size chunks from a static zero block rather than
+                            // allocating a zeroed Vec of the full binding size.
+                            const ZEROS: [u8; 4096] = [0; 4096];
                             let mut view = buf.slice(..).get_mapped_range_mut()?;
-                            view.copy_from_slice(&vec![0; view.len()]);
+                            let len = view.len();
+                            let mut offset = 0;
+                            while offset < len {
+                                let n = (len - offset).min(ZEROS.len());
+                                view.slice(offset..offset + n).copy_from_slice(&ZEROS[..n]);
+                                offset += n;
+                            }
                         }
                         buf.unmap();
                         (buf, *size)
