@@ -28,6 +28,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
+- Runtime: the executor builds its node table in one pass (one copy of the plan's nodes instead
+  of a `Vec` copy plus its `Arc` copy).
 - Runtime: `OwnedExecutor` holds its `Arc<RuntimePlan>` and reads edges, edge transports,
   segments, schedule order and GPU entry/exit lists from it, instead of deep-copying them at build.
 - Engine: `HostGraph::frame_overhead` reads edge labels built once when recording starts, and

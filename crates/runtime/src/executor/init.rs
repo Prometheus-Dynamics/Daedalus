@@ -36,8 +36,7 @@ pub(crate) struct ExecutorInit {
 }
 
 pub(crate) fn build_executor_init(plan: &RuntimePlan) -> Result<ExecutorInit, ExecutorBuildError> {
-    let nodes_vec = normalize_runtime_nodes(&plan.nodes)?;
-    let nodes: Arc<[RuntimeNode]> = nodes_vec.into();
+    let nodes = normalize_runtime_nodes(&plan.nodes)?;
     let node_metadata = build_node_execution_metadata(&nodes);
     let queues = Arc::new(queue::build_queues(plan));
     let (incoming_edges, outgoing_edges) = edge_maps(&plan.edges);
@@ -152,17 +151,25 @@ fn required_input_edges(
         .collect()
 }
 
-fn normalize_runtime_nodes(nodes: &[RuntimeNode]) -> Result<Vec<RuntimeNode>, ExecutorBuildError> {
-    let mut nodes_vec = nodes.to_vec();
-    for node in &mut nodes_vec {
-        if node.stable_id == 0 {
-            node.stable_id = daedalus_core::stable_id::stable_id128("node", &node.id);
-        }
-    }
+/// The executor's own copy of the plan's nodes, with stable ids filled in. Built in one pass: the
+/// copy is collected straight into its `Arc`, not into a `Vec` that is then copied again.
+fn normalize_runtime_nodes(
+    nodes: &[RuntimeNode],
+) -> Result<Arc<[RuntimeNode]>, ExecutorBuildError> {
+    let nodes_arc: Arc<[RuntimeNode]> = nodes
+        .iter()
+        .map(|node| {
+            let mut node = node.clone();
+            if node.stable_id == 0 {
+                node.stable_id = daedalus_core::stable_id::stable_id128("node", &node.id);
+            }
+            node
+        })
+        .collect();
 
     {
         let mut seen: HashMap<u128, &str> = HashMap::new();
-        for node in &nodes_vec {
+        for node in nodes_arc.iter() {
             if let Some(previous) = seen.insert(node.stable_id, node.id.as_str())
                 && previous != node.id
             {
@@ -174,7 +181,7 @@ fn normalize_runtime_nodes(nodes: &[RuntimeNode]) -> Result<Vec<RuntimeNode>, Ex
             }
         }
     }
-    Ok(nodes_vec)
+    Ok(nodes_arc)
 }
 
 /// Build adjacency maps of incoming/outgoing edge indices per node.
