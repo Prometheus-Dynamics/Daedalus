@@ -3,7 +3,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::GpuError;
 
-use super::{Access, BindingData, BindingKind, ShaderBinding, ctx};
+use super::{Access, BindingData, BindingKind, ShaderBinding, ctx, staging_size, temp_pool};
 
 /// Marker for GPU state structs; derive sets whether to zero-init and default readback.
 pub trait GpuStateful: bytemuck::Pod + Copy {
@@ -140,37 +140,74 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
         })
     }
 
-    /// Read back the current value from GPU.
-    pub fn read(&self) -> Result<T, GpuError> {
-        let device = &self.device;
-        let staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu-state-readback"),
-            size: self.size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+    /// Copy the current value into a pooled MAP_READ staging buffer and submit the copy.
+    fn copy_to_staging(&self) -> wgpu::Buffer {
+        let alloc = staging_size(self.size);
+        let pooled = temp_pool().lock().take_buffer(
+            self.device_key,
+            alloc,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        );
+        let staging = pooled.unwrap_or_else(|| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu-state-readback"),
+                size: alloc,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
         });
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gpu-state-readback-encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gpu-state-readback-encoder"),
+            });
         encoder.copy_buffer_to_buffer(self.buffer.as_ref(), 0, &staging, 0, self.size);
         self.queue.submit([encoder.finish()]);
+        staging
+    }
 
-        let slice = staging.slice(..);
+    /// Decode the value from a mapped staging slice.
+    fn value_from_mapped(&self, slice: wgpu::BufferSlice<'_>) -> Result<T, GpuError> {
+        let data = slice.get_mapped_range()?;
+        Ok(bytemuck::pod_read_unaligned::<T>(
+            &data[..self.size as usize],
+        ))
+    }
+
+    fn return_staging(&self, staging: wgpu::Buffer) {
+        temp_pool().lock().put_buffer(self.device_key, staging);
+    }
+
+    /// Read back the current value from GPU. Blocks the calling thread until the copy completes.
+    pub fn read(&self) -> Result<T, GpuError> {
+        let staging = self.copy_to_staging();
+        let slice = staging.slice(..staging_size(self.size));
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |res| {
             let _ = tx.send(res);
         });
-        let _ = device.poll(wgpu::PollType::Wait {
+        let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
         rx.recv()
             .unwrap_or(Err(wgpu::BufferAsyncError))
             .map_err(|e| GpuError::Internal(format!("map failed: {e:?}")))?;
-        let data = slice.get_mapped_range()?;
-        let val = bytemuck::from_bytes::<T>(&data[..self.size as usize]).to_owned();
-        drop(data);
+        let val = self.value_from_mapped(slice)?;
         staging.unmap();
+        self.return_staging(staging);
+        Ok(val)
+    }
+
+    /// Read back the current value from GPU without blocking the calling thread.
+    #[cfg(feature = "gpu-async")]
+    pub async fn read_async(&self) -> Result<T, GpuError> {
+        let staging = self.copy_to_staging();
+        let slice = staging.slice(..staging_size(self.size));
+        super::map_read_async(&self.device, slice).await?;
+        let val = self.value_from_mapped(slice)?;
+        staging.unmap();
+        self.return_staging(staging);
         Ok(val)
     }
 

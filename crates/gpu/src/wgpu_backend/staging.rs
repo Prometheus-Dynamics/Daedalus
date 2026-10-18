@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WgpuStagingPoolStats {
@@ -76,14 +76,21 @@ fn read_env_u64(var: &'static str, default: u64) -> Result<u64, String> {
     }
 }
 
+/// A pooled buffer is reused for a request of `size` only when its allocation is at most this
+/// many times `size`, so a small readback never pins or maps a much larger buffer.
+const STAGING_REUSE_FACTOR: u64 = 2;
+
+/// Allocation sizes a request for `size` bytes may reuse: `size..=2 * size`.
+fn reuse_range(size: u64) -> std::ops::RangeInclusive<u64> {
+    size..=size.saturating_mul(STAGING_REUSE_FACTOR)
+}
+
 #[derive(Debug)]
 pub(super) struct StagingPool {
-    buffers: HashMap<u64, Vec<wgpu::Buffer>>,
-    #[cfg(feature = "gpu-async")]
+    /// Idle buffers keyed by their allocation size (size classes).
+    buffers: BTreeMap<u64, Vec<wgpu::Buffer>>,
     max_size_classes: usize,
-    #[cfg(feature = "gpu-async")]
     max_buffers_per_size: usize,
-    #[cfg(feature = "gpu-async")]
     max_bytes: u64,
     pooled_bytes: u64,
     hits: u64,
@@ -100,14 +107,10 @@ impl Default for StagingPool {
 
 impl StagingPool {
     pub(super) fn with_config(config: WgpuStagingPoolConfig) -> Self {
-        let _ = config;
         Self {
-            buffers: HashMap::new(),
-            #[cfg(feature = "gpu-async")]
+            buffers: BTreeMap::new(),
             max_size_classes: config.max_size_classes.max(1),
-            #[cfg(feature = "gpu-async")]
             max_buffers_per_size: config.max_buffers_per_size.max(1),
-            #[cfg(feature = "gpu-async")]
             max_bytes: config.max_bytes,
             pooled_bytes: 0,
             hits: 0,
@@ -117,24 +120,29 @@ impl StagingPool {
         }
     }
 
-    #[cfg(feature = "gpu-async")]
+    /// Take an idle buffer whose allocation is at least `size` and at most `2 * size` bytes.
     pub(super) fn take(&mut self, size: u64) -> Option<wgpu::Buffer> {
-        let buffer = self.buffers.get_mut(&size).and_then(Vec::pop);
-        if let Some(buffer) = buffer {
-            self.hits = self.hits.saturating_add(1);
-            self.pooled_bytes = self.pooled_bytes.saturating_sub(size);
-            if self.buffers.get(&size).is_some_and(Vec::is_empty) {
-                self.buffers.remove(&size);
-            }
-            Some(buffer)
-        } else {
+        let Some(class) = self
+            .buffers
+            .range(reuse_range(size))
+            .find_map(|(class, list)| (!list.is_empty()).then_some(*class))
+        else {
             self.misses = self.misses.saturating_add(1);
-            None
+            return None;
+        };
+        let list = self.buffers.get_mut(&class)?;
+        let buffer = list.pop()?;
+        if list.is_empty() {
+            self.buffers.remove(&class);
         }
+        self.hits = self.hits.saturating_add(1);
+        self.pooled_bytes = self.pooled_bytes.saturating_sub(class);
+        Some(buffer)
     }
 
-    #[cfg(feature = "gpu-async")]
-    pub(super) fn put(&mut self, size: u64, buffer: wgpu::Buffer) {
+    /// Return an idle buffer, keyed by its allocation size.
+    pub(super) fn put(&mut self, buffer: wgpu::Buffer) {
+        let size = buffer.size();
         if !self.can_store(size) {
             self.evicted = self.evicted.saturating_add(1);
             return;
@@ -154,17 +162,15 @@ impl StagingPool {
         self.pooled_bytes = self.pooled_bytes.saturating_add(size);
     }
 
-    #[cfg(feature = "gpu-async")]
     fn can_store(&self, size: u64) -> bool {
         size <= self.max_bytes && self.pooled_bytes.saturating_add(size) <= self.max_bytes
     }
 
-    #[cfg(feature = "gpu-async")]
     fn make_room_for_size_class(&mut self, size: u64) {
         if self.buffers.contains_key(&size) || self.buffers.len() < self.max_size_classes {
             return;
         }
-        let Some(victim_size) = self.buffers.keys().copied().max() else {
+        let Some(victim_size) = self.buffers.keys().next_back().copied() else {
             return;
         };
         if let Some(victim) = self.buffers.remove(&victim_size) {
@@ -179,46 +185,13 @@ impl StagingPool {
             size_classes: self.buffers.len(),
             pooled_buffers: self.buffers.values().map(Vec::len).sum(),
             pooled_bytes: self.pooled_bytes,
-            max_size_classes: self.max_size_classes(),
-            max_buffers_per_size: self.max_buffers_per_size(),
-            max_bytes: self.max_bytes(),
+            max_size_classes: self.max_size_classes,
+            max_buffers_per_size: self.max_buffers_per_size,
+            max_bytes: self.max_bytes,
             hits: self.hits,
             misses: self.misses,
             returned: self.returned,
             evicted: self.evicted,
-        }
-    }
-
-    fn max_size_classes(&self) -> usize {
-        #[cfg(feature = "gpu-async")]
-        {
-            self.max_size_classes
-        }
-        #[cfg(not(feature = "gpu-async"))]
-        {
-            0
-        }
-    }
-
-    fn max_buffers_per_size(&self) -> usize {
-        #[cfg(feature = "gpu-async")]
-        {
-            self.max_buffers_per_size
-        }
-        #[cfg(not(feature = "gpu-async"))]
-        {
-            0
-        }
-    }
-
-    fn max_bytes(&self) -> u64 {
-        #[cfg(feature = "gpu-async")]
-        {
-            self.max_bytes
-        }
-        #[cfg(not(feature = "gpu-async"))]
-        {
-            0
         }
     }
 }

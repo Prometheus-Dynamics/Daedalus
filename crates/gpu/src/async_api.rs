@@ -20,6 +20,20 @@ pub trait GpuAsyncBackend: GpuBackend {
     async fn create_image_async(&self, req: &GpuImageRequest) -> Result<GpuImageHandle, GpuError> {
         self.create_image(req)
     }
+
+    /// Upload tightly packed texture bytes; backends without texture upload report unsupported.
+    async fn upload_texture_async(
+        &self,
+        req: &GpuImageRequest,
+        data: &[u8],
+    ) -> Result<GpuImageHandle, GpuError> {
+        self.upload_texture(req, data)
+    }
+
+    /// Read a texture back as tightly packed bytes without blocking the calling thread.
+    async fn read_texture_async(&self, _handle: &GpuImageHandle) -> Result<Vec<u8>, GpuError> {
+        Err(GpuError::Unsupported)
+    }
 }
 
 #[cfg(test)]

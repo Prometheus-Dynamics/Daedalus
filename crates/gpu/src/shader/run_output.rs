@@ -78,6 +78,17 @@ impl ShaderRunOutput {
         })
     }
 
+    /// Like `texture_rgba8`, but takes the readback bytes out of the output instead of cloning them.
+    pub fn into_texture_rgba8(
+        mut self,
+        binding: u32,
+        width: u32,
+        height: u32,
+    ) -> Option<image::ImageBuffer<image::Rgba<u8>, Vec<u8>>> {
+        let bytes = self.buffers.remove(&binding)?;
+        image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(width, height, bytes)
+    }
+
     /// Interpret a texture readback (RGBA8) into a DynamicImage.
     pub fn texture_rgba8_image(
         &self,

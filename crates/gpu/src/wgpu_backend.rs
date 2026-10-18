@@ -22,7 +22,9 @@ mod driver;
 mod mapping;
 mod resources;
 mod staging;
+mod texture_transfer;
 
+use crate::shader::staging_size;
 use adapter_select::{preferred_backends, select_best_adapter};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
@@ -33,6 +35,7 @@ use mapping::{gpu_usage_from_wgpu, map_texture_usage, map_usage};
 use resources::{ResourceDropToken, ResourceKind, WgpuResources};
 use staging::StagingPool;
 pub use staging::{WgpuStagingPoolConfig, WgpuStagingPoolStats};
+use texture_transfer::unpad_rows;
 
 /// Minimal wgpu backend placeholder to satisfy trait; queries adapter limits when available.
 pub struct WgpuBackend {
@@ -490,53 +493,13 @@ impl GpuBackend for WgpuBackend {
     }
 
     fn read_texture(&self, handle: &GpuImageHandle) -> Result<Vec<u8>, GpuError> {
-        let tex = self
-            .resources
-            .textures
-            .lock()
-            .get(&handle.id)
-            .cloned()
-            .ok_or(GpuError::Unsupported)?;
-        let bpp = format_bytes_per_pixel(handle.format).ok_or(GpuError::Unsupported)? as u64;
-        let bytes_per_row = handle.width as u64 * bpp;
-        let align = self.caps.bytes_per_row_alignment.max(1) as u64;
-        let padded_bpr = bytes_per_row.div_ceil(align) * align;
-        let size_bytes = padded_bpr * handle.height as u64;
-        let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("tex-readback"),
-            size: size_bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let tex = self.texture_for_readback(handle)?;
+        let (bytes_per_row, padded_bpr) = self.texture_readback_layout(handle)?;
+        let size = padded_bpr as u64 * handle.height as u64;
+        let staging = self.take_staging_buffer(size, "tex-readback");
         let _guard = self.copy_limiter.acquire();
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("tex-readback-encoder"),
-            });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &staging,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bpr as u32),
-                    rows_per_image: Some(handle.height),
-                },
-            },
-            wgpu::Extent3d {
-                width: handle.width,
-                height: handle.height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit(Some(encoder.finish()));
-        let slice = staging.slice(..);
+        self.submit_texture_readback(&tex, &staging, handle, padded_bpr);
+        let slice = staging.slice(..staging_size(size));
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |res| {
             let _ = tx.send(res);
@@ -551,23 +514,13 @@ impl GpuBackend for WgpuBackend {
         rx.recv()
             .map_err(|err| GpuError::Internal(format!("texture map canceled: {err}")))?
             .map_err(|err| GpuError::Internal(format!("texture map failed: {err:?}")))?;
-        let raw = slice.get_mapped_range()?.to_vec();
-        staging.unmap();
-        let data = if padded_bpr == bytes_per_row {
-            raw
-        } else {
-            let mut tight =
-                vec![0u8; (bytes_per_row as usize).saturating_mul(handle.height as usize)];
-            let src_stride = padded_bpr as usize;
-            let dst_stride = bytes_per_row as usize;
-            for row in 0..(handle.height as usize) {
-                let src = row * src_stride;
-                let dst = row * dst_stride;
-                tight[dst..dst + dst_stride].copy_from_slice(&raw[src..src + dst_stride]);
-            }
-            tight
+        let data = {
+            let mapped = slice.get_mapped_range()?;
+            unpad_rows(&mapped, bytes_per_row, padded_bpr, handle.height as usize)
         };
+        staging.unmap();
         self.record_download(data.len() as u64);
+        self.return_staging_buffer(staging);
         Ok(data)
     }
 }
@@ -596,18 +549,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
             .get(&handle.id)
             .cloned()
             .ok_or(GpuError::Unsupported)?;
-        // Staging reuse
-        let staging = {
-            let mut pool = self.staging_pool.lock();
-            pool.take(handle.size_bytes).unwrap_or_else(|| {
-                self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("readback"),
-                    size: handle.size_bytes,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            })
-        };
+        let staging = self.take_staging_buffer(handle.size_bytes, "readback");
         let _guard = self.copy_limiter.acquire_async().await;
         let mut encoder = self
             .device
@@ -616,18 +558,47 @@ impl crate::GpuAsyncBackend for WgpuBackend {
             });
         encoder.copy_buffer_to_buffer(&buf, 0, &staging, 0, handle.size_bytes);
         self.queue.submit(Some(encoder.finish()));
-        let buffer_slice = staging.slice(..);
+        let buffer_slice = staging.slice(..staging_size(handle.size_bytes));
         crate::shader::map_read_async(&self.device, buffer_slice)
             .await
             .map_err(|err| GpuError::Internal(format!("map failed: {err}")))?;
-        let data = buffer_slice.get_mapped_range()?.to_vec();
+        let data = {
+            let mapped = buffer_slice.get_mapped_range()?;
+            mapped[..handle.size_bytes as usize].to_vec()
+        };
         staging.unmap();
         self.record_download(data.len() as u64);
-        // Return staging to pool
-        {
-            let mut pool = self.staging_pool.lock();
-            pool.put(handle.size_bytes, staging);
-        }
+        self.return_staging_buffer(staging);
+        Ok(data)
+    }
+
+    async fn upload_texture_async(
+        &self,
+        req: &GpuImageRequest,
+        data: &[u8],
+    ) -> Result<GpuImageHandle, GpuError> {
+        let _guard = self.copy_limiter.acquire_async().await;
+        self.upload_texture(req, data)
+    }
+
+    async fn read_texture_async(&self, handle: &GpuImageHandle) -> Result<Vec<u8>, GpuError> {
+        let tex = self.texture_for_readback(handle)?;
+        let (bytes_per_row, padded_bpr) = self.texture_readback_layout(handle)?;
+        let size = padded_bpr as u64 * handle.height as u64;
+        let staging = self.take_staging_buffer(size, "tex-readback");
+        let _guard = self.copy_limiter.acquire_async().await;
+        self.submit_texture_readback(&tex, &staging, handle, padded_bpr);
+        let buffer_slice = staging.slice(..staging_size(size));
+        crate::shader::map_read_async(&self.device, buffer_slice)
+            .await
+            .map_err(|err| GpuError::Internal(format!("texture map failed: {err}")))?;
+        let data = {
+            let mapped = buffer_slice.get_mapped_range()?;
+            unpad_rows(&mapped, bytes_per_row, padded_bpr, handle.height as usize)
+        };
+        staging.unmap();
+        self.record_download(data.len() as u64);
+        self.return_staging_buffer(staging);
         Ok(data)
     }
 }
