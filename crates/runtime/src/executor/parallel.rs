@@ -15,8 +15,18 @@ use super::{
 
 /// Per-run segment bookkeeping; inline for graphs up to 32 segments, so a run allocates none.
 type SegmentList = SmallVec<[usize; 32]>;
-/// Per-segment scheduling priorities, inline like [`SegmentList`].
-type PriorityList = SmallVec<[i32; 32]>;
+/// Node priorities and the segments they rank, for ordering the ready queue.
+#[derive(Clone, Copy)]
+struct SegmentPriorities<'g> {
+    nodes: &'g [i32],
+    segments: &'g [crate::plan::RuntimeSegment],
+}
+
+impl SegmentPriorities<'_> {
+    fn of(&self, segment: usize) -> i32 {
+        super::node_policy::segment_priority(self.nodes, self.segments, segment)
+    }
+}
 
 /// Run `exec`'s segments on the worker pool, independent ones concurrently. With `costs`, each
 /// executed segment's wall time in nanoseconds is written at its index.
@@ -44,11 +54,15 @@ where
 
     let pool = WorkerPool::get_or_init(&exec.core.worker_pool, workers)?;
     let clock = costs.is_some().then(|| exec.core.clock.clone());
-    let priorities = exec.core.run_config.policies.priorities().map(|nodes| {
-        (0..schedule.segments.len())
-            .map(|segment| super::node_policy::segment_priority(nodes, &schedule.segments, segment))
-            .collect()
-    });
+    let priorities = exec
+        .core
+        .run_config
+        .policies
+        .priorities()
+        .map(|nodes| SegmentPriorities {
+            nodes,
+            segments: &schedule.segments,
+        });
     let queue = SegmentQueue::new(
         graph,
         exec.core.run_config.fail_fast,
@@ -85,6 +99,9 @@ where
 struct SegmentQueue<'g, 'c> {
     graph: &'g CompiledSegmentGraph,
     fail_fast: bool,
+    /// With node priorities, the highest queued segment is taken first (FIFO among equals);
+    /// `None` keeps plain FIFO.
+    priorities: Option<SegmentPriorities<'g>>,
     /// Times each segment when costs are collected.
     clock: Option<Clock>,
     state: Mutex<QueueState<'c>>,
@@ -96,9 +113,6 @@ struct QueueState<'c> {
     /// Ready segments: `ready[next_ready..]` are still queued, in FIFO order.
     ready: SegmentList,
     next_ready: usize,
-    /// Per segment, its priority: the highest queued one is taken first (FIFO among equals).
-    /// `None` (no node priorities) keeps plain FIFO.
-    priorities: Option<PriorityList>,
     running: usize,
     completed: usize,
     /// Workers waiting on `wake`.
@@ -117,17 +131,17 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
         fail_fast: bool,
         clock: Option<Clock>,
         costs: Option<&'c mut [u64]>,
-        priorities: Option<PriorityList>,
+        priorities: Option<SegmentPriorities<'g>>,
     ) -> Self {
         Self {
             graph,
             fail_fast,
+            priorities,
             clock,
             state: Mutex::new(QueueState {
                 indegree: graph.indegree.iter().copied().collect(),
                 ready: graph.ready_segments.iter().copied().collect(),
                 next_ready: 0,
-                priorities,
                 running: 0,
                 completed: 0,
                 idle: 0,
@@ -146,7 +160,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
         let mut state = self.state.lock();
         let mut busy = 0u64;
         loop {
-            let Some(segment) = state.pop() else {
+            let Some(segment) = state.pop(self.priorities) else {
                 if state.running == 0 || state.error.is_some() {
                     break;
                 }
@@ -213,27 +227,35 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
 }
 
 impl QueueState<'_> {
-    fn pop(&mut self) -> Option<usize> {
+    fn pop(&mut self, priorities: Option<SegmentPriorities<'_>>) -> Option<usize> {
         if self.error.is_some() {
             return None;
         }
-        let queued = self.ready.get(self.next_ready..)?;
-        if let Some(priorities) = &self.priorities
-            && !queued.is_empty()
-        {
-            let priority = |segment: &usize| priorities.get(*segment).copied().unwrap_or(0);
-            // First of the highest priority; rotating it to the front keeps the rest in order.
-            let mut best = 0;
-            for (idx, segment) in queued.iter().enumerate().skip(1) {
-                if priority(segment) > priority(&queued[best]) {
-                    best = idx;
-                }
-            }
-            self.ready[self.next_ready..=self.next_ready + best].rotate_right(1);
+        if let Some(priorities) = priorities {
+            self.prioritize(priorities);
         }
         let segment = *self.ready.get(self.next_ready)?;
         self.next_ready += 1;
         Some(segment)
+    }
+
+    /// Move the first queued segment of the highest priority to the front of the queue,
+    /// keeping the rest in order.
+    #[cold]
+    fn prioritize(&mut self, priorities: SegmentPriorities<'_>) {
+        let Some(queued) = self.ready.get(self.next_ready..) else {
+            return;
+        };
+        let mut best = None::<(usize, i32)>;
+        for (idx, &segment) in queued.iter().enumerate() {
+            let priority = priorities.of(segment);
+            if best.is_none_or(|(_, top)| priority > top) {
+                best = Some((idx, priority));
+            }
+        }
+        if let Some((best, _)) = best {
+            self.ready[self.next_ready..=self.next_ready + best].rotate_right(1);
+        }
     }
 
     fn unblock(&mut self, graph: &CompiledSegmentGraph, segment: usize) {
@@ -269,13 +291,14 @@ fn run_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan::RuntimeSegment;
+    use daedalus_planner::{ComputeAffinity, NodeRef};
 
-    fn state(ready: &[usize], priorities: Option<&[i32]>) -> QueueState<'static> {
+    fn state(ready: &[usize]) -> QueueState<'static> {
         QueueState {
             indegree: SegmentList::new(),
             ready: ready.iter().copied().collect(),
             next_ready: 0,
-            priorities: priorities.map(|p| p.iter().copied().collect()),
             running: 0,
             completed: 0,
             idle: 0,
@@ -286,21 +309,30 @@ mod tests {
         }
     }
 
-    fn drain(mut state: QueueState<'_>) -> Vec<usize> {
-        core::iter::from_fn(|| state.pop()).collect()
+    fn drain(mut state: QueueState<'_>, priorities: Option<SegmentPriorities<'_>>) -> Vec<usize> {
+        core::iter::from_fn(|| state.pop(priorities)).collect()
     }
 
     #[test]
     fn ready_queue_is_fifo_without_priorities() {
-        assert_eq!(drain(state(&[3, 1, 2], None)), vec![3, 1, 2]);
+        assert_eq!(drain(state(&[3, 1, 2]), None), vec![3, 1, 2]);
     }
 
     #[test]
     fn ready_queue_takes_higher_priority_first_and_fifo_among_equals() {
-        // Segments 0..4 with priorities 0, 5, 0, 5.
-        let priorities = [0, 5, 0, 5];
+        // One node per segment; segments 0..4 have priorities 0, 5, 0, 5.
+        let segments: Vec<RuntimeSegment> = (0..4)
+            .map(|node| RuntimeSegment {
+                nodes: vec![NodeRef(node)],
+                compute: ComputeAffinity::CpuOnly,
+            })
+            .collect();
+        let priorities = SegmentPriorities {
+            nodes: &[0, 5, 0, 5],
+            segments: &segments,
+        };
         assert_eq!(
-            drain(state(&[0, 1, 2, 3], Some(&priorities))),
+            drain(state(&[0, 1, 2, 3]), Some(priorities)),
             vec![1, 3, 0, 2]
         );
     }

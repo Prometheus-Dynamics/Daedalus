@@ -651,7 +651,7 @@ What a policy means for the handler:
   Direct host routes (`run_direct_host_*`) return the error to their caller.
 
 Every failure lands in `ExecutionTelemetry::errors`; the recoveries taken are counted in
-`ExecutionTelemetry::recovery` (see "Node Recovery" in
+`ExecutionTelemetry::recovery()` (see "Node Recovery" in
 [runtime-diagnostics.md](runtime-diagnostics.md)).
 
 `daedalus.node.priority` (an integer, default 0) orders parallel work: when more segments are

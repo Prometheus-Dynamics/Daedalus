@@ -148,43 +148,84 @@ pub struct UnknownNodeError {
     pub node: String,
 }
 
-/// The resolved per-node policies of an executor's run configuration. Cloning (per snapshot)
-/// clones `Arc`s only.
+/// The resolved per-node policies of an executor's run configuration: one pointer, `None`
+/// while every policy is the default. The executor core is copied into each tick's executor
+/// view, so its run configuration stays small.
 #[derive(Clone, Default)]
-pub(crate) struct NodePolicies {
+pub(crate) struct NodePolicies(Option<Arc<PolicyTables>>);
+
+#[derive(Clone, Default, PartialEq)]
+struct PolicyTables {
     recovery_default: NodeRecovery,
-    recovery_overrides: Option<Arc<Vec<(String, NodeRecovery)>>>,
+    recovery_overrides: Vec<(String, NodeRecovery)>,
     /// Per node, its recovery; `None` while every node uses [`NodeRecovery::Fail`].
-    recovery: Option<Arc<[NodeRecovery]>>,
-    priority_overrides: Option<Arc<Vec<(String, i32)>>>,
+    recovery: Option<Box<[NodeRecovery]>>,
+    priority_overrides: Vec<(String, i32)>,
     /// Per node, its scheduling priority; `None` while every node has priority 0.
-    priorities: Option<Arc<[i32]>>,
+    priorities: Option<Box<[i32]>>,
     /// Per edge, whether a full queue defers its producer; `None` without blocking edges.
-    pub(crate) blocking_edges: Option<Arc<[bool]>>,
+    blocking_edges: Option<Box<[bool]>>,
 }
 
 impl NodePolicies {
     #[inline]
     pub(crate) fn recovery_of(&self, node_idx: usize) -> NodeRecovery {
-        self.recovery
-            .as_deref()
+        self.tables()
+            .and_then(|tables| tables.recovery.as_deref())
             .and_then(|table| table.get(node_idx).copied())
             .unwrap_or_default()
+    }
+
+    /// Whether any node recovers from failures (else every node uses [`NodeRecovery::Fail`]).
+    #[inline]
+    pub(crate) fn any_recovery(&self) -> bool {
+        self.tables()
+            .is_some_and(|tables| tables.recovery.is_some())
     }
 
     /// Per node scheduling priorities, if any node has a non-zero one.
     #[cfg_attr(not(feature = "threads"), allow(dead_code))]
     pub(crate) fn priorities(&self) -> Option<&[i32]> {
-        self.priorities.as_deref()
+        self.tables()?.priorities.as_deref()
+    }
+
+    /// Per edge, whether a full bounded queue defers its producer, if any edge blocks.
+    #[inline]
+    pub(crate) fn blocking_edges(&self) -> Option<&[bool]> {
+        self.tables()?.blocking_edges.as_deref()
+    }
+
+    /// A handle to the tables when some edge blocks (cheap to hold across a run).
+    #[inline]
+    pub(crate) fn blocking(&self) -> Option<Self> {
+        self.blocking_edges().is_some().then(|| self.clone())
+    }
+
+    #[inline]
+    fn tables(&self) -> Option<&PolicyTables> {
+        self.0.as_deref()
+    }
+
+    /// Change the tables, dropping them again when everything is back to the default.
+    fn update(&mut self, f: impl FnOnce(&mut PolicyTables)) {
+        let mut tables = self.tables().cloned().unwrap_or_default();
+        f(&mut tables);
+        self.0 = (tables != PolicyTables::default()).then(|| Arc::new(tables));
     }
 
     /// Re-resolve the per-node tables from `nodes`' metadata, the overrides and the default.
     pub(crate) fn resolve(&mut self, nodes: &[RuntimeNode], keys: &[Arc<str>]) {
+        self.update(|tables| tables.resolve(nodes, keys));
+    }
+}
+
+impl PolicyTables {
+    fn resolve(&mut self, nodes: &[RuntimeNode], keys: &[Arc<str>]) {
         let recovery: Vec<NodeRecovery> = nodes
             .iter()
             .enumerate()
             .map(|(idx, node)| {
-                lookup(self.recovery_overrides.as_deref(), node, keys.get(idx))
+                lookup(&self.recovery_overrides, node, keys.get(idx))
                     .or_else(|| NodeRecovery::from_metadata(&node.metadata))
                     .unwrap_or(self.recovery_default)
             })
@@ -197,7 +238,7 @@ impl NodePolicies {
             .iter()
             .enumerate()
             .map(|(idx, node)| {
-                lookup(self.priority_overrides.as_deref(), node, keys.get(idx))
+                lookup(&self.priority_overrides, node, keys.get(idx))
                     .or_else(|| priority_from_metadata(&node.metadata))
                     .unwrap_or(0)
             })
@@ -211,11 +252,11 @@ impl NodePolicies {
 
 /// The last override naming `node` by instance key or id.
 fn lookup<T: Copy>(
-    overrides: Option<&Vec<(String, T)>>,
+    overrides: &[(String, T)],
     node: &RuntimeNode,
     key: Option<&Arc<str>>,
 ) -> Option<T> {
-    overrides?
+    overrides
         .iter()
         .rev()
         .find(|(name, _)| key.is_some_and(|key| **key == **name) || *name == node.id)
@@ -256,7 +297,10 @@ pub(crate) trait NodePolicyTarget: ExecutorConfigTarget {
     }
 
     fn apply_recovery(&mut self, policy: NodeRecovery) {
-        self.core_mut().run_config.policies.recovery_default = policy;
+        self.core_mut()
+            .run_config
+            .policies
+            .update(|tables| tables.recovery_default = policy);
         self.resolve_policies();
     }
 
@@ -266,38 +310,37 @@ pub(crate) trait NodePolicyTarget: ExecutorConfigTarget {
         policy: NodeRecovery,
     ) -> Result<(), UnknownNodeError> {
         self.check_node(node)?;
-        let policies = &mut self.core_mut().run_config.policies;
-        let mut overrides = policies.recovery_overrides.as_deref().cloned();
-        overrides
-            .get_or_insert_with(Vec::new)
-            .push((node.into(), policy));
-        policies.recovery_overrides = overrides.map(Arc::new);
+        self.core_mut()
+            .run_config
+            .policies
+            .update(|tables| tables.recovery_overrides.push((node.into(), policy)));
         self.resolve_policies();
         Ok(())
     }
 
     fn apply_node_priority(&mut self, node: &str, priority: i32) -> Result<(), UnknownNodeError> {
         self.check_node(node)?;
-        let policies = &mut self.core_mut().run_config.policies;
-        let mut overrides = policies.priority_overrides.as_deref().cloned();
-        overrides
-            .get_or_insert_with(Vec::new)
-            .push((node.into(), priority));
-        policies.priority_overrides = overrides.map(Arc::new);
+        self.core_mut()
+            .run_config
+            .policies
+            .update(|tables| tables.priority_overrides.push((node.into(), priority)));
         self.resolve_policies();
         Ok(())
     }
 
     fn apply_blocking_backpressure(&mut self, enabled: bool) {
-        let mask: Option<Arc<[bool]>> = enabled
+        let mask: Option<Box<[bool]>> = enabled
             .then(|| {
                 self.policy_edges()
                     .iter()
                     .map(|edge| edge.policy().bounded_capacity().is_some())
-                    .collect::<Arc<[bool]>>()
+                    .collect::<Box<[bool]>>()
             })
             .filter(|mask| mask.iter().any(|&blocking| blocking));
-        self.core_mut().run_config.policies.blocking_edges = mask;
+        self.core_mut()
+            .run_config
+            .policies
+            .update(|tables| tables.blocking_edges = mask);
     }
 
     fn check_node(&mut self, node: &str) -> Result<(), UnknownNodeError> {

@@ -233,10 +233,11 @@ recovered failure leaves the run successful and is reported in its telemetry:
 
 - `ExecutionTelemetry::errors`: one `NodeFailure` per failure (node, code, message), recovered or
   not. Successful retries leave none.
-- `ExecutionTelemetry::recovery` (`RecoveryTelemetry`): `retries` (attempts re-run),
+- `ExecutionTelemetry::recovery()` (`RecoveryTelemetry`): `retries` (attempts re-run),
   `recovered_retries` (nodes a retry rescued), `skipped_frames`, `restarts`, `caught_panics`.
-  It is omitted from serialized telemetry while empty and printed in the compact summary when
-  set.
+  The field behind it (`recovery: Option<Box<RecoveryTelemetry>>`) stays `None`, and out of
+  serialized telemetry, until a run recovers a failure, so telemetry moved per tick stays small;
+  `TelemetryReport::recovery` and the compact summary show the counters.
 - Tracing: `daedalus_runtime::executor` warns on every retry, skip and restart.
 
 Retries run inside the tick, so a `backoff` delays the whole tick (and, in a parallel run, the

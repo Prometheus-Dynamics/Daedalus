@@ -30,7 +30,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   (defaults estimate them without buffering).
 - **Breaking:** `FfiBackendTelemetry::runner_restarts` is removed. Nothing incremented it: the
   FFI runner pool rejects automatic restart policies. Node restarts are counted in
-  `ExecutionTelemetry::recovery.restarts`.
+  `ExecutionTelemetry::recovery().restarts`.
 - `StreamWorkerConfig` gained an `on_error` field (build it with `StreamWorkerConfig::default()`
   and the `with_*` setters), and `ExecutionTelemetry`/`TelemetryReport` gained
   `backpressure_deferrals` and `recovery`.
@@ -135,7 +135,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
   node (`with_node_recovery`, `try_set_node_recovery`, or `daedalus.node.recovery` metadata,
   `NODE_RECOVERY_META_KEY`). `Restart` resets the node's state, resources and custom metrics
   (`StateStore::reset_node`); recovering policies catch handler panics. Recoveries are counted
-  in `ExecutionTelemetry::recovery` (`RecoveryTelemetry`) and in the telemetry report.
+  in `ExecutionTelemetry::recovery()` (`RecoveryTelemetry`, boxed in the `recovery` field and
+  `None` until a recovery happens) and in the telemetry report.
 - Stream workers keep running after a failed tick with `StreamErrorPolicy::Continue`
   (`StreamWorkerConfig::with_error_policy`, `EngineConfig::with_stream_error_policy`; default
   `Stop` keeps the old behaviour); `StreamWorkerDiagnostics::tick_errors` counts failed ticks.

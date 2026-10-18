@@ -98,7 +98,7 @@ fn skip_frame_drops_the_node_output_and_keeps_running() {
         .expect("skip frame recovers");
     assert_eq!(telemetry.errors.len(), 1);
     assert_eq!(telemetry.errors[0].node_id, "flaky");
-    assert_eq!(telemetry.recovery.skipped_frames, 1);
+    assert_eq!(telemetry.recovery().skipped_frames, 1);
     assert!(seen.lock().is_empty(), "sink was not ready");
 }
 
@@ -115,8 +115,8 @@ fn retry_reruns_the_handler_on_the_same_inputs() {
         .run()
         .expect("second retry succeeds");
     assert_eq!(*seen.lock(), vec![2]);
-    assert_eq!(telemetry.recovery.retries, 2);
-    assert_eq!(telemetry.recovery.recovered_retries, 1);
+    assert_eq!(telemetry.recovery().retries, 2);
+    assert_eq!(telemetry.recovery().recovered_retries, 1);
     assert!(telemetry.errors.is_empty());
 }
 
@@ -142,7 +142,7 @@ fn recovery_metadata_selects_a_node_policy() {
     let telemetry = Executor::new(&rt, Flaky::new(1))
         .run()
         .expect("metadata policy recovers");
-    assert_eq!(telemetry.recovery.skipped_frames, 1);
+    assert_eq!(telemetry.recovery().skipped_frames, 1);
 
     // A builder override wins over metadata.
     let err = Executor::new(&rt, Flaky::new(1))
@@ -163,6 +163,8 @@ fn unknown_node_override_is_reported() {
     assert!(exec.try_set_node_priority("flaky", 3).is_ok());
 }
 
+/// Catching a panic needs `std` (without it panics unwind as under `Fail`).
+#[cfg(feature = "std")]
 #[test]
 fn recovering_policy_catches_panics() {
     let rt = build_runtime(
@@ -177,7 +179,7 @@ fn recovering_policy_catches_panics() {
         .with_recovery(NodeRecovery::SkipFrame)
         .run()
         .expect("panic recovered");
-    assert_eq!(telemetry.recovery.caught_panics, 1);
+    assert_eq!(telemetry.recovery().caught_panics, 1);
     assert!(telemetry.errors[0].message.contains("flaky panicked"));
 }
 
@@ -206,7 +208,7 @@ fn parallel_runs_apply_node_recovery() {
         .with_node_priority("bad", 5)
         .run_parallel()
         .expect("recovered in parallel");
-    assert_eq!(telemetry.recovery.skipped_frames, 1);
+    assert_eq!(telemetry.recovery().skipped_frames, 1);
     assert_eq!(telemetry.nodes_executed, 2);
 }
 

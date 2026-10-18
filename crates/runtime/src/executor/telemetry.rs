@@ -79,9 +79,11 @@ pub struct ExecutionTelemetry {
     pub demand: crate::plan::DemandTelemetry,
     #[serde(default, skip_serializing_if = "FfiTelemetryReport::is_empty")]
     pub ffi: FfiTelemetryReport,
-    /// Node failures recovered under a [`NodeRecovery`](super::NodeRecovery) policy.
-    #[serde(default, skip_serializing_if = "super::RecoveryTelemetry::is_empty")]
-    pub recovery: super::RecoveryTelemetry,
+    /// Node failures recovered under a [`NodeRecovery`](super::NodeRecovery) policy; `None`
+    /// until a run recovers one (boxed so telemetry moved per tick stays small). Read it with
+    /// [`Self::recovery`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<Box<super::RecoveryTelemetry>>,
     /// The executor's clock, which lifecycle timestamps and edge timings read.
     #[serde(skip)]
     clock: Clock,
@@ -92,6 +94,15 @@ pub struct ExecutionTelemetry {
 }
 
 impl ExecutionTelemetry {
+    /// The run's recoveries ([`Self::recovery`]), zero when none happened.
+    pub fn recovery(&self) -> super::RecoveryTelemetry {
+        self.recovery.as_deref().copied().unwrap_or_default()
+    }
+
+    pub(crate) fn recovery_mut(&mut self) -> &mut super::RecoveryTelemetry {
+        self.recovery.get_or_insert_with(Default::default)
+    }
+
     pub fn with_level(level: MetricsLevel) -> Self {
         if !cfg!(feature = "metrics") {
             return Self {
@@ -181,7 +192,7 @@ impl ExecutionTelemetry {
             gpu_fallbacks: self.gpu_fallbacks,
             backpressure_events: self.backpressure_events,
             backpressure_deferrals: self.backpressure_deferrals,
-            recovery: self.recovery,
+            recovery: self.recovery(),
             node_timing: self.node_metrics.to_btree_map(),
             edge_timing: self.edge_metrics.clone(),
             transport: self.edge_metrics.clone(),
@@ -205,7 +216,7 @@ impl ExecutionTelemetry {
         self.gpu_fallbacks = 0;
         self.backpressure_events = 0;
         self.backpressure_deferrals = 0;
-        self.recovery = super::RecoveryTelemetry::default();
+        self.recovery = None;
         self.warnings.clear();
         self.errors.clear();
         self.graph_duration = Duration::default();
@@ -263,7 +274,9 @@ impl ExecutionTelemetry {
         }
         self.data_lifecycle.extend(other.data_lifecycle);
         self.ffi.merge(other.ffi);
-        self.recovery.merge(other.recovery);
+        if let Some(other) = other.recovery {
+            self.recovery_mut().merge(*other);
+        }
     }
 
     pub fn record_ffi(&mut self, ffi: FfiTelemetryReport) {

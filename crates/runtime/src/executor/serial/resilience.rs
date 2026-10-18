@@ -19,7 +19,7 @@ use super::{edge_is_active, edge_uses_direct_slot, record_failure};
 
 /// Call `handler` for `node`. Under a recovering policy (and with `std`) a panic is caught and
 /// returned as a [`NodeError::Handler`]; under [`NodeRecovery::Fail`] it unwinds as before.
-#[inline]
+#[inline(never)]
 pub(super) fn run_handler<H: NodeHandler>(
     handler: &H,
     node: &RuntimeNode,
@@ -34,7 +34,7 @@ pub(super) fn run_handler<H: NodeHandler>(
             handler.run(node, ctx, io)
         }))
         .unwrap_or_else(|panic| {
-            telemetry.recovery.caught_panics = telemetry.recovery.caught_panics.saturating_add(1);
+            telemetry.recovery_mut().caught_panics += 1;
             Err(NodeError::Handler(format!(
                 "handler panicked: {}",
                 crate::executor::panic_message(&*panic)
@@ -60,6 +60,7 @@ fn copy_ports(ports: &[NodePort]) -> Vec<NodePort> {
 
 /// Re-run a failed handler on `saved` inputs as `recovery` allows, replacing `io` with each
 /// attempt's. Returns the last attempt's result.
+#[cold]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn retry<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
@@ -91,7 +92,7 @@ pub(super) fn retry<H: NodeHandler>(
         let _ = error;
         backoff_wait(backoff);
         let telemetry = &mut exec.core.telemetry;
-        telemetry.recovery.retries = telemetry.recovery.retries.saturating_add(1);
+        telemetry.recovery_mut().retries += 1;
         *io = exec.core.node_io(node_idx, copy_ports(&saved), consts);
         result = run_handler(
             &*exec.handler,
@@ -104,8 +105,7 @@ pub(super) fn retry<H: NodeHandler>(
     }
     if attempts > 0 && result.is_ok() {
         let telemetry = &mut exec.core.telemetry;
-        telemetry.recovery.recovered_retries =
-            telemetry.recovery.recovered_retries.saturating_add(1);
+        telemetry.recovery_mut().recovered_retries += 1;
     }
     recycle_ports(saved);
     result
@@ -132,6 +132,7 @@ pub(super) fn after_delivery(recovery: NodeRecovery) -> NodeRecovery {
 /// Record node `node_idx`'s failure and handle it under `recovery`: `Err` ends the run
 /// (fail-fast); otherwise the run continues, with the error kept in `first_error` when the
 /// policy does not recover.
+#[cold]
 pub(super) fn handle_failure<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     node_idx: usize,
@@ -145,7 +146,7 @@ pub(super) fn handle_failure<H: NodeHandler>(
         NodeRecovery::SkipFrame => {
             crate::trace::warn!(target: "daedalus_runtime::executor", node_id, error = %error, "node failed; skipping its frame");
             let telemetry = &mut exec.core.telemetry;
-            telemetry.recovery.skipped_frames = telemetry.recovery.skipped_frames.saturating_add(1);
+            telemetry.recovery_mut().skipped_frames += 1;
             Ok(())
         }
         NodeRecovery::Restart => {
@@ -154,7 +155,7 @@ pub(super) fn handle_failure<H: NodeHandler>(
                 exec.core.state.reset_node(&key);
             }
             let telemetry = &mut exec.core.telemetry;
-            telemetry.recovery.restarts = telemetry.recovery.restarts.saturating_add(1);
+            telemetry.recovery_mut().restarts += 1;
             Ok(())
         }
         _ => {
@@ -173,6 +174,7 @@ pub(super) fn handle_failure<H: NodeHandler>(
 
 /// Whether node `node_idx` must wait for a later tick because one of its blocking output
 /// queues is full, or (through `fusion`) one of the nodes its fused outputs feed must.
+#[inline(never)]
 pub(super) fn output_blocked<H: NodeHandler>(
     exec: &Executor<'_, H>,
     blocking: &[bool],

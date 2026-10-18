@@ -96,7 +96,9 @@ fn run_order_timed<H: NodeHandler>(
             && (exec.core.run_config.metrics_level.is_profile() || collect_trace))
     });
     let mut carry = Carry::new();
-    let blocking = exec.core.run_config.policies.blocking_edges.clone();
+    let blocking = exec.core.run_config.policies.blocking();
+    // Without recovery policies every node fails as before: skip the per-node lookups.
+    let recovering = exec.core.run_config.policies.any_recovery();
 
     for (pos, node_ref) in order.iter().copied().enumerate() {
         let node_idx = node_ref.0;
@@ -126,7 +128,9 @@ fn run_order_timed<H: NodeHandler>(
             crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node waiting for inputs");
             continue;
         }
-        if let Some(blocking) = blocking.as_deref()
+        if let Some(blocking) = blocking
+            .as_ref()
+            .and_then(super::NodePolicies::blocking_edges)
             && carry.is_empty()
             && resilience::output_blocked(exec, blocking, fusion.as_deref(), node_idx)
         {
@@ -136,7 +140,11 @@ fn run_order_timed<H: NodeHandler>(
             exec.core.telemetry.backpressure_deferrals += 1;
             continue;
         }
-        let recovery = exec.core.run_config.policies.recovery_of(node_idx);
+        let recovery = if recovering {
+            exec.core.run_config.policies.recovery_of(node_idx)
+        } else {
+            super::NodeRecovery::Fail
+        };
         let collect_start = probe.is_some().then(|| clock.now());
         let inputs = collect_inputs(exec, node_idx, wait_all, &mut carry)?;
         debug_assert!(carry.is_empty(), "fused payloads go to the next node");
@@ -201,7 +209,9 @@ fn run_order_timed<H: NodeHandler>(
             None
         };
         let consts = super::node_consts(&exec.const_inputs, node_idx);
-        let retry_inputs = resilience::retry_inputs(recovery, &inputs);
+        let retry_inputs = recovering
+            .then(|| resilience::retry_inputs(recovery, &inputs))
+            .flatten();
         let mut io = exec.core.node_io(node_idx, inputs, consts.as_ref());
         let ctx = &contexts[node_idx];
         if collect_basic_metrics {
@@ -218,27 +228,31 @@ fn run_order_timed<H: NodeHandler>(
         let run_result = {
             let _handler_span = handler_span.enter();
             let _scope = super::node_alloc_scope();
-            let result = resilience::run_handler(
-                &*exec.handler,
-                node,
-                ctx,
-                &mut io,
-                recovery,
-                &mut exec.core.telemetry,
-            );
-            match retry_inputs {
-                Some(saved) => resilience::retry(
-                    exec,
-                    node_idx,
+            if !recovering {
+                exec.handler.run(node, ctx, &mut io)
+            } else {
+                let result = resilience::run_handler(
+                    &*exec.handler,
                     node,
                     ctx,
-                    consts.as_ref(),
                     &mut io,
-                    result,
-                    saved,
                     recovery,
-                ),
-                None => result,
+                    &mut exec.core.telemetry,
+                );
+                match retry_inputs {
+                    Some(saved) => resilience::retry(
+                        exec,
+                        node_idx,
+                        node,
+                        ctx,
+                        consts.as_ref(),
+                        &mut io,
+                        result,
+                        saved,
+                        recovery,
+                    ),
+                    None => result,
+                }
             }
         };
         if let Some(handler_start) = handler_start {
