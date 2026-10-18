@@ -35,7 +35,9 @@ fn main() -> Result<(), Error> {
     let ticks = env_usize("FRAME_CHAIN_TICKS", 5000);
     let width = env_usize("FRAME_BENCH_FANOUT", 16).max(1);
     let mode = runtime_mode_from_env()?;
-    let outputs: Vec<String> = (0..width).map(|idx| format!("{CHAIN_OUTPUT}_{idx}")).collect();
+    let outputs: Vec<String> = (0..width)
+        .map(|idx| format!("{CHAIN_OUTPUT}_{idx}"))
+        .collect();
     let bench = FrameBenchConfig::new(outputs).with_ticks(ticks / 5, ticks);
     let config = EngineConfig::default()
         .with_metrics_level(MetricsLevel::Off)

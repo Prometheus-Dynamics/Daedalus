@@ -13,7 +13,8 @@
 use daedalus::engine::{EngineConfig, MetricsLevel};
 use daedalus_frame_bench::{
     CHAIN_OUTPUT, CountingAllocator, FrameBenchConfig, FrameBenchRun, FrameFeed, FrameSourceConfig,
-    SyntheticFrameSource, compile_frame_chain, fit_per_node, run_frame_bench, runtime_mode_from_env,
+    SyntheticFrameSource, compile_frame_chain, fit_per_node, run_frame_bench,
+    runtime_mode_from_env,
 };
 
 #[global_allocator]
