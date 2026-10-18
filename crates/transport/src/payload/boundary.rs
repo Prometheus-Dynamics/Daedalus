@@ -67,6 +67,29 @@ impl Payload {
         };
         taken.map_err(|err| BoundaryPayloadError(Box::new(self), err))
     }
+
+    /// [`Payload::try_take_boundary_owned`] for the payload's own key and the `T` the caller
+    /// asks for, without building a required contract.
+    pub(super) fn try_take_boundary_owned_as<T>(mut self) -> Result<T, BoundaryPayloadError>
+    where
+        T: Send + Sync + 'static,
+    {
+        let type_key = &self.type_key;
+        let taken = if self.storage.as_any().is::<BoundaryStorage>() {
+            Arc::get_mut(&mut self.storage)
+                .ok_or(BoundaryTakeError::Shared)
+                .and_then(|storage| {
+                    storage
+                        .as_any_mut()
+                        .downcast_mut::<BoundaryStorage>()
+                        .ok_or(BoundaryTakeError::NotBoundary)?
+                        .try_take_owned_as::<T>(type_key)
+                })
+        } else {
+            Err(BoundaryTakeError::NotBoundary)
+        };
+        taken.map_err(|err| BoundaryPayloadError(Box::new(self), err))
+    }
 }
 
 #[derive(Debug)]

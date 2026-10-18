@@ -5,8 +5,8 @@ use core::any::Any;
 use core::fmt;
 
 use crate::{
-    BoundaryCapabilities, BoundaryStorage, BoundaryTypeContract, CorrelationId, Layout,
-    PayloadLineage, ReleaseMode, Residency, TypeKey,
+    BoundaryCapabilities, BoundaryStorage, CorrelationId, Layout, PayloadLineage, ReleaseMode,
+    Residency, TypeKey,
 };
 
 mod boundary;
@@ -247,14 +247,7 @@ impl Payload {
             if storage.holds::<T>() || !storage.may_hold::<T>() {
                 return storage.borrow_ref_as::<T>(&self.type_key);
             }
-            let required = BoundaryTypeContract::for_type::<T>(
-                self.type_key.clone(),
-                BoundaryCapabilities {
-                    borrow_ref: true,
-                    ..BoundaryCapabilities::default()
-                },
-            );
-            return storage.try_borrow_ref::<T>(&required).ok();
+            return storage.try_borrow_ref_as::<T>(&self.type_key).ok();
         }
         // Storage built by another copy of this crate (a separately built dynamic plugin) has
         // other wrapper `TypeId`s; its value can still be `T` (e.g. a std type).
@@ -278,14 +271,7 @@ impl Payload {
             if storage.holds::<T>() || !storage.may_hold::<T>() {
                 return storage.borrow_mut_as::<T>(&self.type_key);
             }
-            let required = BoundaryTypeContract::for_type::<T>(
-                self.type_key.clone(),
-                BoundaryCapabilities {
-                    borrow_mut: true,
-                    ..BoundaryCapabilities::default()
-                },
-            );
-            return storage.try_borrow_mut::<T>(&required).ok();
+            return storage.try_borrow_mut_as::<T>(&self.type_key).ok();
         }
         let storage = Arc::get_mut(&mut self.storage)?.as_any_mut();
         if storage.is::<ArcValue<T>>() {
@@ -312,13 +298,9 @@ impl Payload {
                     .and_then(|storage| storage.take_owned_as::<T>(&self.type_key));
                 return taken.ok_or_else(|| Box::new(self));
             }
-            // A same-named type of another build: only the full contract can tell.
-            let type_key = self.type_key.clone();
+            // A same-named type of another build: only the layout check can tell.
             return self
-                .try_take_boundary_owned::<T>(&BoundaryTypeContract::for_type::<T>(
-                    type_key,
-                    BoundaryCapabilities::owned(),
-                ))
+                .try_take_boundary_owned_as::<T>()
                 .map_err(|payload| payload.0);
         }
         if self.storage.as_any().is::<ArcValue<T>>() {

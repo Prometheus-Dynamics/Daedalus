@@ -158,6 +158,24 @@ impl BoundaryStorage {
         self.contract()
             .compatible_with(required)
             .map_err(BoundaryTakeError::Incompatible)?;
+        self.take_owned_checked::<T>()
+    }
+
+    /// [`Self::try_take_owned`] for a `T` required under `key`, checked without building the
+    /// required contract (the cross-build fallback in `Payload`).
+    pub(crate) fn try_take_owned_as<T>(&mut self, key: &TypeKey) -> Result<T, BoundaryTakeError>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.check_required::<T>(key, BoundaryCapabilities::owned())
+            .map_err(BoundaryTakeError::Incompatible)?;
+        self.take_owned_checked::<T>()
+    }
+
+    fn take_owned_checked<T>(&mut self) -> Result<T, BoundaryTakeError>
+    where
+        T: Send + Sync + 'static,
+    {
         if self.vtable.rust_type_name != core::any::type_name::<T>() {
             return Err(BoundaryTakeError::RustType {
                 expected: core::any::type_name::<T>(),
@@ -182,6 +200,29 @@ impl BoundaryStorage {
         self.contract()
             .compatible_with(required)
             .map_err(BoundaryTakeError::Incompatible)?;
+        self.borrow_ref_checked::<T>()
+    }
+
+    /// [`Self::try_borrow_ref`] for a `T` required under `key`, without building the contract.
+    pub(crate) fn try_borrow_ref_as<T>(&self, key: &TypeKey) -> Result<&T, BoundaryTakeError>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.check_required::<T>(
+            key,
+            BoundaryCapabilities {
+                borrow_ref: true,
+                ..BoundaryCapabilities::default()
+            },
+        )
+        .map_err(BoundaryTakeError::Incompatible)?;
+        self.borrow_ref_checked::<T>()
+    }
+
+    fn borrow_ref_checked<T>(&self) -> Result<&T, BoundaryTakeError>
+    where
+        T: Send + Sync + 'static,
+    {
         if !self.capabilities.borrow_ref {
             return Err(BoundaryTakeError::Capability("borrow_ref"));
         }
@@ -207,6 +248,29 @@ impl BoundaryStorage {
         self.contract()
             .compatible_with(required)
             .map_err(BoundaryTakeError::Incompatible)?;
+        self.borrow_mut_checked::<T>()
+    }
+
+    /// [`Self::try_borrow_mut`] for a `T` required under `key`, without building the contract.
+    pub(crate) fn try_borrow_mut_as<T>(&mut self, key: &TypeKey) -> Result<&mut T, BoundaryTakeError>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.check_required::<T>(
+            key,
+            BoundaryCapabilities {
+                borrow_mut: true,
+                ..BoundaryCapabilities::default()
+            },
+        )
+        .map_err(BoundaryTakeError::Incompatible)?;
+        self.borrow_mut_checked::<T>()
+    }
+
+    fn borrow_mut_checked<T>(&mut self) -> Result<&mut T, BoundaryTakeError>
+    where
+        T: Send + Sync + 'static,
+    {
         if !self.capabilities.borrow_mut {
             return Err(BoundaryTakeError::Capability("borrow_mut"));
         }
@@ -225,6 +289,46 @@ impl BoundaryStorage {
                 .as_mut()
                 .expect("non-null boundary pointer")
         })
+    }
+
+    /// The checks of [`BoundaryTypeContract::compatible_with`] for a `T` required under `key` with
+    /// `required` capabilities, without building the required contract. The layout hash of `T`
+    /// is cached per type (see [`layout_hash_of`]).
+    fn check_required<T: 'static>(
+        &self,
+        key: &TypeKey,
+        required: BoundaryCapabilities,
+    ) -> Result<(), BoundaryContractError> {
+        let contract = self.contract();
+        if contract.type_key != *key {
+            return Err(BoundaryContractError::TypeKey {
+                expected: key.clone(),
+                found: contract.type_key.clone(),
+            });
+        }
+        if contract.abi_version != BoundaryTypeContract::ABI_VERSION {
+            return Err(BoundaryContractError::Abi {
+                expected: BoundaryTypeContract::ABI_VERSION,
+                found: contract.abi_version,
+            });
+        }
+        layout_hash_of::<T, _>(|layout| {
+            if contract.layout_hash == *layout {
+                Ok(())
+            } else {
+                Err(BoundaryContractError::Layout {
+                    expected: layout.clone(),
+                    found: contract.layout_hash.clone(),
+                })
+            }
+        })?;
+        if !contract.capabilities.satisfies(required) {
+            return Err(BoundaryContractError::Capabilities {
+                expected: required,
+                found: contract.capabilities,
+            });
+        }
+        Ok(())
     }
 
     /// Borrow the stored value as `&(dyn Any + Send + Sync)` for read-only inspection.
@@ -303,6 +407,17 @@ pub enum BoundaryTakeError {
     NotBoundary,
     #[error("boundary payload is missing required capability {0}")]
     Capability(&'static str),
+}
+
+/// Runs `check` on [`LayoutHash::for_type`] of `T`, cached per `TypeId`: the cross-build fallback
+/// compares it on every access, and building it formats a string.
+fn layout_hash_of<T: 'static, R>(check: impl FnOnce(&LayoutHash) -> R) -> R {
+    static LAYOUTS: OnceLock<Mutex<HashMap<TypeId, LayoutHash>>> = OnceLock::new();
+    let mut layouts = crate::lock_recover(LAYOUTS.get_or_init(|| Mutex::new(HashMap::new())));
+    let layout = layouts
+        .entry(TypeId::of::<T>())
+        .or_insert_with(LayoutHash::for_type::<T>);
+    check(layout)
 }
 
 fn boundary_vtable<T>() -> &'static BoundaryVTable

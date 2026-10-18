@@ -28,9 +28,10 @@ impl IdStr {
         Self(Repr::Static(value))
     }
 
-    /// Copy borrowed text into a shared allocation.
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(Repr::Shared(value.into().into()))
+    /// Copy text into a shared allocation: one allocation for `&str` input, where an owned
+    /// `String` argument would cost its own buffer on top of the `Arc<str>`.
+    pub fn new(value: impl AsRef<str>) -> Self {
+        Self(Repr::Shared(Arc::from(value.as_ref())))
     }
 
     pub fn as_str(&self) -> &str {
@@ -161,7 +162,7 @@ macro_rules! define_text_id {
         pub struct $name($crate::IdStr);
 
         impl $name {
-            pub fn new(value: impl Into<$crate::__private::String>) -> Self {
+            pub fn new(value: impl AsRef<str>) -> Self {
                 Self($crate::IdStr::new(value))
             }
 
