@@ -123,8 +123,12 @@ cmd_macro_ui() {
 # resolve features for one package and rebuild about 30 crates.
 cmd_smoke() {
   step "Running CPU-only example binaries"
-  local bins=(runtime_metrics transport_metrics ownership_metrics lifecycle_trace plan_debug
-    overhead_floor observability backpressure_diagnostics external_frame_source frame_chain)
+  local bins=(quickstart_typed_cpu_graph quickstart_direct_host_lane
+    quickstart_bounded_streaming_io quickstart_runtime_config quickstart_gpu_fallback
+    quickstart_strict_builder_roundtrip hello_graph typed_ports typed_handle_graph
+    mutable_payload fanout runtime_metrics transport_metrics ownership_metrics lifecycle_trace
+    plan_debug overhead_floor observability backpressure_diagnostics external_frame_source
+    frame_chain)
   local args=(--examples) bin exes exe
   for bin in "${bins[@]::${#bins[@]}-1}"; do args+=(--bin "$bin"); done
   exes="$(cargo build --workspace --features "$CI_FEATURES" "${args[@]}" \
