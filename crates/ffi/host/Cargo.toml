@@ -39,6 +39,8 @@ libc = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 daedalus-ffi-core = { workspace = true, features = ["conformance"] }
+# Its own tests cover the conformance harness.
+daedalus-ffi-host = { workspace = true, features = ["conformance"] }
 daedalus-ffi-cpp = { workspace = true }
 daedalus-ffi-java = { workspace = true }
 daedalus-ffi-node = { workspace = true }

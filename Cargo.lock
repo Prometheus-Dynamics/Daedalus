@@ -624,6 +624,7 @@ dependencies = [
  "daedalus-data",
  "daedalus-ffi-core",
  "daedalus-ffi-cpp",
+ "daedalus-ffi-host",
  "daedalus-ffi-java",
  "daedalus-ffi-node",
  "daedalus-ffi-python",
