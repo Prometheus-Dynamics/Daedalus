@@ -46,13 +46,6 @@ for member in "${members[@]}"; do
                     name ~ /^target\..*\.build-dependencies$/
             }
 
-            function allowed_exception(dep, line) {
-                return manifest == "crates/engine/Cargo.toml" &&
-                    dep == "daedalus-runtime" &&
-                    line ~ /path[[:space:]]*=/ &&
-                    line ~ /default-features[[:space:]]*=[[:space:]]*false/
-            }
-
             /^\[/ {
                 section = section_name($0)
                 active = dependency_section(section)
@@ -69,11 +62,7 @@ for member in "${members[@]}"; do
                 if (line ~ /workspace[[:space:]]*=[[:space:]]*true/) {
                     next
                 }
-                if (allowed_exception(dep, line)) {
-                    next
-                }
-
-                print manifest ":" FNR ": dependency `" dep "` must use `workspace = true` or be documented in the dependency policy exceptions"
+                print manifest ":" FNR ": dependency `" dep "` must use `workspace = true`"
             }
         ' "$manifest"
     )
