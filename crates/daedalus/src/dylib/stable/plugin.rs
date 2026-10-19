@@ -349,6 +349,7 @@ fn error_status(error: &NodeError) -> u32 {
         NodeError::Handler(_) => status::HANDLER_ERROR,
         NodeError::InvalidInput(_) => status::INVALID_INPUT,
         NodeError::BackpressureDrop(_) => status::BACKPRESSURE,
+        NodeError::InputDropped(_) => status::INPUT_DROPPED,
         _ => status::FAILED,
     }
 }

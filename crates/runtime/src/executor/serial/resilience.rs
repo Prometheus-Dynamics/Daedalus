@@ -81,6 +81,10 @@ pub(super) fn retry<H: NodeHandler>(
     let mut attempts = 0u32;
     while attempts < max {
         let Err(error) = &result else { break };
+        // A dropped input is gone: retrying cannot help.
+        if error.is_input_dropped() {
+            break;
+        }
         attempts += 1;
         crate::trace::warn!(
             target: "daedalus_runtime::executor",
@@ -135,6 +139,11 @@ pub(super) fn handle_failure(
     recovery: NodeRecovery,
     first_error: &mut Option<ExecuteError>,
 ) -> Result<(), ExecuteError> {
+    if error.is_input_dropped() {
+        crate::trace::debug!(target: "daedalus_runtime::executor", node_id, error = %error, "node dropped its input; skipping its frame");
+        v.core.telemetry.recovery_mut().dropped_inputs += 1;
+        return Ok(());
+    }
     record_failure(&mut v.core.telemetry, node_idx, node_id, &error);
     match recovery {
         NodeRecovery::SkipFrame => {

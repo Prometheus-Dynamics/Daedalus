@@ -8,6 +8,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- **`NodeError::InputDropped(String)`** (code `input_dropped`, `NodeError::is_input_dropped`): a
+  node returns it when this tick's input is unusable (e.g. a camera frame that failed while its
+  rows were being written). It never fails the tick, under any `NodeRecovery` and on direct host
+  routes: the node's outputs for the tick are dropped, it is not retried, it stays out of
+  `ExecutionTelemetry::errors`, and it is counted in the new `RecoveryTelemetry::dropped_inputs`.
+  The stable plugin ABI carries it as `status::INPUT_DROPPED` (6); hosts that predate it read it
+  as a failure.
 - Hot graph reload for host graphs (`daedalus-engine`): `HostGraph::reload`, `reload_document`
   and `reload_with` swap a recompiled graph in between ticks onto the same host bridges. Node
   state and managed resources carry over for node instances whose key and node type are

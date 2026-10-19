@@ -142,10 +142,17 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         route: &DirectHostSingleNodeRoute,
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), ExecuteError> {
-        let (output, metrics) = self.run_single_node(route, payload)?;
+        let SingleNodeRun {
+            output,
+            metrics,
+            dropped,
+        } = self.run_single_node(route, payload)?;
         let mut telemetry = ExecutionTelemetry::with_level(self.core.run_config.metrics_level)
             .with_clock(&self.core.clock);
         telemetry.nodes_executed = 1;
+        if dropped {
+            telemetry.recovery_mut().dropped_inputs += 1;
+        }
         telemetry.record_node_custom_metrics(route.node_idx, metrics);
         Ok((telemetry, output))
     }
@@ -155,8 +162,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         route: &DirectHostSingleNodeRoute,
         payload: Payload,
     ) -> Result<Option<Payload>, ExecuteError> {
-        self.run_single_node(route, payload)
-            .map(|(output, _)| output)
+        self.run_single_node(route, payload).map(|run| run.output)
     }
 
     /// Run the route's node on `payload` plus its const inputs (graph constants, port defaults
@@ -166,7 +172,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         &mut self,
         route: &DirectHostSingleNodeRoute,
         payload: Payload,
-    ) -> Result<(Option<Payload>, BTreeMap<String, CustomMetricValue>), ExecuteError> {
+    ) -> Result<SingleNodeRun, ExecuteError> {
         let _scope = super::runtime_alloc_scope();
         let failed = |error| ExecuteError::HandlerFailed {
             node: route.node.id.clone(),
@@ -179,11 +185,19 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.core
             .state
             .clear_node_custom_metrics(&route.ctx.node_id);
+        let mut dropped = false;
         // Direct payload handlers exist only for nodes with a single input, which the route's
         // edge feeds, so they have no const input to deliver.
         let output = if let Some(handler) = &route.direct_payload {
             let _scope = super::node_alloc_scope();
-            let output = handler(&route.node, &route.ctx, payload).map_err(failed)?;
+            let output = match handler(&route.node, &route.ctx, payload) {
+                Ok(output) => output,
+                Err(error) if error.is_input_dropped() => {
+                    dropped = true;
+                    None
+                }
+                Err(error) => return Err(failed(error)),
+            };
             if let (Some(probe), Some(start)) = (&probe, node_start) {
                 probe.add_time(ProbeTime::Handlers, clock.elapsed(start));
             }
@@ -202,15 +216,21 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             let handler_start = probe.is_some().then(|| clock.now());
             {
                 let _scope = super::node_alloc_scope();
-                self.handler
-                    .run(&route.node, &route.ctx, &mut io)
-                    .map_err(failed)?;
+                match self.handler.run(&route.node, &route.ctx, &mut io) {
+                    Ok(()) => {}
+                    Err(error) if error.is_input_dropped() => dropped = true,
+                    Err(error) => return Err(failed(error)),
+                }
             }
             if let (Some(probe), Some(start)) = (&probe, handler_start) {
                 probe.add_time(ProbeTime::Handlers, clock.elapsed(start));
             }
-            io.flush().map_err(failed)?;
-            io.take_output(&route.output_port)
+            if dropped {
+                None
+            } else {
+                io.flush().map_err(failed)?;
+                io.take_output(&route.output_port)
+            }
         };
         let metrics = self
             .core
@@ -221,7 +241,11 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             probe.add_count(ProbeCount::Nodes, 1);
         }
         self.end_probe_tick(tick);
-        Ok((output, metrics))
+        Ok(SingleNodeRun {
+            output,
+            metrics,
+            dropped,
+        })
     }
 
     fn direct_host_single_node_route(
@@ -282,4 +306,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         }
         matched
     }
+}
+
+/// What a direct host route's single node produced: its output, its custom metrics, and whether
+/// it dropped its input ([`NodeError::InputDropped`]).
+struct SingleNodeRun {
+    output: Option<Payload>,
+    metrics: BTreeMap<String, CustomMetricValue>,
+    dropped: bool,
 }

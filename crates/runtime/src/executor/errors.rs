@@ -6,10 +6,23 @@ use crate::prelude::*;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeError {
     Handler(String),
-    MissingHandler { node: String, stable_id: u128 },
-    ExternalHandlerUnavailable { node: String, stable_id: u128 },
+    MissingHandler {
+        node: String,
+        stable_id: u128,
+    },
+    ExternalHandlerUnavailable {
+        node: String,
+        stable_id: u128,
+    },
     InvalidInput(String),
     BackpressureDrop(String),
+    /// This tick's input could not be used (e.g. a camera frame that failed while it was being
+    /// written), so the node drops it. Never a tick failure, whatever the node's
+    /// [`NodeRecovery`](crate::executor::NodeRecovery): the node's outputs for the tick are
+    /// dropped, it is not retried, and it is counted in
+    /// [`RecoveryTelemetry::dropped_inputs`](crate::executor::RecoveryTelemetry::dropped_inputs)
+    /// instead of the failure list.
+    InputDropped(String),
 }
 
 impl core::fmt::Display for NodeError {
@@ -27,6 +40,7 @@ impl core::fmt::Display for NodeError {
             }
             NodeError::InvalidInput(s) => write!(f, "invalid input: {s}"),
             NodeError::BackpressureDrop(s) => write!(f, "backpressure drop: {s}"),
+            NodeError::InputDropped(s) => write!(f, "input dropped: {s}"),
         }
     }
 }
@@ -55,7 +69,14 @@ impl NodeError {
             NodeError::ExternalHandlerUnavailable { .. } => "external_handler_unavailable",
             NodeError::InvalidInput(_) => "invalid_input",
             NodeError::BackpressureDrop(_) => "backpressure_drop",
+            NodeError::InputDropped(_) => "input_dropped",
         }
+    }
+
+    /// Whether this is [`NodeError::InputDropped`]: the tick's input was unusable and skipped,
+    /// not a node failure.
+    pub fn is_input_dropped(&self) -> bool {
+        matches!(self, NodeError::InputDropped(_))
     }
 }
 

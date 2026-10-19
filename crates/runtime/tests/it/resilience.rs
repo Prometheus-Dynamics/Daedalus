@@ -499,3 +499,99 @@ fn retry_gives_a_by_value_consumer_its_input_again() {
     assert_eq!(*seen.lock(), vec![2]);
     assert_eq!(telemetry.recovery().recovered_retries, 1);
 }
+
+/// `flaky` drops its first `drops` inputs with [`NodeError::InputDropped`].
+struct Dropping {
+    drops: u32,
+    calls: AtomicU32,
+    seen: Arc<Mutex<Vec<i32>>>,
+}
+
+impl NodeHandler for Dropping {
+    fn run(
+        &self,
+        node: &RuntimeNode,
+        _ctx: &daedalus_runtime::state::ExecutionContext,
+        io: &mut daedalus_runtime::io::NodeIo,
+    ) -> Result<(), NodeError> {
+        match node.id.as_str() {
+            "src" => io.push_payload("out", Payload::owned("test:i32", 1_i32)),
+            "flaky" => {
+                let value = io.get_typed::<i32>("in").unwrap_or_default();
+                if self.calls.fetch_add(1, Ordering::Relaxed) < self.drops {
+                    return Err(NodeError::InputDropped("frame failed mid-write".into()));
+                }
+                io.push_payload("out", Payload::owned("test:i32", value + 1));
+            }
+            "sink" => {
+                if let Some(value) = io.get_typed::<i32>("in") {
+                    self.seen.lock().push(value);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+fn dropping(drops: u32) -> Dropping {
+    Dropping {
+        drops,
+        calls: AtomicU32::new(0),
+        seen: Arc::default(),
+    }
+}
+
+#[test]
+fn input_dropped_skips_the_frame_under_every_policy_and_is_not_a_failure() {
+    let rt = build_runtime(
+        &chain(&["src", "flaky", "sink"]),
+        &SchedulerConfig::default(),
+    );
+    for recovery in [
+        NodeRecovery::Fail,
+        NodeRecovery::SkipFrame,
+        NodeRecovery::Restart,
+        NodeRecovery::retry(3),
+    ] {
+        let handler = dropping(1);
+        let seen = handler.seen.clone();
+        let telemetry = Executor::new(&rt, handler)
+            .with_recovery(recovery)
+            .run()
+            .unwrap_or_else(|err| panic!("{recovery:?}: a dropped input failed the run: {err}"));
+        assert!(
+            telemetry.errors.is_empty(),
+            "{recovery:?}: counted as a failure"
+        );
+        let counts = telemetry.recovery();
+        assert_eq!(counts.dropped_inputs, 1, "{recovery:?}");
+        assert_eq!(
+            counts.retries, 0,
+            "{recovery:?}: a dropped input was retried"
+        );
+        assert_eq!(counts.skipped_frames + counts.restarts, 0, "{recovery:?}");
+        assert!(seen.lock().is_empty(), "{recovery:?}: sink got a value");
+    }
+}
+
+#[test]
+fn input_dropped_is_not_a_failure_in_parallel_runs() {
+    let rt = build_runtime(
+        &chain(&["src", "flaky", "sink"]),
+        &SchedulerConfig::default(),
+    );
+    let telemetry = Executor::new(&rt, dropping(1))
+        .run_parallel()
+        .expect("a dropped input does not fail a parallel run");
+    assert!(telemetry.errors.is_empty());
+    assert_eq!(telemetry.recovery().dropped_inputs, 1);
+}
+
+#[test]
+fn input_dropped_has_its_own_code() {
+    let error = NodeError::InputDropped("x".into());
+    assert_eq!(error.code(), "input_dropped");
+    assert!(error.is_input_dropped());
+    assert!(!NodeError::Handler("x".into()).is_input_dropped());
+}

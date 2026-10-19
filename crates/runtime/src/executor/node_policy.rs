@@ -123,6 +123,11 @@ pub struct RecoveryTelemetry {
     /// Handler panics caught and handled as errors under a recovering policy.
     #[serde(default)]
     pub caught_panics: u64,
+    /// Node frames skipped because the handler returned
+    /// [`NodeError::InputDropped`](crate::executor::NodeError::InputDropped) (its input was
+    /// unusable); counted under every policy, and not as failures.
+    #[serde(default)]
+    pub dropped_inputs: u64,
 }
 
 impl RecoveryTelemetry {

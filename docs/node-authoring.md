@@ -651,6 +651,14 @@ What a policy means for the handler:
 - Policies apply to scheduled runs (`run*`, `run_*_in_place`, stream graphs, engine host graphs).
   Direct host routes (`run_direct_host_*`) return the error to their caller.
 
+A tick whose input the node cannot use (for example a camera frame that failed while it was being
+written) is not a failure: return `NodeError::InputDropped(reason)`. Under every policy, and on
+direct host routes too, the node's outputs for that tick are dropped, it is not retried, it does
+not appear in `ExecutionTelemetry::errors`, and it is counted in
+`ExecutionTelemetry::recovery().dropped_inputs`, so a host can tell dropped frames from real
+failures without matching strings. Across the stable plugin ABI it travels as
+`status::INPUT_DROPPED`.
+
 Every failure lands in `ExecutionTelemetry::errors`; the recoveries taken are counted in
 `ExecutionTelemetry::recovery()` (see "Node Recovery" in
 [runtime-diagnostics.md](runtime-diagnostics.md)).

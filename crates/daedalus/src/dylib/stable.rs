@@ -103,6 +103,9 @@ pub mod status {
     pub const PANIC: u32 = 4;
     /// Anything else: unknown node, plugin registry failed to build, output rejected.
     pub const FAILED: u32 = 5;
+    /// `NodeError::InputDropped`: the tick's input was unusable and is skipped (hosts that
+    /// predate it read it as a failure).
+    pub const INPUT_DROPPED: u32 = 6;
 }
 
 /// Creates the plugin-side state of one host node instance of schema node `node` (its

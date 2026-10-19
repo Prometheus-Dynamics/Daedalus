@@ -376,6 +376,7 @@ impl HostNode {
         match code {
             status::INVALID_INPUT => NodeError::InvalidInput(message),
             status::BACKPRESSURE => NodeError::BackpressureDrop(message),
+            status::INPUT_DROPPED => NodeError::InputDropped(message),
             status::PANIC => NodeError::Handler(format!("{message} (the handler panicked)")),
             _ => NodeError::Handler(message),
         }
