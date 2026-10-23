@@ -133,6 +133,15 @@ impl PayloadInspection {
     pub fn to_json(&self) -> serde_json::Value {
         daedalus_data::json::to_plain_json(&self.to_display_value())
     }
+
+    /// [`Self::to_json`] with rendering options (e.g. base64 for byte buffers; see
+    /// [`daedalus_data::json::to_plain_json_with`]).
+    pub fn to_json_with(
+        &self,
+        options: daedalus_data::json::PlainJsonOptions,
+    ) -> serde_json::Value {
+        daedalus_data::json::to_plain_json_with(&self.to_display_value(), options)
+    }
 }
 
 /// Serialize a payload's value using `serializers`, without the structured fallback.

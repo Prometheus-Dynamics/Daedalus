@@ -8,6 +8,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- **`daedalus_data::json::to_plain_json_with(value, PlainJsonOptions)`** and
+  `PayloadInspection::to_json_with`: plain JSON with rendering options. `BytesEncoding::Base64`
+  renders `Value::Bytes` as one standard, padded base64 string instead of an array of byte
+  numbers, about a third of the size and much cheaper to parse for large buffers (point clouds,
+  meshes). The default options render exactly what `to_plain_json` does, which is unchanged.
 - **`NodeError::InputDropped(String)`** (code `input_dropped`, `NodeError::is_input_dropped`): a
   node returns it when this tick's input is unusable (e.g. a camera frame that failed while its
   rows were being written). It never fails the tick, under any `NodeRecovery` and on direct host

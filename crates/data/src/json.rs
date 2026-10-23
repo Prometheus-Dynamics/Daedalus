@@ -125,6 +125,30 @@ pub fn encode_value(value: &Value) -> DataResult<JsonValue> {
 /// - `Map` becomes an object when every key is a string, otherwise an array of `[key, value]` pairs.
 /// - `Enum` becomes `{"name": ..., "value": ...}` (`value` omitted for unit variants).
 pub fn to_plain_json(value: &Value) -> JsonValue {
+    to_plain_json_with(value, PlainJsonOptions::default())
+}
+
+/// How [`to_plain_json_with`] renders `Value::Bytes`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BytesEncoding {
+    /// An array of byte numbers (what [`to_plain_json`] emits).
+    #[default]
+    Numbers,
+    /// One standard-alphabet, padded base64 string: about a third of the size of
+    /// [`BytesEncoding::Numbers`] for large buffers and far cheaper to parse. The value's type
+    /// says it is bytes, so the string carries no wrapper.
+    Base64,
+}
+
+/// Rendering options for [`to_plain_json_with`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlainJsonOptions {
+    pub bytes: BytesEncoding,
+}
+
+/// [`to_plain_json`] with options: the same rendering, except for what `options` changes.
+pub fn to_plain_json_with(value: &Value, options: PlainJsonOptions) -> JsonValue {
+    let recurse = |v: &Value| to_plain_json_with(v, options);
     match value {
         Value::Unit => JsonValue::Null,
         Value::Bool(b) => JsonValue::Bool(*b),
@@ -133,19 +157,22 @@ pub fn to_plain_json(value: &Value) -> JsonValue {
             .map(JsonValue::Number)
             .unwrap_or(JsonValue::Null),
         Value::String(s) => JsonValue::String(s.to_string()),
-        Value::Bytes(bytes) => JsonValue::Array(
-            bytes
-                .iter()
-                .map(|byte| JsonValue::Number((*byte).into()))
-                .collect(),
-        ),
+        Value::Bytes(bytes) => match options.bytes {
+            BytesEncoding::Numbers => JsonValue::Array(
+                bytes
+                    .iter()
+                    .map(|byte| JsonValue::Number((*byte).into()))
+                    .collect(),
+            ),
+            BytesEncoding::Base64 => JsonValue::String(B64.encode(bytes)),
+        },
         Value::List(items) | Value::Tuple(items) => {
-            JsonValue::Array(items.iter().map(to_plain_json).collect())
+            JsonValue::Array(items.iter().map(recurse).collect())
         }
         Value::Struct(fields) => {
             let mut obj = serde_json::Map::new();
             for field in fields {
-                obj.insert(field.name.clone(), to_plain_json(&field.value));
+                obj.insert(field.name.clone(), recurse(&field.value));
             }
             JsonValue::Object(obj)
         }
@@ -153,7 +180,7 @@ pub fn to_plain_json(value: &Value) -> JsonValue {
             let mut obj = serde_json::Map::new();
             obj.insert("name".into(), JsonValue::String(ev.name.clone()));
             if let Some(v) = &ev.value {
-                obj.insert("value".into(), to_plain_json(v));
+                obj.insert("value".into(), recurse(v));
             }
             JsonValue::Object(obj)
         }
@@ -162,7 +189,7 @@ pub fn to_plain_json(value: &Value) -> JsonValue {
                 let mut obj = serde_json::Map::new();
                 for (k, v) in entries {
                     if let Value::String(key) = k {
-                        obj.insert(key.to_string(), to_plain_json(v));
+                        obj.insert(key.to_string(), recurse(v));
                     }
                 }
                 JsonValue::Object(obj)
@@ -170,7 +197,7 @@ pub fn to_plain_json(value: &Value) -> JsonValue {
                 JsonValue::Array(
                     entries
                         .iter()
-                        .map(|(k, v)| JsonValue::Array(vec![to_plain_json(k), to_plain_json(v)]))
+                        .map(|(k, v)| JsonValue::Array(vec![recurse(k), recurse(v)]))
                         .collect(),
                 )
             }
@@ -375,6 +402,42 @@ pub fn decode_value(value: &JsonValue) -> DataResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_json_with_base64_bytes_encodes_bytes_only() {
+        let value = Value::Struct(vec![
+            StructFieldValue {
+                name: "xyz".into(),
+                value: Value::Bytes(vec![0u8, 1, 2, 250, 255].into()),
+            },
+            StructFieldValue {
+                name: "count".into(),
+                value: Value::Int(5),
+            },
+            StructFieldValue {
+                name: "nested".into(),
+                value: Value::List(vec![Value::Bytes(Vec::<u8>::new().into())]),
+            },
+        ]);
+        let base64 = to_plain_json_with(
+            &value,
+            PlainJsonOptions {
+                bytes: BytesEncoding::Base64,
+            },
+        );
+        assert_eq!(base64["xyz"], JsonValue::String("AAEC+v8=".into()));
+        assert_eq!(base64["count"], JsonValue::from(5));
+        assert_eq!(base64["nested"][0], JsonValue::String(String::new()));
+        // The default options are `to_plain_json` exactly.
+        assert_eq!(
+            to_plain_json_with(&value, PlainJsonOptions::default()),
+            to_plain_json(&value)
+        );
+        assert_eq!(
+            to_plain_json(&value)["xyz"],
+            serde_json::json!([0, 1, 2, 250, 255])
+        );
+    }
 
     #[test]
     fn plain_json_renders_compound_values() {
