@@ -89,6 +89,36 @@ pub(super) fn metadata_entries(spec: &PortSpec, data_crate: &TokenStream) -> Vec
             );
         });
     }
+    for (part, value) in [
+        ("label", &spec.label),
+        ("unit", &spec.unit),
+        ("group", &spec.group),
+    ] {
+        if let Some(value) = value {
+            let key = LitStr::new(
+                &format!("inputs.{}.{part}", spec.name.value()),
+                Span::call_site(),
+            );
+            entries.push(quote! {
+                __meta.insert(
+                    ::std::string::String::from(#key),
+                    #data_crate::model::Value::String(::std::borrow::Cow::from(#value)),
+                );
+            });
+        }
+    }
+    if let Some(advanced) = spec.advanced {
+        let key = LitStr::new(
+            &format!("inputs.{}.advanced", spec.name.value()),
+            Span::call_site(),
+        );
+        entries.push(quote! {
+            __meta.insert(
+                ::std::string::String::from(#key),
+                #data_crate::model::Value::Bool(#advanced),
+            );
+        });
+    }
     if let Some(policy) = &spec.policy {
         let key = LitStr::new(
             &format!("inputs.{}.policy", spec.name.value()),

@@ -306,6 +306,32 @@ struct BlurConfig {
 fn blur(frame: &Frame, cfg: BlurConfig) -> Result<Frame, NodeError> { /* ... */ }
 ```
 
+### Port Display Metadata
+
+A port can carry display metadata for an editor or a UI, on a `#[derive(NodeConfig)]` field
+(`#[port(...)]`) and on a node's input (`inputs(port(name = "...", ...))`):
+
+- `label = "..."`: a human name for the port;
+- `unit = "..."`: its unit, for example `"m"`, `"px"`, `"ms"` or `"deg"`;
+- `group = "..."`: the stage or section it belongs to;
+- `advanced = true` (or a bare `advanced`): an expert knob a UI folds away by default. `advanced
+  = false` says so explicitly.
+
+They are metadata, not behaviour: the registry records them on the node declaration as
+`inputs.<port>.label`, `inputs.<port>.unit`, `inputs.<port>.group` and `inputs.<port>.advanced`
+(a boolean), next to `inputs.<port>.description`, so they reach the registry and catalog exports
+with the node. Every key is optional and a port without them carries none.
+
+```rust
+#[derive(Clone, Debug, NodeConfig)]
+struct BlurConfig {
+    #[port(default = 3, min = 1, label = "Radius", unit = "px", group = "Filter")]
+    radius: i32,
+    #[port(default = 0.5, label = "Edge gain", unit = "x", group = "Filter", advanced = true)]
+    edge_gain: f64,
+}
+```
+
 ## Adapters Replace Conversion Nodes
 
 When a producer's type or residency differs from what a consumer asks for, the planner resolves

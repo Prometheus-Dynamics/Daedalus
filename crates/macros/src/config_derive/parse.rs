@@ -60,6 +60,10 @@ pub(super) fn parse_port_spec(field: Field) -> Result<PortSpec, proc_macro2::Tok
     let mut name = LitStr::new(&field_ident.to_string(), Span::call_site());
     let mut source: Option<LitStr> = None;
     let mut description: Option<LitStr> = None;
+    let mut label: Option<LitStr> = None;
+    let mut unit: Option<LitStr> = None;
+    let mut group: Option<LitStr> = None;
+    let mut advanced: Option<bool> = None;
     let mut default_value: Option<Lit> = None;
     let mut min_value: Option<Lit> = None;
     let mut max_value: Option<Lit> = None;
@@ -97,6 +101,24 @@ pub(super) fn parse_port_spec(field: Field) -> Result<PortSpec, proc_macro2::Tok
                     }
                     if path.is_ident("description") {
                         description = Some(lit_str_arg(&value, "port description")?);
+                        continue;
+                    }
+                    if path.is_ident("label") {
+                        label = Some(lit_str_arg(&value, "port label")?);
+                        continue;
+                    }
+                    if path.is_ident("unit") {
+                        unit = Some(lit_str_arg(&value, "port unit")?);
+                        continue;
+                    }
+                    if path.is_ident("group") {
+                        group = Some(lit_str_arg(&value, "port group")?);
+                        continue;
+                    }
+                    if path.is_ident("advanced")
+                        && let Some(Lit::Bool(b)) = lit_from_expr(&value)
+                    {
+                        advanced = Some(b.value);
                         continue;
                     }
                     if path.is_ident("default")
@@ -166,6 +188,10 @@ pub(super) fn parse_port_spec(field: Field) -> Result<PortSpec, proc_macro2::Tok
                         odd = true;
                         continue;
                     }
+                    if path.is_ident("advanced") {
+                        advanced = Some(true);
+                        continue;
+                    }
                     return Err(compile_error("unsupported port flag".into()));
                 }
                 _ => {
@@ -183,6 +209,10 @@ pub(super) fn parse_port_spec(field: Field) -> Result<PortSpec, proc_macro2::Tok
         name,
         source,
         description,
+        label,
+        unit,
+        group,
+        advanced,
         default_value,
         min_value,
         max_value,

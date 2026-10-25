@@ -17,6 +17,11 @@ pub(super) struct PortMeta {
     /// Explicit transport key (`type_key = "..."`); also reflected in `ty_override`.
     pub(super) type_key: Option<LitStr>,
     pub(super) description: Option<LitStr>,
+    /// Display metadata for a UI (`inputs.<port>.label` / `.unit` / `.group` / `.advanced`).
+    pub(super) label: Option<LitStr>,
+    pub(super) unit: Option<LitStr>,
+    pub(super) group: Option<LitStr>,
+    pub(super) advanced: Option<bool>,
     pub(super) meta: Vec<(LitStr, Lit)>,
 }
 
@@ -29,6 +34,10 @@ impl PortMeta {
             ty_override: None,
             type_key: None,
             description: None,
+            label: None,
+            unit: None,
+            group: None,
+            advanced: None,
             meta: Vec::new(),
         }
     }
@@ -352,8 +361,18 @@ fn parse_input_port(
     let mut ty_override: Option<TokenStream> = None;
     let mut type_key: Option<LitStr> = None;
     let mut description: Option<LitStr> = None;
+    let mut label: Option<LitStr> = None;
+    let mut unit: Option<LitStr> = None;
+    let mut group: Option<LitStr> = None;
+    let mut advanced: Option<bool> = None;
     let mut meta_entries: Vec<(LitStr, Lit)> = Vec::new();
     for nm in inner_items {
+        if let NestedMeta::Meta(Meta::Path(path)) = &nm
+            && path.is_ident("advanced")
+        {
+            advanced = Some(true);
+            continue;
+        }
         let NestedMeta::Meta(Meta::NameValue(nv)) = nm else {
             if let NestedMeta::Meta(Meta::List(list)) = nm
                 && (list.path.is_ident("meta") || list.path.is_ident("metadata"))
@@ -387,6 +406,24 @@ fn parse_input_port(
             description = Some(lit_str_arg(&nv.value, "port description")?);
             continue;
         }
+        if nv.path.is_ident("label") {
+            label = Some(lit_str_arg(&nv.value, "port label")?);
+            continue;
+        }
+        if nv.path.is_ident("unit") {
+            unit = Some(lit_str_arg(&nv.value, "port unit")?);
+            continue;
+        }
+        if nv.path.is_ident("group") {
+            group = Some(lit_str_arg(&nv.value, "port group")?);
+            continue;
+        }
+        if nv.path.is_ident("advanced")
+            && let Some(Lit::Bool(b)) = lit_from_expr(&nv.value)
+        {
+            advanced = Some(b.value);
+            continue;
+        }
         if nv.path.is_ident("default") {
             default_value = Some(default_value_tokens(&nv.value, data_crate)?);
         }
@@ -404,6 +441,10 @@ fn parse_input_port(
         ty_override,
         type_key,
         description,
+        label,
+        unit,
+        group,
+        advanced,
         meta: meta_entries,
     })
 }

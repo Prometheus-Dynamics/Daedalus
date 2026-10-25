@@ -28,6 +28,12 @@ pub(super) struct PortSpec {
     pub(super) name: LitStr,
     pub(super) source: Option<LitStr>,
     pub(super) description: Option<LitStr>,
+    /// Display metadata for a UI: a human label, a unit, a group (stage or section) and whether
+    /// the port is an expert knob (`inputs.<port>.label` / `.unit` / `.group` / `.advanced`).
+    pub(super) label: Option<LitStr>,
+    pub(super) unit: Option<LitStr>,
+    pub(super) group: Option<LitStr>,
+    pub(super) advanced: Option<bool>,
     pub(super) default_value: Option<Lit>,
     pub(super) min_value: Option<Lit>,
     pub(super) max_value: Option<Lit>,

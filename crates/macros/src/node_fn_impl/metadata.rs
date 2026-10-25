@@ -49,6 +49,27 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
                 desc,
             ));
         }
+        for (part, value) in [
+            ("label", &port.label),
+            ("unit", &port.unit),
+            ("group", &port.group),
+        ] {
+            if let Some(value) = value {
+                entries.push(Entry::text(
+                    format!("inputs.{}.{part}", port.name.value()),
+                    value,
+                ));
+            }
+        }
+        if let Some(advanced) = port.advanced {
+            let key = format!("inputs.{}.advanced", port.name.value());
+            entries.push(Entry::Raw(quote! {
+                __meta.insert(
+                    ::std::string::String::from(#key),
+                    #data_crate::model::Value::Bool(#advanced),
+                );
+            }));
+        }
         for (meta_key, meta_value) in &port.meta {
             let key = format!("inputs.{}.{}", port.name.value(), meta_key.value());
             entries.push(meta_entry(key, meta_value, data_crate));

@@ -16,6 +16,7 @@ mod host_graph_introspection;
 mod input_dropped;
 mod numeric_keys;
 mod optional_inputs;
+mod port_metadata;
 mod registry_type_index;
 mod retry_by_value;
 mod same_id_instances;
