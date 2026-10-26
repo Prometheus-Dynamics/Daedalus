@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-gpu"
-version = "3.0.0"
+version = "3.0.1-dev"
 edition = "2024"
 rust-version.workspace = true
 description = "GPU backends and WGSL dispatch helpers for the Daedalus runtime."

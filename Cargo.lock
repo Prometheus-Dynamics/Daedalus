@@ -463,7 +463,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-core"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "crossbeam-queue",
  "portable-atomic",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-daemon"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-data",
  "daedalus-engine",
@@ -490,7 +490,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-data"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "base64",
  "criterion",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-engine"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "criterion",
  "daedalus-core",
@@ -531,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-examples"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-rs",
  "parking_lot",
@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-ffi-core"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "base64",
  "daedalus-data",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-ffi-cpp"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-data",
  "daedalus-ffi-core",
@@ -566,7 +566,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-ffi-host"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "criterion",
  "daedalus-data",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-ffi-java"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-ffi-core",
  "serde_json",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-ffi-node"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-data",
  "daedalus-ffi-core",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-ffi-python"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-data",
  "daedalus-ffi-core",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-frame-bench"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "criterion",
  "daedalus-rs",
@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-gpu"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "ash",
  "async-trait",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-macros"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-wgsl-infer",
  "proc-macro-crate",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-mcu"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-mcu-macros",
  "defmt",
@@ -666,7 +666,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-mcu-blink"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -678,14 +678,14 @@ dependencies = [
 
 [[package]]
 name = "daedalus-mcu-blink-nodes"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-mcu",
 ]
 
 [[package]]
 name = "daedalus-mcu-build"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-data",
  "daedalus-mcu",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-mcu-macros"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-nodes"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-core",
  "daedalus-data",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-nostd-smoke"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-core",
  "daedalus-data",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-planner"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-core",
  "daedalus-data",
@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-plugins-dependent"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-plugins-example-project",
  "daedalus-rs",
@@ -765,14 +765,14 @@ dependencies = [
 
 [[package]]
 name = "daedalus-plugins-example-project"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-rs",
 ]
 
 [[package]]
 name = "daedalus-plugins-example-project-dylib"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-plugins-example-project",
  "daedalus-rs",
@@ -780,7 +780,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-plugins-foreign-consumer"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-plugins-example-project",
  "daedalus-rs",
@@ -788,14 +788,14 @@ dependencies = [
 
 [[package]]
 name = "daedalus-plugins-math"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-rs",
 ]
 
 [[package]]
 name = "daedalus-plugins-stable-abi"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-rs",
  "serde",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-registry"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-core",
  "daedalus-data",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-rs"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "criterion",
  "daedalus-core",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-runtime"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "criterion",
  "crossbeam-queue",
@@ -869,7 +869,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-transport"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-core",
  "hashbrown 0.17.1",
@@ -882,7 +882,7 @@ dependencies = [
 
 [[package]]
 name = "daedalus-wasm-bindgen-host"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-rs",
  "wasm-bindgen",
@@ -890,14 +890,14 @@ dependencies = [
 
 [[package]]
 name = "daedalus-wasm-smoke"
-version = "3.0.0"
+version = "3.0.1-dev"
 dependencies = [
  "daedalus-rs",
 ]
 
 [[package]]
 name = "daedalus-wgsl-infer"
-version = "3.0.0"
+version = "3.0.1-dev"
 
 [[package]]
 name = "defmt"

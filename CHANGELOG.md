@@ -6,6 +6,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+The workspace is versioned `3.0.1-dev` (from `3.0.0`): dev builds carry a `-dev` pre-release
+patch version, and only the patch moves until a release is agreed. A git dependency on Daedalus
+with `version = "3.0.0"` no longer resolves; drop the `version` requirement and pin the commit.
+Plugins installed through the Rust ABI must be built against the same Daedalus version as their
+host (`PluginInfo::daedalus_version` is compared exactly), so rebuild them with the host. A
+plugin built from a 3.0.0 dev commit with plugin ABI 10 still installs, through the stable ABI
+(stable ABI 2) when it exports stable handlers; one built from the `v3.0.0` tag has an older
+plugin ABI and does not load.
+
 ### Added
 
 - **Port display metadata: `label`, `unit`, `group` and `advanced` on a port.** `#[port(...)]` on a `NodeConfig` field and `port(...)` on a node input accept a human `label`, a `unit`, a `group` (stage or section) and an `advanced` flag (`advanced = true`, or a bare `advanced`). They are recorded as the node declaration's metadata keys `inputs.<port>.label`, `.unit`, `.group` and `.advanced` (a boolean), next to `inputs.<port>.description`, and reach the registry and catalog JSON with the node. All are optional; existing declarations compile and carry the same metadata as before. `docs/node-authoring.md` describes them, and the `port_metadata` integration test checks them on a config and on a registered node.

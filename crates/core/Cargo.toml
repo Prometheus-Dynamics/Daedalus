@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-core"
-version = "3.0.0"
+version = "3.0.1-dev"
 edition = "2024"
 rust-version.workspace = true
 description = "Core types and shared utilities for the Daedalus dataflow stack."

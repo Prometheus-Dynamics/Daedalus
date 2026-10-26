@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-data"
-version = "3.0.0"
+version = "3.0.1-dev"
 edition = "2024"
 rust-version.workspace = true
 description = "Type/value model and serialization helpers for Daedalus node ports."

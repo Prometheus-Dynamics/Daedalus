@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-macros"
-version = "3.0.0"
+version = "3.0.1-dev"
 edition = "2024"
 rust-version.workspace = true
 description = "Proc macros for Daedalus nodes and GPU binding helpers."

@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-examples"
-version = "3.0.0"
+version = "3.0.1-dev"
 edition.workspace = true
 rust-version.workspace = true
 description = "Runnable examples for the Daedalus dataflow runtime workspace."

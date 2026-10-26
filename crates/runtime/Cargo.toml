@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-runtime"
-version = "3.0.0"
+version = "3.0.1-dev"
 edition = "2024"
 rust-version.workspace = true
 description = "Runtime executor for Daedalus plans with backpressure and plugins."

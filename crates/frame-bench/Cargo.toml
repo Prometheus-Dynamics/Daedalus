@@ -1,6 +1,6 @@
 [package]
 name = "daedalus-frame-bench"
-version = "3.0.0"
+version = "3.0.1-dev"
 edition.workspace = true
 rust-version.workspace = true
 description = "Frame-path overhead harness for host-driven Daedalus graphs: synthetic daedalus:frame sources (memfd, dma-heap) and a no-op stage chain."

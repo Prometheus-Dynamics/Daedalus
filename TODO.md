@@ -179,11 +179,18 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 - [x] **Frame-path overhead on the CM5.** Measured `detector`, `frame_chain` and
       `shared_detectors` at `bcc9f33` (4939e42, 3367fb2; `docs/development.md`): detector
       `graph_overhead` p50 7.2 µs unfused / 6.8 µs fused, a real detector graph 16-17 µs.
-- [ ] **First GitHub Actions run** of the new jobs (aarch64, lean-preset, macro-ui, dylib-plugins)
-      and of `bench.yml`, including the `gh run download` baseline lookup and YAML anchors.
-- [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. No further tags or version bumps
-      for dev work: changes go under CHANGELOG `[Unreleased]` and downstream pins by commit until a
-      hardware-validated release.
+- [x] **First GitHub Actions run** of `ci.yml`: every job (workspace, facade with the dylib and
+      macro-UI tests, docs-and-lints, package-surface, aarch64, lean-preset, portability with
+      nostd/wasm/MCU) runs and passes on pushes to `dev` (e.g. run 40175816440).
+- [ ] **`bench.yml` has never run.** Its schedule and `workflow_dispatch` only fire from the
+      default branch (`main`, which does not have the file yet) and its push trigger is `main`
+      only, so the criterion baseline and `bench-compare.py` are untested until a release merge
+      to `main`, or a `dev` trigger is added.
+- [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. Dev work is versioned
+      `<major>.<minor>.<patch>-dev` (now `3.0.1-dev`): only the patch moves during dev, major and
+      minor change only for an agreed release, and changes go under CHANGELOG `[Unreleased]`.
+      Downstream pins by commit and depends on Daedalus by git without a `version =`
+      requirement (`3.0.0` does not match `3.0.1-dev`).
 - [x] **Faster local builds and `ci.sh`** (f7edb7d): `ci.sh -j` parallel lanes, `ci.sh quick`,
       smoke reusing the test build, `ci.sh doc`/`full`; target dirs belong on a local SSD (the
       external drive made the edit loop ~6x slower).
@@ -218,14 +225,10 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       with timeline semaphores (then `Timeline` would neither block nor violate the VUID).
 - [ ] **dmabuf: validation layers on the Pi.** Run `./scripts/ci.sh vvl` on v3dv alongside the
       `pi` report (only RADV has been validated).
-- [ ] **`NodeRecovery::Retry` with by-value inputs.** A retry re-runs the handler on the same
-      inputs, but an input taken by value (`fn f(value: i64)`) is gone after the first attempt, so
-      the retry fails with `invalid input: missing value`. A by-reference input (`&i64`) retries
-      correctly (`examples/09_hosts/node_recovery.rs`).
-- [ ] **GPU fallback with `GpuBackend::Cpu`.** A `Gpu<T>` node with `fallback = "..."` ran its GPU
-      handler on a CPU payload and failed (`missing frame`); the fallback did not run. Observed in
-      a scratch graph, not diagnosed; `docs/node-authoring.md` says the fallback is used when no GPU
-      backend is available.
+- [x] **`NodeRecovery::Retry` with by-value inputs** (89836d1): `#[node]` by-value inputs go
+      through `NodeIo::take_owned_with`, cloning a shared `Clone` input, so retries get it again.
+- [x] **GPU fallback with `GpuBackend::Cpu`** (e9a1f05): the engine substitutes the `fallback`
+      node when the backend is `Cpu`; it was stored as metadata and never read.
 - [ ] **Host-created Vulkan instances.** The driver lock only covers instances `daedalus-gpu`
       creates; a host that creates wgpu/Vulkan instances on other threads at the same time can
       still hit the loader race. Expose the lock (or document a creation order) if a host needs
