@@ -490,6 +490,30 @@ fn replacing_a_backlog_counts_every_evicted_item() {
 }
 
 #[test]
+fn keep_newest_replacements_have_a_reason() {
+    let policy = RuntimeEdgePolicy {
+        pressure: PressurePolicy::Coalesce {
+            window: Duration::from_secs(60),
+            strategy: CoalesceStrategy::KeepNewest,
+        },
+        freshness: FreshnessPolicy::PreserveAll,
+    };
+    let (telemetry, retained) = apply_locked_steps(&[(&policy, 1), (&policy, 2), (&policy, 3)]);
+
+    // Every arrival replaces the held value: the first is kept as the queue's only item, and
+    // each later arrival evicts one item, recorded as a coalesce replacement.
+    assert_eq!(retained, vec![3]);
+    assert_eq!(telemetry.backpressure_events, 2);
+    #[cfg(feature = "metrics")]
+    {
+        let metrics = &telemetry.edge_metrics[&0];
+        assert_eq!(metrics.pressure_events.coalesce_replace, 2);
+        assert_eq!(metrics.pressure_events.coalesce_reject, 0);
+        assert_eq!(metrics.drops, 2);
+    }
+}
+
+#[test]
 fn keep_oldest_refusals_have_their_own_reason() {
     let policy = RuntimeEdgePolicy {
         pressure: PressurePolicy::Coalesce {
