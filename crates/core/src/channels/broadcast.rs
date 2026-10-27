@@ -194,6 +194,7 @@ pub fn broadcast_with_metrics<T: Send + Sync>(
 }
 
 #[cfg(feature = "metrics")]
+/// Broadcast channel of `capacity` slots with an explicit close behavior and metrics sink.
 pub fn broadcast_with_metrics_and_behavior<T: Send + Sync>(
     capacity: usize,
     close_behavior: CloseBehavior,

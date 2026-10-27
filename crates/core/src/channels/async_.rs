@@ -120,6 +120,7 @@ impl<T: Send + Sync + 'static, R: AsyncRecvNotify> AsyncReceiver<T, R> {
     }
 }
 
+/// Bounded channel of `capacity` slots with awaitable send and receive.
 pub fn bounded_async<T: Send>(
     capacity: usize,
 ) -> (
@@ -141,6 +142,7 @@ pub fn bounded_async<T: Send>(
     )
 }
 
+/// Bounded async channel of `capacity` slots with an explicit close behavior.
 pub fn bounded_async_with_behavior<T: Send>(
     capacity: usize,
     close_behavior: CloseBehavior,
@@ -163,6 +165,7 @@ pub fn bounded_async_with_behavior<T: Send>(
     )
 }
 
+/// Unbounded channel with awaitable send and receive.
 pub fn unbounded_async<T: Send>() -> (
     AsyncSender<T, UnboundedSender<T>>,
     AsyncReceiver<T, UnboundedReceiver<T>>,
@@ -182,6 +185,7 @@ pub fn unbounded_async<T: Send>() -> (
     )
 }
 
+/// Unbounded async channel with an explicit close behavior.
 pub fn unbounded_async_with_behavior<T: Send>(
     close_behavior: CloseBehavior,
 ) -> (
@@ -203,6 +207,7 @@ pub fn unbounded_async_with_behavior<T: Send>(
     )
 }
 
+/// Broadcast channel of `capacity` slots with awaitable send and receive.
 pub fn broadcast_async<T: Send + Sync>(
     capacity: usize,
 ) -> (BroadcastAsyncSender<T>, BroadcastAsyncReceiver<T>) {
@@ -221,6 +226,7 @@ pub fn broadcast_async<T: Send + Sync>(
     )
 }
 
+/// Broadcast async channel of `capacity` slots with an explicit close behavior.
 pub fn broadcast_async_with_behavior<T: Send + Sync>(
     capacity: usize,
     close_behavior: CloseBehavior,
@@ -240,6 +246,7 @@ pub fn broadcast_async_with_behavior<T: Send + Sync>(
     )
 }
 
+/// Newest-value channel with awaitable send and receive.
 pub fn newest_async<T: Send + Sync>() -> (NewestAsyncSender<T>, NewestAsyncReceiver<T>) {
     let (tx, rx) = newest();
     let tx = Arc::new(tx);
@@ -256,6 +263,7 @@ pub fn newest_async<T: Send + Sync>() -> (NewestAsyncSender<T>, NewestAsyncRecei
     )
 }
 
+/// Newest-value async channel with an explicit close behavior.
 pub fn newest_async_with_behavior<T: Send + Sync>(
     close_behavior: CloseBehavior,
 ) -> (NewestAsyncSender<T>, NewestAsyncReceiver<T>) {

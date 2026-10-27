@@ -191,6 +191,7 @@ pub fn newest_with_behavior<T>(
 }
 
 #[cfg(feature = "metrics")]
+/// Newest-value channel with an explicit close behavior and metrics sink.
 pub fn newest_with_metrics_and_behavior<T>(
     close_behavior: CloseBehavior,
     metrics: Arc<dyn MetricsSink>,

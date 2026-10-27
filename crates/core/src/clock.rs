@@ -39,7 +39,7 @@ impl TickClock {
         }
     }
 
-    pub fn default_start() -> Self {
+    pub(crate) fn default_start() -> Self {
         Self::new(Tick::ZERO)
     }
 

@@ -8,7 +8,6 @@ pub mod unbounded;
 
 #[cfg(feature = "async-channels")]
 pub mod async_;
-pub mod policy;
 
 pub use bounded::{BoundedReceiver, BoundedSender, bounded};
 pub use broadcast::{BroadcastReceiver, BroadcastSender, broadcast};

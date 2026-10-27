@@ -178,6 +178,7 @@ pub fn unbounded_with_metrics<T>(
 }
 
 #[cfg(feature = "metrics")]
+/// Unbounded channel with an explicit close behavior and metrics sink.
 pub fn unbounded_with_metrics_and_behavior<T>(
     close_behavior: CloseBehavior,
     metrics: Arc<dyn MetricsSink>,
