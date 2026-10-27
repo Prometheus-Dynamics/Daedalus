@@ -14,7 +14,7 @@ use daedalus::{
     transport::Payload,
 };
 use daedalus_frame_bench::{
-    ALL_EVENTS, CacheCounters, CountingAllocator, FrameFeed, FrameSourceConfig,
+    ALL_EVENTS, CacheCounters, CountingAllocator, FrameFeed, FrameSourceConfig, IpSampler,
     SyntheticFrameSource, env_usize,
 };
 
@@ -157,6 +157,207 @@ fn print_run(label: &str, run: &Measured) {
     }
 }
 
+/// Symbols of one mapped file, sorted by address (`nm`; dynamic symbols for shared objects).
+fn file_symbols(path: &str, dynamic: bool) -> Vec<(u64, String)> {
+    let mut args = vec!["-n", "--defined-only"];
+    if dynamic {
+        args.insert(0, "-D");
+    }
+    let Ok(output) = std::process::Command::new("nm")
+        .args(&args)
+        .arg(path)
+        .output()
+    else {
+        return Vec::new();
+    };
+    let mut symbols: Vec<(u64, String)> = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let mut parts = line.splitn(3, ' ');
+        let (Some(addr), Some(kind), Some(name)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        if matches!(kind, "t" | "T" | "w" | "W")
+            && let Ok(addr) = u64::from_str_radix(addr, 16)
+        {
+            symbols.push((addr, name.to_string()));
+        }
+    }
+    symbols
+}
+
+/// Resolves instruction pointers to `file:symbol` through the process's mappings.
+struct Symbolizer {
+    mappings: Vec<(u64, u64, u64, String)>,
+    tables: std::collections::BTreeMap<String, Vec<(u64, String)>>,
+    exe: String,
+}
+
+impl Symbolizer {
+    fn new() -> Result<Self, Error> {
+        // (start, end, file offset, path) of every executable mapping of a file.
+        let maps = std::fs::read_to_string("/proc/self/maps")?;
+        let mut mappings: Vec<(u64, u64, u64, String)> = Vec::new();
+        for line in maps.lines() {
+            let mut fields = line.split_whitespace();
+            let (Some(range), Some(perms), Some(offset), Some(_dev), Some(_inode)) = (
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+                fields.next(),
+            ) else {
+                continue;
+            };
+            let path = fields.next().unwrap_or("");
+            if !perms.contains('x') || path.is_empty() || path.starts_with('[') {
+                continue;
+            }
+            let Some((start, end)) = range.split_once('-') else {
+                continue;
+            };
+            if let (Ok(start), Ok(end), Ok(offset)) = (
+                u64::from_str_radix(start, 16),
+                u64::from_str_radix(end, 16),
+                u64::from_str_radix(offset, 16),
+            ) {
+                mappings.push((start, end, offset, path.to_string()));
+            }
+        }
+        Ok(Self {
+            mappings,
+            tables: Default::default(),
+            exe: std::env::current_exe()?.to_string_lossy().to_string(),
+        })
+    }
+
+    /// `symbol` for `ip`, prefixed with the file name for shared objects.
+    fn name(&mut self, ip: u64) -> String {
+        let Some((start, _, offset, path)) = self
+            .mappings
+            .iter()
+            .find(|(start, end, _, _)| (*start..*end).contains(&ip))
+            .cloned()
+        else {
+            return "(unmapped)".to_string();
+        };
+        let file_addr = ip - start + offset;
+        let table = self.tables.entry(path.clone()).or_insert_with(|| {
+            let symbols = file_symbols(&path, false);
+            if symbols.is_empty() {
+                file_symbols(&path, true)
+            } else {
+                symbols
+            }
+        });
+        let index = table.partition_point(|(addr, _)| *addr <= file_addr);
+        let symbol = index
+            .checked_sub(1)
+            .map_or("?".to_string(), |i| table[i].1.clone());
+        if path == self.exe {
+            symbol
+        } else {
+            let file = path.rsplit('/').next().unwrap_or(&path);
+            format!("{file}:{symbol}")
+        }
+    }
+}
+
+/// Print the hottest symbols of sampled call chains: self (leaf) time, inclusive time (a function
+/// anywhere in a chain, once per sample), and the leaf with its immediate caller.
+fn profile_symbols(chains: &[Vec<u64>]) -> Result<(), Error> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut symbolizer = Symbolizer::new()?;
+    let total = chains.len() as f64;
+    let mut leaf: BTreeMap<String, u64> = BTreeMap::new();
+    let mut inclusive: BTreeMap<String, u64> = BTreeMap::new();
+    let mut pairs: BTreeMap<(String, String), u64> = BTreeMap::new();
+    for chain in chains {
+        let names: Vec<String> = chain.iter().map(|&ip| symbolizer.name(ip)).collect();
+        let Some(first) = names.first() else {
+            continue;
+        };
+        *leaf.entry(first.clone()).or_default() += 1;
+        let caller = names.get(1).cloned().unwrap_or_default();
+        *pairs.entry((first.clone(), caller)).or_default() += 1;
+        let frames: BTreeSet<&String> = names.iter().collect();
+        for name in frames {
+            *inclusive.entry(name.clone()).or_default() += 1;
+        }
+    }
+    let print = |title: &str, counts: &BTreeMap<String, u64>, take: usize| {
+        let mut ranked: Vec<(&String, &u64)> = counts.iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(a.1));
+        println!("== {title} ({} samples)", chains.len());
+        for (name, count) in ranked.iter().take(take) {
+            println!(
+                "{:6.2}% {:>8}  {name}",
+                **count as f64 * 100.0 / total,
+                count
+            );
+        }
+    };
+    print("self (leaf)", &leaf, 40);
+    print("inclusive", &inclusive, 50);
+    let mut ranked: Vec<(&(String, String), &u64)> = pairs.iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(a.1));
+    println!("== leaf <- caller ({} samples)", chains.len());
+    for ((leaf_name, caller_name), count) in ranked.iter().take(30) {
+        println!(
+            "{:6.2}% {:>8}  {leaf_name}\n                   <- {caller_name}",
+            **count as f64 * 100.0 / total,
+            count
+        );
+    }
+    Ok(())
+}
+
+/// `MIRROR_PROFILE=1`: sample the instruction pointer of the measured ticks (metrics Timing, frame
+/// overhead recorded unless `MIRROR_PROFILE_RECORD=0`), then print the hottest symbols.
+fn profile(ticks: usize, warmup: usize) -> Result<(), Error> {
+    let record = env_usize("MIRROR_PROFILE_RECORD", 1) != 0;
+    let mut host = compile(MetricsLevel::Timing, record)?;
+    let mut source = SyntheticFrameSource::new(FrameSourceConfig {
+        feed: FrameFeed::Interface,
+        ..FrameSourceConfig::default()
+    })?;
+    let camera = Payload::shared(Blob::TYPE_KEY, Arc::new(Blob::default()));
+    let extrinsics = Payload::shared(Blob::TYPE_KEY, Arc::new(Blob::default()));
+    let frame_port = daedalus::runtime::PortId::new(FRAME);
+    let camera_port = daedalus::runtime::PortId::new(CAMERA);
+    let extrinsics_port = daedalus::runtime::PortId::new(EXTRINSICS);
+    let mut tick = |host: &mut HostGraph<HandlerRegistry>| -> Result<(), Error> {
+        host.push_payload(frame_port.clone(), source.next_payload());
+        host.push_payload(camera_port.clone(), camera.clone());
+        host.push_payload(extrinsics_port.clone(), extrinsics.clone());
+        host.tick()?;
+        for output in HOST_OUTPUTS {
+            while host.take_payload(output).is_some() {}
+        }
+        Ok(())
+    };
+    for _ in 0..warmup {
+        tick(&mut host)?;
+    }
+    host.reset_frame_overhead();
+    let period = env_usize("MIRROR_PROFILE_PERIOD", 20_000) as u64;
+    let callchain = env_usize("MIRROR_PROFILE_CALLCHAIN", 1) != 0;
+    let started = if callchain {
+        IpSampler::start_callchain(period)
+    } else {
+        IpSampler::start(period)
+    };
+    let Some(sampler) = started else {
+        println!("instruction sampling unavailable (perf_event_paranoid or no PMU)");
+        return Ok(());
+    };
+    for _ in 0..ticks {
+        tick(&mut host)?;
+    }
+    let chains = sampler.finish();
+    profile_symbols(&chains)
+}
+
 fn main() -> Result<(), Error> {
     if let Some(cpu) = daedalus_frame_bench::pin_from_env()? {
         println!("pinned to CPU {cpu}");
@@ -169,6 +370,9 @@ fn main() -> Result<(), Error> {
         std::env::consts::OS,
         ticks
     );
+    if std::env::var("MIRROR_PROFILE").is_ok() {
+        return profile(ticks, warmup);
+    }
     // Untimed run so the first measured one does not pay for cold caches and clock ramp-up.
     measure(MetricsLevel::Off, false, ticks / 4, warmup)?;
     for (name, level) in [("Timing", MetricsLevel::Timing), ("Off", MetricsLevel::Off)] {

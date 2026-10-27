@@ -85,6 +85,13 @@ plugin ABI and does not load.
   the counters for its own cache walk, so the numbers are the runtime's and the handlers' non-touch
   work; `MIRROR_COUNT_TOUCH=1` counts the walk too.
 
+- **frame-bench instruction profile**: `MIRROR_PROFILE=1` on the `apriltag_mirror` example samples
+  the calling thread's instruction pointers and call chains (`perf_event_open` with `PERF_SAMPLE_IP`
+  and `PERF_SAMPLE_CALLCHAIN`, user space only) over the measured ticks, and prints the hottest
+  symbols (self, inclusive and leaf-with-caller), resolved through `/proc/self/maps` and `nm`.
+  Call chains need frame pointers (`RUSTFLAGS="-C force-frame-pointers=yes"`); without them the
+  callers are not reliable.
+
 ### Removed
 
 - Runtime: `NodeError::retryable` and `ExecuteError::retryable`, which nothing called. Recovery

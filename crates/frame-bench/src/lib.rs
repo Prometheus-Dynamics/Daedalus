@@ -57,6 +57,8 @@ pub use detector::{
     RefinedCorners, RejectedMarkers, compile_detector, detector_graph, detector_graph_for,
     detector_registry, register_detector_group,
 };
+#[cfg(target_os = "linux")]
+pub use perf::IpSampler;
 pub use perf::{
     ALL_EVENTS, CYCLES, CacheCounters, DTLB_READ_MISS, Event, INSTRUCTIONS, InstructionCounter,
     L1D_READ_MISS, L1I_READ_MISS, LLC_READ_MISS, pause_counters, resume_counters,
