@@ -134,6 +134,25 @@ fn validate_tiled_modifiers_take_aux_planes() {
 }
 
 #[test]
+fn validate_tiled_nv12_takes_one_memory_plane() {
+    // v3dv's Broadcom UIF NV12 keeps both format planes in one memory plane; the backend checks
+    // the count against the modifier.
+    const BROADCOM_UIF: u64 = 0x0700_0000_0000_0006;
+    let mut desc = nv12_frame(64, 4, 64).with_modifier(BROADCOM_UIF);
+    desc.planes.truncate(1);
+    assert!(desc.validate().unwrap().is_multi_planar());
+    // Subsampling still applies to every format plane.
+    let mut odd = nv12_frame(64, 3, 64).with_modifier(BROADCOM_UIF);
+    odd.planes.truncate(1);
+    assert!(
+        odd.validate()
+            .unwrap_err()
+            .to_string()
+            .contains("divisible by 2")
+    );
+}
+
+#[test]
 fn validate_rejects_bad_descriptors() {
     let err = xrgb_frame(64, 4, 100).validate().unwrap_err();
     assert!(

@@ -7,7 +7,7 @@ use ash::{khr, vk};
 use wgpu::hal::api::Vulkan;
 
 use super::support::{
-    DmaBuf, consumer_backend, device_poll, exclusive, import_backend, note, pixel, skip,
+    DmaBuf, consumer_backend, device_poll, exclusive, linear_import_backend, note, pixel, skip,
     use_fence_wait, validated, wait_until,
 };
 use crate::external::sync_file_signaled;
@@ -76,7 +76,7 @@ fn pipe_fence() -> (OwnedFd, std::io::PipeWriter) {
 #[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
 fn dmabuf_import_waits_for_fences() {
     let _gpu = exclusive();
-    let Some(mut backend) = import_backend() else {
+    let Some(mut backend) = linear_import_backend() else {
         return;
     };
     let frame = Frame::new();
@@ -95,7 +95,7 @@ fn dmabuf_import_waits_for_fences() {
 #[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
 fn dmabuf_fence_mode_selection() {
     let _gpu = exclusive();
-    let Some(mut backend) = import_backend() else {
+    let Some(mut backend) = linear_import_backend() else {
         return;
     };
     let support = backend.dmabuf_import_support();
@@ -238,7 +238,7 @@ fn check_fences(backend: &WgpuBackend, frame: &Frame, wait: AcquireFenceWait) {
 #[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
 fn dmabuf_timeline_watcher() {
     let _gpu = exclusive();
-    let Some(mut backend) = import_backend() else {
+    let Some(mut backend) = linear_import_backend() else {
         return;
     };
     if !use_fence_wait(&mut backend, AcquireFenceWait::Timeline) {

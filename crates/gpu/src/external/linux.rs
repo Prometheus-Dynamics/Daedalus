@@ -219,9 +219,10 @@ impl ExternalFrameDescriptor {
     }
 
     /// Backend-independent checks shared by every backend: non-zero extent (even for subsampled
-    /// formats), a known fourcc, a valid modifier, one plane per format plane (plus up to
-    /// [`MAX_MEMORY_PLANES`] aux planes for non-linear modifiers), and, for linear layouts, strides
-    /// that fit a row. Tiled layouts are left to the backend, which knows the modifier.
+    /// formats), a known fourcc, a valid modifier, one plane per format plane for linear layouts
+    /// (1 to [`MAX_MEMORY_PLANES`] memory planes for other modifiers, whose count the modifier
+    /// sets: v3dv's tiled NV12 is one memory plane), and, for linear layouts, strides that fit a
+    /// row. Tiled layouts are left to the backend, which knows the modifier.
     pub fn validate(&self) -> Result<ValidatedLayout, ExternalImportError> {
         if self.width == 0 || self.height == 0 {
             return Err(ExternalImportError::invalid(format!(
@@ -259,16 +260,16 @@ impl ExternalFrameDescriptor {
         let linear = self
             .modifier
             .is_none_or(|m| m == super::DRM_FORMAT_MOD_LINEAR);
-        let max_planes = if linear {
-            formats.len()
+        let planes = if linear {
+            formats.len()..=formats.len()
         } else {
-            MAX_MEMORY_PLANES
+            1..=MAX_MEMORY_PLANES
         };
-        if !(formats.len()..=max_planes).contains(&self.planes.len()) {
+        if !planes.contains(&self.planes.len()) {
             let expected = if linear {
                 format!("exactly {}", formats.len())
             } else {
-                format!("{} to {MAX_MEMORY_PLANES}", formats.len())
+                format!("1 to {MAX_MEMORY_PLANES}")
             };
             return Err(ExternalImportError::invalid(format!(
                 "{} expects {expected} plane(s), got {}",
@@ -277,7 +278,7 @@ impl ExternalFrameDescriptor {
             )));
         }
         let mut min_len: Vec<u64> = self.planes.iter().map(|p| p.offset).collect();
-        for (index, (plane_format, plane)) in formats.iter().zip(&self.planes).enumerate() {
+        for plane_format in formats {
             let sub = plane_format.subsampling;
             if !self.width.is_multiple_of(sub) || !self.height.is_multiple_of(sub) {
                 return Err(ExternalImportError::invalid(format!(
@@ -285,6 +286,8 @@ impl ExternalFrameDescriptor {
                     self.fourcc, self.width, self.height
                 )));
             }
+        }
+        for (index, (plane_format, plane)) in formats.iter().zip(&self.planes).enumerate() {
             if !linear {
                 continue;
             }

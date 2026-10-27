@@ -275,12 +275,20 @@ device's GPU job, NV12 in one dmabuf and disjoint, and every renderable modifier
 Vulkan producer and read back on a second device; cases the device cannot run print a skip
 reason) and then `cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe`.
 
-Expected on a Pi 5 with current Mesa: all tests pass; `dmabuf_acquire_fence_mode: auto`,
-`dmabuf_acquire_fence_wait: sync_fd` and `dmabuf_acquire_fence_waits: sync_fd, timeline, cpu`
-(v3dv imports `SYNC_FD` semaphores and has Vulkan 1.3 timeline semaphores); the modifier test
-round-trips `LINEAR` plus whichever tiled modifiers v3dv advertises as renderable for `R8` and
-`XRGB8888` (Broadcom `UIF` is `0x700000000000006`); V3D has no compressed modifiers, so no `aux`
-planes are expected. These are expectations, not yet confirmed on a Pi. Without lavapipe installed, a `skipping: no lavapipe consumer` line is
+Measured on a CM5 (V3D 7.1.10.2, Mesa 26.1.8, Vulkan 1.3, HeliOS image, 2026-10-27):
+`dmabuf_acquire_fence_mode: auto`, `dmabuf_acquire_fence_wait: sync_fd` and
+`dmabuf_acquire_fence_waits: sync_fd, timeline, cpu`; `TEXTURE_FORMAT_NV12`, the dma-heaps
+(`system`, `linux,cma`) and `sync_file` export all work. v3dv advertises `LINEAR` (`0x0`) and
+Broadcom `UIF` (`0x700000000000006`) for `R8`, `XRGB8888`, `XBGR8888` and `NV12`, but **`LINEAR` is
+render and transfer only, not sampleable**: only `UIF` imports for sampling, and its `NV12` is a
+single memory plane. So the tests that fill a `LINEAR` dma-heap buffer on the CPU (single-plane
+import, plane offsets, the fence waits and the fence-mode selection) print
+`skipping: LINEAR XRGB8888: ...` there, and a `LINEAR` camera frame on v3dv cannot be imported
+for sampling (`UnsupportedFormat`): a GPU node on such frames needs a transfer-only import plus
+a GPU copy into an optimal texture, which Daedalus does not provide yet (no consumer needs it:
+HeliOS runs its CM5 camera stages on the CPU). V3D has no compressed modifiers, so no `aux`
+planes are expected. The validation layer is not part of that image, so `vvl` needs an aarch64
+layer under `VK_LAYER_PATH`. Without lavapipe installed, a `skipping: no lavapipe consumer` line is
 expected: the fence tests then use a second v3dv device. Run with `-- --nocapture` to see the
 measurements (watcher hop, blocked submission) and the round-tripped modifiers.
 

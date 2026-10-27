@@ -137,7 +137,8 @@ if ctx.supports_dmabuf_import() {
   for Y, `GR88` for UV) using its offset and stride. Three-plane `YU12` is always imported per
   plane. Drivers constrain explicit plane layouts (RADV rejects a 128-byte `LINEAR` pitch that
   256 bytes satisfies); a rejected layout surfaces as `UnsupportedFormat` naming
-  `vkCreateImage`. Tiled NV12 modifiers take two memory planes like `LINEAR`.
+  `vkCreateImage`. Tiled NV12 modifiers take as many memory planes as the modifier has: two on
+  RADV, one for v3dv's Broadcom `UIF`.
 - **Modifiers:** tiled and compressed modifiers import like `LINEAR`: pass one plane per
   *memory* plane of the modifier (the format planes, then aux planes such as AMD DCC metadata),
   each with the offset and pitch the producer reported (`vkGetImageSubresourceLayout` with
@@ -145,7 +146,13 @@ if ctx.supports_dmabuf_import() {
   explicit Vulkan plane layouts as given. Planes in one dmabuf share one allocation; separate
   dmabufs need a modifier with `DISJOINT`. On RADV every renderable `R8`/`XRGB8888` modifier,
   including DCC with 2 and 3 memory planes, round-trips between devices with correct pixels, and
-  the tiled `NV12` modifiers import and sample.
+  the tiled `NV12` modifiers import and sample. On v3dv (Raspberry Pi 5 / CM5) `LINEAR` images
+  are render and transfer only: a `LINEAR` frame fails to import with `UnsupportedFormat` (the
+  import always asks for sampling), and only Broadcom `UIF` (`0x700000000000006`) is
+  sampleable. Every Styx camera frame on a CM5 is `LINEAR` (the PiSP writes only linear or
+  SAND128, never `UIF`), so sampling one there needs a transfer-only import and a GPU copy into
+  an optimal texture (per plane for NV12, or a compute pass reading the buffer), which is not
+  implemented; Styx measured that copy at about 0.28 ms per megapixel on a CM5.
 - **Explicit sync:** `with_acquire_fence(fd)` takes a `sync_file` (from V4L2/libcamera, a GPU
   producer, or `DMA_BUF_IOCTL_EXPORT_SYNC_FILE`). For producers that only fence the dmabuf itself,
   `with_implicit_fence()` exports its implicit fences (`export_dmabuf_fence` is the standalone

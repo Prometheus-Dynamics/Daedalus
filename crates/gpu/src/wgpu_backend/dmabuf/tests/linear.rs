@@ -1,7 +1,7 @@
 use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
 
-use super::support::{DmaBuf, device_poll, exclusive, import_backend, pixel};
+use super::support::{DmaBuf, device_poll, exclusive, linear_import_backend, pixel};
 use crate::{
     AcquireStatus, DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalFrameDescriptor, ExternalImportError,
     ExternalKeepalive, ExternalPlane, GpuBackend, GpuFormat,
@@ -11,7 +11,9 @@ use crate::{
 #[ignore = "needs a Vulkan GPU with dmabuf import and access to /dev/dma_heap"]
 fn dmabuf_import_is_zero_copy() {
     let _gpu = exclusive();
-    let backend = import_backend().expect("dmabuf import support");
+    let Some(backend) = linear_import_backend() else {
+        return;
+    };
     let (width, height, stride) = (64u32, 32u32, 256u64);
     let buf = DmaBuf::alloc((stride * u64::from(height)) as usize).expect("dma-heap alloc");
     buf.write(|bytes| {
@@ -89,7 +91,7 @@ fn dmabuf_import_is_zero_copy() {
 #[ignore = "needs a Vulkan GPU with dmabuf import"]
 fn dmabuf_import_rejects_non_dmabuf_and_short_buffers() {
     let _gpu = exclusive();
-    let Some(backend) = import_backend() else {
+    let Some(backend) = linear_import_backend() else {
         return;
     };
     // A 4 KiB dmabuf cannot hold 64x32 XRGB rows at stride 256.

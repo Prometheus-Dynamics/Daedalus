@@ -1,9 +1,12 @@
 //! Shared helpers of the hardware tests: dma-heap buffers, validation scopes, backends.
 
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
-use crate::{AcquireFenceMode, AcquireFenceWait, GpuBackend, WgpuBackend};
+use crate::{
+    AcquireFenceMode, AcquireFenceWait, DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalFrameDescriptor,
+    ExternalImportError, ExternalPlane, GpuBackend, WgpuBackend,
+};
 
 const DMA_HEAP_IOCTL_ALLOC: u64 = 0xC018_4800; // _IOWR('H', 0, dma_heap_allocation_data)
 const DMA_BUF_IOCTL_SYNC: u64 = 0x4008_6200; // _IOW('b', 0, dma_buf_sync)
@@ -139,6 +142,24 @@ pub(super) fn import_backend() -> Option<WgpuBackend> {
         return None;
     }
     Some(backend)
+}
+
+/// [`import_backend`] for tests that fill a linear XRGB8888 dma-heap buffer on the CPU; `None`
+/// (skipped) when the device cannot sample LINEAR XRGB8888, as v3dv (Raspberry Pi 5), whose
+/// LINEAR images are render and transfer only.
+pub(super) fn linear_import_backend() -> Option<WgpuBackend> {
+    let backend = import_backend()?;
+    let buf = DmaBuf::alloc(256 * 4).expect("dma-heap alloc");
+    let plane = ExternalPlane::from_borrowed(buf.fd.as_fd(), 0, 256).unwrap();
+    let desc = ExternalFrameDescriptor::single_plane(64, 4, DrmFourcc::XRGB8888, plane)
+        .with_modifier(DRM_FORMAT_MOD_LINEAR);
+    match backend.import_dmabuf(desc) {
+        Err(ExternalImportError::UnsupportedFormat { reason, .. }) => {
+            skip(format!("LINEAR XRGB8888: {reason}"));
+            None
+        }
+        _ => Some(backend),
+    }
 }
 
 /// Make `wait` the backend's default through the mode that selects it; `false` when the device
