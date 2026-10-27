@@ -54,6 +54,7 @@ impl PluginRequirement {
     }
 
     /// Check this requirement against an installed plugin version.
+    #[doc(hidden)]
     pub fn check_version(&self, installed: Option<&str>) -> Result<(), UnmetReason> {
         let Some(raw_req) = self.version.as_deref() else {
             return Ok(());
