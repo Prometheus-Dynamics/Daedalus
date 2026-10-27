@@ -2,7 +2,6 @@ use crate::prelude::*;
 use alloc::collections::BTreeMap;
 use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};
-
 use daedalus_planner::GroupMetadata;
 
 mod basics;
@@ -347,18 +346,33 @@ impl ExecutionTelemetry {
     }
 
     pub fn aggregate_groups(&mut self, nodes: &[crate::plan::RuntimeNode]) {
+        let groups: Vec<Option<crate::portable::Arc<str>>> = nodes
+            .iter()
+            .map(|node| {
+                GroupMetadata::from_node_metadata(&node.metadata)
+                    .preferred_id()
+                    .map(crate::portable::Arc::from)
+            })
+            .collect();
+        self.aggregate_group_ids(&groups);
+    }
+
+    /// Merge each node's metrics into its group's (`groups`: each node's preferred group id, see
+    /// `ExecutorCore::node_groups`). The runs call this with the table built once per executor.
+    pub(crate) fn aggregate_group_ids(&mut self, groups: &[Option<crate::portable::Arc<str>>]) {
         for (idx, metrics) in self.node_metrics.iter() {
-            let Some(node) = nodes.get(idx) else {
+            let Some(Some(group)) = groups.get(idx) else {
                 continue;
             };
-            let group = GroupMetadata::from_node_metadata(&node.metadata);
-            let Some(group) = group.preferred_id() else {
-                continue;
-            };
-            self.group_metrics
-                .entry(group.to_string())
-                .or_default()
-                .merge(metrics.clone());
+            // A group already present takes the merge without a new key string.
+            match self.group_metrics.get_mut(group.as_ref()) {
+                Some(entry) => entry.merge(metrics.clone()),
+                None => self
+                    .group_metrics
+                    .entry(group.to_string())
+                    .or_default()
+                    .merge(metrics.clone()),
+            }
         }
     }
 }

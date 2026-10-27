@@ -91,8 +91,8 @@ where
     exec.core
         .telemetry
         .recompute_unattributed_runtime_duration();
-    let nodes = exec.nodes.clone();
-    exec.core.telemetry.aggregate_groups(&nodes);
+    let groups = exec.core.node_groups.clone();
+    exec.core.telemetry.aggregate_group_ids(&groups);
     Ok((core::mem::take(&mut exec.core.telemetry), busiest))
 }
 

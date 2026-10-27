@@ -391,7 +391,7 @@ fn run_order_timed<H: NodeHandler>(
         v.core.telemetry.graph_duration = clock.elapsed(graph_start);
     }
     v.core.telemetry.recompute_unattributed_runtime_duration();
-    v.core.telemetry.aggregate_groups(&nodes);
+    v.core.telemetry.aggregate_group_ids(&v.core.node_groups);
 
     if v.core.run_config.fail_fast
         && let Some(error) = first_error

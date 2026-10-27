@@ -9,6 +9,7 @@ use crate::state::{ExecutionContext, StateStore};
 use crate::sync::Mutex;
 use alloc::collections::BTreeMap;
 use daedalus_core::platform::Clock;
+use daedalus_planner::GroupMetadata;
 
 /// An executor's core: its own (a snapshot, or a borrowed executor's) or borrowed from an
 /// [`OwnedExecutor`](super::OwnedExecutor) for a serial run.
@@ -74,6 +75,9 @@ pub(crate) struct ExecutorCore {
     /// Node instance keys (`node_instance_keys`), shared with `ExecutionContext::node_id` so ticks
     /// do not allocate them.
     pub(crate) node_ids: Arc<[Arc<str>]>,
+    /// Each node's preferred group id (`GroupMetadata::preferred_id`), read once from its
+    /// metadata: [`ExecutionTelemetry::aggregate_groups`] runs every tick.
+    pub(crate) node_groups: Arc<[Option<Arc<str>>]>,
     /// Per node, the incoming edges into its required inputs (see `ExecutorInit`).
     pub(crate) required_inputs: Arc<[super::init::RequiredInputs]>,
     pub(crate) capabilities: Arc<crate::capabilities::CapabilityRegistry>,
@@ -120,6 +124,15 @@ impl ExecutorCore {
             node_ids: crate::plan::node_instance_keys(&init.nodes)
                 .into_iter()
                 .map(Arc::from)
+                .collect(),
+            node_groups: init
+                .nodes
+                .iter()
+                .map(|node| {
+                    GroupMetadata::from_node_metadata(&node.metadata)
+                        .preferred_id()
+                        .map(Arc::from)
+                })
                 .collect(),
             required_inputs: init.required_inputs.clone(),
             capabilities: Arc::new(crate::capabilities::CapabilityRegistry::new()),
@@ -216,6 +229,7 @@ impl ExecutorCore {
             node_metadata: self.node_metadata.clone(),
             output_ports: self.output_ports.clone(),
             node_ids: self.node_ids.clone(),
+            node_groups: self.node_groups.clone(),
             required_inputs: self.required_inputs.clone(),
             capabilities: self.capabilities.clone(),
             clock: self.clock.clone(),
