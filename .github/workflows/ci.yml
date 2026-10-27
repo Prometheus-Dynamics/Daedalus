@@ -104,6 +104,31 @@ jobs:
       - name: Validate package surface
         run: ./scripts/ci.sh package
 
+  # `cargo semver-checks` against the baseline in scripts/ci.sh (SEMVER_BASELINE). Non-blocking
+  # (`continue-on-error`) until the release is sealed: 3.0.1-dev intentionally differs from v3.0.0,
+  # so the report is visible but does not fail the run. Needs the tags, hence the full history.
+  semver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Checkout (with tags)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - *toolchain
+      - *cache
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      - name: Run semver checks (non-blocking)
+        run: ./scripts/ci.sh semver
+
   # Type-check only (no linking): the C cross compiler is for build scripts that compile C.
   aarch64:
     runs-on: ubuntu-latest

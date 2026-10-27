@@ -26,6 +26,10 @@ readonly MCU_MODES=("compiled::8192:512" "tunable:-tunable:10240:512" "loaded:-l
 readonly MCU_COMPILED_SIZE=("2988:112" "3316:112")
 readonly WASM_TARGET="wasm32-unknown-unknown"
 readonly WASI_TARGET="wasm32-wasip1"
+# Baseline for `semver`: a git revision of the last release. Set to the release tag once the release
+# is sealed (`v3.0.0` until then; 3.0.1-dev intentionally differs from it). Overridable from the
+# environment: SEMVER_BASELINE=v2.0.0 scripts/ci.sh semver.
+readonly SEMVER_BASELINE="${SEMVER_BASELINE:-v3.0.0}"
 
 step() { echo "==> $*"; }
 
@@ -59,6 +63,8 @@ usage: scripts/ci.sh [-j] [subcommand...]
               and thumbv6m, check flash and static RAM against per-mode budgets (readelf), and
               run the MCU crates' native tests
   wasm        engine,plugins (embedded, no threads) dev builds and Node runs for wasm32 and WASI
+  semver      `cargo semver-checks` of the published crates against $SEMVER_BASELINE (not part of
+              `all` or `full`: the CI job that runs it is non-blocking until the release is sealed)
   package     `cargo package` of every publishable crate, facade included, but not the example and
               fixture crates (the package-surface job), then the facade's package listing, which
               must be warning-free
@@ -324,6 +330,22 @@ cmd_package() {
   fi
 }
 
+# `cargo semver-checks` over the packages `package` validates, against $SEMVER_BASELINE (a git
+# revision, with its tags). Needs `cargo install cargo-semver-checks --locked`. Set
+# SEMVER_BASELINE to the release tag once the release is sealed; see docs/development.md.
+cmd_semver() {
+  command -v cargo-semver-checks >/dev/null ||
+    { echo "cargo-semver-checks not found: cargo install cargo-semver-checks --locked" >&2; return 1; }
+  step "Checking semver against $SEMVER_BASELINE"
+  # `--baseline-rev` clones the revision without its symlinks, and the tags before 3.0.1-dev link
+  # crate sources (`crates/core/src/portable.rs`) and build scripts, so the baseline is extracted
+  # from `git archive`, which keeps them, into a directory of its own.
+  local baseline="${CARGO_TARGET_DIR:-target}/semver-baseline"
+  rm -rf "$baseline" && mkdir -p "$baseline"
+  git archive "$SEMVER_BASELINE" | tar -x -C "$baseline"
+  cargo semver-checks --workspace --baseline-root "$baseline" "${PACKAGE_EXCLUDES[@]}"
+}
+
 # Criterion writes to `$CARGO_TARGET_DIR/criterion`; compare two such directories with
 # `scripts/bench-compare.py BASELINE CURRENT`.
 cmd_bench() {
@@ -445,7 +467,7 @@ cmd_quick() {
 
 readonly ALL=(lints features clippy link test macro-ui smoke)
 readonly FULL=("${ALL[@]}" doc lean aarch64 nostd mcu wasm package)
-readonly SUBCOMMANDS=" all full ${FULL[*]} quick bench pi vvl "
+readonly SUBCOMMANDS=" all full ${FULL[*]} quick bench pi vvl semver "
 
 run() { "cmd_${1//-/_}"; }
 cmd_all() { local sub; for sub in "${ALL[@]}"; do run "$sub"; done; }
