@@ -2,25 +2,10 @@
 
 use daedalus_planner::{ComputeAffinity, Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_runtime::{
-    BackpressureStrategy, Executor, NodeHandler, RuntimeEdgePolicy, RuntimeNode, SchedulerConfig,
-    build_runtime, executor::NodeError,
+    BackpressureStrategy, Executor, RuntimeEdgePolicy, SchedulerConfig, build_runtime,
 };
 
-struct LogHandler {
-    log: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
-}
-
-impl NodeHandler for LogHandler {
-    fn run(
-        &self,
-        node: &RuntimeNode,
-        _ctx: &daedalus_runtime::state::ExecutionContext,
-        _io: &mut daedalus_runtime::io::NodeIo,
-    ) -> Result<(), NodeError> {
-        self.log.lock().push(node.id.clone());
-        Ok(())
-    }
-}
+use super::support::LogHandler;
 
 fn gpu_plan() -> ExecutionPlan {
     let mut graph = Graph::default();

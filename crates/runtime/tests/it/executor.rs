@@ -14,21 +14,7 @@ use daedalus_transport::Payload;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-struct LogHandler {
-    log: std::sync::Arc<daedalus_runtime::sync::Mutex<Vec<String>>>,
-}
-
-impl NodeHandler for LogHandler {
-    fn run(
-        &self,
-        node: &RuntimeNode,
-        _ctx: &daedalus_runtime::state::ExecutionContext,
-        _io: &mut daedalus_runtime::io::NodeIo,
-    ) -> Result<(), NodeError> {
-        self.log.lock().push(node.id.clone());
-        Ok(())
-    }
-}
+use super::support::{EchoHandler, LogHandler};
 
 struct ConstLogHandler {
     log: Arc<Mutex<Vec<String>>>,
@@ -63,28 +49,6 @@ impl NodeHandler for FailOnHandler {
     ) -> Result<(), NodeError> {
         if node.id == self.fail_node {
             return Err(NodeError::InvalidInput("parity failure".into()));
-        }
-        Ok(())
-    }
-}
-
-struct EchoHandler;
-
-impl NodeHandler for EchoHandler {
-    fn run(
-        &self,
-        node: &RuntimeNode,
-        _ctx: &daedalus_runtime::state::ExecutionContext,
-        io: &mut daedalus_runtime::io::NodeIo,
-    ) -> Result<(), NodeError> {
-        if node.id == "echo" {
-            let inputs: Vec<_> = io
-                .inputs_for("in")
-                .map(|payload| payload.inner.clone())
-                .collect();
-            for payload in inputs {
-                io.push_payload("out", payload);
-            }
         }
         Ok(())
     }

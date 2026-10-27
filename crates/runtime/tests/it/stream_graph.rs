@@ -18,27 +18,7 @@ use daedalus_runtime::{
 };
 use daedalus_transport::{FeedOutcome, FreshnessPolicy, Payload, PressurePolicy};
 
-struct EchoHandler;
-
-impl NodeHandler for EchoHandler {
-    fn run(
-        &self,
-        node: &RuntimeNode,
-        _ctx: &daedalus_runtime::state::ExecutionContext,
-        io: &mut daedalus_runtime::io::NodeIo,
-    ) -> Result<(), NodeError> {
-        if node.id == "echo" {
-            let inputs: Vec<_> = io
-                .inputs_for("in")
-                .map(|payload| payload.inner.clone())
-                .collect();
-            for payload in inputs {
-                io.push_payload("out", payload);
-            }
-        }
-        Ok(())
-    }
-}
+use super::support::EchoHandler;
 
 /// Bound on every wait in this file. Each wait ends on the event it names (a message, a state
 /// transition), so this only keeps a broken build from hanging the run; no test asserts that
