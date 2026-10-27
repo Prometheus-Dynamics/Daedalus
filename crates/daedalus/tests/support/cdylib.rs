@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -66,4 +67,18 @@ pub fn build_cdylib(package: &str, lib_name: &str, features: &str) -> PathBuf {
                 .is_some_and(|name| name.ends_with(std::env::consts::DLL_SUFFIX))
         })
         .unwrap_or_else(|| panic!("cargo did not report a cdylib artifact for {package}"))
+}
+
+/// The `daedalus-plugins-stable-abi` cdylib, built once per test binary. It is built with its
+/// `dylib` feature only: the plugin has its own feature set, not the host's.
+#[allow(dead_code)] // Not every test binary loads the stable-ABI plugin.
+pub fn stable_abi_cdylib() -> &'static Path {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| {
+        build_cdylib(
+            "daedalus-plugins-stable-abi",
+            "daedalus_plugins_stable_abi",
+            "dylib",
+        )
+    })
 }

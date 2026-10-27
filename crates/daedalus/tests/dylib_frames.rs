@@ -10,7 +10,6 @@ mod cdylib;
 #[path = "support/frames.rs"]
 mod frames;
 
-use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -25,21 +24,10 @@ use daedalus::transport::{ColorRange, FrameColorimetry, SharedFrame};
 use daedalus_plugins_stable_abi::StableAbiPlugin;
 use frames::{COUNTED_KEY, Counted, FramesHost};
 
-fn stable_cdylib() -> &'static Path {
-    static PATH: OnceLock<PathBuf> = OnceLock::new();
-    PATH.get_or_init(|| {
-        cdylib::build_cdylib(
-            "daedalus-plugins-stable-abi",
-            "daedalus_plugins_stable_abi",
-            "dylib",
-        )
-    })
-}
-
 fn library() -> &'static PluginLibrary {
     static LIBRARY: OnceLock<PluginLibrary> = OnceLock::new();
     // Safety: a trusted test plugin.
-    LIBRARY.get_or_init(|| unsafe { PluginLibrary::load(stable_cdylib()) }.unwrap())
+    LIBRARY.get_or_init(|| unsafe { PluginLibrary::load(cdylib::stable_abi_cdylib()) }.unwrap())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -302,7 +290,7 @@ fn a_reload_releases_frames_the_old_build_held() {
     let dir = std::env::temp_dir().join(format!("daedalus-frames-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("libframes{}", std::env::consts::DLL_SUFFIX));
-    std::fs::copy(stable_cdylib(), &path).unwrap();
+    std::fs::copy(cdylib::stable_abi_cdylib(), &path).unwrap();
     // Safety: a trusted test plugin.
     let mut library = unsafe { PluginLibrary::load_reloadable(&path) }.unwrap();
     let mut registry = PluginRegistry::new();

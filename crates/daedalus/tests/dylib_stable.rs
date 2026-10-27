@@ -8,7 +8,6 @@
 #[path = "support/cdylib.rs"]
 mod cdylib;
 
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -71,22 +70,10 @@ impl FrameSource for GrayFrame {
 )]
 struct FramesPlugin;
 
-fn stable_cdylib() -> &'static Path {
-    static PATH: OnceLock<PathBuf> = OnceLock::new();
-    // Only `dylib`: the plugin is built with its own feature set, not the host's.
-    PATH.get_or_init(|| {
-        cdylib::build_cdylib(
-            "daedalus-plugins-stable-abi",
-            "daedalus_plugins_stable_abi",
-            "dylib",
-        )
-    })
-}
-
 fn library() -> &'static PluginLibrary {
     static LIBRARY: OnceLock<PluginLibrary> = OnceLock::new();
     // Safety: a trusted test plugin.
-    LIBRARY.get_or_init(|| unsafe { PluginLibrary::load(stable_cdylib()) }.unwrap())
+    LIBRARY.get_or_init(|| unsafe { PluginLibrary::load(cdylib::stable_abi_cdylib()) }.unwrap())
 }
 
 fn host_registry() -> PluginRegistry {
