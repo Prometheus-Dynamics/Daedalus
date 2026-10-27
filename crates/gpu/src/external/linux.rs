@@ -4,7 +4,7 @@ use std::fmt;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::time::Duration;
 
-use daedalus_transport::{FrameFormatKind, FrameView};
+use daedalus_transport::{FrameColorimetry, FrameFormatKind, FrameView, SharedFrame};
 
 use super::fence::{DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, export_dmabuf_fence, wait_sync_file};
 use super::{
@@ -72,6 +72,10 @@ pub struct ExternalFrameDescriptor {
     pub acquire_timeout: Duration,
     /// How to wait for the acquire fence; `None` uses the backend's default mode.
     pub acquire_fence_mode: Option<AcquireFenceMode>,
+    /// How the samples map to color (from `daedalus:frame` v3, see [`Self::from_frame_view`]).
+    /// Informational: imports sample the planes as stored and leave YCbCr-to-RGB conversion and
+    /// range expansion to the shader, which picks its matrix and range from this.
+    pub colorimetry: FrameColorimetry,
 }
 
 impl ExternalFrameDescriptor {
@@ -88,14 +92,16 @@ impl ExternalFrameDescriptor {
             acquire_fence: None,
             acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
             acquire_fence_mode: None,
+            colorimetry: FrameColorimetry::UNSPECIFIED,
         }
     }
 
     /// Describe a `daedalus:frame` for import from its plane metadata alone: every plane's
-    /// dma-buf fd (`dup`ed), offset and stride, the fourcc and the modifier
-    /// (`DRM_FORMAT_MOD_INVALID` becomes the implicit layout). Never maps or syncs the frame's
-    /// memory. The fds keep the dma-bufs alive but not the producer's buffer: attach the frame
-    /// payload (or lease) with [`Self::with_keepalive`] before importing.
+    /// dma-buf fd (`dup`ed), offset and stride, the fourcc, the modifier
+    /// (`DRM_FORMAT_MOD_INVALID` becomes the implicit layout) and the colorimetry. Never maps or
+    /// syncs the frame's memory. The fds keep the dma-bufs alive but not the producer's buffer:
+    /// attach the frame payload (or lease) with [`Self::with_keepalive`] before importing, or
+    /// use [`Self::from_shared_frame`], which does.
     pub fn from_frame_view(frame: &FrameView<'_>) -> Result<Self, ExternalImportError> {
         let (fourcc, modifier) = (DrmFourcc(frame.format()), frame.modifier());
         let modifier = (modifier != DRM_FORMAT_MOD_INVALID).then_some(modifier);
@@ -123,11 +129,25 @@ impl ExternalFrameDescriptor {
                 })
             })
             .collect::<Result<_, _>>()?;
-        let descriptor = Self::new(frame.width(), frame.height(), fourcc, planes);
+        let descriptor = Self::new(frame.width(), frame.height(), fourcc, planes)
+            .with_colorimetry(frame.colorimetry());
         Ok(match modifier {
             Some(modifier) => descriptor.with_modifier(modifier),
             None => descriptor,
         })
+    }
+
+    /// [`Self::from_frame_view`] of an owned frame, with a clone of it (one reference count) as
+    /// the keepalive: the producer's buffer stays out of reuse until the GPU image is destroyed
+    /// and idle.
+    pub fn from_shared_frame(frame: &SharedFrame) -> Result<Self, ExternalImportError> {
+        let keepalive: ExternalKeepalive = std::sync::Arc::new(frame.clone());
+        Ok(Self::from_frame_view(&frame.as_view())?.with_keepalive(keepalive))
+    }
+
+    pub fn with_colorimetry(mut self, colorimetry: FrameColorimetry) -> Self {
+        self.colorimetry = colorimetry;
+        self
     }
 
     /// Convenience for the common single-plane case.
@@ -308,6 +328,7 @@ impl fmt::Debug for ExternalFrameDescriptor {
             )
             .field("acquire_timeout", &self.acquire_timeout)
             .field("acquire_fence_mode", &self.acquire_fence_mode)
+            .field("colorimetry", &self.colorimetry)
             .finish()
     }
 }

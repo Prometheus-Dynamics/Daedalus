@@ -6,8 +6,8 @@ use std::time::Duration;
 use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use daedalus_transport::{
-    ForeignBorrow, FrameFormatKind, FrameInterface, FramePlane, FrameResidency, FrameSource,
-    PlaneMapping,
+    ForeignBorrow, FrameColorimetry, FrameFormatKind, FrameInterface, FramePlane, FrameResidency,
+    FrameSource, PlaneMapping, SharedFrame,
 };
 
 use super::*;
@@ -287,6 +287,9 @@ impl FrameSource for ViewNv12 {
         self.cpu_accesses.fetch_add(1, Relaxed);
         None
     }
+    fn colorimetry(&self) -> FrameColorimetry {
+        FrameColorimetry::BT709
+    }
 }
 
 fn view_descriptor(frame: &ViewNv12) -> Result<ExternalFrameDescriptor, ExternalImportError> {
@@ -310,6 +313,7 @@ fn frame_views_describe_imports_without_cpu_access() {
         .map(|p| (p.offset, p.stride))
         .collect();
     assert_eq!(layout, [(0, 128), (far, 128)], "u64 offsets kept");
+    assert_eq!(descriptor.colorimetry, FrameColorimetry::BT709);
     let source = std::os::fd::AsRawFd::as_raw_fd(&frame.fd);
     assert!(
         descriptor
@@ -327,6 +331,23 @@ fn frame_views_describe_imports_without_cpu_access() {
             "{err}"
         );
     }
+}
+
+#[test]
+fn shared_frames_keep_their_producer_buffer_while_imported() {
+    let frame = std::sync::Arc::new(ViewNv12::new(512, FrameFormatKind::Pixel));
+    let shared = SharedFrame::new(frame.clone());
+    let descriptor = ExternalFrameDescriptor::from_shared_frame(&shared).unwrap();
+    drop(shared);
+    assert!(descriptor.keepalive.is_some());
+    assert_eq!(
+        std::sync::Arc::strong_count(&frame),
+        2,
+        "the keepalive holds it"
+    );
+    assert_eq!(frame.cpu_accesses.load(Relaxed), 0);
+    drop(descriptor);
+    assert_eq!(std::sync::Arc::strong_count(&frame), 1);
 }
 
 #[cfg(feature = "gpu-dmabuf")]
