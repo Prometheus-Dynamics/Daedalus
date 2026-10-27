@@ -152,6 +152,10 @@ serde_json = { workspace = true }
 trybuild = { workspace = true }
 criterion = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# memfd frames standing in for dma-bufs (`tests/support/frames.rs`).
+libc = { workspace = true }
+
 # Integration tests share one binary (`tests/it`) where they can, so the crate graph is linked
 # and its generic code instantiated once. Separate binaries: tests with their own counting
 # `#[global_allocator]` (one per binary), the `dylib-plugins` tests (`export_plugin!` exports
@@ -199,6 +203,11 @@ required-features = ["engine", "dylib-plugins"]
 [[test]]
 name = "dylib_reload"
 path = "tests/dylib_reload.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
+name = "dylib_frames"
+path = "tests/dylib_frames.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]

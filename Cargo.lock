@@ -833,6 +833,7 @@ dependencies = [
  "daedalus-runtime",
  "daedalus-transport",
  "image",
+ "libc",
  "libloading 0.9.0",
  "parking_lot",
  "serde",
