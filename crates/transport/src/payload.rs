@@ -6,10 +6,11 @@ use core::fmt;
 
 use crate::{
     BoundaryCapabilities, BoundaryStorage, CorrelationId, Layout, PayloadLineage, ReleaseMode,
-    Residency, TypeKey,
+    Residency, SourceId, TypeKey,
 };
 
 mod boundary;
+mod created;
 mod foreign;
 mod residency;
 mod storage;
@@ -45,6 +46,11 @@ impl OpaquePayloadHandle {
 }
 
 /// Generic runtime payload envelope.
+///
+/// Its hot fields sit inline (about 128 bytes, two cache lines): the lineage a frame carries on
+/// every tick (correlation id, creation time, sequence, source timestamp) and its layout. The
+/// rare parts (a parent, a source id, cached residents) live in a block shared by clones and
+/// allocated only when one is set.
 #[derive(Clone)]
 pub struct Payload {
     type_key: TypeKey,
@@ -52,12 +58,25 @@ pub struct Payload {
     /// allocates nothing; unique payloads recover the owned value in place
     /// ([`Payload::try_into_owned`]).
     storage: Arc<dyn PayloadStorage>,
-    residency: Residency,
     layout: Option<Layout>,
-    /// Empty (and allocation-free) until a resident is cached.
-    residency_cache: ResidencyCache,
-    lineage: PayloadLineage,
+    correlation_id: CorrelationId,
+    /// `created_at`, packed (see `created`).
+    created_ns: i64,
+    sequence: Option<u64>,
+    source_timestamp: Option<u64>,
+    residency: Residency,
+    spill: Option<Arc<PayloadSpill>>,
 }
+
+/// The rarely set parts of a payload's lineage and its cached residents, shared by clones.
+#[derive(Clone, Default)]
+struct PayloadSpill {
+    parent: Option<CorrelationId>,
+    source_id: Option<SourceId>,
+    residency_cache: ResidencyCache,
+}
+
+static NO_RESIDENTS: ResidencyCache = ResidencyCache::EMPTY;
 
 impl fmt::Debug for Payload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -71,7 +90,7 @@ impl fmt::Debug for Payload {
             )
             .field("rust_type_name", &self.storage.rust_type_name())
             .field("bytes_estimate", &self.storage.bytes_estimate())
-            .field("lineage", &self.lineage)
+            .field("lineage", &self.lineage())
             .finish()
     }
 }
@@ -104,14 +123,7 @@ impl Payload {
     {
         let storage = BoundaryStorage::owned(type_key, value, capabilities);
         let type_key = storage.type_key.clone();
-        Self {
-            type_key,
-            storage: arc_dyn!(storage),
-            residency: Residency::Cpu,
-            layout: None,
-            residency_cache: ResidencyCache::default(),
-            lineage: PayloadLineage::new(),
-        }
+        Self::assemble(type_key, arc_dyn!(storage), Residency::Cpu, None)
     }
 
     #[cfg(test)]
@@ -147,14 +159,7 @@ impl Payload {
                 bytes_estimate,
             }),
         };
-        Self {
-            type_key,
-            storage,
-            residency,
-            layout,
-            residency_cache: ResidencyCache::default(),
-            lineage: PayloadLineage::new(),
-        }
+        Self::assemble(type_key, storage, residency, layout)
     }
 
     pub fn bytes(bytes: Arc<[u8]>) -> Self {
@@ -162,23 +167,102 @@ impl Payload {
     }
 
     pub fn bytes_with_type_key(type_key: impl Into<TypeKey>, bytes: Arc<[u8]>) -> Self {
+        Self::assemble(
+            type_key.into(),
+            arc_dyn!(BytesStorage { bytes }),
+            Residency::Cpu,
+            None,
+        )
+    }
+
+    /// A payload with the given storage and a fresh lineage (see [`PayloadLineage::new`]).
+    fn assemble(
+        type_key: TypeKey,
+        storage: Arc<dyn PayloadStorage>,
+        residency: Residency,
+        layout: Option<Layout>,
+    ) -> Self {
+        let lineage = PayloadLineage::new();
         Self {
-            type_key: type_key.into(),
-            storage: arc_dyn!(BytesStorage { bytes }),
-            residency: Residency::Cpu,
-            layout: None,
-            residency_cache: ResidencyCache::default(),
-            lineage: PayloadLineage::new(),
+            type_key,
+            storage,
+            layout,
+            correlation_id: lineage.correlation_id,
+            created_ns: created::encode(lineage.created_at),
+            sequence: lineage.sequence,
+            source_timestamp: lineage.source_timestamp,
+            residency,
+            spill: None,
         }
     }
 
+    /// Replaces this payload's lineage with `lineage`, keeping its storage, layout and residents.
     pub fn with_lineage(mut self, lineage: PayloadLineage) -> Self {
-        self.lineage = lineage;
+        self.correlation_id = lineage.correlation_id;
+        self.created_ns = created::encode(lineage.created_at);
+        self.sequence = lineage.sequence;
+        self.source_timestamp = lineage.source_timestamp;
+        if lineage.parent.is_some() || lineage.source_id.is_some() || self.spill.is_some() {
+            let spill = Arc::make_mut(self.spill.get_or_insert_with(Default::default));
+            spill.parent = lineage.parent;
+            spill.source_id = lineage.source_id;
+        }
         self
     }
 
-    pub fn lineage(&self) -> &PayloadLineage {
-        &self.lineage
+    /// A payload from a cached resident's parts, with `cache` as its residents.
+    fn from_resident(
+        type_key: TypeKey,
+        storage: Arc<dyn PayloadStorage>,
+        residency: Residency,
+        layout: Option<Layout>,
+        lineage: PayloadLineage,
+        cache: ResidencyCache,
+    ) -> Self {
+        let spill = (!cache.is_empty() || lineage.parent.is_some() || lineage.source_id.is_some())
+            .then(|| {
+                Arc::new(PayloadSpill {
+                    parent: lineage.parent,
+                    source_id: lineage.source_id,
+                    residency_cache: cache,
+                })
+            });
+        Self {
+            type_key,
+            storage,
+            layout,
+            correlation_id: lineage.correlation_id,
+            created_ns: created::encode(lineage.created_at),
+            sequence: lineage.sequence,
+            source_timestamp: lineage.source_timestamp,
+            residency,
+            spill,
+        }
+    }
+
+    /// The payload's lineage, built from its fields (a value: the fields are not stored as one).
+    pub fn lineage(&self) -> PayloadLineage {
+        let spill = self.spill.as_deref();
+        PayloadLineage {
+            correlation_id: self.correlation_id,
+            parent: spill.and_then(|spill| spill.parent),
+            source_id: spill.and_then(|spill| spill.source_id.clone()),
+            created_at: created::decode(self.created_ns),
+            source_timestamp: self.source_timestamp,
+            sequence: self.sequence,
+        }
+    }
+
+    /// The residents cached on this payload (empty and allocation-free until one is cached).
+    fn residency_cache(&self) -> &ResidencyCache {
+        self.spill
+            .as_deref()
+            .map_or(&NO_RESIDENTS, |spill| &spill.residency_cache)
+    }
+
+    /// Mutable access to the residents cache; allocates the spill block on first use.
+    fn residency_cache_mut(&mut self) -> &mut ResidencyCache {
+        &mut Arc::make_mut(self.spill.get_or_insert_with(Default::default)).residency_cache
     }
 
     /// Stamp lineage `created_at` with a reading of `clock`, the clock of the engine or bridge
@@ -187,13 +271,13 @@ impl Payload {
     #[inline]
     pub fn stamp(mut self, clock: &daedalus_core::platform::Clock) -> Self {
         if !clock.is_platform() {
-            self.lineage.created_at = clock.now();
+            self.created_ns = created::encode(clock.now());
         }
         self
     }
 
     pub fn correlation_id(&self) -> CorrelationId {
-        self.lineage.correlation_id
+        self.correlation_id
     }
 
     pub fn release_mode(&self) -> ReleaseMode {
@@ -382,6 +466,54 @@ impl Payload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payload_hot_fields_fit_two_cache_lines() {
+        assert!(core::mem::size_of::<Payload>() <= 128);
+    }
+
+    #[test]
+    fn frame_lineage_with_layout_sequence_and_timestamp_allocates_no_spill() {
+        let layout = Layout::from("frame:nv12");
+        let lineage = PayloadLineage::new()
+            .with_sequence(41)
+            .with_source_timestamp(9_000);
+        let payload = Payload::shared_with(
+            "frame:test",
+            Arc::new(7u32),
+            Residency::Cpu,
+            Some(layout.clone()),
+            None,
+        )
+        .with_lineage(lineage);
+        assert!(payload.spill.is_none());
+        assert_eq!(payload.layout(), Some(&layout));
+        let read = payload.lineage();
+        assert_eq!(read.sequence, Some(41));
+        assert_eq!(read.source_timestamp, Some(9_000));
+        assert_eq!(read.correlation_id, payload.correlation_id());
+    }
+
+    #[test]
+    fn created_at_round_trips_through_the_packed_reading() {
+        let payload = Payload::owned("test:u32", 1u32);
+        let created = payload.lineage().created_at;
+        assert_eq!(payload.clone().lineage().created_at, created);
+    }
+
+    #[test]
+    fn a_parent_allocates_the_spill_block_and_clones_share_it() {
+        let parent = PayloadLineage::new();
+        let child = Payload::owned("test:u32", 1u32)
+            .with_lineage(PayloadLineage::new().with_parent(parent.correlation_id));
+        assert!(child.spill.is_some());
+        let copy = child.clone();
+        assert!(Arc::ptr_eq(
+            child.spill.as_ref().unwrap(),
+            copy.spill.as_ref().unwrap()
+        ));
+        assert_eq!(copy.lineage().parent, Some(parent.correlation_id));
+    }
 
     #[test]
     fn boundary_shared_does_not_advertise_unimplemented_clone() {

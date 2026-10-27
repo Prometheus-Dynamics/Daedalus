@@ -13,11 +13,8 @@ use core::marker::PhantomData;
 
 #[cfg(target_has_atomic = "ptr")]
 use super::ArcValue;
-use super::{Payload, PayloadStorage, ResidencyCache, TypedStorage};
-use crate::{
-    ForeignBorrow, ForeignHandle, ForeignInterface, PayloadLineage, ProvideForeign, Residency,
-    TypeKey,
-};
+use super::{Payload, PayloadStorage, TypedStorage};
+use crate::{ForeignBorrow, ForeignHandle, ForeignInterface, ProvideForeign, Residency, TypeKey};
 
 #[derive(Debug)]
 struct ForeignStorage {
@@ -176,14 +173,12 @@ impl Payload {
         residency: Residency,
         local: bool,
     ) -> Self {
-        Self {
+        Self::assemble(
             type_key,
-            storage: arc_dyn!(ForeignStorage { handle, local }),
+            arc_dyn!(ForeignStorage { handle, local }),
             residency,
-            layout: None,
-            residency_cache: ResidencyCache::default(),
-            lineage: PayloadLineage::new(),
-        }
+            None,
+        )
     }
 
     /// The foreign handle this payload carries, if any (see [`Self::foreign_borrow`] for any
@@ -222,7 +217,7 @@ impl Payload {
         let Some(handle) = ForeignHandle::from_payload::<O, I>(&self) else {
             return Err(Box::new(self));
         };
-        Ok(Payload::foreign_local(I::KEY, handle, self.residency).with_lineage(self.lineage))
+        Ok(Payload::foreign_local(I::KEY, handle, self.residency).with_lineage(self.lineage()))
     }
 
     /// Retype storage that is an `S` at the allocation's address as `ProvidedStorage<S, O, I>`.

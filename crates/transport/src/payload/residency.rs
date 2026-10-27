@@ -30,6 +30,12 @@ impl ResidencyCacheKey {
 pub(super) struct ResidencyCache(Option<Arc<BTreeMap<ResidencyCacheKey, ResidentPayload>>>);
 
 impl ResidencyCache {
+    pub(super) const EMPTY: ResidencyCache = ResidencyCache(None);
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.map().is_none_or(BTreeMap::is_empty)
+    }
+
     fn map(&self) -> Option<&BTreeMap<ResidencyCacheKey, ResidentPayload>> {
         self.0.as_deref()
     }
@@ -80,19 +86,19 @@ impl ResidentPayload {
             storage: payload.storage.clone(),
             residency: payload.residency,
             layout: payload.layout.clone(),
-            lineage: payload.lineage.clone(),
+            lineage: payload.lineage(),
         }
     }
 
     pub(super) fn into_payload(self, cache: ResidencyCache) -> Payload {
-        Payload {
-            type_key: self.type_key,
-            storage: self.storage,
-            residency: self.residency,
-            layout: self.layout,
-            residency_cache: cache,
-            lineage: self.lineage,
-        }
+        Payload::from_resident(
+            self.type_key,
+            self.storage,
+            self.residency,
+            self.layout,
+            self.lineage,
+            cache,
+        )
     }
 }
 
@@ -108,10 +114,10 @@ impl Payload {
 
     /// Caches `resident` as a resident copy of this payload.
     pub fn insert_cached_resident(&mut self, resident: Payload) {
-        let cache = self.residency_cache.make_mut();
+        let cache = self.residency_cache_mut().make_mut();
         cache.extend(
             resident
-                .residency_cache
+                .residency_cache()
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
@@ -120,11 +126,11 @@ impl Payload {
     }
 
     pub fn residency_cache_len(&self) -> usize {
-        self.residency_cache.map().map_or(0, BTreeMap::len)
+        self.residency_cache().map().map_or(0, BTreeMap::len)
     }
 
     pub fn cached_residencies(&self) -> impl Iterator<Item = &ResidencyCacheKey> {
-        self.residency_cache.iter().map(|(key, _)| key)
+        self.residency_cache().iter().map(|(key, _)| key)
     }
 
     pub fn has_resident(
@@ -134,7 +140,7 @@ impl Payload {
         layout: Option<&Layout>,
     ) -> bool {
         let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        self.key() == key || self.residency_cache.get(&key).is_some()
+        self.key() == key || self.residency_cache().get(&key).is_some()
     }
 
     pub fn resident(
@@ -150,12 +156,12 @@ impl Payload {
             return Some(self.clone());
         }
         // Per-edge adapter paths ask this every tick: build no key while the cache is empty.
-        let cache = self.residency_cache.map()?;
+        let cache = self.residency_cache().map()?;
         let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
         cache
             .get(&key)
             .cloned()
-            .map(|resident| resident.into_payload(self.residency_cache.clone()))
+            .map(|resident| resident.into_payload(self.residency_cache().clone()))
     }
 
     pub fn resident_by_type(&self, type_key: &TypeKey, layout: Option<&Layout>) -> Option<Payload> {
@@ -176,7 +182,7 @@ impl Payload {
                 return Some(payload);
             }
         }
-        self.residency_cache
+        self.residency_cache()
             .iter()
             .map(|(_, resident)| resident)
             .find(|resident| {
@@ -184,7 +190,7 @@ impl Payload {
                     && layout.is_none_or(|layout| resident.layout.as_ref() == Some(layout))
             })
             .cloned()
-            .map(|resident| resident.into_payload(self.residency_cache.clone()))
+            .map(|resident| resident.into_payload(self.residency_cache().clone()))
     }
 
     pub fn resident_ref<T>(
@@ -200,7 +206,7 @@ impl Payload {
         if self.key() == key {
             return self.get_ref::<T>();
         }
-        self.residency_cache
+        self.residency_cache()
             .get(&key)
             .and_then(|resident| typed_ref::<T>(resident.storage.as_ref()))
     }

@@ -38,6 +38,19 @@ started from it, check these items:
 7. Behavior: per-edge policies now win over `SchedulerConfig::default_policy`, and `fire = "all"`
    joins are available. See [Scheduling](#scheduling-and-node-semantics).
 
+## Payload lineage (3.0.1-dev)
+
+`Payload` keeps its lineage inline in a smaller form (about 128 bytes instead of 176, two
+cache lines), so `lineage()` builds a `PayloadLineage` value rather than borrowing one. The
+`PayloadLineage` fields did not change: reads like `payload.lineage().sequence` and calls like
+`payload.lineage().age(&clock)` compile as before.
+
+| Before | Now | Since |
+| --- | --- | --- |
+| `payload.lineage()` returns `&PayloadLineage` | returns `PayloadLineage` by value; bind it as `let lineage = payload.lineage();` (or call `.field` / `.age(..)` on the temporary) | 3.0.1-dev |
+| `let l: &PayloadLineage = payload.lineage();` | `let l: PayloadLineage = payload.lineage();` | 3.0.1-dev |
+| `PLUGIN_ABI_VERSION` 11 | 12: rebuild every Rust-ABI plugin (`Payload` changed layout) | 3.0.1-dev |
+
 ## Features
 
 | Before | 3.0.0 | Since |

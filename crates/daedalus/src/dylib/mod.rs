@@ -219,8 +219,10 @@ pub const PLUGIN_DESCRIPTOR_SYMBOL: &str = "daedalus_plugin_descriptor";
 /// handler path, versioned on its own by [`STABLE_ABI_VERSION`]); version 9 added
 /// `crate_builds`; version 10 grew [`StableHandlers`] (`create`, `unload`) for stable ABI 2;
 /// version 11 changed the schema text of boundary contracts from `Debug` output to
-/// `TypeExpr::canonical_label`, which moves every boundary type's `LayoutHash::for_schema`.
-pub const PLUGIN_ABI_VERSION: u32 = 11;
+/// `TypeExpr::canonical_label`, which moves every boundary type's `LayoutHash::for_schema`;
+/// version 12 changed the layout of [`Payload`](crate::transport::Payload) (its lineage is packed
+/// inline, the rare parts shared), which a Rust-ABI plugin passes by value.
+pub const PLUGIN_ABI_VERSION: u32 = 12;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
 

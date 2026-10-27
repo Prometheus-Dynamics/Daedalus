@@ -129,6 +129,17 @@ plugin ABI and does not load.
 
 ### Changed
 
+- **Breaking: `Payload::lineage()` returns `PayloadLineage` by value, and `PLUGIN_ABI_VERSION`
+  is 12 (rebuild every Rust-ABI plugin).** `Payload` now keeps its hot fields inline (correlation
+  id, creation time packed into one `i64` of nanoseconds, sequence, source timestamp, layout,
+  residency): 128 bytes instead of 176, so two cache lines instead of three. A parent, a source id
+  and the residency cache move into a block shared by clones and allocated only when one is set,
+  so a frame with a layout, sequence and source timestamp allocates nothing, but a payload with a
+  source id allocates that block once. The `PayloadLineage` fields are unchanged. Measured on the
+  x86 host at touch 0 (Timing, recorded): 124.5k to 123.8k instructions per tick without recording,
+  2.2k to 2.1k L1D read misses, and no change at a 4 MiB touch (about 8k misses, 197k instructions).
+  See "Payload lineage" in `docs/migration-3.0.md`.
+
 - **Tiled dmabuf imports take 1 to 4 memory planes, whatever the format's plane count.**
   `ExternalFrameDescriptor::validate` required at least one plane per format plane, so NV12 in
   v3dv's Broadcom UIF layout (one memory plane on a Raspberry Pi 5 / CM5) was rejected before the
