@@ -632,6 +632,15 @@ plugin ABI and does not load.
 
 ### Maintenance
 
+- **Smaller `daedalus-runtime` codegen for every dependent build.** The generic adapter
+  registration (`register_transport_adapter_fn_with_options`, `register_branch_payload_adapter`,
+  `register_boundary_type`, the built-in numeric widenings and serializers) now boxes the closure
+  and runs one non-generic body, instead of compiling that body once per closure type (46 copies
+  for the built-ins alone). `daedalus-runtime`'s LLVM IR drops 7.8% (883k to 814k lines) and a
+  release rebuild of transport and runtime takes about 6% less CPU (64 to 60 s). Plugins calling
+  these functions get the same saving per call site. `daedalus_transport::SharedAdapterFn` and
+  `AdapterTable::insert_shared` are doc-hidden plumbing for it.
+
 - **`examples/mcu_blink` no longer plans in its build script.** Its `build.rs` planned the graph
   with `daedalus-mcu-build` as a build dependency, which compiled the planner, registry, runtime
   and transport a second time for the host (a cold `cargo build --workspace --all-targets`

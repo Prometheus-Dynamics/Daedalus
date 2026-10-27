@@ -257,6 +257,12 @@ pub trait TransportAdapter: Send + Sync {
 type AdapterFn =
     dyn Fn(Payload, &AdaptRequest) -> Result<Payload, TransportError> + Send + Sync + 'static;
 
+/// An adapter function as [`AdapterTable`] stores it. Generic registration wrappers box their
+/// closure into one and hand it to [`AdapterTable::insert_shared`], so their bodies are compiled
+/// once instead of once per closure type.
+#[doc(hidden)]
+pub type SharedAdapterFn = Arc<AdapterFn>;
+
 /// Runtime adapter function table keyed by stable adapter id.
 #[derive(Clone, Default)]
 pub struct AdapterTable {
@@ -280,12 +286,7 @@ impl AdapterTable {
     where
         F: Fn(Payload, &AdaptRequest) -> Result<Payload, TransportError> + Send + Sync + 'static,
     {
-        let id = id.into();
-        if self.entries.contains_key(&id) {
-            return Err(TransportError::DuplicateAdapter { adapter: id });
-        }
-        self.entries.insert(id, arc_dyn!(f));
-        Ok(())
+        self.insert_shared(id.into(), arc_dyn!(f), false)
     }
 
     pub fn replace_fn<F>(&mut self, id: impl Into<AdapterId>, f: F)
@@ -293,6 +294,23 @@ impl AdapterTable {
         F: Fn(Payload, &AdaptRequest) -> Result<Payload, TransportError> + Send + Sync + 'static,
     {
         self.entries.insert(id.into(), arc_dyn!(f));
+    }
+
+    /// Insert `f` under `id`: replacing an existing entry when `replace`, otherwise failing with
+    /// [`TransportError::DuplicateAdapter`] (the non-generic core of [`Self::register_fn`] and
+    /// [`Self::replace_fn`]).
+    #[doc(hidden)]
+    pub fn insert_shared(
+        &mut self,
+        id: AdapterId,
+        f: SharedAdapterFn,
+        replace: bool,
+    ) -> Result<(), TransportError> {
+        if !replace && self.entries.contains_key(&id) {
+            return Err(TransportError::DuplicateAdapter { adapter: id });
+        }
+        self.entries.insert(id, f);
+        Ok(())
     }
 
     pub fn register<A>(&mut self, adapter: A) -> Result<(), TransportError>

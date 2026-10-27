@@ -132,8 +132,25 @@ impl PluginRegistry {
     where
         F: Fn(Payload, &AdaptRequest) -> Result<Payload, TransportError> + Send + Sync + 'static,
     {
+        // One non-generic body for every closure type (dozens of built-in adapters alone).
+        self.register_shared_transport_adapter(
+            id.into(),
+            from,
+            to,
+            options,
+            crate::portable::arc_dyn!(f),
+        )
+    }
+
+    pub(super) fn register_shared_transport_adapter(
+        &mut self,
+        id: String,
+        from: TypeExpr,
+        to: TypeExpr,
+        options: TransportAdapterOptions,
+        f: daedalus_transport::SharedAdapterFn,
+    ) -> PluginResult<()> {
         self.ensure_open()?;
-        let id = id.into();
         let options = options.normalized();
         let from_for_compat = from.clone();
         let to_for_compat = to.clone();
@@ -143,15 +160,10 @@ impl PluginRegistry {
             .adapter_decl(&adapter_id)
             .is_some()
             && self.remove_builtin_adapter_source(&adapter_id);
-        if replaces_builtin_adapter {
-            self.runtime_transport
-                .adapters_mut()
-                .replace_fn(adapter_id.clone(), f);
-        } else {
-            self.runtime_transport
-                .register_adapter_fn(adapter_id.clone(), f)
-                .map_err(|source| PluginError::TransportAdapterRegister { source })?;
-        }
+        self.runtime_transport
+            .adapters_mut()
+            .insert_shared(adapter_id.clone(), f, replaces_builtin_adapter)
+            .map_err(|source| PluginError::TransportAdapterRegister { source })?;
         let from_key = typeexpr_transport_key(&from_for_compat);
         let to_key = typeexpr_transport_key(&to_for_compat);
         self.register_transport_type_decl(from_key.clone(), from_for_compat.clone())?;
@@ -208,13 +220,33 @@ impl PluginRegistry {
     {
         let key = typeexpr_transport_key(&schema);
         self.register_boundary_type::<T>(key.clone())?;
-        let mut cost = AdaptCost::new(match T::BRANCH_KIND {
+        let adapter_key = key.clone();
+        let adapter: daedalus_transport::SharedAdapterFn = crate::portable::arc_dyn!(
+            move |payload: Payload, _request: &AdaptRequest| match payload.get_ref::<T>() {
+                Some(value) => Ok(Payload::owned(adapter_key.clone(), value.branch_payload())),
+                None => Err(TransportError::type_mismatch::<T>(
+                    adapter_key.clone(),
+                    &payload,
+                )),
+            }
+        );
+        self.register_shared_branch_adapter(id.into(), schema, T::BRANCH_KIND, adapter)
+    }
+
+    fn register_shared_branch_adapter(
+        &mut self,
+        id: String,
+        schema: TypeExpr,
+        kind: BranchKind,
+        adapter: daedalus_transport::SharedAdapterFn,
+    ) -> PluginResult<()> {
+        let mut cost = AdaptCost::new(match kind {
             BranchKind::Shared => AdaptKind::SharedView,
             BranchKind::Clone | BranchKind::Domain => AdaptKind::Branch,
             BranchKind::Cow => AdaptKind::Cow,
             BranchKind::Materialize => AdaptKind::Materialize,
         });
-        cost.bytes_copied = match T::BRANCH_KIND {
+        cost.bytes_copied = match kind {
             BranchKind::Shared => daedalus_transport::CopyCost::None,
             BranchKind::Cow => daedalus_transport::CopyCost::HeaderOnly,
             BranchKind::Clone | BranchKind::Domain | BranchKind::Materialize => {
@@ -224,16 +256,7 @@ impl PluginRegistry {
         let options = TransportAdapterOptions::default()
             .cost(cost)
             .access(AccessMode::Modify);
-        self.register_transport_adapter_fn_with_options(
-            id,
-            schema.clone(),
-            schema,
-            options,
-            move |payload, _request| match payload.get_ref::<T>() {
-                Some(value) => Ok(Payload::owned(key.clone(), value.branch_payload())),
-                None => Err(TransportError::type_mismatch::<T>(key.clone(), &payload)),
-            },
-        )
+        self.register_shared_transport_adapter(id, schema.clone(), schema, options, adapter)
     }
 
     /// Register a typed CPU adapter. The input is borrowed from the payload and the output is

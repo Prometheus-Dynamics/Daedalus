@@ -84,7 +84,8 @@ impl PluginRegistry {
     }
 
     /// Register the `S -> T` widening adapter. Its result is a fresh value the consumer owns,
-    /// so it also serves `move`/`modify` inputs without a branch.
+    /// so it also serves `move`/`modify` inputs without a branch. Only the conversion closure is
+    /// generic; [`Self::register_widening_adapter`] does the rest once for all 29 pairs.
     fn register_numeric_widening<S, T>(
         &mut self,
         from: ValueType,
@@ -95,26 +96,39 @@ impl PluginRegistry {
         S: Copy + Send + Sync + 'static,
         T: From<S> + Send + Sync + 'static,
     {
-        let id = format!(
-            "daedalus.builtin.widen.{}_to_{}",
-            from.rust_name(),
-            to.rust_name()
-        );
-        let (from, to) = (TypeExpr::Scalar(from), TypeExpr::Scalar(to));
-        let (from_key, to_key) = (typeexpr_transport_key(&from), typeexpr_transport_key(&to));
-        let options = TransportAdapterOptions::default().access(AccessMode::Modify);
-        self.register_transport_adapter_fn_with_options(
-            id.clone(),
-            from,
-            to,
-            options,
-            move |payload, _request| match payload.get_ref::<S>() {
+        let from_key = typeexpr_transport_key(&TypeExpr::Scalar(from));
+        let to_key = typeexpr_transport_key(&TypeExpr::Scalar(to));
+        let adapter: daedalus_transport::SharedAdapterFn = crate::portable::arc_dyn!(
+            move |payload: Payload, _request: &AdaptRequest| match payload.get_ref::<S>() {
                 Some(value) => Ok(Payload::owned(to_key.clone(), T::from(*value))),
                 None => Err(TransportError::type_mismatch::<S>(
                     from_key.clone(),
                     &payload,
                 )),
-            },
+            }
+        );
+        self.register_widening_adapter(from, to, adapter, manifest)
+    }
+
+    fn register_widening_adapter(
+        &mut self,
+        from: ValueType,
+        to: ValueType,
+        adapter: daedalus_transport::SharedAdapterFn,
+        manifest: &mut PluginManifest,
+    ) -> PluginResult<()> {
+        let id = format!(
+            "daedalus.builtin.widen.{}_to_{}",
+            from.rust_name(),
+            to.rust_name()
+        );
+        let options = TransportAdapterOptions::default().access(AccessMode::Modify);
+        self.register_shared_transport_adapter(
+            id.clone(),
+            TypeExpr::Scalar(from),
+            TypeExpr::Scalar(to),
+            options,
+            adapter,
         )?;
         manifest.provided_adapters.push(AdapterId::new(id));
         Ok(())
@@ -186,6 +200,14 @@ impl PluginRegistry {
             &self.value_serializers,
             T::to_value,
         );
+        self.register_builtin_serializer_decl(name, schema)
+    }
+
+    fn register_builtin_serializer_decl(
+        &mut self,
+        name: &str,
+        schema: TypeExpr,
+    ) -> PluginResult<()> {
         let type_key = typeexpr_transport_key(&schema);
         self.register_transport_type_decl(type_key.clone(), schema)?;
         self.transport_capabilities

@@ -38,7 +38,7 @@ mod stream_policy;
 
 pub use adapter::{
     AdaptCost, AdaptRequest, AdapterTable, CopyCost, FanoutAction, FanoutConsumer, FanoutPlan,
-    TransportAdapter, TransportError, TransportOp, plan_fanout,
+    SharedAdapterFn, TransportAdapter, TransportError, TransportOp, plan_fanout,
 };
 pub use boundary_contract::{BoundaryCapabilities, BoundaryContractError, BoundaryTypeContract};
 pub use boundary_storage::{BoundaryStorage, BoundaryTakeError, BoundaryVTable};

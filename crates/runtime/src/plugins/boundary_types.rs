@@ -48,15 +48,20 @@ impl PluginRegistry {
         &mut self,
         key: impl Into<TypeKey>,
     ) -> PluginResult<()> {
+        self.register_boundary_type_of(key.into(), RustTypeIdentity::of::<T>(), TypeId::of::<T>())
+    }
+
+    fn register_boundary_type_of(
+        &mut self,
+        key: TypeKey,
+        identity: RustTypeIdentity,
+        type_id: TypeId,
+    ) -> PluginResult<()> {
         self.ensure_open()?;
-        let key = key.into();
         if !is_structural(&key) {
-            self.record_boundary_identity(&key, RustTypeIdentity::of::<T>())?;
+            self.record_boundary_identity(&key, identity)?;
         }
-        self.type_key_uses
-            .entry(TypeId::of::<T>())
-            .or_default()
-            .insert(key);
+        self.type_key_uses.entry(type_id).or_default().insert(key);
         Ok(())
     }
 
