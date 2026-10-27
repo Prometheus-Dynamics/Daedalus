@@ -95,6 +95,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
     }
 
     #[cfg(feature = "gpu-wgpu")]
+    /// Creates the state on the GPU context `gpu`, starting from `initial`.
     pub fn new_with_gpu(initial: T, gpu: &crate::GpuContextHandle) -> Result<Self, GpuError> {
         let backend = gpu.backend_ref();
         let wgpu_backend = backend
@@ -245,12 +246,14 @@ where
     T: GpuStateful + bytemuck::Zeroable + Default + Copy,
 {
     /// Create a GPU state using either zeroed or Default depending on the derive flags.
+    #[doc(hidden)]
     pub fn new_stateful() -> Result<Self, GpuError> {
         let init = if T::ZEROED { T::zeroed() } else { T::default() };
         Self::new(init)
     }
 
     #[cfg(feature = "gpu-wgpu")]
+    /// Creates the stateful GPU state on `gpu`, starting from the default value of `T`.
     pub fn new_stateful_with_gpu(gpu: &crate::GpuContextHandle) -> Result<Self, GpuError> {
         let init = if T::ZEROED { T::zeroed() } else { T::default() };
         Self::new_with_gpu(init, gpu)

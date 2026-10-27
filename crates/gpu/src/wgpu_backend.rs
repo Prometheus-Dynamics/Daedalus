@@ -111,6 +111,7 @@ impl WgpuBackend {
         Self::new_selected_async(staging_config, requested).await
     }
 
+    /// Creates the wgpu backend with a staging-pool configuration, asynchronously.
     pub async fn new_with_staging_pool_config_async(
         staging_config: WgpuStagingPoolConfig,
     ) -> Result<Self, GpuError> {

@@ -17,6 +17,7 @@ pub trait GpuAsyncBackend: GpuBackend {
         Err(GpuError::Unsupported)
     }
 
+    /// Creates a GPU image for `req`, asynchronously.
     async fn create_image_async(&self, req: &GpuImageRequest) -> Result<GpuImageHandle, GpuError> {
         self.create_image(req)
     }

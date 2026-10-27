@@ -146,6 +146,7 @@ impl GpuBlockInfo {
     /// Block layout derived from [`format_planes`]: single-plane formats are 1x1 texel blocks;
     /// subsampled multi-planar formats use the smallest block covering one texel of every plane
     /// (NV12: a 2x2 block of 4 Y bytes plus one 2-byte UV texel).
+    #[doc(hidden)]
     pub fn for_format(format: GpuFormat) -> Self {
         let planes = format_planes(format);
         let block = planes.iter().map(|p| p.subsampling).max().unwrap_or(1);
@@ -327,10 +328,6 @@ impl GpuContextHandle {
         &self.skipped
     }
 
-    pub fn skipped_summary(&self) -> Vec<String> {
-        self.skipped.iter().map(|s| s.describe()).collect()
-    }
-
     pub fn backend_ref(&self) -> &dyn GpuBackend {
         self.backend.as_ref()
     }
@@ -429,17 +426,9 @@ impl GpuContextHandle {
         self.backend.create_buffer(req)
     }
 
-    pub fn alloc_upload_buffer(&self, size_bytes: u64) -> Result<GpuBufferHandle, GpuError> {
+    pub(crate) fn alloc_upload_buffer(&self, size_bytes: u64) -> Result<GpuBufferHandle, GpuError> {
         self.create_buffer(&GpuRequest {
             usage: GpuUsage::UPLOAD,
-            format: None,
-            size_bytes,
-        })
-    }
-
-    pub fn alloc_download_buffer(&self, size_bytes: u64) -> Result<GpuBufferHandle, GpuError> {
-        self.create_buffer(&GpuRequest {
-            usage: GpuUsage::DOWNLOAD,
             format: None,
             size_bytes,
         })
@@ -539,6 +528,7 @@ pub fn upload_r8_texture(
 }
 
 /// Simple upload helper: allocates an upload buffer and returns it with bytes staged length.
+#[doc(hidden)]
 pub fn upload_bytes(ctx: &GpuContextHandle, bytes: &[u8]) -> Result<GpuBufferHandle, GpuError> {
     let buf = ctx.alloc_upload_buffer(bytes.len() as u64)?;
     // Real implementations would map/stage here; we just track stats.
@@ -618,6 +608,7 @@ impl GpuContext for GpuContextHandle {
 }
 
 /// Convenience for callers that just need to know the active backend kind.
+#[doc(hidden)]
 pub fn active_backend() -> GpuBackendKind {
     select_backend(&GpuOptions::default())
         .map(|ctx| ctx.backend_kind())

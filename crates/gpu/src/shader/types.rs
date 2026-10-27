@@ -49,12 +49,14 @@ impl Default for SamplerDesc {
 }
 
 impl SamplerDesc {
+    /// Sets the minification and magnification filters of the sampler.
     pub fn with_filters(mut self, min: wgpu::FilterMode, mag: wgpu::FilterMode) -> Self {
         self.min_filter = min;
         self.mag_filter = mag;
         self
     }
 
+    /// Sets the address mode on both axes.
     pub fn with_address_mode(mut self, mode: wgpu::AddressMode) -> Self {
         self.address_u = mode;
         self.address_v = mode;
@@ -62,6 +64,7 @@ impl SamplerDesc {
         self
     }
 
+    /// Sets the mipmap filter of the sampler.
     pub fn with_mipmap_filter(mut self, mip: wgpu::MipmapFilterMode) -> Self {
         self.mipmap_filter = mip;
         self
@@ -152,22 +155,6 @@ impl BindingSpec {
         }
     }
 
-    pub fn storage_texture(
-        binding: u32,
-        format: wgpu::TextureFormat,
-        access: Access,
-        view_dimension: Option<wgpu::TextureViewDimension>,
-    ) -> Self {
-        Self {
-            binding,
-            kind: BindingKind::StorageTexture2D,
-            access,
-            texture_format: Some(format),
-            view_dimension,
-            ..Default::default()
-        }
-    }
-
     pub fn sampler(binding: u32, kind: Option<SamplerKind>) -> Self {
         Self {
             binding,
@@ -232,17 +219,11 @@ pub struct BufferOut {
 }
 
 impl BufferOut {
+    /// A buffer output of `len` bytes that the shader writes, without a readback.
     pub fn write_bytes(len: u64) -> Self {
         Self {
             len,
             readback: true,
-        }
-    }
-
-    pub fn write_bytes_no_readback(len: u64) -> Self {
-        Self {
-            len,
-            readback: false,
         }
     }
 }
@@ -263,6 +244,7 @@ impl TextureOut {
         }
     }
 
+    /// A texture output of `width` by `height` that the shader writes and reads back.
     pub fn write_with_readback(width: u32, height: u32) -> Self {
         Self {
             width,
@@ -274,6 +256,7 @@ impl TextureOut {
     /// Create a storage texture description using the dimensions of the input payload.
     /// If no GPU context is present, readback is enabled so the caller can pull bytes.
     #[cfg(feature = "gpu-image")]
+    #[doc(hidden)]
     pub fn from_input(img: &Compute<DynamicImage>, gpu: Option<&GpuContextHandle>) -> Self {
         let (width, height) = img.dimensions();
         Self {
@@ -285,6 +268,7 @@ impl TextureOut {
 
     /// [`TextureOut::from_input`] with the GPU taken from the shader context.
     #[cfg(feature = "gpu-image")]
+    #[doc(hidden)]
     pub fn from_input_ctx(img: &Compute<DynamicImage>, ctx: &super::ShaderContext) -> Self {
         Self::from_input(img, ctx.gpu.as_ref())
     }

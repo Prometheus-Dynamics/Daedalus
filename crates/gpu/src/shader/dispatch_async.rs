@@ -29,6 +29,7 @@ pub async fn dispatch_shader_with_bindings_async<'a>(
     .await
 }
 
+/// Async variant of `dispatch_shader_with_options`.
 pub async fn dispatch_shader_with_options_async<'a>(
     spec: &ShaderSpec,
     shader_src: &str,
@@ -140,6 +141,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
 }
 
 impl ShaderContext {
+    /// Async variant of `dispatch_first`.
     pub async fn dispatch_first_async(
         &self,
         bindings: &[ShaderBinding<'_>],
@@ -162,6 +164,7 @@ impl ShaderContext {
         .await
     }
 
+    /// Async variant of `dispatch_by_name`.
     pub async fn dispatch_by_name_async(
         &self,
         name: &str,
@@ -184,6 +187,7 @@ impl ShaderContext {
         .await
     }
 
+    /// Async variant of `dispatch_bindings`.
     pub async fn dispatch_bindings_async<'a, B: GpuBindings<'a>>(
         &self,
         bindings: &'a B,

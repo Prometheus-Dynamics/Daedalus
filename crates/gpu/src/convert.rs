@@ -144,13 +144,6 @@ impl<T> Backing<T> {
             },
         }
     }
-
-    pub fn shared_arc(&self) -> Option<Arc<T>> {
-        match self.inner.as_ref() {
-            BackingInner::Shared(value) => Some(value.clone()),
-            _ => None,
-        }
-    }
 }
 
 impl<T> Deref for Backing<T> {
@@ -211,25 +204,7 @@ pub enum Compute<T: DeviceBridge> {
     Gpu(T::Device),
 }
 
-impl<T: DeviceBridge> Compute<T> {
-    pub fn is_gpu(&self) -> bool {
-        matches!(self, Compute::Gpu(_))
-    }
-
-    pub fn as_cpu(&self) -> Option<&T> {
-        match self {
-            Compute::Cpu(t) => Some(t),
-            _ => None,
-        }
-    }
-
-    pub fn as_gpu(&self) -> Option<&T::Device> {
-        match self {
-            Compute::Gpu(g) => Some(g),
-            _ => None,
-        }
-    }
-}
+impl<T: DeviceBridge> Compute<T> {}
 
 #[cfg(feature = "gpu-image")]
 impl Compute<DynamicImage> {
@@ -242,6 +217,7 @@ impl Compute<DynamicImage> {
     }
 
     /// Ensure this payload is resident on GPU; uploads if necessary and returns the handle and dimensions.
+    #[doc(hidden)]
     pub fn into_gpu(self, ctx: &GpuContextHandle) -> Result<(GpuImageHandle, u32, u32), GpuError> {
         match self {
             Compute::Gpu(handle) => Ok((handle.clone(), handle.width, handle.height)),

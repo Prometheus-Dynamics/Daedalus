@@ -169,6 +169,7 @@ impl AcquireFenceWait {
     }
 
     /// Whether the descriptor's `acquire_timeout` bounds the wait.
+    #[doc(hidden)]
     pub fn has_timeout(self) -> bool {
         !matches!(self, Self::SyncFd)
     }

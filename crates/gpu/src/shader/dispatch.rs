@@ -241,11 +241,13 @@ impl SubmissionTracker {
 
 /// Set the maximum tracked in-flight submissions per device before dispatch throttles.
 /// Returns the previous limit.
+#[doc(hidden)]
 pub fn set_max_inflight_submissions_per_device(limit: usize) -> usize {
     MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE.swap(limit.max(1), Ordering::Relaxed)
 }
 
 /// Current maximum tracked in-flight submissions per device.
+#[doc(hidden)]
 pub fn max_inflight_submissions_per_device() -> usize {
     MAX_INFLIGHT_SUBMISSIONS_PER_DEVICE
         .load(Ordering::Relaxed)
@@ -325,6 +327,7 @@ impl ShaderContext {
     }
 
     /// Dispatch a shader by name with explicitly described bindings.
+    #[doc(hidden)]
     pub fn dispatch_by_name(
         &self,
         name: &str,
@@ -394,6 +397,7 @@ pub fn dispatch_shader_with_bindings(
     )
 }
 
+/// Dispatches the shader described by `spec` and `shader_src` with explicit options.
 pub fn dispatch_shader_with_options(
     spec: &ShaderSpec,
     shader_src: &str,
