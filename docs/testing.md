@@ -289,7 +289,11 @@ A `LINEAR` camera frame on v3dv cannot be imported for sampling (`UnsupportedFor
 a GPU copy into an optimal texture, which Daedalus does not provide yet (no consumer needs it:
 HeliOS runs its CM5 camera stages on the CPU). V3D has no compressed modifiers, so no `aux`
 planes are expected. The validation layer is not part of that image, so `vvl` needs an aarch64
-layer under `VK_LAYER_PATH`. Without lavapipe installed (as on that image), a `skipping: no
+layer under `VK_LAYER_PATH`: with a cross-built `VK_LAYER_KHRONOS_validation` 1.4.363 (zig,
+static C++ runtime) the dmabuf tests passed with sync validation and no validation message at
+all; `gpu_probe` printed its whole report, also clean, then segfaulted at process exit, under
+the layer only (unexplained so far; possibly that build's static C++ runtime unloaded with the
+layer while a thread's exit destructors still point into it). Without lavapipe installed (as on that image), a `skipping: no
 lavapipe consumer` line is expected: those tests then use a second v3dv device. Run with `-- --nocapture` to see the
 measurements (watcher hop, blocked submission) and the round-tripped modifiers.
 
