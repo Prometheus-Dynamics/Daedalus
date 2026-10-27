@@ -97,6 +97,7 @@ impl DescriptorBuilder {
         self
     }
 
+    /// Sets whether the host may set the value.
     pub fn settable(mut self, settable: bool) -> Self {
         self.inner.settable = settable;
         self
@@ -124,11 +125,6 @@ impl DescriptorBuilder {
 
     pub fn feature_flag(mut self, flag: impl Into<String>) -> Self {
         self.inner.feature_flags.push(flag.into());
-        self
-    }
-
-    pub fn gpu_hints(mut self, hints: GpuHints) -> Self {
-        self.inner.gpu = Some(hints);
         self
     }
 
@@ -162,14 +158,6 @@ impl DescriptorId {
         Self(id.into())
     }
 
-    pub fn namespaced(namespace: impl Into<String>, name: impl Into<String>) -> Self {
-        let ns = namespace.into();
-        let name = name.into();
-        if ns.is_empty() {
-            return Self(name);
-        }
-        Self(format!("{ns}.{name}"))
-    }
     pub fn validate(&self) -> DataResult<()> {
         if self.0.is_empty() {
             return Err(DataError::new(

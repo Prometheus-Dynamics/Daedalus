@@ -29,6 +29,7 @@ pub fn from_json(s: &str) -> DataResult<Value> {
 }
 
 /// Encode to a structured JSON value.
+#[doc(hidden)]
 pub fn encode_value(value: &Value) -> DataResult<JsonValue> {
     let mut obj = serde_json::Map::new();
     match value {
@@ -244,6 +245,7 @@ pub fn from_plain_json(value: &JsonValue) -> DataResult<Value> {
 }
 
 /// Decode from a structured JSON value.
+#[doc(hidden)]
 pub fn decode_value(value: &JsonValue) -> DataResult<Value> {
     let obj = value.as_object().ok_or_else(|| {
         DataError::new(

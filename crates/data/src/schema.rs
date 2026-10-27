@@ -6,6 +6,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 /// Convert a `TypeExpr` into a JSON Schema fragment.
+#[doc(hidden)]
 pub fn type_to_json_schema(ty: &TypeExpr) -> DataResult<serde_json::Value> {
     use serde_json::json;
 
@@ -168,6 +169,7 @@ pub fn value_json_schema(self_ref: &str) -> serde_json::Value {
 }
 
 /// Pretty-printed JSON Schema string.
+#[doc(hidden)]
 pub fn to_json_schema_string(ty: &TypeExpr) -> DataResult<String> {
     let schema = type_to_json_schema(ty)?;
     serde_json::to_string_pretty(&schema)

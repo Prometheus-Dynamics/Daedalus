@@ -33,21 +33,25 @@ impl GpuValueHandle {
         }
     }
 
+    /// Sets the memory location of the value.
     pub fn with_location(mut self, location: MemoryLocation) -> Self {
         self.location = location;
         self
     }
 
+    /// Sets the kind of the handle.
     pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
         self.kind = Some(kind.into());
         self
     }
 
+    /// Sets the format of the handle.
     pub fn with_format(mut self, format: impl Into<String>) -> Self {
         self.format = Some(format.into());
         self
     }
 
+    /// Sets the label of the adapter that owns the handle.
     pub fn with_adapter_label(mut self, label: impl Into<String>) -> Self {
         self.adapter_label = Some(label.into());
         self
@@ -56,6 +60,7 @@ impl GpuValueHandle {
 
 /// Types that can expose a GPU handle for planner/runtime hand-off.
 pub trait AsGpuHandle {
+    /// The GPU value handle behind this value.
     fn as_gpu_handle(&self) -> &GpuValueHandle;
 }
 

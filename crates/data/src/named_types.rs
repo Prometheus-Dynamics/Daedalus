@@ -68,7 +68,8 @@ impl NamedTypeRegistry {
         self.types.read().get(key).cloned()
     }
 
-    pub fn export_policy_for(&self, expr: &TypeExpr) -> HostExportPolicy {
+    #[cfg(test)]
+    pub(crate) fn export_policy_for(&self, expr: &TypeExpr) -> HostExportPolicy {
         use crate::model::{TypeExpr as TE, ValueType};
 
         match expr {

@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 
 /// Render a `TypeExpr` into a proto3 type string. Map keys must be strings;
 /// tuples are not yet supported and return `UnsupportedFeature`.
+#[doc(hidden)]
 pub fn to_proto_type(expr: &TypeExpr) -> DataResult<String> {
     match expr {
         TypeExpr::Scalar(ValueType::Unit) => Ok("google.protobuf.Empty".into()),

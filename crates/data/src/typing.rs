@@ -1,7 +1,9 @@
 use crate::model::{EnumVariant, TypeExpr, Value, ValueType};
 use crate::portable::OnceLock;
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
+use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::any::{Any, TypeId, type_name};
@@ -32,6 +34,7 @@ pub struct TypeConflict {
 pub struct TypeRegistry {
     by_type_id: HashMap<TypeId, RegisteredType>,
     by_rust_name: HashMap<String, TypeExpr>,
+    #[cfg(test)]
     by_capability_type: BTreeMap<TypeExpr, BTreeSet<String>>,
 }
 
@@ -154,29 +157,8 @@ impl TypeRegistry {
             .map(|v| v.expr.clone())
     }
 
-    pub fn lookup_type_by_rust_name(&self, raw: &str) -> Option<TypeExpr> {
-        let key = normalize_rust_type_name(raw);
-        self.by_rust_name.get(&key).cloned()
-    }
-
-    pub fn snapshot_by_rust_name(&self) -> Vec<RegisteredType> {
-        let mut out: Vec<RegisteredType> = self
-            .by_rust_name
-            .iter()
-            .map(|(rust, expr)| RegisteredType {
-                rust: rust.clone(),
-                expr: expr.clone(),
-            })
-            .collect();
-        out.sort_by(|a, b| a.rust.cmp(&b.rust));
-        out
-    }
-
-    pub fn register_type_capability(&mut self, ty: TypeExpr, capability: impl Into<String>) {
-        self.register_type_capabilities(ty, [capability]);
-    }
-
-    pub fn register_type_capabilities(
+    #[cfg(test)]
+    pub(crate) fn register_type_capabilities(
         &mut self,
         ty: TypeExpr,
         capabilities: impl IntoIterator<Item = impl Into<String>>,
@@ -191,7 +173,8 @@ impl TypeRegistry {
         }
     }
 
-    pub fn type_capabilities(&self, ty: &TypeExpr) -> BTreeSet<String> {
+    #[cfg(test)]
+    pub(crate) fn type_capabilities(&self, ty: &TypeExpr) -> BTreeSet<String> {
         let ty = ty.clone().normalize();
         self.by_capability_type
             .get(&ty)
@@ -199,14 +182,16 @@ impl TypeRegistry {
             .unwrap_or_default()
     }
 
-    pub fn has_type_capability(&self, ty: &TypeExpr, capability: &str) -> bool {
+    #[cfg(test)]
+    pub(crate) fn has_type_capability(&self, ty: &TypeExpr, capability: &str) -> bool {
         if capability.trim().is_empty() {
             return false;
         }
         self.type_capabilities(ty).contains(capability)
     }
 
-    pub fn snapshot_type_capabilities(&self) -> Vec<RegisteredTypeCapabilities> {
+    #[cfg(test)]
+    pub(crate) fn snapshot_type_capabilities(&self) -> Vec<RegisteredTypeCapabilities> {
         self.by_capability_type
             .iter()
             .map(|(ty, capabilities)| RegisteredTypeCapabilities {
