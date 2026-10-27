@@ -180,6 +180,7 @@ pub fn plan(
 }
 
 /// [`plan`] against node specs.
+#[doc(hidden)]
 pub fn plan_specs(
     graph: Graph,
     nodes: &[NodeSpec],
