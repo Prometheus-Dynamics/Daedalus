@@ -9,6 +9,7 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 use std::time::Duration;
 
+use super::support::{INT_KEY, IncrementHandler};
 use daedalus_data::model::{TypeExpr, Value, ValueType};
 #[cfg(feature = "threads")]
 use daedalus_engine::InboundWait;
@@ -17,37 +18,13 @@ use daedalus_engine::{
 };
 use daedalus_planner::{Edge, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
-use daedalus_runtime::RuntimeNode;
-use daedalus_runtime::executor::{NodeError, NodeHandler};
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::plugins::PluginRegistry;
 use daedalus_transport::{DropReason, FeedOutcome, FreshnessPolicy, Payload, PressurePolicy};
 
-const INT_KEY: &str = "typeexpr:{\"Scalar\":\"Int\"}";
-
 /// Safety bound on the feeder threads' waits. The drive loops stop themselves, so this only keeps a
 /// broken build from hanging the run.
 const SAFETY_TIMEOUT: Duration = Duration::from_secs(30);
-
-struct IncrementHandler;
-
-impl NodeHandler for IncrementHandler {
-    fn run(
-        &self,
-        node: &RuntimeNode,
-        _ctx: &daedalus_runtime::state::ExecutionContext,
-        io: &mut daedalus_runtime::io::NodeIo,
-    ) -> Result<(), NodeError> {
-        if node.id == "inc" {
-            let Some(Value::Int(value)) = io.get_typed_ref::<Value>("in") else {
-                return Err(NodeError::InvalidInput("expected int".to_string()));
-            };
-            let next = Value::Int(value + 1);
-            io.push_as_to("out", INT_KEY.into(), next);
-        }
-        Ok(())
-    }
-}
 
 fn node(id: &str, label: Option<&str>, inputs: &[&str], outputs: &[&str]) -> NodeInstance {
     NodeInstance {

@@ -7,7 +7,8 @@ use daedalus_engine::{Engine, ExecutionDomain, HostGraph, LinkMode};
 use daedalus_runtime::host_bridge::HostBridgeManager;
 use daedalus_transport::Payload;
 
-use crate::host_graph_reload::{INT_KEY, Nodes, chain, next_for, setup};
+use crate::host_graph_reload::{Nodes, chain, next_for, setup};
+use crate::support::INT_KEY;
 
 fn compile(
     engine: &Engine,

@@ -8,4 +8,5 @@ mod host_graph_events;
 mod host_graph_poll;
 mod host_graph_reload;
 mod host_graph_selected;
+mod support;
 mod transport_run;

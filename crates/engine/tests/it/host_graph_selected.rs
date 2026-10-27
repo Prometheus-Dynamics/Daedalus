@@ -10,7 +10,8 @@ use daedalus_runtime::RuntimeSink;
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::plugins::PluginRegistry;
 
-use super::host_graph_reload::{INT_KEY, Nodes};
+use super::host_graph_reload::Nodes;
+use super::support::INT_KEY;
 
 /// The host node has two inputs (`a`, `b`) fed back from the branches, one output (`in`).
 fn setup() -> (Engine, PluginRegistry) {

@@ -2,6 +2,7 @@
 //! ports keep their values, and a graph that fails to compile leaves the running one untouched.
 #![cfg(feature = "plugins")]
 
+use super::support::INT_KEY;
 use daedalus_data::model::{TypeExpr, Value, ValueType};
 use daedalus_engine::{Engine, EngineConfig, HostGraph};
 use daedalus_planner::{Edge, Graph, NodeInstance};
@@ -12,8 +13,6 @@ use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBr
 use daedalus_runtime::io::NodeIo;
 use daedalus_runtime::plugins::PluginRegistry;
 use daedalus_runtime::state::ExecutionContext;
-
-pub(crate) const INT_KEY: &str = "typeexpr:{\"Scalar\":\"Int\"}";
 
 /// `counter` counts its runs in node state; `relay` forwards its input unchanged.
 pub(crate) struct Nodes;

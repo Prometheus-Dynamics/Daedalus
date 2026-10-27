@@ -7,38 +7,15 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::thread;
 use std::time::Duration;
 
+use super::support::{INT_KEY, IncrementHandler};
 use daedalus_data::model::{TypeExpr, Value, ValueType};
 use daedalus_engine::{Engine, EngineConfig, HostGraph};
 use daedalus_planner::{Edge, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
-use daedalus_runtime::RuntimeNode;
-use daedalus_runtime::executor::{NodeError, NodeHandler};
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
 use daedalus_runtime::plugins::PluginRegistry;
 
-const INT_KEY: &str = "typeexpr:{\"Scalar\":\"Int\"}";
-
-struct Increment;
-
-impl NodeHandler for Increment {
-    fn run(
-        &self,
-        node: &RuntimeNode,
-        _ctx: &daedalus_runtime::state::ExecutionContext,
-        io: &mut daedalus_runtime::io::NodeIo,
-    ) -> Result<(), NodeError> {
-        if node.id == "inc" {
-            let Some(Value::Int(value)) = io.get_typed_ref::<Value>("in") else {
-                return Err(NodeError::InvalidInput("expected int".to_string()));
-            };
-            let next = Value::Int(value + 1);
-            io.push_as_to("out", INT_KEY.into(), next);
-        }
-        Ok(())
-    }
-}
-
-fn increment_graph() -> HostGraph<Increment> {
+fn increment_graph() -> HostGraph<IncrementHandler> {
     let int_ty = TypeExpr::Scalar(ValueType::Int);
     let mut plugins = PluginRegistry::new();
     plugins
@@ -77,7 +54,7 @@ fn increment_graph() -> HostGraph<Increment> {
         .compile_host_graph_plugin_registry(
             &plugins,
             graph,
-            Increment,
+            IncrementHandler,
             HostBridgeManager::new(),
             "host",
         )
