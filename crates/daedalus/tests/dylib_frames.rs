@@ -18,6 +18,7 @@ use daedalus::PluginLibrary;
 use daedalus::data::model::{TypeExpr, ValueType};
 use daedalus::dylib::{HostGraphReloadExt, InstallPath};
 use daedalus::engine::{Engine, EngineConfig, HostGraph};
+use daedalus::planner::Graph;
 use daedalus::runtime::handler_registry::HandlerRegistry;
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
 use daedalus::transport::{ColorRange, FrameColorimetry, SharedFrame};
@@ -61,7 +62,7 @@ fn registry(install: Install) -> PluginRegistry {
 
 /// One plugin node `node` fed from host input `frame` (plus string input `sensor` when the node
 /// takes one), each output `port` wired to a graph output of the same name.
-fn graph(registry: &PluginRegistry, node: &str, outputs: &[&str]) -> HostGraph<HandlerRegistry> {
+fn plan(registry: &PluginRegistry, node: &str, outputs: &[&str]) -> Graph {
     let mut builder = registry
         .graph_builder()
         .unwrap()
@@ -76,9 +77,32 @@ fn graph(registry: &PluginRegistry, node: &str, outputs: &[&str]) -> HostGraph<H
     for port in outputs {
         builder = builder.connect(format!("{node}.{port}").as_str(), *port);
     }
+    builder.build()
+}
+
+fn graph(registry: &PluginRegistry, node: &str, outputs: &[&str]) -> HostGraph<HandlerRegistry> {
     Engine::new(EngineConfig::default())
         .unwrap()
-        .compile_registry(registry, builder.build())
+        .compile_registry(registry, plan(registry, node, outputs))
+        .unwrap()
+}
+
+/// [`plan`] compiled onto `current`'s host bridges, for `HostGraph::reload_with`.
+fn onto(
+    registry: &PluginRegistry,
+    current: &HostGraph<HandlerRegistry>,
+    node: &str,
+    outputs: &[&str],
+) -> HostGraph<HandlerRegistry> {
+    Engine::new(EngineConfig::default())
+        .unwrap()
+        .compile_host_graph_plugin_registry(
+            registry,
+            plan(registry, node, outputs),
+            registry.handlers(),
+            current.bridge_manager().clone(),
+            current.host().alias().to_string(),
+        )
         .unwrap()
 }
 
@@ -309,6 +333,45 @@ fn a_reload_releases_frames_the_old_build_held() {
     drop(registry);
     drop(library);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_graph_reload_carries_held_frames_or_releases_them() {
+    both(|install| {
+        let registry = registry(install);
+        let mut host = graph(&registry, "frame_hold", &["previous"]);
+        let (first, first_drops) = Counted::nv12(4, 2, 1);
+        host.push_payload("frame", first.payload());
+        host.tick().unwrap();
+        drop(first);
+
+        // The same graph again: the node, and the frame its state holds, carry over.
+        let next = onto(&registry, &host, "frame_hold", &["previous"]);
+        let report = host.reload_with(next).unwrap();
+        let hold = |nodes: &[String]| nodes.iter().any(|node| node.ends_with("frame_hold"));
+        assert!(hold(&report.nodes_kept), "{install:?}: {report:?}");
+        assert_eq!(first_drops.load(SeqCst), 0, "{install:?}: still held");
+        let (second, second_drops) = Counted::nv12(4, 2, 2);
+        host.push_payload("frame", second.payload());
+        host.tick().unwrap();
+        let previous = take_frame(&host, "previous").expect("carried over");
+        assert_eq!(previous.as_view().sequence(), 1, "{install:?}");
+        drop(previous);
+        assert_eq!(first_drops.load(SeqCst), 1, "{install:?}");
+
+        // A graph without the node: its state, and the frame in it, are dropped.
+        drop(second);
+        let next = onto(&registry, &host, "frame_pass", &["frame"]);
+        let report = host.reload_with(next).unwrap();
+        assert!(hold(&report.nodes_removed), "{install:?}: {report:?}");
+        assert_eq!(
+            second_drops.load(SeqCst),
+            1,
+            "{install:?}: released with the node"
+        );
+        drop(host);
+        assert_eq!(first_drops.load(SeqCst), 1);
+    });
 }
 
 /// A dma-buf-style frame: NV12 in one memfd, planes at offsets, mapped by the host's provider.
