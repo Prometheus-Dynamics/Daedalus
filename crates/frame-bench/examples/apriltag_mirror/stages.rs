@@ -25,8 +25,38 @@ pub struct Blob {
 #[derive(Default)]
 pub struct Pool(Vec<Arc<Blob>>);
 
+/// `MIRROR_TOUCH_KB` (default 0): every output fill also walks that many KiB of an 8 MiB arena
+/// at a rotating offset, evicting caches the way real handlers working on frames do, so the
+/// runtime's code and data between nodes are cold as on the live engine. The handlers' own time
+/// grows; `graph_overhead` (tick minus handlers) does not include it.
+fn touch_arena() {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    const ARENA: usize = 8 << 20;
+    static BYTES: OnceLock<usize> = OnceLock::new();
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    static mut MEMORY: Vec<u8> = Vec::new();
+    let bytes = *BYTES.get_or_init(|| daedalus_frame_bench::env_usize("MIRROR_TOUCH_KB", 0) << 10);
+    if bytes == 0 {
+        return;
+    }
+    // SAFETY: the mirror runs its graph serially on one thread; only handlers call this.
+    let memory = unsafe { &mut *std::ptr::addr_of_mut!(MEMORY) };
+    if memory.is_empty() {
+        memory.resize(ARENA, 1);
+    }
+    let start = NEXT.fetch_add(bytes, Ordering::Relaxed) % (ARENA - bytes.min(ARENA));
+    let mut sum = 0u8;
+    for line in memory[start..start + bytes.min(ARENA)].chunks_mut(64) {
+        line[0] = line[0].wrapping_add(1);
+        sum = sum.wrapping_add(line[0]);
+    }
+    std::hint::black_box(sum);
+}
+
 impl Pool {
     fn fill(&mut self) -> Arc<Blob> {
+        touch_arena();
         let index = match self.0.iter().position(|slot| Arc::strong_count(slot) == 1) {
             Some(index) => index,
             None => {
