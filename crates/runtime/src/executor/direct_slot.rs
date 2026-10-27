@@ -63,6 +63,7 @@ impl DirectSlot {
         SharedDirectSlot { slot: self }
     }
 
+    #[inline]
     pub(crate) fn access(&self, access: DirectSlotAccess) -> DirectSlotHandle<'_> {
         match access {
             DirectSlotAccess::Serial => DirectSlotHandle::Serial(self.serial()),
@@ -76,14 +77,35 @@ impl DirectSlot {
         unsafe { (*self.payload.get()).clear() }
     }
 
-    /// Store `payload` in `held`, returning the one it replaces (never for `keep_all`).
-    fn put_in(&self, held: &mut Held, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
-        let replaced = if self.keep_all { None } else { held.pop() };
+    /// Store `payload` in `held` over the one it replaces (never for `keep_all`), dropping that one
+    /// in place; whether one was replaced. A slot that keeps only the newest overwrites its last
+    /// entry, so the payload moves once instead of out of the slot and back in.
+    #[inline]
+    fn put_in_place(&self, held: &mut Held, payload: CorrelatedPayload) -> bool {
+        if !self.keep_all
+            && let Some(newest) = held.last_mut()
+        {
+            *newest = payload;
+            return true;
+        }
         held.push(payload);
-        replaced
+        false
+    }
+
+    /// [`Self::put_in_place`] returning the payload it replaces, for a caller that must drop it
+    /// outside a lock.
+    fn replace_in(&self, held: &mut Held, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
+        if !self.keep_all
+            && let Some(newest) = held.last_mut()
+        {
+            return Some(core::mem::replace(newest, payload));
+        }
+        held.push(payload);
+        None
     }
 
     /// The oldest payload of `held`.
+    #[inline]
     fn take_from(held: &mut Held) -> Option<CorrelatedPayload> {
         (!held.is_empty()).then(|| held.remove(0))
     }
@@ -95,14 +117,16 @@ pub(crate) enum DirectSlotHandle<'a> {
 }
 
 impl DirectSlotHandle<'_> {
-    /// Store `payload`, returning the one it replaces.
-    pub(crate) fn put(self, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
+    /// Store `payload`; whether it replaced one.
+    #[inline]
+    pub(crate) fn put(self, payload: CorrelatedPayload) -> bool {
         match self {
             DirectSlotHandle::Serial(slot) => slot.put(payload),
             DirectSlotHandle::Shared(slot) => slot.put(payload),
         }
     }
 
+    #[inline]
     pub(crate) fn take(self) -> Option<CorrelatedPayload> {
         match self {
             DirectSlotHandle::Serial(slot) => slot.take(),
@@ -129,13 +153,15 @@ pub(crate) struct SerialDirectSlot<'a> {
 }
 
 impl SerialDirectSlot<'_> {
-    pub(crate) fn put(self, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
+    #[inline]
+    pub(crate) fn put(self, payload: CorrelatedPayload) -> bool {
         // SAFETY: serial execution owns the graph tick and accesses each direct slot in schedule
         // order, so no shared segment can concurrently touch this slot.
         self.slot
-            .put_in(unsafe { &mut *self.slot.payload.get() }, payload)
+            .put_in_place(unsafe { &mut *self.slot.payload.get() }, payload)
     }
 
+    #[inline]
     pub(crate) fn take(self) -> Option<CorrelatedPayload> {
         // SAFETY: see `put`; the serial accessor is only constructed for single-owner ticks.
         DirectSlot::take_from(unsafe { &mut *self.slot.payload.get() })
@@ -147,13 +173,19 @@ pub(crate) struct SharedDirectSlot<'a> {
 }
 
 impl SharedDirectSlot<'_> {
-    pub(crate) fn put(self, payload: CorrelatedPayload) -> Option<CorrelatedPayload> {
-        let _guard = self.slot.lock.lock();
-        // SAFETY: shared execution holds the slot mutex for the whole mutation.
-        self.slot
-            .put_in(unsafe { &mut *self.slot.payload.get() }, payload)
+    #[inline]
+    pub(crate) fn put(self, payload: CorrelatedPayload) -> bool {
+        // The replaced payload is dropped after the mutex is released, as it always was.
+        let replaced = {
+            let _guard = self.slot.lock.lock();
+            // SAFETY: shared execution holds the slot mutex for the whole mutation.
+            self.slot
+                .replace_in(unsafe { &mut *self.slot.payload.get() }, payload)
+        };
+        replaced.is_some()
     }
 
+    #[inline]
     pub(crate) fn take(self) -> Option<CorrelatedPayload> {
         let _guard = self.slot.lock.lock();
         // SAFETY: shared execution holds the slot mutex for the whole mutation.

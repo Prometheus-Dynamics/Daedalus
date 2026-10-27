@@ -39,13 +39,12 @@ pub(crate) fn push_direct_edge(
     let replaced = core
         .direct_slots
         .get(edge_idx)
-        .and_then(|slot| slot.access(access).put(payload));
-    if replaced.is_some() && collect_basic_metrics {
+        .is_some_and(|slot| slot.access(access).put(payload));
+    if replaced && collect_basic_metrics {
         let reason = replace_reason(edges.get(edge_idx));
         core.telemetry
             .record_edge_pressure_event(edge_idx, reason, 1);
     }
-    drop(replaced);
     if collect_detailed_metrics {
         core.telemetry.record_edge_transport(edge_idx, bytes);
         core.telemetry.record_edge_capacity(edge_idx, Some(1));
@@ -71,6 +70,7 @@ pub(crate) fn replace_reason(edge: Option<&crate::plan::RuntimeEdge>) -> EdgePre
     }
 }
 
+#[inline]
 pub(crate) fn pop_direct_edge(
     core: &mut ExecutorCore,
     access: DirectSlotAccess,
