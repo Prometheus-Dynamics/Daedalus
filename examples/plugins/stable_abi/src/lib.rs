@@ -117,6 +117,18 @@ fn shared_fill(len: i64, value: i64) -> Result<(SharedBytes, i64), NodeError> {
     Ok((bytes, ptr))
 }
 
+/// Hands a buffer straight back by reference (the `SharedBytes` handoff alone).
+#[node(id = "bytes_pass", inputs("bytes"), outputs("bytes"))]
+fn bytes_pass(bytes: SharedBytes) -> Result<SharedBytes, NodeError> {
+    Ok(bytes)
+}
+
+/// Hands a buffer straight back by value (through the stable path: a `Value` copy each way).
+#[node(id = "vec_pass", inputs("bytes"), outputs("bytes"))]
+fn vec_pass(bytes: Vec<u8>) -> Result<Vec<u8>, NodeError> {
+    Ok(bytes)
+}
+
 /// Which build runs: `tick + 1000 * generation` (generation 2 with `reload-v2`).
 #[cfg(not(feature = "reload-incompatible"))]
 #[node(id = "generation", inputs("tick"), outputs("out"))]
@@ -150,6 +162,8 @@ pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
         join,
         shared_sum,
         shared_fill,
+        bytes_pass,
+        vec_pass,
         generation,
         frame_invert,
         frame_pass,

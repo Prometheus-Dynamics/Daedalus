@@ -211,6 +211,11 @@ path = "tests/dylib_frames.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_frames_overhead"
+path = "tests/dylib_frames_overhead.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_linked_deps"
 path = "tests/dylib_linked_deps.rs"
 required-features = ["engine", "dylib-plugins"]
