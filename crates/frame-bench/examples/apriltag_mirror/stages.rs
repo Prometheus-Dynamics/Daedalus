@@ -25,6 +25,11 @@ pub struct Blob {
 #[derive(Default)]
 pub struct Pool(Vec<Arc<Blob>>);
 
+/// `MIRROR_COUNT_TOUCH=1` counts the hardware events of the touch too (default: excluded).
+fn count_touch() -> bool {
+    daedalus_frame_bench::env_usize("MIRROR_COUNT_TOUCH", 0) != 0
+}
+
 /// `MIRROR_TOUCH_KB` (default 0): every output fill also walks that many KiB of an 8 MiB arena
 /// at a rotating offset, evicting caches the way real handlers working on frames do, so the
 /// runtime's code and data between nodes are cold as on the live engine. The handlers' own time
@@ -46,12 +51,21 @@ fn touch_arena() {
         memory.resize(ARENA, 1);
     }
     let start = NEXT.fetch_add(bytes, Ordering::Relaxed) % (ARENA - bytes.min(ARENA));
+    // The thrash's own misses are not the runtime's: the hardware counters stop for it unless
+    // `MIRROR_COUNT_TOUCH=1` asks for the whole tick.
+    let pause = !count_touch();
+    if pause {
+        daedalus_frame_bench::pause_counters();
+    }
     let mut sum = 0u8;
     for line in memory[start..start + bytes.min(ARENA)].chunks_mut(64) {
         line[0] = line[0].wrapping_add(1);
         sum = sum.wrapping_add(line[0]);
     }
     std::hint::black_box(sum);
+    if pause {
+        daedalus_frame_bench::resume_counters();
+    }
 }
 
 impl Pool {

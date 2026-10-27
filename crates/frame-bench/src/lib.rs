@@ -57,7 +57,10 @@ pub use detector::{
     RefinedCorners, RejectedMarkers, compile_detector, detector_graph, detector_graph_for,
     detector_registry, register_detector_group,
 };
-pub use perf::InstructionCounter;
+pub use perf::{
+    ALL_EVENTS, CYCLES, CacheCounters, DTLB_READ_MISS, Event, INSTRUCTIONS, InstructionCounter,
+    L1D_READ_MISS, L1I_READ_MISS, LLC_READ_MISS, pause_counters, resume_counters,
+};
 pub use pin::{PIN_CPU_ENV, pin_from_env};
 pub use shared::{
     DomainBenchRun, PREPROCESS_GRAPH, compile_separate_detectors, compile_shared_detectors,

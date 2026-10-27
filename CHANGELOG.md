@@ -79,6 +79,12 @@ plugin ABI and does not load.
   `HostBridgeHandle::retain_ports`, `HostBridgeManager::is_same`. See the Hosts section of
   `docs/node-authoring.md`.
 
+- **frame-bench hardware counters per tick**: the `apriltag_mirror` example reports, per tick,
+  instructions, cycles, L1D and L1I read misses, and dTLB read misses (LLC read misses where the
+  PMU has them; each event degrades to `n/a` when the kernel refuses it). `MIRROR_TOUCH_KB` pauses
+  the counters for its own cache walk, so the numbers are the runtime's and the handlers' non-touch
+  work; `MIRROR_COUNT_TOUCH=1` counts the walk too.
+
 ### Removed
 
 - Runtime: `NodeError::retryable` and `ExecuteError::retryable`, which nothing called. Recovery

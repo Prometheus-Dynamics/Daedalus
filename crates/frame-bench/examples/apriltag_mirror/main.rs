@@ -14,8 +14,8 @@ use daedalus::{
     transport::Payload,
 };
 use daedalus_frame_bench::{
-    CountingAllocator, FrameFeed, FrameSourceConfig, InstructionCounter, SyntheticFrameSource,
-    env_usize,
+    ALL_EVENTS, CacheCounters, CountingAllocator, FrameFeed, FrameSourceConfig,
+    SyntheticFrameSource, env_usize,
 };
 
 #[global_allocator]
@@ -67,7 +67,8 @@ fn compile(level: MetricsLevel, record: bool) -> Result<HostGraph<HandlerRegistr
 struct Measured {
     tick_p50_ns: u64,
     tick_mean_ns: f64,
-    instructions_per_tick: Option<f64>,
+    /// Per tick, per hardware event in `ALL_EVENTS` order; `None` where the kernel refuses it.
+    hardware_per_tick: Vec<(&'static str, Option<f64>)>,
     allocs_per_tick: Option<[f64; 4]>,
     report: Option<daedalus::runtime::executor::FrameOverheadReport>,
 }
@@ -104,13 +105,13 @@ fn measure(
     host.reset_frame_overhead();
     let mut wall = vec![0u64; ticks];
     let before = daedalus::alloc_probe::counts();
-    let counter = InstructionCounter::start();
+    let counters = CacheCounters::start(&ALL_EVENTS);
     for slot in wall.iter_mut() {
         let start = Instant::now();
         tick(&mut host)?;
         *slot = start.elapsed().as_nanos() as u64;
     }
-    let instructions = counter.as_ref().map(InstructionCounter::read);
+    let hardware = counters.read();
     let during = daedalus::alloc_probe::counts().since(&before);
     let mean = wall.iter().sum::<u64>() as f64 / ticks as f64;
     wall.sort_unstable();
@@ -118,7 +119,10 @@ fn measure(
     Ok(Measured {
         tick_p50_ns: wall[(ticks / 2).min(ticks - 1)],
         tick_mean_ns: mean,
-        instructions_per_tick: instructions.map(|count| count as f64 / ticks as f64),
+        hardware_per_tick: hardware
+            .into_iter()
+            .map(|(name, count)| (name, count.map(|count| count as f64 / ticks as f64)))
+            .collect(),
         allocs_per_tick: daedalus::alloc_probe::is_installed().then(|| {
             [
                 per(during.runtime),
@@ -137,8 +141,11 @@ fn print_run(label: &str, run: &Measured) {
         "tick (push + tick + take): p50 {} ns, mean {:.0} ns",
         run.tick_p50_ns, run.tick_mean_ns
     );
-    if let Some(instructions) = run.instructions_per_tick {
-        println!("instructions per tick: {instructions:.0}");
+    for (name, per_tick) in &run.hardware_per_tick {
+        match per_tick {
+            Some(count) => println!("{name} per tick: {count:.1}"),
+            None => println!("{name} per tick: n/a (the kernel refuses this event)"),
+        }
     }
     if let Some([runtime, node, host, other]) = run.allocs_per_tick {
         println!(
