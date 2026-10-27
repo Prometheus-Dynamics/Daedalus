@@ -57,7 +57,8 @@ pub enum CppPayloadResolveError {
 }
 
 impl CppPointerLengthAbi {
-    pub fn bytes_view() -> Self {
+    #[cfg(test)]
+    pub(crate) fn bytes_view() -> Self {
         Self {
             pointer_type: "const uint8_t*".into(),
             length_type: "size_t".into(),
@@ -144,13 +145,14 @@ pub fn resolve_cpp_payload_handle_mut<'a>(
     })
 }
 
-pub fn cpp_in_process_backend_config(
+pub(crate) fn cpp_in_process_backend_config(
     library_path: impl Into<String>,
     symbol: impl Into<String>,
 ) -> BackendConfig {
     BackendConfig::in_process(BackendKind::CCpp, symbol).with_entry_module(library_path)
 }
 
+/// C++ in-process backend configuration for `library_path` and `symbol`, with the pointer-length ABI.
 pub fn cpp_in_process_backend_config_with_pointer_abi(
     library_path: impl Into<String>,
     symbol: impl Into<String>,
@@ -160,6 +162,7 @@ pub fn cpp_in_process_backend_config_with_pointer_abi(
 }
 
 /// Package C/C++ shared libraries and sources with the default lockfile.
+#[doc(hidden)]
 pub fn cpp_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
