@@ -62,7 +62,9 @@ pub(super) fn collect_inputs(
                         .estimate_payload_bytes(&payload.inner);
                     v.core.telemetry.record_node_transport_in(node_idx, bytes);
                 }
-                payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
+                if edge_adapts(v, edge_idx) {
+                    payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
+                }
                 inputs.push((to_port.clone(), payload));
                 if one_per_edge {
                     break;
@@ -92,7 +94,9 @@ pub(super) fn collect_inputs(
                     .estimate_payload_bytes(&payload.inner);
                 v.core.telemetry.record_node_transport_in(node_idx, bytes);
             }
-            payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
+            if edge_adapts(v, edge_idx) {
+                payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
+            }
             inputs.push((to_port.clone(), payload));
             if one_per_edge {
                 break;
@@ -125,6 +129,16 @@ fn record_queue_wait(
     if let Some(probe) = probe {
         probe.record_queue_wait(edge_idx, waited);
     }
+}
+
+/// Whether `edge_idx` runs an adapter path on its payloads: the check [`adapt_edge_payload`] makes
+/// first, so an edge that adapts nothing never moves its payload through that call.
+fn edge_adapts(v: &SerialView<'_>, edge_idx: usize) -> bool {
+    v.edge_transports
+        .get(edge_idx)
+        .and_then(Option::as_ref)
+        .is_some_and(|transport| !transport.adapter_steps.is_empty())
+        && v.core.runtime_transport.is_some()
 }
 
 fn adapt_edge_payload(
