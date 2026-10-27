@@ -35,7 +35,7 @@ pub use adaptive::DEFAULT_DISPATCH_OVERHEAD;
 pub(crate) use adaptive::{AdaptiveState, run_adaptive_on};
 
 pub(crate) use config::ExecutorRunConfig;
-pub(crate) use config_target::ExecutorConfigTarget;
+pub(crate) use config_target::{ExecutorConfigTarget, executor_config_api};
 pub(crate) use core::{CoreRef, ExecutorCore};
 pub(crate) use direct_slot::{DirectSlot, DirectSlotAccess};
 pub use errors::{ExecuteError, ExecutorBuildError, ExecutorMaskError, NodeError};
@@ -252,6 +252,8 @@ pub(crate) fn reset_run_storage(
 }
 
 impl<'a, H: NodeHandler> Executor<'a, H> {
+    executor_config_api!();
+
     /// Build an executor from a runtime plan and handler.
     ///
     /// # Panics
@@ -296,94 +298,6 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         })
     }
 
-    /// Restrict execution to a subset of nodes (by index).
-    ///
-    /// `active_nodes.len()` must equal `plan.nodes.len()`.
-    pub fn with_active_nodes(mut self, active_nodes: Vec<bool>) -> Self {
-        self.try_set_active_nodes_mask(Some(Arc::new(active_nodes)))
-            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
-        self
-    }
-
-    pub fn with_active_nodes_mask(mut self, active_nodes: Option<Arc<Vec<bool>>>) -> Self {
-        self.try_set_active_nodes_mask(active_nodes)
-            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
-        self
-    }
-
-    pub fn with_active_edges_mask(mut self, active_edges: Option<Arc<Vec<bool>>>) -> Self {
-        self.try_set_active_edges_mask(active_edges)
-            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
-        self
-    }
-
-    pub fn with_active_direct_edges_mask(
-        mut self,
-        active_direct_edges: Option<Arc<Vec<bool>>>,
-    ) -> Self {
-        self.try_set_active_direct_edges_mask(active_direct_edges)
-            .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
-        self
-    }
-
-    pub fn try_with_active_nodes(
-        mut self,
-        active_nodes: Vec<bool>,
-    ) -> Result<Self, ExecutorMaskError> {
-        self.try_set_active_nodes_mask(Some(Arc::new(active_nodes)))?;
-        Ok(self)
-    }
-
-    pub fn try_with_active_nodes_mask(
-        mut self,
-        active_nodes: Option<Arc<Vec<bool>>>,
-    ) -> Result<Self, ExecutorMaskError> {
-        self.try_set_active_nodes_mask(active_nodes)?;
-        Ok(self)
-    }
-
-    pub fn try_with_active_edges_mask(
-        mut self,
-        active_edges: Option<Arc<Vec<bool>>>,
-    ) -> Result<Self, ExecutorMaskError> {
-        self.try_set_active_edges_mask(active_edges)?;
-        Ok(self)
-    }
-
-    pub fn try_with_active_direct_edges_mask(
-        mut self,
-        active_direct_edges: Option<Arc<Vec<bool>>>,
-    ) -> Result<Self, ExecutorMaskError> {
-        self.try_set_active_direct_edges_mask(active_direct_edges)?;
-        Ok(self)
-    }
-
-    pub fn try_set_active_nodes_mask(
-        &mut self,
-        active_nodes: Option<Arc<Vec<bool>>>,
-    ) -> Result<(), ExecutorMaskError> {
-        self.apply_active_nodes_mask(active_nodes)
-    }
-
-    pub fn try_set_active_edges_mask(
-        &mut self,
-        active_edges: Option<Arc<Vec<bool>>>,
-    ) -> Result<(), ExecutorMaskError> {
-        self.apply_active_edges_mask(active_edges)
-    }
-
-    pub fn try_set_active_direct_edges_mask(
-        &mut self,
-        active_direct_edges: Option<Arc<Vec<bool>>>,
-    ) -> Result<(), ExecutorMaskError> {
-        self.apply_active_direct_edges_mask(active_direct_edges)
-    }
-
-    pub fn with_selected_host_output_ports(mut self, ports: Option<Arc<HashSet<String>>>) -> Self {
-        self.apply_selected_host_output_ports(ports);
-        self
-    }
-
     /// Enable demand-driven execution by selecting a set of sink nodes/ports and computing the
     /// upstream closure.
     ///
@@ -408,83 +322,6 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
-    /// Control how executor errors affect the current run.
-    ///
-    /// When enabled, serial execution returns the first node error immediately. Parallel execution
-    /// stops scheduling additional ready segments after the first segment error, then waits for
-    /// already-running scoped segments to return before propagating that error. When disabled, the
-    /// executor records segment errors in telemetry and continues scheduling remaining ready work.
-    pub fn with_fail_fast(mut self, enabled: bool) -> Self {
-        self.apply_fail_fast(enabled);
-        self
-    }
-
-    /// Provide a shared constant coercer registry (used by dynamic plugins).
-    pub fn with_const_coercers(mut self, coercers: crate::io::ConstCoercerMap) -> Self {
-        self.apply_const_coercers(coercers);
-        self
-    }
-
-    /// Resolve handlers' generic pushes (`NodeIo::push_to`) through a registry's type index
-    /// (`PluginRegistry::type_index`).
-    pub fn with_type_index(mut self, types: crate::type_index::TypeIndex) -> Self {
-        self.apply_type_index(types);
-        self
-    }
-
-    pub fn with_data_size_inspectors(mut self, inspectors: RuntimeDataSizeInspectors) -> Self {
-        self.apply_data_size_inspectors(inspectors);
-        self
-    }
-
-    pub fn with_runtime_transport(mut self, transport: crate::transport::RuntimeTransport) -> Self {
-        self.apply_runtime_transport(transport);
-        self
-    }
-
-    pub fn with_capabilities(
-        mut self,
-        capabilities: crate::capabilities::CapabilityRegistry,
-    ) -> Self {
-        self.apply_capabilities(capabilities);
-        self
-    }
-
-    /// Inject shared state store (optional).
-    pub fn with_state(mut self, state: StateStore) -> Self {
-        self.apply_state(state);
-        self
-    }
-
-    pub fn apply_resource_lifecycle(&self, event: ResourceLifecycleEvent) {
-        self.core.state.apply_resource_lifecycle(event)
-    }
-
-    pub fn on_memory_pressure(&self) {
-        self.apply_resource_lifecycle(ResourceLifecycleEvent::MemoryPressure)
-    }
-
-    pub fn on_idle(&self) {
-        self.apply_resource_lifecycle(ResourceLifecycleEvent::Idle)
-    }
-
-    pub fn shutdown_resources(&self) {
-        self.apply_resource_lifecycle(ResourceLifecycleEvent::Stop)
-    }
-
-    /// Provide a GPU handle when available.
-    #[cfg(feature = "gpu")]
-    pub fn with_gpu(mut self, gpu: daedalus_gpu::GpuContextHandle) -> Self {
-        self.apply_gpu(gpu);
-        self
-    }
-
-    #[cfg(not(feature = "gpu"))]
-    pub fn without_gpu(mut self) -> Self {
-        self.clear_gpu();
-        self
-    }
-
     /// Run chains of single-consumer CPU nodes as fused units (the default) or, with `false`,
     /// every node and edge on its own (see "Node fusion" in `docs/development.md`).
     pub fn with_node_fusion(mut self, enabled: bool) -> Self {
@@ -505,19 +342,6 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self
     }
 
-    /// Override the number of parallel workers (default: available parallelism).
-    pub fn with_pool_size(mut self, size: Option<usize>) -> Self {
-        self.apply_pool_size(size);
-        self
-    }
-
-    /// Initial estimate of parallel dispatch cost per segment for `run_adaptive_in_place`
-    /// (default [`DEFAULT_DISPATCH_OVERHEAD`]); parallel frames refine it.
-    pub fn with_adaptive_dispatch_overhead(mut self, overhead: Duration) -> Self {
-        self.adaptive.set_dispatch_overhead(overhead);
-        self
-    }
-
     /// Start the parallel worker threads now instead of on the first parallel run.
     #[cfg(feature = "threads")]
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
@@ -528,34 +352,6 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self.core
             .parallel_workers
             .min(self.schedule.host_deferred_graph.width)
-    }
-
-    pub fn with_metrics_level(mut self, level: MetricsLevel) -> Self {
-        self.apply_metrics_level(level);
-        self
-    }
-
-    /// Read every timing (telemetry, adaptive costs, edge waits) from `clock` instead of the
-    /// platform clock.
-    pub fn with_clock(mut self, clock: daedalus_core::platform::Clock) -> Self {
-        self.apply_clock(clock);
-        self
-    }
-
-    /// The clock this executor's timings read.
-    pub fn clock(&self) -> &daedalus_core::platform::Clock {
-        &self.core.clock
-    }
-
-    pub fn with_runtime_debug_config(mut self, config: crate::config::RuntimeDebugConfig) -> Self {
-        self.apply_runtime_debug_config(config);
-        self
-    }
-
-    /// Apply a graph patch to this executor's constant inputs without rebuilding the graph.
-    pub fn apply_patch(&self, patch: &GraphPatch) -> PatchReport {
-        let mut guard = self.const_inputs.write();
-        apply_patch_to_const_inputs(patch, &self.nodes, guard.as_mut_slice())
     }
 
     /// Attach a host bridge manager to enable implicit host I/O nodes.
