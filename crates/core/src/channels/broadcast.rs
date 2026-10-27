@@ -84,19 +84,8 @@ impl<T> BroadcastInner<T> {
     }
 
     fn try_close(&self) {
-        match self.close_behavior {
-            CloseBehavior::FailFast => {
-                if self.senders.load(Ordering::Acquire) == 0
-                    || self.receivers.load(Ordering::Acquire) == 0
-                {
-                    self.mark_closed();
-                }
-            }
-            CloseBehavior::DrainUntilSendersDone => {
-                if self.senders.load(Ordering::Acquire) == 0 {
-                    self.mark_closed();
-                }
-            }
+        if self.close_behavior.closes(&self.senders, &self.receivers) {
+            self.mark_closed();
         }
     }
 

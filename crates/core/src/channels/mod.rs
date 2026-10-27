@@ -1,4 +1,7 @@
 use core::fmt::Debug;
+use core::sync::atomic::Ordering;
+
+use crate::portable::AtomicUsize;
 
 pub mod bounded;
 pub mod broadcast;
@@ -61,6 +64,19 @@ pub enum CloseBehavior {
     FailFast,
     /// Keep channel open until senders are gone (receivers may drop).
     DrainUntilSendersDone,
+}
+
+impl CloseBehavior {
+    /// Whether a channel whose live endpoint counts are `senders` and `receivers` is closed
+    /// under this rule. Every channel flavour closes through it, so their rules cannot drift.
+    pub(super) fn closes(self, senders: &AtomicUsize, receivers: &AtomicUsize) -> bool {
+        match self {
+            CloseBehavior::FailFast => {
+                senders.load(Ordering::Acquire) == 0 || receivers.load(Ordering::Acquire) == 0
+            }
+            CloseBehavior::DrainUntilSendersDone => senders.load(Ordering::Acquire) == 0,
+        }
+    }
 }
 
 /// Snapshot stats for a channel.
