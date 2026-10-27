@@ -139,15 +139,17 @@ cmd_smoke() {
     mutable_payload fanout runtime_metrics transport_metrics ownership_metrics lifecycle_trace
     plan_debug overhead_floor observability backpressure_diagnostics external_frame_source
     node_fusion execution_domain held_inputs multicam_feeders graph_document graph_hot_reload
-    node_recovery frame_chain)
+    node_recovery)
+  # frame-bench examples: not bin targets, so they are built with --examples only.
+  local frame_examples=(frame_chain apriltag_mirror)
   local args=(--examples) bin exes exe
-  for bin in "${bins[@]::${#bins[@]}-1}"; do args+=(--bin "$bin"); done
+  for bin in "${bins[@]}"; do args+=(--bin "$bin"); done
   exes="$(cargo build --workspace --features "$CI_FEATURES" "${args[@]}" \
     --message-format=json-render-diagnostics | json_field executable)"
-  for bin in "${bins[@]}"; do
+  for bin in "${bins[@]}" "${frame_examples[@]}"; do
     echo "  -> $bin"
     exe="$(grep -m1 "/$bin\$" <<<"$exes")" || { echo "no executable for $bin" >&2 && return 1; }
-    FRAME_CHAIN_TICKS=200 "$exe" >/dev/null
+    FRAME_CHAIN_TICKS=200 MIRROR_TICKS=200 "$exe" >/dev/null
   done
 }
 
