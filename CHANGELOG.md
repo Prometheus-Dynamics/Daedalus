@@ -727,6 +727,32 @@ plugin ABI and does not load.
     handlers and `test_node` (`runtime` tests), and one increment handler and `INT_KEY` (`engine`
     tests).
 
+### Performance
+
+- **Per-tick runtime overhead on the serial executor.** Measured on the new `daedalus-frame-bench`
+  example `apriltag_mirror`: the tracked AprilTag detector group (19 stages, planner-expanded from
+  its embedded graph), the pose and multi-tag pose nodes and the host bridge edges, 21 planned
+  nodes and about 12 runs per tick, with stub handlers so that what it times is the runtime. Median
+  of 7 runs of 5000 ticks per mode, before (`f6299ad`) and after, on the development host (x86-64);
+  the CM5 numbers are not in this entry.
+  - metrics Off, no frame-overhead recording: 120,989 -> 109,263 instructions per tick (-9.7%);
+    tick p50 14.0 -> 11.6 µs.
+  - metrics Off, frame-overhead recording: 152,090 -> 140,300 instructions; overhead
+    (`graph_overhead`) p50 13.8 -> 11.6 µs.
+  - metrics Timing, no recording: 155,235 -> 123,358 instructions (-20.5%); tick p50 17.2 -> 13.2 µs.
+  - metrics Timing, frame-overhead recording: 183,298 -> 151,368 instructions; overhead p50
+    16.4 -> 12.4 µs (-24.5%).
+  - Runtime allocations per tick at Timing: 43.6 -> 3.0 (the three left are the per-run telemetry
+    maps, returned by value); at Off there were none before or after.
+
+  The changes: direct-slot edges replace the held payload in place instead of moving it out and
+  back; an edge that adapts nothing skips the adapter call; an empty edge's byte metrics skip the
+  redundant atomic writes; each node's group id is read once when the executor is built, and group
+  metrics merge without a new key string; custom-metric clear and drain skip an empty map. Telemetry
+  contents, public API and plugin ABI are unchanged. The harness enables daedalus's `metrics` and
+  `tracing` features, which the live engine runs with; without `metrics` the Timing level compiles
+  out.
+
 ## [3.0.0] - 2026-10-05
 
 ### Breaking changes
