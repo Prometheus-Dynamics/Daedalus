@@ -284,7 +284,7 @@ impl HostInstallPlan {
             .collect()
     }
 
-    pub fn from_schema(schema: &PluginSchema) -> Result<Self, HostInstallError> {
+    pub(crate) fn from_schema(schema: &PluginSchema) -> Result<Self, HostInstallError> {
         schema.validate()?;
         Ok(Self {
             plugin: plugin_manifest_from_schema(schema),

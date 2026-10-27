@@ -255,14 +255,6 @@ impl RunnerPool {
         self
     }
 
-    pub fn set_ffi_telemetry(&mut self, telemetry: FfiHostTelemetry) {
-        self.ffi_telemetry = Some(telemetry);
-    }
-
-    pub fn ffi_telemetry(&self) -> Option<FfiTelemetryReport> {
-        self.ffi_telemetry.as_ref().map(FfiHostTelemetry::snapshot)
-    }
-
     pub fn insert<R>(
         &mut self,
         config: &BackendConfig,

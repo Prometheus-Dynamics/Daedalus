@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
+#[cfg(test)]
 use daedalus_data::model::Value;
+#[cfg(test)]
+use daedalus_ffi_core::InvokeEventLevel;
 use daedalus_ffi_core::{
-    InvokeEvent, InvokeEventLevel, InvokeResponse, WirePort, WireValue, WireValueConversionError,
-    WorkerProtocolError,
+    InvokeEvent, InvokeResponse, WirePort, WireValue, WireValueConversionError, WorkerProtocolError,
 };
 use daedalus_registry::typeexpr_transport_key;
 use daedalus_transport::Payload;
@@ -67,7 +69,8 @@ impl DecodedInvokeResponse {
         &self.response.events
     }
 
-    pub fn events_at_level(&self, level: InvokeEventLevel) -> Vec<&InvokeEvent> {
+    #[cfg(test)]
+    pub(crate) fn events_at_level(&self, level: InvokeEventLevel) -> Vec<&InvokeEvent> {
         self.response
             .events
             .iter()
@@ -75,14 +78,15 @@ impl DecodedInvokeResponse {
             .collect()
     }
 
-    pub fn wire_output(&self, port: &str) -> Result<&WireValue, ResponseDecodeError> {
+    pub(crate) fn wire_output(&self, port: &str) -> Result<&WireValue, ResponseDecodeError> {
         self.response
             .outputs
             .get(port)
             .ok_or_else(|| ResponseDecodeError::MissingOutput { port: port.into() })
     }
 
-    pub fn value_output(&self, port: &str) -> Result<Value, ResponseDecodeError> {
+    #[cfg(test)]
+    pub(crate) fn value_output(&self, port: &str) -> Result<Value, ResponseDecodeError> {
         self.wire_output(port)?
             .clone()
             .into_value()
