@@ -166,6 +166,7 @@ planner and runtime make the value arrive in that form when a path exists.
 | `FanIn<T>` | all values arriving on an indexed fan-in port | any |
 | `Cpu<T>` / `Gpu<T>` | explicitly request a device residency | any |
 | `FrameView<'_>` / `ForeignRef<'_, I>` | a host-owned value through a foreign interface, no copy (see [Foreign Interfaces](#foreign-interfaces)) | `read` |
+| `SharedFrame` | an owned `daedalus:frame` (kept in state, returned, made by the node), no copy | `read` |
 
 Use `access = "move"` or `access = "modify"` only when the node truly consumes or mutates its
 input. Read access lets fanout share one allocation.
@@ -609,16 +610,21 @@ fn read_counter(counter: ForeignRef<'_, CounterInterface>) -> Result<i32, NodeEr
 
 Rules and limits:
 
-- The macros recognize the parameter by name: spell it `FrameView<'_>` or `ForeignRef<'_, I>`
-  (a by-value parameter, not `Option`/`&`). Other aliases are not recognized.
+- The macros recognize the parameter by name: spell it `FrameView<'_>`, `SharedFrame` or
+  `ForeignRef<'_, I>` (a by-value parameter, not `Option`/`&`). Other aliases are not
+  recognized.
 - The host input or producer must carry the owner type (declare host inputs with
   `input_as(name, TypeExpr::opaque(owner_key))` or `input_typed::<Owner>`), and the registry needs
   the owner's provider; otherwise planning reports a missing converter.
 - One version per interface key per registry (`PluginError::ForeignInterfaceConflict`); dynamic
   plugins export the interfaces they use and `install_into` refuses mismatches
   (`PluginLibraryError::ForeignInterfaceMismatch`).
-- Interfaces are input-only: a node that produces frames returns its own type, which consumers
-  read through the interface again.
+- Borrowed views are input-only. To keep a frame past the call or return one, take and return
+  `SharedFrame` (also `Option<SharedFrame>` or in a tuple): it owns a reference, its outputs are
+  `daedalus:frame` payloads that `FrameView` consumers downstream read in place, and
+  `SharedFrame::new(Arc::new(my_frame))` makes one from any `FrameSource` (see
+  [`foreign-frame-interface.md`](foreign-frame-interface.md#owning-a-frame-sharedframe)).
+  Other interfaces have no owned form: a node producing such values returns its own type.
 - `foreign_interface!` hashes the field names and types as written (whitespace ignored), size and
   alignment. Keep declarations stable and bump the version for any change.
 - Accessors run the owner's code through `extern "C"` functions: they must not panic (that

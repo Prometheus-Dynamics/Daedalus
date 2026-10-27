@@ -78,14 +78,15 @@
 //! conflicts.
 //!
 //! **Foreign interfaces.** A plugin that has to be built separately reads host-owned types
-//! through a foreign interface instead of sharing them (node inputs typed `FrameView<'_>` or
-//! `ForeignRef<'_, I>`; see [`crate::transport::ForeignInterface`]). Its ports carry the
+//! through a foreign interface instead of sharing them (node ports typed `FrameView<'_>`,
+//! `SharedFrame` or `ForeignRef<'_, I>`; see [`crate::transport::ForeignInterface`]). Its ports carry the
 //! interface key, not a Rust type, so they add no boundary type entry; instead the descriptor's
 //! `foreign_interfaces` entry point exports a C-safe table
 //! ([`ForeignInterfaceTable`](crate::dylib::ForeignInterfaceTable)) of the interfaces the plugin
 //! uses (key, version, vtable layout hash). `install_into` fails with
 //! [`PluginLibraryError::ForeignInterfaceMismatch`] when the host registry uses one of those keys
-//! with another version or layout.
+//! with another version or layout, except that the stable path accepts a plugin built against
+//! `daedalus:frame` v2 in a v3 host and adapts its frames (see "Frames" below).
 //!
 //! **Dependencies.** The schema lists the plugins the plugin depends on (`#[plugin(deps(...))]`
 //! and the plugins linked with `export_plugin!(.., deps [..])`); `install_into` fails with
@@ -113,6 +114,18 @@
 //! [`PluginLibrary::install_into_as`] chooses the path. See [`stable`](crate::dylib::stable) for
 //! the protocol and `docs/dynamic-plugins.md` ("Install Paths") for what crosses and what it
 //! costs.
+//!
+//! **Frames.** Camera frames cross both paths without their pixels being copied, as
+//! `daedalus:frame` handles: a node takes [`FrameView<'_>`](crate::transport::FrameView)
+//! (borrowed for the call) or [`SharedFrame`](crate::transport::SharedFrame) (owned: kept in
+//! node state, returned, or made by the plugin), and reads the owner's planes through the
+//! owner's code. The owner is released exactly once, however the plugin ends its references
+//! (dropped, kept, returned, panicked, reloaded); plane fds are borrowed (`dup` to keep); a
+//! frame a stable-ABI plugin made keeps that plugin's library loaded for good. A stable-ABI
+//! plugin built against frame v2 is lent v3 frames under the v2 identity
+//! ([`frame_handle_to_v2`](crate::transport::frame_handle_to_v2)) and its frames are read
+//! through v3 ([`frame_handle_from_v2`](crate::transport::frame_handle_from_v2)), with no stable
+//! ABI change. See `docs/dynamic-plugins.md` ("Frames across the stable ABI").
 //!
 //! # Known limitations
 //!

@@ -17,6 +17,26 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Owned frames across plugins, both ways (`SharedFrame`):**
+  `daedalus::transport::SharedFrame` is an owned, cheaply cloned `daedalus:frame` handle: a
+  `#[node]` input and output on the Rust-ABI and stable plugin paths, kept in node state,
+  returned, or made by the node (`SharedFrame::new(Arc<impl FrameSource>)`); `as_view()` gives
+  the `FrameView` existing code reads. A separately built (stable-ABI) plugin gets a camera
+  frame from the host and returns one without copying pixels; the owner is released exactly
+  once whether the plugin drops the frame during the call, keeps it, returns it, panics or is
+  reloaded (the facade's `dylib_frames` test, with a drop counter, plus a memfd-backed
+  dma-buf-style frame on Linux). Frames a stable-ABI plugin makes keep its library loaded.
+  `NodeIo::push_frame` and `Payload::foreign_local` back it; `SharedFrame` implements
+  `FrameSource` so a node can retag a frame's metadata without touching its pixels. A 1080p NV12
+  frame in and back out costs about 1.5 µs per tick through the stable path (0.9 µs statically),
+  where a `Vec<u8>` copy of it costs about 1.4 ms (`--test dylib_frames_overhead`).
+- **`daedalus:frame` v3: colorimetry and capture metadata.** `FrameColorimetry` (ITU-T H.273
+  primaries, transfer and matrix plus `ColorRange`, with libcamera-named presets) and keyed
+  metadata (`frame_meta`: exposure, analogue/digital gain, color temperature, frame duration,
+  sensor id, a vendor key range) through three accessors appended after v2's. `FrameSource`
+  gains defaulted `colorimetry` / `metadata_u64` / `metadata_bytes`, so v2 providers compile
+  unchanged. `daedalus-gpu`: `ExternalFrameDescriptor` carries the colorimetry, and
+  `from_shared_frame` builds an import that keeps the frame (the producer's buffer) alive.
 - **Benchmarks on `dev`:** `.github/workflows/bench.yml` runs on pushes to `dev` as well as
   `main` (same path filters). Its baseline is the newest earlier run on the same branch, not on
   the default branch.
@@ -87,6 +107,20 @@ plugin ABI and does not load.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
+
+- **`daedalus:frame` is now v3 (interface version 3, new layout hash); no ABI version
+  changes.** `STABLE_ABI_VERSION` stays 2 and `PLUGIN_ABI_VERSION` stays 11: frames already
+  crossed the stable ABI as foreign handles, and no descriptor, handler or `StableValue`
+  layout changed. Plugins built against frame v2 keep working through the stable path (the host
+  lends them its frames under the v2 identity, `frame_handle_to_v2`, and reads theirs through
+  v3, `frame_handle_from_v2`); the Rust-ABI path needs a rebuilt plugin anyway. Code that
+  compares `FrameInterface::info()` or `VERSION` against 2, or builds a `FrameVTable` by hand,
+  must update; `FRAME_INTERFACE_V2` / `FrameInterfaceV2` name the old version.
+- **`ForeignView::from_borrow` is now `from_payload`** (it receives the payload, so owned views
+  such as `SharedFrame` can retain the frame). Only custom view types implement it.
+- The stable boundary flags handles a plugin created and carried in a foreign payload as
+  `HANDLE_FROM_SENDER` (before, only owner payloads its provider lent), so the host keeps the
+  plugin loaded while such a handle may be released.
 
 - **Breaking: dynamic plugins `PLUGIN_ABI_VERSION` 11** (rebuild every Rust-ABI plugin). Boundary
   contracts hash a schema text into `LayoutHash::for_schema`; that text was the `Debug` output

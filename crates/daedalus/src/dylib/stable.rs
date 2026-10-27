@@ -25,8 +25,12 @@
 //! copy: the receiver reads the sender's buffer through the owner's vtable).
 //! [`SharedBytes`](crate::SharedBytes) ports use that for byte buffers: the host lends its
 //! buffer, and the plugin returns a slice of it or a buffer of its own, all without copying (see
-//! [`crate::bytes`] for the lifetime rules). A handle the sender's own build created carries
-//! [`tag::HANDLE_FROM_SENDER`].
+//! [`crate::bytes`] for the lifetime rules); [`SharedFrame`](crate::transport::SharedFrame)
+//! ports do the same for frames. A handle the sender's own build created (an owner payload its
+//! provider lent, or a foreign payload marked
+//! [`Payload::foreign_local`](crate::transport::Payload::foreign_local), as a frame the plugin
+//! made is) carries [`tag::HANDLE_FROM_SENDER`]; the host then keeps the plugin loaded. A
+//! plugin built against `daedalus:frame` v2 gets the host's v3 frames lent as v2.
 //!
 //! **Host side.** [`PluginLibrary::install_into`](super::PluginLibrary::install_into) uses this
 //! path when [`rust_abi`](super::PluginLibrary::rust_abi) reports a mismatch and

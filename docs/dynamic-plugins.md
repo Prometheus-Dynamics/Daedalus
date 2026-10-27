@@ -113,7 +113,8 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
   with no allocation; strings, bytes and nested values borrowed for the call, copied once into
   the receiver's owned Rust value, never serialized; foreign handles by pointer, so a `FrameView`
   input reads the host's frame in place (the plugin clones the handle, which retains through the
-  owner's own functions). `SharedBytes` crosses the same way (see
+  owner's own functions). `SharedFrame` and `SharedBytes` cross the same way (see
+  [Frames across the stable ABI](#frames-across-the-stable-abi) and
   [Zero-Copy Bytes](#zero-copy-bytes)).
 - **Host side.** The host registers the schema's node declarations
   (`daedalus_ffi_host::node_decl_from_schema`, so fire modes, conditional outputs and other node
@@ -139,7 +140,10 @@ input and output payloads are rebuilt on the other side, the node instance is ta
 state, plus the encode/decode); in a host graph tick, about +0.7 µs per stable node with
 scalars, +0.9 µs with a 4 KiB `Vec<u8>` (one copy in, none out; `SharedBytes` crosses without
 the copy), and about +3 µs for a two-node derived struct chain, whose struct crosses as a `Value`
-and is rebuilt through serde. Frames cross as handles at the scalar cost. Stable ABI 2 cut the
+and is rebuilt through serde. Frames cross as handles at the scalar cost: a 1080p NV12
+`SharedFrame` in and back out costs about 1.5 µs per tick through the stable path against about
+0.9 µs statically, like a `SharedBytes` buffer, where a `Vec<u8>` copy of it costs about 1.4 ms
+(`--test dylib_frames_overhead`). Stable ABI 2 cut the
 per-call overhead by roughly a fifth to a third against version 1 (no per-call port-name
 search, UTF-8 validation, instance-map lock or context clone; reused call buffers; direct scalar
 decoding).
@@ -174,6 +178,71 @@ alive through the sender's reference count. Lifetime rules:
 - Building one from a slice or a `Value::Bytes` constant copies once.
 
 Statically installed and Rust-ABI plugins pass `SharedBytes` as an ordinary shared payload.
+
+### Frames across the stable ABI
+
+A camera frame reaches a separately built plugin, and comes back, without its pixels being
+copied: it crosses as a `daedalus:frame` handle (see
+[`foreign-frame-interface.md`](foreign-frame-interface.md)), whose accessors and reference
+counting are the frame owner's own code. A node reads it borrowed (`FrameView<'_>`) or owned
+(`SharedFrame`, which it can keep in node state, return, or make).
+
+Host side: the frame library's integration registers its frame type and provider once, and the
+host feeds frames as it always does.
+
+```rust
+// Implemented once by the frame library (e.g. Styx's `FrameLease`, `daedalus` feature).
+impl FrameSource for CameraFrame { /* width, format, planes (dma-buf fds), CPU access, ... */ }
+
+#[daedalus::plugin(id = "camera.frames", types(CameraFrame),
+    foreign_providers(CameraFrame => daedalus::transport::FrameInterface))]
+pub struct CameraFramesPlugin;
+
+let mut registry = PluginRegistry::new();
+registry.install_plugin(&CameraFramesPlugin::new())?;
+let library = unsafe { PluginLibrary::load("libvision.so")? };
+library.install_into(&mut registry)?; // `InstallPath::Stable` for another build
+// ... compile the graph, then per frame:
+host.push_payload("frame", Payload::shared_with("camera:frame", Arc::new(frame), Residency::External, None, None));
+host.tick()?;
+let out = SharedFrame::from_payload(&host.take_payload("tagged").unwrap()).unwrap()?;
+```
+
+Plugin side: nothing depends on the camera library.
+
+```rust
+use daedalus::transport::{SharedFrame, FrameView, frame_meta};
+
+#[node(id = "luma_mean", inputs("frame"), outputs("mean"))]
+fn luma_mean(frame: FrameView<'_>) -> Result<f64, NodeError> { /* frame.plane_bytes(0) */ }
+
+/// Returns the frame with its sensor id changed: the pixels stay the host's.
+#[node(id = "tag", inputs("frame"), outputs("tagged"))]
+fn tag(frame: SharedFrame) -> Result<SharedFrame, NodeError> {
+    Ok(SharedFrame::new(Arc::new(Retagged { inner: frame, sensor: "cam1".into() })))
+}
+```
+
+What the stable path guarantees:
+
+- **No pixel copy, either way.** The plugin reads the host's planes in place (CPU bytes through
+  the owner's mapped, synced `plane_data`; dma-buf fds borrowed for GPU import). A frame it
+  returns is the same handle, or one of its own.
+- **The owner is released exactly once,** whether the plugin drops the frame during the call,
+  keeps it in node state (released on a later tick, when the node is dropped, or when a reload
+  resets the node), returns it, or panics while holding it.
+- **fds are borrowed.** A plugin `dup`s a plane's fd to keep it past the frame
+  (`ExternalFrameDescriptor::from_frame_view` / `from_shared_frame` in `daedalus-gpu` do).
+- **Frames a plugin makes keep it loaded.** Their accessors and release are the plugin's code,
+  so the host never closes that library again (like any foreign handle a plugin creates).
+- **Plugins built against `daedalus:frame` v2** (Daedalus 3.0.0) still install and run: the host
+  lends them its v3 frames under the v2 identity and reads theirs through v3. No
+  `STABLE_ABI_VERSION` or `PLUGIN_ABI_VERSION` change was needed: frames have crossed as handles
+  since stable ABI 2.
+
+`examples/plugins/stable_abi`'s frame nodes (invert, pass-through, retag, hold, panic, info) and
+the facade's `dylib_frames` test cover each case with a drop counter, plus (Linux) a memfd-backed
+NV12 frame standing in for a dma-buf.
 
 ### Reloading
 
@@ -294,7 +363,9 @@ two ABI layers, the build fingerprint, feature classification, and known limitat
   layout hash; `PluginLibrary::foreign_interfaces()`) with the host registry's
   (`PluginRegistry::foreign_interfaces()`) and fails with
   `PluginLibraryError::ForeignInterfaceMismatch` when one differs. `PLUGIN_ABI_VERSION` 7 added
-  this table.
+  this table. One exception: the stable path accepts `daedalus:frame` v2 against the host's v3
+  and adapts frames for that plugin (see
+  [Frames across the stable ABI](#frames-across-the-stable-abi)).
 - **Rust-ABI plugins that share third-party Rust types with the host must come from the same
   cargo build as the host**: one workspace and
   lockfile, one toolchain, and one `cargo build` invocation for the host and its plugins (e.g.
@@ -420,7 +491,7 @@ the host) can be installed when:
   features and the layouts of the types installation and node calls touch). Build plugins
   against the host's Daedalus revision and boundary feature set.
 - **Shared third-party types cross through foreign interfaces**, never as Rust types. A plugin
-  node takes `FrameView<'_>` (the `daedalus:frame` interface, see
+  node takes `FrameView<'_>` or `SharedFrame` (the `daedalus:frame` interface, see
   [`foreign-frame-interface.md`](foreign-frame-interface.md)) or `ForeignRef<'_, I>` instead of
   `&camera_lib::Frame`; the host installs the owner's plugin, which registers the provider.
   The plugin's ports then carry the interface key and no Rust boundary type, so the boundary
