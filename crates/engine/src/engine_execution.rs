@@ -7,7 +7,6 @@ use daedalus_runtime::executor::{Executor, NodeHandler};
 use daedalus_runtime::plugins::PluginRegistry;
 use daedalus_runtime::{
     ExecutionTelemetry, HostBridgeManager, RuntimePlan, RuntimeSink, RuntimeTransport,
-    build_runtime,
 };
 
 use crate::compiled_run::RunResult;
@@ -15,14 +14,6 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 
 impl Engine {
-    pub fn build_runtime_plan(
-        &self,
-        plan: &daedalus_planner::ExecutionPlan,
-    ) -> Result<RuntimePlan, EngineError> {
-        let sched = self.scheduler_config();
-        Ok(build_runtime(plan, &sched))
-    }
-
     pub fn execute<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -35,6 +26,7 @@ impl Engine {
         self.run_configured_executor(exec)
     }
 
+    /// Executes `runtime_plan` with the node handler `H` and an explicit transport.
     pub fn execute_with_transport<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -56,6 +48,7 @@ impl Engine {
     }
 
     #[cfg(feature = "plugins")]
+    /// Executes `runtime_plan` with the node handler `H` and an explicit plugin registry.
     pub fn execute_with_plugin_registry<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -79,7 +72,7 @@ impl Engine {
         self.run_configured_executor(exec)
     }
 
-    pub fn execute_scoped<H: NodeHandler + Send + Sync + 'static>(
+    pub(crate) fn execute_scoped<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
         sinks: &[RuntimeSink],
@@ -99,6 +92,7 @@ impl Engine {
         Ok(telemetry)
     }
 
+    /// Scoped variant of `execute_with_transport`.
     pub fn execute_scoped_with_transport<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -122,6 +116,7 @@ impl Engine {
     }
 
     #[cfg(feature = "plugins")]
+    /// Scoped variant of `execute_with_plugin_registry`.
     pub fn execute_scoped_with_plugin_registry<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -147,6 +142,7 @@ impl Engine {
         Ok(telemetry)
     }
 
+    /// Executes `runtime_plan` with the node handler `H` and the host bridges.
     pub fn execute_with_host<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -167,6 +163,7 @@ impl Engine {
         self.run_configured_executor(exec)
     }
 
+    /// Scoped variant of `execute_with_host`.
     pub fn execute_with_host_scoped<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -216,6 +213,7 @@ impl Engine {
         })
     }
 
+    /// Runs `graph` with the node handler `H` and an explicit transport.
     pub fn run_with_transport<H: NodeHandler + Send + Sync + 'static>(
         &self,
         graph: Graph,
@@ -264,6 +262,7 @@ impl Engine {
         })
     }
 
+    /// Runs `base_graph` with the node handler `H`, applying the given patch.
     pub fn run_with_patch<H: NodeHandler + Send + Sync + 'static>(
         &self,
         base_graph: &Graph,

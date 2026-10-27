@@ -237,6 +237,7 @@ impl Engine {
         })
     }
 
+    /// Compiles `runtime_plan` for the node handler `H` with an explicit transport.
     pub fn compile_runtime_plan_with_transport<H: NodeHandler + Send + Sync + 'static>(
         &self,
         runtime_plan: RuntimePlan,
@@ -274,6 +275,7 @@ impl Engine {
 
     /// Plan using a plugin registry's native transport capabilities.
     #[cfg(feature = "plugins")]
+    #[doc(hidden)]
     pub fn plan_plugin_registry(
         &self,
         plugins: &PluginRegistry,
@@ -285,6 +287,7 @@ impl Engine {
         self.plan_with_config(graph, planner_cfg)
     }
 
+    /// Plans `graph` with the given configuration.
     pub fn plan_with_config(
         &self,
         graph: Graph,
@@ -412,6 +415,7 @@ impl Engine {
     }
 
     /// Compile a graph into the lower-level executor runner.
+    #[doc(hidden)]
     pub fn compile_runner<H: NodeHandler + Send + Sync + 'static>(
         &self,
         graph: Graph,

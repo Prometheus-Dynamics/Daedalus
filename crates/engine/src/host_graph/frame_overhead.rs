@@ -106,6 +106,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.host.set_io_timing(false);
     }
 
+    /// Whether frame-overhead measurement is enabled for this graph.
     pub fn frame_overhead_enabled(&self) -> bool {
         self.frame_overhead.is_some()
     }

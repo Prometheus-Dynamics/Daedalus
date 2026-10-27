@@ -71,6 +71,7 @@ impl DomainGraphStats {
     }
 
     /// Mean time per run.
+    #[doc(hidden)]
     pub fn mean_run(&self) -> Duration {
         if self.runs == 0 {
             Duration::ZERO
@@ -99,6 +100,7 @@ pub struct DomainStats {
 
 impl DomainStats {
     /// `wall_time - graph_time`: taking, forwarding and the domain's own bookkeeping.
+    #[doc(hidden)]
     pub fn forward_time(&self) -> Duration {
         self.wall_time.saturating_sub(self.graph_time)
     }

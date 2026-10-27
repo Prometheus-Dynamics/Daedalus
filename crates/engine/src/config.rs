@@ -343,6 +343,7 @@ impl EngineConfig {
         self
     }
 
+    /// Sets the backpressure strategy of the host queues.
     pub fn with_backpressure(mut self, backpressure: BackpressureStrategy) -> Self {
         self.runtime.backpressure = backpressure;
         self
@@ -379,6 +380,7 @@ impl EngineConfig {
         self
     }
 
+    /// Sets how a stream reacts to a node error.
     pub fn with_stream_error_policy(mut self, policy: StreamErrorPolicy) -> Self {
         self.runtime.stream_error_policy = policy;
         self
@@ -426,6 +428,7 @@ impl EngineConfig {
         self
     }
 
+    /// Enables or disables GPU adapters in the planner.
     pub fn with_planner_gpu(mut self, enable_gpu: bool) -> Self {
         self.planner.enable_gpu = enable_gpu;
         self

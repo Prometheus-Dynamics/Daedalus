@@ -320,6 +320,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
     }
 
     /// Bind a raw payload output for dynamic or plugin-driven payloads.
+    #[doc(hidden)]
     pub fn bind_payload_output(&self, port: impl Into<PortId>) -> HostGraphPayloadOutput {
         HostGraphPayloadOutput {
             host: self.host.clone(),
@@ -353,6 +354,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         )
     }
 
+    /// Sets the output policy of `port` to keep only the latest value.
     pub fn set_latest_output(&self, port: impl Into<PortId>) -> Result<(), PolicyValidationError> {
         self.set_output_policy(
             port,
@@ -662,6 +664,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         })
     }
 
+    /// Runs the executor for one tick.
     pub fn run_executor_once(&mut self) -> Result<RunResult, EngineError> {
         self.runner.run()
     }

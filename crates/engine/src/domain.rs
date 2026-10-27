@@ -462,6 +462,7 @@ impl<H: NodeHandler + Send + Sync + 'static> ExecutionDomain<H> {
     }
 
     /// Whether any graph has pending host input.
+    #[doc(hidden)]
     pub fn has_pending_input(&self) -> bool {
         self.members
             .iter()

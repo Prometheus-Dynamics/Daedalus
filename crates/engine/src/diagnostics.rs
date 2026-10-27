@@ -7,6 +7,7 @@ use daedalus_runtime::RuntimePlan;
 use crate::EngineError;
 
 /// Render an `EngineError` into a machine-readable JSON value.
+#[doc(hidden)]
 pub fn render_error(err: &EngineError) -> Value {
     match err {
         EngineError::InvalidConfig(err) => {
@@ -78,12 +79,14 @@ pub fn render_error(err: &EngineError) -> Value {
 }
 
 /// Render a planner execution plan to JSON for diagnostics.
+#[doc(hidden)]
 pub fn render_plan(plan: &ExecutionPlan) -> Result<Value, EngineError> {
     serde_json::to_value(plan)
         .map_err(|e| EngineError::Config(format!("serialize plan failed: {e}")))
 }
 
 /// Render a runtime plan to JSON for diagnostics.
+#[doc(hidden)]
 pub fn render_runtime(runtime: &RuntimePlan) -> Result<Value, EngineError> {
     serde_json::to_value(runtime)
         .map_err(|e| EngineError::Config(format!("serialize runtime failed: {e}")))
