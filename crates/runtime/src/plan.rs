@@ -176,20 +176,24 @@ pub(crate) fn direct_edge_mask_for_active_edges(
 
 /// Whether an edge with `pressure` can hand payloads over through a direct slot (when it alone
 /// feeds its target port, with or without an adapter path): buffer-all edges (the slot keeps every payload in order, one inline),
-/// and the policies that keep only the newest payload: latest-only, coalescing, and a bounded
-/// queue of one that drops the oldest (unless a graph-level `BackpressureStrategy` overrides
-/// bounded edges; see `ExecutorInit`).
+/// and the policies that keep only the newest payload: latest-only, `KeepNewest` coalescing (or
+/// any coalescing with a zero window, which replaces on every arrival), and a bounded queue of
+/// one that drops the oldest (unless a graph-level `BackpressureStrategy` overrides bounded
+/// edges; see `ExecutorInit`). `KeepOldest` coalescing with a window rejects newer arrivals,
+/// which a slot (always replacing) cannot, so it stays on a queue.
 pub(crate) fn direct_slot_policy(pressure: &PressurePolicy) -> bool {
-    matches!(
-        pressure,
+    match pressure {
         PressurePolicy::BufferAll
-            | PressurePolicy::LatestOnly
-            | PressurePolicy::Coalesce { .. }
-            | PressurePolicy::Bounded {
-                capacity: 1,
-                overflow: OverflowPolicy::DropOldest,
-            }
-    )
+        | PressurePolicy::LatestOnly
+        | PressurePolicy::Bounded {
+            capacity: 1,
+            overflow: OverflowPolicy::DropOldest,
+        } => true,
+        PressurePolicy::Coalesce { window, strategy } => {
+            matches!(strategy, daedalus_transport::CoalesceStrategy::KeepNewest) || window.is_zero()
+        }
+        _ => false,
+    }
 }
 
 /// Runtime node with policy hints.

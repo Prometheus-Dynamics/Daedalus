@@ -467,6 +467,11 @@ plugin ABI and does not load.
 
 ### Fixed
 
+- **`Coalesce { strategy: KeepOldest }` edges kept the newest value instead of the oldest.**
+  Every coalescing edge that alone fed its target port was routed through a direct slot, which
+  always replaces, so `KeepOldest` behaved like `KeepNewest` and its window was ignored. Only
+  `KeepNewest` (or a zero window) uses a direct slot now; `KeepOldest` with a window stays on a
+  queue, which rejects arrivals inside the window.
 - **`NodeRecovery::Retry` works for `#[node]` inputs taken by value.** The executor keeps a copy of
   each input for later attempts, so the input is shared and a plain move failed with "missing
   <port>". Generated handlers now take by-value inputs through `NodeIo::take_owned_with`, which
