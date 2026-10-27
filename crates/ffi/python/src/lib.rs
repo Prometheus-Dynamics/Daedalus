@@ -57,7 +57,7 @@ pub fn resolve_python_payload_handle(
     })
 }
 
-pub fn python_worker_backend_config(
+pub(crate) fn python_worker_backend_config(
     module_path: impl Into<String>,
     function_name: impl Into<String>,
 ) -> BackendConfig {
@@ -65,6 +65,7 @@ pub fn python_worker_backend_config(
         .with_entry_module(module_path)
 }
 
+/// Python worker backend configuration for `module_path` and `function_name`, with an explicit transport.
 pub fn python_worker_backend_config_with_transport(
     module_path: impl Into<String>,
     function_name: impl Into<String>,
@@ -75,6 +76,7 @@ pub fn python_worker_backend_config_with_transport(
 }
 
 /// Package Python source files with the default lockfile.
+#[doc(hidden)]
 pub fn python_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
