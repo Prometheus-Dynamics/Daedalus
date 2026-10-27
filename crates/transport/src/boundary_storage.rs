@@ -144,7 +144,8 @@ impl BoundaryStorage {
         self.ptr
     }
 
-    pub fn is_taken(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_taken(&self) -> bool {
         self.ptr.is_none()
     }
 

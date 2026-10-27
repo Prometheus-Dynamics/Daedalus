@@ -37,6 +37,7 @@ pub trait BranchPayload: Send + Sync + 'static {
     where
         Self: Sized;
 
+    /// Estimated bytes of this branch payload, or `None` if unknown.
     fn estimated_branch_bytes(&self) -> Option<u64> {
         None
     }
@@ -132,6 +133,7 @@ impl PayloadLineage {
         self
     }
 
+    /// Sets the parent correlation id.
     pub fn with_parent(mut self, parent: CorrelationId) -> Self {
         self.parent = Some(parent);
         self
@@ -142,6 +144,7 @@ impl PayloadLineage {
         self
     }
 
+    /// Sets the source timestamp.
     pub fn with_source_timestamp(mut self, source_timestamp: u64) -> Self {
         self.source_timestamp = Some(source_timestamp);
         self

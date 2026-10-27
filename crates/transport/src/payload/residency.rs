@@ -6,7 +6,7 @@ use core::fmt;
 
 use crate::{Layout, PayloadLineage, Residency, TypeKey};
 
-use super::{Payload, PayloadStorage, typed_arc, typed_ref};
+use super::{Payload, PayloadStorage, typed_ref};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResidencyCacheKey {
@@ -106,6 +106,7 @@ impl Payload {
         self
     }
 
+    /// Caches `resident` as a resident copy of this payload.
     pub fn insert_cached_resident(&mut self, resident: Payload) {
         let cache = self.residency_cache.make_mut();
         cache.extend(
@@ -116,14 +117,6 @@ impl Payload {
         );
         let resident = ResidentPayload::from_payload(&resident);
         cache.insert(resident.key(), resident);
-    }
-
-    pub fn cache_current(mut self) -> Self {
-        let resident = ResidentPayload::from_payload(&self);
-        self.residency_cache
-            .make_mut()
-            .insert(resident.key(), resident);
-        self
     }
 
     pub fn residency_cache_len(&self) -> usize {
@@ -210,23 +203,5 @@ impl Payload {
         self.residency_cache
             .get(&key)
             .and_then(|resident| typed_ref::<T>(resident.storage.as_ref()))
-    }
-
-    pub fn resident_arc<T>(
-        &self,
-        type_key: &TypeKey,
-        residency: Residency,
-        layout: Option<&Layout>,
-    ) -> Option<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        let key = ResidencyCacheKey::new(type_key.clone(), residency, layout.cloned());
-        if self.key() == key {
-            return self.get_arc::<T>();
-        }
-        self.residency_cache
-            .get(&key)
-            .and_then(|resident| typed_arc::<T>(&resident.storage))
     }
 }

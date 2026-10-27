@@ -114,7 +114,8 @@ impl Payload {
         }
     }
 
-    pub fn boundary_shared<T>(
+    #[cfg(test)]
+    pub(crate) fn boundary_shared<T>(
         type_key: impl Into<TypeKey>,
         value: T,
         capabilities: BoundaryCapabilities,

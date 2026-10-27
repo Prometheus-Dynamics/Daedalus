@@ -16,6 +16,7 @@ impl Payload {
             .map(BoundaryStorage::contract)
     }
 
+    /// Borrows the payload as `T` if it matches the boundary type `required`.
     pub fn try_borrow_boundary_ref<T>(
         &self,
         required: &BoundaryTypeContract,
@@ -30,6 +31,7 @@ impl Payload {
             .try_borrow_ref(required)
     }
 
+    /// Mutably borrows the payload as `T` if it matches the boundary type `required`.
     pub fn try_borrow_boundary_mut<T>(
         &mut self,
         required: &BoundaryTypeContract,
@@ -45,6 +47,7 @@ impl Payload {
             .try_borrow_mut(required)
     }
 
+    /// Takes the payload as an owned `T` if it matches the boundary type `required`.
     pub fn try_take_boundary_owned<T>(
         mut self,
         required: &BoundaryTypeContract,

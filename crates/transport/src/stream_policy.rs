@@ -162,6 +162,7 @@ impl PressurePolicy {
 
     /// Whether the policy keeps at most one item by replacing the queued one: `LatestOnly`,
     /// `DropOldest`, `Coalesce`, and `Bounded { capacity: 1, overflow: DropOldest }`.
+    #[doc(hidden)]
     pub fn is_single_slot(&self) -> bool {
         match self {
             Self::LatestOnly | Self::DropOldest | Self::Coalesce { .. } => true,
