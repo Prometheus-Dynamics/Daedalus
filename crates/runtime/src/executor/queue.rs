@@ -49,6 +49,11 @@ pub struct EdgeStorageMetrics {
 
 impl EdgeStorageMetrics {
     pub(crate) fn set_current_bytes(&self, current_bytes: u64) {
+        // Unchanged bytes (a pop from an empty edge, most ticks for most edges) need no atomic
+        // writes: the peak never sits below the current value, so `fetch_max` would not move it.
+        if self.current_queue_bytes.load(Ordering::Relaxed) == current_bytes {
+            return;
+        }
         self.current_queue_bytes
             .store(current_bytes, Ordering::Relaxed);
         self.peak_queue_bytes
