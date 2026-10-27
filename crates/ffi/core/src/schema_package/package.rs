@@ -397,6 +397,7 @@ impl PluginPackage {
         Ok(sha256_bytes_hex(&bytes))
     }
 
+    /// Reads the package descriptor at `path` without checking its integrity.
     pub fn read_descriptor(path: impl AsRef<Path>) -> Result<Self, FfiContractError> {
         let path = path.as_ref();
         let bytes = fs::read(path).map_err(|err| FfiContractError::PackageIo {
@@ -459,7 +460,7 @@ pub struct PluginLockfile {
 }
 
 impl PluginLockfile {
-    pub fn from_package(package: &PluginPackage) -> Self {
+    pub(crate) fn from_package(package: &PluginPackage) -> Self {
         let mut artifacts: Vec<_> = package
             .artifacts
             .iter()

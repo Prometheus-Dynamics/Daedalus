@@ -130,7 +130,7 @@ pub fn bundled_artifact_path(
     Ok(format!("{dir}/{file_name}"))
 }
 
-pub fn package_platform_dir(platform: Option<&PackagePlatform>) -> String {
+pub(crate) fn package_platform_dir(platform: Option<&PackagePlatform>) -> String {
     let Some(platform) = platform else {
         return "any".into();
     };

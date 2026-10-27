@@ -522,6 +522,7 @@ pub enum ScalarDType {
 
 #[cfg(feature = "image-payload")]
 impl ScalarDType {
+    /// Bytes per sample of this scalar type.
     pub fn bytes_per_sample(self) -> usize {
         match self {
             ScalarDType::U8 => 1,
