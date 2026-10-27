@@ -16,6 +16,7 @@ mod portable;
 pub mod debug;
 mod diagnostics;
 mod document;
+mod gpu_segments;
 mod graph;
 mod host_inputs;
 mod metadata;

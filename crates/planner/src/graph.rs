@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::Diagnostic;
+use crate::gpu_segments::{Dsu, is_gpu_node};
 
 /// Default execution-plan version for deterministic serde/goldens.
 pub const DEFAULT_PLAN_VERSION: &str = "0.1";
@@ -258,43 +259,11 @@ impl Graph {
     /// edge annotations that mark where GPU fast paths can be used.
     ///
     pub fn gpu_buffers(&self) -> (Vec<GpuSegment>, Vec<EdgeBufferInfo>) {
-        #[derive(Clone)]
-        struct Dsu {
-            parent: Vec<usize>,
-        }
-        impl Dsu {
-            fn new(n: usize) -> Self {
-                Self {
-                    parent: (0..n).collect(),
-                }
-            }
-            fn find(&mut self, x: usize) -> usize {
-                if self.parent[x] != x {
-                    let p = self.parent[x];
-                    self.parent[x] = self.find(p);
-                }
-                self.parent[x]
-            }
-            fn union(&mut self, a: usize, b: usize) {
-                let ra = self.find(a);
-                let rb = self.find(b);
-                if ra != rb {
-                    self.parent[rb] = ra;
-                }
-            }
-        }
-
         let mut dsu = Dsu::new(self.nodes.len());
         for e in &self.edges {
             let from = &self.nodes[e.from.node.0];
             let to = &self.nodes[e.to.node.0];
-            let gpu_gpu = matches!(
-                from.compute,
-                ComputeAffinity::GpuPreferred | ComputeAffinity::GpuRequired
-            ) && matches!(
-                to.compute,
-                ComputeAffinity::GpuPreferred | ComputeAffinity::GpuRequired
-            );
+            let gpu_gpu = is_gpu_node(from.compute) && is_gpu_node(to.compute);
             if gpu_gpu {
                 dsu.union(e.from.node.0, e.to.node.0);
             }
@@ -303,10 +272,7 @@ impl Graph {
         let mut root_to_buf = BTreeMap::new();
         let mut node_buf: Vec<Option<usize>> = vec![None; self.nodes.len()];
         for (idx, n) in self.nodes.iter().enumerate() {
-            if matches!(
-                n.compute,
-                ComputeAffinity::GpuPreferred | ComputeAffinity::GpuRequired
-            ) {
+            if is_gpu_node(n.compute) {
                 let root = dsu.find(idx);
                 let buf_id = match root_to_buf.get(&root) {
                     Some(id) => *id,
@@ -341,13 +307,7 @@ impl Graph {
         for (i, e) in self.edges.iter().enumerate() {
             let from = &self.nodes[e.from.node.0];
             let to = &self.nodes[e.to.node.0];
-            let gpu_gpu = matches!(
-                from.compute,
-                ComputeAffinity::GpuPreferred | ComputeAffinity::GpuRequired
-            ) && matches!(
-                to.compute,
-                ComputeAffinity::GpuPreferred | ComputeAffinity::GpuRequired
-            );
+            let gpu_gpu = is_gpu_node(from.compute) && is_gpu_node(to.compute);
             let buffer_id = if gpu_gpu {
                 node_buf[e.from.node.0]
             } else {

@@ -1,10 +1,10 @@
 use alloc::borrow::Cow;
-use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use daedalus_data::model::Value;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
+use crate::gpu_segments::gpu_dependency_segments;
 use crate::graph::{ComputeAffinity, Graph};
 use crate::metadata::{
     PLAN_GPU_SEGMENTS_KEY, PLAN_GPU_WHY_KEY, PLAN_SCHEDULE_ORDER_KEY, PLAN_SCHEDULE_PRIORITY_KEY,
@@ -123,74 +123,6 @@ pub(super) fn gpu(graph: &mut Graph, config: &PlannerConfig, diags: &mut Vec<Dia
             .metadata
             .insert(PLAN_GPU_WHY_KEY.into(), string_list(gpu_reasons));
     }
-}
-
-fn is_gpu_node(compute: ComputeAffinity) -> bool {
-    matches!(
-        compute,
-        ComputeAffinity::GpuPreferred | ComputeAffinity::GpuRequired
-    )
-}
-
-#[derive(Clone, Debug)]
-struct Dsu {
-    parent: Vec<usize>,
-}
-
-impl Dsu {
-    fn new(len: usize) -> Self {
-        Self {
-            parent: (0..len).collect(),
-        }
-    }
-
-    fn find(&mut self, idx: usize) -> usize {
-        if self.parent[idx] != idx {
-            self.parent[idx] = self.find(self.parent[idx]);
-        }
-        self.parent[idx]
-    }
-
-    fn union(&mut self, a: usize, b: usize) {
-        let root_a = self.find(a);
-        let root_b = self.find(b);
-        if root_a != root_b {
-            self.parent[root_b] = root_a;
-        }
-    }
-}
-
-fn gpu_dependency_segments(graph: &Graph) -> Vec<Vec<usize>> {
-    let mut dsu = Dsu::new(graph.nodes.len());
-    for edge in &graph.edges {
-        let from = edge.from.node.0;
-        let to = edge.to.node.0;
-        let Some(from_node) = graph.nodes.get(from) else {
-            continue;
-        };
-        let Some(to_node) = graph.nodes.get(to) else {
-            continue;
-        };
-        if is_gpu_node(from_node.compute) && is_gpu_node(to_node.compute) {
-            dsu.union(from, to);
-        }
-    }
-
-    let mut by_root: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for idx in 0..graph.nodes.len() {
-        if is_gpu_node(graph.nodes[idx].compute) {
-            let root = dsu.find(idx);
-            by_root.entry(root).or_default().push(idx);
-        }
-    }
-
-    by_root
-        .into_values()
-        .map(|mut indices| {
-            indices.sort_unstable();
-            indices
-        })
-        .collect()
 }
 
 pub(super) fn schedule(graph: &mut Graph, _diags: &mut Vec<Diagnostic>) {
