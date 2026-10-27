@@ -19,6 +19,7 @@ pub struct Detection {
 declare_plugin!(DemoPlugin, "demo", [frame_src, decode, sink]);
 
 /// Convenience for non-plugin consumers: install and get handlers in one shot.
+#[doc(hidden)]
 pub fn install_bundle(registry: &mut PluginRegistry) -> PluginResult<HandlerRegistry> {
     registry.merge::<FrameSrcNode>()?;
     registry.merge::<DecodeNode>()?;
