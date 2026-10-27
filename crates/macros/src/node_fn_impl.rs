@@ -10,7 +10,7 @@ mod descriptor;
 mod final_tokens;
 mod handler;
 mod handler_fetch;
-mod idents;
+pub(crate) mod idents;
 mod metadata;
 mod parse;
 mod port_types;
@@ -61,7 +61,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return TokenStream::from(err),
     };
     let fn_ident = input.sig.ident.clone();
-    let struct_ident = node_struct_ident(&fn_ident);
+    let struct_ident = node_struct_ident(&fn_ident, Span::call_site());
     let handle_ident = syn::Ident::new(&format!("{}Handle", struct_ident), Span::call_site());
     let inputs_ident = syn::Ident::new(&format!("{}Inputs", struct_ident), Span::call_site());
     let outputs_ident = syn::Ident::new(&format!("{}Outputs", struct_ident), Span::call_site());

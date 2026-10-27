@@ -56,7 +56,7 @@ pub(super) fn is_rust_keyword(ident: &str) -> bool {
     )
 }
 
-pub(super) fn node_struct_ident(fn_ident: &syn::Ident) -> syn::Ident {
+pub(crate) fn node_struct_ident(fn_ident: &syn::Ident, span: Span) -> syn::Ident {
     let mut out = String::new();
     let mut capitalize = true;
     for ch in fn_ident.to_string().chars() {
@@ -74,7 +74,7 @@ pub(super) fn node_struct_ident(fn_ident: &syn::Ident) -> syn::Ident {
     if out.is_empty() || !out.ends_with("Node") {
         out.push_str("Node");
     }
-    syn::Ident::new(&out, Span::call_site())
+    syn::Ident::new(&out, span)
 }
 
 pub(super) fn port_ident(name: &str) -> syn::Ident {

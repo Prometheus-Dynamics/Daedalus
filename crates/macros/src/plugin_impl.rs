@@ -6,6 +6,7 @@ use crate::foreign_type::{ForeignProvider, collect_foreign_providers, register_f
 use crate::helpers::{
     AttributeArgs, DaedalusCrate, NestedMeta, compile_error, fn_path_arg, parse_nested, str_expr,
 };
+use crate::node_fn_impl::idents::node_struct_ident;
 
 struct PluginArgs {
     id: syn::Expr,
@@ -192,7 +193,10 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
     let parts = parsed.parts;
     let install = parsed.install;
     let node_fields = &nodes;
-    let node_structs: Vec<syn::Ident> = nodes.iter().map(node_struct_ident).collect();
+    let node_structs: Vec<syn::Ident> = nodes
+        .iter()
+        .map(|node| node_struct_ident(node, node.span()))
+        .collect();
     let node_handle_tys: Vec<syn::Ident> = node_structs
         .iter()
         .map(|node| syn::Ident::new(&format!("{node}Handle"), node.span()))
@@ -310,25 +314,4 @@ pub fn plugin(args: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     expanded.into()
-}
-
-fn node_struct_ident(fn_ident: &syn::Ident) -> syn::Ident {
-    let mut out = String::new();
-    let mut capitalize = true;
-    for ch in fn_ident.to_string().chars() {
-        if ch == '_' {
-            capitalize = true;
-            continue;
-        }
-        if capitalize {
-            out.extend(ch.to_uppercase());
-            capitalize = false;
-        } else {
-            out.push(ch);
-        }
-    }
-    if out.is_empty() || !out.ends_with("Node") {
-        out.push_str("Node");
-    }
-    syn::Ident::new(&out, fn_ident.span())
 }
