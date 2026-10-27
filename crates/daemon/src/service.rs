@@ -128,10 +128,19 @@ pub struct ServiceTraceEvent {
     pub ok: bool,
 }
 
+/// Version of the daemon's request/response protocol, reported in `pong`. Bumped on an
+/// incompatible change to the envelope or to a response shape; a client checks it before use.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServiceResponse {
-    Pong,
+    Pong {
+        /// [`PROTOCOL_VERSION`] of the daemon answering. A daemon that predates the field sends
+        /// none, which reads as 0.
+        #[serde(default)]
+        protocol_version: u32,
+    },
     Ack,
     Graph {
         name: String,
@@ -265,7 +274,9 @@ impl ServiceState {
 
         let namespace = self.namespaces.entry(session).or_default();
         match request {
-            ServiceRequest::Ping => Ok(ServiceResponse::Pong),
+            ServiceRequest::Ping => Ok(ServiceResponse::Pong {
+                protocol_version: PROTOCOL_VERSION,
+            }),
             ServiceRequest::PutRegistry { name, registry } => {
                 namespace.registries.insert(name, registry);
                 Ok(ServiceResponse::Ack)

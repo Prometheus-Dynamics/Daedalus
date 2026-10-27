@@ -747,6 +747,19 @@ than queued.
   [`docs/schema/daedalus.graph.v1.schema.json`](schema/daedalus.graph.v1.schema.json), generated
   by `GraphDocument::json_schema()` (planner `schema` feature).
 
+  **Schema versions.** `schema_version` is required. A document loads when its version is in
+  `1..=GRAPH_DOCUMENT_SCHEMA_VERSION`; a newer one fails with
+  `GraphDocumentError::UnsupportedSchemaVersion`, and a missing one with `MissingSchemaVersion`.
+  Writes always emit the current version. The policy:
+  - Bump `GRAPH_DOCUMENT_SCHEMA_VERSION` only for an incompatible change: removing or renaming a
+    field, changing what a field means, or rejecting a document that loads today. Adding an
+    optional field that defaults is compatible and does not bump.
+  - A bump adds a migration step on the load path (`WireOwned::into_document` in
+    `crates/planner/src/document/mod.rs`) that turns the older wire shape into the current one,
+    keeps the older version loadable, adds a `docs/schema/daedalus.graph.vN.schema.json`, and
+    updates goldens deliberately. Version 1 is the only version so far, so there is no migration
+    yet.
+
 ### Context Inputs: Held Ports And Batched Pushes
 
 A frame often needs context that changes at its own pace: resource state, an IMU sample,

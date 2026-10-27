@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Daemon protocol version.** `ping` answers `pong` with `protocol_version` (1, the new
+  `daedalus_daemon::service::PROTOCOL_VERSION`), so a client can check the protocol before use.
+  The graph document's `schema_version` and its bump policy are documented in
+  `docs/node-authoring.md`.
 - **Port display metadata: `label`, `unit`, `group` and `advanced` on a port.** `#[port(...)]` on a `NodeConfig` field and `port(...)` on a node input accept a human `label`, a `unit`, a `group` (stage or section) and an `advanced` flag (`advanced = true`, or a bare `advanced`). They are recorded as the node declaration's metadata keys `inputs.<port>.label`, `.unit`, `.group` and `.advanced` (a boolean), next to `inputs.<port>.description`, and reach the registry and catalog JSON with the node. All are optional; existing declarations compile and carry the same metadata as before. `docs/node-authoring.md` describes them, and the `port_metadata` integration test checks them on a config and on a registered node.
 - **`daedalus_data::json::to_plain_json_with(value, PlainJsonOptions)`** and
   `PayloadInspection::to_json_with`: plain JSON with rendering options. `BytesEncoding::Base64`

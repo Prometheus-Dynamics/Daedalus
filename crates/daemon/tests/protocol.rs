@@ -53,7 +53,7 @@ fn stdio_answers_ping_put_graph_inspect_and_errors_in_lockstep() {
 
     assert_eq!(
         responses[0],
-        json!({"request_id": "1", "session": "default", "kind": "pong"})
+        json!({"request_id": "1", "session": "default", "kind": "pong", "protocol_version": 1})
     );
     assert_eq!(
         responses[1],
@@ -111,6 +111,7 @@ fn tcp_serves_the_protocol_to_the_cli() {
         );
         let body: Value = serde_json::from_slice(&ping.stdout).expect("ping json");
         assert_eq!(body["kind"], "pong");
+        assert_eq!(body["protocol_version"], 1);
 
         let file = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("daemon-graph.json");
         let graph = serde_json::to_string(&Graph::default()).expect("graph json");
