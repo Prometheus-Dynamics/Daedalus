@@ -1,18 +1,6 @@
 use super::*;
+use crate::test_support::test_node;
 use daedalus_planner::{Edge, Graph, NodeInstance, PortRef};
-
-fn test_node(id: &str, stable_id: u128) -> RuntimeNode {
-    RuntimeNode {
-        id: id.to_string(),
-        stable_id,
-        bundle: None,
-        label: None,
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: Vec::new(),
-        sync_groups: Vec::new(),
-        metadata: Default::default(),
-    }
-}
 
 #[test]
 fn stable_id_collision_returns_typed_runtime_plan_error() {

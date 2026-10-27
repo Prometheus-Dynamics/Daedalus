@@ -3,20 +3,10 @@ use crate::config::RuntimeDebugConfig;
 use crate::portable::Arc;
 #[cfg(feature = "gpu")]
 use crate::{RuntimeEdgePolicy, plan::RuntimeEdge};
-use daedalus_planner::ComputeAffinity;
 use std::thread;
 
 fn test_node(id: &str) -> RuntimeNode {
-    RuntimeNode {
-        id: id.to_string(),
-        stable_id: 0,
-        bundle: None,
-        label: None,
-        compute: ComputeAffinity::CpuOnly,
-        const_inputs: Vec::new(),
-        sync_groups: Vec::new(),
-        metadata: Default::default(),
-    }
+    crate::test_support::test_node(id, 0)
 }
 
 fn no_op_handler(

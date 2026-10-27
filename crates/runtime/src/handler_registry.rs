@@ -355,19 +355,9 @@ impl Default for HandlerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use daedalus_planner::ComputeAffinity;
 
     fn test_node(id: &str) -> RuntimeNode {
-        RuntimeNode {
-            id: id.to_string(),
-            stable_id: daedalus_core::stable_id::stable_id128("node", id),
-            bundle: None,
-            label: None,
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: Vec::new(),
-            sync_groups: Vec::new(),
-            metadata: Default::default(),
-        }
+        crate::test_support::test_node(id, daedalus_core::stable_id::stable_id128("node", id))
     }
 
     fn test_context() -> ExecutionContext {

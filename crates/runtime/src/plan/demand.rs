@@ -511,20 +511,10 @@ fn is_host_bridge_runtime_node(node: &RuntimeNode) -> bool {
 mod tests {
     use super::*;
     use crate::RuntimeEdgePolicy;
-    use daedalus_planner::ComputeAffinity;
     use daedalus_planner::NodeRef;
 
     fn test_node(id: &str) -> RuntimeNode {
-        RuntimeNode {
-            id: id.to_string(),
-            stable_id: 0,
-            bundle: None,
-            label: None,
-            compute: ComputeAffinity::CpuOnly,
-            const_inputs: vec![],
-            sync_groups: vec![],
-            metadata: Default::default(),
-        }
+        crate::test_support::test_node(id, 0)
     }
 
     #[test]
