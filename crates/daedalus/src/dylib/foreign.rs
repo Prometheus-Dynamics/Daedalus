@@ -3,7 +3,9 @@
 
 use super::StrSink;
 use crate::runtime::plugins::PluginRegistry;
-use crate::transport::{ForeignInterfaceInfo, TypeKey};
+use crate::transport::{
+    ForeignInterface, ForeignInterfaceInfo, FrameInterface, TypeKey, is_frame_v2,
+};
 use std::fmt;
 
 /// A `'static` array of [`ForeignInterfaceInfo`] owned by the plugin: every foreign interface
@@ -53,17 +55,20 @@ pub(super) fn describe(mismatches: &[ForeignInterfaceMismatch]) -> String {
 }
 
 /// Every plugin interface whose key the host's `registry` uses with another version or layout.
-/// Interfaces the host does not use are fine.
+/// Interfaces the host does not use are fine, and so is `daedalus:frame` v2 against the host's
+/// v3 on the `stable` path, which adapts frames for such a plugin.
 pub(super) fn mismatches(
     registry: &PluginRegistry,
     plugin: &[ForeignInterfaceInfo],
+    stable: bool,
 ) -> Vec<ForeignInterfaceMismatch> {
     let host = registry.foreign_interfaces();
     plugin
         .iter()
         .filter_map(|plugin| {
             let host = host.get(&TypeKey::new(plugin.key()))?;
-            (!host.same_interface(plugin)).then_some(ForeignInterfaceMismatch {
+            let adapted = stable && is_frame_v2(plugin) && host == FrameInterface::info();
+            (!adapted && !host.same_interface(plugin)).then_some(ForeignInterfaceMismatch {
                 host: *host,
                 plugin: *plugin,
             })

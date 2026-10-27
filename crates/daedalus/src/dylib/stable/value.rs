@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::ffi::c_void;
 
 use crate::data::model::{EnumValue, StructFieldValue, Value};
-use crate::transport::{ForeignHandle, Payload, Residency};
+use crate::transport::{ForeignHandle, FrameInterface, Payload, Residency, frame_handle_to_v2};
 
 /// Kind of a [`StableValue`] (`StableValue::tag`). Plain `u32` constants rather than a Rust
 /// `enum`, so an unknown tag from another build is an error instead of undefined behavior.
@@ -216,14 +216,26 @@ pub struct Arena {
 }
 
 impl Arena {
-    /// Lend `payload`'s foreign value: its carried handle (passed on), or (for an owner
-    /// payload its provider retyped) a handle wrapping the owner value, created here and kept
-    /// alive with the arena.
+    /// Lend `payload`'s foreign value: its carried handle (passed on; flagged
+    /// [`tag::HANDLE_FROM_SENDER`] when this build created it, e.g. a `SharedFrame` the node
+    /// made), or (for an owner payload its provider retyped) a handle wrapping the owner value,
+    /// created here and kept alive with the arena.
     pub fn encode_foreign(&mut self, payload: &Payload) -> Option<StableValue> {
         if let Some(handle) = payload.foreign_handle() {
-            return Some(StableValue::handle(handle, payload.residency(), false));
+            let local = payload.foreign_handle_is_local();
+            return Some(StableValue::handle(handle, payload.residency(), local));
         }
         Some(self.lend(payload.to_foreign_handle()?, payload.residency(), true))
+    }
+
+    /// Lend `payload`'s `daedalus:frame` v3 frame to a plugin built against frame v2, under
+    /// the v2 identity ([`frame_handle_to_v2`]): one retain and one box, no copy. `None` when
+    /// the payload holds no v3 frame.
+    pub fn lend_frame_as_v2(&mut self, payload: &Payload) -> Option<StableValue> {
+        let local = payload.foreign_handle().is_none() || payload.foreign_handle_is_local();
+        let handle = payload.to_foreign_handle()?;
+        handle.view::<FrameInterface>().ok()?;
+        Some(self.lend(frame_handle_to_v2(handle), payload.residency(), local))
     }
 
     /// Keep `handle` alive with the arena and lend it.

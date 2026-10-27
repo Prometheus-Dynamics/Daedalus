@@ -288,7 +288,8 @@ impl PluginLibrary {
                 missing,
             });
         }
-        let mismatches = foreign::mismatches(registry, &self.foreign_interfaces);
+        let stable = path == InstallPath::Stable;
+        let mismatches = foreign::mismatches(registry, &self.foreign_interfaces, stable);
         if !mismatches.is_empty() {
             return Err(PluginLibraryError::ForeignInterfaceMismatch {
                 plugin: plugin(),

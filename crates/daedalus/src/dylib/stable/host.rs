@@ -19,7 +19,10 @@ use crate::runtime::host_bridge::ValueSerializerMap;
 use crate::runtime::io::NodeIo;
 use crate::runtime::plugins::{Plugin, PluginError, PluginInstallContext, PluginResult};
 use crate::runtime::{ExecutionContext, NodeError};
-use crate::transport::{ForeignInterfaceInfo, Payload, Residency, TypeKey};
+use crate::transport::{
+    ForeignInterface, ForeignInterfaceInfo, FrameInterface, Payload, Residency, TypeKey,
+    frame_handle_from_v2, is_frame_v2,
+};
 
 /// One loaded build of a plugin: its stable entry points and the library they live in. Node
 /// instances and buffers the build produced hold it; when the last one drops, the plugin's
@@ -188,7 +191,14 @@ impl Plugin for StablePlugin<'_> {
 
     fn install(&self, ctx: &mut PluginInstallContext<'_>) -> PluginResult<()> {
         let failed = |message: String| PluginError::Install { message };
+        // A plugin built against `daedalus:frame` v2 is fed this host's v3 frames lent as v2
+        // and its frames are read through v3, so the host's graph only ever sees v3.
+        let frame_v2 = self.foreign_interfaces.iter().any(is_frame_v2);
         for interface in self.foreign_interfaces {
+            let interface = match is_frame_v2(interface) {
+                true => FrameInterface::info(),
+                false => interface,
+            };
             ctx.register_foreign_interface_info(*interface)?;
         }
         let port = |port: &daedalus_ffi_host::core::WirePort| {
@@ -216,6 +226,7 @@ impl Plugin for StablePlugin<'_> {
                 inputs: node.inputs.iter().map(port).collect(),
                 outputs: node.outputs.iter().map(port).collect(),
                 serializers: ctx.value_serializers.clone(),
+                frame_v2,
             });
             shared_bytes |= host_node
                 .inputs
@@ -252,6 +263,8 @@ struct HostNode {
     inputs: Vec<HostPort>,
     outputs: Vec<HostPort>,
     serializers: ValueSerializerMap,
+    /// The plugin reads frames through `daedalus:frame` v2.
+    frame_v2: bool,
 }
 
 /// A host node instance's plugin-side state (node state included) in one generation, plus the
@@ -424,6 +437,11 @@ impl HostNode {
         payload: &Payload,
         arena: &mut Arena,
     ) -> Result<StableValue, NodeError> {
+        if self.frame_v2
+            && let Some(value) = arena.lend_frame_as_v2(payload)
+        {
+            return Ok(value);
+        }
         if let Some(value) = arena.encode_foreign(payload) {
             return Ok(value);
         }
@@ -499,7 +517,8 @@ impl Outputs<'_> {
                     // The handle's code is the plugin's and nothing tracks the payload.
                     self.generation.pin();
                 }
-                Payload::foreign(key, handle.clone(), value.residency())
+                // A frame from a plugin built against frame v2 is read through v3.
+                Payload::foreign(key, frame_handle_from_v2(handle.clone()), value.residency())
             }
         } else if port.shared_bytes && value.tag == tag::BYTES {
             Payload::owned(key, SharedBytes::from(unsafe { value.as_bytes() }))

@@ -18,6 +18,7 @@ impl Plugin for LoaderTestPlugin {
         ctx.register_boundary_type::<LoaderFrame>(FRAME_KEY)?;
         ctx.register_crate_build(PLUGIN_FRAMES)?;
         ctx.register_foreign_interface::<FrameInterface>()?;
+        frame_v2::register(ctx)?;
         ctx.register_node_decl(
             NodeDecl::new("add")
                 .input(PortDecl::new("a", "i64").schema(TypeExpr::Scalar(ValueType::Int)))
@@ -103,8 +104,8 @@ fn matching_plugin_loads_exposes_schema_and_installs() {
     assert_eq!(library.info().plugin_name.as_str(), Some("daedalus-rs"));
     let schema = library.schema();
     assert_eq!(schema.plugin.name, "loader_test");
-    let node = &schema.nodes[0];
-    assert!(node.id.ends_with("add"), "{node:?}");
+    let node = schema.nodes.iter().find(|node| node.id.ends_with("add"));
+    let node = node.expect("the add node");
     assert_eq!(node.inputs[0].name, "a");
     assert!(node.outputs.iter().any(|port| port.name == "out"));
 
@@ -159,7 +160,7 @@ fn run_add(
 fn mismatched_toolchain_installs_and_runs_through_the_stable_path() {
     let library = load_with(old_toolchain).unwrap();
     assert_eq!(library.schema().plugin.name, "loader_test");
-    assert_eq!(library.schema().nodes.len(), 1);
+    assert_eq!(library.schema().nodes.len(), 2);
     assert_eq!(library.rust_abi(), Err(&old_rustc()));
     assert_eq!(library.stable_abi_version(), STABLE_ABI_VERSION);
     assert_eq!(library.install_mode(), Some(InstallPath::Stable));
@@ -184,7 +185,7 @@ fn mismatched_toolchain_installs_and_runs_through_the_stable_path() {
         InstallPath::Stable
     );
     let manifest = &registry.plugin_manifests["loader_test"];
-    assert_eq!(manifest.provided_nodes.len(), 1);
+    assert_eq!(manifest.provided_nodes.len(), 2);
     assert!(
         registry
             .foreign_interfaces()
@@ -526,7 +527,7 @@ fn foreign_interfaces_are_exported_and_checked_against_the_host() {
     assert_eq!(mismatches[0].host, *FrameInterface::info());
     assert_eq!(mismatches[0].plugin, FRAME_INTERFACE_V1);
     assert!(
-        message.contains("`daedalus:frame`: host v2 (layout ")
+        message.contains("`daedalus:frame`: host v3 (layout ")
             && message.contains("plugin v1 (layout "),
         "{message}"
     );
@@ -675,3 +676,5 @@ fn info_strings_are_host_copies() {
         host.as_str().unwrap().as_ptr()
     );
 }
+
+mod frame_v2;
