@@ -141,8 +141,9 @@ impl ColorRange {
 ///
 /// One key space: each key is either numeric or bytes, as documented on it. A provider answers
 /// the keys it knows and returns nothing for the rest, so new keys never change the vtable.
-/// Keys below [`VENDOR_BASE`] are assigned here; keys from [`VENDOR_BASE`] up are private to a
-/// provider (name them in its documentation; consumers check the frame's source type first).
+/// Keys below [`VENDOR_BASE`](frame_meta::VENDOR_BASE) are assigned here; keys from it up are
+/// private to a provider (name them in its documentation; consumers check the frame's source
+/// type first).
 pub mod frame_meta {
     /// Numeric: exposure time in nanoseconds.
     pub const EXPOSURE_NS: u32 = 1;

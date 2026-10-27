@@ -184,13 +184,13 @@ mod tests {
             "{err}"
         );
 
-        // A `daedalus:frame` v1 user (a stale plugin or library) conflicts with v2.
+        // A `daedalus:frame` v1 user (a stale plugin or library) conflicts with v3.
         let err = registry
             .register_foreign_interface_info(FRAME_INTERFACE_V1)
             .unwrap_err();
         let PluginError::ForeignInterfaceConflict { existing, new } = err else {
             panic!("unexpected error: {err}");
         };
-        assert_eq!((existing.version, new.version), (2, 1));
+        assert_eq!((existing.version, new.version), (3, 1));
     }
 }
