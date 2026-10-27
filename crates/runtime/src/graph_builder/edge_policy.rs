@@ -14,6 +14,7 @@ impl GraphBuilder {
     /// # Panics
     ///
     /// Panics when either endpoint references an unknown node alias.
+    #[doc(hidden)]
     pub fn edge_metadata<F, T>(self, from: F, to: T, key: impl Into<String>, value: Value) -> Self
     where
         F: IntoPortSpec,
@@ -23,6 +24,7 @@ impl GraphBuilder {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
+    /// Fallible variant of `edge_metadata`.
     pub fn try_edge_metadata<F, T>(
         mut self,
         from: F,
@@ -126,6 +128,7 @@ impl GraphBuilder {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
+    /// Fallible variant of `connect_with_metadata`.
     pub fn try_connect_with_metadata<F, T, K>(
         mut self,
         from: F,

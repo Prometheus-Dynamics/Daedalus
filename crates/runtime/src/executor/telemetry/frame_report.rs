@@ -119,10 +119,6 @@ impl FrameOverheadWindow {
         self.latest_slot().map(|slot| &self.ticks[slot])
     }
 
-    pub fn latest_mut(&mut self) -> Option<&mut FrameTickSample> {
-        self.latest_slot().map(|slot| &mut self.ticks[slot])
-    }
-
     /// Slots oldest first.
     fn slots(&self) -> impl Iterator<Item = usize> + '_ {
         let start = (self.next + self.capacity - self.len) % self.capacity;

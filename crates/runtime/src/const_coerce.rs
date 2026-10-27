@@ -45,6 +45,7 @@ pub fn register_default_const_coercer<T>(
 
 /// Deserialize `T` from `value`. Enums use serde's external tagging: a unit variant is its name
 /// (`Value::String` or `Value::Enum`), a payload variant `Value::Enum { name, value }`.
+#[doc(hidden)]
 pub fn deserialize_value<T: DeserializeOwned>(value: &Value) -> Option<T> {
     serde_json::from_value(serde_json_of(value)).ok()
 }

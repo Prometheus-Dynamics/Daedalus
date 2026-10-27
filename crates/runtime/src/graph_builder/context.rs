@@ -51,6 +51,7 @@ impl GraphCtx {
     ///
     /// Panics if the node id is not present in the capability registry. Use
     /// [`Self::try_node_as`] for user-provided graph definitions.
+    #[doc(hidden)]
     pub fn node_as(&mut self, id: &str, alias: &str) -> crate::handles::NodeHandle {
         self.try_node_as(id, alias)
             .unwrap_or_else(|err| panic!("{err}"))

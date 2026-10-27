@@ -166,21 +166,6 @@ impl ExecutionTelemetry {
         entry.adapter_errors = entry.adapter_errors.saturating_add(1);
     }
 
-    pub fn record_edge_gpu_transfer(&mut self, edge_idx: usize, upload: bool) {
-        if !cfg!(feature = "metrics") {
-            return;
-        }
-        if !self.metrics_level.is_detailed() {
-            return;
-        }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
-        if upload {
-            entry.gpu_uploads = entry.gpu_uploads.saturating_add(1);
-        } else {
-            entry.gpu_downloads = entry.gpu_downloads.saturating_add(1);
-        }
-    }
-
     pub fn record_edge_drop(&mut self, edge_idx: usize, count: u64) {
         if !cfg!(feature = "metrics") {
             return;

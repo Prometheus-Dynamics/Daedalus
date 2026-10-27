@@ -136,11 +136,6 @@ impl ExecutionTelemetry {
         &self.clock
     }
 
-    pub fn is_lifecycle_enabled(&self) -> bool {
-        cfg!(feature = "metrics")
-            && (self.metrics_level.is_profile() || self.metrics_level.is_trace())
-    }
-
     pub fn report(&self) -> TelemetryReport {
         let ownership = self
             .edge_metrics

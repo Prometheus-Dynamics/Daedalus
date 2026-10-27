@@ -308,6 +308,7 @@ impl GraphBuilder {
     }
 
     /// Bulk metadata helper for a node handle.
+    #[doc(hidden)]
     pub fn node_metadata_map<H, K, I>(self, handle: &H, metadata: I) -> Self
     where
         H: NodeHandleLike,
@@ -318,6 +319,7 @@ impl GraphBuilder {
     }
 
     /// Bulk metadata helper for a node alias.
+    #[doc(hidden)]
     pub fn node_metadata_map_by_id<K, I>(
         mut self,
         node_alias: impl Into<String>,

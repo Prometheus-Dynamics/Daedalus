@@ -160,6 +160,7 @@ pub fn is_installed() -> bool {
 }
 
 /// The current thread's scope.
+#[doc(hidden)]
 pub fn current_scope() -> AllocScope {
     match SCOPE.try_with(Cell::get).unwrap_or(0) {
         1 => AllocScope::Host,

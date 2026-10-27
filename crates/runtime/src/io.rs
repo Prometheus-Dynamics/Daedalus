@@ -163,10 +163,6 @@ impl NodeIo {
         Self::from_port_buffer(buffer)
     }
 
-    pub fn from_single_input(port: PortId, payload: CorrelatedPayload) -> Self {
-        Self::from_inputs([(port, payload)])
-    }
-
     /// Take `inputs` as the input list (a [`port_buffer`]).
     pub(crate) fn from_port_buffer(inputs: Vec<NodePort>) -> Self {
         Self {
@@ -309,10 +305,6 @@ impl NodeIo {
             .push((port.into(), CorrelatedPayload::from_edge(payload)));
     }
 
-    pub fn push_payload_default(&mut self, payload: Payload) {
-        self.push_payload(DEFAULT_OUTPUT_PORT, payload);
-    }
-
     pub fn push_as<T>(
         &mut self,
         port: Option<&str>,
@@ -336,13 +328,6 @@ impl NodeIo {
         self.push_payload(port, payload);
     }
 
-    pub fn push_as_default<T>(&mut self, type_key: daedalus_transport::TypeKey, value: T)
-    where
-        T: Send + Sync + 'static,
-    {
-        self.push_as_to(DEFAULT_OUTPUT_PORT, type_key, value);
-    }
-
     pub fn push_arc_as<T>(
         &mut self,
         port: Option<&str>,
@@ -364,13 +349,6 @@ impl NodeIo {
     {
         let payload = Payload::shared(type_key, value).stamp(self.clock());
         self.push_payload(port, payload);
-    }
-
-    pub fn push_arc_as_default<T>(&mut self, type_key: daedalus_transport::TypeKey, value: Arc<T>)
-    where
-        T: Send + Sync + 'static,
-    {
-        self.push_arc_as_to(DEFAULT_OUTPUT_PORT, type_key, value);
     }
 
     /// Push `value` under the key the graph's registry gives `T` (its `TypeIndex`, see
@@ -493,20 +471,6 @@ impl NodeIo {
             .collect()
     }
 
-    pub fn get_typed_mut<T>(&mut self, port: &str) -> Option<T>
-    where
-        T: Clone + Send + Sync + 'static,
-    {
-        let payload = self.take_input_payload(port)?;
-        if let Some(value) = payload.inner.get_ref::<T>() {
-            return Some(value.clone());
-        }
-        payload
-            .inner
-            .get_ref::<Value>()
-            .and_then(|value| self.coerce_value::<T>(value))
-    }
-
     /// Take the input as an owned `T`; a `Value` input (a graph constant) is coerced to `T`
     /// without first failing a move (which would box the payload).
     pub fn take_owned<T>(&mut self, port: &str) -> Option<T>
@@ -617,10 +581,6 @@ pub struct CowArcMut<T> {
 impl<T> CowArcMut<T> {
     pub fn new(arc: Arc<T>) -> Self {
         Self { arc }
-    }
-
-    pub fn as_arc(&self) -> &Arc<T> {
-        &self.arc
     }
 
     pub fn into_arc(self) -> Arc<T> {

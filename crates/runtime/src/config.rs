@@ -44,10 +44,13 @@ impl RuntimeDebugConfig {
         config
     }
 
+    /// Reads the debug variables through `get` (no process environment access; the `no_std`
+    /// counterpart of [`Self::from_env`]).
     pub fn from_lookup(mut get: impl FnMut(&str) -> Option<String>) -> Self {
         Self::from_lookup_with_diagnostics(&mut get).0
     }
 
+    /// Reads the debug configuration through `get`, also returning warnings for invalid values.
     pub fn from_lookup_with_diagnostics(
         mut get: impl FnMut(&str) -> Option<String>,
     ) -> (Self, Vec<RuntimeDebugConfigEnvWarning>) {

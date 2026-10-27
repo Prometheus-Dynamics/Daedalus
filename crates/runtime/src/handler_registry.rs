@@ -134,6 +134,7 @@ impl HandlerRegistry {
             .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
     }
 
+    /// Fallible variant of `on_stateful`: fails on a duplicate or invalid id.
     pub fn try_on_stateful<F>(&mut self, id: &str, f: F) -> Result<(), HandlerRegistryError>
     where
         F: FnMut(&RuntimeNode, &ExecutionContext, &mut NodeIo) -> Result<(), NodeError>
@@ -174,6 +175,7 @@ impl HandlerRegistry {
             .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
     }
 
+    /// Fallible variant of `on_direct_payload`: fails on a duplicate or invalid id.
     pub fn try_on_direct_payload<F>(&mut self, id: &str, f: F) -> Result<(), HandlerRegistryError>
     where
         F: Fn(
@@ -210,6 +212,7 @@ impl HandlerRegistry {
             .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"));
     }
 
+    /// Fallible variant of `merge`: merges the handlers of `other`, failing on a duplicate id.
     pub fn try_merge(&mut self, other: HandlerRegistry) -> Result<(), HandlerRegistryError> {
         for (k, v) in other.ids {
             self.record_id(k, &v)?;
@@ -238,6 +241,7 @@ impl HandlerRegistry {
             .unwrap_or_else(|err| panic!("daedalus-runtime: {err}"))
     }
 
+    /// Fallible variant of `with_prefix`.
     pub fn try_with_prefix(self, prefix: &str) -> Result<Self, HandlerRegistryError> {
         if prefix.is_empty() {
             return Ok(self);

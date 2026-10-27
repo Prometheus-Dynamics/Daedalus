@@ -182,6 +182,7 @@ impl GraphInput {
         Ok(self.handle.feed_payload(self.port.clone(), payload))
     }
 
+    /// Feeds a typed value into this input, keyed by `type_key`.
     pub fn feed_typed<T>(
         &self,
         type_key: impl Into<TypeKey>,
@@ -229,6 +230,7 @@ impl GraphOutput {
         Ok(self.handle.try_pop_payload(&self.port))
     }
 
+    /// Receives the next value as `T` without blocking; `None` if none is ready.
     pub fn try_recv_typed<T>(&self) -> Result<Option<T>, ExecuteError>
     where
         T: Clone + Send + Sync + 'static,
@@ -296,6 +298,7 @@ impl<H: NodeHandler> StreamGraph<H> {
         Self::with_host_alias(plan, handler, "host")
     }
 
+    /// Stream graph for `plan` and `handler`, with the host bridge alias set to `host_alias`.
     pub fn with_host_alias(
         plan: Arc<RuntimePlan>,
         handler: H,
@@ -492,17 +495,7 @@ impl<H: NodeHandler> StreamGraph<H> {
         self.last_telemetry.as_ref()
     }
 
-    pub fn profiler_snapshot(&self) -> Option<ExecutionTelemetry> {
-        self.last_telemetry.clone()
-    }
-
-    pub fn export_profile_json(&self) -> Result<Option<String>, serde_json::Error> {
-        self.last_telemetry
-            .as_ref()
-            .map(serde_json::to_string_pretty)
-            .transpose()
-    }
-
+    /// Host bridge statistics of this stream graph.
     pub fn host_stats(&self) -> HostBridgeStats {
         self.bridges.ensure_handle(self.host_alias.clone()).stats()
     }
@@ -513,6 +506,7 @@ impl<H: NodeHandler> StreamGraph<H> {
             .config_snapshot()
     }
 
+    /// Host bridge events of this stream graph.
     pub fn host_events(&self) -> Vec<HostBridgeEvent> {
         self.bridges.ensure_handle(self.host_alias.clone()).events()
     }

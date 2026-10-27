@@ -186,6 +186,7 @@ impl PluginRegistry {
     ///
     /// The adapter's associated metadata is installed into the capability registry and its
     /// `adapt` function is installed into the runtime adapter table under the same stable ID.
+    #[doc(hidden)]
     pub fn register_smart_adapter<A: SmartAdapter>(&mut self) -> PluginResult<()> {
         self.register_transport_adapter_fn_with_options(
             A::ID,
@@ -237,6 +238,7 @@ impl PluginRegistry {
 
     /// Register a typed CPU adapter. The input is borrowed from the payload and the output is
     /// stored as a new typed transport payload.
+    #[doc(hidden)]
     pub fn register_typed_transport_adapter<S, T, F>(
         &mut self,
         id: impl Into<String>,

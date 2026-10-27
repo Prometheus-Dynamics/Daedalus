@@ -311,7 +311,7 @@ impl ManagedByteBuffer {
         self.live_len == 0
     }
 
-    pub fn clear_live(&mut self) {
+    pub(crate) fn clear_live(&mut self) {
         self.live_len = 0;
         self.bytes.clear();
     }

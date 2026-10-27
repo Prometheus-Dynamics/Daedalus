@@ -12,6 +12,7 @@ impl GraphBuilder {
     ///
     /// Panics when the outer endpoint references an unknown node alias or `port`
     /// is not exposed as a nested graph input.
+    #[doc(hidden)]
     pub fn connect_to_nested<F>(
         self,
         from: F,
@@ -45,6 +46,7 @@ impl GraphBuilder {
     ///
     /// Panics when the outer endpoint references an unknown node alias or `port`
     /// is not exposed as a nested graph output.
+    #[doc(hidden)]
     pub fn connect_from_nested<T>(
         self,
         nested: &NestedGraphHandle,

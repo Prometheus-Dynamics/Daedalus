@@ -119,6 +119,7 @@ impl PayloadInspection {
     }
 
     /// Serialized value, or the structured summary for opaque payloads.
+    #[doc(hidden)]
     pub fn to_display_value(&self) -> Value {
         match self {
             PayloadInspection::Value { value, .. } => value.clone(),

@@ -67,14 +67,6 @@ impl PluginRegistry {
         installable.install_into(self)
     }
 
-    pub fn install_and_freeze<I: PluginInstallable + ?Sized>(
-        &mut self,
-        installable: &I,
-    ) -> PluginResult<CapabilityRegistrySnapshot> {
-        self.install(installable)?;
-        self.freeze()
-    }
-
     pub fn freeze(&mut self) -> PluginResult<CapabilityRegistrySnapshot> {
         let merged = self.combined_transport_capabilities()?;
         let snapshot = merged.freeze().map_err(|source| {
@@ -95,14 +87,6 @@ impl PluginRegistry {
 
     pub fn handlers(&self) -> HandlerRegistry {
         self.handlers.clone()
-    }
-
-    pub fn take_runtime_transport(&mut self) -> RuntimeTransport {
-        core::mem::take(&mut self.runtime_transport)
-    }
-
-    pub fn take_transport_capabilities(&mut self) -> TransportCapabilityRegistry {
-        core::mem::take(&mut self.transport_capabilities)
     }
 }
 

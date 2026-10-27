@@ -24,10 +24,6 @@ impl GraphBuilder {
         )
     }
 
-    pub fn node_port(&self, node_alias: impl Into<String>, port: impl Into<String>) -> PortHandle {
-        PortHandle::new(node_alias, port)
-    }
-
     /// Connect two ports using the builder's concise wiring syntax.
     ///
     /// Prefer `PortHandle` or `(node, port)` endpoints in release code. String
@@ -62,6 +58,7 @@ impl GraphBuilder {
     /// Panics when either endpoint references an unknown node alias, when nested
     /// graphs are connected directly to each other, or when a nested endpoint
     /// names a missing exposed port.
+    #[doc(hidden)]
     pub fn connect_ports<F, T>(self, from: F, to: T) -> Self
     where
         F: IntoPortSpec,
@@ -276,6 +273,7 @@ impl GraphBuilder {
     /// # Panics
     ///
     /// Panics under the same conditions as [`GraphBuilder::connect`].
+    #[doc(hidden)]
     pub fn connect_handles(mut self, from: &PortHandle, to: &PortHandle) -> Self {
         self = self.connect_ports(from, to);
         self

@@ -136,6 +136,7 @@ impl StateStore {
     }
 
     /// Fallible getter with error context.
+    #[doc(hidden)]
     pub fn get_checked<T: serde::de::DeserializeOwned>(
         &self,
         key: &str,
@@ -195,11 +196,6 @@ impl StateStore {
                 values.json.insert(key.to_string(), value);
             }
         }
-    }
-
-    pub fn set_typed<T: serde::Serialize>(&self, key: &str, value: &T) -> Result<(), StateError> {
-        self.set(key, serde_json::to_value(value)?);
-        Ok(())
     }
 
     /// Store a native typed value without serializing it through `serde_json`.

@@ -239,6 +239,7 @@ impl GraphScope {
     /// # Panics
     ///
     /// Panics under the same conditions as [`GraphScope::connect`].
+    #[doc(hidden)]
     pub fn connect_policy<F, T>(&mut self, from: F, to: T, policy: RuntimeEdgePolicy)
     where
         F: IntoPortSpec,

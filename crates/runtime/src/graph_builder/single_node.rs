@@ -26,6 +26,7 @@ impl GraphBuilder {
     ///
     /// Panics when either generated edge is invalid. Use [`Self::try_single_node_io`]
     /// for production-facing graph construction.
+    #[doc(hidden)]
     pub fn single_node_io<H>(
         self,
         node: H,
@@ -98,6 +99,7 @@ impl GraphBuilder {
     ///
     /// Panics when either generated edge is invalid. Use [`Self::try_single_node_ports`]
     /// for production-facing graph construction.
+    #[doc(hidden)]
     pub fn single_node_ports<H>(
         self,
         node: H,

@@ -67,26 +67,6 @@ impl<'a> RuntimeResources<'a> {
         self.state.snapshot_node_resources(self.node_id)
     }
 
-    pub fn record_frame_scratch_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
-        self.state.record_node_resource_usage(
-            self.node_id,
-            name,
-            ResourceClass::FrameScratch,
-            live_bytes,
-            retained_bytes,
-        )
-    }
-
-    pub fn record_warm_cache_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
-        self.state.record_node_resource_usage(
-            self.node_id,
-            name,
-            ResourceClass::WarmCache,
-            live_bytes,
-            retained_bytes,
-        )
-    }
-
     pub fn record_persistent_state_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.state.record_node_resource_usage(
             self.node_id,
@@ -97,6 +77,7 @@ impl<'a> RuntimeResources<'a> {
         )
     }
 
+    /// Runs `f` with a frame-scratch value `name`, built by `init`.
     pub fn with_frame_scratch<T, R, Init, F>(
         &self,
         name: &str,
@@ -157,6 +138,7 @@ impl<'a> RuntimeResources<'a> {
         })
     }
 
+    /// Runs `f` with a warm-cache byte buffer of `len` bytes named `name`.
     pub fn with_warm_cache_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, StateError>
     where
         F: FnOnce(&mut [u8]) -> R,
@@ -167,6 +149,7 @@ impl<'a> RuntimeResources<'a> {
         })
     }
 
+    /// Runs `f` with a persistent byte buffer of `len` bytes named `name`.
     pub fn with_persistent_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, StateError>
     where
         F: FnOnce(&mut [u8]) -> R,
@@ -253,6 +236,7 @@ impl ExecutionContext {
         self.resources().on_stop()
     }
 
+    /// Records a named metric on this context.
     pub fn record_metric(
         &self,
         name: impl Into<String>,
@@ -290,21 +274,12 @@ impl ExecutionContext {
         self.record_metric(name, crate::executor::CustomMetricValue::Json(value))
     }
 
-    pub fn record_frame_scratch_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
-        self.resources()
-            .record_frame_scratch_bytes(name, live_bytes, retained_bytes)
-    }
-
-    pub fn record_warm_cache_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
-        self.resources()
-            .record_warm_cache_bytes(name, live_bytes, retained_bytes)
-    }
-
     pub fn record_persistent_state_bytes(&self, name: &str, live_bytes: u64, retained_bytes: u64) {
         self.resources()
             .record_persistent_state_bytes(name, live_bytes, retained_bytes)
     }
 
+    /// Runs `f` with the frame-scratch value `name`, built by `init`.
     pub fn with_frame_scratch<T, R, Init, F>(
         &self,
         name: &str,
@@ -359,6 +334,7 @@ impl ExecutionContext {
         self.resources().with_frame_scratch_bytes(name, len, f)
     }
 
+    /// Runs `f` with a warm-cache byte buffer of `len` bytes named `name`.
     pub fn with_warm_cache_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, StateError>
     where
         F: FnOnce(&mut [u8]) -> R,
@@ -366,6 +342,7 @@ impl ExecutionContext {
         self.resources().with_warm_cache_bytes(name, len, f)
     }
 
+    /// Runs `f` with a persistent byte buffer of `len` bytes named `name`.
     pub fn with_persistent_bytes<R, F>(&self, name: &str, len: usize, f: F) -> Result<R, StateError>
     where
         F: FnOnce(&mut [u8]) -> R,

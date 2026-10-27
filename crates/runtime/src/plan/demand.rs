@@ -14,6 +14,7 @@ impl RuntimePlan {
     /// Compute an "active nodes" mask for demand-driven execution given a set of sinks.
     ///
     /// The returned mask can be passed to `Executor::with_active_nodes` to skip unrelated branches.
+    #[doc(hidden)]
     pub fn active_nodes_for_sinks(&self, sinks: &[RuntimeSink]) -> Result<Vec<bool>, DemandError> {
         Ok(self.demand_slice_for_sinks(sinks)?.active_nodes)
     }
@@ -137,11 +138,11 @@ impl DemandSlice {
         slice
     }
 
-    pub fn active_node_count(&self) -> usize {
+    pub(crate) fn active_node_count(&self) -> usize {
         self.active_nodes.iter().filter(|active| **active).count()
     }
 
-    pub fn active_edge_count(&self) -> usize {
+    pub(crate) fn active_edge_count(&self) -> usize {
         self.active_edges.iter().filter(|active| **active).count()
     }
 

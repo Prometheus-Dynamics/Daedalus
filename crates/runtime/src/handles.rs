@@ -34,14 +34,6 @@ impl PortHandle {
     pub fn port(&self) -> &str {
         self.port.as_str()
     }
-
-    pub fn node_alias_id(&self) -> NodeAlias {
-        self.node_alias.clone()
-    }
-
-    pub fn port_id(&self) -> PortId {
-        self.port.clone()
-    }
 }
 
 /// Handle to a node id + alias pair.
@@ -75,10 +67,6 @@ impl NodeHandle {
 
     pub fn alias_name(&self) -> &str {
         self.alias.as_str()
-    }
-
-    pub fn alias_id(&self) -> NodeAlias {
-        self.alias.clone()
     }
 
     /// Build an input port handle.

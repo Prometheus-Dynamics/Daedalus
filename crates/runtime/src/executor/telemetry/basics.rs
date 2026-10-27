@@ -1,4 +1,3 @@
-use crate::prelude::*;
 use core::time::Duration;
 
 use super::ExecutionTelemetry;
@@ -36,10 +35,6 @@ impl MetricsLevel {
         self >= MetricsLevel::Detailed
     }
 
-    pub fn is_hardware(self) -> bool {
-        self >= MetricsLevel::Hardware
-    }
-
     pub fn is_profile(self) -> bool {
         self >= MetricsLevel::Profile
     }
@@ -67,16 +62,8 @@ impl Profiler {
         &self.telemetry
     }
 
-    pub fn telemetry_mut(&mut self) -> &mut ExecutionTelemetry {
-        &mut self.telemetry
-    }
-
     pub fn snapshot(&self) -> ExecutionTelemetry {
         self.telemetry.clone()
-    }
-
-    pub fn export_json(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(&self.telemetry)
     }
 }
 

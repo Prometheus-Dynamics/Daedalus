@@ -56,10 +56,6 @@ impl RuntimeEdgePolicy {
         }
     }
 
-    pub fn is_latest_only(&self) -> bool {
-        matches!(self.pressure, PressurePolicy::LatestOnly)
-    }
-
     pub fn bounded_capacity(&self) -> Option<usize> {
         self.pressure.bounded_capacity()
     }

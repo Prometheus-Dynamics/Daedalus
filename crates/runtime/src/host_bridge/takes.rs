@@ -23,6 +23,7 @@ impl HostBridgeHandle {
         };
         payload.try_into_owned::<T>().map(Some)
     }
+    /// Pops the next `Arc<T>` from the host port `port`, if one is queued.
     pub fn try_pop_arc<T>(&self, port: impl AsRef<str>) -> Option<Arc<T>>
     where
         T: Send + Sync + 'static,
@@ -37,15 +38,6 @@ impl HostBridgeHandle {
         self.drain_payloads(port)
             .into_iter()
             .filter_map(|payload| payload.get_ref::<T>().cloned())
-            .collect()
-    }
-    pub fn drain_arcs<T>(&self, port: impl AsRef<str>) -> Vec<Arc<T>>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.drain_payloads(port)
-            .into_iter()
-            .filter_map(|payload| payload.get_arc::<T>())
             .collect()
     }
 }

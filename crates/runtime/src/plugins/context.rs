@@ -74,10 +74,6 @@ impl<'a> PluginInstallContext<'a> {
         &self.manifest
     }
 
-    pub fn manifest_mut(&mut self) -> &mut PluginManifest {
-        &mut self.manifest
-    }
-
     pub fn dependency(&mut self, id: impl Into<String>) -> &mut Self {
         self.manifest.dependencies.push(id.into());
         self
