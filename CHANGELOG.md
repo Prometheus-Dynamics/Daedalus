@@ -705,6 +705,18 @@ plugin ABI and does not load.
   `FRAME_BENCH_MODE` (`serial`, `parallel`, `adaptive`), and the new `fanout` example runs one
   frame through `FRAME_BENCH_FANOUT` no-op stages (default 16). The pool comparison in
   `docs/development.md` used these.
+- Internal: merged duplicate code, with no change in behaviour, public API or ABI:
+  - The GPU chain union-find, copied in the planner's schedule and GPU buffer passes, is one
+    planner helper.
+  - The close rule of the bounded, unbounded, newest and broadcast channels is one
+    `CloseBehavior::closes`.
+  - The 32 configuration and lifecycle methods shared by `Executor` and `OwnedExecutor` expand
+    from one macro (`executor_config_api`), so both keep them as inherent public methods.
+  - The plugin and node macros share one `node_struct_ident`.
+  - The frame-bench examples share one `env_usize`.
+  - Test fixtures: one stable-ABI cdylib builder (`daedalus` tests), one set of executor test
+    handlers and `test_node` (`runtime` tests), and one increment handler and `INT_KEY` (`engine`
+    tests).
 
 ## [3.0.0] - 2026-10-05
 
