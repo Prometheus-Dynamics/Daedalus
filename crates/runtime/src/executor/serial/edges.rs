@@ -3,6 +3,7 @@
 use crate::prelude::*;
 use daedalus_transport::{AdaptRequest, Payload};
 
+use crate::handles::PortId;
 use crate::io::NodePort;
 
 use crate::executor::queue::{ApplyPolicyOwnedArgs, apply_policy_owned, pop_edge};
@@ -45,15 +46,7 @@ pub(super) fn collect_inputs(
         if edge_uses_direct_slot(v, edge_idx) {
             while let Some(mut payload) = pop_direct_edge(v.core, v.direct_slot_access, edge_idx) {
                 if collect_lifecycle {
-                    let mut lifecycle = DataLifecycleRecord::new(
-                        payload.correlation_id,
-                        DataLifecycleStage::EdgeDequeued,
-                    );
-                    lifecycle.node_idx = Some(node_idx);
-                    lifecycle.edge_idx = Some(edge_idx);
-                    lifecycle.port = Some(to_port.to_string());
-                    lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
-                    v.core.telemetry.record_data_lifecycle(lifecycle);
+                    record_dequeued(v, node_idx, edge_idx, to_port, &payload);
                 }
                 if collect_detailed_metrics {
                     let bytes = v
@@ -77,15 +70,7 @@ pub(super) fn collect_inputs(
         {
             record_queue_wait(v, edge_idx, &payload, collect_detailed_metrics);
             if collect_lifecycle {
-                let mut lifecycle = DataLifecycleRecord::new(
-                    payload.correlation_id,
-                    DataLifecycleStage::EdgeDequeued,
-                );
-                lifecycle.node_idx = Some(node_idx);
-                lifecycle.edge_idx = Some(edge_idx);
-                lifecycle.port = Some(to_port.to_string());
-                lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
-                v.core.telemetry.record_data_lifecycle(lifecycle);
+                record_dequeued(v, node_idx, edge_idx, to_port, &payload);
             }
             if collect_detailed_metrics {
                 let bytes = v
@@ -105,6 +90,26 @@ pub(super) fn collect_inputs(
     }
 
     Ok(inputs)
+}
+
+/// The profile/trace lifecycle record of a payload taken off `edge_idx` for `node_idx`'s `port`.
+/// Outlined: it formats text, and only profile and trace metrics record it.
+#[cold]
+#[inline(never)]
+fn record_dequeued(
+    v: &mut SerialView<'_>,
+    node_idx: usize,
+    edge_idx: usize,
+    port: &PortId,
+    payload: &CorrelatedPayload,
+) {
+    let mut lifecycle =
+        DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::EdgeDequeued);
+    lifecycle.node_idx = Some(node_idx);
+    lifecycle.edge_idx = Some(edge_idx);
+    lifecycle.port = Some(port.to_string());
+    lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+    v.core.telemetry.record_data_lifecycle(lifecycle);
 }
 
 /// Enqueue-to-dequeue time of a queued payload (stamped with basic metrics or a frame probe).

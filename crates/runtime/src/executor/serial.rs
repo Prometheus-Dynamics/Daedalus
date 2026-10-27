@@ -161,7 +161,7 @@ fn run_order_timed<H: NodeHandler>(
             .is_some_and(|required| required.wait_all);
         if wait_all && !required_inputs_held(&v, node_idx) {
             // `fire = "all"`: wait without popping, so what arrived stays queued for a later tick.
-            crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node waiting for inputs");
+            trace_node_skipped(&node.id, "node waiting for inputs");
             continue;
         }
         if let Some(blocking) = blocking
@@ -172,7 +172,7 @@ fn run_order_timed<H: NodeHandler>(
         {
             // Blocking backpressure: a bounded output queue is full, so leave the inputs queued
             // and run again once the consumer has drained it.
-            crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node deferred by blocking backpressure");
+            trace_node_skipped(&node.id, "node deferred by blocking backpressure");
             v.core.telemetry.backpressure_deferrals += 1;
             continue;
         }
@@ -190,7 +190,7 @@ fn run_order_timed<H: NodeHandler>(
         if !required_inputs_ready(&v, node_idx, &inputs) {
             // Not ready this tick: a connected required input has no value (its producer was
             // skipped or pushed nothing). Optional inputs never block.
-            crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node not ready");
+            trace_node_skipped(&node.id, "node not ready");
             crate::io::recycle_ports(inputs);
             continue;
         }
@@ -203,22 +203,14 @@ fn run_order_timed<H: NodeHandler>(
                 if v.core.gpu_available {
                     v.core.telemetry.gpu_segments = v.core.telemetry.gpu_segments.saturating_add(1);
                 } else {
-                    v.core.telemetry.gpu_fallbacks =
-                        v.core.telemetry.gpu_fallbacks.saturating_add(1);
-                    v.core.telemetry.warnings.push(format!(
-                        "gpu_preferred node {} executed on CPU because no GPU handle is available",
-                        node.id
-                    ));
-                    v.core.telemetry.cpu_segments = v.core.telemetry.cpu_segments.saturating_add(1);
+                    gpu_preferred_fallback(&mut v.core.telemetry, &node.id);
                 }
             }
             ComputeAffinity::GpuRequired => {
                 if v.core.gpu_available {
                     v.core.telemetry.gpu_segments = v.core.telemetry.gpu_segments.saturating_add(1);
                 } else {
-                    return Err(ExecuteError::GpuUnavailable {
-                        segment: vec![NodeRef(node_idx)],
-                    });
+                    return Err(gpu_required_unavailable(node_idx));
                 }
             }
         }
@@ -347,17 +339,8 @@ fn run_order_timed<H: NodeHandler>(
             probe.add_time(ProbeTime::NodeRuns, elapsed);
             probe.add_count(ProbeCount::Nodes, 1);
         }
-        if let Some(cpu_start) = cpu_start
-            && let Some(cpu_end) = super::thread_cpu_time()
-        {
-            v.core
-                .telemetry
-                .record_node_cpu_duration(node_idx, cpu_end.saturating_sub(cpu_start));
-        }
-        if let Some(perf_guard) = perf_guard
-            && let Ok(sample) = perf_guard.finish()
-        {
-            v.core.telemetry.record_node_perf(node_idx, sample);
+        if cpu_start.is_some() || perf_guard.is_some() {
+            record_node_debug_samples(&mut v.core.telemetry, node_idx, cpu_start, perf_guard);
         }
         if collect_basic_metrics {
             let metrics = v.core.state.drain_node_custom_metrics(&ctx.node_id);
@@ -370,9 +353,11 @@ fn run_order_timed<H: NodeHandler>(
             && let (Some(graph_start), Some(node_start)) =
                 (graph_start.as_ref(), node_start.as_ref())
         {
-            v.core.telemetry.record_trace_event(
+            record_trace_node(
+                &mut v.core.telemetry,
                 node_idx,
-                node_start.saturating_duration_since(*graph_start),
+                graph_start,
+                node_start,
                 elapsed,
             );
         }
@@ -403,6 +388,70 @@ fn run_order_timed<H: NodeHandler>(
     let telemetry = core::mem::take(&mut v.core.telemetry);
     v.core.telemetry.metrics_level = level;
     Ok(telemetry)
+}
+
+/// A `gpu_preferred` node that runs on the CPU because no GPU handle is available: the fallback
+/// is counted and warned about. Outlined: the loop only sees the branch.
+#[inline(never)]
+fn gpu_preferred_fallback(telemetry: &mut ExecutionTelemetry, node_id: &str) {
+    telemetry.gpu_fallbacks = telemetry.gpu_fallbacks.saturating_add(1);
+    telemetry.warnings.push(format!(
+        "gpu_preferred node {node_id} executed on CPU because no GPU handle is available"
+    ));
+    telemetry.cpu_segments = telemetry.cpu_segments.saturating_add(1);
+}
+
+/// The error of a `gpu_required` node run without a GPU.
+#[cold]
+#[inline(never)]
+fn gpu_required_unavailable(node_idx: usize) -> ExecuteError {
+    ExecuteError::GpuUnavailable {
+        segment: vec![NodeRef(node_idx)],
+    }
+}
+
+/// A node the loop skips this tick (waiting, deferred or not ready): a trace event only.
+#[cold]
+#[inline(never)]
+fn trace_node_skipped(node_id: &str, reason: &'static str) {
+    crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node_id, "{}", reason);
+}
+
+/// A node's span on the trace-level timeline (`metrics` trace level only).
+#[cold]
+#[inline(never)]
+fn record_trace_node(
+    telemetry: &mut ExecutionTelemetry,
+    node_idx: usize,
+    graph_start: &daedalus_core::platform::Instant,
+    node_start: &daedalus_core::platform::Instant,
+    elapsed: core::time::Duration,
+) {
+    telemetry.record_trace_event(
+        node_idx,
+        node_start.saturating_duration_since(*graph_start),
+        elapsed,
+    );
+}
+
+/// The per-node CPU-time and perf-counter samples, taken only under the debug configuration.
+#[inline(never)]
+fn record_node_debug_samples(
+    telemetry: &mut ExecutionTelemetry,
+    node_idx: usize,
+    cpu_start: Option<core::time::Duration>,
+    perf_guard: Option<crate::perf::PerfCounterGuard>,
+) {
+    if let Some(cpu_start) = cpu_start
+        && let Some(cpu_end) = super::thread_cpu_time()
+    {
+        telemetry.record_node_cpu_duration(node_idx, cpu_end.saturating_sub(cpu_start));
+    }
+    if let Some(perf_guard) = perf_guard
+        && let Ok(sample) = perf_guard.finish()
+    {
+        telemetry.record_node_perf(node_idx, sample);
+    }
 }
 
 fn node_is_active(v: &SerialView<'_>, node_idx: usize) -> bool {
