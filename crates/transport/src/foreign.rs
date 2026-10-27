@@ -289,6 +289,19 @@ impl ForeignHandle {
     pub fn view<I: ForeignInterface>(&self) -> Result<ForeignRef<'_, I>, ForeignInterfaceMismatch> {
         self.borrow().view()
     }
+
+    /// The same handle (data, vtable and owner reference) under another interface identity.
+    ///
+    /// # Safety
+    /// The handle's vtable must have the layout and meaning of the vtable `interface` describes
+    /// (e.g. a newer table whose leading fields are exactly an older version's).
+    pub(crate) unsafe fn with_interface(
+        mut self,
+        interface: &'static ForeignInterfaceInfo,
+    ) -> Self {
+        self.interface = interface;
+        self
+    }
 }
 
 impl Clone for ForeignHandle {
@@ -407,6 +420,18 @@ impl<I: ForeignInterface> Clone for ForeignRef<'_, I> {
 impl<I: ForeignInterface> Copy for ForeignRef<'_, I> {}
 
 impl<'a, I: ForeignInterface> ForeignRef<'a, I> {
+    /// A view whose interface was already checked.
+    ///
+    /// # Safety
+    /// `vtable`'s functions must accept `data`, which must stay valid for `'a`.
+    pub(crate) unsafe fn from_checked(data: *const c_void, vtable: &'a I::VTable) -> Self {
+        Self {
+            data,
+            vtable,
+            interface: PhantomData,
+        }
+    }
+
     pub fn vtable(&self) -> &'a I::VTable {
         self.vtable
     }
@@ -425,18 +450,22 @@ impl<I: ForeignInterface> fmt::Debug for ForeignRef<'_, I> {
     }
 }
 
-/// Types a node can take as a foreign-interface input (`ForeignRef<'_, I>` and aliases such as
-/// [`FrameView`](crate::FrameView)); the node macros fetch them with `NodeIo::get_foreign`.
+/// Types a node can take as a foreign-interface input: borrowed views (`ForeignRef<'_, I>` and
+/// aliases such as [`FrameView`](crate::FrameView)) and owned handles such as
+/// [`SharedFrame`](crate::SharedFrame). The node macros fetch them with `NodeIo::get_foreign`.
 pub trait ForeignView<'a>: Sized {
     type Interface: ForeignInterface;
-    fn from_borrow(borrow: ForeignBorrow<'a>) -> Result<Self, ForeignInterfaceMismatch>;
+    /// Read `payload`'s foreign value as `Self`: `None` when the payload is not
+    /// foreign-readable ([`Payload::foreign_borrow`]), `Err` when it is another interface or
+    /// version.
+    fn from_payload(payload: &'a Payload) -> Option<Result<Self, ForeignInterfaceMismatch>>;
 }
 
 impl<'a, I: ForeignInterface> ForeignView<'a> for ForeignRef<'a, I> {
     type Interface = I;
 
-    fn from_borrow(borrow: ForeignBorrow<'a>) -> Result<Self, ForeignInterfaceMismatch> {
-        borrow.view()
+    fn from_payload(payload: &'a Payload) -> Option<Result<Self, ForeignInterfaceMismatch>> {
+        Some(payload.foreign_borrow()?.view())
     }
 }
 

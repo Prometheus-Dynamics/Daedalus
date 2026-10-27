@@ -1,13 +1,16 @@
-//! Node-side access to foreign-interface inputs (`FrameView<'_>`, `ForeignRef<'_, I>`).
+//! Node-side access to foreign-interface ports: inputs (`FrameView<'_>`, `ForeignRef<'_, I>`,
+//! `SharedFrame`) and frame outputs (`SharedFrame`).
 
 use daedalus_data::model::TypeExpr;
-use daedalus_transport::{ForeignInterface, ForeignView};
+use daedalus_transport::{ForeignInterface, ForeignView, SharedFrame};
 
 use crate::NodeError;
+use crate::handles::PortId;
 use crate::io::NodeIo;
 
 impl NodeIo {
-    /// Borrow input `port` as the foreign view `V`.
+    /// Read input `port` as the foreign view `V`: borrowed (`FrameView<'_>`) or owned
+    /// (`SharedFrame`, a retain of the frame).
     ///
     /// The payload must be foreign-readable ([`Payload::foreign_borrow`]): an owner value the
     /// planner's provider adapter retyped (borrowed in place, no allocation) or a carried foreign
@@ -20,15 +23,23 @@ impl NodeIo {
         let payload = self
             .get_payload(port)
             .ok_or_else(|| NodeError::InvalidInput(format!("missing {port}")))?;
-        let borrow = payload.foreign_borrow().ok_or_else(|| {
-            NodeError::InvalidInput(format!(
-                "input `{port}` expects foreign interface `{key}`, found a `{}` payload that is \
-                 not foreign-readable (is a provider for `{key}` registered for that type?)",
-                payload.type_key()
-            ))
-        })?;
-        V::from_borrow(borrow)
+        V::from_payload(payload)
+            .ok_or_else(|| {
+                NodeError::InvalidInput(format!(
+                    "input `{port}` expects foreign interface `{key}`, found a `{}` payload that \
+                     is not foreign-readable (is a provider for `{key}` registered for that \
+                     type?)",
+                    payload.type_key()
+                ))
+            })?
             .map_err(|mismatch| NodeError::InvalidInput(format!("input `{port}`: {mismatch}")))
+    }
+
+    /// Push `frame` to output `port` as a `daedalus:frame` payload (what a `SharedFrame` node
+    /// output does): no copy, one allocation for the payload storage.
+    pub fn push_frame(&mut self, port: impl Into<PortId>, frame: SharedFrame) {
+        let payload = frame.into_payload().stamp(self.clock());
+        self.push_payload(port, payload);
     }
 }
 

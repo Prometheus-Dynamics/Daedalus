@@ -211,16 +211,19 @@ crate::foreign_interface! {
 }
 
 #[test]
-fn v1_and_v2_never_mix() {
+fn v1_and_v3_never_mix() {
     assert_eq!(*FrameV1::info(), FRAME_INTERFACE_V1);
-    let (v1, v2) = (FRAME_INTERFACE_V1, *FrameInterface::info());
+    let (v1, v3) = (FRAME_INTERFACE_V1, *FrameInterface::info());
     assert_eq!(
-        (v1.key(), v2.key()),
+        (v1.key(), v3.key()),
         (FRAME_INTERFACE_KEY, FRAME_INTERFACE_KEY)
     );
-    assert_eq!((v1.version, v2.version), (1, 2));
-    assert_ne!(v1.layout_hash, v2.layout_hash);
+    assert_eq!((v1.version, v3.version), (1, 3));
+    assert_ne!(v1.layout_hash, v3.layout_hash);
     let handle = ForeignHandle::from_arc::<_, FrameInterface>(nv12());
     let err = handle.view::<FrameV1>().unwrap_err();
-    assert_eq!((err.expected, err.found), (v1, v2));
+    assert_eq!((err.expected, err.found), (v1, v3));
 }
+
+#[path = "tests_v3.rs"]
+mod v3;

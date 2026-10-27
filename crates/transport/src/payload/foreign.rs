@@ -22,6 +22,8 @@ use crate::{
 #[derive(Debug)]
 struct ForeignStorage {
     handle: ForeignHandle,
+    /// This build created the handle (see [`Payload::foreign_local`]).
+    local: bool,
 }
 
 impl PayloadStorage for ForeignStorage {
@@ -47,6 +49,10 @@ impl PayloadStorage for ForeignStorage {
 
     fn foreign_handle(&self) -> Option<&ForeignHandle> {
         Some(&self.handle)
+    }
+
+    fn foreign_handle_is_local(&self) -> bool {
+        self.local
     }
 }
 
@@ -143,15 +149,36 @@ where
 }
 
 impl Payload {
-    /// A payload carrying `handle` under `type_key` (normally the interface key).
+    /// A payload carrying `handle` under `type_key` (normally the interface key): one received
+    /// from another build (see [`Self::foreign_local`]).
     pub fn foreign(
         type_key: impl Into<TypeKey>,
         handle: ForeignHandle,
         residency: Residency,
     ) -> Self {
+        Self::foreign_with(type_key.into(), handle, residency, false)
+    }
+
+    /// [`Self::foreign`] for a handle this build created (its vtable and owner functions are
+    /// this build's code). The stable plugin boundary passes that on
+    /// ([`Self::foreign_handle_is_local`]), so a host keeps the creating plugin loaded.
+    pub fn foreign_local(
+        type_key: impl Into<TypeKey>,
+        handle: ForeignHandle,
+        residency: Residency,
+    ) -> Self {
+        Self::foreign_with(type_key.into(), handle, residency, true)
+    }
+
+    fn foreign_with(
+        type_key: TypeKey,
+        handle: ForeignHandle,
+        residency: Residency,
+        local: bool,
+    ) -> Self {
         Self {
-            type_key: type_key.into(),
-            storage: arc_dyn!(ForeignStorage { handle }),
+            type_key,
+            storage: arc_dyn!(ForeignStorage { handle, local }),
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),
@@ -163,6 +190,11 @@ impl Payload {
     /// foreign-readable payload).
     pub fn foreign_handle(&self) -> Option<&ForeignHandle> {
         self.storage.foreign_handle()
+    }
+
+    /// Whether [`Self::foreign_handle`] was created by this build ([`Self::foreign_local`]).
+    pub fn foreign_handle_is_local(&self) -> bool {
+        self.storage.foreign_handle_is_local()
     }
 
     /// Retype a payload holding the owner type `O` as interface `I` (key `I::KEY`), readable
@@ -190,7 +222,7 @@ impl Payload {
         let Some(handle) = ForeignHandle::from_payload::<O, I>(&self) else {
             return Err(Box::new(self));
         };
-        Ok(Payload::foreign(I::KEY, handle, self.residency).with_lineage(self.lineage))
+        Ok(Payload::foreign_local(I::KEY, handle, self.residency).with_lineage(self.lineage))
     }
 
     /// Retype storage that is an `S` at the allocation's address as `ProvidedStorage<S, O, I>`.

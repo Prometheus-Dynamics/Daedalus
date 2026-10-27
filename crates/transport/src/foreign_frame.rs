@@ -1,16 +1,31 @@
-//! `daedalus:frame` v2: the standard foreign interface for image frames.
+//! `daedalus:frame` v3: the standard foreign interface for image frames.
 //!
 //! Camera-free and dependency-free: frame owners (camera stacks, decoders, image libraries)
 //! implement [`FrameSource`] for their frame type in their `daedalus` integration feature, and
-//! any node, including one in a separately built plugin, reads it as a [`FrameView`]. Plane
+//! any node, including one in a separately built plugin, reads it as a [`FrameView`] (borrowed
+//! for the call) or a [`SharedFrame`] (owned: kept in node state, returned as an output). Plane
 //! metadata (fd, offset, stride, length, mapping kind) never touches pixel memory; CPU bytes are
-//! mapped only when a consumer asks for them ([`FrameView::plane_bytes`]). The public contract
-//! is specified in `docs/foreign-frame-interface.md`.
+//! mapped only when a consumer asks for them ([`FrameView::plane_bytes`]). v3 adds colorimetry
+//! ([`FrameColorimetry`]) and keyed metadata ([`frame_meta`]) after v2's accessors; a host
+//! still feeds plugins built against v2 (see [`frame_handle_to_v2`]). The public contract is
+//! specified in `docs/foreign-frame-interface.md`.
 
 use core::ffi::c_void;
 use core::ops::Deref;
 
 use crate::{ForeignInterfaceInfo, ForeignRef, ProvideForeign, foreign_interface};
+
+mod color;
+mod compat;
+mod shared;
+mod thunks;
+
+pub use color::{ColorRange, FrameColorimetry, frame_meta};
+pub use compat::{
+    FRAME_INTERFACE_V2, FrameInterfaceV2, FrameVTableV2, frame_handle_from_v2, frame_handle_to_v2,
+    is_frame_v2,
+};
+pub use shared::SharedFrame;
 
 /// Key of the frame interface.
 pub const FRAME_INTERFACE_KEY: &str = "daedalus:frame";
@@ -30,12 +45,16 @@ pub const fn fourcc(code: &[u8; 4]) -> u32 {
 }
 
 foreign_interface! {
-    /// The `daedalus:frame` v2 interface (see [`FrameView`] and [`FrameSource`]).
-    pub interface FrameInterface("daedalus:frame", version = 2);
+    /// The `daedalus:frame` v3 interface (see [`FrameView`], [`SharedFrame`] and
+    /// [`FrameSource`]).
+    pub interface FrameInterface("daedalus:frame", version = 3);
 
-    /// Accessors of `daedalus:frame` v2. Every function takes the handle's data pointer first;
+    /// Accessors of `daedalus:frame` v3. Every function takes the handle's data pointer first;
     /// per-plane functions are only called with `index < plane_count`. Everything but
     /// `plane_data` is metadata and never maps or syncs plane memory.
+    ///
+    /// The fields up to `plane_end_cpu_access` are v2's, unchanged and in v2's order, so a v3
+    /// table is also a valid v2 table ([`FrameVTableV2`]); v3's fields follow them.
     pub struct FrameVTable {
         pub width: unsafe extern "C" fn(data: *const c_void) -> u32,
         pub height: unsafe extern "C" fn(data: *const c_void) -> u32,
@@ -65,6 +84,16 @@ foreign_interface! {
             unsafe extern "C" fn(data: *const c_void, index: u32, len: *mut u64) -> *const u8,
         /// End a CPU access begun by a non-null `plane_data(index)`.
         pub plane_end_cpu_access: unsafe extern "C" fn(data: *const c_void, index: u32),
+        /// v3: color primaries, transfer, matrix (ITU-T H.273 code points) and range.
+        pub colorimetry: unsafe extern "C" fn(data: *const c_void) -> FrameColorimetry,
+        /// v3: the numeric metadata under `key` ([`frame_meta`]) into `*value`; false when the
+        /// frame has none (`*value` untouched).
+        pub metadata_u64:
+            unsafe extern "C" fn(data: *const c_void, key: u32, value: *mut u64) -> bool,
+        /// v3: the byte metadata under `key` ([`frame_meta`]), `*len` set to its length, or null
+        /// when the frame has none. The bytes stay valid and unchanged while the frame lives.
+        pub metadata_bytes:
+            unsafe extern "C" fn(data: *const c_void, key: u32, len: *mut u64) -> *const u8,
     }
 }
 
@@ -219,7 +248,7 @@ impl FramePlane {
     }
 }
 
-/// Safe owner-side implementation of `daedalus:frame` v2.
+/// Safe owner-side implementation of `daedalus:frame` (v3).
 ///
 /// Implementing it provides the interface (`ProvideForeign<FrameInterface>`), so the owner's
 /// Daedalus integration registers it with
@@ -266,85 +295,20 @@ pub trait FrameSource: Send + Sync + 'static {
     fn end_cpu_access(&self, index: u32) {
         let _ = index;
     }
-}
-
-mod thunks {
-    use super::*;
-
-    /// # Safety
-    /// `data` points to a live `T` (the `ProvideForeign` contract).
-    unsafe fn source<'a, T>(data: *const c_void) -> &'a T {
-        // Safety: guaranteed by the caller.
-        unsafe { &*data.cast::<T>() }
+    /// Color primaries, transfer, matrix and range (v3); unspecified by default.
+    fn colorimetry(&self) -> FrameColorimetry {
+        FrameColorimetry::UNSPECIFIED
     }
-
-    macro_rules! scalar {
-        ($($name:ident -> $ret:ty = $body:expr;)*) => {$(
-            pub(super) unsafe extern "C" fn $name<T: FrameSource>(data: *const c_void) -> $ret {
-                // Safety: the vtable is only used with data pointers to `T`.
-                let f: fn(&T) -> $ret = $body;
-                f(unsafe { source::<T>(data) })
-            }
-        )*};
+    /// Numeric metadata under `key` (see [`frame_meta`] for the keys and their encodings).
+    fn metadata_u64(&self, key: u32) -> Option<u64> {
+        let _ = key;
+        None
     }
-
-    macro_rules! plane {
-        ($($name:ident -> $ret:ty = $body:expr;)*) => {$(
-            pub(super) unsafe extern "C" fn $name<T: FrameSource>(
-                data: *const c_void,
-                index: u32,
-            ) -> $ret {
-                let f: fn(Option<FramePlane>) -> $ret = $body;
-                // Safety: the vtable is only used with data pointers to `T`.
-                f(unsafe { source::<T>(data) }.plane(index))
-            }
-        )*};
-    }
-
-    scalar! {
-        width -> u32 = T::width;
-        height -> u32 = T::height;
-        format -> u32 = T::format;
-        format_kind -> u32 = |frame| frame.format_kind() as u32;
-        modifier -> u64 = T::modifier;
-        timestamp_ns -> u64 = T::timestamp_ns;
-        sequence -> u64 = T::sequence;
-        residency -> u32 = |frame| frame.residency() as u32;
-        plane_count -> u32 = T::plane_count;
-    }
-
-    plane! {
-        plane_fd -> i32 = |plane| plane.and_then(|plane| plane.dmabuf_fd).unwrap_or(-1);
-        plane_offset -> u64 = |plane| plane.map_or(0, |plane| plane.offset);
-        plane_stride -> u64 = |plane| plane.map_or(0, |plane| plane.stride);
-        plane_len -> u64 = |plane| plane.map_or(0, |plane| plane.len);
-        plane_mapping -> u32 = |plane| {
-            plane.map_or(PlaneMapping::Unmapped, |plane| plane.mapping) as u32
-        };
-    }
-
-    pub(super) unsafe extern "C" fn plane_data<T: FrameSource>(
-        data: *const c_void,
-        index: u32,
-        len: *mut u64,
-    ) -> *const u8 {
-        // Safety: the vtable is only used with data pointers to `T`.
-        let Some(bytes) = unsafe { source::<T>(data) }.plane_data(index) else {
-            return core::ptr::null();
-        };
-        if !len.is_null() {
-            // Safety: a non-null `len` points to a writable `u64` (the caller's contract).
-            unsafe { *len = bytes.len() as u64 };
-        }
-        bytes.as_ptr()
-    }
-
-    pub(super) unsafe extern "C" fn plane_end_cpu_access<T: FrameSource>(
-        data: *const c_void,
-        index: u32,
-    ) {
-        // Safety: the vtable is only used with data pointers to `T`.
-        unsafe { source::<T>(data) }.end_cpu_access(index)
+    /// Byte metadata under `key` (see [`frame_meta`]); the bytes stay valid and unchanged while
+    /// the frame lives.
+    fn metadata_bytes(&self, key: u32) -> Option<&[u8]> {
+        let _ = key;
+        None
     }
 }
 
@@ -370,13 +334,17 @@ unsafe impl<T: FrameSource> ProvideForeign<FrameInterface> for T {
                 plane_mapping: thunks::plane_mapping::<T>,
                 plane_data: thunks::plane_data::<T>,
                 plane_end_cpu_access: thunks::plane_end_cpu_access::<T>,
+                colorimetry: thunks::colorimetry::<T>,
+                metadata_u64: thunks::metadata_u64::<T>,
+                metadata_bytes: thunks::metadata_bytes::<T>,
             }
         }
     }
 }
 
-/// A frame seen through `daedalus:frame` v2. Take it as a node input (`frame: FrameView<'_>`);
-/// it borrows the input payload, which keeps the frame alive for `'a`.
+/// A frame seen through `daedalus:frame` v3. Take it as a node input (`frame: FrameView<'_>`);
+/// it borrows the input payload, which keeps the frame alive for `'a`. To keep the frame past
+/// the call or return it, take a [`SharedFrame`] instead.
 pub type FrameView<'a> = ForeignRef<'a, FrameInterface>;
 
 impl<'a> ForeignRef<'a, FrameInterface> {
@@ -472,6 +440,42 @@ impl<'a> ForeignRef<'a, FrameInterface> {
     pub fn cpu_planes(&self) -> impl Iterator<Item = Option<PlaneBytes<'a>>> + 'a {
         let view = *self;
         (0..view.plane_count()).map(move |index| view.plane_bytes(index))
+    }
+
+    /// Color primaries, transfer, matrix and range.
+    pub fn colorimetry(&self) -> FrameColorimetry {
+        unsafe { (self.vtable().colorimetry)(self.data()) }
+    }
+
+    /// Numeric metadata under `key` (see [`frame_meta`]).
+    pub fn metadata_u64(&self, key: u32) -> Option<u64> {
+        let mut value = 0;
+        unsafe { (self.vtable().metadata_u64)(self.data(), key, &mut value) }.then_some(value)
+    }
+
+    /// Byte metadata under `key` (see [`frame_meta`]), valid while the frame lives.
+    pub fn metadata_bytes(&self, key: u32) -> Option<&'a [u8]> {
+        let mut len = 0u64;
+        let ptr = unsafe { (self.vtable().metadata_bytes)(self.data(), key, &mut len) };
+        // Safety: a non-null pointer covers `len` bytes, immutable while the frame lives, which
+        // the borrowed payload or handle guarantees for `'a`.
+        (!ptr.is_null()).then(|| unsafe { core::slice::from_raw_parts(ptr, len as usize) })
+    }
+
+    /// [`frame_meta::EXPOSURE_NS`].
+    pub fn exposure_ns(&self) -> Option<u64> {
+        self.metadata_u64(frame_meta::EXPOSURE_NS)
+    }
+
+    /// [`frame_meta::ANALOGUE_GAIN`].
+    pub fn analogue_gain(&self) -> Option<f64> {
+        self.metadata_u64(frame_meta::ANALOGUE_GAIN)
+            .map(f64::from_bits)
+    }
+
+    /// [`frame_meta::SENSOR_ID`], when it is UTF-8.
+    pub fn sensor_id(&self) -> Option<&'a str> {
+        core::str::from_utf8(self.metadata_bytes(frame_meta::SENSOR_ID)?).ok()
     }
 }
 
