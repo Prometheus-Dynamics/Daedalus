@@ -253,40 +253,20 @@ same `Arc` (one reference count increment) that carries the vtable.
 
 ### Adopting v3 downstream
 
-Styx already implements `FrameSource` for `FrameLease` (v2, `styx-core`'s `daedalus` feature).
-v3 is three more methods; the colorimetry comes from the frame's `MediaFormat::color`, which has
-no range, so a YUV frame states what its source produces:
+Styx implements v3 for `FrameLease` (Styx a8ebe51, `styx_core::daedalus::colorimetry`, described
+in Styx's `docs/daedalus.md`):
 
-```rust
-impl FrameSource for FrameLease {
-    // ... the v2 methods, unchanged ...
-
-    fn colorimetry(&self) -> FrameColorimetry {
-        let rgb = matches!(self.format_kind(), FrameFormatKind::Pixel) && is_rgb(self.meta().format.code);
-        match self.meta().format.color {
-            ColorSpace::Srgb if rgb => FrameColorimetry::SRGB,
-            ColorSpace::Srgb => FrameColorimetry::SYCC, // libcamera `Sycc`: JPEG/ISP YUV, full range
-            ColorSpace::Bt709 => FrameColorimetry::BT709,
-            ColorSpace::Bt2020 => FrameColorimetry::BT2020,
-            ColorSpace::Unknown => FrameColorimetry::UNSPECIFIED,
-        }
-    }
-
-    // Capture metadata the backend attached (libcamera `ExposureTime`, `AnalogueGain`, ...).
-    fn metadata_u64(&self, key: u32) -> Option<u64> {
-        let backend = self.meta().backend.as_ref()?;
-        match key {
-            frame_meta::EXPOSURE_NS => backend.exposure_ns(),
-            frame_meta::ANALOGUE_GAIN => backend.analogue_gain().map(f64::to_bits),
-            _ => None,
-        }
-    }
-
-    fn metadata_bytes(&self, key: u32) -> Option<&[u8]> {
-        (key == frame_meta::SENSOR_ID).then(|| self.camera_id().as_bytes())
-    }
-}
-```
+- **Colorimetry.** Styx's `MediaFormat::color` has no range, so the range follows the source:
+  YUV and luma labelled `Srgb` are `SYCC` (BT.601, full range: the PiSP and the software ISP
+  write JFIF YCbCr, and libcamera maps only its full-range spaces to `Srgb`); `Bt709` and
+  `Bt2020` are limited range; RGB is the identity matrix, full range; MJPG/JPEG is `SYCC`;
+  Bayer, H.264/H.265 and `Unknown` are `UNSPECIFIED`. Caveat: `uvcvideo` labels raw YUYV
+  `V4L2_COLORSPACE_SRGB`, which V4L2 defines as limited range; Styx treats it as full range,
+  as its own decoders do, which is not verified per camera.
+- **Metadata.** `metadata_u64` gives `EXPOSURE_NS`, `ANALOGUE_GAIN`, `DIGITAL_GAIN` and
+  `FRAME_DURATION_NS` for native and libcamera frames, and `COLOR_TEMPERATURE_K` for native
+  frames; V4L2/UVC frames carry none. There is no `SENSOR_ID`: a lease does not know its
+  camera's id.
 
 Nothing else changes for Styx: the provider registration, `frame_payload` and the host feeding
 stay as they are, and every `FrameView` / `SharedFrame` consumer, separately built or not, sees
