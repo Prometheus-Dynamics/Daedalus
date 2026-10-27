@@ -152,7 +152,7 @@ pub(super) fn conditional_outputs(ret: &syn::ReturnType, outputs_len: usize) -> 
 
 pub(super) fn direct_payload_plain_type(ty: &syn::Type) -> Option<&syn::Type> {
     let ident = last_segment(ty)?.ident.to_string();
-    (!matches!(ident.as_str(), "Arc" | "Compute" | "Option")).then_some(ty)
+    (!matches!(ident.as_str(), "Arc" | "Compute" | "Option" | "SharedFrame")).then_some(ty)
 }
 
 pub(super) fn direct_payload_same_type(left: &syn::Type, right: &syn::Type) -> bool {

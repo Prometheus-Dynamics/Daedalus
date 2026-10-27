@@ -114,7 +114,7 @@ pub mod prelude {
     pub use crate::transport::{
         AccessMode, AdaptKind, AdapterId, AdapterKind, BoundaryPayloadError, Cpu, Device,
         DeviceClass, ForeignRef, FrameInterface, FrameSource, FrameView, Gpu, Layout, LayoutHash,
-        Payload, Residency, SourceId, TransportError, TypeKey,
+        Payload, Residency, SharedFrame, SourceId, TransportError, TypeKey,
     };
     #[cfg(feature = "gpu-types")]
     pub use crate::{Backing, Compute, DeviceBridge, GpuBufferHandle, GpuImageHandle};

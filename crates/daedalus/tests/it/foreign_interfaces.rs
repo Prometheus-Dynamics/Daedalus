@@ -1,6 +1,6 @@
 //! A host-owned frame type with a `daedalus:frame` provider feeds nodes that take `FrameView`
 //! and `ForeignRef`: the planner inserts the provider's `View` adapter and the nodes read the
-//! host's buffer in place.
+//! host's buffer in place. A `SharedFrame` node keeps frames in its state and hands them on.
 
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use daedalus::{
     runtime::{NodeError, plugins::PluginRegistry},
     transport::{
         ForeignInterface, ForeignRef, FrameFormatKind, FrameInterface, FramePlane, FrameResidency,
-        FrameSource, FrameView, Payload, Residency, TypeKey, fourcc,
+        FrameSource, FrameView, Payload, Residency, SharedFrame, TypeKey, fourcc,
     },
     type_key,
 };
@@ -153,4 +153,79 @@ fn frame_views_read_host_frames_in_place() {
         1,
         "every handle released its reference"
     );
+}
+
+#[derive(Default)]
+struct Last(Option<SharedFrame>);
+
+/// Delays frames by one tick: owned frames in node state, returned as an output.
+#[node(
+    id = "test.foreign.delay",
+    inputs("frame"),
+    outputs("frame"),
+    state(Last)
+)]
+fn delay(frame: SharedFrame, state: &mut Last) -> Result<Option<SharedFrame>, NodeError> {
+    Ok(state.0.replace(frame))
+}
+
+#[plugin(id = "test.foreign.delayer", deps("test.foreign.owner"), nodes(delay))]
+struct DelayPlugin;
+
+#[test]
+fn shared_frames_are_kept_and_returned_without_copying() {
+    let mut registry = PluginRegistry::new();
+    let (consumer, delayer) = (ConsumerPlugin::new(), DelayPlugin::new());
+    registry
+        .install(&OwnerPlugin::new())
+        .expect("install owner");
+    registry.install(&consumer).expect("install consumer");
+    registry.install(&delayer).expect("install delayer");
+    let (delay, sum) = (delayer.delay.alias("delay"), consumer.sum.alias("sum"));
+    let graph = registry
+        .graph_builder()
+        .expect("graph builder")
+        .input_typed::<GrayFrame>("frame")
+        .and_then(|b| b.try_node(&delay))
+        .and_then(|b| b.try_node(&sum))
+        .and_then(|b| b.try_connect("frame", &delay.inputs.frame))
+        .and_then(|b| b.try_connect(&delay.outputs.frame, &sum.inputs.frame))
+        .and_then(|b| b.try_connect(&delay.outputs.frame, "delayed"))
+        .and_then(|b| b.try_connect(&sum.outputs.sum, "sum"))
+        .and_then(|b| b.try_connect(&sum.outputs.ptr, "ptr"))
+        .expect("wire graph")
+        .build();
+    let mut host = Engine::new(EngineConfig::default())
+        .expect("engine")
+        .compile_registry(&registry, graph)
+        .expect("compile");
+    let frame = |sequence| {
+        Arc::new(GrayFrame {
+            pixels: vec![sequence as u8; 6],
+            width: 3,
+            sequence,
+        })
+    };
+    let (first, second) = (frame(1), frame(2));
+    let feed = |frame: &Arc<GrayFrame>| {
+        Payload::shared_with(FRAME_KEY, frame.clone(), Residency::Cpu, None, None)
+    };
+    host.push_payload("frame", feed(&first));
+    host.tick().expect("tick 1");
+    assert!(host.take_payload("delayed").is_none());
+    assert_eq!(Arc::strong_count(&first), 2, "held in node state");
+
+    host.push_payload("frame", feed(&second));
+    host.tick().expect("tick 2");
+    let payload = host.take_payload("delayed").expect("the first frame");
+    let delayed = SharedFrame::from_payload(&payload).unwrap().unwrap();
+    assert_eq!(delayed.handle().data(), Arc::as_ptr(&first).cast());
+    // A `FrameView` downstream read the returned frame in place.
+    assert_eq!(host.take::<i64>("sum"), Some(6));
+    assert_eq!(host.take::<i64>("ptr"), Some(first.pixels.as_ptr() as i64));
+    drop((payload, delayed));
+    assert_eq!(Arc::strong_count(&first), 1, "released once handed on");
+    assert_eq!(Arc::strong_count(&second), 2, "the next one is held");
+    drop(host);
+    assert_eq!(Arc::strong_count(&second), 1, "released with the node");
 }

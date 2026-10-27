@@ -1,5 +1,6 @@
 //! Foreign interfaces in the node and plugin macros: foreign view inputs (`FrameView<'_>`,
-//! `ForeignRef<'_, I>`) and `#[plugin(foreign_providers(Owner => Interface))]`.
+//! `ForeignRef<'_, I>`, `SharedFrame`), `SharedFrame` outputs and
+//! `#[plugin(foreign_providers(Owner => Interface))]`.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -12,9 +13,15 @@ use crate::type_expr::{bind_types, leaf_type_key};
 
 /// Whether a by-value node parameter is a foreign view: the payload carries a `ForeignHandle`
 /// and the macro fetches it with `NodeIo::get_foreign` instead of a typed downcast. Recognized
-/// by name (`FrameView`, `ForeignRef`), since aliases are invisible to macros.
+/// by name (`FrameView`, `ForeignRef`, `SharedFrame`), since aliases are invisible to macros.
 pub(crate) fn is_foreign_view(ty: &Type) -> bool {
-    last_ident_is(ty, "FrameView") || last_ident_is(ty, "ForeignRef")
+    last_ident_is(ty, "FrameView") || last_ident_is(ty, "ForeignRef") || is_shared_frame(ty)
+}
+
+/// Whether a node output (or input) is an owned frame, pushed with `NodeIo::push_frame` as a
+/// `daedalus:frame` payload rather than as a typed Rust value.
+pub(crate) fn is_shared_frame(ty: &Type) -> bool {
+    last_ident_is(ty, "SharedFrame")
 }
 
 /// `Owner => Interface`.

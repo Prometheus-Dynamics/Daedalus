@@ -73,6 +73,12 @@ pub(super) fn register_port_types_fn(inputs: PortTypeInputs<'_>) -> TokenStream 
             }
         }
         for (port, ty) in outputs.iter().zip(output_contract_tys) {
+            let value = generic_arg(ty, "Option", 0).unwrap_or(ty);
+            if crate::foreign_type::is_shared_frame(value) {
+                // A frame output declares the interface, not a Rust type, for its key.
+                foreign_views.push(quote! { into.register_foreign_port::<#value>()?; });
+                continue;
+            }
             if let Some(value_ty) = stable_port_type(ty) {
                 stable_ports.push(stable_port_registration(
                     &port.name,

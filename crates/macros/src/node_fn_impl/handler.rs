@@ -610,6 +610,10 @@ fn push_output(
         let push = push_output(inner, port, explicit, quote! { __value }, keys);
         return quote! { if let Some(__value) = #value { #push } };
     }
+    if crate::foreign_type::is_shared_frame(ty) {
+        // A foreign payload under the interface key: no Rust type key to compute.
+        return quote! { io.push_frame(#port, #value); };
+    }
     let idx = keys.len();
     let key = quote! { __output_keys[#idx].clone() };
     match arc_inner_type(ty) {

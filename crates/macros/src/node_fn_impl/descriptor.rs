@@ -178,7 +178,16 @@ pub(super) fn output_type_exprs(
     outputs: &[OutputPortMeta],
     generic_type_params: &::std::collections::HashSet<::std::string::String>,
     data_crate: &TokenStream,
+    runtime_crate: &TokenStream,
 ) -> Vec<TokenStream> {
+    // A frame output carries its interface key, like a frame input.
+    let type_expr = |ty: &syn::Type| {
+        if crate::foreign_type::is_shared_frame(ty) {
+            quote! { #runtime_crate::foreign::view_type_expr::<#ty>() }
+        } else {
+            node_type_expr(ty, generic_type_params, data_crate)
+        }
+    };
     let explicit: Vec<Option<TokenStream>> = outputs
         .iter()
         .map(|p| p.ty_override.as_ref().map(|ts| quote! { (#ts) }))
@@ -196,14 +205,14 @@ pub(super) fn output_type_exprs(
                         continue;
                     }
                     let elem = optional_input_type(elem).unwrap_or(elem);
-                    out.push(node_type_expr(elem, generic_type_params, data_crate));
+                    out.push(type_expr(elem));
                 }
             }
         } else if outputs.len() == 1 {
             if let Some(ts) = explicit.first().and_then(|v| v.clone()) {
                 out.push(ts);
             } else {
-                out.push(node_type_expr(base_ty, generic_type_params, data_crate));
+                out.push(type_expr(base_ty));
             }
         }
     }

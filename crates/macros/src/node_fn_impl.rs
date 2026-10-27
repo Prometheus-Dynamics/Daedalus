@@ -229,6 +229,7 @@ pub fn node(args: TokenStream, item: TokenStream) -> TokenStream {
         &outputs_vec,
         &generic_type_params,
         &data_crate,
+        &runtime_crate,
     );
 
     let has_fn_generics = !fn_generics.params.is_empty();
