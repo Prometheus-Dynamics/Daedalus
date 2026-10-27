@@ -1,5 +1,7 @@
 use super::*;
-use daedalus_planner::{Graph, GraphDocument, MissingPlugins, PluginRequirement};
+use daedalus_planner::{
+    Graph, GraphDocument, MissingPlugins, PluginRequirement, PortRefreshReport,
+};
 
 impl PluginRegistry {
     /// Whether a plugin (or plugin group) with this id is installed, and its declared version.
@@ -51,5 +53,13 @@ impl PluginRegistry {
     pub fn graph_document(&self, graph: Graph) -> GraphDocument {
         let requires = self.graph_requirements(&graph);
         GraphDocument::new(graph).with_requires(requires)
+    }
+
+    /// Bring `graph`'s node port lists up to date with the installed nodes
+    /// ([`Graph::refresh_ports`]): ports a plugin added since the graph was stored are added with
+    /// their metadata, unused ports it removed are dropped. Call it before compiling a stored
+    /// graph, and re-save it when [`PortRefreshReport::changed`].
+    pub fn refresh_graph_ports(&self, graph: &mut Graph) -> PortRefreshReport {
+        graph.refresh_ports(&self.transport_capabilities)
     }
 }

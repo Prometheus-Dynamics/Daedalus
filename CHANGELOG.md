@@ -17,6 +17,15 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Refresh stale port lists of stored graphs.** `Graph::refresh_ports(&CapabilityRegistry)`,
+  `GraphDocument::refresh_ports` and `PluginRegistry::refresh_graph_ports(&mut Graph)` add the
+  ports a node's declaration gained since the graph was saved (with their `inputs.<port>.*` /
+  `outputs.<port>.*` metadata) and drop the ones it lost unless an edge or const input uses
+  them; they return a `PortRefreshReport` of what changed. Before this, a plugin adding a port to
+  a node made every stored graph using that node fail to plan with "graph is stale; regenerate
+  ports from registry", with no API to do so (hit by HeliOS when Eidos added `map`/`save`/
+  `saved_map` to `mapping.live_map`).
+
 - **`HostGraph::set_frame_overhead_sampling(every)`**: record frame-path overhead for one tick in
   `every` (default 1, every tick). Recording costs about 13 µs per tick of the 22-node AprilTag
   graph on a CM5; HeliOS keeps it on with its metrics, so sampling 1 in 16 saves nearly all of it

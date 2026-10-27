@@ -22,6 +22,7 @@ mod host_inputs;
 mod metadata;
 mod passes;
 mod patch;
+mod refresh;
 mod sharing;
 
 daedalus_core::build_facts!();
@@ -57,6 +58,7 @@ pub use passes::{
     registered_planner_lowerings,
 };
 pub use patch::{GraphMetadataSelector, GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
+pub use refresh::{NodePortRefresh, PortRefreshReport};
 pub use sharing::{
     SHARED_UPSTREAM_HOST, SharedNode, SharedPart, SharedPort, SharedSplit, split_shared_upstream,
 };

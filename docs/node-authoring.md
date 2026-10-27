@@ -753,6 +753,16 @@ than queued.
   [`docs/schema/daedalus.graph.v1.schema.json`](schema/daedalus.graph.v1.schema.json), generated
   by `GraphDocument::json_schema()` (planner `schema` feature).
 
+  **Stale port lists.** A document stores each node's port names and per-port metadata, so a
+  graph saved before a plugin added a port to one of its nodes fails to plan (`PortMissing`,
+  "graph is stale; regenerate ports from registry"). Refresh it before compiling:
+  `PluginRegistry::refresh_graph_ports(&mut document.graph)` (or `Graph::refresh_ports` /
+  `GraphDocument::refresh_ports` with a `CapabilityRegistry`) adds the declared ports the node
+  lacks, with the declaration's `inputs.<port>.*`/`outputs.<port>.*` metadata, and drops ports the
+  node no longer declares unless an edge or const input uses them (those stay for the planner to
+  report). Nodes that list no ports, dynamic port directions and fan-in ports are left alone. It
+  is idempotent; re-save the document when the returned `PortRefreshReport::changed()`.
+
   **Schema versions.** `schema_version` is required. A document loads when its version is in
   `1..=GRAPH_DOCUMENT_SCHEMA_VERSION`; a newer one fails with
   `GraphDocumentError::UnsupportedSchemaVersion`, and a missing one with `MissingSchemaVersion`.
