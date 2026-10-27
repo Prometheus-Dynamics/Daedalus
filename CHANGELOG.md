@@ -38,8 +38,10 @@ plugin ABI and does not load.
   unchanged. `daedalus-gpu`: `ExternalFrameDescriptor` carries the colorimetry, and
   `from_shared_frame` builds an import that keeps the frame (the producer's buffer) alive.
 - **Benchmarks on `dev`:** `.github/workflows/bench.yml` runs on pushes to `dev` as well as
-  `main` (same path filters). Its baseline is the newest earlier run on the same branch, not on
-  the default branch.
+  `main` (same path filters). Its baseline is the head commit of the newest earlier run on the
+  same branch, benched again in the same job: the first dev runs compared against the previous
+  run's artifact and flagged 15-45% slowdowns on every bench, including after a docs-only
+  commit, because hosted runners differ in speed between jobs.
 - **`daedalus_gpu::driver_lock()` and `with_driver_lock(f)`** (`gpu-wgpu`): the process-wide
   lock that serializes Daedalus's Vulkan instance, adapter and device creation. A host that
   creates wgpu/Vulkan instances itself takes it around that setup. It is not reentrant; see

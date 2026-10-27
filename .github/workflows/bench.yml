@@ -1,9 +1,11 @@
 name: bench
 
-# Benchmark tracking: never runs on pull requests. Each run uploads its criterion output as the
-# `criterion` artifact and compares against the newest earlier run on the same branch (main or
-# dev) that still has one (scripts/bench-compare.py; >15% median regression fails the compare
-# step).
+# Benchmark tracking: never runs on pull requests. Each run benches the head commit and the
+# head commit of the previous bench run on the same branch (main or dev) in the same job, so both
+# sides share one runner: hosted runners differ in speed by 15-40% between jobs, which made a
+# compare against an earlier run's artifact flag every bench. The head's criterion output is
+# uploaded as the `criterion` artifact; scripts/bench-compare.py fails the compare step on a
+# >15% median regression.
 on:
   workflow_dispatch:
   schedule:
@@ -17,6 +19,8 @@ on:
       - "crates/engine/**"
       - "crates/transport/**"
       - "Cargo.lock"
+      - ".github/workflows/bench.yml"
+      - "scripts/bench-compare.py"
 
 concurrency:
   group: bench
@@ -38,12 +42,42 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.99.0
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
+
+      # The previous bench run's head commit on this branch, benched here on the same runner.
+      - name: Bench the previous baseline commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          mkdir -p baseline
+          base=""
+          # `gh run list` returns newest first; skip this run and any newer one.
+          for row in $(gh run list --workflow bench.yml --branch "$BRANCH" --status completed \
+              --limit 50 --json databaseId,headSha --jq '.[] | "\(.databaseId):\(.headSha)"'); do
+            id=${row%%:*} sha=${row#*:}
+            [ "$id" -ge "$GITHUB_RUN_ID" ] && continue
+            [ "$sha" = "$GITHUB_SHA" ] && continue
+            if git cat-file -e "$sha^{commit}" 2>/dev/null; then base=$sha; break; fi
+          done
+          if [ -z "$base" ]; then
+            echo "No previous bench commit found; this run has nothing to compare against"
+            exit 0
+          fi
+          echo "Baseline commit $base"
+          git worktree add --detach ../bench-base "$base"
+          # Share the target directory so dependencies build once.
+          (cd ../bench-base && rm -rf "$GITHUB_WORKSPACE/target/criterion" \
+            && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" ./scripts/ci.sh bench)
+          cp -r target/criterion/. baseline/
+          rm -rf target/criterion
 
       # Start from an empty criterion directory so only this run's estimates are uploaded.
       - name: Run benches
@@ -55,25 +89,6 @@ jobs:
           name: ${{ env.BENCH_ARTIFACT }}
           path: target/criterion
           retention-days: 90
-
-      - name: Download previous baseline
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # The branch this run is for, so a dev run compares with earlier dev runs and a main
-          # run with earlier main runs. `gh run list` returns newest first.
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          mkdir -p baseline
-          for id in $(gh run list --workflow bench.yml --branch "$BRANCH" --status completed \
-              --limit 50 --json databaseId --jq '.[].databaseId'); do
-            # Only earlier runs: a newer run may already have finished, and it is not a baseline.
-            [ "$id" -ge "$GITHUB_RUN_ID" ] && continue
-            if gh run download "$id" --name "$BENCH_ARTIFACT" --dir baseline 2>/dev/null; then
-              echo "Using baseline from run $id"
-              exit 0
-            fi
-          done
-          echo "No previous baseline artifact found"
 
       - name: Compare against baseline
         run: python3 scripts/bench-compare.py baseline target/criterion --threshold 15

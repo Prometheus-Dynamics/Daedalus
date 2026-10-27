@@ -191,8 +191,10 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 - [x] **`bench.yml` on `dev`.** Its push trigger now covers `dev` as well as `main`, with the same
       path filters, and the baseline is the newest earlier run on the same branch (it was the
       default branch, which lacked the file). Its schedule and `workflow_dispatch` still fire from
-      `main` only; the workflow has not been run yet (it cannot run locally), so the first push to
-      `dev` that touches runtime/engine/transport is the first real run.
+      `main` only. The first dev runs (40532524948 onward) worked, but comparing against an earlier
+      job's artifact flagged runner speed differences (+15-45% on every bench, including a
+      docs-only commit), so each run now benches the previous run's head commit on the same
+      runner.
 - [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. Dev work is versioned
       `<major>.<minor>.<patch>-dev` (now `3.0.1-dev`): only the patch moves during dev, major and
       minor change only for an agreed release, and changes go under CHANGELOG `[Unreleased]`.
