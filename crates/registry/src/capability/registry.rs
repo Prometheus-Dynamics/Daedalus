@@ -453,10 +453,6 @@ impl CapabilityRegistry {
         self.serializers.register(decl)
     }
 
-    pub fn replace_serializer(&mut self, decl: SerializerDecl) {
-        self.serializers.replace(decl);
-    }
-
     pub fn register_device(&mut self, decl: DeviceDecl) -> RegistryResult<()> {
         self.devices.register(decl)
     }
@@ -518,10 +514,6 @@ impl CapabilityRegistry {
 
     pub fn node_decl(&self, id: &NodeId) -> Option<&NodeDecl> {
         self.nodes.get(id)
-    }
-
-    pub fn serializer_decl(&self, id: &str) -> Option<&SerializerDecl> {
-        self.serializers.get(id)
     }
 
     pub fn device_decl(&self, id: &str) -> Option<&DeviceDecl> {

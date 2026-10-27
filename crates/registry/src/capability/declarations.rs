@@ -483,13 +483,6 @@ impl NodeFire {
             .and_then(Self::parse)
             .unwrap_or_default()
     }
-
-    pub fn write_to_metadata(self, metadata: &mut BTreeMap<String, Value>) {
-        metadata.insert(
-            NODE_FIRE_META_KEY.to_string(),
-            Value::String(self.as_str().into()),
-        );
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -503,6 +496,14 @@ pub enum NodeExecutionKind {
 }
 
 impl NodeExecutionKind {
+    #[cfg(test)]
+    pub(crate) fn write_to_metadata(self, metadata: &mut BTreeMap<String, Value>) {
+        metadata.insert(
+            NODE_EXECUTION_KIND_META_KEY.to_string(),
+            Value::String(self.as_str().into()),
+        );
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             NodeExecutionKind::HandlerRequired => "handler_required",
@@ -522,7 +523,7 @@ impl NodeExecutionKind {
         }
     }
 
-    pub fn from_metadata_value(value: &Value) -> Option<Self> {
+    pub(crate) fn from_metadata_value(value: &Value) -> Option<Self> {
         match value {
             Value::String(value) => Self::parse(value),
             _ => None,
@@ -533,13 +534,6 @@ impl NodeExecutionKind {
         metadata
             .get(NODE_EXECUTION_KIND_META_KEY)
             .and_then(Self::from_metadata_value)
-    }
-
-    pub fn write_to_metadata(self, metadata: &mut BTreeMap<String, Value>) {
-        metadata.insert(
-            NODE_EXECUTION_KIND_META_KEY.to_string(),
-            Value::String(self.as_str().into()),
-        );
     }
 
     pub fn write_default_to_metadata(self, metadata: &mut BTreeMap<String, Value>) {
