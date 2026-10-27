@@ -13,20 +13,13 @@
 use daedalus::engine::{EngineConfig, MetricsLevel};
 use daedalus_frame_bench::{
     CHAIN_OUTPUT, CountingAllocator, FrameBenchConfig, FrameFeed, FrameSourceConfig,
-    SyntheticFrameSource, compile_frame_fanout, run_frame_bench, runtime_mode_from_env,
+    SyntheticFrameSource, compile_frame_fanout, env_usize, run_frame_bench, runtime_mode_from_env,
 };
 
 #[global_allocator]
 static ALLOC: CountingAllocator = CountingAllocator::system();
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
-
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
 
 fn main() -> Result<(), Error> {
     if let Some(cpu) = daedalus_frame_bench::pin_from_env()? {

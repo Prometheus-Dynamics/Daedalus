@@ -208,6 +208,15 @@ pub fn run_frame_bench<H: NodeHandler + Send + Sync + 'static>(
     })
 }
 
+/// `name` parsed as a `usize`, or `default` when it is unset or not a number. The bench examples
+/// read their sizes (ticks, fan-out, detector count) this way.
+pub fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
 /// `DAEDALUS_NODE_FUSION` (`0`/`off` turns node fusion off; on by default), for comparing fused
 /// and unfused runs of the bench examples (`EngineConfig::with_node_fusion`).
 pub fn node_fusion_from_env() -> bool {

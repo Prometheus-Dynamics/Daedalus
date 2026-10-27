@@ -14,7 +14,7 @@ use daedalus::engine::{EngineConfig, MetricsLevel};
 use daedalus_frame_bench::{
     CountingAllocator, DETECTOR_OUTPUTS, FrameBenchConfig, FrameFeed, FrameSourceConfig, Marker,
     SyntheticFrameSource, compile_separate_detectors, compile_shared_detectors,
-    compile_structural_detectors, marker_name, run_domain_bench,
+    compile_structural_detectors, env_usize, marker_name, run_domain_bench,
 };
 
 #[global_allocator]
@@ -33,14 +33,8 @@ fn main() -> Result<(), Error> {
     if let Some(cpu) = daedalus_frame_bench::pin_from_env()? {
         println!("pinned to CPU {cpu}");
     }
-    let env = |name: &str, default: usize| {
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default)
-    };
-    let ticks = env("FRAME_CHAIN_TICKS", 5000);
-    let detectors = &ALL[..env("SHARED_DETECTORS", 2).clamp(1, ALL.len())];
+    let ticks = env_usize("FRAME_CHAIN_TICKS", 5000);
+    let detectors = &ALL[..env_usize("SHARED_DETECTORS", 2).clamp(1, ALL.len())];
     let bench = FrameBenchConfig::new(DETECTOR_OUTPUTS).with_ticks(ticks / 5, ticks);
     let outputs: Vec<(&str, &str)> = detectors
         .iter()

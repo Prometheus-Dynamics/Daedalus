@@ -13,7 +13,7 @@
 use daedalus::engine::{EngineConfig, MetricsLevel};
 use daedalus_frame_bench::{
     CHAIN_OUTPUT, CountingAllocator, FrameBenchConfig, FrameBenchRun, FrameFeed, FrameSourceConfig,
-    SyntheticFrameSource, compile_frame_chain, fit_per_node, run_frame_bench,
+    SyntheticFrameSource, compile_frame_chain, env_usize, fit_per_node, run_frame_bench,
     runtime_mode_from_env,
 };
 
@@ -23,13 +23,6 @@ static ALLOC: CountingAllocator = CountingAllocator::system();
 const STAGES: [usize; 3] = [1, 4, 16];
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
-
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
 
 fn run(
     stages: usize,
