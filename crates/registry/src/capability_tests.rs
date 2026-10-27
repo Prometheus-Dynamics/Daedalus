@@ -507,9 +507,10 @@ fn adapter_search_breaks_ties_by_path_order_on_many_adapters() {
 
     let index = reg.adapter_index();
     let request = AdaptRequest::new(TypeKey::new("c"));
-    // Equal-cost arrivals pop greatest path first (the frontier is a max-heap over
-    // `(Reverse(cost), type, path)`); pinned so a change of tie-break is a visible test change.
-    let expected = vec![AdapterId::new("a_199_in"), AdapterId::new("b_199_out")];
+    // Equal-cost routes break ties by the smallest adapter id sequence (fewer steps first); the
+    // 200 routes tie, so the one whose ids sort first wins. Pinned so a change is a visible test
+    // change.
+    let expected = vec![AdapterId::new("a_000_in"), AdapterId::new("b_000_out")];
     let expected_cost = 2 * AdaptCost::view().weight();
     let by_default = reg
         .resolve_adapter_path(&TypeKey::new("a"), &TypeKey::new("c"))
@@ -521,4 +522,47 @@ fn adapter_search_breaks_ties_by_path_order_on_many_adapters() {
         assert_eq!(path.steps, expected);
         assert_eq!(path.total_cost, expected_cost);
     }
+}
+
+/// A cost that weighs `4`, the same as two `view` hops (`2 + 2`).
+fn cost_four() -> AdaptCost {
+    let mut cost = AdaptCost::new(AdaptKind::Reinterpret);
+    cost.cpu_ns = 1;
+    cost
+}
+
+#[test]
+fn adapter_search_equal_cost_prefers_smaller_id_not_greater() {
+    // Two single-hop routes of equal cost. The smaller id wins whatever the registration order;
+    // the old tie-break (greatest path first) picked `route_b`.
+    let mut reg = CapabilityRegistry::new();
+    reg.register_adapter(AdapterDecl::new("route_b", "a", "c").cost(cost_four()))
+        .unwrap();
+    reg.register_adapter(AdapterDecl::new("route_a", "a", "c").cost(cost_four()))
+        .unwrap();
+
+    let path = reg
+        .resolve_adapter_path(&TypeKey::new("a"), &TypeKey::new("c"))
+        .unwrap();
+    assert_eq!(path.steps, vec![AdapterId::new("route_a")]);
+    assert_eq!(path.total_cost, cost_four().weight());
+}
+
+#[test]
+fn adapter_search_equal_cost_prefers_fewer_steps() {
+    // A direct adapter and a two-hop route of equal cost. The fewer-step route wins even though
+    // the two-hop route's first id sorts first.
+    let mut reg = CapabilityRegistry::new();
+    reg.register_adapter(AdapterDecl::new("b_direct", "a", "c").cost(cost_four()))
+        .unwrap();
+    reg.register_adapter(AdapterDecl::new("a_first", "a", "m").cost(AdaptCost::view()))
+        .unwrap();
+    reg.register_adapter(AdapterDecl::new("a_second", "m", "c").cost(AdaptCost::view()))
+        .unwrap();
+
+    let path = reg
+        .resolve_adapter_path(&TypeKey::new("a"), &TypeKey::new("c"))
+        .unwrap();
+    assert_eq!(path.steps, vec![AdapterId::new("b_direct")]);
+    assert_eq!(path.total_cost, cost_four().weight());
 }

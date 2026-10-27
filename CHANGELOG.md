@@ -69,6 +69,13 @@ plugin ABI and does not load.
   `struct{"a":...}`, ...), so the layout hash of a type changes only when its shape does. The
   golden test `canonical_label_is_pinned` guards it. Every boundary layout hash changes once, so
   rebuild plugins with this host.
+- Planner: equal-cost adapter paths tie-break deterministically. The search prefers the path
+  with fewer adapter steps, then the one whose adapter ids sort first, lexicographically. It used
+  to prefer the greatest id sequence, an artifact of the max-heap it pops from. Only the choice
+  between equal-cost routes changes; the cost of the chosen route does not. The test
+  `adapter_search_breaks_ties_by_path_order_on_many_adapters` now expects `a_000_in`, and the new
+  `adapter_search_equal_cost_prefers_smaller_id_not_greater` and
+  `adapter_search_equal_cost_prefers_fewer_steps` pin the rule.
 - Engine: without a GPU backend (`GpuBackend::Cpu`), a node declared with
   `#[node(fallback = "...")]` runs its CPU fallback in place of the GPU node. Before, the GPU
   handler ran on CPU data and failed.

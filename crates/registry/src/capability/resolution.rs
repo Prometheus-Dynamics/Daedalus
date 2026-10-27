@@ -18,6 +18,8 @@ use super::support::{ActiveFeatureSet, active_feature_set, features_enabled};
 struct PathNode<'a> {
     adapter: &'a AdapterDecl,
     parent: Path<'a>,
+    /// Number of adapters on the path ending at this node.
+    depth: usize,
 }
 
 type Path<'a> = Option<Rc<PathNode<'a>>>;
@@ -34,17 +36,26 @@ fn path_adapters<'a>(path: &Path<'a>) -> Vec<&'a AdapterDecl> {
     adapters
 }
 
-/// Lexicographic order of two paths by adapter id, the order the search has always tie-broken on.
-fn path_cmp(a: &Path<'_>, b: &Path<'_>) -> Ordering {
-    let a = path_adapters(a);
-    let b = path_adapters(b);
-    a.iter()
-        .map(|adapter| &adapter.id)
-        .cmp(b.iter().map(|adapter| &adapter.id))
+/// Number of adapter steps on a path.
+fn path_len(path: &Path<'_>) -> usize {
+    path.as_deref().map_or(0, |node| node.depth)
 }
 
-/// A search frontier entry, ordered as the `(Reverse(cost), type, path)` tuple the search has
-/// always used in its max-heap: the cheapest entry, then the greatest type and path, pops first.
+/// Preference order of two paths to the same cost: `Less` is the preferred path. The path with
+/// fewer adapter steps wins, then the one whose adapter ids sort first, lexicographically. The
+/// order is total and deterministic, so equal-cost routes never depend on registration order.
+fn path_cmp(a: &Path<'_>, b: &Path<'_>) -> Ordering {
+    path_len(a).cmp(&path_len(b)).then_with(|| {
+        let a = path_adapters(a);
+        let b = path_adapters(b);
+        a.iter()
+            .map(|adapter| &adapter.id)
+            .cmp(b.iter().map(|adapter| &adapter.id))
+    })
+}
+
+/// A search frontier entry. The search pops from a max-heap, so the entry that pops first is the
+/// greatest under this order: the cheapest, then the preferred path (see [`path_cmp`]).
 struct Frontier<'a> {
     cost: u64,
     key: &'a TypeKey,
@@ -55,8 +66,8 @@ impl Ord for Frontier<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         Reverse(self.cost)
             .cmp(&Reverse(other.cost))
+            .then_with(|| path_cmp(&other.path, &self.path))
             .then_with(|| self.key.cmp(other.key))
-            .then_with(|| path_cmp(&self.path, &other.path))
     }
 }
 
@@ -244,6 +255,7 @@ impl CapabilityRegistry {
                 let next_path: Path<'_> = Some(Rc::new(PathNode {
                     adapter,
                     parent: path.clone(),
+                    depth: path_len(&path) + 1,
                 }));
 
                 let replace = match dist.get(&adapter.to) {
