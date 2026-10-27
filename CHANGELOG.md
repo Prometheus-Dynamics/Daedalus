@@ -17,6 +17,9 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Benchmarks on `dev`:** `.github/workflows/bench.yml` runs on pushes to `dev` as well as
+  `main` (same path filters). Its baseline is the newest earlier run on the same branch, not on
+  the default branch.
 - **`daedalus_gpu::driver_lock()` and `with_driver_lock(f)`** (`gpu-wgpu`): the process-wide
   lock that serializes Daedalus's Vulkan instance, adapter and device creation. A host that
   creates wgpu/Vulkan instances itself takes it around that setup. It is not reentrant; see

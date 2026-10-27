@@ -219,10 +219,10 @@ counter. The `portability` CI job runs it. See [mcu.md](mcu.md).
 ### Benchmarks
 
 Benches do not run on pull requests. The `bench` workflow (`.github/workflows/bench.yml`) runs
-on `workflow_dispatch`, weekly, and on pushes to `main` that touch runtime/engine/transport. It
-runs `scripts/ci.sh bench`, uploads `target/criterion` as the `criterion` artifact (90 days),
-downloads the same artifact from the newest earlier completed run on the default branch, and
-runs:
+on `workflow_dispatch`, weekly (the schedule runs from `main`), and on pushes to `main` or `dev`
+that touch runtime/engine/transport. It runs `scripts/ci.sh bench`, uploads `target/criterion` as
+the `criterion` artifact (90 days), downloads the same artifact from the newest earlier completed
+run on the same branch, and runs:
 
 ```bash
 python3 scripts/bench-compare.py BASELINE_DIR CURRENT_DIR [--threshold 15] [--stat median|mean]

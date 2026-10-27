@@ -182,10 +182,11 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 - [x] **First GitHub Actions run** of `ci.yml`: every job (workspace, facade with the dylib and
       macro-UI tests, docs-and-lints, package-surface, aarch64, lean-preset, portability with
       nostd/wasm/MCU) runs and passes on pushes to `dev` (e.g. run 40175816440).
-- [ ] **`bench.yml` has never run.** Its schedule and `workflow_dispatch` only fire from the
-      default branch (`main`, which does not have the file yet) and its push trigger is `main`
-      only, so the criterion baseline and `bench-compare.py` are untested until a release merge
-      to `main`, or a `dev` trigger is added.
+- [x] **`bench.yml` on `dev`.** Its push trigger now covers `dev` as well as `main`, with the same
+      path filters, and the baseline is the newest earlier run on the same branch (it was the
+      default branch, which lacked the file). Its schedule and `workflow_dispatch` still fire from
+      `main` only; the workflow has not been run yet (it cannot run locally), so the first push to
+      `dev` that touches runtime/engine/transport is the first real run.
 - [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. Dev work is versioned
       `<major>.<minor>.<patch>-dev` (now `3.0.1-dev`): only the patch moves during dev, major and
       minor change only for an agreed release, and changes go under CHANGELOG `[Unreleased]`.
