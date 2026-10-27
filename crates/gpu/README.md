@@ -29,6 +29,28 @@ The `wgpu` backend list is chosen in this order:
 `EngineConfig` does not carry GPU options; hosts that build `GpuOptions` themselves set the field.
 Planner/runtime GPU behavior is enabled from facade/runtime/engine features, not by this crate alone.
 
+## Host-created Vulkan instances
+
+The Vulkan loader is not safe when several threads set up a graphics driver at once: the NVIDIA ICD
+next to Mesa can crash it during instance creation. Daedalus serializes its own instance, adapter
+and device creation with a process-wide lock. A host that creates wgpu/Vulkan instances on its own
+threads should take the same lock around that setup:
+
+```rust,ignore
+let instance = daedalus_gpu::with_driver_lock(|| wgpu::Instance::new(desc));
+// or, holding the guard across several calls:
+let guard = daedalus_gpu::driver_lock();
+let instance = wgpu::Instance::new(desc);
+drop(guard);
+```
+
+- `driver_lock()` returns a `DriverGuard`; `with_driver_lock(f)` holds it while `f` runs. Both need
+  the `gpu-wgpu` feature.
+- The lock is not reentrant. Do not call a Daedalus GPU constructor (`WgpuBackend::new`,
+  `select_backend`, a shader helper that creates its context) while you hold it: that deadlocks.
+- Only creation is covered. Dropping instances, adapters and devices needs no lock; the loader
+  serializes destruction itself.
+
 ## Sync and async GPU paths
 
 The synchronous `wgpu` entry points are compatibility APIs for callers that do not own an async

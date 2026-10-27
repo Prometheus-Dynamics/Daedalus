@@ -27,18 +27,29 @@ use parking_lot::{Condvar, Mutex};
 static BUSY: Mutex<bool> = Mutex::new(false);
 static FREED: Condvar = Condvar::new();
 
-/// Held while a wgpu instance, adapter or device is being created; see the module docs.
+/// Held while a graphics driver is being set up; see the module docs. Dropping it releases the
+/// lock. It is `Send`, and it is not reentrant: taking it again on the same thread deadlocks.
 #[must_use = "the driver lock is released when the guard is dropped"]
-pub(crate) struct DriverGuard(());
+pub struct DriverGuard(());
 
-/// Wait until no other thread sets up a graphics driver, then hold the lock (not reentrant).
-pub(crate) fn driver_lock() -> DriverGuard {
+/// Wait until no other thread sets up a graphics driver, then hold the lock.
+///
+/// Take it around any wgpu instance, adapter or device creation a host makes on its own, so that
+/// it serializes with the creations Daedalus does. Do not call a Daedalus GPU constructor while
+/// holding it: that takes the same lock and deadlocks. Use [`with_driver_lock`] for a closure.
+pub fn driver_lock() -> DriverGuard {
     let mut busy = BUSY.lock();
     while *busy {
         FREED.wait(&mut busy);
     }
     *busy = true;
     DriverGuard(())
+}
+
+/// Run `f` while holding the driver lock (see [`driver_lock`]), and return its result.
+pub fn with_driver_lock<R>(f: impl FnOnce() -> R) -> R {
+    let _guard = driver_lock();
+    f()
 }
 
 impl Drop for DriverGuard {
@@ -79,6 +90,13 @@ mod tests {
                 });
             }
         });
+    }
+
+    #[test]
+    fn with_driver_lock_returns_the_value_and_releases_the_lock() {
+        assert_eq!(super::with_driver_lock(|| 7), 7);
+        // Would deadlock if the closure form left the lock held.
+        drop(driver_lock());
     }
 
     #[test]

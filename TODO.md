@@ -229,10 +229,10 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       through `NodeIo::take_owned_with`, cloning a shared `Clone` input, so retries get it again.
 - [x] **GPU fallback with `GpuBackend::Cpu`** (e9a1f05): the engine substitutes the `fallback`
       node when the backend is `Cpu`; it was stored as metadata and never read.
-- [ ] **Host-created Vulkan instances.** The driver lock only covers instances `daedalus-gpu`
-      creates; a host that creates wgpu/Vulkan instances on other threads at the same time can
-      still hit the loader race. Expose the lock (or document a creation order) if a host needs
-      it.
+- [x] **Host-created Vulkan instances.** `daedalus_gpu::driver_lock()` and
+      `daedalus_gpu::with_driver_lock(f)` expose the lock that serializes Daedalus's own driver
+      setup, so a host creating wgpu/Vulkan instances can serialize with it. The lock is not
+      reentrant; see "Host-created Vulkan instances" in `crates/gpu/README.md`.
 
 ### Portability (tier 2)
 Tier 1 (`no_std` + `alloc` core/transport/data/registry/planner, and the `embedded` preset on

@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`daedalus_gpu::driver_lock()` and `with_driver_lock(f)`** (`gpu-wgpu`): the process-wide
+  lock that serializes Daedalus's Vulkan instance, adapter and device creation. A host that
+  creates wgpu/Vulkan instances itself takes it around that setup. It is not reentrant; see
+  "Host-created Vulkan instances" in `crates/gpu/README.md`.
 - **Daemon protocol version.** `ping` answers `pong` with `protocol_version` (1, the new
   `daedalus_daemon::service::PROTOCOL_VERSION`), so a client can check the protocol before use.
   The graph document's `schema_version` and its bump policy are documented in

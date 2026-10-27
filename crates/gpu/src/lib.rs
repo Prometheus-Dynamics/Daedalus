@@ -54,7 +54,8 @@ pub use traits::{GpuBackend, GpuContext};
 pub use wgpu;
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu_backend::{
-    WgpuBackend, WgpuStagingPoolConfig, WgpuStagingPoolStats, texture_plane_views,
+    DriverGuard, WgpuBackend, WgpuStagingPoolConfig, WgpuStagingPoolStats, driver_lock,
+    texture_plane_views, with_driver_lock,
 };
 
 use bitflags::bitflags;
