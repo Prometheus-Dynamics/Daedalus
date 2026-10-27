@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`HostGraph::set_frame_overhead_sampling(every)`**: record frame-path overhead for one tick in
+  `every` (default 1, every tick). Recording costs about 13 µs per tick of the 22-node AprilTag
+  graph on a CM5; HeliOS keeps it on with its metrics, so sampling 1 in 16 saves nearly all of it
+  while the window's percentiles still describe typical ticks. Additive, kept across
+  `enable_frame_overhead` and `reset_frame_overhead`.
+
 - **Owned frames across plugins, both ways (`SharedFrame`):**
   `daedalus::transport::SharedFrame` is an owned, cheaply cloned `daedalus:frame` handle: a
   `#[node]` input and output on the Rust-ABI and stable plugin paths, kept in node state,

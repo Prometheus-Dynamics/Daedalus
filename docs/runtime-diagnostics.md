@@ -78,6 +78,8 @@ let config = EngineConfig::default()
     .with_frame_overhead(1024);
 let mut host = engine.compile_registry(&registry, graph)?;
 // ... or on a compiled graph: host.enable_frame_overhead(1024);
+// Always-on telemetry: record one tick in 16; the others run untimed.
+host.set_frame_overhead_sampling(16);
 
 // warm up, then start the window over
 host.reset_frame_overhead();
@@ -85,6 +87,11 @@ host.reset_frame_overhead();
 println!("{}", host.frame_overhead().unwrap()); // table; `.to_json()` for logs
 let last = host.last_frame_tick();               // one tick's `FrameTickSample`
 ```
+
+Recording every tick has a cost: about 13 µs per tick for a 22-node graph on a Raspberry Pi CM5
+(clock reads per stage and per edge hop). A host that keeps it on in production should sample:
+`set_frame_overhead_sampling(n)` records one tick in `n` (with its feeds and takes), so the
+window's p50/p99 still describe typical ticks while the others pay nothing.
 
 `frame_overhead()` returns a `FrameOverheadReport`: p50/p99/max/mean (exact, over the window,
 plus a log2 `Histogram` per row) of each stage in nanoseconds, the per-tick counters, and per-edge

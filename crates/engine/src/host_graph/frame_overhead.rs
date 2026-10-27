@@ -25,6 +25,10 @@ pub(crate) struct FrameOverheadState {
     /// `from.port -> to.port` per plan edge, built once: the plan and node labels of a graph
     /// never change (a reload replaces the graph).
     edge_labels: Arc<[String]>,
+    /// Record one tick in `every` ([`HostGraph::set_frame_overhead_sampling`]; 1: every tick).
+    every: u32,
+    /// Ticks since the last recorded one, modulo `every`; 0 means the current tick is recorded.
+    phase: u32,
 }
 
 /// Host-side values of the run the probe holds.
@@ -79,10 +83,14 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         let edge_labels = self.edge_labels().into();
         self.runner.executor.set_frame_probe(Some(probe.clone()));
         self.host.set_io_timing(true);
+        let every = self.frame_overhead.as_ref().map_or(1, |state| state.every);
         self.frame_overhead = Some(Box::new(FrameOverheadState {
             probe,
             window,
             edge_labels,
+            every,
+            // The next tick is recorded.
+            phase: every - 1,
             host: HostSide {
                 push_ns: 0,
                 #[cfg(feature = "alloc-probe")]
@@ -104,6 +112,19 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.frame_overhead = None;
         self.runner.executor.set_frame_probe(None);
         self.host.set_io_timing(false);
+    }
+
+    /// Record only one tick in `every` (minimum 1, the default: every tick). The window then
+    /// holds the last `window` recorded ticks, so its p50/p99 still describe typical ticks while
+    /// the others skip the timing (on a Raspberry Pi CM5 recording costs about 13 µs per tick of
+    /// a 22-node graph). The ticks in between run exactly as with recording off. Kept across
+    /// [`Self::enable_frame_overhead`] and [`Self::reset_frame_overhead`]; no effect while
+    /// recording is off.
+    pub fn set_frame_overhead_sampling(&mut self, every: u32) {
+        if let Some(state) = self.frame_overhead.as_deref_mut() {
+            state.every = every.max(1);
+            state.phase = state.every - 1;
+        }
     }
 
     /// Whether frame-overhead measurement is enabled for this graph.
@@ -192,6 +213,8 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
             window,
             host,
             edge_labels: _,
+            every,
+            phase,
         } = state;
         if probe.has_tick() {
             let take_ns = io.take.as_nanos() as u64;
@@ -202,5 +225,19 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
             #[cfg(feature = "alloc-probe")]
             allocs: HostSide::alloc_count(),
         };
+        if *every == 1 {
+            return;
+        }
+        // Sampled: the executor times this tick only when it is recorded, and the host bridge
+        // times its feeds and takes around recorded ticks (the feeds before the next one and
+        // this one's takes).
+        *phase = (*phase + 1) % *every;
+        let recorded = *phase == 0;
+        let next_recorded = *phase + 1 == *every;
+        let probe = recorded.then(|| probe.clone());
+        if probe.is_some() != self.runner.executor.frame_probe().is_some() {
+            self.runner.executor.set_frame_probe(probe);
+        }
+        self.host.set_io_timing(recorded || next_recorded);
     }
 }

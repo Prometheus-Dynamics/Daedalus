@@ -172,6 +172,35 @@ fn stages_add_up_to_the_tick() {
 }
 
 #[test]
+fn sampled_recording_keeps_one_tick_in_n() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let config = EngineConfig::default().with_frame_overhead(256);
+    let mut host = compile_frame_chain(4, FrameFeed::Interface, config).expect("compile chain");
+    host.set_frame_overhead_sampling(4);
+    let mut source = SyntheticFrameSource::new(FrameSourceConfig {
+        width: 64,
+        height: 48,
+        feed: FrameFeed::Interface,
+        ..FrameSourceConfig::default()
+    })
+    .expect("frame source");
+    let run = run_frame_bench(
+        &mut host,
+        &mut source,
+        &FrameBenchConfig::new([CHAIN_OUTPUT]).with_ticks(64, 256),
+    )
+    .expect("frame bench");
+    let report = run.overhead.as_ref().expect("overhead report");
+    // 256 measured ticks, every fourth recorded (the last one folded in by the report).
+    assert_eq!(report.recorded, 64, "{run}");
+    assert_eq!(report.ticks, 64, "{run}");
+    let mean = |name: &str| report.stage(name).expect(name).mean;
+    // Recorded ticks are whole: the host side was timed around them too.
+    assert!(mean("push") > 0.0 && mean("take") > 0.0, "{run}");
+    assert_eq!(report.counter("nodes").expect("nodes").p50, 4, "{run}");
+}
+
+#[test]
 fn detailed_metrics_keep_the_chain_copy_free() {
     let run = run(4, FrameFeed::Interface, MetricsLevel::Detailed);
     let report = run.overhead.as_ref().expect("overhead report");
