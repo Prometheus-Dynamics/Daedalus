@@ -328,6 +328,11 @@ impl StateStore {
     }
 
     pub(crate) fn clear_node_custom_metrics(&self, node_id: &str) {
+        // Most nodes never record one: an empty map has nothing to remove, so skip the write lock
+        // and the key hash.
+        if self.custom_metrics.read().is_empty() {
+            return;
+        }
         self.custom_metrics.write().remove(node_id);
     }
 
@@ -335,6 +340,9 @@ impl StateStore {
         &self,
         node_id: &str,
     ) -> BTreeMap<String, crate::executor::CustomMetricValue> {
+        if self.custom_metrics.read().is_empty() {
+            return BTreeMap::new();
+        }
         self.custom_metrics
             .write()
             .remove(node_id)
