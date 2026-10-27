@@ -204,8 +204,10 @@ pub const PLUGIN_DESCRIPTOR_SYMBOL: &str = "daedalus_plugin_descriptor";
 /// Version 5 introduced the descriptor and its stable `schema` entry point; version 6 added
 /// `boundary_types`; version 7 added `foreign_interfaces`; version 8 added `stable` (the stable
 /// handler path, versioned on its own by [`STABLE_ABI_VERSION`]); version 9 added
-/// `crate_builds`; version 10 grew [`StableHandlers`] (`create`, `unload`) for stable ABI 2.
-pub const PLUGIN_ABI_VERSION: u32 = 10;
+/// `crate_builds`; version 10 grew [`StableHandlers`] (`create`, `unload`) for stable ABI 2;
+/// version 11 changed the schema text of boundary contracts from `Debug` output to
+/// `TypeExpr::canonical_label`, which moves every boundary type's `LayoutHash::for_schema`.
+pub const PLUGIN_ABI_VERSION: u32 = 11;
 /// `rustc --version` of the compiler that built this copy of Daedalus.
 pub const RUSTC_VERSION: &str = env!("DAEDALUS_RUSTC_VERSION");
 

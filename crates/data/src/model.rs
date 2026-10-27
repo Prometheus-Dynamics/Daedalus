@@ -350,6 +350,111 @@ impl TypeExpr {
     }
 }
 
+impl TypeExpr {
+    /// Canonical text of this type, the form that feeds layout identity.
+    ///
+    /// **ABI-relevant.** The macro-generated boundary contracts hash this text into
+    /// `LayoutHash::for_schema` (see `BoundaryTypeContract`), so a change to any output here
+    /// changes the layout hash of every boundary type that uses it, and hosts and plugins built
+    /// on either side of the change reject each other. The rendering is written by hand and
+    /// independent of `Debug`, so reshaping `Debug` output or the field names of these enums
+    /// does not move it. Do not change the rendering of an existing variant: a new variant gets
+    /// a new, distinct spelling. The golden test `canonical_label_is_pinned` pins it.
+    ///
+    /// Grammar: `scalar:<rust type>`, `opaque:"<name>"`, `optional<T>`, `list<T>`, `map<K,V>`,
+    /// `tuple(A,B)`, `struct{"name":T,...}` and `enum{"name"[:T],...}`. Fields and variants keep
+    /// their declared order. Names are quoted and escaped, so no name can collide with the syntax.
+    pub fn canonical_label(&self) -> String {
+        let mut out = String::new();
+        self.write_canonical(&mut out);
+        out
+    }
+
+    fn write_canonical(&self, out: &mut String) {
+        match self {
+            TypeExpr::Scalar(v) => {
+                out.push_str("scalar:");
+                out.push_str(v.rust_name());
+            }
+            TypeExpr::Opaque(name) => {
+                out.push_str("opaque:");
+                write_canonical_name(out, name);
+            }
+            TypeExpr::Optional(inner) => {
+                out.push_str("optional<");
+                inner.write_canonical(out);
+                out.push('>');
+            }
+            TypeExpr::List(inner) => {
+                out.push_str("list<");
+                inner.write_canonical(out);
+                out.push('>');
+            }
+            TypeExpr::Map(k, v) => {
+                out.push_str("map<");
+                k.write_canonical(out);
+                out.push(',');
+                v.write_canonical(out);
+                out.push('>');
+            }
+            TypeExpr::Tuple(items) => {
+                out.push_str("tuple(");
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    item.write_canonical(out);
+                }
+                out.push(')');
+            }
+            TypeExpr::Struct(fields) => {
+                out.push_str("struct{");
+                for (i, field) in fields.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_canonical_name(out, &field.name);
+                    out.push(':');
+                    field.ty.write_canonical(out);
+                }
+                out.push('}');
+            }
+            TypeExpr::Enum(variants) => {
+                out.push_str("enum{");
+                for (i, variant) in variants.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write_canonical_name(out, &variant.name);
+                    if let Some(ty) = &variant.ty {
+                        out.push(':');
+                        ty.write_canonical(out);
+                    }
+                }
+                out.push('}');
+            }
+        }
+    }
+}
+
+/// Write a name as a double-quoted string, escaping `"`, `\` and control characters.
+fn write_canonical_name(out: &mut String, name: &str) {
+    out.push('"');
+    for ch in name.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() => {
+                out.push_str("\\u{");
+                out.push_str(&alloc::format!("{:x}", u32::from(c)));
+                out.push('}');
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
 /// Named field for struct types.
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
@@ -421,6 +526,68 @@ mod tests {
             _ => unreachable!(),
         };
         assert_eq!(variants[0].name, "a");
+    }
+
+    /// Pins [`TypeExpr::canonical_label`]: these strings feed layout hashes, so a diff here is an
+    /// ABI change (bump `PLUGIN_ABI_VERSION`). Do not edit an expectation to make it pass.
+    #[test]
+    fn canonical_label_is_pinned() {
+        let s = |t: ValueType| TypeExpr::Scalar(t);
+        let cases: Vec<(TypeExpr, &str)> = vec![
+            (s(ValueType::Int), "scalar:i64"),
+            (s(ValueType::Float), "scalar:f64"),
+            (s(ValueType::Bool), "scalar:bool"),
+            (s(ValueType::String), "scalar:String"),
+            (s(ValueType::Bytes), "scalar:Vec<u8>"),
+            (s(ValueType::Unit), "scalar:()"),
+            (
+                TypeExpr::opaque("my_plugin::Frame"),
+                r#"opaque:"my_plugin::Frame""#,
+            ),
+            (
+                TypeExpr::optional(s(ValueType::Bool)),
+                "optional<scalar:bool>",
+            ),
+            (TypeExpr::list(s(ValueType::F32)), "list<scalar:f32>"),
+            (
+                TypeExpr::map(s(ValueType::String), s(ValueType::Int)),
+                "map<scalar:String,scalar:i64>",
+            ),
+            (
+                TypeExpr::Tuple(vec![s(ValueType::U8), TypeExpr::opaque("x")]),
+                r#"tuple(scalar:u8,opaque:"x")"#,
+            ),
+            (
+                TypeExpr::r#struct(vec![
+                    StructField {
+                        name: "a".into(),
+                        ty: s(ValueType::Int),
+                    },
+                    StructField {
+                        name: "b".into(),
+                        ty: TypeExpr::optional(TypeExpr::list(s(ValueType::Float))),
+                    },
+                ]),
+                r#"struct{"a":scalar:i64,"b":optional<list<scalar:f64>>}"#,
+            ),
+            (
+                TypeExpr::r#enum(vec![
+                    EnumVariant {
+                        name: "none".into(),
+                        ty: None,
+                    },
+                    EnumVariant {
+                        name: "some".into(),
+                        ty: Some(s(ValueType::Int)),
+                    },
+                ]),
+                r#"enum{"none","some":scalar:i64}"#,
+            ),
+            (TypeExpr::opaque("a\"b\\c\n"), r#"opaque:"a\"b\\c\u{a}""#),
+        ];
+        for (ty, expected) in cases {
+            assert_eq!(ty.canonical_label(), expected, "label of {ty:?}");
+        }
     }
 
     #[test]

@@ -355,7 +355,7 @@ fn boundary_contract_push(
             __contracts.push(
                 #runtime_crate::transport_types::BoundaryTypeContract::for_schema::<#contract_ty>(
                     __key,
-                    format!("{:?}", __ty),
+                    __ty.canonical_label(),
                     #runtime_crate::transport_types::BoundaryCapabilities::rust_value(),
                 )
             );

@@ -11,7 +11,7 @@ patch version, and only the patch moves until a release is agreed. A git depende
 with `version = "3.0.0"` no longer resolves; drop the `version` requirement and pin the commit.
 Plugins installed through the Rust ABI must be built against the same Daedalus version as their
 host (`PluginInfo::daedalus_version` is compared exactly), so rebuild them with the host. A
-plugin built from a 3.0.0 dev commit with plugin ABI 10 still installs, through the stable ABI
+plugin built from a 3.0.0 dev commit with plugin ABI 10 (before 11) still installs, through the stable ABI
 (stable ABI 2) when it exports stable handlers; one built from the `v3.0.0` tag has an older
 plugin ABI and does not load.
 
@@ -62,6 +62,13 @@ plugin ABI and does not load.
 
 ### Changed
 
+- **Breaking: dynamic plugins `PLUGIN_ABI_VERSION` 11** (rebuild every Rust-ABI plugin). Boundary
+  contracts hash a schema text into `LayoutHash::for_schema`; that text was the `Debug` output
+  of `TypeExpr`, which moves whenever the derived `Debug` does. It is now
+  `TypeExpr::canonical_label()`, a hand-written, pinned rendering (`scalar:i64`, `list<...>`,
+  `struct{"a":...}`, ...), so the layout hash of a type changes only when its shape does. The
+  golden test `canonical_label_is_pinned` guards it. Every boundary layout hash changes once, so
+  rebuild plugins with this host.
 - Engine: without a GPU backend (`GpuBackend::Cpu`), a node declared with
   `#[node(fallback = "...")]` runs its CPU fallback in place of the GPU node. Before, the GPU
   handler ran on CPU data and failed.
