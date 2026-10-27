@@ -116,7 +116,9 @@ plugin ABI and does not load.
   backend's check against the modifier's advertised memory plane count. LINEAR still takes exactly
   one plane per format plane. Found by the first `ci.sh pi` run on a CM5 (V3D 7.1, Mesa 26.1.8):
   there, LINEAR XRGB8888 and NV12 are render/transfer only, not sampleable, so the
-  linear dma-heap hardware tests now skip on such devices instead of failing.
+  linear dma-heap hardware tests now skip on such devices instead of failing, as does the tiled
+  NV12 test when no modifier imports (v3dv's `vkCreateImage` rejects the explicit layout of its
+  own `UIF` NV12 export).
 - **`daedalus:frame` is now v3 (interface version 3, new layout hash); no ABI version
   changes.** `STABLE_ABI_VERSION` stays 2 and `PLUGIN_ABI_VERSION` stays 11: frames already
   crossed the stable ABI as foreign handles, and no descriptor, handler or `StableValue`
