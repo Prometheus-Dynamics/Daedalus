@@ -98,6 +98,16 @@ checkout itself can stay where it is.
 - Public ids, type keys, package descriptors, and telemetry fields should remain deterministic because planner/runtime goldens and FFI fixtures depend on stable serialization.
 - Host-facing queues should be bounded deliberately; internal finite graph edges default to compatibility-oriented FIFO behavior unless a graph or runtime config selects otherwise.
 
+### Semver checks
+
+`scripts/ci.sh semver` runs `cargo semver-checks --workspace` on the published packages (the
+`cargo package` exclusions) against `SEMVER_BASELINE` in `scripts/ci.sh`, a git revision that
+defaults to `v3.0.0`. Set it to the release tag once the release is sealed. It needs
+`cargo install cargo-semver-checks --locked`, and it is not part of `all` or `full`. The CI `semver`
+job runs it with `continue-on-error`, so its report is visible without failing the run until the
+release is sealed: 3.0.1-dev intentionally breaks the `v3.0.0` API (see `docs/api-review.md` for
+the surface that changed). Until then no run fails on it.
+
 ## Observability
 
 - Initialize a `tracing` subscriber in binaries and integration tests. The runtime's, engine's

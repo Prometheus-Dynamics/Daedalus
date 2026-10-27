@@ -70,6 +70,21 @@ plugin ABI and does not load.
   (a clean build of the same example is about 2.6 s faster), and `cargo tree` loses rayon,
   rayon-core, crossbeam-deque, crossbeam-epoch and either. See "Choosing a runtime mode" in
   `docs/development.md`.
+- Public API review (`docs/api-review.md`): the public functions below had no caller in the
+  workspace (tests, examples and benches included), in the HeliOS, Styx and Eidos repositories,
+  or in `docs/`, and are removed. Replacements where one exists: `channels::policy::build_bounded`,
+  `build_unbounded` and `build_broadcast` (the whole `daedalus-core` `channels::policy` module) are
+  `bounded_with_behavior`, `unbounded_with_behavior` and `broadcast_with_behavior`;
+  `Engine::build_runtime_plan` is `daedalus_runtime::build_runtime`; `RunnerPool::ffi_telemetry` and
+  `set_ffi_telemetry` are `RunnerPool::with_ffi_telemetry`. The rest have no replacement.
+  - `daedalus-core`: `channels::policy::build_bounded`, `channels::policy::build_broadcast`, `channels::policy::build_unbounded`.
+  - `daedalus-data`: `descriptor::DescriptorBuilder::gpu_hints`, `prelude::DescriptorId::namespaced`, `typing::TypeRegistry::lookup_type_by_rust_name`, `typing::TypeRegistry::register_type_capability`, `typing::TypeRegistry::snapshot_by_rust_name`.
+  - `daedalus-engine`: `Engine::build_runtime_plan`.
+  - `daedalus-ffi-host`: `RunnerPool::ffi_telemetry`, `RunnerPool::set_ffi_telemetry`.
+  - `daedalus-gpu`: `Backing::shared_arc`, `Compute::as_cpu`, `Compute::as_gpu`, `Compute::is_gpu`, `GpuContextHandle::alloc_download_buffer`, `GpuContextHandle::skipped_summary`, `shader::BindingSpec::storage_texture`, `shader::BufferOut::write_bytes_no_readback`, `shader::ShaderRunOutput::storage_r32f`, `shader::ShaderRunOutput::storage_rgba16f_image`.
+  - `daedalus-registry`: `prelude::CapabilityRegistry::replace_serializer`, `prelude::CapabilityRegistry::serializer_decl`, `prelude::NodeFire::write_to_metadata`.
+  - `daedalus-runtime`: `ExecutionContext::record_frame_scratch_bytes`, `ExecutionContext::record_warm_cache_bytes`, `ExecutionTelemetry::is_lifecycle_enabled`, `ExecutionTelemetry::record_edge_gpu_transfer`, `FrameOverheadWindow::latest_mut`, `HostBridgeHandle::drain_arcs`, `MetricsLevel::is_hardware`, `NodeHandle::alias_id`, `NodeIo::from_single_input`, `NodeIo::get_typed_mut`, `NodeIo::push_arc_as_default`, `NodeIo::push_as_default`, `NodeIo::push_payload_default`, `PortHandle::node_alias_id`, `PortHandle::port_id`, `Profiler::export_json`, `Profiler::telemetry_mut`, `RuntimeEdgePolicy::is_latest_only`, `RuntimeResources::record_frame_scratch_bytes`, `RuntimeResources::record_warm_cache_bytes`, `StateStore::set_typed`, `StreamGraph::export_profile_json`, `StreamGraph::profiler_snapshot`, `graph_builder::GraphBuilder::node_port`, `io::CowArcMut::as_arc`, `plugins::PluginInstallContext::manifest_mut`, `plugins::PluginRegistry::install_and_freeze`, `plugins::PluginRegistry::take_runtime_transport`, `plugins::PluginRegistry::take_transport_capabilities`.
+  - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
 
@@ -273,6 +288,36 @@ plugin ABI and does not load.
   ChannelAsync}`, `bounded_with_metrics_and_behavior`, and `daedalus_data::NamedTypeRegistry::
   resolve_opaque`. `PushOutcome::Replaced` is now `{ old, dropped }`. `IdStr::new` takes
   `impl AsRef<str>`, so borrowed text is copied with one allocation.
+- Public API review (`docs/api-review.md`): these items are no longer public API. Nothing in the
+  workspace outside its own module, nor the HeliOS, Styx or Eidos repositories, calls them. The
+  hidden ones stay callable (semver-public) under `#[doc(hidden)]` and are not for applications;
+  the `pub(crate)` ones are internal, and the test-only ones exist only under `cfg(test)`.
+  Hidden:
+  - `daedalus-core`: `metrics::InMemoryMetrics::into_sink`, `metrics::metrics_sink`.
+  - `daedalus-data`: `json::decode_value`, `json::encode_value`, `proto::to_proto_type`, `schema::to_json_schema_string`, `schema::type_to_json_schema`.
+  - `daedalus-engine`: `DomainGraphStats::mean_run`, `DomainStats::forward_time`, `Engine::compile_runner`, `Engine::plan_plugin_registry`, `ExecutionDomain::has_pending_input`, `HostGraph::bind_payload_output`, `diagnostics::render_error`, `diagnostics::render_plan`, `diagnostics::render_runtime`.
+  - `daedalus-ffi-cpp`: `cpp_plugin_package`.
+  - `daedalus-ffi-node`: `node_plugin_package`.
+  - `daedalus-ffi-python`: `python_plugin_package`.
+  - `daedalus-gpu`: `AcquireFenceWait::has_timeout`, `Compute::into_gpu`, `GpuBlockInfo::for_format`, `active_backend`, `shader::GpuState::new_stateful`, `shader::ShaderContext::dispatch_by_name`, `shader::ShaderRunOutput::storage_rgba8_image`, `shader::ShaderRunOutput::texture_handle`, `shader::ShaderRunOutput::texture_r32f`, `shader::ShaderRunOutput::texture_r32f_gray_u8`, `shader::ShaderRunOutput::texture_r32f_image`, `shader::ShaderRunOutput::texture_rgba16f`, `shader::ShaderRunOutput::texture_rgba16f_image`, `shader::ShaderRunOutput::texture_rgba8`, `shader::ShaderRunOutput::texture_rgba8_image`, `shader::TextureOut::from_input`, `shader::TextureOut::from_input_ctx`, `shader::max_inflight_submissions_per_device`, `shader::set_max_inflight_submissions_per_device`, `upload_bytes`.
+  - `daedalus-mcu-build`: `plan_specs`.
+  - `daedalus-nodes`: `bundle_demo::install_bundle`.
+  - `daedalus-planner`: `PluginRequirement::check_version`.
+  - `daedalus-runtime`: `PayloadInspection::to_display_value`, `RuntimePlan::active_nodes_for_sinks`, `StateStore::get_checked`, `alloc_probe::current_scope`, `const_coerce::deserialize_value`, `graph_builder::GraphBuilder::connect_from_nested`, `graph_builder::GraphBuilder::connect_handles`, `graph_builder::GraphBuilder::connect_ports`, `graph_builder::GraphBuilder::connect_to_nested`, `graph_builder::GraphBuilder::edge_metadata`, `graph_builder::GraphBuilder::node_metadata_map`, `graph_builder::GraphBuilder::node_metadata_map_by_id`, `graph_builder::GraphBuilder::single_node_io`, `graph_builder::GraphBuilder::single_node_ports`, `graph_builder::GraphCtx::node_as`, `graph_builder::GraphScope::connect_policy`, `plugins::PluginRegistry::register_smart_adapter`, `plugins::PluginRegistry::register_typed_transport_adapter`.
+  - `daedalus-transport`: `PressurePolicy::is_single_slot`.
+  Now `pub(crate)` (or test-only):
+  - `daedalus-core`: `clock::TickClock::default_start`.
+  - `daedalus-data`: `named_types::NamedTypeRegistry::export_policy_for`, `typing::TypeRegistry::has_type_capability`, `typing::TypeRegistry::register_type_capabilities`, `typing::TypeRegistry::snapshot_type_capabilities`, `typing::TypeRegistry::type_capabilities`.
+  - `daedalus-engine`: `Engine::execute_scoped`.
+  - `daedalus-ffi-core`: `PluginLockfile::from_package`, `package_platform_dir`.
+  - `daedalus-ffi-cpp`: `CppPointerLengthAbi::bytes_view`, `cpp_in_process_backend_config`.
+  - `daedalus-ffi-host`: `DecodedInvokeResponse::events_at_level`, `DecodedInvokeResponse::value_output`, `DecodedInvokeResponse::wire_output`, `HostInstallPlan::from_schema`.
+  - `daedalus-ffi-node`: `node_worker_backend_config`.
+  - `daedalus-ffi-python`: `python_worker_backend_config`.
+  - `daedalus-gpu`: `GpuContextHandle::alloc_upload_buffer`.
+  - `daedalus-registry`: `prelude::NodeExecutionKind::from_metadata_value`, `prelude::NodeExecutionKind::write_to_metadata`.
+  - `daedalus-runtime`: `DemandSlice::active_edge_count`, `DemandSlice::active_node_count`, `ManagedByteBuffer::clear_live`.
+  - `daedalus-transport`: `BoundaryStorage::is_taken`, `Payload::boundary_shared`.
 
 ### Added
 

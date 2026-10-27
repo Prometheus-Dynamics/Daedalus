@@ -170,6 +170,12 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
 
 ## Remaining
 
+### Release checklist
+- [ ] **Semver baseline.** Set `SEMVER_BASELINE` in `scripts/ci.sh` to the release tag once the
+      release is sealed (`v3.0.0` until then), run `./scripts/ci.sh semver`, and make the CI
+      `semver` job blocking (drop its `continue-on-error`). Fix or document the breaks it reports
+      (`docs/development.md`, "Semver checks").
+
 ### High priority
 - [ ] **Validate on a Pi 5 / CM5 with Mesa v3dv.** Run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
@@ -197,8 +203,11 @@ for the full list of changes and `docs/migration-3.0.md` for upgrading.
       external drive made the edit loop ~6x slower).
 
 ### Medium priority
-- [ ] **Public API review.** About 130 public functions have no in-repo callers (e.g.
-      `stream::feed_typed`, several `gpu` helpers). Keep, document, or remove them.
+- [x] **Public API review.** 266 public items have no use outside their own file (the TODO's
+      estimate was about 130). Each is kept (downstream, documented, or a builder family),
+      hidden with `#[doc(hidden)]`, made `pub(crate)` (test-only where so), or removed; 55 were
+      removed. Classified in `docs/api-review.md`, with the replacements in CHANGELOG
+      `[Unreleased]`.
 - [x] **dmabuf: GPU-side fence wait with a timeout.** `AcquireFenceWait::Timeline`: a timeline
       semaphore host-signaled by one watcher thread per device on fence or `acquire_timeout`,
       `GpuImageHandle::acquire_status()` reports `TimedOut`; `SyncFd` (no timeout) and `Cpu`
