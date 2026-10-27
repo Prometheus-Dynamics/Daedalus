@@ -62,7 +62,7 @@ pub fn resolve_node_payload_handle(
     })
 }
 
-pub fn node_worker_backend_config(
+pub(crate) fn node_worker_backend_config(
     module_path: impl Into<String>,
     function_name: impl Into<String>,
 ) -> BackendConfig {
@@ -70,6 +70,7 @@ pub fn node_worker_backend_config(
         .with_entry_module(module_path)
 }
 
+/// Node worker backend configuration for `module_path` and `function_name`, with an explicit transport.
 pub fn node_worker_backend_config_with_transport(
     module_path: impl Into<String>,
     function_name: impl Into<String>,
@@ -79,6 +80,7 @@ pub fn node_worker_backend_config_with_transport(
 }
 
 /// Package Node.js source files with the default lockfile.
+#[doc(hidden)]
 pub fn node_plugin_package(
     schema: PluginSchema,
     backends: BTreeMap<String, BackendConfig>,
