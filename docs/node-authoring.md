@@ -762,6 +762,11 @@ than queued.
   node no longer declares unless an edge or const input uses them (those stay for the planner to
   report). Nodes that list no ports, dynamic port directions and fan-in ports are left alone. It
   is idempotent; re-save the document when the returned `PortRefreshReport::changed()`.
+  A const input on a port the plugin has since dropped (a knob folded into a constant) keeps that
+  port, and the planner rejects it (`PortExtra`). Hosts that treat it as a stale setting call
+  `refresh_graph_ports_with(&mut graph, RefreshPolicy { drop_stale_consts: true })` (or
+  `Graph::refresh_ports_with`): such consts are dropped with their port, unless an edge still uses
+  the port, and listed with their values in `NodePortRefresh::dropped_consts` for the host to log.
 
   **Schema versions.** `schema_version` is required. A document loads when its version is in
   `1..=GRAPH_DOCUMENT_SCHEMA_VERSION`; a newer one fails with

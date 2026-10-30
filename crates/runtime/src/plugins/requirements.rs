@@ -1,6 +1,6 @@
 use super::*;
 use daedalus_planner::{
-    Graph, GraphDocument, MissingPlugins, PluginRequirement, PortRefreshReport,
+    Graph, GraphDocument, MissingPlugins, PluginRequirement, PortRefreshReport, RefreshPolicy,
 };
 
 impl PluginRegistry {
@@ -61,5 +61,16 @@ impl PluginRegistry {
     /// graph, and re-save it when [`PortRefreshReport::changed`].
     pub fn refresh_graph_ports(&self, graph: &mut Graph) -> PortRefreshReport {
         graph.refresh_ports(&self.transport_capabilities)
+    }
+
+    /// [`refresh_graph_ports`](Self::refresh_graph_ports) under `policy` ([`Graph::refresh_ports_with`]):
+    /// with [`RefreshPolicy::drop_stale_consts`], const inputs on ports a plugin no longer declares
+    /// are dropped too and listed in the report.
+    pub fn refresh_graph_ports_with(
+        &self,
+        graph: &mut Graph,
+        policy: RefreshPolicy,
+    ) -> PortRefreshReport {
+        graph.refresh_ports_with(&self.transport_capabilities, policy)
     }
 }

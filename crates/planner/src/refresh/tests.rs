@@ -7,6 +7,7 @@ use daedalus_registry::capability::{CapabilityRegistry, FanInDecl, NodeDecl, Por
 use crate::diagnostics::DiagnosticCode;
 use crate::graph::{Edge, Graph, NodeInstance};
 use crate::passes::{PlannerConfig, PlannerInput, build_plan};
+use crate::refresh::RefreshPolicy;
 
 const MAPPER: &str = "test:mapping.live_map";
 
@@ -180,4 +181,130 @@ fn document_refresh_updates_its_graph() {
     let mut document = crate::document::GraphDocument::new(stored_graph());
     assert!(document.refresh_ports(&registry).changed());
     assert_eq!(document.graph.nodes[1].inputs, ["frame", "map", "save"]);
+}
+
+/// A pose node whose `huber_delta_px` knob was folded into a constant: the stored graph still
+/// lists the port and sets it; `legacy_wired` is also gone but an edge feeds it.
+fn stale_knob_graph() -> (CapabilityRegistry, Graph) {
+    let mut registry = registry();
+    registry
+        .register_node(
+            NodeDecl::new("test:pose")
+                .input(port("frame"))
+                .output(port("pose")),
+        )
+        .expect("register pose");
+    let graph = Graph {
+        nodes: vec![
+            NodeInstance::new("test:source").with_outputs(["frame"]),
+            NodeInstance::new("test:pose")
+                .with_inputs(["frame", "huber_delta_px", "legacy_wired"])
+                .with_outputs(["pose"])
+                .with_const_input("huber_delta_px", Value::Float(1.5))
+                .with_const_input("legacy_wired", Value::Int(3))
+                .with_metadata("inputs.huber_delta_px.min", Value::Float(0.0)),
+            // No port list: only the const is stale.
+            NodeInstance::new("test:pose").with_const_input("huber_delta_px", Value::Float(2.0)),
+        ],
+        edges: vec![
+            Edge::new(0, "frame", 1, "frame"),
+            Edge::new(0, "frame", 1, "legacy_wired"),
+        ],
+        ..Graph::default()
+    };
+    (registry, graph)
+}
+
+#[test]
+fn stale_consts_are_kept_by_default() {
+    let (registry, mut graph) = stale_knob_graph();
+    let report = graph.refresh_ports(&registry);
+    assert_eq!(report.nodes.len(), 1, "{report:?}");
+    assert_eq!(
+        report.nodes[0].kept_inputs,
+        ["huber_delta_px", "legacy_wired"]
+    );
+    assert!(report.nodes[0].dropped_consts.is_empty());
+    let diags = planner_diagnostics(graph, &registry);
+    assert!(
+        diags
+            .iter()
+            .any(|(code, message)| *code == DiagnosticCode::PortExtra
+                && message.contains("`huber_delta_px`")),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn drop_stale_consts_drops_const_only_ports_and_reports_values() {
+    let (registry, mut graph) = stale_knob_graph();
+    let policy = RefreshPolicy {
+        drop_stale_consts: true,
+    };
+    let report = graph.refresh_ports_with(&registry, policy);
+    assert!(report.changed());
+    assert_eq!(report.nodes.len(), 2, "{report:?}");
+
+    let pose = &report.nodes[0];
+    assert_eq!(pose.node, 1);
+    assert_eq!(
+        pose.dropped_consts,
+        [(String::from("huber_delta_px"), Value::Float(1.5))]
+    );
+    assert_eq!(pose.removed_inputs, ["huber_delta_px"]);
+    // An edge still uses `legacy_wired`: kept with its const, for the planner to report.
+    assert_eq!(pose.kept_inputs, ["legacy_wired"]);
+    let node = &graph.nodes[1];
+    assert_eq!(node.inputs, ["frame", "legacy_wired"]);
+    assert_eq!(
+        node.const_inputs,
+        [(String::from("legacy_wired"), Value::Int(3))]
+    );
+    assert!(!node.metadata.contains_key("inputs.huber_delta_px.min"));
+
+    let portless = &report.nodes[1];
+    assert_eq!(portless.node, 2);
+    assert_eq!(
+        portless.dropped_consts,
+        [(String::from("huber_delta_px"), Value::Float(2.0))]
+    );
+    assert!(graph.nodes[2].const_inputs.is_empty());
+
+    let diags = planner_diagnostics(graph.clone(), &registry);
+    assert!(
+        !diags
+            .iter()
+            .any(|(_, message)| message.contains("`huber_delta_px`")),
+        "{diags:?}"
+    );
+    // Idempotent: nothing more to drop.
+    let again = graph.refresh_ports_with(&registry, policy);
+    assert!(!again.changed(), "{again:?}");
+}
+
+#[test]
+fn drop_stale_consts_keeps_declared_and_fanin_consts() {
+    let registry = registry();
+    let mut graph = Graph {
+        nodes: vec![
+            NodeInstance::new(MAPPER)
+                .with_inputs(["frame", "map", "save"])
+                .with_outputs(["pose", "saved_map"])
+                .with_const_input("save", Value::Bool(true)),
+            NodeInstance::new("test:merge")
+                .with_inputs(["in0"])
+                .with_outputs(["out"])
+                .with_const_input("in0", Value::Int(1)),
+        ],
+        ..Graph::default()
+    };
+    let before = graph.clone();
+    let report = graph.refresh_ports_with(
+        &registry,
+        RefreshPolicy {
+            drop_stale_consts: true,
+        },
+    );
+    assert!(report.is_empty(), "{report:?}");
+    assert_eq!(graph, before);
 }

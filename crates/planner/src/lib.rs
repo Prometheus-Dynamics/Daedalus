@@ -58,7 +58,7 @@ pub use passes::{
     registered_planner_lowerings,
 };
 pub use patch::{GraphMetadataSelector, GraphNodeSelector, GraphPatch, GraphPatchOp, PatchReport};
-pub use refresh::{NodePortRefresh, PortRefreshReport};
+pub use refresh::{NodePortRefresh, PortRefreshReport, RefreshPolicy};
 pub use sharing::{
     SHARED_UPSTREAM_HOST, SharedNode, SharedPart, SharedPort, SharedSplit, split_shared_upstream,
 };

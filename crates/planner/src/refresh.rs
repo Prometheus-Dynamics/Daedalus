@@ -5,6 +5,8 @@
 //! graph stored earlier lacks it and the planner rejects the node as stale (`PortMissing`).
 //! [`Graph::refresh_ports`] adds what the registry now declares and drops what it no longer
 //! declares, unless an edge or const input still uses it (that stays for the planner to report).
+//! [`Graph::refresh_ports_with`] can also drop const inputs on ports the plugin no longer declares
+//! ([`RefreshPolicy::drop_stale_consts`]): a stale setting rather than a wiring error.
 
 use alloc::collections::BTreeSet;
 use alloc::string::String;
@@ -18,8 +20,17 @@ use crate::document::GraphDocument;
 use crate::graph::{Graph, NodeInstance};
 use crate::metadata::descriptor_dynamic_port_type;
 
+/// How [`Graph::refresh_ports_with`] treats stale state beyond port lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RefreshPolicy {
+    /// Drop const inputs on input ports the declaration no longer has (and no edge uses), with
+    /// the port; the dropped values are listed in [`NodePortRefresh::dropped_consts`]. Off by
+    /// default: such a port is then kept and the planner reports it (`PortExtra`).
+    pub drop_stale_consts: bool,
+}
+
 /// What [`Graph::refresh_ports`] changed on one node.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NodePortRefresh {
     /// The node's index in [`Graph::nodes`].
     pub node: usize,
@@ -31,6 +42,10 @@ pub struct NodePortRefresh {
     /// Undeclared ports kept because an edge or const input uses them; the planner reports them.
     pub kept_inputs: Vec<String>,
     pub kept_outputs: Vec<String>,
+    /// Const inputs dropped because their port is no longer declared
+    /// ([`RefreshPolicy::drop_stale_consts`]), as (port, value).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dropped_consts: Vec<(String, Value)>,
 }
 
 impl NodePortRefresh {
@@ -41,11 +56,12 @@ impl NodePortRefresh {
             && self.removed_outputs.is_empty()
             && self.kept_inputs.is_empty()
             && self.kept_outputs.is_empty()
+            && self.dropped_consts.is_empty()
     }
 }
 
 /// Every node [`Graph::refresh_ports`] touched or found stale, in node order.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PortRefreshReport {
     pub nodes: Vec<NodePortRefresh>,
 }
@@ -56,13 +72,15 @@ impl PortRefreshReport {
         self.nodes.is_empty()
     }
 
-    /// Whether ports were added or removed (the graph changed and may be re-saved).
+    /// Whether ports were added or removed or const inputs dropped (the graph changed and may be
+    /// re-saved).
     pub fn changed(&self) -> bool {
         self.nodes.iter().any(|node| {
             !(node.added_inputs.is_empty()
                 && node.added_outputs.is_empty()
                 && node.removed_inputs.is_empty()
-                && node.removed_outputs.is_empty())
+                && node.removed_outputs.is_empty()
+                && node.dropped_consts.is_empty())
         })
     }
 }
@@ -81,18 +99,39 @@ impl Graph {
     /// as they are. Const inputs, labels, edges and other metadata are untouched. Idempotent: a
     /// second call reports nothing.
     pub fn refresh_ports(&mut self, registry: &CapabilityRegistry) -> PortRefreshReport {
+        self.refresh_ports_with(registry, RefreshPolicy::default())
+    }
+
+    /// [`Graph::refresh_ports`] under `policy`. With [`RefreshPolicy::drop_stale_consts`], a
+    /// const input on an input port the declaration no longer has, and no edge uses, is dropped
+    /// (on any known node without dynamic inputs, including nodes that list no ports) and its
+    /// port removed; edges on undeclared ports still keep them.
+    pub fn refresh_ports_with(
+        &mut self,
+        registry: &CapabilityRegistry,
+        policy: RefreshPolicy,
+    ) -> PortRefreshReport {
         let mut report = PortRefreshReport::default();
         for index in 0..self.nodes.len() {
-            let node = &self.nodes[index];
-            if node.inputs.is_empty() && node.outputs.is_empty() {
-                continue;
-            }
-            let Some(decl) = registry.nodes().get(&node.id) else {
+            let Some(decl) = registry.nodes().get(&self.nodes[index].id) else {
                 continue;
             };
-            let used_inputs = self.used_ports(index, true);
-            let used_outputs = self.used_ports(index, false);
-            let node = &mut self.nodes[index];
+            let dynamic_inputs = descriptor_dynamic_port_type(decl, true).is_some();
+            let declared_inputs: Vec<&str> = decl.inputs.iter().map(|p| p.name.as_str()).collect();
+            let mut dropped_consts = Vec::new();
+            if policy.drop_stale_consts && !dynamic_inputs {
+                let wired = self.wired_ports(index, true);
+                self.nodes[index].const_inputs.retain(|(port, value)| {
+                    if declares_input(decl, &declared_inputs, port)
+                        || wired.contains(&port.trim().to_ascii_lowercase())
+                    {
+                        return true;
+                    }
+                    dropped_consts.push((port.clone(), value.clone()));
+                    false
+                });
+            }
+            let node = &self.nodes[index];
             let mut change = NodePortRefresh {
                 node: index,
                 id: node.id.clone(),
@@ -102,11 +141,25 @@ impl Graph {
                 removed_outputs: Vec::new(),
                 kept_inputs: Vec::new(),
                 kept_outputs: Vec::new(),
+                dropped_consts,
             };
-            if descriptor_dynamic_port_type(decl, true).is_none() {
-                let declared: Vec<&str> = decl.inputs.iter().map(|p| p.name.as_str()).collect();
-                let (added, removed, kept) =
-                    refresh_direction(node, decl, Direction::Inputs, &declared, &used_inputs);
+            if node.inputs.is_empty() && node.outputs.is_empty() {
+                if !change.is_empty() {
+                    report.nodes.push(change);
+                }
+                continue;
+            }
+            let used_inputs = self.used_ports(index, true);
+            let used_outputs = self.used_ports(index, false);
+            let node = &mut self.nodes[index];
+            if !dynamic_inputs {
+                let (added, removed, kept) = refresh_direction(
+                    node,
+                    decl,
+                    Direction::Inputs,
+                    &declared_inputs,
+                    &used_inputs,
+                );
                 change.added_inputs = added;
                 change.removed_inputs = removed;
                 change.kept_inputs = kept;
@@ -126,16 +179,20 @@ impl Graph {
         report
     }
 
-    /// Lowercased names of node `index`'s ports an edge (or, for inputs, a const input) uses.
-    fn used_ports(&self, index: usize, inputs: bool) -> BTreeSet<String> {
-        let mut used: BTreeSet<String> = self
-            .edges
+    /// Lowercased names of node `index`'s ports an edge uses.
+    fn wired_ports(&self, index: usize, inputs: bool) -> BTreeSet<String> {
+        self.edges
             .iter()
             .filter_map(|edge| {
                 let end = if inputs { &edge.to } else { &edge.from };
                 (end.node.0 == index).then(|| end.port.trim().to_ascii_lowercase())
             })
-            .collect();
+            .collect()
+    }
+
+    /// Lowercased names of node `index`'s ports an edge (or, for inputs, a const input) uses.
+    fn used_ports(&self, index: usize, inputs: bool) -> BTreeSet<String> {
+        let mut used = self.wired_ports(index, inputs);
         if inputs {
             used.extend(
                 self.nodes[index]
@@ -182,11 +239,11 @@ fn refresh_direction(
         Direction::Inputs => &mut node.inputs,
         Direction::Outputs => &mut node.outputs,
     };
-    let is_declared = |port: &str| {
-        declared
+    let is_declared = |port: &str| match direction {
+        Direction::Inputs => declares_input(decl, declared, port),
+        Direction::Outputs => declared
             .iter()
-            .any(|name| name.eq_ignore_ascii_case(port.trim()))
-            || matches!(direction, Direction::Inputs) && is_fanin_port(decl, port.trim())
+            .any(|name| name.eq_ignore_ascii_case(port.trim())),
     };
 
     let (mut removed, mut kept) = (Vec::new(), Vec::new());
@@ -229,6 +286,12 @@ fn refresh_direction(
         }
     }
     (added, removed, kept)
+}
+
+/// Whether `decl` declares input `port`: by name (`declared`) or as a fan-in instance.
+fn declares_input(decl: &NodeDecl, declared: &[&str], port: &str) -> bool {
+    let port = port.trim();
+    declared.iter().any(|name| name.eq_ignore_ascii_case(port)) || is_fanin_port(decl, port)
 }
 
 /// Whether `port` is an instance of one of `decl`'s fan-in inputs (`prefix<N>`, N >= start).

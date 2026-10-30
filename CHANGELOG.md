@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Drop stale const inputs when refreshing a stored graph.** `Graph::refresh_ports_with` (and
+  `PluginRegistry::refresh_graph_ports_with`) take a `RefreshPolicy`; with `drop_stale_consts`, a
+  const input on an input port the node's declaration no longer has, and no edge uses, is dropped
+  with the port, and `NodePortRefresh::dropped_consts` lists the (port, value) pairs. The default
+  (`refresh_ports`) still keeps such ports for the planner to reject (`PortExtra`). Hit by HeliOS
+  when Eidos folded node knob ports into constants.
 - **Refresh stale port lists of stored graphs.** `Graph::refresh_ports(&CapabilityRegistry)`,
   `GraphDocument::refresh_ports` and `PluginRegistry::refresh_graph_ports(&mut Graph)` add the
   ports a node's declaration gained since the graph was saved (with their `inputs.<port>.*` /
