@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Added
 
+- **GPU node guide** (`docs/gpu-nodes.md`) and the `gpu_fragment_node` example: a 3x3 box filter
+  whose device is a per-node config value. Its GPU path keeps a fragment pass, textures and a
+  binding in node state, submits without waiting and emits results on later ticks. It falls back
+  to the CPU with a message. The CPU path runs in `ci.sh smoke`, and both paths match the CPU
+  reference.
 - **`GpuStoragePool`**: per-frame scratch `GpuStorage` from power-of-two size classes, with a
   cap on idle bytes and stats (`created`, `reused`, `dropped`, `reuse_rate`). In a 1000-frame
   test with varying sizes it stays under its cap and reuses over 90% of takes.

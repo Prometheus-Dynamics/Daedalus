@@ -360,6 +360,9 @@ handoff reason for each edge.
 
 ## CPU/GPU Residency
 
+For nodes with a GPU implementation, see [gpu-nodes.md](gpu-nodes.md).
+
+
 - `#[device(id = ..., cpu = "k", device = "k@gpu", download = f)]` on an upload function declares
   a device pair: an upload adapter (CPU → device) and a download adapter (device → CPU).
   An upload that creates real GPU resources takes the engine's context as a second argument:

@@ -147,7 +147,7 @@ cmd_smoke() {
     mutable_payload fanout runtime_metrics transport_metrics ownership_metrics lifecycle_trace
     plan_debug overhead_floor observability backpressure_diagnostics external_frame_source
     node_fusion execution_domain held_inputs multicam_feeders graph_document graph_hot_reload
-    node_recovery)
+    node_recovery gpu_fragment_node)
   # frame-bench examples: not bin targets, so they are built with --examples only.
   local frame_examples=(frame_chain apriltag_mirror)
   local args=(--examples) bin exes exe

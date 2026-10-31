@@ -153,7 +153,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a 1000-frame test with varying sizes stays under the cap, and its reuse
       rate is reported.
       **Blocked by:** nothing.
-- [ ] **What:** a guide to writing GPU nodes: a `#[device]` WGSL node with its CPU pair,
+- [x] **What:** a guide to writing GPU nodes (`docs/gpu-nodes.md`, example `gpu_fragment_node`; GPU path verified on desktop, Raze run pending): a `#[device]` WGSL node with its CPU pair,
       persistent state, non-blocking completion and readback, plus a tested example.
       **Why:** Eidos and other libraries ship GPU implementations behind features.
       **Done when:** the example runs in CI (CPU path) and on the Raze (GPU path).

@@ -21,6 +21,7 @@ This directory is the repository-level documentation index. Crate-specific detai
 - [../crates/planner/README.md](../crates/planner/README.md): graph validation, lowering, adapter resolution, and scheduling.
 - [../crates/runtime/README.md](../crates/runtime/README.md): executor, host bridge, streaming, state, and telemetry.
 - [runtime-diagnostics.md](runtime-diagnostics.md): release/debug flow for runtime telemetry, host bridge diagnostics, stream workers, and FFI workers.
+- [gpu-nodes.md](gpu-nodes.md): writing GPU nodes with a CPU pair: device choice, node-owned GPU state, fragment passes, non-blocking completion, readback, timing, camera frames, startup, portability.
 - [node-authoring.md](node-authoring.md): node authoring, adapters, payload residency, host APIs, graph documents, and external frame sources.
 - [host-bridge-lock-granularity.md](host-bridge-lock-granularity.md): release review note for host bridge shared-state locking.
 - [../crates/engine/README.md](../crates/engine/README.md): high-level host facade and warm reuse model.

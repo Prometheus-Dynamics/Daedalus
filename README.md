@@ -87,6 +87,7 @@ example smoke runs.
 
 - [docs/README.md](docs/README.md): documentation map.
 - [docs/migration-3.0.md](docs/migration-3.0.md): upgrading to 3.0 from 2.0.0 or pre-release `dev`.
+- [docs/gpu-nodes.md](docs/gpu-nodes.md): writing GPU nodes with a CPU pair (fragment passes, non-blocking completion, readback, timing, camera frames).
 - [docs/node-authoring.md](docs/node-authoring.md): node authoring, adapters, payload residency, and host integration.
 - [docs/development.md](docs/development.md): development rules, features, observability, and production API guidance.
 - [docs/testing.md](docs/testing.md): supported validation surface.

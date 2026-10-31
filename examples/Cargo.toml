@@ -177,6 +177,10 @@ name = "mixed_cpu_gpu"
 path = "07_gpu/mixed_cpu_gpu.rs"
 
 [[bin]]
+name = "gpu_fragment_node"
+path = "07_gpu/fragment_node.rs"
+
+[[bin]]
 name = "execution_domain"
 path = "09_hosts/execution_domain.rs"
 
