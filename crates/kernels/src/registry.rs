@@ -304,9 +304,9 @@ static FLOAT_KERNELS: [[Kernel; 9]; 3] = [
             "daedalus.float.f16_to_f32",
             FLOAT,
             T,
-            "f16_to_f32::sse4",
-            "f16_to_f32::v",
-            "f16_to_f32::avx2"
+            "f16_to_f32_base::sse4",
+            "f16_to_f32_base::v",
+            "f16_to_f32_base::avx2"
         ),
         gpu_compute("daedalus.float.f16_to_f32"),
     ),
@@ -550,6 +550,21 @@ static CRC_KERNELS: [Kernel; 11] = [
     Kernel::missing(CRC_OP, Backend::FixedFunction, NO_FIXED),
 ];
 
+static F16C_KERNELS: [Kernel; 1] = [Kernel::implemented(
+    "daedalus.float.f16_to_f32",
+    Backend::X86Avx2,
+    "crates/kernels/src/float.rs",
+    T,
+)
+.with_extensions(&[Ext::F16c])
+.with_symbol("f16_to_f32_f16c")];
+
+static F16C_TABLE: Registry = Registry {
+    name: "daedalus-kernels-f16c",
+    kernels: &F16C_KERNELS,
+    ..Registry::EMPTY
+};
+
 static CRC_TABLE: Registry = Registry {
     name: "daedalus-kernels-crc",
     ops: &CRC_OPS,
@@ -581,5 +596,5 @@ pub static ACCEL: Registry = Registry {
             reason: "the inventory table",
         },
     ],
-    children: &[&GPU_OPS, &CRC_TABLE],
+    children: &[&GPU_OPS, &CRC_TABLE, &F16C_TABLE],
 };

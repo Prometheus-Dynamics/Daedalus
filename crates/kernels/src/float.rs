@@ -21,7 +21,7 @@ multiversion! {
     /// Little-endian IEEE half-precision bytes to f32, bit-exact (subnormals, infinities and
     /// NaN payloads included). Branch-free, four lanes per step, so it vectorizes everywhere
     /// (ARMv7's loop vectorizer declines the one-at-a-time form).
-    pub fn f16_to_f32(src: &[u8], dst: &mut [f32]) -> () {
+    pub fn f16_to_f32_base(src: &[u8], dst: &mut [f32]) -> () {
         let (quads, _) = src.as_chunks::<8>();
         let (out, _) = dst.as_chunks_mut::<4>();
         let steps = quads.len().min(out.len());
@@ -85,5 +85,51 @@ multiversion! {
             let up = (scaled - whole as f32 >= 0.5) as u32;
             *d = (whole + up) as u8;
         }
+    }
+}
+
+/// binary16 to f32 with F16C (`vcvtph2ps`, eight per instruction), the `x86_avx2+f16c` column.
+/// Bit-exact with [`f16_to_f32_base`]: F16C quiets NaNs and converts subnormals exactly.
+///
+/// # Safety
+/// The CPU must support AVX2 and F16C.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2,f16c")]
+#[inline(never)]
+pub unsafe fn f16_to_f32_f16c(src: &[u8], dst: &mut [f32]) {
+    #[cfg(target_arch = "x86")]
+    use core::arch::x86::{_mm_loadu_si128, _mm256_cvtph_ps, _mm256_storeu_ps};
+    #[cfg(target_arch = "x86_64")]
+    use core::arch::x86_64::{_mm_loadu_si128, _mm256_cvtph_ps, _mm256_storeu_ps};
+    let n = (src.len() / 2).min(dst.len());
+    let blocks = n / 8;
+    for i in 0..blocks {
+        // SAFETY: 16 source bytes and 8 destination floats are in bounds (`i < n / 8`).
+        unsafe {
+            let h = _mm_loadu_si128(src.as_ptr().add(16 * i).cast());
+            _mm256_storeu_ps(dst.as_mut_ptr().add(8 * i), _mm256_cvtph_ps(h));
+        }
+    }
+    let done = blocks * 8;
+    f16_to_f32_base::v(&src[2 * done..2 * n], &mut dst[done..n]);
+}
+
+/// [`f16_to_f32_f16c`] when the CPU has AVX2 and F16C (`std`); `None` otherwise.
+pub fn f16_to_f32_with_f16c(src: &[u8], dst: &mut [f32]) -> Option<()> {
+    #[cfg(all(feature = "std", any(target_arch = "x86", target_arch = "x86_64")))]
+    if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("f16c") {
+        // SAFETY: the CPU reports AVX2 and F16C.
+        unsafe { f16_to_f32_f16c(src, dst) };
+        return Some(());
+    }
+    let _ = (src, dst);
+    None
+}
+
+/// Little-endian binary16 bytes to f32 (`min(src.len() / 2, dst.len())` values), bit-exact:
+/// F16C on x86 when the CPU has it, else the vectorized [`f16_to_f32_base`].
+pub fn f16_to_f32(src: &[u8], dst: &mut [f32]) {
+    if f16_to_f32_with_f16c(src, dst).is_none() {
+        f16_to_f32_base(src, dst);
     }
 }

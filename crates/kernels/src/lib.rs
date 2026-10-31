@@ -30,7 +30,7 @@ pub use base64::{
 };
 pub use copy::{copy_bytes, copy_rows};
 pub use crc::crc32;
-pub use float::{f16_to_f32, f32_from_le, f32_to_unorm8};
+pub use float::{f16_to_f32, f16_to_f32_base, f16_to_f32_with_f16c, f32_from_le, f32_to_unorm8};
 pub use hex::hex_lower;
 pub use pixel::{gray_to_rgba, rgb_to_rgba, rgba_red, rgba_to_rgb};
 pub use registry::ACCEL;

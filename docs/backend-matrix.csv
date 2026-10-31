@@ -6,7 +6,7 @@ daedalus,daedalus.codec.base64_decode,x86_avx2,pass,,x86_64-unknown-linux-gnu na
 daedalus,daedalus.codec.base64_decode,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.codec.base64_decode,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.codec.base64_decode,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.codec.base64_decode,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 5592408 input bytes, data GPU-resident: gpu pass 0.140 ms (Timestamps) vs cpu kernel 1.057 ms"
+daedalus,daedalus.codec.base64_decode,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 5592408 input bytes, data GPU-resident: gpu pass 0.141 ms (Timestamps) vs cpu kernel 1.087 ms"
 daedalus,daedalus.codec.base64_decode,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.codec.base64_decode,wired,pass,,2 call site(s)
 daedalus,daedalus.codec.base64_encode,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -16,7 +16,7 @@ daedalus,daedalus.codec.base64_encode,x86_avx2,pass,,x86_64-unknown-linux-gnu na
 daedalus,daedalus.codec.base64_encode,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.codec.base64_encode,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.codec.base64_encode,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.codec.base64_encode,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.049 ms (Timestamps) vs cpu kernel 0.876 ms"
+daedalus,daedalus.codec.base64_encode,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.049 ms (Timestamps) vs cpu kernel 0.787 ms"
 daedalus,daedalus.codec.base64_encode,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.codec.base64_encode,wired,pass,,2 call site(s)
 daedalus,daedalus.codec.crc32,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -39,7 +39,7 @@ daedalus,daedalus.codec.hex_lower,x86_avx2,pass,,x86_64-unknown-linux-gnu native
 daedalus,daedalus.codec.hex_lower,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.codec.hex_lower,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.codec.hex_lower,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.codec.hex_lower,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.034 ms (Timestamps) vs cpu kernel 0.407 ms"
+daedalus,daedalus.codec.hex_lower,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.034 ms (Timestamps) vs cpu kernel 0.295 ms"
 daedalus,daedalus.codec.hex_lower,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.codec.hex_lower,wired,pass,,1 call site(s)
 daedalus,daedalus.copy.bytes,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -49,18 +49,18 @@ daedalus,daedalus.copy.bytes,x86_avx2,pass,,x86_64-unknown-linux-gnu native +asm
 daedalus,daedalus.copy.bytes,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.copy.bytes,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.copy.bytes,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.copy.bytes,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.020 ms (Timestamps) vs cpu kernel 0.354 ms"
-daedalus,daedalus.copy.bytes,fixed_function,pass,,copy_engine: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 bytes: copy engine 0.157 ms submit-to-done (Timestamps timer available) vs cpu 0.360 ms
+daedalus,daedalus.copy.bytes,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.019 ms (Timestamps) vs cpu kernel 0.119 ms"
+daedalus,daedalus.copy.bytes,fixed_function,pass,,copy_engine: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 bytes: copy engine 0.145 ms submit-to-done (Timestamps timer available) vs cpu 0.424 ms
 daedalus,daedalus.copy.bytes,wired,pass,,6 call site(s)
 daedalus,daedalus.float.f16_to_f32,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.float.f16_to_f32,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.float.f16_to_f32,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
 daedalus,daedalus.float.f16_to_f32,x86_avx2,pass,,x86_64-unknown-linux-gnu native +asm
-daedalus,daedalus.float.f16_to_f32,x86_avx2+f16c,gap,could use f16c; no kernel,
+daedalus,daedalus.float.f16_to_f32,x86_avx2+f16c,pass,,x86_64-unknown-linux-gnu native +asm
 daedalus,daedalus.float.f16_to_f32,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.float.f16_to_f32,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.float.f16_to_f32,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.float.f16_to_f32,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 8388608 input bytes, data GPU-resident: gpu pass 0.150 ms (Timestamps) vs cpu kernel 4.051 ms"
+daedalus,daedalus.float.f16_to_f32,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 8388608 input bytes, data GPU-resident: gpu pass 0.150 ms (Timestamps) vs cpu kernel 0.705 ms"
 daedalus,daedalus.float.f16_to_f32,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.float.f16_to_f32,wired,pass,,1 call site(s)
 daedalus,daedalus.float.f32_from_le,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -70,7 +70,7 @@ daedalus,daedalus.float.f32_from_le,x86_avx2,pass,,x86_64-unknown-linux-gnu nati
 daedalus,daedalus.float.f32_from_le,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.float.f32_from_le,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.float.f32_from_le,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.float.f32_from_le,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 16777216 input bytes, data GPU-resident: gpu pass 0.194 ms (Timestamps) vs cpu kernel 2.395 ms"
+daedalus,daedalus.float.f32_from_le,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 16777216 input bytes, data GPU-resident: gpu pass 0.195 ms (Timestamps) vs cpu kernel 1.538 ms"
 daedalus,daedalus.float.f32_from_le,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.float.f32_from_le,wired,pass,,1 call site(s)
 daedalus,daedalus.float.f32_to_unorm8,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -80,7 +80,7 @@ daedalus,daedalus.float.f32_to_unorm8,x86_avx2,pass,,x86_64-unknown-linux-gnu na
 daedalus,daedalus.float.f32_to_unorm8,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.float.f32_to_unorm8,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.float.f32_to_unorm8,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.float.f32_to_unorm8,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 801048 input bytes, data GPU-resident: gpu pass 0.004 ms (Timestamps) vs cpu kernel 0.187 ms"
+daedalus,daedalus.float.f32_to_unorm8,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 801048 input bytes, data GPU-resident: gpu pass 0.004 ms (Timestamps) vs cpu kernel 0.191 ms"
 daedalus,daedalus.float.f32_to_unorm8,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.float.f32_to_unorm8,wired,pass,,1 call site(s)
 daedalus,daedalus.gpu.storage_to_texture,scalar,pass,,x86_64-unknown-linux-gnu native
@@ -100,7 +100,7 @@ daedalus,daedalus.pixel.gray_to_rgba,x86_avx2,pass,,x86_64-unknown-linux-gnu nat
 daedalus,daedalus.pixel.gray_to_rgba,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.pixel.gray_to_rgba,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.pixel.gray_to_rgba,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.pixel.gray_to_rgba,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.135 ms (Timestamps) vs cpu kernel 1.327 ms"
+daedalus,daedalus.pixel.gray_to_rgba,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 4194304 input bytes, data GPU-resident: gpu pass 0.135 ms (Timestamps) vs cpu kernel 0.503 ms"
 daedalus,daedalus.pixel.gray_to_rgba,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.pixel.gray_to_rgba,wired,pass,,1 call site(s)
 daedalus,daedalus.pixel.rgb_to_rgba,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -110,7 +110,7 @@ daedalus,daedalus.pixel.rgb_to_rgba,x86_avx2,pass,,x86_64-unknown-linux-gnu nati
 daedalus,daedalus.pixel.rgb_to_rgba,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.pixel.rgb_to_rgba,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.pixel.rgb_to_rgba,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.pixel.rgb_to_rgba,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 12582912 input bytes, data GPU-resident: gpu pass 0.186 ms (Timestamps) vs cpu kernel 1.956 ms"
+daedalus,daedalus.pixel.rgb_to_rgba,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 12582912 input bytes, data GPU-resident: gpu pass 0.186 ms (Timestamps) vs cpu kernel 1.084 ms"
 daedalus,daedalus.pixel.rgb_to_rgba,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.pixel.rgb_to_rgba,wired,pass,,1 call site(s)
 daedalus,daedalus.pixel.rgba_red,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -120,7 +120,7 @@ daedalus,daedalus.pixel.rgba_red,x86_avx2,pass,,x86_64-unknown-linux-gnu native 
 daedalus,daedalus.pixel.rgba_red,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.pixel.rgba_red,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.pixel.rgba_red,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.pixel.rgba_red,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 16777216 input bytes, data GPU-resident: gpu pass 0.019 ms (Timestamps) vs cpu kernel 0.999 ms"
+daedalus,daedalus.pixel.rgba_red,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 16777216 input bytes, data GPU-resident: gpu pass 0.019 ms (Timestamps) vs cpu kernel 0.296 ms"
 daedalus,daedalus.pixel.rgba_red,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.pixel.rgba_red,wired,pass,,1 call site(s)
 daedalus,daedalus.pixel.rgba_to_rgb,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
@@ -130,6 +130,6 @@ daedalus,daedalus.pixel.rgba_to_rgb,x86_avx2,pass,,x86_64-unknown-linux-gnu nati
 daedalus,daedalus.pixel.rgba_to_rgb,neon64,pass,,aarch64-unknown-linux-musl qemu +asm
 daedalus,daedalus.pixel.rgba_to_rgb,neon32,pass,,armv7-unknown-linux-musleabihf qemu-cortex-a7 +asm
 daedalus,daedalus.pixel.rgba_to_rgb,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
-daedalus,daedalus.pixel.rgba_to_rgb,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 16777216 input bytes, data GPU-resident: gpu pass 0.117 ms (Timestamps) vs cpu kernel 1.660 ms"
+daedalus,daedalus.pixel.rgba_to_rgb,gpu,pass,,"compute: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)): measured over 16777216 input bytes, data GPU-resident: gpu pass 0.117 ms (Timestamps) vs cpu kernel 0.784 ms"
 daedalus,daedalus.pixel.rgba_to_rgb,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
 daedalus,daedalus.pixel.rgba_to_rgb,wired,pass,,1 call site(s)

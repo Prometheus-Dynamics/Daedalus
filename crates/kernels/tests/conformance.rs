@@ -167,7 +167,7 @@ fn float_conversions() {
         },
         &|b, s, d: &mut [Bits]| {
             let mut out = vec![0f32; d.len()];
-            k::f16_to_f32::run(b, s, &mut out)?;
+            k::f16_to_f32_base::run(b, s, &mut out)?;
             for (d, v) in d.iter_mut().zip(out) {
                 *d = Bits(v.to_bits());
             }
@@ -304,6 +304,31 @@ fn crc32_kernels() {
         || check(Backend::Neon64),
     );
     assert_eq!(k::crc32(b"123456789"), 0xCBF4_3926);
+}
+
+/// binary16 with F16C (`x86_avx2+f16c`): every half, bit for bit.
+#[test]
+fn f16_to_f32_with_f16c() {
+    use daedalus_accel::{Evidence, Ext, conform_with};
+    let all: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_le_bytes).collect();
+    conform_with(
+        Evidence::new("daedalus.float.f16_to_f32", Backend::X86Avx2).extensions(&[Ext::F16c]),
+        || {
+            for input in [all.clone(), bytes(2 * 1001, 15), bytes(14, 16)] {
+                let want = r::f16_to_f32(&input);
+                let mut got = vec![0f32; want.len()];
+                k::f16_to_f32_with_f16c(&input, &mut got).ok_or("no F16C")?;
+                if got
+                    .iter()
+                    .zip(&want)
+                    .any(|(a, b)| a.to_bits() != b.to_bits())
+                {
+                    return Err(format!("{} halves differ", input.len() / 2));
+                }
+            }
+            Ok(())
+        },
+    );
 }
 
 /// The public entry points (dispatching) agree with the references, including errors.
