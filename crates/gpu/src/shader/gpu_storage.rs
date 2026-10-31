@@ -9,6 +9,9 @@ use crate::{GpuContextHandle, GpuError};
 
 use super::{Access, BindingData, BindingKind, ShaderBinding};
 
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+mod dmabuf;
+
 /// A sized storage buffer a node keeps on the engine's device for its lifetime: kept in the
 /// node's `state(T)` across ticks (a TSDF volume, cost-volume scratch). Dropping it (on the
 /// node's `Restart`, or when a reload drops the node's state) frees the buffer.

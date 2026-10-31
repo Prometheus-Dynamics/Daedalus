@@ -135,7 +135,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a test sees nonzero GPU time per GPU node, and the Raze report states
       which source v3dv uses.
       **Blocked by:** the bench run (timestamp support on v3dv).
-- [ ] **What:** import a LINEAR dmabuf as a storage buffer (public API).
+- [x] **What:** import a LINEAR dmabuf as a storage buffer (public API: `GpuStorage::import_dmabuf`; the Raze run is part of `ci.sh pi`).
       **Why:** zero-copy camera frames for packed-u32 compute on v3dv, where LINEAR images
       cannot be sampled.
       **Done when:** a hardware test imports, runs a kernel and verifies the output, on RADV and

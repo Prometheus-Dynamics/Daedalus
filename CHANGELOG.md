@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`GpuStorage::import_dmabuf`**: zero-copy import of a `LINEAR` dmabuf (a camera frame) as a
+  storage buffer, with an optional acquire-fence wait. The import is refused with the size it
+  needs when the dmabuf lacks the driver's buffer padding (256 B on v3dv). Import costs
+  16-29 µs per frame on the CM5.
 - **GPU time per pass: `GpuTimer`, `GpuTimed`, `GpuTimeSource`.** Timestamp queries at the
   start and end of a compute or render pass, resolved and read back without waiting
   (`try_elapsed`). Without timestamp support it falls back to submit→completion time.

@@ -286,6 +286,23 @@ CARGO_BUILD_JOBS=4 cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored
 DAEDALUS_DMA_HEAP=/dev/dma_heap/system cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf
 ```
 
+### Camera frames as storage buffers
+
+`GpuStorage::import_dmabuf(gpu, fd, offset, len, acquire_fence, timeout, label)` imports a
+`LINEAR` dmabuf into a storage buffer with no copy (`VK_EXT_external_memory_dma_buf` on a
+`VkBuffer`). Compute and fragment kernels then read the frame's rows in place; pass the stride
+in a parameter buffer. On v3dv a `LINEAR` image cannot be sampled, so this is the zero-copy way
+for a camera frame to reach a kernel there. Several conditions apply:
+
+- The dmabuf must extend past the range by the driver's buffer padding, 256 B on v3dv. Styx pads
+  its frames by 256 B rounded up to a page. Without the slack the import is refused with the
+  size it needs.
+- An acquire fence is waited on the CPU before the import.
+- The buffer keeps the dmabuf memory alive until it is dropped.
+
+The hardware test is `dmabuf_storage_import_reads_the_frame_in_place` (`ci.sh pi`). On the CM5
+the import takes 16-29 µs per frame (`gpu_bench`).
+
 ### Probing a device
 
 The `gpu_probe` example prints a paste-friendly `key: value` report of the selected adapter and
