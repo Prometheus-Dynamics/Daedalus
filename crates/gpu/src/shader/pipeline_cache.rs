@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
 
@@ -33,6 +34,8 @@ pub struct GpuPipelineCache {
     cache: wgpu::PipelineCache,
     path: PathBuf,
     loaded_bytes: usize,
+    /// Bytes in the file: loaded at `open`, then the last save.
+    file_bytes: AtomicUsize,
     /// The backend device's key (`device_key` is per `wgpu::Device` handle, so it is taken from
     /// the backend's own handle at `open`).
     device_key: usize,
@@ -74,10 +77,12 @@ impl GpuPipelineCache {
                 fallback: true,
             })
         };
+        let loaded_bytes = data.map_or(0, |data| data.len());
         Ok(Self {
             cache,
             path,
-            loaded_bytes: data.map_or(0, |data| data.len()),
+            loaded_bytes,
+            file_bytes: AtomicUsize::new(loaded_bytes),
             device_key: super::device_key(device),
         })
     }
@@ -111,12 +116,34 @@ impl GpuPipelineCache {
         let Some(data) = self.cache.get_data() else {
             return Ok(0);
         };
+        self.write(&data)
+    }
+
+    /// [`save`](Self::save) only when the cache grew past what the file holds (new pipelines
+    /// were built since `open` or the last save). `None` when nothing was written. Cheap enough
+    /// to call after the first ticks of a pipeline: the driver copies its data, no file I/O.
+    pub fn save_if_grown(&self) -> Result<Option<usize>, GpuError> {
+        match self.cache.get_data() {
+            Some(data) if data.len() > self.file_bytes.load(Ordering::Relaxed) => {
+                self.write(&data).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Bytes the file holds: those loaded at `open`, or the last save's.
+    pub fn file_bytes(&self) -> usize {
+        self.file_bytes.load(Ordering::Relaxed)
+    }
+
+    fn write(&self, data: &[u8]) -> Result<usize, GpuError> {
         let tmp = self.path.with_extension("tmp");
         let io = |err: std::io::Error| {
             GpuError::Internal(format!("pipeline cache {}: {err}", self.path.display()))
         };
-        std::fs::write(&tmp, &data).map_err(io)?;
+        std::fs::write(&tmp, data).map_err(io)?;
         std::fs::rename(&tmp, &self.path).map_err(io)?;
+        self.file_bytes.store(data.len(), Ordering::Relaxed);
         Ok(data.len())
     }
 }

@@ -9,7 +9,7 @@
 #![allow(dead_code, unused_imports, unused_macros)]
 
 #[cfg(feature = "tracing")]
-pub(crate) use tracing::{debug, debug_span, error, trace, warn};
+pub(crate) use tracing::{debug, debug_span, error, info, trace, warn};
 
 #[cfg(not(feature = "tracing"))]
 macro_rules! noop {
@@ -18,7 +18,7 @@ macro_rules! noop {
     };
 }
 #[cfg(not(feature = "tracing"))]
-pub(crate) use {noop as debug, noop as error, noop as trace, noop as warn};
+pub(crate) use {noop as debug, noop as error, noop as info, noop as trace, noop as warn};
 
 #[cfg(not(feature = "tracing"))]
 macro_rules! debug_span {

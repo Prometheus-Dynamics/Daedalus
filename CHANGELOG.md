@@ -49,6 +49,14 @@ plugin ABI and does not load.
   `FragmentPass` pipelines use it. The driver validates the data, so a driver change starts a
   fresh cache. The backend requests `PIPELINE_CACHE` when available. On desktop, 12 fragment
   pipelines build in 3 ms instead of 82 ms with the cache reloaded.
+  `save_if_grown` writes the file only when new pipelines were built.
+- **The engine owns the pipeline cache: `EngineConfig::with_gpu_pipeline_cache(dir)`**
+  (`CacheSection::gpu_pipeline_dir`, `DAEDALUS_GPU_PIPELINE_CACHE`, engine feature `gpu-wgpu`).
+  The engine opens and installs the cache when it creates its GPU device, so pipelines a node
+  builds in its first tick from `ctx.gpu` hit it. Each `HostGraph` saves a grown cache after its
+  1st, 2nd, 4th, ... 256th tick, on `HostGraph::save_pipeline_cache()`, and on drop.
+  `HostGraph::pipeline_cache_status()` / `Engine::pipeline_cache_status()` report the file,
+  bytes loaded and saved, and why no cache is in use; loads and saves are logged.
 - **`GpuStorage::import_dmabuf`**: zero-copy import of a `LINEAR` dmabuf (a camera frame) as a
   storage buffer, with an optional acquire-fence wait. The import is refused with the size it
   needs when the dmabuf lacks the driver's buffer padding (256 B on v3dv). Import costs

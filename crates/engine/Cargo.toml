@@ -42,6 +42,9 @@ threads = ["std", "daedalus-runtime/threads"]
 # Serde for the config sections and `diagnostics`; `EngineConfig::from_env` also needs `std`.
 config-env = ["serde", "serde_json"]
 gpu = ["std", "daedalus-runtime/gpu", "daedalus-planner/gpu", "daedalus-gpu"]
+# The wgpu backend's GPU types in the engine: the on-disk pipeline cache
+# (`CacheSection::gpu_pipeline_dir`).
+gpu-wgpu = ["gpu", "daedalus-gpu/gpu-wgpu"]
 gpu-mock = ["gpu", "daedalus-runtime/gpu-mock", "daedalus-gpu/gpu-mock"]
 lockfree-queues = ["daedalus-runtime/lockfree-queues"]
 metrics = ["daedalus-runtime/metrics"]

@@ -74,7 +74,8 @@ resolves against `3.0.1-dev`, so drop the requirement.
   never valid behave differently.
 - New, all additive: `GpuContextHandle::wgpu()`, `GpuStorage` (including `import_dmabuf`),
   `GpuStoragePool`, `GpuTexture`, `GpuTicket` / `GpuInFlight`, `GpuReadback`, `FragmentPass`
-  (with `FragmentBinding`, `FragmentRects`), `GpuTimer`, `GpuPipelineCache`, and `#[device]`
+  (with `FragmentBinding`, `FragmentRects`), `GpuTimer`, `GpuPipelineCache` (and the engine-owned cache,
+  `EngineConfig::with_gpu_pipeline_cache`), and `#[device]`
   transfers taking `&GpuContextHandle`. See [`gpu-nodes.md`](gpu-nodes.md).
 
 ## Structs that gained fields
@@ -84,6 +85,7 @@ implements `Default`):
 
 | Crate | Struct | New fields |
 |---|---|---|
+| engine | `CacheSection` | `gpu_pipeline_dir` |
 | engine | `RuntimeSection` | `blocking_backpressure`, `frame_overhead_window`, `node_fusion`, `recovery`, `stream_error_policy` |
 | gpu | `GpuCapabilities` | `compute` |
 | gpu | `GpuOptions` | `backends` |

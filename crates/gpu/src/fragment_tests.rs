@@ -234,9 +234,18 @@ fn pipeline_cache_round_trips_through_its_file() {
         &[wgpu::TextureFormat::Rgba8Unorm],
     )
     .unwrap();
-    let saved = cache.save().unwrap();
+    let saved = cache
+        .save_if_grown()
+        .unwrap()
+        .expect("new pipelines grew the cache");
     assert!(saved > 0, "the driver saved pipeline data");
     assert!(cache.path().exists());
+    assert_eq!(
+        cache.save_if_grown().unwrap(),
+        None,
+        "nothing new since the save"
+    );
+    assert_eq!(cache.file_bytes(), saved);
 
     let reopened = GpuPipelineCache::open(&ctx, &dir).unwrap();
     assert_eq!(reopened.loaded_bytes(), saved);

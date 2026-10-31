@@ -88,6 +88,10 @@ pub struct Engine {
     caches: Arc<EngineCaches>,
     #[cfg(feature = "gpu")]
     gpu_handle: daedalus_runtime::sync::Mutex<Option<Arc<daedalus_gpu::GpuContextHandle>>>,
+    /// Opened with the GPU device when `cache.gpu_pipeline_dir` is set.
+    #[cfg(feature = "gpu-wgpu")]
+    pub(crate) pipeline_cache:
+        daedalus_runtime::sync::Mutex<Option<Arc<crate::pipeline_cache::EnginePipelineCache>>>,
 }
 
 impl Engine {
@@ -106,6 +110,8 @@ impl Engine {
             config,
             #[cfg(feature = "gpu")]
             gpu_handle: daedalus_runtime::sync::Mutex::new(None),
+            #[cfg(feature = "gpu-wgpu")]
+            pipeline_cache: daedalus_runtime::sync::Mutex::new(None),
         })
     }
 
@@ -415,6 +421,8 @@ impl Engine {
             types: daedalus_runtime::TypeIndex::default(),
             frame_overhead: None,
             selected: None,
+            #[cfg(feature = "gpu-wgpu")]
+            pipeline_cache: self.pipeline_cache_saver(),
         }
         .with_configured_frame_overhead(self.config.runtime.frame_overhead_window))
     }
@@ -559,6 +567,8 @@ impl Engine {
             types,
             frame_overhead: None,
             selected: None,
+            #[cfg(feature = "gpu-wgpu")]
+            pipeline_cache: self.pipeline_cache_saver(),
         }
         .with_configured_frame_overhead(self.config.runtime.frame_overhead_window))
     }
@@ -654,6 +664,12 @@ impl Engine {
             },
         };
         let handle = Arc::new(select_backend(&opts)?);
+        #[cfg(feature = "gpu-wgpu")]
+        if let Some(dir) = self.config.cache.gpu_pipeline_dir.as_deref() {
+            *self.pipeline_cache.lock() = Some(Arc::new(
+                crate::pipeline_cache::EnginePipelineCache::open(&handle, dir),
+            ));
+        }
         *guard = Some(handle.clone());
         Ok(Some(handle))
     }

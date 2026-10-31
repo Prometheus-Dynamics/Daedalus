@@ -138,10 +138,21 @@ chains. A transfer done inside a handler is invisible to the plan.
 
 ## Startup
 
-`GpuPipelineCache::open(gpu, dir)` loads the Vulkan pipeline cache for the adapter.
-`install()` it before building passes and `save()` it after; the driver drops data from another
-driver version. On the CM5's V3D, 12 fragment pipelines build in 5.7 ms instead of 52 ms with the
-cache loaded (Mesa's own shader cache off); on desktop 3 ms instead of 82 ms.
+Let the engine keep the Vulkan pipeline cache: `EngineConfig::gpu(GpuBackend::Device)
+.with_gpu_pipeline_cache(dir)` (or `DAEDALUS_GPU_PIPELINE_CACHE=dir`). When the engine creates
+its device it opens the cache file for the adapter in `dir` and installs it, so `FragmentPass`,
+shader dispatch, and the pipelines a node builds from `ctx.gpu` in its first tick all use it. A
+node building its own pipelines passes `pipeline_cache_for(device)` as the descriptor's
+`cache`. Each graph saves the cache when it grew: after its 1st, 2nd, 4th, ... 256th tick, on
+`HostGraph::save_pipeline_cache()`, and on drop, so a process that is killed keeps what its
+first ticks built. `HostGraph::pipeline_cache_status()` reports the file, the bytes loaded and
+saved, and why there is no cache (no Vulkan pipeline cache on the device, an unwritable
+directory). The driver drops data from another driver version.
+
+Outside an engine, `GpuPipelineCache::open(gpu, dir)` does the same by hand: `install()` it
+before building passes and `save()` (or `save_if_grown()`) it after. On the CM5's V3D, 12
+fragment pipelines build in 5.7 ms instead of 52 ms with the cache loaded (Mesa's own shader
+cache off); on desktop 3 ms instead of 82 ms.
 
 ## Limits and portability
 

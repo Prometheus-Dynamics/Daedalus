@@ -245,6 +245,13 @@ pub struct CacheSection {
     pub planner_max_entries: usize,
     #[cfg_attr(feature = "config-env", serde(default = "default_cache_entries"))]
     pub runtime_plan_max_entries: usize,
+    /// Directory of the on-disk GPU pipeline cache (Vulkan): the engine opens and installs it
+    /// when it creates its GPU device, so every pipeline built on that device (node state,
+    /// `FragmentPass`, shader dispatch) uses it, and saves it as graphs grow it. `None` (the
+    /// default) keeps no cache. Needs the `gpu-wgpu` feature; see
+    /// [`HostGraph::pipeline_cache_status`](crate::HostGraph::pipeline_cache_status).
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub gpu_pipeline_dir: Option<String>,
 }
 
 fn default_cache_entries() -> usize {
@@ -256,6 +263,7 @@ impl Default for CacheSection {
         Self {
             planner_max_entries: default_cache_entries(),
             runtime_plan_max_entries: default_cache_entries(),
+            gpu_pipeline_dir: None,
         }
     }
 }
@@ -428,6 +436,12 @@ impl EngineConfig {
         self
     }
 
+    /// Keep the GPU pipeline cache in `dir` ([`CacheSection::gpu_pipeline_dir`]).
+    pub fn with_gpu_pipeline_cache(mut self, dir: impl Into<String>) -> Self {
+        self.cache.gpu_pipeline_dir = Some(dir.into());
+        self
+    }
+
     /// Enables or disables GPU adapters in the planner.
     pub fn with_planner_gpu(mut self, enable_gpu: bool) -> Self {
         self.planner.enable_gpu = enable_gpu;
@@ -460,6 +474,7 @@ impl EngineConfig {
     ///
     /// Environment variables:
     /// - `DAEDALUS_METRICS_LEVEL=off|basic|detailed|profile`
+    /// - `DAEDALUS_GPU_PIPELINE_CACHE=<dir>` ([`CacheSection::gpu_pipeline_dir`])
     #[cfg(all(feature = "config-env", feature = "std"))]
     pub fn from_env() -> Result<Self, EngineConfigError> {
         let mut cfg = EngineConfig::default();
@@ -476,6 +491,12 @@ impl EngineConfig {
                     });
                 }
             };
+        }
+
+        if let Ok(dir) = env::var("DAEDALUS_GPU_PIPELINE_CACHE")
+            && !dir.trim().is_empty()
+        {
+            cfg.cache.gpu_pipeline_dir = Some(dir);
         }
 
         cfg.planner.enable_gpu = read_bool("DAEDALUS_PLANNER_GPU", cfg.planner.enable_gpu)?;

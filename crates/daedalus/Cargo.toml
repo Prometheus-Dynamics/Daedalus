@@ -73,7 +73,7 @@ gpu-engine = [
 ]
 gpu = ["gpu-engine"]
 # wgpu backend: Vulkan, plus Metal on Apple and DX12 on Windows.
-gpu-wgpu = ["gpu-engine", "daedalus-gpu/gpu-wgpu"]
+gpu-wgpu = ["gpu-engine", "daedalus-gpu/gpu-wgpu", "daedalus-engine/gpu-wgpu"]
 # wgpu's OpenGL/GLES backend for devices without Vulkan (changes wgpu internals, so a boundary
 # feature).
 gpu-gles = ["gpu-wgpu", "daedalus-gpu/gpu-gles"]
@@ -178,6 +178,11 @@ required-features = ["engine", "plugins", "gpu-wgpu"]
 [[test]]
 name = "gpu_fragment"
 path = "tests/gpu_fragment.rs"
+required-features = ["engine", "plugins", "gpu-wgpu"]
+
+[[test]]
+name = "gpu_pipeline_cache"
+path = "tests/gpu_pipeline_cache.rs"
 required-features = ["engine", "plugins", "gpu-wgpu"]
 
 [[test]]

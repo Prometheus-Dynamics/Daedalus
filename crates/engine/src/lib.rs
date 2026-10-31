@@ -27,6 +27,7 @@ mod engine;
 mod engine_execution;
 mod error;
 mod host_graph;
+mod pipeline_cache;
 mod prepared_plan;
 
 pub use cache::{CacheStatus, EngineCacheMetrics};
@@ -63,4 +64,5 @@ pub use host_graph::{
     HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput, HostGraphReload,
     HostGraphStopHandle, HostGraphTurn,
 };
+pub use pipeline_cache::PipelineCacheStatus;
 pub use prepared_plan::{PreparedPlan, PreparedRuntimePlan};

@@ -28,6 +28,7 @@ mod frame_overhead;
 mod introspect;
 #[cfg(any(feature = "threads", all(feature = "std", target_os = "linux")))]
 mod multicam;
+mod pipeline_cache;
 mod reload;
 
 pub use bindings::{
@@ -73,6 +74,9 @@ pub struct HostGraph<H: NodeHandler> {
     /// The demand slice of the last [`HostGraph::tick_selected`] sink set. A repeated sink set
     /// reuses it; a reload replaces the whole graph, so the cache never outlives its plan.
     pub(crate) selected: Option<Box<SelectedDemand>>,
+    /// The engine's GPU pipeline cache, saved after the first ticks and on drop.
+    #[cfg(feature = "gpu-wgpu")]
+    pub(crate) pipeline_cache: Option<crate::pipeline_cache::PipelineCacheSaver>,
 }
 
 /// Demand for one sink set, computed once and reused while the same sinks are ticked.
@@ -420,7 +424,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
 
     /// Execute one graph tick. Pair with `push`/`drain_*` for advanced multi-input workflows.
     pub fn tick(&mut self) -> Result<ExecutionTelemetry, EngineError> {
-        self.frame_commit();
+        self.tick_start();
         self.runner.run_telemetry()
     }
 
@@ -431,7 +435,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         output_port: impl AsRef<str>,
     ) -> Result<Option<(ExecutionTelemetry, Option<Payload>)>, EngineError> {
         self.types.check_payload(&payload)?;
-        self.frame_commit();
+        self.tick_start();
         self.runner
             .executor
             .run_direct_host_payload(input_port.as_ref(), payload, output_port.as_ref())
@@ -486,7 +490,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<(ExecutionTelemetry, Option<Payload>), EngineError> {
         self.types.check_payload(&payload)?;
-        self.frame_commit();
+        self.tick_start();
         self.runner
             .executor
             .run_direct_host_route(route, payload)
@@ -499,7 +503,7 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         payload: Payload,
     ) -> Result<Option<Payload>, EngineError> {
         self.types.check_payload(&payload)?;
-        self.frame_commit();
+        self.tick_start();
         self.runner
             .executor
             .run_direct_host_route_payload(route, payload)
