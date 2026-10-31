@@ -668,20 +668,21 @@ static F16C_TABLE: Registry = Registry {
     ..Registry::EMPTY
 };
 
-/// Rockchip's RGA through the `rockchip-rga` V4L2 mem2mem driver: written, untested on board.
+/// Rockchip's RGA (`daedalus-rga`, the `rockchip-rga` V4L2 mem2mem driver): written, untested on
+/// board.
 static RGA_KERNELS: [Kernel; 4] = [
     Kernel::implemented(
         "daedalus.pixel.rgb_to_rgba",
         Backend::FixedFunction,
-        "crates/kernels/src/v4l2.rs",
-        "crates/kernels/tests/v4l2.rs",
+        "crates/rga/src/lib.rs",
+        "crates/rga/tests/v4l2.rs",
     )
     .with_variant("rga-v4l2"),
     Kernel::implemented(
         "daedalus.pixel.rgba_to_rgb",
         Backend::FixedFunction,
-        "crates/kernels/src/v4l2.rs",
-        "crates/kernels/tests/v4l2.rs",
+        "crates/rga/src/lib.rs",
+        "crates/rga/tests/v4l2.rs",
     )
     .with_variant("rga-v4l2"),
     Kernel::missing(

@@ -103,8 +103,15 @@ plugin ABI and does not load.
   the compute form (`kernels_common.wgsl`), then the target is copied into the destination
   buffer. This is the form for tile-based GPUs (V3D, Mali), where fragment passes beat compute.
   It covers every op but base64 decode, bit-exact, and is recorded as the `fragment` variant.
-- **Fixed-function conversions through V4L2 mem2mem** (`daedalus_kernels::v4l2`, feature
-  `v4l2`): a frame converter on any mem2mem device, single- or multi-planar, with ioctl struct
+- **`daedalus-rga`**: Rockchip's RGA 2D engine through the V4L2 mem2mem interface
+  (`rockchip-rga`). It scales, crops (`VIDIOC_S_SELECTION`) and converts pixel formats (RGB,
+  BGR, ABGR/XBGR, GREY, NV12/NV21, I420). It works dmabuf in and dmabuf out with no CPU copy
+  (`Rga::blit`), or on byte buffers (`Rga::convert`). Sessions are cached per configuration. The
+  ioctl structs are size-checked against the kernel ABI. Tested end to end against the kernel's
+  `vim2m` (conversion, scaling, `dma_heap` dmabufs); on a board it is written, untested. This is
+  the binding Daedalus and Styx share, and it depends only on libc. RGB↔RGBA are registered as
+  fixed-function `rga-v4l2` cells.
+- or multi-planar, with ioctl struct
   sizes checked against the kernel ABI. It is tested end to end against the kernel's `vim2m`.
   `v4l2::Rga` drives Rockchip's RGA (`rockchip-rga`) for RGB↔RGBA. That part is written, untested
   on board; gray needs librga.

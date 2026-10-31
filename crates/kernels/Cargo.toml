@@ -17,20 +17,16 @@ workspace = true
 
 [package.metadata.daedalus]
 boundary-features = []
-host-only-features = ["std", "v4l2"]
+host-only-features = ["std"]
 
 [features]
 default = ["std"]
 # Runtime selection of AVX2 kernels on x86 (`is_x86_feature_detected`). Without it, x86 runs
 # the SSE2 (or compiled-in) kernels.
 std = []
-# Fixed-function conversions through a V4L2 mem2mem device (Rockchip's RGA via `rockchip-rga`;
-# the kernel's `vim2m` in tests). Linux.
-v4l2 = ["std", "dep:libc"]
 
 [dependencies]
 daedalus-accel = { workspace = true }
-libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 daedalus-accel = { workspace = true, features = ["std"] }

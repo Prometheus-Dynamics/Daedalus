@@ -1,20 +1,15 @@
-//! Fixed-function conversions through a V4L2 mem2mem device: the kernel's `rockchip-rga` driver
-//! (Rockchip's 2D engine) on boards, and `vim2m` (the kernel's test driver) here. Feature `v4l2`,
-//! Linux only.
+//! V4L2 mem2mem sessions: one device context with an output (source) and a capture
+//! (destination) queue, configured once per format, size, stride and crop.
 //!
-//! The ioctl structs follow `linux/videodev2.h`. Their sizes are checked at compile time on 64-bit
-//! targets, and the ioctl numbers are derived from them, so 32-bit builds with 64-bit `time_t`
-//! get the right numbers too. Buffers are `MMAP`: each conversion copies the frame in and the
-//! result out.
+//! The ioctl structs follow `linux/videodev2.h`. Their sizes are asserted on 64-bit targets and
+//! the ioctl numbers are derived from them, so 32-bit builds with 64-bit `time_t` get the right
+//! numbers too.
 
 use std::ffi::CStr;
-use std::format;
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::{Path, PathBuf};
-use std::string::String;
-use std::vec::Vec;
 
 const CAP_VIDEO_M2M: u32 = 0x0000_8000;
 const CAP_VIDEO_M2M_MPLANE: u32 = 0x0000_4000;
@@ -25,10 +20,13 @@ const BUF_TYPE_VIDEO_OUTPUT: u32 = 2;
 const BUF_TYPE_VIDEO_CAPTURE_MPLANE: u32 = 9;
 const BUF_TYPE_VIDEO_OUTPUT_MPLANE: u32 = 10;
 const MEMORY_MMAP: u32 = 1;
+const MEMORY_DMABUF: u32 = 4;
 const FIELD_NONE: u32 = 1;
+const SEL_TGT_CROP: u32 = 0;
 
-/// A V4L2 pixel format (`V4L2_PIX_FMT_*`), byte order in memory as the comment says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A V4L2 pixel format (`V4L2_PIX_FMT_*`); the comment gives the byte order in memory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PixelFormat {
     /// `RGB3`: R, G, B.
     Rgb24,
@@ -40,26 +38,46 @@ pub enum PixelFormat {
     Xbgr32,
     /// `GREY`.
     Grey,
+    /// `NV12`: Y plane, then interleaved U, V at half resolution (one buffer).
+    Nv12,
+    /// `NV21`: as NV12 with V, U.
+    Nv21,
+    /// `YU12` (I420): Y, U, V planes (one buffer).
+    Yuv420,
 }
 
 impl PixelFormat {
-    fn fourcc(self) -> u32 {
+    pub fn fourcc(self) -> u32 {
         let code = match self {
             PixelFormat::Rgb24 => *b"RGB3",
             PixelFormat::Bgr24 => *b"BGR3",
             PixelFormat::Abgr32 => *b"AR24",
             PixelFormat::Xbgr32 => *b"XR24",
             PixelFormat::Grey => *b"GREY",
+            PixelFormat::Nv12 => *b"NV12",
+            PixelFormat::Nv21 => *b"NV21",
+            PixelFormat::Yuv420 => *b"YU12",
         };
         u32::from_le_bytes(code)
     }
 
-    /// Bytes per pixel.
+    /// Bytes per pixel of the first plane.
     pub fn bytes(self) -> u32 {
         match self {
             PixelFormat::Rgb24 | PixelFormat::Bgr24 => 3,
             PixelFormat::Abgr32 | PixelFormat::Xbgr32 => 4,
-            PixelFormat::Grey => 1,
+            PixelFormat::Grey | PixelFormat::Nv12 | PixelFormat::Nv21 | PixelFormat::Yuv420 => 1,
+        }
+    }
+
+    /// Bytes of a `height`-row frame with `stride`-byte rows (all planes).
+    pub fn frame_len(self, stride: u32, height: u32) -> usize {
+        let luma = stride as usize * height as usize;
+        match self {
+            PixelFormat::Nv12 | PixelFormat::Nv21 | PixelFormat::Yuv420 => {
+                luma + stride as usize * height.div_ceil(2) as usize
+            }
+            _ => luma,
         }
     }
 }
@@ -199,7 +217,19 @@ struct Buffer {
     request_fd: i32,
 }
 
-// The kernel's sizes on 64-bit Linux (`pahole` of videodev2.h).
+#[repr(C)]
+struct Selection {
+    type_: u32,
+    target: u32,
+    flags: u32,
+    left: i32,
+    top: i32,
+    width: u32,
+    height: u32,
+    reserved: [u32; 9],
+}
+
+// The kernel's sizes on 64-bit Linux.
 #[cfg(target_pointer_width = "64")]
 const _: () = {
     assert!(size_of::<Capability>() == 104);
@@ -208,6 +238,7 @@ const _: () = {
     assert!(size_of::<RequestBuffers>() == 20);
     assert!(size_of::<Plane>() == 64);
     assert!(size_of::<Buffer>() == 88);
+    assert!(size_of::<Selection>() == 64);
 };
 
 /// `_IOC(dir, 'V', nr, size)` as the kernel encodes it on the targets Daedalus supports.
@@ -224,6 +255,7 @@ const VIDIOC_QBUF: u64 = ioc(READ | WRITE, 15, size_of::<Buffer>());
 const VIDIOC_DQBUF: u64 = ioc(READ | WRITE, 17, size_of::<Buffer>());
 const VIDIOC_STREAMON: u64 = ioc(WRITE, 18, size_of::<i32>());
 const VIDIOC_STREAMOFF: u64 = ioc(WRITE, 19, size_of::<i32>());
+const VIDIOC_S_SELECTION: u64 = ioc(READ | WRITE, 94, size_of::<Selection>());
 
 fn ioctl<T>(file: &File, request: u64, arg: &mut T) -> io::Result<()> {
     loop {
@@ -240,9 +272,8 @@ fn ioctl<T>(file: &File, request: u64, arg: &mut T) -> io::Result<()> {
     }
 }
 
-/// The driver name of a V4L2 device, and whether it is a mem2mem device (single- or
-/// multi-planar).
-fn query(file: &File) -> io::Result<(String, Option<bool>)> {
+/// The driver name of a V4L2 device and, for a mem2mem device, whether it is multi-planar.
+pub(crate) fn query(file: &File) -> io::Result<(String, Option<bool>)> {
     // SAFETY: an all-zero `v4l2_capability` is valid.
     let mut cap: Capability = unsafe { std::mem::zeroed() };
     ioctl(file, VIDIOC_QUERYCAP, &mut cap)?;
@@ -288,6 +319,51 @@ pub fn find_m2m_device(driver: &str) -> Option<PathBuf> {
     })
 }
 
+/// One side of a conversion: pixel format, size and row stride.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Layout {
+    pub format: PixelFormat,
+    pub width: u32,
+    pub height: u32,
+    /// Bytes per row of the first plane.
+    pub stride: u32,
+}
+
+impl Layout {
+    /// Tightly packed rows.
+    pub fn packed(format: PixelFormat, width: u32, height: u32) -> Self {
+        Self {
+            format,
+            width,
+            height,
+            stride: width * format.bytes(),
+        }
+    }
+
+    /// Bytes of a frame in this layout.
+    pub fn frame_len(&self) -> usize {
+        self.format.frame_len(self.stride, self.height)
+    }
+}
+
+/// A source rectangle to convert from (the rest of the frame is ignored).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Rect {
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// How a session's buffers are provided.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Memory {
+    /// Driver buffers mapped into the process: bytes are copied in and out.
+    Mmap,
+    /// The caller's dmabufs, queued per conversion: no copies.
+    Dmabuf,
+}
+
 /// An `mmap`ed V4L2 buffer.
 struct Mapped {
     ptr: *mut u8,
@@ -301,30 +377,29 @@ impl Drop for Mapped {
     }
 }
 
-/// A frame-size converter on a mem2mem device: `width x height` frames from `src` to `dst`
-/// format, one buffer per queue.
-pub struct V4l2Converter {
+/// A configured mem2mem context: `src` into `dst`, scaling to `dst`'s size, from `crop` of the
+/// source when given.
+pub(crate) struct Session {
     file: File,
     mplane: bool,
     out_type: u32,
     cap_type: u32,
-    out: Mapped,
-    cap: Mapped,
+    memory: Memory,
+    mapped: Option<(Mapped, Mapped)>,
     in_len: usize,
     out_len: usize,
 }
 
-// SAFETY: the mappings are owned by the converter and only touched through `&mut self`.
-unsafe impl Send for V4l2Converter {}
+// SAFETY: the mappings are owned by the session and only touched through `&mut self`.
+unsafe impl Send for Session {}
 
-impl V4l2Converter {
-    /// Open the mem2mem device at `path` for `width x height` frames, `src` into `dst`.
-    pub fn open(
+impl Session {
+    pub(crate) fn open(
         path: &Path,
-        width: u32,
-        height: u32,
-        src: PixelFormat,
-        dst: PixelFormat,
+        src: Layout,
+        dst: Layout,
+        crop: Option<Rect>,
+        memory: Memory,
     ) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         let (_, m2m) = query(&file)?;
@@ -335,10 +410,41 @@ impl V4l2Converter {
         } else {
             (BUF_TYPE_VIDEO_OUTPUT, BUF_TYPE_VIDEO_CAPTURE)
         };
-        let in_len = set_format(&file, out_type, mplane, width, height, src)?;
-        let out_len = set_format(&file, cap_type, mplane, width, height, dst)?;
-        let out = map_buffer(&file, out_type, mplane)?;
-        let cap = map_buffer(&file, cap_type, mplane)?;
+        let in_len = set_format(&file, out_type, mplane, src)?;
+        let out_len = set_format(&file, cap_type, mplane, dst)?;
+        if let Some(r) = crop {
+            let mut sel = Selection {
+                // The selection API takes the single-planar type for both kinds of device.
+                type_: BUF_TYPE_VIDEO_OUTPUT,
+                target: SEL_TGT_CROP,
+                flags: 0,
+                left: r.left,
+                top: r.top,
+                width: r.width,
+                height: r.height,
+                reserved: [0; 9],
+            };
+            ioctl(&file, VIDIOC_S_SELECTION, &mut sel)?;
+            if (sel.left, sel.top, sel.width, sel.height) != (r.left, r.top, r.width, r.height) {
+                return Err(io::Error::other(format!(
+                    "the device adjusted crop {r:?} to {}x{}+{}+{}",
+                    sel.width, sel.height, sel.left, sel.top
+                )));
+            }
+        }
+        let mem = match memory {
+            Memory::Mmap => MEMORY_MMAP,
+            Memory::Dmabuf => MEMORY_DMABUF,
+        };
+        request_buffer(&file, out_type, mem)?;
+        request_buffer(&file, cap_type, mem)?;
+        let mapped = match memory {
+            Memory::Mmap => Some((
+                map_buffer(&file, out_type, mplane)?,
+                map_buffer(&file, cap_type, mplane)?,
+            )),
+            Memory::Dmabuf => None,
+        };
         for ty in [out_type, cap_type] {
             let mut t = ty as i32;
             ioctl(&file, VIDIOC_STREAMON, &mut t)?;
@@ -348,52 +454,87 @@ impl V4l2Converter {
             mplane,
             out_type,
             cap_type,
-            out,
-            cap,
+            memory,
+            mapped,
             in_len,
             out_len,
         })
     }
 
-    /// The frame sizes the device expects in and gives out (its strides included).
-    pub fn frame_lens(&self) -> (usize, usize) {
+    /// The frame sizes the device expects in and gives out.
+    pub(crate) fn frame_lens(&self) -> (usize, usize) {
         (self.in_len, self.out_len)
     }
 
-    /// Convert one frame: `src` (at least [`frame_lens`](Self::frame_lens)`.0` bytes) into
-    /// `dst`; returns the bytes written.
-    pub fn convert(&mut self, src: &[u8], dst: &mut [u8]) -> io::Result<usize> {
-        if src.len() < self.in_len || self.out.len < self.in_len {
+    /// Convert one frame between byte buffers (`Mmap` sessions); returns the bytes written.
+    pub(crate) fn convert_bytes(&mut self, src: &[u8], dst: &mut [u8]) -> io::Result<usize> {
+        let Some((out, cap)) = &self.mapped else {
+            return Err(io::Error::other("a dmabuf session takes dmabufs"));
+        };
+        if src.len() < self.in_len || out.len < self.in_len {
             return Err(io::Error::other("source frame shorter than the device's"));
         }
-        // SAFETY: the output buffer is mapped for `self.out.len >= in_len` bytes.
-        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.out.ptr, self.in_len) };
-        self.queue(self.cap_type, 0)?;
-        self.queue(self.out_type, self.in_len)?;
+        // SAFETY: the output buffer is mapped for `out.len >= in_len` bytes.
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), out.ptr, self.in_len) };
+        let (cap_ptr, cap_len) = (cap.ptr, cap.len);
+        self.queue(self.cap_type, None, 0)?;
+        self.queue(self.out_type, None, self.in_len)?;
         self.dequeue(self.out_type)?;
-        let used = self
-            .dequeue(self.cap_type)?
-            .min(self.cap.len)
-            .min(dst.len());
-        // SAFETY: the capture buffer is mapped for `self.cap.len >= used` bytes.
-        unsafe { std::ptr::copy_nonoverlapping(self.cap.ptr, dst.as_mut_ptr(), used) };
+        let used = self.dequeue(self.cap_type)?.min(cap_len).min(dst.len());
+        // SAFETY: the capture buffer is mapped for `cap_len >= used` bytes.
+        unsafe { std::ptr::copy_nonoverlapping(cap_ptr, dst.as_mut_ptr(), used) };
         Ok(used)
     }
 
-    fn queue(&self, type_: u32, bytesused: usize) -> io::Result<()> {
+    /// Convert one frame from dmabuf `src` into dmabuf `dst` (`Dmabuf` sessions): no copies.
+    pub(crate) fn convert_dmabuf(
+        &mut self,
+        src: BorrowedFd<'_>,
+        src_len: usize,
+        dst: BorrowedFd<'_>,
+        dst_len: usize,
+    ) -> io::Result<usize> {
+        if self.memory != Memory::Dmabuf {
+            return Err(io::Error::other("a byte session takes byte buffers"));
+        }
+        if src_len < self.in_len || dst_len < self.out_len {
+            return Err(io::Error::other(format!(
+                "dmabufs of {src_len} and {dst_len} bytes; the device needs {} and {}",
+                self.in_len, self.out_len
+            )));
+        }
+        self.queue(self.cap_type, Some((dst.as_raw_fd(), dst_len)), 0)?;
+        self.queue(self.out_type, Some((src.as_raw_fd(), src_len)), self.in_len)?;
+        self.dequeue(self.out_type)?;
+        self.dequeue(self.cap_type)
+    }
+
+    fn queue(&self, type_: u32, dmabuf: Option<(i32, usize)>, bytesused: usize) -> io::Result<()> {
         // SAFETY: all-zero `v4l2_buffer` / `v4l2_plane` are valid.
         let mut plane: Plane = unsafe { std::mem::zeroed() };
         let mut buf: Buffer = unsafe { std::mem::zeroed() };
         buf.index = 0;
         buf.type_ = type_;
-        buf.memory = MEMORY_MMAP;
         buf.field = FIELD_NONE;
+        buf.memory = if dmabuf.is_some() {
+            MEMORY_DMABUF
+        } else {
+            MEMORY_MMAP
+        };
         if self.mplane {
             plane.bytesused = bytesused as u32;
+            if let Some((fd, len)) = dmabuf {
+                plane.m.fd = fd;
+                plane.length = len as u32;
+            }
             buf.m.planes = &mut plane;
             buf.length = 1;
         } else {
             buf.bytesused = bytesused as u32;
+            if let Some((fd, len)) = dmabuf {
+                buf.m.fd = fd;
+                buf.length = len as u32;
+            }
         }
         ioctl(&self.file, VIDIOC_QBUF, &mut buf)
     }
@@ -403,7 +544,10 @@ impl V4l2Converter {
         let mut plane: Plane = unsafe { std::mem::zeroed() };
         let mut buf: Buffer = unsafe { std::mem::zeroed() };
         buf.type_ = type_;
-        buf.memory = MEMORY_MMAP;
+        buf.memory = match self.memory {
+            Memory::Mmap => MEMORY_MMAP,
+            Memory::Dmabuf => MEMORY_DMABUF,
+        };
         if self.mplane {
             buf.m.planes = &mut plane;
             buf.length = 1;
@@ -417,7 +561,7 @@ impl V4l2Converter {
     }
 }
 
-impl Drop for V4l2Converter {
+impl Drop for Session {
     fn drop(&mut self) {
         for ty in [self.out_type, self.cap_type] {
             let mut t = ty as i32;
@@ -427,34 +571,30 @@ impl Drop for V4l2Converter {
 }
 
 /// Set a queue's format; returns the frame size the driver chose.
-fn set_format(
-    file: &File,
-    type_: u32,
-    mplane: bool,
-    width: u32,
-    height: u32,
-    format: PixelFormat,
-) -> io::Result<usize> {
+fn set_format(file: &File, type_: u32, mplane: bool, layout: Layout) -> io::Result<usize> {
     // SAFETY: an all-zero `v4l2_format` is valid.
     let mut f: Format = unsafe { std::mem::zeroed() };
     f.type_ = type_;
+    let fourcc = layout.format.fourcc();
     if mplane {
+        // SAFETY: an all-zero `v4l2_pix_format_mplane` is valid.
         let mut mp: PixFormatMplane = unsafe { std::mem::zeroed() };
-        mp.width = width;
-        mp.height = height;
-        mp.pixelformat = format.fourcc();
+        mp.width = layout.width;
+        mp.height = layout.height;
+        mp.pixelformat = fourcc;
         mp.field = FIELD_NONE;
         mp.num_planes = 1;
-        mp.plane_fmt[0].bytesperline = width * format.bytes();
+        mp.plane_fmt[0].bytesperline = layout.stride;
+        mp.plane_fmt[0].sizeimage = layout.frame_len() as u32;
         f.fmt.pix_mp = mp;
     } else {
         f.fmt.pix = PixFormat {
-            width,
-            height,
-            pixelformat: format.fourcc(),
+            width: layout.width,
+            height: layout.height,
+            pixelformat: fourcc,
             field: FIELD_NONE,
-            bytesperline: width * format.bytes(),
-            sizeimage: 0,
+            bytesperline: layout.stride,
+            sizeimage: layout.frame_len() as u32,
             colorspace: 0,
             priv_: 0,
             flags: 0,
@@ -465,28 +605,34 @@ fn set_format(
     }
     ioctl(file, VIDIOC_S_FMT, &mut f)?;
     // SAFETY: the driver filled the member for `type_`.
-    let (got, size) = unsafe {
+    let (got, w, h, size) = unsafe {
         if mplane {
             let mp = f.fmt.pix_mp;
-            (mp.pixelformat, mp.plane_fmt[0].sizeimage as usize)
+            (
+                mp.pixelformat,
+                mp.width,
+                mp.height,
+                mp.plane_fmt[0].sizeimage as usize,
+            )
         } else {
-            (f.fmt.pix.pixelformat, f.fmt.pix.sizeimage as usize)
+            let p = f.fmt.pix;
+            (p.pixelformat, p.width, p.height, p.sizeimage as usize)
         }
     };
-    if got != format.fourcc() {
+    if got != fourcc || (w, h) != (layout.width, layout.height) {
         return Err(io::Error::other(format!(
-            "the device does not take {format:?}"
+            "the device does not take {:?} at {}x{} (it chose {w}x{h} of {got:#x})",
+            layout.format, layout.width, layout.height
         )));
     }
     Ok(size)
 }
 
-/// Request one `MMAP` buffer on a queue and map it.
-fn map_buffer(file: &File, type_: u32, mplane: bool) -> io::Result<Mapped> {
+fn request_buffer(file: &File, type_: u32, memory: u32) -> io::Result<()> {
     let mut req = RequestBuffers {
         count: 1,
         type_,
-        memory: MEMORY_MMAP,
+        memory,
         capabilities: 0,
         flags: 0,
         reserved: [0; 3],
@@ -495,7 +641,12 @@ fn map_buffer(file: &File, type_: u32, mplane: bool) -> io::Result<Mapped> {
     if req.count < 1 {
         return Err(io::Error::other("the device gave no buffer"));
     }
-    // SAFETY: as in `V4l2Converter::queue`.
+    Ok(())
+}
+
+/// Map buffer 0 of a queue.
+fn map_buffer(file: &File, type_: u32, mplane: bool) -> io::Result<Mapped> {
+    // SAFETY: all-zero `v4l2_buffer` / `v4l2_plane` are valid.
     let mut plane: Plane = unsafe { std::mem::zeroed() };
     let mut buf: Buffer = unsafe { std::mem::zeroed() };
     buf.type_ = type_;
@@ -531,66 +682,4 @@ fn map_buffer(file: &File, type_: u32, mplane: bool) -> io::Result<Mapped> {
         ptr: ptr.cast(),
         len,
     })
-}
-
-/// Rockchip's RGA through the mainline `rockchip-rga` mem2mem driver, for
-/// `daedalus.pixel.rgb_to_rgba` and `rgba_to_rgb`.
-///
-/// The driver has no R,G,B,A byte order, so the frames are relabelled: RGB bytes read as
-/// `BGR24`, converted to `ABGR32` (B,G,R,A), give R,G,B,A, and the reverse for RGBA to RGB. The
-/// alpha the engine writes is checked by the board conformance run. Written, untested on a
-/// board: `find` returns `None` without the driver.
-pub struct Rga {
-    path: PathBuf,
-    converters: std::collections::HashMap<(u32, u32, bool), V4l2Converter>,
-}
-
-impl Rga {
-    /// The RGA device, when the kernel exposes `rockchip-rga`.
-    pub fn find() -> Option<Self> {
-        Some(Self {
-            path: find_m2m_device("rockchip-rga")?,
-            converters: std::collections::HashMap::new(),
-        })
-    }
-
-    fn converter(&mut self, w: u32, h: u32, to_rgba: bool) -> io::Result<&mut V4l2Converter> {
-        let key = (w, h, to_rgba);
-        if !self.converters.contains_key(&key) {
-            let (src, dst) = if to_rgba {
-                (PixelFormat::Bgr24, PixelFormat::Abgr32)
-            } else {
-                (PixelFormat::Abgr32, PixelFormat::Bgr24)
-            };
-            let c = V4l2Converter::open(&self.path, w, h, src, dst)?;
-            self.converters.insert(key, c);
-        }
-        Ok(self.converters.get_mut(&key).expect("inserted above"))
-    }
-
-    /// RGB8 to RGBA8 on the RGA, `width x height`, tightly packed.
-    pub fn rgb_to_rgba(
-        &mut self,
-        width: u32,
-        height: u32,
-        src: &[u8],
-        dst: &mut [u8],
-    ) -> io::Result<()> {
-        self.converter(width, height, true)?
-            .convert(src, dst)
-            .map(drop)
-    }
-
-    /// RGBA8 to RGB8 on the RGA.
-    pub fn rgba_to_rgb(
-        &mut self,
-        width: u32,
-        height: u32,
-        src: &[u8],
-        dst: &mut [u8],
-    ) -> io::Result<()> {
-        self.converter(width, height, false)?
-            .convert(src, dst)
-            .map(drop)
-    }
 }

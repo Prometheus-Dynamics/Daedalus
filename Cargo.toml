@@ -4,6 +4,7 @@ members = [
     "crates/core",
     "crates/accel",
     "crates/kernels",
+    "crates/rga",
     "crates/transport",
     "crates/data",
     "crates/wgsl-infer",
@@ -55,6 +56,7 @@ rust-version = "1.99"
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.1-dev", default-features = false }
 daedalus-core = { path = "crates/core", version = "3.0.1-dev", default-features = false }
 daedalus-kernels = { path = "crates/kernels", version = "3.0.1-dev", default-features = false }
+daedalus-rga = { path = "crates/rga", version = "3.0.1-dev" }
 daedalus-accel = { path = "crates/accel", version = "3.0.1-dev", default-features = false }
 daedalus-transport = { path = "crates/transport", version = "3.0.1-dev", default-features = false }
 daedalus-data = { path = "crates/data", version = "3.0.1-dev", default-features = false }

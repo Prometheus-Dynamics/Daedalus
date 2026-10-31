@@ -652,7 +652,6 @@ name = "daedalus-kernels"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-accel",
- "libc",
 ]
 
 [[package]]
@@ -823,6 +822,15 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "daedalus-rga"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-accel",
+ "daedalus-kernels",
+ "libc",
 ]
 
 [[package]]

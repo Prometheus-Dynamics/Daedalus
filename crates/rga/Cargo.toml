@@ -1,0 +1,27 @@
+[package]
+name = "daedalus-rga"
+version = "3.0.1-dev"
+edition = "2024"
+rust-version.workspace = true
+description = "Rockchip RGA 2D engine (scale, crop, pixel-format conversion, dmabuf in and out) through V4L2 mem2mem; the binding Daedalus and Styx share."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-rga"
+readme = "README.md"
+keywords = ["rockchip", "rga", "v4l2", "dmabuf", "2d"]
+categories = ["hardware-support", "multimedia::images"]
+
+[lints]
+workspace = true
+
+[package.metadata.daedalus]
+boundary-features = []
+host-only-features = []
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+daedalus-accel = { workspace = true, features = ["std"] }
+daedalus-kernels = { workspace = true, features = ["std"] }

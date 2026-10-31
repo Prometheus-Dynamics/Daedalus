@@ -46,6 +46,6 @@ Totals: pass 110, impossible 20, untested 2, gap 2.
 19. `daedalus.gpu.storage_to_texture` on neon32: the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes
 20. `daedalus.gpu.storage_to_texture` on rvv: the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes
 21. `daedalus.pixel.gray_to_rgba` on fixed_function: no fixed-function unit on the supported boards works on host memory
-22. `daedalus.pixel.rgb_to_rgba` on fixed_function: rga-v4l2: no CI run of crates/kernels/tests/v4l2.rs
+22. `daedalus.pixel.rgb_to_rgba` on fixed_function: rga-v4l2: no CI run of crates/rga/tests/v4l2.rs
 23. `daedalus.pixel.rgba_red` on fixed_function: no fixed-function unit on the supported boards works on host memory
-24. `daedalus.pixel.rgba_to_rgb` on fixed_function: rga-v4l2: no CI run of crates/kernels/tests/v4l2.rs
+24. `daedalus.pixel.rgba_to_rgb` on fixed_function: rga-v4l2: no CI run of crates/rga/tests/v4l2.rs
