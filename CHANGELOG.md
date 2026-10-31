@@ -77,6 +77,12 @@ plugin ABI and does not load.
   package digest hex. The `base64` and `half` dependencies are gone. Each op lists its call
   sites, and the matrix's `wired` column checks them: a proven kernel that nothing calls is a
   gap, and the old scalar code coming back fails the gate.
+- **`GpuKernels` / `GpuKernel`**: every `daedalus-kernels` op as a compute kernel on
+  GPU-resident `GpuStorage` (`kernels.wgsl`), bit-exact with the CPU kernels (integer-only
+  binary16 and unorm8 conversions, `firstLeadingBit` for subnormals). There is also
+  `copy_with_engine` (`copy_buffer_to_buffer`). The conformance tests record each op's GPU pass
+  time against the CPU kernel per adapter in the matrix. No op is "impossible" on the GPU any
+  more; the caller selects per device.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`

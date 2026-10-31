@@ -1,24 +1,21 @@
 //! Daedalus's entries in the acceleration inventory (`docs/backend-matrix.md`).
 
-use daedalus_accel::{Backend, CallSite, Exempt, Kernel, Op, Registry, Status};
+use daedalus_accel::{Backend, CallSite, Exempt, Ext, Kernel, Op, Registry, Status};
 
 const PORTABLE: Status = Status::Impossible(
     "portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel",
 );
 const NO_FIXED: Status =
     Status::Impossible("no fixed-function unit on the supported boards works on host memory");
-const HOST_SIDE: Status = Status::Impossible(
-    "the host side of a GPU transfer: the bytes are already in host memory, and a GPU pass would add a round trip",
-);
-const WIRE: Status = Status::Impossible(
-    "host-side serialization of payload bytes for JSON / the FFI wire; a GPU round trip costs more than the encoding",
-);
 
 /// The CPU rows every vectorized kernel has: scalar reference, the x86 SSE build (`sse`), the
 /// baseline build for NEON / NEON32 / RVV (`v`) and AVX2, with the asm symbols the matrix
 /// checks.
 macro_rules! cpu_kernels {
     ($op:expr, $file:expr, $test:expr, $sse:expr, $v:expr, $avx2:expr) => {
+        cpu_kernels!($op, $file, $test, $sse, $v, $avx2; Kernel::missing($op, Backend::FixedFunction, NO_FIXED))
+    };
+    ($op:expr, $file:expr, $test:expr, $sse:expr, $v:expr, $avx2:expr; $fixed:expr) => {
         [
             Kernel::implemented(
                 $op,
@@ -32,12 +29,24 @@ macro_rules! cpu_kernels {
             Kernel::implemented($op, Backend::Neon32, $file, $test).with_symbol($v),
             Kernel::implemented($op, Backend::Rvv, $file, $test).with_symbol($v),
             Kernel::missing($op, Backend::PortableSimd, PORTABLE),
-            Kernel::missing($op, Backend::FixedFunction, NO_FIXED),
+            $fixed,
         ]
     };
     ($op:expr, $file:expr, $test:expr, $v:expr, $avx2:expr) => {
         cpu_kernels!($op, $file, $test, $v, $v, $avx2)
     };
+}
+
+/// The GPU compute kernel of an op on GPU-resident data (`GpuKernels`, `kernels.wgsl`),
+/// bit-exact with the CPU kernels; its evidence carries the measured time against them.
+const fn gpu_compute(op: &'static str) -> Kernel {
+    Kernel::implemented(
+        op,
+        Backend::Gpu,
+        "crates/gpu/src/shader/kernels.wgsl",
+        "crates/gpu/src/kernels_tests.rs",
+    )
+    .with_variant("compute")
 }
 
 const PIXEL: &str = "crates/kernels/src/pixel.rs";
@@ -189,6 +198,7 @@ static OPS: [Op; 12] = [
         "binary16 to f32 (rgba16float readback)",
         "daedalus_kernels::reference::f16_to_f32",
     )
+    .could_use(&[(Backend::X86Avx2, &[Ext::F16c])])
     .wired_at(&SITES_FLOAT_F16_TO_F32),
     op(
         "daedalus.float.f32_to_unorm8",
@@ -240,13 +250,7 @@ static PIXEL_KERNELS: [[Kernel; 9]; 4] = [
             "rgb_to_rgba::v",
             "rgb_to_rgba::avx2"
         ),
-        Kernel::missing(
-            "daedalus.pixel.rgb_to_rgba",
-            Backend::Gpu,
-            Status::Gap(
-                "planned: upload packed RGB to a storage buffer and expand it in a fragment pass (25% fewer bytes)",
-            ),
-        ),
+        gpu_compute("daedalus.pixel.rgb_to_rgba"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -257,11 +261,7 @@ static PIXEL_KERNELS: [[Kernel; 9]; 4] = [
             "rgba_to_rgb::v",
             "rgba_to_rgb::avx2"
         ),
-        Kernel::missing(
-            "daedalus.pixel.rgba_to_rgb",
-            Backend::Gpu,
-            Status::Gap("planned: pack to RGB in a GPU pass before the readback (25% fewer bytes)"),
-        ),
+        gpu_compute("daedalus.pixel.rgba_to_rgb"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -272,13 +272,7 @@ static PIXEL_KERNELS: [[Kernel; 9]; 4] = [
             "gray_to_rgba::v",
             "gray_to_rgba::avx2"
         ),
-        Kernel::missing(
-            "daedalus.pixel.gray_to_rgba",
-            Backend::Gpu,
-            Status::Gap(
-                "planned: upload R8 and expand on the GPU when the format lacks R8 sampling",
-            ),
-        ),
+        gpu_compute("daedalus.pixel.gray_to_rgba"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -289,13 +283,7 @@ static PIXEL_KERNELS: [[Kernel; 9]; 4] = [
             "rgba_red::v",
             "rgba_red::avx2"
         ),
-        Kernel::missing(
-            "daedalus.pixel.rgba_red",
-            Backend::Gpu,
-            Status::Gap(
-                "planned: render the red channel to an R8 target before the readback (4x fewer bytes)",
-            ),
-        ),
+        gpu_compute("daedalus.pixel.rgba_red"),
     ),
 ];
 
@@ -309,7 +297,7 @@ static FLOAT_KERNELS: [[Kernel; 9]; 3] = [
             "copy_bytes::v",
             "copy_bytes::avx2"
         ),
-        Kernel::missing("daedalus.float.f32_from_le", Backend::Gpu, HOST_SIDE),
+        gpu_compute("daedalus.float.f32_from_le"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -320,13 +308,7 @@ static FLOAT_KERNELS: [[Kernel; 9]; 3] = [
             "f16_to_f32::v",
             "f16_to_f32::avx2"
         ),
-        Kernel::missing(
-            "daedalus.float.f16_to_f32",
-            Backend::Gpu,
-            Status::Impossible(
-                "converting before the readback doubles the bytes read back; the conversion is the host side of the transfer",
-            ),
-        ),
+        gpu_compute("daedalus.float.f16_to_f32"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -337,11 +319,7 @@ static FLOAT_KERNELS: [[Kernel; 9]; 3] = [
             "f32_to_unorm8::v",
             "f32_to_unorm8::avx2"
         ),
-        Kernel::missing(
-            "daedalus.float.f32_to_unorm8",
-            Backend::Gpu,
-            Status::Gap("planned: convert in a GPU pass before the readback (4x fewer bytes)"),
-        ),
+        gpu_compute("daedalus.float.f32_to_unorm8"),
     ),
 ];
 
@@ -352,9 +330,18 @@ static OTHER_KERNELS: [[Kernel; 9]; 4] = [
             COPY,
             T,
             "copy_bytes::v",
-            "copy_bytes::avx2"
+            "copy_bytes::v",
+            "copy_bytes::avx2";
+            // GPU-resident bytes: `copy_buffer_to_buffer` on the copy engine.
+            Kernel::implemented(
+                "daedalus.copy.bytes",
+                Backend::FixedFunction,
+                "crates/gpu/src/shader/kernels.rs",
+                "crates/gpu/src/kernels_tests.rs",
+            )
+            .with_variant("copy_engine")
         ),
-        Kernel::missing("daedalus.copy.bytes", Backend::Gpu, HOST_SIDE),
+        gpu_compute("daedalus.copy.bytes"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -365,7 +352,7 @@ static OTHER_KERNELS: [[Kernel; 9]; 4] = [
             "hex_lower::v",
             "hex_lower::avx2"
         ),
-        Kernel::missing("daedalus.codec.hex_lower", Backend::Gpu, WIRE),
+        gpu_compute("daedalus.codec.hex_lower"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -376,7 +363,7 @@ static OTHER_KERNELS: [[Kernel; 9]; 4] = [
             "encode_groups::v",
             "encode_groups::avx2"
         ),
-        Kernel::missing("daedalus.codec.base64_encode", Backend::Gpu, WIRE),
+        gpu_compute("daedalus.codec.base64_encode"),
     ),
     with_gpu(
         cpu_kernels!(
@@ -387,7 +374,7 @@ static OTHER_KERNELS: [[Kernel; 9]; 4] = [
             "decode_groups::v",
             "decode_groups::avx2"
         ),
-        Kernel::missing("daedalus.codec.base64_decode", Backend::Gpu, WIRE),
+        gpu_compute("daedalus.codec.base64_decode"),
     ),
 ];
 

@@ -57,9 +57,9 @@ pub use selection::select_backend;
 pub use selection::select_backend_async;
 #[cfg(feature = "gpu-wgpu")]
 pub use shader::{
-    FragmentBinding, FragmentPass, FragmentRects, GpuInFlight, GpuPipelineCache, GpuReadback,
-    GpuStorage, GpuStoragePool, GpuStoragePoolStats, GpuTexture, GpuTicket, GpuTimeSource,
-    GpuTimed, GpuTimer, pipeline_cache_for,
+    FragmentBinding, FragmentPass, FragmentRects, GpuInFlight, GpuKernel, GpuKernels,
+    GpuPipelineCache, GpuReadback, GpuStorage, GpuStoragePool, GpuStoragePoolStats, GpuTexture,
+    GpuTicket, GpuTimeSource, GpuTimed, GpuTimer, pipeline_cache_for,
 };
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
@@ -787,3 +787,5 @@ mod context_tests;
 mod fragment_rect_tests;
 #[cfg(all(test, feature = "gpu-wgpu"))]
 mod fragment_tests;
+#[cfg(all(test, feature = "gpu-wgpu"))]
+mod kernels_tests;

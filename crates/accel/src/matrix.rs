@@ -101,6 +101,8 @@ pub struct Record {
     pub vlen: Option<u32>,
     pub pass: bool,
     pub detail: Option<String>,
+    /// A measurement or remark ([`crate::Evidence::note`]).
+    pub note: Option<String>,
 }
 
 /// What a matrix cell says.
@@ -269,6 +271,7 @@ impl Inventory {
                 vlen: v.get("vlen").and_then(Value::as_u64).map(|v| v as u32),
                 pass: s(&v, "result") == "pass",
                 detail: opt(&v, "detail"),
+                note: opt(&v, "note"),
             });
         }
         Ok(())
@@ -497,6 +500,9 @@ impl Inventory {
             }
             if let Some(adapter) = &r.adapter {
                 let _ = write!(run, " ({adapter})");
+            }
+            if let Some(note) = &r.note {
+                let _ = write!(run, ": {note}");
             }
             runs.insert(run);
         }

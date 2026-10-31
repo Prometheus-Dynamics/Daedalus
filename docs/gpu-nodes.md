@@ -81,6 +81,18 @@ used.
 
 Compute stays available through `daedalus::gpu::shader` dispatch, or your own pipelines.
 
+## Conversions on the device
+
+`GpuKernels::new(gpu)` runs the `daedalus-kernels` ops on GPU-resident `GpuStorage`, bit for bit
+like the CPU kernels: RGB/RGBA/gray layouts, LE f32, binary16→f32, f32→unorm8, byte copies,
+hex and base64 (`GpuKernel`). `run(kernel, &src, &dst, n)` submits and returns a ticket;
+`encode` adds the pass to your encoder (with optional timestamps). `base64_decode` also reports
+the decoded length and invalid input. `copy_with_engine` copies on the copy engine. Use them when
+the data is already on the GPU: convert before a readback, or after a decode, instead of moving
+the bytes back to the CPU. `docs/backend-matrix.md` records the measured pass time against the
+CPU kernel per adapter. On an RTX 4060, every op over 4 MiB takes 0.005-0.2 ms on the GPU against
+0.2-10 ms on the CPU. The choice is the caller's, per device.
+
 ## Never wait in a tick
 
 A tick submits and returns. Its results arrive on a later tick:

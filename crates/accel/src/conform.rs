@@ -16,6 +16,8 @@ pub struct Evidence<'a> {
     pub adapter: Option<&'a str>,
     /// Extensions the kernel used; the check runs only when the process has them all.
     pub extensions: &'a [Ext],
+    /// A measurement or remark for the evidence column ("gpu 0.41 ms vs cpu 0.12 ms").
+    pub note: Option<&'a str>,
 }
 
 impl<'a> Evidence<'a> {
@@ -26,7 +28,13 @@ impl<'a> Evidence<'a> {
             variant: None,
             adapter: None,
             extensions: &[],
+            note: None,
         }
+    }
+
+    pub fn note(mut self, note: &'a str) -> Self {
+        self.note = Some(note);
+        self
     }
 
     pub fn extensions(mut self, extensions: &'a [Ext]) -> Self {
@@ -210,7 +218,7 @@ fn record(evidence: &Evidence<'_>, result: &Result<(), String>) {
         .map(|e| json_str(e.name()))
         .collect();
     let line = format!(
-        "{{\"kind\":\"test\",\"op\":{},\"backend\":{},\"extensions\":[{}],\"variant\":{},\"adapter\":{},\"target\":{},\"runner\":{},\"vlen\":{vlen},\"rev\":{},\"result\":{},\"detail\":{}}}\n",
+        "{{\"kind\":\"test\",\"op\":{},\"backend\":{},\"extensions\":[{}],\"variant\":{},\"adapter\":{},\"target\":{},\"runner\":{},\"vlen\":{vlen},\"rev\":{},\"result\":{},\"detail\":{},\"note\":{}}}\n",
         json_str(evidence.op),
         json_str(evidence.backend.name()),
         extensions.join(","),
@@ -221,6 +229,7 @@ fn record(evidence: &Evidence<'_>, result: &Result<(), String>) {
         json_str(&rev),
         json_str(if result.is_ok() { "pass" } else { "fail" }),
         opt(result.as_ref().err().map(String::as_str)),
+        opt(evidence.note),
     );
     let dir = std::path::PathBuf::from(dir);
     let _ = std::fs::create_dir_all(&dir);

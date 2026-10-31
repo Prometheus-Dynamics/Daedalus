@@ -75,7 +75,7 @@ run_target "$host" native
 # adapter (lavapipe in CI). Without an adapter they skip and their cells stay untested.
 step "GPU conformance (wgpu adapter)"
 ACCEL_TARGET=$host ACCEL_RUNNER=native \
-  cargo test -q -p daedalus-gpu --features gpu-wgpu --lib storage_frames_copy_into_textures
+  cargo test -q -p daedalus-gpu --features gpu-wgpu --lib -- storage_frames_copy_into_textures kernels_tests --test-threads 1
 
 # cross TRIPLE CC_WRAPPER QEMU: set up the linker; false (with a note) when a tool is missing.
 cross() {
