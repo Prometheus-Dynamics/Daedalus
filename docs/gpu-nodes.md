@@ -128,8 +128,8 @@ chains. A transfer done inside a handler is invisible to the plan.
 
 `GpuPipelineCache::open(gpu, dir)` loads the Vulkan pipeline cache for the adapter.
 `install()` it before building passes and `save()` it after; the driver drops data from another
-driver version. On desktop, 12 fragment pipelines build in 3 ms instead of 82 ms with the cache
-loaded.
+driver version. On the CM5's V3D, 12 fragment pipelines build in 5.7 ms instead of 52 ms with the
+cache loaded (Mesa's own shader cache off); on desktop 3 ms instead of 82 ms.
 
 ## Limits and portability
 
