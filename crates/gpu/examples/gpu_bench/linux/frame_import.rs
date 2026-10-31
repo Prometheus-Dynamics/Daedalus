@@ -112,8 +112,13 @@ fn buffer_import_supported(hal: &hal_vk::Device) -> Result<(), String> {
     }
 }
 
-/// Import `fd` (a dmabuf of `len` bytes) as a wgpu storage buffer through Vulkan.
-fn import_buffer(device: &wgpu::Device, fd: OwnedFd, len: u64) -> Result<wgpu::Buffer, String> {
+/// Import `fd` (a dmabuf of `len` bytes) as a wgpu storage buffer of `size` bytes through Vulkan.
+fn import_buffer(
+    device: &wgpu::Device,
+    fd: OwnedFd,
+    size: u64,
+    len: u64,
+) -> Result<wgpu::Buffer, String> {
     // SAFETY: the hal device outlives this function; the buffer and memory created here go to
     // wgpu (`from_raw_managed`), which destroys and frees them when the wgpu buffer drops.
     let hal = unsafe { device.as_hal::<Vulkan>() }.ok_or("not a Vulkan device")?;
@@ -122,7 +127,7 @@ fn import_buffer(device: &wgpu::Device, fd: OwnedFd, len: u64) -> Result<wgpu::B
     let handle_type = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
     let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle_type);
     let info = vk::BufferCreateInfo::default()
-        .size(len)
+        .size(size)
         .usage(
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::TRANSFER_SRC
@@ -266,39 +271,72 @@ pub(super) fn frame_import(backend: &WgpuBackend, device: &wgpu::Device, queue: 
         let stride = u64::from(width * 4).next_multiple_of(256);
         let len = (stride * u64::from(height)) as usize;
         let tag = format!("{width}x{height}");
-        let buf = match DmaBuf::alloc(len) {
-            Ok(buf) => buf,
-            Err(err) => {
-                kv(&tag, format!("dma-heap alloc failed: {err}"));
+        // A frame-sized dmabuf, as a camera allocates it, and one with a page of slack after the
+        // frame (some drivers need the buffer's memory requirement to fit inside the dmabuf).
+        let alloc = |len: usize| -> Result<DmaBuf, String> {
+            let buf = DmaBuf::alloc(len).map_err(|err| format!("dma-heap alloc failed: {err}"))?;
+            buf.write(|bytes| {
+                for y in 0..height {
+                    for x in 0..width {
+                        let at = y as usize * stride as usize + x as usize * 4;
+                        bytes[at..at + 4].copy_from_slice(&pixel(x, y));
+                    }
+                }
+            })
+            .map_err(|err| format!("mmap failed: {err}"))?;
+            Ok(buf)
+        };
+        let (buf, padded) = match (alloc(len), alloc(len + 4096)) {
+            (Ok(buf), Ok(padded)) => (buf, padded),
+            (Err(err), _) | (_, Err(err)) => {
+                kv(&tag, err);
                 continue;
             }
         };
-        let filled = buf.write(|bytes| {
-            for y in 0..height {
-                for x in 0..width {
-                    let at = y as usize * stride as usize + x as usize * 4;
-                    bytes[at..at + 4].copy_from_slice(&pixel(x, y));
-                }
-            }
-        });
-        if let Err(err) = filled {
-            kv(&tag, format!("mmap failed: {err}"));
-            continue;
-        }
         let out = storage(device, u64::from(width * height) * 4);
+        upload_path(
+            device,
+            queue,
+            &unpack,
+            &buf,
+            &out,
+            (width, height, stride),
+            &tag,
+        );
+        verify(device, queue, &out, width, height, &format!("{tag}_upload"));
         if probe.is_ok() {
-            buffer_path(
+            let exact = buf
+                .fd
+                .try_clone()
+                .map_err(|err| err.to_string())
+                .and_then(|fd| import_buffer(device, fd, len as u64, buf.len as u64));
+            kv(
+                &format!("{tag}_buffer_import_frame_sized_dmabuf"),
+                match exact {
+                    Ok(_) => "ok".to_string(),
+                    Err(err) => err,
+                },
+            );
+            if buffer_path(
                 device,
                 queue,
                 &unpack,
-                &buf,
+                &padded,
                 &out,
                 (width, height, stride),
-                &tag,
-            );
-            verify(device, queue, &out, width, height, &format!("{tag}_buffer"));
+                &format!("{tag}_padded"),
+            ) {
+                verify(
+                    device,
+                    queue,
+                    &out,
+                    width,
+                    height,
+                    &format!("{tag}_padded_buffer"),
+                );
+            }
         }
-        image_path(
+        if image_path(
             backend,
             device,
             queue,
@@ -307,13 +345,15 @@ pub(super) fn frame_import(backend: &WgpuBackend, device: &wgpu::Device, queue: 
             &out,
             (width, height, stride),
             &tag,
-        );
-        verify(device, queue, &out, width, height, &format!("{tag}_image"));
+        ) {
+            verify(device, queue, &out, width, height, &format!("{tag}_image"));
+        }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn buffer_path(
+/// The copy route: the CPU reads the mapped dmabuf into a storage buffer
+/// (`Queue::write_buffer`) every frame, then the kernel runs.
+fn upload_path(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     unpack: &wgpu::ComputePipeline,
@@ -328,6 +368,43 @@ fn buffer_path(
         contents: bytemuck::cast_slice(&params),
         usage: wgpu::BufferUsages::STORAGE,
     });
+    let src = storage(device, buf.len as u64);
+    let bind_group = bind(device, unpack, &[&src, out, &frame]);
+    let groups = (width.div_ceil(8), height.div_ceil(8));
+    let (mut upload, mut total) = (Vec::new(), Vec::new());
+    let mapped = buf.write(|bytes| {
+        for _ in 0..iters() {
+            let start = Instant::now();
+            queue.write_buffer(&src, 0, bytes);
+            queue.submit([]);
+            upload.push(start.elapsed());
+            run_once(device, queue, unpack, &bind_group, groups);
+            total.push(start.elapsed());
+        }
+    });
+    if let Err(err) = mapped {
+        return kv(&format!("{tag}_upload"), format!("mmap failed: {err}"));
+    }
+    kv(&format!("{tag}_upload_write_buffer"), stats(&mut upload));
+    kv(&format!("{tag}_upload_and_kernel"), stats(&mut total));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn buffer_path(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    unpack: &wgpu::ComputePipeline,
+    buf: &DmaBuf,
+    out: &wgpu::Buffer,
+    (width, height, stride): (u32, u32, u64),
+    tag: &str,
+) -> bool {
+    let params: [u32; 4] = [width, height, (stride / 4) as u32, 0];
+    let frame = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("frame"),
+        contents: bytemuck::cast_slice(&params),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let groups = (width.div_ceil(8), height.div_ceil(8));
     let (mut import, mut total) = (Vec::new(), Vec::new());
     let mut cached = None;
@@ -335,11 +412,18 @@ fn buffer_path(
         let start = Instant::now();
         let fd = match buf.fd.try_clone() {
             Ok(fd) => fd,
-            Err(err) => return kv(&format!("{tag}_buffer"), format!("dup failed: {err}")),
+            Err(err) => {
+                kv(&format!("{tag}_buffer"), format!("dup failed: {err}"));
+                return false;
+            }
         };
-        let src = match import_buffer(device, fd, buf.len as u64) {
+        let frame_len = stride * u64::from(height);
+        let src = match import_buffer(device, fd, frame_len, buf.len as u64) {
             Ok(src) => src,
-            Err(err) => return kv(&format!("{tag}_buffer"), format!("import failed: {err}")),
+            Err(err) => {
+                kv(&format!("{tag}_buffer"), format!("import failed: {err}"));
+                return false;
+            }
         };
         let bind_group = bind(device, unpack, &[&src, out, &frame]);
         import.push(start.elapsed());
@@ -358,6 +442,7 @@ fn buffer_path(
             .collect();
         kv(&format!("{tag}_buffer_cached_kernel"), stats(&mut kernel));
     }
+    true
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -370,7 +455,7 @@ fn image_path(
     out: &wgpu::Buffer,
     (width, height, stride): (u32, u32, u64),
     tag: &str,
-) {
+) -> bool {
     let size = wgpu::Extent3d {
         width,
         height,
@@ -407,17 +492,24 @@ fn image_path(
         let start = Instant::now();
         let plane = match ExternalPlane::from_borrowed(buf.fd.as_fd(), 0, stride) {
             Ok(plane) => plane,
-            Err(err) => return kv(&format!("{tag}_image"), format!("plane failed: {err}")),
+            Err(err) => {
+                kv(&format!("{tag}_image"), format!("plane failed: {err}"));
+                return false;
+            }
         };
         let handle = match backend.import_dmabuf(
             ExternalFrameDescriptor::single_plane(width, height, DrmFourcc::XRGB8888, plane)
                 .with_modifier(DRM_FORMAT_MOD_LINEAR),
         ) {
             Ok(handle) => handle,
-            Err(err) => return kv(&format!("{tag}_image"), format!("import failed: {err}")),
+            Err(err) => {
+                kv(&format!("{tag}_image"), format!("import failed: {err}"));
+                return false;
+            }
         };
         let Some(texture) = backend.wgpu_get_texture(&handle) else {
-            return kv(&format!("{tag}_image"), "imported handle has no texture");
+            kv(&format!("{tag}_image"), "imported handle has no texture");
+            return false;
         };
         import.push(start.elapsed());
         let copy_start = Instant::now();
@@ -435,6 +527,7 @@ fn image_path(
         &format!("{tag}_image_import_copy_kernel"),
         stats(&mut total),
     );
+    true
 }
 
 /// Read `out` back and check it against the frame's green channel.

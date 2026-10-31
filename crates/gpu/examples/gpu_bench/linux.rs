@@ -2,6 +2,7 @@
 
 mod compute;
 mod frame_import;
+mod images;
 mod limits;
 
 use std::fmt::Display;
@@ -80,6 +81,8 @@ pub fn run() {
     compute::dispatch_latency(device, queue);
     heading("throughput");
     compute::throughput(device, queue);
+    heading("image-paths");
+    images::image_paths(device, queue);
     heading("frame-import");
     frame_import::frame_import(&backend, device, queue);
 }
