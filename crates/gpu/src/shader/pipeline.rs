@@ -203,13 +203,14 @@ pub(crate) fn pipeline_entry(
         source: wgpu::ShaderSource::Wgsl(shader_src.into()),
     });
 
+    let disk_cache = super::pipeline_cache_for(device);
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("pipeline"),
         layout: Some(&pipeline_layout),
         module: &shader,
         entry_point: Some(spec.entry),
         compilation_options: wgpu::PipelineCompilationOptions::default(),
-        cache: None,
+        cache: disk_cache.as_ref(),
     });
 
     let entry = Arc::new(PipelineEntry {

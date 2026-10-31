@@ -141,7 +141,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a hardware test imports, runs a kernel and verifies the output, on RADV and
       on the Raze.
       **Blocked by:** the bench result (whether v3dv imports dmabuf buffers).
-- [ ] **What:** an on-disk pipeline cache across runs (wgpu `PipelineCache` on Vulkan), keyed by
+- [x] **What:** an on-disk pipeline cache across runs (`GpuPipelineCache`; Raze numbers pending in `gpu_bench` `[pipeline-cache]`) (wgpu `PipelineCache` on Vulkan), keyed by
       adapter, driver and shader hash.
       **Why:** startup time on the CM5.
       **Done when:** a second process start creates its pipelines measurably faster (reported by

@@ -286,6 +286,17 @@ CARGO_BUILD_JOBS=4 cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored
 DAEDALUS_DMA_HEAP=/dev/dma_heap/system cargo test -p daedalus-gpu --features gpu-dmabuf -- --ignored dmabuf
 ```
 
+### Pipeline cache across runs
+
+`GpuPipelineCache::open(gpu, dir)` loads the Vulkan pipeline cache for the adapter from
+`dir/wgpu_pipeline_cache_vulkan_<vendor>_<device>`, creating it on first use. `install()` makes
+every pipeline Daedalus builds on that device use the cache: shader dispatch, and `FragmentPass`.
+Nodes building their own pipelines pass `pipeline_cache_for(device)` as the descriptor's `cache`.
+`save()` writes the cache back atomically. The driver checks the data's header on load, so data
+from another driver version is dropped and the cache starts empty. The backend requests wgpu's
+`PIPELINE_CACHE` feature whenever the adapter has it; elsewhere `open` returns `Unsupported`.
+`gpu_bench` `[pipeline-cache]` measures build time with an empty cache and with a reloaded one.
+
 ### Camera frames as storage buffers
 
 `GpuStorage::import_dmabuf(gpu, fd, offset, len, acquire_fence, timeout, label)` imports a

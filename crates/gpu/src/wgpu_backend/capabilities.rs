@@ -98,8 +98,10 @@ pub(super) fn build_info_from_adapter(
     )
 }
 
-/// Optional compute features the backend enables when the adapter has them.
+/// Optional features the backend enables when the adapter has them: compute shader features,
+/// timestamps, and the pipeline cache.
 pub(super) const OPTIONAL_COMPUTE_FEATURES: wgpu::Features = wgpu::Features::SHADER_F16
+    .union(wgpu::Features::PIPELINE_CACHE)
     .union(wgpu::Features::SHADER_F64)
     .union(wgpu::Features::SHADER_INT64)
     .union(wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX)

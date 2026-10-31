@@ -4,6 +4,7 @@ mod compute;
 mod frame_import;
 mod images;
 mod limits;
+mod startup;
 
 use std::fmt::Display;
 use std::time::{Duration, Instant};
@@ -83,6 +84,8 @@ pub fn run() {
     compute::throughput(device, queue);
     heading("image-paths");
     images::image_paths(device, queue);
+    heading("pipeline-cache");
+    startup::startup();
     heading("frame-import");
     frame_import::frame_import(&backend, device, queue);
 }

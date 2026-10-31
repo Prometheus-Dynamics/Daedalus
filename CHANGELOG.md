@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Added
 
+- **On-disk pipeline cache: `GpuPipelineCache`, `pipeline_cache_for`.** It loads and saves
+  wgpu's Vulkan pipeline cache per adapter. Once installed, Daedalus's shader-dispatch and
+  `FragmentPass` pipelines use it. The driver validates the data, so a driver change starts a
+  fresh cache. The backend requests `PIPELINE_CACHE` when available. On desktop, 12 fragment
+  pipelines build in 3 ms instead of 82 ms with the cache reloaded.
 - **`GpuStorage::import_dmabuf`**: zero-copy import of a `LINEAR` dmabuf (a camera frame) as a
   storage buffer, with an optional acquire-fence wait. The import is refused with the size it
   needs when the dmabuf lacks the driver's buffer padding (256 B on v3dv). Import costs

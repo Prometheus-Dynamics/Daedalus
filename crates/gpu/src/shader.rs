@@ -16,6 +16,7 @@ mod gpu_storage;
 mod gpu_texture;
 mod gpu_timer;
 mod pipeline;
+mod pipeline_cache;
 #[cfg(feature = "gpu-async")]
 mod poll_driver;
 mod pool;
@@ -45,6 +46,7 @@ pub use pipeline::{
     bind_group_cache_limit, pipeline_cache_limit, set_bind_group_cache_limit,
     set_pipeline_cache_limit,
 };
+pub use pipeline_cache::{GpuPipelineCache, pipeline_cache_for};
 #[cfg(feature = "gpu-async")]
 pub use poll_driver::{
     DEFAULT_ASYNC_POLL_OVERFLOW_THREAD_LIMIT, DEFAULT_ASYNC_POLL_WORKER_LIMIT,

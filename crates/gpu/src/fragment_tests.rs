@@ -210,3 +210,45 @@ fn timers_report_gpu_time_per_pass() {
     };
     assert!(elapsed > std::time::Duration::ZERO);
 }
+
+/// The pipeline cache saves what Daedalus pipelines compiled, reloads it, and survives a corrupt
+/// file.
+#[test]
+fn pipeline_cache_round_trips_through_its_file() {
+    use crate::GpuPipelineCache;
+    let Some(ctx) = wgpu_ctx() else { return };
+    let dir = std::env::temp_dir().join(format!("daedalus-pipeline-cache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let cache = match GpuPipelineCache::open(&ctx, &dir) {
+        Ok(cache) => cache,
+        Err(GpuError::Unsupported) => return, // no Vulkan pipeline cache on this device
+        Err(err) => panic!("open: {err}"),
+    };
+    assert_eq!(cache.loaded_bytes(), 0);
+    cache.install();
+    let (device, _) = ctx.wgpu().unwrap();
+    assert!(crate::pipeline_cache_for(device).is_some());
+    FragmentPass::new(
+        &ctx,
+        "@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.25); }",
+        &[wgpu::TextureFormat::Rgba8Unorm],
+    )
+    .unwrap();
+    let saved = cache.save().unwrap();
+    assert!(saved > 0, "the driver saved pipeline data");
+    assert!(cache.path().exists());
+
+    let reopened = GpuPipelineCache::open(&ctx, &dir).unwrap();
+    assert_eq!(reopened.loaded_bytes(), saved);
+
+    std::fs::write(cache.path(), b"not a pipeline cache").unwrap();
+    let fresh = GpuPipelineCache::open(&ctx, &dir).unwrap();
+    fresh.install();
+    FragmentPass::new(
+        &ctx,
+        "@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.5); }",
+        &[wgpu::TextureFormat::Rgba8Unorm],
+    )
+    .unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}

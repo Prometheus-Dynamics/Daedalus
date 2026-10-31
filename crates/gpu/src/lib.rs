@@ -53,8 +53,8 @@ pub use selection::select_backend;
 pub use selection::select_backend_async;
 #[cfg(feature = "gpu-wgpu")]
 pub use shader::{
-    FragmentPass, GpuInFlight, GpuReadback, GpuStorage, GpuTexture, GpuTicket, GpuTimeSource,
-    GpuTimed, GpuTimer,
+    FragmentPass, GpuInFlight, GpuPipelineCache, GpuReadback, GpuStorage, GpuTexture, GpuTicket,
+    GpuTimeSource, GpuTimed, GpuTimer, pipeline_cache_for,
 };
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]

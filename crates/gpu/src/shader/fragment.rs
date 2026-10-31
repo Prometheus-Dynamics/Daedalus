@@ -63,6 +63,7 @@ impl FragmentPass {
                 format!("{FULL_SCREEN_VERTEX}\n{fragment_wgsl}").into(),
             ),
         });
+        let cache = super::pipeline_cache_for(device);
         let color_targets: Vec<Option<wgpu::ColorTargetState>> =
             targets.iter().map(|&format| Some(format.into())).collect();
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -84,7 +85,7 @@ impl FragmentPass {
             depth_stencil: None,
             multisample: Default::default(),
             multiview_mask: None,
-            cache: None,
+            cache: cache.as_ref(),
         });
         if let Some(err) = pollster::block_on(scope.pop()) {
             return Err(GpuError::InvalidInput(format!(
