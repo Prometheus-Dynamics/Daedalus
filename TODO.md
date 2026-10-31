@@ -129,7 +129,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** tests cover a graph with a round trip (reported with nodes and ports) and
       one without (empty).
       **Blocked by:** nothing.
-- [ ] **What:** GPU time per dispatch: timestamp queries where the device has them, otherwise
+- [x] **What:** GPU time per dispatch (`GpuTimer` / `GpuTimed`; reported through `ctx.duration_metric`): timestamp queries where the device has them, otherwise
       submit→fence time, fed into the frame-overhead stages.
       **Why:** GPU ms per keyframe for Eidos; v3dv timestamp support is unconfirmed.
       **Done when:** a test sees nonzero GPU time per GPU node, and the Raze report states

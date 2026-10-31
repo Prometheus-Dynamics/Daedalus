@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Added
 
+- **GPU time per pass: `GpuTimer`, `GpuTimed`, `GpuTimeSource`.** Timestamp queries at the
+  start and end of a compute or render pass, resolved and read back without waiting
+  (`try_elapsed`). Without timestamp support it falls back to submit→completion time.
+  `FragmentPass::run_timed` times a fragment pass. Nodes report the result with
+  `ctx.duration_metric`.
 - **`#[device]` transfers with the GPU context.** An upload function may take
   `&GpuContextHandle` as a second argument, with its download taking it too. The executor
   provides its context while it adapts an edge, so real uploads create buffers on the engine's

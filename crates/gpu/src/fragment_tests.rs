@@ -130,3 +130,83 @@ fn invalid_passes_are_reported() {
         Err(GpuError::InvalidInput(_))
     ));
 }
+
+/// A timed fragment pass and a timed compute pass report a GPU time; heavier work takes longer.
+#[test]
+fn timers_report_gpu_time_per_pass() {
+    use crate::{GpuTimeSource, GpuTimer};
+    let Some(ctx) = wgpu_ctx() else { return };
+    let timer = GpuTimer::new(&ctx).unwrap();
+    let expected = if ctx.capabilities().compute.features.timestamps {
+        GpuTimeSource::Timestamps
+    } else {
+        GpuTimeSource::SubmitToCompletion
+    };
+    assert_eq!(timer.source(), expected);
+
+    let shader = |iterations: u32| {
+        format!(
+            "@fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {{
+                 var a = pos.x;
+                 for (var k = 0u; k < {iterations}u; k++) {{ a = a * 0.9999 + 0.0001; }}
+                 return vec4<f32>(a);
+             }}"
+        )
+    };
+    let target = GpuTexture::new(&ctx, (512, 512), wgpu::TextureFormat::R32Float, None).unwrap();
+    let time = |iterations| {
+        let pass =
+            FragmentPass::new(&ctx, &shader(iterations), &[wgpu::TextureFormat::R32Float]).unwrap();
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let mut timed = pass.run_timed(&timer, &[], &[], &[&target]).unwrap();
+            assert_eq!(timed.source(), expected);
+            best = best.min(timed.wait().unwrap());
+        }
+        best
+    };
+    let light = time(1);
+    let heavy = time(4096);
+    assert!(heavy > light, "heavy {heavy:?} vs light {light:?}");
+    // Sequential measurements reuse one staging buffer.
+    if expected == GpuTimeSource::Timestamps {
+        assert_eq!(timer.staging_buffers_created(), 1);
+    }
+
+    // A compute pass, timed by the same timer.
+    let (device, _) = ctx.wgpu().unwrap();
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(
+            "@compute @workgroup_size(64) fn main() { var a = 1.0; for (var k = 0u; k < 1024u; k++) { a = a * 0.5 + 0.5; } }"
+                .into(),
+        ),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: timer.compute_writes(),
+        });
+        pass.set_pipeline(&pipeline);
+        pass.dispatch_workgroups(256, 1, 1);
+    }
+    let mut timed = timer.submit(encoder);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let elapsed = loop {
+        if let Some(result) = timed.try_elapsed() {
+            break result.unwrap();
+        }
+        assert!(std::time::Instant::now() < deadline, "timing never arrived");
+        std::thread::yield_now();
+    };
+    assert!(elapsed > std::time::Duration::ZERO);
+}

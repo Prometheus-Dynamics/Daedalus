@@ -76,6 +76,17 @@ rgba8, r32f and rg32f work on every backend. `pass.run(&inputs, &buffers, &targe
 `start_read()` / `try_read_into` (polled) or `read_into` (blocking), reusing one staging buffer.
 Keep the pass and its textures in the node's state. See `crates/daedalus/tests/gpu_fragment.rs`.
 
+### GPU time per pass
+
+`GpuTimer::new(gpu)` times one pass per submission. Give the pass
+`timer.compute_writes()` / `timer.render_writes()` as its timestamp writes (or use
+`FragmentPass::run_timed`), then submit the encoder with `timer.submit(encoder)`. Poll the
+returned `GpuTimed` with `try_elapsed()`, which never waits, and report the duration with
+`ctx.duration_metric("gpu", time)`. With timestamp queries (V3D, Mali, desktop),
+`GpuTimeSource::Timestamps` gives GPU execution time. Without them, `SubmitToCompletion` measures
+from submit to the completion callback, which includes queue wait and poll latency. The backend
+requests timestamp queries whenever the adapter has them.
+
 ## Host-created Vulkan instances
 
 The Vulkan loader is not safe when several threads set up a graphics driver at once: the NVIDIA ICD

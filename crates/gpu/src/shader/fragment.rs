@@ -6,7 +6,7 @@
 
 use crate::{GpuContextHandle, GpuError};
 
-use super::{GpuStorage, GpuTexture, GpuTicket};
+use super::{GpuStorage, GpuTexture, GpuTicket, GpuTimed, GpuTimer};
 
 /// The vertex stage every pass shares: one triangle covering the target. `@builtin(position)`
 /// in the fragment stage is the texel centre (`x + 0.5`, `y + 0.5`) of the pixel it writes.
@@ -114,6 +114,17 @@ impl FragmentPass {
         buffers: &[&GpuStorage],
         targets: &[&GpuTexture],
     ) -> Result<(), GpuError> {
+        self.encode_with(encoder, inputs, buffers, targets, None)
+    }
+
+    fn encode_with(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        inputs: &[&GpuTexture],
+        buffers: &[&GpuStorage],
+        targets: &[&GpuTexture],
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) -> Result<(), GpuError> {
         let formats: Vec<_> = targets.iter().map(|t| t.format()).collect();
         if formats != self.targets {
             return Err(GpuError::InvalidInput(format!(
@@ -171,7 +182,7 @@ impl FragmentPass {
             label: Some("daedalus-fragment-pass"),
             color_attachments: &attachments,
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes,
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -198,5 +209,24 @@ impl FragmentPass {
             &self.queue,
             [encoder.finish()],
         ))
+    }
+
+    /// [`FragmentPass::run`], timed by `timer`: poll the result for the pass's GPU time.
+    pub fn run_timed(
+        &self,
+        timer: &GpuTimer,
+        inputs: &[&GpuTexture],
+        buffers: &[&GpuStorage],
+        targets: &[&GpuTexture],
+    ) -> Result<GpuTimed, GpuError> {
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        self.encode_with(
+            &mut encoder,
+            inputs,
+            buffers,
+            targets,
+            timer.render_writes(),
+        )?;
+        Ok(timer.submit(encoder))
     }
 }
