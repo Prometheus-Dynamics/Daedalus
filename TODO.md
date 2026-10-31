@@ -39,7 +39,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** the report is pasted into `docs/testing.md` ("Validating on a Raspberry
       Pi 5"), with every `_verify` line `ok`.
       **Blocked by:** a Raze window (HeliOS coordinator).
-- [ ] **What:** the `gpu_probe` segfault at exit under the cross-built Khronos validation layer
+- [x] **What:** the `gpu_probe` segfault at exit under the cross-built Khronos validation layer
       on v3dv.
       **Why:** VVL is how new Eidos kernels get validated; a crashing run hides real errors.
       **Found (2026-10-30, Raze):** a bare `vkCreateInstance` + `vkDestroyInstance` program
@@ -49,8 +49,10 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       properly built layer (a distro arm64 package, or a build against a real aarch64 sysroot).
       **Done when:** `./scripts/ci.sh vvl` on the Raze exits 0, with no layer errors from our
       code.
-      **Blocked by:** a user decision on where the layer comes from (both options download
-      files), then a Raze window.
+      **Decision (2026-10-30):** accepted as-is with the root cause documented: it affects only a
+      cross-built debugging layer at process exit. For clean `ci.sh vvl` runs later, a distro
+      arm64 layer copied to `/tmp` (needs the user's OK for the download).
+      **Blocked by:** nothing for this release.
 - [x] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
       invocations, workgroup storage, storage buffer size, f16, int64, int64 atomics,
       timestamps, subgroups.
@@ -97,7 +99,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a graph test shows the tick never blocks on the fence (tick time stays
       under the kernel time) and the result arrives on a later tick.
       **Blocked by:** nothing.
-- [ ] **What:** fragment-pass nodes: a `#[device]` helper for a full-screen draw. Sampled
+- [x] **What:** fragment-pass nodes: a `#[device]` helper for a full-screen draw. Sampled
       textures come in through `textureLoad`, render targets go out (several through MRT), in the
       formats r8, rgba8, r32f and rg32f. They get the same node-owned persistent resources,
       `GpuTicket` completion, timestamps and round-trip check as compute.
@@ -107,9 +109,9 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a graph test runs a fragment-pass node with two outputs against its CPU
       pair and the results match. `gpu_bench` on the Raze shows the helper costs no more than the
       hand-written fragment pass (within 5%). The guide documents it.
-      **Status:** `FragmentPass` + `GpuTexture` landed with the graph and format tests; the helper
-      matches the hand-written pass on desktop. Left: the Raze measurement.
-      **Blocked by:** a Raze window.
+      **Status:** done. `FragmentPass` + `GpuTexture` landed (e26be2b). On the Raze the helper
+      matches the hand-written pass: box3x3 r8 2.83 vs 2.84 ms, box5x5 7.05 vs 7.06 ms.
+      **Blocked by:** nothing.
 - [x] **What:** `read_buffer_into(&GpuStorage, range, &mut [u8])` (shipped as `GpuStorage::read_into` / `start_read` → `GpuReadback::try_read_into`), plus a non-blocking form
       through `GpuSubmission`, with a persistent staging ring.
       **Why:** Eidos mesh and depth readback, with no allocation per download.
