@@ -356,6 +356,38 @@ missing hardware; a failed check prints its error in place of the value.
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
+## Desktop GPUs (2026-10-30)
+
+These runs used this workstation's two GPUs, with the Vulkan loader pinned to one driver
+(`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/<driver>_icd.x86_64.json`). They ran the release GPU
+lib tests with `--include-ignored` (hardware tests included) and `gpu_bench`.
+
+| | RADV (RX 6800 XT, Mesa 26.2.4) | NVIDIA (RTX 4060, 595.104) |
+|---|---|---|
+| GPU lib tests | 73/73 pass | dmabuf fence/NV12 tests fail (below); the rest pass |
+| dmabuf import, fence wait | supported, `sync_fd` | supported |
+| optional features | f16, f64, int64, int64 atomics, subgroups, timestamps | same |
+| empty dispatch submit→fence p50 | 63 µs | 57 µs |
+| saxpy 4M | 0.12 ms (426 GB/s) | 0.31 ms (162 GB/s) |
+| box 3x3 1280x800, fragment r8 | 0.09 ms | 0.11 ms |
+| fma256 2048², fragment | 10.2 TFLOP/s | 3.0 TFLOP/s |
+| 12 pipelines, empty → loaded cache | 34.0 → 3.2 ms | 8.8 → 3.4 ms |
+| 150 fragment encodes (CPU), bind each / bound | 0.27 / 0.07 ms | 0.21 / 0.07 ms |
+| 640x480 dmabuf: storage-buffer import / image import | 22 / 73 µs | 358 / 497 µs |
+
+On NVIDIA the pre-existing dmabuf fence paths, previously validated on RADV only, fail with
+dma-heap buffers:
+
+- `dmabuf_import_waits_for_fences` and `dmabuf_fence_mode_selection`: the GPU-side wait on the
+  dma-heap's `sync_file` never returns.
+- `dmabuf_timeline_watcher`: the status stays `Pending` where the timeout should report
+  `TimedOut`.
+- `dmabuf_import_nv12_as_one_texture`: the driver needs 128 KiB of image memory for a 12 KiB
+  test buffer, and the import refuses it, correctly.
+
+NVIDIA's dmabuf imports of system-memory dma-heap buffers are also 5-15x slower than RADV's.
+The board targets (V3D, Mali) do not use these paths; see the release TODO.
+
 ## Vulkan Validation Layers
 
 The dmabuf path drives Vulkan directly (image creation over dmabuf memory, queue family ownership
