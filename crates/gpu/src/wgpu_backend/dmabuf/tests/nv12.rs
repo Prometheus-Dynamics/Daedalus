@@ -1,6 +1,6 @@
 use std::os::fd::AsFd;
 
-use super::support::{DmaBuf, device_poll, exclusive, import_backend, skip};
+use super::support::{DmaBuf, device_poll, exclusive, import_backend, note, skip};
 use crate::{
     DrmFourcc, ExternalFrameDescriptor, ExternalImportError, ExternalPlane, GpuBackend, GpuFormat,
     GpuImageHandle, WgpuBackend,
@@ -54,19 +54,31 @@ fn dmabuf_import_nv12_as_one_texture() {
     };
     let (width, height, stride) = (64u32, 32u32, 256u64);
     let uv_offset = stride * u64::from(height);
-    let buf = DmaBuf::alloc((uv_offset * 3 / 2) as usize).expect("dma-heap alloc");
-    buf.write(|bytes| write_nv12(bytes, width, height, stride, 0, uv_offset));
-    let plane = |offset| ExternalPlane::from_borrowed(buf.fd.as_fd(), offset, stride).unwrap();
-    let result = backend.import_dmabuf(
-        ExternalFrameDescriptor::new(
-            width,
-            height,
-            DrmFourcc::NV12,
-            vec![plane(0), plane(uv_offset)],
-        )
-        .with_implicit_fence()
-        .expect("implicit fence"),
-    );
+    let import = |len: usize| {
+        let buf = DmaBuf::alloc(len).expect("dma-heap alloc");
+        buf.write(|bytes| write_nv12(bytes, width, height, stride, 0, uv_offset));
+        let plane = |offset| ExternalPlane::from_borrowed(buf.fd.as_fd(), offset, stride).unwrap();
+        let result = backend.import_dmabuf(
+            ExternalFrameDescriptor::new(
+                width,
+                height,
+                DrmFourcc::NV12,
+                vec![plane(0), plane(uv_offset)],
+            )
+            .with_implicit_fence()
+            .expect("implicit fence"),
+        );
+        (result, buf)
+    };
+    let (mut result, mut _buf) = import((uv_offset * 3 / 2) as usize);
+    // Some drivers need more image memory than the frame's bytes (NVIDIA pads NV12 to 128 KiB
+    // here): the import says how much, and a producer allocating that much imports.
+    if let Some(needed) = driver_needs(&result) {
+        note(format!(
+            "NV12 frame-sized dmabuf refused; retrying with {needed} bytes"
+        ));
+        (result, _buf) = import(needed);
+    }
     let handle = match result {
         Ok(handle) => handle,
         Err(ExternalImportError::UnsupportedFormat { reason, .. }) => {
@@ -86,22 +98,38 @@ fn dmabuf_import_nv12_as_one_texture() {
     );
 
     // Planes in two separate dmabufs: a disjoint image, when the modifier allows it.
-    let y_buf = DmaBuf::alloc((stride * u64::from(height)) as usize).expect("y alloc");
-    let uv_buf = DmaBuf::alloc((stride * u64::from(height) / 2) as usize).expect("uv alloc");
     let mut whole = vec![0u8; (uv_offset * 3 / 2) as usize];
     write_nv12(&mut whole, width, height, stride, 0, uv_offset);
-    y_buf.write(|bytes| bytes.copy_from_slice(&whole[..uv_offset as usize]));
-    uv_buf.write(|bytes| bytes.copy_from_slice(&whole[uv_offset as usize..]));
-    let planes = vec![
-        ExternalPlane::from_borrowed(y_buf.fd.as_fd(), 0, stride).unwrap(),
-        ExternalPlane::from_borrowed(uv_buf.fd.as_fd(), 0, stride).unwrap(),
-    ];
-    match backend.import_dmabuf(ExternalFrameDescriptor::new(
-        width,
-        height,
-        DrmFourcc::NV12,
-        planes,
-    )) {
+    let (y_len, uv_len) = (uv_offset as usize, uv_offset as usize / 2);
+    let disjoint = |slack: usize| {
+        let y_buf = DmaBuf::alloc(y_len.max(slack)).expect("y alloc");
+        let uv_buf = DmaBuf::alloc(uv_len.max(slack)).expect("uv alloc");
+        y_buf.write(|bytes| bytes[..y_len].copy_from_slice(&whole[..y_len]));
+        uv_buf.write(|bytes| bytes[..uv_len].copy_from_slice(&whole[y_len..]));
+        let planes = vec![
+            ExternalPlane::from_borrowed(y_buf.fd.as_fd(), 0, stride).unwrap(),
+            ExternalPlane::from_borrowed(uv_buf.fd.as_fd(), 0, stride).unwrap(),
+        ];
+        let result = backend.import_dmabuf(ExternalFrameDescriptor::new(
+            width,
+            height,
+            DrmFourcc::NV12,
+            planes,
+        ));
+        (result, (y_buf, uv_buf))
+    };
+    let (mut result, mut _bufs) = disjoint(0);
+    // Each plane's dmabuf padded to what the driver asks for (NVIDIA: 64 KiB per plane).
+    for _ in 0..2 {
+        let Some(needed) = driver_needs(&result) else {
+            break;
+        };
+        note(format!(
+            "disjoint NV12 plane refused; retrying with {needed} bytes per plane"
+        ));
+        (result, _bufs) = disjoint(needed);
+    }
+    match result {
         Ok(handle) => assert_nv12(&backend, &handle),
         Err(ExternalImportError::UnsupportedFormat { reason, .. }) => {
             skip(format!("disjoint NV12: {reason}"));
@@ -195,4 +223,17 @@ out[id.y * dims.x + id.x] = u32(round(y * 255.0))
     drop(view);
     readback.unmap();
     words
+}
+
+/// The image memory size an import refused for a too-small dmabuf ("driver needs N bytes ...").
+fn driver_needs<T>(result: &Result<T, ExternalImportError>) -> Option<usize> {
+    let Err(ExternalImportError::InvalidDescriptor { reason }) = result else {
+        return None;
+    };
+    reason
+        .strip_prefix("driver needs ")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }

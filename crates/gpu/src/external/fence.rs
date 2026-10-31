@@ -73,6 +73,37 @@ pub fn export_dmabuf_fence(dmabuf: BorrowedFd<'_>, access: DmabufAccess) -> io::
     Ok(unsafe { OwnedFd::from_raw_fd(arg.fd) })
 }
 
+/// `struct sync_file_info` from `linux/sync_file.h`.
+#[repr(C)]
+struct SyncFileInfo {
+    name: [u8; 32],
+    status: i32,
+    flags: u32,
+    num_fences: u32,
+    pad: u32,
+    sync_fence_info: u64,
+}
+
+/// `_IOWR('>', 4, struct sync_file_info)`.
+const SYNC_IOC_FILE_INFO: u64 = 0xC038_3E04;
+
+/// Whether `fd` is a `sync_file` (`SYNC_IOC_FILE_INFO` succeeds only on one). Drivers differ on
+/// rejecting other fds when they are imported as a `SYNC_FD` semaphore: NVIDIA accepts a pipe
+/// and the GPU then waits forever, so callers check before handing a fence to the GPU.
+#[cfg_attr(not(feature = "gpu-dmabuf"), allow(dead_code))]
+pub(crate) fn is_sync_file(fd: BorrowedFd<'_>) -> bool {
+    let mut info = SyncFileInfo {
+        name: [0; 32],
+        status: 0,
+        flags: 0,
+        num_fences: 0,
+        pad: 0,
+        sync_fence_info: 0,
+    };
+    // SAFETY: valid fd; with `num_fences` 0 the kernel only fills in the fixed-size struct.
+    unsafe { libc::ioctl(fd.as_raw_fd(), SYNC_IOC_FILE_INFO as _, &mut info) == 0 }
+}
+
 /// Whether `fence` has already signaled (non-blocking poll; `false` also for non-`sync_file`s).
 #[cfg_attr(not(feature = "gpu-dmabuf"), allow(dead_code))]
 pub(crate) fn sync_file_signaled(fence: BorrowedFd<'_>) -> bool {

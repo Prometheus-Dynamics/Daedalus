@@ -364,7 +364,7 @@ lib tests with `--include-ignored` (hardware tests included) and `gpu_bench`.
 
 | | RADV (RX 6800 XT, Mesa 26.2.4) | NVIDIA (RTX 4060, 595.104) |
 |---|---|---|
-| GPU lib tests | 73/73 pass | dmabuf fence/NV12 tests fail (below); the rest pass |
+| GPU lib tests | 73/73 pass | 73/73 pass |
 | dmabuf import, fence wait | supported, `sync_fd` | supported |
 | optional features | f16, f64, int64, int64 atomics, subgroups, timestamps | same |
 | empty dispatch submit→fence p50 | 63 µs | 57 µs |
@@ -375,18 +375,18 @@ lib tests with `--include-ignored` (hardware tests included) and `gpu_bench`.
 | 150 fragment encodes (CPU), bind each / bound | 0.27 / 0.07 ms | 0.21 / 0.07 ms |
 | 640x480 dmabuf: storage-buffer import / image import | 22 / 73 µs | 358 / 497 µs |
 
-On NVIDIA the pre-existing dmabuf fence paths, previously validated on RADV only, fail with
-dma-heap buffers:
+NVIDIA first exposed three gaps the RADV-only validation had hidden, all fixed now:
 
-- `dmabuf_import_waits_for_fences` and `dmabuf_fence_mode_selection`: the GPU-side wait on the
-  dma-heap's `sync_file` never returns.
-- `dmabuf_timeline_watcher`: the status stays `Pending` where the timeout should report
-  `TimedOut`.
-- `dmabuf_import_nv12_as_one_texture`: the driver needs 128 KiB of image memory for a 12 KiB
-  test buffer, and the import refuses it, correctly.
+- The driver accepts a pipe as a `SYNC_FD` semaphore, and the GPU then waits forever.
+  Daedalus now checks with `SYNC_IOC_FILE_INFO` that a fence is a `sync_file` before handing it
+  to the GPU, and anything else takes the non-`sync_file` fallback.
+- A submission behind a pending timeline wait is not blocked, as it is on Mesa. The test now
+  checks only the release order, which holds on both.
+- The image memory requirement is larger than the frame: 128 KiB for a 12 KiB NV12 frame, or
+  64 KiB per plane when disjoint. The import already says how much it needs, and the test now
+  retries with that.
 
-NVIDIA's dmabuf imports of system-memory dma-heap buffers are also 5-15x slower than RADV's.
-The board targets (V3D, Mali) do not use these paths; see the release TODO.
+NVIDIA's imports of system-memory dma-heap buffers are 5-15x slower than RADV's.
 
 ## Vulkan Validation Layers
 

@@ -316,12 +316,26 @@ fn dmabuf_timeline_watcher() {
     note(format!(
         "submission behind a pending timeline wait blocked for {blocked:?} (timeout {timeout:?})"
     ));
+    // In order on every driver: `second` is never released while `first` is still pending.
+    // Mesa blocks the second import until `first` times out; NVIDIA returns at once and the
+    // watcher holds `second` until then.
+    let order_kept = || {
+        second.acquire_status() == AcquireStatus::Pending
+            || first.acquire_status() != AcquireStatus::Pending
+    };
+    assert!(order_kept(), "second released before first");
+    wait_until(Duration::from_secs(2), "both fences resolved", || {
+        assert!(order_kept(), "second released before first");
+        first.acquire_status() != AcquireStatus::Pending
+            && second.acquire_status() != AcquireStatus::Pending
+    });
     assert_eq!(first.acquire_status(), AcquireStatus::TimedOut);
     assert_eq!(second.acquire_status(), AcquireStatus::Ready);
-    assert!(
-        blocked >= timeout * 3 / 4 && blocked < timeout * 5,
-        "blocked {blocked:?}"
-    );
+    if blocked >= timeout * 3 / 4 {
+        assert!(blocked < timeout * 5, "blocked {blocked:?}");
+    } else {
+        note("this driver does not block a submission behind a pending timeline wait".into());
+    }
     drop((first, second));
 
     // Shutdown with a fence that would block the GPU for a minute.

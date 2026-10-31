@@ -448,7 +448,7 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use fence::{DEFAULT_ACQUIRE_TIMEOUT, DmabufAccess, export_dmabuf_fence};
 #[cfg(all(target_os = "linux", feature = "gpu-dmabuf"))]
-pub(crate) use fence::{sync_file_signaled, wait_sync_file};
+pub(crate) use fence::{is_sync_file, sync_file_signaled, wait_sync_file};
 #[cfg(target_os = "linux")]
 pub use linux::*;
 

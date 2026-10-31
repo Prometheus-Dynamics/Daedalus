@@ -158,14 +158,11 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Why:** Eidos and other libraries ship GPU implementations behind features.
       **Done when:** the example runs in CI (CPU path) and on the Raze (GPU path).
       **Blocked by:** the items above.
-- [ ] **What:** desktop GPUs (RADV, NVIDIA): the dmabuf hardware tests, `gpu_bench`, and every
+- [x] **What:** desktop GPUs (RADV, NVIDIA): the dmabuf hardware tests, `gpu_bench`, and every
       new GPU API's tests pass.
-      **Status (2026-10-30):** RADV passes all 73 GPU tests, and `gpu_bench` is recorded for
-      both GPUs (`docs/testing.md`, "Desktop GPUs"). Left on NVIDIA 595:
-      - the GPU-side `sync_file` wait on dma-heap buffers hangs; fall back to the CPU wait, or
-        detect and refuse it;
-      - the timeline timeout stays `Pending`;
-      - the NV12 test buffer is too small for the driver's padding.
+      **Status (2026-10-30):** done. Both GPUs pass all 73 GPU tests, hardware ones included, and
+      `gpu_bench` is recorded (`docs/testing.md`, "Desktop GPUs"). The NVIDIA hang (a pipe
+      imported as a `SYNC_FD` semaphore) is fixed by checking for a `sync_file` first.
       **Why:** desktop is a supported GPU backend.
       **Done when:** `./scripts/ci.sh pi`-equivalent hardware tests and the new API tests pass
       on this workstation's RADV and NVIDIA, and the reports are in `docs/testing.md`.

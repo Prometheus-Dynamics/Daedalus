@@ -34,7 +34,7 @@
 //! timeline path, the timeout passed).
 
 use std::ffi::CStr;
-use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
@@ -454,6 +454,14 @@ struct SemaphorePool {
 impl SemaphorePool {
     /// Import `fence` into a pooled semaphore; the fd comes back when it is not a `sync_file`.
     fn import(self: &Arc<Self>, fence: OwnedFd) -> Result<PooledSemaphore, OwnedFd> {
+        // Not every driver rejects other fds here (NVIDIA imports a pipe and never signals it).
+        if !crate::external::is_sync_file(fence.as_fd()) {
+            tracing::debug!(
+                target: "daedalus_gpu::dmabuf",
+                "acquire fence is not a sync_file; using the non-sync_file fallback"
+            );
+            return Err(fence);
+        }
         let Ok(semaphore) = self.take() else {
             return Err(fence);
         };

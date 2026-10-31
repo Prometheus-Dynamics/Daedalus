@@ -677,6 +677,11 @@ plugin ABI and does not load.
 
 ### Fixed
 
+- **dmabuf import could hang the GPU on NVIDIA.** A fence that was not a `sync_file` (a pipe)
+  was imported as a `SYNC_FD` semaphore. RADV rejects that import, but NVIDIA accepts it, and
+  the GPU then waited forever. The acquire path now checks for a `sync_file`
+  (`SYNC_IOC_FILE_INFO`) before the import, and other fences take the documented
+  non-`sync_file` fallback.
 - `SimpleBufferPool` could hand out a freed buffer smaller than the request when both fell in
   the same power-of-two bucket; it now only reuses buffers at least as large.
 - **`Coalesce { strategy: KeepOldest }` edges kept the newest value instead of the oldest.**
