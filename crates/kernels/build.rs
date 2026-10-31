@@ -4,6 +4,9 @@
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(daedalus_neon32)");
     println!("cargo::rustc-check-cfg=cfg(daedalus_rvv)");
+    // `--cfg daedalus_portable_simd` on a nightly toolchain builds the `core::simd` kernels
+    // (`portable`), the inventory's portable_simd column.
+    println!("cargo::rustc-check-cfg=cfg(daedalus_portable_simd)");
     println!("cargo::rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let flags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();

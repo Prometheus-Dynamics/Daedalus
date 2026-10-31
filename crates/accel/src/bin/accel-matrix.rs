@@ -4,7 +4,7 @@
 //! accel-matrix render --registry dump.json... --results DIR... [--baseline docs/backend-matrix.csv]
 //!                     [--scan REPO_ROOT] [--release] [--strict-review] --out docs/
 //! accel-matrix asm --registry dump.json... --binary TEST_BINARY --target TRIPLE --out DIR
-//!                  [--objdump rust-objdump]
+//!                  [--objdump rust-objdump] [--portable]
 //! ```
 //!
 //! `render` writes `backend-matrix.md` and `.csv` to `--out`, then fails on: registry errors,
@@ -36,6 +36,8 @@ struct Args {
     objdump: String,
     release: bool,
     strict_review: bool,
+    /// `asm`: check only the portable-SIMD kernels (a nightly `core::simd` build).
+    portable: bool,
 }
 
 fn parse() -> Result<Args, String> {
@@ -53,6 +55,7 @@ fn parse() -> Result<Args, String> {
         objdump: std::env::var("OBJDUMP").unwrap_or_else(|_| "rust-objdump".into()),
         release: false,
         strict_review: false,
+        portable: false,
     };
     while let Some(flag) = it.next() {
         let mut value = || it.next().ok_or(format!("{flag} needs a value"));
@@ -67,6 +70,7 @@ fn parse() -> Result<Args, String> {
             "--objdump" => args.objdump = value()?,
             "--release" => args.release = true,
             "--strict-review" => args.strict_review = true,
+            "--portable" => args.portable = true,
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -188,16 +192,28 @@ fn asm(args: &Args) -> Result<bool, String> {
     let mut ok = true;
     for k in inv.kernels.iter().filter(|k| k.status == "implemented") {
         let Some(symbol) = &k.symbol else { continue };
-        if !backends.contains(&k.backend) {
+        // Portable SIMD (only in a `--portable` run, on a nightly binary) is checked against the
+        // target's own vector ISA.
+        if (k.backend == Backend::PortableSimd) != args.portable {
             continue;
         }
+        let isa = if k.backend == Backend::PortableSimd {
+            match backends.first() {
+                Some(&b) => b,
+                None => continue,
+            }
+        } else if backends.contains(&k.backend) {
+            k.backend
+        } else {
+            continue;
+        };
         let bodies: Vec<&(String, String)> = funcs
             .iter()
             .filter(|(n, _)| n.contains(symbol.as_str()))
             .collect();
         let count: usize = bodies
             .iter()
-            .map(|(_, body)| vector_or_extension_instructions(k.backend, &k.extensions, body))
+            .map(|(_, body)| vector_or_extension_instructions(isa, &k.extensions, body))
             .sum();
         let (pass, detail) = if bodies.is_empty() {
             (

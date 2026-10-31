@@ -2,9 +2,9 @@
 
 use daedalus_accel::{Backend, CallSite, Exempt, Ext, Kernel, Op, Registry, Status};
 
-const PORTABLE: Status = Status::Impossible(
-    "portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel",
-);
+/// Unused once every op has a `core::simd` kernel; kept for ops added without one.
+#[allow(dead_code)]
+const PORTABLE: Status = Status::Gap("no core::simd kernel yet (portable.rs)");
 const NO_FIXED: Status =
     Status::Impossible("no fixed-function unit on the supported boards works on host memory");
 
@@ -378,9 +378,71 @@ static OTHER_KERNELS: [[Kernel; 9]; 4] = [
     ),
 ];
 
+/// The `core::simd` kernel of each op (`portable.rs`, nightly).
+const PORTABLE_SYMBOLS: [(&str, &str); 11] = [
+    ("daedalus.pixel.rgb_to_rgba", "portable::rgb_to_rgba"),
+    ("daedalus.pixel.rgba_to_rgb", "portable::rgba_to_rgb"),
+    ("daedalus.pixel.gray_to_rgba", "portable::gray_to_rgba"),
+    ("daedalus.pixel.rgba_red", "portable::rgba_red"),
+    ("daedalus.float.f32_from_le", "portable::copy_bytes"),
+    ("daedalus.float.f16_to_f32", "portable::f16_to_f32"),
+    ("daedalus.float.f32_to_unorm8", "portable::f32_to_unorm8"),
+    ("daedalus.copy.bytes", "portable::copy_bytes"),
+    ("daedalus.codec.hex_lower", "portable::hex_lower"),
+    (
+        "daedalus.codec.base64_encode",
+        "portable::base64_encode_groups",
+    ),
+    (
+        "daedalus.codec.base64_decode",
+        "portable::base64_decode_groups",
+    ),
+];
+
+const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// The op's portable-SIMD entry: implemented when it has a `core::simd` kernel.
+const fn portable_entry(k: Kernel) -> Kernel {
+    let mut i = 0;
+    while i < PORTABLE_SYMBOLS.len() {
+        if str_eq(PORTABLE_SYMBOLS[i].0, k.op) {
+            return Kernel::implemented(
+                k.op,
+                Backend::PortableSimd,
+                "crates/kernels/src/portable.rs",
+                T,
+            )
+            .with_symbol(PORTABLE_SYMBOLS[i].1);
+        }
+        i += 1;
+    }
+    k
+}
+
 const fn with_gpu(cpu: [Kernel; 8], gpu: Kernel) -> [Kernel; 9] {
     [
-        cpu[0], cpu[1], cpu[2], cpu[3], cpu[4], cpu[5], cpu[6], cpu[7], gpu,
+        cpu[0],
+        cpu[1],
+        cpu[2],
+        cpu[3],
+        cpu[4],
+        cpu[5],
+        portable_entry(cpu[6]),
+        cpu[7],
+        gpu,
     ]
 }
 
@@ -546,7 +608,7 @@ static CRC_KERNELS: [Kernel; 11] = [
         Backend::Gpu,
         Status::Gap("planned: CRC per chunk on the GPU, combined with GF(2) shifts"),
     ),
-    Kernel::missing(CRC_OP, Backend::PortableSimd, PORTABLE),
+    Kernel::missing(CRC_OP, Backend::PortableSimd, CHAIN),
     Kernel::missing(CRC_OP, Backend::FixedFunction, NO_FIXED),
 ];
 

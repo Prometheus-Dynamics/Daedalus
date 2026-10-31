@@ -246,10 +246,11 @@ built, measured per device and kept selectable. `docs/backend-matrix.md` is the 
       into every call site.
       **Done:** 6f9bd4b, 002d1f4, d5b55f7, c27f9c9 (CRC-32: PCLMULQDQ, AArch64 CRC), c797a47
       (F16C). Matrix: 98 pass, 33 impossible with reasons, 3 gaps.
-- [ ] **What:** the `portable_simd` column: a `nightly` feature using `core::simd`, tested in a
-      nightly CI lane (user decision, 2026-10-31; the product stays on stable).
-      **Done when:** the column passes for every op in the nightly lane.
-      **Blocked by:** nothing.
+- [x] **What:** the `portable_simd` column: `core::simd` kernels tested in a nightly CI lane
+      (user decision, 2026-10-31; the product stays on stable).
+      **Done:** `daedalus_kernels::portable` behind `--cfg daedalus_portable_simd` (a cfg, so
+      stable `--all-features` builds keep working), run by `ci.sh accel` on nightly-2026-10-15
+      with asm checks; all 11 vectorizable ops pass (CRC-32: not data-parallel).
 - [ ] **What:** the Rockchip RGA fixed-function backend (librga: RGB↔RGBA, gray).
       **Done when:** written, with conformance tests that run where librga exists; untested on
       board until a Rockchip board.

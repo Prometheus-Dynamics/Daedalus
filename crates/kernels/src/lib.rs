@@ -11,6 +11,7 @@
 //! independent scalar references in [`reference`](mod@reference). [`ACCEL`] registers them in the acceleration
 //! inventory (`docs/backend-matrix.md`).
 #![no_std]
+#![cfg_attr(daedalus_portable_simd, feature(portable_simd))]
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -21,6 +22,8 @@ mod crc;
 mod float;
 mod hex;
 mod pixel;
+#[cfg(daedalus_portable_simd)]
+pub mod portable;
 pub mod reference;
 mod registry;
 

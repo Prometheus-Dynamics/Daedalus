@@ -373,3 +373,142 @@ fn registry_dump() {
     let json = daedalus_accel::dump_json(&[&k::ACCEL]);
     assert!(json.contains("daedalus.codec.base64_decode"));
 }
+
+/// The `core::simd` kernels (nightly, `--cfg daedalus_portable_simd`) against the references.
+#[cfg(daedalus_portable_simd)]
+#[test]
+fn portable_simd_kernels() {
+    use daedalus_kernels::portable as p;
+    let pb = Backend::PortableSimd;
+    let all_lengths = |want: &dyn Fn(usize) -> (Vec<u8>, Vec<u8>),
+                       run: &dyn Fn(&[u8], &mut [u8])| {
+        LENGTHS.iter().all(|&n| {
+            let (input, expected) = want(n);
+            let mut out = vec![0u8; expected.len()];
+            run(&input, &mut out);
+            out == expected
+        })
+    };
+    conform("daedalus.pixel.rgb_to_rgba", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n * 3, 1);
+                let w = r::rgb_to_rgba(&i);
+                (i, w)
+            },
+            &p::rgb_to_rgba,
+        )
+    });
+    conform("daedalus.pixel.rgba_to_rgb", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n * 4, 2);
+                let w = r::rgba_to_rgb(&i);
+                (i, w)
+            },
+            &p::rgba_to_rgb,
+        )
+    });
+    conform("daedalus.pixel.gray_to_rgba", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n, 3);
+                let w = r::gray_to_rgba(&i);
+                (i, w)
+            },
+            &p::gray_to_rgba,
+        )
+    });
+    conform("daedalus.pixel.rgba_red", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n * 4, 4);
+                let w = r::rgba_red(&i);
+                (i, w)
+            },
+            &p::rgba_red,
+        )
+    });
+    conform("daedalus.copy.bytes", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n, 7);
+                (i.clone(), i)
+            },
+            &p::copy_bytes,
+        )
+    });
+    conform("daedalus.float.f32_from_le", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n * 4, 5);
+                (i.clone(), i)
+            },
+            &p::copy_bytes,
+        )
+    });
+    conform("daedalus.codec.hex_lower", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n, 8);
+                let w = r::hex_lower(&i);
+                (i, w)
+            },
+            &p::hex_lower,
+        )
+    });
+    conform("daedalus.codec.base64_encode", pb, || {
+        all_lengths(
+            &|n| {
+                let i = bytes(n, 9);
+                let w = r::base64_encode(&i);
+                (i, w)
+            },
+            &|s, d| {
+                let full = s.len() / 3;
+                p::base64_encode_groups(&s[..full * 3], &mut d[..full * 4]);
+                d[full * 4..].copy_from_slice(k::base64_encode(&s[full * 3..]).as_bytes());
+            },
+        )
+    });
+    conform("daedalus.codec.base64_decode", pb, || {
+        LENGTHS.iter().all(|&n| {
+            let raw = bytes(n, 10);
+            let enc = r::base64_encode(&raw);
+            let body = (enc.len() / 4).saturating_sub(1);
+            let mut out = vec![0u8; raw.len()];
+            let ok = p::base64_decode_groups(&enc[..body * 4], &mut out[..body * 3]);
+            let tail = k::base64_decode(&enc[body * 4..]).unwrap();
+            out[body * 3..].copy_from_slice(&tail);
+            let mut bad = enc[..body * 4].to_vec();
+            let caught = match bad.first_mut() {
+                None => true,
+                Some(c) => {
+                    *c = b'*';
+                    !p::base64_decode_groups(&bad, &mut vec![0u8; body * 3])
+                }
+            };
+            ok && out == raw && caught
+        })
+    });
+    let halves: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_le_bytes).collect();
+    conform("daedalus.float.f16_to_f32", pb, || {
+        let want = r::f16_to_f32(&halves);
+        let mut got = vec![0f32; want.len()];
+        p::f16_to_f32(&halves, &mut got);
+        got.iter()
+            .zip(&want)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    });
+    conform("daedalus.float.f32_to_unorm8", pb, || {
+        let mut values: Vec<f32> = (0..=300_000)
+            .map(|i| -0.25 + i as f32 * (1.5 / 300_000.0))
+            .collect();
+        values.extend([f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.0]);
+        values.extend((0..=255).map(|i| (i as f32 + 0.5) / 255.0));
+        let want = r::f32_to_unorm8(&values);
+        let mut got = vec![0u8; values.len()];
+        p::f32_to_unorm8(&values, &mut got);
+        got == want
+    });
+}

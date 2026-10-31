@@ -39,10 +39,11 @@ cargo build -q -p daedalus-accel --features generator --bin accel-matrix
 MATRIX=$TARGET_DIR/debug/accel-matrix
 ACCEL_DUMP=$(realpath "$OUT")/daedalus.json
 
-# The conformance test binary for a target, built (not run).
+# The conformance test binary for a target, built (not run). `TOOLCHAIN=+nightly-...` selects
+# another toolchain.
 test_binary() {
   local target=$1
-  cargo test -q -p daedalus-kernels --test conformance --target "$target" --no-run \
+  cargo ${TOOLCHAIN:-} test -q -p daedalus-kernels --test conformance --target "$target" --no-run \
     --message-format=json 2>/dev/null |
     python3 -c 'import json,sys
 for line in sys.stdin:
@@ -104,6 +105,23 @@ if cross riscv64gc-unknown-linux-musl riscv64-cc qemu-riscv64-static; then
     run_target riscv64gc-unknown-linux-musl "qemu-vlen$vlen" \
       qemu-riscv64-static -cpu "rv64,v=true,vlen=$vlen"
   done
+fi
+
+# Portable SIMD (`core::simd`) needs nightly: the pinned toolchain builds the `portable` kernels
+# with `--cfg daedalus_portable_simd`; the product stays on stable.
+NIGHTLY=${ACCEL_NIGHTLY:-nightly-2026-10-15}
+if rustup run "$NIGHTLY" rustc --version >/dev/null 2>&1; then
+  step "Portable SIMD on $NIGHTLY ($host)"
+  # A separate target dir: the cfg changes every crate's fingerprint.
+  nightly_dir=$TARGET_DIR/nightly
+  CARGO_TARGET_DIR=$nightly_dir RUSTFLAGS="--cfg daedalus_portable_simd" \
+    ACCEL_TARGET=$host ACCEL_RUNNER="native-$NIGHTLY" \
+    cargo "+$NIGHTLY" test -q -p daedalus-kernels --test conformance --target "$host" portable
+  bin=$(CARGO_TARGET_DIR=$nightly_dir RUSTFLAGS="--cfg daedalus_portable_simd" TOOLCHAIN="+$NIGHTLY" \
+    test_binary "$host")
+  "$MATRIX" asm --registry "$ACCEL_DUMP" --binary "$bin" --target "$host" --out "$RESULTS" --portable
+else
+  echo "skipping portable SIMD: rustup toolchain $NIGHTLY is not installed (its cells stay untested)" >&2
 fi
 
 step "Rendering docs/backend-matrix.{md,csv}"
