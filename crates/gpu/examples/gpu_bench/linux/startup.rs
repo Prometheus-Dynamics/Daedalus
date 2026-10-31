@@ -74,4 +74,59 @@ pub(super) fn startup() {
         Err(err) => kv("pipeline_cache_reload", format!("failed: {err}")),
     }
     let _ = std::fs::remove_dir_all(&dir);
+    encode_cost(&ctx);
+}
+
+/// CPU time to encode 150 fragment passes (a plane sweep's per-keyframe count): binding on every
+/// encode (`encode`) against one binding reused (`encode_bound`).
+fn encode_cost(ctx: &daedalus_gpu::GpuContextHandle) {
+    use daedalus_gpu::GpuTexture;
+    let format = wgpu::TextureFormat::R32Float;
+    let shader = "@group(0) @binding(0) var src: texture_2d<f32>;
+        @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+            return textureLoad(src, vec2<i32>(pos.xy), 0);
+        }";
+    let built = (|| {
+        let pass = FragmentPass::new(ctx, shader, &[format])?;
+        let a = GpuTexture::new(ctx, (640, 480), format, None)?;
+        let b = GpuTexture::new(ctx, (640, 480), format, None)?;
+        Ok::<_, daedalus_gpu::GpuError>((pass, a, b))
+    })();
+    let Ok((pass, a, b)) = built else {
+        return kv("fragment_encode_150", "unsupported");
+    };
+    let Some((device, queue)) = ctx.wgpu() else {
+        return;
+    };
+    let time = |bound: bool| {
+        let binding = pass.bind(&[&a], &[]).expect("bind");
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let start = Instant::now();
+            for _ in 0..150 {
+                let result = if bound {
+                    pass.encode_bound(&mut encoder, &binding, &[&b])
+                } else {
+                    pass.encode(&mut encoder, &[&a], &[], &[&b])
+                };
+                result.expect("encode");
+            }
+            best = best.min(start.elapsed().as_secs_f64());
+            queue.submit([encoder.finish()]);
+            let _ = device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
+        }
+        best * 1e3
+    };
+    kv(
+        "fragment_encode_150_bind_each",
+        format!("{:.2} ms CPU", time(false)),
+    );
+    kv(
+        "fragment_encode_150_bound",
+        format!("{:.2} ms CPU", time(true)),
+    );
 }

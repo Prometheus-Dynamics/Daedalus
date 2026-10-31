@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`FragmentPass` bindings, rectangles and integer formats.** `bind` → `FragmentBinding` is
+  validated once and reused by `encode_bound` / `run_bound`. `FragmentRects` + `encode_rects`
+  draw a list of rectangles in one instanced draw, optionally keeping the targets' contents
+  (`LoadOp::Load`). Integer textures (`texture_2d<u32>`, rgba16uint, rg32uint targets) are
+  tested. The built-in vertex stage now draws per-instance rectangles; a full-target draw is one
+  rectangle.
 - **On-disk pipeline cache: `GpuPipelineCache`, `pipeline_cache_for`.** It loads and saves
   wgpu's Vulkan pipeline cache per adapter. Once installed, Daedalus's shader-dispatch and
   `FragmentPass` pipelines use it. The driver validates the data, so a driver change starts a

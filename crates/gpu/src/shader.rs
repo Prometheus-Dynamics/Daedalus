@@ -34,7 +34,7 @@ pub(crate) use device_cache::{device_key, register_device, unregister_device};
 pub use dispatch::*;
 #[cfg(feature = "gpu-async")]
 pub use dispatch_async::*;
-pub use fragment::FragmentPass;
+pub use fragment::{FragmentBinding, FragmentPass, FragmentRects};
 pub(crate) use gpu_state::clear_gpu_state_pool_for_device;
 pub use gpu_state::*;
 pub use gpu_state::{gpu_state_pool_limit, set_gpu_state_pool_limit};

@@ -76,6 +76,16 @@ rgba8, r32f and rg32f work on every backend. `pass.run(&inputs, &buffers, &targe
 `start_read()` / `try_read_into` (polled) or `read_into` (blocking), reusing one staging buffer.
 Keep the pass and its textures in the node's state. See `crates/daedalus/tests/gpu_fragment.rs`.
 
+For many passes per tick, bind once with `pass.bind(&inputs, &buffers) -> FragmentBinding`, keep
+the binding in state, and encode with `encode_bound(encoder, &binding, &targets)` or
+`run_bound`. This skips the per-encode validation round trip: 150 encodes take 0.07 ms of CPU
+bound against 0.21 ms binding each time (`gpu_bench`). To update part of a target, such as the
+visited tiles of an atlas, write the rectangles (`[x, y, w, h]` in target pixels) into a
+`FragmentRects` and call `encode_rects(encoder, &binding, &rects, &targets, load)`. It is one
+instanced draw. With `load` the rest of the target is kept; without it the target is cleared.
+Integer formats work as inputs (`texture_2d<u32>`) and as targets (rgba16uint, rg32uint),
+with exact values.
+
 ### GPU time per pass
 
 `GpuTimer::new(gpu)` times one pass per submission. Give the pass
