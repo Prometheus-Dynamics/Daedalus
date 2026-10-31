@@ -1,6 +1,6 @@
 # TODO
 
-## Next release (3.0.0)
+## Next release (4.0.0)
 
 Feature freeze of 2026-10-27, plus its last addition, hardware support and GPU (2026-10-30).
 Nothing else joins this release. The user decided (2026-10-30): full support on every backend,
@@ -183,13 +183,14 @@ The explicit assignment above already carries a backend choice.
       **Done when:** `./scripts/ci.sh semver` reports no unexplained break, and the CI `semver`
       job is blocking.
       **Blocked by:** nothing.
-- [ ] **What:** the version number. The user decided on 3.0.0 (2026-10-30), but tag `v3.0.0`
-      already exists (e7e88fc) and downstream may pin it.
-      **Why:** dev is `3.0.1-dev`.
-      **Done when:** every crate carries the released version, the tag points at the release
-      commit, and the plugin-ABI and stable-ABI constants are unchanged or bumped with a reason.
-      **Blocked by:** a user decision on the existing tag: move `v3.0.0` (rewrites a published
-      tag), or release as 3.0.1 or 3.1.0.
+- [ ] **What:** version 4.0.0 (user decision, 2026-10-30). The existing `v3.0.0` tag stays as it
+      is.
+      **Why:** dev is `3.0.1-dev`; this release breaks public API (`GpuCapabilities`,
+      `NodePortRefresh` and others).
+      **Done when:** every crate carries `4.0.0`, downstream git deps need no `version =`
+      change, and the plugin-ABI and stable-ABI constants are unchanged or bumped with a
+      reason.
+      **Blocked by:** the rest of this release (bump last).
 - [ ] **What:** CHANGELOG `[Unreleased]` becomes the release section, with a migration note if
       needed.
       **Why:** downstream pins by commit and reads the CHANGELOG.
@@ -200,7 +201,7 @@ The explicit assignment above already carries a backend choice.
       `ci.yml` and `bench.yml` are green on `dev`, and `ci.sh pi` and `ci.sh vvl` pass on the
       Raze.
       **Blocked by:** a Raze window.
-- [ ] **What:** merge `dev` into `main`, and tag the release.
+- [ ] **What:** merge `dev` into `main`, and tag `v4.0.0`.
       **Why:** the release. **Done when:** the tag exists and downstream bumps its pin.
       **Blocked by:** every item above, and user approval.
 
