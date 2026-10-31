@@ -195,6 +195,16 @@ impl FragmentPass {
         targets: &[wgpu::TextureFormat],
     ) -> Result<Self, GpuError> {
         let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
+        Self::with_device(device, queue, fragment_wgsl, targets)
+    }
+
+    /// [`FragmentPass::new`] on a device and queue directly.
+    pub(super) fn with_device(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        fragment_wgsl: &str,
+        targets: &[wgpu::TextureFormat],
+    ) -> Result<Self, GpuError> {
         if targets.is_empty() {
             return Err(GpuError::InvalidInput(
                 "a fragment pass needs at least one target".into(),
