@@ -70,6 +70,13 @@ plugin ABI and does not load.
 
   Targets: x86_64 SSE2 with SSSE3/SSE4.1 and AVX2 chosen at runtime, AArch64 NEON, ARMv7 NEON
   (`+neon`) and RVV (`+v`), the last two checked at VLEN 128, 256 and 512.
+- **The kernels run in the product.** The GPU crate's RGB/gray upload and download conversions
+  (`DynamicImage` RGB8/Luma8 included, also in `#[shader]` bindings), the r32float / rgba16float
+  / gray readback conversions and every row re-pitch and readback copy go through
+  `daedalus-kernels`. So do base64 for `Value::Bytes` in JSON and on the FFI wire, and the
+  package digest hex. The `base64` and `half` dependencies are gone. Each op lists its call
+  sites, and the matrix's `wired` column checks them: a proven kernel that nothing calls is a
+  gap, and the old scalar code coming back fails the gate.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`

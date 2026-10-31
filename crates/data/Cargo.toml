@@ -29,12 +29,12 @@ host-only-features = []
 default = ["std", "json"]
 # Host OS facilities: `std` locks and collections, clocks, threads. Without it the crate is
 # `no_std` + `alloc` (see "Portability" in docs/development.md).
-std = ["dep:parking_lot", "serde/std", "thiserror/std", "serde_json?/std", "base64?/std"]
+std = ["dep:parking_lot", "serde/std", "thiserror/std", "serde_json?/std", "daedalus-kernels?/std"]
 schema = ["dep:serde_json"]
 proto = []
 gpu = ["std", "daedalus-gpu"]
 async = []
-json = ["base64", "dep:serde_json"]
+json = ["dep:daedalus-kernels", "dep:serde_json"]
 
 [dependencies]
 hashbrown = { workspace = true }
@@ -43,7 +43,8 @@ serde = { workspace = true }
 spin = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true, optional = true }
-base64 = { workspace = true, optional = true }
+# Base64 for `Value::Bytes` in JSON (vectorized; `docs/backend-matrix.md`).
+daedalus-kernels = { workspace = true, optional = true }
 daedalus-gpu = { workspace = true, optional = true }
 
 # Targets without 64-bit atomics (`thumbv7em`, ...): `portable-atomic`'s `AtomicU64`.

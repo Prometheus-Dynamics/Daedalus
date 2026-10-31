@@ -8,6 +8,7 @@ daedalus,daedalus.codec.base64_decode,neon32,pass,,armv7-unknown-linux-musleabih
 daedalus,daedalus.codec.base64_decode,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.codec.base64_decode,gpu,impossible,host-side serialization of payload bytes for JSON / the FFI wire; a GPU round trip costs more than the encoding,
 daedalus,daedalus.codec.base64_decode,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.codec.base64_decode,wired,pass,,2 call site(s)
 daedalus,daedalus.codec.base64_encode,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.codec.base64_encode,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.codec.base64_encode,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -17,6 +18,7 @@ daedalus,daedalus.codec.base64_encode,neon32,pass,,armv7-unknown-linux-musleabih
 daedalus,daedalus.codec.base64_encode,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.codec.base64_encode,gpu,impossible,host-side serialization of payload bytes for JSON / the FFI wire; a GPU round trip costs more than the encoding,
 daedalus,daedalus.codec.base64_encode,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.codec.base64_encode,wired,pass,,2 call site(s)
 daedalus,daedalus.codec.hex_lower,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.codec.hex_lower,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.codec.hex_lower,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -26,6 +28,7 @@ daedalus,daedalus.codec.hex_lower,neon32,pass,,armv7-unknown-linux-musleabihf qe
 daedalus,daedalus.codec.hex_lower,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.codec.hex_lower,gpu,impossible,host-side serialization of payload bytes for JSON / the FFI wire; a GPU round trip costs more than the encoding,
 daedalus,daedalus.codec.hex_lower,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.codec.hex_lower,wired,pass,,1 call site(s)
 daedalus,daedalus.copy.bytes,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.copy.bytes,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.copy.bytes,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -35,6 +38,7 @@ daedalus,daedalus.copy.bytes,neon32,pass,,armv7-unknown-linux-musleabihf qemu-co
 daedalus,daedalus.copy.bytes,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.copy.bytes,gpu,impossible,"the host side of a GPU transfer: the bytes are already in host memory, and a GPU pass would add a round trip",
 daedalus,daedalus.copy.bytes,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.copy.bytes,wired,pass,,6 call site(s)
 daedalus,daedalus.float.f16_to_f32,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.float.f16_to_f32,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.float.f16_to_f32,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -44,6 +48,7 @@ daedalus,daedalus.float.f16_to_f32,neon32,pass,,armv7-unknown-linux-musleabihf q
 daedalus,daedalus.float.f16_to_f32,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.float.f16_to_f32,gpu,impossible,converting before the readback doubles the bytes read back; the conversion is the host side of the transfer,
 daedalus,daedalus.float.f16_to_f32,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.float.f16_to_f32,wired,pass,,1 call site(s)
 daedalus,daedalus.float.f32_from_le,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.float.f32_from_le,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.float.f32_from_le,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -53,6 +58,7 @@ daedalus,daedalus.float.f32_from_le,neon32,pass,,armv7-unknown-linux-musleabihf 
 daedalus,daedalus.float.f32_from_le,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.float.f32_from_le,gpu,impossible,"the host side of a GPU transfer: the bytes are already in host memory, and a GPU pass would add a round trip",
 daedalus,daedalus.float.f32_from_le,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.float.f32_from_le,wired,pass,,1 call site(s)
 daedalus,daedalus.float.f32_to_unorm8,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.float.f32_to_unorm8,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.float.f32_to_unorm8,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -62,6 +68,7 @@ daedalus,daedalus.float.f32_to_unorm8,neon32,pass,,armv7-unknown-linux-musleabih
 daedalus,daedalus.float.f32_to_unorm8,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.float.f32_to_unorm8,gpu,gap,planned: convert in a GPU pass before the readback (4x fewer bytes),
 daedalus,daedalus.float.f32_to_unorm8,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.float.f32_to_unorm8,wired,pass,,1 call site(s)
 daedalus,daedalus.gpu.storage_to_texture,scalar,pass,,x86_64-unknown-linux-gnu native
 daedalus,daedalus.gpu.storage_to_texture,portable_simd,impossible,"the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes",
 daedalus,daedalus.gpu.storage_to_texture,x86_sse2,impossible,"the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes",
@@ -71,6 +78,7 @@ daedalus,daedalus.gpu.storage_to_texture,neon32,impossible,"the data is GPU-resi
 daedalus,daedalus.gpu.storage_to_texture,rvv,impossible,"the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes",
 daedalus,daedalus.gpu.storage_to_texture,gpu,pass,,fold_unfold: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02))
 daedalus,daedalus.gpu.storage_to_texture,fixed_function,pass,,direct: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02)); rows: x86_64-unknown-linux-gnu native (NVIDIA GeForce RTX 4060 (595.104.02))
+daedalus,daedalus.gpu.storage_to_texture,wired,pass,,1 call site(s)
 daedalus,daedalus.pixel.gray_to_rgba,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.pixel.gray_to_rgba,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.pixel.gray_to_rgba,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -80,6 +88,7 @@ daedalus,daedalus.pixel.gray_to_rgba,neon32,pass,,armv7-unknown-linux-musleabihf
 daedalus,daedalus.pixel.gray_to_rgba,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.pixel.gray_to_rgba,gpu,gap,planned: upload R8 and expand on the GPU when the format lacks R8 sampling,
 daedalus,daedalus.pixel.gray_to_rgba,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.pixel.gray_to_rgba,wired,pass,,1 call site(s)
 daedalus,daedalus.pixel.rgb_to_rgba,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.pixel.rgb_to_rgba,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.pixel.rgb_to_rgba,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -89,6 +98,7 @@ daedalus,daedalus.pixel.rgb_to_rgba,neon32,pass,,armv7-unknown-linux-musleabihf 
 daedalus,daedalus.pixel.rgb_to_rgba,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.pixel.rgb_to_rgba,gpu,gap,planned: upload packed RGB to a storage buffer and expand it in a fragment pass (25% fewer bytes),
 daedalus,daedalus.pixel.rgb_to_rgba,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.pixel.rgb_to_rgba,wired,pass,,1 call site(s)
 daedalus,daedalus.pixel.rgba_red,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.pixel.rgba_red,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.pixel.rgba_red,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -98,6 +108,7 @@ daedalus,daedalus.pixel.rgba_red,neon32,pass,,armv7-unknown-linux-musleabihf qem
 daedalus,daedalus.pixel.rgba_red,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.pixel.rgba_red,gpu,gap,planned: render the red channel to an R8 target before the readback (4x fewer bytes),
 daedalus,daedalus.pixel.rgba_red,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.pixel.rgba_red,wired,pass,,1 call site(s)
 daedalus,daedalus.pixel.rgba_to_rgb,scalar,pass,,"aarch64-unknown-linux-musl qemu, armv7-unknown-linux-musleabihf qemu-cortex-a7, riscv64gc-unknown-linux-musl qemu-vlen128, riscv64gc-unknown-linux-musl qemu-vlen256, riscv64gc-unknown-linux-musl qemu-vlen512, x86_64-unknown-linux-gnu native"
 daedalus,daedalus.pixel.rgba_to_rgb,portable_simd,impossible,portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel,
 daedalus,daedalus.pixel.rgba_to_rgb,x86_sse2,pass,,x86_64-unknown-linux-gnu native +asm
@@ -107,3 +118,4 @@ daedalus,daedalus.pixel.rgba_to_rgb,neon32,pass,,armv7-unknown-linux-musleabihf 
 daedalus,daedalus.pixel.rgba_to_rgb,rvv,pass,,"riscv64gc-unknown-linux-musl qemu-vlen128 vlen 128, riscv64gc-unknown-linux-musl qemu-vlen256 vlen 256, riscv64gc-unknown-linux-musl qemu-vlen512 vlen 512 +asm"
 daedalus,daedalus.pixel.rgba_to_rgb,gpu,gap,planned: pack to RGB in a GPU pass before the readback (25% fewer bytes),
 daedalus,daedalus.pixel.rgba_to_rgb,fixed_function,impossible,no fixed-function unit on the supported boards works on host memory,
+daedalus,daedalus.pixel.rgba_to_rgb,wired,pass,,1 call site(s)

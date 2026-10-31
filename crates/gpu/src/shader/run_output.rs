@@ -24,14 +24,8 @@ impl ShaderRunOutput {
             if bytes.len() < expected || bytes.len() % 4 != 0 {
                 return None;
             }
-            let mut out = Vec::with_capacity(bytes.len() / 4);
-            out.extend(
-                bytes
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|chunk| f32::from_le_bytes(*chunk)),
-            );
+            let mut out = vec![0f32; bytes.len() / 4];
+            daedalus_kernels::f32_from_le(bytes, &mut out);
             Some(out)
         })
     }
@@ -43,14 +37,8 @@ impl ShaderRunOutput {
             if bytes.len() < (width as usize) * (height as usize) * 8 {
                 return None;
             }
-            let mut out = Vec::with_capacity((width as usize) * (height as usize) * 4);
-            out.extend(
-                bytes
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|chunk| half::f16::from_bits(u16::from_le_bytes(*chunk)).to_f32()),
-            );
+            let mut out = vec![0f32; bytes.len() / 2];
+            daedalus_kernels::f16_to_f32(bytes, &mut out);
             Some(out)
         })
     }
@@ -113,11 +101,8 @@ impl ShaderRunOutput {
             if vals.len() < (width as usize) * (height as usize) {
                 return None;
             }
-            let mut out = Vec::with_capacity(vals.len());
-            for v in vals {
-                let clamped = v.clamp(0.0, 1.0);
-                out.push((clamped * 255.0).round().clamp(0.0, 255.0) as u8);
-            }
+            let mut out = vec![0u8; vals.len()];
+            daedalus_kernels::f32_to_unorm8(&vals, &mut out);
             image::ImageBuffer::<image::Luma<u8>, _>::from_raw(width, height, out)
         })
     }

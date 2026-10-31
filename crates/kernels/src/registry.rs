@@ -1,6 +1,6 @@
 //! Daedalus's entries in the acceleration inventory (`docs/backend-matrix.md`).
 
-use daedalus_accel::{Backend, Exempt, Kernel, Op, Registry, Status};
+use daedalus_accel::{Backend, CallSite, Exempt, Kernel, Op, Registry, Status};
 
 const PORTABLE: Status = Status::Impossible(
     "portable SIMD (core::simd) is nightly-only on Rust 1.99; each ISA has its own kernel",
@@ -50,67 +50,182 @@ const fn op(id: &'static str, summary: &'static str, scalar: &'static str) -> Op
     Op::new(id, summary, scalar)
 }
 
+static SITES_PIXEL_RGB_TO_RGBA: [CallSite; 1] =
+    [
+        CallSite::new("crates/gpu/src/convert.rs", "daedalus_kernels::rgb_to_rgba")
+            .forbid(&["ImageBuffer::from_fn"]),
+    ];
+
+static SITES_PIXEL_RGBA_TO_RGB: [CallSite; 1] =
+    [
+        CallSite::new("crates/gpu/src/convert.rs", "daedalus_kernels::rgba_to_rgb")
+            .forbid(&["image::Rgb([p[0], p[1], p[2]])"]),
+    ];
+
+static SITES_PIXEL_GRAY_TO_RGBA: [CallSite; 1] = [CallSite::new(
+    "crates/gpu/src/convert.rs",
+    "daedalus_kernels::gray_to_rgba",
+)
+.forbid(&["extend_from_slice(&[v, v, v, 255])"])];
+
+static SITES_PIXEL_RGBA_RED: [CallSite; 1] =
+    [
+        CallSite::new("crates/gpu/src/convert.rs", "daedalus_kernels::rgba_red")
+            .forbid(&[".map(|rgba| rgba[0])"]),
+    ];
+
+static SITES_FLOAT_F32_FROM_LE: [CallSite; 1] = [CallSite::new(
+    "crates/gpu/src/shader/run_output.rs",
+    "daedalus_kernels::f32_from_le",
+)
+.forbid(&["f32::from_le_bytes"])];
+
+static SITES_FLOAT_F16_TO_F32: [CallSite; 1] = [CallSite::new(
+    "crates/gpu/src/shader/run_output.rs",
+    "daedalus_kernels::f16_to_f32",
+)
+.forbid(&["half::f16"])];
+
+static SITES_FLOAT_F32_TO_UNORM8: [CallSite; 1] = [CallSite::new(
+    "crates/gpu/src/shader/run_output.rs",
+    "daedalus_kernels::f32_to_unorm8",
+)
+.forbid(&["(clamped * 255.0).round()"])];
+
+static SITES_COPY_BYTES: [CallSite; 6] = [
+    CallSite::new(
+        "crates/gpu/src/wgpu_backend.rs",
+        "daedalus_kernels::copy_rows",
+    ),
+    CallSite::new(
+        "crates/gpu/src/wgpu_backend/texture_transfer.rs",
+        "daedalus_kernels::copy_rows",
+    )
+    .forbid(&["out.extend_from_slice(&src[start"]),
+    CallSite::new(
+        "crates/gpu/src/shader/prepare/prepare_texture.rs",
+        "daedalus_kernels::copy_rows",
+    )
+    .forbid(&[".copy_from_slice(&bytes[src_start"]),
+    CallSite::new(
+        "crates/gpu/src/shader/readback.rs",
+        "daedalus_kernels::copy_rows",
+    )
+    .forbid(&["trimmed.extend_from_slice"]),
+    CallSite::new(
+        "crates/gpu/src/shader/readback_async.rs",
+        "daedalus_kernels::copy_rows",
+    )
+    .forbid(&["trimmed.extend_from_slice"]),
+    CallSite::new(
+        "crates/gpu/src/shader/gpu_storage.rs",
+        "daedalus_kernels::copy_rows",
+    )
+    .forbid(&["dst.copy_from_slice(&src[..unpadded])"]),
+];
+
+static SITES_CODEC_HEX_LOWER: [CallSite; 1] = [CallSite::new(
+    "crates/ffi/core/src/schema_package/package_support.rs",
+    "daedalus_kernels::hex_lower",
+)
+.forbid(&["b\"0123456789abcdef\""])];
+
+static SITES_CODEC_BASE64_ENCODE: [CallSite; 2] = [
+    CallSite::new("crates/data/src/json.rs", "base64_encode(").forbid(&["B64.encode"]),
+    CallSite::new(
+        "crates/ffi/core/src/wire_protocol/wire_value.rs",
+        "daedalus_kernels::base64_encode",
+    )
+    .forbid(&["STANDARD.encode"]),
+];
+
+static SITES_CODEC_BASE64_DECODE: [CallSite; 2] = [
+    CallSite::new("crates/data/src/json.rs", "base64_decode(").forbid(&["B64.decode"]),
+    CallSite::new(
+        "crates/ffi/core/src/wire_protocol/wire_value.rs",
+        "daedalus_kernels::base64_decode",
+    )
+    .forbid(&["general_purpose::STANDARD"]),
+];
+
+static SITES_GPU_STORAGE_TO_TEXTURE: [CallSite; 1] = [CallSite::new(
+    "crates/gpu/src/shader/gpu_texture.rs",
+    "fn copy_folded",
+)];
+
 static OPS: [Op; 12] = [
     op(
         "daedalus.pixel.rgb_to_rgba",
         "RGB8 to RGBA8 (GPU upload of RgbImage)",
         "daedalus_kernels::reference::rgb_to_rgba",
-    ),
+    )
+    .wired_at(&SITES_PIXEL_RGB_TO_RGBA),
     op(
         "daedalus.pixel.rgba_to_rgb",
         "RGBA8 to RGB8 (GPU download to RgbImage)",
         "daedalus_kernels::reference::rgba_to_rgb",
-    ),
+    )
+    .wired_at(&SITES_PIXEL_RGBA_TO_RGB),
     op(
         "daedalus.pixel.gray_to_rgba",
         "Gray8 to RGBA8 (GrayImage upload without R8)",
         "daedalus_kernels::reference::gray_to_rgba",
-    ),
+    )
+    .wired_at(&SITES_PIXEL_GRAY_TO_RGBA),
     op(
         "daedalus.pixel.rgba_red",
         "RGBA8 red channel (GrayImage download from RGBA)",
         "daedalus_kernels::reference::rgba_red",
-    ),
+    )
+    .wired_at(&SITES_PIXEL_RGBA_RED),
     op(
         "daedalus.float.f32_from_le",
         "LE bytes to f32 (r32float readback)",
         "daedalus_kernels::reference::f32_from_le",
-    ),
+    )
+    .wired_at(&SITES_FLOAT_F32_FROM_LE),
     op(
         "daedalus.float.f16_to_f32",
         "binary16 to f32 (rgba16float readback)",
         "daedalus_kernels::reference::f16_to_f32",
-    ),
+    )
+    .wired_at(&SITES_FLOAT_F16_TO_F32),
     op(
         "daedalus.float.f32_to_unorm8",
         "f32 to unorm8 (r32float to gray8 readback)",
         "daedalus_kernels::reference::f32_to_unorm8",
-    ),
+    )
+    .wired_at(&SITES_FLOAT_F32_TO_UNORM8),
     op(
         "daedalus.copy.bytes",
         "byte copy; row re-pitch on upload and readback runs it per row",
         "<[u8]>::copy_from_slice",
-    ),
+    )
+    .wired_at(&SITES_COPY_BYTES),
     op(
         "daedalus.codec.hex_lower",
         "lowercase hex (package digests)",
         "daedalus_kernels::reference::hex_lower",
-    ),
+    )
+    .wired_at(&SITES_CODEC_HEX_LOWER),
     op(
         "daedalus.codec.base64_encode",
         "standard base64 encode (JSON and FFI wire bytes)",
         "daedalus_kernels::reference::base64_encode",
-    ),
+    )
+    .wired_at(&SITES_CODEC_BASE64_ENCODE),
     op(
         "daedalus.gpu.storage_to_texture",
         "a frame in a storage buffer (any stride) into a sampled texture, on the device",
         "crates/gpu/src/fragment_rect_tests.rs (rows de-strided on the CPU)",
-    ),
+    )
+    .wired_at(&SITES_GPU_STORAGE_TO_TEXTURE),
     op(
         "daedalus.codec.base64_decode",
         "standard base64 decode (JSON and FFI wire bytes)",
         "daedalus_kernels::reference::base64_decode",
-    ),
+    )
+    .wired_at(&SITES_CODEC_BASE64_DECODE),
 ];
 
 const T: &str = "crates/kernels/tests/conformance.rs";

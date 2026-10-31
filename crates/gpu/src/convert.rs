@@ -206,6 +206,26 @@ pub enum Compute<T: DeviceBridge> {
 
 impl<T: DeviceBridge> Compute<T> {}
 
+/// RGBA8 of any `DynamicImage`: RGB8 and Luma8 through the vectorized kernels, RGBA8 as is,
+/// other layouts through `image`.
+#[cfg(feature = "gpu-image")]
+#[doc(hidden)]
+pub fn dynamic_to_rgba8(img: &DynamicImage) -> RgbaImage {
+    let (w, h) = img.dimensions();
+    let expand = |raw: &[u8], kernel: fn(&[u8], &mut [u8])| {
+        let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+        kernel(raw, &mut out);
+        RgbaImage::from_raw(w, h, out)
+    };
+    let fast = match img {
+        DynamicImage::ImageRgba8(rgba) => Some(rgba.clone()),
+        DynamicImage::ImageRgb8(rgb) => expand(rgb.as_raw(), daedalus_kernels::rgb_to_rgba),
+        DynamicImage::ImageLuma8(gray) => expand(gray.as_raw(), daedalus_kernels::gray_to_rgba),
+        _ => None,
+    };
+    fast.unwrap_or_else(|| img.to_rgba8())
+}
+
 #[cfg(feature = "gpu-image")]
 impl Compute<DynamicImage> {
     /// Return image dimensions without forcing the caller to pattern match.
@@ -222,7 +242,7 @@ impl Compute<DynamicImage> {
         match self {
             Compute::Gpu(handle) => Ok((handle.clone(), handle.width, handle.height)),
             Compute::Cpu(img) => {
-                let rgba = img.to_rgba8();
+                let rgba = dynamic_to_rgba8(&img);
                 let (w, h) = rgba.dimensions();
                 let handle = upload_rgba8_texture(ctx, w, h, rgba.as_raw())?;
                 Ok((handle, w, h))
@@ -236,7 +256,7 @@ impl DeviceBridge for DynamicImage {
     type Device = GpuImageHandle;
 
     fn upload(self, ctx: &GpuContextHandle) -> Result<Self::Device, GpuError> {
-        let rgba = self.to_rgba8();
+        let rgba = dynamic_to_rgba8(&self);
         let (width, height) = rgba.dimensions();
         upload_rgba8_texture(ctx, width, height, rgba.as_raw())
     }
@@ -271,25 +291,20 @@ impl DeviceBridge for RgbImage {
 
     fn upload(self, ctx: &GpuContextHandle) -> Result<Self::Device, GpuError> {
         let (width, height) = self.dimensions();
-        let rgba = image::ImageBuffer::from_fn(width, height, |x, y| {
-            let p = self.get_pixel(x, y);
-            image::Rgba([p[0], p[1], p[2], 255])
-        });
-        upload_rgba8_texture(ctx, width, height, rgba.as_raw())
+        let mut rgba = vec![0u8; self.as_raw().len() / 3 * 4];
+        daedalus_kernels::rgb_to_rgba(self.as_raw(), &mut rgba);
+        upload_rgba8_texture(ctx, width, height, &rgba)
     }
 
     fn download(gpu: &Self::Device, ctx: &GpuContextHandle) -> Result<Self, GpuError> {
         let bytes = ctx.read_texture(gpu)?;
-        let rgba = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(gpu.width, gpu.height, bytes)
-            .ok_or(GpuError::AllocationFailed)?;
-        Ok(image::ImageBuffer::from_fn(
-            gpu.width,
-            gpu.height,
-            |x, y| {
-                let p = rgba.get_pixel(x, y);
-                image::Rgb([p[0], p[1], p[2]])
-            },
-        ))
+        let pixels = (gpu.width as usize) * (gpu.height as usize);
+        if bytes.len() < pixels * 4 {
+            return Err(GpuError::AllocationFailed);
+        }
+        let mut rgb = vec![0u8; pixels * 3];
+        daedalus_kernels::rgba_to_rgb(&bytes, &mut rgb);
+        image::ImageBuffer::from_raw(gpu.width, gpu.height, rgb).ok_or(GpuError::AllocationFailed)
     }
 }
 
@@ -310,14 +325,8 @@ impl DeviceBridge for GrayImage {
         }
 
         // Fallback: expand to RGBA8.
-        let mut rgba = Vec::with_capacity(
-            (width as usize)
-                .saturating_mul(height as usize)
-                .saturating_mul(4),
-        );
-        for &v in self.as_raw() {
-            rgba.extend_from_slice(&[v, v, v, 255]);
-        }
+        let mut rgba = vec![0u8; self.as_raw().len().saturating_mul(4)];
+        daedalus_kernels::gray_to_rgba(self.as_raw(), &mut rgba);
         upload_rgba8_texture(ctx, width, height, &rgba)
     }
 
@@ -327,9 +336,8 @@ impl DeviceBridge for GrayImage {
             crate::GpuFormat::R8Unorm => image::ImageBuffer::from_raw(gpu.width, gpu.height, bytes)
                 .ok_or(GpuError::AllocationFailed),
             _ => {
-                let mut gray =
-                    Vec::with_capacity((gpu.width as usize).saturating_mul(gpu.height as usize));
-                gray.extend(bytes.as_chunks::<4>().0.iter().map(|rgba| rgba[0]));
+                let mut gray = vec![0u8; bytes.len() / 4];
+                daedalus_kernels::rgba_red(&bytes, &mut gray);
                 image::ImageBuffer::from_raw(gpu.width, gpu.height, gray)
                     .ok_or(GpuError::AllocationFailed)
             }
@@ -346,7 +354,7 @@ impl Compute<DynamicImage> {
     ) -> Result<(Vec<u8>, u32, u32), GpuError> {
         match self {
             Compute::Cpu(cpu) => {
-                let rgba = cpu.to_rgba8();
+                let rgba = dynamic_to_rgba8(cpu);
                 let (w, h) = rgba.dimensions();
                 Ok((rgba.into_raw(), w, h))
             }

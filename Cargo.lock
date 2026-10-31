@@ -95,12 +95,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base64"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
-
-[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -499,9 +493,9 @@ dependencies = [
 name = "daedalus-data"
 version = "3.0.1-dev"
 dependencies = [
- "base64",
  "criterion",
  "daedalus-gpu",
+ "daedalus-kernels",
  "hashbrown 0.17.1",
  "once_cell",
  "parking_lot",
@@ -550,8 +544,8 @@ dependencies = [
 name = "daedalus-ffi-core"
 version = "3.0.1-dev"
 dependencies = [
- "base64",
  "daedalus-data",
+ "daedalus-kernels",
  "daedalus-transport",
  "serde",
  "serde_json",
@@ -641,9 +635,9 @@ dependencies = [
  "bitflags 2.13.2",
  "bytemuck",
  "daedalus-accel",
+ "daedalus-kernels",
  "daedalus-transport",
  "daedalus-wgsl-infer",
- "half",
  "image",
  "libc",
  "parking_lot",

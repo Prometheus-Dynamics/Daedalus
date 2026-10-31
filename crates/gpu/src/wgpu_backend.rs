@@ -498,13 +498,15 @@ impl GpuBackend for WgpuBackend {
                 data
             } else {
                 let mut tmp = vec![0u8; (padded_bpr as usize).saturating_mul(req.height as usize)];
-                let src_stride = bytes_per_row as usize;
-                let dst_stride = padded_bpr as usize;
-                for row in 0..(req.height as usize) {
-                    let src = row * src_stride;
-                    let dst = row * dst_stride;
-                    tmp[dst..dst + src_stride].copy_from_slice(&data[src..src + src_stride]);
-                }
+                let row = bytes_per_row as usize;
+                daedalus_kernels::copy_rows(
+                    data,
+                    row,
+                    &mut tmp,
+                    padded_bpr as usize,
+                    row,
+                    req.height as usize,
+                );
                 staged = tmp;
                 &staged
             };

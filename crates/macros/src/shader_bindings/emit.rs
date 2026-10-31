@@ -281,7 +281,7 @@ pub fn emit_bindings(
                             }
                         }},
                         super::types::TextureSource::DynamicImage => quote! {{
-                            let rgba = self.#ident.to_rgba8();
+                            let rgba = ::daedalus::gpu::dynamic_to_rgba8(&self.#ident);
                             let (w, h) = rgba.dimensions();
                             let kind = if #write {
                                 ::daedalus::gpu::shader::BindingKind::StorageTexture2D

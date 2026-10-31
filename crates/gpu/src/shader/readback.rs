@@ -243,16 +243,20 @@ pub(crate) fn resolve_readbacks(
             let slice = buffer.slice(..staging_size(size));
             let data = slice.get_mapped_range()?;
             if is_texture {
-                let mut trimmed = Vec::with_capacity(row_bytes * height as usize);
-                for row in 0..height as usize {
-                    let start = row * padded_bpr;
-                    trimmed.extend_from_slice(&data[start..start + row_bytes]);
-                }
+                let mut trimmed = vec![0u8; row_bytes * height as usize];
+                daedalus_kernels::copy_rows(
+                    &data,
+                    padded_bpr,
+                    &mut trimmed,
+                    row_bytes,
+                    row_bytes,
+                    height as usize,
+                );
                 result.insert(binding, trimmed);
             } else {
                 let len = size.min(data.len() as u64) as usize;
-                let mut out = Vec::with_capacity(len);
-                out.extend_from_slice(&data[..len]);
+                let mut out = vec![0u8; len];
+                daedalus_kernels::copy_bytes(&data[..len], &mut out);
                 result.insert(binding, out);
             }
         }

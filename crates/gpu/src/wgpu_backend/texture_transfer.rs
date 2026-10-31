@@ -97,14 +97,15 @@ pub(super) fn unpad_rows(
     padded_bpr: usize,
     height: usize,
 ) -> Vec<u8> {
-    if bytes_per_row == padded_bpr {
-        return src[..bytes_per_row * height].to_vec();
-    }
-    let mut out = Vec::with_capacity(bytes_per_row * height);
-    for row in 0..height {
-        let start = row * padded_bpr;
-        out.extend_from_slice(&src[start..start + bytes_per_row]);
-    }
+    let mut out = vec![0u8; bytes_per_row * height];
+    daedalus_kernels::copy_rows(
+        src,
+        padded_bpr,
+        &mut out,
+        bytes_per_row,
+        bytes_per_row,
+        height,
+    );
     out
 }
 

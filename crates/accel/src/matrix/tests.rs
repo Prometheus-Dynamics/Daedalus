@@ -77,12 +77,14 @@ fn cells_need_evidence_and_rvv_needs_three_vector_lengths() {
     let dotprod = Column {
         backend: Backend::Neon64,
         extensions: vec!["dotprod".into()],
+        wired: false,
     };
     assert_eq!(inv.cell_in("t.add", &dotprod).cell, Cell::Gap);
     assert_eq!(inv.cell_in("t.hash", &dotprod).cell, Cell::NotApplicable);
     let bmi2 = Column {
         backend: Backend::X86Avx2,
         extensions: vec!["bmi2".into()],
+        wired: false,
     };
     assert_eq!(inv.cell_in("t.add", &bmi2).cell, Cell::Untested);
     assert!(inv.columns().iter().any(|c| c.name() == "x86_avx2+bmi2"));
@@ -104,6 +106,41 @@ fn cells_need_evidence_and_rvv_needs_three_vector_lengths() {
     let lost = regressions(&baseline, &now);
     assert_eq!(lost, ["t.add on rvv: pass -> untested"]);
     assert!(inv.markdown().contains("| `t.add` |"));
+}
+
+#[test]
+fn wired_needs_every_call_site_to_call_the_kernel() {
+    static SITES: [crate::CallSite; 1] = [crate::CallSite::new("src/user.rs", "kernels::add(")
+        .forbid(&["for i in 0..n { a[i] += b[i] }"])];
+    static WIRED: [Op; 1] = [Op::new("t.add", "add", "t::add").wired_at(&SITES)];
+    static REG: Registry = Registry {
+        repo: "t",
+        ops: &WIRED,
+        ..Registry::EMPTY
+    };
+    let root = std::env::temp_dir().join(format!("accel-wired-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    let mut inv = Inventory::default();
+    inv.add_registry(&crate::dump_json(&[&REG])).unwrap();
+    assert_eq!(inv.wired_cell("t.add").cell, Cell::Untested, "no root yet");
+    inv.root = Some(root.clone());
+    assert_eq!(inv.wired_cell("t.add").cell, Cell::Gap, "file missing");
+    std::fs::write(root.join("src/user.rs"), "fn f() { scalar() }").unwrap();
+    assert_eq!(inv.wired_cell("t.add").cell, Cell::Gap, "kernel not called");
+    std::fs::write(root.join("src/user.rs"), "fn f() { kernels::add(a, b) }").unwrap();
+    assert_eq!(inv.wired_cell("t.add").cell, Cell::Pass);
+    std::fs::write(
+        root.join("src/user.rs"),
+        "fn f() { kernels::add(a, b); for i in 0..n { a[i] += b[i] } }",
+    )
+    .unwrap();
+    assert_eq!(
+        inv.wired_cell("t.add").cell,
+        Cell::Fail,
+        "the old loop is still there"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]

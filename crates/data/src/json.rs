@@ -3,8 +3,7 @@ use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
+use daedalus_kernels::{base64_decode, base64_encode};
 use serde_json::Value as JsonValue;
 
 use crate::errors::{DataError, DataErrorCode, DataResult};
@@ -66,7 +65,7 @@ pub fn encode_value(value: &Value) -> DataResult<JsonValue> {
         }
         Value::Bytes(bytes) => {
             obj.insert("type".into(), JsonValue::String("bytes".into()));
-            obj.insert("value".into(), JsonValue::String(B64.encode(bytes)));
+            obj.insert("value".into(), JsonValue::String(base64_encode(bytes)));
         }
         Value::List(items) => {
             obj.insert("type".into(), JsonValue::String("list".into()));
@@ -165,7 +164,7 @@ pub fn to_plain_json_with(value: &Value, options: PlainJsonOptions) -> JsonValue
                     .map(|byte| JsonValue::Number((*byte).into()))
                     .collect(),
             ),
-            BytesEncoding::Base64 => JsonValue::String(B64.encode(bytes)),
+            BytesEncoding::Base64 => JsonValue::String(base64_encode(bytes)),
         },
         Value::List(items) | Value::Tuple(items) => {
             JsonValue::Array(items.iter().map(recurse).collect())
@@ -301,7 +300,7 @@ pub fn decode_value(value: &JsonValue) -> DataResult<Value> {
                     "expected base64 string in `value`",
                 )
             })?;
-            let decoded = B64.decode(s.as_bytes()).map_err(|e| {
+            let decoded = base64_decode(s.as_bytes()).map_err(|e| {
                 DataError::new(
                     DataErrorCode::Serialization,
                     format!("invalid base64 for bytes: {e}"),

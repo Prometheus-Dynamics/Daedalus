@@ -23,7 +23,7 @@ default = ["gpu-noop"]
 gpu-noop = []
 gpu-mock = []
 # wgpu backend: Vulkan everywhere, plus Metal on Apple and DX12 on Windows.
-gpu-wgpu = ["wgpu", "pollster", "bytemuck", "half", "daedalus-wgsl-infer"]
+gpu-wgpu = ["wgpu", "pollster", "bytemuck", "daedalus-wgsl-infer"]
 # wgpu's OpenGL/GLES backend (glow, EGL, Wayland loaders) for devices without Vulkan.
 gpu-gles = ["gpu-wgpu", "wgpu/gles"]
 # `image` crate bridges: `Compute<DynamicImage>`, `DeviceBridge` for `image` buffers and the
@@ -42,9 +42,10 @@ wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
 bytemuck = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
-half = { workspace = true, optional = true }
 daedalus-wgsl-infer = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
+# Vectorized conversions and row copies (`docs/backend-matrix.md`).
+daedalus-kernels = { workspace = true, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = { workspace = true, optional = true }

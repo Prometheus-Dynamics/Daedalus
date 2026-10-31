@@ -328,11 +328,10 @@ impl GpuReadback {
         let result = match staging.slice(..self.copy).get_mapped_range() {
             Ok(view) => {
                 match self.rows {
-                    None => out.copy_from_slice(&view[..self.len]),
+                    None => daedalus_kernels::copy_bytes(&view[..self.len], out),
                     Some((padded, unpadded)) => {
-                        for (dst, src) in out.chunks_mut(unpadded).zip(view.chunks(padded)) {
-                            dst.copy_from_slice(&src[..unpadded]);
-                        }
+                        let rows = self.len / unpadded;
+                        daedalus_kernels::copy_rows(&view, padded, out, unpadded, unpadded, rows);
                     }
                 }
                 Ok(())

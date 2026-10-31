@@ -219,6 +219,35 @@ pub struct Op {
     /// Extension variants the op could use (`(Neon64, &[Ext::Dotprod])`): without a kernel
     /// for one, the matrix shows a gap in that column.
     pub candidates: &'static [(Backend, &'static [Ext])],
+    /// Where the op runs in the product: the matrix's `wired` column checks that each site
+    /// calls the kernel and holds none of the old scalar code. No sites is a gap.
+    pub call_sites: &'static [CallSite],
+}
+
+/// A place that must run an op through its kernel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CallSite {
+    /// `path/from/repo/root.rs`.
+    pub path: &'static str,
+    /// Text the file must contain: the kernel call (`daedalus_kernels::rgb_to_rgba(`).
+    pub calls: &'static str,
+    /// Text it must not contain: the scalar code the kernel replaced (`half::f16`).
+    pub forbid: &'static [&'static str],
+}
+
+impl CallSite {
+    pub const fn new(path: &'static str, calls: &'static str) -> Self {
+        Self {
+            path,
+            calls,
+            forbid: &[],
+        }
+    }
+
+    pub const fn forbid(mut self, forbid: &'static [&'static str]) -> Self {
+        self.forbid = forbid;
+        self
+    }
 }
 
 impl Op {
@@ -230,7 +259,14 @@ impl Op {
             scalar,
             per_element: true,
             candidates: &[],
+            call_sites: &[],
         }
+    }
+
+    /// The call sites that must use the kernel.
+    pub const fn wired_at(mut self, call_sites: &'static [CallSite]) -> Self {
+        self.call_sites = call_sites;
+        self
     }
 
     /// Not per-element work (a hash chain, setup code).

@@ -1,7 +1,7 @@
 //! The backend matrix: registry dumps plus CI evidence, rendered to Markdown and CSV, and the
 //! release gate (`accel-matrix`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,9 @@ use serde_json::Value;
 use crate::Backend;
 
 mod asm;
+mod render;
 pub use asm::{functions, vector_instructions};
+pub use render::regressions;
 
 /// An op from a registry dump.
 #[derive(Clone, Debug)]
@@ -21,6 +23,8 @@ pub struct OpRow {
     pub per_element: bool,
     /// Extension variants the op could use.
     pub candidates: Vec<Column>,
+    /// (path, the kernel call it must contain, scalar code it must not contain)
+    pub call_sites: Vec<(String, String, Vec<String>)>,
 }
 
 /// A matrix column: a backend, plus the extensions of a variant (`neon64+dotprod`).
@@ -29,6 +33,8 @@ pub struct Column {
     pub backend: Backend,
     /// Sorted extension names; empty for the backend's base column.
     pub extensions: Vec<String>,
+    /// The `wired` column: the op's call sites run the kernel (`backend` unused).
+    pub wired: bool,
 }
 
 impl Column {
@@ -36,11 +42,24 @@ impl Column {
         Self {
             backend,
             extensions: Vec::new(),
+            wired: false,
         }
     }
 
-    /// `neon64`, `neon64+dotprod`, `x86_avx2+bmi2+popcnt`.
+    /// The `wired` column.
+    pub fn wired() -> Self {
+        Self {
+            backend: Backend::Scalar,
+            extensions: Vec::new(),
+            wired: true,
+        }
+    }
+
+    /// `neon64`, `neon64+dotprod`, `x86_avx2+bmi2+popcnt`, `wired`.
     pub fn name(&self) -> String {
+        if self.wired {
+            return "wired".into();
+        }
         let mut name = self.backend.name().to_string();
         for ext in &self.extensions {
             name.push('+');
@@ -126,6 +145,8 @@ pub struct Inventory {
     /// (repo, path, reason)
     pub exempt: Vec<(String, String, String)>,
     pub records: Vec<Record>,
+    /// The repository root, for the `wired` column (`--scan`).
+    pub root: Option<PathBuf>,
 }
 
 fn s(v: &Value, key: &str) -> String {
@@ -188,9 +209,27 @@ impl Inventory {
                         Ok(Column {
                             backend: backend(c)?,
                             extensions: exts(c),
+                            wired: false,
                         })
                     })
                     .collect::<Result<_, String>>()?,
+                call_sites: op
+                    .get("call_sites")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|c| {
+                        let forbid = c
+                            .get("forbid")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect();
+                        (s(c, "path"), s(c, "calls"), forbid)
+                    })
+                    .collect(),
             });
         }
         for k in list("kernels") {
@@ -279,6 +318,7 @@ impl Inventory {
             variants.insert(Column {
                 backend: k.backend,
                 extensions: k.extensions.clone(),
+                wired: false,
             });
         }
         for op in &self.ops {
@@ -294,7 +334,61 @@ impl Inventory {
             out.push(Column::base(backend));
             out.extend(variants.iter().filter(|c| c.backend == backend).cloned());
         }
+        out.push(Column::wired());
         out
+    }
+
+    /// The `wired` cell: every call site contains the kernel call and none of the scalar code
+    /// it replaced. Needs `root` (the repo, `--scan`) to read the files.
+    pub fn wired_cell(&self, op: &str) -> CellValue {
+        let value = |cell, reason: String, evidence: String| CellValue {
+            cell,
+            reason,
+            evidence,
+        };
+        let Some(row) = self.ops.iter().find(|o| o.id == op) else {
+            return value(Cell::NotApplicable, String::new(), String::new());
+        };
+        if row.call_sites.is_empty() {
+            return value(
+                Cell::Gap,
+                "no call sites listed: the kernel may be proven but unused".into(),
+                String::new(),
+            );
+        }
+        let Some(root) = &self.root else {
+            return value(
+                Cell::Untested,
+                "call sites not checked (run with --scan)".into(),
+                String::new(),
+            );
+        };
+        let mut gaps = Vec::new();
+        for (path, calls, forbid) in &row.call_sites {
+            let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+                gaps.push(format!("{path} not found"));
+                continue;
+            };
+            if let Some(old) = forbid.iter().find(|f| text.contains(f.as_str())) {
+                return value(
+                    Cell::Fail,
+                    format!("{path} still has the scalar code `{old}`"),
+                    String::new(),
+                );
+            }
+            if !text.contains(calls.as_str()) {
+                gaps.push(format!("{path} does not call `{calls}`"));
+            }
+        }
+        if gaps.is_empty() {
+            value(
+                Cell::Pass,
+                String::new(),
+                format!("{} call site(s)", row.call_sites.len()),
+            )
+        } else {
+            value(Cell::Gap, gaps.join("; "), String::new())
+        }
     }
 
     /// The cell for `op` on a backend's base column.
@@ -305,6 +399,9 @@ impl Inventory {
     /// The cell for `op` in `column`. A base kernel's evidence never counts for an extension
     /// column.
     pub fn cell_in(&self, op: &str, column: &Column) -> CellValue {
+        if column.wired {
+            return self.wired_cell(op);
+        }
         let entries: Vec<&KernelRow> = self
             .kernels
             .iter()
@@ -513,110 +610,6 @@ impl Inventory {
         }
         Ok(missing)
     }
-
-    /// The CSV: `repo,op,backend,cell,reason,evidence`.
-    pub fn csv(&self) -> String {
-        let mut out = String::from("repo,op,backend,cell,reason,evidence\n");
-        for (op, row) in self.cells() {
-            for (column, value) in row
-                .into_iter()
-                .filter(|(_, v)| v.cell != Cell::NotApplicable)
-            {
-                let _ = writeln!(
-                    out,
-                    "{},{},{},{},{},{}",
-                    csv_field(&op.repo),
-                    csv_field(&op.id),
-                    column.name(),
-                    value.cell.name(),
-                    csv_field(&value.reason),
-                    csv_field(&value.evidence)
-                );
-            }
-        }
-        out
-    }
-
-    /// The Markdown page: totals, one table per repo, then every reason.
-    pub fn markdown(&self) -> String {
-        let cells = self.cells();
-        let mut totals: BTreeMap<Cell, usize> = BTreeMap::new();
-        for (_, row) in &cells {
-            for (_, v) in row.iter().filter(|(_, v)| v.cell != Cell::NotApplicable) {
-                *totals.entry(v.cell).or_default() += 1;
-            }
-        }
-        let mut out = String::from(
-            "# Backend matrix\n\nGenerated by `accel-matrix` from the registry tables and CI evidence; \
-             do not edit. A cell is **pass** only when CI ran the kernel's conformance test on that \
-             backend and it matched scalar (RVV: VLEN 128, 256 and 512; compiler-vectorized kernels: \
-             an asm check too).\n\n",
-        );
-        let total: Vec<String> = totals
-            .iter()
-            .map(|(cell, n)| format!("{} {n}", cell.name()))
-            .collect();
-        let _ = writeln!(out, "Totals: {}.\n", total.join(", "));
-        let header: Vec<String> = self.columns().iter().map(Column::name).collect();
-        let mut repo = "";
-        let mut notes = Vec::new();
-        for (op, row) in &cells {
-            if op.repo != repo {
-                repo = &op.repo;
-                let _ = writeln!(out, "\n## {repo}\n\n| op | {} |", header.join(" | "));
-                let _ = writeln!(out, "|---|{}", "---|".repeat(header.len()));
-            }
-            let marks: Vec<String> = row
-                .iter()
-                .map(|(column, v)| {
-                    if v.cell == Cell::NotApplicable {
-                        "-".to_string()
-                    } else if v.reason.is_empty() {
-                        v.cell.name().to_string()
-                    } else {
-                        notes.push(format!("- `{}` on {}: {}", op.id, column.name(), v.reason));
-                        format!("{}[{}]", v.cell.name(), notes.len())
-                    }
-                })
-                .collect();
-            let _ = writeln!(out, "| `{}` | {} |", op.id, marks.join(" | "));
-        }
-        if !notes.is_empty() {
-            out.push_str("\n## Reasons\n\n");
-            for (i, note) in notes.iter().enumerate() {
-                let _ = writeln!(out, "{}. {}", i + 1, note.trim_start_matches("- "));
-            }
-        }
-        out
-    }
-}
-
-/// Cells that were pass in `baseline_csv` and are not pass now.
-pub fn regressions(baseline_csv: &str, current: &Inventory) -> Vec<String> {
-    let now: BTreeMap<(String, String), Cell> = current
-        .cells()
-        .into_iter()
-        .flat_map(|(op, row)| {
-            row.into_iter()
-                .map(|(c, v)| ((op.id.clone(), c.name()), v.cell))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    baseline_csv
-        .lines()
-        .skip(1)
-        .filter_map(|line| {
-            let fields = parse_csv_line(line);
-            let (op, backend, cell) = (fields.get(1)?, fields.get(2)?, fields.get(3)?);
-            (cell == "pass").then_some(())?;
-            let key = (op.clone(), backend.clone());
-            match now.get(&key) {
-                Some(Cell::Pass) => None,
-                Some(other) => Some(format!("{op} on {backend}: pass -> {}", other.name())),
-                None => Some(format!("{op} on {backend}: pass -> removed")),
-            }
-        })
-        .collect()
 }
 
 fn source_path(source: &str) -> &str {
@@ -679,34 +672,6 @@ fn files(root: &Path, keep: &dyn Fn(&Path) -> bool) -> Result<Vec<PathBuf>, Stri
     }
     out.sort();
     Ok(out)
-}
-
-fn csv_field(field: &str) -> String {
-    if field.contains([',', '"', '\n']) {
-        format!("\"{}\"", field.replace('"', "\"\""))
-    } else {
-        field.to_string()
-    }
-}
-
-fn parse_csv_line(line: &str) -> Vec<String> {
-    let mut fields = Vec::new();
-    let mut field = String::new();
-    let mut quoted = false;
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        match (c, quoted) {
-            ('"', true) if chars.peek() == Some(&'"') => {
-                field.push('"');
-                chars.next();
-            }
-            ('"', _) => quoted = !quoted,
-            (',', false) => fields.push(std::mem::take(&mut field)),
-            (c, _) => field.push(c),
-        }
-    }
-    fields.push(field);
-    fields
 }
 
 #[cfg(test)]

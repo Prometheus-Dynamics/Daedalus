@@ -367,10 +367,9 @@ struct BytePayloadWire {
 
 impl Serialize for BytePayload {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use base64::Engine as _;
         let (data, encoding) = match self.encoding {
             ByteEncoding::Base64 => (
-                ByteDataRef::Base64(base64::engine::general_purpose::STANDARD.encode(&self.data)),
+                ByteDataRef::Base64(daedalus_kernels::base64_encode(&self.data)),
                 ByteEncoding::Base64,
             ),
             ByteEncoding::Raw => (ByteDataRef::Raw(&self.data), ByteEncoding::Raw),
@@ -381,15 +380,12 @@ impl Serialize for BytePayload {
 
 impl<'de> Deserialize<'de> for BytePayload {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use base64::Engine as _;
         let wire = BytePayloadWire::deserialize(deserializer)?;
         match wire.data {
             ByteData::Base64(text) => {
-                let data = base64::engine::general_purpose::STANDARD
-                    .decode(text.as_bytes())
-                    .map_err(|err| {
-                        serde::de::Error::custom(format!("invalid base64 bytes: {err}"))
-                    })?;
+                let data = daedalus_kernels::base64_decode(text.as_bytes()).map_err(|err| {
+                    serde::de::Error::custom(format!("invalid base64 bytes: {err}"))
+                })?;
                 Ok(BytePayload {
                     data,
                     encoding: ByteEncoding::Base64,

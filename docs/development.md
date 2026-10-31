@@ -378,6 +378,36 @@ match the crate version in `Cargo.lock`.
 threads: the same preset builds there, and CI runs the `daedalus-wasi-smoke` command (the smoke
 graph on the platform clock) under Node's WASI. A WASI runtime such as `wasmtime` runs it too.
 
+### SIMD on boards: build flags
+
+Daedalus's data-parallel kernels (`daedalus-kernels`, `docs/backend-matrix.md`) select vector
+code at runtime where stable Rust can detect it, and at build time where it cannot:
+
+| Target | Vector unit | Build with | Without it |
+|---|---|---|---|
+| x86_64 | SSE2 (baseline), SSSE3/SSE4.1, AVX2 | nothing: chosen at runtime (`std`) | — |
+| AArch64 (CM5, Rockchip) | NEON | nothing: baseline | — |
+| ARMv7 (Flame RV1106G2, Cortex-A7) | NEON | `-C target-feature=+neon` | scalar kernels |
+| RISC-V 64 (K230D, C908) | RVV 1.0 | `-C target-feature=+v` | scalar kernels |
+
+Set the flag for the board target, for example in `.cargo/config.toml`:
+
+```toml
+[target.armv7-unknown-linux-musleabihf]
+rustflags = ["-C", "target-feature=+neon"]
+
+[target.riscv64gc-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+v"]
+```
+
+rustc warns that these features are unstable. They still enable the vector code, and
+`scripts/ci.sh accel` checks that those builds match scalar (RVV at VLEN 128, 256 and 512).
+Stable Rust cannot detect NEON on ARMv7 or V on RISC-V at runtime. It does not expose them to
+`cfg(target_feature)` either, so `daedalus-kernels` and `daedalus-accel` read the flags in their
+build scripts (`daedalus_neon32`, `daedalus_rvv`). A crate with its own NEON32 or RVV code needs
+the same build script. Only use a flag on hardware that has the extension: a `+v` binary traps
+on a RISC-V core without V.
+
 ### Rules for new code
 
 - Tier-1 crates: no `std::` paths outside `#[cfg(feature = "std")]` items and tests. Use `core::`

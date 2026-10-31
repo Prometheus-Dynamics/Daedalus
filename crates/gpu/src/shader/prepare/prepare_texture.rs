@@ -105,12 +105,14 @@ pub(super) fn prepare_texture_binding(
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
             let padded_bpr = bytes_per_row.div_ceil(align) * align;
             let mut padded = vec![0u8; padded_bpr * (*height as usize)];
-            for row in 0..*height as usize {
-                let src_start = row * bytes_per_row;
-                let dst_start = row * padded_bpr;
-                padded[dst_start..dst_start + bytes_per_row]
-                    .copy_from_slice(&bytes[src_start..src_start + bytes_per_row]);
-            }
+            daedalus_kernels::copy_rows(
+                bytes,
+                bytes_per_row,
+                &mut padded,
+                padded_bpr,
+                bytes_per_row,
+                *height as usize,
+            );
             ctx.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: texture.as_ref(),
@@ -261,12 +263,14 @@ pub(super) fn prepare_texture_binding(
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
             let padded_bpr = bytes_per_row.div_ceil(align) * align;
             let mut padded = vec![0u8; padded_bpr * (handle.height as usize)];
-            for row in 0..handle.height as usize {
-                let src_start = row * bytes_per_row;
-                let dst_start = row * padded_bpr;
-                padded[dst_start..dst_start + bytes_per_row]
-                    .copy_from_slice(&bytes[src_start..src_start + bytes_per_row]);
-            }
+            daedalus_kernels::copy_rows(
+                &bytes,
+                bytes_per_row,
+                &mut padded,
+                padded_bpr,
+                bytes_per_row,
+                handle.height as usize,
+            );
             ctx.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: texture.as_ref(),

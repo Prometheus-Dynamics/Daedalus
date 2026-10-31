@@ -32,6 +32,8 @@ pub use async_api::GpuAsyncBackend;
 pub use backends::GpuBackends;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
 pub use compute_caps::{GpuComputeCaps, GpuComputeFeatures};
+#[cfg(feature = "gpu-image")]
+pub use convert::dynamic_to_rgba8;
 pub use convert::{Backing, Compute, DeviceBridge};
 pub use external::{
     AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, DRM_FORMAT_MOD_INVALID,

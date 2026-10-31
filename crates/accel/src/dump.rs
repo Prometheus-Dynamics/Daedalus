@@ -41,7 +41,7 @@ fn collect(
     };
     for op in registry.ops {
         ops.push(format!(
-            "{{\"repo\":{},\"table\":{},\"id\":{},\"summary\":{},\"scalar\":{},\"per_element\":{},\"candidates\":[{}]}}",
+            "{{\"repo\":{},\"table\":{},\"id\":{},\"summary\":{},\"scalar\":{},\"per_element\":{},\"candidates\":[{}],\"call_sites\":[{}]}}",
             json_str(repo),
             json_str(registry.name),
             json_str(op.id),
@@ -54,6 +54,16 @@ fn collect(
                     "{{\"backend\":{},\"extensions\":[{}]}}",
                     json_str(b.name()),
                     ext_list(exts)
+                ))
+                .collect::<Vec<_>>()
+                .join(","),
+            op.call_sites
+                .iter()
+                .map(|c| format!(
+                    "{{\"path\":{},\"calls\":{},\"forbid\":[{}]}}",
+                    json_str(c.path),
+                    json_str(c.calls),
+                    c.forbid.iter().map(|f| json_str(f)).collect::<Vec<_>>().join(",")
                 ))
                 .collect::<Vec<_>>()
                 .join(",")

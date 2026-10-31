@@ -182,13 +182,10 @@ pub(crate) fn sha256_bytes_hex(bytes: &[u8]) -> String {
 
 #[cfg(feature = "integrity")]
 fn hex_lower(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
+    let mut out = vec![0u8; bytes.len() * 2];
+    daedalus_kernels::hex_lower(bytes, &mut out);
+    // The digits are ASCII.
+    String::from_utf8(out).unwrap_or_default()
 }
 
 pub(crate) fn validate_ports(

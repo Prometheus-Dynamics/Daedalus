@@ -87,7 +87,8 @@ fn load(args: &Args) -> Result<Inventory, String> {
 }
 
 fn render(args: &Args) -> Result<bool, String> {
-    let inv = load(args)?;
+    let mut inv = load(args)?;
+    inv.root = args.scan.clone();
     let out = args.out.as_ref().ok_or("--out is required")?;
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     let baseline = match &args.baseline {
