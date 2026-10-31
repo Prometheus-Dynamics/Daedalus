@@ -82,7 +82,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a node test builds a pipeline on `ctx.gpu`'s device and dispatches on its
       queue.
       **Blocked by:** nothing.
-- [ ] **What:** `#[device]` upload/download functions can take `&GpuContextHandle`, and the
+- [x] **What:** `#[device]` upload/download functions can take `&GpuContextHandle`, and the
       runtime passes it (as `DeviceBridge::upload(self, ctx)` already allows).
       **Why:** a real upload adapter has to create buffers on the engine's device; otherwise
       transfers stay inside handlers and never become plan edges, so `explain_plan()` cannot

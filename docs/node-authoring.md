@@ -362,6 +362,15 @@ handoff reason for each edge.
 
 - `#[device(id = ..., cpu = "k", device = "k@gpu", download = f)]` on an upload function declares
   a device pair: an upload adapter (CPU → device) and a download adapter (device → CPU).
+  An upload that creates real GPU resources takes the engine's context as a second argument:
+  `fn upload(v: &Cpu, gpu: &GpuContextHandle) -> Result<Dev, TransportError>`, with a download of
+  the same form (`fn download(d: &Dev, gpu: &GpuContextHandle)`). The executor hands over its GPU
+  context while it adapts the edge, so the buffer or texture lands on the device the GPU nodes
+  use, and the transfer stays a plan edge that `explain_plan()` shows (and
+  `device_round_trips()` checks). Outside an executor, or without a GPU backend, the transfer
+  fails with `TransportError::Unsupported`. The registry form is
+  `PluginRegistry::register_typed_device_transport_with_gpu`, and custom adapters can read the
+  context with `daedalus_runtime::with_current_gpu`.
 - A node asking for `Gpu<T>` receives device-resident data; a node asking for `T` or `Cpu<T>`
   receives CPU data. The planner inserts `DeviceUpload`/`DeviceDownload` adapters as needed.
 - `#[node(fallback = "cpu.node.id")]` lets a GPU node fall back to a CPU implementation when no

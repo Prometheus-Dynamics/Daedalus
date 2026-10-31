@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`#[device]` transfers with the GPU context.** An upload function may take
+  `&GpuContextHandle` as a second argument, with its download taking it too. The executor
+  provides its context while it adapts an edge, so real uploads create buffers on the engine's
+  device and stay plan edges. Also added: `PluginRegistry::register_typed_device_transport_with_gpu`
+  and `daedalus_runtime::with_current_gpu`. Without a context the transfer returns
+  `TransportError::Unsupported`. The one-argument form is unchanged.
 - **Resolved device per node in `explain_plan()`.** `RuntimeNodeExplanation` gains `device`
   (`NodeDevice::Cpu`/`Gpu`) and `device_reason`. The engine records them in node metadata
   (`daedalus.device`, `daedalus.device_reason`, and `daedalus.fallback_from` on a CPU fallback).

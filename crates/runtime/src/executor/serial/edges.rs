@@ -221,7 +221,15 @@ fn adapt_edge_payload(
     let probe = v.core.run_config.frame_probe.clone();
     let adapter_start = (collect_detailed_metrics || probe.is_some()).then(|| v.core.clock.now());
     let source = collect_lifecycle.then(|| inner.clone());
-    match runtime_transport.execute_adapter_path(inner, &edge_transport.adapter_steps, &request) {
+    // Device transfers registered with a GPU context (`#[device]` functions taking
+    // `&GpuContextHandle`) read the executor's through this scope.
+    #[cfg(feature = "gpu")]
+    let gpu_scope = crate::gpu_scope::enter(v.core.gpu.as_ref());
+    let adapted =
+        runtime_transport.execute_adapter_path(inner, &edge_transport.adapter_steps, &request);
+    #[cfg(feature = "gpu")]
+    drop(gpu_scope);
+    match adapted {
         Ok(adapted) => {
             if let Some(start) = adapter_start {
                 let duration = v.core.clock.elapsed(start);

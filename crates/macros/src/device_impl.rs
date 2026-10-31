@@ -70,6 +70,17 @@ fn borrowed_input_type(ty: &Type) -> Option<&Type> {
     Some(reference.elem.as_ref())
 }
 
+/// `&GpuContextHandle` (any path ending in it).
+fn is_gpu_context_ref(ty: &Type) -> bool {
+    let Some(Type::Path(path)) = borrowed_input_type(ty) else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "GpuContextHandle")
+}
+
 pub fn device(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args with AttributeArgs::parse_terminated);
     let input = parse_macro_input!(item as ItemFn);
@@ -101,13 +112,27 @@ pub fn device(args: TokenStream, item: TokenStream) -> TokenStream {
     });
     let Some(arg) = typed_args.next() else {
         return compile_error(
-            "device upload functions must take exactly one borrowed argument".into(),
+            "device upload functions take `&Cpu`, optionally followed by `&GpuContextHandle`"
+                .into(),
         )
         .into();
     };
+    // An optional second `&GpuContextHandle`: the upload (and the download, which must take it
+    // too) gets the engine's GPU context.
+    let with_gpu = match typed_args.next() {
+        None => false,
+        Some(gpu) if is_gpu_context_ref(gpu.ty.as_ref()) => true,
+        Some(_) => {
+            return compile_error(
+                "a device upload function's second argument must be `&GpuContextHandle`".into(),
+            )
+            .into();
+        }
+    };
     if typed_args.next().is_some() {
         return compile_error(
-            "device upload functions must take exactly one borrowed argument".into(),
+            "device upload functions take `&Cpu`, optionally followed by `&GpuContextHandle`"
+                .into(),
         )
         .into();
     }
@@ -122,13 +147,18 @@ pub fn device(args: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     };
 
+    let register = if with_gpu {
+        quote! { register_typed_device_transport_with_gpu }
+    } else {
+        quote! { register_typed_device_transport }
+    };
     let expanded = quote! {
         #input
 
         #vis fn #register_ident(
             into: &mut #runtime_crate::plugins::PluginRegistry,
         ) -> #runtime_crate::plugins::PluginResult<()> {
-            into.register_typed_device_transport::<#cpu_ty, #device_ty, _, _>(
+            into.#register::<#cpu_ty, #device_ty, _, _>(
                 #runtime_crate::plugins::TypedDeviceTransport::new(
                     #id,
                     #data_crate::model::TypeExpr::opaque(#cpu),

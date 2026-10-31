@@ -312,6 +312,51 @@ impl PluginRegistry {
         )
     }
 
+    /// [`register_typed_device_transport`](Self::register_typed_device_transport) for upload and
+    /// download functions that need the engine's GPU: they get the executor's
+    /// [`GpuContextHandle`](daedalus_gpu::GpuContextHandle) (create buffers or textures on its
+    /// device). Outside an executor, or without a GPU backend, the transfer fails with
+    /// `TransportError::Unsupported`. `#[device]` registers through this when its function takes
+    /// `&GpuContextHandle` as a second argument.
+    #[cfg(feature = "gpu")]
+    pub fn register_typed_device_transport_with_gpu<Cpu, Device, Upload, Download>(
+        &mut self,
+        spec: TypedDeviceTransport,
+        upload: Upload,
+        download: Download,
+    ) -> PluginResult<()>
+    where
+        Cpu: Send + Sync + 'static,
+        Device: Send + Sync + 'static,
+        Upload: Fn(&Cpu, &daedalus_gpu::GpuContextHandle) -> Result<Device, TransportError>
+            + Send
+            + Sync
+            + 'static,
+        Download: Fn(&Device, &daedalus_gpu::GpuContextHandle) -> Result<Cpu, TransportError>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let no_gpu = |what: &str| {
+            TransportError::Unsupported(format!(
+                "{what} needs the engine's GPU context: run it on an edge of a GPU-backed engine"
+            ))
+        };
+        self.register_typed_device_transport::<Cpu, Device, _, _>(
+            spec,
+            move |cpu| {
+                crate::gpu_scope::with_current_gpu(|gpu| {
+                    upload(cpu, gpu.ok_or_else(|| no_gpu("device upload"))?)
+                })
+            },
+            move |device| {
+                crate::gpu_scope::with_current_gpu(|gpu| {
+                    download(device, gpu.ok_or_else(|| no_gpu("device download"))?)
+                })
+            },
+        )
+    }
+
     /// Register paired CPU/device upload and download adapters plus a device capability.
     pub fn register_typed_device_transport<Cpu, Device, Upload, Download>(
         &mut self,

@@ -431,3 +431,83 @@ impl NodeHandler for DeviceTransportEngineHandler {
         Ok(())
     }
 }
+
+/// A device transport registered with the GPU context gets the executor's GPU on its edge, and
+/// fails cleanly outside an executor.
+#[test]
+#[cfg(all(feature = "plugins", feature = "gpu-mock"))]
+fn device_transport_with_gpu_gets_the_executor_context() {
+    let cpu_ty = TypeExpr::opaque("test:i32");
+    let device_ty = TypeExpr::opaque("test:i32@gpu");
+    let mut plugins = PluginRegistry::new();
+    for decl in [
+        NodeDecl::new("source").output(PortDecl::new("out", "test:i32").schema(cpu_ty.clone())),
+        NodeDecl::new("device_passthrough")
+            .input(PortDecl::new("in", "test:i32@gpu").schema(device_ty.clone()))
+            .output(PortDecl::new("out", "test:i32@gpu").schema(device_ty.clone())),
+        NodeDecl::new("sink").input(PortDecl::new("in", "test:i32").schema(cpu_ty.clone())),
+    ] {
+        plugins.register_node_decl(decl).unwrap();
+    }
+    let seen_backend = Arc::new(Mutex::new(None));
+    let record = seen_backend.clone();
+    plugins
+        .register_typed_device_transport_with_gpu::<i32, GpuI32, _, _>(
+            daedalus_runtime::plugins::TypedDeviceTransport::new(
+                "test.device.i32",
+                cpu_ty,
+                device_ty,
+                "test.i32.upload",
+                "test.i32.download",
+            ),
+            move |value, gpu| {
+                record.lock().replace(gpu.backend_kind());
+                Ok(GpuI32(*value))
+            },
+            |value, _gpu| Ok(value.0),
+        )
+        .unwrap();
+
+    // Outside an executor there is no GPU context: the transfer says so instead of panicking.
+    let mut request =
+        daedalus_transport::AdaptRequest::new(daedalus_transport::TypeKey::new("test:i32@gpu"));
+    request.residency = Some(daedalus_transport::Residency::Gpu);
+    let outside = plugins.runtime_transport.execute_adapter_path(
+        daedalus_transport::Payload::owned("test:i32", 1i32),
+        &[daedalus_transport::AdapterId::new("test.i32.upload")],
+        &request,
+    );
+    assert!(
+        matches!(outside, Err(daedalus_transport::TransportError::Unsupported(ref m)) if m.contains("GPU context")),
+        "{outside:?}"
+    );
+
+    let graph = Graph {
+        nodes: vec![
+            NodeInstance::new("source").with_outputs(["out"]),
+            NodeInstance::new("device_passthrough")
+                .with_inputs(["in"])
+                .with_outputs(["out"]),
+            NodeInstance::new("sink").with_inputs(["in"]),
+        ],
+        edges: vec![Edge::new(0, "out", 1, "in"), Edge::new(1, "out", 2, "in")],
+        metadata: Default::default(),
+    };
+    let seen = Arc::new(Mutex::new(None));
+    let mut config = EngineConfig::default();
+    config.planner.enable_gpu = true;
+    config.gpu = GpuBackend::Mock;
+    Engine::new(config)
+        .unwrap()
+        .run_plugin_registry(
+            &plugins,
+            graph,
+            DeviceTransportEngineHandler { seen: seen.clone() },
+        )
+        .unwrap();
+    assert_eq!(*seen.lock(), Some(42));
+    assert_eq!(
+        *seen_backend.lock(),
+        Some(daedalus_gpu::GpuBackendKind::Mock)
+    );
+}

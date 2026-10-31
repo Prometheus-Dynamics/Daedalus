@@ -108,7 +108,11 @@ pub mod debug;
 pub mod executor;
 pub mod fanin;
 pub mod foreign;
+#[cfg(feature = "gpu")]
+mod gpu_scope;
 pub mod graph_builder;
+#[cfg(feature = "gpu")]
+pub use gpu_scope::with_current_gpu;
 pub mod handler_registry;
 pub mod handles;
 pub mod host_bridge;
