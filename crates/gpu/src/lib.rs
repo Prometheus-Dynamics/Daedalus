@@ -52,7 +52,7 @@ pub use selection::select_backend;
 #[cfg(feature = "gpu-async")]
 pub use selection::select_backend_async;
 #[cfg(feature = "gpu-wgpu")]
-pub use shader::GpuStorage;
+pub use shader::{GpuInFlight, GpuStorage, GpuTicket};
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu;

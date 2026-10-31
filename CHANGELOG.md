@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`GpuTicket` and `GpuInFlight<T>`**: non-blocking GPU completion. A node submits on one
+  tick, keeps the ticket in its state, and on a later tick `try_complete()` (one non-blocking
+  poll) tells it the work finished, so no tick waits on a fence. `GpuInFlight` caps the number of
+  outstanding submissions, pops results in submission order and can drop the oldest. A graph
+  test checks that the result arrives on a later tick, and that no tick takes more than a
+  quarter of the GPU work's time.
 - **`GpuStorage`**: a persistent, sized storage buffer on the engine's device that a node keeps in
   its `state(T)` across ticks (Eidos TSDF volume, cost-volume scratch). It provides `new`
   (zeroed), `with_data`, `write`, `ensure_size`, `buffer()` for the node's own pipelines, and

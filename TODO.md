@@ -85,12 +85,23 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a test keeps a buffer across 100 ticks with no reallocation, and the buffer
       is dropped on `Restart` and on reload.
       **Blocked by:** nothing.
-- [ ] **What:** `GpuSubmission`, a non-blocking completion API. Submit on tick N;
+- [x] **What:** `GpuSubmission` (shipped as `GpuTicket` / `GpuInFlight`), a non-blocking completion API. Submit on tick N;
       `try_complete()` polls (never waits) on later ticks; there is an in-flight limit.
       **Why:** the vision core must never wait on a GPU fence inside a tick.
       **Done when:** a graph test shows the tick never blocks on the fence (tick time stays
       under the kernel time) and the result arrives on a later tick.
       **Blocked by:** nothing.
+- [ ] **What:** fragment-pass nodes: a `#[device]` helper for a full-screen draw. Sampled
+      textures come in through `textureLoad`, render targets go out (several through MRT), in the
+      formats r8, rgba8, r32f and rg32f. They get the same node-owned persistent resources,
+      `GpuTicket` completion, timestamps and round-trip check as compute.
+      **Why:** on V3D the fragment path is 10-13x faster than compute (gpu_bench, 2026-10-30).
+      There fragment passes are the only GPU path that beats the CPU, so Eidos's V3D kernels
+      depend on them (user decision, part of 4.0.0).
+      **Done when:** a graph test runs a fragment-pass node with two outputs against its CPU
+      pair and the results match. `gpu_bench` on the Raze shows the helper costs no more than the
+      hand-written fragment pass (within 5%). The guide documents it.
+      **Blocked by:** nothing (the Raze check needs a window).
 - [ ] **What:** `read_buffer_into(&GpuStorage, range, &mut [u8])`, plus a non-blocking form
       through `GpuSubmission`, with a persistent staging ring.
       **Why:** Eidos mesh and depth readback, with no allocation per download.

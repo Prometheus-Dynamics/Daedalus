@@ -150,3 +150,59 @@ fn gpu_storage_validates_and_grows() {
         0
     );
 }
+
+/// A ticket completes through non-blocking polls alone; `GpuInFlight` caps and orders tickets.
+#[test]
+fn tickets_complete_without_waiting_and_in_flight_is_bounded() {
+    let ctx = select_backend(&GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Wgpu),
+        ..Default::default()
+    })
+    .unwrap();
+    let Some((device, _)) = ctx.wgpu() else {
+        assert!(matches!(
+            crate::GpuTicket::submit(&ctx, []),
+            Err(crate::GpuError::Unsupported)
+        ));
+        return;
+    };
+    let encode = || device.create_command_encoder(&Default::default()).finish();
+    let poll_until = |ticket: &crate::GpuTicket| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while ticket.try_complete().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ticket never completed"
+            );
+            std::thread::yield_now();
+        }
+    };
+    let ticket = crate::GpuTicket::submit(&ctx, [encode()]).unwrap();
+    poll_until(&ticket);
+    assert!(ticket.is_complete());
+
+    let mut in_flight = crate::GpuInFlight::new(2);
+    for value in [1, 2] {
+        let ticket = crate::GpuTicket::submit(&ctx, [encode()]).unwrap();
+        in_flight.push(ticket, value).unwrap();
+    }
+    assert!(in_flight.is_full());
+    let extra = crate::GpuTicket::submit(&ctx, [encode()]).unwrap();
+    let (extra, value) = in_flight.push(extra, 3).unwrap_err();
+    assert_eq!(value, 3);
+    extra.wait();
+    let mut drained = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while drained.len() < 2 {
+        assert!(std::time::Instant::now() < deadline);
+        if let Some(value) = in_flight.pop_completed() {
+            drained.push(value);
+        }
+    }
+    assert_eq!(
+        drained,
+        [1, 2],
+        "completed values come out in submission order"
+    );
+    assert!(in_flight.is_empty());
+}

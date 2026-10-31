@@ -43,6 +43,14 @@ frees the buffer. `new` creates it zeroed, `with_data` creates it with contents,
 `ensure_size` grows it. `write` queues an update. Bind it to your own pipelines with `buffer()`,
 or to Daedalus dispatches with `binding()`. See `crates/daedalus/tests/gpu_storage.rs`.
 
+A tick never waits on a GPU fence. Submit with `GpuTicket::submit(gpu, commands)` and keep the
+ticket in the node's state. On later ticks, `ticket.try_complete()` runs one non-blocking poll
+(about 0.3 µs on the CM5) and returns `Some(())` once the work has finished; emit the result on
+that tick. `GpuInFlight<T>` caps how many submissions are outstanding, each paired with the value
+it will produce. `push` hands the pair back when the cap is reached, `pop_completed` returns
+finished values in submission order, and `drop_oldest` implements latest-wins. See
+`crates/daedalus/tests/gpu_ticket.rs`.
+
 ## Host-created Vulkan instances
 
 The Vulkan loader is not safe when several threads set up a graphics driver at once: the NVIDIA ICD
