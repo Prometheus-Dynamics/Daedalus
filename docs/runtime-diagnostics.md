@@ -208,9 +208,9 @@ its `Display` prints one line per node and edge plus a summary:
 
 ```text
 runtime plan: 3 nodes, 3 edges, backpressure=None
-  node 0: io.host_bridge (CpuOnly) label=host
-  node 1: daedalus.frame_bench:stage (CpuOnly) label=stage_0
-  node 2: daedalus.frame_bench:stage (CpuOnly) label=stage_1
+  node 0: io.host_bridge (CpuOnly, on Cpu) label=host device_reason="compute = cpu_only"
+  node 1: daedalus.frame_bench:stage (CpuOnly, on Cpu) label=stage_0 device_reason="compute = cpu_only"
+  node 2: daedalus.frame_bench:stage (CpuOnly, on Cpu) label=stage_1 device_reason="compute = cpu_only"
   edge 0: io.host_bridge.frame -> daedalus.frame_bench:stage.frame [direct_slot] adapters=daedalus.foreign:daedalus.frame_bench:synthetic_frame->daedalus:frame:view unfused: host-bridge boundary
   edge 1: daedalus.frame_bench:stage.frame -> daedalus.frame_bench:stage.frame [direct_slot] fused
   edge 2: daedalus.frame_bench:stage.frame -> io.host_bridge.out [direct_slot] unfused: host-bridge boundary
@@ -219,6 +219,17 @@ crosses_residency: none
 fused_units: [daedalus.frame_bench:stage -> daedalus.frame_bench:stage] edges [1]
 ```
 
+
+### Which device each node runs on
+
+The consumer chooses the device: each node's `compute` (`cpu_only`, `gpu_preferred`,
+`gpu_required`, set with `add_handle_with_compute` / `node_with_compute`) and the engine's GPU
+backend (`EngineConfig::gpu` plus `with_planner_gpu`). Nothing is chosen on cost. The engine
+records the result in node metadata (`daedalus.device`, `daedalus.device_reason`), and each
+`RuntimeNodeExplanation` reports it as `device` (`Cpu`/`Gpu`) and `device_reason`. There is no
+silent fallback. Without a GPU backend, a node's `fallback` CPU node runs in its place, and its
+reason names the GPU node it replaced (`daedalus.fallback_from`). A `gpu_preferred` node with no
+fallback runs on the CPU and says so. A `gpu_required` node fails planning.
 
 ### Device round trips
 

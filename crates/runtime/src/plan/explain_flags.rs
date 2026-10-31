@@ -160,9 +160,16 @@ impl fmt::Display for RuntimePlanExplanation {
             self.backpressure
         )?;
         for node in &self.nodes {
-            write!(f, "  node {}: {} ({:?})", node.index, node.id, node.compute)?;
+            write!(
+                f,
+                "  node {}: {} ({:?}, on {:?})",
+                node.index, node.id, node.compute, node.device
+            )?;
             if let Some(label) = node.label.as_deref().filter(|label| *label != node.id) {
                 write!(f, " label={label}")?;
+            }
+            if let Some(reason) = &node.device_reason {
+                write!(f, " device_reason=\"{reason}\"")?;
             }
             writeln!(f)?;
         }

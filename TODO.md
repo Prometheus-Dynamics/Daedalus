@@ -61,7 +61,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** unit tests against the mock backend pass, and `gpu_probe` on the Raze
       prints the same values as `gpu_bench`'s `[limits]`.
       **Blocked by:** nothing (the Raze check needs a window).
-- [ ] **What:** explicit device assignment. The per-node `compute` and a graph-level default
+- [x] **What:** explicit device assignment. The per-node `compute` and a graph-level default
       choose CPU or GPU. The planner honours it, `GpuRequired` fails planning without an
       adapter, and `explain_plan()` reports the resolved device per node (today it reports only
       the requested affinity). Any fallback is visible, never silent.
@@ -70,6 +70,10 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** planner and runtime tests cover CPU, GPU and missing-adapter cases, and
       each case's resolved device appears in `explain_plan()`; `docs/node-authoring.md`
       documents it.
+      **Status:** done. The graph-level choice is the engine's GPU backend; per node, `compute`.
+      The resolved device and its reason are in node metadata and in `explain_plan()`. Tests:
+      engine `devices` unit tests (GPU, fallback, gpu_preferred and gpu_required without GPU)
+      and the facade `device_assignment` test.
       **Blocked by:** nothing.
 - [x] **What:** `GpuContextHandle::wgpu() -> Option<(&wgpu::Device, &wgpu::Queue)>`, so a node
       reaches the engine's own device.

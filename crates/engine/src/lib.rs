@@ -17,6 +17,7 @@ mod trace;
 mod cache;
 mod compiled_run;
 mod config;
+mod devices;
 #[cfg(feature = "config-env")]
 pub mod diagnostics;
 #[cfg(feature = "plugins")]

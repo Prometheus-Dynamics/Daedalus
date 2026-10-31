@@ -41,12 +41,54 @@ pub struct RuntimeFusedUnitExplanation {
     pub edges: Vec<usize>,
 }
 
+/// Node metadata the engine sets: the device it resolved for the node, `"cpu"` or `"gpu"`. The
+/// consumer chooses it (the node's `compute` and the engine's GPU backend); nothing is picked on
+/// cost. Its reason is under [`NODE_DEVICE_REASON_META_KEY`].
+pub const NODE_DEVICE_META_KEY: &str = "daedalus.device";
+/// Node metadata: why the node runs on [`NODE_DEVICE_META_KEY`]'s device.
+pub const NODE_DEVICE_REASON_META_KEY: &str = "daedalus.device_reason";
+/// Node metadata the engine sets on a CPU fallback: the id of the GPU node it replaced.
+pub const NODE_FALLBACK_FROM_META_KEY: &str = "daedalus.fallback_from";
+
+/// The device a node runs on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeDevice {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeNodeExplanation {
     pub index: usize,
     pub id: String,
     pub label: Option<String>,
+    /// The requested affinity.
     pub compute: ComputeAffinity,
+    /// The device the node runs on: the engine's resolution ([`NODE_DEVICE_META_KEY`]), else
+    /// the requested affinity.
+    #[serde(default)]
+    pub device: NodeDevice,
+    /// Why, when the engine resolved it ([`NODE_DEVICE_REASON_META_KEY`]): a CPU fallback names
+    /// the GPU node it replaced, and a GPU-preferring node that runs on the CPU says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_reason: Option<String>,
+}
+
+fn node_device(node: &super::RuntimeNode) -> (NodeDevice, Option<String>) {
+    use daedalus_data::model::Value;
+    let text = |key: &str| match node.metadata.get(key) {
+        Some(Value::String(value)) => Some(value.to_string()),
+        _ => None,
+    };
+    let device = match text(NODE_DEVICE_META_KEY).as_deref() {
+        Some("gpu") => NodeDevice::Gpu,
+        Some(_) => NodeDevice::Cpu,
+        None if super::is_gpu_compute(node.compute) => NodeDevice::Gpu,
+        None => NodeDevice::Cpu,
+    };
+    (device, text(NODE_DEVICE_REASON_META_KEY))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -141,6 +183,8 @@ impl RuntimePlan {
                 id: node.id.clone(),
                 label: node.label.clone(),
                 compute: node.compute,
+                device: node_device(node).0,
+                device_reason: node_device(node).1,
             })
             .collect();
         let full_direct = slice

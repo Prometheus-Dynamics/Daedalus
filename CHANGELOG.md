@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Resolved device per node in `explain_plan()`.** `RuntimeNodeExplanation` gains `device`
+  (`NodeDevice::Cpu`/`Gpu`) and `device_reason`. The engine records them in node metadata
+  (`daedalus.device`, `daedalus.device_reason`, and `daedalus.fallback_from` on a CPU fallback).
+  The consumer's choice (per-node `compute`, the engine's GPU backend) is what decides, and every
+  fallback is visible: a CPU fallback names the GPU node it replaced, and a `gpu_preferred` node
+  on the CPU says so. The `Display` node line now reads `(<compute>, on <device>)`.
 - **`RuntimePlanExplanation::device_round_trips()`** lists CPU→GPU→CPU chains across nodes
   (`DeviceRoundTrip`: the upload edge, the nodes on the device, the download edge), so a test can
   assert that a GPU pipeline has none.
