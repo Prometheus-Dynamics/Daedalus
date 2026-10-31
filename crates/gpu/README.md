@@ -51,6 +51,12 @@ then copies it into `out`. `read_into(offset, &mut out)` is the blocking form, f
 tests. Sequential readbacks reuse one staging buffer; `staging_buffers_created()` counts how
 many exist.
 
+For scratch buffers that change size from frame to frame, use `GpuStoragePool::new(gpu,
+cap_bytes)`. `take(size)` hands out a `GpuStorage` from a power-of-two size class (256 B and up),
+reusing an idle one when it can. `give(storage)` returns it once its GPU work is done. Idle
+buffers are kept up to `cap_bytes`, and `stats()` reports created, reused and dropped buffers and
+the reuse rate. A taken buffer is not cleared.
+
 A tick never waits on a GPU fence. Submit with `GpuTicket::submit(gpu, commands)` and keep the
 ticket in the node's state. On later ticks, `ticket.try_complete()` runs one non-blocking poll
 (about 0.3 µs on the CM5) and returns `Some(())` once the work has finished; emit the result on

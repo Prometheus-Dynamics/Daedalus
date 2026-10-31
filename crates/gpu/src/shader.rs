@@ -25,6 +25,7 @@ mod readback;
 #[cfg(feature = "gpu-async")]
 mod readback_async;
 mod run_output;
+mod storage_pool;
 mod submission;
 mod types;
 mod workgroups;
@@ -66,6 +67,7 @@ pub use readback_async::{
     set_async_readback_timeout,
 };
 pub use run_output::*;
+pub use storage_pool::{GpuStoragePool, GpuStoragePoolStats};
 pub use submission::{GpuInFlight, GpuTicket};
 pub use types::*;
 

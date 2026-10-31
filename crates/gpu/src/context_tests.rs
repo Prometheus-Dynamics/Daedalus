@@ -265,3 +265,38 @@ fn gpu_storage_reads_back_into_caller_buffers() {
     assert_eq!(storage.staging_buffers_created(), created);
     assert_eq!(created, 1);
 }
+
+/// 1000 frames of varying scratch sizes: the pool stays under its cap and serves most takes.
+#[test]
+fn storage_pool_reuses_within_its_cap() {
+    let ctx = select_backend(&GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Wgpu),
+        ..Default::default()
+    })
+    .unwrap();
+    if ctx.wgpu().is_none() {
+        return;
+    }
+    let cap = 4 << 20;
+    let pool = crate::GpuStoragePool::new(&ctx, cap).unwrap();
+    assert!(pool.take(6).is_err(), "not a multiple of 4");
+    for frame in 0..1000u64 {
+        // Two to four scratch buffers per frame, between 1 KiB and ~600 KiB.
+        let sizes: Vec<u64> = (0..2 + frame % 3)
+            .map(|i| (1024 + (frame * 7919 + i * 104729) % (600 << 10)) / 4 * 4)
+            .collect();
+        let taken: Vec<_> = sizes.iter().map(|&s| pool.take(s).unwrap()).collect();
+        for (storage, &size) in taken.iter().zip(&sizes) {
+            assert_eq!(storage.size(), size);
+            assert!(storage.buffer().size() >= size);
+        }
+        for storage in taken {
+            pool.give(storage);
+        }
+        assert!(pool.stats().pooled_bytes <= cap);
+    }
+    let stats = pool.stats();
+    assert!(stats.reuse_rate() > 0.9, "{stats:?}");
+    pool.clear();
+    assert_eq!(pool.stats().pooled_bytes, 0);
+}

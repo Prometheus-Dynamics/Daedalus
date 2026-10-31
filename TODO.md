@@ -147,7 +147,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a second process start creates its pipelines measurably faster (reported by
       `gpu_bench`), and a driver change invalidates the cache.
       **Blocked by:** nothing.
-- [ ] **What:** a buffer pool with size classes, per-frame reuse, a memory cap and stats,
+- [x] **What:** a buffer pool with size classes (`GpuStoragePool`; `SimpleBufferPool`'s size bug fixed), per-frame reuse, a memory cap and stats,
       replacing `SimpleBufferPool`'s exact-size matching.
       **Why:** steady-state GPU nodes should not allocate per frame.
       **Done when:** a 1000-frame test with varying sizes stays under the cap, and its reuse

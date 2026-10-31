@@ -46,10 +46,9 @@ impl BufferPool for SimpleBufferPool {
         let bucket_idx = bucket_for(size_bytes);
         let mut buckets = self.buckets.lock();
         if let Some(bucket) = buckets.get_mut(bucket_idx)
-            && let Some((idx, _)) = bucket
-                .iter()
-                .enumerate()
-                .find(|(_, h)| h.usage == usage && h.location == location)
+            && let Some((idx, _)) = bucket.iter().enumerate().find(|(_, h)| {
+                h.usage == usage && h.location == location && h.size_bytes >= size_bytes
+            })
         {
             let handle = bucket.swap_remove(idx);
             return Ok(handle);
@@ -94,5 +93,27 @@ impl TransferStats {
 
     pub fn take(&mut self) -> TransferStats {
         std::mem::take(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BufferPool, SimpleBufferPool};
+    use crate::{GpuMemoryLocation, GpuUsage};
+
+    /// A freed buffer smaller than a request of the same size class is not handed out for it.
+    #[test]
+    fn pool_never_returns_a_smaller_buffer() {
+        let pool = SimpleBufferPool::new();
+        let usage = GpuUsage::STORAGE;
+        let small = pool.alloc(100, usage, GpuMemoryLocation::Gpu).unwrap();
+        pool.free(small);
+        let bigger = pool.alloc(120, usage, GpuMemoryLocation::Gpu).unwrap();
+        assert!(bigger.size_bytes >= 120);
+        let reused = pool.alloc(90, usage, GpuMemoryLocation::Gpu).unwrap();
+        assert_eq!(
+            reused.size_bytes, 100,
+            "the freed buffer fits a smaller request"
+        );
     }
 }

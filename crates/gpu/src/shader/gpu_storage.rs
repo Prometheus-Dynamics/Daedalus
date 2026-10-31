@@ -19,8 +19,8 @@ mod dmabuf;
 /// Created zeroed. Bind it to Daedalus dispatches with [`GpuStorage::binding`], or to the
 /// node's own wgpu pipelines with [`GpuStorage::buffer`].
 pub struct GpuStorage {
-    buffer: Arc<wgpu::Buffer>,
-    size: u64,
+    pub(super) buffer: Arc<wgpu::Buffer>,
+    pub(super) size: u64,
     label: Option<String>,
     device: wgpu::Device,
     queue: wgpu::Queue,

@@ -17,6 +17,9 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`GpuStoragePool`**: per-frame scratch `GpuStorage` from power-of-two size classes, with a
+  cap on idle bytes and stats (`created`, `reused`, `dropped`, `reuse_rate`). In a 1000-frame
+  test with varying sizes it stays under its cap and reuses over 90% of takes.
 - **`FragmentPass` bindings, rectangles and integer formats.** `bind` → `FragmentBinding` is
   validated once and reused by `encode_bound` / `run_bound`. `FragmentRects` + `encode_rects`
   draw a list of rectangles in one instanced draw, optionally keeping the targets' contents
@@ -664,6 +667,8 @@ plugin ABI and does not load.
 
 ### Fixed
 
+- `SimpleBufferPool` could hand out a freed buffer smaller than the request when both fell in
+  the same power-of-two bucket; it now only reuses buffers at least as large.
 - **`Coalesce { strategy: KeepOldest }` edges kept the newest value instead of the oldest.**
   Every coalescing edge that alone fed its target port was routed through a direct slot, which
   always replaces, so `KeepOldest` behaved like `KeepNewest` and its window was ignored. Only
