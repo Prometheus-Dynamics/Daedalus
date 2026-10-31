@@ -117,7 +117,8 @@ it with `ctx.duration_metric("gpu", time)`.
   frame from offset 0: 0.49 ms at 640x480 XRGB and 0.71 ms at 1280x720, against 2.9 and 8.6 ms
   for a shader copy. A stride that is not a multiple of 256 bytes (640-byte GREY rows) is
   folded instead: `k` rows side by side are 256-aligned (`k = 2` for 640), so one direct copy
-  fills a wider intermediate texture, and a small fragment pass unfolds it. That needs the source
+  fills a wider intermediate texture, and a small fragment pass unfolds it: 0.43 ms for a
+  640x480 GREY frame on the CM5, against 0.27 ms with a 256-aligned stride. That needs the source
   to cover the last folded row, which a camera frame's padding does. Row-by-row re-pitching (21 ms
   at 640x480 on v3dv) remains only for strides whose fold would be too wide. Frames allocated
   with 256-aligned strides stay on the direct path. The PiSP writes only `LINEAR`

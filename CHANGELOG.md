@@ -22,7 +22,8 @@ plugin ABI and does not load.
   texture with `vkCmdCopyBufferToImage`, which v3dv runs on its TFU for whole-frame copies: 0.49 ms
   at 640x480 and 0.71 ms at 1280x720 on the CM5, 6-12x faster than a shader copy. Strides that
   aren't multiples of 256 are folded (`k` rows per 256-aligned intermediate row, one direct copy,
-  then an unfold fragment pass), with row-by-row re-pitching only when the fold would be too wide.
+  then an unfold fragment pass; 0.43 ms against 0.27 ms direct for 640x480 GREY on the CM5), with
+  row-by-row re-pitching only when the fold would be too wide.
   Unaligned rows and offsets, and short buffers, are refused.
 - **`#[node(device_from = "<port>.<field>")]`** (`NODE_DEVICE_FROM_META_KEY`). For nodes that
   choose CPU or GPU through a config value and keep CPU-typed ports, the engine reports each
