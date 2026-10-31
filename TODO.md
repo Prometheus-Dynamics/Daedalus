@@ -59,7 +59,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       each case's resolved device appears in `explain_plan()`; `docs/node-authoring.md`
       documents it.
       **Blocked by:** nothing.
-- [ ] **What:** `GpuContextHandle::wgpu() -> Option<(&wgpu::Device, &wgpu::Queue)>`, so a node
+- [x] **What:** `GpuContextHandle::wgpu() -> Option<(&wgpu::Device, &wgpu::Queue)>`, so a node
       reaches the engine's own device.
       **Why:** Eidos nodes keep pipelines and persistent buffers in `state(T)`; without it they
       open a second device (Eidos GPU worker, 2026-10-30).

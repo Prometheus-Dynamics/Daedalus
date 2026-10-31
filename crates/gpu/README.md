@@ -29,6 +29,14 @@ The `wgpu` backend list is chosen in this order:
 `EngineConfig` does not carry GPU options; hosts that build `GpuOptions` themselves set the field.
 Planner/runtime GPU behavior is enabled from facade/runtime/engine features, not by this crate alone.
 
+## The engine's device from a node
+
+A node that keeps its own pipelines and persistent buffers in its state, such as a plane sweep
+or a TSDF volume, should create them on the engine's device: there the other GPU nodes and the
+transfer adapters can use them without a copy. Get that device with
+`GpuContextHandle::wgpu() -> Option<(&wgpu::Device, &wgpu::Queue)>`, which is `None` on the
+noop and mock backends. Don't open a second device.
+
 ## Host-created Vulkan instances
 
 The Vulkan loader is not safe when several threads set up a graphics driver at once: the NVIDIA ICD

@@ -332,6 +332,14 @@ impl GpuContextHandle {
         self.backend.as_ref()
     }
 
+    /// The engine's wgpu device and queue, `None` on a non-wgpu backend (CPU, mock). A node that
+    /// keeps its own pipelines and persistent buffers in its state creates them here, on the
+    /// device every other GPU node and transfer uses, instead of opening a second device.
+    #[cfg(feature = "gpu-wgpu")]
+    pub fn wgpu(&self) -> Option<(&wgpu::Device, &wgpu::Queue)> {
+        self.backend.wgpu_device_queue()
+    }
+
     pub fn capabilities(&self) -> GpuCapabilities {
         self.backend.capabilities()
     }
@@ -750,3 +758,6 @@ mod tests {
         assert_eq!(unique.len(), handles.len());
     }
 }
+
+#[cfg(all(test, feature = "gpu-wgpu"))]
+mod context_tests;

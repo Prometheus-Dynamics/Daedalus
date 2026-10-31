@@ -17,6 +17,9 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`GpuContextHandle::wgpu()`** returns the engine's wgpu device and queue (`None` on a
+  non-wgpu backend). A node can build pipelines and persistent buffers on the same device the
+  other GPU nodes and the transfers use, instead of opening its own.
 - **`gpu_bench` example** (`daedalus-gpu`, `gpu-dmabuf`). It reports the compute limits and
   the Vulkan features wgpu does not surface (64-bit and f16 types, atomics, timestamps, storage
   image formats). It measures dispatch latency, kernel throughput against the CPU on 1 thread
