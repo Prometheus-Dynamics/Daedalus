@@ -1,0 +1,34 @@
+[package]
+name = "daedalus-accel"
+version = "3.0.1-dev"
+edition = "2024"
+rust-version.workspace = true
+description = "Acceleration inventory: kernels register per op and backend, conformance tests record CI evidence, and a generator writes the backend matrix."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/daedalus-accel"
+readme = "README.md"
+keywords = ["simd", "gpu", "conformance", "inventory"]
+categories = ["development-tools::testing", "no-std"]
+
+[lints]
+workspace = true
+
+[package.metadata.daedalus]
+boundary-features = []
+host-only-features = ["std", "generator"]
+
+[features]
+default = ["std"]
+# Runtime backend detection, `conform` (records evidence) and `dump`.
+std = []
+# The `accel-matrix` generator and gate.
+generator = ["std", "dep:serde_json"]
+
+[dependencies]
+serde_json = { workspace = true, optional = true, features = ["std"] }
+
+[[bin]]
+name = "accel-matrix"
+required-features = ["generator"]

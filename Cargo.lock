@@ -462,6 +462,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-accel"
+version = "3.0.1-dev"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "daedalus-core"
 version = "3.0.1-dev"
 dependencies = [
