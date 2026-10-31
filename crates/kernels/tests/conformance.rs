@@ -273,6 +273,39 @@ fn copies_and_codecs() {
     );
 }
 
+/// CRC-32: slice-by-8 and the extension kernels (PCLMULQDQ, AArch64 CRC) against the bitwise
+/// reference, at every length up to 300 bytes and a few large ones.
+#[test]
+fn crc32_kernels() {
+    use daedalus_accel::{Evidence, Ext, conform_with};
+    let check = |backend: Backend| -> Result<(), String> {
+        for len in (0..300).chain([1000, 4099, 65_537, 1 << 20]) {
+            let data = bytes(len, 14);
+            let want = r::crc32(&data);
+            match k::crc32::run(backend, &data) {
+                Some(got) if got == want => {}
+                Some(got) => return Err(format!("{len} bytes: {got:#x} != {want:#x}")),
+                None => return Err("not runnable".into()),
+            }
+        }
+        Ok(())
+    };
+    assert_eq!(r::crc32(b"123456789"), 0xCBF4_3926, "the IEEE check value");
+    conform_with(
+        Evidence::new("daedalus.codec.crc32", Backend::Scalar),
+        || check(Backend::Scalar),
+    );
+    conform_with(
+        Evidence::new("daedalus.codec.crc32", Backend::X86Sse2).extensions(&[Ext::Pclmulqdq]),
+        || check(Backend::X86Sse2),
+    );
+    conform_with(
+        Evidence::new("daedalus.codec.crc32", Backend::Neon64).extensions(&[Ext::Crc32]),
+        || check(Backend::Neon64),
+    );
+    assert_eq!(k::crc32(b"123456789"), 0xCBF4_3926);
+}
+
 /// The public entry points (dispatching) agree with the references, including errors.
 #[test]
 fn public_entry_points() {

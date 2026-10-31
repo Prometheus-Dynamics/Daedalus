@@ -17,6 +17,7 @@ extern crate std;
 
 mod base64;
 mod copy;
+mod crc;
 mod float;
 mod hex;
 mod pixel;
@@ -28,6 +29,7 @@ pub use base64::{
     base64_encode_into, base64_encoded_len, decode_groups, encode_groups,
 };
 pub use copy::{copy_bytes, copy_rows};
+pub use crc::crc32;
 pub use float::{f16_to_f32, f32_from_le, f32_to_unorm8};
 pub use hex::hex_lower;
 pub use pixel::{gray_to_rgba, rgb_to_rgba, rgba_red, rgba_to_rgb};

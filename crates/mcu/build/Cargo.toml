@@ -24,6 +24,8 @@ path = "src/main.rs"
 
 [dependencies]
 daedalus-data = { workspace = true, features = ["std"] }
+# CRC-32 of plan blobs (accelerated; the device checks with its own bitwise CRC).
+daedalus-kernels = { workspace = true, features = ["std"] }
 daedalus-mcu = { workspace = true, features = ["loaded"] }
 daedalus-planner = { workspace = true, features = ["std"] }
 daedalus-registry = { workspace = true, features = ["std"] }

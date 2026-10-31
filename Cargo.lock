@@ -697,6 +697,7 @@ name = "daedalus-mcu-build"
 version = "3.0.1-dev"
 dependencies = [
  "daedalus-data",
+ "daedalus-kernels",
  "daedalus-mcu",
  "daedalus-planner",
  "daedalus-registry",

@@ -11,7 +11,7 @@ use crate::Backend;
 
 mod asm;
 mod render;
-pub use asm::{functions, vector_instructions};
+pub use asm::{functions, vector_instructions, vector_or_extension_instructions};
 pub use render::regressions;
 
 /// An op from a registry dump.

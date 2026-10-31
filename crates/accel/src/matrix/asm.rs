@@ -5,6 +5,63 @@ use crate::Backend;
 /// Vector instructions for `backend` in an `llvm-objdump -d` listing of one function: packed
 /// operations only (scalar SSE `*ss`/`*sd`, VFP scalar `.f64` and plain moves do not count).
 pub fn vector_instructions(backend: Backend, asm: &str) -> usize {
+    vector_or_extension_instructions(backend, &[], asm)
+}
+
+/// Mnemonic prefixes of extension instructions that are not vector operations (AArch64
+/// `crc32x`, x86 `popcnt`, BMI2 `pdep`), so a kernel built on them passes the asm check.
+fn extension_mnemonics(ext: &str) -> &'static [&'static str] {
+    match ext {
+        "crc" => &["crc32"],
+        "pclmulqdq" => &["pclmul", "vpclmul"],
+        "aes" => &["aes", "vaes"],
+        "sha2" => &["sha256", "sha1"],
+        "sha3" => &["sha512", "eor3", "rax1", "xar", "bcax"],
+        "sha" => &["sha1", "sha256"],
+        "popcnt" => &["popcnt"],
+        "bmi2" => &[
+            "pdep", "pext", "shlx", "shrx", "sarx", "bzhi", "mulx", "rorx",
+        ],
+        "f16c" => &["vcvtph2ps", "vcvtps2ph"],
+        "dotprod" => &["sdot", "udot"],
+        "i8mm" => &["smmla", "ummla", "usmmla", "usdot", "sudot"],
+        "zba" => &["sh1add", "sh2add", "sh3add", "add.uw", "slli.uw"],
+        "zbb" => &[
+            "andn", "orn", "xnor", "clz", "ctz", "cpop", "max", "min", "rev8", "rol", "ror",
+            "orc.b",
+        ],
+        "zbs" => &["bclr", "bext", "binv", "bset"],
+        "zvbc" => &["vclmul"],
+        "zvbb" => &[
+            "vandn", "vbrev", "vclz", "vctz", "vcpop", "vrol", "vror", "vwsll",
+        ],
+        _ => &[],
+    }
+}
+
+/// [`vector_instructions`], also counting the instructions of `extensions` (names as
+/// [`crate::Ext::name`]).
+pub fn vector_or_extension_instructions(
+    backend: Backend,
+    extensions: &[String],
+    asm: &str,
+) -> usize {
+    let ext: Vec<&str> = extensions
+        .iter()
+        .flat_map(|e| extension_mnemonics(e).iter().copied())
+        .collect();
+    let base = base_vector_instructions(backend, asm);
+    let extra = asm
+        .lines()
+        .filter(|line| {
+            let m = line.split_whitespace().next().unwrap_or("");
+            ext.iter().any(|p| m.starts_with(p))
+        })
+        .count();
+    base + extra
+}
+
+fn base_vector_instructions(backend: Backend, asm: &str) -> usize {
     asm.lines()
         .filter(|line| {
             let line = line.trim();

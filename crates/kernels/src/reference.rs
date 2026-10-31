@@ -94,6 +94,22 @@ pub fn hex_lower(src: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+/// CRC-32 (IEEE), one bit at a time.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &b in bytes {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Standard base64 with padding, bit by bit.

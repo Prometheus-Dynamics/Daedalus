@@ -90,6 +90,9 @@ plugin ABI and does not load.
   ARM's documented architecture; the board runs confirm them (`docs/testing.md`, board
   checklist). `drm_format_mod_arm_afbc` / `is_arm_afbc` cover the AFBC modifiers that Rockchip
   blocks produce.
+- **`daedalus_kernels::crc32`**: CRC-32 (IEEE) with x86 PCLMULQDQ folding and the AArch64 CRC
+  instructions, chosen at runtime, and slice-by-8 elsewhere. It checksums MCU plan blobs in
+  `daedalus-mcu-build`. The device keeps its 1 KiB-free bitwise CRC for flash.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`

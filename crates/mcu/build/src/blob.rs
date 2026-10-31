@@ -2,7 +2,8 @@
 //! `daedalus_mcu::loaded`), and the plan manifest that names ports and parameters by id.
 
 use daedalus_data::model::Value;
-use daedalus_mcu::loaded::{FORMAT_VERSION, MAGIC, crc32};
+use daedalus_kernels::crc32;
+use daedalus_mcu::loaded::{FORMAT_VERSION, MAGIC};
 use daedalus_mcu::wire::Write;
 use daedalus_mcu::{Overflow, ParamSpec, ParamUpdate, Scalar, ScalarKind, name_hash};
 use serde::{Deserialize, Serialize};

@@ -503,6 +503,60 @@ static PORTABLE_GPU: Registry = Registry {
     ..Registry::EMPTY
 };
 
+const CRC: &str = "crates/kernels/src/crc.rs";
+const CRC_OP: &str = "daedalus.codec.crc32";
+const CHAIN: Status = Status::NotDataParallel(
+    "a CRC is one dependency chain; it speeds up with carry-less multiply or CRC instructions, the extension columns",
+);
+
+static CRC_SITES: [CallSite; 1] = [CallSite::new(
+    "crates/mcu/build/src/blob.rs",
+    "use daedalus_kernels::crc32",
+)];
+
+static CRC_OPS: [Op; 1] = [Op::new(
+    CRC_OP,
+    "CRC-32 (IEEE) of MCU plan blobs",
+    "daedalus_kernels::reference::crc32",
+)
+.could_use(&[(Backend::Rvv, &[Ext::Zvbc])])
+.wired_at(&CRC_SITES)];
+
+static CRC_KERNELS: [Kernel; 11] = [
+    Kernel::implemented(CRC_OP, Backend::Scalar, CRC, T),
+    Kernel::implemented(CRC_OP, Backend::X86Sse2, CRC, T)
+        .with_extensions(&[Ext::Pclmulqdq])
+        .with_symbol("crc32::pclmul"),
+    Kernel::implemented(CRC_OP, Backend::Neon64, CRC, T)
+        .with_extensions(&[Ext::Crc32])
+        .with_symbol("crc32::arm_crc"),
+    Kernel::missing(CRC_OP, Backend::X86Sse2, CHAIN),
+    Kernel::missing(CRC_OP, Backend::X86Avx2, CHAIN),
+    Kernel::missing(CRC_OP, Backend::Neon64, CHAIN),
+    Kernel::missing(
+        CRC_OP,
+        Backend::Neon32,
+        Status::Gap(
+            "planned: fold with NEON vmull.p8 (8-bit polynomial multiply; ARMv7 has no CRC instructions)",
+        ),
+    ),
+    Kernel::missing(CRC_OP, Backend::Rvv, CHAIN),
+    Kernel::missing(
+        CRC_OP,
+        Backend::Gpu,
+        Status::Gap("planned: CRC per chunk on the GPU, combined with GF(2) shifts"),
+    ),
+    Kernel::missing(CRC_OP, Backend::PortableSimd, PORTABLE),
+    Kernel::missing(CRC_OP, Backend::FixedFunction, NO_FIXED),
+];
+
+static CRC_TABLE: Registry = Registry {
+    name: "daedalus-kernels-crc",
+    ops: &CRC_OPS,
+    kernels: &CRC_KERNELS,
+    ..Registry::EMPTY
+};
+
 /// Daedalus's kernels, and the source files with SIMD markers that hold none.
 pub static ACCEL: Registry = Registry {
     repo: "daedalus",
@@ -527,5 +581,5 @@ pub static ACCEL: Registry = Registry {
             reason: "the inventory table",
         },
     ],
-    children: &[&GPU_OPS],
+    children: &[&GPU_OPS, &CRC_TABLE],
 };

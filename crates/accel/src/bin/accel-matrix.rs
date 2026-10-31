@@ -20,7 +20,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use daedalus_accel::Backend;
-use daedalus_accel::matrix::{Cell, Inventory, functions, regressions, vector_instructions};
+use daedalus_accel::matrix::{
+    Cell, Inventory, functions, regressions, vector_or_extension_instructions,
+};
 
 struct Args {
     command: String,
@@ -195,7 +197,7 @@ fn asm(args: &Args) -> Result<bool, String> {
             .collect();
         let count: usize = bodies
             .iter()
-            .map(|(_, body)| vector_instructions(k.backend, body))
+            .map(|(_, body)| vector_or_extension_instructions(k.backend, &k.extensions, body))
             .sum();
         let (pass, detail) = if bodies.is_empty() {
             (
