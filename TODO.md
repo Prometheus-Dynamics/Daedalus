@@ -13,7 +13,7 @@ Board-gated items are marked **[board]**.
 
 ### 1. Freeze-list items still open
 
-- [ ] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
+- [x] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
       `drop_stale_consts`, bb07e3b).
       **Why:** HeliOS's stored rev-215 graph failed to plan (`PortExtra` on folded Eidos knobs).
       **Done when:** HeliOS dev on the Raze plans and runs the default pipeline from the stored
@@ -233,6 +233,8 @@ The explicit assignment above already carries a backend choice.
       **Blocked by:** the rest of this release (bump last).
 - [ ] **What:** CHANGELOG `[Unreleased]` becomes the release section, with a migration note if
       needed.
+      **Status:** the migration guide is written (`docs/migration-4.0.md`, checked against the
+      semver report). The section cut waits with the 4.0.0 bump for the coordinated release.
       **Why:** downstream pins by commit and reads the CHANGELOG.
       **Done when:** every merged change since `v3.0.0` has an entry.
       **Blocked by:** the items above.
