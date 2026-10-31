@@ -10,6 +10,9 @@ use daedalus_accel::Backend;
 /// CRC-32 of `bytes`: AArch64 CRC instructions or x86 PCLMULQDQ folding when the CPU has them,
 /// else slice-by-8.
 pub fn crc32(bytes: &[u8]) -> u32 {
+    #[cfg(all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc))]
+    // SAFETY: V and Zvbc are compiled in.
+    return unsafe { crc32::rvv_zvbc(bytes) };
     #[cfg(all(feature = "std", target_arch = "aarch64"))]
     if std::arch::is_aarch64_feature_detected!("crc") {
         // SAFETY: the CPU reports the CRC instructions.
@@ -114,6 +117,79 @@ fn slice8(mut crc: u32, bytes: &[u8]) -> u32 {
     crc
 }
 
+/// 64x64 carry-less multiply in software: the 128-bit product as (low, high).
+pub(crate) fn clmul_soft(a: u64, b: u64) -> (u64, u64) {
+    let (mut lo, mut hi) = (0u64, 0u64);
+    for i in 0..64 {
+        if (b >> i) & 1 == 1 {
+            lo ^= a << i;
+            if i > 0 {
+                hi ^= a >> (64 - i);
+            }
+        }
+    }
+    (lo, hi)
+}
+
+/// The PCLMULQDQ folding algorithm over any 64x64 carry-less multiply `clmul` (128-bit lanes as
+/// (low, high) pairs): the RVV Zvbc kernel plugs in `vclmul`/`vclmulh`, the tests a software
+/// multiply.
+pub(crate) fn crc32_fold(bytes: &[u8], clmul: &mut dyn FnMut(u64, u64) -> (u64, u64)) -> u32 {
+    const K1: u64 = 0x1_5444_2bd4;
+    const K2: u64 = 0x1_c6e4_1596;
+    const K3: u64 = 0x1_7519_97d0;
+    const K4: u64 = 0x0_ccaa_009e;
+    const K5: u64 = 0x1_63cd_6124;
+    const P_X: u64 = 0x1_DB71_0641;
+    const U_PRIME: u64 = 0x1_F701_1641;
+    if bytes.len() < 128 {
+        return !slice8(!0, bytes);
+    }
+    let (blocks, rest) = bytes.as_chunks::<16>();
+    let load = |i: usize| -> (u64, u64) {
+        let b = &blocks[i];
+        (
+            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            u64::from_le_bytes([b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]),
+        )
+    };
+    // fold(a, b) = a.lo * k_lo ^ a.hi * k_hi ^ b
+    let mut fold = |a: (u64, u64), b: (u64, u64), k_lo: u64, k_hi: u64| {
+        let (l1, h1) = clmul(a.0, k_lo);
+        let (l2, h2) = clmul(a.1, k_hi);
+        (b.0 ^ l1 ^ l2, b.1 ^ h1 ^ h2)
+    };
+    let mut x3 = load(0);
+    x3.0 ^= 0xffff_ffff;
+    let (mut x2, mut x1, mut x0) = (load(1), load(2), load(3));
+    let mut i = 4;
+    while i + 4 <= blocks.len() {
+        x3 = fold(x3, load(i), K1, K2);
+        x2 = fold(x2, load(i + 1), K1, K2);
+        x1 = fold(x1, load(i + 2), K1, K2);
+        x0 = fold(x0, load(i + 3), K1, K2);
+        i += 4;
+    }
+    let mut x = fold(x3, x2, K3, K4);
+    x = fold(x, x1, K3, K4);
+    x = fold(x, x0, K3, K4);
+    while i < blocks.len() {
+        x = fold(x, load(i), K3, K4);
+        i += 1;
+    }
+    // 128 to 64 bits: x.lo * K4 ^ (x >> 64).
+    let (l, h) = clmul(x.0, K4);
+    let x = (l ^ x.1, h);
+    // 64 to 32: (x & 0xffffffff) * K5 ^ (x >> 32).
+    let (l, h) = clmul(x.0 & 0xffff_ffff, K5);
+    let x = (l ^ ((x.0 >> 32) | (x.1 << 32)), h ^ (x.1 >> 32));
+    // Barrett reduction.
+    let (t1, _) = clmul(x.0 & 0xffff_ffff, U_PRIME);
+    let (t2, _) = clmul(t1 & 0xffff_ffff, P_X);
+    let crc = ((x.0 ^ t2) >> 32) as u32;
+    !slice8(crc, rest)
+}
+
 #[doc(hidden)]
 pub mod crc32 {
     use super::{Backend, slice8};
@@ -208,8 +284,40 @@ pub mod crc32 {
         !slice8(crc, rest)
     }
 
-    /// Run with `backend` and extension: `Scalar` is slice-by-8; `X86Sse2` runs PCLMULQDQ and
-    /// `Neon64` the CRC instructions, when the CPU has them. `None` otherwise.
+    /// RVV with Zvbc: the folding of [`super::crc32_fold`] with each 64x64 carry-less
+    /// multiply done by `vclmul`/`vclmulh` (SEW 64).
+    ///
+    /// # Safety
+    /// The CPU must have V and Zvbc (compiled in: `-C target-feature=+v,+zvbc`).
+    #[cfg(all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc))]
+    #[inline(never)]
+    pub unsafe fn rvv_zvbc(bytes: &[u8]) -> u32 {
+        super::crc32_fold(bytes, &mut |a, b| {
+            let (lo, hi): (u64, u64);
+            // SAFETY: V and Zvbc are compiled in; one element, registers v1-v3 clobbered.
+            unsafe {
+                core::arch::asm!(
+                    "vsetivli zero, 1, e64, m1, ta, ma",
+                    "vmv.s.x v1, {a}",
+                    "vclmul.vx v2, v1, {b}",
+                    "vclmulh.vx v3, v1, {b}",
+                    "vmv.x.s {lo}, v2",
+                    "vmv.x.s {hi}, v3",
+                    a = in(reg) a,
+                    b = in(reg) b,
+                    lo = out(reg) lo,
+                    hi = out(reg) hi,
+                    out("v1") _, out("v2") _, out("v3") _,
+                    options(nostack, nomem),
+                );
+            }
+            (lo, hi)
+        })
+    }
+
+    /// Run with `backend` and extension: `Scalar` is slice-by-8; `X86Sse2` runs PCLMULQDQ,
+    /// `Neon64` the CRC instructions and `Rvv` the Zvbc folding, when the CPU (or build) has
+    /// them. `None` otherwise.
     pub fn run(backend: Backend, bytes: &[u8]) -> Option<u32> {
         match backend {
             Backend::Scalar => Some(v(bytes)),
@@ -226,7 +334,34 @@ pub mod crc32 {
                 // SAFETY: the CPU reports the CRC instructions.
                 Some(unsafe { arm_crc(bytes) })
             }
+            #[cfg(all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc))]
+            // SAFETY: V and Zvbc are compiled in.
+            Backend::Rvv => Some(unsafe { rvv_zvbc(bytes) }),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate alloc;
+
+    /// The folding algorithm with a software carry-less multiply matches the bitwise CRC (the
+    /// same algorithm the RVV Zvbc kernel runs with `vclmul`).
+    #[test]
+    fn folding_with_a_software_clmul_matches() {
+        let data: alloc::vec::Vec<u8> = (0..70_000u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        for len in [128usize, 129, 191, 192, 255, 256, 4097, 70_000] {
+            let want = crate::reference::crc32(&data[..len]);
+            assert_eq!(
+                super::crc32_fold(&data[..len], &mut super::clmul_soft),
+                want,
+                "{len}"
+            );
+        }
+        assert_eq!(super::clmul_soft(0b11, 0b11), (0b101, 0));
+        assert_eq!(super::clmul_soft(1 << 63, 2), (0, 1));
     }
 }

@@ -35,4 +35,8 @@ fn main() {
     if (arch == "riscv64" || arch == "riscv32") && enabled("v") {
         println!("cargo::rustc-cfg=daedalus_rvv");
     }
+    println!("cargo::rustc-check-cfg=cfg(daedalus_ext_zvbc)");
+    if arch.starts_with("riscv") && enabled("zvbc") {
+        println!("cargo::rustc-cfg=daedalus_ext_zvbc");
+    }
 }

@@ -303,6 +303,10 @@ fn crc32_kernels() {
         Evidence::new("daedalus.codec.crc32", Backend::Neon64).extensions(&[Ext::Crc32]),
         || check(Backend::Neon64),
     );
+    conform_with(
+        Evidence::new("daedalus.codec.crc32", Backend::Rvv).extensions(&[Ext::Zvbc]),
+        || check(Backend::Rvv),
+    );
     assert_eq!(k::crc32(b"123456789"), 0xCBF4_3926);
     // Combining per-chunk CRCs gives the whole buffer's.
     let data = bytes(10_000, 17);

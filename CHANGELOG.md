@@ -91,7 +91,8 @@ plugin ABI and does not load.
   checklist). `drm_format_mod_arm_afbc` / `is_arm_afbc` cover the AFBC modifiers that Rockchip
   blocks produce.
 - **`daedalus_kernels::crc32`**: CRC-32 (IEEE) with x86 PCLMULQDQ folding and the AArch64 CRC
-  instructions, chosen at runtime, and slice-by-8 elsewhere. It checksums MCU plan blobs in
+  instructions, chosen at runtime, and RVV Zvbc folding (`vclmul`) in `+v,+zvbc` builds, and
+  slice-by-8 elsewhere. It checksums MCU plan blobs in
   `daedalus-mcu-build`. The device keeps its 1 KiB-free bitwise CRC for flash.
 - **Portable SIMD kernels** (`daedalus_kernels::portable`, `core::simd`): every op in portable
   SIMD, built only with `--cfg daedalus_portable_simd` on the pinned nightly

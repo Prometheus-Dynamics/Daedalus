@@ -259,8 +259,8 @@ built, measured per device and kept selectable. `docs/backend-matrix.md` is the 
       decision.
       **Done when:** the RGA cells pass on a Rockchip board.
       **Blocked by:** a Rockchip board; the user's OK for the librga headers (route a).
-- [ ] **What:** the remaining CRC-32 cells: NEON32 `vmull.p8` folding and `rvv+zvbc` (the GPU
-      chunk-and-combine CRC is done).
+- [ ] **What:** the remaining CRC-32 cell: NEON32 `vmull.p8` folding (the GPU chunk-and-combine
+      CRC and `rvv+zvbc` folding are done).
       **Done when:** each passes conformance in `ci.sh accel`, or carries a physical reason.
       **Blocked by:** nothing.
 - [ ] **What:** `GpuKernels` and the kernels measured on V3D, and later on Mali (the matrix's GPU
@@ -268,11 +268,9 @@ built, measured per device and kept selectable. `docs/backend-matrix.md` is the 
       **Status:** V3D done (2026-10-31): all bit-exact; compute is 5-40x slower than the A76 CPU,
       the copy engine is even. Mali: written, untested on board.
       **Blocked by:** Rockchip boards for Mali.
-- [ ] **What:** fragment-pass variants of the GPU kernels for tile-based GPUs (V3D, Mali), where
-      fragment passes run 10x+ faster than compute.
-      **Done when:** bit-exact against the references, and measured on the Raze next to the
-      compute variant.
-      **Blocked by:** nothing (a Raze slot for the measurement).
+- [x] **What:** fragment-pass variants of the GPU kernels for tile-based GPUs (V3D, Mali).
+      **Done:** a08550b; bit-exact, measured on the Raze (2026-10-31): 3-6x faster than compute
+      on V3D, f16→f32 beats the A76 (8.1 vs 11.9 ms), rgb→rgba even (8.0 vs 8.2 ms).
 
 A CUDA backend is not in this release. If one comes later, it needs:
 

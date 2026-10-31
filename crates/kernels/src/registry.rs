@@ -623,7 +623,7 @@ static CRC_OPS: [Op; 1] = [Op::new(
 .could_use(&[(Backend::Rvv, &[Ext::Zvbc])])
 .wired_at(&CRC_SITES)];
 
-static CRC_KERNELS: [Kernel; 11] = [
+static CRC_KERNELS: [Kernel; 12] = [
     Kernel::implemented(CRC_OP, Backend::Scalar, CRC, T),
     Kernel::implemented(CRC_OP, Backend::X86Sse2, CRC, T)
         .with_extensions(&[Ext::Pclmulqdq])
@@ -631,6 +631,9 @@ static CRC_KERNELS: [Kernel; 11] = [
     Kernel::implemented(CRC_OP, Backend::Neon64, CRC, T)
         .with_extensions(&[Ext::Crc32])
         .with_symbol("crc32::arm_crc"),
+    Kernel::implemented(CRC_OP, Backend::Rvv, CRC, T)
+        .with_extensions(&[Ext::Zvbc])
+        .with_symbol("crc32::rvv_zvbc"),
     Kernel::missing(CRC_OP, Backend::X86Sse2, CHAIN),
     Kernel::missing(CRC_OP, Backend::X86Avx2, CHAIN),
     Kernel::missing(CRC_OP, Backend::Neon64, CHAIN),

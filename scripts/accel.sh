@@ -104,10 +104,11 @@ if cross armv7-unknown-linux-musleabihf armv7-cc qemu-arm-static; then
   run_target armv7-unknown-linux-musleabihf qemu-cortex-a7 qemu-arm-static -cpu cortex-a7
 fi
 if cross riscv64gc-unknown-linux-musl riscv64-cc qemu-riscv64-static; then
-  export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+v"
+  # +zvbc too, for the CRC's vclmul kernel (rvv+zvbc). Board builds use the board's own flags.
+  export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-feature=+v,+zvbc"
   for vlen in 128 256 512; do
     run_target riscv64gc-unknown-linux-musl "qemu-vlen$vlen" \
-      qemu-riscv64-static -cpu "rv64,v=true,vlen=$vlen"
+      qemu-riscv64-static -cpu "rv64,v=true,zvbc=true,vlen=$vlen"
   done
 fi
 
