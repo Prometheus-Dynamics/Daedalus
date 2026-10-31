@@ -24,8 +24,15 @@ fn to_wgpu(backends: GpuBackends) -> Backends {
     out
 }
 
-pub(super) fn select_best_adapter(adapters: Vec<Adapter>) -> Option<Adapter> {
-    adapters.into_iter().max_by_key(adapter_score)
+/// Adapters best first: the order device creation tries them in.
+pub(super) fn rank_adapters(adapters: Vec<Adapter>) -> Vec<Adapter> {
+    let mut ranked: Vec<(i64, Adapter)> = adapters
+        .into_iter()
+        .map(|a| (adapter_score(&a), a))
+        .collect();
+    // Stable: equal scores keep the enumeration order.
+    ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    ranked.into_iter().map(|(_, a)| a).collect()
 }
 
 fn adapter_score(adapter: &Adapter) -> i64 {

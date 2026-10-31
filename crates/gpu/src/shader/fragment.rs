@@ -321,6 +321,28 @@ impl FragmentPass {
         Ok(())
     }
 
+    /// [`FragmentPass::encode_bound`] with optional timestamp writes on the render pass.
+    pub(super) fn encode_bound_timed(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        binding: &FragmentBinding,
+        targets: &[&GpuTexture],
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) -> Result<(), GpuError> {
+        let size = self.check_targets(targets)?;
+        let full = self.full_target(size);
+        self.draw(
+            encoder,
+            binding,
+            full.slice(..),
+            1,
+            targets,
+            false,
+            timestamps,
+        );
+        Ok(())
+    }
+
     /// Draw only `rects`, written for these targets' size. With `load`, the targets keep their
     /// contents outside the rectangles (`LoadOp::Load`); without, they are cleared to zero first.
     pub fn encode_rects(

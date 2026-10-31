@@ -98,6 +98,11 @@ plugin ABI and does not load.
   (`nightly-2026-10-15`) in `ci.sh accel`. They give the inventory's portable_simd column real
   evidence. The product builds on stable without them; a cfg rather than a cargo feature keeps
   `--all-features` stable builds working.
+- **Fragment forms of the GPU kernels** (`GpuKernels::encode_fragment` / `run_fragment`): each
+  fragment of an `R32Uint` target computes one output word with the same WGSL word functions as
+  the compute form (`kernels_common.wgsl`), then the target is copied into the destination
+  buffer. This is the form for tile-based GPUs (V3D, Mali), where fragment passes beat compute.
+  It covers every op but base64 decode, bit-exact, and is recorded as the `fragment` variant.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`
@@ -750,6 +755,9 @@ plugin ABI and does not load.
   blocking. `ShaderRunOutput::into_texture_rgba8` returns the RGBA8 image without cloning the bytes.
 
 ### Fixed
+- **wgpu adapter selection falls back.** When the best adapter's device cannot be created (out
+  of memory on a GPU another process fills, a lost device), `select_backend` now tries the next
+  adapter by rank instead of failing.
 
 - **dmabuf import could hang the GPU on NVIDIA.** A fence that was not a `sync_file` (a pipe)
   was imported as a `SYNC_FD` semaphore. RADV rejects that import, but NVIDIA accepts it, and

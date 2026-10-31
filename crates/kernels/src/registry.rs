@@ -533,6 +533,45 @@ static GPU_KERNELS: [Kernel; 9] = [
     Kernel::missing("daedalus.gpu.storage_to_texture", Backend::Rvv, ON_DEVICE),
 ];
 
+/// The fragment forms (`GpuKernels::encode_fragment`): every GPU kernel but base64 decode.
+static FRAGMENT_KERNELS: [Kernel; 10] = {
+    const OPS: [&str; 10] = [
+        "daedalus.pixel.rgb_to_rgba",
+        "daedalus.pixel.rgba_to_rgb",
+        "daedalus.pixel.gray_to_rgba",
+        "daedalus.pixel.rgba_red",
+        "daedalus.float.f32_from_le",
+        "daedalus.float.f16_to_f32",
+        "daedalus.float.f32_to_unorm8",
+        "daedalus.copy.bytes",
+        "daedalus.codec.hex_lower",
+        "daedalus.codec.base64_encode",
+    ];
+    let mut out = [gpu_fragment(OPS[0]); 10];
+    let mut i = 0;
+    while i < 10 {
+        out[i] = gpu_fragment(OPS[i]);
+        i += 1;
+    }
+    out
+};
+
+const fn gpu_fragment(op: &'static str) -> Kernel {
+    Kernel::implemented(
+        op,
+        Backend::Gpu,
+        "crates/gpu/src/shader/kernels_common.wgsl",
+        "crates/gpu/src/kernels_tests.rs",
+    )
+    .with_variant("fragment")
+}
+
+static FRAGMENT_TABLE: Registry = Registry {
+    name: "daedalus-gpu-fragment",
+    kernels: &FRAGMENT_KERNELS,
+    ..Registry::EMPTY
+};
+
 static GPU_OPS: Registry = Registry {
     name: "daedalus-gpu",
     kernels: &GPU_KERNELS,
@@ -550,7 +589,7 @@ static GPU_OPS: Registry = Registry {
             reason: "test shaders for the spec cache (in its test module)",
         },
     ],
-    children: &[&PORTABLE_GPU],
+    children: &[&PORTABLE_GPU, &FRAGMENT_TABLE],
     ..Registry::EMPTY
 };
 

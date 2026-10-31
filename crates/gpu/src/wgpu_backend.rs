@@ -25,7 +25,7 @@ mod staging;
 mod texture_transfer;
 
 use crate::shader::staging_size;
-use adapter_select::{preferred_backends, select_best_adapter};
+use adapter_select::{preferred_backends, rank_adapters};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
 pub use dmabuf::texture_plane_views;
@@ -132,7 +132,7 @@ impl WgpuBackend {
         requested: Option<GpuBackends>,
         memory_hints: crate::GpuMemoryHints,
     ) -> Result<Self, GpuError> {
-        let adapter = {
+        let adapters = {
             let _driver = driver_lock();
             let preferred_backends = preferred_backends(requested);
             let instance = Instance::new(instance_descriptor(preferred_backends));
@@ -140,10 +140,27 @@ impl WgpuBackend {
             if adapters.is_empty() && preferred_backends != Backends::all() {
                 adapters = instance.enumerate_adapters(Backends::all()).await;
             }
-            select_best_adapter(adapters)
+            rank_adapters(adapters)
         };
-        let adapter = adapter.ok_or(GpuError::AdapterUnavailable)?;
-        Self::with_adapter(adapter, staging_config, memory_hints).await
+        // The best adapter first; when its device cannot be created (out of memory on a GPU
+        // another process fills, a lost device), the next one.
+        let mut last = GpuError::AdapterUnavailable;
+        for adapter in adapters {
+            let name = adapter.get_info().name;
+            match Self::with_adapter(adapter, staging_config, memory_hints).await {
+                Ok(backend) => return Ok(backend),
+                Err(err) => {
+                    tracing::warn!(
+                        target: "daedalus_gpu::wgpu",
+                        adapter = %name,
+                        error = %err,
+                        "device request failed; trying the next adapter"
+                    );
+                    last = err;
+                }
+            }
+        }
+        Err(last)
     }
 
     /// Create the backend on a specific adapter.

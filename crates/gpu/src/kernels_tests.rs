@@ -13,13 +13,33 @@ use crate::{
     select_backend,
 };
 
+/// One wgpu context for the whole test process. Opening a device per check made some opens fail
+/// under load, and a check that then skipped silently lost its inventory evidence; now no adapter
+/// skips every check, and a device that fails to open after another opened fails the test.
 fn wgpu_ctx() -> Option<GpuContextHandle> {
-    let ctx = select_backend(&GpuOptions {
-        preferred_backend: Some(GpuBackendKind::Wgpu),
-        ..Default::default()
+    static CTX: std::sync::OnceLock<Option<GpuContextHandle>> = std::sync::OnceLock::new();
+    CTX.get_or_init(|| {
+        let ctx = select_backend(&GpuOptions {
+            preferred_backend: Some(GpuBackendKind::Wgpu),
+            ..Default::default()
+        });
+        let found = match &ctx {
+            Ok(ctx) if ctx.wgpu().is_some() => None,
+            Ok(ctx) => Some(format!("no wgpu backend (skipped: {:?})", ctx.skipped())),
+            Err(err) => Some(err.to_string()),
+        };
+        if let Some(why) = found {
+            // The inventory lane needs the evidence: a missing GPU there is a failure.
+            assert!(
+                std::env::var_os("ACCEL_REQUIRE_GPU").is_none(),
+                "ACCEL_REQUIRE_GPU is set but no GPU opened: {why}"
+            );
+            eprintln!("skipping the GPU kernel checks: {why}");
+            return None;
+        }
+        ctx.ok()
     })
-    .unwrap();
-    ctx.wgpu().is_some().then_some(ctx)
+    .clone()
 }
 
 fn adapter(ctx: &GpuContextHandle) -> String {
@@ -72,11 +92,14 @@ fn f32_bytes(v: &[f32]) -> Vec<u8> {
     v.iter().flat_map(|f| f.to_le_bytes()).collect()
 }
 
-/// Median GPU pass time of `kernel` over `n` elements, and median CPU time of `cpu`.
+/// Median GPU pass time of `kernel` over `n` elements in its compute or fragment form, and
+/// median CPU time of `cpu`.
+#[allow(clippy::too_many_arguments)]
 fn measure(
     ctx: &GpuContextHandle,
     kernels: &GpuKernels,
     kernel: GpuKernel,
+    fragment: bool,
     src: &GpuStorage,
     dst: &GpuStorage,
     n: u64,
@@ -87,9 +110,15 @@ fn measure(
     let mut gpu = Vec::new();
     for _ in 0..7 {
         let mut encoder = device.create_command_encoder(&Default::default());
-        kernels
-            .encode(&mut encoder, kernel, src, dst, n, timer.compute_writes())
-            .unwrap();
+        if fragment {
+            kernels
+                .encode_fragment(&mut encoder, kernel, src, dst, n, timer.render_writes())
+                .unwrap();
+        } else {
+            kernels
+                .encode(&mut encoder, kernel, src, dst, n, timer.compute_writes())
+                .unwrap();
+        }
         let mut timed = timer.submit(encoder);
         timed.ticket().wait();
         let elapsed = loop {
@@ -118,7 +147,8 @@ fn measure(
     )
 }
 
-/// One op: every length matches the reference on the GPU, then a 4 MiB-ish measurement.
+/// One op: every length matches the reference on the GPU, in the compute and (where the op has
+/// one) fragment forms, then a 4 MiB-ish measurement of each.
 fn check(
     op: &str,
     kernel: GpuKernel,
@@ -129,37 +159,55 @@ fn check(
 ) {
     let Some(ctx) = wgpu_ctx() else { return };
     let kernels = GpuKernels::new(&ctx).unwrap();
-    let mut mismatch = None;
-    for len in [1usize, 3, 7, 64, 129, 1000, 4099, 65_537] {
-        let src_bytes = input(len);
-        let n = elements(&src_bytes);
-        let expected = want(&src_bytes);
-        let (src, dst) = (
-            storage(&ctx, &src_bytes),
-            out_storage(&ctx, kernel.output_len(n)),
-        );
-        kernels.run(kernel, &src, &dst, n).unwrap().wait();
-        let got = read(&dst, expected.len());
-        if got != expected && mismatch.is_none() {
-            mismatch = Some(format!("{op}: {n} elements differ"));
-        }
-    }
-    let big = input(4 << 20);
-    let n = elements(&big);
-    let (src, dst) = (storage(&ctx, &big), out_storage(&ctx, kernel.output_len(n)));
-    let mut out = vec![0u8; kernel.output_len(n) as usize];
-    let note = measure(&ctx, &kernels, kernel, &src, &dst, n, &mut || {
-        cpu(&big, &mut out)
-    });
-    eprintln!("{op}: {note}");
     let adapter = adapter(&ctx);
-    conform_with(
-        Evidence::new(op, Backend::Gpu)
-            .variant("compute")
-            .adapter(&adapter)
-            .note(&note),
-        || mismatch.map_or(Ok(()), Err),
-    );
+    let forms: &[bool] = if GpuKernels::has_fragment(kernel) {
+        &[false, true]
+    } else {
+        &[false]
+    };
+    for &fragment in forms {
+        let mut mismatch = None;
+        for len in [1usize, 3, 7, 64, 129, 1000, 4099, 65_537] {
+            let src_bytes = input(len);
+            let n = elements(&src_bytes);
+            let expected = want(&src_bytes);
+            let (src, dst) = (
+                storage(&ctx, &src_bytes),
+                out_storage(&ctx, kernel.output_len(n)),
+            );
+            let ticket = if fragment {
+                kernels.run_fragment(kernel, &src, &dst, n)
+            } else {
+                kernels.run(kernel, &src, &dst, n)
+            };
+            ticket.unwrap().wait();
+            let got = read(&dst, expected.len());
+            if got != expected && mismatch.is_none() {
+                mismatch = Some(format!("{op}: {n} elements differ"));
+            }
+        }
+        let big = input(4 << 20);
+        let n = elements(&big);
+        let (src, dst) = (storage(&ctx, &big), out_storage(&ctx, kernel.output_len(n)));
+        let mut out = vec![0u8; kernel.output_len(n) as usize];
+        let note = measure(&ctx, &kernels, kernel, fragment, &src, &dst, n, &mut || {
+            cpu(&big, &mut out)
+        });
+        let variant = if fragment { "fragment" } else { "compute" };
+        let note = if fragment {
+            format!("{note} (render pass; the target-to-buffer copy is not timed)")
+        } else {
+            note
+        };
+        eprintln!("{op} ({variant}): {note}");
+        conform_with(
+            Evidence::new(op, Backend::Gpu)
+                .variant(variant)
+                .adapter(&adapter)
+                .note(&note),
+            || mismatch.map_or(Ok(()), Err),
+        );
+    }
 }
 
 #[test]

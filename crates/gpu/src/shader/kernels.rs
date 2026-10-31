@@ -12,7 +12,10 @@ use wgpu::util::DeviceExt as _;
 use super::{GpuStorage, GpuTicket};
 use crate::{GpuContextHandle, GpuError};
 
-const WGSL: &str = include_str!("kernels.wgsl");
+const COMMON: &str = include_str!("kernels_common.wgsl");
+const COMPUTE: &str = include_str!("kernels.wgsl");
+/// Width of the fragment form's render target, in output words.
+const FRAGMENT_WIDTH: u32 = 4096;
 const WORKGROUP: u64 = 64;
 
 /// An op [`GpuKernels`] runs; each matches a `daedalus-kernels` CPU kernel bit for bit.
@@ -111,6 +114,10 @@ pub struct GpuKernels {
     pipeline_layout: wgpu::PipelineLayout,
     pipelines: Mutex<HashMap<GpuKernel, Arc<wgpu::ComputePipeline>>>,
     max_groups: u32,
+    gpu: GpuContextHandle,
+    /// Fragment forms, and their render targets by size.
+    fragments: Mutex<HashMap<GpuKernel, Arc<super::FragmentPass>>>,
+    targets: Mutex<HashMap<(u32, u32), Arc<super::GpuTexture>>>,
 }
 
 impl std::fmt::Debug for GpuKernels {
@@ -139,7 +146,7 @@ impl GpuKernels {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("daedalus-kernels"),
-            source: wgpu::ShaderSource::Wgsl(WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(format!("{COMMON}\n{COMPUTE}").into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("daedalus-kernels"),
@@ -166,6 +173,9 @@ impl GpuKernels {
             pipeline_layout,
             pipelines: Mutex::new(HashMap::new()),
             max_groups: device.limits().max_compute_workgroups_per_dimension,
+            gpu: gpu.clone(),
+            fragments: Mutex::new(HashMap::new()),
+            targets: Mutex::new(HashMap::new()),
         })
     }
 
@@ -321,6 +331,157 @@ impl GpuKernels {
         }
         encoder.copy_buffer_to_buffer(src.buffer(), 0, dst.buffer(), 0, n);
         Ok(())
+    }
+
+    /// Whether `kernel` has a fragment form ([`GpuKernels::encode_fragment`]): all but base64
+    /// decode, whose error report needs atomics.
+    pub fn has_fragment(kernel: GpuKernel) -> bool {
+        kernel != GpuKernel::Base64Decode
+    }
+
+    fn fragment(&self, kernel: GpuKernel) -> Result<Arc<super::FragmentPass>, GpuError> {
+        if let Some(pass) = self.fragments.lock().get(&kernel) {
+            return Ok(pass.clone());
+        }
+        let word = kernel.entry();
+        let wgsl = format!(
+            "@group(0) @binding(0) var<storage, read> src: array<u32>;
+             @group(0) @binding(1) var<storage, read> params: Params;
+             {COMMON}
+             @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {{
+                 let t = u32(pos.y) * params.unused + u32(pos.x);
+                 if (t >= params.threads) {{ return vec4<u32>(0u); }}
+                 return vec4<u32>(word_{word}(t), 0u, 0u, 0u);
+             }}"
+        );
+        let pass = Arc::new(super::FragmentPass::with_device(
+            &self.device,
+            &self.queue,
+            &wgsl,
+            &[wgpu::TextureFormat::R32Uint],
+        )?);
+        self.fragments.lock().insert(kernel, pass.clone());
+        Ok(pass)
+    }
+
+    /// Encode `kernel` as a fragment pass: each fragment of an `R32Uint` target computes one
+    /// output word, then the target is copied into `dst`. The fast form on tile-based GPUs (V3D,
+    /// Mali), where fragment passes beat compute; the results equal [`GpuKernels::encode`]'s.
+    pub fn encode_fragment(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        kernel: GpuKernel,
+        src: &GpuStorage,
+        dst: &GpuStorage,
+        n: u64,
+        timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) -> Result<(), GpuError> {
+        if !Self::has_fragment(kernel) {
+            return Err(GpuError::Unsupported);
+        }
+        if n == 0 {
+            return Ok(());
+        }
+        let (need_in, need_out) = (
+            kernel.input_len(n),
+            kernel.output_len(n).next_multiple_of(4),
+        );
+        if src.size() < need_in.next_multiple_of(4) || dst.size() < need_out {
+            return Err(GpuError::InvalidInput(format!(
+                "{kernel:?} over {n} needs {need_in} input and {need_out} output bytes; got {} and {}",
+                src.size(),
+                dst.size()
+            )));
+        }
+        let threads = kernel.threads(n);
+        let max = self.device.limits().max_texture_dimension_2d;
+        let width = FRAGMENT_WIDTH.min(max);
+        let height = threads.div_ceil(u64::from(width));
+        if height > u64::from(max) {
+            return Err(GpuError::InvalidInput(format!(
+                "{kernel:?} over {n} elements does not fit one {width}x{max} target"
+            )));
+        }
+        let (w, h) = ((threads.min(u64::from(width))) as u32, height as u32);
+        let target = {
+            let mut targets = self.targets.lock();
+            match targets.get(&(w, h)) {
+                Some(t) => t.clone(),
+                None => {
+                    let t = Arc::new(super::GpuTexture::with_device(
+                        &self.device,
+                        &self.queue,
+                        (w, h),
+                        wgpu::TextureFormat::R32Uint,
+                        Some("daedalus-kernels-fragment"),
+                    )?);
+                    targets.insert((w, h), t.clone());
+                    t
+                }
+            }
+        };
+        let params = [n as u32, threads as u32, kernel.output_len(n) as u32, w];
+        let params = GpuStorage::with_data(
+            &self.gpu,
+            &params
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+            Some("daedalus-kernels-params"),
+        )?;
+        let pass = self.fragment(kernel)?;
+        let binding = pass.bind(&[], &[src, &params])?;
+        pass.encode_bound_timed(encoder, &binding, &[&target], timestamps)?;
+        // Full rows, then the last (partial) row.
+        let full_rows = (threads / u64::from(w)) as u32;
+        let copy = |encoder: &mut wgpu::CommandEncoder, y: u32, rows: u32, words: u32| {
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: target.texture(),
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: dst.buffer(),
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: u64::from(y) * u64::from(w) * 4,
+                        bytes_per_row: (rows > 1).then_some(w * 4),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::Extent3d {
+                    width: words,
+                    height: rows,
+                    depth_or_array_layers: 1,
+                },
+            );
+        };
+        if full_rows > 0 {
+            copy(encoder, 0, full_rows, w);
+        }
+        let rest = (threads - u64::from(full_rows) * u64::from(w)) as u32;
+        if rest > 0 {
+            copy(encoder, full_rows, 1, rest);
+        }
+        Ok(())
+    }
+
+    /// Encode and submit `kernel`'s fragment form (never waits).
+    pub fn run_fragment(
+        &self,
+        kernel: GpuKernel,
+        src: &GpuStorage,
+        dst: &GpuStorage,
+        n: u64,
+    ) -> Result<GpuTicket, GpuError> {
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        self.encode_fragment(&mut encoder, kernel, src, dst, n, None)?;
+        Ok(GpuTicket::submit_on(
+            &self.device,
+            &self.queue,
+            [encoder.finish()],
+        ))
     }
 
     /// Encode and submit `kernel` (never waits).

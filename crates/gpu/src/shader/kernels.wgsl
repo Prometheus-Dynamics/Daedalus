@@ -1,17 +1,5 @@
-// Data-parallel kernels on GPU-resident data (`GpuKernels`): the GPU column of the Daedalus ops
-// in docs/backend-matrix.md. Buffers are `array<u32>` (WGSL has no byte stores): every thread
-// writes whole output words, little-endian bytes, and the results are bit-exact with the CPU
-// references (integer-only conversions, no float flushing of the values that matter).
-
-struct Params {
-    // Input elements: pixels, floats, halves or bytes, per entry point.
-    n: u32,
-    // Threads that write (output words, or output elements).
-    threads: u32,
-    // Output bytes (to zero the tail of the last word).
-    out_len: u32,
-    unused: u32,
-}
+// The compute form of the data-parallel kernels (`GpuKernels`): one thread per output word.
+// The word functions are in `kernels_common.wgsl`, prepended at load.
 
 @group(0) @binding(0) var<storage, read> src: array<u32>;
 @group(0) @binding(1) var<storage, read_write> dst: array<u32>;
@@ -25,168 +13,74 @@ fn thread_index(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
     return gid.x + gid.y * groups.x * WG;
 }
 
-fn byte_at(i: u32) -> u32 {
-    return (src[i >> 2u] >> ((i & 3u) * 8u)) & 0xffu;
-}
-
-/// Keep the bytes of word `t` that lie before `out_len`.
-fn tail_mask(t: u32, word: u32) -> u32 {
-    let first = t * 4u;
-    if (first + 4u <= params.out_len) {
-        return word;
-    }
-    let keep = params.out_len - first;
-    return word & ((1u << (keep * 8u)) - 1u);
-}
-
 @compute @workgroup_size(64)
 fn rgb_to_rgba(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    let b = t * 3u;
-    dst[t] = byte_at(b) | (byte_at(b + 1u) << 8u) | (byte_at(b + 2u) << 16u) | 0xff000000u;
+    dst[t] = word_rgb_to_rgba(t);
 }
 
 @compute @workgroup_size(64)
 fn rgba_to_rgb(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    var word = 0u;
-    for (var k = 0u; k < 4u; k++) {
-        let j = t * 4u + k;
-        if (j < params.out_len) {
-            word |= byte_at((j / 3u) * 4u + j % 3u) << (8u * k);
-        }
-    }
-    dst[t] = word;
+    dst[t] = word_rgba_to_rgb(t);
 }
 
 @compute @workgroup_size(64)
 fn gray_to_rgba(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    let g = byte_at(t);
-    dst[t] = g | (g << 8u) | (g << 16u) | 0xff000000u;
+    dst[t] = word_gray_to_rgba(t);
 }
 
 @compute @workgroup_size(64)
 fn rgba_red(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    var word = 0u;
-    for (var k = 0u; k < 4u; k++) {
-        let p = t * 4u + k;
-        if (p < params.out_len) {
-            word |= (src[p] & 0xffu) << (8u * k);
-        }
-    }
-    dst[t] = word;
+    dst[t] = word_rgba_red(t);
 }
 
 @compute @workgroup_size(64)
 fn f32_from_le(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    // GPU words are little-endian: the bits are the float.
-    dst[t] = src[t];
-}
-
-fn half_to_f32_bits(h: u32) -> u32 {
-    let sign = (h & 0x8000u) << 16u;
-    let e = (h >> 10u) & 0x1fu;
-    let m = h & 0x3ffu;
-    if (e == 0x1fu) {
-        // Inf, or NaN quieted (as F16C and the CPU kernels do).
-        return sign | 0x7f800000u | (m << 13u) | select(0u, 0x400000u, m != 0u);
-    }
-    if (e != 0u) {
-        return sign | ((e + 112u) << 23u) | (m << 13u);
-    }
-    if (m == 0u) {
-        return sign;
-    }
-    // Subnormal m * 2^-24, normalized with integers (a float multiply could be flushed).
-    let p = firstLeadingBit(m);
-    return sign | ((p + 103u) << 23u) | ((m << (23u - p)) & 0x7fffffu);
+    dst[t] = word_f32_from_le(t);
 }
 
 @compute @workgroup_size(64)
 fn f16_to_f32(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    dst[t] = half_to_f32_bits((src[t >> 1u] >> ((t & 1u) * 16u)) & 0xffffu);
-}
-
-fn unorm8(bits: u32) -> u32 {
-    // NaN by its bits (a float compare may be folded away).
-    if ((bits & 0x7fffffffu) > 0x7f800000u) { return 0u; }
-    let s = clamp(bitcast<f32>(bits), 0.0, 1.0) * 255.0;
-    let whole = u32(s);
-    // Half away from zero, like the CPU kernels (`round` is half-to-even in WGSL).
-    return min(whole + select(0u, 1u, s - f32(whole) >= 0.5), 255u);
+    dst[t] = word_f16_to_f32(t);
 }
 
 @compute @workgroup_size(64)
 fn f32_to_unorm8(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    var word = 0u;
-    for (var k = 0u; k < 4u; k++) {
-        let i = t * 4u + k;
-        if (i < params.n) {
-            word |= unorm8(src[i]) << (8u * k);
-        }
-    }
-    dst[t] = word;
+    dst[t] = word_f32_to_unorm8(t);
 }
 
 @compute @workgroup_size(64)
 fn copy_words(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    dst[t] = tail_mask(t, src[t]);
-}
-
-fn hex_digit(n: u32) -> u32 {
-    return n + 48u + select(0u, 39u, n > 9u);
+    dst[t] = word_copy_words(t);
 }
 
 @compute @workgroup_size(64)
 fn hex_lower(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    // Output word t: the 4 digits of input bytes 2t and 2t + 1.
-    let a = byte_at(2u * t);
-    let b = select(0u, byte_at(2u * t + 1u), 2u * t + 1u < params.n);
-    let word = hex_digit(a >> 4u) | (hex_digit(a & 15u) << 8u) | (hex_digit(b >> 4u) << 16u)
-        | (hex_digit(b & 15u) << 24u);
-    dst[t] = tail_mask(t, word);
-}
-
-fn b64_symbol(v: u32) -> u32 {
-    var c = v + 65u;
-    c += select(0u, 6u, v >= 26u);
-    c -= select(0u, 75u, v >= 52u);
-    c -= select(0u, 15u, v == 62u);
-    c -= select(0u, 12u, v == 63u);
-    return c;
+    dst[t] = word_hex_lower(t);
 }
 
 @compute @workgroup_size(64)
 fn base64_encode(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
     let t = thread_index(gid, groups);
     if (t >= params.threads) { return; }
-    // Output word t: the 4 symbols of input bytes 3t..3t + 2, padded with '=' at the end.
-    let b = t * 3u;
-    let have = min(3u, params.n - b);
-    let x = (byte_at(b) << 16u) | (select(0u, byte_at(b + 1u), have > 1u) << 8u)
-        | select(0u, byte_at(b + 2u), have > 2u);
-    var word = 0u;
-    for (var k = 0u; k < 4u; k++) {
-        let c = select(61u, b64_symbol((x >> (18u - 6u * k)) & 63u), k <= have);
-        word |= c << (8u * k);
-    }
-    dst[t] = word;
+    dst[t] = word_base64_encode(t);
 }
 
 fn b64_value(c: u32) -> u32 {
