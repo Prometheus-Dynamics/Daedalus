@@ -42,9 +42,15 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
 - [ ] **What:** the `gpu_probe` segfault at exit under the cross-built Khronos validation layer
       on v3dv.
       **Why:** VVL is how new Eidos kernels get validated; a crashing run hides real errors.
+      **Found (2026-10-30, Raze):** a bare `vkCreateInstance` + `vkDestroyInstance` program
+      segfaults at exit under the layer. Under `_exit(0)`, or with the instance never destroyed,
+      it does not. The crash is in the zig-cross-built layer's static destructors; Daedalus, wgpu
+      and v3dv are not involved, and messages printed before exit are valid. The fix is a
+      properly built layer (a distro arm64 package, or a build against a real aarch64 sysroot).
       **Done when:** `./scripts/ci.sh vvl` on the Raze exits 0, with no layer errors from our
       code.
-      **Blocked by:** a Raze window.
+      **Blocked by:** a user decision on where the layer comes from (both options download
+      files), then a Raze window.
 - [x] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
       invocations, workgroup storage, storage buffer size, f16, int64, int64 atomics,
       timestamps, subgroups.
@@ -102,11 +108,12 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       pair and the results match. `gpu_bench` on the Raze shows the helper costs no more than the
       hand-written fragment pass (within 5%). The guide documents it.
       **Blocked by:** nothing (the Raze check needs a window).
-- [ ] **What:** `read_buffer_into(&GpuStorage, range, &mut [u8])`, plus a non-blocking form
+- [x] **What:** `read_buffer_into(&GpuStorage, range, &mut [u8])` (shipped as `GpuStorage::read_into` / `start_read` → `GpuReadback::try_read_into`), plus a non-blocking form
       through `GpuSubmission`, with a persistent staging ring.
       **Why:** Eidos mesh and depth readback, with no allocation per download.
-      **Done when:** a test reads back 1000 times with zero allocations after warm-up (counting
-      allocator) and correct contents.
+      **Done when:** a test reads back repeatedly with correct contents and no new staging
+      buffers after the first (`staging_buffers_created()`). wgpu's own per-submit bookkeeping
+      still allocates.
       **Blocked by:** nothing.
 - [ ] **What:** `RuntimePlanExplanation::device_round_trips()`, which lists CPU→GPU→CPU chains
       across nodes.

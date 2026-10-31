@@ -206,3 +206,62 @@ fn tickets_complete_without_waiting_and_in_flight_is_bounded() {
     );
     assert!(in_flight.is_empty());
 }
+
+/// Readbacks land in the caller's buffer, blocking or polled, and reuse one staging buffer.
+#[test]
+fn gpu_storage_reads_back_into_caller_buffers() {
+    let ctx = select_backend(&GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Wgpu),
+        ..Default::default()
+    })
+    .unwrap();
+    if ctx.wgpu().is_none() {
+        return;
+    }
+    let data: Vec<u8> = (0..64u8).collect();
+    let storage = crate::GpuStorage::with_data(&ctx, &data, None).unwrap();
+    let mut all = [0u8; 64];
+    storage.read_into(0, &mut all).unwrap();
+    assert_eq!(&all[..], &data[..]);
+    // A sub-range whose length is not a multiple of 4.
+    let mut part = [0u8; 6];
+    storage.read_into(8, &mut part).unwrap();
+    assert_eq!(part, [8, 9, 10, 11, 12, 13]);
+    assert!(storage.start_read(2, 4).is_err(), "unaligned offset");
+    assert!(storage.start_read(60, 8).is_err(), "past the end");
+
+    // Polled: never waits, delivers once, rejects a wrong-sized destination without consuming.
+    let mut readback = storage.start_read(16, 8).unwrap();
+    let mut wrong = [0u8; 4];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut out = [0u8; 8];
+    loop {
+        match readback.try_read_into(&mut wrong) {
+            None => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "readback never arrived"
+                );
+                std::thread::yield_now();
+            }
+            Some(result) => {
+                assert!(matches!(result, Err(crate::GpuError::InvalidInput(_))));
+                break;
+            }
+        }
+    }
+    readback.try_read_into(&mut out).unwrap().unwrap();
+    assert_eq!(out, [16, 17, 18, 19, 20, 21, 22, 23]);
+    assert!(
+        readback.try_read_into(&mut out).unwrap().is_err(),
+        "consumed"
+    );
+
+    // Steady state: sequential readbacks reuse the same staging buffer.
+    let created = storage.staging_buffers_created();
+    for _ in 0..100 {
+        storage.read_into(0, &mut all).unwrap();
+    }
+    assert_eq!(storage.staging_buffers_created(), created);
+    assert_eq!(created, 1);
+}

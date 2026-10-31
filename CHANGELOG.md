@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Readback into caller buffers.** `GpuStorage::start_read(offset, len) -> GpuReadback`
+  copies into a reusable staging buffer without waiting. `GpuReadback::try_read_into(&mut [u8])`
+  delivers the data on a later tick, and `GpuStorage::read_into` is the blocking form. No buffer
+  is allocated per download; `staging_buffers_created()` stays at one for sequential readbacks.
 - **`GpuTicket` and `GpuInFlight<T>`**: non-blocking GPU completion. A node submits on one
   tick, keeps the ticket in its state, and on a later tick `try_complete()` (one non-blocking
   poll) tells it the work finished, so no tick waits on a fence. `GpuInFlight` caps the number of

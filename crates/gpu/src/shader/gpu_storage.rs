@@ -1,6 +1,9 @@
 //! Node-owned persistent storage buffers.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+use parking_lot::Mutex;
 
 use crate::{GpuContextHandle, GpuError};
 
@@ -19,6 +22,14 @@ pub struct GpuStorage {
     device: wgpu::Device,
     queue: wgpu::Queue,
     device_key: usize,
+    staging: Arc<StagingRing>,
+}
+
+/// Reusable `MAP_READ` buffers for readbacks: a readback takes one and returns it when done.
+#[derive(Default)]
+struct StagingRing {
+    free: Mutex<Vec<wgpu::Buffer>>,
+    created: AtomicUsize,
 }
 
 impl std::fmt::Debug for GpuStorage {
@@ -57,6 +68,7 @@ impl GpuStorage {
             device: device.clone(),
             queue: queue.clone(),
             device_key: super::device_key(device),
+            staging: Arc::default(),
         })
     }
 
@@ -128,6 +140,8 @@ impl GpuStorage {
         });
         self.buffer = Arc::new(buffer);
         self.size = size;
+        // Readbacks in flight return their (smaller) staging buffers to the old ring.
+        self.staging = Arc::default();
         Ok(true)
     }
 
@@ -143,6 +157,166 @@ impl GpuStorage {
                 device_key: self.device_key,
             },
             readback: false,
+        }
+    }
+
+    /// Copy `out.len()` bytes from `offset` into `out`, waiting for the GPU. For setup, shutdown
+    /// and tests: a tick uses [`GpuStorage::start_read`] and polls the [`GpuReadback`].
+    pub fn read_into(&self, offset: u64, out: &mut [u8]) -> Result<(), GpuError> {
+        let mut readback = self.start_read(offset, out.len() as u64)?;
+        readback.wait();
+        readback
+            .try_read_into(out)
+            .unwrap_or_else(|| Err(GpuError::Internal("readback did not complete".into())))
+    }
+
+    /// Start copying `len` bytes from `offset` into a reusable staging buffer and return without
+    /// waiting. Work queued on this device before the call (dispatches writing the buffer) lands
+    /// first. `offset` must be a multiple of 4; the range must fit the buffer.
+    pub fn start_read(&self, offset: u64, len: u64) -> Result<GpuReadback, GpuError> {
+        let copy = len.next_multiple_of(4);
+        let end = offset.checked_add(copy);
+        if !offset.is_multiple_of(4) || len == 0 || end.is_none_or(|end| end > self.size) {
+            return Err(GpuError::InvalidInput(format!(
+                "GpuStorage read of {len} bytes at {offset} from {} bytes (4-byte aligned offset)",
+                self.size
+            )));
+        }
+        let staging = self.staging.free.lock().pop().unwrap_or_else(|| {
+            self.staging.created.fetch_add(1, Ordering::Relaxed);
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu-storage-readback"),
+                size: self.size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&self.buffer, offset, &staging, 0, copy);
+        self.queue.submit([encoder.finish()]);
+        let state = Arc::new(AtomicU8::new(MAP_PENDING));
+        let flag = state.clone();
+        staging
+            .slice(..copy)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let value = if result.is_ok() { MAP_OK } else { MAP_FAILED };
+                flag.store(value, Ordering::Release);
+            });
+        Ok(GpuReadback {
+            staging: Some(staging),
+            ring: self.staging.clone(),
+            state,
+            len: len as usize,
+            copy,
+            device: self.device.clone(),
+        })
+    }
+
+    /// Staging buffers this storage has created for readbacks: constant once readbacks reuse
+    /// them (one per readback in flight).
+    pub fn staging_buffers_created(&self) -> usize {
+        self.staging.created.load(Ordering::Relaxed)
+    }
+}
+
+const MAP_PENDING: u8 = 0;
+const MAP_OK: u8 = 1;
+const MAP_FAILED: u8 = 2;
+
+/// A readback started by [`GpuStorage::start_read`]. Poll it each tick with
+/// [`GpuReadback::try_read_into`]; it never waits.
+pub struct GpuReadback {
+    staging: Option<wgpu::Buffer>,
+    ring: Arc<StagingRing>,
+    state: Arc<AtomicU8>,
+    len: usize,
+    copy: u64,
+    device: wgpu::Device,
+}
+
+impl std::fmt::Debug for GpuReadback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GpuReadback")
+            .field("len", &self.len)
+            .field("ready", &self.is_ready())
+            .finish_non_exhaustive()
+    }
+}
+
+impl GpuReadback {
+    /// Bytes this readback delivers.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Whether the data has arrived (as of the last device poll).
+    pub fn is_ready(&self) -> bool {
+        self.state.load(Ordering::Acquire) != MAP_PENDING
+    }
+
+    /// `None` while the copy is in flight (after one non-blocking device poll). Once it has
+    /// arrived, copies it into `out` (exactly [`GpuReadback::len`] bytes) and returns
+    /// `Some(Ok(()))`; the staging buffer goes back for reuse, and later calls return
+    /// `Some(Err(..))`.
+    pub fn try_read_into(&mut self, out: &mut [u8]) -> Option<Result<(), GpuError>> {
+        if !self.is_ready() {
+            let _ = self.device.poll(wgpu::PollType::Poll);
+            if !self.is_ready() {
+                return None;
+            }
+        }
+        let Some(staging) = self.staging.take() else {
+            return Some(Err(GpuError::InvalidInput(
+                "readback already consumed".into(),
+            )));
+        };
+        if self.state.load(Ordering::Acquire) == MAP_FAILED {
+            return Some(Err(GpuError::Internal("readback map failed".into())));
+        }
+        if out.len() != self.len {
+            self.staging = Some(staging);
+            return Some(Err(GpuError::InvalidInput(format!(
+                "readback of {} bytes into a {}-byte buffer",
+                self.len,
+                out.len()
+            ))));
+        }
+        let result = match staging.slice(..self.copy).get_mapped_range() {
+            Ok(view) => {
+                out.copy_from_slice(&view[..self.len]);
+                Ok(())
+            }
+            Err(err) => Err(GpuError::Internal(format!("readback map failed: {err:?}"))),
+        };
+        staging.unmap();
+        self.ring.free.lock().push(staging);
+        Some(result)
+    }
+
+    /// Wait for the data to arrive. For shutdown and tests.
+    pub fn wait(&self) {
+        if !self.is_ready() {
+            let _ = self.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: None,
+            });
+        }
+    }
+}
+
+impl Drop for GpuReadback {
+    fn drop(&mut self) {
+        // A mapped, unread staging buffer goes back to the ring; one still mapping is dropped
+        // (wgpu frees it once the map settles).
+        if let Some(staging) = self.staging.take()
+            && self.state.load(Ordering::Acquire) == MAP_OK
+        {
+            staging.unmap();
+            self.ring.free.lock().push(staging);
         }
     }
 }

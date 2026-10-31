@@ -43,6 +43,14 @@ frees the buffer. `new` creates it zeroed, `with_data` creates it with contents,
 `ensure_size` grows it. `write` queues an update. Bind it to your own pipelines with `buffer()`,
 or to Daedalus dispatches with `binding()`. See `crates/daedalus/tests/gpu_storage.rs`.
 
+To read a `GpuStorage` back into an existing CPU buffer, call
+`storage.start_read(offset, len)` on the tick that needs the data. It queues the copy into a
+reusable staging buffer and returns a `GpuReadback`. On later ticks,
+`readback.try_read_into(&mut out)` returns `None` until the data arrives (one non-blocking poll),
+then copies it into `out`. `read_into(offset, &mut out)` is the blocking form, for setup and
+tests. Sequential readbacks reuse one staging buffer; `staging_buffers_created()` counts how
+many exist.
+
 A tick never waits on a GPU fence. Submit with `GpuTicket::submit(gpu, commands)` and keep the
 ticket in the node's state. On later ticks, `ticket.try_complete()` runs one non-blocking poll
 (about 0.3 µs on the CM5) and returns `Some(())` once the work has finished; emit the result on
