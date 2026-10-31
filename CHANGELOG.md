@@ -17,6 +17,9 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`RuntimePlanExplanation::device_round_trips()`** lists CPU→GPU→CPU chains across nodes
+  (`DeviceRoundTrip`: the upload edge, the nodes on the device, the download edge), so a test can
+  assert that a GPU pipeline has none.
 - **Fragment-pass nodes: `FragmentPass` and `GpuTexture`.** A full-screen fragment pass reads
   `GpuTexture` inputs (`textureLoad`) and `GpuStorage` parameters, and writes one or more render
   targets. The tested formats are r8, rgba8, r32f and rg32f. It returns a `GpuTicket`.

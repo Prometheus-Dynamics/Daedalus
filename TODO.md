@@ -117,7 +117,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       buffers after the first (`staging_buffers_created()`). wgpu's own per-submit bookkeeping
       still allocates.
       **Blocked by:** nothing.
-- [ ] **What:** `RuntimePlanExplanation::device_round_trips()`, which lists CPU→GPU→CPU chains
+- [x] **What:** `RuntimePlanExplanation::device_round_trips()`, which lists CPU→GPU→CPU chains
       across nodes.
       **Why:** a consumer test asserts mechanically that a GPU pipeline has none.
       **Done when:** tests cover a graph with a round trip (reported with nodes and ports) and

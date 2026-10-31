@@ -217,9 +217,9 @@ pub use io::{
     DEFAULT_OUTPUT_PORT, NodeIo, NodePort, TypedInputResolution, TypedInputResolutionKind,
 };
 pub use plan::{
-    BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry, FusionBlock,
-    HostPortConnection, HostPortDescriptor, HostPortDirection, NODE_COST_META_KEY,
-    NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_FUSION_META_KEY,
+    BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry,
+    DeviceRoundTrip, FusionBlock, HostPortConnection, HostPortDescriptor, HostPortDirection,
+    NODE_COST_META_KEY, NODE_EXECUTION_KIND_META_KEY, NODE_FIRE_META_KEY, NODE_FUSION_META_KEY,
     NODE_REQUIRED_INPUTS_META_KEY, NODE_SHAREABLE_META_KEY, NodeExecutionKind, NodeFire,
     RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation, RuntimeEdgeHandoff,
     RuntimeEdgePolicy, RuntimeEdgeTransport, RuntimeFusedUnitExplanation, RuntimeNode,

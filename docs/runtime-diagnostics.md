@@ -219,6 +219,21 @@ crosses_residency: none
 fused_units: [daedalus.frame_bench:stage -> daedalus.frame_bench:stage] edges [1]
 ```
 
+
+### Device round trips
+
+`RuntimePlanExplanation::device_round_trips()` lists every CPU→GPU→CPU chain across nodes. Each
+entry names the upload edge, the nodes the payload passes through on device-resident edges, and
+the download edge. One edge that uploads and downloads within its own adapter path is listed
+with the same edge twice. A GPU pipeline test can assert the list is empty:
+
+```rust
+assert!(host.explain_plan().device_round_trips().is_empty());
+```
+
+Only transfers on edges are visible. An upload or readback done inside a node's handler never
+appears, so keep GPU data on GPU-typed ports between nodes.
+
 ### Frame bench harness
 
 `crates/frame-bench` (`daedalus-frame-bench`, not published; use it as a path or git

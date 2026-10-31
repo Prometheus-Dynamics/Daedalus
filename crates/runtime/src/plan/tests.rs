@@ -198,3 +198,99 @@ fn explanation_flags_copying_and_crossing_frame_edges() {
     assert_eq!(json["edges"][0]["copies_frame"], true);
     assert_eq!(json["crossing_edges"][0], 0);
 }
+
+fn edge(from: usize, from_port: &str, to: usize, to_port: &str) -> Edge {
+    Edge {
+        from: PortRef {
+            node: NodeRef(from),
+            port: from_port.into(),
+        },
+        to: PortRef {
+            node: NodeRef(to),
+            port: to_port.into(),
+        },
+        metadata: BTreeMap::new(),
+    }
+}
+
+#[test]
+fn explanation_lists_device_round_trips_across_nodes() {
+    use daedalus_transport::{AdaptKind, Residency};
+    // src -upload-> blur -device-> sharpen -download-> sink; blur -device-> preview (stays on
+    // the device: no trip); src -> log (CPU only).
+    let mut graph = Graph::default();
+    for (id, inputs, outputs) in [
+        ("src", vec![], vec!["out", "raw"]),
+        ("blur", vec!["in"], vec!["out", "view"]),
+        ("sharpen", vec!["in"], vec!["out"]),
+        ("sink", vec!["in"], vec![]),
+        ("preview", vec!["in"], vec![]),
+        ("log", vec!["in"], vec![]),
+    ] {
+        graph.nodes.push(
+            NodeInstance::new(id)
+                .with_inputs(inputs)
+                .with_outputs(outputs),
+        );
+    }
+    graph.edges = vec![
+        edge(0, "out", 1, "in"),
+        edge(1, "out", 2, "in"),
+        edge(2, "out", 3, "in"),
+        edge(1, "view", 4, "in"),
+        edge(0, "raw", 5, "in"),
+    ];
+    let mut plan =
+        RuntimePlan::try_from_execution(&ExecutionPlan::new(graph, vec![])).expect("plan");
+    let upload = || {
+        transport(vec![step(
+            AdaptKind::DeviceUpload,
+            "cpu:img",
+            "gpu:img",
+            Some(Residency::Gpu),
+        )])
+    };
+    let download = || {
+        transport(vec![step(
+            AdaptKind::DeviceDownload,
+            "gpu:img",
+            "cpu:img",
+            Some(Residency::Cpu),
+        )])
+    };
+    let index_of = |plan: &RuntimePlan, from: usize, to: usize| {
+        plan.explain()
+            .edges
+            .iter()
+            .find(|e| e.from_node == from && e.to_node == to)
+            .map(|e| e.index)
+            .expect("edge")
+    };
+    let (up, down) = (index_of(&plan, 0, 1), index_of(&plan, 2, 3));
+    plan.edge_transports = vec![None; plan.edges.len()];
+    plan.edge_transports[up] = Some(upload());
+    plan.edge_transports[down] = Some(download());
+    let trips = plan.explain().device_round_trips();
+    assert_eq!(
+        trips,
+        vec![crate::plan::DeviceRoundTrip {
+            upload_edge: up,
+            download_edge: down,
+            nodes: vec![1, 2],
+            node_ids: vec!["blur".into(), "sharpen".into()],
+        }]
+    );
+
+    // No download: the chain stays on the device.
+    plan.edge_transports[down] = None;
+    assert!(plan.explain().device_round_trips().is_empty());
+
+    // One edge that uploads and downloads in its own path.
+    let mut both = upload();
+    both.adapter_path.extend(download().adapter_path);
+    plan.edge_transports[up] = Some(both);
+    let trips = plan.explain().device_round_trips();
+    assert_eq!(trips.len(), 1);
+    assert_eq!((trips[0].upload_edge, trips[0].download_edge), (up, up));
+    assert!(trips[0].nodes.is_empty());
+}

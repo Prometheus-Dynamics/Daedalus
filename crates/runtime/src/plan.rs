@@ -6,6 +6,7 @@ mod explain_flags;
 mod fusion;
 mod host_ports;
 mod policy;
+mod round_trips;
 mod shared_metadata;
 mod transports;
 
@@ -47,6 +48,7 @@ pub use policy::{
     EDGE_PRESSURE_DROP_NEWEST, EDGE_PRESSURE_DROP_OLDEST, EDGE_PRESSURE_ERROR_ON_FULL,
     EDGE_PRESSURE_FIFO, EDGE_PRESSURE_LATEST_ONLY, EDGE_PRESSURE_POLICY_KEY, RuntimeEdgePolicy,
 };
+pub use round_trips::DeviceRoundTrip;
 
 pub fn node_execution_kind_from_metadata(
     metadata: &alloc::collections::BTreeMap<String, Value>,
