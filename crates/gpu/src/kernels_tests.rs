@@ -421,3 +421,45 @@ fn copy_engine_copies_gpu_resident_bytes() {
         },
     );
 }
+
+/// CRC-32 on the GPU (chunk CRCs combined on the host) against the bitwise reference, measured.
+#[test]
+fn gpu_crc32_matches_the_reference() {
+    let Some(ctx) = wgpu_ctx() else { return };
+    let kernels = GpuKernels::new(&ctx).unwrap();
+    let mut mismatch = None;
+    for len in [1usize, 7, 4095, 4096, 4097, 65_537, 1 << 20] {
+        let data = bytes(len, 18);
+        let got = kernels.crc32(&storage(&ctx, &data), len as u64).unwrap();
+        if got != r::crc32(&data) && mismatch.is_none() {
+            mismatch = Some(format!("{len} bytes: {got:#x}"));
+        }
+    }
+    let big = bytes(4 << 20, 19);
+    let src = storage(&ctx, &big);
+    let mut gpu = Vec::new();
+    for _ in 0..5 {
+        let start = Instant::now();
+        let _ = kernels.crc32(&src, big.len() as u64).unwrap();
+        gpu.push(start.elapsed());
+    }
+    gpu.sort();
+    let start = Instant::now();
+    let _ = daedalus_kernels::crc32(&big);
+    let cpu = start.elapsed();
+    let note = format!(
+        "measured over {} bytes, data GPU-resident: gpu chunks + host combine {:.3} ms (submit to result) vs cpu kernel {:.3} ms",
+        big.len(),
+        gpu[2].as_secs_f64() * 1e3,
+        cpu.as_secs_f64() * 1e3
+    );
+    eprintln!("daedalus.codec.crc32: {note}");
+    let adapter = adapter(&ctx);
+    conform_with(
+        Evidence::new("daedalus.codec.crc32", Backend::Gpu)
+            .variant("chunks+combine")
+            .adapter(&adapter)
+            .note(&note),
+        || mismatch.map_or(Ok(()), Err),
+    );
+}

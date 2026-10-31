@@ -258,8 +258,8 @@ built, measured per device and kept selectable. `docs/backend-matrix.md` is the 
       decision.
       **Done when:** the RGA cells pass on a Rockchip board.
       **Blocked by:** a Rockchip board; the user's OK for the librga headers (route a).
-- [ ] **What:** the remaining CRC-32 cells: NEON32 `vmull.p8` folding, `rvv+zvbc`, and a GPU
-      chunk-and-combine CRC.
+- [ ] **What:** the remaining CRC-32 cells: NEON32 `vmull.p8` folding and `rvv+zvbc` (the GPU
+      chunk-and-combine CRC is done).
       **Done when:** each passes conformance in `ci.sh accel`, or carries a physical reason.
       **Blocked by:** nothing.
 - [ ] **What:** `GpuKernels` and the kernels measured on V3D, and later on Mali (the matrix's GPU

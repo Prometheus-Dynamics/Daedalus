@@ -304,6 +304,16 @@ fn crc32_kernels() {
         || check(Backend::Neon64),
     );
     assert_eq!(k::crc32(b"123456789"), 0xCBF4_3926);
+    // Combining per-chunk CRCs gives the whole buffer's.
+    let data = bytes(10_000, 17);
+    for split in [0, 1, 7, 4096, 9_999, 10_000] {
+        let (a, b) = data.split_at(split);
+        assert_eq!(
+            k::crc32_combine(k::crc32(a), k::crc32(b), b.len() as u64),
+            r::crc32(&data),
+            "split {split}"
+        );
+    }
 }
 
 /// binary16 with F16C (`x86_avx2+f16c`): every half, bit for bit.

@@ -642,11 +642,13 @@ static CRC_KERNELS: [Kernel; 11] = [
         ),
     ),
     Kernel::missing(CRC_OP, Backend::Rvv, CHAIN),
-    Kernel::missing(
+    Kernel::implemented(
         CRC_OP,
         Backend::Gpu,
-        Status::Gap("planned: CRC per chunk on the GPU, combined with GF(2) shifts"),
-    ),
+        "crates/gpu/src/shader/kernels.wgsl",
+        "crates/gpu/src/kernels_tests.rs",
+    )
+    .with_variant("chunks+combine"),
     Kernel::missing(CRC_OP, Backend::PortableSimd, CHAIN),
     Kernel::missing(CRC_OP, Backend::FixedFunction, NO_FIXED),
 ];

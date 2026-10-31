@@ -44,6 +44,8 @@ pub enum GpuKernel {
     Base64Encode,
     /// `n` standard base64 symbols (a multiple of 4) to bytes; see [`GpuKernels::base64_decode`].
     Base64Decode,
+    /// The CRC-32 of each 4 KiB chunk of `n` bytes; [`GpuKernels::crc32`] combines them.
+    Crc32Chunks,
 }
 
 impl GpuKernel {
@@ -60,6 +62,7 @@ impl GpuKernel {
             GpuKernel::HexLower => "hex_lower",
             GpuKernel::Base64Encode => "base64_encode",
             GpuKernel::Base64Decode => "base64_decode",
+            GpuKernel::Crc32Chunks => "crc32_chunks",
         }
     }
 
@@ -74,7 +77,8 @@ impl GpuKernel {
             | GpuKernel::Copy
             | GpuKernel::HexLower
             | GpuKernel::Base64Encode
-            | GpuKernel::Base64Decode => n,
+            | GpuKernel::Base64Decode
+            | GpuKernel::Crc32Chunks => n,
         }
     }
 
@@ -88,6 +92,7 @@ impl GpuKernel {
             GpuKernel::HexLower => 2 * n,
             GpuKernel::Base64Encode => n.div_ceil(3) * 4,
             GpuKernel::Base64Decode => n / 4 * 3,
+            GpuKernel::Crc32Chunks => n.div_ceil(4096) * 4,
         }
     }
 
@@ -104,6 +109,19 @@ impl GpuKernel {
     }
 }
 
+/// The CRC-32 byte table, little-endian words.
+fn crc_table() -> Vec<u8> {
+    (0u32..256)
+        .flat_map(|b| {
+            let mut crc = b;
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xEDB8_8320 & (crc & 1).wrapping_neg());
+            }
+            crc.to_le_bytes()
+        })
+        .collect()
+}
+
 /// Compute pipelines for the [`GpuKernel`] ops on one device, built on first use (with the
 /// installed pipeline cache).
 pub struct GpuKernels {
@@ -114,6 +132,8 @@ pub struct GpuKernels {
     pipeline_layout: wgpu::PipelineLayout,
     pipelines: Mutex<HashMap<GpuKernel, Arc<wgpu::ComputePipeline>>>,
     max_groups: u32,
+    /// The CRC-32 table (`aux` for `crc32_chunks`).
+    crc_table: wgpu::Buffer,
     gpu: GpuContextHandle,
     /// Fragment forms, and their render targets by size.
     fragments: Mutex<HashMap<GpuKernel, Arc<super::FragmentPass>>>,
@@ -155,6 +175,7 @@ impl GpuKernels {
                 entry(1, false),
                 entry(2, true),
                 entry(3, false),
+                entry(4, true),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -173,6 +194,11 @@ impl GpuKernels {
             pipeline_layout,
             pipelines: Mutex::new(HashMap::new()),
             max_groups: device.limits().max_compute_workgroups_per_dimension,
+            crc_table: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("daedalus-kernels-crc-table"),
+                contents: &crc_table(),
+                usage: wgpu::BufferUsages::STORAGE,
+            }),
             gpu: gpu.clone(),
             fragments: Mutex::new(HashMap::new()),
             targets: Mutex::new(HashMap::new()),
@@ -291,6 +317,10 @@ impl GpuKernels {
                     binding: 3,
                     resource: status.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.crc_table.as_entire_binding(),
+                },
             ],
         });
         let pipeline = self.pipeline(kernel);
@@ -336,7 +366,26 @@ impl GpuKernels {
     /// Whether `kernel` has a fragment form ([`GpuKernels::encode_fragment`]): all but base64
     /// decode, whose error report needs atomics.
     pub fn has_fragment(kernel: GpuKernel) -> bool {
-        kernel != GpuKernel::Base64Decode
+        !matches!(kernel, GpuKernel::Base64Decode | GpuKernel::Crc32Chunks)
+    }
+
+    /// The CRC-32 (IEEE) of `n` bytes of `src`: chunk CRCs on the GPU, combined on the host
+    /// (`daedalus_kernels::crc32_combine`). Waits for the result.
+    pub fn crc32(&self, src: &GpuStorage, n: u64) -> Result<u32, GpuError> {
+        if n == 0 {
+            return Ok(0);
+        }
+        let chunks = n.div_ceil(4096);
+        let dst = GpuStorage::new(&self.gpu, chunks * 4, Some("daedalus-kernels-crc-chunks"))?;
+        self.run(GpuKernel::Crc32Chunks, src, &dst, n)?.wait();
+        let mut words = vec![0u8; (chunks * 4) as usize];
+        dst.read_into(0, &mut words)?;
+        let mut crc = 0u32;
+        for (i, w) in words.as_chunks::<4>().0.iter().enumerate() {
+            let len = (n - i as u64 * 4096).min(4096);
+            crc = daedalus_kernels::crc32_combine(crc, u32::from_le_bytes(*w), len);
+        }
+        Ok(crc)
     }
 
     fn fragment(&self, kernel: GpuKernel) -> Result<Arc<super::FragmentPass>, GpuError> {

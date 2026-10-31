@@ -108,6 +108,9 @@ plugin ABI and does not load.
   sizes checked against the kernel ABI. It is tested end to end against the kernel's `vim2m`.
   `v4l2::Rga` drives Rockchip's RGA (`rockchip-rga`) for RGB↔RGBA. That part is written, untested
   on board; gray needs librga.
+- **CRC-32 on the GPU** (`GpuKernels::crc32`): table-driven CRCs of 4 KiB chunks on the device,
+  combined on the host with the new `daedalus_kernels::crc32_combine` (zlib's combine). The
+  result is bit-exact and measured.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`

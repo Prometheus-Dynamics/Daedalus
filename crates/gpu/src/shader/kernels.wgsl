@@ -7,6 +7,9 @@
 // base64 decode: [first invalid symbol offset (0xffffffff when none), decoded length].
 @group(0) @binding(3) var<storage, read_write> status: array<atomic<u32>>;
 
+// Auxiliary read-only data: the CRC-32 table for `crc32_chunks` (another buffer otherwise).
+@group(0) @binding(4) var<storage, read> aux: array<u32>;
+
 const WG: u32 = 64u;
 
 fn thread_index(gid: vec3<u32>, groups: vec3<u32>) -> u32 {
@@ -146,4 +149,21 @@ fn base64_decode(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_wor
     }
     // Every group has at least one output byte, so every group is checked by some thread.
     dst[t] = word;
+}
+
+const CRC_CHUNK: u32 = 4096u;
+
+// The CRC-32 of each 4 KiB chunk (thread t: bytes 4096t..), table-driven; the host combines them
+// (`crc32_combine`).
+@compute @workgroup_size(64)
+fn crc32_chunks(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) groups: vec3<u32>) {
+    let t = thread_index(gid, groups);
+    if (t >= params.threads) { return; }
+    let start = t * CRC_CHUNK;
+    let end = min(start + CRC_CHUNK, params.n);
+    var crc = 0xffffffffu;
+    for (var i = start; i < end; i++) {
+        crc = aux[(crc ^ byte_at(i)) & 0xffu] ^ (crc >> 8u);
+    }
+    dst[t] = ~crc;
 }

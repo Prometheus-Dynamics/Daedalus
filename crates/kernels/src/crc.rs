@@ -25,6 +25,48 @@ pub fn crc32(bytes: &[u8]) -> u32 {
     crc32::v(bytes)
 }
 
+/// The CRC-32 of `A ++ B` from `crc32(A)`, `crc32(B)` and `B`'s length (zlib's
+/// `crc32_combine`): `crc_a` times `x^(8 len_b)` modulo the polynomial, plus `crc_b`. Joins CRCs
+/// computed per chunk in parallel (the GPU form).
+pub fn crc32_combine(crc_a: u32, crc_b: u32, len_b: u64) -> u32 {
+    mul_mod_p(x_pow_2n_8(len_b), crc_a) ^ crc_b
+}
+
+/// `a * b` modulo the reflected polynomial (bit 31 is `x^0`).
+fn mul_mod_p(a: u32, mut b: u32) -> u32 {
+    let mut m = 1u32 << 31;
+    let mut p = 0u32;
+    loop {
+        if a & m != 0 {
+            p ^= b;
+            if a & (m - 1) == 0 {
+                return p;
+            }
+        }
+        m >>= 1;
+        b = if b & 1 != 0 {
+            (b >> 1) ^ 0xEDB8_8320
+        } else {
+            b >> 1
+        };
+    }
+}
+
+/// `x^(8 n)` modulo the polynomial, by squaring.
+fn x_pow_2n_8(mut n: u64) -> u32 {
+    // x^(2^k) for k = 3 onward: x^8, x^16, ...
+    let mut power = 1u32 << (31 - 8); // x^8
+    let mut p = 1u32 << 31; // 1
+    while n != 0 {
+        if n & 1 != 0 {
+            p = mul_mod_p(power, p);
+        }
+        power = mul_mod_p(power, power);
+        n >>= 1;
+    }
+    p
+}
+
 /// `TABLES[k][b]`: the CRC of byte `b` followed by `k` zero bytes.
 const TABLES: [[u32; 256]; 8] = {
     let mut t = [[0u32; 256]; 8];
