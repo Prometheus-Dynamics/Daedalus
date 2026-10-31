@@ -1,9 +1,13 @@
 # TODO
 
-## Next release (3.1.0)
+## Next release (3.0.0)
 
 Feature freeze of 2026-10-27, plus its last addition, hardware support and GPU (2026-10-30).
-Nothing else joins this release. Each item says **what** it is, **why** it is in the release,
+Nothing else joins this release. The user decided (2026-10-30): full support on every backend,
+no half implementations. That means GPU on every target with a usable driver (V3D,
+Mali-G610, Mali-G52, desktop), the CPU path everywhere, and builds and tests for x86_64,
+aarch64, armv7 (Flame RV1106G2) and riscv64 (K230D). Signing and registry work is pinned for a
+later release. Each item says **what** it is, **why** it is in the release,
 **done when** (a checkable test, gate, measurement or board run) and **blocked by**.
 Board-gated items are marked **[board]**.
 
@@ -128,6 +132,18 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Why:** Eidos and other libraries ship GPU implementations behind features.
       **Done when:** the example runs in CI (CPU path) and on the Raze (GPU path).
       **Blocked by:** the items above.
+- [ ] **What:** desktop GPUs (RADV, NVIDIA): the dmabuf hardware tests, `gpu_bench`, and every
+      new GPU API's tests pass.
+      **Why:** desktop is a supported GPU backend.
+      **Done when:** `./scripts/ci.sh pi`-equivalent hardware tests and the new API tests pass
+      on this workstation's RADV and NVIDIA, and the reports are in `docs/testing.md`.
+      **Blocked by:** nothing.
+- [ ] **[board] What:** armv7 (Flame RV1106G2, `armv7-unknown-linux-gnueabihf`), CPU-only: a
+      `ci.sh` lane that builds and tests the CPU path with the GPU features off.
+      **Why:** the user's platform list (2026-10-30); the RV1106G2 has no compute-capable GPU.
+      **Done when:** the lane is in `ci.sh full` and CI, and a CPU-only graph test passes on the
+      Flame.
+      **Blocked by:** nothing for the lane; a Flame board for the run.
 - [ ] **[board] What:** K230D, CPU-only: a `riscv64gc-unknown-linux-gnu` build with wgpu
       feature-gated off, and `#[device]` nodes running their CPU implementation.
       **Why:** the K230D has no compute-capable GPU.
@@ -162,24 +178,29 @@ The explicit assignment above already carries a backend choice.
       with the gate green (9561d9b..f6299ad). **Blocked by:** nothing.
 - [ ] **What:** run the semver check against `v3.0.0`, and set `SEMVER_BASELINE` to the new tag
       afterwards.
-      **Why:** decides between 3.1.0 and 4.0.0 (`NodePortRefresh` and other public structs
-      changed).
+      **Why:** documents every break since `v3.0.0` in the CHANGELOG and migration notes
+      (`NodePortRefresh`, `GpuCapabilities` and other public structs changed).
       **Done when:** `./scripts/ci.sh semver` reports no unexplained break, and the CI `semver`
       job is blocking.
       **Blocked by:** nothing.
-- [ ] **What:** the version number. **Why:** dev is `3.0.1-dev`; this release adds API.
-      **Done when:** every crate is bumped to the agreed version, and the plugin-ABI and
-      stable-ABI constants are unchanged or bumped with a reason. **Blocked by:** a user
-      decision (3.1.0 proposed; 4.0.0 if semver reports breaks).
-- [ ] **What:** CHANGELOG `[Unreleased]` becomes `[3.1.0]`, with a migration note if needed.
+- [ ] **What:** the version number. The user decided on 3.0.0 (2026-10-30), but tag `v3.0.0`
+      already exists (e7e88fc) and downstream may pin it.
+      **Why:** dev is `3.0.1-dev`.
+      **Done when:** every crate carries the released version, the tag points at the release
+      commit, and the plugin-ABI and stable-ABI constants are unchanged or bumped with a reason.
+      **Blocked by:** a user decision on the existing tag: move `v3.0.0` (rewrites a published
+      tag), or release as 3.0.1 or 3.1.0.
+- [ ] **What:** CHANGELOG `[Unreleased]` becomes the release section, with a migration note if
+      needed.
       **Why:** downstream pins by commit and reads the CHANGELOG.
       **Done when:** every merged change since `v3.0.0` has an entry.
       **Blocked by:** the items above.
 - [ ] **What:** release gates. **Why:** release quality.
-      **Done when:** `./scripts/ci.sh full` passes, `ci.yml` and `bench.yml` are green on `dev`,
-      and `ci.sh pi` and `ci.sh vvl` pass on the Raze.
+      **Done when:** `./scripts/ci.sh full` passes (x86_64, aarch64, armv7 and riscv64 lanes),
+      `ci.yml` and `bench.yml` are green on `dev`, and `ci.sh pi` and `ci.sh vvl` pass on the
+      Raze.
       **Blocked by:** a Raze window.
-- [ ] **What:** merge `dev` into `main`, and tag `v3.1.0`.
+- [ ] **What:** merge `dev` into `main`, and tag the release.
       **Why:** the release. **Done when:** the tag exists and downstream bumps its pin.
       **Blocked by:** every item above, and user approval.
 
