@@ -63,6 +63,18 @@ pub const DRM_FORMAT_MOD_LINEAR: u64 = 0;
 /// Reserved DRM modifier meaning "no valid modifier"; rejected by imports.
 pub const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;
 
+/// `DRM_FORMAT_MOD_ARM_AFBC(mode)`: ARM framebuffer compression, which Rockchip's VOP2, RGA,
+/// VPU and Mali produce and consume (`drm_fourcc.h`; `mode` is the `AFBC_FORMAT_MOD_*` flags).
+/// Only a GPU (or display) that lists the modifier can import such a frame; it has no CPU view.
+pub const fn drm_format_mod_arm_afbc(mode: u64) -> u64 {
+    (0x08 << 56) | (mode & 0x000f_ffff_ffff_ffff)
+}
+
+/// Whether `modifier` is an ARM AFBC modifier.
+pub const fn is_arm_afbc(modifier: u64) -> bool {
+    modifier >> 56 == 0x08 && (modifier >> 52) & 0xf == 0
+}
+
 /// DRM fourcc pixel format code (`drm_fourcc.h`), little-endian packed.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DrmFourcc(pub u32);

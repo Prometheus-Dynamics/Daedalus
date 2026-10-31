@@ -83,6 +83,13 @@ plugin ABI and does not load.
   `copy_with_engine` (`copy_buffer_to_buffer`). The conformance tests record each op's GPU pass
   time against the CPU kernel per adapter in the matrix. No op is "impossible" on the GPU any
   more; the caller selects per device.
+- **`GpuDeviceProfile`** (`GpuContextHandle::device_profile()`): the adapter's family, from its
+  vendor id and name. Families are Mali Bifrost and Valhall, VideoCore, Adreno, PowerVR,
+  Apple, desktop and software. The profile also gives tile-based or immediate-mode
+  (`prefer_fragment_passes`), the warp width and a default workgroup size. Mali G610/G52 follow
+  ARM's documented architecture; the board runs confirm them (`docs/testing.md`, board
+  checklist). `drm_format_mod_arm_afbc` / `is_arm_afbc` cover the AFBC modifiers that Rockchip
+  blocks produce.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`

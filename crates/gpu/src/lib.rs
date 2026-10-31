@@ -14,6 +14,7 @@ mod backends;
 mod buffer;
 mod compute_caps;
 mod convert;
+mod device_profile;
 mod external;
 mod handles;
 mod memory_hints;
@@ -35,10 +36,11 @@ pub use compute_caps::{GpuComputeCaps, GpuComputeFeatures};
 #[cfg(feature = "gpu-image")]
 pub use convert::dynamic_to_rgba8;
 pub use convert::{Backing, Compute, DeviceBridge};
+pub use device_profile::{GpuDeviceProfile, GpuFamily, vendor_ids};
 pub use external::{
     AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, DRM_FORMAT_MOD_INVALID,
     DRM_FORMAT_MOD_LINEAR, DrmFourcc, ExternalImportError, ExternalImportSupport,
-    ExternalKeepalive,
+    ExternalKeepalive, drm_format_mod_arm_afbc, is_arm_afbc,
 };
 #[cfg(target_os = "linux")]
 pub use external::{

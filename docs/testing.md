@@ -219,6 +219,25 @@ Stable Rust cannot detect ARMv7 NEON or RVV at runtime, and does not expose them
 Boards should build that way: the Flame RV1106 (Cortex-A7) with `+neon`, the K230D (C908) with
 `+v`.
 
+### Board checklist: written, untested on board
+
+The code for these boards is written and tested off-board (qemu, lavapipe, desktop GPUs). A
+board run confirms it:
+
+- **Rockchip (RK3588S / RK3576 G610, RK3566 G52), Mali through wgpu/Vulkan (libmali or panvk):**
+  - `cargo test -p daedalus-gpu --features gpu-wgpu --lib` covers the GPU kernels (bit-exact
+    and measured), fragment passes, storage-to-texture, and `device_profile`. The profile
+    should report `MaliValhall` with warp 16 on G610, and `MaliBifrost` with warp 8 on G52.
+  - `gpu_bench` gives the fragment-versus-compute numbers that `prefer_fragment_passes` assumes.
+  - An AFBC frame from the VOP2/RGA (`drm_format_mod_arm_afbc`) imports only where the driver
+    lists the modifier.
+  - Run `scripts/accel.sh` on the board so the matrix records the Mali adapter.
+- **K230D (riscv64, C908, RVV 1.0):** the `+v` build is proven under qemu at VLEN 128, 256 and
+  512. On the board, run the conformance test binary (`--target riscv64gc-unknown-linux-musl`,
+  `+v`) to record a real-hardware VLEN.
+- **Flame RV1106G2 (armv7 Cortex-A7, NEON):** the `+neon` build is proven under qemu
+  cortex-a7. On the board, run the same binary and the CPU graph tests (`ci.sh cross`).
+
 ### Lean preset
 
 ```bash
