@@ -21,6 +21,8 @@ path = "src/lib.rs"
 [[bin]]
 name = "daedalus-mcu"
 path = "src/main.rs"
+# Its docs would overwrite the device crate's `daedalus_mcu` docs.
+doc = false
 
 [dependencies]
 daedalus-data = { workspace = true, features = ["std"] }

@@ -8,7 +8,7 @@
 //!
 //! The kernels are plain loops the compiler vectorizes for each target; `accel-matrix asm`
 //! proves the vector code is there, and the conformance tests check every backend against the
-//! independent scalar references in [`reference`]. [`ACCEL`] registers them in the acceleration
+//! independent scalar references in [`reference`](mod@reference). [`ACCEL`] registers them in the acceleration
 //! inventory (`docs/backend-matrix.md`).
 #![no_std]
 

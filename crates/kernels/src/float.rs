@@ -114,7 +114,7 @@ pub unsafe fn f16_to_f32_f16c(src: &[u8], dst: &mut [f32]) {
     f16_to_f32_base::v(&src[2 * done..2 * n], &mut dst[done..n]);
 }
 
-/// [`f16_to_f32_f16c`] when the CPU has AVX2 and F16C (`std`); `None` otherwise.
+/// The F16C kernel (`f16_to_f32_f16c`) when the CPU has AVX2 and F16C (`std`); `None` otherwise.
 pub fn f16_to_f32_with_f16c(src: &[u8], dst: &mut [f32]) -> Option<()> {
     #[cfg(all(feature = "std", any(target_arch = "x86", target_arch = "x86_64")))]
     if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("f16c") {

@@ -204,7 +204,7 @@ cmd_cross() {
     var="CARGO_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_RUNNER"
     if [[ -n ${!var:-} ]]; then
       step "Testing on $target (${!var})"
-      cargo test --target "$target" -p daedalus-rs --features "$CI_FEATURES,gpu-engine" \
+      cargo test --target "$target" -p daedalus-rs --features "$CI_FEATURES,gpu-engine,gpu-mock" \
         --test it --test gpu_fallback --test device_assignment
     else
       echo "skipping $target tests: set $var (and its _LINKER) to run them"
