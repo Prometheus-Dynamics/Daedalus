@@ -118,6 +118,7 @@ fn slice8(mut crc: u32, bytes: &[u8]) -> u32 {
 }
 
 /// 64x64 carry-less multiply in software: the 128-bit product as (low, high).
+#[cfg(test)]
 pub(crate) fn clmul_soft(a: u64, b: u64) -> (u64, u64) {
     let (mut lo, mut hi) = (0u64, 0u64);
     for i in 0..64 {
@@ -134,6 +135,7 @@ pub(crate) fn clmul_soft(a: u64, b: u64) -> (u64, u64) {
 /// The PCLMULQDQ folding algorithm over any 64x64 carry-less multiply `clmul` (128-bit lanes as
 /// (low, high) pairs): the RVV Zvbc kernel plugs in `vclmul`/`vclmulh`, the tests a software
 /// multiply.
+#[cfg(any(test, all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc)))]
 pub(crate) fn crc32_fold(bytes: &[u8], clmul: &mut dyn FnMut(u64, u64) -> (u64, u64)) -> u32 {
     const K1: u64 = 0x1_5444_2bd4;
     const K2: u64 = 0x1_c6e4_1596;
