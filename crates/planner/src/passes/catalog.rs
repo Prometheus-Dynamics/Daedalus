@@ -1,6 +1,5 @@
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
-use core::cell::RefCell;
 use daedalus_data::model::TypeExpr;
 use daedalus_registry::capability::{AdapterIndex, NodeDecl, TypeDecl};
 use daedalus_registry::ids::NodeId;
@@ -9,14 +8,27 @@ use daedalus_transport::TypeKey;
 
 use super::PlannerConfig;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct PlannerCatalog {
     nodes: BTreeMap<NodeId, NodeDecl>,
     types: BTreeMap<daedalus_transport::TypeKey, TypeDecl>,
     /// The adapter index of the run's registry, built once so every edge's path search reuses it.
     adapters: Option<AdapterIndex>,
     /// Transport keys of structured types, computed once per run (see [`Self::transport_key`]).
-    keys: RefCell<BTreeMap<TypeExpr, TypeKey>>,
+    /// A lock rather than a `RefCell` keeps the catalog `Sync`, so lowering contexts borrowing it
+    /// stay `Send`.
+    keys: spin::Mutex<BTreeMap<TypeExpr, TypeKey>>,
+}
+
+impl Clone for PlannerCatalog {
+    fn clone(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            types: self.types.clone(),
+            adapters: self.adapters.clone(),
+            keys: spin::Mutex::new(self.keys.lock().clone()),
+        }
+    }
 }
 
 impl PlannerCatalog {
@@ -41,7 +53,7 @@ impl PlannerCatalog {
             nodes,
             types,
             adapters,
-            keys: RefCell::new(BTreeMap::new()),
+            keys: spin::Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -55,7 +67,7 @@ impl PlannerCatalog {
         if let TypeExpr::Opaque(_) = ty {
             return typeexpr_transport_key(ty);
         }
-        let mut keys = self.keys.borrow_mut();
+        let mut keys = self.keys.lock();
         if let Some(key) = keys.get(ty) {
             return key.clone();
         }
@@ -103,6 +115,13 @@ pub(super) fn simplify_rust_name(raw: &str) -> String {
     }
 }
 
+/// Lowering callbacks get a `&PlannerLoweringContext` borrowing the catalog; it must stay
+/// shareable across threads (it was before 3.0.1-dev's key cache).
+const _: () = {
+    const fn sync<T: Sync>() {}
+    sync::<PlannerCatalog>();
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,7 +145,7 @@ mod tests {
             assert_eq!(catalog.transport_key(ty), typeexpr_transport_key(ty));
         }
         assert_eq!(
-            catalog.keys.borrow().len(),
+            catalog.keys.lock().len(),
             1,
             "only structured types are memoized"
         );

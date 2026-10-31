@@ -212,6 +212,12 @@ The explicit assignment above already carries a backend choice.
       with the gate green (9561d9b..f6299ad). **Blocked by:** nothing.
 - [ ] **What:** run the semver check against `v3.0.0`, and set `SEMVER_BASELINE` to the new tag
       afterwards.
+      **Status (2026-10-30):** `ci.sh semver` runs over all 20 crates; the facade is checked too,
+      after the baseline's stale git-dependency version is dropped. It reports 250 breaking
+      items, each named in CHANGELOG `[Unreleased]` or `docs/api-review.md`. The one it found
+      unexplained, `PlannerLoweringContext` no longer `Send` (a `RefCell` key cache in
+      `PlannerCatalog`), is fixed. Left: point `SEMVER_BASELINE` at `v4.0.0`, and make the CI job
+      blocking, after the tag.
       **Why:** documents every break since `v3.0.0` in the CHANGELOG and migration notes
       (`NodePortRefresh`, `GpuCapabilities` and other public structs changed).
       **Done when:** `./scripts/ci.sh semver` reports no unexplained break, and the CI `semver`

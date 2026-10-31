@@ -378,6 +378,9 @@ cmd_semver() {
   local baseline="${CARGO_TARGET_DIR:-target}/semver-baseline"
   rm -rf "$baseline" && mkdir -p "$baseline"
   git archive "$SEMVER_BASELINE" | tar -x -C "$baseline"
+  # Git dependencies of the baseline may carry a `version` its branch no longer matches (Styx's
+  # `dev` moved from 2.0.0 to 2.0.1-dev); drop the requirement so the branch head resolves.
+  sed -i -E '/git = /s/version = "[^"]*", *//' "$baseline/Cargo.toml"
   cargo semver-checks --workspace --baseline-root "$baseline" "${PACKAGE_EXCLUDES[@]}"
 }
 
