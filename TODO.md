@@ -45,7 +45,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** `./scripts/ci.sh vvl` on the Raze exits 0, with no layer errors from our
       code.
       **Blocked by:** a Raze window.
-- [ ] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
+- [x] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
       invocations, workgroup storage, storage buffer size, f16, int64, int64 atomics,
       timestamps, subgroups.
       **Why:** a library picks a kernel variant, or refuses the GPU backend, from facts rather

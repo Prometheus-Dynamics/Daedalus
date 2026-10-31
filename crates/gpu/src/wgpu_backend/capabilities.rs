@@ -62,6 +62,20 @@ pub(super) fn caps_from_adapter(
         rows_per_image_alignment: 1,
         // wgpu uses a unified queue that supports transfer+compute.
         has_transfer_queue: true,
+        compute: crate::GpuComputeCaps {
+            max_workgroup_storage_size: limits.max_compute_workgroup_storage_size,
+            max_invocations_per_workgroup: limits.max_compute_invocations_per_workgroup,
+            max_workgroup_size: [
+                limits.max_compute_workgroup_size_x,
+                limits.max_compute_workgroup_size_y,
+                limits.max_compute_workgroup_size_z,
+            ],
+            max_workgroups_per_dimension: limits.max_compute_workgroups_per_dimension,
+            max_storage_buffer_binding_size: limits.max_storage_buffer_binding_size,
+            max_storage_buffers_per_stage: limits.max_storage_buffers_per_shader_stage,
+            max_storage_textures_per_stage: limits.max_storage_textures_per_shader_stage,
+            features: crate::GpuComputeFeatures::NONE,
+        },
     }
 }
 
@@ -82,4 +96,28 @@ pub(super) fn build_info_from_adapter(
         features,
         limits,
     )
+}
+
+/// Optional compute features the backend enables when the adapter has them.
+pub(super) const OPTIONAL_COMPUTE_FEATURES: wgpu::Features = wgpu::Features::SHADER_F16
+    .union(wgpu::Features::SHADER_F64)
+    .union(wgpu::Features::SHADER_INT64)
+    .union(wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX)
+    .union(wgpu::Features::SUBGROUP)
+    .union(wgpu::Features::TIMESTAMP_QUERY)
+    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
+
+/// The [`crate::GpuComputeFeatures`] enabled on a device.
+pub(super) fn compute_features(enabled: wgpu::Features) -> crate::GpuComputeFeatures {
+    crate::GpuComputeFeatures {
+        shader_f16: enabled.contains(wgpu::Features::SHADER_F16),
+        shader_f64: enabled.contains(wgpu::Features::SHADER_F64),
+        shader_int64: enabled.contains(wgpu::Features::SHADER_INT64),
+        shader_int64_atomics: enabled.contains(wgpu::Features::SHADER_INT64_ATOMIC_MIN_MAX),
+        subgroups: enabled.contains(wgpu::Features::SUBGROUP),
+        timestamps: enabled.contains(wgpu::Features::TIMESTAMP_QUERY)
+            && enabled.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS),
+        timestamps_inside_passes: enabled.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
+    }
 }

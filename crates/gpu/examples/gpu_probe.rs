@@ -127,6 +127,27 @@ mod linux {
                 kv("dmabuf_import", format!("unsupported: {reason}"))
             }
         }
+        let compute = backend.capabilities().compute;
+        kv(
+            "compute_workgroup",
+            format!(
+                "storage {} B, {} invocations, size {:?}, {} groups/dim",
+                compute.max_workgroup_storage_size,
+                compute.max_invocations_per_workgroup,
+                compute.max_workgroup_size,
+                compute.max_workgroups_per_dimension
+            ),
+        );
+        kv(
+            "compute_storage",
+            format!(
+                "binding {} B, {} buffers, {} textures per stage",
+                compute.max_storage_buffer_binding_size,
+                compute.max_storage_buffers_per_stage,
+                compute.max_storage_textures_per_stage
+            ),
+        );
+        kv("compute_features", format!("{:?}", compute.features));
         let nv12 = device
             .features()
             .contains(wgpu::Features::TEXTURE_FORMAT_NV12);

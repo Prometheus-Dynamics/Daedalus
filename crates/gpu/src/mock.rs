@@ -110,6 +110,7 @@ impl Default for MockBackend {
                 bytes_per_row_alignment: 256,
                 rows_per_image_alignment: 1,
                 has_transfer_queue: false,
+                compute: crate::GpuComputeCaps::WEBGPU_DEFAULTS,
             },
             pool: SimpleBufferPool::new(),
             stats: Mutex::new(TransferStats::default()),

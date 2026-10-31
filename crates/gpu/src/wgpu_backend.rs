@@ -142,11 +142,11 @@ impl WgpuBackend {
         staging_config: WgpuStagingPoolConfig,
     ) -> Result<Self, GpuError> {
         let (info, features, limits) = build_info_from_adapter(&adapter);
-        let caps = caps_from_adapter(Some(&adapter), &limits);
+        let mut caps = caps_from_adapter(Some(&adapter), &limits);
 
         let device_desc = wgpu::DeviceDescriptor {
             label: Some("wgpu-backend"),
-            required_features: Features::empty(),
+            required_features: adapter.features() & capabilities::OPTIONAL_COMPUTE_FEATURES,
             required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::default(),
@@ -158,6 +158,7 @@ impl WgpuBackend {
             .await
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
         drop(driver);
+        caps.compute.features = capabilities::compute_features(device.features());
         let (dmabuf_support, dmabuf) = dmabuf::probe(&device, &queue);
 
         let device_key = crate::shader::register_device(&device);

@@ -12,6 +12,7 @@
 mod async_api;
 mod backends;
 mod buffer;
+mod compute_caps;
 mod convert;
 mod external;
 mod handles;
@@ -29,6 +30,7 @@ mod wgpu_backend;
 pub use async_api::GpuAsyncBackend;
 pub use backends::GpuBackends;
 pub use buffer::{BufferPool, SimpleBufferPool, TransferStats};
+pub use compute_caps::{GpuComputeCaps, GpuComputeFeatures};
 pub use convert::{Backing, Compute, DeviceBridge};
 pub use external::{
     AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, DRM_FORMAT_MOD_INVALID,
@@ -247,6 +249,9 @@ pub struct GpuCapabilities {
     pub bytes_per_row_alignment: u32,
     pub rows_per_image_alignment: u32,
     pub has_transfer_queue: bool,
+    /// Compute limits and enabled shader features.
+    #[serde(default)]
+    pub compute: GpuComputeCaps,
 }
 
 /// GPU error codes for diagnostics.

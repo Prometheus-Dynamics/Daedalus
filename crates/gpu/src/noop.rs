@@ -63,6 +63,7 @@ impl GpuBackend for NoopBackend {
             bytes_per_row_alignment: 1,
             rows_per_image_alignment: 1,
             has_transfer_queue: false,
+            compute: crate::GpuComputeCaps::default(),
         }
     }
 

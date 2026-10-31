@@ -74,3 +74,39 @@ fn wgpu_accessor_dispatches_on_the_engine_device() {
     );
     assert_eq!(value, 42);
 }
+
+/// The wgpu backend reports the adapter's compute limits and the optional features it enabled.
+#[test]
+fn wgpu_reports_compute_limits_and_enabled_features() {
+    let ctx = select_backend(&GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Wgpu),
+        ..Default::default()
+    })
+    .unwrap();
+    let Some((device, _)) = ctx.wgpu() else {
+        return;
+    };
+    let compute = ctx.capabilities().compute;
+    let limits = device.limits();
+    assert_eq!(
+        compute.max_invocations_per_workgroup,
+        limits.max_compute_invocations_per_workgroup
+    );
+    assert_eq!(
+        compute.max_workgroup_storage_size,
+        limits.max_compute_workgroup_storage_size
+    );
+    // Every conforming device meets the WebGPU defaults.
+    let defaults = crate::GpuComputeCaps::WEBGPU_DEFAULTS;
+    assert!(compute.max_invocations_per_workgroup >= defaults.max_invocations_per_workgroup);
+    assert!(compute.fits_workgroup([8, 8, 1]));
+    let enabled = device.features();
+    assert_eq!(
+        compute.features.shader_f16,
+        enabled.contains(wgpu::Features::SHADER_F16)
+    );
+    assert_eq!(
+        compute.features.timestamps_inside_passes,
+        enabled.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+    );
+}

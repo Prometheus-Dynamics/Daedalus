@@ -17,6 +17,13 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Compute limits and features in `GpuCapabilities::compute`** (`GpuComputeCaps`,
+  `GpuComputeFeatures`). It reports workgroup storage, invocations and size, the storage buffer
+  binding size, and storage buffers and textures per stage. It also reports which of f16, f64,
+  int64, int64 atomics, subgroups and timestamp queries are enabled. The wgpu backend now
+  requests these optional features whenever the adapter has them (before, it requested none).
+  `GpuComputeCaps::WEBGPU_DEFAULTS` gives the portable baseline, and `fits_workgroup` checks a
+  workgroup size against the limits. `gpu_probe` prints all of it.
 - **`GpuContextHandle::wgpu()`** returns the engine's wgpu device and queue (`None` on a
   non-wgpu backend). A node can build pipelines and persistent buffers on the same device the
   other GPU nodes and the transfers use, instead of opening its own.
