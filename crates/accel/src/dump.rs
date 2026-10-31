@@ -41,13 +41,22 @@ fn collect(
     };
     for op in registry.ops {
         ops.push(format!(
-            "{{\"repo\":{},\"table\":{},\"id\":{},\"summary\":{},\"scalar\":{},\"per_element\":{}}}",
+            "{{\"repo\":{},\"table\":{},\"id\":{},\"summary\":{},\"scalar\":{},\"per_element\":{},\"candidates\":[{}]}}",
             json_str(repo),
             json_str(registry.name),
             json_str(op.id),
             json_str(op.summary),
             json_str(op.scalar),
-            op.per_element
+            op.per_element,
+            op.candidates
+                .iter()
+                .map(|(b, exts)| format!(
+                    "{{\"backend\":{},\"extensions\":[{}]}}",
+                    json_str(b.name()),
+                    ext_list(exts)
+                ))
+                .collect::<Vec<_>>()
+                .join(",")
         ));
     }
     for k in registry.kernels {
@@ -60,10 +69,11 @@ fn collect(
         let mut line = String::new();
         let _ = write!(
             line,
-            "{{\"repo\":{},\"op\":{},\"backend\":{},\"variant\":{},\"source\":{},\"test\":{},\"symbol\":{},\"status\":{},\"reason\":{}}}",
+            "{{\"repo\":{},\"op\":{},\"backend\":{},\"extensions\":[{}],\"variant\":{},\"source\":{},\"test\":{},\"symbol\":{},\"status\":{},\"reason\":{}}}",
             json_str(repo),
             json_str(k.op),
             json_str(k.backend.name()),
+            ext_list(k.extensions),
             k.variant.map_or_else(|| "null".into(), json_str),
             json_str(k.source),
             json_str(k.test),
@@ -84,6 +94,13 @@ fn collect(
     for child in registry.children {
         collect(child, repo, ops, kernels, exempt);
     }
+}
+
+fn ext_list(exts: &[crate::Ext]) -> String {
+    exts.iter()
+        .map(|e| json_str(e.name()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// A JSON string literal.

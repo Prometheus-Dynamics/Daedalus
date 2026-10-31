@@ -64,6 +64,10 @@ usage: scripts/ci.sh [-j] [subcommand...]
               CPU feature set must not pull in wgpu, and, where a linker and runner are set
               (CARGO_TARGET_<TRIPLE>_LINKER/_RUNNER, e.g. zig cc + qemu-user), the integration,
               GPU-fallback and device-assignment tests run on the target
+  accel       acceleration inventory: kernel conformance on x86 (SSE, AVX2), aarch64, armv7
+              +neon and riscv64 +v at VLEN 128/256/512 (qemu-user, zig linkers), GPU kernels on
+              the Vulkan adapter, asm checks of the vector code, and docs/backend-matrix.{md,csv};
+              fails on failing, regressed or unregistered cells (ACCEL_RELEASE=1: also gaps)
   lean        tests for the lean preset (no metrics) and without threads
   nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
               serial runtime and engine, and the no_std smoke graph
@@ -504,11 +508,16 @@ cmd_quick() {
 }
 
 readonly ALL=(lints features clippy link test macro-ui smoke)
-readonly FULL=("${ALL[@]}" doc lean aarch64 cross nostd mcu wasm package)
+readonly FULL=("${ALL[@]}" doc lean aarch64 cross accel nostd mcu wasm package)
 readonly SUBCOMMANDS=" all full ${FULL[*]} quick bench pi vvl semver "
 
 run() { "cmd_${1//-/_}"; }
 cmd_all() { local sub; for sub in "${ALL[@]}"; do run "$sub"; done; }
+cmd_accel() {
+  step "Acceleration inventory"
+  scripts/accel.sh
+}
+
 cmd_full() { local sub; for sub in "${FULL[@]}"; do run "$sub"; done; }
 
 # `-j`: lints first, then one lane per crate graph, all lanes at once. A lane runs its subcommands

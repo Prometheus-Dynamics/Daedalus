@@ -640,6 +640,7 @@ dependencies = [
  "async-trait",
  "bitflags 2.13.2",
  "bytemuck",
+ "daedalus-accel",
  "daedalus-transport",
  "daedalus-wgsl-infer",
  "half",
@@ -650,6 +651,13 @@ dependencies = [
  "serde",
  "tracing",
  "wgpu",
+]
+
+[[package]]
+name = "daedalus-kernels"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-accel",
 ]
 
 [[package]]

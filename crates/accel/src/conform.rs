@@ -2,8 +2,8 @@
 
 use std::io::Write as _;
 
-use crate::Backend;
 use crate::dump::json_str;
+use crate::{Backend, Ext};
 
 /// What a conformance check ran: the op, the backend and, for GPU kernels, the variant and
 /// adapter.
@@ -14,6 +14,8 @@ pub struct Evidence<'a> {
     pub variant: Option<&'a str>,
     /// The GPU adapter (name and driver) for [`Backend::Gpu`].
     pub adapter: Option<&'a str>,
+    /// Extensions the kernel used; the check runs only when the process has them all.
+    pub extensions: &'a [Ext],
 }
 
 impl<'a> Evidence<'a> {
@@ -23,7 +25,13 @@ impl<'a> Evidence<'a> {
             backend,
             variant: None,
             adapter: None,
+            extensions: &[],
         }
+    }
+
+    pub fn extensions(mut self, extensions: &'a [Ext]) -> Self {
+        self.extensions = extensions;
+        self
     }
 
     pub fn variant(mut self, variant: &'a str) -> Self {
@@ -60,6 +68,10 @@ pub fn conform_with(evidence: Evidence<'_>, check: impl FnOnce() -> Result<(), S
     if cpu && !detected_backends().contains(&evidence.backend) {
         return false;
     }
+    let have = detected_extensions();
+    if !evidence.extensions.iter().all(|e| have.contains(e)) {
+        return false;
+    }
     let result = check();
     record(&evidence, &result);
     if let Err(err) = result {
@@ -94,22 +106,75 @@ pub fn detected_backends() -> Vec<Backend> {
     if std::arch::is_aarch64_feature_detected!("neon") {
         found.push(Backend::Neon64);
     }
-    #[cfg(all(target_arch = "arm", target_feature = "neon"))]
+    #[cfg(daedalus_neon32)]
     found.push(Backend::Neon32);
-    #[cfg(all(
-        any(target_arch = "riscv64", target_arch = "riscv32"),
-        target_feature = "v"
-    ))]
+    #[cfg(daedalus_rvv)]
     found.push(Backend::Rvv);
+    found
+}
+
+/// The ISA extensions this process can use: detected at runtime on x86 and AArch64; compiled
+/// in (`-C target-feature=+zbb`, ...) on RISC-V, which stable Rust cannot detect.
+pub fn detected_extensions() -> Vec<Ext> {
+    #[allow(unused_mut)]
+    let mut found = Vec::new();
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        use std::arch::is_x86_feature_detected as has;
+        for (on, ext) in [
+            (has!("popcnt"), Ext::Popcnt),
+            (has!("bmi2"), Ext::Bmi2),
+            (has!("fma"), Ext::Fma),
+            (has!("f16c"), Ext::F16c),
+            (has!("pclmulqdq"), Ext::Pclmulqdq),
+            (has!("aes"), Ext::Aes),
+            (has!("sha"), Ext::Sha),
+            (has!("avx512f"), Ext::Avx512f),
+            (has!("avx512bw"), Ext::Avx512bw),
+            (has!("avx512vnni"), Ext::Avx512vnni),
+        ] {
+            if on {
+                found.push(ext);
+            }
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::is_aarch64_feature_detected as has;
+        for (on, ext) in [
+            (has!("dotprod"), Ext::Dotprod),
+            (has!("fp16"), Ext::Fp16),
+            (has!("i8mm"), Ext::I8mm),
+            (has!("crc"), Ext::Crc32),
+            (has!("aes"), Ext::Aes),
+            (has!("sha2"), Ext::Sha2),
+            (has!("sha3"), Ext::Sha3),
+            (has!("sve"), Ext::Sve),
+            (has!("sve2"), Ext::Sve2),
+        ] {
+            if on {
+                found.push(ext);
+            }
+        }
+    }
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    for (on, ext) in [
+        (cfg!(daedalus_ext_zba), Ext::Zba),
+        (cfg!(daedalus_ext_zbb), Ext::Zbb),
+        (cfg!(daedalus_ext_zbs), Ext::Zbs),
+        (cfg!(daedalus_ext_zvbb), Ext::Zvbb),
+        (cfg!(daedalus_ext_zvbc), Ext::Zvbc),
+    ] {
+        if on {
+            found.push(ext);
+        }
+    }
     found
 }
 
 /// The RISC-V vector register length in bits, when the build has the V extension.
 pub fn rvv_vlen() -> Option<u32> {
-    #[cfg(all(
-        any(target_arch = "riscv64", target_arch = "riscv32"),
-        target_feature = "v"
-    ))]
+    #[cfg(daedalus_rvv)]
     {
         let vlenb: usize;
         // SAFETY: reading the read-only `vlenb` CSR, which exists with the V extension.
@@ -139,10 +204,16 @@ fn record(evidence: &Evidence<'_>, result: &Result<(), String>) {
     } else {
         "null".into()
     };
+    let extensions: Vec<String> = evidence
+        .extensions
+        .iter()
+        .map(|e| json_str(e.name()))
+        .collect();
     let line = format!(
-        "{{\"kind\":\"test\",\"op\":{},\"backend\":{},\"variant\":{},\"adapter\":{},\"target\":{},\"runner\":{},\"vlen\":{vlen},\"rev\":{},\"result\":{},\"detail\":{}}}\n",
+        "{{\"kind\":\"test\",\"op\":{},\"backend\":{},\"extensions\":[{}],\"variant\":{},\"adapter\":{},\"target\":{},\"runner\":{},\"vlen\":{vlen},\"rev\":{},\"result\":{},\"detail\":{}}}\n",
         json_str(evidence.op),
         json_str(evidence.backend.name()),
+        extensions.join(","),
         opt(evidence.variant),
         opt(evidence.adapter),
         json_str(&target),

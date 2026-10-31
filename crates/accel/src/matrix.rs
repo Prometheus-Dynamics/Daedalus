@@ -9,6 +9,9 @@ use serde_json::Value;
 
 use crate::Backend;
 
+mod asm;
+pub use asm::{functions, vector_instructions};
+
 /// An op from a registry dump.
 #[derive(Clone, Debug)]
 pub struct OpRow {
@@ -16,6 +19,35 @@ pub struct OpRow {
     pub id: String,
     pub summary: String,
     pub per_element: bool,
+    /// Extension variants the op could use.
+    pub candidates: Vec<Column>,
+}
+
+/// A matrix column: a backend, plus the extensions of a variant (`neon64+dotprod`).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Column {
+    pub backend: Backend,
+    /// Sorted extension names; empty for the backend's base column.
+    pub extensions: Vec<String>,
+}
+
+impl Column {
+    pub fn base(backend: Backend) -> Self {
+        Self {
+            backend,
+            extensions: Vec::new(),
+        }
+    }
+
+    /// `neon64`, `neon64+dotprod`, `x86_avx2+bmi2+popcnt`.
+    pub fn name(&self) -> String {
+        let mut name = self.backend.name().to_string();
+        for ext in &self.extensions {
+            name.push('+');
+            name.push_str(ext);
+        }
+        name
+    }
 }
 
 /// A kernel entry from a registry dump.
@@ -24,6 +56,8 @@ pub struct KernelRow {
     pub repo: String,
     pub op: String,
     pub backend: Backend,
+    /// Sorted extension names.
+    pub extensions: Vec<String>,
     pub variant: Option<String>,
     pub source: String,
     pub test: String,
@@ -39,6 +73,8 @@ pub struct Record {
     pub kind: String,
     pub op: String,
     pub backend: Backend,
+    /// Sorted extension names the run used.
+    pub extensions: Vec<String>,
     pub variant: Option<String>,
     pub adapter: Option<String>,
     pub target: String,
@@ -51,6 +87,8 @@ pub struct Record {
 /// What a matrix cell says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Cell {
+    /// No kernel, candidate or entry: an extension column another op declared.
+    NotApplicable,
     Pass,
     Impossible,
     Untested,
@@ -61,6 +99,7 @@ pub enum Cell {
 impl Cell {
     pub fn name(self) -> &'static str {
         match self {
+            Cell::NotApplicable => "n/a",
             Cell::Pass => "pass",
             Cell::Impossible => "impossible",
             Cell::Untested => "untested",
@@ -100,6 +139,22 @@ fn opt(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
+fn exts(v: &Value) -> Vec<String> {
+    let mut out: Vec<String> = v
+        .get("extensions")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn backend(v: &Value) -> Result<Backend, String> {
     let name = s(v, "backend");
     Backend::from_name(&name).ok_or_else(|| format!("unknown backend {name:?}"))
@@ -124,6 +179,18 @@ impl Inventory {
                     .get("per_element")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
+                candidates: op
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|c| {
+                        Ok(Column {
+                            backend: backend(c)?,
+                            extensions: exts(c),
+                        })
+                    })
+                    .collect::<Result<_, String>>()?,
             });
         }
         for k in list("kernels") {
@@ -131,6 +198,7 @@ impl Inventory {
                 repo: s(&k, "repo"),
                 op: s(&k, "op"),
                 backend: backend(&k)?,
+                extensions: exts(&k),
                 variant: opt(&k, "variant"),
                 source: s(&k, "source"),
                 test: s(&k, "test"),
@@ -154,6 +222,7 @@ impl Inventory {
                 kind: s(&v, "kind"),
                 op: s(&v, "op"),
                 backend: backend(&v)?,
+                extensions: exts(&v),
                 variant: opt(&v, "variant"),
                 adapter: opt(&v, "adapter"),
                 target: s(&v, "target"),
@@ -202,13 +271,66 @@ impl Inventory {
         errors
     }
 
-    /// The cell for `op` on `backend`.
+    /// Every column: each backend's base, then the extension variants any kernel or candidate
+    /// declares.
+    pub fn columns(&self) -> Vec<Column> {
+        let mut variants: BTreeSet<Column> = BTreeSet::new();
+        for k in self.kernels.iter().filter(|k| !k.extensions.is_empty()) {
+            variants.insert(Column {
+                backend: k.backend,
+                extensions: k.extensions.clone(),
+            });
+        }
+        for op in &self.ops {
+            variants.extend(
+                op.candidates
+                    .iter()
+                    .filter(|c| !c.extensions.is_empty())
+                    .cloned(),
+            );
+        }
+        let mut out = Vec::new();
+        for backend in Backend::ALL {
+            out.push(Column::base(backend));
+            out.extend(variants.iter().filter(|c| c.backend == backend).cloned());
+        }
+        out
+    }
+
+    /// The cell for `op` on a backend's base column.
     pub fn cell(&self, op: &str, backend: Backend) -> CellValue {
+        self.cell_in(op, &Column::base(backend))
+    }
+
+    /// The cell for `op` in `column`. A base kernel's evidence never counts for an extension
+    /// column.
+    pub fn cell_in(&self, op: &str, column: &Column) -> CellValue {
         let entries: Vec<&KernelRow> = self
             .kernels
             .iter()
-            .filter(|k| k.op == op && k.backend == backend)
+            .filter(|k| {
+                k.op == op && k.backend == column.backend && k.extensions == column.extensions
+            })
             .collect();
+        if entries.is_empty() && !column.extensions.is_empty() {
+            let candidate = self
+                .ops
+                .iter()
+                .any(|o| o.id == op && o.candidates.contains(column));
+            return CellValue {
+                cell: if candidate {
+                    Cell::Gap
+                } else {
+                    Cell::NotApplicable
+                },
+                reason: if candidate {
+                    format!("could use {}; no kernel", column.extensions.join("+"))
+                } else {
+                    String::new()
+                },
+                evidence: String::new(),
+            };
+        }
         let implemented: Vec<&&KernelRow> = entries
             .iter()
             .filter(|k| k.status == "implemented")
@@ -257,7 +379,11 @@ impl Inventory {
 
     fn variant_cell(&self, k: &KernelRow) -> CellValue {
         let matches = |r: &&Record, kind: &str| {
-            r.kind == kind && r.op == k.op && r.backend == k.backend && r.variant == k.variant
+            r.kind == kind
+                && r.op == k.op
+                && r.backend == k.backend
+                && r.variant == k.variant
+                && r.extensions == k.extensions
         };
         let tests: Vec<&Record> = self.records.iter().filter(|r| matches(r, "test")).collect();
         let asm: Vec<&Record> = self.records.iter().filter(|r| matches(r, "asm")).collect();
@@ -323,14 +449,15 @@ impl Inventory {
     }
 
     /// Every cell, by (repo, op) then backend.
-    pub fn cells(&self) -> Vec<(&OpRow, Vec<(Backend, CellValue)>)> {
+    pub fn cells(&self) -> Vec<(&OpRow, Vec<(Column, CellValue)>)> {
+        let columns = self.columns();
         let mut ops: Vec<&OpRow> = self.ops.iter().collect();
         ops.sort_by(|a, b| (&a.repo, &a.id).cmp(&(&b.repo, &b.id)));
         ops.into_iter()
             .map(|op| {
-                let row = Backend::ALL
-                    .into_iter()
-                    .map(|b| (b, self.cell(&op.id, b)))
+                let row = columns
+                    .iter()
+                    .map(|c| (c.clone(), self.cell_in(&op.id, c)))
                     .collect();
                 (op, row)
             })
@@ -344,7 +471,9 @@ impl Inventory {
             .into_iter()
             .filter(|(op, _)| op.per_element)
             .filter_map(|(op, row)| {
-                let (_, gpu) = row.into_iter().find(|(b, _)| *b == Backend::Gpu)?;
+                let (_, gpu) = row
+                    .into_iter()
+                    .find(|(c, _)| *c == Column::base(Backend::Gpu))?;
                 (gpu.cell == Cell::Impossible).then(|| {
                     format!(
                         "{}: GPU impossible on a per-element op ({})",
@@ -389,13 +518,16 @@ impl Inventory {
     pub fn csv(&self) -> String {
         let mut out = String::from("repo,op,backend,cell,reason,evidence\n");
         for (op, row) in self.cells() {
-            for (backend, value) in row {
+            for (column, value) in row
+                .into_iter()
+                .filter(|(_, v)| v.cell != Cell::NotApplicable)
+            {
                 let _ = writeln!(
                     out,
                     "{},{},{},{},{},{}",
                     csv_field(&op.repo),
                     csv_field(&op.id),
-                    backend.name(),
+                    column.name(),
                     value.cell.name(),
                     csv_field(&value.reason),
                     csv_field(&value.evidence)
@@ -410,7 +542,7 @@ impl Inventory {
         let cells = self.cells();
         let mut totals: BTreeMap<Cell, usize> = BTreeMap::new();
         for (_, row) in &cells {
-            for (_, v) in row {
+            for (_, v) in row.iter().filter(|(_, v)| v.cell != Cell::NotApplicable) {
                 *totals.entry(v.cell).or_default() += 1;
             }
         }
@@ -425,7 +557,7 @@ impl Inventory {
             .map(|(cell, n)| format!("{} {n}", cell.name()))
             .collect();
         let _ = writeln!(out, "Totals: {}.\n", total.join(", "));
-        let header: Vec<&str> = Backend::ALL.iter().map(|b| b.name()).collect();
+        let header: Vec<String> = self.columns().iter().map(Column::name).collect();
         let mut repo = "";
         let mut notes = Vec::new();
         for (op, row) in &cells {
@@ -436,11 +568,13 @@ impl Inventory {
             }
             let marks: Vec<String> = row
                 .iter()
-                .map(|(backend, v)| {
-                    if v.reason.is_empty() {
+                .map(|(column, v)| {
+                    if v.cell == Cell::NotApplicable {
+                        "-".to_string()
+                    } else if v.reason.is_empty() {
                         v.cell.name().to_string()
                     } else {
-                        notes.push(format!("- `{}` on {}: {}", op.id, backend.name(), v.reason));
+                        notes.push(format!("- `{}` on {}: {}", op.id, column.name(), v.reason));
                         format!("{}[{}]", v.cell.name(), notes.len())
                     }
                 })
@@ -464,7 +598,7 @@ pub fn regressions(baseline_csv: &str, current: &Inventory) -> Vec<String> {
         .into_iter()
         .flat_map(|(op, row)| {
             row.into_iter()
-                .map(|(b, v)| ((op.id.clone(), b.name().to_string()), v.cell))
+                .map(|(c, v)| ((op.id.clone(), c.name()), v.cell))
                 .collect::<Vec<_>>()
         })
         .collect();
@@ -508,15 +642,16 @@ fn marker(rel: &str, text: &str) -> Option<&'static str> {
     if rel.ends_with(".wgsl") {
         return Some("a WGSL shader");
     }
-    const MARKERS: [(&str, &str); 9] = [
+    const MARKERS: [(&str, &str); 10] = [
         ("core::arch::", "core::arch"),
         ("std::arch::", "std::arch"),
         ("#[target_feature", "#[target_feature]"),
         ("asm!(", "asm!"),
-        ("multiversion!", "multiversion!"),
+        ("multiversion! {", "multiversion!"),
         ("create_compute_pipeline", "a compute pipeline"),
         ("create_render_pipeline", "a render pipeline"),
         ("FragmentPass::new(", "a fragment pass"),
+        ("FragmentPass::with_device(", "a fragment pass"),
         ("@compute", "an inline WGSL kernel"),
     ];
     MARKERS
@@ -572,70 +707,6 @@ fn parse_csv_line(line: &str) -> Vec<String> {
     }
     fields.push(field);
     fields
-}
-
-/// Vector instructions for `backend` in an `llvm-objdump -d` listing of one function.
-pub fn vector_instructions(backend: Backend, asm: &str) -> usize {
-    asm.lines()
-        .filter(|line| {
-            let line = line.trim();
-            let Some((mnemonic, operands)) =
-                line.split_once(char::is_whitespace).or(Some((line, "")))
-            else {
-                return false;
-            };
-            let operands = operands.trim();
-            match backend {
-                Backend::X86Sse2 => operands.contains("%xmm") || operands.contains("xmm"),
-                Backend::X86Avx2 => operands.contains("ymm"),
-                Backend::Neon64 => [".16b", ".8b", ".8h", ".4h", ".4s", ".2s", ".2d"]
-                    .iter()
-                    .any(|t| operands.contains(t)),
-                Backend::Neon32 => {
-                    mnemonic.starts_with('v')
-                        && (mnemonic.contains(".i")
-                            || mnemonic.contains(".u")
-                            || mnemonic.contains(".s")
-                            || mnemonic.contains(".f")
-                            || mnemonic.starts_with("vld")
-                            || mnemonic.starts_with("vst"))
-                        && (operands.contains('q') || operands.contains('d'))
-                }
-                Backend::Rvv => {
-                    mnemonic.starts_with("vset")
-                        || (mnemonic.starts_with('v')
-                            && operands.split(',').any(|o| {
-                                let o = o.trim();
-                                o.len() >= 2
-                                    && o.starts_with('v')
-                                    && o[1..].chars().all(|c| c.is_ascii_digit())
-                            }))
-                }
-                _ => false,
-            }
-        })
-        .count()
-}
-
-/// Functions (name, body) in an `llvm-objdump -d --demangle` listing.
-pub fn functions(listing: &str) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = Vec::new();
-    for line in listing.lines() {
-        if let Some(name) = line
-            .trim_end()
-            .strip_suffix(">:")
-            .and_then(|l| l.split_once(" <"))
-            .map(|(_, name)| name.to_string())
-        {
-            out.push((name, String::new()));
-        } else if let Some((_, body)) = out.last_mut()
-            && let Some((_, insn)) = line.split_once(":\t").or_else(|| line.split_once(": "))
-        {
-            body.push_str(insn.trim());
-            body.push('\n');
-        }
-    }
-    out
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@ members = [
     "crates/daedalus",
     "crates/core",
     "crates/accel",
+    "crates/kernels",
     "crates/transport",
     "crates/data",
     "crates/wgsl-infer",
@@ -53,6 +54,7 @@ rust-version = "1.99"
 # without default features; `std` consumers enable `features = ["std"]` themselves.
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.1-dev", default-features = false }
 daedalus-core = { path = "crates/core", version = "3.0.1-dev", default-features = false }
+daedalus-kernels = { path = "crates/kernels", version = "3.0.1-dev", default-features = false }
 daedalus-accel = { path = "crates/accel", version = "3.0.1-dev", default-features = false }
 daedalus-transport = { path = "crates/transport", version = "3.0.1-dev", default-features = false }
 daedalus-data = { path = "crates/data", version = "3.0.1-dev", default-features = false }
@@ -159,6 +161,15 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# The kernels are vectorized by the optimizer: keep them optimized in debug builds too, so dev
+# builds run the vector code and the conformance tests check it (`scripts/accel.sh`). Overflow
+# checks and core's debug-assertion UB checks (in `as_chunks`) would stop the loops from
+# vectorizing; the kernels use wrapping arithmetic and are covered by the conformance tests.
+[profile.dev.package.daedalus-kernels]
+opt-level = 3
+overflow-checks = false
+debug-assertions = false
 
 # `crates/daedalus/tests/dylib_plugin.rs` builds these examples as `cdylib`s. Dropping their own
 # debug info and stripping the shared objects keeps the debug `.so`s small and quick to link; it

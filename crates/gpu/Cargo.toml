@@ -55,6 +55,7 @@ daedalus-transport = { workspace = true }
 
 [dev-dependencies]
 bytemuck = { workspace = true }
+daedalus-accel = { workspace = true, features = ["std"] }
 
 [[example]]
 name = "gpu_probe"

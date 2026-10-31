@@ -184,6 +184,41 @@ export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER=~/zigcc/riscv64-cc \
 
 To run on the boards themselves, copy the test binaries over with the same target.
 
+### Acceleration inventory
+
+```bash
+scripts/ci.sh accel        # = scripts/accel.sh; ACCEL_RELEASE=1 also fails on gaps
+```
+
+Every data-parallel op registers its kernels per backend in a `daedalus-accel` table
+(`daedalus_kernels::ACCEL`), and this lane proves them:
+
+- the conformance tests (`crates/kernels/tests/conformance.rs`, and the GPU crate's) on
+  x86_64 natively (SSE through SSSE3/SSE4.1, and AVX2);
+- aarch64 musl under `qemu-aarch64-static`;
+- armv7 musl built with `-C target-feature=+neon` under `qemu-arm-static -cpu cortex-a7`;
+- riscv64 musl built with `-C target-feature=+v` under `qemu-riscv64-static -cpu
+  rv64,v=true,vlen=N` for N = 128, 256 and 512;
+- the GPU kernels on the machine's Vulkan adapter (lavapipe in CI).
+
+Each run records evidence. `accel-matrix asm` disassembles the test binaries (llvm-objdump from
+`llvm-tools`) and checks that every kernel symbol holds that ISA's packed vector instructions,
+so a kernel the compiler left scalar fails. `accel-matrix render` then writes
+`docs/backend-matrix.{md,csv}` and fails on:
+- a failing cell;
+- a pass cell lost against the committed CSV;
+- a source file with SIMD or GPU markers and no registry entry.
+
+The cross targets use zig wrappers in `$ZIGCC_DIR` (`aarch64-musl-cc`, `armv7-cc`,
+`riscv64-cc`; as above, plus `-Wl,--fix-cortex-a53-843419` dropped for aarch64). A missing tool
+skips its target, which leaves its cells untested.
+
+Stable Rust cannot detect ARMv7 NEON or RVV at runtime, and does not expose them to
+`cfg(target_feature)` either. A build with `+neon` / `+v` sets `daedalus_neon32` /
+`daedalus_rvv` through the crates' build scripts, and those builds choose the vector kernels.
+Boards should build that way: the Flame RV1106 (Cortex-A7) with `+neon`, the K230D (C908) with
+`+v`.
+
 ### Lean preset
 
 ```bash

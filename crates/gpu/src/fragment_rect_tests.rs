@@ -156,11 +156,47 @@ fn integer_formats_round_trip_exactly() {
     }
 }
 
+/// The op id of the storage-to-texture copy in the acceleration inventory.
+const STORAGE_TO_TEXTURE: &str = "daedalus.gpu.storage_to_texture";
+
+/// Record `got == want` for the inventory (`conform`) under `variant` on `backend`.
+fn conform_copy(
+    ctx: &GpuContextHandle,
+    backend: daedalus_accel::Backend,
+    variant: &str,
+    got: &[u8],
+    want: &[u8],
+) {
+    let (device, _) = ctx.wgpu().unwrap();
+    let info = device.adapter_info();
+    let adapter = format!("{} ({})", info.name, info.driver_info);
+    daedalus_accel::conform_with(
+        daedalus_accel::Evidence::new(STORAGE_TO_TEXTURE, backend)
+            .variant(variant)
+            .adapter(&adapter),
+        || {
+            (got == want)
+                .then_some(())
+                .ok_or_else(|| format!("{variant}: texture differs from the de-strided rows"))
+        },
+    );
+}
+
 /// A frame in a storage buffer (rows `stride` apart, as a camera writes them) copies into a
 /// texture a fragment pass then samples; misaligned strides and short buffers are refused.
+/// Each path records inventory evidence: the direct copy (`copy_buffer_to_texture`, the TFU on
+/// V3D) and per-row copies on the copy engine, and the fold-and-unfold fragment pass.
 #[test]
 fn storage_frames_copy_into_textures() {
     use crate::GpuStorage;
+    // The scalar reference: de-striding drops each row's padding.
+    daedalus_accel::conform(STORAGE_TO_TEXTURE, daedalus_accel::Backend::Scalar, || {
+        let rows = [1u8, 2, 0xEE, 3, 4, 0xEE];
+        rows.chunks(3)
+            .flat_map(|r| r[..2].to_vec())
+            .collect::<Vec<_>>()
+            == [1, 2, 3, 4]
+    });
     let Some(ctx) = wgpu_ctx() else { return };
     let (width, height, stride) = (100u32, 6u32, 256u32);
     let frame: Vec<u8> = (0..stride * height)
@@ -186,6 +222,13 @@ fn storage_frames_copy_into_textures() {
         .flat_map(|row| row[..width as usize].to_vec())
         .collect();
     assert_eq!(out, want, "rows de-strided, padding dropped");
+    conform_copy(
+        &ctx,
+        daedalus_accel::Backend::FixedFunction,
+        "direct",
+        &out,
+        &want,
+    );
 
     // The copied texture feeds a pass like any other input.
     let pass = FragmentPass::new(
@@ -227,6 +270,14 @@ fn storage_frames_copy_into_textures() {
             .flat_map(|row| row[..frame_w as usize].to_vec())
             .collect();
         assert_eq!(got, want, "stride {frame_stride}");
+        // 640 folds two rows into one 256-aligned row and unfolds them in a fragment pass; 132
+        // is re-pitched with one copy per row.
+        let (backend, variant) = if frame_stride == 640 {
+            (daedalus_accel::Backend::Gpu, "fold_unfold")
+        } else {
+            (daedalus_accel::Backend::FixedFunction, "rows")
+        };
+        conform_copy(&ctx, backend, variant, &got, &want);
     }
     let odd = GpuTexture::new(&ctx, (101, height), r8, None).unwrap();
     assert!(

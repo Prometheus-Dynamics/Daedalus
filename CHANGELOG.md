@@ -50,6 +50,28 @@ plugin ABI and does not load.
   fresh cache. The backend requests `PIPELINE_CACHE` when available. On desktop, 12 fragment
   pipelines build in 3 ms instead of 82 ms with the cache reloaded.
   `save_if_grown` writes the file only when new pipelines were built.
+- **Acceleration inventory: `daedalus-accel`** (no dependencies, `no_std`). Kernels register
+  per op and backend in const `Registry` tables:
+  - backends: scalar, portable SIMD, x86 SSE / AVX2, NEON64, NEON32, RVV, GPU (with variants)
+    and fixed-function;
+  - ISA extensions as their own columns (`neon64+dotprod`);
+  - each entry is implemented, a gap, impossible, or not data-parallel, with a reason.
+
+  `conform()` records CI evidence. The `accel-matrix` generator renders
+  `docs/backend-matrix.{md,csv}`, checks the kernels' vector instructions in the disassembly, and
+  gates on failures, regressions and unregistered SIMD/GPU code. Eidos and Styx use the same
+  crate.
+- **`daedalus-kernels`**: Daedalus's data-parallel CPU kernels, vectorized per ISA and proven by
+  `scripts/ci.sh accel` (69 cells pass, the rest impossible with reasons or planned GPU gaps):
+  - RGB/RGBA/gray conversions, LE f32, binary16 and unorm8 readback conversions;
+  - byte and row copies (explicit SSE2/AVX2/NEON intrinsics, and NEON32/RVV inline asm, since
+    musl's ARMv7 and RISC-V `memcpy` is scalar);
+  - hex, and standard base64.
+
+  Targets: x86_64 SSE2 with SSSE3/SSE4.1 and AVX2 chosen at runtime, AArch64 NEON, ARMv7 NEON
+  (`+neon`) and RVV (`+v`), the last two checked at VLEN 128, 256 and 512.
+- The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
+  copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`
   (`GpuMemoryHints`).** wgpu's `Performance` hints allocate a large block on the first
   allocation of each memory type (a 42 ms tick for the first readback buffer on the CM5, 3.6 ms
@@ -217,6 +239,7 @@ plugin ABI and does not load.
   callers are not reliable.
 
 ### Removed
+- `crates/daedalus/assets/*.wgsl`: six shaders no code referenced since 0.1.0.
 
 - Runtime: `NodeError::retryable` and `ExecuteError::retryable`, which nothing called. Recovery
   policies (`NodeRecovery`) decide retries from node metadata instead.

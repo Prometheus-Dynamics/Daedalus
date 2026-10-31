@@ -20,7 +20,9 @@ mod dump;
 pub mod matrix;
 
 #[cfg(feature = "std")]
-pub use conform::{Evidence, conform, conform_with, detected_backends, rvv_vlen};
+pub use conform::{
+    Evidence, conform, conform_with, detected_backends, detected_extensions, rvv_vlen,
+};
 #[cfg(feature = "std")]
 pub use dump::{dump, dump_json};
 
@@ -93,6 +95,100 @@ impl Backend {
     }
 }
 
+/// An ISA extension a kernel uses on top of its backend's base vector unit. Matrix columns
+/// split per extension set (`neon64+dotprod`); a base kernel's pass does not count for one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum Ext {
+    // AArch64
+    Dotprod,
+    Fp16,
+    I8mm,
+    Crc32,
+    Aes,
+    Sha2,
+    Sha3,
+    Sve,
+    Sve2,
+    // RISC-V
+    Zba,
+    Zbb,
+    Zbs,
+    Zvbb,
+    Zvbc,
+    // x86
+    Popcnt,
+    Bmi2,
+    Fma,
+    F16c,
+    Pclmulqdq,
+    Sha,
+    Avx512f,
+    Avx512bw,
+    Avx512vnni,
+}
+
+impl Ext {
+    pub const ALL: [Ext; 23] = [
+        Ext::Dotprod,
+        Ext::Fp16,
+        Ext::I8mm,
+        Ext::Crc32,
+        Ext::Aes,
+        Ext::Sha2,
+        Ext::Sha3,
+        Ext::Sve,
+        Ext::Sve2,
+        Ext::Zba,
+        Ext::Zbb,
+        Ext::Zbs,
+        Ext::Zvbb,
+        Ext::Zvbc,
+        Ext::Popcnt,
+        Ext::Bmi2,
+        Ext::Fma,
+        Ext::F16c,
+        Ext::Pclmulqdq,
+        Ext::Sha,
+        Ext::Avx512f,
+        Ext::Avx512bw,
+        Ext::Avx512vnni,
+    ];
+
+    /// The stable name (the target-feature name where there is one).
+    pub const fn name(self) -> &'static str {
+        match self {
+            Ext::Dotprod => "dotprod",
+            Ext::Fp16 => "fp16",
+            Ext::I8mm => "i8mm",
+            Ext::Crc32 => "crc",
+            Ext::Aes => "aes",
+            Ext::Sha2 => "sha2",
+            Ext::Sha3 => "sha3",
+            Ext::Sve => "sve",
+            Ext::Sve2 => "sve2",
+            Ext::Zba => "zba",
+            Ext::Zbb => "zbb",
+            Ext::Zbs => "zbs",
+            Ext::Zvbb => "zvbb",
+            Ext::Zvbc => "zvbc",
+            Ext::Popcnt => "popcnt",
+            Ext::Bmi2 => "bmi2",
+            Ext::Fma => "fma",
+            Ext::F16c => "f16c",
+            Ext::Pclmulqdq => "pclmulqdq",
+            Ext::Sha => "sha",
+            Ext::Avx512f => "avx512f",
+            Ext::Avx512bw => "avx512bw",
+            Ext::Avx512vnni => "avx512vnni",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Ext> {
+        Ext::ALL.into_iter().find(|e| e.name() == name)
+    }
+}
+
 /// What a backend's entry for an op says. A backend with no entry is a gap.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -120,6 +216,34 @@ pub struct Op {
     pub scalar: &'static str,
     /// Per-pixel or per-element work: never impossible on the GPU without review.
     pub per_element: bool,
+    /// Extension variants the op could use (`(Neon64, &[Ext::Dotprod])`): without a kernel
+    /// for one, the matrix shows a gap in that column.
+    pub candidates: &'static [(Backend, &'static [Ext])],
+}
+
+impl Op {
+    /// A per-element op with no extension candidates.
+    pub const fn new(id: &'static str, summary: &'static str, scalar: &'static str) -> Self {
+        Self {
+            id,
+            summary,
+            scalar,
+            per_element: true,
+            candidates: &[],
+        }
+    }
+
+    /// Not per-element work (a hash chain, setup code).
+    pub const fn not_per_element(mut self) -> Self {
+        self.per_element = false;
+        self
+    }
+
+    /// Extension variants the op could use.
+    pub const fn could_use(mut self, candidates: &'static [(Backend, &'static [Ext])]) -> Self {
+        self.candidates = candidates;
+        self
+    }
 }
 
 /// One backend's entry for an op.
@@ -131,6 +255,8 @@ pub struct Kernel {
     /// A variant within the backend ("fragment", "compute", "avx2+fma"); `None` for the
     /// backend's only kernel. Evidence carries the same string.
     pub variant: Option<&'static str>,
+    /// Extensions the kernel needs beyond the backend's base (sorted or not; compared as a set).
+    pub extensions: &'static [Ext],
     /// `path/from/repo/root.rs:line` of the kernel; the gate matches marker files by path.
     pub source: &'static str,
     /// The conformance test (`module::path::test_name`) that checks it against scalar.
@@ -153,6 +279,7 @@ impl Kernel {
             op,
             backend,
             variant: None,
+            extensions: &[],
             source,
             test,
             symbol: None,
@@ -166,6 +293,7 @@ impl Kernel {
             op,
             backend,
             variant: None,
+            extensions: &[],
             source: "",
             test: "",
             symbol: None,
@@ -175,6 +303,11 @@ impl Kernel {
 
     pub const fn with_variant(mut self, variant: &'static str) -> Self {
         self.variant = Some(variant);
+        self
+    }
+
+    pub const fn with_extensions(mut self, extensions: &'static [Ext]) -> Self {
+        self.extensions = extensions;
         self
     }
 

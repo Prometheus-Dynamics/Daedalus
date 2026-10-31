@@ -115,14 +115,14 @@ fn render(args: &Args) -> Result<bool, String> {
     }
     let mut gaps = Vec::new();
     for (op, row) in inv.cells() {
-        for (backend, v) in row {
-            let at = format!("{} on {}", op.id, backend.name());
+        for (column, v) in row {
+            let at = format!("{} on {}", op.id, column.name());
             match v.cell {
                 Cell::Fail => failures.push(format!("{at}: {}", v.reason)),
                 Cell::Gap | Cell::Untested => {
                     gaps.push(format!("{at}: {} ({})", v.cell.name(), v.reason))
                 }
-                Cell::Pass | Cell::Impossible => {}
+                Cell::Pass | Cell::Impossible | Cell::NotApplicable => {}
             }
         }
     }
@@ -215,9 +215,10 @@ fn asm(args: &Args) -> Result<bool, String> {
             eprintln!("error: {} on {}: {detail}", k.op, k.backend.name());
         }
         lines.push_str(&format!(
-            "{{\"kind\":\"asm\",\"op\":{},\"backend\":\"{}\",\"variant\":{},\"adapter\":null,\"target\":{},\"runner\":\"objdump\",\"vlen\":null,\"rev\":\"\",\"result\":\"{}\",\"detail\":{}}}\n",
+            "{{\"kind\":\"asm\",\"op\":{},\"backend\":\"{}\",\"extensions\":{},\"variant\":{},\"adapter\":null,\"target\":{},\"runner\":\"objdump\",\"vlen\":null,\"rev\":\"\",\"result\":\"{}\",\"detail\":{}}}\n",
             serde_json::to_string(&k.op).map_err(|e| e.to_string())?,
             k.backend.name(),
+            serde_json::to_string(&k.extensions).map_err(|e| e.to_string())?,
             k.variant.as_ref().map_or("null".into(), |v| serde_json::to_string(v).unwrap_or_default()),
             serde_json::to_string(target).map_err(|e| e.to_string())?,
             if pass { "pass" } else { "fail" },

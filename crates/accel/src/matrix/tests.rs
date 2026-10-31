@@ -1,19 +1,9 @@
 use super::*;
-use crate::{Backend, Exempt, Kernel, Op, Registry, Status};
+use crate::{Backend, Exempt, Ext, Kernel, Op, Registry, Status};
 
 static OPS: [Op; 2] = [
-    Op {
-        id: "t.add",
-        summary: "add",
-        scalar: "t::add",
-        per_element: true,
-    },
-    Op {
-        id: "t.hash",
-        summary: "hash",
-        scalar: "t::hash",
-        per_element: false,
-    },
+    Op::new("t.add", "add", "t::add").could_use(&[(Backend::Neon64, &[Ext::Dotprod])]),
+    Op::new("t.hash", "hash", "t::hash").not_per_element(),
 ];
 
 static CHILD: Registry = Registry {
@@ -36,6 +26,8 @@ static ROOT: Registry = Registry {
             .with_symbol("add_rvv"),
         Kernel::implemented("t.add", Backend::Neon64, "src/add.rs:20", "add::neon"),
         Kernel::missing("t.add", Backend::Gpu, Status::Impossible("tiny")),
+        Kernel::implemented("t.add", Backend::X86Avx2, "src/add.rs:30", "add::avx2")
+            .with_extensions(&[Ext::Bmi2]),
     ],
     exempt: &[Exempt {
         path: "src/detect.rs",
@@ -80,6 +72,20 @@ fn cells_need_evidence_and_rvv_needs_three_vector_lengths() {
     assert_eq!(inv.cell("t.add", Backend::Neon64).cell, Cell::Untested);
     assert_eq!(inv.cell("t.add", Backend::X86Avx2).cell, Cell::Gap);
     assert_eq!(inv.cell("t.hash", Backend::Gpu).cell, Cell::Impossible);
+    // Extension columns: a declared candidate without a kernel is a gap; another op's
+    // extension column does not apply; a base pass does not count for the variant.
+    let dotprod = Column {
+        backend: Backend::Neon64,
+        extensions: vec!["dotprod".into()],
+    };
+    assert_eq!(inv.cell_in("t.add", &dotprod).cell, Cell::Gap);
+    assert_eq!(inv.cell_in("t.hash", &dotprod).cell, Cell::NotApplicable);
+    let bmi2 = Column {
+        backend: Backend::X86Avx2,
+        extensions: vec!["bmi2".into()],
+    };
+    assert_eq!(inv.cell_in("t.add", &bmi2).cell, Cell::Untested);
+    assert!(inv.columns().iter().any(|c| c.name() == "x86_avx2+bmi2"));
     assert_eq!(inv.review().len(), 1, "GPU impossible on a per-element op");
 
     let full = partial + &rec("rvv", Some(512), "pass", "test") + &rec("rvv", None, "pass", "asm");
@@ -130,17 +136,35 @@ fn marker_files_need_an_entry_or_an_exemption() {
 #[test]
 fn vector_instructions_are_recognized_per_isa() {
     let rvv = "vsetvli\ta0, a1, e8, m1, ta, ma\nvle8.v\tv8, (a2)\nadd\ta0, a0, a1\n";
-    assert_eq!(vector_instructions(Backend::Rvv, rvv), 2);
+    assert_eq!(
+        vector_instructions(Backend::Rvv, rvv),
+        1,
+        "vle8; vsetvli alone is not vector work"
+    );
     let neon64 = "ld4\t{ v0.16b, v1.16b, v2.16b, v3.16b }, [x0]\nadd\tx0, x0, #1\n";
     assert_eq!(vector_instructions(Backend::Neon64, neon64), 1);
     let neon32 = "vld4.8\t{d16, d17, d18, d19}, [r0]\nvmull.u8\tq8, d16, d20\nadd\tr0, r0, #1\n";
     assert_eq!(vector_instructions(Backend::Neon32, neon32), 2);
-    let x86 = "paddb\t%xmm1, %xmm0\nvpaddb\t%ymm1, %ymm0, %ymm0\naddq\t$1, %rax\n";
-    assert_eq!(vector_instructions(Backend::X86Sse2, x86), 1);
+    let x86 = "paddb\t%xmm1, %xmm0\nvpaddb\t%ymm1, %ymm0, %ymm0\naddq\t$1, %rax\nvmulss\t%xmm2, %xmm5, %xmm5\nvxorps\t%xmm0, %xmm0, %xmm0\nmulps\t%xmm1, %xmm2\n";
+    assert_eq!(
+        vector_instructions(Backend::X86Sse2, x86),
+        2,
+        "paddb and mulps; not mulss or zeroing"
+    );
     assert_eq!(vector_instructions(Backend::X86Avx2, x86), 1);
+    let vfp = "vmul.f64\td0, d1, d2\nvadd.f32\ts0, s1, s2\nvldr\td0, [r0]\nvadd.f32\tq0, q1, q2\n";
+    assert_eq!(
+        vector_instructions(Backend::Neon32, vfp),
+        1,
+        "only the q-register add"
+    );
     let listing = "0000000000001000 <k::add_rvv>:\n    1000:\tvsetvli\ta0, a1, e8, m1, ta, ma\n    1004:\tret\n\n0000000000002000 <other>:\n    2000:\tret\n";
     let funcs = functions(listing);
     assert_eq!(funcs.len(), 2);
     assert_eq!(funcs[0].0, "k::add_rvv");
-    assert_eq!(vector_instructions(Backend::Rvv, &funcs[0].1), 1);
+    assert_eq!(
+        vector_instructions(Backend::Rvv, &funcs[0].1),
+        0,
+        "vsetvli only"
+    );
 }
