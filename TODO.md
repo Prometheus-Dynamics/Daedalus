@@ -107,7 +107,9 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a graph test runs a fragment-pass node with two outputs against its CPU
       pair and the results match. `gpu_bench` on the Raze shows the helper costs no more than the
       hand-written fragment pass (within 5%). The guide documents it.
-      **Blocked by:** nothing (the Raze check needs a window).
+      **Status:** `FragmentPass` + `GpuTexture` landed with the graph and format tests; the helper
+      matches the hand-written pass on desktop. Left: the Raze measurement.
+      **Blocked by:** a Raze window.
 - [x] **What:** `read_buffer_into(&GpuStorage, range, &mut [u8])` (shipped as `GpuStorage::read_into` / `start_read` → `GpuReadback::try_read_into`), plus a non-blocking form
       through `GpuSubmission`, with a persistent staging ring.
       **Why:** Eidos mesh and depth readback, with no allocation per download.

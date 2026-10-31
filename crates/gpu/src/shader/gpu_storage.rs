@@ -27,9 +27,31 @@ pub struct GpuStorage {
 
 /// Reusable `MAP_READ` buffers for readbacks: a readback takes one and returns it when done.
 #[derive(Default)]
-struct StagingRing {
+pub(super) struct StagingRing {
     free: Mutex<Vec<wgpu::Buffer>>,
     created: AtomicUsize,
+}
+
+impl StagingRing {
+    /// A free staging buffer of at least `size` bytes, or a new one.
+    pub(super) fn take(&self, device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+        let mut free = self.free.lock();
+        if let Some(at) = free.iter().position(|b| b.size() >= size) {
+            return free.swap_remove(at);
+        }
+        drop(free);
+        self.created.fetch_add(1, Ordering::Relaxed);
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu-readback-staging"),
+            size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    pub(super) fn created(&self) -> usize {
+        self.created.load(Ordering::Relaxed)
+    }
 }
 
 impl std::fmt::Debug for GpuStorage {
@@ -182,40 +204,24 @@ impl GpuStorage {
                 self.size
             )));
         }
-        let staging = self.staging.free.lock().pop().unwrap_or_else(|| {
-            self.staging.created.fetch_add(1, Ordering::Relaxed);
-            self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("gpu-storage-readback"),
-                size: self.size,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        });
+        let staging = self.staging.take(&self.device, self.size);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&self.buffer, offset, &staging, 0, copy);
         self.queue.submit([encoder.finish()]);
-        let state = Arc::new(AtomicU8::new(MAP_PENDING));
-        let flag = state.clone();
-        staging
-            .slice(..copy)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let value = if result.is_ok() { MAP_OK } else { MAP_FAILED };
-                flag.store(value, Ordering::Release);
-            });
-        Ok(GpuReadback {
-            staging: Some(staging),
-            ring: self.staging.clone(),
-            state,
-            len: len as usize,
+        Ok(GpuReadback::begin(
+            &self.device,
+            &self.staging,
+            staging,
+            len as usize,
             copy,
-            device: self.device.clone(),
-        })
+            None,
+        ))
     }
 
     /// Staging buffers this storage has created for readbacks: constant once readbacks reuse
     /// them (one per readback in flight).
     pub fn staging_buffers_created(&self) -> usize {
-        self.staging.created.load(Ordering::Relaxed)
+        self.staging.created()
     }
 }
 
@@ -231,6 +237,9 @@ pub struct GpuReadback {
     state: Arc<AtomicU8>,
     len: usize,
     copy: u64,
+    /// `(padded, unpadded)` row bytes for a texture copy, whose rows are 256-byte aligned in
+    /// the staging buffer.
+    rows: Option<(usize, usize)>,
     device: wgpu::Device,
 }
 
@@ -244,6 +253,34 @@ impl std::fmt::Debug for GpuReadback {
 }
 
 impl GpuReadback {
+    /// Map the first `copy` bytes of `staging` (the copy into it is already submitted).
+    pub(super) fn begin(
+        device: &wgpu::Device,
+        ring: &Arc<StagingRing>,
+        staging: wgpu::Buffer,
+        len: usize,
+        copy: u64,
+        rows: Option<(usize, usize)>,
+    ) -> Self {
+        let state = Arc::new(AtomicU8::new(MAP_PENDING));
+        let flag = state.clone();
+        staging
+            .slice(..copy)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let value = if result.is_ok() { MAP_OK } else { MAP_FAILED };
+                flag.store(value, Ordering::Release);
+            });
+        Self {
+            staging: Some(staging),
+            ring: ring.clone(),
+            state,
+            len,
+            copy,
+            rows,
+            device: device.clone(),
+        }
+    }
+
     /// Bytes this readback delivers.
     pub fn len(&self) -> usize {
         self.len
@@ -287,7 +324,14 @@ impl GpuReadback {
         }
         let result = match staging.slice(..self.copy).get_mapped_range() {
             Ok(view) => {
-                out.copy_from_slice(&view[..self.len]);
+                match self.rows {
+                    None => out.copy_from_slice(&view[..self.len]),
+                    Some((padded, unpadded)) => {
+                        for (dst, src) in out.chunks_mut(unpadded).zip(view.chunks(padded)) {
+                            dst.copy_from_slice(&src[..unpadded]);
+                        }
+                    }
+                }
                 Ok(())
             }
             Err(err) => Err(GpuError::Internal(format!("readback map failed: {err:?}"))),

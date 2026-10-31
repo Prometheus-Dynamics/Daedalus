@@ -464,6 +464,7 @@ pub(super) fn image_paths(device: &wgpu::Device, queue: &wgpu::Queue) {
         for pass in passes {
             report(device, pass);
         }
+        helper_box(&grey, radius, &tag);
         cpu_box(&grey, FRAME, radius as usize, &tag);
         cpu_box_separable(&grey, FRAME, radius as usize, &tag);
     }
@@ -706,4 +707,57 @@ fn cpu_box_separable(src: &[u8], (w, h): (u32, u32), radius: usize, tag: &str) {
         );
     }
     std::hint::black_box(&dst);
+}
+
+/// The r8 box filter through `FragmentPass` + `GpuTexture` (the node helper), on its own context:
+/// its cost against the hand-written `_fragment_r8` pass above.
+fn helper_box(grey: &[u8], radius: i32, tag: &str) {
+    use daedalus_gpu::{FragmentPass, GpuBackendKind, GpuOptions, GpuTexture, select_backend};
+    let name = format!("{tag}_fragment_helper_r8");
+    let ctx = match select_backend(&GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Wgpu),
+        ..Default::default()
+    }) {
+        Ok(ctx) if ctx.wgpu().is_some() => ctx,
+        _ => return kv(&name, "no wgpu context"),
+    };
+    let format = wgpu::TextureFormat::R8Unorm;
+    let shader = format!(
+        "@group(0) @binding(0) var src: texture_2d<f32>;
+         @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {{
+             let c = vec2<i32>(pos.xy); let size = vec2<i32>(textureDimensions(src));
+             {sum} return mean;
+         }}",
+        sum = box_sum(radius, "textureLoad(src, p, 0)")
+    );
+    let built = (|| {
+        let pass = FragmentPass::new(&ctx, &shader, &[format])?;
+        let src = GpuTexture::new(&ctx, FRAME, format, None)?;
+        src.write(grey)?;
+        let dst = GpuTexture::new(&ctx, FRAME, format, None)?;
+        Ok::<_, daedalus_gpu::GpuError>((pass, src, dst))
+    })();
+    let (pass, src, dst) = match built {
+        Ok(built) => built,
+        Err(err) => return kv(&name, format!("unsupported: {err}")),
+    };
+    let run = || {
+        if let Ok(ticket) = pass.run(&[&src], &[], &[&dst]) {
+            ticket.wait();
+        }
+    };
+    run();
+    let mut samples: Vec<Duration> = (0..iters().min(30))
+        .map(|_| {
+            let start = Instant::now();
+            run();
+            start.elapsed()
+        })
+        .collect();
+    let t = median(&mut samples).as_secs_f64();
+    let pixels = f64::from(FRAME.0 * FRAME.1);
+    kv(
+        &name,
+        format!("{:.2} ms, {:.2} GB/s", t * 1e3, pixels * 2.0 / t / 1e9),
+    );
 }

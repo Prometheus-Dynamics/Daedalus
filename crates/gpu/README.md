@@ -59,6 +59,23 @@ it will produce. `push` hands the pair back when the cap is reached, `pop_comple
 finished values in submission order, and `drop_oldest` implements latest-wins. See
 `crates/daedalus/tests/gpu_ticket.rs`.
 
+## Fragment-pass nodes
+
+On tile-based GPUs, use a full-screen fragment pass for dense per-pixel work instead of a
+compute shader. On the CM5's V3D it runs 10-13x faster than the same kernel in compute, whether
+compute reads storage buffers or storage images, and it matches the four A76 cores on ALU-heavy
+work (`gpu_bench` `[image-paths]`).
+
+`FragmentPass::new(gpu, wgsl, &[formats])` compiles a `@fragment fn fs(@builtin(position) pos:
+vec4<f32>)` entry point against a built-in full-screen triangle. Inputs are `GpuTexture`s at
+`@group(0)` bindings `0..n`, read with `textureLoad(src, vec2<i32>(pos.xy), 0)`; after them come
+`GpuStorage` buffers (`var<storage, read>`, for parameters). The pass writes one render target
+per `@location`; use several for multiple render targets. Targets must share one size, and r8,
+rgba8, r32f and rg32f work on every backend. `pass.run(&inputs, &buffers, &targets)` returns a
+`GpuTicket`. `GpuTexture` uploads with `write(bytes)` (tightly packed rows) and reads back with
+`start_read()` / `try_read_into` (polled) or `read_into` (blocking), reusing one staging buffer.
+Keep the pass and its textures in the node's state. See `crates/daedalus/tests/gpu_fragment.rs`.
+
 ## Host-created Vulkan instances
 
 The Vulkan loader is not safe when several threads set up a graphics driver at once: the NVIDIA ICD

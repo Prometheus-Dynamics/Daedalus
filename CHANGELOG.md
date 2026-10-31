@@ -17,6 +17,13 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Fragment-pass nodes: `FragmentPass` and `GpuTexture`.** A full-screen fragment pass reads
+  `GpuTexture` inputs (`textureLoad`) and `GpuStorage` parameters, and writes one or more render
+  targets. The tested formats are r8, rgba8, r32f and rg32f. It returns a `GpuTicket`.
+  `GpuTexture` is a persistent 2D texture with `write` and polled or blocking readback through
+  one reused staging buffer. On V3D this is the GPU path that beats the CPU: 10-13x faster than
+  compute. A graph test checks a two-target pass against its CPU pair; `gpu_bench` compares the
+  helper with a hand-written pass (equal on desktop).
 - **Readback into caller buffers.** `GpuStorage::start_read(offset, len) -> GpuReadback`
   copies into a reusable staging buffer without waiting. `GpuReadback::try_read_into(&mut [u8])`
   delivers the data on a later tick, and `GpuStorage::read_into` is the blocking form. No buffer

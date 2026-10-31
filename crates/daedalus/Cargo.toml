@@ -176,6 +176,11 @@ path = "tests/gpu_ticket.rs"
 required-features = ["engine", "plugins", "gpu-wgpu"]
 
 [[test]]
+name = "gpu_fragment"
+path = "tests/gpu_fragment.rs"
+required-features = ["engine", "plugins", "gpu-wgpu"]
+
+[[test]]
 name = "macro_hot_path_allocations"
 path = "tests/macro_hot_path_allocations.rs"
 required-features = ["engine", "plugins"]
