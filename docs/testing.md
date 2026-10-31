@@ -412,6 +412,192 @@ missing hardware; a failed check prints its error in place of the value.
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
+### CM5 run (2026-10-31)
+
+The Raze (CM5, V3D 7.1.10.2, Mesa 26.1.8, kernel 7.2.9), at 389bc7e:
+- the GPU crate's tests: 72 pass;
+- `ci.sh pi`'s dmabuf hardware tests: 12 ok. The LINEAR storage import
+  (`dmabuf_storage_import_reads_the_frame_in_place`) passes; the LINEAR-image tests skip for
+  the reason above;
+- the GPU kernels: all 11 bit-exact. On V3D compute they are slower than the A76 CPU (rgb→rgba
+  41.9 vs 7.8 ms, f16→f32 42.7 vs 11.9 ms). The copy engine is even with the CPU (0.87 vs
+  0.90 ms). The measurements are in `docs/backend-matrix.md`, and the evidence in
+  `docs/accel-evidence/raze-cm5-v3d-2026-10-31.jsonl`.
+
+`gpu_probe`, whose limits match `gpu_bench`'s `[limits]`:
+
+```text
+daedalus-gpu gpu_probe 3.0.1-dev
+
+[system]
+kernel: Linux 7.2.9-v8-16k
+kernel_build: #1 SMP PREEMPT Thu Oct 29 01:04:03 PDT 2026
+machine: aarch64
+model: Raspberry Pi Compute Module 5 Rev 1.0
+
+[gpu]
+name: V3D 7.1.10.2
+backend: Vulkan
+device_type: IntegratedGpu
+vendor_id: 0x14e4
+device_id: 0x55701c33
+driver: V3DV Mesa
+driver_info: Mesa 26.1.8
+dmabuf_import: supported
+dmabuf_acquire_fence_mode: auto
+dmabuf_acquire_fence_wait: sync_fd
+dmabuf_acquire_fence_waits: sync_fd, timeline, cpu
+compute_workgroup: storage 16384 B, 256 invocations, size [256, 256, 256], 65535 groups/dim
+compute_storage: binding 1073741824 B, 8 buffers, 4 textures per stage
+compute_features: GpuComputeFeatures { shader_f16: false, shader_f64: false, shader_int64: false, shader_int64_atomics: false, subgroups: true, timestamps: true, timestamps_inside_passes: true }
+texture_format_nv12: yes
+VK_KHR_external_semaphore_fd: yes
+VK_EXT_queue_family_foreign: yes
+timeline_semaphore: yes
+sync_fd_semaphore_import: yes
+
+[nv12-linear]
+vulkan_api: 1.3.354
+nv12_modifiers: [0x0, 0x700000000000006]
+nv12_linear: advertised
+nv12_linear_memory_planes: 1
+nv12_linear_tiling_features: TRANSFER_SRC | TRANSFER_DST | DISJOINT
+nv12_linear_disjoint_feature: yes
+nv12_linear_import_one_dmabuf: ok
+nv12_linear_import_disjoint: ok
+nv12_linear_needs_disjoint: no
+
+[modifiers]
+r8_modifiers: [0x0 (1 plane(s), render); 0x700000000000006 (1 plane(s), sample, render, storage, tested)]
+xrgb8888_modifiers: [0x0 (1 plane(s), render); 0x700000000000006 (1 plane(s), sample, render, storage, tested)]
+xbgr8888_modifiers: [0x0 (1 plane(s), render); 0x700000000000006 (1 plane(s), sample, render, storage)]
+nv12_modifiers: [0x0 (1 plane(s), disjoint); 0x700000000000006 (1 plane(s), sample, disjoint)]
+
+[dma-heap]
+/dev/dma_heap/default_cma_region: opens
+/dev/dma_heap/linux,cma: opens
+/dev/dma_heap/system: opens
+
+[sync-file]
+heap: /dev/dma_heap/system
+export_sync_file: works
+fence_signaled: yes
+```
+
+`gpu_bench`, all `_verify` lines `ok`:
+
+```text
+daedalus-gpu gpu_bench 3.0.1-dev
+adapter: V3D 7.1.10.2 (Vulkan)
+driver: V3DV Mesa Mesa 26.1.8
+
+[limits]
+max_compute_workgroup_storage_size: 16384
+max_compute_invocations_per_workgroup: 256
+max_compute_workgroup_size: 256x256x256
+max_compute_workgroups_per_dimension: 65535
+max_storage_buffer_binding_size: 1073741824
+max_storage_buffers_per_shader_stage: 8
+max_storage_textures_per_shader_stage: 4
+max_buffer_size: 1073741824
+wgpu_enabled_features: Features { features_wgpu: FeaturesWGPU(TIMESTAMP_QUERY_INSIDE_ENCODERS | TIMESTAMP_QUERY_INSIDE_PASSES | TEXTURE_FORMAT_NV12 | SUBGROUP | PIPELINE_CACHE), features_webgpu: FeaturesWebGPU(TIMESTAMP_QUERY) }
+vulkan_api: 1.3.354
+vk_max_compute_shared_memory_size: 16384
+vk_max_compute_work_group_invocations: 256
+vk_max_storage_buffer_range: 1073741824
+vk_min_storage_buffer_offset_alignment: 32
+shader_int64: no
+shader_int16: no
+shader_float64: no
+shader_float16: no
+storage_buffer_16bit_access: yes
+shader_buffer_int64_atomics: no
+shader_shared_int64_atomics: no
+shader_storage_image_extended_formats: yes
+subgroup_size: 16 (ops BASIC | VOTE | ARITHMETIC | BALLOT | SHUFFLE | SHUFFLE_RELATIVE | QUAD)
+timestamp_compute_and_graphics: yes
+timestamp_period_ns: 1
+queue_timestamp_valid_bits: GRAPHICS | COMPUTE | TRANSFER=64
+storage_image_formats: r32uint(storage+atomic) r32sint(storage+atomic) r32float(storage) rg32float(storage) rgba8unorm(storage) rgba8uint(storage) r8unorm(storage) r16float(storage) rgba16float(storage) rgba32float(storage)
+
+[dispatch-latency]
+empty_dispatch_submit_to_fence: p50 87.3 us, p90 123.1 us, p99 954.7 us, min 70.7 us (n=100)
+empty_dispatch_record_and_submit: p50 33.7 us, p90 48.5 us, p99 75.5 us, min 24.5 us (n=100)
+idle_poll: p50 0.3 us, p90 0.3 us, p99 0.4 us, min 0.3 us (n=100)
+
+[throughput]
+gpu_saxpy: 37.29 ms for 4M elements: 1.35 GB/s, 0.22 GFLOP/s
+gpu_fma256: 638.78 ms for 4M elements: 0.05 GB/s, 3.36 GFLOP/s
+cpu_saxpy_1t: 9.22 ms: 5.46 GB/s, 0.91 GFLOP/s
+cpu_saxpy_4t: 11.46 ms: 4.39 GB/s, 0.73 GFLOP/s
+cpu_fma256_1t: 492.86 ms: 0.07 GB/s, 4.36 GFLOP/s
+cpu_fma256_4t: 133.33 ms: 0.25 GB/s, 16.11 GFLOP/s
+
+[image-paths]
+box3x3_1280x800_buffer_packed_r8: 36.45 ms, 0.06 GB/s
+box3x3_1280x800_storage_image_r32f: 30.59 ms, 0.27 GB/s
+box3x3_1280x800_storage_image_rgba8: 31.92 ms, 0.26 GB/s
+box3x3_1280x800_sampled_r8_to_storage_r32f: 11.70 ms, 0.44 GB/s
+box3x3_1280x800_fragment_r8: 2.85 ms, 0.72 GB/s
+box3x3_1280x800_fragment_rgba8: 3.05 ms, 2.68 GB/s
+box3x3_1280x800_fragment_helper_r8: 2.91 ms, 0.70 GB/s
+box3x3_1280x800_cpu_naive_1t: 18.62 ms, 0.11 GB/s
+box3x3_1280x800_cpu_naive_4t: 4.75 ms, 0.43 GB/s
+box3x3_1280x800_cpu_separable_1t: 6.13 ms, 0.33 GB/s
+box3x3_1280x800_cpu_separable_4t: 2.04 ms, 1.01 GB/s
+box5x5_1280x800_buffer_packed_r8: 89.45 ms, 0.02 GB/s
+box5x5_1280x800_storage_image_r32f: 77.51 ms, 0.11 GB/s
+box5x5_1280x800_storage_image_rgba8: 126.22 ms, 0.06 GB/s
+box5x5_1280x800_sampled_r8_to_storage_r32f: 19.92 ms, 0.26 GB/s
+box5x5_1280x800_fragment_r8: 7.08 ms, 0.29 GB/s
+box5x5_1280x800_fragment_rgba8: 7.29 ms, 1.12 GB/s
+box5x5_1280x800_fragment_helper_r8: 7.15 ms, 0.29 GB/s
+box5x5_1280x800_cpu_naive_1t: 45.05 ms, 0.05 GB/s
+box5x5_1280x800_cpu_naive_4t: 13.36 ms, 0.15 GB/s
+box5x5_1280x800_cpu_separable_1t: 6.44 ms, 0.32 GB/s
+box5x5_1280x800_cpu_separable_4t: 2.68 ms, 0.76 GB/s
+saxpy_2048x2048_r32f_storage_image: 64.25 ms, 0.78 GB/s, 0.13 GFLOP/s
+saxpy_2048x2048_r32f_sampled: 38.04 ms, 1.32 GB/s, 0.22 GFLOP/s
+saxpy_2048x2048_r32f_fragment: 4.15 ms, 12.12 GB/s, 2.02 GFLOP/s
+fma256_2048x2048_r32f_storage_image: 395.22 ms, 0.13 GB/s, 5.43 GFLOP/s
+fma256_2048x2048_r32f_sampled: 354.75 ms, 0.14 GB/s, 6.05 GFLOP/s
+fma256_2048x2048_r32f_fragment: 111.43 ms, 0.45 GB/s, 19.27 GFLOP/s
+
+[pipeline-cache]
+pipelines_empty_cache: 5.48 ms for 12 pipelines
+pipeline_cache_saved_bytes: 85936
+pipeline_cache_loaded_bytes: 85936
+pipelines_loaded_cache: 4.16 ms for 12 pipelines
+fragment_encode_150_bind_each: 0.56 ms CPU
+fragment_encode_150_bound: 0.22 ms CPU
+grey_640x480_stride640_storage_to_texture: p50 422.1 us, p90 441.6 us, p99 475.6 us, min 406.6 us (n=30)
+grey_640x480_stride768_storage_to_texture: p50 266.8 us, p90 283.1 us, p99 299.3 us, min 262.4 us (n=30)
+
+[frame-import]
+dmabuf_storage_buffer_import: importable
+dmabuf_image_import: supported
+640x480_upload_write_buffer: p50 3498.5 us, p90 4743.4 us, p99 6080.1 us, min 2971.7 us (n=100)
+640x480_upload_and_kernel: p50 7940.3 us, p90 9447.3 us, p99 11422.0 us, min 7264.8 us (n=100)
+640x480_upload_verify: ok
+640x480_buffer_import_frame_sized_dmabuf: no memory type (buffer 0x1, dmabuf 0x1) or size 1229056 > 1228800
+640x480_padded_buffer_import: p50 22.6 us, p90 66.5 us, p99 184.4 us, min 12.4 us (n=100)
+640x480_padded_buffer_import_and_kernel: p50 2979.0 us, p90 3331.1 us, p99 4029.6 us, min 2879.4 us (n=100)
+640x480_padded_buffer_cached_kernel: p50 2876.3 us, p90 3089.8 us, p99 3414.6 us, min 2851.2 us (n=100)
+640x480_padded_buffer_to_texture_copy: p50 245.6 us, p90 374.7 us, p99 731.8 us, min 229.8 us (n=100)
+640x480_padded_buffer_verify: ok
+640x480_image: import failed: unsupported format XR24 (modifier 0x0): modifier supports COLOR_ATTACHMENT | COLOR_ATTACHMENT_BLEND | BLIT_DST | TRANSFER_SRC | TRANSFER_DST, import needs SAMPLED_IMAGE | TRANSFER_SRC
+1280x720_upload_write_buffer: p50 823.9 us, p90 1239.9 us, p99 2154.2 us, min 730.0 us (n=100)
+1280x720_upload_and_kernel: p50 10217.2 us, p90 11146.8 us, p99 13114.7 us, min 10016.4 us (n=100)
+1280x720_upload_verify: ok
+1280x720_buffer_import_frame_sized_dmabuf: no memory type (buffer 0x1, dmabuf 0x1) or size 3686656 > 3686400
+1280x720_padded_buffer_import: p50 26.7 us, p90 52.8 us, p99 80.6 us, min 14.7 us (n=100)
+1280x720_padded_buffer_import_and_kernel: p50 8520.3 us, p90 8782.6 us, p99 9200.9 us, min 8390.3 us (n=100)
+1280x720_padded_buffer_cached_kernel: p50 8473.8 us, p90 8688.0 us, p99 9246.1 us, min 8366.4 us (n=100)
+1280x720_padded_buffer_to_texture_copy: p50 741.8 us, p90 1180.1 us, p99 1492.1 us, min 709.3 us (n=100)
+1280x720_padded_buffer_verify: ok
+1280x720_image: import failed: unsupported format XR24 (modifier 0x0): modifier supports COLOR_ATTACHMENT | COLOR_ATTACHMENT_BLEND | BLIT_DST | TRANSFER_SRC | TRANSFER_DST, import needs SAMPLED_IMAGE | TRANSFER_SRC
+```
+
 ## Desktop GPUs (2026-10-30)
 
 These runs used this workstation's two GPUs, with the Vulkan loader pinned to one driver

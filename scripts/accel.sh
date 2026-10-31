@@ -109,5 +109,7 @@ fi
 step "Rendering docs/backend-matrix.{md,csv}"
 release=()
 [[ ${ACCEL_RELEASE:-0} = 1 ]] && release=(--release)
-"$MATRIX" render --registry "$ACCEL_DUMP" --results "$RESULTS" \
+# Board evidence CI cannot reproduce (the Raze, later Rockchip, K230D, Flame) is committed under
+# docs/accel-evidence/.
+"$MATRIX" render --registry "$ACCEL_DUMP" --results "$RESULTS" --results docs/accel-evidence \
   --baseline docs/backend-matrix.csv --scan . --out docs "${release[@]}"

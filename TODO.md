@@ -35,7 +35,7 @@ GPU is an explicit backend chosen by the consumer (per node or per graph), like 
 feature. Daedalus provides residency, `#[device]` adapters and transfers, capabilities, timing,
 and a clean explicit choice. It does no cost-based CPU/GPU selection.
 
-- [ ] **What:** the `gpu_bench` report on the Raze CM5 (v3dv): limits, dispatch latency, kernel
+- [x] **What:** the `gpu_bench` report on the Raze CM5 (v3dv): limits, dispatch latency, kernel
       throughput against the CPU, and dmabuf frame import as a storage buffer vs image + copy.
       **Why:** it fixes V3D's real budget for Eidos dense depth, and shows whether LINEAR camera
       frames can reach compute zero-copy.
@@ -44,7 +44,10 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** the full `gpu_bench` output is pasted into `docs/testing.md` ("Validating
       on a Raspberry Pi 5"), with every `_verify` line `ok`, plus the `GpuKernels` measurements
       on V3D (`kernels_tests --nocapture`, recorded in the backend matrix).
-      **Blocked by:** a Raze slot (HeliOS coordinator).
+      **Status:** done (2026-10-31, at 389bc7e): the full `gpu_bench` and `gpu_probe` output is in
+      `docs/testing.md` ("CM5 run (2026-10-31)"), all four `_verify` lines `ok`; the
+      `GpuKernels` V3D measurements are in the matrix (`docs/accel-evidence/`).
+      **Blocked by:** nothing.
 - [x] **What:** the `gpu_probe` segfault at exit under the cross-built Khronos validation layer
       on v3dv.
       **Why:** VVL is how new Eidos kernels get validated; a crashing run hides real errors.
@@ -60,7 +63,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       arm64 layer copied to `/tmp` (needs the user's OK for the download).
       **Blocked by:** nothing for this release. (`docs/testing.md` now states the root cause, not
       "unexplained".)
-- [ ] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
+- [x] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
       invocations, workgroup storage, storage buffer size, f16, int64, int64 atomics,
       timestamps, subgroups.
       **Why:** a library picks a kernel variant, or refuses the GPU backend, from facts rather
@@ -69,9 +72,10 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       prints the same values as `gpu_bench`'s `[limits]`.
       **Status (audit 2026-10-31):** fields and wgpu-backed tests in fb5ba91
       (`context_tests.rs`); the mock and noop backend test is
-      `compute_caps::tests::mock_and_noop_backends_report_compute_caps`. Left: the Raze
-      comparison.
-      **Blocked by:** a Raze slot.
+      `compute_caps::tests::mock_and_noop_backends_report_compute_caps`. On the Raze (2026-10-31)
+      `gpu_probe`'s compute lines match `gpu_bench`'s `[limits]` (16 KiB, 256 invocations, 1 GiB
+      storage binding, subgroups, timestamps; `docs/testing.md`).
+      **Blocked by:** nothing.
 - [x] **What:** explicit device assignment. The per-node `compute` and a graph-level default
       choose CPU or GPU. The planner honours it, `GpuRequired` fails planning without an
       adapter, and `explain_plan()` reports the resolved device per node (today it reports only
@@ -151,15 +155,15 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a test sees nonzero GPU time per GPU node, and the Raze report states
       which source v3dv uses.
       **Blocked by:** the bench run (timestamp support on v3dv).
-- [ ] **What:** import a LINEAR dmabuf as a storage buffer (public API: `GpuStorage::import_dmabuf`; the Raze run is part of `ci.sh pi`).
+- [x] **What:** import a LINEAR dmabuf as a storage buffer (public API: `GpuStorage::import_dmabuf`; the Raze run is part of `ci.sh pi`).
       **Why:** zero-copy camera frames for packed-u32 compute on v3dv, where LINEAR images
       cannot be sampled.
       **Done when:** a hardware test imports, runs a kernel and verifies the output, on RADV and
       on the Raze.
       **Status (audit 2026-10-31):** fd455a4; the test (`gpu_storage/dmabuf.rs`) passes on RADV
-      (the 73/73 run), and import costs 16-29 µs on the CM5 (`gpu_bench`). Left: record the
-      Raze run of that test and `gpu_bench`'s frame_import `_verify ok` in `docs/testing.md`.
-      **Blocked by:** a Raze slot.
+      (the 73/73 run) and on the Raze (2026-10-31, `dmabuf_storage_import_reads_the_frame_in_place`
+      ok); `gpu_bench` frame_import `_verify ok` at 640x480 and 1280x720; padded import 23 µs.
+      **Blocked by:** nothing.
 - [x] **What:** an on-disk pipeline cache across runs (`GpuPipelineCache`; on V3D 12 pipelines build in 52.0 → 5.7 ms with the cache loaded, Mesa's cache off) (wgpu `PipelineCache` on Vulkan), keyed by
       adapter, driver and shader hash.
       **Why:** startup time on the CM5.
@@ -256,7 +260,14 @@ built, measured per device and kept selectable. `docs/backend-matrix.md` is the 
       **Blocked by:** nothing.
 - [ ] **What:** `GpuKernels` and the kernels measured on V3D, and later on Mali (the matrix's GPU
       evidence per adapter).
-      **Blocked by:** a Raze slot; Rockchip boards for Mali.
+      **Status:** V3D done (2026-10-31): all bit-exact; compute is 5-40x slower than the A76 CPU,
+      the copy engine is even. Mali: written, untested on board.
+      **Blocked by:** Rockchip boards for Mali.
+- [ ] **What:** fragment-pass variants of the GPU kernels for tile-based GPUs (V3D, Mali), where
+      fragment passes run 10x+ faster than compute.
+      **Done when:** bit-exact against the references, and measured on the Raze next to the
+      compute variant.
+      **Blocked by:** nothing (a Raze slot for the measurement).
 
 A CUDA backend is not in this release. If one comes later, it needs:
 
@@ -484,8 +495,8 @@ and `docs/migration-3.0.md` for upgrading.
 ### Remaining
 
 #### High priority
-- [ ] **Validate on a Pi 5 / CM5 with Mesa v3dv** (1512568, abe7ad4, d02276e; the 2026-10-27 summary
-      is in `docs/testing.md`, the full report is not). Blocked by: a Raze slot. Run `./scripts/ci.sh pi` on the device and
+- [x] **Validate on a Pi 5 / CM5 with Mesa v3dv** (1512568, abe7ad4, d02276e; the full `gpu_probe`
+      report and the dmabuf test results from 2026-10-31 are in `docs/testing.md`). Run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
       `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
       measurements of the fence tests; see "Validating on a Raspberry Pi 5" in
