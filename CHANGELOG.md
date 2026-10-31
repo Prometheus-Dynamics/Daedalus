@@ -50,6 +50,13 @@ plugin ABI and does not load.
   fresh cache. The backend requests `PIPELINE_CACHE` when available. On desktop, 12 fragment
   pipelines build in 3 ms instead of 82 ms with the cache reloaded.
   `save_if_grown` writes the file only when new pipelines were built.
+- **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`
+  (`GpuMemoryHints`).** wgpu's `Performance` hints allocate a large block on the first
+  allocation of each memory type (a 42 ms tick for the first readback buffer on the CM5, 3.6 ms
+  on RADV; 0.23 ms with `MemoryUsage`). The default, `Auto`, now uses `MemoryUsage` on
+  integrated, virtual and CPU adapters and `Performance` on discrete GPUs;
+  `DAEDALUS_GPU_MEMORY_HINTS=performance|memory` overrides `Auto`.
+  `WgpuBackend::memory_hints()` reports the resolved choice.
 - **The engine owns the pipeline cache: `EngineConfig::with_gpu_pipeline_cache(dir)`**
   (`CacheSection::gpu_pipeline_dir`, `DAEDALUS_GPU_PIPELINE_CACHE`, engine feature `gpu-wgpu`).
   The engine opens and installs the cache when it creates its GPU device, so pipelines a node

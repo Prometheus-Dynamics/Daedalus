@@ -65,7 +65,7 @@ resolves against `3.0.1-dev`, so drop the requirement.
 - `GpuCapabilities` gained `compute` (`GpuComputeCaps`: limits and enabled shader features), and
   the wgpu backend now requests optional features (f16, int64, subgroups, timestamps, pipeline
   cache) when the adapter has them.
-- `GpuOptions` gained `backends`, and `ExternalFrameDescriptor` gained `colorimetry`.
+- `GpuOptions` gained `backends` and `memory_hints`, and `ExternalFrameDescriptor` gained `colorimetry`.
 - `GpuError::InvalidInput(String)` is new, for caller sizes and ranges.
 - Tiled dmabuf imports take 1 to 4 memory planes, whatever the format's plane count (v3dv's
   UIF NV12 is one plane). `LINEAR` still takes one plane per format plane.
@@ -85,10 +85,11 @@ implements `Default`):
 
 | Crate | Struct | New fields |
 |---|---|---|
+| engine | `EngineConfig` | `gpu_memory_hints` |
 | engine | `CacheSection` | `gpu_pipeline_dir` |
 | engine | `RuntimeSection` | `blocking_backpressure`, `frame_overhead_window`, `node_fusion`, `recovery`, `stream_error_policy` |
 | gpu | `GpuCapabilities` | `compute` |
-| gpu | `GpuOptions` | `backends` |
+| gpu | `GpuOptions` | `backends`, `memory_hints` |
 | gpu | `ExternalFrameDescriptor` | `colorimetry` (build it with the constructors) |
 | runtime | `StreamWorkerConfig` | `on_error` |
 | runtime | `TelemetryReport` | `backpressure_deferrals`, `recovery` |
@@ -138,6 +139,9 @@ replacement:
   node in its place; before, the GPU handler ran on CPU data. `explain_plan()` reports each
   node's resolved `device` and `device_reason`, and its `Display` node line reads
   `(<compute>, on <device>)`.
+- **GPU memory hints.** On integrated, virtual and CPU adapters the wgpu device now uses
+  `MemoryHints::MemoryUsage` instead of `Performance` (fewer, smaller memory blocks; no
+  first-allocation stall). Set `GpuMemoryHints::Performance` to keep the old behavior.
 - **Adapter search.** Equal-cost paths now tie-break deterministically: fewer steps first, then
   ids in order. Only the choice between equal-cost routes changes.
 - **Counting drops.** A push that evicts a backlog counts every evicted item, in edge drops,

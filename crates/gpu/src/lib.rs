@@ -16,6 +16,7 @@ mod compute_caps;
 mod convert;
 mod external;
 mod handles;
+mod memory_hints;
 #[cfg(feature = "gpu-mock")]
 mod mock;
 mod noop;
@@ -43,6 +44,7 @@ pub use external::{
     MAX_MEMORY_PLANES, ValidatedLayout, export_dmabuf_fence,
 };
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
+pub use memory_hints::GpuMemoryHints;
 #[cfg(feature = "gpu-mock")]
 pub use mock::MockBackend;
 #[cfg(all(feature = "gpu-mock", target_os = "linux"))]
@@ -216,6 +218,10 @@ pub struct GpuOptions {
     /// ([`ExternalFrameDescriptor::with_acquire_fence_mode`](crate::ExternalFrameDescriptor)).
     #[serde(default)]
     pub acquire_fence_mode: AcquireFenceMode,
+    /// How the `wgpu` device sizes its memory blocks; `Auto` saves memory (and first-allocation
+    /// stalls) on integrated GPUs.
+    #[serde(default)]
+    pub memory_hints: GpuMemoryHints,
 }
 
 /// Request shape for resource creation.

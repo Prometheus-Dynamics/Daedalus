@@ -33,8 +33,8 @@ mod prepared_plan;
 pub use cache::{CacheStatus, EngineCacheMetrics};
 pub use compiled_run::{CompiledRun, RunResult};
 pub use config::{
-    CacheSection, EngineConfig, EngineConfigError, GpuBackend, PlannerSection, RuntimeMode,
-    RuntimeSection,
+    CacheSection, EngineConfig, EngineConfigError, GpuBackend, GpuMemoryHints, PlannerSection,
+    RuntimeMode, RuntimeSection,
 };
 pub use daedalus_core::platform::Clock;
 pub use daedalus_runtime::MetricsLevel;

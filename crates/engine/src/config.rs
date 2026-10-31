@@ -53,6 +53,22 @@ pub enum GpuBackend {
     Device,
 }
 
+/// How the GPU device sizes its memory blocks (`daedalus_gpu::GpuMemoryHints`).
+///
+/// `Performance` makes large blocks up front, so the first allocation of each memory type
+/// stalls (a 42 ms tick for the first readback buffer on the CM5's V3D). `Auto` uses
+/// `MemoryUsage` on integrated GPUs (V3D, Mali) and `Performance` on discrete ones;
+/// `DAEDALUS_GPU_MEMORY_HINTS=performance|memory` overrides `Auto`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "config-env", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "config-env", serde(rename_all = "snake_case"))]
+pub enum GpuMemoryHints {
+    #[default]
+    Auto,
+    Performance,
+    MemoryUsage,
+}
+
 /// Runtime execution mode.
 ///
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -281,6 +297,9 @@ pub struct EngineConfig {
     pub runtime: RuntimeSection,
     #[cfg_attr(feature = "config-env", serde(default))]
     pub cache: CacheSection,
+    /// The GPU device's memory hints ([`GpuMemoryHints`]).
+    #[cfg_attr(feature = "config-env", serde(default))]
+    pub gpu_memory_hints: GpuMemoryHints,
 }
 
 impl Default for EngineConfig {
@@ -290,6 +309,7 @@ impl Default for EngineConfig {
             planner: PlannerSection::default(),
             runtime: RuntimeSection::default(),
             cache: CacheSection::default(),
+            gpu_memory_hints: GpuMemoryHints::default(),
         }
     }
 }
@@ -433,6 +453,12 @@ impl EngineConfig {
     ) -> Self {
         self.cache.planner_max_entries = planner_max_entries.max(1);
         self.cache.runtime_plan_max_entries = runtime_plan_max_entries.max(1);
+        self
+    }
+
+    /// Set the GPU device's memory hints ([`GpuMemoryHints`]).
+    pub fn with_gpu_memory_hints(mut self, hints: GpuMemoryHints) -> Self {
+        self.gpu_memory_hints = hints;
         self
     }
 

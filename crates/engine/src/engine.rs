@@ -648,6 +648,11 @@ impl Engine {
         if let Some(handle) = guard.as_ref() {
             return Ok(Some(handle.clone()));
         }
+        let memory_hints = match self.config.gpu_memory_hints {
+            crate::GpuMemoryHints::Auto => daedalus_gpu::GpuMemoryHints::Auto,
+            crate::GpuMemoryHints::Performance => daedalus_gpu::GpuMemoryHints::Performance,
+            crate::GpuMemoryHints::MemoryUsage => daedalus_gpu::GpuMemoryHints::MemoryUsage,
+        };
         let opts = match self.config.gpu {
             GpuBackend::Cpu => return Ok(None),
             GpuBackend::Mock => GpuOptions {
@@ -660,6 +665,7 @@ impl Engine {
                 preferred_backend: Some(GpuBackendKind::Wgpu),
                 adapter_label: None,
                 allow_software: false,
+                memory_hints,
                 ..Default::default()
             },
         };

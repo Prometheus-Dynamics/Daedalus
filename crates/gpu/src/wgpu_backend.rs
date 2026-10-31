@@ -60,6 +60,8 @@ pub struct WgpuBackend {
     submission_tracker: SubmissionTracker,
     device_key: usize,
     dmabuf_support: crate::ExternalImportSupport,
+    /// Resolved at device creation: `Performance` or `MemoryUsage`.
+    memory_hints: crate::GpuMemoryHints,
 }
 
 impl WgpuBackend {
@@ -68,12 +70,17 @@ impl WgpuBackend {
     /// This blocks while wgpu enumerates adapters and requests a device. Async callers should use
     /// [`WgpuBackend::new_async`] to avoid blocking executor threads.
     pub fn new() -> Result<Self, GpuError> {
-        Self::new_with_backends(None)
+        Self::new_with_backends(None, crate::GpuMemoryHints::Auto)
     }
 
     /// Synchronous [`WgpuBackend::new_with_backends_async`] (same blocking caveat as `new`).
-    pub(crate) fn new_with_backends(requested: Option<GpuBackends>) -> Result<Self, GpuError> {
-        let res = std::panic::catch_unwind(|| Self::new_with_backends_async(requested).block_on());
+    pub(crate) fn new_with_backends(
+        requested: Option<GpuBackends>,
+        memory_hints: crate::GpuMemoryHints,
+    ) -> Result<Self, GpuError> {
+        let res = std::panic::catch_unwind(|| {
+            Self::new_with_backends_async(requested, memory_hints).block_on()
+        });
 
         match res {
             Ok(ok) => ok,
@@ -99,28 +106,31 @@ impl WgpuBackend {
 
     /// Create a wgpu backend without blocking the current thread on async wgpu operations.
     pub async fn new_async() -> Result<Self, GpuError> {
-        Self::new_with_backends_async(None).await
+        Self::new_with_backends_async(None, crate::GpuMemoryHints::Auto).await
     }
 
     /// Create a wgpu backend that enumerates the `requested` graphics APIs (see
     /// [`GpuOptions::backends`](crate::GpuOptions)); `WGPU_BACKEND` takes precedence when set.
+    /// [`GpuOptions::memory_hints`](crate::GpuOptions) sets the device's `MemoryHints`.
     pub(crate) async fn new_with_backends_async(
         requested: Option<GpuBackends>,
+        memory_hints: crate::GpuMemoryHints,
     ) -> Result<Self, GpuError> {
         let staging_config = WgpuStagingPoolConfig::from_env().map_err(GpuError::Internal)?;
-        Self::new_selected_async(staging_config, requested).await
+        Self::new_selected_async(staging_config, requested, memory_hints).await
     }
 
     /// Creates the wgpu backend with a staging-pool configuration, asynchronously.
     pub async fn new_with_staging_pool_config_async(
         staging_config: WgpuStagingPoolConfig,
     ) -> Result<Self, GpuError> {
-        Self::new_selected_async(staging_config, None).await
+        Self::new_selected_async(staging_config, None, crate::GpuMemoryHints::Auto).await
     }
 
     async fn new_selected_async(
         staging_config: WgpuStagingPoolConfig,
         requested: Option<GpuBackends>,
+        memory_hints: crate::GpuMemoryHints,
     ) -> Result<Self, GpuError> {
         let adapter = {
             let _driver = driver_lock();
@@ -133,14 +143,16 @@ impl WgpuBackend {
             select_best_adapter(adapters)
         };
         let adapter = adapter.ok_or(GpuError::AdapterUnavailable)?;
-        Self::with_adapter(adapter, staging_config).await
+        Self::with_adapter(adapter, staging_config, memory_hints).await
     }
 
     /// Create the backend on a specific adapter.
     pub(crate) async fn with_adapter(
         adapter: Adapter,
         staging_config: WgpuStagingPoolConfig,
+        memory_hints: crate::GpuMemoryHints,
     ) -> Result<Self, GpuError> {
+        let memory_hints = memory_hints.resolve(adapter.get_info().device_type);
         let (info, features, limits) = build_info_from_adapter(&adapter);
         let mut caps = caps_from_adapter(Some(&adapter), &limits);
 
@@ -149,7 +161,7 @@ impl WgpuBackend {
             required_features: adapter.features() & capabilities::OPTIONAL_COMPUTE_FEATURES,
             required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
+            memory_hints: memory_hints.to_wgpu(),
             trace: wgpu::Trace::default(),
         };
         // With `gpu-dmabuf` on Linux/Vulkan this also enables the dmabuf import extensions.
@@ -188,7 +200,14 @@ impl WgpuBackend {
             submission_tracker: SubmissionTracker::default(),
             device_key,
             dmabuf_support,
+            memory_hints,
         })
+    }
+
+    /// The device's memory hints, `Auto` resolved for the adapter
+    /// ([`GpuOptions::memory_hints`](crate::GpuOptions)).
+    pub fn memory_hints(&self) -> crate::GpuMemoryHints {
+        self.memory_hints
     }
 
     /// Set the default [`AcquireFenceMode`](crate::AcquireFenceMode) of dmabuf imports

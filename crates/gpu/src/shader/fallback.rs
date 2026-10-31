@@ -187,7 +187,9 @@ async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
             required_features: wgpu::Features::empty(),
             required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
+            memory_hints: crate::GpuMemoryHints::Auto
+                .resolve(adapter.get_info().device_type)
+                .to_wgpu(),
             trace: wgpu::Trace::default(),
         })
         .await

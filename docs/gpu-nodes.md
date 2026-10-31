@@ -149,6 +149,12 @@ first ticks built. `HostGraph::pipeline_cache_status()` reports the file, the by
 saved, and why there is no cache (no Vulkan pipeline cache on the device, an unwritable
 directory). The driver drops data from another driver version.
 
+Memory hints decide how the device allocates: wgpu's `Performance` hints make a large block on
+the first allocation of each memory type, a 42 ms tick for the first readback buffer on the
+CM5. The engine's default (`GpuMemoryHints::Auto`) uses `MemoryUsage` on integrated GPUs (V3D,
+Mali) and `Performance` on discrete ones. Choose with `EngineConfig::with_gpu_memory_hints`,
+`GpuOptions::memory_hints`, or `DAEDALUS_GPU_MEMORY_HINTS=performance|memory`.
+
 Outside an engine, `GpuPipelineCache::open(gpu, dir)` does the same by hand: `install()` it
 before building passes and `save()` (or `save_if_grown()`) it after. On the CM5's V3D, 12
 fragment pipelines build in 5.7 ms instead of 52 ms with the cache loaded (Mesa's own shader

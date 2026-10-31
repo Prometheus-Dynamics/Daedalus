@@ -207,7 +207,7 @@ pub(super) fn consumer_backend() -> (WgpuBackend, bool) {
     };
     let lavapipe = adapter
         .and_then(|adapter| {
-            WgpuBackend::with_adapter(adapter, Default::default())
+            WgpuBackend::with_adapter(adapter, Default::default(), Default::default())
                 .block_on()
                 .ok()
         })
