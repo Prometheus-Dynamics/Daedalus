@@ -34,9 +34,10 @@ use alloc::collections::{BTreeMap, BTreeSet};
 pub(crate) use demand::active_nodes_mask_for_sinks;
 pub use demand::{DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry};
 pub use explain::{
-    NODE_DEVICE_META_KEY, NODE_DEVICE_REASON_META_KEY, NODE_FALLBACK_FROM_META_KEY, NodeDevice,
-    RuntimeBranchExplanation, RuntimeEdgeExplanation, RuntimeEdgeHandoff,
-    RuntimeFusedUnitExplanation, RuntimeNodeExplanation, RuntimePlanExplanation,
+    NODE_DEVICE_FROM_META_KEY, NODE_DEVICE_META_KEY, NODE_DEVICE_REASON_META_KEY,
+    NODE_FALLBACK_FROM_META_KEY, NodeDevice, RuntimeBranchExplanation, RuntimeEdgeExplanation,
+    RuntimeEdgeHandoff, RuntimeFusedUnitExplanation, RuntimeNodeExplanation,
+    RuntimePlanExplanation,
 };
 pub(crate) use fusion::{FusionAnalysis, analyze_fusion};
 pub use fusion::{FusionBlock, NODE_FUSION_META_KEY};

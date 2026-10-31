@@ -86,6 +86,8 @@ pub(super) struct NodeArgs {
     pub(super) sync_groups_attr: Option<TokenStream>,
     pub(super) capability_attr: Option<LitStr>,
     pub(super) fallback_attr: Option<LitStr>,
+    /// `device_from = "<port>.<field>"`: the config value that selects the instance's device.
+    pub(super) device_from_attr: Option<LitStr>,
     /// `fire = "any" | "all"`: when the node fires (`NodeFire`).
     pub(super) fire_attr: Option<LitStr>,
     pub(super) same_payload_attr: bool,
@@ -150,6 +152,7 @@ pub(super) fn parse_node_args(
     let mut sync_groups_attr: Option<TokenStream> = None;
     let mut capability_attr: Option<LitStr> = None;
     let mut fallback_attr: Option<LitStr> = None;
+    let mut device_from_attr: Option<LitStr> = None;
     let mut fire_attr: Option<LitStr> = None;
     let mut same_payload_attr = false;
     let mut shareable_attr = false;
@@ -206,6 +209,8 @@ pub(super) fn parse_node_args(
                     sync_groups_attr = Some(value.to_token_stream());
                 } else if path.is_ident("fallback") {
                     fallback_attr = Some(lit_str_arg(&expr, "fallback")?);
+                } else if path.is_ident("device_from") {
+                    device_from_attr = Some(lit_str_arg(&expr, "device_from")?);
                 } else if path.is_ident("fire") {
                     let fire = lit_str_arg(&expr, "fire")?;
                     if !matches!(fire.value().as_str(), "any" | "all") {
@@ -301,6 +306,7 @@ pub(super) fn parse_node_args(
         sync_groups_attr,
         capability_attr,
         fallback_attr,
+        device_from_attr,
         fire_attr,
         same_payload_attr,
         shareable_attr,

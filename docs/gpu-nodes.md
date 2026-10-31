@@ -13,7 +13,11 @@ The consumer chooses the device; Daedalus never picks one on cost. There are two
   node's `compute` affinity (`cpu_only`, `gpu_preferred`, `gpu_required`), set with
   `add_handle_with_compute` / `node_with_compute`. A node that keeps one id and switches inside
   its handler (as Eidos does) reads its own config. A CPU and a GPU node pair use
-  `#[node(fallback = "...")]`.
+  `#[node(fallback = "...")]`. A node that switches inside, with CPU-typed ports, keeps
+  `compute = cpu_only`, so no GPU segment or transfers are planned. It names its config value
+  with `#[node(device_from = "config.backend")]` (`<port>.<field>...`). `explain_plan()` then
+  reports the instance's device from that const value: `"gpu"` gives GPU when the engine has a
+  GPU backend, and otherwise the reason is `config backend = gpu, no GPU backend: CPU fallback`.
 - **Per graph:** the engine's GPU backend (`EngineConfig::gpu(GpuBackend::Device)`, with
   `with_planner_gpu(true)` for GPU-resident ports). Without one, `fallback` nodes run their CPU
   node.

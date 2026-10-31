@@ -223,13 +223,14 @@ pub use io::{
 pub use plan::{
     BackpressureStrategy, DemandError, DemandSlice, DemandSliceEntry, DemandTelemetry,
     DeviceRoundTrip, FusionBlock, HostPortConnection, HostPortDescriptor, HostPortDirection,
-    NODE_COST_META_KEY, NODE_DEVICE_META_KEY, NODE_DEVICE_REASON_META_KEY,
-    NODE_EXECUTION_KIND_META_KEY, NODE_FALLBACK_FROM_META_KEY, NODE_FIRE_META_KEY,
-    NODE_FUSION_META_KEY, NODE_REQUIRED_INPUTS_META_KEY, NODE_SHAREABLE_META_KEY, NodeDevice,
-    NodeExecutionKind, NodeFire, RuntimeBranchExplanation, RuntimeEdge, RuntimeEdgeExplanation,
-    RuntimeEdgeHandoff, RuntimeEdgePolicy, RuntimeEdgeTransport, RuntimeFusedUnitExplanation,
-    RuntimeNode, RuntimeNodeExplanation, RuntimePlan, RuntimePlanError, RuntimePlanExplanation,
-    RuntimeSegment, RuntimeSink, node_instance_keys,
+    NODE_COST_META_KEY, NODE_DEVICE_FROM_META_KEY, NODE_DEVICE_META_KEY,
+    NODE_DEVICE_REASON_META_KEY, NODE_EXECUTION_KIND_META_KEY, NODE_FALLBACK_FROM_META_KEY,
+    NODE_FIRE_META_KEY, NODE_FUSION_META_KEY, NODE_REQUIRED_INPUTS_META_KEY,
+    NODE_SHAREABLE_META_KEY, NodeDevice, NodeExecutionKind, NodeFire, RuntimeBranchExplanation,
+    RuntimeEdge, RuntimeEdgeExplanation, RuntimeEdgeHandoff, RuntimeEdgePolicy,
+    RuntimeEdgeTransport, RuntimeFusedUnitExplanation, RuntimeNode, RuntimeNodeExplanation,
+    RuntimePlan, RuntimePlanError, RuntimePlanExplanation, RuntimeSegment, RuntimeSink,
+    node_instance_keys,
 };
 pub use scheduler::{SchedulerConfig, build_runtime};
 pub use state::{

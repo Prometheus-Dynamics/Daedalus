@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`#[node(device_from = "<port>.<field>")]`** (`NODE_DEVICE_FROM_META_KEY`). For nodes that
+  choose CPU or GPU through a config value and keep CPU-typed ports, the engine reports each
+  instance's device from its const config: `explain_plan()` shows `gpu` / `config backend = gpu`
+  with a GPU backend and `cpu` / `config backend = gpu, no GPU backend: CPU fallback` without
+  one. `compute` is unchanged, so no GPU segment, transfers or crossing edges are planned.
 - **GPU node guide** (`docs/gpu-nodes.md`) and the `gpu_fragment_node` example: a 3x3 box filter
   whose device is a per-node config value. Its GPU path keeps a fragment pass, textures and a
   binding in node state, submits without waiting and emits results on later ticks. It falls back

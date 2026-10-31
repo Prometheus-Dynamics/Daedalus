@@ -49,6 +49,11 @@ pub const NODE_DEVICE_META_KEY: &str = "daedalus.device";
 pub const NODE_DEVICE_REASON_META_KEY: &str = "daedalus.device_reason";
 /// Node metadata the engine sets on a CPU fallback: the id of the GPU node it replaced.
 pub const NODE_FALLBACK_FROM_META_KEY: &str = "daedalus.fallback_from";
+/// Node (declaration) metadata `"<port>.<field>..."`: the instance's const config value at that
+/// path selects the device it reports (`"gpu"` or anything else for the CPU), for nodes that
+/// switch backends inside their handler and keep CPU-typed ports (`compute` stays as declared,
+/// so no GPU segment or transfers are planned). `#[node(device_from = "config.backend")]` sets it.
+pub const NODE_DEVICE_FROM_META_KEY: &str = "daedalus.device_from";
 
 /// The device a node runs on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

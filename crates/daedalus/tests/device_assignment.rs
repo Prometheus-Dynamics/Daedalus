@@ -130,3 +130,96 @@ fn a_gpu_requiring_node_without_gpu_fails_to_plan() {
     let err = resolve(EngineConfig::default(), false, ComputeAffinity::GpuRequired).unwrap_err();
     assert!(err.contains("requires GPU"), "{err}");
 }
+
+/// A node choosing its backend by config: one id, CPU-typed ports, `device_from` names the
+/// config value.
+#[node(
+    id = "dev.switch",
+    inputs("frame", "backend"),
+    outputs("frame"),
+    device_from = "backend"
+)]
+fn switch(frame: Cpu<i64>, backend: String) -> Result<Cpu<i64>, NodeError> {
+    let _ = backend;
+    Ok(frame)
+}
+
+#[plugin(id = "devsw", nodes(pre, switch))]
+struct SwitchPlugin;
+
+fn configured(
+    config: EngineConfig,
+    backend: Option<&str>,
+) -> daedalus::runtime::RuntimePlanExplanation {
+    let mut registry = PluginRegistry::new();
+    let plugin = SwitchPlugin::new();
+    registry.install(&plugin).unwrap();
+    let pre = plugin.pre.clone().alias("pre");
+    let node = plugin.switch.clone().alias("switch");
+    let mut builder = registry
+        .graph_builder()
+        .unwrap()
+        .try_node(&pre)
+        .unwrap()
+        .try_node(&node)
+        .unwrap();
+    if let Some(backend) = backend {
+        builder = builder.const_input(
+            &node.inputs.backend,
+            Some(daedalus::data::model::Value::String(
+                backend.to_string().into(),
+            )),
+        );
+    }
+    let graph = builder
+        .try_connect("in", &pre.inputs.r#in)
+        .unwrap()
+        .try_connect(&pre.outputs.out, &node.inputs.frame)
+        .unwrap()
+        .try_connect(&node.outputs.frame, "out")
+        .unwrap()
+        .build();
+    Engine::new(config)
+        .unwrap()
+        .compile_registry(&registry, graph)
+        .unwrap()
+        .explain_plan()
+}
+
+#[test]
+fn a_config_backend_sets_the_reported_device_without_gpu_edges() {
+    let switch_node = |explanation: &daedalus::runtime::RuntimePlanExplanation| {
+        let node = explanation
+            .nodes
+            .iter()
+            .find(|n| n.label.as_deref() == Some("switch"))
+            .expect("switch node")
+            .clone();
+        (node.device, node.device_reason.unwrap_or_default())
+    };
+    let gpu_engine = || EngineConfig::gpu(daedalus::engine::GpuBackend::Mock);
+    let explanation = configured(gpu_engine(), Some("gpu"));
+    assert_eq!(
+        switch_node(&explanation),
+        (NodeDevice::Gpu, "config backend = gpu".to_string())
+    );
+    assert!(explanation.crossing_edges.is_empty());
+    assert!(explanation.device_round_trips().is_empty());
+
+    let explanation = configured(EngineConfig::default(), Some("gpu"));
+    assert_eq!(
+        switch_node(&explanation),
+        (
+            NodeDevice::Cpu,
+            "config backend = gpu, no GPU backend: CPU fallback".to_string()
+        )
+    );
+    assert_eq!(
+        switch_node(&configured(gpu_engine(), Some("cpu"))).0,
+        NodeDevice::Cpu
+    );
+    assert_eq!(
+        switch_node(&configured(gpu_engine(), None)).0,
+        NodeDevice::Cpu
+    );
+}

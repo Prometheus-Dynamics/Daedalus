@@ -183,7 +183,7 @@ required-features = ["engine", "plugins", "gpu-wgpu"]
 [[test]]
 name = "device_assignment"
 path = "tests/device_assignment.rs"
-required-features = ["engine", "plugins", "gpu-engine"]
+required-features = ["engine", "plugins", "gpu-engine", "gpu-mock"]
 
 [[test]]
 name = "macro_hot_path_allocations"

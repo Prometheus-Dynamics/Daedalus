@@ -29,7 +29,7 @@ pub(crate) fn use_cpu_fallbacks(graph: &mut Graph) {
 
 /// Record each node's resolved device and why, from its `compute` affinity, whether the planner
 /// targets the GPU, and any CPU-fallback swap.
-pub(crate) fn record_devices(graph: &mut Graph, gpu_enabled: bool) {
+pub(crate) fn record_devices(graph: &mut Graph, gpu_enabled: bool, gpu_backend: bool) {
     use daedalus_core::compute::ComputeAffinity;
     use daedalus_data::model::Value;
     use daedalus_runtime::{
@@ -40,7 +40,17 @@ pub(crate) fn record_devices(graph: &mut Graph, gpu_enabled: bool) {
             Some(Value::String(from)) => Some(from.to_string()),
             _ => None,
         };
+        let configured = match node
+            .metadata
+            .get(daedalus_runtime::NODE_DEVICE_FROM_META_KEY)
+        {
+            Some(Value::String(path)) if fallback_from.is_none() => {
+                Some(configured_device(node, path, gpu_backend))
+            }
+            _ => None,
+        };
         let (device, reason) = match (node.compute, gpu_enabled, fallback_from) {
+            _ if configured.is_some() => configured.expect("checked"),
             (_, _, Some(from)) => ("cpu", format!("cpu fallback for {from}: no GPU backend")),
             (ComputeAffinity::CpuOnly, _, None) => ("cpu", "compute = cpu_only".to_string()),
             (affinity, true, None) => ("gpu", format!("compute = {}", affinity_name(affinity))),
@@ -62,6 +72,53 @@ pub(crate) fn record_devices(graph: &mut Graph, gpu_enabled: bool) {
             NODE_DEVICE_REASON_META_KEY.to_string(),
             Value::String(reason.into()),
         );
+    }
+}
+
+/// The device a `device_from` node reports: the const config value at `path`
+/// (`"<port>.<field>..."`), `"gpu"` meaning the GPU when the engine has a GPU backend.
+fn configured_device(
+    node: &daedalus_planner::NodeInstance,
+    path: &str,
+    gpu_backend: bool,
+) -> (&'static str, String) {
+    use daedalus_data::model::Value;
+    let mut segments = path.split('.');
+    let port = segments.next().unwrap_or_default();
+    let field = path.rsplit('.').next().unwrap_or(port).to_string();
+    let value = node
+        .const_inputs
+        .iter()
+        .find(|(name, _)| name == port)
+        .map(|(_, value)| value)
+        .and_then(|mut value| {
+            for segment in segments {
+                value = match value {
+                    Value::Struct(_) => value.field(segment)?,
+                    Value::Map(entries) => entries
+                        .iter()
+                        .find(|(key, _)| key.as_str() == Some(segment))
+                        .map(|(_, v)| v)?,
+                    _ => return None,
+                };
+            }
+            Some(value)
+        });
+    let Some(value) = value else {
+        return ("cpu", format!("config {field} not set: default (cpu)"));
+    };
+    let chosen = match value {
+        Value::String(text) => text.to_ascii_lowercase(),
+        Value::Enum(variant) => variant.name.to_ascii_lowercase(),
+        other => format!("{other:?}").to_ascii_lowercase(),
+    };
+    match (chosen.as_str(), gpu_backend) {
+        ("gpu", true) => ("gpu", format!("config {field} = gpu")),
+        ("gpu", false) => (
+            "cpu",
+            format!("config {field} = gpu, no GPU backend: CPU fallback"),
+        ),
+        (other, _) => ("cpu", format!("config {field} = {other}")),
     }
 }
 
@@ -111,7 +168,7 @@ mod tests {
     #[test]
     fn gpu_backend_resolves_gpu_nodes_to_the_gpu() {
         let mut graph = graph();
-        record_devices(&mut graph, true);
+        record_devices(&mut graph, true, true);
         assert_eq!(
             resolved(&graph, 0),
             ("cpu".into(), "compute = cpu_only".into())
@@ -131,7 +188,7 @@ mod tests {
     fn cpu_backend_swaps_fallbacks_and_says_why() {
         let mut graph = graph();
         use_cpu_fallbacks(&mut graph);
-        record_devices(&mut graph, false);
+        record_devices(&mut graph, false, false);
         assert_eq!(graph.nodes[3].id.0, "p:cpu");
         let (device, reason) = resolved(&graph, 3);
         assert_eq!(device, "cpu");
@@ -140,5 +197,71 @@ mod tests {
         assert_eq!(device, "cpu");
         assert!(reason.contains("gpu_preferred"), "{reason}");
         assert!(resolved(&graph, 2).1.contains("planning fails"));
+    }
+
+    /// A `device_from` node reports its config's backend; `compute` stays CPU.
+    #[test]
+    fn device_from_reads_the_instance_config() {
+        use daedalus_data::model::{EnumValue, StructFieldValue};
+        let config = |backend: Value| {
+            Value::Struct(vec![
+                StructFieldValue {
+                    name: "levels".into(),
+                    value: Value::Int(3),
+                },
+                StructFieldValue {
+                    name: "backend".into(),
+                    value: backend,
+                },
+            ])
+        };
+        let node = |value: Option<Value>| {
+            let mut node = NodeInstance::new("eidos:dense.map").with_metadata(
+                daedalus_runtime::NODE_DEVICE_FROM_META_KEY,
+                Value::String("config.backend".into()),
+            );
+            if let Some(value) = value {
+                node = node.with_const_input("config", value);
+            }
+            node
+        };
+        let mut graph = Graph {
+            nodes: vec![
+                node(Some(config(Value::String("gpu".into())))),
+                node(Some(config(Value::String("cpu".into())))),
+                node(None),
+                node(Some(config(Value::Enum(EnumValue {
+                    name: "Gpu".into(),
+                    value: None,
+                })))),
+            ],
+            ..Graph::default()
+        };
+        let mut no_gpu = graph.clone();
+        record_devices(&mut graph, false, true);
+        assert_eq!(
+            resolved(&graph, 0),
+            ("gpu".into(), "config backend = gpu".into())
+        );
+        assert_eq!(
+            resolved(&graph, 1),
+            ("cpu".into(), "config backend = cpu".into())
+        );
+        assert_eq!(resolved(&graph, 2).0, "cpu");
+        assert_eq!(resolved(&graph, 3).0, "gpu", "enum variants by name");
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .all(|n| n.compute == ComputeAffinity::CpuOnly)
+        );
+        record_devices(&mut no_gpu, false, false);
+        assert_eq!(
+            resolved(&no_gpu, 0),
+            (
+                "cpu".into(),
+                "config backend = gpu, no GPU backend: CPU fallback".into()
+            )
+        );
     }
 }

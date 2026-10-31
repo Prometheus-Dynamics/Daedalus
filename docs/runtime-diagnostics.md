@@ -229,7 +229,11 @@ records the result in node metadata (`daedalus.device`, `daedalus.device_reason`
 `RuntimeNodeExplanation` reports it as `device` (`Cpu`/`Gpu`) and `device_reason`. There is no
 silent fallback. Without a GPU backend, a node's `fallback` CPU node runs in its place, and its
 reason names the GPU node it replaced (`daedalus.fallback_from`). A `gpu_preferred` node with no
-fallback runs on the CPU and says so. A `gpu_required` node fails planning.
+fallback runs on the CPU and says so. A `gpu_required` node fails planning. A node that picks its backend by config inside its
+handler declares `#[node(device_from = "<port>.<field>")]` (`daedalus.device_from`). Its reported
+device then comes from the instance's const value at that path (struct field, map key or enum
+variant): `gpu` with a GPU backend, otherwise CPU, with the reason saying which. Its `compute`,
+and so its edges, stay as declared.
 
 ### Device round trips
 

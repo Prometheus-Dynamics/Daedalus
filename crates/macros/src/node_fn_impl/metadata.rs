@@ -11,6 +11,7 @@ pub(super) struct MetadataInputs<'a> {
     pub(super) input_access: &'a [(LitStr, LitStr)],
     pub(super) outputs: &'a [OutputPortMeta],
     pub(super) fallback_attr: Option<&'a LitStr>,
+    pub(super) device_from_attr: Option<&'a LitStr>,
     pub(super) fire_attr: Option<&'a LitStr>,
     pub(super) shareable: bool,
     /// Per output: an `Option` return, recorded as `outputs.<port>.conditional`.
@@ -28,6 +29,7 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
         input_access,
         outputs,
         fallback_attr,
+        device_from_attr,
         fire_attr,
         shareable,
         conditional_outputs,
@@ -124,6 +126,9 @@ pub(super) fn metadata_tokens(inputs: MetadataInputs<'_>) -> TokenStream {
     }
     if let Some(fallback) = fallback_attr {
         entries.push(Entry::text("fallback".into(), fallback));
+    }
+    if let Some(device_from) = device_from_attr {
+        entries.push(Entry::text("daedalus.device_from".into(), device_from));
     }
 
     // Consecutive string entries become one static table and one loop; the typed ones keep

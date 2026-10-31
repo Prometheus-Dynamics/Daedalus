@@ -331,7 +331,11 @@ impl Engine {
         if matches!(self.config.gpu, GpuBackend::Cpu) {
             crate::devices::use_cpu_fallbacks(&mut graph);
         }
-        crate::devices::record_devices(&mut graph, planner_cfg.enable_gpu);
+        crate::devices::record_devices(
+            &mut graph,
+            planner_cfg.enable_gpu,
+            !matches!(self.config.gpu, GpuBackend::Cpu),
+        );
         let cache_key = planner_cache_key(&graph, &planner_cfg);
         let output = if let Some(cached) = self.caches.planner_get(&cache_key) {
             (cached, CacheStatus::Hit)
