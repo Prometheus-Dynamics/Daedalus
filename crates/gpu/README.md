@@ -248,6 +248,28 @@ what each line means, and "Vulkan Validation Layers" there for `./scripts/ci.sh 
 the hardware tests and the probe under `VK_LAYER_KHRONOS_validation` with synchronization
 validation.
 
+### Measuring a device's budget
+
+The `gpu_bench` example reports what a GPU node can spend on the host:
+
+- the compute limits wgpu exposes, plus the Vulkan ones it does not: 64-bit and 16-bit types and
+  atomics, timestamp support and period, and the storage image formats;
+- empty-dispatch latency (submit to fence, record and submit alone, and an idle `poll`);
+- saxpy (bandwidth) and an FMA loop (ALU) on the GPU, and on 1 thread and on every core;
+- the per-frame cost of handing a `LINEAR` XRGB8888 dmabuf (640x480, 1280x720) to a compute
+  kernel. It compares two routes. The first imports the dmabuf as a storage buffer
+  (`VkBuffer` + `VK_EXT_external_memory_dma_buf`, a zero-copy route that needs no tiled
+  modifier); it is timed per frame and cached. The second imports it as an image and copies it
+  to a sampleable texture. Both routes' output is verified.
+
+```bash
+cargo run --release -p daedalus-gpu --features gpu-dmabuf --example gpu_bench
+GPU_BENCH_ITERS=200 DAEDALUS_DMA_HEAP=/dev/dma_heap/linux,cma ...
+```
+
+Timings are wall clock, from submit to the fence signalling. Every section reports its error,
+and the report continues.
+
 ### Concurrency
 
 Creating wgpu instances, enumerating adapters and opening devices is serialized process-wide

@@ -60,6 +60,10 @@ bytemuck = { workspace = true }
 name = "gpu_probe"
 required-features = ["gpu-dmabuf"]
 
+[[example]]
+name = "gpu_bench"
+required-features = ["gpu-dmabuf"]
+
 [[bench]]
 name = "dispatch_readback"
 harness = false

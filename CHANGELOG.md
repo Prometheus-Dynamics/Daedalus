@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`gpu_bench` example** (`daedalus-gpu`, `gpu-dmabuf`). It reports the compute limits and
+  the Vulkan features wgpu does not surface (64-bit and f16 types, atomics, timestamps, storage
+  image formats). It measures dispatch latency, kernel throughput against the CPU on 1 thread
+  and on every core, and the per-frame cost of a `LINEAR` dmabuf camera frame reaching a compute
+  kernel. That cost is measured two ways: as a storage buffer imported with
+  `VK_EXT_external_memory_dma_buf` (zero-copy), and as an image import plus a copy.
 - **Drop stale const inputs when refreshing a stored graph.** `Graph::refresh_ports_with` (and
   `PluginRegistry::refresh_graph_ports_with`) take a `RefreshPolicy`; with `drop_stale_consts`, a
   const input on an input port the node's declaration no longer has, and no edge uses, is dropped
