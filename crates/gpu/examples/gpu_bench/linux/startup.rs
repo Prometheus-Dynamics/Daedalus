@@ -75,6 +75,7 @@ pub(super) fn startup() {
     }
     let _ = std::fs::remove_dir_all(&dir);
     encode_cost(&ctx);
+    repitch_cost(&ctx);
 }
 
 /// CPU time to encode 150 fragment passes (a plane sweep's per-keyframe count): binding on every
@@ -129,4 +130,33 @@ fn encode_cost(ctx: &daedalus_gpu::GpuContextHandle) {
         "fragment_encode_150_bound",
         format!("{:.2} ms CPU", time(true)),
     );
+}
+
+/// A 640x480 GREY frame into an r8 texture: 640-byte rows (re-pitched through the padded
+/// intermediate) against 768-byte rows (direct buffer-to-texture copy).
+fn repitch_cost(ctx: &daedalus_gpu::GpuContextHandle) {
+    use daedalus_gpu::{GpuStorage, GpuTexture};
+    let (w, h) = (640u32, 480u32);
+    for stride in [640u32, 768] {
+        let name = format!("grey_{w}x{h}_stride{stride}_storage_to_texture");
+        let built = (|| {
+            let src = GpuStorage::new(ctx, u64::from(stride * h), None)?;
+            let tex = GpuTexture::new(ctx, (w, h), wgpu::TextureFormat::R8Unorm, None)?;
+            Ok::<_, daedalus_gpu::GpuError>((src, tex))
+        })();
+        let Ok((src, tex)) = built else {
+            return kv(&name, "unsupported");
+        };
+        let mut samples = Vec::new();
+        for _ in 0..super::iters().min(30) + 1 {
+            let start = Instant::now();
+            match tex.upload_from_storage(&src, 0, stride) {
+                Ok(ticket) => ticket.wait(),
+                Err(err) => return kv(&name, format!("failed: {err}")),
+            }
+            samples.push(start.elapsed());
+        }
+        samples.remove(0);
+        kv(&name, super::stats(&mut samples));
+    }
 }

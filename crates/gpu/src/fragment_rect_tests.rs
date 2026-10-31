@@ -202,7 +202,42 @@ fn storage_frames_copy_into_textures() {
     dst.read_into(&mut out).unwrap();
     assert_eq!(out, want);
 
-    for (offset, stride) in [(0, 100), (0, 128), (1 << 20, 256)] {
+    // A stride that is not a multiple of 256 (a 640-wide GREY level's 640) is re-pitched.
+    for (frame_w, frame_stride) in [(640u32, 640u32), (100, 132)] {
+        let rows: Vec<u8> = (0..frame_stride * height)
+            .map(|i| {
+                if i % frame_stride < frame_w {
+                    (i % 241) as u8
+                } else {
+                    0xEE
+                }
+            })
+            .collect();
+        let src = GpuStorage::with_data(&ctx, &rows, None).unwrap();
+        let tex = GpuTexture::new(&ctx, (frame_w, height), r8, None).unwrap();
+        for _ in 0..2 {
+            tex.upload_from_storage(&src, 0, frame_stride)
+                .unwrap()
+                .wait();
+        }
+        let mut got = vec![0u8; tex.len_bytes()];
+        tex.read_into(&mut got).unwrap();
+        let want: Vec<u8> = rows
+            .chunks(frame_stride as usize)
+            .flat_map(|row| row[..frame_w as usize].to_vec())
+            .collect();
+        assert_eq!(got, want, "stride {frame_stride}");
+    }
+    let odd = GpuTexture::new(&ctx, (101, height), r8, None).unwrap();
+    assert!(
+        matches!(
+            odd.upload_from_storage(&storage, 0, 130),
+            Err(GpuError::InvalidInput(_))
+        ),
+        "re-pitching needs 4-byte rows"
+    );
+
+    for (offset, stride) in [(0, 99), (1 << 20, 256)] {
         assert!(
             matches!(
                 texture.upload_from_storage(&storage, offset, stride),

@@ -114,7 +114,11 @@ it with `ctx.duration_metric("gpu", time)`.
 - Into a sampled texture without a shader: import as a storage buffer as above, then
   `texture.copy_from_storage(encoder, &storage, 0, stride)` (or `upload_from_storage`). This is
   `vkCmdCopyBufferToImage`, which v3dv runs on its texture formatting unit (TFU) for a whole
-  frame from offset 0. The stride must be a multiple of 256 bytes. The PiSP writes only `LINEAR`
+  frame from offset 0: 0.49 ms at 640x480 XRGB and 0.71 ms at 1280x720, against 2.9 and 8.6 ms
+  for a shader copy. A stride that is not a multiple of 256 bytes (640-byte GREY rows) is
+  re-pitched through a padded intermediate buffer the texture keeps, which costs one buffer copy
+  per row (rows must be 4-byte aligned). Frames allocated with 256-aligned strides stay on the
+  direct path. The PiSP writes only `LINEAR`
   or SAND128, and v3dv samples only UIF, so this is the fast way to sample a CM5 camera frame.
 - Into a sampled image: `GpuContextHandle::import_dmabuf` with a DRM format modifier the GPU can
   sample. On v3dv that is UIF only; `LINEAR` images are render/transfer only, so they need a copy.

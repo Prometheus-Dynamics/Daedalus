@@ -20,6 +20,9 @@ pub struct GpuTexture {
     device: wgpu::Device,
     queue: wgpu::Queue,
     staging: Arc<StagingRing>,
+    /// Padded rows for [`GpuTexture::copy_from_storage`] when a frame's stride is not a multiple
+    /// of 256 (made on first need, reused).
+    repitch: parking_lot::Mutex<Option<wgpu::Buffer>>,
 }
 
 impl std::fmt::Debug for GpuTexture {
@@ -77,6 +80,7 @@ impl GpuTexture {
             device: device.clone(),
             queue: queue.clone(),
             staging: Arc::default(),
+            repitch: parking_lot::Mutex::new(None),
         })
     }
 
@@ -137,8 +141,14 @@ impl GpuTexture {
     /// fragment pass. It is `vkCmdCopyBufferToImage`; v3dv runs a whole-slice copy like this on
     /// its texture formatting unit (TFU), with no shader, when `offset` is 0.
     ///
-    /// `InvalidInput` when `stride` is not a multiple of 256 (wgpu's copy row alignment) or
-    /// smaller than a row, `offset` is not texel aligned, or the rows run past `src`.
+    /// A `stride` that is not a multiple of 256 (wgpu's row alignment for buffer-to-texture
+    /// copies, for example the 640-byte rows of a 640-wide GREY level) is re-pitched first: each
+    /// row is copied into a padded intermediate buffer the texture keeps, then that buffer is
+    /// copied in. That costs one small buffer copy per row on top. Allocating frames with
+    /// 256-aligned strides keeps the direct path.
+    ///
+    /// `InvalidInput` when `stride` is smaller than a row, a re-pitched row or `offset` is not
+    /// 4-byte aligned, `offset` is not texel aligned, or the rows run past `src`.
     pub fn copy_from_storage(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -149,12 +159,6 @@ impl GpuTexture {
         let (width, height) = self.size();
         let row = width as u64 * self.texel_bytes() as u64;
         let invalid = |what: String| Err(GpuError::InvalidInput(what));
-        if !stride.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) {
-            return invalid(format!(
-                "stride {stride} must be a multiple of {}",
-                wgpu::COPY_BYTES_PER_ROW_ALIGNMENT
-            ));
-        }
         if u64::from(stride) < row {
             return invalid(format!("stride {stride} is shorter than a {row}-byte row"));
         }
@@ -169,19 +173,64 @@ impl GpuTexture {
                 src.size()
             ));
         }
+        if stride.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) {
+            self.copy_rows(encoder, src.buffer(), offset, stride);
+            return Ok(());
+        }
+        let align = wgpu::COPY_BUFFER_ALIGNMENT;
+        if !row.is_multiple_of(align)
+            || !offset.is_multiple_of(align)
+            || !u64::from(stride).is_multiple_of(align)
+        {
+            return invalid(format!(
+                "re-pitching stride {stride} needs 4-byte aligned rows ({row} bytes), stride and \
+                 offset ({offset})"
+            ));
+        }
+        let padded = (row as u32).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let needed = u64::from(padded) * u64::from(height);
+        let mut repitch = self.repitch.lock();
+        if repitch.as_ref().is_none_or(|b| b.size() < needed) {
+            *repitch = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gpu-texture-repitch"),
+                size: needed,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        let staging = repitch.as_ref().expect("made above");
+        for y in 0..u64::from(height) {
+            encoder.copy_buffer_to_buffer(
+                src.buffer(),
+                offset + y * u64::from(stride),
+                staging,
+                y * u64::from(padded),
+                row,
+            );
+        }
+        self.copy_rows(encoder, staging, 0, padded);
+        Ok(())
+    }
+
+    fn copy_rows(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &wgpu::Buffer,
+        offset: u64,
+        stride: u32,
+    ) {
         encoder.copy_buffer_to_texture(
             wgpu::TexelCopyBufferInfo {
-                buffer: src.buffer(),
+                buffer: src,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset,
                     bytes_per_row: Some(stride),
-                    rows_per_image: Some(height),
+                    rows_per_image: Some(self.texture.height()),
                 },
             },
             self.texture.as_image_copy(),
             self.texture.size(),
         );
-        Ok(())
     }
 
     /// [`GpuTexture::copy_from_storage`] submitted on its own; poll the ticket, or encode the
