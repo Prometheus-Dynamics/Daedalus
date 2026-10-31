@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`GpuStorage`**: a persistent, sized storage buffer on the engine's device that a node keeps in
+  its `state(T)` across ticks (Eidos TSDF volume, cost-volume scratch). It provides `new`
+  (zeroed), `with_data`, `write`, `ensure_size`, `buffer()` for the node's own pipelines, and
+  `binding()` for Daedalus dispatches. A graph test keeps one buffer for 100 ticks.
+- **`GpuError::InvalidInput`** for caller-supplied sizes and ranges (breaking: a new variant).
 - **Compute limits and features in `GpuCapabilities::compute`** (`GpuComputeCaps`,
   `GpuComputeFeatures`). It reports workgroup storage, invocations and size, the storage buffer
   binding size, and storage buffers and textures per stage. It also reports which of f16, f64,

@@ -51,6 +51,8 @@ pub use noop::NoopBackend;
 pub use selection::select_backend;
 #[cfg(feature = "gpu-async")]
 pub use selection::select_backend_async;
+#[cfg(feature = "gpu-wgpu")]
+pub use shader::GpuStorage;
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu;
@@ -261,6 +263,8 @@ pub enum GpuError {
     Unsupported,
     AllocationFailed,
     AdapterUnavailable,
+    /// A caller-supplied size, offset or range the operation cannot accept.
+    InvalidInput(String),
     Internal(String),
 }
 
@@ -270,6 +274,7 @@ impl fmt::Display for GpuError {
             GpuError::Unsupported => write!(f, "unsupported"),
             GpuError::AllocationFailed => write!(f, "allocation failed"),
             GpuError::AdapterUnavailable => write!(f, "adapter unavailable"),
+            GpuError::InvalidInput(msg) => write!(f, "invalid input: {msg}"),
             GpuError::Internal(msg) => write!(f, "internal: {msg}"),
         }
     }

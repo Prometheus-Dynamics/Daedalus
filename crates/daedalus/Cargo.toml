@@ -166,6 +166,11 @@ path = "tests/it/main.rs"
 required-features = ["engine", "plugins"]
 
 [[test]]
+name = "gpu_storage"
+path = "tests/gpu_storage.rs"
+required-features = ["engine", "plugins", "gpu-wgpu"]
+
+[[test]]
 name = "macro_hot_path_allocations"
 path = "tests/macro_hot_path_allocations.rs"
 required-features = ["engine", "plugins"]

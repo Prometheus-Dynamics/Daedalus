@@ -79,7 +79,7 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       a graph, and its edges show DeviceUpload/DeviceDownload in `explain_plan()`; the existing
       `fn(&Cpu)` form still compiles.
       **Blocked by:** nothing.
-- [ ] **What:** `GpuStorage`, a sized persistent storage buffer kept in a node's `state(T)`
+- [x] **What:** `GpuStorage`, a sized persistent storage buffer kept in a node's `state(T)`
       across ticks (TSDF volume, cost-volume scratch).
       **Why:** Eidos M1 (plane sweep) keeps GPU state for the node's lifetime.
       **Done when:** a test keeps a buffer across 100 ticks with no reallocation, and the buffer

@@ -110,3 +110,43 @@ fn wgpu_reports_compute_limits_and_enabled_features() {
         enabled.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
     );
 }
+
+/// `GpuStorage` checks sizes and write ranges, grows on demand, and needs a wgpu backend.
+#[test]
+fn gpu_storage_validates_and_grows() {
+    let noop = select_backend(&GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Noop),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        crate::GpuStorage::new(&noop, 16, None).unwrap_err(),
+        crate::GpuError::Unsupported
+    );
+    let ctx = select_backend(&GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Wgpu),
+        ..Default::default()
+    })
+    .unwrap();
+    if ctx.wgpu().is_none() {
+        return;
+    }
+    for bad in [0, 6] {
+        assert!(matches!(
+            crate::GpuStorage::new(&ctx, bad, None),
+            Err(crate::GpuError::InvalidInput(_))
+        ));
+    }
+    let mut storage = crate::GpuStorage::with_data(&ctx, &[1, 2, 3, 4, 5], Some("s")).unwrap();
+    assert_eq!(storage.size(), 8);
+    assert!(storage.write(4, &[0; 4]).is_ok());
+    assert!(storage.write(6, &[0; 4]).is_err(), "unaligned offset");
+    assert!(storage.write(8, &[0; 4]).is_err(), "past the end");
+    assert!(!storage.ensure_size(8).unwrap());
+    assert!(storage.ensure_size(30).unwrap());
+    assert_eq!(storage.size(), 32);
+    assert_eq!(
+        storage.binding(0, crate::shader::Access::ReadWrite).binding,
+        0
+    );
+}

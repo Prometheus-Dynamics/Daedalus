@@ -37,6 +37,12 @@ transfer adapters can use them without a copy. Get that device with
 `GpuContextHandle::wgpu() -> Option<(&wgpu::Device, &wgpu::Queue)>`, which is `None` on the
 noop and mock backends. Don't open a second device.
 
+`GpuStorage` is a sized storage buffer on that device, for state a node keeps for its whole
+lifetime. Keep it in the node's `state(T)`; dropping the state, as `Restart` or a reload does,
+frees the buffer. `new` creates it zeroed, `with_data` creates it with contents, and
+`ensure_size` grows it. `write` queues an update. Bind it to your own pipelines with `buffer()`,
+or to Daedalus dispatches with `binding()`. See `crates/daedalus/tests/gpu_storage.rs`.
+
 ## Host-created Vulkan instances
 
 The Vulkan loader is not safe when several threads set up a graphics driver at once: the NVIDIA ICD

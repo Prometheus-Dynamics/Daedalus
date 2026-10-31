@@ -11,6 +11,7 @@ mod dispatch;
 mod dispatch_async;
 mod fallback;
 mod gpu_state;
+mod gpu_storage;
 mod pipeline;
 #[cfg(feature = "gpu-async")]
 mod poll_driver;
@@ -31,6 +32,7 @@ pub use dispatch_async::*;
 pub(crate) use gpu_state::clear_gpu_state_pool_for_device;
 pub use gpu_state::*;
 pub use gpu_state::{gpu_state_pool_limit, set_gpu_state_pool_limit};
+pub use gpu_storage::GpuStorage;
 pub(crate) use pipeline::clear_pipeline_caches_for_device;
 pub use pipeline::{
     bind_group_cache_limit, pipeline_cache_limit, set_bind_group_cache_limit,
