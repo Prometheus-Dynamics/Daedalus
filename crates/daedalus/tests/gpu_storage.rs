@@ -142,3 +142,143 @@ fn gpu_storage_in_node_state_persists_across_ticks() {
         "one increment per tick on the same buffer"
     );
 }
+
+/// Buffers held in node state that have been dropped.
+static HELD_DROPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A `GpuStorage` whose drop is counted.
+struct Held(#[allow(dead_code)] GpuStorage);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        HELD_DROPS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[derive(Default)]
+struct Holder {
+    held: Option<Held>,
+}
+
+/// Allocates a buffer on its first tick and keeps it; fails when `fail` is set.
+#[node(id = "test.gpu_holder", inputs("fail"), outputs("out"), state(Holder))]
+fn gpu_holder(fail: bool, ctx: &ExecutionContext, state: &mut Holder) -> Result<i64, NodeError> {
+    let gpu = ctx
+        .gpu
+        .as_ref()
+        .ok_or_else(|| NodeError::Handler("no GPU context".into()))?;
+    if state.held.is_none() {
+        let storage = GpuStorage::new(gpu, 64, Some("held"))
+            .map_err(|err| NodeError::Handler(err.to_string()))?;
+        state.held = Some(Held(storage));
+    }
+    if fail {
+        return Err(NodeError::Handler("asked to fail".into()));
+    }
+    Ok(1)
+}
+
+/// Another node with the same ports, for a reload that removes `gpu_holder`.
+#[node(id = "test.gpu_other", inputs("fail"), outputs("out"))]
+fn gpu_other(fail: bool) -> Result<i64, NodeError> {
+    let _ = fail;
+    Ok(2)
+}
+
+#[plugin(id = "test.gpu_holder_plugin", nodes(gpu_holder, gpu_other))]
+struct HolderPlugin;
+
+/// A node's `GpuStorage` is dropped when the node restarts (`NodeRecovery::Restart`) and when a
+/// reload removes the node; a reload that keeps the node keeps the buffer.
+#[test]
+fn gpu_storage_drops_on_restart_and_on_reload() {
+    use daedalus::runtime::NodeRecovery;
+    use std::sync::atomic::Ordering::SeqCst;
+    let config = EngineConfig::gpu(GpuBackend::Device).with_recovery(NodeRecovery::Restart);
+    let engine = match Engine::new(config) {
+        Ok(engine) => engine,
+        Err(err) => return eprintln!("skipping: no GPU engine ({err})"),
+    };
+    let mut registry = PluginRegistry::new();
+    let plugin = HolderPlugin::new();
+    registry.install(&plugin).expect("install plugin");
+    let (holder, other_node) = (plugin.gpu_holder.alias("n"), plugin.gpu_other.alias("n"));
+    let graph = |other: bool| {
+        let builder = registry.graph_builder().expect("graph builder");
+        if other {
+            let node = &other_node;
+            builder
+                .try_node(node)
+                .and_then(|b| b.try_connect("fail", &node.inputs.fail))
+                .and_then(|b| b.try_connect(&node.outputs.out, "out"))
+                .expect("graph")
+                .build()
+        } else {
+            let node = &holder;
+            builder
+                .try_node(node)
+                .and_then(|b| b.try_connect("fail", &node.inputs.fail))
+                .and_then(|b| b.try_connect(&node.outputs.out, "out"))
+                .expect("graph")
+                .build()
+        }
+    };
+    let mut host = match engine.compile_registry(&registry, graph(false)) {
+        Ok(host) => host,
+        Err(err) => return eprintln!("skipping: no GPU adapter ({err})"),
+    };
+    let tick = |host: &mut daedalus::engine::HostGraph<_>, fail: bool| {
+        host.push("fail", fail);
+        let _ = host.tick();
+        host.drain_owned::<i64>("out").unwrap_or_default()
+    };
+    let start = HELD_DROPS.load(SeqCst);
+    assert_eq!(tick(&mut host, false), [1]);
+    assert_eq!(tick(&mut host, false), [1]);
+    assert_eq!(HELD_DROPS.load(SeqCst), start, "kept across ticks");
+
+    // A failing tick restarts the node: its state, and the buffer, are dropped.
+    let _ = tick(&mut host, true);
+    assert_eq!(HELD_DROPS.load(SeqCst), start + 1, "dropped on Restart");
+    assert_eq!(
+        tick(&mut host, false),
+        [1],
+        "a fresh buffer after the restart"
+    );
+
+    // A reload that keeps the node keeps its buffer...
+    let next = engine
+        .compile_host_graph_plugin_registry(
+            &registry,
+            graph(false),
+            registry.handlers(),
+            host.bridge_manager().clone(),
+            host.host().alias().to_string(),
+        )
+        .expect("recompile");
+    host.reload_with(next).expect("reload");
+    assert_eq!(
+        HELD_DROPS.load(SeqCst),
+        start + 1,
+        "kept by a reload that keeps the node"
+    );
+    assert_eq!(tick(&mut host, false), [1]);
+
+    // ...and one that removes it drops the buffer.
+    let next = engine
+        .compile_host_graph_plugin_registry(
+            &registry,
+            graph(true),
+            registry.handlers(),
+            host.bridge_manager().clone(),
+            host.host().alias().to_string(),
+        )
+        .expect("recompile");
+    host.reload_with(next).expect("reload");
+    assert_eq!(
+        HELD_DROPS.load(SeqCst),
+        start + 2,
+        "dropped by a reload that removes the node"
+    );
+    assert_eq!(tick(&mut host, false), [2]);
+}

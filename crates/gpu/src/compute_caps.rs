@@ -92,4 +92,28 @@ mod tests {
         assert!(!caps.fits_workgroup([0, 1, 1]));
         assert!(!GpuComputeCaps::default().fits_workgroup([1, 1, 1]));
     }
+
+    /// The mock backend reports the WebGPU defaults and no optional features; the noop backend
+    /// reports no compute at all.
+    #[test]
+    #[cfg(feature = "gpu-mock")]
+    fn mock_and_noop_backends_report_compute_caps() {
+        use crate::{GpuBackendKind, GpuOptions, select_backend};
+        let mock = select_backend(&GpuOptions {
+            preferred_backend: Some(GpuBackendKind::Mock),
+            allow_software: true,
+            ..Default::default()
+        })
+        .unwrap();
+        let caps = mock.capabilities().compute;
+        assert_eq!(caps, GpuComputeCaps::WEBGPU_DEFAULTS);
+        assert_eq!(caps.features, super::GpuComputeFeatures::default());
+        assert!(caps.fits_workgroup([64, 1, 1]));
+        let noop = select_backend(&GpuOptions {
+            preferred_backend: Some(GpuBackendKind::Noop),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(noop.capabilities().compute, GpuComputeCaps::default());
+    }
 }

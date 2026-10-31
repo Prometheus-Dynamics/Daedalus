@@ -379,8 +379,10 @@ planes are expected. The validation layer is not part of that image, so `vvl` ne
 layer under `VK_LAYER_PATH`: with a cross-built `VK_LAYER_KHRONOS_validation` 1.4.363 (zig,
 static C++ runtime) the dmabuf tests passed with sync validation and no validation message at
 all; `gpu_probe` printed its whole report, also clean, then segfaulted at process exit, under
-the layer only (unexplained so far; possibly that build's static C++ runtime unloaded with the
-layer while a thread's exit destructors still point into it). Without lavapipe installed (as on that image), a `skipping: no
+the layer only. Root cause (2026-10-30): a bare `vkCreateInstance` + `vkDestroyInstance` program
+segfaults the same way, so the crash is in that cross-built layer's static destructors, not in
+Daedalus, wgpu or v3dv; messages printed before exit are valid. A properly built layer (a
+distro arm64 package) avoids it. Without lavapipe installed (as on that image), a `skipping: no
 lavapipe consumer` line is expected: those tests then use a second v3dv device. Run with `-- --nocapture` to see the
 measurements (watcher hop, blocked submission) and the round-tripped modifiers.
 

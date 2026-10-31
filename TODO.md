@@ -13,18 +13,21 @@ Board-gated items are marked **[board]**.
 
 ### 1. Freeze-list items still open
 
-- [x] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
+- [ ] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
       `drop_stale_consts`, bb07e3b).
       **Why:** HeliOS's stored rev-215 graph failed to plan (`PortExtra` on folded Eidos knobs).
+      **Status (audit 2026-10-31):** the code and planner tests are in (bb07e3b, 0398d4a,
+      `planner/src/refresh/tests.rs`); no HeliOS run on the Raze is recorded.
       **Done when:** HeliOS dev on the Raze plans and runs the default pipeline from the stored
-      graph and logs the dropped consts.
+      rev-215 graph and logs the dropped consts.
       **Blocked by:** a HeliOS deploy carrying bb07e3b (the HeliOS coordinator).
 - [ ] **What:** frame interface v3 follow-ups.
       **Why:** v3 shipped (SharedFrame, colorimetry, dylib reload); further changes only on
       consumer request.
       **Done when:** no consumer request is open at release time, or each request has a merged
       commit and a test.
-      **Blocked by:** a consumer asking (Styx, HeliOS, Eidos); none open.
+      **Blocked by:** a consumer asking (Styx, HeliOS, Eidos); none open. Re-check at the
+      coordinated release go.
 
 ### 2. Hardware support and GPU
 
@@ -36,9 +39,12 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       throughput against the CPU, and dmabuf frame import as a storage buffer vs image + copy.
       **Why:** it fixes V3D's real budget for Eidos dense depth, and shows whether LINEAR camera
       frames can reach compute zero-copy.
-      **Done when:** the report is pasted into `docs/testing.md` ("Validating on a Raspberry
-      Pi 5"), with every `_verify` line `ok`.
-      **Blocked by:** a Raze window (HeliOS coordinator).
+      **Status (audit 2026-10-31):** the numbers are summarized in `docs/gpu-nodes.md` (fragment
+      vs compute, TFU copy, pipeline cache, dmabuf import); the full output is not recorded.
+      **Done when:** the full `gpu_bench` output is pasted into `docs/testing.md` ("Validating
+      on a Raspberry Pi 5"), with every `_verify` line `ok`, plus the `GpuKernels` measurements
+      on V3D (`kernels_tests --nocapture`, recorded in the backend matrix).
+      **Blocked by:** a Raze slot (HeliOS coordinator).
 - [x] **What:** the `gpu_probe` segfault at exit under the cross-built Khronos validation layer
       on v3dv.
       **Why:** VVL is how new Eidos kernels get validated; a crashing run hides real errors.
@@ -52,15 +58,20 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Decision (2026-10-30):** accepted as-is with the root cause documented: it affects only a
       cross-built debugging layer at process exit. For clean `ci.sh vvl` runs later, a distro
       arm64 layer copied to `/tmp` (needs the user's OK for the download).
-      **Blocked by:** nothing for this release.
-- [x] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
+      **Blocked by:** nothing for this release. (`docs/testing.md` now states the root cause, not
+      "unexplained".)
+- [ ] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
       invocations, workgroup storage, storage buffer size, f16, int64, int64 atomics,
       timestamps, subgroups.
       **Why:** a library picks a kernel variant, or refuses the GPU backend, from facts rather
       than from trial dispatches.
       **Done when:** unit tests against the mock backend pass, and `gpu_probe` on the Raze
       prints the same values as `gpu_bench`'s `[limits]`.
-      **Blocked by:** nothing (the Raze check needs a window).
+      **Status (audit 2026-10-31):** fields and wgpu-backed tests in fb5ba91
+      (`context_tests.rs`); the mock and noop backend test is
+      `compute_caps::tests::mock_and_noop_backends_report_compute_caps`. Left: the Raze
+      comparison.
+      **Blocked by:** a Raze slot.
 - [x] **What:** explicit device assignment. The per-node `compute` and a graph-level default
       choose CPU or GPU. The planner honours it, `GpuRequired` fails planning without an
       adapter, and `explain_plan()` reports the resolved device per node (today it reports only
@@ -73,7 +84,8 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Status:** done. The graph-level choice is the engine's GPU backend; per node, `compute`.
       The resolved device and its reason are in node metadata and in `explain_plan()`. Tests:
       engine `devices` unit tests (GPU, fallback, gpu_preferred and gpu_required without GPU)
-      and the facade `device_assignment` test.
+      and the facade `device_assignment` test (74b8ef4, b24bde0). `docs/node-authoring.md`
+      ("CPU/GPU Residency") documents it, linking `docs/runtime-diagnostics.md`.
       **Blocked by:** nothing.
 - [x] **What:** `GpuContextHandle::wgpu() -> Option<(&wgpu::Device, &wgpu::Queue)>`, so a node
       reaches the engine's own device.
@@ -96,6 +108,9 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Why:** Eidos M1 (plane sweep) keeps GPU state for the node's lifetime.
       **Done when:** a test keeps a buffer across 100 ticks with no reallocation, and the buffer
       is dropped on `Restart` and on reload.
+      **Status:** done (8358890). `tests/gpu_storage.rs`: 100 ticks on one buffer, and
+      `gpu_storage_drops_on_restart_and_on_reload` (dropped on `Restart` and by a reload that
+      removes the node, kept by one that keeps it).
       **Blocked by:** nothing.
 - [x] **What:** `GpuSubmission` (shipped as `GpuTicket` / `GpuInFlight`), a non-blocking completion API. Submit on tick N;
       `try_complete()` polls (never waits) on later ticks; there is an in-flight limit.
@@ -114,7 +129,8 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       pair and the results match. `gpu_bench` on the Raze shows the helper costs no more than the
       hand-written fragment pass (within 5%). The guide documents it.
       **Status:** done. `FragmentPass` + `GpuTexture` landed (e26be2b). On the Raze the helper
-      matches the hand-written pass: box3x3 r8 2.83 vs 2.84 ms, box5x5 7.05 vs 7.06 ms.
+      matches the hand-written pass: box3x3 r8 2.83 vs 2.84 ms, box5x5 7.05 vs 7.06 ms, recorded
+      in `docs/gpu-nodes.md`. Test: `tests/gpu_fragment.rs`.
       **Blocked by:** nothing.
 - [x] **What:** `read_buffer_into(&GpuStorage, range, &mut [u8])` (shipped as `GpuStorage::read_into` / `start_read` → `GpuReadback::try_read_into`), plus a non-blocking form
       through `GpuSubmission`, with a persistent staging ring.
@@ -135,17 +151,24 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** a test sees nonzero GPU time per GPU node, and the Raze report states
       which source v3dv uses.
       **Blocked by:** the bench run (timestamp support on v3dv).
-- [x] **What:** import a LINEAR dmabuf as a storage buffer (public API: `GpuStorage::import_dmabuf`; the Raze run is part of `ci.sh pi`).
+- [ ] **What:** import a LINEAR dmabuf as a storage buffer (public API: `GpuStorage::import_dmabuf`; the Raze run is part of `ci.sh pi`).
       **Why:** zero-copy camera frames for packed-u32 compute on v3dv, where LINEAR images
       cannot be sampled.
       **Done when:** a hardware test imports, runs a kernel and verifies the output, on RADV and
       on the Raze.
-      **Blocked by:** the bench result (whether v3dv imports dmabuf buffers).
+      **Status (audit 2026-10-31):** fd455a4; the test (`gpu_storage/dmabuf.rs`) passes on RADV
+      (the 73/73 run), and import costs 16-29 µs on the CM5 (`gpu_bench`). Left: record the
+      Raze run of that test and `gpu_bench`'s frame_import `_verify ok` in `docs/testing.md`.
+      **Blocked by:** a Raze slot.
 - [x] **What:** an on-disk pipeline cache across runs (`GpuPipelineCache`; on V3D 12 pipelines build in 52.0 → 5.7 ms with the cache loaded, Mesa's cache off) (wgpu `PipelineCache` on Vulkan), keyed by
       adapter, driver and shader hash.
       **Why:** startup time on the CM5.
       **Done when:** a second process start creates its pipelines measurably faster (reported by
       `gpu_bench`), and a driver change invalidates the cache.
+      **Status:** done (8fbc780; engine-owned in 3d34c9e). `fragment_tests.rs`
+      `pipeline_cache_round_trips_through_its_file` covers reload, a corrupt file, and another
+      adapter's data (header vendor changed) being dropped; `tests/gpu_pipeline_cache.rs` covers
+      the engine path.
       **Blocked by:** nothing.
 - [x] **What:** a buffer pool with size classes (`GpuStoragePool`; `SimpleBufferPool`'s size bug fixed), per-frame reuse, a memory cap and stats,
       replacing `SimpleBufferPool`'s exact-size matching.
@@ -170,31 +193,70 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
 - [ ] **[board] What:** armv7 (Flame RV1106G2, `armv7-unknown-linux-musleabihf`), CPU-only: a
       `ci.sh` lane that builds and tests the CPU path with the GPU features off.
       **Status:** `ci.sh cross` (and its CI job) type-checks, rejects wgpu in the CPU set, and runs
-      the integration, fallback and device-assignment tests under qemu-arm (91 + 4 + 2 pass).
-      Left: the run on a Flame board.
+      the integration, fallback and device-assignment tests under qemu-arm (91 + 4 + 2 pass; the
+      lane's missing `gpu-mock` feature is fixed in de16ef3). The `+neon` kernels pass under
+      qemu cortex-a7 (`ci.sh accel`). Written, untested on board: the CPU graph tests and the
+      kernel conformance binary on a Flame.
       **Why:** the user's platform list (2026-10-30); the RV1106G2 has no compute-capable GPU.
       **Done when:** the lane is in `ci.sh full` and CI, and a CPU-only graph test passes on the
       Flame.
-      **Blocked by:** nothing for the lane; a Flame board for the run.
+      **Blocked by:** a Flame board for the on-board run.
 - [ ] **[board] What:** K230D, CPU-only: a `riscv64gc-unknown-linux-gnu` build with wgpu
       feature-gated off, and `#[device]` nodes running their CPU implementation.
       **Status:** `ci.sh cross` checks riscv64 gnu and musl and runs the CPU graph tests under
-      qemu-riscv64 (91 + 4 + 2 pass). Left: the run on a K230D board.
+      qemu-riscv64 (91 + 4 + 2 pass). The `+v` kernels pass under qemu at VLEN 128, 256 and 512
+      (`ci.sh accel`). Written, untested on board: the CPU graph tests and the kernel
+      conformance binary on a K230D (a real VLEN).
       **Why:** the K230D has no compute-capable GPU.
       **Done when:** the cross-build check is in `ci.sh`, and a CPU-only graph test passes on
       the K230D.
-      **Blocked by:** nothing for the build; a K230D board for the run.
+      **Blocked by:** a K230D board for the on-board run.
 - [ ] **[board] What:** RK3588S (Mali-G610): `gpu_probe`, the `ci.sh pi` hardware tests and
       `gpu_bench` with the shipped driver (libmali or PanVK).
       **Why:** proper hardware support on every board.
       **Done when:** the reports are in `docs/testing.md`, and the hardware tests pass or each
       gap is documented, with the copy fallback in place.
+      **Status:** written, untested on board: `GpuDeviceProfile` (Mali Valhall, warp 16;
+      b095018), the GPU kernels and fragment passes (tested on lavapipe and desktop), the AFBC
+      modifier helpers, and the board checklist in `docs/testing.md`.
       **Blocked by:** a board (the PCB dev board) and Gaia's driver choice.
 - [ ] **[board] What:** RK3576, RK3566 and RK3562 (Mali-G52): the same reports, or a confirmed
       clean CPU fallback where the driver has no usable Vulkan compute.
       **Why:** as above.
       **Done when:** as above, per chip.
+      **Status:** written, untested on board, as above (Mali Bifrost, warp 8 on G52).
       **Blocked by:** boards and Gaia's driver choice.
+
+### 2b. Acceleration inventory (user rule, 2026-10-31)
+
+Everything that can use RVV, NEON (64 and 32), x86 SIMD, ISA extensions, the GPU or a
+fixed-function unit does. "Impossible" means physically impossible only; slower variants are
+built, measured per device and kept selectable. `docs/backend-matrix.md` is the evidence;
+`ci.sh accel` is the gate.
+
+- [x] **What:** `daedalus-accel`: kernel registry, CI evidence, the matrix generator and the gate
+      (unregistered SIMD/GPU code, failing or regressed cells, the `wired` column).
+      **Done:** 7b85ad7, 6f9bd4b (extensions), 002d1f4 (wired), d5b55f7 (notes); Eidos adopts it.
+- [x] **What:** `daedalus-kernels`, every Daedalus data-parallel op on x86 SSE/AVX2, NEON64,
+      NEON32 (`+neon`), RVV (`+v`, VLEN 128/256/512) and the GPU (`GpuKernels`, measured), wired
+      into every call site.
+      **Done:** 6f9bd4b, 002d1f4, d5b55f7, c27f9c9 (CRC-32: PCLMULQDQ, AArch64 CRC), c797a47
+      (F16C). Matrix: 98 pass, 33 impossible with reasons, 3 gaps.
+- [ ] **What:** the `portable_simd` column: a `nightly` feature using `core::simd`, tested in a
+      nightly CI lane (user decision, 2026-10-31; the product stays on stable).
+      **Done when:** the column passes for every op in the nightly lane.
+      **Blocked by:** nothing.
+- [ ] **What:** the Rockchip RGA fixed-function backend (librga: RGB↔RGBA, gray).
+      **Done when:** written, with conformance tests that run where librga exists; untested on
+      board until a Rockchip board.
+      **Blocked by:** nothing for the code; a Rockchip board for the run.
+- [ ] **What:** the remaining CRC-32 cells: NEON32 `vmull.p8` folding, `rvv+zvbc`, and a GPU
+      chunk-and-combine CRC.
+      **Done when:** each passes conformance in `ci.sh accel`, or carries a physical reason.
+      **Blocked by:** nothing.
+- [ ] **What:** `GpuKernels` and the kernels measured on V3D, and later on Mali (the matrix's GPU
+      evidence per adapter).
+      **Blocked by:** a Raze slot; Rockchip boards for Mali.
 
 A CUDA backend is not in this release. If one comes later, it needs:
 
@@ -222,7 +284,7 @@ The explicit assignment above already carries a backend choice.
       (`NodePortRefresh`, `GpuCapabilities` and other public structs changed).
       **Done when:** `./scripts/ci.sh semver` reports no unexplained break, and the CI `semver`
       job is blocking.
-      **Blocked by:** nothing.
+      **Blocked by:** the coordinated release go (the v4.0.0 tag).
 - [ ] **What:** version 4.0.0 (user decision, 2026-10-30). The existing `v3.0.0` tag stays as it
       is.
       **Why:** dev is `3.0.1-dev`; this release breaks public API (`GpuCapabilities`,
@@ -230,22 +292,24 @@ The explicit assignment above already carries a backend choice.
       **Done when:** every crate carries `4.0.0`, downstream git deps need no `version =`
       change, and the plugin-ABI and stable-ABI constants are unchanged or bumped with a
       reason.
-      **Blocked by:** the rest of this release (bump last).
+      **Blocked by:** the coordinated all-repo release go (HeliOS coordinator); bump last.
 - [ ] **What:** CHANGELOG `[Unreleased]` becomes the release section, with a migration note if
       needed.
       **Status:** the migration guide is written (`docs/migration-4.0.md`, checked against the
       semver report). The section cut waits with the 4.0.0 bump for the coordinated release.
       **Why:** downstream pins by commit and reads the CHANGELOG.
       **Done when:** every merged change since `v3.0.0` has an entry.
-      **Blocked by:** the items above.
+      **Blocked by:** the coordinated release go.
 - [ ] **What:** release gates. **Why:** release quality.
       **Done when:** `./scripts/ci.sh full` passes (x86_64, aarch64, armv7 and riscv64 lanes),
       `ci.yml` and `bench.yml` are green on `dev`, and `ci.sh pi` and `ci.sh vvl` pass on the
       Raze.
-      **Blocked by:** a Raze window.
+      **Status (audit 2026-10-31):** dev CI was red at 002d1f4 (the cross lane's `gpu-mock`, a
+      docs link and a doc filename collision), fixed in de16ef3.
+      **Blocked by:** a Raze slot for `ci.sh pi` and `vvl`, then the coordinated release go.
 - [ ] **What:** merge `dev` into `main`, and tag `v4.0.0`.
       **Why:** the release. **Done when:** the tag exists and downstream bumps its pin.
-      **Blocked by:** every item above, and user approval.
+      **Blocked by:** every item above, the coordinated release go, and user approval.
 
 ## Backlog (not for this release)
 
@@ -420,7 +484,8 @@ and `docs/migration-3.0.md` for upgrading.
 ### Remaining
 
 #### High priority
-- [x] **Validate on a Pi 5 / CM5 with Mesa v3dv** (1512568, abe7ad4, d02276e). Run `./scripts/ci.sh pi` on the device and
+- [ ] **Validate on a Pi 5 / CM5 with Mesa v3dv** (1512568, abe7ad4, d02276e; the 2026-10-27 summary
+      is in `docs/testing.md`, the full report is not). Blocked by: a Raze slot. Run `./scripts/ci.sh pi` on the device and
       paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
       `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
       measurements of the fence tests; see "Validating on a Raspberry Pi 5" in
@@ -482,7 +547,7 @@ and `docs/migration-3.0.md` for upgrading.
       `pi` report (only RADV has been validated).
 - [x] **`NodeRecovery::Retry` with by-value inputs** (89836d1): `#[node]` by-value inputs go
       through `NodeIo::take_owned_with`, cloning a shared `Clone` input, so retries get it again.
-- [x] **GPU fallback with `GpuBackend::Cpu`** (e9a1f05): the engine substitutes the `fallback`
+- [x] **GPU fallback with `GpuBackend::Cpu`** (4939d8a): the engine substitutes the `fallback`
       node when the backend is `Cpu`; it was stored as metadata and never read.
 - [x] **Host-created Vulkan instances.** `daedalus_gpu::driver_lock()` and
       `daedalus_gpu::with_driver_lock(f)` expose the lock that serializes Daedalus's own driver

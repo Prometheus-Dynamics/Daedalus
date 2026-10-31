@@ -249,6 +249,26 @@ fn pipeline_cache_round_trips_through_its_file() {
 
     let reopened = GpuPipelineCache::open(&ctx, &dir).unwrap();
     assert_eq!(reopened.loaded_bytes(), saved);
+    let kept = reopened.cache().get_data().map_or(0, |d| d.len());
+    assert!(
+        kept > 32,
+        "the driver kept the loaded pipelines ({kept} bytes)"
+    );
+
+    // Data from another adapter (its header's vendor id changed): the driver starts empty.
+    let mut foreign = std::fs::read(cache.path()).unwrap();
+    if foreign.len() >= 12 {
+        for byte in &mut foreign[8..12] {
+            *byte ^= 0x5a;
+        }
+        std::fs::write(cache.path(), &foreign).unwrap();
+        let other = GpuPipelineCache::open(&ctx, &dir).unwrap();
+        let left = other.cache().get_data().map_or(0, |d| d.len());
+        assert!(
+            left < kept,
+            "another adapter's data was dropped ({left} of {kept} bytes)"
+        );
+    }
 
     std::fs::write(cache.path(), b"not a pipeline cache").unwrap();
     let fresh = GpuPipelineCache::open(&ctx, &dir).unwrap();

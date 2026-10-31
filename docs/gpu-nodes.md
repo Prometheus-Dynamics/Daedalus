@@ -71,6 +71,8 @@ The pass writes one render target per `@location` (multiple render targets). r8,
 rg32f, r8uint, rgba16uint and rg32uint are tested. Every binding the shader declares must be
 used.
 
+- **Cost.** On the Raze (V3D), `FragmentPass` costs the same as a hand-written fragment
+  pipeline: box3x3 r8 2.83 ms against 2.84 ms, box5x5 7.05 ms against 7.06 ms (`gpu_bench`).
 - **Bind once.** `pass.bind(&inputs, &buffers)` returns a `FragmentBinding`; keep it with the
   textures and encode with `encode_bound` / `run_bound`. `encode` / `run` bind each call (one
   validation round trip, about 1 µs).

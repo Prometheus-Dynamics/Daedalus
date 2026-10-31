@@ -362,6 +362,21 @@ handoff reason for each edge.
 
 For nodes with a GPU implementation, see [gpu-nodes.md](gpu-nodes.md).
 
+**Which device a node runs on.** The consumer chooses the device; nothing is chosen on cost.
+- **Per node:** `compute` is `cpu_only`, `gpu_preferred` or `gpu_required`. Set it with
+  `add_handle_with_compute` / `node_with_compute`, or name a config value with
+  `#[node(device_from = "config.backend")]`.
+- **Per graph:** the engine's GPU backend (`EngineConfig::gpu`).
+
+`explain_plan()` reports each node's resolved `device` and `device_reason`. Without a GPU
+backend:
+- a `#[node(fallback = "...")]` node runs its CPU node, and says which;
+- a `gpu_preferred` node runs on the CPU, and says so;
+- a `gpu_required` node fails planning.
+
+No fallback is silent. Details and metadata keys are in
+[runtime-diagnostics.md](runtime-diagnostics.md#which-device-each-node-runs-on).
+
 
 - `#[device(id = ..., cpu = "k", device = "k@gpu", download = f)]` on an upload function declares
   a device pair: an upload adapter (CPU → device) and a download adapter (device → CPU).
