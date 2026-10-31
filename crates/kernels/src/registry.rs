@@ -666,6 +666,42 @@ static F16C_TABLE: Registry = Registry {
     ..Registry::EMPTY
 };
 
+/// Rockchip's RGA through the `rockchip-rga` V4L2 mem2mem driver: written, untested on board.
+static RGA_KERNELS: [Kernel; 4] = [
+    Kernel::implemented(
+        "daedalus.pixel.rgb_to_rgba",
+        Backend::FixedFunction,
+        "crates/kernels/src/v4l2.rs",
+        "crates/kernels/tests/v4l2.rs",
+    )
+    .with_variant("rga-v4l2"),
+    Kernel::implemented(
+        "daedalus.pixel.rgba_to_rgb",
+        Backend::FixedFunction,
+        "crates/kernels/src/v4l2.rs",
+        "crates/kernels/tests/v4l2.rs",
+    )
+    .with_variant("rga-v4l2"),
+    Kernel::missing(
+        "daedalus.pixel.gray_to_rgba",
+        Backend::FixedFunction,
+        Status::Gap(
+            "Rockchip RGA through librga (YCbCr_400 input; mainline rockchip-rga has no GREY), pending the librga headers",
+        ),
+    ),
+    Kernel::missing(
+        "daedalus.pixel.rgba_red",
+        Backend::FixedFunction,
+        Status::Gap("Rockchip RGA through librga (Y-only output), pending the librga headers"),
+    ),
+];
+
+static RGA_TABLE: Registry = Registry {
+    name: "daedalus-kernels-rga",
+    kernels: &RGA_KERNELS,
+    ..Registry::EMPTY
+};
+
 static CRC_TABLE: Registry = Registry {
     name: "daedalus-kernels-crc",
     ops: &CRC_OPS,
@@ -697,5 +733,5 @@ pub static ACCEL: Registry = Registry {
             reason: "the inventory table",
         },
     ],
-    children: &[&GPU_OPS, &CRC_TABLE, &F16C_TABLE],
+    children: &[&GPU_OPS, &CRC_TABLE, &F16C_TABLE, &RGA_TABLE],
 };

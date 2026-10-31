@@ -74,6 +74,10 @@ run_target "$host" native
 
 # GPU and fixed-function kernels: the GPU crate's conformance tests on this machine's Vulkan
 # adapter (lavapipe in CI). Without an adapter they skip and their cells stay untested.
+step "Fixed-function conformance (V4L2 mem2mem: vim2m here, rockchip-rga on Rockchip boards)"
+ACCEL_TARGET=$host ACCEL_RUNNER=native \
+  cargo test -q -p daedalus-kernels --features v4l2 --test v4l2
+
 step "GPU conformance (wgpu adapter)"
 ACCEL_TARGET=$host ACCEL_RUNNER=native ACCEL_REQUIRE_GPU=1 \
   cargo test -q -p daedalus-gpu --features gpu-wgpu --lib -- storage_frames_copy_into_textures kernels_tests --test-threads 1

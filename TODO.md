@@ -251,10 +251,13 @@ built, measured per device and kept selectable. `docs/backend-matrix.md` is the 
       **Done:** `daedalus_kernels::portable` behind `--cfg daedalus_portable_simd` (a cfg, so
       stable `--all-features` builds keep working), run by `ci.sh accel` on nightly-2026-10-15
       with asm checks; all 11 vectorizable ops pass (CRC-32: not data-parallel).
-- [ ] **What:** the Rockchip RGA fixed-function backend (librga: RGB↔RGBA, gray).
-      **Done when:** written, with conformance tests that run where librga exists; untested on
-      board until a Rockchip board.
-      **Blocked by:** nothing for the code; a Rockchip board for the run.
+- [ ] **What:** the Rockchip RGA fixed-function backend (RGB↔RGBA, gray).
+      **Status:** route (b) is written: `daedalus_kernels::v4l2` (V4L2 mem2mem, tested end to end
+      on `vim2m`) and `v4l2::Rga` for RGB↔RGBA on `rockchip-rga`, written, untested on board.
+      Route (a), librga for gray and RGA3 on vendor kernels, waits for the header download
+      decision.
+      **Done when:** the RGA cells pass on a Rockchip board.
+      **Blocked by:** a Rockchip board; the user's OK for the librga headers (route a).
 - [ ] **What:** the remaining CRC-32 cells: NEON32 `vmull.p8` folding, `rvv+zvbc`, and a GPU
       chunk-and-combine CRC.
       **Done when:** each passes conformance in `ci.sh accel`, or carries a physical reason.

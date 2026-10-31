@@ -103,6 +103,11 @@ plugin ABI and does not load.
   the compute form (`kernels_common.wgsl`), then the target is copied into the destination
   buffer. This is the form for tile-based GPUs (V3D, Mali), where fragment passes beat compute.
   It covers every op but base64 decode, bit-exact, and is recorded as the `fragment` variant.
+- **Fixed-function conversions through V4L2 mem2mem** (`daedalus_kernels::v4l2`, feature
+  `v4l2`): a frame converter on any mem2mem device, single- or multi-planar, with ioctl struct
+  sizes checked against the kernel ABI. It is tested end to end against the kernel's `vim2m`.
+  `v4l2::Rga` drives Rockchip's RGA (`rockchip-rga`) for RGB↔RGBA. That part is written, untested
+  on board; gray needs librga.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`
