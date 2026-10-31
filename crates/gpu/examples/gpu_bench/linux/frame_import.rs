@@ -436,11 +436,12 @@ fn buffer_path(
         &format!("{tag}_buffer_import_and_kernel"),
         stats(&mut total),
     );
-    if let Some((_src, bind_group)) = cached {
+    if let Some((src, bind_group)) = cached {
         let mut kernel: Vec<_> = (0..iters())
             .map(|_| run_once(device, queue, unpack, &bind_group, groups))
             .collect();
         kv(&format!("{tag}_buffer_cached_kernel"), stats(&mut kernel));
+        tfu_copy(device, queue, &src, (width, height, stride), tag);
     }
     true
 }
@@ -570,4 +571,56 @@ fn verify(
     );
     // Clear for the next path.
     queue.write_buffer(out, 0, &vec![0u8; size as usize]);
+}
+
+/// The imported frame buffer copied into a sampleable texture by `copy_buffer_to_texture`
+/// (`vkCmdCopyBufferToImage`, a whole slice from offset 0: v3dv's TFU path), against the
+/// shader copy above (`_buffer_cached_kernel`).
+fn tfu_copy(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    src: &wgpu::Buffer,
+    (width, height, stride): (u32, u32, u64),
+    tag: &str,
+) {
+    let size = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("tfu-target"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Bgra8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let mut samples: Vec<_> = (0..iters())
+        .map(|_| {
+            let start = Instant::now();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            encoder.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: src,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(stride as u32),
+                        rows_per_image: Some(height),
+                    },
+                },
+                texture.as_image_copy(),
+                size,
+            );
+            queue.submit([encoder.finish()]);
+            wait(device);
+            start.elapsed()
+        })
+        .collect();
+    kv(
+        &format!("{tag}_buffer_to_texture_copy"),
+        stats(&mut samples),
+    );
 }

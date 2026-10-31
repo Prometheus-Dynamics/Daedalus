@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use crate::{GpuContextHandle, GpuError};
 
+use super::GpuStorage;
+use super::GpuTicket;
 use super::gpu_storage::{GpuReadback, StagingRing};
 
 /// A 2D texture a node keeps on the engine's device across ticks: a fragment pass samples it
@@ -128,6 +130,75 @@ impl GpuTexture {
             self.texture.size(),
         );
         Ok(())
+    }
+
+    /// Record a copy of the whole texture from `src` (rows `stride` bytes apart, from `offset`):
+    /// typically a camera frame imported with [`GpuStorage::import_dmabuf`], to sample it in a
+    /// fragment pass. It is `vkCmdCopyBufferToImage`; v3dv runs a whole-slice copy like this on
+    /// its texture formatting unit (TFU), with no shader, when `offset` is 0.
+    ///
+    /// `InvalidInput` when `stride` is not a multiple of 256 (wgpu's copy row alignment) or
+    /// smaller than a row, `offset` is not texel aligned, or the rows run past `src`.
+    pub fn copy_from_storage(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        src: &GpuStorage,
+        offset: u64,
+        stride: u32,
+    ) -> Result<(), GpuError> {
+        let (width, height) = self.size();
+        let row = width as u64 * self.texel_bytes() as u64;
+        let invalid = |what: String| Err(GpuError::InvalidInput(what));
+        if !stride.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) {
+            return invalid(format!(
+                "stride {stride} must be a multiple of {}",
+                wgpu::COPY_BYTES_PER_ROW_ALIGNMENT
+            ));
+        }
+        if u64::from(stride) < row {
+            return invalid(format!("stride {stride} is shorter than a {row}-byte row"));
+        }
+        if !offset.is_multiple_of(self.texel_bytes() as u64) {
+            return invalid(format!("offset {offset} is not texel aligned"));
+        }
+        let end = offset + u64::from(stride) * u64::from(height - 1) + row;
+        if end > src.size() {
+            return invalid(format!(
+                "a {width}x{height} copy with stride {stride} from offset {offset} needs {end} \
+                 bytes, the buffer has {}",
+                src.size()
+            ));
+        }
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: src.buffer(),
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset,
+                    bytes_per_row: Some(stride),
+                    rows_per_image: Some(height),
+                },
+            },
+            self.texture.as_image_copy(),
+            self.texture.size(),
+        );
+        Ok(())
+    }
+
+    /// [`GpuTexture::copy_from_storage`] submitted on its own; poll the ticket, or encode the
+    /// passes reading the texture after it on the same queue.
+    pub fn upload_from_storage(
+        &self,
+        src: &GpuStorage,
+        offset: u64,
+        stride: u32,
+    ) -> Result<GpuTicket, GpuError> {
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        self.copy_from_storage(&mut encoder, src, offset, stride)?;
+        Ok(GpuTicket::submit_on(
+            &self.device,
+            &self.queue,
+            [encoder.finish()],
+        ))
     }
 
     /// Start copying the whole texture into a reusable staging buffer, without waiting. Work

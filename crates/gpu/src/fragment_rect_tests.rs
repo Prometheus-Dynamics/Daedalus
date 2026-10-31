@@ -155,3 +155,60 @@ fn integer_formats_round_trip_exactly() {
         assert_eq!(pair[1], u32::from(texel[2]) | (u32::from(texel[3]) << 16));
     }
 }
+
+/// A frame in a storage buffer (rows `stride` apart, as a camera writes them) copies into a
+/// texture a fragment pass then samples; misaligned strides and short buffers are refused.
+#[test]
+fn storage_frames_copy_into_textures() {
+    use crate::GpuStorage;
+    let Some(ctx) = wgpu_ctx() else { return };
+    let (width, height, stride) = (100u32, 6u32, 256u32);
+    let frame: Vec<u8> = (0..stride * height)
+        .map(|i| {
+            if i % stride < width {
+                (i % 251) as u8
+            } else {
+                0xEE
+            }
+        })
+        .collect();
+    let storage = GpuStorage::with_data(&ctx, &frame, None).unwrap();
+    let r8 = wgpu::TextureFormat::R8Unorm;
+    let texture = GpuTexture::new(&ctx, (width, height), r8, None).unwrap();
+    texture
+        .upload_from_storage(&storage, 0, stride)
+        .unwrap()
+        .wait();
+    let mut out = vec![0u8; texture.len_bytes()];
+    texture.read_into(&mut out).unwrap();
+    let want: Vec<u8> = frame
+        .chunks(stride as usize)
+        .flat_map(|row| row[..width as usize].to_vec())
+        .collect();
+    assert_eq!(out, want, "rows de-strided, padding dropped");
+
+    // The copied texture feeds a pass like any other input.
+    let pass = FragmentPass::new(
+        &ctx,
+        "@group(0) @binding(0) var src: texture_2d<f32>;
+         @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+             return textureLoad(src, vec2<i32>(pos.xy), 0);
+         }",
+        &[r8],
+    )
+    .unwrap();
+    let dst = GpuTexture::new(&ctx, (width, height), r8, None).unwrap();
+    pass.run(&[&texture], &[], &[&dst]).unwrap().wait();
+    dst.read_into(&mut out).unwrap();
+    assert_eq!(out, want);
+
+    for (offset, stride) in [(0, 100), (0, 128), (1 << 20, 256)] {
+        assert!(
+            matches!(
+                texture.upload_from_storage(&storage, offset, stride),
+                Err(GpuError::InvalidInput(_))
+            ),
+            "offset {offset}, stride {stride}"
+        );
+    }
+}

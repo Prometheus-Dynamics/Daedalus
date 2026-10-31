@@ -111,6 +111,11 @@ it with `ctx.duration_metric("gpu", time)`.
 - Zero copy into a storage buffer: `GpuStorage::import_dmabuf(gpu, fd, offset, len, fence,
   timeout, label)` for `LINEAR` dmabufs. The dmabuf needs the driver's buffer padding, 256 B on
   v3dv; Styx pads its frames. Import takes 16-29 µs per frame on the CM5.
+- Into a sampled texture without a shader: import as a storage buffer as above, then
+  `texture.copy_from_storage(encoder, &storage, 0, stride)` (or `upload_from_storage`). This is
+  `vkCmdCopyBufferToImage`, which v3dv runs on its texture formatting unit (TFU) for a whole
+  frame from offset 0. The stride must be a multiple of 256 bytes. The PiSP writes only `LINEAR`
+  or SAND128, and v3dv samples only UIF, so this is the fast way to sample a CM5 camera frame.
 - Into a sampled image: `GpuContextHandle::import_dmabuf` with a DRM format modifier the GPU can
   sample. On v3dv that is UIF only; `LINEAR` images are render/transfer only, so they need a copy.
 - Otherwise upload: `GpuTexture::write` or `GpuStorage::write` from the mapped frame (0.26 ms
