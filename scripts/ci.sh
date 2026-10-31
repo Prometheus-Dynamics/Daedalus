@@ -11,6 +11,10 @@ cd "$root_dir"
 readonly CI_FEATURES="engine,plugins"
 readonly AARCH64_TARGET="aarch64-unknown-linux-gnu"
 readonly AARCH64_MUSL_TARGET="aarch64-unknown-linux-musl"
+# CPU-only Linux boards: armv7 (Flame RV1106G2) and riscv64 (K230D). No compute-capable GPU, so
+# the GPU path stays off and `#[device]`/fallback nodes run their CPU implementations.
+readonly CROSS_TARGETS=("armv7-unknown-linux-musleabihf" "riscv64gc-unknown-linux-gnu"
+  "riscv64gc-unknown-linux-musl")
 # Bare metal without `std`: Cortex-M4F (32-bit atomics, no 64-bit ones) and Cortex-M0 (no
 # compare-and-swap: atomics, locks and `Arc` go through `portable-atomic`).
 readonly NOSTD_TARGETS=("thumbv7em-none-eabihf" "thumbv6m-none-eabi")
@@ -44,7 +48,7 @@ usage: scripts/ci.sh [-j] [subcommand...]
   -j          run the subcommands concurrently, grouped into lanes by crate graph, each lane in
               its own target directory and log ($CARGO_TARGET_DIR/ci/), under one jobserver
   all         lints features clippy link test macro-ui smoke (default)
-  full        every CI subcommand: all, then doc lean aarch64 nostd mcu wasm
+  full        every CI subcommand: all, then doc lean aarch64 cross nostd mcu wasm
   quick       pre-push subset: lints, clippy (CI features), and the tests of the packages changed
               since $CI_BASE (default: the upstream branch, else HEAD) and their dependents
   lints       file-size, workspace-deps, GPU async lints and rustfmt
@@ -56,6 +60,10 @@ usage: scripts/ci.sh [-j] [subcommand...]
   smoke       run the CPU-only example binaries (sharing the `test` build)
   doc         rustdoc for the workspace with -D warnings
   aarch64     cargo check for aarch64 gnu (default, embedded, gpu-dmabuf) and musl (libraries)
+  cross       CPU-only boards (armv7 musl, riscv64 gnu/musl): cargo check of the libraries, the
+              CPU feature set must not pull in wgpu, and, where a linker and runner are set
+              (CARGO_TARGET_<TRIPLE>_LINKER/_RUNNER, e.g. zig cc + qemu-user), the integration,
+              GPU-fallback and device-assignment tests run on the target
   lean        tests for the lean preset (no metrics) and without threads
   nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
               serial runtime and engine, and the no_std smoke graph
@@ -173,6 +181,31 @@ cmd_aarch64() {
   cargo check --target "$AARCH64_MUSL_TARGET" --workspace --features "$CI_FEATURES"
   cargo check --target "$AARCH64_MUSL_TARGET" -p daedalus-runtime --all-features
   cargo check --target "$AARCH64_MUSL_TARGET" -p daedalus-gpu --features "gpu-dmabuf"
+}
+
+# CPU-only boards. Type-checks always; runs the CPU graph tests on the target when the host has a
+# linker and a runner for it (see docs/testing.md, "CPU-only boards").
+cmd_cross() {
+  local target var
+  for target in "${CROSS_TARGETS[@]}"; do
+    step "Checking $target (CPU only)"
+    ensure_target "$target"
+    cargo check --target "$target" --workspace --features "$CI_FEATURES"
+    cargo check --target "$target" -p daedalus-rs --no-default-features --features "embedded"
+    if cargo tree -p daedalus-rs --features "$CI_FEATURES,gpu-engine" --target "$target" -e normal \
+      --prefix none | grep -q '^wgpu '; then
+      echo "error: the CPU feature set pulls in wgpu on $target" >&2
+      return 1
+    fi
+    var="CARGO_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_RUNNER"
+    if [[ -n ${!var:-} ]]; then
+      step "Testing on $target (${!var})"
+      cargo test --target "$target" -p daedalus-rs --features "$CI_FEATURES,gpu-engine" \
+        --test it --test gpu_fallback --test device_assignment
+    else
+      echo "skipping $target tests: set $var (and its _LINKER) to run them"
+    fi
+  done
 }
 
 # Workspace tests unify features across all members, so the daemon crate turns on the executor
@@ -468,7 +501,7 @@ cmd_quick() {
 }
 
 readonly ALL=(lints features clippy link test macro-ui smoke)
-readonly FULL=("${ALL[@]}" doc lean aarch64 nostd mcu wasm package)
+readonly FULL=("${ALL[@]}" doc lean aarch64 cross nostd mcu wasm package)
 readonly SUBCOMMANDS=" all full ${FULL[*]} quick bench pi vvl semver "
 
 run() { "cmd_${1//-/_}"; }

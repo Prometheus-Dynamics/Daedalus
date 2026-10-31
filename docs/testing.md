@@ -151,6 +151,39 @@ Debian/Ubuntu install `gcc-aarch64-linux-gnu` (CI does). On hosts whose cross gc
 glibc sysroot (e.g. Fedora's `gcc-aarch64-linux-gnu`), set
 `CFLAGS_aarch64_unknown_linux_gnu=-ffreestanding`.
 
+### CPU-only boards (armv7, riscv64)
+
+```bash
+scripts/ci.sh cross
+```
+
+The targets are the Flame RV1106G2 (`armv7-unknown-linux-musleabihf`) and the K230D
+(`riscv64gc-unknown-linux-gnu` / `-musl`). Neither has a compute-capable GPU, so Daedalus runs
+CPU-only there. The lane type-checks the libraries with the CI features and the facade
+`embedded` preset. It also checks that the CPU feature set (`engine,plugins,gpu-engine`) pulls in
+no wgpu. When a target has a linker and a runner, the lane then runs the integration,
+GPU-fallback and device-assignment tests on it. Without wgpu, `#[device]` / `fallback` nodes run
+their CPU implementations, and `explain_plan()` says so. With zig as the cross linker and
+qemu-user as the runner (CI does this):
+
+```bash
+# zig wrapper per target: drop the flags zig's frontend rejects, pin the musl target.
+cat > ~/zigcc/riscv64-cc <<'SH'
+#!/bin/sh
+args=""
+for a in "$@"; do case "$a" in --target=*|-fuse-ld=lld|-B*gcc-ld|-march=*|-mabi=*|-mfpu=*|-mfloat-abi=*) ;; *) args="$args '$a'";; esac; done
+eval exec zig cc -target riscv64-linux-musl $args
+SH
+export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER=~/zigcc/riscv64-cc \
+  CC_riscv64gc_unknown_linux_musl=~/zigcc/riscv64-cc \
+  CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUNNER=qemu-riscv64-static
+# armv7: the same wrapper with `-target arm-linux-musleabihf`, runner qemu-arm-static, and
+# CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS="-C link-self-contained=no" (zig brings
+# its own musl startup files).
+```
+
+To run on the boards themselves, copy the test binaries over with the same target.
+
 ### Lean preset
 
 ```bash

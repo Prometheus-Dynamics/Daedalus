@@ -145,6 +145,39 @@ jobs:
       - name: Check aarch64 (default, embedded, gpu-dmabuf)
         run: ./scripts/ci.sh aarch64
 
+  # CPU-only boards (armv7 Flame, riscv64 K230D): type-checks, and the CPU graph tests under
+  # qemu-user with zig as the cross linker.
+  cross:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - *checkout
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          targets: armv7-unknown-linux-musleabihf,riscv64gc-unknown-linux-gnu,riscv64gc-unknown-linux-musl
+      - *cache
+      - name: Install qemu-user and zig
+        run: |
+          sudo apt-get update && sudo apt-get install -y qemu-user-static
+          pip install ziglang==0.15.2
+          mkdir -p "$HOME/zigcc"
+          for pair in "riscv64-cc riscv64-linux-musl" "armv7-cc arm-linux-musleabihf"; do
+            set -- $pair
+            printf '#!/bin/sh\nargs=""\nfor a in "$@"; do case "$a" in --target=*|-fuse-ld=lld|-B*gcc-ld|-march=*|-mabi=*|-mfpu=*|-mfloat-abi=*) ;; *) args="$args '"'"'$a'"'"'";; esac; done\neval exec python3 -m ziglang cc -target %s $args\n' "$2" > "$HOME/zigcc/$1"
+            chmod +x "$HOME/zigcc/$1"
+          done
+      - name: Check and test CPU-only boards
+        env:
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER: /home/runner/zigcc/riscv64-cc
+          CC_riscv64gc_unknown_linux_musl: /home/runner/zigcc/riscv64-cc
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUNNER: qemu-riscv64-static
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: /home/runner/zigcc/armv7-cc
+          CC_armv7_unknown_linux_musleabihf: /home/runner/zigcc/armv7-cc
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm-static
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS: -C link-self-contained=no
+        run: ./scripts/ci.sh cross
+
   # Workspace tests unify the daemon crate's metrics feature into every crate; this job tests the
   # facade/engine/runtime without it.
   lean-preset:

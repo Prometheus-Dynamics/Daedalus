@@ -164,14 +164,19 @@ and a clean explicit choice. It does no cost-based CPU/GPU selection.
       **Done when:** `./scripts/ci.sh pi`-equivalent hardware tests and the new API tests pass
       on this workstation's RADV and NVIDIA, and the reports are in `docs/testing.md`.
       **Blocked by:** nothing.
-- [ ] **[board] What:** armv7 (Flame RV1106G2, `armv7-unknown-linux-gnueabihf`), CPU-only: a
+- [ ] **[board] What:** armv7 (Flame RV1106G2, `armv7-unknown-linux-musleabihf`), CPU-only: a
       `ci.sh` lane that builds and tests the CPU path with the GPU features off.
+      **Status:** `ci.sh cross` (and its CI job) type-checks, rejects wgpu in the CPU set, and runs
+      the integration, fallback and device-assignment tests under qemu-arm (91 + 4 + 2 pass).
+      Left: the run on a Flame board.
       **Why:** the user's platform list (2026-10-30); the RV1106G2 has no compute-capable GPU.
       **Done when:** the lane is in `ci.sh full` and CI, and a CPU-only graph test passes on the
       Flame.
       **Blocked by:** nothing for the lane; a Flame board for the run.
 - [ ] **[board] What:** K230D, CPU-only: a `riscv64gc-unknown-linux-gnu` build with wgpu
       feature-gated off, and `#[device]` nodes running their CPU implementation.
+      **Status:** `ci.sh cross` checks riscv64 gnu and musl and runs the CPU graph tests under
+      qemu-riscv64 (91 + 4 + 2 pass). Left: the run on a K230D board.
       **Why:** the K230D has no compute-capable GPU.
       **Done when:** the cross-build check is in `ci.sh`, and a CPU-only graph test passes on
       the K230D.
