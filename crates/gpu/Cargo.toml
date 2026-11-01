@@ -32,6 +32,9 @@ gpu-image = ["gpu-wgpu", "dep:image"]
 gpu-async = ["async-trait"]
 # Zero-copy import of Linux dmabuf frames into wgpu textures (Vulkan only).
 gpu-dmabuf = ["gpu-wgpu"]
+# Raw Vulkan handles of a context and its storage, for SPIR-V kernels from outside Daedalus run
+# on its device (Linux; `daedalus_gpu::raw_vulkan`).
+gpu-vulkan-raw = ["gpu-wgpu"]
 
 [dependencies]
 parking_lot = { workspace = true }
@@ -56,6 +59,8 @@ daedalus-transport = { workspace = true }
 
 [dev-dependencies]
 bytemuck = { workspace = true }
+# SPIR-V for the raw Vulkan dispatch test (the version wgpu already builds).
+naga = { workspace = true }
 daedalus-accel = { workspace = true, features = ["std"] }
 
 [[example]]

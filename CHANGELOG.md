@@ -17,6 +17,21 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Raw Vulkan access for external SPIR-V kernels** (feature `gpu-vulkan-raw`, Linux,
+  `daedalus_gpu::raw_vulkan`). `GpuContextHandle::raw_vulkan()` returns the `ash` entry,
+  instance, physical device, device, queue, queue family and queue index. `GpuStorage::raw_vk_buffer()`
+  returns the `VkBuffer`, offset and size, imported camera frames included.
+  `GpuContextHandle::submit_raw` records commands into a wgpu command buffer between full memory
+  barriers, submits it on Daedalus's queue and returns a `GpuTicket`. Daedalus does every
+  submission because wgpu serializes its own submissions behind a lock that outside code cannot
+  take. The module docs give the contract (who submits, barriers, waiting, lifetimes). Tested on
+  the CM5 under the validation layer: a raw `ash` compute pipeline reads an imported dma-heap
+  frame in place, with no validation messages. `scripts/ci.sh vvl` runs these tests.
+- **`GpuStorage::dmabuf_import_len` / `GpuFrameImports::required_len`**: the dmabuf size an
+  import needs, which is the frame plus the driver's buffer padding. That padding is 256 B on
+  v3dv and none on RADV, NVIDIA and lavapipe. A shorter dmabuf cannot be imported: Vulkan binds a
+  buffer only to memory covering its whole requirement.
+
 - **`GpuTexture::copy_from_storage` / `upload_from_storage`**: copy a frame held in a
   `GpuStorage` (rows `stride` apart, for example an imported camera dmabuf) into a sampleable
   texture with `vkCmdCopyBufferToImage`, which v3dv runs on its TFU for whole-frame copies: 0.49 ms

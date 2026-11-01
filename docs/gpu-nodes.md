@@ -165,8 +165,25 @@ it with `ctx.duration_metric("gpu", time)`.
   for the dmabuf's implicit write fence. A producer that wrote the frame with the CPU ends its
   access first (`DMA_BUF_IOCTL_SYNC`, `SYNC_END`). The lower level is
   `GpuStorage::import_dmabuf(gpu, fd, offset, len, fence, timeout, label)` for `LINEAR`
-  dmabufs. The dmabuf needs the driver's buffer padding, 256 B on
-  v3dv; Styx pads its frames. Import takes 16-29 µs per frame on the CM5.
+  dmabufs. The dmabuf needs the driver's buffer padding past the last plane: 256 B on v3dv
+  (a 307200-byte frame needs 307456 bytes), none on RADV, NVIDIA or lavapipe. That is a Vulkan
+  rule (a buffer binds only to memory covering its whole requirement), so a shorter dmabuf
+  cannot be imported whole, by clamping or otherwise. `GpuStorage::dmabuf_import_len(gpu, len)`
+  and `GpuFrameImports::required_len(end)` give the size to allocate. vb2 rounds V4L2 `MMAP`
+  buffers up to whole pages, so the padding is usually there already. It is not when
+  `sizeimage` is a whole number of pages (640x480 GREY): then request a larger buffer
+  (`VIDIOC_CREATE_BUFS` with a larger `sizeimage`). Styx pads its dma-heap frames. Import takes
+  16-29 µs per frame on the CM5.
+- Your own SPIR-V on Daedalus's device (feature `gpu-vulkan-raw`, Linux):
+  `GpuContextHandle::raw_vulkan()` gives the `ash` instance, physical device, device, queue
+  and queue family; `GpuStorage::raw_vk_buffer()` gives a storage's (or imported frame's)
+  `VkBuffer`, offset and size, for your own descriptor sets. Record dispatches with
+  `gpu.submit_raw(|device, cmd| ...)`. Daedalus submits them on its queue, in order with its
+  own work and between full memory barriers, and returns a `GpuTicket`. Never submit on the
+  queue yourself: wgpu serializes its submissions behind a lock nothing outside it can take.
+  Keep everything the commands use alive until the ticket completes. `daedalus_gpu::raw_vulkan`
+  documents the whole contract. Tested on v3dv under the validation layer with synchronization
+  validation: a raw `ash` pipeline reads an imported dma-heap frame in place.
 - Into a sampled texture without a shader: import as a storage buffer as above, then
   `texture.copy_from_storage(encoder, &storage, 0, stride)` (or `upload_from_storage`). This is
   `vkCmdCopyBufferToImage`, which v3dv runs on its texture formatting unit (TFU) for a whole

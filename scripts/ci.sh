@@ -82,7 +82,8 @@ usage: scripts/ci.sh [-j] [subcommand...]
               must be warning-free
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
-  vvl         the dmabuf hardware tests and gpu_probe under the Khronos validation layer
+  vvl         the dmabuf hardware and raw Vulkan tests and gpu_probe under the Khronos
+              validation layer
 EOF
 }
 
@@ -177,7 +178,7 @@ cmd_aarch64() {
   local target=(--target "$AARCH64_TARGET")
   cargo check "${target[@]}" --workspace --all-targets --features "$CI_FEATURES"
   cargo check "${target[@]}" -p daedalus-rs --all-targets --no-default-features --features "embedded"
-  cargo check "${target[@]}" -p daedalus-gpu --all-targets --features "gpu-dmabuf"
+  cargo check "${target[@]}" -p daedalus-gpu --all-targets --features "gpu-dmabuf,gpu-vulkan-raw"
   # musl: libc signatures differ from glibc (e.g. `ioctl` takes a `c_int` request). Library
   # targets only, so no musl C toolchain is needed for test-only C build scripts.
   step "Checking $AARCH64_MUSL_TARGET"
@@ -447,6 +448,7 @@ cmd_vvl() {
   step "Running dmabuf hardware tests and gpu_probe under the validation layer (log: $log)"
   {
     cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf --test-threads=1
+    cargo test -p daedalus-gpu --features gpu-dmabuf,gpu-vulkan-raw -- raw_vulkan --test-threads=1
     cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe
   } 2>&1 | tee "$log"
   step "Validation messages"

@@ -21,6 +21,8 @@ mod memory_hints;
 #[cfg(feature = "gpu-mock")]
 mod mock;
 mod noop;
+#[cfg(all(feature = "gpu-vulkan-raw", target_os = "linux"))]
+pub mod raw_vulkan;
 mod selection;
 #[cfg(feature = "gpu-wgpu")]
 pub mod shader;

@@ -156,7 +156,10 @@ only what its handler does: the output payload it pushes. Both sides keep their 
 allocations (`PayloadSlot`), which are released after each call so a frame or buffer is never
 kept past it. `SharedBytes` and frames cross as handles both ways; borrowed `BYTES` values (a
 host or plugin that has no handle for them) and `Vec<u8>` ports are copied once, as the receiver
-cannot adopt the other side's allocation.
+cannot adopt the other side's allocation. On the CM5 (Cortex-A76, release, three runs each before and after the change), per-call and
+per-tick times stayed within about ±5% (scale handler call +1.29 → +1.22 µs over static, scalar
+tick +1.41 → +1.50 µs, `SharedFrame` in and out 3.5 → 3.6 µs). A 1080p NV12 `Vec<u8>` by value,
+whose copies are unavoidable, went from 4.7 to 2.6 ms.
 
 ### Zero-Copy Bytes
 

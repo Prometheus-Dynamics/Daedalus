@@ -17,8 +17,8 @@ impl GpuStorage {
     /// rows directly (pass the stride in a parameter buffer).
     ///
     /// - The dmabuf must extend past the range by the driver's buffer padding. On v3dv that is
-    ///   256 bytes (Styx pads its dma-heap frames for this). `InvalidDescriptor` names the
-    ///   size the import needs.
+    ///   256 bytes (Styx pads its dma-heap frames for this). [`GpuStorage::dmabuf_import_len`]
+    ///   gives the size an import needs; `InvalidDescriptor` names it too.
     /// - `offset` must be a multiple of the buffer's memory alignment and `len` of 4.
     /// - `acquire_fence` (a `sync_file` from the producer) is waited on the CPU, for up to
     ///   `timeout`, before the import; without one the frame must already be complete.
@@ -86,6 +86,56 @@ impl GpuStorage {
     }
 }
 
+impl GpuStorage {
+    /// The dmabuf bytes an [`import_dmabuf`](Self::import_dmabuf) of `len` bytes at offset 0
+    /// needs on `gpu`'s device: `len` plus the driver's buffer padding (256 B on v3dv; none on
+    /// drivers whose requirement is the size itself). Vulkan binds a buffer only to memory
+    /// covering its whole requirement, so a dmabuf shorter than this cannot be imported whole:
+    /// size frame buffers to at least this (for V4L2, `VIDIOC_CREATE_BUFS` with a larger
+    /// `sizeimage`). vb2 rounds buffers up to whole pages, which often leaves the room already.
+    pub fn dmabuf_import_len(gpu: &GpuContextHandle, len: u64) -> Result<u64, ExternalImportError> {
+        let unsupported = |reason: String| ExternalImportError::Unsupported { reason };
+        let (device, _) = gpu
+            .wgpu()
+            .ok_or_else(|| unsupported("not a wgpu backend".into()))?;
+        if len == 0 || !len.is_multiple_of(4) {
+            return Err(ExternalImportError::invalid(format!(
+                "import length {len} must be a non-zero multiple of 4"
+            )));
+        }
+        // SAFETY: a buffer created only to read its requirements, destroyed here.
+        unsafe {
+            let hal = device
+                .as_hal::<Vulkan>()
+                .ok_or_else(|| unsupported("the wgpu device is not using Vulkan".into()))?;
+            let raw = hal.raw_device();
+            let mut external = vk::ExternalMemoryBufferCreateInfo::default()
+                .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
+            let info = buffer_info(len).push_next(&mut external);
+            let buffer = raw.create_buffer(&info, None).map_err(|err| {
+                ExternalImportError::ImportFailed {
+                    reason: format!("vkCreateBuffer: {err}"),
+                }
+            })?;
+            let req = raw.get_buffer_memory_requirements(buffer);
+            raw.destroy_buffer(buffer, None);
+            Ok(req.size.max(len))
+        }
+    }
+}
+
+/// The create info of an imported storage buffer of `len` bytes.
+fn buffer_info<'a>(len: u64) -> vk::BufferCreateInfo<'a> {
+    vk::BufferCreateInfo::default()
+        .size(len)
+        .usage(
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_SRC
+                | vk::BufferUsageFlags::TRANSFER_DST,
+        )
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+}
+
 /// Size of a dmabuf (`lseek(SEEK_END)`); the offset is reset to 0.
 fn dmabuf_len(fd: &OwnedFd) -> Result<u64, ExternalImportError> {
     // SAFETY: plain lseek calls on a valid descriptor.
@@ -144,15 +194,7 @@ unsafe fn import(
         reason: format!("{what}: {err}"),
     };
     let mut external = vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle_type);
-    let info = vk::BufferCreateInfo::default()
-        .size(len)
-        .usage(
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_SRC
-                | vk::BufferUsageFlags::TRANSFER_DST,
-        )
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .push_next(&mut external);
+    let info = buffer_info(len).push_next(&mut external);
     // SAFETY: valid device and create info.
     let buffer =
         unsafe { raw.create_buffer(&info, None) }.map_err(|e| failed("vkCreateBuffer", e))?;

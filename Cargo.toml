@@ -83,6 +83,7 @@ daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "3.0.1
 daedalus-plugins-example-project = { path = "examples/plugins/example_project" }
 daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
+naga = { version = "30.0.1", default-features = false, features = ["wgsl-in", "spv-out"] }
 async-trait = "0.1.92"
 bitflags = { version = "2.13.2", features = ["serde"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }

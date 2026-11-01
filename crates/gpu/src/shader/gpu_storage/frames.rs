@@ -84,7 +84,8 @@ impl GpuFrameImports {
     /// with the CPU must have ended its access (`DMA_BUF_IOCTL_SYNC` with `SYNC_END`) first.
     ///
     /// The import covers the dmabuf from offset 0 to the end of the last plane (rounded up to 4);
-    /// the dmabuf needs the driver's buffer padding beyond that (256 B on v3dv; Styx pads).
+    /// the dmabuf needs the driver's buffer padding beyond that (256 B on v3dv; Styx pads), a
+    /// Vulkan rule rather than a choice: [`GpuFrameImports::required_len`] gives the size.
     pub fn import(
         &self,
         frame: &SharedFrame,
@@ -181,6 +182,12 @@ impl GpuFrameImports {
             plane_count,
             _frame: frame.clone(),
         })
+    }
+
+    /// The dmabuf bytes a frame whose last plane ends at byte `end` needs to import (see
+    /// [`GpuStorage::dmabuf_import_len`]).
+    pub fn required_len(&self, end: u64) -> Result<u64, ExternalImportError> {
+        GpuStorage::dmabuf_import_len(&self.gpu, end.next_multiple_of(4))
     }
 
     pub fn stats(&self) -> GpuFrameImportStats {

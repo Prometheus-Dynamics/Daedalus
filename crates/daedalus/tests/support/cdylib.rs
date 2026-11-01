@@ -32,8 +32,13 @@ pub fn host_matching_features() -> String {
 }
 
 /// Build `package`'s library with `features` in its own cargo invocation (with the cargo, and
-/// therefore rustc, running this test) and return the `cdylib`'s path.
+/// therefore rustc, running this test) and return the `cdylib`'s path. `DAEDALUS_CDYLIB_<LIB>`
+/// (the library name upper-cased, e.g. `DAEDALUS_CDYLIB_DAEDALUS_PLUGINS_STABLE_ABI`) names a
+/// prebuilt one instead, for test binaries run where cargo is not (a board).
 pub fn build_cdylib(package: &str, lib_name: &str, features: &str) -> PathBuf {
+    if let Some(path) = std::env::var_os(format!("DAEDALUS_CDYLIB_{}", lib_name.to_uppercase())) {
+        return PathBuf::from(path);
+    }
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let mut command = Command::new(cargo);
     command

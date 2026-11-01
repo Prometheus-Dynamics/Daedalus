@@ -640,6 +640,7 @@ dependencies = [
  "daedalus-wgsl-infer",
  "image",
  "libc",
+ "naga",
  "parking_lot",
  "pollster",
  "serde",
