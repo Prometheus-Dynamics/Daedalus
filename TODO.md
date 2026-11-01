@@ -1,630 +1,380 @@
 # TODO
 
-## Next release (4.0.0)
+Open work first, done work with its commits below. Each open item says **what** it is, **why** it
+matters, **done when** (a checkable test, gate, measurement or board run), **blocked by**, and
+**measured** (current numbers, or that none exist). **[board]** items need hardware; "written,
+untested on board" means the code exists and has only run under qemu, lavapipe, stand-ins or a
+desktop GPU. Audited against the code and CI on 2026-11-01, at 03f55c5.
 
-Feature freeze of 2026-10-27, plus its last addition, hardware support and GPU (2026-10-30).
-Nothing else joins this release. The user decided (2026-10-30): full support on every backend,
-no half implementations. That means GPU on every target with a usable driver (V3D,
-Mali-G610, Mali-G52, desktop), the CPU path everywhere, and builds and tests for x86_64,
-aarch64, armv7 (Flame RV1106G2) and riscv64 (K230D). Signing and registry work is pinned for a
-later release. Each item says **what** it is, **why** it is in the release,
-**done when** (a checkable test, gate, measurement or board run) and **blocked by**.
-Board-gated items are marked **[board]**.
+The user alone decides when anything is released and what blocks a release. `dev` stays on the
+`3.0.1-dev` scheme. Board work is tested on boards before anything ships, unless the user says
+otherwise.
 
-### 1. Freeze-list items still open
+Scope (user decision, 2026-10-30): full support on every backend, no half implementations. GPU on
+every target with a usable driver (V3D, Mali-G610, Mali-G52, desktop), the CPU path everywhere,
+builds and tests for x86_64, aarch64, armv7 and riscv64. GPU is an explicit backend the consumer
+chooses, per node or per graph; Daedalus does no cost-based CPU/GPU selection. Acceleration rule
+(user, 2026-10-31): everything that can use RVV, NEON (64 and 32), x86 SIMD, ISA extensions, the
+GPU or a fixed-function unit does. "Impossible" means physically impossible only; slower variants
+are built, measured per device and kept selectable. `docs/backend-matrix.md` is the evidence and
+`ci.sh accel` the gate.
+
+## Open
+
+### CI on `dev`
+
+The last green `CI` run on `dev` is 350c34d (2026-11-01 00:04 UTC); all 15 runs since failed.
+`cross`, `workspace`, `facade`, `docs-and-lints`, `aarch64`, `lean-preset` and `portability` pass at
+03f55c5. The `bench` workflow is separate: 14 of its last 15 runs pass.
+
+- [ ] **What:** the `package-surface` job fails: `cargo package` verifies
+      `examples/plugins/stable_abi_counted`, whose path dependency has no version.
+      **Why:** it fails the `CI` run on every commit since 5f5c51c, which added the crate without
+      adding it to `PACKAGE_EXCLUDES` in `scripts/ci.sh`.
+      **Done when:** `ci.sh package` and the CI job pass.
+      **Blocked by:** nothing.
+      **Measured:** failing at 5f5c51c..03f55c5 (7 runs).
+- [ ] **What:** the `accel` job fails: `regression: daedalus.codec.crc32 on rvv+zvbc: pass ->
+      untested`, and it renders pass 111, impossible 18, untested 5.
+      **Why:** the committed matrix (pass 112, impossible 18, untested 4) depends on a local run. The
+      job has failed since 1a6e8de chose Zvbc at runtime through `riscv_hwprobe`. The likely cause,
+      not yet confirmed, is that CI's Ubuntu `qemu-user-static` 8.2.2 does not report Zvbc there,
+      while this workstation's qemu 10.2.2 does.
+      **Done when:** the CI job renders the committed totals, on a qemu that reports Zvbc.
+      **Blocked by:** nothing.
+      **Measured:** failing on all 15 runs from 1a6e8de to 03f55c5.
+- [ ] **What:** `ci.sh semver` no longer finishes, locally or in CI.
+      **Why:** it documents every break since `v3.0.0`. It stops with exit 101 at `daedalus-accel`,
+      a crate `v3.0.0` does not have, so crates new since the baseline need excluding or skipping.
+      In CI the job (non-blocking) also fails building the `v3.0.0` facade baseline, because
+      `libcamera-sys` needs `libcamera.pc`.
+      **Done when:** the report covers every crate in both places, and every break it lists is named
+      in CHANGELOG `[Unreleased]` or `docs/api-review.md`.
+      **Blocked by:** nothing.
+      **Measured (2026-11-01):** 20 crates checked before the stop, 61 failed major checks, 319
+      listed items. The earlier 250-item count and "each one explained" (2026-10-30) predate this
+      and have not been redone.
+
+### Raze (CM5, V3D)
 
 - [ ] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
-      `drop_stale_consts`, bb07e3b).
+      `drop_stale_consts`, bb07e3b, 0398d4a).
       **Why:** HeliOS's stored rev-215 graph failed to plan (`PortExtra` on folded Eidos knobs).
-      **Status (audit 2026-10-31):** the code and planner tests are in (bb07e3b, 0398d4a,
-      `planner/src/refresh/tests.rs`); no HeliOS run on the Raze is recorded.
       **Done when:** HeliOS dev on the Raze plans and runs the default pipeline from the stored
       rev-215 graph and logs the dropped consts.
-      **Blocked by:** a HeliOS deploy carrying bb07e3b (the HeliOS coordinator).
-- [ ] **What:** frame interface v3 follow-ups.
-      **Why:** v3 shipped (SharedFrame, colorimetry, dylib reload); further changes only on
-      consumer request.
-      **Done when:** no consumer request is open at release time, or each request has a merged
-      commit and a test.
-      **Blocked by:** a consumer asking (Styx, HeliOS, Eidos); none open. Re-check at the
-      coordinated release go.
+      **Blocked by:** a HeliOS deploy on the Raze, which the HeliOS coordinator owns. HeliOS `dev`'s
+      `backend/Cargo.lock` pins b148918, which carries bb07e3b; what the Raze runs was not checked.
+      **Measured:** planner tests only (`planner/src/refresh/tests.rs`); no Raze run is recorded.
+- [ ] **What:** `ci.sh vvl` on the Raze exits cleanly under the validation layer.
+      **Why:** VVL is how new Eidos kernels get validated. This was ticked as accepted on 2026-10-30,
+      but its done-when (`ci.sh vvl` exits 0) was never met.
+      **Done when:** `./scripts/ci.sh vvl` on the Raze exits 0, with no layer errors from our code.
+      **Blocked by:** a properly built aarch64 layer. Today's is cross-built with zig and segfaults
+      in its own static destructors at process exit, even for a bare `vkCreateInstance` +
+      `vkDestroyInstance`. A distro arm64 package needs the user's OK for the download.
+      **Measured:** the runs recorded in `docs/testing.md` print no validation message before the
+      exit crash.
+- [ ] **What:** re-run `ci.sh pi` on the Raze at current `dev`.
+      **Why:** the GPU code has changed since the recorded full run (raw Vulkan, 8-bit storage,
+      cached readback, dmabuf import size).
+      **Done when:** the hardware tests pass and `docs/testing.md` carries the new report.
+      **Blocked by:** a Raze slot.
+      **Measured:** last full run 2026-10-31 (`docs/testing.md`, "CM5 run (2026-10-31)"), all four
+      `_verify` lines `ok`; evidence at `docs/accel-evidence/raze-cm5-v3d-2026-11-01-full-cost.jsonl`
+      was taken at f4ea43a.
 
-### 2. Hardware support and GPU
+### Boards
 
-GPU is an explicit backend chosen by the consumer (per node or per graph), like a SIMD
-feature. Daedalus provides residency, `#[device]` adapters and transfers, capabilities, timing,
-and a clean explicit choice. It does no cost-based CPU/GPU selection.
-
-- [x] **What:** the `gpu_bench` report on the Raze CM5 (v3dv): limits, dispatch latency, kernel
-      throughput against the CPU, and dmabuf frame import as a storage buffer vs image + copy.
-      **Why:** it fixes V3D's real budget for Eidos dense depth, and shows whether LINEAR camera
-      frames can reach compute zero-copy.
-      **Status (audit 2026-10-31):** the numbers are summarized in `docs/gpu-nodes.md` (fragment
-      vs compute, TFU copy, pipeline cache, dmabuf import); the full output is not recorded.
-      **Done when:** the full `gpu_bench` output is pasted into `docs/testing.md` ("Validating
-      on a Raspberry Pi 5"), with every `_verify` line `ok`, plus the `GpuKernels` measurements
-      on V3D (`kernels_tests --nocapture`, recorded in the backend matrix).
-      **Status:** done (2026-10-31, at 389bc7e): the full `gpu_bench` and `gpu_probe` output is in
-      `docs/testing.md` ("CM5 run (2026-10-31)"), all four `_verify` lines `ok`; the
-      `GpuKernels` V3D measurements are in the matrix (`docs/accel-evidence/`).
-      **Blocked by:** nothing.
-- [x] **What:** the `gpu_probe` segfault at exit under the cross-built Khronos validation layer
-      on v3dv.
-      **Why:** VVL is how new Eidos kernels get validated; a crashing run hides real errors.
-      **Found (2026-10-30, Raze):** a bare `vkCreateInstance` + `vkDestroyInstance` program
-      segfaults at exit under the layer. Under `_exit(0)`, or with the instance never destroyed,
-      it does not. The crash is in the zig-cross-built layer's static destructors; Daedalus, wgpu
-      and v3dv are not involved, and messages printed before exit are valid. The fix is a
-      properly built layer (a distro arm64 package, or a build against a real aarch64 sysroot).
-      **Done when:** `./scripts/ci.sh vvl` on the Raze exits 0, with no layer errors from our
-      code.
-      **Decision (2026-10-30):** accepted as-is with the root cause documented: it affects only a
-      cross-built debugging layer at process exit. For clean `ci.sh vvl` runs later, a distro
-      arm64 layer copied to `/tmp` (needs the user's OK for the download).
-      **Blocked by:** nothing for this release. (`docs/testing.md` now states the root cause, not
-      "unexplained".)
-- [x] **What:** compute limits and features in `GpuCapabilities`: workgroup size and
-      invocations, workgroup storage, storage buffer size, f16, int64, int64 atomics,
-      timestamps, subgroups.
-      **Why:** a library picks a kernel variant, or refuses the GPU backend, from facts rather
-      than from trial dispatches.
-      **Done when:** unit tests against the mock backend pass, and `gpu_probe` on the Raze
-      prints the same values as `gpu_bench`'s `[limits]`.
-      **Status (audit 2026-10-31):** fields and wgpu-backed tests in fb5ba91
-      (`context_tests.rs`); the mock and noop backend test is
-      `compute_caps::tests::mock_and_noop_backends_report_compute_caps`. On the Raze (2026-10-31)
-      `gpu_probe`'s compute lines match `gpu_bench`'s `[limits]` (16 KiB, 256 invocations, 1 GiB
-      storage binding, subgroups, timestamps; `docs/testing.md`).
-      **Blocked by:** nothing.
-- [x] **What:** explicit device assignment. The per-node `compute` and a graph-level default
-      choose CPU or GPU. The planner honours it, `GpuRequired` fails planning without an
-      adapter, and `explain_plan()` reports the resolved device per node (today it reports only
-      the requested affinity). Any fallback is visible, never silent.
-      **Why:** user direction (2026-10-30): the consumer chooses the backend; the planner does
-      not.
-      **Done when:** planner and runtime tests cover CPU, GPU and missing-adapter cases, and
-      each case's resolved device appears in `explain_plan()`; `docs/node-authoring.md`
-      documents it.
-      **Status:** done. The graph-level choice is the engine's GPU backend; per node, `compute`.
-      The resolved device and its reason are in node metadata and in `explain_plan()`. Tests:
-      engine `devices` unit tests (GPU, fallback, gpu_preferred and gpu_required without GPU)
-      and the facade `device_assignment` test (74b8ef4, b24bde0). `docs/node-authoring.md`
-      ("CPU/GPU Residency") documents it, linking `docs/runtime-diagnostics.md`.
-      **Blocked by:** nothing.
-- [x] **What:** `GpuContextHandle::wgpu() -> Option<(&wgpu::Device, &wgpu::Queue)>`, so a node
-      reaches the engine's own device.
-      **Why:** Eidos nodes keep pipelines and persistent buffers in `state(T)`; without it they
-      open a second device (Eidos GPU worker, 2026-10-30).
-      **Done when:** a node test builds a pipeline on `ctx.gpu`'s device and dispatches on its
-      queue.
-      **Blocked by:** nothing.
-- [x] **What:** `#[device]` upload/download functions can take `&GpuContextHandle`, and the
-      runtime passes it (as `DeviceBridge::upload(self, ctx)` already allows).
-      **Why:** a real upload adapter has to create buffers on the engine's device; otherwise
-      transfers stay inside handlers and never become plan edges, so `explain_plan()` cannot
-      show them.
-      **Done when:** a `#[device]` type with context-taking upload/download round-trips through
-      a graph, and its edges show DeviceUpload/DeviceDownload in `explain_plan()`; the existing
-      `fn(&Cpu)` form still compiles.
-      **Blocked by:** nothing.
-- [x] **What:** `GpuStorage`, a sized persistent storage buffer kept in a node's `state(T)`
-      across ticks (TSDF volume, cost-volume scratch).
-      **Why:** Eidos M1 (plane sweep) keeps GPU state for the node's lifetime.
-      **Done when:** a test keeps a buffer across 100 ticks with no reallocation, and the buffer
-      is dropped on `Restart` and on reload.
-      **Status:** done (8358890). `tests/gpu_storage.rs`: 100 ticks on one buffer, and
-      `gpu_storage_drops_on_restart_and_on_reload` (dropped on `Restart` and by a reload that
-      removes the node, kept by one that keeps it).
-      **Blocked by:** nothing.
-- [x] **What:** `GpuSubmission` (shipped as `GpuTicket` / `GpuInFlight`), a non-blocking completion API. Submit on tick N;
-      `try_complete()` polls (never waits) on later ticks; there is an in-flight limit.
-      **Why:** the vision core must never wait on a GPU fence inside a tick.
-      **Done when:** a graph test shows the tick never blocks on the fence (tick time stays
-      under the kernel time) and the result arrives on a later tick.
-      **Blocked by:** nothing.
-- [x] **What:** fragment-pass nodes: a `#[device]` helper for a full-screen draw. Sampled
-      textures come in through `textureLoad`, render targets go out (several through MRT), in the
-      formats r8, rgba8, r32f and rg32f. They get the same node-owned persistent resources,
-      `GpuTicket` completion, timestamps and round-trip check as compute.
-      **Why:** on V3D the fragment path is 10-13x faster than compute (gpu_bench, 2026-10-30).
-      There fragment passes are the only GPU path that beats the CPU, so Eidos's V3D kernels
-      depend on them (user decision, part of 4.0.0).
-      **Done when:** a graph test runs a fragment-pass node with two outputs against its CPU
-      pair and the results match. `gpu_bench` on the Raze shows the helper costs no more than the
-      hand-written fragment pass (within 5%). The guide documents it.
-      **Status:** done. `FragmentPass` + `GpuTexture` landed (e26be2b). On the Raze the helper
-      matches the hand-written pass: box3x3 r8 2.83 vs 2.84 ms, box5x5 7.05 vs 7.06 ms, recorded
-      in `docs/gpu-nodes.md`. Test: `tests/gpu_fragment.rs`.
-      **Blocked by:** nothing.
-- [x] **What:** `read_buffer_into(&GpuStorage, range, &mut [u8])` (shipped as `GpuStorage::read_into` / `start_read` → `GpuReadback::try_read_into`), plus a non-blocking form
-      through `GpuSubmission`, with a persistent staging ring.
-      **Why:** Eidos mesh and depth readback, with no allocation per download.
-      **Done when:** a test reads back repeatedly with correct contents and no new staging
-      buffers after the first (`staging_buffers_created()`). wgpu's own per-submit bookkeeping
-      still allocates.
-      **Blocked by:** nothing.
-- [x] **What:** `RuntimePlanExplanation::device_round_trips()`, which lists CPU→GPU→CPU chains
-      across nodes.
-      **Why:** a consumer test asserts mechanically that a GPU pipeline has none.
-      **Done when:** tests cover a graph with a round trip (reported with nodes and ports) and
-      one without (empty).
-      **Blocked by:** nothing.
-- [x] **What:** GPU time per dispatch (`GpuTimer` / `GpuTimed`; reported through `ctx.duration_metric`): timestamp queries where the device has them, otherwise
-      submit→fence time, fed into the frame-overhead stages.
-      **Why:** GPU ms per keyframe for Eidos; v3dv timestamp support is unconfirmed.
-      **Done when:** a test sees nonzero GPU time per GPU node, and the Raze report states
-      which source v3dv uses.
-      **Blocked by:** the bench run (timestamp support on v3dv).
-- [x] **What:** import a LINEAR dmabuf as a storage buffer (public API: `GpuStorage::import_dmabuf`; the Raze run is part of `ci.sh pi`).
-      **Why:** zero-copy camera frames for packed-u32 compute on v3dv, where LINEAR images
-      cannot be sampled.
-      **Done when:** a hardware test imports, runs a kernel and verifies the output, on RADV and
-      on the Raze.
-      **Status (audit 2026-10-31):** fd455a4; the test (`gpu_storage/dmabuf.rs`) passes on RADV
-      (the 73/73 run) and on the Raze (2026-10-31, `dmabuf_storage_import_reads_the_frame_in_place`
-      ok); `gpu_bench` frame_import `_verify ok` at 640x480 and 1280x720; padded import 23 µs.
-      **Blocked by:** nothing.
-- [x] **What:** an on-disk pipeline cache across runs (`GpuPipelineCache`; on V3D 12 pipelines build in 52.0 → 5.7 ms with the cache loaded, Mesa's cache off) (wgpu `PipelineCache` on Vulkan), keyed by
-      adapter, driver and shader hash.
-      **Why:** startup time on the CM5.
-      **Done when:** a second process start creates its pipelines measurably faster (reported by
-      `gpu_bench`), and a driver change invalidates the cache.
-      **Status:** done (8fbc780; engine-owned in 3d34c9e). `fragment_tests.rs`
-      `pipeline_cache_round_trips_through_its_file` covers reload, a corrupt file, and another
-      adapter's data (header vendor changed) being dropped; `tests/gpu_pipeline_cache.rs` covers
-      the engine path.
-      **Blocked by:** nothing.
-- [x] **What:** a buffer pool with size classes (`GpuStoragePool`; `SimpleBufferPool`'s size bug fixed), per-frame reuse, a memory cap and stats,
-      replacing `SimpleBufferPool`'s exact-size matching.
-      **Why:** steady-state GPU nodes should not allocate per frame.
-      **Done when:** a 1000-frame test with varying sizes stays under the cap, and its reuse
-      rate is reported.
-      **Blocked by:** nothing.
-- [x] **What:** a guide to writing GPU nodes (`docs/gpu-nodes.md`, example `gpu_fragment_node`; GPU path verified on desktop and on the Raze's V3D): a `#[device]` WGSL node with its CPU pair,
-      persistent state, non-blocking completion and readback, plus a tested example.
-      **Why:** Eidos and other libraries ship GPU implementations behind features.
-      **Done when:** the example runs in CI (CPU path) and on the Raze (GPU path).
-      **Blocked by:** the items above.
-- [x] **What:** desktop GPUs (RADV, NVIDIA): the dmabuf hardware tests, `gpu_bench`, and every
-      new GPU API's tests pass.
-      **Status (2026-10-30):** done. Both GPUs pass all 73 GPU tests, hardware ones included, and
-      `gpu_bench` is recorded (`docs/testing.md`, "Desktop GPUs"). The NVIDIA hang (a pipe
-      imported as a `SYNC_FD` semaphore) is fixed by checking for a `sync_file` first.
-      **Why:** desktop is a supported GPU backend.
-      **Done when:** `./scripts/ci.sh pi`-equivalent hardware tests and the new API tests pass
-      on this workstation's RADV and NVIDIA, and the reports are in `docs/testing.md`.
-      **Blocked by:** nothing.
-- [ ] **[board] What:** armv7 (Flame RV1106G2, `armv7-unknown-linux-musleabihf`), CPU-only: a
-      `ci.sh` lane that builds and tests the CPU path with the GPU features off.
-      **Status:** `ci.sh cross` (and its CI job) type-checks, rejects wgpu in the CPU set, and runs
-      the integration, fallback and device-assignment tests under qemu-arm (91 + 4 + 2 pass; the
-      lane's missing `gpu-mock` feature is fixed in de16ef3). The `+neon` kernels pass under
-      qemu cortex-a7 (`ci.sh accel`). Written, untested on board: the CPU graph tests and the
-      kernel conformance binary on a Flame.
-      **Why:** the user's platform list (2026-10-30); the RV1106G2 has no compute-capable GPU.
-      **Done when:** the lane is in `ci.sh full` and CI, and a CPU-only graph test passes on the
-      Flame.
-      **Blocked by:** a Flame board for the on-board run.
-- [ ] **[board] What:** K230D, CPU-only: a `riscv64gc-unknown-linux-gnu` build with wgpu
-      feature-gated off, and `#[device]` nodes running their CPU implementation.
-      **Status:** `ci.sh cross` checks riscv64 gnu and musl and runs the CPU graph tests under
-      qemu-riscv64 (91 + 4 + 2 pass). The `+v` kernels pass under qemu at VLEN 128, 256 and 512
-      (`ci.sh accel`). Written, untested on board: the CPU graph tests and the kernel
-      conformance binary on a K230D (a real VLEN).
-      **Why:** the K230D has no compute-capable GPU.
-      **Done when:** the cross-build check is in `ci.sh`, and a CPU-only graph test passes on
-      the K230D.
-      **Blocked by:** a K230D board for the on-board run.
-- [ ] **[board] What:** RK3588S (Mali-G610): `gpu_probe`, the `ci.sh pi` hardware tests and
-      `gpu_bench` with the shipped driver (libmali or PanVK).
+- [ ] **[board] What:** armv7 RV1106, CPU-only (`armv7-unknown-linux-musleabihf`): the CPU graph
+      tests and the kernel conformance binary on the board. Written, untested on board.
+      **Why:** the user's platform list (2026-10-30); the RV1106 has no compute-capable GPU.
+      **Done when:** `ci.sh cross`'s CPU graph tests and the `+neon` conformance binary pass on the
+      board, and the evidence is committed.
+      **Blocked by:** the board. The docs name a Flame RV1106G2; the board Gaia was imaging on
+      2026-10-31 is a Luckfox Pico Pro (RV1106).
+      **Measured:** qemu only: 91 + 5 + 2 tests pass in `ci.sh cross` at 03f55c5; `+neon` kernels
+      pass under qemu cortex-a7.
+- [ ] **[board] What:** decide `crc32()`'s ARMv7 default from a measurement of
+      `crc32::neon_vmull_p8` (50093a9) against slice-by-8. Written, untested on board.
+      **Why:** selection follows measurements. `crc32()` stays on slice-by-8 on ARMv7 until then.
+      **Done when:** `conformance crc32_throughput -- --ignored --nocapture` has run on the RV1106
+      and the default follows the numbers.
+      **Blocked by:** the RV1106 board. The Raze cannot run AArch32 binaries.
+      **Measured:** conformance under qemu only; no timing exists.
+- [ ] **[board] What:** K230D, CPU-only (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph
+      tests and the kernel conformance binary on the board. Written, untested on board.
+      **Why:** the K230D has no compute-capable GPU, and qemu cannot show a real VLEN.
+      **Done when:** both pass on a K230D and the evidence, with its VLEN, is committed.
+      **Blocked by:** a K230D board.
+      **Measured:** qemu only: 91 + 5 + 2 tests in `ci.sh cross` at 03f55c5; `+v` kernels at VLEN
+      128, 256 and 512, plus a run without Zvbc.
+- [ ] **[board] What:** RK3588S (Mali-G610): `gpu_probe`, the `ci.sh pi` hardware tests, `gpu_bench`
+      and the `GpuKernels` evidence on the shipped driver (libmali or PanVK). Written, untested on
+      board: `GpuDeviceProfile` (Mali Valhall, warp 16; b095018), the GPU kernels and fragment
+      passes, the AFBC modifier helpers, the checklist in `docs/testing.md`.
       **Why:** proper hardware support on every board.
-      **Done when:** the reports are in `docs/testing.md`, and the hardware tests pass or each
-      gap is documented, with the copy fallback in place.
-      **Status:** written, untested on board: `GpuDeviceProfile` (Mali Valhall, warp 16;
-      b095018), the GPU kernels and fragment passes (tested on lavapipe and desktop), the AFBC
-      modifier helpers, and the board checklist in `docs/testing.md`.
-      **Blocked by:** a board (the PCB dev board) and Gaia's driver choice.
+      **Done when:** the reports are in `docs/testing.md`, the matrix has Mali evidence, and the
+      hardware tests pass or each gap is documented, with the copy fallback in place.
+      **Blocked by:** a board (the PCB dev board) and Gaia's driver choice. Both are as recorded on
+      2026-10-30; neither can be checked from this repo.
+      **Measured:** nothing on Mali. The same code runs on lavapipe, desktop GPUs and V3D.
 - [ ] **[board] What:** RK3576, RK3566 and RK3562 (Mali-G52): the same reports, or a confirmed
-      clean CPU fallback where the driver has no usable Vulkan compute.
+      clean CPU fallback where the driver has no usable Vulkan compute. Written, untested on board
+      (Mali Bifrost, warp 8 on G52).
       **Why:** as above.
       **Done when:** as above, per chip.
-      **Status:** written, untested on board, as above (Mali Bifrost, warp 8 on G52).
       **Blocked by:** boards and Gaia's driver choice.
-
-### 2b. Acceleration inventory (user rule, 2026-10-31)
-
-Everything that can use RVV, NEON (64 and 32), x86 SIMD, ISA extensions, the GPU or a
-fixed-function unit does. "Impossible" means physically impossible only; slower variants are
-built, measured per device and kept selectable. `docs/backend-matrix.md` is the evidence;
-`ci.sh accel` is the gate.
-
-- [x] **What:** `daedalus-accel`: kernel registry, CI evidence, the matrix generator and the gate
-      (unregistered SIMD/GPU code, failing or regressed cells, the `wired` column).
-      **Done:** 7b85ad7, 6f9bd4b (extensions), 002d1f4 (wired), d5b55f7 (notes); Eidos adopts it.
-- [x] **What:** `daedalus-kernels`, every Daedalus data-parallel op on x86 SSE/AVX2, NEON64,
-      NEON32 (`+neon`), RVV (`+v`, VLEN 128/256/512) and the GPU (`GpuKernels`, measured), wired
-      into every call site.
-      **Done:** 6f9bd4b, 002d1f4, d5b55f7, c27f9c9 (CRC-32: PCLMULQDQ, AArch64 CRC), c797a47
-      (F16C). Matrix: 98 pass, 33 impossible with reasons, 3 gaps.
-- [x] **What:** the `portable_simd` column: `core::simd` kernels tested in a nightly CI lane
-      (user decision, 2026-10-31; the product stays on stable).
-      **Done:** `daedalus_kernels::portable` behind `--cfg daedalus_portable_simd` (a cfg, so
-      stable `--all-features` builds keep working), run by `ci.sh accel` on nightly-2026-10-15
-      with asm checks; all 11 vectorizable ops pass (CRC-32: not data-parallel).
-- [ ] **What:** the Rockchip RGA fixed-function backend (RGB↔RGBA, gray).
-      **Status:** both routes are written in the `daedalus-rga` crate shared with Styx. Route (b),
-      V4L2 mem2mem (scale, crop, format conversion, dmabuf in and out), is tested end to end on
-      `vim2m` with `dma_heap` dmabufs. Route (a), `Librga` (RGA3 on vendor kernels, gray input,
-      red through a relabelled nearest scale), is unit-tested against software stand-ins. Both are
-      written, untested on board; whether the hardware's nearest sample is red needs that run.
-      **Done when:** the RGA cells pass on a Rockchip board (`crates/rga/tests/{v4l2,librga}.rs`).
+      **Measured:** nothing on Mali.
+- [ ] **[board] What:** the Rockchip RGA fixed-function cells in `daedalus-rga`, the crate shared
+      with Styx. Route (b) is V4L2 mem2mem (`rgb_to_rgba`, `rgba_to_rgb`); route (a) is `Librga`
+      (2f7c880; `gray_to_rgba`, `rgba_red`). Both written, untested on board.
+      **Why:** these are the matrix's 4 untested cells. `rgba_red` relabels the frame as gray and
+      scales it down by nearest, so it yields red only if the hardware takes the first of every four
+      samples; the headers do not promise that.
+      **Done when:** `crates/rga/tests/{v4l2,librga}.rs` pass on a Rockchip board and the cells read
+      pass, or `rgba_red` is recorded as failing.
       **Blocked by:** a Rockchip board.
-- [x] **What:** the remaining CRC-32 cell: NEON32 `vmull.p8` folding.
-      **Done:** 50093a9; conformance under qemu. `crc32()` stays on slice-by-8 on ARMv7 until
-      `crc32_throughput` runs on the Luckfox Pico Pro (RV1106).
-- [ ] **What:** `GpuKernels` and the kernels measured on V3D, and later on Mali (the matrix's GPU
-      evidence per adapter).
-      **Status:** V3D done (2026-10-31): all bit-exact; compute is 5-40x slower than the A76 CPU,
-      the copy engine is even. Mali: written, untested on board.
-      **Blocked by:** Rockchip boards for Mali.
-- [x] **What:** fragment-pass variants of the GPU kernels for tile-based GPUs (V3D, Mali).
-      **Done:** a08550b; bit-exact, measured on the Raze (2026-10-31): 3-6x faster than compute
-      on V3D, f16→f32 beats the A76 (8.1 vs 11.9 ms), rgb→rgba even (8.0 vs 8.2 ms).
+      **Measured:** no RGA hardware run. Route (b) passes end to end on `vim2m` with `dma_heap`
+      dmabufs; route (a) passes against software stand-ins and a C stub built from the real header.
 
-A CUDA backend is not in this release. If one comes later, it needs:
+### Upstream and low priority
 
-- a second `GpuBackend` implementation;
-- a residency key per backend, so CUDA and wgpu device memory are distinct port types;
-- upload/download adapters, and CUDA↔Vulkan interop (`cudaImportExternalMemory`) if both run
-  in one graph;
-- `#[device]` implementations keyed by backend instead of a single GPU slot.
-
-The explicit assignment above already carries a backend choice.
-
-### 3. Release mechanics
-
-- [x] **What:** the internal API dedup pass. **Why:** the freeze list. **Done when:** merged
-      with the gate green (9561d9b..f6299ad). **Blocked by:** nothing.
-- [ ] **What:** run the semver check against `v3.0.0`, and set `SEMVER_BASELINE` to the new tag
-      afterwards.
-      **Status (2026-10-30):** `ci.sh semver` runs over all 20 crates; the facade is checked too,
-      after the baseline's stale git-dependency version is dropped. It reports 250 breaking
-      items, each named in CHANGELOG `[Unreleased]` or `docs/api-review.md`. The one it found
-      unexplained, `PlannerLoweringContext` no longer `Send` (a `RefCell` key cache in
-      `PlannerCatalog`), is fixed. Left: point `SEMVER_BASELINE` at `v4.0.0`, and make the CI job
-      blocking, after the tag.
-      **Why:** documents every break since `v3.0.0` in the CHANGELOG and migration notes
-      (`NodePortRefresh`, `GpuCapabilities` and other public structs changed).
-      **Done when:** `./scripts/ci.sh semver` reports no unexplained break, and the CI `semver`
-      job is blocking.
-      **Blocked by:** the coordinated release go (the v4.0.0 tag).
-- [ ] **What:** version 4.0.0 (user decision, 2026-10-30). The existing `v3.0.0` tag stays as it
-      is.
-      **Why:** dev is `3.0.1-dev`; this release breaks public API (`GpuCapabilities`,
-      `NodePortRefresh` and others).
-      **Done when:** every crate carries `4.0.0`, downstream git deps need no `version =`
-      change, and the plugin-ABI and stable-ABI constants are unchanged or bumped with a
-      reason.
-      **Blocked by:** the coordinated all-repo release go (HeliOS coordinator); bump last.
-- [ ] **What:** CHANGELOG `[Unreleased]` becomes the release section, with a migration note if
-      needed.
-      **Status:** the migration guide is written (`docs/migration-4.0.md`, checked against the
-      semver report). The section cut waits with the 4.0.0 bump for the coordinated release.
-      **Why:** downstream pins by commit and reads the CHANGELOG.
-      **Done when:** every merged change since `v3.0.0` has an entry.
-      **Blocked by:** the coordinated release go.
-- [ ] **What:** release gates. **Why:** release quality.
-      **Done when:** `./scripts/ci.sh full` passes (x86_64, aarch64, armv7 and riscv64 lanes),
-      `ci.yml` and `bench.yml` are green on `dev`, and `ci.sh pi` and `ci.sh vvl` pass on the
-      Raze.
-      **Status (audit 2026-10-31):** dev CI was red at 002d1f4 (the cross lane's `gpu-mock`, a
-      docs link and a doc filename collision), fixed in de16ef3.
-      **Blocked by:** a Raze slot for `ci.sh pi` and `vvl`, then the coordinated release go.
-- [ ] **What:** merge `dev` into `main`, and tag `v4.0.0`.
-      **Why:** the release. **Done when:** the tag exists and downstream bumps its pin.
-      **Blocked by:** every item above, the coordinated release go, and user approval.
-
-## Backlog (not for this release)
-
-The maturity pass after 2.0.0 (a feature branch, merged into `dev`) was released as 3.0.0. It was
-driven by host-integration reviews. See `CHANGELOG.md` `[3.0.0]` for the full list of changes
-and `docs/migration-3.0.md` for upgrading.
-
-### Done
-
-#### Host integration
-- [x] Native Rust `cdylib` plugin loading (`dylib-plugins`): stable `#[repr(C)]` descriptor, schema
-      introspection, and typed rejection on rustc/version/fingerprint mismatch.
-- [x] Declarative boundary/host-only feature classification (`[package.metadata.daedalus]`) with
-      generated `ENABLED_FEATURES`.
-- [x] `GraphDocument` (`daedalus.graph` v1): strict parsing with JSON-path errors, plugin
-      requirements, checked-in JSON Schema (`docs/schema/daedalus.graph.v1.schema.json`).
-- [x] Host graph APIs: typed host ports (`input_typed` / `input_as`), port introspection,
-      `inspect_payload` / `inspect_outputs`, per-port stats, and input-driven `drive_blocking` /
-      `drive`.
-- [x] Lean presets: `embedded`, `engine`, `engine-full`; the executor pool and metrics are opt-in.
-- [x] `FfiHost` one-call package host with rollback and aggregated shutdown.
-- [x] dmabuf zero-copy GPU import (`gpu-dmabuf`): acquire fences and single-image NV12.
-- [x] Docs: `docs/node-authoring.md`, `docs/dynamic-plugins.md`, minimal CPU-only profile, and the
-      `external_frame_source` example (camera glue pattern with no camera-library dependency).
-- [x] Decision: Daedalus never depends on a camera library. The crate that defines a type owns its key and
-      Daedalus registration behind an optional `daedalus` feature (documented in
-      `docs/node-authoring.md`, "Library-Owned Integration Features"); without one, the frame
-      glue lives in the application.
-- [x] **Deterministic port keys for foreign types.** Macros resolve a type's own key at compile
-      time; ports take `type_key = "..."`, plugins `foreign_types(Type = "key")`; an unkeyed
-      foreign type fails install (`UnkeyedForeignType`) instead of getting an order-dependent
-      `rust:` key.
-- [x] **Boundary type check for dylib plugins.** A host found that a plugin built in a separate
-      cargo invocation passed the fingerprint check but failed on every frame with
-      `payload type mismatch: expected example:frame, found example:frame`. Now the
-      descriptor (ABI 6) exports `(TypeKey, TypeId hash, size, align, type_name)` per boundary
-      type, `install_into` fails with `BoundaryTypeConflict` naming every differing key before
-      installing anything, adapter errors say "same TypeKey, different Rust type", and the
-      same-cargo-build rule is documented in `docs/dynamic-plugins.md`.
-- [x] **Foreign (host-owned) types for separately built plugins.** Foreign interfaces
-      (`foreign_interface!`: `#[repr(C)]` accessor vtable, key, version, layout hash), owner
-      providers registered as zero-copy `View` adapters, `ForeignHandle` payloads with an
-      `Arc`-backed keepalive, and node inputs `FrameView<'_>` / `ForeignRef<'_, I>`. The standard
-      `daedalus:frame` v1 interface (`docs/foreign-frame-interface.md`) lets owners such as
-      camera-library crates implement `FrameSource` in their `daedalus` feature. The descriptor (ABI 7)
-      exports the interfaces a plugin uses and `install_into` refuses version/layout mismatches;
-      `examples/plugins/foreign_consumer`, built separately with a different copy of the type's
-      crate, reads host values in place.
-- [x] **Generic runtime key lookups.** `type_key_of` is gone. `PluginRegistry::type_index()`
-      freezes `TypeId → TypeKey` (builtins and `Option`/`Vec` of them, the key a type owns in
-      that registry, else the one key its ports use) and `TypeKey → RustTypeIdentity`; graph
-      builders and compiled graphs capture it, so `push::<T>`, `bind_input`, `bind_lane`,
-      `run_once`, `HostBridgeHandle::push`, `NodeIo::push_to` and `input_typed` no longer depend
-      on install order or on other registries, and an unknown type is a `TypeKeyError` naming
-      the fixes. The host bridge rejects payloads whose key is registered for another Rust type
-      (`FeedOutcome::Rejected`), and key registration is strict (identical is a no-op, another
-      type, key or declaration fails; one `BoundaryTypeConflict` for static and dylib installs).
-
-- [x] **Optional inputs.** `Option<T>` inputs carry `T`'s key (producers of `T` connect
-      directly; before, the edge had no converter), are marked `PortDecl::optional`, and never
-      block: a node runs when each connected required input has a value and is skipped
-      otherwise; optional inputs are `None` without one. `Result<Option<T>, _>` returns are
-      conditional outputs. See "Optional Inputs And Readiness" in `docs/node-authoring.md`.
-- [x] **Cross-tick joins.** `fire = "all"` nodes (`#[node(fire = "all")]`,
-      `GraphBuilder::fire_all`, `daedalus.node.fire` metadata) peek their required edges and wait,
-      popping nothing, until each holds a value, then take one value per edge; optional inputs
-      never block, edge policies decide what is held, and the planner lints joins on producers
-      that may not produce. Per-edge policies now also survive the scheduler default.
-- [x] **Typed host ports in embedded graphs.** Embedded-graph expansion and `nest` carry an
-      inner host port's declared type to an undeclared outer host port wired to it.
-- [x] **Stable plugin handler path.** Plugins built with another rustc or Daedalus patch release
-      (same `PLUGIN_ABI_VERSION`) install and run: the descriptor's `StableHandlers`
-      (`STABLE_ABI_VERSION` 1) run schema nodes through a C-ABI `invoke` with `StableValue`s
-      (scalars inline, strings/bytes/nested values borrowed, frames as foreign handles), node port
-      codecs registered by the node macros convert to and from the handlers' Rust types, and
-      `install_into` picks `InstallPath::RustAbi` or `InstallPath::Stable`
-      (`install_into_as` forces one). `examples/plugins/stable_abi` and the facade's
-      `dylib` test (`stable` module) cover it.
-- [x] **`export_plugin!` boundary contracts in the schema.** `PluginSchema::boundary_contracts`
-      lists them next to the plugin's own.
-- [x] **Graph JSON Schema drift.** Enum lists come from each core type's `ALL` (guarded by an
-      exhaustive match), and a test validates every variant against the generated schema.
-- [x] **Enum config ports.** `NodeConfig` enum fields and enum handler inputs failed
-      with `missing <port>`: the engine never handed the registry's const coercers to its
-      executors and owned/borrowed inputs never coerced `Value` constants. The node macros now
-      register a coercer per input and config field type at install (`DaedalusTypeExpr` unit
-      enums by name or index, else serde); see "Constants, Defaults And Config Enums" in
-      `docs/node-authoring.md`.
-- [x] **Ids from other macros.** `#[node]`/`#[adapt]`/`#[plugin]` accept any `&'static
-      str` constant expression as `id` (`concat!`, a user macro, a `const`).
-- [x] **Macro leaf keys without an owned key.** Port types without a `#[type_key]` (a
-      `foreign_types` mapping) resolve through the installing registry's `TypeRegistry`
-      (`node_decl_in`, `handler_registry_in`, ...), handlers compute output keys once per
-      registry, and the process-global typing registry is gone. Dynamic plugins resolve a
-      dependency's mapping through the registry they install into: the introspection registry
-      (where `export_plugin!(.., deps [..])` installs linked dependencies first) or the host's.
-- [x] **Dynamic plugin dependencies.** Schemas list a plugin's dependencies and
-      `install_into` refuses a plugin whose dependencies the host has not installed
-      (`MissingDependencies`). `export_plugin!(P, deps [Dep])` links dependency plugins into
-      the library's introspection registry, so keys they map resolve; without the link,
-      unkeyed foreign port types are listed as `external_types` instead of failing the schema.
-- [x] **One key per builtin number.** `i32`/`u32`/`f32` (and every other width) shared
-      `Int`/`Float` with `i64`/`f64`: plugins with `i64` and `i32` ports conflicted and a fanned-out
-      `i64` host input was branched by the `i32` adapter. Each builtin number now has its own
-      `ValueType` and key, the planner inserts lossless widening adapters (`i32 -> i64`,
-      `f32 -> f64`, ...) and rejects narrowing at plan time, and constants are range-checked
-      against the port's exact width. See "Builtin Numbers" in `docs/node-authoring.md`.
-- [x] **Direct routes deliver const inputs.** The single-node direct route (`run_direct_once`,
-      lanes, `tick_direct_*`) skipped const inputs, so constants, port defaults and config fields
-      were `missing`; it now delivers them like a scheduled tick (`tests/it/direct_const_inputs.rs`).
-- [x] **Typed nodes with three reference parameters.** `fn(&A, &B, &mut State)` was taken for
-      the low-level `(node, ctx, io)` form; the form is now recognized by parameter types.
-
-#### Performance
-- [x] Process-global boundary contract registry removed; `Payload::owned` always uses typed storage.
-- [x] Host bridge: per-port state, single-slot latest-only queues, events off by default.
-- [x] Executor: direct bridge handles, allocation-free ticks (31 → 4 allocations per round trip,
-      enforced by `crates/engine/tests/hot_path_allocations.rs`), `IdStr` for static ids, cheaper
-      `Payload`.
-- [x] Shared `PolicyQueue<T>` for host ports and executor edges.
-- [x] Generated handlers allocate nothing per frame: stateful nodes keep state in per-node
-      `StateStore` slots instead of formatting a key per call, and configs and `&T` constants are
-      decoded once per change (`daedalus_runtime::const_cache`), so the detector graph frame is
-      its 31 payload allocations.
-- [x] **Java and C++ SDK integer widths.** Both SDKs declare width-exact scalars (Java
-      `@Scalar` for unsigned widths); the host range-checks worker outputs. C++ registrations
-      always type ports from `decltype(&fn)` (unmapped types fail to compile), and Java
-      multi-output nodes type each output from a returned record's components.
-- [x] **`u64` on the FFI wire.** `WireValue::UInt` (`"uint"`) carries values above `i64::MAX`;
-      every SDK's wire encoder writes `u64` port values as `uint`.
-- [x] **Owned constants decode once.** Owned `T`/`Option<T>` parameters fed a non-builtin
-      constant clone the value decoded into the per-node cache (`T: Clone`, probed by the macro)
-      instead of converting it every call.
-- [x] Benchmarks: `crates/engine/benches/host_graph_drive.rs`, plus `.github/workflows/bench.yml`
-      with regression flagging.
-
-#### CI, examples and daemon
-- [x] CI runs on pushes to `dev` as well, and `dev` saves the Rust cache, so PRs into `dev`
-      restore it.
-- [x] `ci.sh smoke` runs the quickstart and basics bins and the new `09_hosts` bins.
-- [x] Examples for the host-side features that only had tests: execution domains
-      (`09_hosts/execution_domain`), node fusion (`03_transport/node_fusion`), held inputs and
-      batch pushes (`09_hosts/held_inputs`), multi-camera feeders (`09_hosts/multicam_feeders`),
-      graph documents (`09_hosts/graph_document`), hot reload (`09_hosts/graph_hot_reload`) and
-      node recovery (`09_hosts/node_recovery`).
-- [x] Daemon tests: the stdio protocol through the binary, and the TCP protocol with `serve` and
-      the CLI behind the `tcp` feature (run by `ci.sh test`).
-- [x] Docs match the tree: UI test path, `repo-clean.sh` runs the default CI loop, the facade's
-      feature list, and the duplicate dependency roots from the lock.
-
-#### Code health
-- [x] `parking_lot` everywhere outside `core`/`transport`; poison handling removed.
-- [x] Oversized files split; the strict file-size check now fails on new oversized files.
-- [x] Duplicate code consolidated: macros, FFI language crates, edge explanations, `Value`
-      accessors, text ids, GPU format tables, build scripts, builtins, host bridge config, test
-      graph builders (`NodeInstance::new`, `Edge::new`).
-- [x] Dead code removed (`Outputs` derive, aliases, unused globals); `CapabilityRegistry::remove_plugin`
-      added.
-- [x] **`--all-features` workspace builds link.** Example plugins depending on
-      `example_project` duplicated its `export_plugin!` symbols once features unified; the export
-      lives in the leaf `examples/plugins/example_project_dylib`, and CI builds (links) the
-      workspace with `--all-features`.
-- [x] CI: aarch64 check, lean-preset tests, macro UI and dylib jobs, example smoke runs, and
-      `scripts/ci.sh` subcommands.
-- [x] Portability tier 1: `no_std` + `alloc` core/transport/data/registry/planner (default `std`
-      feature), the `embedded` preset running on `wasm32-unknown-unknown` (`platform::THREADS`,
-      `platform::Instant`), and the `portability` CI job (`scripts/ci.sh nostd wasm`).
-- [x] Bugs fixed: schema export/import encoding round trip, unknown wgpu formats silently treated
-      as RGBA8, `Coalesce` never shrinking host FIFOs, input and output freshness watermarks
-      shared by name, and broken CI feature checks.
-
-### Remaining
-
-#### High priority
-- [x] **Validate on a Pi 5 / CM5 with Mesa v3dv** (1512568, abe7ad4, d02276e; the full `gpu_probe`
-      report and the dmabuf test results from 2026-10-31 are in `docs/testing.md`). Run `./scripts/ci.sh pi` on the device and
-      paste the `gpu_probe` report (fence path, per-format modifiers, LINEAR NV12, `DISJOINT`,
-      `TEXTURE_FORMAT_NV12`, the fence export ioctl, dma-heaps) and the `--nocapture`
-      measurements of the fence tests; see "Validating on a Raspberry Pi 5" in
-      `docs/testing.md`.
-- [x] **Frame-path overhead on the CM5.** Measured `detector`, `frame_chain` and
-      `shared_detectors` at `bcc9f33` (4939e42, 3367fb2; `docs/development.md`): detector
-      `graph_overhead` p50 7.2 µs unfused / 6.8 µs fused, a real detector graph 16-17 µs.
-- [x] **First GitHub Actions run** of `ci.yml`: every job (workspace, facade with the dylib and
-      macro-UI tests, docs-and-lints, package-surface, aarch64, lean-preset, portability with
-      nostd/wasm/MCU) runs and passes on pushes to `dev` (e.g. run 40175816440).
-- [x] **`bench.yml` on `dev`.** Its push trigger now covers `dev` as well as `main`, with the same
-      path filters, and the baseline is the newest earlier run on the same branch (it was the
-      default branch, which lacked the file). Its schedule and `workflow_dispatch` still fire from
-      `main` only. The first dev runs (40532524948 onward) worked, but comparing against an earlier
-      job's artifact flagged runner speed differences (+15-45% on every bench, including a
-      docs-only commit), so each run now benches the previous run's head commit on the same
-      runner.
-- [x] **Tags.** `v2.0.0` (8946223) and `v3.0.0` (e7e88fc) exist. Dev work is versioned
-      `<major>.<minor>.<patch>-dev` (now `3.0.1-dev`): only the patch moves during dev, major and
-      minor change only for an agreed release, and changes go under CHANGELOG `[Unreleased]`.
-      Downstream pins by commit and depends on Daedalus by git without a `version =`
-      requirement (`3.0.0` does not match `3.0.1-dev`).
-- [x] **Faster local builds and `ci.sh`** (f7edb7d): `ci.sh -j` parallel lanes, `ci.sh quick`,
-      smoke reusing the test build, `ci.sh doc`/`full`; target dirs belong on a local SSD (the
-      external drive made the edit loop ~6x slower).
-
-#### Medium priority
-- [x] **Public API review.** 266 public items have no use outside their own file (the TODO's
-      estimate was about 130). Each is kept (downstream, documented, or a builder family),
-      hidden with `#[doc(hidden)]`, made `pub(crate)` (test-only where so), or removed; 55 were
-      removed. Classified in `docs/api-review.md`, with the replacements in CHANGELOG
-      `[Unreleased]`.
-- [x] **dmabuf: GPU-side fence wait with a timeout.** `AcquireFenceWait::Timeline`: a timeline
-      semaphore host-signaled by one watcher thread per device on fence or `acquire_timeout`,
-      `GpuImageHandle::acquire_status()` reports `TimedOut`; `SyncFd` (no timeout) and `Cpu`
-      fallbacks. Every import does a queue-family-foreign acquire into a known wgpu state and a
-      release back on drop.
-- [x] **dmabuf: configurable fence wait, `SyncFd` by default.** `AcquireFenceMode`
-      (`Auto` = `SyncFd` -> `Timeline` -> `Cpu`, or an explicit mode falling back to `Cpu`) as a
-      backend default (`GpuOptions::acquire_fence_mode`) with a per-import override;
-      `ExternalImportSupport` and `gpu_probe` report the mode, its wait and the available waits.
-- [x] **dmabuf: hardware tests under the Vulkan validation layers.** `scripts/ci.sh vvl`
-      (`docs/testing.md`); on RADV the NV12 view-format list was the one error in our code, and the
-      only remaining message is the `Timeline` mode's `VUID-vkQueueSubmit-pWaitSemaphores-03238`
-      (wgpu-hal's binary semaphore chain behind a pending timeline wait).
-- [x] **Parallel test runs segfaulted** in the Vulkan loader (concurrent instance creation with
-      the NVIDIA ICD installed; debug-utils terminators racing with instance/device creation).
-      `daedalus-gpu` serializes driver setup and creates instances without wgpu's `DEBUG` flag
-      unless `WGPU_DEBUG=1`.
-- [x] **dmabuf: compressed modifiers.** Multi-memory-plane modifiers (aux planes) import; on RADV
-      every renderable `R8`/`XRGB8888` modifier including DCC (2 and 3 planes) round-trips between
-      devices (`dmabuf/tests/modifiers.rs`), tiled NV12 imports and samples.
-- [ ] **dmabuf: `Timeline` mode blocks the next submission on Mesa** and trips
-      `VUID-vkQueueSubmit-pWaitSemaphores-03238`: wgpu-hal chains submissions with binary
-      semaphores, which Mesa only accepts once the previous (wait-before-signal) submission
-      reached the kernel. It is opt-in now (`SyncFd` is the default); revisit if wgpu-hal relays
-      with timeline semaphores (then `Timeline` would neither block nor violate the VUID).
-- [x] **dmabuf: validation layers on the Pi** (d02276e; the exit segfault is a release item). Run `./scripts/ci.sh vvl` on v3dv alongside the
-      `pi` report (only RADV has been validated).
-- [x] **`NodeRecovery::Retry` with by-value inputs** (89836d1): `#[node]` by-value inputs go
-      through `NodeIo::take_owned_with`, cloning a shared `Clone` input, so retries get it again.
-- [x] **GPU fallback with `GpuBackend::Cpu`** (4939d8a): the engine substitutes the `fallback`
-      node when the backend is `Cpu`; it was stored as metadata and never read.
-- [x] **Host-created Vulkan instances.** `daedalus_gpu::driver_lock()` and
-      `daedalus_gpu::with_driver_lock(f)` expose the lock that serializes Daedalus's own driver
-      setup, so a host creating wgpu/Vulkan instances can serialize with it. The lock is not
-      reentrant; see "Host-created Vulkan instances" in `crates/gpu/README.md`.
-
-#### Portability (tier 2)
-Tier 1 (`no_std` + `alloc` core/transport/data/registry/planner, and the `embedded` preset on
-`wasm32-unknown-unknown`) and tier 2 (`no_std` + `alloc` runtime and engine with the serial
-executor, checked on `thumbv7em` and `thumbv6m`) are done; see "Portability" in `docs/development.md`.
-- [x] **Lock backend for runtime/engine.** `daedalus_runtime::sync`: `parking_lot` with `std`,
-      `spin` (`lock_api`) without; the engine has no direct `parking_lot` dependency.
-- [x] **`threads` feature.** Worker pool, stream workers and blocking waits (`InboundWaiter::wait`,
-      `drive_blocking`, `recv_payload_timeout`, ...) exist only with `threads`; `platform::THREADS`
-      is gone. The bridge's `Condvar` stays (`std`) for those waits.
-- [x] **Clock injection.** `daedalus_core::platform::Clock` on the executor
-      (`with_clock`), `StreamGraph` and `EngineConfig::with_clock`.
-- [x] **Non-blocking host bridge without `std`.** Push, poll (`try_pop*`, `drain*`) and await the
-      `core::task` `InboundWaiter`; the `Condvar` exists only with `std`.
-- [x] **Lineage clock.** Node pushes, bridge pushes and direct lanes stamp lineage with the
-      engine/executor clock (`Payload::stamp`); bridges (`HostBridgeManager::set_clock`) timestamp
-      events and age `MaxAge` payloads on it. `platform::set_clock` is gone.
-- [x] **`alloc`-only runtime.** The runtime's and engine's `std` feature removes `std`
-      (`hashbrown` maps, spin-locked port buffer pool, perf counters/env config `std`-only);
-      `ci.sh nostd` checks both and `examples/nostd_smoke` for `thumbv7em` and runs the smoke
-      graph natively without `std`.
-- [x] **Targets without compare-and-swap** (`thumbv6m-none-eabi`, `riscv32imc`): tier-1 crates
-      build there; atomics, `spin` and `Arc` via `portable-atomic(-util)` (`critical-section`),
-      target-specific; `ci.sh nostd` checks `thumbv6m`.
-- [x] **Runtime and engine without compare-and-swap.** `tracing` is an optional feature
-      (implied by `std`) behind the crate-private `trace` macros; `Arc<dyn _>` coercions go
-      through `arc_dyn!`; `lockfree-queues` falls back to locked queues; `ci.sh nostd` checks
-      runtime, engine and `nostd_smoke` for `thumbv6m` (`riscv32imc` checked locally).
-- [x] **wasm host glue.** `examples/wasm_bindgen_host` (`Clock::new` on
-      `performance.now()`, `push`/`tick`/`take` from JS, Node-driven), a `wasm32-wasip1` check and
-      WASI smoke run (`ci.sh wasm`).
-
-#### MCU profile
-`daedalus-mcu` + `daedalus-mcu-build` (host-planned graphs, no heap) in three modes per firmware:
-compiled (3.1-3.6 KiB flash, 160 B RAM for `examples/mcu_blink`), compiled + tunable (6.0-6.9
-KiB, 176 B) and loaded (11.3-12.4 KiB, 584 B); see `docs/mcu.md`.
-- [x] Host plan compiler, device crate, `#[daedalus_mcu::node]`, blink example with firmware for
-      `thumbv7em`/`thumbv6m`, `scripts/ci.sh mcu` size budgets in the `portability` job.
-- [x] **Live parameters**: constants marked in `daedalus.mcu.params` become a `Tunable` parameter
-      table (typed setters, range and type checks with the planner's constant rules, postcard
-      `ParamUpdate` messages, a JSON manifest and `daedalus-mcu param`); `freeze_params` and
-      unmarked graphs compile to the same code as before (byte-exact size check in `ci.sh mcu`).
-- [x] **Runtime-loaded plans**: `daedalus_mcu_build::library` generates a node library,
-      `compile_loaded`/`to_blob` compile plans for it (same lowering as compiled mode),
-      `loaded::Interpreter` validates and swaps them in a fixed arena (feature `loaded`), with
-      parameters; plan A/B swap, validation failures and per-mode budgets tested.
-- [ ] **Flash the firmwares** on a real board (with a HAL: ADC input, GPIO output) and measure
-      stack use and tick time in each mode.
-- [ ] **Chunked blob receive helper** (feature-gated framing + CRC32 into a buffer or flash
-      partition) if applications keep writing the same transport code.
-- [ ] **Smaller tunable/loaded code**: the generic `Scalar` conversion pulls in `f64` soft-float
-      even for `f32`-only graphs; a per-kind conversion could drop it.
-- [ ] **Fan-in and user adapters** on the device (generate adapter calls for `#[adapt]` functions
+- [ ] **What:** dmabuf `Timeline` fence mode blocks the next submission on Mesa and trips
+      `VUID-vkQueueSubmit-pWaitSemaphores-03238`.
+      **Why:** wgpu-hal chains submissions with binary semaphores, which Mesa accepts only once the
+      previous wait-before-signal submission reached the kernel. `Timeline` is opt-in; `Auto` tries
+      `SyncFd` first and does not produce it.
+      **Done when:** `Timeline` neither blocks nor violates the VUID under `ci.sh vvl`.
+      **Blocked by:** wgpu-hal relaying with timeline semaphores; 30.0.1 still uses binary
+      `RelaySemaphores`.
+      **Measured:** 100 ms blocked with a 100 ms timeout (`crates/gpu/README.md`).
+- [ ] **What:** flash the MCU firmwares on a real board (with a HAL: ADC input, GPIO output) and
+      measure stack use and tick time in each mode.
+      **Why:** sizes are linked and measured, but the firmware has never run on hardware.
+      **Done when:** the stack and tick numbers per mode are in `docs/mcu.md`.
+      **Blocked by:** an MCU board and a HAL.
+      **Measured (`ci.sh mcu`, 2026-11-01), flash / static RAM, M4F and M0+:** compiled 2988 / 3316 B
+      and 112 B; tunable 5012 / 5952 B and 128 B; loaded 11672 / 12488 B and 584 B. Stack and tick
+      time: none.
+- [ ] **What:** a chunked blob receive helper for the MCU (feature-gated framing + CRC-32 into a
+      buffer or flash partition).
+      **Why:** only if applications keep writing the same transport code.
+      **Done when:** a test receives a plan blob in chunks and loads it.
+      **Blocked by:** a consumer needing it; none is recorded.
+      **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
+- [ ] **What:** smaller tunable and loaded MCU code: a per-kind conversion instead of the generic
+      `Scalar` one.
+      **Why:** the generic conversion pulls `f64` soft-float into graphs with no `f64` port.
+      **Done when:** the blink tunable and loaded firmwares link without `__aeabi_d*` and the budgets
+      in `ci.sh` are tightened.
+      **Blocked by:** nothing.
+      **Measured:** `__aeabi_dcmple` and `__aeabi_d2f` are in both M4F firmwares and not in the
+      compiled one. Tunable adds 2024 B (M4F) / 2636 B (M0+) in all; the soft-float share is not
+      measured.
+- [ ] **What:** fan-in and user adapters on the MCU device (adapter calls for `#[adapt]` functions
       that are plain `no_std` code).
-- [ ] **Shared nodes with the full runtime:** generate both a `#[node]` handler and the device
-      glue from one function, so a node crate serves both.
+      **Why:** today lowering rejects several edges into one input (`crates/mcu/build/src/lower.rs`),
+      and only builtin numeric widening adapts.
+      **Done when:** a blink-style graph with fan-in and a user adapter runs in each mode.
+      **Blocked by:** nothing.
+      **Measured:** none.
+- [ ] **What:** shared nodes with the full runtime: generate both a `#[node]` handler and the device
+      glue from one function.
+      **Why:** so a node crate serves both.
+      **Done when:** one function runs under both, with a test in each.
+      **Blocked by:** nothing.
+      **Measured:** none.
+- [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
+      under `crates/` (`build.rs`, `portable.rs`, `trace.rs`).
+      **Why:** without it those crates do not build from a Windows checkout.
+      **Done when:** the user has decided, and the symlinks are replaced or the limit is documented.
+      **Blocked by:** the user's decision.
+      **Measured:** 14 symlinks.
+- [ ] **What:** false bench flags on shared CI runners; consider a median of several runs.
+      **Why:** each run already benches both commits on one runner and compares medians at 15%, and
+      a noise flag still fails the job.
+      **Done when:** a docs-only change cannot fail `bench`.
+      **Blocked by:** nothing.
+      **Measured:** 1 failure in the last 15 `dev` runs: 0e620c2, `telemetry_clone_costs/clone/Basic`
+      66.1 → 77.1 ns (+16.7%). Whether that was noise was not checked.
+- [ ] **What:** a CUDA backend: a second `GpuBackend`, a residency key per backend so CUDA and wgpu
+      device memory are distinct port types, upload/download adapters, CUDA↔Vulkan interop
+      (`cudaImportExternalMemory`) if both run in one graph, and `#[device]` implementations keyed by
+      backend.
+      **Why:** only if one is wanted; no request is recorded.
+      **Done when:** a graph runs a node on CUDA, with tests.
+      **Blocked by:** a decision to do it.
+      **Measured:** none.
+- [ ] **What:** signing and registry work.
+      **Why:** pinned for later by the user (2026-10-30).
+      **Done when:** the user has scoped it.
+      **Blocked by:** the user's decision.
+      **Measured:** none.
 
-#### Low priority
-- [ ] Windows checkouts need `core.symlinks` for the shared `crates/build_features.rs` symlinks.
-      Decide whether Windows matters.
-- [ ] Bench noise on shared CI runners may produce occasional false 15% flags. Consider a median of
-      several runs.
+### Release steps
+
+These run only when the user calls a release. None of them is pending until then.
+
+- [ ] **What:** the version bump (4.0.0 was the user's choice on 2026-10-30), the CHANGELOG
+      `[Unreleased]` section cut, `SEMVER_BASELINE` set to the new tag, the CI `semver` job made
+      blocking, `dev` merged into `main`, and the tag. The `v3.0.0` tag stays as it is.
+      **Why:** `dev` breaks public API since `v3.0.0` (`GpuCapabilities`, `NodePortRefresh` and
+      others); downstream pins by commit and reads the CHANGELOG.
+      **Done when:** the tag exists, every crate carries the version, the plugin-ABI and stable-ABI
+      constants are unchanged or bumped with a reason, and `ci.sh full`, `ci.yml` and `bench.yml` are
+      green.
+      **Blocked by:** the user's decision.
+      **Measured:** `dev` is `3.0.1-dev`; `docs/migration-4.0.md` is written (b422ec0) but its check
+      against the semver report predates the 319 items above; CI as above.
+
+## Done
+
+Each entry cites the commit that did the work, as far as history can attribute it. Where one symbol
+was searched for, the commit is the one that introduced it.
+
+### GPU and hardware support
+
+- [x] `gpu_bench` and `gpu_probe` report on the Raze CM5: e56840d (`docs/testing.md`, "CM5 run
+      (2026-10-31)").
+- [x] Compute limits and features in `GpuCapabilities`: fb5ba91;
+      `mock_and_noop_backends_report_compute_caps`.
+- [x] Explicit device assignment, resolved device in `explain_plan()`: 74b8ef4, b24bde0; test
+      `device_assignment`.
+- [x] `GpuContextHandle::wgpu()`: 8865fcf.
+- [x] `#[device]` transfers can take the GPU context: f22a58c.
+- [x] `GpuStorage`, persistent node-owned storage: 8358890; `tests/gpu_storage.rs`.
+- [x] `GpuTicket` / `GpuInFlight`, non-blocking completion: 3ce1b9a; `tests/gpu_ticket.rs`.
+- [x] Fragment-pass nodes, `FragmentPass` + `GpuTexture`: e26be2b. On the Raze the helper matches the
+      hand-written pass: box3x3 r8 2.83 vs 2.84 ms, box5x5 7.05 vs 7.06 ms.
+- [x] `GpuStorage::read_into` / `start_read` with a staging ring: e526090.
+- [x] `device_round_trips()`: 154b8c5.
+- [x] `GpuTimer` / `GpuTimed`: bb618bc. v3dv uses timestamp queries (evidence "Timestamps").
+- [x] LINEAR dmabuf as a storage buffer, `GpuStorage::import_dmabuf`: fd455a4; passes on RADV and
+      the Raze.
+- [x] On-disk pipeline cache: 8fbc780, engine-owned in 3d34c9e, `pipeline_cache_path_for` in 03f55c5.
+      On V3D 12 pipelines build in 52.0 → 5.7 ms with the cache loaded, Mesa's cache off.
+- [x] `GpuStoragePool`, `SimpleBufferPool` size fix: ee86872; `storage_pool_reuses_within_its_cap`.
+- [x] GPU nodes guide and `gpu_fragment_node`: f626d74.
+- [x] Desktop GPUs (RADV, NVIDIA): d033fc7 (`docs/testing.md`, "Desktop GPUs").
+- [x] CI lane for the CPU-only boards: 501de01, de16ef3. The on-board runs stay open above.
+- [x] Raw Vulkan access for external SPIR-V kernels: 29ae351; 8-bit storage: c572945.
+- [x] Cached readback on v3dv through a dma-heap buffer: 602b14b.
+- [x] Stable-ABI plugin path without per-call allocations: 5f5c51c.
+- [x] Frame interface v3 (`SharedFrame`, colorimetry, dylib reload): 36d2af6, 2b09654, fad4b99,
+      3b14534, d543c6c. The open "v3 follow-ups" item is removed: it held no work, only a wait for a
+      consumer request, and none is open.
+
+### Acceleration inventory
+
+- [x] `daedalus-accel`, registry, evidence, matrix and gate: 7b85ad7, 6f9bd4b, 002d1f4, d5b55f7.
+- [x] `daedalus-kernels` on every backend, wired into every call site: 6f9bd4b, 002d1f4, d5b55f7,
+      c27f9c9, c797a47, 3196a4e, 1a6e8de. Committed matrix: pass 112, impossible 18, untested 4.
+- [x] The `portable_simd` column on nightly-2026-10-15: 80eb8cb.
+- [x] NEON32 CRC-32 by `vmull.p8` folding: 50093a9. Its default is open above.
+- [x] Core-tuned variants as their own matrix columns: 03cb4a8.
+- [x] `GpuKernels` on V3D, compute and fragment forms: d5b55f7, a08550b, evidence refreshed at
+      f4ea43a. All bit-exact. Delivered cost, all copies included, against the A76: compute 3.7x
+      (`f16_to_f32`) to 93x (`crc32`) slower; fragment 1.2x (`f16_to_f32`, 14.3 vs 11.9 ms) to 9x
+      slower, and 1.1-3.5x faster than compute. The pass alone, without its copies, beats the A76 only
+      on `f16_to_f32` (8.1 vs 11.9 ms) and `rgb_to_rgba` (8.05 vs 8.40 ms). The copy engine is 1.09 vs 1.27 ms per 4 MiB.
+
+### Earlier release mechanics
+
+- [x] Internal API dedup pass: 9561d9b..f6299ad.
+- [x] Migration guide and first semver report: b422ec0, 4d24649.
+
+### Host integration
+
+- [x] Native Rust `cdylib` plugin loading: 3b4abe8.
+- [x] Declarative feature classification (`[package.metadata.daedalus]`): 8f9968e.
+- [x] `GraphDocument` and its JSON Schema: f181802, 4420c46.
+- [x] Host graph APIs (typed ports, inspection, `drive`): 1e38a37, 9ba8b01.
+- [x] Lean presets; executor pool opt-in: 5856708.
+- [x] `FfiHost` one-call package host: af12814.
+- [x] dmabuf zero-copy GPU import, fences and NV12: 007a200, 384eea1.
+- [x] `external_frame_source` example: 1209795.
+- [x] Daedalus never depends on a camera library; library-owned integration features: 603b56b.
+- [x] Deterministic port keys for foreign types, boundary type check: 1832ae7.
+- [x] Foreign (host-owned) types, `foreign_interface!`: 11fe8de.
+- [x] Generic runtime key lookups, `type_index`: de1d95e.
+- [x] Optional inputs: 26fbe0f.
+- [x] Cross-tick joins, `fire = "all"`: 5133cc0.
+- [x] Typed host ports in embedded graphs: 0cd2d82.
+- [x] Stable plugin handler path: a852ed1.
+- [x] Graph JSON Schema drift, enum lists from `ALL`: 0c55a31.
+- [x] Enum config ports: 5d2e5a1.
+- [x] Ids from other macros: c57d28e.
+- [x] Macro leaf keys through the installing registry: c1b1902.
+- [x] Dynamic plugin dependencies: 9d183ef.
+- [x] One key per builtin number: 632a82e.
+- [x] Direct routes deliver const inputs: c487ae3.
+- [x] Typed nodes with three reference parameters: d267d3b.
+- [x] `export_plugin!` boundary contracts in the schema: commit not attributed (the field is older
+      than the item, 509283e).
+
+### Performance
+
+- [x] Process-global boundary contract registry removed: 3aa0f30, 233f947.
+- [x] Host bridge per-port state, latest-only slots: f881d93.
+- [x] Executor direct bridge handles, allocation-free ticks (`hot_path_allocations`): 3aa0f30.
+- [x] Shared `PolicyQueue<T>`: 9ee678c.
+- [x] Generated handlers allocate nothing per frame: d75e60f.
+- [x] Java and C++ SDK integer widths: 20dfb33.
+- [x] `u64` on the FFI wire: 73d6524.
+- [x] Owned constants decode once: 8c884d5.
+- [x] Benchmarks and `bench.yml`: f881d93, 595a1b0.
+
+### CI, examples and daemon
+
+- [x] CI on pushes to `dev`, with its cache: 7c70fed.
+- [x] `ci.sh smoke` and the `09_hosts` examples: f32c804, a3581e0.
+- [x] Docs match the tree: 17685f6.
+- [x] Daemon tests: commit not attributed (the tooling is 24283de).
+
+### Code health
+
+- [x] `parking_lot` outside `core`/`transport`: 59e1e70.
+- [x] Oversized files split, strict file-size check: 81df42c, 47fe6e9.
+- [x] Duplicate code consolidated: 825c007, 6dfc13b, 349674c.
+- [x] Dead code removed: b523513, 62e7757.
+- [x] `--all-features` workspace builds link: dada0fb.
+- [x] CI aarch64 check, lean-preset tests, `ci.sh` subcommands: 595a1b0.
+- [x] Portability tier 1 and the `portability` job: f088918, add2024, 2c37564.
+- [x] Bugs fixed: schema round trip 6dfc13b, `Coalesce` 96cb7af. The other bugs in that entry
+      (unknown wgpu formats, shared freshness watermarks, CI feature checks) are not attributed.
+
+### Validation and tooling
+
+- [x] v3dv validation on a CM5: 1512568, abe7ad4, d02276e.
+- [x] Frame-path overhead on the CM5: 4939e42, 3367fb2 (`docs/benchmarks-log.md`). Detector
+      `graph_overhead` p50 7.2 µs unfused, 6.8 µs fused.
+- [x] First GitHub Actions run of `ci.yml`: run 40175816440.
+- [x] `bench.yml` on `dev`, baseline on the same runner: 595a1b0 and later; see the workflow.
+- [x] Tags `v2.0.0` (8946223) and `v3.0.0` (e7e88fc); dev versioning.
+- [x] Faster local builds and `ci.sh -j`: f7edb7d.
+- [x] Public API review: 38cbdd9, b25b304 and the series around them (`docs/api-review.md`).
+- [x] GPU-side fence wait with a timeout, compressed modifiers: 6b5ec57, 9dfeda1.
+- [x] Configurable fence wait, `SyncFd` by default: a03a1e0.
+- [x] Hardware tests under the validation layers: fc50a8a.
+- [x] Parallel test runs segfault; driver setup serialized: documented in 05633f0.
+- [x] `NodeRecovery::Retry` with by-value inputs: 89836d1.
+- [x] GPU fallback with `GpuBackend::Cpu`: 4939d8a.
+- [x] Host-created Vulkan instances, `with_driver_lock`: 888aaca.
+
+### Portability (tier 2)
+
+Tier 1 and tier 2 are done; see "Portability" in `docs/development.md`.
+
+- [x] Lock backend for runtime and engine: bf3b085.
+- [x] `threads` feature: 19b6925.
+- [x] Clock injection, lineage clock: 7d0bbc8.
+- [x] Non-blocking host bridge without `std`: 9ba8b01 (`InboundWaiter`), bf3b085.
+- [x] `alloc`-only runtime: 2c37564.
+- [x] Targets without compare-and-swap, runtime and engine included: d81cee9.
+- [x] wasm host glue: 624bab5.
+
+### MCU profile
+
+- [x] Host plan compiler, device crate, blink example, size budgets: c7b3989.
+- [x] Live parameters: 0cb75f6, 1bfd08c.
+- [x] Runtime-loaded plans: 0cb75f6, 1bfd08c; blob CRC-32 in c06a35e.
