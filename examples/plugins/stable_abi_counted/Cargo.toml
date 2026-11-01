@@ -1,0 +1,19 @@
+[package]
+name = "daedalus-plugins-stable-abi-counted"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Only a `cdylib`: its global allocator must not reach a binary that links it.
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+doctest = false
+test = false
+
+[dependencies]
+daedalus-plugins-stable-abi = { workspace = true, features = ["dylib"] }

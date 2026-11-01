@@ -3,7 +3,7 @@
 //! A plugin crate builds as a `cdylib` and invokes [`export_plugin!`](crate::export_plugin)
 //! on a `Plugin + Default` type. A host loads the resulting `.so` / `.dylib` / `.dll` with
 //! [`PluginLibrary::load`], inspects it, and installs it into a
-//! [`PluginRegistry`](crate::PluginRegistry) with [`PluginLibrary::install_into`]. Both sides
+//! [`PluginRegistry`] with [`PluginLibrary::install_into`]. Both sides
 //! enable the `dylib-plugins` feature.
 //!
 //! Plugins installed through the stable path can be reloaded in place for development loops
@@ -60,7 +60,7 @@
 //! ([`BoundaryTypeTable`](crate::dylib::BoundaryTypeTable)) of every type key the plugin
 //! consumes, produces or registers, with the Rust type behind it in the plugin's build
 //! (`TypeId` hash, size, align, type name; see
-//! [`PluginRegistry::boundary_types`](crate::PluginRegistry::boundary_types)).
+//! [`PluginRegistry::boundary_types`]).
 //! [`PluginLibrary::install_into`] compares it with the host registry's entries for the same
 //! keys and, before installing anything, fails with
 //! [`PluginLibraryError::BoundaryTypeConflict`] listing every differing key. Keys the host does
@@ -69,9 +69,9 @@
 //!
 //! The error groups the conflicts by the crate defining each type
 //! ([`RustTypeIdentity::defining_crate`](crate::transport::RustTypeIdentity::defining_crate)).
-//! Crates that register their build ([`CrateBuildInfo`](crate::CrateBuildInfo): name, version,
+//! Crates that register their build ([`CrateBuildInfo`]: name, version,
 //! features; `#[plugin(.., crate_build)]` or
-//! [`PluginRegistry::register_crate_build`](crate::PluginRegistry::register_crate_build)) are
+//! [`PluginRegistry::register_crate_build`]) are
 //! also exported by the descriptor's `crate_builds` entry point
 //! ([`CrateBuildTable`](crate::dylib::CrateBuildTable)); the error then names the exact version
 //! and feature differences, and [`PluginLibrary::crate_build_diff`] lists them even when no type
@@ -110,7 +110,7 @@
 //! [`StableValue`](crate::dylib::StableValue)s (scalars inline, strings/bytes/nested values
 //! borrowed, frames as foreign handles) instead of Rust types, so no boundary type check applies
 //! (foreign interface and dependency checks still do). Only nodes install that way;
-//! [`InstallPath`](crate::dylib::InstallPath) reports and
+//! [`InstallPath`] reports and
 //! [`PluginLibrary::install_into_as`] chooses the path. See [`stable`](crate::dylib::stable) for
 //! the protocol and `docs/dynamic-plugins.md` ("Install Paths") for what crosses and what it
 //! costs.
@@ -159,7 +159,7 @@
 //!
 //! A library stays open while anything may run its code, and closes when the last of these
 //! drops: the [`PluginLibrary`], every stable install made from it (the registries and the
-//! graphs compiled from them), and the [`SharedBytes`](crate::SharedBytes) buffers it produced.
+//! graphs compiled from them), and the [`SharedBytes`] buffers it produced.
 //! Strings the host keeps from a plugin ([`PluginInfo`], boundary types, crate builds, foreign
 //! interface keys, the plugin id) are host copies. A foreign handle the plugin created that
 //! reaches the host through another port type pins the library (the host cannot track the

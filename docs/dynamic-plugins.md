@@ -148,6 +148,16 @@ per-call overhead by roughly a fifth to a third against version 1 (no per-call p
 search, UTF-8 validation, instance-map lock or context clone; reused call buffers; direct scalar
 decoding).
 
+**Allocations** (`--test dylib_stable_allocations`): after warm-up a tick through a stable
+plugin allocates no more on the host than the same graph with the plugin installed statically.
+The plugin side, counted by its own allocator (`examples/plugins/stable_abi_counted`), allocates
+only what its handler does: the output payload it pushes. Both sides keep their encoding
+`Arena`, call buffers and port lists across calls, and build decoded payloads in reused
+allocations (`PayloadSlot`), which are released after each call so a frame or buffer is never
+kept past it. `SharedBytes` and frames cross as handles both ways; borrowed `BYTES` values (a
+host or plugin that has no handle for them) and `Vec<u8>` ports are copied once, as the receiver
+cannot adopt the other side's allocation.
+
 ### Zero-Copy Bytes
 
 A `Vec<u8>` (or `String`) port copies its bytes once into the receiver's allocation: the host and

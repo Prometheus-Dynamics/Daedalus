@@ -20,8 +20,8 @@ use crate::runtime::io::NodeIo;
 use crate::runtime::plugins::{Plugin, PluginError, PluginInstallContext, PluginResult};
 use crate::runtime::{ExecutionContext, NodeError};
 use crate::transport::{
-    ForeignInterface, ForeignInterfaceInfo, FrameInterface, Payload, Residency, TypeKey,
-    frame_handle_from_v2, is_frame_v2,
+    ForeignInterface, ForeignInterfaceInfo, FrameInterface, Payload, PayloadSlot, Residency,
+    TypeKey, frame_handle_from_v2, is_frame_v2,
 };
 
 /// One loaded build of a plugin: its stable entry points and the library they live in. Node
@@ -279,10 +279,15 @@ struct Instance {
     inputs: Vec<StableInput>,
     /// Empty between calls.
     pushed: Vec<(u32, Payload)>,
+    /// What the inputs borrow; empty between calls.
+    arena: Arena,
+    /// Scalar outputs' payload allocations, by output port (a scalar holds no resource, so
+    /// keeping the last one until the next call holds nothing back).
+    scalars: Vec<PayloadSlot>,
 }
 
-// Safety: `inputs` holds pointers only during a call (it is empty between calls), and the
-// plugin handle is only used by the call holding the instance.
+// Safety: `inputs` and `arena` hold pointers only during a call (they are empty between calls),
+// and the plugin handle is only used by the call holding the instance.
 unsafe impl Send for Instance {}
 // Safety: see above; shared references never touch the plugin state.
 unsafe impl Sync for Instance {}
@@ -328,30 +333,46 @@ impl HostNode {
             resolved: Vec::new(),
             inputs: Vec::new(),
             pushed: Vec::new(),
+            arena: Arena::default(),
+            scalars: Vec::new(),
         })
     }
 
     fn call(&self, instance: &mut Instance, io: &mut NodeIo) -> Result<(), NodeError> {
+        let result = self.invoke(instance, io);
+        // Whatever the outcome, nothing the call lent outlives it; the buffers stay.
+        instance.inputs.clear();
+        instance.arena.clear();
+        instance.pushed.clear();
+        result
+    }
+
+    fn invoke(&self, instance: &mut Instance, io: &mut NodeIo) -> Result<(), NodeError> {
         let Instance {
             generation,
             handle,
             resolved,
             inputs,
             pushed,
+            arena,
+            scalars,
         } = instance;
-        let mut arena = Arena::default();
         for (position, (port, payload)) in io.inputs().enumerate() {
             let (index, fanin) = self.resolve_input(resolved, position, port)?;
             inputs.push(StableInput {
                 port: index,
                 fanin,
-                value: self.encode_input(port.as_str(), &payload.inner, &mut arena)?,
+                value: self.encode_input(port.as_str(), &payload.inner, arena)?,
             });
+        }
+        if scalars.len() < self.outputs.len() {
+            scalars.resize_with(self.outputs.len(), PayloadSlot::default);
         }
         let mut outputs = Outputs {
             node: self,
             generation,
             pushed,
+            scalars,
             error: None,
         };
         let sink = StableOutputSink {
@@ -359,8 +380,8 @@ impl HostNode {
             push: Some(push_output),
         };
         let mut message: Option<String> = None;
-        // Safety: the inputs borrow `io` and `arena`, both alive for the call; the sinks point
-        // to locals that outlive it; the handle is this instance's.
+        // Safety: the inputs borrow `io` and the arena, both alive for the call; the sinks
+        // point to locals that outlive it; the handle is this instance's.
         let code = unsafe {
             (generation.handlers.invoke)(
                 *handle,
@@ -370,8 +391,6 @@ impl HostNode {
                 string_sink(&mut message),
             )
         };
-        inputs.clear();
-        drop(arena);
         let Outputs { error, .. } = outputs;
         if code == status::OK {
             for (port, payload) in pushed.drain(..) {
@@ -379,7 +398,6 @@ impl HostNode {
             }
             return Ok(());
         }
-        pushed.clear();
         Err(self.error(code, error.or(message)))
     }
 
@@ -491,6 +509,7 @@ struct Outputs<'a> {
     node: &'a HostNode,
     generation: &'a Arc<Generation>,
     pushed: &'a mut Vec<(u32, Payload)>,
+    scalars: &'a mut [PayloadSlot],
     error: Option<String>,
 }
 
@@ -523,7 +542,7 @@ impl Outputs<'_> {
         } else if port.shared_bytes && value.tag == tag::BYTES {
             Payload::owned(key, SharedBytes::from(unsafe { value.as_bytes() }))
         } else if let Some(scalar) = port.scalar {
-            unsafe { builtin::decode(scalar, key, value) }?
+            unsafe { builtin::decode(scalar, key, &mut self.scalars[index as usize], value) }?
         } else {
             Payload::owned(key, unsafe { to_value(value) }?)
         };

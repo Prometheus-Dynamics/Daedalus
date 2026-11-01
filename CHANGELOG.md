@@ -353,6 +353,20 @@ plugin ABI and does not load.
 
 ### Changed
 
+- **Stable-ABI plugin calls stop allocating per call on both sides.** The host and the plugin keep
+  their `Arena` (now `Arena::clear`, which keeps its buffers and boxes) and call buffers across
+  calls. The plugin drains its outputs into the pooled port list (`NodeIo::drain_outputs`) and
+  reuses its handler io's environment (`NodeIo::shared_env` / `with_env`). Decoded inputs, and the
+  host's decoded scalar outputs, are built in reused allocations (`transport::PayloadSlot`). A tick
+  through a stable plugin now allocates no more on the host than the static install does: 2, 2 and 1
+  allocations for scalars, `SharedBytes` and `SharedFrame` against 3, 2 and 1, where it was 3, 4
+  and 3. The plugin side allocates only its handler's output payload, where it was 5, 6 and 4
+  (`--test dylib_stable_allocations`, counted in the plugin by `examples/plugins/stable_abi_counted`).
+  `NodeIo::take_owned` clones a shared input without first boxing it on the refused move.
+  `SharedBytes::default()` no longer allocates. A failed or panicking call no longer leaves the
+  host's input list or the plugin's decoded inputs behind: a frame the plugin held when it panicked
+  is released.
+
 - **Tiled dmabuf imports take 1 to 4 memory planes, whatever the format's plane count.**
   `ExternalFrameDescriptor::validate` required at least one plane per format plane, so NV12 in
   v3dv's Broadcom UIF layout (one memory plane on a Raspberry Pi 5 / CM5) was rejected before the

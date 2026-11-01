@@ -12,11 +12,13 @@ use crate::{
 mod boundary;
 mod foreign;
 mod residency;
+mod slot;
 mod storage;
 
 pub use boundary::BoundaryPayloadError;
 use residency::ResidencyCache;
 pub use residency::ResidencyCacheKey;
+pub use slot::PayloadSlot;
 pub use storage::PayloadStorage;
 use storage::{
     ArcValue, BytesStorage, TypedStorage, arc_storage, into_arc_value, typed_arc, typed_ref,

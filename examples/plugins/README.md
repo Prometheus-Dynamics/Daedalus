@@ -14,6 +14,8 @@ Standalone plugin-style crates used as copyable examples and integration fixture
 - `stable_abi`: a plugin whose `cdylib` claims another toolchain, so hosts install and run it
   through the stable handler path; its `reload-v2` / `reload-incompatible` features are the
   rebuilt fixtures of the facade's `dylib_reload` test.
+- `stable_abi_counted`: the `stable_abi` plugin as a `cdylib` with a counting allocator, so
+  the facade's `dylib_stable_allocations` test can count what the plugin side allocates.
 
 Build one directly with Cargo, for example:
 

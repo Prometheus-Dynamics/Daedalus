@@ -203,19 +203,72 @@ unsafe fn raw_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 }
 
 /// Owns the nested arrays (and temporary values) a [`StableValue`] tree borrows. Moving the
-/// arena does not move what it owns, so pointers into it stay valid until it is dropped.
+/// arena does not move what it owns, so pointers into it stay valid until it is dropped or
+/// [cleared](Arena::clear). A cleared arena keeps its buffers and boxes for what it encodes
+/// next, so one kept across calls stops allocating once warm.
+#[derive(Default)]
+pub struct Arena {
+    held: Parts,
+    /// Emptied by [`Arena::clear`], reused before allocating.
+    spare: Parts,
+}
+
 #[derive(Default)]
 // Boxed so their addresses survive the vectors growing.
 #[allow(clippy::vec_box)]
-pub struct Arena {
+struct Parts {
     values: Vec<Vec<StableValue>>,
     fields: Vec<Vec<StableField>>,
     enums: Vec<Box<StableEnum>>,
     owned: Vec<Box<Value>>,
-    handles: Vec<Box<ForeignHandle>>,
+    /// `None` once cleared.
+    handles: Vec<Box<Option<ForeignHandle>>>,
+}
+
+/// `value` in a spare box, or a new one.
+#[allow(clippy::vec_box)]
+fn boxed<T>(spare: &mut Vec<Box<T>>, value: T) -> Box<T> {
+    match spare.pop() {
+        Some(mut cell) => {
+            *cell = value;
+            cell
+        }
+        None => Box::new(value),
+    }
 }
 
 impl Arena {
+    /// Drop what the arena holds (values and handles it lent) and keep its buffers and boxes
+    /// for reuse. Every [`StableValue`] it encoded becomes dangling.
+    pub fn clear(&mut self) {
+        let Parts {
+            values,
+            fields,
+            enums,
+            owned,
+            handles,
+        } = &mut self.held;
+        self.spare.values.extend(values.drain(..).map(|mut items| {
+            items.clear();
+            items
+        }));
+        self.spare.fields.extend(fields.drain(..).map(|mut items| {
+            items.clear();
+            items
+        }));
+        self.spare.enums.append(enums);
+        self.spare.owned.extend(owned.drain(..).map(|mut value| {
+            *value = Value::Unit;
+            value
+        }));
+        self.spare
+            .handles
+            .extend(handles.drain(..).map(|mut handle| {
+                *handle = None;
+                handle
+            }));
+    }
+
     /// Lend `payload`'s foreign value: its carried handle (passed on; flagged
     /// [`tag::HANDLE_FROM_SENDER`] when this build created it, e.g. a `SharedFrame` the node
     /// made), or (for an owner payload its provider retyped) a handle wrapping the owner value,
@@ -245,19 +298,19 @@ impl Arena {
         residency: Residency,
         from_sender: bool,
     ) -> StableValue {
-        let handle = Box::new(handle);
-        let ptr: *const ForeignHandle = &*handle;
-        self.handles.push(handle);
-        // Safety: the box lives (unmoved) as long as the arena.
+        let handle = boxed(&mut self.spare.handles, Some(handle));
+        let ptr: *const ForeignHandle = handle.as_ref().as_ref().expect("just set");
+        self.held.handles.push(handle);
+        // Safety: the box lives (unmoved) until the arena is dropped or cleared.
         StableValue::handle(unsafe { &*ptr }, residency, from_sender)
     }
 
     /// Keep `value` alive with the arena and encode it.
     pub fn encode_owned(&mut self, value: Value) -> StableValue {
-        let value = Box::new(value);
+        let value = boxed(&mut self.spare.owned, value);
         let ptr: *const Value = &*value;
-        self.owned.push(value);
-        // Safety: the box lives (unmoved) as long as the arena.
+        self.held.owned.push(value);
+        // Safety: the box lives (unmoved) until the arena is dropped or cleared.
         self.encode(unsafe { &*ptr })
     }
 
@@ -278,41 +331,46 @@ impl Arena {
                 value
             }
             Value::Struct(fields) => {
-                let fields: Vec<StableField> = fields
-                    .iter()
-                    .map(|field| StableField {
+                let mut encoded = self.spare.fields.pop().unwrap_or_default();
+                for field in fields {
+                    encoded.push(StableField {
                         name_ptr: field.name.as_ptr(),
                         name_len: field.name.len(),
                         value: self.encode(&field.value),
-                    })
-                    .collect();
+                    });
+                }
+                let fields = encoded;
                 let value = StableValue {
                     tag: tag::STRUCT,
                     scalar: 0,
                     ptr: fields.as_ptr().cast(),
                     len: fields.len(),
                 };
-                self.fields.push(fields);
+                self.held.fields.push(fields);
                 value
             }
             Value::Enum(variant) => {
                 let payload = match &variant.value {
                     Some(inner) => {
                         let inner = self.encode(inner);
-                        let cell = vec![inner];
+                        let mut cell = self.spare.values.pop().unwrap_or_default();
+                        cell.push(inner);
                         let ptr = cell.as_ptr();
-                        self.values.push(cell);
+                        self.held.values.push(cell);
                         ptr
                     }
                     None => std::ptr::null(),
                 };
-                let stable = Box::new(StableEnum {
-                    name_ptr: variant.name.as_ptr(),
-                    name_len: variant.name.len(),
-                    value: payload,
-                });
+                let stable = boxed(
+                    &mut self.spare.enums,
+                    StableEnum {
+                        name_ptr: variant.name.as_ptr(),
+                        name_len: variant.name.len(),
+                        value: payload,
+                    },
+                );
                 let ptr: *const StableEnum = &*stable;
-                self.enums.push(stable);
+                self.held.enums.push(stable);
                 StableValue {
                     tag: tag::ENUM,
                     scalar: 0,
@@ -324,14 +382,19 @@ impl Arena {
     }
 
     fn list<'v>(&mut self, tag: u32, items: impl Iterator<Item = &'v Value>) -> StableValue {
-        let items: Vec<StableValue> = items.map(|item| self.encode(item)).collect();
+        let mut encoded = self.spare.values.pop().unwrap_or_default();
+        for item in items {
+            let value = self.encode(item);
+            encoded.push(value);
+        }
+        let items = encoded;
         let value = StableValue {
             tag,
             scalar: 0,
             ptr: items.as_ptr().cast(),
             len: items.len(),
         };
-        self.values.push(items);
+        self.held.values.push(items);
         value
     }
 }

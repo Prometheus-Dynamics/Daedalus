@@ -9,7 +9,7 @@ use super::value::{StableValue, tag, to_value};
 use crate::data::model::{TypeExpr, Value, ValueType};
 use crate::data::typing::coerce_builtin_const_value;
 use crate::registry::typeexpr_transport_key;
-use crate::transport::{Payload, TypeKey};
+use crate::transport::{Payload, PayloadSlot, TypeKey};
 
 /// Encode a builtin Rust value, borrowing strings and bytes from `any`.
 pub fn encode(any: &dyn Any) -> Option<StableValue> {
@@ -66,98 +66,107 @@ pub fn scalar_of(ty: &TypeExpr, key: &TypeKey) -> Option<ValueType> {
 unsafe fn decode_direct(
     scalar: ValueType,
     key: &TypeKey,
+    slot: &mut PayloadSlot,
     value: &StableValue,
 ) -> Option<Result<Payload, String>> {
-    fn owned<T: Send + Sync + 'static>(key: &TypeKey, value: T) -> Option<Result<Payload, String>> {
-        Some(Ok(Payload::owned(key.clone(), value)))
-    }
-    fn int<T: TryFrom<i64> + Send + Sync + 'static>(
+    fn owned<T: Default + Send + Sync + 'static>(
+        slot: &mut PayloadSlot,
         key: &TypeKey,
-        scalar: ValueType,
-        value: i64,
+        value: T,
     ) -> Option<Result<Payload, String>> {
-        Some(
-            T::try_from(value)
-                .map(|value| Payload::owned(key.clone(), value))
-                .map_err(|_| format!("expected {}, found {value}", scalar.rust_name())),
-        )
+        Some(Ok(slot.owned(key.clone(), value)))
     }
     let bits = value.scalar;
+    let int = bits as i64;
     // Safety (slices): forwarded from the caller.
     match (scalar, value.tag) {
         (ValueType::String, tag::STRING) => {
-            Some(unsafe { value.as_str() }.map(|text| Payload::owned(key.clone(), text.to_owned())))
+            Some(unsafe { value.as_str() }.map(|text| slot.owned(key.clone(), text.to_owned())))
         }
-        (ValueType::Bytes, tag::BYTES) => owned(key, unsafe { value.as_bytes() }.to_vec()),
-        (ValueType::Bool, tag::BOOL) => owned(key, bits != 0),
-        (ValueType::Float, tag::FLOAT) => owned(key, f64::from_bits(bits)),
-        (ValueType::F32, tag::FLOAT) => owned(key, f64::from_bits(bits) as f32),
-        (ValueType::U64, tag::UINT) => owned(key, bits),
+        (ValueType::Bytes, tag::BYTES) => owned(slot, key, unsafe { value.as_bytes() }.to_vec()),
+        (ValueType::Bool, tag::BOOL) => owned(slot, key, bits != 0),
+        (ValueType::Float, tag::FLOAT) => owned(slot, key, f64::from_bits(bits)),
+        (ValueType::F32, tag::FLOAT) => owned(slot, key, f64::from_bits(bits) as f32),
+        (ValueType::U64, tag::UINT) => owned(slot, key, bits),
         (ValueType::USize, tag::UINT) => Some(
             usize::try_from(bits)
-                .map(|value| Payload::owned(key.clone(), value))
+                .map(|value| slot.owned(key.clone(), value))
                 .map_err(|err| err.to_string()),
         ),
-        (_, tag::INT) => {
-            let int_value = bits as i64;
-            match scalar {
-                ValueType::Int => owned(key, int_value),
-                ValueType::I32 => int::<i32>(key, scalar, int_value),
-                ValueType::U32 => int::<u32>(key, scalar, int_value),
-                ValueType::I16 => int::<i16>(key, scalar, int_value),
-                ValueType::U16 => int::<u16>(key, scalar, int_value),
-                ValueType::I8 => int::<i8>(key, scalar, int_value),
-                ValueType::U8 => int::<u8>(key, scalar, int_value),
-                ValueType::U64 => int::<u64>(key, scalar, int_value),
-                ValueType::ISize => int::<isize>(key, scalar, int_value),
-                ValueType::USize => int::<usize>(key, scalar, int_value),
-                _ => None,
-            }
-        }
+        (_, tag::INT) => match scalar {
+            ValueType::Int => owned(slot, key, int),
+            ValueType::I32 => int_in::<i32>(slot, key, scalar, int),
+            ValueType::U32 => int_in::<u32>(slot, key, scalar, int),
+            ValueType::I16 => int_in::<i16>(slot, key, scalar, int),
+            ValueType::U16 => int_in::<u16>(slot, key, scalar, int),
+            ValueType::I8 => int_in::<i8>(slot, key, scalar, int),
+            ValueType::U8 => int_in::<u8>(slot, key, scalar, int),
+            ValueType::U64 => int_in::<u64>(slot, key, scalar, int),
+            ValueType::ISize => int_in::<isize>(slot, key, scalar, int),
+            ValueType::USize => int_in::<usize>(slot, key, scalar, int),
+            _ => None,
+        },
         _ => None,
     }
 }
 
-/// A payload holding the Rust type of `scalar` under `key`.
+/// `value` as `T` in `slot`, or the range error.
+fn int_in<T: TryFrom<i64> + Default + Send + Sync + 'static>(
+    slot: &mut PayloadSlot,
+    key: &TypeKey,
+    scalar: ValueType,
+    value: i64,
+) -> Option<Result<Payload, String>> {
+    Some(
+        T::try_from(value)
+            .map(|value| slot.owned(key.clone(), value))
+            .map_err(|_| format!("expected {}, found {value}", scalar.rust_name())),
+    )
+}
+
+/// A payload holding the Rust type of `scalar` under `key`, built in `slot`'s allocation when
+/// it is free.
 ///
 /// # Safety
 /// Every pointer in `value` must be valid for the call.
 pub unsafe fn decode(
     scalar: ValueType,
     key: TypeKey,
+    slot: &mut PayloadSlot,
     value: &StableValue,
 ) -> Result<Payload, String> {
-    if let Some(payload) = unsafe { decode_direct(scalar, &key, value) } {
+    if let Some(payload) = unsafe { decode_direct(scalar, &key, slot, value) } {
         return payload;
     }
     // Safety: forwarded from the caller.
     let value = unsafe { to_value(value) }?;
-    fn typed<T: Send + Sync + 'static>(
+    fn typed<T: Default + Send + Sync + 'static>(
         key: TypeKey,
         scalar: ValueType,
+        slot: &mut PayloadSlot,
         value: &Value,
     ) -> Result<Payload, String> {
         coerce_builtin_const_value::<T>(value)
-            .map(|typed| Payload::owned(key, typed))
+            .map(|typed| slot.owned(key, typed))
             .ok_or_else(|| format!("expected {}, found {value:?}", scalar.rust_name()))
     }
     match scalar {
-        ValueType::Unit => typed::<()>(key, scalar, &value),
-        ValueType::Bool => typed::<bool>(key, scalar, &value),
-        ValueType::I8 => typed::<i8>(key, scalar, &value),
-        ValueType::I16 => typed::<i16>(key, scalar, &value),
-        ValueType::I32 => typed::<i32>(key, scalar, &value),
-        ValueType::Int => typed::<i64>(key, scalar, &value),
-        ValueType::ISize => typed::<isize>(key, scalar, &value),
-        ValueType::U8 => typed::<u8>(key, scalar, &value),
-        ValueType::U16 => typed::<u16>(key, scalar, &value),
-        ValueType::U32 => typed::<u32>(key, scalar, &value),
-        ValueType::U64 => typed::<u64>(key, scalar, &value),
-        ValueType::USize => typed::<usize>(key, scalar, &value),
-        ValueType::F32 => typed::<f32>(key, scalar, &value),
-        ValueType::Float => typed::<f64>(key, scalar, &value),
-        ValueType::String => typed::<String>(key, scalar, &value),
-        ValueType::Bytes => typed::<Vec<u8>>(key, scalar, &value),
+        ValueType::Unit => typed::<()>(key, scalar, slot, &value),
+        ValueType::Bool => typed::<bool>(key, scalar, slot, &value),
+        ValueType::I8 => typed::<i8>(key, scalar, slot, &value),
+        ValueType::I16 => typed::<i16>(key, scalar, slot, &value),
+        ValueType::I32 => typed::<i32>(key, scalar, slot, &value),
+        ValueType::Int => typed::<i64>(key, scalar, slot, &value),
+        ValueType::ISize => typed::<isize>(key, scalar, slot, &value),
+        ValueType::U8 => typed::<u8>(key, scalar, slot, &value),
+        ValueType::U16 => typed::<u16>(key, scalar, slot, &value),
+        ValueType::U32 => typed::<u32>(key, scalar, slot, &value),
+        ValueType::U64 => typed::<u64>(key, scalar, slot, &value),
+        ValueType::USize => typed::<usize>(key, scalar, slot, &value),
+        ValueType::F32 => typed::<f32>(key, scalar, slot, &value),
+        ValueType::Float => typed::<f64>(key, scalar, slot, &value),
+        ValueType::String => typed::<String>(key, scalar, slot, &value),
+        ValueType::Bytes => typed::<Vec<u8>>(key, scalar, slot, &value),
     }
 }
 
@@ -174,16 +183,46 @@ mod tests {
             text.as_ptr(),
             "borrowed, not copied"
         );
-        let payload = unsafe { decode(ValueType::String, "string".into(), &encoded) }.unwrap();
+        let payload = unsafe {
+            decode(
+                ValueType::String,
+                "string".into(),
+                &mut PayloadSlot::default(),
+                &encoded,
+            )
+        }
+        .unwrap();
         assert_eq!(payload.get_ref::<String>().map(String::as_str), Some("hi"));
 
-        let payload =
-            unsafe { decode(ValueType::I32, "i32".into(), &encode(&7_u8).unwrap()) }.unwrap();
+        let payload = unsafe {
+            decode(
+                ValueType::I32,
+                "i32".into(),
+                &mut PayloadSlot::default(),
+                &encode(&7_u8).unwrap(),
+            )
+        }
+        .unwrap();
         assert_eq!(payload.get_ref::<i32>(), Some(&7));
         let big = encode(&u64::MAX).unwrap();
-        let payload = unsafe { decode(ValueType::U64, "u64".into(), &big) }.unwrap();
+        let payload = unsafe {
+            decode(
+                ValueType::U64,
+                "u64".into(),
+                &mut PayloadSlot::default(),
+                &big,
+            )
+        }
+        .unwrap();
         assert_eq!(payload.get_ref::<u64>(), Some(&u64::MAX));
-        let err = unsafe { decode(ValueType::I8, "i8".into(), &encode(&1000_i64).unwrap()) };
+        let err = unsafe {
+            decode(
+                ValueType::I8,
+                "i8".into(),
+                &mut PayloadSlot::default(),
+                &encode(&1000_i64).unwrap(),
+            )
+        };
         assert!(err.is_err());
         assert!(encode(&Value::Unit).is_none());
     }

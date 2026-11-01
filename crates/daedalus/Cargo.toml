@@ -236,6 +236,11 @@ path = "tests/dylib_frames.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_stable_allocations"
+path = "tests/dylib_stable_allocations.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_frames_overhead"
 path = "tests/dylib_frames_overhead.rs"
 required-features = ["engine", "dylib-plugins"]

@@ -812,6 +812,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-plugins-stable-abi-counted"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-plugins-stable-abi",
+]
+
+[[package]]
 name = "daedalus-registry"
 version = "3.0.1-dev"
 dependencies = [

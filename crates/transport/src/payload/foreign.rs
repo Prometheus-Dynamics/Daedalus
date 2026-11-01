@@ -20,10 +20,11 @@ use crate::{
 };
 
 #[derive(Debug)]
-struct ForeignStorage {
-    handle: ForeignHandle,
+pub(super) struct ForeignStorage {
+    /// `None` only in a released [`super::PayloadSlot`], which no payload sees.
+    pub(super) handle: Option<ForeignHandle>,
     /// This build created the handle (see [`Payload::foreign_local`]).
-    local: bool,
+    pub(super) local: bool,
 }
 
 impl PayloadStorage for ForeignStorage {
@@ -36,11 +37,13 @@ impl PayloadStorage for ForeignStorage {
     }
 
     fn value_any(&self) -> Option<&dyn Any> {
-        Some(&self.handle)
+        self.handle.as_ref().map(|handle| handle as &dyn Any)
     }
 
     fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        Some(&self.handle)
+        self.handle
+            .as_ref()
+            .map(|handle| handle as &(dyn Any + Send + Sync))
     }
 
     fn rust_type_name(&self) -> Option<&'static str> {
@@ -48,7 +51,7 @@ impl PayloadStorage for ForeignStorage {
     }
 
     fn foreign_handle(&self) -> Option<&ForeignHandle> {
-        Some(&self.handle)
+        self.handle.as_ref()
     }
 
     fn foreign_handle_is_local(&self) -> bool {
@@ -178,7 +181,10 @@ impl Payload {
     ) -> Self {
         Self {
             type_key,
-            storage: arc_dyn!(ForeignStorage { handle, local }),
+            storage: arc_dyn!(ForeignStorage {
+                handle: Some(handle),
+                local
+            }),
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),

@@ -33,6 +33,7 @@ members = [
     "examples/plugins/foreign_consumer",
     "examples/plugins/dependent",
     "examples/plugins/stable_abi",
+    "examples/plugins/stable_abi_counted",
     "examples/wasm_smoke",
     "examples/nostd_smoke",
     "examples/mcu_blink",

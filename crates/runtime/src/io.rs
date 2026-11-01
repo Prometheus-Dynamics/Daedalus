@@ -198,6 +198,18 @@ impl NodeIo {
         }
     }
 
+    /// This io's environment (const coercers, type index, clock, output ports), to give later
+    /// calls' io through [`Self::with_env`] without building it again.
+    pub fn shared_env(&self) -> Option<Arc<NodeIoEnv>> {
+        self.env.clone()
+    }
+
+    /// Use `env` (from [`Self::shared_env`]) as this io's environment: one `Arc` clone.
+    pub fn with_env(mut self, env: Arc<NodeIoEnv>) -> Self {
+        self.env = Some(env);
+        self
+    }
+
     fn env(&self) -> Option<&NodeIoEnv> {
         self.env.as_deref()
     }
@@ -292,6 +304,12 @@ impl NodeIo {
 
     pub fn take_outputs(mut self) -> Vec<NodePort> {
         core::mem::take(&mut self.outputs)
+    }
+
+    /// Move out the pushed outputs, keeping the output list's buffer (it returns to the
+    /// thread's pool with the `NodeIo`), unlike [`Self::take_outputs`].
+    pub fn drain_outputs(&mut self) -> alloc::vec::Drain<'_, NodePort> {
+        self.outputs.drain(..)
     }
 
     /// Move out the payload pushed to `port`, if any, recycling the output list.
@@ -520,6 +538,10 @@ impl NodeIo {
             && let Some(value) = payload.get_ref::<Value>()
         {
             return self.coerce_value::<T>(value);
+        }
+        if !payload.is_storage_unique() {
+            // Shared: cloned, as `try_into_owned` would refuse it (after boxing the payload).
+            return payload.get_ref::<T>().map(cloner?);
         }
         match payload.try_into_owned::<T>() {
             Ok(value) => Some(value),

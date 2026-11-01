@@ -101,6 +101,8 @@ pub struct SharedBytes {
 
 #[derive(Clone)]
 enum Owner {
+    /// No buffer: the empty default, made without allocating.
+    Empty,
     Local(Arc<Vec<u8>>),
     /// Fields drop in order: the handle (released through its owner's code) before the
     /// keepalive that keeps that code loaded.
@@ -221,8 +223,13 @@ impl AsRef<[u8]> for SharedBytes {
 }
 
 impl Default for SharedBytes {
+    /// Empty bytes, without an allocation.
     fn default() -> Self {
-        Self::new(Vec::new())
+        Self {
+            ptr: std::ptr::NonNull::dangling().as_ptr(),
+            len: 0,
+            owner: Owner::Empty,
+        }
     }
 }
 

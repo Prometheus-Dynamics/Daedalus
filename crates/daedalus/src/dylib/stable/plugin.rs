@@ -14,10 +14,10 @@ use crate::runtime::executor::{CorrelatedPayload, NodeHandler, panic_message};
 use crate::runtime::handler_registry::HandlerRegistry;
 use crate::runtime::handles::PortId;
 use crate::runtime::host_bridge::ValueSerializerMap;
-use crate::runtime::io::{ConstCoercerMap, NodeIo};
+use crate::runtime::io::{ConstCoercerMap, NodeIo, NodeIoEnv};
 use crate::runtime::plugins::{Plugin, StableCodec};
 use crate::runtime::{ExecutionContext, NodeError, RuntimeNode, StateStore, TypeIndex};
-use crate::transport::{Payload, Residency, TypeKey};
+use crate::transport::{Payload, PayloadSlot, Residency, TypeKey};
 
 /// The plugin's stable runtime: built by the first `create` (again after `unload`), shared by
 /// every instance created from it.
@@ -80,8 +80,8 @@ struct StablePort {
     shared_bytes: bool,
 }
 
-/// One host node instance: its node, execution context (and with it node state) and the port
-/// ids its calls resolved. The host never runs one instance concurrently.
+/// One host node instance: its node, execution context (and with it node state), the port ids
+/// its calls resolved and what its calls reuse. The host never runs one instance concurrently.
 struct StableInstance {
     runtime: Arc<StableRuntime>,
     node: usize,
@@ -90,6 +90,12 @@ struct StableInstance {
     fanin: Vec<(u32, u32, PortId)>,
     /// The last call's outputs and their port indices, position by position.
     outputs: Vec<(PortId, u32)>,
+    /// The handler io's environment, shared by every call.
+    env: Arc<NodeIoEnv>,
+    /// The decoded inputs' payload allocations, position by position (released after a call).
+    slots: Vec<PayloadSlot>,
+    /// What the encoded outputs borrow; cleared after a call.
+    arena: Arena,
 }
 
 impl StableRuntime {
@@ -147,12 +153,20 @@ impl StableRuntime {
         if !node.has_handler {
             return Err(failed(format!("node `{}` has no handler", node.node.id)));
         }
+        let env = NodeIo::empty()
+            .with_const_coercers(Some(self.const_coercers.clone()))
+            .with_type_index(Some(self.types.clone()))
+            .shared_env()
+            .expect("set above");
         Ok(StableInstance {
             runtime: self.clone(),
             node: index as usize,
             ctx: ExecutionContext::detached(StateStore::default(), node.state_id.clone()),
             fanin: Vec::new(),
             outputs: Vec::new(),
+            env,
+            slots: Vec::new(),
+            arena: Arena::default(),
         })
     }
 
@@ -207,25 +221,46 @@ impl StableInstance {
         inputs: &[StableInput],
         outputs: StableOutputSink,
     ) -> Result<(), Failure> {
+        // Safety: forwarded from the caller.
+        let result = catch_unwind(AssertUnwindSafe(|| unsafe { self.run(inputs, outputs) }));
+        // Nothing the call decoded or encoded outlives it, a panic's included; the buffers stay
+        // for the next.
+        self.arena.clear();
+        self.slots.iter_mut().for_each(PayloadSlot::release);
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
+    /// # Safety
+    /// As [`Self::invoke`].
+    unsafe fn run(
+        &mut self,
+        inputs: &[StableInput],
+        outputs: StableOutputSink,
+    ) -> Result<(), Failure> {
         let failed = |message: String| (status::FAILED, message);
         let runtime = &*self.runtime;
         let node = &runtime.nodes[self.node];
-        // Decoded straight into the `NodeIo`'s pooled port buffer; the first failure stops it.
+        // Decoded straight into the `NodeIo`'s pooled port buffer, each payload in its
+        // position's slot; the first failure stops it.
         let mut failure = None;
         let fanin = &mut self.fanin;
-        let ports = inputs.iter().map_while(|input| {
-            // Safety: forwarded from the caller.
-            match unsafe { decode_port(node, fanin, input) } {
-                Ok(port) => Some(port),
-                Err(message) => {
-                    failure = Some((status::INVALID_INPUT, message));
-                    None
+        if self.slots.len() < inputs.len() {
+            self.slots.resize_with(inputs.len(), PayloadSlot::default);
+        }
+        let ports = inputs
+            .iter()
+            .zip(self.slots.iter_mut())
+            .map_while(|(input, slot)| {
+                // Safety: forwarded from the caller.
+                match unsafe { decode_port(node, fanin, slot, input) } {
+                    Ok(port) => Some(port),
+                    Err(message) => {
+                        failure = Some((status::INVALID_INPUT, message));
+                        None
+                    }
                 }
-            }
-        });
-        let mut io = NodeIo::from_inputs(ports)
-            .with_const_coercers(Some(runtime.const_coercers.clone()))
-            .with_type_index(Some(runtime.types.clone()));
+            });
+        let mut io = NodeIo::from_inputs(ports).with_env(self.env.clone());
         if let Some(failure) = failure {
             return Err(failure);
         }
@@ -237,8 +272,7 @@ impl StableInstance {
         let push = outputs
             .push
             .ok_or_else(|| failed("no output sink".into()))?;
-        let mut arena = Arena::default();
-        for (position, (port, payload)) in io.take_outputs().into_iter().enumerate() {
+        for (position, (port, payload)) in io.drain_outputs().enumerate() {
             let index =
                 output_index(&mut self.outputs, node, position, &port).ok_or_else(|| {
                     failed(format!(
@@ -247,9 +281,13 @@ impl StableInstance {
                     ))
                 })?;
             let value = runtime
-                .encode_output(&node.outputs[index as usize], &payload.inner, &mut arena)
+                .encode_output(
+                    &node.outputs[index as usize],
+                    &payload.inner,
+                    &mut self.arena,
+                )
                 .map_err(|err| failed(format!("output `{port}` of `{}`: {err}", node.node.id)))?;
-            // Safety: the host's sink for this call; the value borrows `payload` and `arena`.
+            // Safety: the host's sink for this call; the value borrows `payload` and the arena.
             if !unsafe { push(outputs.ctx, index, &value) } {
                 return Err(failed(format!("the host rejected output `{port}`")));
             }
@@ -285,6 +323,7 @@ fn output_index(
 unsafe fn decode_port(
     node: &StableNode,
     fanin: &mut Vec<(u32, u32, PortId)>,
+    slot: &mut PayloadSlot,
     input: &StableInput,
 ) -> Result<(PortId, CorrelatedPayload), String> {
     let port = node
@@ -292,7 +331,7 @@ unsafe fn decode_port(
         .get(input.port as usize)
         .ok_or_else(|| format!("node `{}` has no input {}", node.node.id, input.port))?;
     // Safety: forwarded from the caller.
-    let payload = unsafe { decode_input(port, &input.value) }
+    let payload = unsafe { decode_input(port, slot, &input.value) }
         .map_err(|err| format!("input `{}` of `{}`: {err}", port.name, node.node.id))?;
     let id = if input.fanin == NO_FANIN {
         port.id.clone()
@@ -312,7 +351,11 @@ unsafe fn decode_port(
 
 /// # Safety
 /// Every pointer in `value` must be valid for the call.
-unsafe fn decode_input(port: &StablePort, value: &StableValue) -> Result<Payload, String> {
+unsafe fn decode_input(
+    port: &StablePort,
+    slot: &mut PayloadSlot,
+    value: &StableValue,
+) -> Result<Payload, String> {
     let key = port.key.clone();
     // Safety (throughout): forwarded from the caller.
     if let Some(handle) = unsafe { value.as_handle() } {
@@ -320,18 +363,16 @@ unsafe fn decode_input(port: &StablePort, value: &StableValue) -> Result<Payload
             // The host's buffer, read in place; the host keeps its own code loaded.
             let bytes = SharedBytes::from_handle(handle.clone(), None)
                 .map_err(|err| format!("expected `daedalus:bytes`: {err:?}"))?;
-            return Ok(Payload::owned(key, bytes));
+            return Ok(slot.owned(key, bytes));
         }
-        return Ok(Payload::foreign(key, handle.clone(), value.residency()));
+        return Ok(slot.foreign(key, handle.clone(), value.residency(), false));
     }
     if port.shared_bytes && value.tag == super::tag::BYTES {
-        return Ok(Payload::owned(
-            key,
-            SharedBytes::from(unsafe { value.as_bytes() }),
-        ));
+        // Borrowed bytes (a host without a handle for them): copied, as nothing owns them.
+        return Ok(slot.owned(key, SharedBytes::from(unsafe { value.as_bytes() })));
     }
     if let Some(scalar) = port.scalar {
-        return unsafe { builtin::decode(scalar, key, value) };
+        return unsafe { builtin::decode(scalar, key, slot, value) };
     }
     let value = unsafe { to_value(value) }?;
     match &port.codec {
