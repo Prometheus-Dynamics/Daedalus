@@ -413,6 +413,17 @@ plugin ABI and does not load.
 
 ### Changed
 
+- **Breaks `ci.sh semver` reports against `v3.0.0` that had no entry of their own.**
+  `ServiceResponse::Pong` is a struct variant with `protocol_version`. Struct literals need the new
+  fields of `RuntimeSection` (`frame_overhead_window`, `blocking_backpressure`,
+  `stream_error_policy`, `node_fusion`), `EngineConfig` (`gpu_memory_hints`),
+  `ApplyPolicyOwnedArgs` (`stamp_enqueue`), `StableInput` (`port`, `fanin`) and
+  `RuntimeEdgeExplanation` (`fused`); `ExecutionContext` has a private `node_state` field, so it
+  cannot be built by a literal. `FramePlane` has no lifetime parameter any more.
+  `StableValue::handle` takes 2 parameters. New variants renumber `PluginLibraryError` and
+  `daedalus-mcu`'s `LoadError`, so numeric casts of them change. The features `base64`
+  (`daedalus-data`), `half` (`daedalus-gpu`), `executor-pool` (`daedalus-engine`) and `rayon`
+  (`daedalus-runtime`) are gone.
 - **Stable-ABI plugin calls stop allocating per call on both sides.** The host and the plugin keep
   their `Arena` (now `Arena::clear`, which keeps its buffers and boxes) and call buffers across
   calls. The plugin drains its outputs into the pooled port list (`NodeIo::drain_outputs`) and

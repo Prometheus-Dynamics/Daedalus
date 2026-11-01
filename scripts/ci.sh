@@ -374,6 +374,16 @@ cmd_package() {
 # `cargo semver-checks` over the packages `package` validates, against $SEMVER_BASELINE (a git
 # revision, with its tags). Needs `cargo install cargo-semver-checks --locked`. Set
 # SEMVER_BASELINE to the release tag once the release is sealed; see docs/development.md.
+# Sorted names of the workspace's non-proc-macro packages in manifest $1.
+semver_crates() {
+  cargo metadata --no-deps --format-version 1 --manifest-path "$1" | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["packages"]:
+    if not any("proc-macro" in t["kind"] for t in p["targets"]):
+        print(p["name"])
+' | LC_ALL=C sort
+}
+
 cmd_semver() {
   command -v cargo-semver-checks >/dev/null ||
     { echo "cargo-semver-checks not found: cargo install cargo-semver-checks --locked" >&2; return 1; }
@@ -387,7 +397,15 @@ cmd_semver() {
   # Git dependencies of the baseline may carry a `version` its branch no longer matches (Styx's
   # `dev` moved from 2.0.0 to 2.0.1-dev); drop the requirement so the branch head resolves.
   sed -i -E '/git = /s/version = "[^"]*", *//' "$baseline/Cargo.toml"
-  cargo semver-checks --workspace --baseline-root "$baseline" "${PACKAGE_EXCLUDES[@]}"
+  # The baseline facade's `styx-camera-example` needs libcamera to build; the feature is gone since
+  # (named in CHANGELOG), so drop it there rather than require libcamera for a report.
+  sed -i -E '/styx-camera-example|^styx = /d' "$baseline/crates/daedalus/Cargo.toml"
+  # Crates newer than the baseline have nothing to compare against.
+  local new_crates=() crate
+  while read -r crate; do
+    new_crates+=(--exclude "$crate")
+  done < <(comm -13 <(semver_crates "$baseline/Cargo.toml") <(semver_crates Cargo.toml))
+  cargo semver-checks --workspace --baseline-root "$baseline" "${PACKAGE_EXCLUDES[@]}" "${new_crates[@]}"
 }
 
 # Criterion writes to `$CARGO_TARGET_DIR/criterion`; compare two such directories with
