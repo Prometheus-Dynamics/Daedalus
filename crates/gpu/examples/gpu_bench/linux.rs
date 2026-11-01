@@ -17,6 +17,14 @@ fn heading(title: &str) {
     println!("\n[{title}]");
 }
 
+/// Whether to run a section: all of them, or those named in `GPU_BENCH_SECTIONS`
+/// (comma-separated, e.g. `batching,allocation`).
+fn wanted(section: &str) -> bool {
+    std::env::var("GPU_BENCH_SECTIONS")
+        .map(|list| list.split(',').any(|s| s.trim() == section))
+        .unwrap_or(true)
+}
+
 fn kv(key: &str, value: impl Display) {
     println!("{key}: {value}");
 }
@@ -77,22 +85,38 @@ pub fn run() {
     let info = device.adapter_info();
     kv("adapter", format!("{} ({:?})", info.name, info.backend));
     kv("driver", format!("{} {}", info.driver, info.driver_info));
-    heading("limits");
-    limits::limits(device);
-    heading("dispatch-latency");
-    compute::dispatch_latency(device, queue);
-    heading("throughput");
-    compute::throughput(device, queue);
-    heading("image-paths");
-    images::image_paths(device, queue);
-    heading("pipeline-cache");
-    startup::startup();
-    heading("frame-import");
-    frame_import::frame_import(&backend, device, queue);
-    heading("allocation");
-    alloc::allocation();
-    heading("batching");
-    alloc::batching();
+    if wanted("limits") {
+        heading("limits");
+        limits::limits(device);
+    }
+    if wanted("dispatch-latency") {
+        heading("dispatch-latency");
+        compute::dispatch_latency(device, queue);
+    }
+    if wanted("throughput") {
+        heading("throughput");
+        compute::throughput(device, queue);
+    }
+    if wanted("image-paths") {
+        heading("image-paths");
+        images::image_paths(device, queue);
+    }
+    if wanted("pipeline-cache") {
+        heading("pipeline-cache");
+        startup::startup();
+    }
+    if wanted("frame-import") {
+        heading("frame-import");
+        frame_import::frame_import(&backend, device, queue);
+    }
+    if wanted("allocation") {
+        heading("allocation");
+        alloc::allocation();
+    }
+    if wanted("batching") {
+        heading("batching");
+        alloc::batching();
+    }
 }
 
 fn pipeline(device: &wgpu::Device, wgsl: &str) -> wgpu::ComputePipeline {

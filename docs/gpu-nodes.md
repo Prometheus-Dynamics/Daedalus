@@ -82,7 +82,10 @@ used.
 - **Many passes per tick.** Encode them into one `wgpu::CommandEncoder` and submit once
   (`GpuKernels::encode`, `FragmentPass::encode_bound`). Each encoder and submission costs wgpu
   time and allocations (about 29 allocations per submit). On an RX 6800 XT, 8 small kernels cost
-  0.37 ms per frame as 8 submits and 0.15 ms as one (`gpu_bench [batching]`).
+  0.37 ms per frame as 8 submits and 0.15 ms as one (`gpu_bench [batching]`). On V3D the same
+  frame is GPU-bound: 1.29 ms either way, against 21.7 µs to record and submit an empty dispatch
+  (p50, `[dispatch-latency]`), so there the per-submit cost is a small share.
+  `GPU_BENCH_SECTIONS=batching,allocation` runs only the named sections.
 
 Compute stays available through `daedalus::gpu::shader` dispatch, or your own pipelines.
 
