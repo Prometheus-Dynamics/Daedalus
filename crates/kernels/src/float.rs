@@ -93,7 +93,7 @@ multiversion! {
 ///
 /// # Safety
 /// The CPU must support AVX2 and F16C.
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(all(feature = "std", any(target_arch = "x86", target_arch = "x86_64")))]
 #[target_feature(enable = "avx2,f16c")]
 #[inline(never)]
 pub unsafe fn f16_to_f32_f16c(src: &[u8], dst: &mut [f32]) {
