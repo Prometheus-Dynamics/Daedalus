@@ -273,8 +273,8 @@ fn copies_and_codecs() {
     );
 }
 
-/// CRC-32: slice-by-8 and the extension kernels (PCLMULQDQ, AArch64 CRC) against the bitwise
-/// reference, at every length up to 300 bytes and a few large ones.
+/// CRC-32: slice-by-8, the extension kernels (PCLMULQDQ, AArch64 CRC, Zvbc) and the ARMv7
+/// `vmull.p8` folding against the bitwise reference, at every length up to 300 bytes and a few large ones.
 #[test]
 fn crc32_kernels() {
     use daedalus_accel::{Evidence, Ext, conform_with};
@@ -306,6 +306,10 @@ fn crc32_kernels() {
     conform_with(
         Evidence::new("daedalus.codec.crc32", Backend::Rvv).extensions(&[Ext::Zvbc]),
         || check(Backend::Rvv),
+    );
+    conform_with(
+        Evidence::new("daedalus.codec.crc32", Backend::Neon32),
+        || check(Backend::Neon32),
     );
     assert_eq!(k::crc32(b"123456789"), 0xCBF4_3926);
     // Combining per-chunk CRCs gives the whole buffer's.
@@ -525,4 +529,34 @@ fn portable_simd_kernels() {
         p::f32_to_unorm8(&values, &mut got);
         got == want
     });
+}
+
+/// CRC-32 throughput of every backend this process can run, for choosing `crc32`'s dispatch:
+/// `cargo test -p daedalus-kernels --release --test conformance crc32_throughput -- --ignored
+/// --nocapture` (on the device itself; qemu timings mean nothing).
+#[test]
+#[ignore = "timing; run manually on the device"]
+fn crc32_throughput() {
+    use std::time::Instant;
+    for len in [64usize, 1024, 64 << 10, 4 << 20] {
+        let data = bytes(len, 21);
+        let runs = ((64 << 20) / len).max(8);
+        for backend in [Backend::Scalar].into_iter().chain(BACKENDS) {
+            if k::crc32::run(backend, &data).is_none() {
+                continue;
+            }
+            let start = Instant::now();
+            let mut sink = 0u32;
+            for _ in 0..runs {
+                sink ^= k::crc32::run(backend, std::hint::black_box(&data)).unwrap();
+            }
+            let secs = start.elapsed().as_secs_f64();
+            std::hint::black_box(sink);
+            eprintln!(
+                "crc32 {len:>8} B {:>7}: {:>8.0} MB/s",
+                backend.name(),
+                (len * runs) as f64 / secs / 1e6
+            );
+        }
+    }
 }

@@ -637,13 +637,7 @@ static CRC_KERNELS: [Kernel; 12] = [
     Kernel::missing(CRC_OP, Backend::X86Sse2, CHAIN),
     Kernel::missing(CRC_OP, Backend::X86Avx2, CHAIN),
     Kernel::missing(CRC_OP, Backend::Neon64, CHAIN),
-    Kernel::missing(
-        CRC_OP,
-        Backend::Neon32,
-        Status::Gap(
-            "planned: fold with NEON vmull.p8 (8-bit polynomial multiply; ARMv7 has no CRC instructions)",
-        ),
-    ),
+    Kernel::implemented(CRC_OP, Backend::Neon32, CRC, T).with_symbol("crc32::neon_vmull_p8"),
     Kernel::missing(CRC_OP, Backend::Rvv, CHAIN),
     Kernel::implemented(
         CRC_OP,

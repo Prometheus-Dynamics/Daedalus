@@ -2,13 +2,16 @@
 //! `!0`).
 //!
 //! A CRC is one dependency chain, so it does not vectorize as such. It speeds up with
-//! carry-less multiplication (x86 PCLMULQDQ folding) or with CRC instructions (AArch64 `crc`).
-//! Without either, it uses slice-by-8 tables.
+//! carry-less multiplication (x86 PCLMULQDQ, RVV Zvbc, or ARMv7 NEON's 8-bit `vmull.p8` built up
+//! to 64 bits) folding, or with CRC instructions (AArch64 `crc`). Without either, it uses
+//! slice-by-8 tables.
 
 use daedalus_accel::Backend;
 
-/// CRC-32 of `bytes`: AArch64 CRC instructions or x86 PCLMULQDQ folding when the CPU has them,
-/// else slice-by-8.
+/// CRC-32 of `bytes`: AArch64 CRC instructions, x86 PCLMULQDQ or RVV Zvbc folding when the CPU
+/// has them, else slice-by-8. ARMv7 stays on slice-by-8 until the NEON `vmull.p8` folding
+/// ([`crc32::run`] with `Backend::Neon32`) is measured faster on an ARMv7 core: it is
+/// conformance-tested under qemu only, and qemu timings mean nothing.
 pub fn crc32(bytes: &[u8]) -> u32 {
     #[cfg(all(target_arch = "riscv64", target_os = "linux", daedalus_rvv))]
     if crate::riscv::has_zvbc() {
@@ -135,10 +138,15 @@ pub(crate) fn clmul_soft(a: u64, b: u64) -> (u64, u64) {
 }
 
 /// The PCLMULQDQ folding algorithm over any 64x64 carry-less multiply `clmul` (128-bit lanes as
-/// (low, high) pairs): the RVV Zvbc kernel plugs in `vclmul`/`vclmulh`, the tests a software
-/// multiply.
-#[cfg(any(test, all(target_arch = "riscv64", target_os = "linux", daedalus_rvv)))]
-pub(crate) fn crc32_fold(bytes: &[u8], clmul: &mut dyn FnMut(u64, u64) -> (u64, u64)) -> u32 {
+/// (low, high) pairs): the RVV Zvbc kernel plugs in `vclmul`/`vclmulh`, the ARMv7 one a
+/// `vmull.p8` construction, the tests a software multiply.
+#[cfg(any(
+    test,
+    all(target_arch = "riscv64", target_os = "linux", daedalus_rvv),
+    all(target_arch = "arm", daedalus_neon32)
+))]
+#[inline(always)]
+pub(crate) fn crc32_fold(bytes: &[u8], mut clmul: impl FnMut(u64, u64) -> (u64, u64)) -> u32 {
     const K1: u64 = 0x1_5444_2bd4;
     const K2: u64 = 0x1_c6e4_1596;
     const K3: u64 = 0x1_7519_97d0;
@@ -297,7 +305,7 @@ pub mod crc32 {
     #[cfg(all(target_arch = "riscv64", target_os = "linux", daedalus_rvv))]
     #[inline(never)]
     pub unsafe fn rvv_zvbc(bytes: &[u8]) -> u32 {
-        super::crc32_fold(bytes, &mut |a, b| {
+        super::crc32_fold(bytes, |a, b| {
             let (lo, hi): (u64, u64);
             // SAFETY: V and Zvbc are compiled in; one element, registers v1-v3 clobbered.
             unsafe {
@@ -323,9 +331,57 @@ pub mod crc32 {
         })
     }
 
+    /// ARMv7 NEON: the folding of [`super::crc32_fold`] with each 64x64 carry-less multiply
+    /// built from eight `vmull.p8` (8x8-bit polynomial multiplies, eight lanes): for each byte
+    /// `b_j` of `b`, `vmull.p8` of `a` by `b_j` in every lane gives the eight 16-bit products
+    /// `a_i b_j`, `vuzp` splits them into their low and high bytes (at byte `i` and `i + 1` of
+    /// the row), and Horner's rule over `j` (shift the 128-bit sum up a byte, add the next row)
+    /// places row `j` at byte `j`. ARMv7 has no CRC instructions and no 64-bit `vmull.p64`.
+    ///
+    /// # Safety
+    /// NEON must be compiled in (it is whenever this exists).
+    #[cfg(all(target_arch = "arm", daedalus_neon32))]
+    #[inline(never)]
+    pub unsafe fn neon_vmull_p8(bytes: &[u8]) -> u32 {
+        super::crc32_fold(bytes, |a, b| {
+            let (lo, hi): (u64, u64);
+            // Row j, Horner step: acc = ((acc ^ hi_j) << 8) ^ lo_j, from j = 7 down to 0.
+            macro_rules! row {
+                ($j:literal) => {
+                    concat!(
+                        "vdup.8 d1, d2[",
+                        $j,
+                        "]\n",
+                        "vmull.p8 q2, d0, d1\n",
+                        "vuzp.8 d4, d5\n",
+                        "veor d16, d16, d5\n",
+                        "vext.8 q8, q15, q8, #15\n",
+                        "veor d16, d16, d4\n",
+                    )
+                };
+            }
+            // SAFETY: NEON is compiled in; only the named registers are touched.
+            unsafe {
+                core::arch::asm!(
+                    "vmov.i8 q15, #0",
+                    "vmov.i8 q8, #0",
+                    row!(7), row!(6), row!(5), row!(4),
+                    row!(3), row!(2), row!(1), row!(0),
+                    in("d0") a,
+                    in("d2") b,
+                    out("d16") lo,
+                    out("d17") hi,
+                    out("d1") _, out("d4") _, out("d5") _, out("d30") _, out("d31") _,
+                    options(pure, nomem, nostack),
+                );
+            }
+            (lo, hi)
+        })
+    }
+
     /// Run with `backend` and extension: `Scalar` is slice-by-8; `X86Sse2` runs PCLMULQDQ,
-    /// `Neon64` the CRC instructions and `Rvv` the Zvbc folding, when the CPU (or build) has
-    /// them. `None` otherwise.
+    /// `Neon64` the CRC instructions, `Rvv` the Zvbc folding and `Neon32` the `vmull.p8`
+    /// folding, when the CPU (or build) has them. `None` otherwise.
     pub fn run(backend: Backend, bytes: &[u8]) -> Option<u32> {
         match backend {
             Backend::Scalar => Some(v(bytes)),
@@ -345,6 +401,9 @@ pub mod crc32 {
             #[cfg(all(target_arch = "riscv64", target_os = "linux", daedalus_rvv))]
             // SAFETY: V is compiled in and the kernel reports Zvbc.
             Backend::Rvv if crate::riscv::has_zvbc() => Some(unsafe { rvv_zvbc(bytes) }),
+            #[cfg(all(target_arch = "arm", daedalus_neon32))]
+            // SAFETY: NEON is compiled in.
+            Backend::Neon32 => Some(unsafe { neon_vmull_p8(bytes) }),
             _ => None,
         }
     }
@@ -364,7 +423,7 @@ mod tests {
         for len in [128usize, 129, 191, 192, 255, 256, 4097, 70_000] {
             let want = crate::reference::crc32(&data[..len]);
             assert_eq!(
-                super::crc32_fold(&data[..len], &mut super::clmul_soft),
+                super::crc32_fold(&data[..len], super::clmul_soft),
                 want,
                 "{len}"
             );

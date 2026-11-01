@@ -17,6 +17,14 @@ plugin ABI and does not load.
 
 ### Added
 
+- **NEON32 CRC-32** (`crc32::neon_vmull_p8`). ARMv7 has neither CRC instructions nor a 64-bit
+  carry-less multiply. Each 64x64 multiply of the PCLMULQDQ folding is built from eight
+  `vmull.p8` (8x8-bit polynomial multiplies), combined by Horner's rule over the bytes. It
+  passes conformance under qemu (Cortex-A7) at every length from 0 to 300 bytes plus 1 KiB to
+  1 MiB. This closes the last gap in the backend matrix (112 pass, 20 impossible, 2 untested:
+  the RGA cells, which need the board). `crc32()` stays on slice-by-8 on ARMv7 until the
+  kernel is measured faster on an ARMv7 core. None is available: the Raze kernel has no
+  AArch32 support. `--test conformance crc32_throughput -- --ignored` measures it.
 - **Raw Vulkan access for external SPIR-V kernels** (feature `gpu-vulkan-raw`, Linux,
   `daedalus_gpu::raw_vulkan`). `GpuContextHandle::raw_vulkan()` returns the `ash` entry,
   instance, physical device, device, queue, queue family and queue index. `GpuStorage::raw_vk_buffer()`
