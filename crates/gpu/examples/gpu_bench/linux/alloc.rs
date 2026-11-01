@@ -187,3 +187,59 @@ fn raw_vulkan() {
         }
     }
 }
+
+/// Eight small kernels as eight submissions against one encoder and one submission: wgpu's
+/// per-encoder and per-submit cost (and allocations) paid once per frame instead of per kernel.
+pub(super) fn batching() {
+    let Some(ctx) = ctx(GpuMemoryHints::Auto) else {
+        return kv("batching", "no wgpu context");
+    };
+    let (device, queue) = ctx.wgpu().unwrap();
+    let Ok(kernels) = GpuKernels::new(&ctx) else {
+        return;
+    };
+    let n = 64 << 10;
+    let bufs: Vec<(GpuStorage, GpuStorage)> = (0..8)
+        .map(|_| {
+            (
+                GpuStorage::new(&ctx, n, None).unwrap(),
+                GpuStorage::new(&ctx, n, None).unwrap(),
+            )
+        })
+        .collect();
+    let wait = || {
+        let _ = device.poll(daedalus_gpu::wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
+    };
+    let mut separate = Vec::new();
+    let mut batched = Vec::new();
+    for round in 0..40 {
+        let start = Instant::now();
+        for (src, dst) in &bufs {
+            let _ = kernels.run(GpuKernel::Copy, src, dst, n);
+        }
+        wait();
+        let t = start.elapsed();
+        let start = Instant::now();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for (src, dst) in &bufs {
+            let _ = kernels.encode(&mut encoder, GpuKernel::Copy, src, dst, n, None);
+        }
+        queue.submit([encoder.finish()]);
+        wait();
+        if round >= 5 {
+            separate.push(t);
+            batched.push(start.elapsed());
+        }
+    }
+    kv(
+        "batching_8_kernels",
+        format!(
+            "8 submits {} per frame, 1 encoder + 1 submit {} per frame (64 KiB copies)",
+            ms(median(&mut separate)),
+            ms(median(&mut batched))
+        ),
+    );
+}

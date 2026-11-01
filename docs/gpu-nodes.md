@@ -79,7 +79,10 @@ used.
 - **Draw part of a target.** Write rectangles (`[x, y, w, h]` in target pixels) into a
   `FragmentRects`, then call `encode_rects(encoder, &binding, &rects, &targets, load)`. It is
   one instanced draw; with `load` the rest of the target is kept.
-- **Many passes per tick.** Encode them into one `wgpu::CommandEncoder` and submit once.
+- **Many passes per tick.** Encode them into one `wgpu::CommandEncoder` and submit once
+  (`GpuKernels::encode`, `FragmentPass::encode_bound`). Each encoder and submission costs wgpu
+  time and allocations (about 29 allocations per submit). On an RX 6800 XT, 8 small kernels cost
+  0.37 ms per frame as 8 submits and 0.15 ms as one (`gpu_bench [batching]`).
 
 Compute stays available through `daedalus::gpu::shader` dispatch, or your own pipelines.
 

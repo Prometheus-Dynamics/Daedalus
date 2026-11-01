@@ -91,6 +91,8 @@ pub fn run() {
     frame_import::frame_import(&backend, device, queue);
     heading("allocation");
     alloc::allocation();
+    heading("batching");
+    alloc::batching();
 }
 
 fn pipeline(device: &wgpu::Device, wgsl: &str) -> wgpu::ComputePipeline {
