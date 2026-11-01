@@ -107,8 +107,9 @@ fn measure(
 ) -> String {
     let (device, _) = ctx.wgpu().unwrap();
     let timer = GpuTimer::new(ctx).unwrap();
-    let mut gpu = Vec::new();
+    let (mut gpu, mut total) = (Vec::new(), Vec::new());
     for _ in 0..7 {
+        let start = Instant::now();
         let mut encoder = device.create_command_encoder(&Default::default());
         if fragment {
             kernels
@@ -121,6 +122,9 @@ fn measure(
         }
         let mut timed = timer.submit(encoder);
         timed.ticket().wait();
+        // Encode to completion: the pass plus every copy (the fragment form's target-to-buffer
+        // copy) and the submission itself.
+        total.push(start.elapsed());
         let elapsed = loop {
             if let Some(t) = timed.try_elapsed() {
                 break t.unwrap();
@@ -139,8 +143,10 @@ fn measure(
         v[v.len() / 2].as_secs_f64() * 1e3
     };
     format!(
-        "measured over {} input bytes, data GPU-resident: gpu pass {:.3} ms ({:?}) vs cpu kernel {:.3} ms",
+        "measured over {} input bytes, data GPU-resident: gpu {:.3} ms encode-to-result \
+         (all copies; the pass alone {:.3} ms, {:?}) vs cpu kernel {:.3} ms",
         kernel.input_len(n),
+        median(&mut total),
         median(&mut gpu),
         timer.source(),
         median(&mut host)
@@ -194,11 +200,6 @@ fn check(
             cpu(&big, &mut out)
         });
         let variant = if fragment { "fragment" } else { "compute" };
-        let note = if fragment {
-            format!("{note} (render pass; the target-to-buffer copy is not timed)")
-        } else {
-            note
-        };
         eprintln!("{op} ({variant}): {note}");
         conform_with(
             Evidence::new(op, Backend::Gpu)

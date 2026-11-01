@@ -63,6 +63,8 @@ pub use shader::{
     GpuPipelineCache, GpuReadback, GpuStorage, GpuStoragePool, GpuStoragePoolStats, GpuTexture,
     GpuTicket, GpuTimeSource, GpuTimed, GpuTimer, pipeline_cache_for,
 };
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+pub use shader::{GpuFrameImportStats, GpuFrameImports, GpuFrameInput};
 pub use traits::{GpuBackend, GpuContext};
 #[cfg(feature = "gpu-wgpu")]
 pub use wgpu;
@@ -791,3 +793,5 @@ mod fragment_rect_tests;
 mod fragment_tests;
 #[cfg(all(test, feature = "gpu-wgpu"))]
 mod kernels_tests;
+#[cfg(all(test, feature = "gpu-wgpu", target_os = "linux"))]
+mod zero_copy_tests;

@@ -81,6 +81,7 @@ impl GpuStorage {
             queue: queue.clone(),
             device_key: super::super::device_key(device),
             staging: Arc::default(),
+            host: None,
         })
     }
 }

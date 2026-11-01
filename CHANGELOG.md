@@ -119,6 +119,18 @@ plugin ABI and does not load.
 - **CRC-32 on the GPU** (`GpuKernels::crc32`): table-driven CRCs of 4 KiB chunks on the device,
   combined on the host with the new `daedalus_kernels::crc32_combine` (zlib's combine). The
   result is bit-exact and measured.
+- **Zero-copy GPU input and output:**
+  - `GpuFrameImports` imports `SharedFrame`s (External residency, a Styx `FrameLease`) as
+    storage buffers, once per dmabuf (keyed by inode, LRU-bounded). It waits on the implicit
+    write fence, and gives each plane's offset and stride. The `GpuFrameInput` handle holds the
+    frame's lease.
+  - `GpuStorage::new_host_mapped` gives persistently mapped host-visible buffers
+    (`write_mapped` / `read_mapped`, no staging copy: the UMA path).
+  - `GpuStorage::new_uninit` skips wgpu's zero-init clear.
+  - `gpu_bench [allocation]` times `vkCreateBuffer`, `vkAllocateMemory`, `create_buffer` per
+    memory-hint mode and the first-use clear separately.
+  - The kernel measurements now report encode-to-result time (every copy included) next to the
+    pass time.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`

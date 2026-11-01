@@ -11,6 +11,12 @@ use super::{Access, BindingData, BindingKind, ShaderBinding};
 
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 mod dmabuf;
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+mod frames;
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+pub use frames::{GpuFrameImportStats, GpuFrameImports, GpuFrameInput};
+#[cfg(target_os = "linux")]
+mod host;
 
 /// A sized storage buffer a node keeps on the engine's device for its lifetime: kept in the
 /// node's `state(T)` across ticks (a TSDF volume, cost-volume scratch). Dropping it (on the
@@ -26,6 +32,9 @@ pub struct GpuStorage {
     queue: wgpu::Queue,
     device_key: usize,
     staging: Arc<StagingRing>,
+    /// The persistent CPU mapping of a host-mapped buffer.
+    #[cfg(target_os = "linux")]
+    host: Option<Arc<host::HostMapping>>,
 }
 
 /// Reusable `MAP_READ` buffers for readbacks: a readback takes one and returns it when done.
@@ -94,6 +103,8 @@ impl GpuStorage {
             queue: queue.clone(),
             device_key: super::device_key(device),
             staging: Arc::default(),
+            #[cfg(target_os = "linux")]
+            host: None,
         })
     }
 

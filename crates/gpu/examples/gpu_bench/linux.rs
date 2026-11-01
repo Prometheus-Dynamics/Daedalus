@@ -1,5 +1,6 @@
 //! The `gpu_bench` report: shared helpers and the section order.
 
+mod alloc;
 mod compute;
 mod frame_import;
 mod images;
@@ -88,6 +89,8 @@ pub fn run() {
     startup::startup();
     heading("frame-import");
     frame_import::frame_import(&backend, device, queue);
+    heading("allocation");
+    alloc::allocation();
 }
 
 fn pipeline(device: &wgpu::Device, wgsl: &str) -> wgpu::ComputePipeline {

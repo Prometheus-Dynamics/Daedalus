@@ -40,6 +40,8 @@ pub use fragment::{FragmentBinding, FragmentPass, FragmentRects};
 pub(crate) use gpu_state::clear_gpu_state_pool_for_device;
 pub use gpu_state::*;
 pub use gpu_state::{gpu_state_pool_limit, set_gpu_state_pool_limit};
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+pub use gpu_storage::{GpuFrameImportStats, GpuFrameImports, GpuFrameInput};
 pub use gpu_storage::{GpuReadback, GpuStorage};
 pub use gpu_texture::GpuTexture;
 pub use gpu_timer::{GpuTimeSource, GpuTimed, GpuTimer};

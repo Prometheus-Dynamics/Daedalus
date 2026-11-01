@@ -23,7 +23,7 @@ default = ["gpu-noop"]
 gpu-noop = []
 gpu-mock = []
 # wgpu backend: Vulkan everywhere, plus Metal on Apple and DX12 on Windows.
-gpu-wgpu = ["wgpu", "pollster", "bytemuck", "daedalus-wgsl-infer"]
+gpu-wgpu = ["wgpu", "pollster", "bytemuck", "daedalus-wgsl-infer", "dep:ash"]
 # wgpu's OpenGL/GLES backend (glow, EGL, Wayland loaders) for devices without Vulkan.
 gpu-gles = ["gpu-wgpu", "wgpu/gles"]
 # `image` crate bridges: `Compute<DynamicImage>`, `DeviceBridge` for `image` buffers and the
@@ -31,7 +31,7 @@ gpu-gles = ["gpu-wgpu", "wgpu/gles"]
 gpu-image = ["gpu-wgpu", "dep:image"]
 gpu-async = ["async-trait"]
 # Zero-copy import of Linux dmabuf frames into wgpu textures (Vulkan only).
-gpu-dmabuf = ["gpu-wgpu", "dep:ash"]
+gpu-dmabuf = ["gpu-wgpu"]
 
 [dependencies]
 parking_lot = { workspace = true }

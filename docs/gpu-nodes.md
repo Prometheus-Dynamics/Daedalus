@@ -95,6 +95,18 @@ the bytes back to the CPU. `docs/backend-matrix.md` records the measured pass ti
 CPU kernel per adapter. On an RTX 4060, every op over 4 MiB takes 0.005-0.2 ms on the GPU against
 0.2-10 ms on the CPU. The choice is the caller's, per device.
 
+## Buffers without copies
+
+- **Unified memory (V3D, Mali, integrated, lavapipe):** `GpuStorage::new_host_mapped` puts the
+  buffer in host-visible memory, mapped for its whole life. `write_mapped` and `read_mapped` copy
+  in and out in place, with no staging buffer and no queue copy. The GPU sees the bytes on the
+  next submit, and the CPU reads results once the ticket completes. On discrete GPUs it is the
+  same API over the bus (slower CPU writes).
+- **No zero-init:** `GpuStorage::new_uninit` skips wgpu's lazy clear on first use, for buffers
+  the caller fully writes first. `gpu_bench`'s `[allocation]` section reports what that clear
+  costs, next to `vkCreateBuffer`, `vkAllocateMemory` and wgpu's `create_buffer` under each
+  memory-hint mode.
+
 ## Never wait in a tick
 
 A tick submits and returns. Its results arrive on a later tick:
@@ -122,8 +134,16 @@ it with `ctx.duration_metric("gpu", time)`.
 
 ## Camera frames
 
-- Zero copy into a storage buffer: `GpuStorage::import_dmabuf(gpu, fd, offset, len, fence,
-  timeout, label)` for `LINEAR` dmabufs. The dmabuf needs the driver's buffer padding, 256 B on
+- Zero copy into a storage buffer, imported once per dmabuf: keep a `GpuFrameImports` in the
+  node's state and call `imports.import(&frame, timeout)` with the `SharedFrame` of an
+  External-residency input (a Styx `FrameLease`). A camera's pooled dmabufs are each imported on
+  first sight, keyed by inode, and reused after that (`stats()` counts hits, imports and
+  evictions). The returned `GpuFrameInput` holds the storage, each plane's offset and stride,
+  and the frame itself: keep it until the GPU work reading the frame completes. The import waits
+  for the dmabuf's implicit write fence. A producer that wrote the frame with the CPU ends its
+  access first (`DMA_BUF_IOCTL_SYNC`, `SYNC_END`). The lower level is
+  `GpuStorage::import_dmabuf(gpu, fd, offset, len, fence, timeout, label)` for `LINEAR`
+  dmabufs. The dmabuf needs the driver's buffer padding, 256 B on
   v3dv; Styx pads its frames. Import takes 16-29 µs per frame on the CM5.
 - Into a sampled texture without a shader: import as a storage buffer as above, then
   `texture.copy_from_storage(encoder, &storage, 0, stride)` (or `upload_from_storage`). This is
