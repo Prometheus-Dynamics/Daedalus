@@ -11,7 +11,8 @@
 #   riscv64gc-unknown-linux-musl with +v under qemu-riscv64-static at VLEN 128, 256, 512 (RVV)
 # Cross targets need zig linker wrappers in $ZIGCC_DIR (default ~/zigcc: aarch64-musl-cc,
 # armv7-cc, riscv64-cc; see docs/testing.md) and qemu-user-static; a missing one is skipped with a note,
-# and its cells stay untested.
+# and its cells stay untested. qemu must be 9.0 or newer: older qemu-user does not report Zvbc
+# through riscv_hwprobe, so the CRC's rvv+zvbc cell falls back to untested.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

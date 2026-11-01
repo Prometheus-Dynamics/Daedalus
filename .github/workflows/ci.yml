@@ -181,9 +181,10 @@ jobs:
   # The acceleration inventory: every kernel on every CPU backend (x86 SSE/AVX2 natively;
   # aarch64, armv7 +neon and riscv64 +v at VLEN 128/256/512 under qemu-user), GPU kernels on
   # lavapipe, asm checks that the kernels are vector code, and docs/backend-matrix.{md,csv}
-  # against the committed baseline.
+  # against the committed baseline. On 26.04 for its qemu: Zvbc is chosen through riscv_hwprobe,
+  # which qemu-user reports from 9.0 on (24.04 ships 8.2), so the rvv+zvbc cell really runs here.
   accel:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     steps:
       - *checkout
