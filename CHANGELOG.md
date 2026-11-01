@@ -125,7 +125,8 @@ plugin ABI and does not load.
     write fence, and gives each plane's offset and stride. The `GpuFrameInput` handle holds the
     frame's lease.
   - `GpuStorage::new_host_mapped` gives persistently mapped host-visible buffers
-    (`write_mapped` / `read_mapped`, no staging copy: the UMA path).
+    (`write_mapped` / `read_mapped`, no staging copy: the UMA path). `new_host_cached` is the
+    same in cached memory, for readback: 17 ms instead of 640 ms to read 16 MiB on RADV.
   - `GpuStorage::new_uninit` skips wgpu's zero-init clear.
   - `gpu_bench [allocation]` times `vkCreateBuffer`, `vkAllocateMemory`, `create_buffer` per
     memory-hint mode and the first-use clear separately.

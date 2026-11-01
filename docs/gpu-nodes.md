@@ -102,6 +102,11 @@ CPU kernel per adapter. On an RTX 4060, every op over 4 MiB takes 0.005-0.2 ms o
   in and out in place, with no staging buffer and no queue copy. The GPU sees the bytes on the
   next submit, and the CPU reads results once the ticket completes. On discrete GPUs it is the
   same API over the bus (slower CPU writes).
+- **Read results back from `GpuStorage::new_host_cached`, not `new_host_mapped`.** Host-mapped
+  memory is usually uncached or write-combined: fine for CPU writes, slow for CPU reads.
+  Reading 16 MiB took 640 ms from host-mapped memory on an RX 6800 XT and 17 ms from
+  host-cached. `new_host_cached` falls back to host-mapped memory where the device has no cached
+  kind.
 - **No zero-init:** `GpuStorage::new_uninit` skips wgpu's lazy clear on first use, for buffers
   the caller fully writes first. `gpu_bench`'s `[allocation]` section reports what that clear
   costs, next to `vkCreateBuffer`, `vkAllocateMemory` and wgpu's `create_buffer` under each

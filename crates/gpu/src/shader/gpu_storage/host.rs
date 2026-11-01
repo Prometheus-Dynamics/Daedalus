@@ -31,6 +31,8 @@ unsafe impl Sync for HostMapping {}
 enum Placement {
     /// Host-visible and coherent (device-local too where the GPU has such memory: UMA).
     HostMapped,
+    /// Host-visible, cached and coherent where the device has it: fast CPU reads.
+    HostCached,
     /// Device-local; no CPU access.
     Device,
 }
@@ -48,6 +50,17 @@ impl GpuStorage {
         label: Option<&str>,
     ) -> Result<Self, GpuError> {
         create(gpu, size, label, Placement::HostMapped)
+    }
+
+    /// [`GpuStorage::new_host_mapped`] in host-cached memory where the device has it (falling
+    /// back to the plain host-mapped kind): for results the CPU reads back. Uncached host
+    /// memory, the usual kind on UMA, is slow for CPU reads.
+    pub fn new_host_cached(
+        gpu: &GpuContextHandle,
+        size: u64,
+        label: Option<&str>,
+    ) -> Result<Self, GpuError> {
+        create(gpu, size, label, Placement::HostCached)
     }
 
     /// A device-local storage buffer whose contents start undefined: no zero-initialization
@@ -79,7 +92,9 @@ impl GpuStorage {
     }
 
     /// Copy `out.len()` bytes at `offset` out of a host-mapped buffer: a readback without a
-    /// staging copy. Call after the GPU work that wrote the range completed.
+    /// staging copy. Call after the GPU work that wrote the range completed. Make buffers the
+    /// CPU reads with [`GpuStorage::new_host_cached`]: reading uncached host memory is one to
+    /// two orders of magnitude slower.
     pub fn read_mapped(&self, offset: u64, out: &mut [u8]) -> Result<(), GpuError> {
         let (ptr, start) = self.mapped_range(offset, out.len())?;
         // SAFETY: as in `write_mapped`.
@@ -190,6 +205,10 @@ unsafe fn allocate(
         Placement::HostMapped => {
             pick(host | vk::MemoryPropertyFlags::DEVICE_LOCAL).or_else(|| pick(host))
         }
+        // Cached for CPU reads; else as host-mapped.
+        Placement::HostCached => pick(host | vk::MemoryPropertyFlags::HOST_CACHED)
+            .or_else(|| pick(host | vk::MemoryPropertyFlags::DEVICE_LOCAL))
+            .or_else(|| pick(host)),
         Placement::Device => pick(vk::MemoryPropertyFlags::DEVICE_LOCAL)
             .or_else(|| pick(vk::MemoryPropertyFlags::empty())),
     };
@@ -224,7 +243,7 @@ unsafe fn allocate(
         cleanup();
         return Err(failed("vkBindBufferMemory", err));
     }
-    let mapping = if placement == Placement::HostMapped {
+    let mapping = if placement != Placement::Device {
         // SAFETY: host-visible memory, mapped once; `vkFreeMemory` unmaps it when wgpu frees it.
         match unsafe { raw.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()) } {
             Ok(ptr) => Some(HostMapping {

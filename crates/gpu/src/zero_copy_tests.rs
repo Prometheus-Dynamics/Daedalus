@@ -33,7 +33,7 @@ fn host_mapped_storage_round_trips_without_staging() {
     let Some(ctx) = vulkan_ctx() else { return };
     let data = bytes(1 << 20, 3);
     let src = GpuStorage::new_host_mapped(&ctx, data.len() as u64, Some("src")).unwrap();
-    let dst = GpuStorage::new_host_mapped(&ctx, data.len() as u64, Some("dst")).unwrap();
+    let dst = GpuStorage::new_host_cached(&ctx, data.len() as u64, Some("dst")).unwrap();
     assert!(src.is_host_mapped() && dst.is_host_mapped());
     let kernels = GpuKernels::new(&ctx).unwrap();
     for round in 0..3u8 {

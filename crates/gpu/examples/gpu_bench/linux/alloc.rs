@@ -110,6 +110,17 @@ pub(super) fn allocation() {
                 }
                 Err(err) => kv(&format!("{label}_host_mapped"), err),
             }
+            for (kind, made) in [
+                ("host_mapped", GpuStorage::new_host_mapped(&ctx, size, None)),
+                ("host_cached", GpuStorage::new_host_cached(&ctx, size, None)),
+            ] {
+                if let Ok(b) = made {
+                    let mut out = vec![0u8; size as usize];
+                    let start = Instant::now();
+                    let _ = b.read_mapped(0, &mut out);
+                    kv(&format!("{label}_{kind}_read"), ms(start.elapsed()));
+                }
+            }
         }
     }
     raw_vulkan();
