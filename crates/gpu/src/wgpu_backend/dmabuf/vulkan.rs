@@ -91,18 +91,23 @@ const REQUIRED_EXTENSIONS: [&std::ffi::CStr; 3] = [
 ];
 
 /// Request the wgpu device, adding `VK_EXT_image_drm_format_modifier` on Vulkan adapters that
-/// support the full dmabuf import extension set, and `TEXTURE_FORMAT_NV12` when available.
+/// support the full dmabuf import extension set, 8-bit storage-buffer access (for SPIR-V kernels
+/// from outside Daedalus, `raw_vulkan`) where the device has it, and `TEXTURE_FORMAT_NV12` when
+/// available.
 pub(in crate::wgpu_backend) async fn request_device(
     adapter: &wgpu::Adapter,
     desc: &wgpu::DeviceDescriptor<'_>,
 ) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
     let mut desc = desc.clone();
     desc.required_features |= adapter.features() & wgpu::Features::TEXTURE_FORMAT_NV12;
-    if let Some(open) = open_with_modifier_extension(adapter, &desc) {
+    if let Some((open, eight_bit)) = open_with_modifier_extension(adapter, &desc) {
         // SAFETY: `open` was created from this adapter's hal adapter with `desc`'s features and
-        // limits; the callback only appended an extension the adapter reports as supported.
+        // limits; the callback only appended extensions and features the adapter supports.
         match unsafe { adapter.create_device_from_hal::<Vulkan>(open, &desc) } {
-            Ok(pair) => return Ok(pair),
+            Ok(pair) => {
+                record_enabled(&pair.0, eight_bit);
+                return Ok(pair);
+            }
             Err(err) => tracing::warn!(
                 target: "daedalus_gpu::dmabuf",
                 error = %err,
@@ -116,7 +121,7 @@ pub(in crate::wgpu_backend) async fn request_device(
 fn open_with_modifier_extension(
     adapter: &wgpu::Adapter,
     desc: &wgpu::DeviceDescriptor<'_>,
-) -> Option<wgpu::hal::OpenDevice<Vulkan>> {
+) -> Option<(wgpu::hal::OpenDevice<Vulkan>, EightBitStorage)> {
     // SAFETY: the hal adapter is only used to open a device; nothing is destroyed through it.
     let hal_adapter = unsafe { adapter.as_hal::<Vulkan>() }?;
     let caps = hal_adapter.physical_device_capabilities();
@@ -125,31 +130,66 @@ fn open_with_modifier_extension(
     {
         return None;
     }
-    if let Some(missing) = REQUIRED_EXTENSIONS
+    let mut extensions: Vec<&'static std::ffi::CStr> = Vec::new();
+    match REQUIRED_EXTENSIONS
         .iter()
         .find(|ext| !caps.supports_extension(ext))
     {
-        tracing::debug!(
+        Some(missing) => tracing::debug!(
             target: "daedalus_gpu::dmabuf",
             extension = ?missing,
-            "adapter lacks a dmabuf import extension; using default device"
-        );
+            "adapter lacks a dmabuf import extension; opening without dmabuf import"
+        ),
+        None => extensions.extend(
+            REQUIRED_EXTENSIONS
+                .into_iter()
+                .chain(OPTIONAL_EXTENSIONS)
+                .filter(|ext| caps.supports_extension(ext)),
+        ),
+    }
+    // 8-bit storage: core in Vulkan 1.2, else `VK_KHR_8bit_storage`. wgpu-hal enables neither.
+    let core_12 = caps.properties().api_version >= vk::API_VERSION_1_2
+        && hal_adapter.shared_instance().instance_api_version() >= vk::API_VERSION_1_2;
+    let has_ext = caps.supports_extension(khr::_8bit_storage::NAME);
+    let mut eight_bit = vk::PhysicalDevice8BitStorageFeatures::default();
+    if core_12 || has_ext {
+        let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut eight_bit);
+        // SAFETY: a feature query on the adapter's physical device.
+        unsafe {
+            hal_adapter
+                .shared_instance()
+                .raw_instance()
+                .get_physical_device_features2(hal_adapter.raw_physical_device(), &mut features)
+        };
+    }
+    let enabled = EightBitStorage {
+        storage_buffer: eight_bit.storage_buffer8_bit_access != 0,
+        uniform_and_storage_buffer: eight_bit.uniform_and_storage_buffer8_bit_access != 0,
+    };
+    // Only what the device supports; push constants stay off (wgpu does not need them).
+    eight_bit.storage_push_constant8 = 0;
+    if enabled.storage_buffer && !core_12 {
+        extensions.push(khr::_8bit_storage::NAME);
+    }
+    if extensions.is_empty() && !enabled.storage_buffer {
         return None;
     }
-    let extensions: Vec<&'static std::ffi::CStr> = REQUIRED_EXTENSIONS
-        .into_iter()
-        .chain(OPTIONAL_EXTENSIONS)
-        .filter(|ext| caps.supports_extension(ext))
-        .collect();
-    let callback = Box::new(move |args: hal_vk::CreateDeviceCallbackArgs<'_, '_, '_>| {
+    let chain_eight_bit = enabled.storage_buffer;
+    let eight_bit_ref = &mut eight_bit;
+    let callback: Box<hal_vk::CreateDeviceCallback<'_>> = Box::new(move |args| {
         for ext in &extensions {
             if !args.extensions.contains(ext) {
                 args.extensions.push(ext);
             }
         }
+        if chain_eight_bit {
+            // wgpu-hal chains the promoted feature structs one by one (never
+            // `VkPhysicalDeviceVulkan12Features`), and not this one, so it may be added.
+            *args.create_info = args.create_info.push_next(eight_bit_ref);
+        }
     });
-    // SAFETY: the callback only adds extensions that `supports_extension` confirmed; it removes
-    // nothing and does not touch features.
+    // SAFETY: the callback only adds extensions that `supports_extension` confirmed and the
+    // 8-bit storage features the device reports; it removes and disables nothing.
     let opened = unsafe {
         hal_adapter.open_with_callback(
             desc.required_features,
@@ -159,7 +199,7 @@ fn open_with_modifier_extension(
         )
     };
     match opened {
-        Ok(open) => Some(open),
+        Ok(open) => Some((open, enabled)),
         Err(err) => {
             tracing::warn!(
                 target: "daedalus_gpu::dmabuf",
@@ -169,6 +209,39 @@ fn open_with_modifier_extension(
             None
         }
     }
+}
+
+/// The 8-bit storage-buffer features a device was created with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EightBitStorage {
+    /// `storageBuffer8BitAccess`: 8-bit types in storage buffers.
+    pub storage_buffer: bool,
+    /// `uniformAndStorageBuffer8BitAccess`: in uniform buffers too.
+    pub uniform_and_storage_buffer: bool,
+}
+
+/// The 8-bit storage each device Daedalus created has, by `VkDevice` handle.
+static ENABLED: Mutex<Vec<(vk::Device, EightBitStorage)>> = Mutex::new(Vec::new());
+
+fn record_enabled(device: &wgpu::Device, eight_bit: EightBitStorage) {
+    // SAFETY: reads the handle only.
+    if let Some(hal) = unsafe { device.as_hal::<Vulkan>() } {
+        let mut enabled = ENABLED.lock();
+        let handle = hal.raw_device().handle();
+        enabled.retain(|(d, _)| *d != handle);
+        enabled.push((handle, eight_bit));
+    }
+}
+
+/// The 8-bit storage `device` (a `VkDevice` of Daedalus's) was created with; none for a device
+/// Daedalus did not open with them.
+pub(crate) fn enabled_eight_bit(device: vk::Device) -> EightBitStorage {
+    ENABLED
+        .lock()
+        .iter()
+        .find(|(d, _)| *d == device)
+        .map(|(_, e)| *e)
+        .unwrap_or_default()
 }
 
 /// Per-device import state: the acquire machinery and the cached Vulkan format queries.

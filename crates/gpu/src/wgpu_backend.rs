@@ -17,7 +17,7 @@ use wgpu::{Adapter, Backends, Features, Instance, Limits};
 mod adapter_select;
 mod capabilities;
 mod copy_limiter;
-mod dmabuf;
+pub(crate) mod dmabuf;
 mod driver;
 mod mapping;
 mod resources;

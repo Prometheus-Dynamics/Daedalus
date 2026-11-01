@@ -68,11 +68,23 @@ impl<'a> Invert<'a> {
     /// # Safety
     /// `src` and `dst` must be buffers of `device` and outlive the returned value's use.
     unsafe fn new(device: &'a ash::Device, src: &GpuStorage, dst: &GpuStorage) -> Self {
+        // SAFETY: forwarded.
+        unsafe { Self::with_code(device, &spirv(), src, dst) }
+    }
+
+    /// # Safety
+    /// As [`Invert::new`]; `code` must be a valid compute shader with `main` reading binding 0
+    /// and writing binding 1.
+    unsafe fn with_code(
+        device: &'a ash::Device,
+        code: &[u32],
+        src: &GpuStorage,
+        dst: &GpuStorage,
+    ) -> Self {
         // SAFETY (throughout): valid create infos on a live device.
         unsafe {
-            let code = spirv();
             let module = device
-                .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None)
+                .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(code), None)
                 .unwrap();
             let bindings = [0, 1].map(|binding| {
                 vk::DescriptorSetLayoutBinding::default()
@@ -301,4 +313,49 @@ fn a_raw_spirv_dispatch_reads_an_imported_frame_in_place() {
         Err(err) => return eprintln!("skipping: cannot import dmabuf storage ({err})"),
     };
     run_and_check(&ctx, &raw, &frame, &pixels);
+}
+
+/// 8-bit samples from a storage buffer (`storageBuffer8BitAccess`, which Daedalus enables where
+/// the device has it), as gpuisp reads raw Bayer data: a precompiled GLSL kernel
+/// (`raw_vulkan/widen_u8.comp`) widens each byte to a word.
+#[test]
+fn a_raw_kernel_reads_8_bit_storage() {
+    let Some((ctx, raw)) = vulkan_ctx() else {
+        return eprintln!("skipping: no Vulkan device");
+    };
+    eprintln!(
+        "storage_buffer_8bit {}, uniform_and_storage_buffer_8bit {}, timestamp bits {}, period {} ns",
+        raw.storage_buffer_8bit,
+        raw.uniform_and_storage_buffer_8bit,
+        raw.timestamp_valid_bits,
+        raw.timestamp_period_ns
+    );
+    if !raw.storage_buffer_8bit {
+        return eprintln!("skipping: the device has no 8-bit storage-buffer access");
+    }
+    let bytes = include_bytes!("raw_vulkan/widen_u8.spv");
+    let code: Vec<u32> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|w| u32::from_le_bytes(*w))
+        .collect();
+    let input = pattern(4096);
+    let src = GpuStorage::with_data(&ctx, &input, None).unwrap();
+    let dst = GpuStorage::new_host_cached(&ctx, 4 * input.len() as u64, None).unwrap();
+    // SAFETY: both storages outlive the submission, which the ticket waits for.
+    let widen = unsafe { Invert::with_code(&raw.device, &code, &src, &dst) };
+    // SAFETY: valid commands; everything they use outlives the wait below.
+    let ticket = unsafe { ctx.submit_raw(|_, cmd| widen.record(cmd, input.len() as u32)) }.unwrap();
+    ticket.wait();
+    let mut out = vec![0u8; 4 * input.len()];
+    dst.read_mapped(0, &mut out).unwrap();
+    let words: Vec<u32> = out
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|w| u32::from_le_bytes(*w))
+        .collect();
+    let want: Vec<u32> = input.iter().map(|&b| u32::from(b) * 3).collect();
+    assert_eq!(words, want);
 }

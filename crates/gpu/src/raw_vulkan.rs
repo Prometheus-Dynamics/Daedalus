@@ -25,6 +25,14 @@
 //! - **Object ownership.** Objects you create with [`RawVulkan::device`] are yours to destroy;
 //!   never destroy what Daedalus or wgpu own (the device, the queue, a [`RawVkBuffer`]). The
 //!   handles stay valid while the context (and, for a buffer, its `GpuStorage`) lives.
+//! - **Timestamps.** Query pools are yours like any other object: reset them
+//!   (`vkCmdResetQueryPool`) and write timestamps inside the recording, then read the results
+//!   (`vkGetQueryPoolResults`) once the ticket completes. [`RawVulkan::timestamp_valid_bits`]
+//!   is 0 when the queue cannot write them.
+//! - **Device features.** Beyond what wgpu enables, Daedalus enables 8-bit storage-buffer access
+//!   where the device has it ([`RawVulkan::storage_buffer_8bit`]). Check it (and anything else
+//!   your shaders need) before creating pipelines: a feature the device was not created with
+//!   makes the pipeline invalid.
 
 use ash::vk;
 use wgpu::hal::api::Vulkan;
@@ -49,6 +57,14 @@ pub struct RawVulkan {
     pub queue: vk::Queue,
     pub queue_family_index: u32,
     pub queue_index: u32,
+    /// `storageBuffer8BitAccess` is enabled: shaders may use 8-bit types in storage buffers.
+    pub storage_buffer_8bit: bool,
+    /// `uniformAndStorageBuffer8BitAccess` is enabled.
+    pub uniform_and_storage_buffer_8bit: bool,
+    /// The queue family's `timestampValidBits` (0: no timestamps on this queue).
+    pub timestamp_valid_bits: u32,
+    /// Nanoseconds per timestamp tick (`timestampPeriod`).
+    pub timestamp_period_ns: f32,
 }
 
 /// A [`GpuStorage`]'s `VkBuffer` and the range of it the storage covers.
@@ -74,14 +90,31 @@ impl GpuContextHandle {
             let hal = device.as_hal::<Vulkan>()?;
             let hal_queue = queue.as_hal::<Vulkan>()?;
             let shared = hal.shared_instance();
+            let instance = shared.raw_instance();
+            let physical_device = hal.raw_physical_device();
+            let family = hal.queue_family_index();
+            let timestamp_valid_bits = instance
+                .get_physical_device_queue_family_properties(physical_device)
+                .get(family as usize)
+                .map_or(0, |props| props.timestamp_valid_bits);
+            let timestamp_period_ns = instance
+                .get_physical_device_properties(physical_device)
+                .limits
+                .timestamp_period;
+            let eight_bit =
+                crate::wgpu_backend::dmabuf::enabled_eight_bit(hal.raw_device().handle());
             Some(RawVulkan {
                 entry: shared.entry().clone(),
                 instance: shared.raw_instance().clone(),
                 physical_device: hal.raw_physical_device(),
                 device: hal.raw_device().clone(),
                 queue: hal_queue.as_raw(),
-                queue_family_index: hal.queue_family_index(),
+                queue_family_index: family,
                 queue_index: hal.queue_index(),
+                storage_buffer_8bit: eight_bit.storage_buffer,
+                uniform_and_storage_buffer_8bit: eight_bit.uniform_and_storage_buffer,
+                timestamp_valid_bits,
+                timestamp_period_ns,
             })
         }
     }

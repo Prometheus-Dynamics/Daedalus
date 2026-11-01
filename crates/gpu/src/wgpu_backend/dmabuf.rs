@@ -18,6 +18,8 @@ mod vulkan;
 mod watcher;
 
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+pub(crate) use vulkan::enabled_eight_bit;
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 pub(super) use vulkan::{ImportState, import, probe, request_device, set_fence_mode};
 
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]

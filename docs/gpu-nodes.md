@@ -195,7 +195,11 @@ it with `ctx.duration_metric("gpu", time)`.
   queue yourself: wgpu serializes its submissions behind a lock nothing outside it can take.
   Keep everything the commands use alive until the ticket completes. `daedalus_gpu::raw_vulkan`
   documents the whole contract. Tested on v3dv under the validation layer with synchronization
-  validation: a raw `ash` pipeline reads an imported dma-heap frame in place.
+  validation: a raw `ash` pipeline reads an imported dma-heap frame in place. Daedalus enables
+  8-bit storage-buffer access where the device has it (all of v3dv, RADV, NVIDIA and lavapipe
+  do): check `RawVulkan::storage_buffer_8bit` before creating a pipeline that reads 8-bit
+  samples. `timestamp_valid_bits` and `timestamp_period_ns` are for timestamp queries recorded
+  inside `submit_raw`.
 - Into a sampled texture without a shader: import as a storage buffer as above, then
   `texture.copy_from_storage(encoder, &storage, 0, stride)` (or `upload_from_storage`). This is
   `vkCmdCopyBufferToImage`, which v3dv runs on its texture formatting unit (TFU) for a whole

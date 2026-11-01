@@ -34,7 +34,7 @@ gpu-async = ["async-trait"]
 gpu-dmabuf = ["gpu-wgpu"]
 # Raw Vulkan handles of a context and its storage, for SPIR-V kernels from outside Daedalus run
 # on its device (Linux; `daedalus_gpu::raw_vulkan`).
-gpu-vulkan-raw = ["gpu-wgpu"]
+gpu-vulkan-raw = ["gpu-wgpu", "gpu-dmabuf"]
 
 [dependencies]
 parking_lot = { workspace = true }

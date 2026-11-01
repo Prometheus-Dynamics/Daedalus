@@ -17,6 +17,15 @@ plugin ABI and does not load.
 
 ### Added
 
+- **8-bit storage-buffer access on Daedalus's Vulkan device.** `storageBuffer8BitAccess` and
+  `uniformAndStorageBuffer8BitAccess` are enabled at device creation where the device supports
+  them (`VK_KHR_8bit_storage` below Vulkan 1.2), for SPIR-V kernels that read 8-bit samples.
+  `RawVulkan` reports them (`storage_buffer_8bit`, `uniform_and_storage_buffer_8bit`), along
+  with the queue's `timestamp_valid_bits` and `timestamp_period_ns` for timestamp queries
+  recorded in `submit_raw`. Tested on v3dv (with the validation layer), RADV, NVIDIA and
+  lavapipe with a precompiled GLSL kernel reading `uint8_t` storage. `gpu-vulkan-raw` now
+  implies `gpu-dmabuf`.
+
 - **Core-tuned kernel variants get their own matrix column.** Mark a variant with
   `Kernel::with_core("a55")` and `accel-matrix render` gives it a column of its own
   (`neon64[a53]`, `neon64+dotprod[a55]`), placed after the shared one. The column passes only on
