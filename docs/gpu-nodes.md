@@ -106,6 +106,17 @@ CPU kernel per adapter. On an RTX 4060, every op over 4 MiB takes 0.005-0.2 ms o
   the caller fully writes first. `gpu_bench`'s `[allocation]` section reports what that clear
   costs, next to `vkCreateBuffer`, `vkAllocateMemory` and wgpu's `create_buffer` under each
   memory-hint mode.
+- **What an allocation costs on V3D** (Raze, 2026-11-01):
+  - `vkAllocateMemory` grows with size, about 0.35 ms per MiB (5.5 ms for 16 MiB, 0.28 ms for
+    1 MiB); `vkCreateBuffer` is free.
+  - With `MemoryUsage` hints each large buffer is its own allocation: a 16 MiB `GpuStorage::new`
+    costs 5.8-6.4 ms. With `Performance`, wgpu sub-allocates from blocks it already made
+    (0.005 ms).
+  - The first use adds the zero-init clear: 2.3 ms for 16 MiB, against 0.47 ms with
+    `new_uninit`.
+
+  So on V3D, allocate at setup and reuse (`state(T)`, `GpuStoragePool`): never allocate per
+  tick.
 
 ## Never wait in a tick
 
