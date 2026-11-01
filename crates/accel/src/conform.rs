@@ -121,8 +121,8 @@ pub fn detected_backends() -> Vec<Backend> {
     found
 }
 
-/// The ISA extensions this process can use: detected at runtime on x86 and AArch64; compiled
-/// in (`-C target-feature=+zbb`, ...) on RISC-V, which stable Rust cannot detect.
+/// The ISA extensions this process can use: detected at runtime on x86 and AArch64, and on
+/// RISC-V through the kernel's `riscv_hwprobe` (or compiled in with `-C target-feature`).
 pub fn detected_extensions() -> Vec<Ext> {
     #[allow(unused_mut)]
     let mut found = Vec::new();
@@ -166,18 +166,53 @@ pub fn detected_extensions() -> Vec<Ext> {
         }
     }
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    let probed = riscv_ima_ext_0();
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
     for (on, ext) in [
-        (cfg!(daedalus_ext_zba), Ext::Zba),
-        (cfg!(daedalus_ext_zbb), Ext::Zbb),
-        (cfg!(daedalus_ext_zbs), Ext::Zbs),
-        (cfg!(daedalus_ext_zvbb), Ext::Zvbb),
-        (cfg!(daedalus_ext_zvbc), Ext::Zvbc),
+        (cfg!(daedalus_ext_zba) || probed & (1 << 3) != 0, Ext::Zba),
+        (cfg!(daedalus_ext_zbb) || probed & (1 << 4) != 0, Ext::Zbb),
+        (cfg!(daedalus_ext_zbs) || probed & (1 << 5) != 0, Ext::Zbs),
+        (
+            cfg!(daedalus_ext_zvbb) || probed & (1 << 17) != 0,
+            Ext::Zvbb,
+        ),
+        (
+            cfg!(daedalus_ext_zvbc) || probed & (1 << 18) != 0,
+            Ext::Zvbc,
+        ),
     ] {
         if on {
             found.push(ext);
         }
     }
     found
+}
+
+/// `riscv_hwprobe`'s `RISCV_HWPROBE_KEY_IMA_EXT_0` (0 without the syscall or off riscv64).
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+fn riscv_ima_ext_0() -> u64 {
+    #[cfg(all(target_arch = "riscv64", target_os = "linux"))]
+    {
+        let mut pair: [u64; 2] = [4, 0];
+        let ret: isize;
+        // SAFETY: riscv_hwprobe(pairs, 1, 0, NULL, 0) (syscall 258) fills one key/value pair.
+        unsafe {
+            core::arch::asm!(
+                "ecall",
+                inlateout("a0") pair.as_mut_ptr() as isize => ret,
+                in("a1") 1usize,
+                in("a2") 0usize,
+                in("a3") 0usize,
+                in("a4") 0usize,
+                in("a7") 258usize,
+                options(nostack),
+            );
+        }
+        if ret == 0 && pair[0] == 4 {
+            return pair[1];
+        }
+    }
+    0
 }
 
 /// The RISC-V vector register length in bits, when the build has the V extension.

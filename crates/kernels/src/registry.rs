@@ -738,6 +738,10 @@ pub static ACCEL: Registry = Registry {
             path: "crates/kernels/src/registry.rs",
             reason: "the inventory table",
         },
+        Exempt {
+            path: "crates/kernels/src/riscv.rs",
+            reason: "RISC-V extension detection (riscv_hwprobe syscall)",
+        },
     ],
     children: &[&GPU_OPS, &CRC_TABLE, &F16C_TABLE, &RGA_TABLE],
 };

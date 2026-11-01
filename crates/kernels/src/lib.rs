@@ -26,6 +26,8 @@ mod pixel;
 pub mod portable;
 pub mod reference;
 mod registry;
+#[cfg(all(target_arch = "riscv64", target_os = "linux"))]
+mod riscv;
 
 pub use base64::{
     Base64Error, base64_decode, base64_decode_into, base64_decoded_len, base64_encode,

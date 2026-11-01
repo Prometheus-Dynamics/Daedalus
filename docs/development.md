@@ -406,7 +406,8 @@ Stable Rust cannot detect NEON on ARMv7 or V on RISC-V at runtime. It does not e
 `cfg(target_feature)` either, so `daedalus-kernels` and `daedalus-accel` read the flags in their
 build scripts (`daedalus_neon32`, `daedalus_rvv`). A crate with its own NEON32 or RVV code needs
 the same build script. Only use a flag on hardware that has the extension: a `+v` binary traps
-on a RISC-V core without V.
+on a RISC-V core without V. Extensions beyond V (Zvbc for the CRC) are detected at run time
+through `riscv_hwprobe`, so one `+v` binary works on K230D cores with or without them.
 
 ### Rules for new code
 

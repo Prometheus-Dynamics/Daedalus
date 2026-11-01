@@ -10,9 +10,11 @@ use daedalus_accel::Backend;
 /// CRC-32 of `bytes`: AArch64 CRC instructions or x86 PCLMULQDQ folding when the CPU has them,
 /// else slice-by-8.
 pub fn crc32(bytes: &[u8]) -> u32 {
-    #[cfg(all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc))]
-    // SAFETY: V and Zvbc are compiled in.
-    return unsafe { crc32::rvv_zvbc(bytes) };
+    #[cfg(all(target_arch = "riscv64", target_os = "linux", daedalus_rvv))]
+    if crate::riscv::has_zvbc() {
+        // SAFETY: V is compiled in and the kernel reports Zvbc.
+        return unsafe { crc32::rvv_zvbc(bytes) };
+    }
     #[cfg(all(feature = "std", target_arch = "aarch64"))]
     if std::arch::is_aarch64_feature_detected!("crc") {
         // SAFETY: the CPU reports the CRC instructions.
@@ -135,7 +137,7 @@ pub(crate) fn clmul_soft(a: u64, b: u64) -> (u64, u64) {
 /// The PCLMULQDQ folding algorithm over any 64x64 carry-less multiply `clmul` (128-bit lanes as
 /// (low, high) pairs): the RVV Zvbc kernel plugs in `vclmul`/`vclmulh`, the tests a software
 /// multiply.
-#[cfg(any(test, all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc)))]
+#[cfg(any(test, all(target_arch = "riscv64", target_os = "linux", daedalus_rvv)))]
 pub(crate) fn crc32_fold(bytes: &[u8], clmul: &mut dyn FnMut(u64, u64) -> (u64, u64)) -> u32 {
     const K1: u64 = 0x1_5444_2bd4;
     const K2: u64 = 0x1_c6e4_1596;
@@ -287,11 +289,12 @@ pub mod crc32 {
     }
 
     /// RVV with Zvbc: the folding of [`super::crc32_fold`] with each 64x64 carry-less
-    /// multiply done by `vclmul`/`vclmulh` (SEW 64).
+    /// multiply done by `vclmul`/`vclmulh` (SEW 64). Chosen at runtime (`riscv_hwprobe`), so a
+    /// `+v` build runs it on cores with Zvbc and slice-by-8 elsewhere.
     ///
     /// # Safety
-    /// The CPU must have V and Zvbc (compiled in: `-C target-feature=+v,+zvbc`).
-    #[cfg(all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc))]
+    /// The CPU must have V (compiled in) and Zvbc.
+    #[cfg(all(target_arch = "riscv64", target_os = "linux", daedalus_rvv))]
     #[inline(never)]
     pub unsafe fn rvv_zvbc(bytes: &[u8]) -> u32 {
         super::crc32_fold(bytes, &mut |a, b| {
@@ -299,12 +302,15 @@ pub mod crc32 {
             // SAFETY: V and Zvbc are compiled in; one element, registers v1-v3 clobbered.
             unsafe {
                 core::arch::asm!(
+                    ".option push",
+                    ".option arch, +zvbc",
                     "vsetivli zero, 1, e64, m1, ta, ma",
                     "vmv.s.x v1, {a}",
                     "vclmul.vx v2, v1, {b}",
                     "vclmulh.vx v3, v1, {b}",
                     "vmv.x.s {lo}, v2",
                     "vmv.x.s {hi}, v3",
+                    ".option pop",
                     a = in(reg) a,
                     b = in(reg) b,
                     lo = out(reg) lo,
@@ -336,9 +342,9 @@ pub mod crc32 {
                 // SAFETY: the CPU reports the CRC instructions.
                 Some(unsafe { arm_crc(bytes) })
             }
-            #[cfg(all(target_arch = "riscv64", daedalus_rvv, daedalus_ext_zvbc))]
-            // SAFETY: V and Zvbc are compiled in.
-            Backend::Rvv => Some(unsafe { rvv_zvbc(bytes) }),
+            #[cfg(all(target_arch = "riscv64", target_os = "linux", daedalus_rvv))]
+            // SAFETY: V is compiled in and the kernel reports Zvbc.
+            Backend::Rvv if crate::riscv::has_zvbc() => Some(unsafe { rvv_zvbc(bytes) }),
             _ => None,
         }
     }
