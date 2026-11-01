@@ -10,9 +10,9 @@ use parking_lot::Mutex;
 use crate::{GpuContextHandle, GpuError};
 
 /// Caches installed per device ([`GpuPipelineCache::install`]), keyed by `device_key`.
-static INSTALLED: OnceLock<Mutex<HashMap<usize, wgpu::PipelineCache>>> = OnceLock::new();
+static INSTALLED: OnceLock<Mutex<HashMap<usize, (wgpu::PipelineCache, PathBuf)>>> = OnceLock::new();
 
-fn installed() -> &'static Mutex<HashMap<usize, wgpu::PipelineCache>> {
+fn installed() -> &'static Mutex<HashMap<usize, (wgpu::PipelineCache, PathBuf)>> {
     INSTALLED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -20,7 +20,21 @@ fn installed() -> &'static Mutex<HashMap<usize, wgpu::PipelineCache>> {
 /// the descriptor's `cache`. Daedalus's own pipelines (shader dispatch, [`super::FragmentPass`])
 /// use it automatically.
 pub fn pipeline_cache_for(device: &wgpu::Device) -> Option<wgpu::PipelineCache> {
-    installed().lock().get(&super::device_key(device)).cloned()
+    installed()
+        .lock()
+        .get(&super::device_key(device))
+        .map(|(cache, _)| cache.clone())
+}
+
+/// The file of the pipeline cache installed for `device`. Its directory holds per-device data
+/// across runs, and its name identifies the adapter, so a node can keep what it measured once per
+/// device next to it (`path.with_extension("my-node")`). The driver's update invalidates the
+/// pipeline cache by itself; such a file must check that on its own.
+pub fn pipeline_cache_path_for(device: &wgpu::Device) -> Option<PathBuf> {
+    installed()
+        .lock()
+        .get(&super::device_key(device))
+        .map(|(_, path)| path.clone())
 }
 
 /// A Vulkan pipeline cache loaded from and saved to a file named after the adapter (vendor and
@@ -107,7 +121,7 @@ impl GpuPipelineCache {
     pub fn install(&self) {
         installed()
             .lock()
-            .insert(self.device_key, self.cache.clone());
+            .insert(self.device_key, (self.cache.clone(), self.path.clone()));
     }
 
     /// Write the cache's current data to its file (atomically: a temporary file, then a rename).

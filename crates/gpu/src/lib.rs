@@ -63,7 +63,7 @@ pub use selection::select_backend_async;
 pub use shader::{
     FragmentBinding, FragmentPass, FragmentRects, GpuInFlight, GpuKernel, GpuKernels,
     GpuPipelineCache, GpuReadback, GpuStorage, GpuStoragePool, GpuStoragePoolStats, GpuTexture,
-    GpuTicket, GpuTimeSource, GpuTimed, GpuTimer, pipeline_cache_for,
+    GpuTicket, GpuTimeSource, GpuTimed, GpuTimer, pipeline_cache_for, pipeline_cache_path_for,
 };
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 pub use shader::{GpuFrameImportStats, GpuFrameImports, GpuFrameInput};

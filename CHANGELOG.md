@@ -17,6 +17,9 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`pipeline_cache_path_for(device)`**: the file of the pipeline cache installed for a device, so
+  a node can keep what it measured once per device next to it.
+
 - **`daedalus_rga::Librga`: the RGA through the vendor's `librga`, loaded at runtime** (written,
   untested on board). It reaches what the mainline V4L2 driver does not: RGA3 on vendor kernels,
   gray input and Y-only output. It offers format conversion and scaling between dmabufs or byte

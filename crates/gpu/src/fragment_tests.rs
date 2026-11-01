@@ -228,6 +228,10 @@ fn pipeline_cache_round_trips_through_its_file() {
     cache.install();
     let (device, _) = ctx.wgpu().unwrap();
     assert!(crate::pipeline_cache_for(device).is_some());
+    assert_eq!(
+        crate::pipeline_cache_path_for(device).as_deref(),
+        Some(cache.path())
+    );
     FragmentPass::new(
         &ctx,
         "@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.25); }",
