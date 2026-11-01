@@ -16,11 +16,16 @@
 //! ```
 //!
 //! Status: written and tested against `vim2m` (conversion, scaling, dmabuf in and out); on a
-//! Rockchip board untested. A librga backend (RGA3 on vendor kernels) is planned behind the same
-//! API.
+//! Rockchip board untested. [`Librga`] reaches the engine through the vendor's library instead,
+//! for RGA3 on vendor kernels, gray input and Y-only output (written, untested on board).
 
 #[cfg(target_os = "linux")]
+mod librga;
+#[cfg(target_os = "linux")]
 mod v4l2;
+
+#[cfg(target_os = "linux")]
+pub use librga::{Image, Librga, RgaFormat};
 
 #[cfg(target_os = "linux")]
 pub use rga::Rga;

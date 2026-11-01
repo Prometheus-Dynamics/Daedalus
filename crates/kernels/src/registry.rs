@@ -665,35 +665,54 @@ static F16C_TABLE: Registry = Registry {
     ..Registry::EMPTY
 };
 
-/// Rockchip's RGA (`daedalus-rga`, the `rockchip-rga` V4L2 mem2mem driver): written, untested on
-/// board.
-static RGA_KERNELS: [Kernel; 4] = [
+/// Rockchip's RGA (`daedalus-rga`): the `rockchip-rga` V4L2 mem2mem driver and the vendor's
+/// `librga`. Written, untested on board.
+const RGA_V4L2: (&str, &str) = ("crates/rga/src/lib.rs", "crates/rga/tests/v4l2.rs");
+const RGA_LIB: (&str, &str) = ("crates/rga/src/librga.rs", "crates/rga/tests/librga.rs");
+
+static RGA_KERNELS: [Kernel; 6] = [
     Kernel::implemented(
         "daedalus.pixel.rgb_to_rgba",
         Backend::FixedFunction,
-        "crates/rga/src/lib.rs",
-        "crates/rga/tests/v4l2.rs",
+        RGA_V4L2.0,
+        RGA_V4L2.1,
     )
     .with_variant("rga-v4l2"),
     Kernel::implemented(
         "daedalus.pixel.rgba_to_rgb",
         Backend::FixedFunction,
-        "crates/rga/src/lib.rs",
-        "crates/rga/tests/v4l2.rs",
+        RGA_V4L2.0,
+        RGA_V4L2.1,
     )
     .with_variant("rga-v4l2"),
-    Kernel::missing(
+    Kernel::implemented(
+        "daedalus.pixel.rgb_to_rgba",
+        Backend::FixedFunction,
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
+        "daedalus.pixel.rgba_to_rgb",
+        Backend::FixedFunction,
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
         "daedalus.pixel.gray_to_rgba",
         Backend::FixedFunction,
-        Status::Gap(
-            "Rockchip RGA through librga (YCbCr_400 input; mainline rockchip-rga has no GREY), pending the librga headers",
-        ),
-    ),
-    Kernel::missing(
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
         "daedalus.pixel.rgba_red",
         Backend::FixedFunction,
-        Status::Gap("Rockchip RGA through librga (Y-only output), pending the librga headers"),
-    ),
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
 ];
 
 static RGA_TABLE: Registry = Registry {

@@ -17,6 +17,13 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`daedalus_rga::Librga`: the RGA through the vendor's `librga`, loaded at runtime** (written,
+  untested on board). It reaches what the mainline V4L2 driver does not: RGA3 on vendor kernels,
+  gray input and Y-only output. It offers format conversion and scaling between dmabufs or byte
+  buffers, and `rgb_to_rgba`, `rgba_to_rgb`, `gray_to_rgba` and `rgba_red`. The FFI declarations
+  follow airockchip/librga's headers (Apache-2.0, commit 2b32edc); nothing links the library. The
+  matrix's RGA gray and red cells go from a masked gap to untested.
+
 - **8-bit storage-buffer access on Daedalus's Vulkan device.** `storageBuffer8BitAccess` and
   `uniformAndStorageBuffer8BitAccess` are enabled at device creation where the device supports
   them (`VK_KHR_8bit_storage` below Vulkan 1.2), for SPIR-V kernels that read 8-bit samples.

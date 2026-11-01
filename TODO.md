@@ -252,17 +252,16 @@ built, measured per device and kept selectable. `docs/backend-matrix.md` is the 
       stable `--all-features` builds keep working), run by `ci.sh accel` on nightly-2026-10-15
       with asm checks; all 11 vectorizable ops pass (CRC-32: not data-parallel).
 - [ ] **What:** the Rockchip RGA fixed-function backend (RGB↔RGBA, gray).
-      **Status:** route (b) is written as the `daedalus-rga` crate shared with Styx: scale, crop
-      and format conversion, dmabuf in and dmabuf out (V4L2 mem2mem, tested end to end on
-      `vim2m` with `dma_heap` dmabufs); on `rockchip-rga` written, untested on board.
-      Route (a), librga for gray and RGA3 on vendor kernels, waits for the header download
-      decision.
-      **Done when:** the RGA cells pass on a Rockchip board.
-      **Blocked by:** a Rockchip board; the user's OK for the librga headers (route a).
-- [ ] **What:** the remaining CRC-32 cell: NEON32 `vmull.p8` folding (the GPU chunk-and-combine
-      CRC and `rvv+zvbc` folding are done).
-      **Done when:** each passes conformance in `ci.sh accel`, or carries a physical reason.
-      **Blocked by:** nothing.
+      **Status:** both routes are written in the `daedalus-rga` crate shared with Styx. Route (b),
+      V4L2 mem2mem (scale, crop, format conversion, dmabuf in and out), is tested end to end on
+      `vim2m` with `dma_heap` dmabufs. Route (a), `Librga` (RGA3 on vendor kernels, gray input,
+      red through a relabelled nearest scale), is unit-tested against software stand-ins. Both are
+      written, untested on board; whether the hardware's nearest sample is red needs that run.
+      **Done when:** the RGA cells pass on a Rockchip board (`crates/rga/tests/{v4l2,librga}.rs`).
+      **Blocked by:** a Rockchip board.
+- [x] **What:** the remaining CRC-32 cell: NEON32 `vmull.p8` folding.
+      **Done:** 50093a9; conformance under qemu. `crc32()` stays on slice-by-8 on ARMv7 until
+      `crc32_throughput` runs on the Luckfox Pico Pro (RV1106).
 - [ ] **What:** `GpuKernels` and the kernels measured on V3D, and later on Mali (the matrix's GPU
       evidence per adapter).
       **Status:** V3D done (2026-10-31): all bit-exact; compute is 5-40x slower than the A76 CPU,
