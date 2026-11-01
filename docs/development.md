@@ -599,7 +599,7 @@ handles; `owner` feeds the frame type, so the provider's `View` adapter runs on 
 rows).
 
 **Host numbers: x86_64 (AMD Ryzen 9 5900X, shared 24-core machine at load ~40), not the Raspberry Pi CM5 (aarch64).**
-On-device numbers are a TODO. Push + tick + take per frame, p50 of 20000 frames
+The CM5 numbers are in [benchmarks-log.md](benchmarks-log.md#fusion). Push + tick + take per frame, p50 of 20000 frames
 (`FRAME_CHAIN_TICKS=20000`), frame-overhead recording off:
 
 | Stages | `interface` | `owner` |

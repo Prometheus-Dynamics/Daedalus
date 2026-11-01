@@ -1,7 +1,7 @@
 # Migrating To Daedalus 4.0
 
 This guide covers upgrading from **3.0.0** (tag `v3.0.0`) to 4.0.0, which `dev` carries as
-`3.0.1-dev` until the coordinated release. The full list of changes is in
+`3.0.1-dev` until it is released. The full list of changes is in
 [`CHANGELOG.md`](../CHANGELOG.md) (`[Unreleased]` until the release); every breaking item that
 `./scripts/ci.sh semver` reports against `v3.0.0` is named there or in
 [`api-review.md`](api-review.md).
