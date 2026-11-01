@@ -17,6 +17,13 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Core-tuned kernel variants get their own matrix column.** Mark a variant with
+  `Kernel::with_core("a55")` and `accel-matrix render` gives it a column of its own
+  (`neon64[a53]`, `neon64+dotprod[a55]`), placed after the shared one. The column passes only on
+  the variant's own evidence (`Evidence::variant("a55")`), and the shared column ignores it.
+  Plain `with_variant` variants (GPU compute and fragment forms) still share the backend's
+  column. The registry dump carries `"core"`; older dumps read as `false`.
+
 - **NEON32 CRC-32** (`crc32::neon_vmull_p8`). ARMv7 has neither CRC instructions nor a 64-bit
   carry-less multiply. Each 64x64 multiply of the PCLMULQDQ folding is built from eight
   `vmull.p8` (8x8-bit polynomial multiplies), combined by Horner's rule over the bytes. It

@@ -77,6 +77,7 @@ fn cells_need_evidence_and_rvv_needs_three_vector_lengths() {
     let dotprod = Column {
         backend: Backend::Neon64,
         extensions: vec!["dotprod".into()],
+        core: None,
         wired: false,
     };
     assert_eq!(inv.cell_in("t.add", &dotprod).cell, Cell::Gap);
@@ -84,6 +85,7 @@ fn cells_need_evidence_and_rvv_needs_three_vector_lengths() {
     let bmi2 = Column {
         backend: Backend::X86Avx2,
         extensions: vec!["bmi2".into()],
+        core: None,
         wired: false,
     };
     assert_eq!(inv.cell_in("t.add", &bmi2).cell, Cell::Untested);
@@ -203,5 +205,62 @@ fn vector_instructions_are_recognized_per_isa() {
         vector_instructions(Backend::Rvv, &funcs[0].1),
         0,
         "vsetvli only"
+    );
+}
+
+static CORE_ROOT: Registry = Registry {
+    repo: "t",
+    name: "core",
+    ops: &[Op::new("t.sum", "sum", "t::sum")],
+    kernels: &[
+        Kernel::implemented("t.sum", Backend::Neon64, "src/sum.rs:1", "sum::neon"),
+        Kernel::implemented("t.sum", Backend::Neon64, "src/sum.rs:9", "sum::a53").with_core("a53"),
+        Kernel::implemented("t.sum", Backend::Neon64, "src/sum.rs:20", "sum::a55")
+            .with_core("a55")
+            .with_extensions(&[Ext::Dotprod]),
+    ],
+    ..Registry::EMPTY
+};
+
+/// A core-tuned variant (`with_core`) is its own column, passing only from its own evidence;
+/// the shared column ignores it.
+#[test]
+fn core_tuned_variants_get_their_own_columns() {
+    let record = |variant: &str, exts: &str| {
+        format!(
+            "{{\"kind\":\"test\",\"op\":\"t.sum\",\"backend\":\"neon64\",\"extensions\":[{exts}],\"variant\":{variant},\"adapter\":null,\"target\":\"x\",\"runner\":\"qemu\",\"vlen\":null,\"rev\":\"\",\"result\":\"pass\",\"detail\":null}}\n"
+        )
+    };
+    let mut inv = Inventory::default();
+    inv.add_registry(&crate::dump_json(&[&CORE_ROOT])).unwrap();
+    inv.add_records(&(record("null", "") + &record("\"a55\"", "\"dotprod\"")))
+        .unwrap();
+    let names: Vec<String> = inv.columns().iter().map(Column::name).collect();
+    let at = |name: &str| names.iter().position(|n| n == name).unwrap_or(usize::MAX);
+    assert!(at("neon64") < at("neon64[a53]"), "{names:?}");
+    assert!(
+        at("neon64+dotprod") < at("neon64+dotprod[a55]"),
+        "{names:?}"
+    );
+    let column = |name: &str| {
+        inv.columns()
+            .into_iter()
+            .find(|c| c.name() == name)
+            .unwrap()
+    };
+    // The shared column passes from the base kernel alone; a53 has no evidence of its own.
+    assert_eq!(inv.cell("t.sum", Backend::Neon64).cell, Cell::Pass);
+    assert_eq!(
+        inv.cell_in("t.sum", &column("neon64[a53]")).cell,
+        Cell::Untested
+    );
+    assert_eq!(
+        inv.cell_in("t.sum", &column("neon64+dotprod[a55]")).cell,
+        Cell::Pass
+    );
+    // No shared dotprod kernel: that column does not apply.
+    assert_eq!(
+        inv.cell_in("t.sum", &column("neon64+dotprod")).cell,
+        Cell::NotApplicable
     );
 }

@@ -79,12 +79,13 @@ fn collect(
         let mut line = String::new();
         let _ = write!(
             line,
-            "{{\"repo\":{},\"op\":{},\"backend\":{},\"extensions\":[{}],\"variant\":{},\"source\":{},\"test\":{},\"symbol\":{},\"status\":{},\"reason\":{}}}",
+            "{{\"repo\":{},\"op\":{},\"backend\":{},\"extensions\":[{}],\"variant\":{},\"core\":{},\"source\":{},\"test\":{},\"symbol\":{},\"status\":{},\"reason\":{}}}",
             json_str(repo),
             json_str(k.op),
             json_str(k.backend.name()),
             ext_list(k.extensions),
             k.variant.map_or_else(|| "null".into(), json_str),
+            k.core,
             json_str(k.source),
             json_str(k.test),
             k.symbol.map_or_else(|| "null".into(), json_str),

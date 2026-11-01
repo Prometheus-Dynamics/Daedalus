@@ -27,12 +27,15 @@ pub struct OpRow {
     pub call_sites: Vec<(String, String, Vec<String>)>,
 }
 
-/// A matrix column: a backend, plus the extensions of a variant (`neon64+dotprod`).
+/// A matrix column: a backend, plus the extensions of a variant (`neon64+dotprod`), plus the
+/// CPU core a variant is tuned for (`neon64+dotprod[a55]`).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Column {
     pub backend: Backend,
     /// Sorted extension names; empty for the backend's base column.
     pub extensions: Vec<String>,
+    /// The core of a core-tuned variant (`Kernel::with_core`); `None` for the shared column.
+    pub core: Option<String>,
     /// The `wired` column: the op's call sites run the kernel (`backend` unused).
     pub wired: bool,
 }
@@ -42,6 +45,7 @@ impl Column {
         Self {
             backend,
             extensions: Vec::new(),
+            core: None,
             wired: false,
         }
     }
@@ -51,11 +55,12 @@ impl Column {
         Self {
             backend: Backend::Scalar,
             extensions: Vec::new(),
+            core: None,
             wired: true,
         }
     }
 
-    /// `neon64`, `neon64+dotprod`, `x86_avx2+bmi2+popcnt`, `wired`.
+    /// `neon64`, `neon64+dotprod`, `x86_avx2+bmi2+popcnt`, `neon64+dotprod[a55]`, `wired`.
     pub fn name(&self) -> String {
         if self.wired {
             return "wired".into();
@@ -64,6 +69,11 @@ impl Column {
         for ext in &self.extensions {
             name.push('+');
             name.push_str(ext);
+        }
+        if let Some(core) = &self.core {
+            name.push('[');
+            name.push_str(core);
+            name.push(']');
         }
         name
     }
@@ -78,12 +88,21 @@ pub struct KernelRow {
     /// Sorted extension names.
     pub extensions: Vec<String>,
     pub variant: Option<String>,
+    /// The variant is core-tuned: it has its own column.
+    pub core: bool,
     pub source: String,
     pub test: String,
     pub symbol: Option<String>,
     /// `implemented`, `gap`, `impossible` or `not_data_parallel`.
     pub status: String,
     pub reason: String,
+}
+
+impl KernelRow {
+    /// The core whose column this kernel belongs to; `None` for the shared column.
+    pub fn core_column(&self) -> Option<&str> {
+        self.variant.as_deref().filter(|_| self.core)
+    }
 }
 
 /// One evidence record (`kind` `test` from [`crate::conform`], `asm` from the asm check).
@@ -211,6 +230,7 @@ impl Inventory {
                         Ok(Column {
                             backend: backend(c)?,
                             extensions: exts(c),
+                            core: None,
                             wired: false,
                         })
                     })
@@ -241,6 +261,7 @@ impl Inventory {
                 backend: backend(&k)?,
                 extensions: exts(&k),
                 variant: opt(&k, "variant"),
+                core: k.get("core").and_then(Value::as_bool).unwrap_or(false),
                 source: s(&k, "source"),
                 test: s(&k, "test"),
                 symbol: opt(&k, "symbol"),
@@ -314,16 +335,31 @@ impl Inventory {
     }
 
     /// Every column: each backend's base, then the extension variants any kernel or candidate
-    /// declares.
+    /// declares, then the core-tuned ones (each after its shared column).
     pub fn columns(&self) -> Vec<Column> {
         let mut variants: BTreeSet<Column> = BTreeSet::new();
-        for k in self.kernels.iter().filter(|k| !k.extensions.is_empty()) {
+        for k in self
+            .kernels
+            .iter()
+            .filter(|k| !k.extensions.is_empty() || k.core)
+        {
             variants.insert(Column {
                 backend: k.backend,
                 extensions: k.extensions.clone(),
+                core: None,
                 wired: false,
             });
+            if k.core {
+                variants.insert(Column {
+                    backend: k.backend,
+                    extensions: k.extensions.clone(),
+                    core: k.variant.clone(),
+                    wired: false,
+                });
+            }
         }
+        // The base column comes first anyway.
+        variants.retain(|c| !c.extensions.is_empty() || c.core.is_some());
         for op in &self.ops {
             variants.extend(
                 op.candidates
@@ -400,7 +436,7 @@ impl Inventory {
     }
 
     /// The cell for `op` in `column`. A base kernel's evidence never counts for an extension
-    /// column.
+    /// column, and a core-tuned variant counts only in its own column.
     pub fn cell_in(&self, op: &str, column: &Column) -> CellValue {
         if column.wired {
             return self.wired_cell(op);
@@ -409,10 +445,13 @@ impl Inventory {
             .kernels
             .iter()
             .filter(|k| {
-                k.op == op && k.backend == column.backend && k.extensions == column.extensions
+                k.op == op
+                    && k.backend == column.backend
+                    && k.extensions == column.extensions
+                    && k.core_column() == column.core.as_deref()
             })
             .collect();
-        if entries.is_empty() && !column.extensions.is_empty() {
+        if entries.is_empty() && (!column.extensions.is_empty() || column.core.is_some()) {
             let candidate = self
                 .ops
                 .iter()

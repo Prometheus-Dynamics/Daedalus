@@ -291,6 +291,9 @@ pub struct Kernel {
     /// A variant within the backend ("fragment", "compute", "avx2+fma"); `None` for the
     /// backend's only kernel. Evidence carries the same string.
     pub variant: Option<&'static str>,
+    /// The variant is tuned for one CPU core ([`Kernel::with_core`]): its own matrix column
+    /// (`neon64+dotprod[a55]`) instead of a share of the backend's.
+    pub core: bool,
     /// Extensions the kernel needs beyond the backend's base (sorted or not; compared as a set).
     pub extensions: &'static [Ext],
     /// `path/from/repo/root.rs:line` of the kernel; the gate matches marker files by path.
@@ -315,6 +318,7 @@ impl Kernel {
             op,
             backend,
             variant: None,
+            core: false,
             extensions: &[],
             source,
             test,
@@ -329,6 +333,7 @@ impl Kernel {
             op,
             backend,
             variant: None,
+            core: false,
             extensions: &[],
             source: "",
             test: "",
@@ -339,6 +344,15 @@ impl Kernel {
 
     pub const fn with_variant(mut self, variant: &'static str) -> Self {
         self.variant = Some(variant);
+        self
+    }
+
+    /// A variant tuned for the CPU core `core` (`"a53"`, `"a55"`): evidence records it as the
+    /// variant (`Evidence::variant(core)`), and the matrix gives it its own column
+    /// (`neon64[a53]`, `neon64+dotprod[a55]`) that passes only from that evidence.
+    pub const fn with_core(mut self, core: &'static str) -> Self {
+        self.variant = Some(core);
+        self.core = true;
         self
     }
 
