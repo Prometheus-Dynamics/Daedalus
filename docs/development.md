@@ -513,7 +513,7 @@ fixes described below.
 | Payloads created (node outputs, adapter results, branch, host frame) | 31 | 31 | 31 | 31 | 31 |
 | Config decoding (E's serde enum and `String` fields, decoded per frame without the cache) | - | - | - | - | 0 |
 | Generated handler code (`daedalus-macros`: per-push keys in A, state keys until E) | 55 | 9 | 9 | 9 | 0 |
-| **Serial, metrics off** | **378** | **290** | **40** | **40** | **31** |
+| **Serial, metrics off** | **378** | **290** | **40** | **40** | **31** (14 since the tick-cost pass) |
 | Serial, basic metrics (per-node metrics: a `BTreeMap` until C, one vector in D) | 381 | 293 | 43 | 41 | 32 |
 | Parallel/adaptive on the Rayon pool (`executor-pool`, removed since; C: a pool task per segment and a result channel) | 422 | 334 | 60 | 40 | 31 |
 | Parallel/adaptive without the Rayon pool (C: a scoped OS thread per segment; D: parked threads) | 458 | 370 | 141 | 40 | 31 |
@@ -558,6 +558,33 @@ The harness needed two fixes to run at all: owned scalar parameters fed by const
 (`NodeIo::take_owned` coercing `Value`s) and builtin branch adapters for keys shared by several
 Rust types (a fanned-out `i64` output was branched by the `i32` adapter; since E every builtin
 number has its own key).
+
+### Hot-path copy and allocation audit (2026-11-01)
+
+Every per-execution copy and allocation on the runtime and GPU hot paths, and where each
+stands. Frames never copy:
+- `SharedFrame` and external-residency payloads fan out as `Arc` bumps;
+- adapters retype in place;
+- `#[adapt]` `Owned` uses `Arc::try_unwrap` and errors rather than copying.
+
+This is checked by `frame-bench`'s `external_frame_chain_has_no_copies_and_no_runtime_allocations`
+and `detector_frames_allocate_nothing`.
+
+| Path | Per execution | Status |
+| --- | --- | --- |
+| Payload created by a node or adapter | one `Arc` (the value's storage) | inherent; returning an `Arc` the node holds costs 0 |
+| Detector graph frame (`graph_frame_allocations`) | 14: 12 payloads, 1 built-in branch (`count` fanned out to an owned consumer), 1 `String` const taken by value | budget exact; no runtime bookkeeping |
+| `tick_direct_payload` (route by port name) | was 5 (route, mask `Vec`, node clone) | fixed: routes cached per port pair, single-node part `Arc`-shared; 1 now (`hot_path_allocations`) |
+| `drain_payloads` | a `Vec` per call | `drain_payloads_into(&mut Vec)` reuses one: 0 |
+| Edge pop size estimate | `RwLock` read per pop | skipped when no size inspector is registered |
+| `take_owned` of a `String` const | the string | by design (owned parameter); take `&str` to avoid |
+| Retry (`NodeRecovery::Retry`) on a by-value input | a clone of the input | by design (the retry needs the original); take an `Arc` to avoid |
+| Exclusive owned consumer of fanned-out bytes | a copy of the bytes | by design (the consumer may mutate); read through `&T`/`Arc` to avoid |
+| Stable-ABI plugin call | per-call handle arena; `String`/bytes inputs and outputs copied unless passed as `SharedBytes` handles | open: keep the arena across calls, recycle the output vector |
+| GPU kernel dispatch (`GpuKernels::encode`) | 0 beyond wgpu (29 = raw wgpu, `tests/gpu_allocations`) | fixed: cached bindings, no pass labels, stated binding sizes |
+| GPU `run` | +2 (the `GpuTicket`) | inherent to a completion handle; batch kernels in one encoder |
+| GPU frame input (`GpuFrameImports`) | 0 after the first frame of each dmabuf | no copy, no import, inline plane layout |
+| GPU upload / readback on UMA | 0 copies with `new_host_mapped` / `new_host_cached` | staging-free |
 
 ### Frame-path overhead
 

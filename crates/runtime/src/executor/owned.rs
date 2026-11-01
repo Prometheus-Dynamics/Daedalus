@@ -36,6 +36,9 @@ pub struct OwnedExecutor<H: NodeHandler> {
     pub(super) storage_needs_reset: bool,
     /// Measured costs behind `run_adaptive_in_place`.
     pub(super) adaptive: AdaptiveState,
+    /// Routes resolved by `run_direct_host_payload`, by (input port, output port): the routes
+    /// depend only on the plan, so a repeated call reuses its route instead of rebuilding it.
+    pub(super) direct_routes: Vec<(Box<str>, Box<str>, super::DirectHostRoute)>,
 }
 
 impl<H: NodeHandler> ExecutorConfigTarget for OwnedExecutor<H> {
@@ -98,6 +101,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             core,
             storage_needs_reset: true,
             adaptive: AdaptiveState::default(),
+            direct_routes: Vec::new(),
             plan,
         })
     }

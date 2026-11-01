@@ -128,7 +128,9 @@ fn call_site(trace: &str) -> String {
             continue;
         };
         let generated = symbol.contains("detector_graph");
-        if !(symbol.starts_with("daedalus") || generated) {
+        // Trait impls print as `<daedalus_runtime::... as ...>::f` or `<daedalus_...>::f`.
+        let daedalus = symbol.starts_with("daedalus") || symbol.starts_with("<daedalus");
+        if !(daedalus || generated) {
             continue;
         }
         let symbol = match symbol.rsplit_once("::h") {

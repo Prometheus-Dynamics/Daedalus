@@ -228,3 +228,47 @@ fn round_trip_after_reload_allocation_budget() {
         "{TICKS} round trips after reload allocated {allocations} times"
     );
 }
+
+/// A direct-payload tick by port name resolves its route once and reuses it (no route rebuild,
+/// no node clone per call), and draining into a reused vector allocates nothing: only the
+/// node's output payload allocates.
+#[test]
+fn direct_payload_ticks_and_reused_drains_allocate_only_the_output() {
+    let _serial = serial();
+    let (_plugins, mut graph) = compile(MetricsLevel::Off);
+    graph.host().set_event_recording(false);
+    let input = Payload::owned(INT_KEY, Value::Int(1));
+    for _ in 0..4 {
+        let _ = graph
+            .tick_direct_payload("in", input.clone(), "out")
+            .expect("tick");
+    }
+    let allocations = allocations_during(|| {
+        let out = graph
+            .tick_direct_payload("in", input.clone(), "out")
+            .expect("tick")
+            .and_then(|(_, out)| out);
+        assert!(out.is_some());
+    });
+    assert!(
+        allocations <= 1,
+        "a direct-payload tick allocated {allocations} times (route rebuilt per call?)"
+    );
+
+    let mut drained = Vec::with_capacity(4);
+    for value in 0..4 {
+        graph.push_payload("in", input.clone());
+        graph.tick().expect("tick");
+        graph.drain_payloads_into("out", &mut drained);
+        assert_eq!(drained.len(), 1, "round {value}");
+    }
+    let allocations = allocations_during(|| {
+        graph.push_payload("in", input.clone());
+        graph.tick().expect("tick");
+        graph.drain_payloads_into("out", &mut drained);
+    });
+    assert!(
+        allocations <= 1,
+        "push, tick and a reused drain allocated {allocations} times"
+    );
+}

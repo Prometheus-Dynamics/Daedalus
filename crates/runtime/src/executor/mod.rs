@@ -80,7 +80,8 @@ pub struct DirectHostRoute {
     input_edge: usize,
     output_edge: usize,
     active_direct_edges: Arc<Vec<bool>>,
-    single_node: Option<DirectHostSingleNodeRoute>,
+    /// Shared, so cloning a route never copies the node and its context.
+    single_node: Option<Arc<DirectHostSingleNodeRoute>>,
 }
 
 impl DirectHostRoute {

@@ -16,9 +16,23 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         payload: Payload,
         output_port: &str,
     ) -> Result<Option<(ExecutionTelemetry, Option<Payload>)>, ExecuteError> {
-        let Some(route) = self.direct_host_route(input_port, output_port) else {
-            return Ok(None);
+        let cached = self
+            .direct_routes
+            .iter()
+            .position(|(i, o, _)| &**i == input_port && &**o == output_port);
+        let index = match cached {
+            Some(index) => index,
+            None => {
+                let Some(route) = self.direct_host_route(input_port, output_port) else {
+                    return Ok(None);
+                };
+                self.direct_routes
+                    .push((input_port.into(), output_port.into(), route));
+                self.direct_routes.len() - 1
+            }
         };
+        // The route is plan data (Arc-shared); clone it out so the run can borrow `self`.
+        let route = self.direct_routes[index].2.clone();
         self.run_direct_host_route(&route, payload).map(Some)
     }
 
@@ -41,7 +55,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             input_edge,
             output_edge,
             active_direct_edges: Arc::new(direct_edges),
-            single_node: self.direct_host_single_node_route(input_edge, output_edge),
+            single_node: self
+                .direct_host_single_node_route(input_edge, output_edge)
+                .map(Arc::new),
         })
     }
 

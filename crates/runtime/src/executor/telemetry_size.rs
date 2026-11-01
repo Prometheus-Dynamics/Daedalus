@@ -9,6 +9,9 @@ pub type RuntimeDataSizeInspector = fn(&dyn core::any::Any) -> Option<u64>;
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeDataSizeInspectors {
     inspectors: Arc<RwLock<Vec<RuntimeDataSizeInspector>>>,
+    /// Set once an inspector is registered: without one, the per-pop size estimate skips the
+    /// lock.
+    any: Arc<core::sync::atomic::AtomicBool>,
 }
 
 impl RuntimeDataSizeInspectors {
@@ -31,11 +34,15 @@ impl RuntimeDataSizeInspectors {
             return;
         }
         inspectors.push(inspector);
+        self.any.store(true, core::sync::atomic::Ordering::Release);
     }
 
     pub fn estimate_payload_bytes(&self, payload: &daedalus_transport::Payload) -> Option<u64> {
         if let Some(bytes) = payload.bytes_estimate() {
             return Some(bytes);
+        }
+        if !self.any.load(core::sync::atomic::Ordering::Acquire) {
+            return None;
         }
         let value = payload.value_any()?;
         let inspectors = self.inspectors.read();

@@ -746,6 +746,11 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.host.drain_payloads(port)
     }
 
+    /// [`HostGraph::drain_payloads`] into a reused vector (cleared first): no allocation.
+    pub fn drain_payloads_into(&self, port: impl AsRef<str>, out: &mut Vec<Payload>) {
+        self.host.drain_payloads_into(port, out);
+    }
+
     pub fn drain_owned<T>(&self, port: impl AsRef<str>) -> Result<Vec<T>, EngineError>
     where
         T: Send + Sync + 'static,

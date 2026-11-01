@@ -670,6 +670,13 @@ impl HostBridgeHandle {
         }
     }
 
+    /// [`HostBridgeHandle::drain_payloads`] into a reused vector (cleared first): no allocation
+    /// once `out` has grown to the port's backlog.
+    pub fn drain_payloads_into(&self, port: impl AsRef<str>, out: &mut Vec<Payload>) {
+        out.clear();
+        self.drain_port_into(port.as_ref(), out);
+    }
+
     pub fn drain_payloads(&self, port: impl AsRef<str>) -> Vec<Payload> {
         let _scope = io_timing::host_alloc_scope();
         let port = port.as_ref();
@@ -681,17 +688,25 @@ impl HostBridgeHandle {
 
     #[inline(always)]
     fn drain_port(&self, port: &str) -> Vec<Payload> {
+        let mut payloads = Vec::new();
+        self.drain_port_into(port, &mut payloads);
+        payloads
+    }
+
+    /// Append `port`'s outbound backlog to `payloads`, with the delivery stats and events.
+    fn drain_port_into(&self, port: &str, payloads: &mut Vec<Payload>) {
         let mut guard = self.shared.buffers.lock();
         let buffers = &mut *guard;
-        let mut payloads = Vec::new();
+        let start = payloads.len();
         if let Some(state) = buffers.outbound.get_mut(port) {
             state.drain_into(|entry| payloads.push(entry.payload));
         }
+        let drained = &payloads[start..];
         buffers.stats.outbound_delivered = buffers
             .stats
             .outbound_delivered
-            .saturating_add(payloads.len() as u64);
-        for payload in &payloads {
+            .saturating_add(drained.len() as u64);
+        for payload in drained {
             record_host_event(
                 &mut buffers.events,
                 &buffers.clock,
@@ -703,7 +718,6 @@ impl HostBridgeHandle {
                 None,
             );
         }
-        payloads
     }
 }
 

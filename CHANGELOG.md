@@ -141,6 +141,12 @@ plugin ABI and does not load.
 
     `GpuFrameImports` compares plane dmabufs by inode, so Styx's NV12 with dup'd plane fds is one
     import. `GpuFrameInput` keeps plane offsets inline, with no per-frame allocation.
+- **Hot-path allocations** (the audit in `docs/development.md`):
+  - `tick_direct_payload` caches its route per port pair, and the route's single-node part is
+    `Arc`-shared: 5 allocations per call down to 1, the output.
+  - `drain_payloads_into` drains into a reused vector.
+  - The per-pop size estimate skips its lock when no size inspector is registered.
+  - The allocation trace attributes `<daedalus_…>` trait-impl frames.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`
