@@ -83,9 +83,16 @@ used.
   (`GpuKernels::encode`, `FragmentPass::encode_bound`). Each encoder and submission costs wgpu
   time and allocations (about 29 allocations per submit). On an RX 6800 XT, 8 small kernels cost
   0.37 ms per frame as 8 submits and 0.15 ms as one (`gpu_bench [batching]`). On V3D the same
-  frame is GPU-bound: 1.29 ms either way, against 21.7 µs to record and submit an empty dispatch
-  (p50, `[dispatch-latency]`), so there the per-submit cost is a small share.
-  `GPU_BENCH_SECTIONS=batching,allocation` runs only the named sections.
+  frame is GPU-bound: 1.30 ms as 8 submits and 1.32 ms as one, against 22 µs to record and
+  submit an empty dispatch (p50, `[dispatch-latency]`), so there the per-submit cost is a small
+  share. `GPU_BENCH_SECTIONS=batching,allocation` runs only the named sections.
+- **Dispatch floor.** One small dispatch (a 64 KiB copy) costs the same CPU time through
+  `GpuKernels` as hand-written wgpu with its pipeline and bind group made up front. On the Raze
+  (V3D, p50), recording and submitting takes 23.3 µs raw, 23.0 µs with `encode` and 23.2 µs with
+  `run`. Submit to done takes 173 µs raw and 186-187 µs through `GpuKernels`: its kernel also
+  binds the status and auxiliary buffers. The allocations match too: 29 per dispatch raw and with
+  `encode`, 31 with `run` (its `GpuTicket`; `tests/gpu_allocations.rs`). Reported by
+  `gpu_bench [dispatch-floor]`.
 
 Compute stays available through `daedalus::gpu::shader` dispatch, or your own pipelines.
 
@@ -111,8 +118,13 @@ CPU kernel per adapter. On an RTX 4060, every op over 4 MiB takes 0.005-0.2 ms o
 - **Read results back from `GpuStorage::new_host_cached`, not `new_host_mapped`.** Host-mapped
   memory is usually uncached or write-combined: fine for CPU writes, slow for CPU reads.
   Reading 16 MiB took 640 ms from host-mapped memory on an RX 6800 XT and 17 ms from
-  host-cached. `new_host_cached` falls back to host-mapped memory where the device has no cached
-  kind.
+  host-cached. v3dv has a single memory type (`DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT`, no
+  `HOST_CACHED`). There, with the `gpu-dmabuf` feature, `new_host_cached` makes a system dma-heap
+  buffer that the GPU writes through an import and the CPU reads through its own cached mapping,
+  with `DMA_BUF_IOCTL_SYNC` around each `read_mapped`/`write_mapped`. On the Raze that reads
+  16 MiB in 3.6 ms instead of 13.1 ms from the uncached mapping (a plain memcpy takes 2.9 ms),
+  and 1 MiB in 0.30 ms instead of 0.63 ms (`gpu_bench [readback]`). Without dma-heap access it
+  falls back to host-mapped memory.
 - **No zero-init:** `GpuStorage::new_uninit` skips wgpu's lazy clear on first use, for buffers
   the caller fully writes first. `gpu_bench`'s `[allocation]` section reports what that clear
   costs, next to `vkCreateBuffer`, `vkAllocateMemory` and wgpu's `create_buffer` under each

@@ -117,6 +117,14 @@ pub fn run() {
         heading("batching");
         alloc::batching();
     }
+    if wanted("readback") {
+        heading("readback");
+        frame_import::readback();
+    }
+    if wanted("dispatch-floor") {
+        heading("dispatch-floor");
+        alloc::dispatch_floor();
+    }
 }
 
 fn pipeline(device: &wgpu::Device, wgsl: &str) -> wgpu::ComputePipeline {

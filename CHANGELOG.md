@@ -25,6 +25,17 @@ plugin ABI and does not load.
   the RGA cells, which need the board). `crc32()` stays on slice-by-8 on ARMv7 until the
   kernel is measured faster on an ARMv7 core. None is available: the Raze kernel has no
   AArch32 support. `--test conformance crc32_throughput -- --ignored` measures it.
+- **`new_host_cached` gives cached memory on devices without a host-cached memory type**
+  (v3dv): a system dma-heap buffer imported for the GPU and mapped cached for the CPU, with
+  `DMA_BUF_IOCTL_SYNC` around each CPU access (`gpu-dmabuf`). On the Raze, reading 16 MiB back
+  takes 3.6 ms instead of 13.1 ms (memcpy: 2.9 ms), and 1 MiB 0.30 ms instead of 0.63 ms. It
+  passes the validation layer with no messages.
+- **`gpu_bench` sections `[dispatch-floor]` and `[readback]`, and memory types in
+  `[allocation]`.** `[dispatch-floor]` compares one dispatch through `GpuKernels` with
+  hand-written wgpu. On V3D the CPU cost is equal (23 µs record and submit, p50), and so are the
+  allocations (29, plus 2 for `run`'s ticket). `[readback]` compares the dma-heap readback with
+  the host-cached one. `[allocation]` lists the Vulkan memory types and a memcpy baseline.
+
 - **Raw Vulkan access for external SPIR-V kernels** (feature `gpu-vulkan-raw`, Linux,
   `daedalus_gpu::raw_vulkan`). `GpuContextHandle::raw_vulkan()` returns the `ash` entry,
   instance, physical device, device, queue, queue family and queue index. `GpuStorage::raw_vk_buffer()`

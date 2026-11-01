@@ -12,7 +12,7 @@ use daedalus_gpu::{
     GpuStorage, select_backend,
 };
 
-use super::{kv, median};
+use super::{kv, median, stats, wait};
 
 const SIZES: [u64; 3] = [4 << 10, 1 << 20, 16 << 20];
 
@@ -124,6 +124,21 @@ pub(super) fn allocation() {
         }
     }
     raw_vulkan();
+    // The CPU's own copy speed, for the mapped reads above.
+    for size in SIZES {
+        let (src, mut dst) = (vec![0x5a_u8; size as usize], vec![0_u8; size as usize]);
+        let mut times = Vec::new();
+        for _ in 0..10 {
+            let start = Instant::now();
+            dst.copy_from_slice(std::hint::black_box(&src));
+            times.push(start.elapsed());
+        }
+        std::hint::black_box(&dst);
+        kv(
+            &format!("cpu_memcpy_{}k", size >> 10),
+            ms(median(&mut times)),
+        );
+    }
 }
 
 /// `vkCreateBuffer` and a dedicated `vkAllocateMemory` (device-local), each alone.
@@ -140,6 +155,15 @@ fn raw_vulkan() {
         let raw = hal.raw_device();
         let instance = hal.shared_instance().raw_instance();
         let props = instance.get_physical_device_memory_properties(hal.raw_physical_device());
+        for (i, t) in props.memory_types[..props.memory_type_count as usize]
+            .iter()
+            .enumerate()
+        {
+            kv(
+                &format!("vk_memory_type_{i}"),
+                format!("heap {} {:?}", t.heap_index, t.property_flags),
+            );
+        }
         for size in SIZES {
             let info = vk::BufferCreateInfo::default()
                 .size(size)
@@ -242,4 +266,85 @@ pub(super) fn batching() {
             ms(median(&mut batched))
         ),
     );
+}
+
+/// What one small dispatch costs through `GpuKernels` against the same dispatch written directly
+/// in wgpu (one pipeline and bind group made up front, five storage bindings like the kernels):
+/// CPU time to record and submit, and submit to done.
+pub(super) fn dispatch_floor() {
+    let Some(ctx) = ctx(GpuMemoryHints::Auto) else {
+        return kv("dispatch_floor", "no wgpu context");
+    };
+    let (device, queue) = ctx.wgpu().unwrap();
+    let Ok(kernels) = GpuKernels::new(&ctx) else {
+        return;
+    };
+    let n: u64 = 64 << 10;
+    let src = GpuStorage::new(&ctx, n, None).unwrap();
+    let dst = GpuStorage::new(&ctx, n, None).unwrap();
+    let params = GpuStorage::with_data(&ctx, &((n / 4) as u32).to_le_bytes(), None).unwrap();
+    let status = GpuStorage::new(&ctx, 8, None).unwrap();
+    let aux = GpuStorage::new(&ctx, 1024, None).unwrap();
+    let pipeline = super::pipeline(
+        device,
+        "@group(0) @binding(0) var<storage, read> s: array<u32>;
+         @group(0) @binding(1) var<storage, read_write> d: array<u32>;
+         @group(0) @binding(2) var<storage, read> p: array<u32>;
+         @group(0) @binding(3) var<storage, read_write> st: array<u32>;
+         @group(0) @binding(4) var<storage, read> a: array<u32>;
+         @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3<u32>) {
+             if (g.x < p[0] + st[0] * 0u + a[0] * 0u) { d[g.x] = s[g.x]; }
+         }",
+    );
+    let entries: Vec<_> = [&src, &dst, &params, &status, &aux]
+        .iter()
+        .enumerate()
+        .map(|(i, b)| daedalus_gpu::wgpu::BindGroupEntry {
+            binding: i as u32,
+            resource: b.buffer().as_entire_binding(),
+        })
+        .collect();
+    let bind = device.create_bind_group(&daedalus_gpu::wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &entries,
+    });
+    let raw = || {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups((n / 4).div_ceil(64) as u32, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+    };
+    let encode = || {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let _ = kernels.encode(&mut encoder, GpuKernel::Copy, &src, &dst, n, None);
+        queue.submit([encoder.finish()]);
+    };
+    let run = || {
+        let _ = kernels.run(GpuKernel::Copy, &src, &dst, n);
+    };
+    for (name, f) in [
+        ("raw_wgpu", &raw as &dyn Fn()),
+        ("gpukernels_encode", &encode),
+        ("gpukernels_run", &run),
+    ] {
+        for _ in 0..20 {
+            f();
+            wait(device);
+        }
+        let (mut cpu, mut done) = (Vec::new(), Vec::new());
+        for _ in 0..200 {
+            let start = Instant::now();
+            f();
+            cpu.push(start.elapsed());
+            wait(device);
+            done.push(start.elapsed());
+        }
+        kv(&format!("dispatch_{name}_record_submit"), stats(&mut cpu));
+        kv(&format!("dispatch_{name}_submit_to_done"), stats(&mut done));
+    }
 }

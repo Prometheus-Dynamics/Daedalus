@@ -3,7 +3,10 @@
 //! without wgpu's zero-initialization clear.
 //!
 //! Both are Vulkan memory created through wgpu's hal layer, like the dmabuf import: wgpu frees
-//! it when the buffer drops, and treats the contents as initialized (no lazy clear).
+//! it when the buffer drops, and treats the contents as initialized (no lazy clear). Where the
+//! device has no host-cached memory (v3dv), host-cached storage is a system dma-heap buffer
+//! instead: imported for the GPU, mapped cached for the CPU, with `DMA_BUF_IOCTL_SYNC` around
+//! each CPU access (feature `gpu-dmabuf`).
 
 use std::sync::Arc;
 
@@ -18,7 +21,42 @@ use super::GpuStorage;
 pub(crate) struct HostMapping {
     ptr: *mut u8,
     len: usize,
+    /// A dma-heap buffer's own mapping (`None`: Vulkan's, unmapped when wgpu frees the memory).
+    dmabuf: Option<DmabufMapping>,
 }
+
+/// The dmabuf behind a dma-heap mapping, and the mapping's length.
+pub(crate) struct DmabufMapping {
+    fd: std::os::fd::OwnedFd,
+    map_len: usize,
+}
+
+impl HostMapping {
+    /// Bracket a CPU access: `DMA_BUF_IOCTL_SYNC` start or end (cache maintenance) for a
+    /// dma-heap mapping; nothing for coherent Vulkan memory.
+    fn sync(&self, flags: u64) {
+        if let Some(dmabuf) = &self.dmabuf {
+            const DMA_BUF_IOCTL_SYNC: u64 = 0x4008_6200;
+            use std::os::fd::AsRawFd;
+            // SAFETY: a valid dmabuf fd and a u64 `dma_buf_sync` argument.
+            unsafe { libc::ioctl(dmabuf.fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC as _, &flags) };
+        }
+    }
+}
+
+impl Drop for HostMapping {
+    fn drop(&mut self) {
+        if let Some(dmabuf) = &self.dmabuf {
+            // SAFETY: the mapping made for this dmabuf, unused once the storage drops.
+            unsafe { libc::munmap(self.ptr.cast(), dmabuf.map_len) };
+        }
+    }
+}
+
+/// `DMA_BUF_SYNC_*` flags.
+const SYNC_READ: u64 = 1;
+const SYNC_WRITE: u64 = 2;
+const SYNC_END: u64 = 4;
 
 // SAFETY: the mapping is plain memory owned by the buffer; access goes through `GpuStorage`'s
 // copy methods, whose contract rules out racing GPU work.
@@ -52,14 +90,23 @@ impl GpuStorage {
         create(gpu, size, label, Placement::HostMapped)
     }
 
-    /// [`GpuStorage::new_host_mapped`] in host-cached memory where the device has it (falling
-    /// back to the plain host-mapped kind): for results the CPU reads back. Uncached host
-    /// memory, the usual kind on UMA, is slow for CPU reads.
+    /// [`GpuStorage::new_host_mapped`] in host-cached memory: for results the CPU reads back.
+    /// Uncached host memory, the usual kind on UMA, is slow for CPU reads. Where the device has
+    /// no host-cached memory type (v3dv), the storage is a system dma-heap buffer the GPU writes
+    /// through an import and the CPU reads through a cached mapping (with the
+    /// `gpu-dmabuf` feature and `/dev/dma_heap/system` access): 3x faster reads on the CM5. Else
+    /// it falls back to the plain host-mapped kind.
     pub fn new_host_cached(
         gpu: &GpuContextHandle,
         size: u64,
         label: Option<&str>,
     ) -> Result<Self, GpuError> {
+        #[cfg(feature = "gpu-dmabuf")]
+        if !has_host_cached_memory(gpu)
+            && let Ok(storage) = dma_heap_storage(gpu, size, label)
+        {
+            return Ok(storage);
+        }
         create(gpu, size, label, Placement::HostCached)
     }
 
@@ -84,10 +131,12 @@ impl GpuStorage {
     /// the range is in flight: wait for its [`GpuTicket`](crate::GpuTicket) first.
     /// `InvalidInput` when not host-mapped or out of range.
     pub fn write_mapped(&self, offset: u64, bytes: &[u8]) -> Result<(), GpuError> {
-        let (ptr, start) = self.mapped_range(offset, bytes.len())?;
+        let (host, start) = self.mapped_range(offset, bytes.len())?;
+        host.sync(SYNC_WRITE);
         // SAFETY: `start..start + len` lies in the live mapping (checked); the caller keeps GPU
         // work off the range.
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.add(start), bytes.len()) };
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), host.ptr.add(start), bytes.len()) };
+        host.sync(SYNC_END | SYNC_WRITE);
         Ok(())
     }
 
@@ -96,13 +145,15 @@ impl GpuStorage {
     /// CPU reads with [`GpuStorage::new_host_cached`]: reading uncached host memory is one to
     /// two orders of magnitude slower.
     pub fn read_mapped(&self, offset: u64, out: &mut [u8]) -> Result<(), GpuError> {
-        let (ptr, start) = self.mapped_range(offset, out.len())?;
+        let (host, start) = self.mapped_range(offset, out.len())?;
+        host.sync(SYNC_READ);
         // SAFETY: as in `write_mapped`.
-        unsafe { std::ptr::copy_nonoverlapping(ptr.add(start), out.as_mut_ptr(), out.len()) };
+        unsafe { std::ptr::copy_nonoverlapping(host.ptr.add(start), out.as_mut_ptr(), out.len()) };
+        host.sync(SYNC_END | SYNC_READ);
         Ok(())
     }
 
-    fn mapped_range(&self, offset: u64, len: usize) -> Result<(*mut u8, usize), GpuError> {
+    fn mapped_range(&self, offset: u64, len: usize) -> Result<(&HostMapping, usize), GpuError> {
         let host = self
             .host
             .as_ref()
@@ -114,7 +165,7 @@ impl GpuStorage {
                 host.len
             )));
         }
-        Ok((host.ptr, start))
+        Ok((host, start))
     }
 }
 
@@ -249,6 +300,7 @@ unsafe fn allocate(
             Ok(ptr) => Some(HostMapping {
                 ptr: ptr.cast(),
                 len: size as usize,
+                dmabuf: None,
             }),
             Err(err) => {
                 cleanup();
@@ -263,4 +315,137 @@ unsafe fn allocate(
         unsafe { hal_vk::Buffer::from_raw_managed(buffer, memory, 0, req.size) },
         mapping,
     ))
+}
+
+/// Whether the device has a host-visible, host-cached memory type (not on v3dv).
+#[cfg(feature = "gpu-dmabuf")]
+fn has_host_cached_memory(gpu: &GpuContextHandle) -> bool {
+    let Some((device, _)) = gpu.wgpu() else {
+        return false;
+    };
+    // SAFETY: a query on wgpu's live device.
+    unsafe {
+        let Some(hal) = device.as_hal::<Vulkan>() else {
+            return false;
+        };
+        let props = hal
+            .shared_instance()
+            .raw_instance()
+            .get_physical_device_memory_properties(hal.raw_physical_device());
+        let want = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_CACHED;
+        props.memory_types[..props.memory_type_count as usize]
+            .iter()
+            .any(|t| t.property_flags.contains(want))
+    }
+}
+
+/// Host-cached storage from a system dma-heap buffer: imported as the GPU's storage, mapped
+/// (cached) for the CPU.
+#[cfg(feature = "gpu-dmabuf")]
+fn dma_heap_storage(
+    gpu: &GpuContextHandle,
+    size: u64,
+    label: Option<&str>,
+) -> Result<GpuStorage, GpuError> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    #[repr(C)]
+    struct Alloc {
+        len: u64,
+        fd: u32,
+        fd_flags: u32,
+        heap_flags: u64,
+    }
+    let failed = |what: &str| GpuError::Internal(format!("dma-heap storage: {what}"));
+    let need = GpuStorage::dmabuf_import_len(gpu, size)
+        .map_err(|err| failed(&err.to_string()))?
+        .next_multiple_of(4096);
+    let heap = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open("/dev/dma_heap/system")
+        .map_err(|err| failed(&err.to_string()))?;
+    let mut req = Alloc {
+        len: need,
+        fd: 0,
+        fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
+        heap_flags: 0,
+    };
+    // SAFETY: `req` is the DMA_HEAP_IOCTL_ALLOC argument.
+    if unsafe { libc::ioctl(heap.as_raw_fd(), 0xC018_4800u64 as _, &mut req) } != 0 {
+        return Err(failed("DMA_HEAP_IOCTL_ALLOC"));
+    }
+    // SAFETY: a new dmabuf fd we own.
+    let fd = unsafe { OwnedFd::from_raw_fd(req.fd as i32) };
+    let map_len = need as usize;
+    // SAFETY: a shared mapping of the whole dmabuf, unmapped when the storage drops.
+    let ptr = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            map_len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd.as_raw_fd(),
+            0,
+        )
+    };
+    if ptr == libc::MAP_FAILED {
+        return Err(failed("mmap"));
+    }
+    let mapping = HostMapping {
+        ptr: ptr.cast(),
+        len: size as usize,
+        dmabuf: Some(DmabufMapping {
+            fd: fd.try_clone().map_err(|err| failed(&err.to_string()))?,
+            map_len,
+        }),
+    };
+    let mut storage =
+        GpuStorage::import_dmabuf(gpu, fd, 0, size, None, std::time::Duration::ZERO, label)
+            .map_err(|err| failed(&err.to_string()))?;
+    storage.host = Some(Arc::new(mapping));
+    Ok(storage)
+}
+
+#[cfg(all(test, feature = "gpu-dmabuf"))]
+#[allow(clippy::print_stderr)] // skip reasons
+mod tests {
+    use crate::{GpuBackendKind, GpuKernel, GpuKernels, GpuOptions, GpuStorage, select_backend};
+
+    /// The dma-heap form of host-cached storage (what v3dv gets), forced: the GPU writes it and
+    /// the CPU reads the result, the CPU writes it and the GPU reads it.
+    #[test]
+    fn dma_heap_host_cached_storage_round_trips() {
+        let Ok(ctx) = select_backend(&GpuOptions {
+            preferred_backend: Some(GpuBackendKind::Wgpu),
+            ..Default::default()
+        }) else {
+            return eprintln!("skipping: no GPU");
+        };
+        let size = 256 << 10;
+        let storage = match super::dma_heap_storage(&ctx, size, Some("readback")) {
+            Ok(storage) => storage,
+            Err(err) => return eprintln!("skipping: {err}"),
+        };
+        assert!(storage.is_host_mapped());
+        let kernels = GpuKernels::new(&ctx).unwrap();
+        let data: Vec<u8> = (0..size as usize).map(|i| (i * 13 + 5) as u8).collect();
+        let src = GpuStorage::with_data(&ctx, &data, None).unwrap();
+        kernels
+            .run(GpuKernel::Copy, &src, &storage, size)
+            .unwrap()
+            .wait();
+        let mut out = vec![0u8; size as usize];
+        storage.read_mapped(0, &mut out).unwrap();
+        assert_eq!(out, data, "GPU write, CPU read");
+        let back: Vec<u8> = data.iter().map(|b| !b).collect();
+        storage.write_mapped(0, &back).unwrap();
+        let dst = GpuStorage::new(&ctx, size, None).unwrap();
+        kernels
+            .run(GpuKernel::Copy, &storage, &dst, size)
+            .unwrap()
+            .wait();
+        dst.read_into(0, &mut out).unwrap();
+        assert_eq!(out, back, "CPU write, GPU read");
+        assert_eq!(storage.staging_buffers_created(), 0);
+    }
 }

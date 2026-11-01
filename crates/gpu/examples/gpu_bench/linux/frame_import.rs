@@ -624,3 +624,123 @@ fn tfu_copy(
         stats(&mut samples),
     );
 }
+
+/// Readback through a system dma-heap buffer: the GPU writes it through a storage-buffer import,
+/// the CPU reads it through its own (cached) mapping, with `DMA_BUF_IOCTL_SYNC` doing the cache
+/// maintenance. For devices whose host-visible memory is uncached (v3dv has only
+/// `DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT`), against `read_mapped` of host-cached storage.
+pub(super) fn readback() {
+    use daedalus_gpu::{GpuKernel, GpuKernels, GpuOptions, GpuStorage, select_backend};
+    let Ok(ctx) = select_backend(&GpuOptions {
+        preferred_backend: Some(daedalus_gpu::GpuBackendKind::Wgpu),
+        ..Default::default()
+    }) else {
+        return kv("readback", "no wgpu context");
+    };
+    let Ok(kernels) = GpuKernels::new(&ctx) else {
+        return;
+    };
+    for size in [1usize << 20, 16 << 20] {
+        let label = format!("readback_{}k", size >> 10);
+        let data: Vec<u8> = (0..size).map(|i| (i * 7 + 3) as u8).collect();
+        let src = GpuStorage::with_data(&ctx, &data, None).unwrap();
+        let mut out = vec![0u8; size];
+        let mut time = |read: &mut dyn FnMut(&mut [u8])| {
+            let mut times = Vec::new();
+            for _ in 0..10 {
+                out.fill(0);
+                let start = Instant::now();
+                read(&mut out);
+                times.push(start.elapsed());
+            }
+            let ok = out == data;
+            (super::median(&mut times), ok)
+        };
+        if let Ok(cached) = GpuStorage::new_host_cached(&ctx, size as u64, None) {
+            let mut reads = Vec::new();
+            let (t, ok) = time(&mut |out| {
+                kernels
+                    .run(GpuKernel::Copy, &src, &cached, size as u64)
+                    .unwrap()
+                    .wait();
+                let start = Instant::now();
+                cached.read_mapped(0, out).unwrap();
+                reads.push(start.elapsed());
+            });
+            kv(
+                &format!("{label}_host_cached_kernel_and_read"),
+                format!(
+                    "{:.3} ms, ok {ok}; read {:.3} ms",
+                    t.as_secs_f64() * 1e3,
+                    super::median(&mut reads).as_secs_f64() * 1e3
+                ),
+            );
+        }
+        let need = match GpuStorage::dmabuf_import_len(&ctx, size as u64) {
+            Ok(need) => need as usize,
+            Err(err) => return kv(&label, format!("dmabuf: {err}")),
+        };
+        let buf = match DmaBuf::alloc(need.next_multiple_of(4096)) {
+            Ok(buf) => buf,
+            Err(err) => return kv(&label, format!("dma-heap: {err}")),
+        };
+        let imported = match GpuStorage::import_dmabuf(
+            &ctx,
+            buf.fd.try_clone().unwrap(),
+            0,
+            size as u64,
+            None,
+            std::time::Duration::from_secs(1),
+            None,
+        ) {
+            Ok(storage) => storage,
+            Err(err) => return kv(&label, format!("import: {err}")),
+        };
+        // SAFETY: a read-only mapping of the dmabuf, unmapped below.
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                buf.len,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                buf.fd.as_raw_fd(),
+                0,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            return kv(&label, "mmap failed");
+        }
+        let sync = |flags: u64| {
+            // SAFETY: valid dmabuf fd and a u64 `dma_buf_sync` argument.
+            unsafe { libc::ioctl(buf.fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC as _, &flags) };
+        };
+        const READ: u64 = 1;
+        let (mut sync_only, mut copy_only) = (Vec::new(), Vec::new());
+        let (t, ok) = time(&mut |out| {
+            kernels
+                .run(GpuKernel::Copy, &src, &imported, size as u64)
+                .unwrap()
+                .wait();
+            let start = Instant::now();
+            sync(DMA_BUF_SYNC_START | READ);
+            let synced = start.elapsed();
+            // SAFETY: `size` bytes of the mapping; the GPU work writing them completed.
+            out.copy_from_slice(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), size) });
+            let copied = start.elapsed();
+            sync(DMA_BUF_SYNC_END | READ);
+            sync_only.push(synced);
+            copy_only.push(copied - synced);
+        });
+        kv(
+            &format!("{label}_dmaheap_kernel_and_read"),
+            format!(
+                "{:.3} ms, ok {ok}; sync {:.3} ms, copy {:.3} ms",
+                t.as_secs_f64() * 1e3,
+                super::median(&mut sync_only).as_secs_f64() * 1e3,
+                super::median(&mut copy_only).as_secs_f64() * 1e3
+            ),
+        );
+        // SAFETY: the mapping made above.
+        unsafe { libc::munmap(ptr, buf.len) };
+    }
+}
