@@ -70,3 +70,7 @@ required-features = ["gpu-dmabuf"]
 name = "dispatch_readback"
 harness = false
 required-features = ["gpu-wgpu", "gpu-async"]
+
+[[test]]
+name = "gpu_allocations"
+required-features = ["gpu-wgpu"]

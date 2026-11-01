@@ -24,9 +24,20 @@ use super::GpuStorage;
 /// frame has completed.
 pub struct GpuFrameInput {
     pub storage: Arc<GpuStorage>,
-    /// `(offset, stride)` of each plane in [`GpuFrameInput::storage`].
-    pub planes: Vec<(u64, u64)>,
+    /// `(offset, stride)` per plane, inline (no allocation per frame).
+    planes: [(u64, u64); MAX_PLANES],
+    plane_count: usize,
     _frame: SharedFrame,
+}
+
+/// Planes a frame may have (`daedalus:frame` allows four).
+const MAX_PLANES: usize = 4;
+
+impl GpuFrameInput {
+    /// `(offset, stride)` of each plane in [`GpuFrameInput::storage`].
+    pub fn planes(&self) -> &[(u64, u64)] {
+        &self.planes[..self.plane_count]
+    }
 }
 
 /// What the import cache did.
@@ -80,26 +91,41 @@ impl GpuFrameImports {
         timeout: Duration,
     ) -> Result<GpuFrameInput, ExternalImportError> {
         let view = frame.as_view();
-        let mut fd = None;
-        let mut planes = Vec::new();
+        // Planes may carry different fds (dups) of one dmabuf, as Styx's NV12 does: one buffer
+        // means one inode, whatever the fd numbers.
+        let mut first: Option<(i32, (u64, u64))> = None;
+        let mut planes = [(0u64, 0u64); MAX_PLANES];
+        let mut plane_count = 0;
         let mut end = 0u64;
         for (i, plane) in view.planes().enumerate() {
             let plane_fd = plane.dmabuf_fd.ok_or_else(|| {
                 ExternalImportError::invalid(format!("plane {i} has no dma-buf fd"))
             })?;
-            if *fd.get_or_insert(plane_fd) != plane_fd {
-                return Err(ExternalImportError::invalid(
-                    "the planes are in different dma-bufs; import each plane's dma-buf separately",
-                ));
+            // SAFETY: the frame keeps its fds open while `frame` is borrowed.
+            let id = inode(unsafe { BorrowedFd::borrow_raw(plane_fd) })?;
+            match first {
+                None => first = Some((plane_fd, id)),
+                Some((_, first_id)) if first_id != id => {
+                    return Err(ExternalImportError::invalid(
+                        "the planes are in different dma-bufs; import each plane's dma-buf separately",
+                    ));
+                }
+                Some(_) => {}
             }
-            planes.push((plane.offset, plane.stride));
+            if plane_count == MAX_PLANES {
+                return Err(ExternalImportError::invalid(format!(
+                    "more than {MAX_PLANES} planes"
+                )));
+            }
+            planes[plane_count] = (plane.offset, plane.stride);
+            plane_count += 1;
             end = end.max(plane.offset + plane.len);
         }
-        let fd = fd.ok_or_else(|| ExternalImportError::invalid("the frame has no planes"))?;
-        // SAFETY: the frame keeps the fd open while `frame` is borrowed.
+        let (fd, key) =
+            first.ok_or_else(|| ExternalImportError::invalid("the frame has no planes"))?;
+        // SAFETY: as above.
         let fd = unsafe { BorrowedFd::borrow_raw(fd) };
         wait_writes(fd, timeout)?;
-        let key = inode(fd)?;
         let len = end.next_multiple_of(4);
         let storage = {
             let mut guard = self.state.lock();
@@ -152,6 +178,7 @@ impl GpuFrameImports {
         Ok(GpuFrameInput {
             storage,
             planes,
+            plane_count,
             _frame: frame.clone(),
         })
     }

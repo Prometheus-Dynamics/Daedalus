@@ -173,6 +173,104 @@ mod frames {
         }
     }
 
+    /// NV12 in one dmabuf with each plane given its own dup of the fd (as Styx's `FrameFdPlane`
+    /// does): one import, the chroma read at `stride * height`.
+    struct DupNv12 {
+        y_fd: OwnedFd,
+        uv_fd: OwnedFd,
+        _buffer: HeapFrame,
+        width: u32,
+        height: u32,
+    }
+
+    impl FrameSource for DupNv12 {
+        fn width(&self) -> u32 {
+            self.width
+        }
+        fn height(&self) -> u32 {
+            self.height
+        }
+        fn format(&self) -> u32 {
+            u32::from_le_bytes(*b"NV12")
+        }
+        fn format_kind(&self) -> FrameFormatKind {
+            FrameFormatKind::Pixel
+        }
+        fn residency(&self) -> FrameResidency {
+            FrameResidency::External
+        }
+        fn plane_count(&self) -> u32 {
+            2
+        }
+        fn plane(&self, index: u32) -> Option<FramePlane> {
+            let (w, h) = (u64::from(self.width), u64::from(self.height));
+            match index {
+                0 => Some(FramePlane::dmabuf(self.y_fd.as_raw_fd(), 0, w, w * h)),
+                1 => Some(FramePlane::dmabuf(
+                    self.uv_fd.as_raw_fd(),
+                    w * h,
+                    w,
+                    w * h / 2,
+                )),
+                _ => None,
+            }
+        }
+        fn plane_data(&self, _index: u32) -> Option<&[u8]> {
+            None
+        }
+    }
+
+    #[test]
+    fn nv12_with_duplicated_plane_fds_is_one_import() {
+        let Some(ctx) = vulkan_ctx() else { return };
+        let (w, h) = (256u32, 64u32);
+        let pixels = bytes((w * h * 3 / 2) as usize, 11);
+        let Some(buffer) = heap_frame(w, h * 3 / 2, &pixels) else {
+            return eprintln!("skipping: no /dev/dma_heap/system access");
+        };
+        let frame = DupNv12 {
+            y_fd: buffer.fd.try_clone().unwrap(),
+            uv_fd: buffer.fd.try_clone().unwrap(),
+            _buffer: buffer,
+            width: w,
+            height: h,
+        };
+        assert_ne!(
+            frame.y_fd.as_raw_fd(),
+            frame.uv_fd.as_raw_fd(),
+            "different fd numbers"
+        );
+        let frame = SharedFrame::new(std::sync::Arc::new(frame));
+        let imports = GpuFrameImports::new(&ctx, 2);
+        let input = match imports.import(&frame, Duration::from_secs(1)) {
+            Ok(input) => input,
+            Err(err) => {
+                return eprintln!("skipping: this device cannot import dmabuf storage ({err})");
+            }
+        };
+        assert_eq!(input.planes(), [(0, 256), (u64::from(w * h), 256)]);
+        assert_eq!(imports.stats().imports, 1);
+        // The chroma plane's bytes, read through the one import.
+        let out = GpuStorage::new_host_cached(&ctx, u64::from(w * h * 3 / 2), None).unwrap();
+        GpuKernels::new(&ctx)
+            .unwrap()
+            .run(
+                GpuKernel::Copy,
+                &input.storage,
+                &out,
+                u64::from(w * h * 3 / 2),
+            )
+            .unwrap()
+            .wait();
+        let mut got = vec![0u8; (w * h * 3 / 2) as usize];
+        out.read_mapped(0, &mut got).unwrap();
+        assert_eq!(
+            got[(w * h) as usize..],
+            pixels[(w * h) as usize..],
+            "chroma at stride * height"
+        );
+    }
+
     /// Frames from the same dmabuf share one import; a kernel reads the frame's bytes in place.
     #[test]
     fn frames_import_once_per_dmabuf_and_read_in_place() {
@@ -196,7 +294,7 @@ mod frames {
                     return eprintln!("skipping: this device cannot import dmabuf storage ({err})");
                 }
             };
-            assert_eq!(input.planes, [(0, u64::from(w))]);
+            assert_eq!(input.planes(), [(0, u64::from(w))]);
             kernels
                 .run(GpuKernel::Copy, &input.storage, &out, u64::from(w * h))
                 .unwrap()

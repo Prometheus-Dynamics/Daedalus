@@ -132,6 +132,15 @@ plugin ABI and does not load.
     memory-hint mode and the first-use clear separately.
   - The kernel measurements now report encode-to-result time (every copy included) next to the
     pass time.
+  - A repeated `GpuKernels` dispatch allocates nothing beyond raw wgpu (`tests/gpu_allocations`):
+    - bind groups and parameter buffers are cached per dispatch shape;
+    - one status buffer is shared;
+    - no pass labels (wgpu copies them per pass);
+    - the layout states each binding's minimum size, which removes wgpu's per-dispatch late size
+      checks.
+
+    `GpuFrameImports` compares plane dmabufs by inode, so Styx's NV12 with dup'd plane fds is one
+    import. `GpuFrameInput` keeps plane offsets inline, with no per-frame allocation.
 - The storage-to-texture copy is registered too: the direct copy (the TFU on V3D) and per-row
   copies as fixed-function, the fold-and-unfold pass as GPU.
 - **GPU memory hints: `GpuOptions::memory_hints` / `EngineConfig::with_gpu_memory_hints`

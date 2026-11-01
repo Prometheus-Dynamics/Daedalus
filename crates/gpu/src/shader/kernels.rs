@@ -138,7 +138,18 @@ pub struct GpuKernels {
     /// Fragment forms, and their render targets by size.
     fragments: Mutex<HashMap<GpuKernel, Arc<super::FragmentPass>>>,
     targets: Mutex<HashMap<(u32, u32), Arc<super::GpuTexture>>>,
+    /// The status buffer of every kernel but base64 decode (which needs its own per call).
+    shared_status: wgpu::Buffer,
+    /// Bind groups by dispatch shape, so a repeated dispatch allocates nothing in Daedalus.
+    compute_bindings: Mutex<HashMap<ComputeKey, Arc<wgpu::BindGroup>>>,
+    fragment_bindings: Mutex<HashMap<FragmentKey, Arc<(super::FragmentBinding, GpuStorage)>>>,
 }
+
+type ComputeKey = (GpuKernel, wgpu::Buffer, wgpu::Buffer, u64);
+type FragmentKey = (GpuKernel, wgpu::Buffer, u64, u32);
+
+/// Cached bindings per `GpuKernels` (cleared when full: steady state reuses a few shapes).
+const BINDING_CACHE: usize = 64;
 
 impl std::fmt::Debug for GpuKernels {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -146,14 +157,16 @@ impl std::fmt::Debug for GpuKernels {
     }
 }
 
-fn entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+fn entry(binding: u32, read_only: bool, min: u64) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::COMPUTE,
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Storage { read_only },
             has_dynamic_offset: false,
-            min_binding_size: None,
+            // The shader's minimum, stated up front: with `None`, wgpu re-checks the bound sizes
+            // on every dispatch (and allocates to track them).
+            min_binding_size: std::num::NonZeroU64::new(min),
         },
         count: None,
     }
@@ -171,11 +184,13 @@ impl GpuKernels {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("daedalus-kernels"),
             entries: &[
-                entry(0, true),
-                entry(1, false),
-                entry(2, true),
-                entry(3, false),
-                entry(4, true),
+                // src, dst, status and aux are `array<u32>` (4 bytes at least), params a
+                // 16-byte struct.
+                entry(0, true, 4),
+                entry(1, false, 4),
+                entry(2, true, 16),
+                entry(3, false, 8),
+                entry(4, true, 4),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -202,6 +217,9 @@ impl GpuKernels {
             gpu: gpu.clone(),
             fragments: Mutex::new(HashMap::new()),
             targets: Mutex::new(HashMap::new()),
+            shared_status: status_buffer(device),
+            compute_bindings: Mutex::new(HashMap::new()),
+            fragment_bindings: Mutex::new(HashMap::new()),
         })
     }
 
@@ -238,8 +256,7 @@ impl GpuKernels {
         n: u64,
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) -> Result<(), GpuError> {
-        let status = self.status_buffer();
-        self.encode_with_status(encoder, kernel, src, dst, n, &status, timestamps)
+        self.encode_with_status(encoder, kernel, src, dst, n, None, timestamps)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -250,7 +267,9 @@ impl GpuKernels {
         src: &GpuStorage,
         dst: &GpuStorage,
         n: u64,
-        status: &wgpu::Buffer,
+        // A per-call status buffer (base64 decode); `None` uses the shared one and the binding
+        // cache.
+        status: Option<&wgpu::Buffer>,
         timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
     ) -> Result<(), GpuError> {
         let invalid = |what: String| Err(GpuError::InvalidInput(what));
@@ -286,6 +305,48 @@ impl GpuKernels {
                 "{kernel:?} over {n} elements does not fit one dispatch"
             ));
         }
+        let key = (kernel, src.buffer().clone(), dst.buffer().clone(), n);
+        let cached = status
+            .is_none()
+            .then(|| self.compute_bindings.lock().get(&key).cloned())
+            .flatten();
+        let bind = match cached {
+            Some(bind) => bind,
+            None => {
+                let bind = Arc::new(self.compute_binding(kernel, src, dst, n, threads, status));
+                if status.is_none() {
+                    let mut cache = self.compute_bindings.lock();
+                    if cache.len() >= BINDING_CACHE {
+                        cache.clear();
+                    }
+                    cache.insert(key, bind.clone());
+                }
+                bind
+            }
+        };
+        let pipeline = self.pipeline(kernel);
+        // No pass label: wgpu copies it into a `String` on every pass.
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: timestamps,
+        });
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &*bind, &[]);
+        pass.dispatch_workgroups(x as u32, y as u32, 1);
+        Ok(())
+    }
+
+    /// The bind group (and its parameter buffer) for one dispatch shape.
+    fn compute_binding(
+        &self,
+        kernel: GpuKernel,
+        src: &GpuStorage,
+        dst: &GpuStorage,
+        n: u64,
+        threads: u64,
+        status: Option<&wgpu::Buffer>,
+    ) -> wgpu::BindGroup {
+        let status = status.unwrap_or(&self.shared_status);
         let params = [n as u32, threads as u32, kernel.output_len(n) as u32, 0];
         let params = self
             .device
@@ -297,7 +358,7 @@ impl GpuKernels {
                     .collect::<Vec<_>>(),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(kernel.entry()),
             layout: &self.layout,
             entries: &[
@@ -322,25 +383,17 @@ impl GpuKernels {
                     resource: self.crc_table.as_entire_binding(),
                 },
             ],
-        });
-        let pipeline = self.pipeline(kernel);
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some(kernel.entry()),
-            timestamp_writes: timestamps,
-        });
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bind, &[]);
-        pass.dispatch_workgroups(x as u32, y as u32, 1);
-        Ok(())
+        })
+    }
+
+    /// Drop the cached bindings (they hold the source and destination buffers alive).
+    pub fn clear_cache(&self) {
+        self.compute_bindings.lock().clear();
+        self.fragment_bindings.lock().clear();
     }
 
     fn status_buffer(&self) -> wgpu::Buffer {
-        self.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("daedalus-kernels-status"),
-                contents: &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0],
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            })
+        status_buffer(&self.device)
     }
 
     /// Copy `n` bytes from `src` to `dst` on the copy engine (`copy_buffer_to_buffer`): the
@@ -469,18 +522,31 @@ impl GpuKernels {
                 }
             }
         };
-        let params = [n as u32, threads as u32, kernel.output_len(n) as u32, w];
-        let params = GpuStorage::with_data(
-            &self.gpu,
-            &params
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect::<Vec<_>>(),
-            Some("daedalus-kernels-params"),
-        )?;
         let pass = self.fragment(kernel)?;
-        let binding = pass.bind(&[], &[src, &params])?;
-        pass.encode_bound_timed(encoder, &binding, &[&target], timestamps)?;
+        let key = (kernel, src.buffer().clone(), n, w);
+        let cached = self.fragment_bindings.lock().get(&key).cloned();
+        let binding = match cached {
+            Some(binding) => binding,
+            None => {
+                let params = [n as u32, threads as u32, kernel.output_len(n) as u32, w];
+                let params = GpuStorage::with_data(
+                    &self.gpu,
+                    &params
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect::<Vec<_>>(),
+                    Some("daedalus-kernels-params"),
+                )?;
+                let binding = Arc::new((pass.bind(&[], &[src, &params])?, params));
+                let mut cache = self.fragment_bindings.lock();
+                if cache.len() >= BINDING_CACHE {
+                    cache.clear();
+                }
+                cache.insert(key, binding.clone());
+                binding
+            }
+        };
+        pass.encode_bound_timed(encoder, &binding.0, &[&target], timestamps)?;
         // Full rows, then the last (partial) row.
         let full_rows = (threads / u64::from(w)) as u32;
         let copy = |encoder: &mut wgpu::CommandEncoder, y: u32, rows: u32, words: u32| {
@@ -570,7 +636,7 @@ impl GpuKernels {
             src,
             dst,
             n,
-            &status,
+            Some(&status),
             None,
         )?;
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -609,4 +675,13 @@ impl GpuKernels {
         }
         Ok(u64::from(words[1]))
     }
+}
+
+/// A base64-decode status buffer: [no invalid symbol, decoded length 0].
+fn status_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("daedalus-kernels-status"),
+        contents: &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0],
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+    })
 }

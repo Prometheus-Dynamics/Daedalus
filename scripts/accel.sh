@@ -81,6 +81,8 @@ ACCEL_TARGET=$host ACCEL_RUNNER=native \
 step "GPU conformance (wgpu adapter)"
 ACCEL_TARGET=$host ACCEL_RUNNER=native ACCEL_REQUIRE_GPU=1 \
   cargo test -q -p daedalus-gpu --features gpu-dmabuf --lib -- storage_frames_copy_into_textures kernels_tests zero_copy --test-threads 1
+# A repeated kernel dispatch allocates no more than the same dispatch written in raw wgpu.
+cargo test -q -p daedalus-gpu --features gpu-wgpu --test gpu_allocations
 
 # cross TRIPLE CC_WRAPPER QEMU: set up the linker; false (with a note) when a tool is missing.
 cross() {
