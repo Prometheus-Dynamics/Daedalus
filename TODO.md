@@ -127,12 +127,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** a test receives a plan blob in chunks and loads it.
       **Blocked by:** a consumer needing it; none is recorded.
       **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
-- [ ] **What:** shared nodes with the full runtime: generate both a `#[node]` handler and the device
-      glue from one function.
-      **Why:** so a node crate serves both.
-      **Done when:** one function runs under both, with a test in each.
-      **Blocked by:** nothing.
-      **Measured:** none.
 - [ ] **What:** zero allocations per frame on the raw GPU submit path (Styx's request,
       2026-11-02): an opt-in `RawSubmitter` with a ring of reused command buffers and `VkFence`s,
       submitting by `vkQueueSubmit` under a Daedalus submit mutex that every Daedalus
@@ -154,7 +148,7 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       app sharing Daedalus's device with it must not hold a `RawSubmitter`. Measure with Styx's
       `cargo nextest run -p styx-gpuisp --features daedalus -E
       'test(a_frame_from_a_device_buffer)'` (`STYX_GPU_ALLOC_TRACE=1` for stacks).
-      **Blocked by:** shared nodes first.
+      **Blocked by:** nothing; next after shared nodes (done).
       **Measured:** 17 per frame (Styx's count). V3D 7.1 on the Raze (v3dv) has one queue family
       with `queueCount = 1` (vulkaninfo, 2026-11-02), so a second queue is no way around the lock.
 - [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
@@ -421,3 +415,7 @@ Tier 1 and tier 2 are done; see "Portability" in `docs/development.md`.
       blob format 3: 730edf7. `examples/mcu_blink/graph_fanin.json` runs natively in all three modes
       (no firmware of its own, so not size-measured); the blink loaded firmware grew to 11496 /
       12572 B. `FanIn<T>` (indexed ports) stays unsupported.
+- [x] Shared nodes: one function is the device node and a full-runtime `#[node]`
+      (`runtime = "feature"`), with the same id, ports, state and fire mode; the runtime NodeDecl
+      matches the device derivation in a test, and one graph runs under the runtime, compiled and
+      loaded. `examples/mcu_shared`; the blink firmwares are unchanged: 25777dc.
