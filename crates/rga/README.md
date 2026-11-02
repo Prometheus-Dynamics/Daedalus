@@ -7,7 +7,8 @@ share.
 - **Backend:** the kernel's V4L2 mem2mem interface. On boards that is the mainline
   `rockchip-rga` driver (RGA2). It works with any mem2mem device, and the tests run it against
   the kernel's `vim2m` test driver and `/dev/dma_heap/system` dmabufs.
-- **Planned:** librga (RGA3 on vendor kernels), behind the same API.
-- **Status:** written; RGA on a board is untested.
+- **librga:** `Librga` reaches the engine through the vendor library instead, for RGA3 on vendor
+  kernels, gray input and Y-only output.
+- **Status:** V4L2 path tested on `vim2m`; both paths written, untested on a Rockchip board.
 
 Depends only on `libc`, and is Linux-only.

@@ -199,6 +199,16 @@ on 2026-11-02, at f7e05ac.
       **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
       **Blocked by:** the user's go; Styx's side.
       **Measured:** n/a.
+- [ ] **What:** the generic V4L2 mem2mem session (`REQBUFS`/`QBUF` over dmabufs) onto Lemnos, if
+      Lemnos takes Styx's `styx-kernel::v4l2::m2m` code.
+      **Why:** one RGA binding, in Daedalus (agreed with Styx 2026-11-02): `daedalus-rga` keeps
+      scaling, conversion and rotation (V4L2 M2M and librga); Styx keeps V4L2 M2M only for codecs
+      and hands frames to Daedalus by dmabuf for RGA. Two M2M session implementations remain
+      (`crates/rga/src/v4l2.rs`, Styx's `M2mSession`).
+      **Done when:** `daedalus-rga` builds its session on Lemnos's, with `crates/rga/tests/v4l2.rs`
+      passing on `vim2m`.
+      **Blocked by:** the user's go; the session existing in Lemnos.
+      **Measured:** n/a.
 - [ ] **What:** later, an accelerator interface (load program, import buffers, submit, fence) for
       NPUs and custom accelerators. Design doc first.
       **Why:** the GPU path's residency, `#[device]` transfers and completion API should extend to
