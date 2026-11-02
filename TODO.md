@@ -220,8 +220,8 @@ on 2026-11-02, at f7e05ac.
       Raze readback numbers unchanged (host-cached read 3.6 ms per 16 MiB).
       **Blocked by:** a Raze slot for the readback measurement (the user's go came 2026-11-02).
       **Measured:** the code moved (803f310, Lemnos 63374c6; borrowed descriptors through
-      `DmaBufRef` and the frame identity with Lemnos fdbb0c4; the acquire-fence wait stays, see
-      `external/fence.rs`). The gpu
+      `DmaBufRef`, the frame identity and the acquire-fence wait with Lemnos fdbb0c4 and
+      2610455). The gpu
       crate's tests pass on the desktop GPU with `/dev/dma_heap/system`. The Raze readback is not
       re-measured yet.
 - [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.

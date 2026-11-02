@@ -17,7 +17,7 @@
 
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::ExternalImportError;
 
@@ -84,43 +84,17 @@ pub(crate) fn sync_file_signaled(fence: BorrowedFd<'_>) -> bool {
     wait_sync_file(fence, Duration::ZERO).is_ok()
 }
 
-/// Block until `fence` is signaled (readable), failing after `timeout`. Kept here rather than
-/// Lemnos's `wait_fence`, which reports a descriptor that hangs up without becoming readable
-/// (not a sync_file) as "not signaled", where this rejects it at once.
+/// Block until `fence` is signaled (readable), failing after `timeout`; a descriptor that hangs
+/// up without becoming readable is not a sync_file and fails at once.
 pub(crate) fn wait_sync_file(
     fence: BorrowedFd<'_>,
     timeout: Duration,
 ) -> Result<(), ExternalImportError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let mut pfd = libc::pollfd {
-            fd: fence.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let millis = remaining
-            .as_nanos()
-            .div_ceil(1_000_000)
-            .min(i32::MAX as u128) as i32;
-        // SAFETY: one valid pollfd for the duration of the call.
-        match unsafe { libc::poll(&mut pfd, 1, millis) } {
-            0 => return Err(ExternalImportError::FenceTimeout { timeout }),
-            n if n > 0 && pfd.revents & libc::POLLIN != 0 => return Ok(()),
-            n if n > 0 => {
-                return Err(ExternalImportError::invalid(format!(
-                    "acquire fence polled as {:#x} without POLLIN; expected a sync_file",
-                    pfd.revents
-                )));
-            }
-            _ => {
-                let err = io::Error::last_os_error();
-                if err.kind() != io::ErrorKind::Interrupted {
-                    return Err(ExternalImportError::invalid(format!(
-                        "cannot poll acquire fence: {err}"
-                    )));
-                }
-            }
-        }
+    match lemnos_linux::dma::wait_fence(fence, Some(timeout)) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ExternalImportError::FenceTimeout { timeout }),
+        Err(err) => Err(ExternalImportError::invalid(format!(
+            "cannot wait on the acquire fence (expected a sync_file): {err}"
+        ))),
     }
 }

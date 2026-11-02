@@ -451,9 +451,9 @@ plugin ABI and does not load.
   devices without host-cached memory (v3dv), `DMA_BUF_IOCTL_SYNC` around its CPU access, the
   dmabuf size query of imports, and `export_dmabuf_fence`. The Vulkan imports stay here. The
   package lane packages without a lockfile (`--exclude-lockfile`): `lemnos-linux` is not on
-  crates.io yet, so publishing needs Lemnos published first. The lock file pins Lemnos at fdbb0c4:
+  crates.io yet, so publishing needs Lemnos published first. The lock file pins Lemnos at 2610455:
   borrowed dmabufs go through `DmaBufRef` (no descriptor duplicate per frame), and the frame
-  identity is Lemnos's too.
+  identity and the CPU acquire-fence wait are Lemnos's too.
 - `daedalus-rga`: the V4L2 mem2mem session is Lemnos's `M2mSession` (feature `v4l2-m2m`); the
   public API (`Rga`, `Layout`, `PixelFormat`, `Rect`, `find_m2m_device`) is unchanged. A crop the
   device does not take is still an error.
