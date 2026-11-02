@@ -4,7 +4,7 @@ Open work first, done work with its commits below. Each open item says **what** 
 matters, **done when** (a checkable test, gate, measurement or board run), **blocked by**, and
 **measured** (current numbers, or that none exist). **[board]** items need hardware; "written,
 untested on board" means the code exists and has only run under qemu, lavapipe, stand-ins or a
-desktop GPU. Audited against the code and CI on 2026-11-01, at 03f55c5.
+desktop GPU. Audited against the code and CI on 2026-11-01, at 03f55c5; CI items updated at 519b022.
 
 The user alone decides when anything is released and what blocks a release. `dev` stays on the
 `3.0.1-dev` scheme. Board work is tested on boards before anything ships, unless the user says
@@ -23,37 +23,16 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
 
 ### CI on `dev`
 
-The last green `CI` run on `dev` is 350c34d (2026-11-01 00:04 UTC); all 15 runs since failed.
-`cross`, `workspace`, `facade`, `docs-and-lints`, `aarch64`, `lean-preset` and `portability` pass at
-03f55c5. The `bench` workflow is separate: 14 of its last 15 runs pass.
-
-- [ ] **What:** the `package-surface` job fails: `cargo package` verifies
-      `examples/plugins/stable_abi_counted`, whose path dependency has no version.
-      **Why:** it fails the `CI` run on every commit since 5f5c51c, which added the crate without
-      adding it to `PACKAGE_EXCLUDES` in `scripts/ci.sh`.
-      **Done when:** `ci.sh package` and the CI job pass.
-      **Blocked by:** nothing.
-      **Measured:** failing at 5f5c51c..03f55c5 (7 runs).
-- [ ] **What:** the `accel` job fails: `regression: daedalus.codec.crc32 on rvv+zvbc: pass ->
-      untested`, and it renders pass 111, impossible 18, untested 5.
-      **Why:** the committed matrix (pass 112, impossible 18, untested 4) depends on a local run. The
-      job has failed since 1a6e8de chose Zvbc at runtime through `riscv_hwprobe`. The likely cause,
-      not yet confirmed, is that CI's Ubuntu `qemu-user-static` 8.2.2 does not report Zvbc there,
-      while this workstation's qemu 10.2.2 does.
-      **Done when:** the CI job renders the committed totals, on a qemu that reports Zvbc.
-      **Blocked by:** nothing.
-      **Measured:** failing on all 15 runs from 1a6e8de to 03f55c5.
-- [ ] **What:** `ci.sh semver` no longer finishes, locally or in CI.
-      **Why:** it documents every break since `v3.0.0`. It stops with exit 101 at `daedalus-accel`,
-      a crate `v3.0.0` does not have, so crates new since the baseline need excluding or skipping.
-      In CI the job (non-blocking) also fails building the `v3.0.0` facade baseline, because
-      `libcamera-sys` needs `libcamera.pc`.
-      **Done when:** the report covers every crate in both places, and every break it lists is named
-      in CHANGELOG `[Unreleased]` or `docs/api-review.md`.
-      **Blocked by:** nothing.
-      **Measured (2026-11-01):** 20 crates checked before the stop, 61 failed major checks, 319
-      listed items. The earlier 250-item count and "each one explained" (2026-10-30) predate this
-      and have not been redone.
+- [ ] **What:** the `semver` job stays red. It is non-blocking (`continue-on-error`), so the `CI`
+      run is green without it.
+      **Why:** `cargo semver-checks` judges breaks against the version number. `dev` is `3.0.1-dev`,
+      a patch over `v3.0.0`, so every listed break fails it whether or not CHANGELOG explains it;
+      it has no allowlist. It passes only once the crates carry a major version.
+      **Done when:** the release version bump, which is the user's call (see Release steps); then the
+      job is made blocking with `SEMVER_BASELINE` on the new tag.
+      **Blocked by:** the user's decision.
+      **Measured (519b022):** the report finishes over 20 crates; 324 listed items, each named in
+      CHANGELOG `[Unreleased]` or `docs/api-review.md` (an identifier match, ab7cadd).
 
 ### Raze (CM5, V3D)
 
@@ -90,16 +69,16 @@ The last green `CI` run on `dev` is 350c34d (2026-11-01 00:04 UTC); all 15 runs 
       **Why:** the user's platform list (2026-10-30); the RV1106 has no compute-capable GPU.
       **Done when:** `ci.sh cross`'s CPU graph tests and the `+neon` conformance binary pass on the
       board, and the evidence is committed.
-      **Blocked by:** the board. The docs name a Flame RV1106G2; the board Gaia was imaging on
-      2026-10-31 is a Luckfox Pico Pro (RV1106).
+      **Blocked by:** a board. The target is Flame, our own RV1106G2 module; the Luckfox Pico Pro
+      (same chip, off the shelf, Gaia is imaging it) stands in for it and is where it gets tested.
       **Measured:** qemu only: 91 + 5 + 2 tests pass in `ci.sh cross` at 03f55c5; `+neon` kernels
       pass under qemu cortex-a7.
 - [ ] **[board] What:** decide `crc32()`'s ARMv7 default from a measurement of
       `crc32::neon_vmull_p8` (50093a9) against slice-by-8. Written, untested on board.
       **Why:** selection follows measurements. `crc32()` stays on slice-by-8 on ARMv7 until then.
-      **Done when:** `conformance crc32_throughput -- --ignored --nocapture` has run on the RV1106
-      and the default follows the numbers.
-      **Blocked by:** the RV1106 board. The Raze cannot run AArch32 binaries.
+      **Done when:** `conformance crc32_throughput -- --ignored --nocapture` has run on the Luckfox
+      Pico Pro (Flame's stand-in) and the default follows the numbers.
+      **Blocked by:** the Luckfox board. The Raze cannot run AArch32 binaries.
       **Measured:** conformance under qemu only; no timing exists.
 - [ ] **[board] What:** K230D, CPU-only (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph
       tests and the kernel conformance binary on the board. Written, untested on board.
@@ -277,6 +256,20 @@ was searched for, the commit is the one that introduced it.
       (`f16_to_f32`) to 93x (`crc32`) slower; fragment 1.2x (`f16_to_f32`, 14.3 vs 11.9 ms) to 9x
       slower, and 1.1-3.5x faster than compute. The pass alone, without its copies, beats the A76 only
       on `f16_to_f32` (8.1 vs 11.9 ms) and `rgb_to_rgba` (8.05 vs 8.40 ms). The copy engine is 1.09 vs 1.27 ms per 4 MiB.
+
+### CI on `dev` (2026-11-01)
+
+The `CI` run on `dev` was red from 3196a4e to ab7cadd; green again at 519b022 (`semver` stays red,
+non-blocking, see above).
+
+- [x] `package-surface`: the `stable_abi_counted` fixture excluded from packaging, 8bfeb5e.
+- [x] `accel`: CI's qemu 8.2.2 (ubuntu-24.04) did not report Zvbc through `riscv_hwprobe` (absent
+      from qemu's `linux-user/syscall.c` at v8.2.2, present at v9.0.0). The job runs on ubuntu-26.04
+      with `qemu-user-binfmt` 10.2.1: a1d615f, 519b022. The GitHub job renders pass 112,
+      impossible 18, untested 4, the committed matrix.
+- [x] `ci.sh semver` finishes over every crate: new crates excluded, the baseline's libcamera
+      feature dropped, the unnamed breaks named in CHANGELOG: ab7cadd.
+- [x] Stale lines in `docs/migration-4.0.md` and `docs/development.md`: 249bf6e.
 
 ### Earlier release mechanics
 
