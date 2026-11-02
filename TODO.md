@@ -133,6 +133,20 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** one function runs under both, with a test in each.
       **Blocked by:** nothing.
       **Measured:** none.
+- [ ] **What:** zero allocations per frame on the raw GPU submit path (Styx's request,
+      2026-11-02): an opt-in `RawSubmitter` with a ring of reused command buffers and `VkFence`s,
+      submitting by `vkQueueSubmit` under a Daedalus submit mutex that every Daedalus
+      `queue.submit` also takes. Same full barriers, same ticket semantics, one `VkDevice`.
+      **Why:** Styx's GPU ISP `Input::Buffer` makes 17 allocations per frame, all in `submit_raw`,
+      `GpuTicket::submit_on` and wgpu-core's submit. wgpu-hal's submit allocates too, and
+      wgpu-core serializes queue access with private locks, so 0 needs a raw submit under a lock
+      Daedalus owns.
+      **Done when:** Styx's test caps the path at 0, and the Raze GPU tests and VVL run stay clean.
+      Report the count before and after.
+      **Blocked by:** Styx's answers: does it call `queue.submit` outside `submit_raw`, and does
+      its per-frame input go through `queue.write_buffer`? (wgpu flushes those writes only on its
+      own submit.) After shared nodes.
+      **Measured:** 17 per frame (Styx's count).
 - [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
       under `crates/` (`build.rs`, `portable.rs`, `trace.rs`).
       **Why:** without it those crates do not build from a Windows checkout.
