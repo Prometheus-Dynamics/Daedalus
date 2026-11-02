@@ -360,13 +360,6 @@ fn a_raw_kernel_reads_8_bit_storage() {
     assert_eq!(words, want);
 }
 
-/// `write_buffer` data reaches the device only with wgpu's next submit, and a raw submit is not
-/// one. Flush it with an empty wgpu submit (in queue order) before raw commands read the upload.
-fn flush_uploads(ctx: &GpuContextHandle) {
-    let (_, queue) = ctx.wgpu().unwrap();
-    crate::shader::submit_lock::submit_locked(queue, std::iter::empty::<wgpu::CommandBuffer>());
-}
-
 /// The `Invert` kernel recorded through a [`RawSubmitter`] gives the same bytes as `submit_raw`.
 #[test]
 fn a_raw_submitter_dispatch_matches_submit_raw() {
@@ -376,7 +369,8 @@ fn a_raw_submitter_dispatch_matches_submit_raw() {
     let submitter = RawSubmitter::new(&ctx).unwrap();
     let input = pattern(64 << 10);
     let src = GpuStorage::with_data(&ctx, &input, Some("raw-src")).unwrap();
-    flush_uploads(&ctx);
+    // `with_data` is a `write_buffer`: flush it before raw commands read it.
+    ctx.flush_uploads().unwrap();
     let dst = GpuStorage::new_host_cached(&ctx, input.len() as u64, Some("raw-dst")).unwrap();
     // SAFETY: both storages outlive the submission, which the ticket waits for.
     let invert = unsafe { Invert::new(&raw.device, &src, &dst) };
@@ -402,7 +396,8 @@ fn raw_submits_interleave_with_daedalus_work_in_order() {
     let input = pattern(64 << 10);
     let len = input.len() as u64;
     let src = GpuStorage::with_data(&ctx, &input, None).unwrap();
-    flush_uploads(&ctx);
+    // `with_data` is a `write_buffer`: flush it before raw commands read it.
+    ctx.flush_uploads().unwrap();
     let mid = GpuStorage::new_host_cached(&ctx, len, None).unwrap();
     let out = GpuStorage::new(&ctx, len, None).unwrap();
     let back = GpuStorage::new_host_cached(&ctx, len, None).unwrap();

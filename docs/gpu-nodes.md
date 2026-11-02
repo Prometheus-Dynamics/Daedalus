@@ -203,7 +203,8 @@ it with `ctx.duration_metric("gpu", time)`.
   buffers, each with a fence, and allocates nothing per submit: `RawSubmitter::new(&gpu)`, then
   `unsafe submitter.submit(|device, cmd| ...)` returns a `RawTicket` (`try_complete`, `wait`). It
   takes the same submit lock as every Daedalus submit. Raw commands do not see `queue.write_buffer`
-  data (wgpu flushes that with its own next submit): upload inside your own recording.
+  data (wgpu flushes that with its own next submit): call `gpu.flush_uploads()` after such writes
+  (once at setup for `GpuStorage::with_data`), or upload inside your own recording.
 - Into a sampled texture without a shader: import as a storage buffer as above, then
   `texture.copy_from_storage(encoder, &storage, 0, stride)` (or `upload_from_storage`). This is
   `vkCmdCopyBufferToImage`, which v3dv runs on its texture formatting unit (TFU) for a whole

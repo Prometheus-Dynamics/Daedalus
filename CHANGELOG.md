@@ -24,7 +24,9 @@ plugin ABI and does not load.
   17 allocations per frame through `submit_raw` before, 0 after. Every Daedalus `queue.submit`
   now takes one process-wide submit lock, and so do the `on_submitted_work_done` and `map_async`
   calls that flush pending writes, so a raw submit never overlaps one. While a `RawSubmitter`
-  exists, code outside Daedalus must not submit on its device.
+  exists, code outside Daedalus must not submit on its device. `GpuContextHandle::flush_uploads()`
+  submits pending `write_buffer` data (`GpuStorage::with_data` included), which raw commands
+  otherwise do not see.
 - **Shared nodes for the MCU profile.** `#[daedalus_mcu::node(.., runtime = "feature")]` makes one
   function both the device node and a full-runtime `#[daedalus::macros::node]`, with the same id,
   ports, types, optional inputs, conditional outputs, fire mode and state, so one node crate serves

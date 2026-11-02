@@ -19,8 +19,9 @@
 //!   sharing the device with Styx, for example through styx-wgpu's `Gpu::from_device`, when the
 //!   app calls `queue.submit` itself.
 //! - **Uploads.** `queue.write_buffer` and `write_texture` data is flushed only by wgpu's next
-//!   submit, so raw commands do not see it. Upload inside your own recording instead (a copy
-//!   from a staging buffer).
+//!   submit, so raw commands do not see it. Call [`GpuContextHandle::flush_uploads`] after
+//!   them (once at setup for `GpuStorage::with_data`), or upload inside your own recording (a
+//!   copy from a staging buffer).
 //! - **Relay semaphores.** wgpu-hal chains its submits with relay semaphores (each waits on the
 //!   previous one's signal). A raw submit neither waits on nor signals them, so the chain is
 //!   unchanged. The dmabuf acquire path stages wait semaphores on wgpu-hal's list for its next

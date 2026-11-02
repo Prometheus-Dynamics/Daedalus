@@ -70,6 +70,19 @@ impl GpuTicket {
     }
 }
 
+impl GpuContextHandle {
+    /// Submit the `queue.write_buffer` / `write_texture` data wgpu still holds (it uploads that
+    /// data only with its next submit). Call it after such writes, and after creating a storage
+    /// with data (`GpuStorage::with_data`), before work that wgpu does not submit reads them:
+    /// `raw_vulkan::RawSubmitter` commands, or another queue. Daedalus's own wgpu
+    /// submissions need no flush. `Unsupported` on a non-wgpu backend.
+    pub fn flush_uploads(&self) -> Result<(), GpuError> {
+        let (_, queue) = self.wgpu().ok_or(GpuError::Unsupported)?;
+        submit_locked(queue, []);
+        Ok(())
+    }
+}
+
 /// At most `max` tickets in flight, each with the value it will produce (a staging buffer, a frame
 /// id). A node pushes when [`GpuInFlight::is_full`] is false (otherwise it skips or drops the
 /// frame) and pops completed values in submission order every tick.
