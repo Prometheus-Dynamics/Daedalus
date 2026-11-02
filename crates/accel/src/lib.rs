@@ -203,6 +203,10 @@ pub enum Status {
     /// per-element heap values). On [`Backend::Gpu`] for an op marked
     /// [`Op::per_element`], the gate lists it for review.
     NotDataParallel(&'static str),
+    /// Possible but deliberately postponed, with the reason (waiting on a board, a vendor
+    /// toolchain or an SDK). The matrix counts it apart from gaps; `--release` still fails
+    /// on it.
+    Deferred(&'static str),
 }
 
 /// A data-parallel operation and its scalar reference.
@@ -275,7 +279,9 @@ impl Op {
         self
     }
 
-    /// Extension variants the op could use.
+    /// Extension variants the op could use. Each becomes a column; with no kernel it is a
+    /// gap. To mark one that cannot be done, add
+    /// `Kernel::missing(op, backend, Status::Impossible(reason)).with_extensions(exts)`.
     pub const fn could_use(mut self, candidates: &'static [(Backend, &'static [Ext])]) -> Self {
         self.candidates = candidates;
         self
@@ -327,7 +333,8 @@ impl Kernel {
         }
     }
 
-    /// An entry that is not implemented: `Gap`, `Impossible` or `NotDataParallel`.
+    /// An entry that is not implemented: `Gap`, `Impossible`, `NotDataParallel` or
+    /// `Deferred`. With [`Kernel::with_extensions`] it decides that extension column.
     pub const fn missing(op: &'static str, backend: Backend, status: Status) -> Self {
         Self {
             op,

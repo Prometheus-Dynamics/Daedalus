@@ -126,7 +126,7 @@ fn render(args: &Args) -> Result<bool, String> {
             let at = format!("{} on {}", op.id, column.name());
             match v.cell {
                 Cell::Fail => failures.push(format!("{at}: {}", v.reason)),
-                Cell::Gap | Cell::Untested => {
+                Cell::Gap | Cell::Untested | Cell::Deferred => {
                     gaps.push(format!("{at}: {} ({})", v.cell.name(), v.reason))
                 }
                 Cell::Pass | Cell::Impossible | Cell::NotApplicable => {}
@@ -144,7 +144,10 @@ fn render(args: &Args) -> Result<bool, String> {
     if args.release {
         failures.extend(gaps.iter().map(|g| format!("release gate: {g}")));
     } else {
-        eprintln!("{} gap or untested cells (fail with --release)", gaps.len());
+        eprintln!(
+            "{} gap, untested or deferred cells (fail with --release)",
+            gaps.len()
+        );
     }
     for f in &failures {
         eprintln!("error: {f}");

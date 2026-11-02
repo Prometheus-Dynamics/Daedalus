@@ -93,7 +93,7 @@ pub struct KernelRow {
     pub source: String,
     pub test: String,
     pub symbol: Option<String>,
-    /// `implemented`, `gap`, `impossible` or `not_data_parallel`.
+    /// `implemented`, `gap`, `impossible`, `not_data_parallel` or `deferred`.
     pub status: String,
     pub reason: String,
 }
@@ -131,6 +131,8 @@ pub enum Cell {
     NotApplicable,
     Pass,
     Impossible,
+    /// Possible but postponed ([`crate::Status::Deferred`]).
+    Deferred,
     Untested,
     Gap,
     Fail,
@@ -142,6 +144,7 @@ impl Cell {
             Cell::NotApplicable => "n/a",
             Cell::Pass => "pass",
             Cell::Impossible => "impossible",
+            Cell::Deferred => "deferred",
             Cell::Untested => "untested",
             Cell::Gap => "gap",
             Cell::Fail => "fail",
@@ -482,10 +485,10 @@ impl Inventory {
                     evidence: String::new(),
                 },
                 Some(k) => CellValue {
-                    cell: if k.status == "gap" {
-                        Cell::Gap
-                    } else {
-                        Cell::Impossible
+                    cell: match k.status.as_str() {
+                        "gap" => Cell::Gap,
+                        "deferred" => Cell::Deferred,
+                        _ => Cell::Impossible,
                     },
                     reason: if k.status == "not_data_parallel" {
                         format!("not data-parallel: {}", k.reason)

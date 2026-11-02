@@ -9,8 +9,10 @@ No dependencies and `no_std` by default-off `std`; Eidos uses it as a dev-depend
 - **Register.** A crate (or a registry crate next to it) exports const `Registry` tables:
   every `Op` with its scalar reference, and per backend a `Kernel`: implemented (source
   `path:line`, conformance test, optional `symbol` for compiler-vectorized code), `Gap`,
-  `Impossible` or `NotDataParallel`, each with a reason. Tables nest through `children`. A
-  backend without an entry is a gap.
+  `Impossible`, `NotDataParallel` or `Deferred` (possible but postponed), each with a reason.
+  An entry with `with_extensions` decides that extension column, so an `Op::could_use`
+  candidate that cannot be done is a `missing(.., Impossible(..))` entry with its extensions.
+  Tables nest through `children`. A backend without an entry is a gap.
 - **Prove.** Conformance tests call `conform(op, backend, || kernel == scalar)` (`std`). With
   `ACCEL_RESULTS_DIR` set it appends a JSON line: op, backend, variant, adapter, target
   (`ACCEL_TARGET`), runner (`ACCEL_RUNNER`), RVV `vlen` (read from `vlenb`), rev, result.
@@ -25,10 +27,10 @@ No dependencies and `no_std` by default-off `std`; Eidos uses it as a dev-depend
 
 A cell is **pass** only with passing CI evidence (RVV at VLEN 128, 256 and 512; compiler-
 vectorized kernels also need the asm record); **fail** when any record failed; **untested**
-when implemented without that evidence; **gap**; or **impossible** with its reason.
+when implemented without that evidence; **gap**; **deferred**; or **impossible** with its reason. The totals count each separately.
 
 The gate fails on registry errors, failing cells, a source file with SIMD or GPU markers
 (`core::arch`, `#[target_feature]`, `asm!`, `multiversion!`, WGSL, pipeline creation) that no
 kernel or exemption names, and pass cells lost against the baseline. `--release` also fails on
-every gap or untested cell. GPU cells marked impossible on per-element ops are listed for
+every gap, untested or deferred cell. GPU cells marked impossible on per-element ops are listed for
 review (`--strict-review` fails on them).

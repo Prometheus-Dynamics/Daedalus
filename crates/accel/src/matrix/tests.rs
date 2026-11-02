@@ -264,3 +264,59 @@ fn core_tuned_variants_get_their_own_columns() {
         Cell::NotApplicable
     );
 }
+
+static EXT_OPS: [Op; 1] = [Op::new("t.mul", "mul", "t::mul").could_use(&[
+    (Backend::Neon64, &[Ext::Dotprod]),
+    (Backend::Neon64, &[Ext::I8mm]),
+])];
+
+static EXT_ROOT: Registry = Registry {
+    repo: "t",
+    name: "ext",
+    ops: &EXT_OPS,
+    kernels: &[
+        Kernel::implemented("t.mul", Backend::Scalar, "src/mul.rs:1", "mul::scalar"),
+        Kernel::missing(
+            "t.mul",
+            Backend::Neon64,
+            Status::Impossible("no widening form for this width"),
+        )
+        .with_extensions(&[Ext::Dotprod]),
+        Kernel::missing(
+            "t.mul",
+            Backend::Gpu,
+            Status::Deferred("waiting on the SDK"),
+        ),
+    ],
+    ..Registry::EMPTY
+};
+
+#[test]
+fn extension_candidates_can_be_impossible_and_cells_deferred() {
+    let mut inv = Inventory::default();
+    inv.add_registry(&crate::dump_json(&[&EXT_ROOT])).unwrap();
+    assert!(
+        inv.check_registry().is_empty(),
+        "{:?}",
+        inv.check_registry()
+    );
+    let column = |name: &str| {
+        inv.columns()
+            .into_iter()
+            .find(|c| c.name() == name)
+            .unwrap()
+    };
+    let dotprod = inv.cell_in("t.mul", &column("neon64+dotprod"));
+    assert_eq!(dotprod.cell, Cell::Impossible);
+    assert_eq!(dotprod.reason, "no widening form for this width");
+    assert_eq!(inv.cell_in("t.mul", &column("neon64+i8mm")).cell, Cell::Gap);
+    let gpu = inv.cell("t.mul", Backend::Gpu);
+    assert_eq!(gpu.cell, Cell::Deferred);
+    assert_eq!(gpu.reason, "waiting on the SDK");
+    let md = inv.markdown();
+    assert!(md.contains("deferred 1") && md.contains("gap "), "{md}");
+    assert!(
+        inv.csv()
+            .contains("t,t.mul,gpu,deferred,waiting on the SDK,")
+    );
+}

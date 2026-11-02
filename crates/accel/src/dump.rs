@@ -75,6 +75,7 @@ fn collect(
             Status::Gap(r) => ("gap", r),
             Status::Impossible(r) => ("impossible", r),
             Status::NotDataParallel(r) => ("not_data_parallel", r),
+            Status::Deferred(r) => ("deferred", r),
         };
         let mut line = String::new();
         let _ = write!(

@@ -70,6 +70,13 @@ plugin ABI and does not load.
   lavapipe with a precompiled GLSL kernel reading `uint8_t` storage. `gpu-vulkan-raw` now
   implies `gpu-dmabuf`.
 
+- **`Status::Deferred` in the acceleration inventory.** For a cell that is possible but
+  postponed (waiting on a board, a vendor toolchain or an SDK), with its reason. It renders as
+  **deferred**, has its own count in the totals, and `accel-matrix --release` still fails on it,
+  as it does on gaps. An `Op::could_use` candidate that cannot be done is marked with
+  `Kernel::missing(op, backend, Status::Impossible(reason)).with_extensions(exts)`; this is now
+  documented and tested. Adding the variant breaks exhaustive matches on `Status`.
+
 - **Core-tuned kernel variants get their own matrix column.** Mark a variant with
   `Kernel::with_core("a55")` and `accel-matrix render` gives it a column of its own
   (`neon64[a53]`, `neon64+dotprod[a55]`), placed after the shared one. The column passes only on
