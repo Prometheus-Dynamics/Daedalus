@@ -7,7 +7,7 @@
 use std::fs::OpenOptions;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 
-use daedalus_rga::{Filter, Layout, PixelFormat, Rect, Rga, find_m2m_device};
+use daedalus_rga::{Filter, Layout, PixelFormat, Rect, Rga, Transform, find_m2m_device};
 
 fn vim2m() -> Option<Rga> {
     match find_m2m_device("vim2m") {
@@ -395,4 +395,80 @@ fn rga_crops_like_the_reference() {
                 .ok_or_else(|| "differs".into())
         },
     );
+}
+
+/// Flips through the context's controls on vim2m (it copies RGB24, so the result is exact);
+/// vim2m has no rotate control, so a turn is refused as `Unsupported`.
+#[test]
+fn vim2m_flips_through_the_controls() {
+    use daedalus_kernels::reference as r;
+    let Some(mut rga) = vim2m() else { return };
+    let (w, h) = (64u32, 48u32);
+    let src = Layout::packed(PixelFormat::Rgb24, w, h);
+    let input = frame(src.frame_len(), 17);
+    for (t, horizontal, vertical) in [
+        (Transform::FlipHorizontal, true, false),
+        (Transform::FlipVertical, false, true),
+    ] {
+        let mut out = vec![0u8; src.frame_len()];
+        rga.transform_bytes(src, &input, src, &mut out, t).unwrap();
+        let want = r::flip(&input, w as usize, h as usize, 3, horizontal, vertical);
+        assert!(out == want, "{t:?}");
+    }
+    let turned = Layout::packed(PixelFormat::Rgb24, h, w);
+    let mut out = vec![0u8; turned.frame_len()];
+    match rga.transform_bytes(src, &input, turned, &mut out, Transform::Rotate90) {
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {}
+        other => panic!("vim2m has no rotate control, got {other:?}"),
+    }
+    let err = rga
+        .transform_bytes(src, &input, src, &mut out, Transform::Rotate90)
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+/// Rockchip's RGA flips and turns against the references, recorded as the `rga-v4l2` variant.
+/// Written, untested on board.
+#[test]
+fn rga_flips_and_turns_like_the_references() {
+    use daedalus_accel::{Backend, Evidence, conform_with};
+    use daedalus_kernels::reference as r;
+    let Some(mut rga) = Rga::find() else {
+        return eprintln!("skipping: no rockchip-rga device");
+    };
+    let (w, h) = (320u32, 240u32);
+    let src = Layout::packed(PixelFormat::Rgb24, w, h);
+    let input = frame(src.frame_len(), 23);
+    let mut turn = |t: Transform, want: &[u8]| -> Result<(), String> {
+        let (ow, oh) = t.output_size(w, h);
+        let dst = Layout::packed(PixelFormat::Rgb24, ow, oh);
+        let mut out = vec![0u8; dst.frame_len()];
+        rga.transform_bytes(src, &input, dst, &mut out, t)
+            .map_err(|e| format!("{t:?}: {e}"))?;
+        (out == want)
+            .then_some(())
+            .ok_or_else(|| format!("{t:?} differs"))
+    };
+    let (wu, hu) = (w as usize, h as usize);
+    let evidence = |op| Evidence::new(op, Backend::FixedFunction).variant("rga-v4l2");
+    conform_with(evidence("daedalus.image.flip"), || {
+        turn(
+            Transform::FlipHorizontal,
+            &r::flip(&input, wu, hu, 3, true, false),
+        )?;
+        turn(
+            Transform::FlipVertical,
+            &r::flip(&input, wu, hu, 3, false, true),
+        )
+    });
+    conform_with(evidence("daedalus.image.rotate"), || {
+        for (t, q) in [
+            (Transform::Rotate90, 1),
+            (Transform::Rotate180, 2),
+            (Transform::Rotate270, 3),
+        ] {
+            turn(t, &r::rotate(&input, wu, hu, 3, q).0)?;
+        }
+        Ok(())
+    });
 }

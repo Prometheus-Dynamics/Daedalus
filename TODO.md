@@ -192,8 +192,8 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       chains NV12 levels (nostd, 2026-11-02). (2) written: librga palette and colour key, ops
       `daedalus.image.{palette,color_key_mask}`, `caps` `FixedOp`; written, untested on board.
       (3) written: crop on both routes (full frame = copy), flip and rotate on librga, ops
-      `daedalus.image.{crop,flip,rotate}`. Open in (3): mainline flip and rotate, waiting on
-      `M2mSession::set_control` in Lemnos (asked HeliOS 2026-11-02).
+      `daedalus.image.{crop,flip,rotate}`; mainline flip and rotate through Lemnos's
+      `set_control` (01939e9), flips checked exactly on vim2m.
       **Measured:** n/a.
 
 ### Release steps

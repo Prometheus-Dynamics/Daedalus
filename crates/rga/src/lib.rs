@@ -47,12 +47,13 @@ mod rga {
     use std::os::fd::BorrowedFd;
     use std::path::{Path, PathBuf};
 
+    use crate::Transform;
     use crate::caps::Route;
     use crate::resize::{Filter, source_size};
     use crate::transform::{check_crop, check_size};
     use crate::v4l2::{Layout, Memory, PixelFormat, Rect, Session, find_m2m_device};
 
-    type Key = (Layout, Layout, Option<Rect>, Memory);
+    type Key = (Layout, Layout, Option<Rect>, Option<Transform>, Memory);
 
     /// A 2D engine on a mem2mem device. Each distinct (source layout, destination layout, crop,
     /// memory) gets its own session, configured once and reused.
@@ -80,11 +81,12 @@ mod rga {
             src: Layout,
             dst: Layout,
             crop: Option<Rect>,
+            transform: Option<Transform>,
             memory: Memory,
         ) -> io::Result<&mut Session> {
-            let key = (src, dst, crop, memory);
+            let key = (src, dst, crop, transform, memory);
             if !self.sessions.contains_key(&key) {
-                let s = Session::open(&self.path, src, dst, crop, memory)?;
+                let s = Session::open(&self.path, src, dst, crop, transform, memory)?;
                 self.sessions.insert(key, s);
             }
             Ok(self.sessions.get_mut(&key).expect("inserted above"))
@@ -103,7 +105,7 @@ mod rga {
             dst_fd: BorrowedFd<'_>,
             dst_len: usize,
         ) -> io::Result<usize> {
-            self.session(src, dst, crop, Memory::Dmabuf)?
+            self.session(src, dst, crop, None, Memory::Dmabuf)?
                 .convert_dmabuf(src_fd, src_len, dst_fd, dst_len)
         }
 
@@ -117,13 +119,15 @@ mod rga {
             dst: Layout,
             dst_bytes: &mut [u8],
         ) -> io::Result<usize> {
-            self.session(src, dst, crop, Memory::Mmap)?
+            self.session(src, dst, crop, None, Memory::Mmap)?
                 .convert_bytes(src_bytes, dst_bytes)
         }
 
         /// The frame sizes the device expects for a conversion.
         pub fn frame_lens(&mut self, src: Layout, dst: Layout) -> io::Result<(usize, usize)> {
-            Ok(self.session(src, dst, None, Memory::Mmap)?.frame_lens())
+            Ok(self
+                .session(src, dst, None, None, Memory::Mmap)?
+                .frame_lens())
         }
 
         /// The source crop for a resize: the whole frame, or the top-left part an area
@@ -247,6 +251,46 @@ mod rga {
         ) -> io::Result<usize> {
             let crop = Self::crop_rect(src, rect, dst)?;
             self.convert(src, src_bytes, crop, dst, dst_bytes)
+        }
+
+        /// Flip or turn dmabuf `src_fd` into dmabuf `dst_fd`, whose layout has
+        /// [`Transform::output_size`] of the source (the driver's `V4L2_CID_HFLIP`, `VFLIP` and
+        /// `ROTATE` controls). A device that does not keep the control is `Unsupported`.
+        /// Returns the bytes written.
+        #[allow(clippy::too_many_arguments)]
+        pub fn transform(
+            &mut self,
+            src: Layout,
+            src_fd: BorrowedFd<'_>,
+            src_len: usize,
+            dst: Layout,
+            dst_fd: BorrowedFd<'_>,
+            dst_len: usize,
+            transform: Transform,
+        ) -> io::Result<usize> {
+            check_size(
+                (dst.width, dst.height),
+                transform.output_size(src.width, src.height),
+            )?;
+            self.session(src, dst, None, Some(transform), Memory::Dmabuf)?
+                .convert_dmabuf(src_fd, src_len, dst_fd, dst_len)
+        }
+
+        /// [`Rga::transform`] between byte buffers. Returns the bytes written.
+        pub fn transform_bytes(
+            &mut self,
+            src: Layout,
+            src_bytes: &[u8],
+            dst: Layout,
+            dst_bytes: &mut [u8],
+            transform: Transform,
+        ) -> io::Result<usize> {
+            check_size(
+                (dst.width, dst.height),
+                transform.output_size(src.width, src.height),
+            )?;
+            self.session(src, dst, None, Some(transform), Memory::Mmap)?
+                .convert_bytes(src_bytes, dst_bytes)
         }
 
         /// The device crop for `rect`: none for the full frame.

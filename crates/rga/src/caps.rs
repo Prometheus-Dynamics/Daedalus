@@ -186,9 +186,18 @@ const ROTATE_LIBRGA: OpCaps = OpCaps {
     note: "imrotate with IM_HAL_TRANSFORM_ROT_90/180/270; clockwise is assumed, unmeasured",
 };
 
-/// Mainline: crop only until flip and rotate (`V4L2_CID_HFLIP`, `VFLIP`, `ROTATE`) can be set
-/// through Lemnos's session.
-const V4L2_OPS: &[OpCaps] = &[CROP_V4L2];
+const FLIP_V4L2: OpCaps = OpCaps {
+    op: FixedOp::Flip,
+    exactness: Exactness::Unmeasured,
+    note: "V4L2_CID_HFLIP or VFLIP on the context",
+};
+const ROTATE_V4L2: OpCaps = OpCaps {
+    op: FixedOp::Rotate,
+    exactness: Exactness::Unmeasured,
+    note: "V4L2_CID_ROTATE 90, 180 or 270 on the context; clockwise is assumed, unmeasured",
+};
+
+const V4L2_OPS: &[OpCaps] = &[CROP_V4L2, FLIP_V4L2, ROTATE_V4L2];
 const RGA3_LIBRGA_OPS: &[OpCaps] = &[CROP_LIBRGA, FLIP_LIBRGA, ROTATE_LIBRGA];
 
 const RGA2_LIBRGA_OPS: &[OpCaps] = &[
@@ -323,7 +332,7 @@ mod tests {
             let crop = c.op(FixedOp::Crop).is_some();
             assert_eq!(crop, c.route != Route::Design, "{c:?}");
             let flip = c.op(FixedOp::Flip).is_some();
-            assert_eq!(flip, c.route == Route::Librga, "{c:?}");
+            assert_eq!(flip, c.route != Route::Design, "{c:?}");
         }
     }
 }

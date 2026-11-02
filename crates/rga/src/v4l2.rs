@@ -9,8 +9,11 @@ use std::time::Duration;
 
 use lemnos_linux::v4l2::m2m::{M2mSession, QueueSetup, Ready};
 use lemnos_linux::v4l2::{
-    self as lv, Format, PixFormat, PixFormatMplane, PlaneFormat, PlaneMemory, QueuePlane,
+    self as lv, CID_HFLIP, CID_ROTATE, CID_VFLIP, Format, PixFormat, PixFormatMplane, PlaneFormat,
+    PlaneMemory, QueuePlane,
 };
+
+use crate::Transform;
 
 /// `V4L2_FIELD_NONE`: progressive frames.
 const FIELD_NONE: u32 = 1;
@@ -127,7 +130,7 @@ pub(crate) enum Memory {
 }
 
 /// A configured mem2mem context: `src` into `dst`, scaling to `dst`'s size, from `crop` of the
-/// source when given. One buffer per queue, index 0.
+/// source when given, flipped or turned by `transform`. One buffer per queue, index 0.
 pub(crate) struct Session {
     session: M2mSession,
     memory: Memory,
@@ -141,6 +144,7 @@ impl Session {
         src: Layout,
         dst: Layout,
         crop: Option<Rect>,
+        transform: Option<Transform>,
         memory: Memory,
     ) -> io::Result<Self> {
         let cap = lv::query(path)?;
@@ -177,6 +181,29 @@ impl Session {
                 return Err(io::Error::other(format!(
                     "the device adjusted crop {r:?} to {got:?}"
                 )));
+            }
+        }
+        if let Some(t) = transform {
+            let controls: &[(u32, i32)] = match t {
+                Transform::FlipHorizontal => &[(CID_HFLIP, 1)],
+                Transform::FlipVertical => &[(CID_VFLIP, 1)],
+                Transform::Rotate90 => &[(CID_ROTATE, 90)],
+                Transform::Rotate180 => &[(CID_ROTATE, 180)],
+                Transform::Rotate270 => &[(CID_ROTATE, 270)],
+            };
+            for &(id, value) in controls {
+                let kept = session.set_control(id, value).map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!("the device does not take {t:?} (control {id:#x}: {e})"),
+                    )
+                })?;
+                if kept != value {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!("the device kept {kept} for {t:?} (control {id:#x})"),
+                    ));
+                }
             }
         }
         session.stream_on()?;

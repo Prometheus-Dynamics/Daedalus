@@ -70,6 +70,13 @@ plugin ABI and does not load.
   lavapipe with a precompiled GLSL kernel reading `uint8_t` storage. `gpu-vulkan-raw` now
   implies `gpu-dmabuf`.
 
+- **RGA flip and rotate on the mainline driver.** `Rga::transform` and `transform_bytes` set
+  the context's `V4L2_CID_HFLIP`, `VFLIP` or `ROTATE` control (Lemnos's
+  `M2mSession::set_control`) before streaming; a driver that refuses or does not keep the value
+  makes the call `Unsupported`. Each transform gets its own cached session. `caps` lists flip and
+  rotate on the V4L2 route, and the registry gains their `rga-v4l2` rows. vim2m checks both flips
+  exactly and refuses a turn (it has no rotate control). Lemnos is locked at 01939e9.
+
 - **RGA crop, flip and rotate.** `Rga::crop` and `crop_bytes` on the mainline driver (crop
   selection, unscaled; a full-frame rectangle is a copy) and `Librga::crop_bytes`, `crop_dmabuf`,
   `transform_bytes` and `transform_dmabuf` (`imcrop`, `imflip`, `imrotate`) with the new

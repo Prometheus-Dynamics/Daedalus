@@ -60,7 +60,7 @@ static IMAGE_OPS: [Op; 7] = [
     .only_on(NODE_ONLY, NODE_REASON),
 ];
 
-static IMAGE_KERNELS: [Kernel; 17] = [
+static IMAGE_KERNELS: [Kernel; 19] = [
     Kernel::implemented(
         "daedalus.image.resize_area",
         Backend::Scalar,
@@ -117,7 +117,20 @@ static IMAGE_KERNELS: [Kernel; 17] = [
         RGA_LIB.1,
     )
     .with_variant("librga"),
-    // Mainline flip and rotate need a control setter on Lemnos's session; librga for now.
+    Kernel::implemented(
+        "daedalus.image.flip",
+        Backend::FixedFunction,
+        RGA_V4L2.0,
+        RGA_V4L2.1,
+    )
+    .with_variant("rga-v4l2"),
+    Kernel::implemented(
+        "daedalus.image.rotate",
+        Backend::FixedFunction,
+        RGA_V4L2.0,
+        RGA_V4L2.1,
+    )
+    .with_variant("rga-v4l2"),
     Kernel::implemented(
         "daedalus.image.flip",
         Backend::FixedFunction,

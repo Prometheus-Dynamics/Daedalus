@@ -18,8 +18,9 @@ share.
 - **Crop, flip, rotate:** `Rga::crop` / `crop_bytes` (the output queue's crop selection,
   unscaled; a full-frame rectangle is a copy) and `Librga::crop_*` and `transform_*`
   (`Transform`: horizontal and vertical flip, 90, 180 and 270 degree turns, clockwise assumed).
-  An output that is not the rectangle's or the turn's size is refused. Mainline flip and rotate
-  wait on a control setter on Lemnos's session.
+  An output that is not the rectangle's or the turn's size is refused. On mainline,
+  `Rga::transform` / `transform_bytes` set the context's `V4L2_CID_HFLIP`, `VFLIP` or `ROTATE`
+  control through Lemnos and refuse a value the driver does not keep.
 - **Palette and colour key (librga only):** `Librga::palette_bytes` / `palette_dmabuf` (8-bit
   indices through a 256-entry RGBA table) and `color_key_bytes` / `color_key_dmabuf` /
   `color_key_mask` (the pixels whose R, G and B lie in a range drawn opaque onto a cleared RGBA
