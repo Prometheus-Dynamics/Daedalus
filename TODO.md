@@ -123,8 +123,8 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Why:** sizes are linked and measured, but the firmware has never run on hardware.
       **Done when:** the stack and tick numbers per mode are in `docs/mcu.md`.
       **Blocked by:** an MCU board and a HAL.
-      **Measured (`ci.sh mcu`, 2026-11-01), flash / static RAM, M4F and M0+:** compiled 2988 / 3316 B
-      and 112 B; tunable 5012 / 5952 B and 128 B; loaded 11672 / 12488 B and 584 B. Stack and tick
+      **Measured (`ci.sh mcu`, 2026-11-02), flash / static RAM, M4F and M0+:** compiled 2988 / 3316 B
+      and 112 B; tunable 4424 / 5488 B and 128 B; loaded 11060 / 12024 B and 584 B. Stack and tick
       time: none.
 - [ ] **What:** a chunked blob receive helper for the MCU (feature-gated framing + CRC-32 into a
       buffer or flash partition).
@@ -132,15 +132,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** a test receives a plan blob in chunks and loads it.
       **Blocked by:** a consumer needing it; none is recorded.
       **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
-- [ ] **What:** smaller tunable and loaded MCU code: a per-kind conversion instead of the generic
-      `Scalar` one.
-      **Why:** the generic conversion pulls `f64` soft-float into graphs with no `f64` port.
-      **Done when:** the blink tunable and loaded firmwares link without `__aeabi_d*` and the budgets
-      in `ci.sh` are tightened.
-      **Blocked by:** nothing.
-      **Measured:** `__aeabi_dcmple` and `__aeabi_d2f` are in both M4F firmwares and not in the
-      compiled one. Tunable adds 2024 B (M4F) / 2636 B (M0+) in all; the soft-float share is not
-      measured.
 - [ ] **What:** fan-in and user adapters on the MCU device (adapter calls for `#[adapt]` functions
       that are plain `no_std` code).
       **Why:** today lowering rejects several edges into one input (`crates/mcu/build/src/lower.rs`),
@@ -364,3 +355,7 @@ Tier 1 and tier 2 are done; see "Portability" in `docs/development.md`.
 - [x] Host plan compiler, device crate, blink example, size budgets: c7b3989.
 - [x] Live parameters: 0cb75f6, 1bfd08c.
 - [x] Runtime-loaded plans: 0cb75f6, 1bfd08c; blob CRC-32 in c06a35e.
+- [x] Smaller tunable and loaded code: the `f64` feature (default) gates `f64` conversions, and
+      `f64` to `f32` narrows in integer arithmetic, so the blink firmwares link no `__aeabi_d*`.
+      Tunable 5012 → 4424 B (M4F), 5952 → 5488 B (M0+); loaded 11672 → 11060 B, 12488 → 12024 B;
+      budgets 6 KiB and 13 KiB. Commit: daa7d22.
