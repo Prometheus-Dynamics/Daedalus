@@ -44,15 +44,7 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Blocked by:** a HeliOS deploy on the Raze, which the HeliOS coordinator owns. HeliOS `dev`'s
       `backend/Cargo.lock` pins b148918, which carries bb07e3b; what the Raze runs was not checked.
       **Measured:** planner tests only (`planner/src/refresh/tests.rs`); no Raze run is recorded.
-- [ ] **What:** `ci.sh vvl` on the Raze exits cleanly under the validation layer.
-      **Why:** VVL is how new Eidos kernels get validated. This was ticked as accepted on 2026-10-30,
-      but its done-when (`ci.sh vvl` exits 0) was never met.
-      **Done when:** `./scripts/ci.sh vvl` on the Raze exits 0, with no layer errors from our code.
-      **Blocked by:** a properly built aarch64 layer. Today's is cross-built with zig and segfaults
-      in its own static destructors at process exit, even for a bare `vkCreateInstance` +
-      `vkDestroyInstance`. A distro arm64 package needs the user's OK for the download.
-      **Measured:** the runs recorded in `docs/testing.md` print no validation message before the
-      exit crash.
+
 ### Boards
 
 - [ ] **[board] What:** armv7 RV1106, CPU-only (`armv7-unknown-linux-musleabihf`): the CPU graph
@@ -337,6 +329,10 @@ non-blocking, see above).
 - [x] GPU-side fence wait with a timeout, compressed modifiers: 6b5ec57, 9dfeda1.
 - [x] Configurable fence wait, `SyncFd` by default: a03a1e0.
 - [x] Hardware tests under the validation layers: fc50a8a.
+- [x] The validation layer on the Raze, cleanly: Debian trixie's arm64 layer 1.4.309 (download
+      approved by the user, 2026-11-02) loads, the dmabuf (13) and raw Vulkan (3) tests and
+      `gpu_probe` exit 0 with no validation message and no exit crash, after fixing the one error it
+      found (a dedicated dmabuf allocation, VUID-...-02965): 8fbea48.
 - [x] Parallel test runs segfault; driver setup serialized: documented in 05633f0.
 - [x] `NodeRecovery::Retry` with by-value inputs: 89836d1.
 - [x] GPU fallback with `GpuBackend::Cpu`: 4939d8a.
