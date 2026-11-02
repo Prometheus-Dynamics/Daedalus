@@ -119,7 +119,7 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** the stack and tick numbers per mode are in `docs/mcu.md`.
       **Blocked by:** an MCU board and a HAL.
       **Measured (`ci.sh mcu`, 2026-11-02), flash / static RAM, M4F and M0+:** compiled 2988 / 3316 B
-      and 112 B; tunable 4424 / 5488 B and 128 B; loaded 11060 / 12024 B and 584 B. Stack and tick
+      and 112 B; tunable 4424 / 5488 B and 128 B; loaded 11496 / 12572 B and 584 B. Stack and tick
       time: none.
 - [ ] **What:** a chunked blob receive helper for the MCU (feature-gated framing + CRC-32 into a
       buffer or flash partition).
@@ -127,13 +127,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** a test receives a plan blob in chunks and loads it.
       **Blocked by:** a consumer needing it; none is recorded.
       **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
-- [x] **What:** fan-in and user adapters on the MCU device (adapter calls for `#[adapt]` functions
-      that are plain `no_std` code).
-      **Why:** today lowering rejects several edges into one input (`crates/mcu/build/src/lower.rs`),
-      and only builtin numeric widening adapts.
-      **Done when:** a blink-style graph with fan-in and a user adapter runs in each mode.
-      **Result:** `examples/mcu_blink` runs `graph_fanin.json` natively in all three modes. No
-      firmware for it yet, so its flash and RAM are not measured.
 - [ ] **What:** shared nodes with the full runtime: generate both a `#[node]` handler and the device
       glue from one function.
       **Why:** so a node crate serves both.
@@ -359,3 +352,7 @@ Tier 1 and tier 2 are done; see "Portability" in `docs/development.md`.
       `f64` to `f32` narrows in integer arithmetic, so the blink firmwares link no `__aeabi_d*`.
       Tunable 5012 → 4424 B (M4F), 5952 → 5488 B (M0+); loaded 11672 → 11060 B, 12488 → 12024 B;
       budgets 6 KiB and 13 KiB. Commit: daa7d22.
+- [x] Fan-in and user adapters (`#[daedalus_mcu::adapt]`) in compiled, tunable and loaded modes,
+      blob format 3: 730edf7. `examples/mcu_blink/graph_fanin.json` runs natively in all three modes
+      (no firmware of its own, so not size-measured); the blink loaded firmware grew to 11496 /
+      12572 B. `FanIn<T>` (indexed ports) stays unsupported.
