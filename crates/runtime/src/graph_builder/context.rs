@@ -16,8 +16,7 @@ pub struct GraphCtx {
 
 impl GraphCtx {
     fn take_builder(&mut self) -> GraphBuilder {
-        let capabilities = self.builder.capabilities.clone();
-        core::mem::replace(&mut self.builder, GraphBuilder::new(capabilities))
+        self.builder.take()
     }
 
     pub fn new(capabilities: CapabilityRegistry, inputs: &[&str], outputs: &[&str]) -> Self {

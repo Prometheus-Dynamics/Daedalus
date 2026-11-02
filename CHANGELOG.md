@@ -918,6 +918,11 @@ plugin ABI and does not load.
   blocking. `ShaderRunOutput::into_texture_rgba8` returns the RGBA8 image without cloning the bytes.
 
 ### Fixed
+- `daedalus-runtime`: `GraphBuilder` shares its capability registry, so connecting through the
+  host bridge or a nested graph, and `GraphCtx`'s builder steps, no longer copy the whole node
+  registry per edge. With 2000 registered nodes, a host-bridge connect went from about 24,600
+  allocations to 15 (`tests/connect_allocations.rs`). Eidos measured the copies at about 95% of
+  its graph-install time (8.4 G instructions per start).
 - `daedalus-gpu`: the per-device caches (pipelines, staging pools, the installed pipeline cache)
   are keyed by the device's identity instead of the address of the `wgpu::Device` handle passed
   in. A clone of the device now finds the cache installed for it (`pipeline_cache_for`,

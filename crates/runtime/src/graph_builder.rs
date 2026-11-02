@@ -29,6 +29,7 @@ use self::metadata::{const_value_from_port_decl, metadata_from_node_decl};
 use self::nested::is_host_bridge;
 use crate::host_bridge::HOST_BRIDGE_ID;
 use crate::plan::RuntimeEdgePolicy;
+use crate::portable::Arc;
 use crate::type_index::TypeIndex;
 
 /// Graph builder with alias and basic port validation using native transport capabilities.
@@ -39,7 +40,9 @@ use crate::type_index::TypeIndex;
 /// nested ports may panic with an actionable message.
 #[derive(Clone)]
 pub struct GraphBuilder {
-    capabilities: CapabilityRegistry,
+    /// Shared, so cloning a builder (a placeholder while a consuming step runs, a rollback copy)
+    /// never copies the node registry.
+    capabilities: Arc<CapabilityRegistry>,
     nodes: Vec<NodeInstance>,
     edges: Vec<Edge>,
     const_overrides: HashMap<String, HashMap<String, Option<Value>>>,
@@ -57,6 +60,10 @@ pub struct GraphBuilder {
 
 impl GraphBuilder {
     pub fn new(capabilities: CapabilityRegistry) -> Self {
+        Self::with_shared_capabilities(Arc::new(capabilities))
+    }
+
+    fn with_shared_capabilities(capabilities: Arc<CapabilityRegistry>) -> Self {
         Self {
             capabilities,
             nodes: Vec::new(),
@@ -78,6 +85,13 @@ impl GraphBuilder {
     pub fn with_type_index(mut self, types: TypeIndex) -> Self {
         self.types = types;
         self
+    }
+
+    /// Move the builder out of `self` for a consuming step, leaving an empty builder that shares
+    /// the registry (no registry copy).
+    pub(crate) fn take(&mut self) -> Self {
+        let empty = Self::with_shared_capabilities(self.capabilities.clone());
+        core::mem::replace(self, empty)
     }
 
     pub fn new_with_capabilities(capabilities: CapabilityRegistry) -> Self {

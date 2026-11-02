@@ -119,7 +119,8 @@ impl GraphBuilder {
         }
         if let Some(nested) = from_nested {
             let backup = self.clone();
-            let next = core::mem::replace(self, GraphBuilder::new(self.capabilities.clone()))
+            let next = self
+                .take()
                 .try_connect_from_nested_spec(&nested, &from_spec.port, to_spec);
             return match next {
                 Ok(next) => {
@@ -134,7 +135,8 @@ impl GraphBuilder {
         }
         if let Some(nested) = to_nested {
             let backup = self.clone();
-            let next = core::mem::replace(self, GraphBuilder::new(self.capabilities.clone()))
+            let next = self
+                .take()
                 .try_connect_to_nested_spec(from_spec, &nested, &to_spec.port);
             return match next {
                 Ok(next) => {
@@ -159,16 +161,13 @@ impl GraphBuilder {
             self.validate_declared_port(t_idx, &to_spec.node, &to_spec.port, false)?;
         }
         if from_is_host || to_is_host {
-            *self = core::mem::replace(self, GraphBuilder::new(self.capabilities.clone()))
-                .ensure_host_bridge(Some(host_alias.clone()));
+            *self = self.take().ensure_host_bridge(Some(host_alias.clone()));
         }
         if from_is_host {
-            *self = core::mem::replace(self, GraphBuilder::new(self.capabilities.clone()))
-                .ensure_host_bridge_port(true, &from_spec.port);
+            *self = self.take().ensure_host_bridge_port(true, &from_spec.port);
         }
         if to_is_host {
-            *self = core::mem::replace(self, GraphBuilder::new(self.capabilities.clone()))
-                .ensure_host_bridge_port(false, &to_spec.port);
+            *self = self.take().ensure_host_bridge_port(false, &to_spec.port);
         }
         let f_idx = self.try_find_index(&from_spec.node)?;
         let t_idx = self.try_find_index(&to_spec.node)?;
