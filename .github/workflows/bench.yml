@@ -4,8 +4,9 @@ name: bench
 # head commit of the previous bench run on the same branch (main or dev) in the same job, so both
 # sides share one runner: hosted runners differ in speed by 15-40% between jobs, which made a
 # compare against an earlier run's artifact flag every bench. The head's criterion output is
-# uploaded as the `criterion` artifact; scripts/bench-compare.py fails the compare step on a
-# >15% median regression.
+# uploaded as the `criterion` artifact; scripts/bench-compare.py flags a >15% median regression.
+# A flagged bench is re-run twice more on both commits, alternating, and the job fails only if
+# the median of the three runs per side still regresses: one noisy run no longer fails it.
 on:
   workflow_dispatch:
   schedule:
@@ -91,4 +92,22 @@ jobs:
           retention-days: 90
 
       - name: Compare against baseline
-        run: python3 scripts/bench-compare.py baseline target/criterion --threshold 15
+        run: |
+          cp -r target/criterion current-0
+          if python3 scripts/bench-compare.py baseline current-0 --threshold 15 \
+              --regressions-out regressions.txt; then
+            exit 0
+          fi
+          [ -d ../bench-base ] || exit 1
+          # Confirm: re-run only the flagged benches, baseline and head alternating.
+          filter=$(python3 scripts/bench-compare.py --filter-for regressions.txt)
+          echo "Re-running $(wc -l < regressions.txt) flagged bench(es): $filter"
+          for i in 1 2; do
+            (cd ../bench-base && rm -rf "$GITHUB_WORKSPACE/target/criterion" \
+              && BENCH_FILTER="$filter" CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" ./scripts/ci.sh bench)
+            cp -r target/criterion "baseline-$i"
+            rm -rf target/criterion && BENCH_FILTER="$filter" ./scripts/ci.sh bench
+            cp -r target/criterion "current-$i"
+          done
+          python3 scripts/bench-compare.py baseline,baseline-1,baseline-2 \
+            current-0,current-1,current-2 --threshold 15

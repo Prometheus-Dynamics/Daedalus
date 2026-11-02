@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Compare two criterion output directories and flag regressions.
 
-Usage: scripts/bench-compare.py BASELINE_DIR CURRENT_DIR [--threshold PCT] [--stat median|mean]
+Usage: scripts/bench-compare.py BASELINE_DIRS CURRENT_DIRS [--threshold PCT] [--stat median|mean]
+                                [--regressions-out FILE]
+       scripts/bench-compare.py --filter-for FILE
 
 Both directories are criterion roots (normally `target/criterion`). Every
 `<bench id>/new/estimates.json` is read; the bench id comes from the sibling
@@ -10,6 +12,11 @@ Benchmarks whose chosen point estimate grew by more than `--threshold` percent
 (default 15) are reported as regressions and the script exits 1. A missing or
 empty baseline is not an error: the script reports the current numbers and exits 0.
 
+Each side may name several directories, comma-separated (repeat runs of the same commit): a
+bench's estimate is then the median of its point estimates across them. `--regressions-out`
+writes the regressed bench ids, one per line, so CI can re-run just those before deciding;
+`--filter-for FILE` prints a criterion filter (a Rust regex) matching exactly the ids in FILE.
+
 When `GITHUB_STEP_SUMMARY` is set, a Markdown table is appended to it, and each
 regression is also emitted as a GitHub `::warning` annotation.
 """
@@ -17,6 +24,7 @@ regression is also emitted as a GitHub `::warning` annotation.
 import argparse
 import json
 import os
+import statistics
 import sys
 from pathlib import Path
 
@@ -41,6 +49,15 @@ def load(root: Path, stat: str) -> dict[str, float]:
     return results
 
 
+def load_runs(dirs: str, stat: str) -> dict[str, float]:
+    """The median per bench id over the comma-separated criterion roots in `dirs`."""
+    runs: dict[str, list[float]] = {}
+    for root in filter(None, dirs.split(",")):
+        for bench_id, value in load(Path(root), stat).items():
+            runs.setdefault(bench_id, []).append(value)
+    return {bench_id: statistics.median(values) for bench_id, values in runs.items()}
+
+
 def fmt_ns(ns: float) -> str:
     for unit, scale in (("s", 1e9), ("ms", 1e6), ("µs", 1e3)):
         if ns >= scale:
@@ -48,16 +65,28 @@ def fmt_ns(ns: float) -> str:
     return f"{ns:.1f} ns"
 
 
+def rust_regex_for(ids: list[str]) -> str:
+    """A Rust `regex` matching exactly `ids` (only its metacharacters are escaped)."""
+    meta = set("\\.+*?()|[]{}^$#&-~")
+    escape = lambda s: "".join("\\" + c if c in meta else c for c in s)
+    return "^(" + "|".join(escape(i) for i in ids) + ")$"
+
+
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--filter-for":
+        ids = [line.strip() for line in Path(sys.argv[2]).read_text().splitlines() if line.strip()]
+        print(rust_regex_for(ids))
+        return 0
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("baseline", type=Path)
-    parser.add_argument("current", type=Path)
+    parser.add_argument("baseline", help="criterion root(s), comma-separated")
+    parser.add_argument("current", help="criterion root(s), comma-separated")
     parser.add_argument("--threshold", type=float, default=15.0, help="regression threshold in percent")
     parser.add_argument("--stat", choices=("median", "mean"), default="median")
+    parser.add_argument("--regressions-out", type=Path, help="write regressed bench ids here")
     args = parser.parse_args()
 
-    baseline = load(args.baseline, args.stat)
-    current = load(args.current, args.stat)
+    baseline = load_runs(args.baseline, args.stat)
+    current = load_runs(args.current, args.stat)
     if not current:
         print(f"error: no criterion estimates under {args.current}", file=sys.stderr)
         return 2
@@ -103,6 +132,8 @@ def main() -> int:
         for bench_id, change in regressions:
             print(f"::warning title=Benchmark regression::{bench_id} {args.stat} {change:+.1f}%")
 
+    if args.regressions_out:
+        args.regressions_out.write_text("".join(f"{bench_id}\n" for bench_id, _ in regressions))
     if regressions:
         print(f"{len(regressions)} benchmark(s) regressed by more than {args.threshold:g}%", file=sys.stderr)
         return 1

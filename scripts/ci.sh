@@ -411,11 +411,16 @@ cmd_semver() {
 
 # Criterion writes to `$CARGO_TARGET_DIR/criterion`; compare two such directories with
 # `scripts/bench-compare.py BASELINE CURRENT`.
+# `BENCH_FILTER` (a criterion regex over bench ids) runs only the matching benches.
 cmd_bench() {
   step "Running host bridge and executor benches"
-  cargo bench -p daedalus-engine --features plugins --bench host_graph_drive
-  cargo bench -p daedalus-runtime --bench executor_snapshot
-  cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame
+  local filter=()
+  if [[ -n ${BENCH_FILTER:-} ]]; then
+    filter=(-- "$BENCH_FILTER")
+  fi
+  cargo bench -p daedalus-engine --features plugins --bench host_graph_drive "${filter[@]}"
+  cargo bench -p daedalus-runtime --bench executor_snapshot "${filter[@]}"
+  cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame "${filter[@]}"
 }
 
 # Run on the target device (Raspberry Pi 5 / CM5, or any Linux Vulkan GPU): the ignored dmabuf
