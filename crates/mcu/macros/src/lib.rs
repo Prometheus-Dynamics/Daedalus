@@ -399,7 +399,7 @@ fn same_type(a: &Type, b: &Type) -> bool {
 /// daedalus_mcu::AdapterDesc` (the id, the input and output port type keys and the planner cost),
 /// `In`/`Out` (the types) and `run(x: In) -> Out`, the uniform call the generated code makes.
 /// Adapters are infallible and take one input and return one value; they must be plain
-/// `no_std` functions, and the input and output types need [`McuType`] keys.
+/// `no_std` functions, and the input and output types need `daedalus_mcu::McuType` keys.
 #[proc_macro_attribute]
 pub fn adapt(
     args: proc_macro::TokenStream,
