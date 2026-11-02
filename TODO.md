@@ -169,6 +169,47 @@ These run only when the user calls a release. None of them is pending until then
       **Measured:** `dev` is `3.0.1-dev`; `docs/migration-4.0.md` is written (b422ec0) but its check
       against the semver report predates the 319 items above; CI as above.
 
+## After the release: dependency layers (planned, not started)
+
+The user slated this for after the release (HeliOS architecture-overhaul f2a15c8f, TODO.md, "After
+the release: dependency layers"). Nothing here starts without the user's go. The split: Daedalus
+decides whether and how data moves; a compute device's own copies stay in its driver (GPU, RGA,
+later NPU); Lemnos owns the DMA buffer basics and bus transfers. Overlap checked against the code
+on 2026-11-02, at f7e05ac.
+
+- [ ] **What:** move the gpu crate's DMA-buffer basics onto Lemnos's.
+      **Why:** one owner for dma-heap allocation and dmabuf CPU access across the stack.
+      **Scope, as the code stands:** the part that moves is small and Linux-syscall level:
+      `dma_heap_storage` (a `/dev/dma_heap` allocation, `gpu_storage/host.rs`), the
+      `DMA_BUF_IOCTL_SYNC` CPU bracket on its mapping (`host.rs`), the dmabuf size query by `lseek`
+      (`dmabuf_import_len`'s input) and `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` (`external/fence.rs`).
+      The rest of the "dmabuf code" is the GPU driver's own and stays: the Vulkan imports
+      (`gpu_storage/dmabuf.rs`, `frames.rs`, `wgpu_backend/dmabuf/`: modifiers, planes, dedicated
+      allocation, fence waits). Test fixtures (gpu, rga and frame-bench tests allocate from
+      dma-heap) would switch too. `daedalus-rga`'s V4L2 buffers are the RGA's own and stay.
+      **Done when:** the gpu crate allocates and syncs host-visible dmabufs through Lemnos, with the
+      Raze readback numbers unchanged (host-cached read 3.6 ms per 16 MiB).
+      **Blocked by:** the user's go, and Lemnos's DMA basics existing.
+      **Measured:** n/a.
+- [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.
+      **Why:** two devices in one process duplicate pipelines and memory and need cross-device
+      sync.
+      **Scope, as the code stands:** the sharing mechanism exists: `GpuContextHandle::wgpu()`, and
+      `raw_vulkan()` / `submit_raw` for external SPIR-V (29ae351). Styx reported gpuisp running on
+      Daedalus's device, bit-exact and validation-clean on v3dv (2026-11-01). Left: make it the
+      only path when both are in a process (who creates the device, how Styx gets it when it runs
+      without a Daedalus graph), and a test that a process has one `VkDevice`.
+      **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
+      **Blocked by:** the user's go; Styx's side.
+      **Measured:** n/a.
+- [ ] **What:** later, an accelerator interface (load program, import buffers, submit, fence) for
+      NPUs and custom accelerators. Design doc first.
+      **Why:** the GPU path's residency, `#[device]` transfers and completion API should extend to
+      other accelerators without a backend per device type.
+      **Done when:** the design doc is agreed; implementation is a later item.
+      **Blocked by:** the user's go.
+      **Measured:** n/a.
+
 ## Done
 
 Each entry cites the commit that did the work, as far as history can attribute it. Where one symbol
