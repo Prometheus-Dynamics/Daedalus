@@ -150,6 +150,19 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Blocked by:** the user's decision.
       **Measured:** none.
 
+- [ ] **What:** per-executor port buffer pools without `std`, if a multi-threaded `no_std` host
+      needs allocation-free ticks.
+      **Why:** without `std` the pool (`crates/runtime/src/io.rs`, `PORT_BUFFERS`) is one
+      process-wide `spin` pool taken with `try_lock`; there are no thread-locals. Graphs ticking on
+      several threads swap differently sized buffers through it, or find it locked, and allocate.
+      Ticks stay correct. Eidos hit it in a test running 5 graphs in parallel in a binary that
+      builds the runtime without `std` (15/80 runs allocated at cad62f3; fixed on its side by
+      serializing, Eidos 203b2376). With `std` the pool is per thread and this does not apply.
+      **Done when:** a `no_std` build's pool belongs to the executor (carried in `NodeIoEnv`), and a
+      test with two executors on two threads allocates nothing per tick.
+      **Blocked by:** a host that needs it; none is known (MCU graphs use the heap-free MCU profile).
+      **Measured:** n/a.
+
 ### Release steps
 
 These run only when the user calls a release. None of them is pending until then.

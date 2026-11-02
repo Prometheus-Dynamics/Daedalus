@@ -304,7 +304,9 @@ fingerprint; `dylib-plugins` turns it on):
   `HashSet`, the types in runtime signatures) are `std`'s with `std` and `hashbrown`'s without.
 - The per-thread port buffer pool (`NodeIo` input/output lists) is a `thread_local!` with `std`
   and one `spin`-locked pool without (taken with `try_lock`, so a contended or interrupted
-  caller allocates instead of waiting).
+  caller allocates instead of waiting). Without `std`, graphs ticking on several threads share
+  that pool, so their ticks can allocate (re-growing a buffer another thread swapped in, or
+  finding the pool locked); allocation-free ticks across threads need `std`.
 - `std`-only: Linux perf counters and thread CPU time (`RuntimeDebugConfig::node_perf_counters`/
   `node_cpu_time` read nothing elsewhere), `RuntimeDebugConfig::from_env` and
   `EngineConfig::from_env` (`config-env` without `std` keeps the serde config types only), and
