@@ -127,27 +127,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** a test receives a plan blob in chunks and loads it.
       **Blocked by:** a consumer needing it; none is recorded.
       **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
-- [ ] **What:** zero allocations per frame on the raw GPU submit path (Styx's request,
-      2026-11-02): an opt-in `RawSubmitter` with a ring of reused command buffers and `VkFence`s,
-      submitting by `vkQueueSubmit` under a Daedalus submit mutex that every Daedalus
-      `queue.submit` also takes. Same full barriers, same ticket semantics, one `VkDevice`.
-      **Why:** Styx's GPU ISP `Input::Buffer` makes 17 allocations per frame, all in `submit_raw`,
-      `GpuTicket::submit_on` and wgpu-core's submit. wgpu-hal's submit allocates too, and
-      wgpu-core serializes queue access with private locks, so 0 needs a raw submit under a lock
-      Daedalus owns.
-      **Done when:** Styx's test caps the path at 0, and the Raze GPU tests and VVL run stay clean.
-      Report the count before and after.
-      Contract (approved 2026-11-02): while a `RawSubmitter` exists, every submit in the process
-      goes through Daedalus's mutex. An input uploaded with `queue.write_buffer` moves into the
-      raw command buffer, copied from a persistent staging ring.
-      Styx's answers (2026-11-02): its only per-frame submit on Daedalus's device is `submit_raw`
-      (gpuisp kernels.rs:268, then `ticket.wait()`), so `wait` must not allocate either. Its input
-      is an imported dmabuf `GpuFrameInput` read in place, with no `write_buffer`, so no staging ring
-      is needed. Keep the HOST_READ in the after-barrier, since GpuIsp reads mapped results right
-      after the wait. styx-wgpu's `Gpu::from_device` submits through wgpu itself: document that an
-      app sharing Daedalus's device with it must not hold a `RawSubmitter`. Measure with Styx's
-      `cargo nextest run -p styx-gpuisp --features daedalus -E
-      'test(a_frame_from_a_device_buffer)'` (`STYX_GPU_ALLOC_TRACE=1` for stacks).
       **Blocked by:** nothing; next after shared nodes (done).
       **Measured:** 17 per frame (Styx's count). V3D 7.1 on the Raze (v3dv) has one queue family
       with `queueCount = 1` (vulkaninfo, 2026-11-02), so a second queue is no way around the lock.
@@ -266,6 +245,8 @@ was searched for, the commit is the one that introduced it.
 - [x] Frame interface v3 (`SharedFrame`, colorimetry, dylib reload): 36d2af6, 2b09654, fad4b99,
       3b14534, d543c6c. The open "v3 follow-ups" item is removed: it held no work, only a wait for a
       consumer request, and none is open.
+
+- [x] Zero allocations per frame on the raw GPU submit path: `RawSubmitter`, a ring of command buffers and fences that shares one submit lock with every Daedalus submit. 0 allocations over 100 frames of submit and wait, against 17 per frame through `submit_raw` before (1700 over 100). fd18808; `tests/raw_submitter_allocations.rs`. The validation layer is not installed here, and Styx's own test and the Raze runs are still to do.
 
 ### Acceleration inventory
 
