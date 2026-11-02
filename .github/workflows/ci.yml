@@ -198,7 +198,7 @@ jobs:
         run: rustup toolchain install nightly-2026-10-15 --profile minimal
       - name: Install qemu-user, zig and lavapipe
         run: |
-          sudo apt-get update && sudo apt-get install -y qemu-user-static mesa-vulkan-drivers
+          sudo apt-get update && sudo apt-get install -y qemu-user-binfmt mesa-vulkan-drivers
           pip install ziglang==0.15.2
           mkdir -p "$HOME/zigcc"
           for pair in "riscv64-cc riscv64-linux-musl" "armv7-cc arm-linux-musleabihf" "aarch64-musl-cc aarch64-linux-musl"; do
