@@ -50,8 +50,7 @@ pub struct GpuPipelineCache {
     loaded_bytes: usize,
     /// Bytes in the file: loaded at `open`, then the last save.
     file_bytes: AtomicUsize,
-    /// The backend device's key (`device_key` is per `wgpu::Device` handle, so it is taken from
-    /// the backend's own handle at `open`).
+    /// The device's key (the same for every clone of the device).
     device_key: usize,
 }
 

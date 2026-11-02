@@ -908,6 +908,11 @@ plugin ABI and does not load.
   blocking. `ShaderRunOutput::into_texture_rgba8` returns the RGBA8 image without cloning the bytes.
 
 ### Fixed
+- `daedalus-gpu`: the per-device caches (pipelines, staging pools, the installed pipeline cache)
+  are keyed by the device's identity instead of the address of the `wgpu::Device` handle passed
+  in. A clone of the device now finds the cache installed for it (`pipeline_cache_for`,
+  `pipeline_cache_path_for` returned `None`), and a later handle at a reused address can no
+  longer pick up another device's entries.
 - **dmabuf storage imports are valid Vulkan.** `GpuStorage::import_dmabuf` (and the frame import
   cache built on it) allocated the whole dmabuf as a *dedicated* allocation, which must equal the
   buffer's memory requirement and bind at offset 0 (`VUID-VkMemoryDedicatedAllocateInfo-buffer-02965`,
