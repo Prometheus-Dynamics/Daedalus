@@ -151,13 +151,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** the user has decided, and the symlinks are replaced or the limit is documented.
       **Blocked by:** the user's decision.
       **Measured:** 14 symlinks.
-- [ ] **What:** false bench flags on shared CI runners; consider a median of several runs.
-      **Why:** each run already benches both commits on one runner and compares medians at 15%, and
-      a noise flag still fails the job.
-      **Done when:** a docs-only change cannot fail `bench`.
-      **Blocked by:** nothing.
-      **Measured:** 1 failure in the last 15 `dev` runs: 0e620c2, `telemetry_clone_costs/clone/Basic`
-      66.1 → 77.1 ns (+16.7%). Whether that was noise was not checked.
 - [ ] **What:** a CUDA backend: a second `GpuBackend`, a residency key per backend so CUDA and wgpu
       device memory are distinct port types, upload/download adapters, CUDA↔Vulkan interop
       (`cudaImportExternalMemory`) if both run in one graph, and `#[device]` implementations keyed by
@@ -329,6 +322,11 @@ non-blocking, see above).
 - [x] `bench.yml` on `dev`, baseline on the same runner: 595a1b0 and later; see the workflow.
 - [x] Tags `v2.0.0` (8946223) and `v3.0.0` (e7e88fc); dev versioning.
 - [x] Faster local builds and `ci.sh -j`: f7edb7d.
+- [x] False bench flags on shared runners: a flagged bench is re-run twice more on both commits,
+      alternating, and `bench` fails only if the median of three still regresses (bf07300).
+      Docs-only commits never ran `bench` (its path filters). The one failure in 15 runs, 0e620c2's
+      `telemetry_clone_costs/clone/Basic` +16.7%, was noise: that commit does not touch what the
+      bench clones, and a local re-run overlaps (196-212 ns before, 212-217 ns after, ±10% per run).
 - [x] Public API review: 38cbdd9, b25b304 and the series around them (`docs/api-review.md`).
 - [x] GPU-side fence wait with a timeout, compressed modifiers: 6b5ec57, 9dfeda1.
 - [x] Configurable fence wait, `SyncFd` by default: a03a1e0.
