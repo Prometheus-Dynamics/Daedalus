@@ -70,6 +70,17 @@ plugin ABI and does not load.
   lavapipe with a precompiled GLSL kernel reading `uint8_t` storage. `gpu-vulkan-raw` now
   implies `gpu-dmabuf`.
 
+- **RGA crop, flip and rotate.** `Rga::crop` and `crop_bytes` on the mainline driver (crop
+  selection, unscaled; a full-frame rectangle is a copy) and `Librga::crop_bytes`, `crop_dmabuf`,
+  `transform_bytes` and `transform_dmabuf` (`imcrop`, `imflip`, `imrotate`) with the new
+  `Transform` (`FlipHorizontal`, `FlipVertical`, `Rotate90`, `Rotate180`, `Rotate270`, clockwise
+  assumed until a board measures it). An output that is not the rectangle's or the turn's size is
+  `InvalidInput`. `caps::FixedOp` gains `Crop`, `Flip` and `Rotate`; mainline lists crop only
+  until Lemnos's session can set `V4L2_CID_HFLIP`, `VFLIP` and `ROTATE`. Ops `daedalus.image.crop`,
+  `flip` and `rotate` with scalar references. vim2m checks a full-frame copy; the board tests
+  are written, untested on board. The librga stand-in tests keep their last-call records per
+  thread, so parallel tests no longer race on them.
+
 - **RGA palette and colour key through librga.** `Librga::palette_bytes` and `palette_dmabuf`
   (`impalette`, a `BPP8` source and a 256-entry RGBA8888 table), and `color_key_bytes`,
   `color_key_dmabuf` and `color_key_mask` (`imcolorkey` `INVERTED` from RGBX8888 onto a cleared

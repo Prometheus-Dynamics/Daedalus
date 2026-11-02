@@ -5,7 +5,7 @@
 
 use daedalus_accel::{Backend, Evidence, conform_with};
 use daedalus_kernels::reference as r;
-use daedalus_rga::{Filter, Image, Librga, RgaFormat};
+use daedalus_rga::{Filter, Image, Librga, RgaFormat, Transform};
 
 fn pattern(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i * 31 + 7) as u8).collect()
@@ -145,5 +145,50 @@ fn librga_palettes_and_colour_keys_like_the_references() {
         rga.color_key_mask(w, h, &rgbx, min, max, &mut mask)
             .map_err(|e| e.to_string())?;
         same(&mask, &r::color_key_mask(&rgbx, 4, min, max))
+    });
+}
+
+#[test]
+fn librga_crops_flips_and_turns_like_the_references() {
+    let Ok(rga) = Librga::load() else {
+        return eprintln!("skipping: no librga.so");
+    };
+    let (w, h) = (128u32, 64u32);
+    let rgba = pattern((w * h * 4) as usize);
+    let image = |w, h| Image::packed(RgaFormat::Rgba8888, w, h);
+    let evidence = |op| Evidence::new(op, Backend::FixedFunction).variant("librga");
+    conform_with(evidence("daedalus.image.crop"), || {
+        let mut out = vec![0; 64 * 32 * 4];
+        rga.crop_bytes(image(w, h), &rgba, (16, 8, 64, 32), image(64, 32), &mut out)
+            .map_err(|e| e.to_string())?;
+        same(&out, &r::crop(&rgba, w as usize, 4, (16, 8, 64, 32)))
+    });
+    let turn = |t: Transform, want: &[u8]| {
+        let (ow, oh) = t.output_size(w, h);
+        let mut out = vec![0; want.len()];
+        rga.transform_bytes(image(w, h), &rgba, image(ow, oh), &mut out, t)
+            .map_err(|e| e.to_string())?;
+        same(&out, want).map_err(|e| format!("{t:?}: {e}"))
+    };
+    let (wu, hu) = (w as usize, h as usize);
+    conform_with(evidence("daedalus.image.flip"), || {
+        turn(
+            Transform::FlipHorizontal,
+            &r::flip(&rgba, wu, hu, 4, true, false),
+        )?;
+        turn(
+            Transform::FlipVertical,
+            &r::flip(&rgba, wu, hu, 4, false, true),
+        )
+    });
+    conform_with(evidence("daedalus.image.rotate"), || {
+        for (t, q) in [
+            (Transform::Rotate90, 1),
+            (Transform::Rotate180, 2),
+            (Transform::Rotate270, 3),
+        ] {
+            turn(t, &r::rotate(&rgba, wu, hu, 4, q).0)?;
+        }
+        Ok(())
     });
 }

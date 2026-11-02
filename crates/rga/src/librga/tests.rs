@@ -91,8 +91,10 @@ unsafe extern "C" fn cvtcolor(
     1
 }
 
-/// The interpolation of the last `resize` call.
-static LAST_INTERP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+// The interpolation of this thread's last `resize` call (each test runs on its own thread).
+thread_local! {
+    static LAST_INTERP: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+}
 
 /// Software `imresize_t`: nearest, sampling the first of each group, or the rounded block
 /// mean of gray for `IM_INTERP_AVERAGE`.
@@ -104,7 +106,7 @@ unsafe extern "C" fn resize(
     interpolation: c_int,
     sync: c_int,
 ) -> c_int {
-    LAST_INTERP.store(interpolation, std::sync::atomic::Ordering::Relaxed);
+    LAST_INTERP.set(interpolation);
     assert_eq!((fx, fy, sync), (0.0, 0.0, 1));
     if interpolation == INTERP_AVERAGE {
         let f = (src.width / dst.width) as usize;
@@ -200,6 +202,39 @@ unsafe extern "C" fn colorkey(
     1
 }
 
+// This thread's last flip mode or rotation.
+thread_local! {
+    static LAST_TURN: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+}
+
+/// Software `imcrop_t` on one-byte pixels.
+unsafe extern "C" fn crop(src: RgaBuffer, dst: RgaBuffer, rect: ImRect, sync: c_int) -> c_int {
+    assert_eq!(sync, 1);
+    assert_eq!((dst.width, dst.height), (rect.width, rect.height));
+    let (s, d) = (src.vir_addr.cast::<u8>(), dst.vir_addr.cast::<u8>());
+    for y in 0..rect.height as usize {
+        for x in 0..rect.width as usize {
+            let at = (rect.y as usize + y) * src.wstride as usize + rect.x as usize + x;
+            // SAFETY: the wrapped buffers cover their images.
+            unsafe { *d.add(y * dst.wstride as usize + x) = *s.add(at) };
+        }
+    }
+    1
+}
+
+/// Records the mode; the device work is the board's to check.
+unsafe extern "C" fn flip(_: RgaBuffer, _: RgaBuffer, mode: c_int, sync: c_int) -> c_int {
+    assert_eq!(sync, 1);
+    LAST_TURN.set(mode);
+    1
+}
+
+unsafe extern "C" fn rotate(_: RgaBuffer, _: RgaBuffer, rotation: c_int, sync: c_int) -> c_int {
+    assert_eq!(sync, 1);
+    LAST_TURN.set(rotation);
+    1
+}
+
 fn stand_in() -> Librga {
     Librga::with_api(Api {
         wrap_fd,
@@ -209,6 +244,9 @@ fn stand_in() -> Librga {
         querystring,
         palette: Some(palette),
         colorkey: Some(colorkey),
+        crop: Some(crop),
+        flip: Some(flip),
+        rotate: Some(rotate),
     })
 }
 
@@ -231,6 +269,7 @@ fn palette_and_colour_key_pass_the_table_and_the_range() {
     let bare = Librga::with_api(Api {
         palette: None,
         colorkey: None,
+        crop: None,
         ..rga.api
     });
     let err = bare
@@ -276,7 +315,6 @@ fn short_buffers_and_library_errors_are_refused() {
 
 #[test]
 fn resize_crops_through_the_image_and_passes_the_filter() {
-    use std::sync::atomic::Ordering;
     let rga = stand_in();
     // 5x3 gray to 2x1: the trailing column and row are cropped by narrowing the image.
     let src: Vec<u8> = (0..15).map(|i| i * 10).collect();
@@ -287,7 +325,7 @@ fn resize_crops_through_the_image_and_passes_the_filter() {
     let mut out = [0u8; 2];
     rga.resize_bytes(s, &src, d, &mut out, Filter::Area)
         .unwrap();
-    assert_eq!(LAST_INTERP.load(Ordering::Relaxed), INTERP_AVERAGE);
+    assert_eq!(LAST_INTERP.get(), INTERP_AVERAGE);
     // (0 + 10 + 50 + 60 + 2) / 4 and (20 + 30 + 70 + 80 + 2) / 4.
     assert_eq!(out, [30, 50]);
     let err = rga
@@ -304,7 +342,7 @@ fn resize_crops_through_the_image_and_passes_the_filter() {
     let err = rga
         .resize_bytes(s, &src, up, &mut [0; 60], Filter::Bilinear)
         .unwrap_err();
-    assert_eq!(LAST_INTERP.load(Ordering::Relaxed), INTERP_LINEAR);
+    assert_eq!(LAST_INTERP.get(), INTERP_LINEAR);
     assert!(err.to_string().contains("status -1"), "{err}");
 }
 
@@ -319,4 +357,43 @@ fn frame_lengths_follow_the_format_and_strides() {
         hstride: 3,
     };
     assert_eq!(image.frame_len(), 36);
+}
+
+#[test]
+fn crops_and_transforms_check_sizes_and_pass_the_mode() {
+    let rga = stand_in();
+    let gray = |w, h| Image::packed(RgaFormat::Gray8, w, h);
+    let src: Vec<u8> = (0..12).collect();
+    let mut out = [0u8; 4];
+    rga.crop_bytes(gray(4, 3), &src, (1, 1, 2, 2), gray(2, 2), &mut out)
+        .unwrap();
+    assert_eq!(out, [5, 6, 9, 10]);
+    for (rect, dst) in [((3, 1, 2, 2), gray(2, 2)), ((1, 1, 2, 2), gray(2, 1))] {
+        let err = rga
+            .crop_bytes(gray(4, 3), &src, rect, dst, &mut out)
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{rect:?}");
+    }
+    let mut turned = [0u8; 12];
+    for (t, mode, dst) in [
+        (Transform::FlipHorizontal, FLIP_H, gray(4, 3)),
+        (Transform::FlipVertical, FLIP_V, gray(4, 3)),
+        (Transform::Rotate90, ROT_90, gray(3, 4)),
+        (Transform::Rotate180, ROT_180, gray(4, 3)),
+        (Transform::Rotate270, ROT_270, gray(3, 4)),
+    ] {
+        rga.transform_bytes(gray(4, 3), &src, dst, &mut turned, t)
+            .unwrap();
+        assert_eq!(LAST_TURN.get(), mode, "{t:?}");
+    }
+    let err = rga
+        .transform_bytes(
+            gray(4, 3),
+            &src,
+            gray(4, 3),
+            &mut turned,
+            Transform::Rotate90,
+        )
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 }

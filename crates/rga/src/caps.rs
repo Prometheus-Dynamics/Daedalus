@@ -88,6 +88,12 @@ pub enum FixedOp {
     Palette,
     /// Per-channel range test giving a mask (`daedalus.image.color_key_mask`).
     ColorKey,
+    /// A rectangle, unscaled; the full frame is a copy (`daedalus.image.crop`).
+    Crop,
+    /// Mirror (`daedalus.image.flip`).
+    Flip,
+    /// Quarter turns (`daedalus.image.rotate`).
+    Rotate,
 }
 
 /// What a route does with one [`FixedOp`].
@@ -159,7 +165,36 @@ const BILINEAR_LIBRGA: FilterCaps = FilterCaps {
     note: "imresize with IM_INTERP_LINEAR",
 };
 
+const CROP_V4L2: OpCaps = OpCaps {
+    op: FixedOp::Crop,
+    exactness: Exactness::Unmeasured,
+    note: "the output queue's crop selection, unscaled",
+};
+const CROP_LIBRGA: OpCaps = OpCaps {
+    op: FixedOp::Crop,
+    exactness: Exactness::Unmeasured,
+    note: "imcrop",
+};
+const FLIP_LIBRGA: OpCaps = OpCaps {
+    op: FixedOp::Flip,
+    exactness: Exactness::Unmeasured,
+    note: "imflip with IM_HAL_TRANSFORM_FLIP_H or FLIP_V",
+};
+const ROTATE_LIBRGA: OpCaps = OpCaps {
+    op: FixedOp::Rotate,
+    exactness: Exactness::Unmeasured,
+    note: "imrotate with IM_HAL_TRANSFORM_ROT_90/180/270; clockwise is assumed, unmeasured",
+};
+
+/// Mainline: crop only until flip and rotate (`V4L2_CID_HFLIP`, `VFLIP`, `ROTATE`) can be set
+/// through Lemnos's session.
+const V4L2_OPS: &[OpCaps] = &[CROP_V4L2];
+const RGA3_LIBRGA_OPS: &[OpCaps] = &[CROP_LIBRGA, FLIP_LIBRGA, ROTATE_LIBRGA];
+
 const RGA2_LIBRGA_OPS: &[OpCaps] = &[
+    CROP_LIBRGA,
+    FLIP_LIBRGA,
+    ROTATE_LIBRGA,
     OpCaps {
         op: FixedOp::Palette,
         exactness: Exactness::Unmeasured,
@@ -188,7 +223,7 @@ const fn v4l2(soc: Soc, unit: Unit) -> UnitCaps {
         luma_cost_permille: 1500,
         filters: if rga3 { RGA3_V4L2 } else { RGA2_V4L2 },
         // The mainline driver has no palette or colour key.
-        ops: &[],
+        ops: V4L2_OPS,
     }
 }
 
@@ -205,7 +240,7 @@ const fn librga(soc: Soc, unit: Unit) -> UnitCaps {
         ops: if matches!(unit, Unit::Rga2) {
             RGA2_LIBRGA_OPS
         } else {
-            &[]
+            RGA3_LIBRGA_OPS
         },
     }
 }
@@ -285,6 +320,10 @@ mod tests {
                 c.route == Route::Librga && c.unit == Unit::Rga2,
                 "{c:?}"
             );
+            let crop = c.op(FixedOp::Crop).is_some();
+            assert_eq!(crop, c.route != Route::Design, "{c:?}");
+            let flip = c.op(FixedOp::Flip).is_some();
+            assert_eq!(flip, c.route == Route::Librga, "{c:?}");
         }
     }
 }

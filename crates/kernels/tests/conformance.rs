@@ -55,6 +55,13 @@ fn scalar_references_match_known_answers() {
     let mut lut = [[0u8; 4]; 256];
     lut[2] = [1, 2, 3, 4];
     let palette = r::palette(&[2, 0], &lut) == [1, 2, 3, 4, 0, 0, 0, 0];
+    // [[A, B], [C, D]] as 0, 1, 2, 3.
+    let crop = r::crop(&[0, 1, 2, 3, 4, 5], 3, 1, (1, 0, 2, 2)) == [1, 2, 4, 5];
+    let flip = r::flip(&[0, 1, 2, 3], 2, 2, 1, true, false) == [1, 0, 3, 2]
+        && r::flip(&[0, 1, 2, 3], 2, 2, 1, true, true) == [3, 2, 1, 0];
+    let rotate = r::rotate(&[0, 1, 2, 3], 2, 2, 1, 1) == (vec![2, 0, 3, 1], 2, 2)
+        && r::rotate(&[0, 1, 2, 3], 2, 2, 1, 3) == (vec![1, 3, 0, 2], 2, 2)
+        && r::rotate(&[0, 1], 2, 1, 1, 1) == (vec![0, 1], 1, 2);
     let key =
         r::color_key_mask(&[5, 6, 7, 10, 6, 7, 5, 6, 8], 3, [5, 6, 7], [9, 6, 7]) == [255, 0, 0];
     for op in [
@@ -77,6 +84,9 @@ fn scalar_references_match_known_answers() {
         bilinear
     });
     conform("daedalus.image.palette", Backend::Scalar, || palette);
+    conform("daedalus.image.crop", Backend::Scalar, || crop);
+    conform("daedalus.image.flip", Backend::Scalar, || flip);
+    conform("daedalus.image.rotate", Backend::Scalar, || rotate);
     conform("daedalus.image.color_key_mask", Backend::Scalar, || key);
 }
 

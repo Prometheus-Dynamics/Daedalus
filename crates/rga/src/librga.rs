@@ -12,6 +12,7 @@ use std::os::fd::{AsRawFd, BorrowedFd};
 
 use crate::caps::Route;
 use crate::resize::{Filter, source_size};
+use crate::transform::{Transform, check_crop, check_size};
 
 /// `im_colorkey_range`.
 #[repr(C)]
@@ -65,6 +66,19 @@ type Resize = unsafe extern "C" fn(RgaBuffer, RgaBuffer, f64, f64, c_int, c_int)
 type QueryString = unsafe extern "C" fn(c_int) -> *const c_char;
 type Palette = unsafe extern "C" fn(RgaBuffer, RgaBuffer, RgaBuffer, c_int) -> c_int;
 type Colorkey = unsafe extern "C" fn(RgaBuffer, RgaBuffer, ColorkeyRange, c_int, c_int) -> c_int;
+type Crop = unsafe extern "C" fn(RgaBuffer, RgaBuffer, ImRect, c_int) -> c_int;
+/// `imflip_t` and `imrotate_t`: a mode or a rotation, then `sync`.
+type Turn = unsafe extern "C" fn(RgaBuffer, RgaBuffer, c_int, c_int) -> c_int;
+
+/// `im_rect`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ImRect {
+    x: c_int,
+    y: c_int,
+    width: c_int,
+    height: c_int,
+}
 
 /// The library's entry points.
 #[derive(Clone, Copy)]
@@ -78,6 +92,10 @@ pub(crate) struct Api {
     /// only makes its operation `Unsupported`.
     pub(crate) palette: Option<Palette>,
     pub(crate) colorkey: Option<Colorkey>,
+    /// `imcrop_t`, `imflip_t`, `imrotate_t`: optional likewise.
+    pub(crate) crop: Option<Crop>,
+    pub(crate) flip: Option<Turn>,
+    pub(crate) rotate: Option<Turn>,
 }
 
 /// `IM_STATUS_SUCCESS` and `IM_STATUS_NOERROR`.
@@ -97,6 +115,12 @@ const INTERP_AVERAGE: c_int = 3;
 /// `IM_ALPHA_COLORKEY_INVERTED`: by its name, the foreground pixels outside the range are
 /// removed and those inside are drawn (`NORMAL` removes the range, per librga's sample).
 const COLORKEY_INVERTED: c_int = 1 << 18;
+/// `IM_HAL_TRANSFORM_*`.
+const ROT_90: c_int = 1;
+const ROT_180: c_int = 1 << 1;
+const ROT_270: c_int = 1 << 2;
+const FLIP_H: c_int = 1 << 3;
+const FLIP_V: c_int = 1 << 4;
 
 /// A pixel format of [`Image`], with `RkRgaSurfaceFormat`'s value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -225,6 +249,15 @@ impl Librga {
                 colorkey: symbol(c"imcolorkey_t")
                     .ok()
                     .map(|f| std::mem::transmute::<*mut c_void, Colorkey>(f)),
+                crop: symbol(c"imcrop_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Crop>(f)),
+                flip: symbol(c"imflip_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Turn>(f)),
+                rotate: symbol(c"imrotate_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Turn>(f)),
             }
         };
         Ok(Self {
@@ -491,6 +524,126 @@ impl Librga {
         };
         // SAFETY: both buffers describe live memory for the (synchronous) call.
         status(unsafe { call(src, dst, range, COLORKEY_INVERTED, 1) })
+    }
+
+    /// Copy the `rect` (left, top, width, height) of `src` into `dst`, which has the
+    /// rectangle's size; a full-frame rectangle is a copy. Byte buffers.
+    pub fn crop_bytes(
+        &self,
+        src: Image,
+        from: &[u8],
+        rect: (u32, u32, u32, u32),
+        dst: Image,
+        to: &mut [u8],
+    ) -> io::Result<()> {
+        check(src, from.len(), dst, to.len())?;
+        self.crop(
+            src,
+            self.wrap_ptr(src, from.as_ptr()),
+            rect,
+            dst,
+            self.wrap_ptr(dst, to.as_mut_ptr()),
+        )
+    }
+
+    /// [`Librga::crop_bytes`] between dmabufs.
+    pub fn crop_dmabuf(
+        &self,
+        src: Image,
+        src_fd: BorrowedFd<'_>,
+        rect: (u32, u32, u32, u32),
+        dst: Image,
+        dst_fd: BorrowedFd<'_>,
+    ) -> io::Result<()> {
+        self.crop(
+            src,
+            self.wrap_fd(src, src_fd),
+            rect,
+            dst,
+            self.wrap_fd(dst, dst_fd),
+        )
+    }
+
+    fn crop(
+        &self,
+        si: Image,
+        src: RgaBuffer,
+        rect: (u32, u32, u32, u32),
+        di: Image,
+        dst: RgaBuffer,
+    ) -> io::Result<()> {
+        check_crop(rect, si.width, si.height)?;
+        check_size((di.width, di.height), (rect.2, rect.3))?;
+        let call = self.api.crop.ok_or_else(|| missing("imcrop_t"))?;
+        let rect = ImRect {
+            x: rect.0 as c_int,
+            y: rect.1 as c_int,
+            width: rect.2 as c_int,
+            height: rect.3 as c_int,
+        };
+        // SAFETY: both buffers describe live memory for the (synchronous) call.
+        status(unsafe { call(src, dst, rect, 1) })
+    }
+
+    /// Flip or turn `src` into `dst` ([`Transform::output_size`] of the source). Byte buffers.
+    pub fn transform_bytes(
+        &self,
+        src: Image,
+        from: &[u8],
+        dst: Image,
+        to: &mut [u8],
+        transform: Transform,
+    ) -> io::Result<()> {
+        check(src, from.len(), dst, to.len())?;
+        self.transform(
+            src,
+            self.wrap_ptr(src, from.as_ptr()),
+            dst,
+            self.wrap_ptr(dst, to.as_mut_ptr()),
+            transform,
+        )
+    }
+
+    /// [`Librga::transform_bytes`] between dmabufs.
+    pub fn transform_dmabuf(
+        &self,
+        src: Image,
+        src_fd: BorrowedFd<'_>,
+        dst: Image,
+        dst_fd: BorrowedFd<'_>,
+        transform: Transform,
+    ) -> io::Result<()> {
+        self.transform(
+            src,
+            self.wrap_fd(src, src_fd),
+            dst,
+            self.wrap_fd(dst, dst_fd),
+            transform,
+        )
+    }
+
+    fn transform(
+        &self,
+        si: Image,
+        src: RgaBuffer,
+        di: Image,
+        dst: RgaBuffer,
+        transform: Transform,
+    ) -> io::Result<()> {
+        check_size(
+            (di.width, di.height),
+            transform.output_size(si.width, si.height),
+        )?;
+        let (call, name, mode) = match transform {
+            Transform::FlipHorizontal => (self.api.flip, "imflip_t", FLIP_H),
+            Transform::FlipVertical => (self.api.flip, "imflip_t", FLIP_V),
+            Transform::Rotate90 => (self.api.rotate, "imrotate_t", ROT_90),
+            Transform::Rotate180 => (self.api.rotate, "imrotate_t", ROT_180),
+            Transform::Rotate270 => (self.api.rotate, "imrotate_t", ROT_270),
+        };
+        let call = call.ok_or_else(|| missing(name))?;
+        // SAFETY: both buffers describe live memory for the (synchronous) call.
+        status(unsafe { call(src, dst, mode, 1) })
     }
 
     /// Convert the pixel format between byte buffers of the same size.

@@ -339,3 +339,60 @@ fn rga_resizes_like_the_references() {
         within_one("bilinear rgb 160x120 x 2", &out, &want)
     });
 }
+
+/// A full-frame crop is a copy (vim2m copies RGB24 unchanged); a destination that is not the
+/// rectangle's size is refused before any device call.
+#[test]
+fn vim2m_copies_through_a_full_frame_crop() {
+    let Some(mut rga) = vim2m() else { return };
+    let src = Layout::packed(PixelFormat::Rgb24, 64, 48);
+    let input = frame(src.frame_len(), 11);
+    let mut out = vec![0u8; src.frame_len()];
+    let full = Rect {
+        left: 0,
+        top: 0,
+        width: 64,
+        height: 48,
+    };
+    rga.crop_bytes(src, &input, full, src, &mut out).unwrap();
+    assert_eq!(out, input);
+    let half = Layout::packed(PixelFormat::Rgb24, 32, 48);
+    let err = rga
+        .crop_bytes(src, &input, full, half, &mut out)
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+/// Rockchip's RGA crop against the reference, recorded as the `rga-v4l2` variant. Written,
+/// untested on board.
+#[test]
+fn rga_crops_like_the_reference() {
+    use daedalus_accel::{Backend, Evidence, conform_with};
+    use daedalus_kernels::reference as r;
+    let Some(mut rga) = Rga::find() else {
+        return eprintln!("skipping: no rockchip-rga device");
+    };
+    conform_with(
+        Evidence::new("daedalus.image.crop", Backend::FixedFunction).variant("rga-v4l2"),
+        || {
+            let (w, h) = (640u32, 480u32);
+            let rgb = frame((w * h * 3) as usize, 5);
+            let rect = Rect {
+                left: 64,
+                top: 32,
+                width: 320,
+                height: 240,
+            };
+            let (s, d) = (
+                Layout::packed(PixelFormat::Rgb24, w, h),
+                Layout::packed(PixelFormat::Rgb24, 320, 240),
+            );
+            let mut out = vec![0u8; d.frame_len()];
+            rga.crop_bytes(s, &rgb, rect, d, &mut out)
+                .map_err(|e| e.to_string())?;
+            (out == r::crop(&rgb, w as usize, 3, (64, 32, 320, 240)))
+                .then_some(())
+                .ok_or_else(|| "differs".into())
+        },
+    );
+}

@@ -252,3 +252,70 @@ pub fn color_key_mask(src: &[u8], channels: usize, min: [u8; 3], max: [u8; 3]) -
         })
         .collect()
 }
+
+/// The `crop_width` by `crop_height` rectangle at (`left`, `top`) of tightly packed
+/// `channels`-byte pixels.
+pub fn crop(
+    src: &[u8],
+    width: usize,
+    channels: usize,
+    (left, top, crop_width, crop_height): (usize, usize, usize, usize),
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    for y in top..top + crop_height {
+        for x in left..left + crop_width {
+            out.extend_from_slice(&src[(y * width + x) * channels..][..channels]);
+        }
+    }
+    out
+}
+
+/// Mirror tightly packed `channels`-byte pixels left to right and/or top to bottom.
+pub fn flip(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    horizontal: bool,
+    vertical: bool,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    for y in 0..height {
+        let sy = if vertical { height - 1 - y } else { y };
+        for x in 0..width {
+            let sx = if horizontal { width - 1 - x } else { x };
+            out.extend_from_slice(&src[(sy * width + sx) * channels..][..channels]);
+        }
+    }
+    out
+}
+
+/// Turn tightly packed `channels`-byte pixels clockwise by `quarters` quarter turns. Returns
+/// the bytes and the output size.
+pub fn rotate(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    quarters: u32,
+) -> (Vec<u8>, usize, usize) {
+    let (ow, oh) = if quarters % 2 == 1 {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    let mut out = Vec::new();
+    for y in 0..oh {
+        for x in 0..ow {
+            // The source pixel that lands at (x, y).
+            let (sx, sy) = match quarters % 4 {
+                0 => (x, y),
+                1 => (y, height - 1 - x),
+                2 => (width - 1 - x, height - 1 - y),
+                _ => (width - 1 - y, x),
+            };
+            out.extend_from_slice(&src[(sy * width + sx) * channels..][..channels]);
+        }
+    }
+    (out, ow, oh)
+}

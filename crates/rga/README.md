@@ -15,6 +15,11 @@ share.
   when it downscales, interpolates when it upscales), so it refuses bilinear downscale with
   `Unsupported` rather than substitute; librga does both. Mainline has no gray format, so
   `resize_luma` goes through NV12 with neutral chroma (1.5 times the bytes).
+- **Crop, flip, rotate:** `Rga::crop` / `crop_bytes` (the output queue's crop selection,
+  unscaled; a full-frame rectangle is a copy) and `Librga::crop_*` and `transform_*`
+  (`Transform`: horizontal and vertical flip, 90, 180 and 270 degree turns, clockwise assumed).
+  An output that is not the rectangle's or the turn's size is refused. Mainline flip and rotate
+  wait on a control setter on Lemnos's session.
 - **Palette and colour key (librga only):** `Librga::palette_bytes` / `palette_dmabuf` (8-bit
   indices through a 256-entry RGBA table) and `color_key_bytes` / `color_key_dmabuf` /
   `color_key_mask` (the pixels whose R, G and B lie in a range drawn opaque onto a cleared RGBA

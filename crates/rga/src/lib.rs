@@ -26,12 +26,14 @@ pub mod caps;
 #[cfg(target_os = "linux")]
 mod librga;
 mod resize;
+mod transform;
 #[cfg(target_os = "linux")]
 mod v4l2;
 
 #[cfg(target_os = "linux")]
 pub use librga::{Image, Librga, RgaFormat};
 pub use resize::Filter;
+pub use transform::Transform;
 
 #[cfg(target_os = "linux")]
 pub use rga::Rga;
@@ -47,6 +49,7 @@ mod rga {
 
     use crate::caps::Route;
     use crate::resize::{Filter, source_size};
+    use crate::transform::{check_crop, check_size};
     use crate::v4l2::{Layout, Memory, PixelFormat, Rect, Session, find_m2m_device};
 
     type Key = (Layout, Layout, Option<Rect>, Memory);
@@ -213,6 +216,51 @@ mod rga {
             self.resize_bytes(s, &staged, d, &mut out, filter)?;
             dst[..out_luma].copy_from_slice(&out[..out_luma]);
             Ok(())
+        }
+
+        /// Copy the `rect` of dmabuf `src_fd` into dmabuf `dst_fd`, whose layout must have the
+        /// rectangle's size (a different size is a resize: [`Rga::resize`]). A full-frame
+        /// rectangle is a copy. Returns the bytes written.
+        #[allow(clippy::too_many_arguments)]
+        pub fn crop(
+            &mut self,
+            src: Layout,
+            src_fd: BorrowedFd<'_>,
+            src_len: usize,
+            rect: Rect,
+            dst: Layout,
+            dst_fd: BorrowedFd<'_>,
+            dst_len: usize,
+        ) -> io::Result<usize> {
+            let crop = Self::crop_rect(src, rect, dst)?;
+            self.blit(src, src_fd, src_len, crop, dst, dst_fd, dst_len)
+        }
+
+        /// [`Rga::crop`] between byte buffers. Returns the bytes written.
+        pub fn crop_bytes(
+            &mut self,
+            src: Layout,
+            src_bytes: &[u8],
+            rect: Rect,
+            dst: Layout,
+            dst_bytes: &mut [u8],
+        ) -> io::Result<usize> {
+            let crop = Self::crop_rect(src, rect, dst)?;
+            self.convert(src, src_bytes, crop, dst, dst_bytes)
+        }
+
+        /// The device crop for `rect`: none for the full frame.
+        fn crop_rect(src: Layout, rect: Rect, dst: Layout) -> io::Result<Option<Rect>> {
+            let (Ok(left), Ok(top)) = (u32::try_from(rect.left), u32::try_from(rect.top)) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("crop {rect:?} starts outside the frame"),
+                ));
+            };
+            check_crop((left, top, rect.width, rect.height), src.width, src.height)?;
+            check_size((dst.width, dst.height), (rect.width, rect.height))?;
+            let full = (left, top, rect.width, rect.height) == (0, 0, src.width, src.height);
+            Ok((!full).then_some(rect))
         }
 
         /// RGB8 to RGBA8, tightly packed. The mainline driver has no R,G,B,A order, so the

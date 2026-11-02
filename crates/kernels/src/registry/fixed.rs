@@ -15,7 +15,7 @@ const RGA_LIB: (&str, &str) = ("crates/rga/src/librga.rs", "crates/rga/tests/lib
 const NODE_ONLY: &[Backend] = &[Backend::Scalar, Backend::FixedFunction];
 const NODE_REASON: &str = "a fixed-function node: the CPU kernels and the callers are Eidos's";
 
-static IMAGE_OPS: [Op; 4] = [
+static IMAGE_OPS: [Op; 7] = [
     op(
         "daedalus.image.resize_area",
         "Area downscale by an integer factor, rounded block means (pyramid levels)",
@@ -40,9 +40,27 @@ static IMAGE_OPS: [Op; 4] = [
         "daedalus_kernels::reference::color_key_mask",
     )
     .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.crop",
+        "A rectangle of a frame, unscaled (a full-frame rectangle is a copy)",
+        "daedalus_kernels::reference::crop",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.flip",
+        "Mirror left to right or top to bottom",
+        "daedalus_kernels::reference::flip",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.rotate",
+        "Quarter turns clockwise",
+        "daedalus_kernels::reference::rotate",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
 ];
 
-static IMAGE_KERNELS: [Kernel; 10] = [
+static IMAGE_KERNELS: [Kernel; 17] = [
     Kernel::implemented(
         "daedalus.image.resize_area",
         Backend::Scalar,
@@ -67,6 +85,53 @@ static IMAGE_KERNELS: [Kernel; 10] = [
         "crates/kernels/src/reference.rs",
         T,
     ),
+    Kernel::implemented(
+        "daedalus.image.crop",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    Kernel::implemented(
+        "daedalus.image.flip",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    Kernel::implemented(
+        "daedalus.image.rotate",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    Kernel::implemented(
+        "daedalus.image.crop",
+        Backend::FixedFunction,
+        RGA_V4L2.0,
+        RGA_V4L2.1,
+    )
+    .with_variant("rga-v4l2"),
+    Kernel::implemented(
+        "daedalus.image.crop",
+        Backend::FixedFunction,
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
+    // Mainline flip and rotate need a control setter on Lemnos's session; librga for now.
+    Kernel::implemented(
+        "daedalus.image.flip",
+        Backend::FixedFunction,
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
+        "daedalus.image.rotate",
+        Backend::FixedFunction,
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
     // The mainline driver has neither: librga only.
     Kernel::implemented(
         "daedalus.image.palette",
