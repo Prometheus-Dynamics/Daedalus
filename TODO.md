@@ -146,8 +146,15 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       Contract (approved 2026-11-02): while a `RawSubmitter` exists, every submit in the process
       goes through Daedalus's mutex. An input uploaded with `queue.write_buffer` moves into the
       raw command buffer, copied from a persistent staging ring.
-      **Blocked by:** shared nodes first; Styx's answers (does it call `queue.submit` outside
-      `submit_raw`, and how it feeds `Input::Buffer`).
+      Styx's answers (2026-11-02): its only per-frame submit on Daedalus's device is `submit_raw`
+      (gpuisp kernels.rs:268, then `ticket.wait()`), so `wait` must not allocate either. Its input
+      is an imported dmabuf `GpuFrameInput` read in place, with no `write_buffer`, so no staging ring
+      is needed. Keep the HOST_READ in the after-barrier, since GpuIsp reads mapped results right
+      after the wait. styx-wgpu's `Gpu::from_device` submits through wgpu itself: document that an
+      app sharing Daedalus's device with it must not hold a `RawSubmitter`. Measure with Styx's
+      `cargo nextest run -p styx-gpuisp --features daedalus -E
+      'test(a_frame_from_a_device_buffer)'` (`STYX_GPU_ALLOC_TRACE=1` for stacks).
+      **Blocked by:** shared nodes first.
       **Measured:** 17 per frame (Styx's count). V3D 7.1 on the Raze (v3dv) has one queue family
       with `queueCount = 1` (vulkaninfo, 2026-11-02), so a second queue is no way around the lock.
 - [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
