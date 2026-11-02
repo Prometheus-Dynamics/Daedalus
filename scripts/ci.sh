@@ -374,6 +374,9 @@ cmd_package() {
   step "Validating the package surface"
   cargo package --workspace "${PACKAGE_EXCLUDES[@]}" --allow-dirty --no-verify --exclude-lockfile
   step "Listing the facade package (must print no warnings)"
+  # Fetch first: a fresh checkout of a git dependency (Lemnos) reports "Updating git repository"
+  # on stderr, which is not a packaging warning.
+  cargo fetch --quiet
   local warnings
   warnings="$(cargo package -p daedalus-rs --list --allow-dirty 2>&1 >/dev/null)"
   if [[ -n $warnings ]]; then
