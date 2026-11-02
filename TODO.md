@@ -127,13 +127,13 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** a test receives a plan blob in chunks and loads it.
       **Blocked by:** a consumer needing it; none is recorded.
       **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
-- [ ] **What:** fan-in and user adapters on the MCU device (adapter calls for `#[adapt]` functions
+- [x] **What:** fan-in and user adapters on the MCU device (adapter calls for `#[adapt]` functions
       that are plain `no_std` code).
       **Why:** today lowering rejects several edges into one input (`crates/mcu/build/src/lower.rs`),
       and only builtin numeric widening adapts.
       **Done when:** a blink-style graph with fan-in and a user adapter runs in each mode.
-      **Blocked by:** nothing.
-      **Measured:** none.
+      **Result:** `examples/mcu_blink` runs `graph_fanin.json` natively in all three modes. No
+      firmware for it yet, so its flash and RAM are not measured.
 - [ ] **What:** shared nodes with the full runtime: generate both a `#[node]` handler and the device
       glue from one function.
       **Why:** so a node crate serves both.

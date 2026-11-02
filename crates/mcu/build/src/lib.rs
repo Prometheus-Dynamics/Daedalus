@@ -16,12 +16,16 @@
 //! [`PlanManifest`] (JSON) names a plan's host ports and parameters by id for host tools; the
 //! `daedalus-mcu` binary compiles blobs and encodes parameter updates from the command line.
 //!
+//! Several edges into one input (fan-in) and user adapters (`#[daedalus_mcu::adapt]`) are planned
+//! and rendered in every mode; see docs/mcu.md.
+//!
 //! ```ignore
 //! // build.rs of the device crate; `my_nodes` is also a regular dependency.
 //! fn main() {
 //!     let nodes = [my_nodes::scale::NODE, my_nodes::lowpass::NODE];
+//!     let adapters = [my_nodes::to_volts::ADAPTER];
 //!     let json = std::fs::read_to_string("graph.json").unwrap();
-//!     let source = daedalus_mcu_build::compile_document(&json, &nodes, &Default::default())
+//!     let source = daedalus_mcu_build::compile_document(&json, &nodes, &adapters, &Default::default())
 //!         .unwrap_or_else(|err| panic!("{err}"));
 //!     daedalus_mcu_build::write_out_dir("graph.rs", &source).unwrap();
 //!     println!("cargo:rerun-if-changed=graph.json");
@@ -37,12 +41,12 @@ mod tests;
 
 use std::path::PathBuf;
 
-use daedalus_mcu::NodeDesc;
+use daedalus_mcu::{AdapterDesc, NodeDesc};
 use daedalus_planner::GraphDocumentError;
 use daedalus_registry::capability::{NODE_FIRE_META_KEY, NodeDecl, PortDecl};
 use daedalus_registry::transport_key_typeexpr;
 use daedalus_runtime::plugins::PluginRegistry;
-use daedalus_transport::TypeKey;
+use daedalus_transport::{AdaptRequest, Payload, TransportError, TypeKey};
 use serde::{Deserialize, Serialize};
 
 pub use blob::{ParamManifest, PlanManifest, PortManifest};
@@ -51,8 +55,8 @@ pub use daedalus_mcu::{Overflow, Scalar, ScalarKind};
 pub use daedalus_planner::{Graph, GraphDocument};
 pub use library::LibraryManifest;
 pub use lower::{
-    Endpoint, HostPort, InputSource, McuPlan, PARAMS_META_KEY, PlanEdge, PlanNode, PlanParam,
-    scalar_value,
+    Endpoint, HostPort, InputSource, McuPlan, PARAMS_META_KEY, PlanAdapter, PlanEdge, PlanNode,
+    PlanParam, scalar_value,
 };
 
 /// Code generation choices that the graph does not carry.
@@ -108,6 +112,37 @@ pub struct NodeSpec {
     pub fire_all: bool,
 }
 
+/// A user adapter as the host compiler reads it: from an [`AdapterDesc`], or from a
+/// [`LibraryManifest`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdapterSpec {
+    pub id: String,
+    /// Module path of the adapter's generated glue.
+    pub path: String,
+    /// Transport key of the input type.
+    pub from: String,
+    /// Transport key of the output type.
+    pub to: String,
+    /// Planner cost.
+    pub cost: u32,
+}
+
+impl From<&AdapterDesc> for AdapterSpec {
+    fn from(desc: &AdapterDesc) -> Self {
+        Self {
+            id: desc.id.into(),
+            path: desc.path.into(),
+            from: desc.from.into(),
+            to: desc.to.into(),
+            cost: desc.cost,
+        }
+    }
+}
+
+fn adapter_specs(adapters: &[AdapterDesc]) -> Vec<AdapterSpec> {
+    adapters.iter().map(AdapterSpec::from).collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortSpec {
     pub name: String,
@@ -143,57 +178,70 @@ fn specs(nodes: &[NodeDesc]) -> Vec<NodeSpec> {
     nodes.iter().map(NodeSpec::from).collect()
 }
 
-/// Plan `graph` against `nodes` and render the compiled device module.
+/// Plan `graph` against `nodes` and `adapters` and render the compiled device module.
 pub fn compile(
     graph: Graph,
     nodes: &[NodeDesc],
+    adapters: &[AdapterDesc],
     options: &CompileOptions,
 ) -> Result<String, CompileError> {
-    Ok(plan(graph, nodes, options)?.to_rust(options))
+    Ok(plan(graph, nodes, adapters, options)?.to_rust(options))
 }
 
 /// [`compile`] a persisted graph document (`daedalus.graph` JSON).
 pub fn compile_document(
     json: &str,
     nodes: &[NodeDesc],
+    adapters: &[AdapterDesc],
     options: &CompileOptions,
 ) -> Result<String, CompileError> {
-    Ok(plan_document(json, nodes, options)?.to_rust(options))
+    Ok(plan_document(json, nodes, adapters, options)?.to_rust(options))
 }
 
 /// [`plan`] a persisted graph document.
 pub fn plan_document(
     json: &str,
     nodes: &[NodeDesc],
+    adapters: &[AdapterDesc],
     options: &CompileOptions,
 ) -> Result<McuPlan, CompileError> {
-    plan(GraphDocument::from_json(json)?.graph, nodes, options)
+    plan(
+        GraphDocument::from_json(json)?.graph,
+        nodes,
+        adapters,
+        options,
+    )
 }
 
 /// Plan `graph` into the device plan (inspectable; [`McuPlan::to_rust`] renders it).
 pub fn plan(
     graph: Graph,
     nodes: &[NodeDesc],
+    adapters: &[AdapterDesc],
     options: &CompileOptions,
 ) -> Result<McuPlan, CompileError> {
-    plan_specs(graph, &specs(nodes), options)
+    plan_specs(graph, &specs(nodes), &adapter_specs(adapters), options)
 }
 
-/// [`plan`] against node specs.
+/// [`plan`] against node and adapter specs.
 #[doc(hidden)]
 pub fn plan_specs(
     graph: Graph,
     nodes: &[NodeSpec],
+    adapters: &[AdapterSpec],
     options: &CompileOptions,
 ) -> Result<McuPlan, CompileError> {
-    lower::lower(graph, nodes, &registry(nodes)?, options)
+    lower::lower(graph, nodes, adapters, &registry(nodes, adapters)?, options)
 }
 
-/// The node library of a loaded-mode firmware, from the nodes it includes (in entry order).
-/// [`LibraryManifest::to_rust`] renders its `LIBRARY`; the JSON manifest lets host tools
-/// compile plans for it.
-pub fn library(nodes: &[NodeDesc]) -> Result<LibraryManifest, CompileError> {
-    LibraryManifest::new(specs(nodes))
+/// The node library of a loaded-mode firmware, from the nodes and user adapters it includes (in
+/// entry order). [`LibraryManifest::to_rust`] renders its `LIBRARY`; the JSON manifest lets host
+/// tools compile plans for it.
+pub fn library(
+    nodes: &[NodeDesc],
+    adapters: &[AdapterDesc],
+) -> Result<LibraryManifest, CompileError> {
+    LibraryManifest::new(specs(nodes), adapter_specs(adapters))
 }
 
 /// Plan `graph` for a loaded-mode firmware with `library`; [`McuPlan::to_blob`] encodes it.
@@ -202,7 +250,7 @@ pub fn compile_loaded(
     library: &LibraryManifest,
     options: &CompileOptions,
 ) -> Result<McuPlan, CompileError> {
-    plan_specs(graph, &library.nodes, options)
+    plan_specs(graph, &library.nodes, &library.adapters, options)
 }
 
 /// [`compile_loaded`] a graph document and encode the blob and its manifest.
@@ -216,12 +264,35 @@ pub fn compile_loaded_document(
 }
 
 /// The plugin registry the planner sees: the runtime builtins (host bridge, primitive types,
-/// numeric widening adapters) plus one declaration per device node.
-pub fn registry(nodes: &[NodeSpec]) -> Result<PluginRegistry, CompileError> {
+/// numeric widening adapters) plus one declaration per device node and per user adapter.
+pub fn registry(
+    nodes: &[NodeSpec],
+    adapters: &[AdapterSpec],
+) -> Result<PluginRegistry, CompileError> {
     let mut registry = PluginRegistry::new();
     for spec in nodes {
         registry
             .register_node_decl(node_decl(spec))
+            .map_err(|err| CompileError::Registry {
+                id: spec.id.clone(),
+                message: err.to_string(),
+            })?;
+    }
+    for spec in adapters {
+        // The planner needs the declaration only: the device runs the function.
+        let not_run_here = |_: Payload, _: &AdaptRequest| {
+            Err(TransportError::Unsupported(
+                "a device adapter runs on the device, not in the host planner".into(),
+            ))
+        };
+        registry
+            .register_transport_adapter_fn_with_cost(
+                spec.id.clone(),
+                transport_key_typeexpr(&TypeKey::new(spec.from.as_str())),
+                transport_key_typeexpr(&TypeKey::new(spec.to.as_str())),
+                u64::from(spec.cost),
+                not_run_here,
+            )
             .map_err(|err| CompileError::Registry {
                 id: spec.id.clone(),
                 message: err.to_string(),

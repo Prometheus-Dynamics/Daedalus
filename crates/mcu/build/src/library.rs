@@ -4,33 +4,42 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use daedalus_mcu::loaded::{MAX_PORTS, SCALAR_TYPES};
+use daedalus_mcu::loaded::{MAX_ADAPTERS, MAX_PORTS, SCALAR_TYPES};
 use serde::{Deserialize, Serialize};
 
 use crate::lower::{TypeNames, scalar_kind};
-use crate::{CompileError, NodeSpec, registry};
+use crate::{AdapterSpec, CompileError, NodeSpec, registry};
 
 const MCU: &str = "::daedalus_mcu";
 
-/// A firmware's node library: the nodes in entry order, their non-scalar port types in type-id
-/// order (after the [`daedalus_mcu::ScalarKind`]s), and the hash of their interfaces.
+/// A firmware's node library: the nodes in entry order, the user adapters, their non-scalar port
+/// types in type-id order (after the [`daedalus_mcu::ScalarKind`]s), and the hash of their
+/// interfaces.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryManifest {
     /// [`LibraryManifest::FORMAT`].
     pub format: String,
     pub hash: u64,
     pub nodes: Vec<NodeSpec>,
+    /// User adapters, in index order (an edge of a plan names one by index).
+    #[serde(default)]
+    pub adapters: Vec<AdapterSpec>,
     pub types: Vec<String>,
 }
 
 impl LibraryManifest {
     pub const FORMAT: &'static str = "daedalus.mcu.library";
 
-    pub fn new(nodes: Vec<NodeSpec>) -> Result<Self, CompileError> {
+    pub fn new(nodes: Vec<NodeSpec>, adapters: Vec<AdapterSpec>) -> Result<Self, CompileError> {
         if nodes.len() > 256 {
             return Err(CompileError::Unsupported(
                 "a node library has at most 256 nodes".into(),
             ));
+        }
+        if adapters.len() > MAX_ADAPTERS {
+            return Err(CompileError::Unsupported(format!(
+                "a node library has at most {MAX_ADAPTERS} user adapters"
+            )));
         }
         let mut ids = BTreeSet::new();
         let mut types = Vec::new();
@@ -62,11 +71,30 @@ impl LibraryManifest {
                 }
             }
         }
-        registry(&nodes)?;
+        for adapter in &adapters {
+            if !ids.insert(&adapter.id) {
+                return Err(CompileError::Unsupported(format!(
+                    "adapter `{}` twice in the library",
+                    adapter.id
+                )));
+            }
+            let _ = writeln!(
+                canonical,
+                "adapter {} {} {}",
+                adapter.id, adapter.from, adapter.to
+            );
+            for key in [&adapter.from, &adapter.to] {
+                if scalar_kind(key).is_none() && !types.contains(key) {
+                    types.push(key.clone());
+                }
+            }
+        }
+        registry(&nodes, &adapters)?;
         Ok(Self {
             format: Self::FORMAT.into(),
             hash: fnv1a64(canonical.as_bytes()),
             nodes,
+            adapters,
             types,
         })
     }
@@ -75,7 +103,7 @@ impl LibraryManifest {
     pub fn from_json(json: &str) -> Result<Self, CompileError> {
         let read: Self =
             serde_json::from_str(json).map_err(|err| CompileError::Manifest(err.to_string()))?;
-        let rebuilt = Self::new(read.nodes.clone())?;
+        let rebuilt = Self::new(read.nodes.clone(), read.adapters.clone())?;
         if read.format != Self::FORMAT || rebuilt != read {
             return Err(CompileError::Manifest(
                 "not a library manifest, or its hash or types do not match its nodes".into(),
@@ -86,6 +114,12 @@ impl LibraryManifest {
 
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// The index of the user adapter `id`.
+    pub fn adapter_index(&self, id: &str) -> Option<u8> {
+        let index = self.adapters.iter().position(|adapter| adapter.id == id)?;
+        u8::try_from(index).ok()
     }
 
     /// The type id of transport key `key`.
@@ -100,7 +134,7 @@ impl LibraryManifest {
     /// The Rust module defining `LIBRARY_HASH` and `LIBRARY` (a `daedalus_mcu::loaded::Library`)
     /// with a type-erased `run` adapter per node, for `include!` in the firmware.
     pub fn to_rust(&self) -> Result<String, CompileError> {
-        let names = TypeNames::new(&self.nodes);
+        let names = TypeNames::new(&self.nodes, &self.adapters);
         let types = self
             .types
             .iter()
@@ -158,7 +192,35 @@ impl LibraryManifest {
                 node.path
             );
         }
-        out.push_str("    ],\n};\n");
+        out.push_str("    ],\n    adapters: &[");
+        for (i, adapter) in self.adapters.iter().enumerate() {
+            let ty = |key: &str| self.type_id(key).unwrap_or_default();
+            let _ = write!(
+                out,
+                "\n        // {}\n        {MCU}::loaded::AdapterEntry {{ input: {}, output: {}, run: adapt_{i} }},",
+                adapter.id,
+                ty(&adapter.from),
+                ty(&adapter.to),
+            );
+        }
+        out.push_str(if self.adapters.is_empty() {
+            "],\n};\n"
+        } else {
+            "\n    ],\n};\n"
+        });
+        for (i, adapter) in self.adapters.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "\n/// Adapter `{id}`: converts the input value at `input` into the output slot.\n\
+                 unsafe fn adapt_{i}(input: *const u8, output: *mut u8) {{\n    \
+                 // SAFETY: the interpreter passes a value of the adapter's input type and a slot of\n    \
+                 // its output type (checked when the plan was loaded).\n    unsafe {{\n        \
+                 let value = input.cast::<::{path}::In>().read_unaligned();\n        \
+                 output.cast::<::{path}::Out>().write_unaligned(::{path}::run(value));\n    }}\n}}",
+                id = adapter.id,
+                path = adapter.path,
+            );
+        }
         for (i, node) in self.nodes.iter().enumerate() {
             let args: Vec<String> = node
                 .inputs

@@ -11,14 +11,17 @@
 //! host_inputs, host_outputs: seq<{ name: u32, ty: u16 }>
 //! nodes: seq<{ wait_all: bool, inputs: seq<Input> }>
 //!   Input = Absent | Edge(Edge) | Const(Scalar) | Param { value, min, max: Scalar }
-//!   Edge  = { from: Host(u16) | Node(u16, u8), capacity: u16, overflow: u8 }
+//!         | Fan(seq<Edge>)               several edges into one input, at least two
+//!   Edge  = { from: Host(u16) | Node(u16, u8), capacity: u16, overflow: u8,
+//!             convert: None | Adapter(u8) }
 //! outputs: seq<Edge>                   the edge into each host output
 //! crc: u32 little-endian               CRC-32 of every byte before it
 //! ```
 //!
-//! Edges are numbered in order of appearance (node inputs, then host outputs), parameters
-//! likewise. Type ids are [`ScalarKind`](crate::ScalarKind)s, then the library's types. A producer runs before
-//! its consumer: an edge from node `m` into node `n` needs `m < n`.
+//! Edges are numbered in order of appearance (node inputs, the edges of a fan-in in their
+//! order, then host outputs), parameters likewise. Type ids are [`ScalarKind`](crate::ScalarKind)s,
+//! then the library's types. A producer runs before its consumer: an edge from node `m` into
+//! node `n` needs `m < n`.
 
 use core::mem::{align_of, size_of};
 use core::ptr;
@@ -31,12 +34,17 @@ use crate::{Scalar, ScalarKind};
 
 /// `EdgeRec::from` of an edge leaving host input `port`: `HOST | port`.
 pub(crate) const HOST: u16 = 0x8000;
-/// A [`Source`] reading constant `index`: `CONST | index`.
-pub(crate) const CONST: u16 = 0x8000;
-/// A [`Source`] of an unconnected optional input.
-pub(crate) const ABSENT: u16 = u16::MAX;
 /// `EdgeRec::widen` of an edge that copies values unchanged.
 pub(crate) const NO_WIDEN: u8 = u8::MAX;
+/// `EdgeRec::adapter` of an edge without a user adapter.
+pub(crate) const NO_ADAPTER: u8 = u8::MAX;
+/// `Source::kind` of an unconnected optional input.
+pub(crate) const SOURCE_ABSENT: u8 = 0;
+/// `Source::kind` of an input fed by `count` consecutive edges from `first` (one edge, or a
+/// fan-in).
+pub(crate) const SOURCE_EDGES: u8 = 1;
+/// `Source::kind` of an input fed by the constant `first`.
+pub(crate) const SOURCE_CONST: u8 = 2;
 
 #[derive(Clone, Copy)]
 pub(crate) struct NodeRec {
@@ -47,9 +55,27 @@ pub(crate) struct NodeRec {
     pub wait_all: bool,
 }
 
-/// An input source: an edge index, `CONST | constant index` or [`ABSENT`].
+/// Where an input's values come from (see [`SOURCE_ABSENT`], [`SOURCE_EDGES`], [`SOURCE_CONST`]).
 #[derive(Clone, Copy)]
-pub(crate) struct Source(pub u16);
+pub(crate) struct Source {
+    pub kind: u8,
+    /// Number of edges (`SOURCE_EDGES`).
+    pub count: u8,
+    /// The first edge (`SOURCE_EDGES`) or the constant (`SOURCE_CONST`).
+    pub first: u16,
+}
+
+impl Source {
+    /// The edge indices feeding the input.
+    pub fn edges(&self) -> core::ops::Range<usize> {
+        if self.kind == SOURCE_EDGES {
+            let first = usize::from(self.first);
+            first..first + usize::from(self.count)
+        } else {
+            0..0
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct EdgeRec {
@@ -58,6 +84,8 @@ pub(crate) struct EdgeRec {
     pub port: u8,
     /// The producer's [`ScalarKind`](crate::ScalarKind) when values widen at the push, else [`NO_WIDEN`].
     pub widen: u8,
+    /// The library adapter converting the values at the push, else [`NO_ADAPTER`].
+    pub adapter: u8,
     pub overflow: Overflow,
     /// Consumer type id.
     pub ty: u16,
@@ -255,20 +283,58 @@ impl Walk<'_> {
                     input: k as u8,
                 };
                 let source = match r.u8()? {
-                    0 if input.optional => ABSENT,
+                    0 if input.optional => Source {
+                        kind: SOURCE_ABSENT,
+                        count: 0,
+                        first: 0,
+                    },
                     0 => return Err(bad),
-                    1 => self.edge(&mut r, hosts, entries, node, input.ty)?,
+                    1 => {
+                        let edge = self.edge(&mut r, hosts, entries, node, input.ty)?;
+                        Source {
+                            kind: SOURCE_EDGES,
+                            count: 1,
+                            first: edge,
+                        }
+                    }
                     2 => {
                         let value = r.scalar()?;
                         if scalar_kind(input.ty) != Some(value.kind()) {
                             return Err(bad);
                         }
-                        CONST | self.constant(value)?
+                        Source {
+                            kind: SOURCE_CONST,
+                            count: 0,
+                            first: self.constant(value)?,
+                        }
                     }
-                    3 => CONST | self.param(&mut r, input.ty)?,
+                    3 => Source {
+                        kind: SOURCE_CONST,
+                        count: 0,
+                        first: self.param(&mut r, input.ty)?,
+                    },
+                    4 => {
+                        // Fan-in: the edges are numbered consecutively, in blob order.
+                        let count = r.varint()?;
+                        if !(2..=u64::from(u8::MAX)).contains(&count) {
+                            return Err(bad);
+                        }
+                        let first = self.edge(&mut r, hosts, entries, node, input.ty)?;
+                        for k in 1..count as usize {
+                            let edge = self.edge(&mut r, hosts, entries, node, input.ty)?;
+                            if usize::from(edge) != usize::from(first) + k {
+                                return Err(LoadError::Malformed);
+                            }
+                        }
+                        Source {
+                            kind: SOURCE_EDGES,
+                            count: count as u8,
+                            first,
+                        }
+                    }
                     _ => return Err(LoadError::Malformed),
                 };
-                self.push(Kind::Sources, Source(source))?;
+                self.push(Kind::Sources, source)?;
             }
             self.push(Kind::Nodes, rec)?;
         }
@@ -323,10 +389,26 @@ impl Walk<'_> {
         };
         let capacity = r.u16()?;
         let overflow = *Overflow::ALL.get(usize::from(r.u8()?)).ok_or(bad)?;
-        let widen = match (scalar_kind(from_ty), scalar_kind(ty)) {
-            _ if from_ty == ty => NO_WIDEN,
-            (Some(from), Some(to)) if from.widens_to(to) => from as u8,
-            _ => return Err(LoadError::Type { edge }),
+        // A user adapter converts the values (its types must be the edge's); otherwise they
+        // copy, or widen between scalars.
+        let (adapter, widen) = match r.u8()? {
+            0 => (
+                NO_ADAPTER,
+                match (scalar_kind(from_ty), scalar_kind(ty)) {
+                    _ if from_ty == ty => NO_WIDEN,
+                    (Some(from), Some(to)) if from.widens_to(to) => from as u8,
+                    _ => return Err(LoadError::Type { edge }),
+                },
+            ),
+            1 => {
+                let index = u8::try_from(r.varint()?).map_err(|_| bad)?;
+                let adapter = self.library.adapter(index).ok_or(bad)?;
+                if adapter.input != from_ty || adapter.output != ty {
+                    return Err(LoadError::Type { edge });
+                }
+                (index, NO_WIDEN)
+            }
+            _ => return Err(LoadError::Malformed),
         };
         let info = self.library.ty(ty).ok_or(bad)?;
         let stride = align_up(info.size.into(), info.align.into());
@@ -340,6 +422,7 @@ impl Walk<'_> {
                 from,
                 port,
                 widen,
+                adapter,
                 overflow,
                 ty,
                 offset,

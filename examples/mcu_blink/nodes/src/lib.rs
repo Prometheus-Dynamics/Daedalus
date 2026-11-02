@@ -5,7 +5,7 @@
 //! descriptor to plan the graph on the host).
 #![no_std]
 
-use daedalus_mcu::{Ctx, NodeState, node};
+use daedalus_mcu::{Ctx, NodeState, adapt, node};
 
 /// ADC counts to volts.
 #[node(id = "blink.scale", inputs("raw", "volts_per_count"), outputs("volts"))]
@@ -86,4 +86,11 @@ pub fn rising(active: bool, state: &mut Edges) -> Option<u32> {
 #[node(id = "blink.blink", inputs("active", "period"), outputs("led"))]
 pub fn blink(ctx: &Ctx, active: bool, period: u32) -> bool {
     active && (ctx.tick / period.max(1)).is_multiple_of(2)
+}
+
+/// A user adapter: a host command byte turns the blink on (any nonzero value) and off (zero). Its
+/// edge into `blink.active` is one of the fan-in edges of `graph_fanin.json`.
+#[adapt(id = "blink.command_active", cost = 1)]
+pub fn command_active(command: u8) -> bool {
+    command != 0
 }

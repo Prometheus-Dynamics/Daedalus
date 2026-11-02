@@ -46,6 +46,7 @@ pub static LIBRARY: ::daedalus_mcu::loaded::Library = ::daedalus_mcu::loaded::Li
             run: run_4,
         },
     ],
+    adapters: &[],
 };
 
 /// `blink.scale`

@@ -17,6 +17,16 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`daedalus-mcu` fan-in and user adapters** (compiled, tunable and loaded modes). Several edges
+  into one plain input now plan: the input takes the oldest value of the first edge, in graph
+  order, that holds one, and the other values are dropped, as the full runtime does (`FanIn<T>`
+  stays unsupported). `#[daedalus_mcu::adapt(id, cost)]` declares a plain `no_std` conversion
+  between two port types; the planner uses it like any adapter, inlined in compiled code and as a
+  library entry in loaded mode. The build functions (`compile_document`, `plan`, `library`, ...)
+  take the device's adapters. Plan blobs move to format version 3 (fan-in inputs, an adapter per
+  edge, adapters in the library hash): version 2 blobs are rejected. Several edges into a host
+  output stay a build error. `examples/mcu_blink` adds a fan-in graph with a user adapter, tested
+  natively in all three modes; the blink firmware's compiled size is unchanged.
 - **`daedalus-mcu` `f64` feature** (default): conversions to and from `f64` for parameters,
   constants and widening edges. Without it no `f64` soft-float is linked: an `f64` parameter does not
   compile, a loaded plan converting to or from `f64` fails to load (`LoadError::Type` or

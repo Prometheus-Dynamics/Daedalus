@@ -227,13 +227,8 @@ impl McuPlan {
             let held: Vec<String> = node
                 .inputs
                 .iter()
-                .filter_map(|input| match input {
-                    InputSource::Edge {
-                        edge,
-                        required: true,
-                    } => Some(format!("!self.e{edge}.is_empty()")),
-                    _ => None,
-                })
+                .flat_map(InputSource::required_edges)
+                .map(|edge| format!("!self.e{edge}.is_empty()"))
                 .collect();
             (format!("        if {} {{\n", held.join(" && ")), "pop")
         } else {
@@ -249,6 +244,21 @@ impl McuPlan {
                     required: is_required,
                 } => {
                     let _ = writeln!(out, "            let i{k} = self.e{edge}.{take}();");
+                    if *is_required {
+                        required.push(format!("i{k}"));
+                    }
+                    args.push(format!("i{k}"));
+                }
+                InputSource::Fan {
+                    edges,
+                    required: is_required,
+                } => {
+                    // Every edge is taken (drained or popped); the first with a value wins.
+                    let mut first_value = format!("self.e{}.{take}()", edges[0]);
+                    for edge in &edges[1..] {
+                        let _ = write!(first_value, ".or(self.e{edge}.{take}())");
+                    }
+                    let _ = writeln!(out, "            let i{k} = {first_value};");
                     if *is_required {
                         required.push(format!("i{k}"));
                     }
@@ -308,7 +318,9 @@ impl McuPlan {
             } else {
                 value.to_string()
             };
-            if plan.widen {
+            if let Some(adapter) = &plan.adapter {
+                item = format!("::{}::run({item})", adapter.path);
+            } else if plan.widen {
                 item = format!("<{} as ::core::convert::From<_>>::from({item})", plan.ty);
             }
             let overflow = match plan.overflow {

@@ -4,9 +4,10 @@ use core::mem::MaybeUninit;
 use core::{ptr, slice};
 
 use super::plan::{
-    self, ABSENT, CONST, ConstRec, EdgeRec, HOST, HostRec, Layout, NodeRec, ParamRec, Source, Table,
+    self, ConstRec, EdgeRec, HOST, HostRec, Layout, NodeRec, ParamRec, SOURCE_ABSENT, SOURCE_CONST,
+    Source, Table,
 };
-use super::{Io, Library, LoadError, TypeInfo, scalar_kind};
+use super::{AdapterEntry, Io, Library, LoadError, TypeInfo, scalar_kind};
 use crate::param::{ParamError, ParamSpec, Tunable};
 use crate::{Clock, Ctx, McuError, McuType, Scalar, name_hash};
 
@@ -99,9 +100,19 @@ impl<const ARENA: usize> Interpreter<ARENA> {
     /// Push a value into host input `port` (`McuError::Port` for an unknown port or another
     /// type than the port's).
     pub fn push<T: McuType + Copy>(&mut self, port: u16, value: T) -> Result<(), McuError> {
+        let adapters = self.library.adapters;
         let (_, edges, base) = self.host::<T>(port, |layout| layout.inputs)?;
         // SAFETY: `value` is a `T`, the type of the port's edges (or of their widening).
-        unsafe { push_edges(edges, base, HOST | port, 0, ptr::from_ref(&value).cast()) }
+        unsafe {
+            push_edges(
+                edges,
+                base,
+                adapters,
+                HOST | port,
+                0,
+                ptr::from_ref(&value).cast(),
+            )
+        }
     }
 
     /// Pop the oldest value of host output `port`.
@@ -150,11 +161,10 @@ impl<const ARENA: usize> Interpreter<ARENA> {
         for (index, node) in nodes.iter().enumerate() {
             let entry = &library.nodes[usize::from(node.entry)];
             let sources = &sources[usize::from(node.sources)..][..entry.inputs.len()];
-            let edge = |source: &Source| (source.0 & CONST == 0).then_some(usize::from(source.0));
             // Fire mode `all`: wait until every connected required edge holds a value.
             if node.wait_all
                 && sources.iter().zip(entry.inputs).any(|(source, input)| {
-                    !input.optional && edge(source).is_some_and(|e| edges[e].ring.is_empty())
+                    !input.optional && source.edges().any(|e| edges[e].ring.is_empty())
                 })
             {
                 continue;
@@ -162,27 +172,35 @@ impl<const ARENA: usize> Interpreter<ARENA> {
             let mut io = Io::new();
             let mut ready = true;
             for (k, (source, input)) in sources.iter().zip(entry.inputs).enumerate() {
-                let value = match (source.0, edge(source)) {
-                    (ABSENT, _) => ptr::null(),
-                    (_, Some(e)) => {
-                        let edge = &mut edges[e];
-                        let slot = edge.ring.pop(edge.capacity.into());
-                        // Fire mode `any` drains the edge and reads its oldest value.
-                        if !node.wait_all {
-                            edge.ring.clear();
+                let value = match source.kind {
+                    SOURCE_ABSENT => ptr::null(),
+                    SOURCE_CONST => {
+                        // SAFETY: the constant's slot.
+                        unsafe {
+                            base.add(consts[usize::from(source.first)].offset.into())
+                                .cast_const()
                         }
-                        let at = |slot| usize::from(edge.offset) + slot * usize::from(edge.stride);
-                        // SAFETY: a slot inside the edge's storage; popped values stay in place
-                        // until a later push.
-                        slot.map_or(ptr::null(), |slot| unsafe {
-                            base.add(at(slot)).cast_const()
-                        })
                     }
-                    // SAFETY: the constant's slot.
-                    (konst, None) => unsafe {
-                        base.add(consts[usize::from(konst & !CONST)].offset.into())
-                            .cast_const()
-                    },
+                    _ => {
+                        // Every edge of a fan-in is taken: drained (fire mode `any`) or popped
+                        // once (`all`). The first edge in plan order holding a value supplies
+                        // the input; the other values are dropped, as the full runtime does.
+                        let mut value: *const u8 = ptr::null();
+                        for e in source.edges() {
+                            let edge = &mut edges[e];
+                            let slot = edge.ring.pop(edge.capacity.into());
+                            if !node.wait_all {
+                                edge.ring.clear();
+                            }
+                            if let (true, Some(slot)) = (value.is_null(), slot) {
+                                let at = usize::from(edge.offset) + slot * usize::from(edge.stride);
+                                // SAFETY: a slot inside the edge's storage; a popped value stays
+                                // in place until a later push.
+                                value = unsafe { base.add(at).cast_const() };
+                            }
+                        }
+                        value
+                    }
                 };
                 ready &= input.optional || !value.is_null();
                 io.inputs[k] = value;
@@ -204,7 +222,16 @@ impl<const ARENA: usize> Interpreter<ARENA> {
             )?;
             for k in (0..entry.outputs.len()).filter(|k| io.produced & (1 << k) != 0) {
                 // SAFETY: output `k` was written with the entry's output type.
-                unsafe { push_edges(edges, base, index as u16, k as u8, io.outputs[k])? };
+                unsafe {
+                    push_edges(
+                        edges,
+                        base,
+                        library.adapters,
+                        index as u16,
+                        k as u8,
+                        io.outputs[k],
+                    )?
+                };
             }
         }
         Ok(())
@@ -294,6 +321,7 @@ impl<const ARENA: usize> Tunable for Interpreter<ARENA> {
 unsafe fn push_edges(
     edges: &mut [EdgeRec],
     base: *mut u8,
+    adapters: &[AdapterEntry],
     from: u16,
     port: u8,
     value: *const u8,
@@ -310,6 +338,11 @@ unsafe fn push_edges(
         // SAFETY: a slot of the edge inside the arena; the value types were checked at load.
         unsafe {
             let dst = base.add(usize::from(edge.offset) + slot * usize::from(edge.stride));
+            // `NO_ADAPTER` is past the end of the adapter table.
+            if let Some(adapter) = adapters.get(usize::from(edge.adapter)) {
+                (adapter.run)(value, dst);
+                continue;
+            }
             match (scalar_kind(edge.widen.into()), scalar_kind(edge.ty)) {
                 (Some(from), Some(to)) => {
                     if let Some(widened) = Scalar::read(from, value).coerce(to) {

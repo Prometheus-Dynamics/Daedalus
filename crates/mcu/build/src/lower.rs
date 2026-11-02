@@ -16,7 +16,7 @@ use daedalus_runtime::plugins::PluginRegistry;
 use daedalus_runtime::{NodeFire, RuntimePlan, SchedulerConfig, build_runtime};
 use daedalus_transport::{FreshnessPolicy, OverflowPolicy, PressurePolicy, TypeKey};
 
-use crate::{CompileError, CompileOptions, NodeSpec};
+use crate::{AdapterSpec, CompileError, CompileOptions, NodeSpec};
 
 /// Node metadata marking constants as tunable parameters: a map from input name to its range
 /// (`[min, max]`, or unit for the type's full range), or a list of input names.
@@ -58,10 +58,11 @@ pub struct PlanNode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputSource {
-    Edge {
-        edge: usize,
-        required: bool,
-    },
+    /// One edge into the input.
+    Edge { edge: usize, required: bool },
+    /// Several edges into the input (fan-in, at least two). The input gets the value of the
+    /// first edge, in plan order, that holds one; see docs/mcu.md ("Fan-in").
+    Fan { edges: Vec<usize>, required: bool },
     /// A graph constant: its scalar value, if it is one, and a typed Rust expression.
     Const {
         value: Option<Scalar>,
@@ -69,12 +70,28 @@ pub enum InputSource {
         required: bool,
     },
     /// A graph constant marked tunable: parameter `param`.
-    Param {
-        param: usize,
-        required: bool,
-    },
+    Param { param: usize, required: bool },
     /// An unconnected optional input (`None`).
     Absent,
+}
+
+impl InputSource {
+    /// The edges feeding the input, in plan order.
+    pub fn edges(&self) -> &[usize] {
+        match self {
+            Self::Edge { edge, .. } => std::slice::from_ref(edge),
+            Self::Fan { edges, .. } => edges,
+            Self::Const { .. } | Self::Param { .. } | Self::Absent => &[],
+        }
+    }
+
+    /// The edges feeding a required input (none for an optional one).
+    pub fn required_edges(&self) -> &[usize] {
+        match self {
+            Self::Edge { required: true, .. } | Self::Fan { required: true, .. } => self.edges(),
+            _ => &[],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -88,6 +105,16 @@ pub struct PlanEdge {
     pub overflow: Overflow,
     /// The producer's values go through the builtin widening `From` conversion.
     pub widen: bool,
+    /// The values go through a user adapter at the push.
+    pub adapter: Option<PlanAdapter>,
+}
+
+/// A user adapter on an edge: its id (the library entry of loaded mode) and the module path of
+/// its generated glue (compiled mode calls it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanAdapter {
+    pub id: String,
+    pub path: String,
 }
 
 /// Where an edge's values come from.
@@ -124,6 +151,7 @@ pub struct PlanParam {
 pub(crate) fn lower(
     graph: Graph,
     specs: &[NodeSpec],
+    adapters: &[AdapterSpec],
     registry: &PluginRegistry,
     options: &CompileOptions,
 ) -> Result<McuPlan, CompileError> {
@@ -146,7 +174,7 @@ pub(crate) fn lower(
     let graph = &plan.graph;
     let explanations = edge_explanations(&graph.metadata);
 
-    let types = TypeNames::new(specs);
+    let types = TypeNames::new(specs, adapters);
     let spec_of = |index: usize| -> Result<Option<(usize, &NodeSpec)>, CompileError> {
         let node = &graph.nodes[index];
         if is_host_bridge_metadata(&node.metadata) {
@@ -214,10 +242,23 @@ pub(crate) fn lower(
             },
         };
         edge_types.push((&explanation.from_type, &explanation.to_type));
+        let (widen, adapter) = match conversion(explanation, adapters)
+            .map_err(|why| unsupported(format!("edge {label}: {why}")))?
+        {
+            Conversion::Direct => (false, None),
+            Conversion::Widen => (true, None),
+            Conversion::Adapter(index) => (
+                false,
+                Some(PlanAdapter {
+                    id: adapters[index].id.clone(),
+                    path: adapters[index].path.clone(),
+                }),
+            ),
+        };
         edges.push(PlanEdge {
             ty: types.rust(&explanation.to_type)?,
-            widen: widens(explanation)
-                .map_err(|why| unsupported(format!("edge {label}: {why}")))?,
+            widen,
+            adapter,
             from,
             label,
             capacity,
@@ -225,20 +266,15 @@ pub(crate) fn lower(
         });
     }
 
-    let incoming = |node: usize, port: &str| -> Result<Option<usize>, CompileError> {
-        let mut found = graph
+    // The edges into a node's input, in graph order (several for a fan-in).
+    let incoming = |node: usize, port: &str| -> Vec<usize> {
+        graph
             .edges
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.to.node.0 == node && e.to.port.eq_ignore_ascii_case(port));
-        let first = found.next().map(|(i, _)| i);
-        if found.next().is_some() {
-            return Err(unsupported(format!(
-                "several edges into `{}.{port}` (fan-in)",
-                name_of(node)
-            )));
-        }
-        Ok(first)
+            .filter(|(_, e)| e.to.node.0 == node && e.to.port.eq_ignore_ascii_case(port))
+            .map(|(i, _)| i)
+            .collect()
     };
     let outgoing = |node: usize, port: &str| -> Vec<usize> {
         graph
@@ -267,7 +303,14 @@ pub(crate) fn lower(
                         edges: edges_out,
                     });
                 } else {
-                    let edge = incoming(index, &port)?.unwrap_or_default();
+                    let edges_in = incoming(index, &port);
+                    if edges_in.len() > 1 {
+                        return Err(unsupported(format!(
+                            "several edges into host output `{}.{port}` (fan-in into a host output)",
+                            name_of(index)
+                        )));
+                    }
+                    let edge = edges_in.first().copied().unwrap_or_default();
                     host_outputs.push(HostPort {
                         name: port,
                         ty: edges[edge].ty.clone(),
@@ -305,19 +348,27 @@ pub(crate) fn lower(
             let required = !port.optional;
             let name = format!("{}.{}", name_of(index), port.name);
             let constant = node.const_inputs.iter().find(|(n, _)| n == &port.name);
-            inputs.push(match (incoming(index, &port.name)?, constant) {
-                (Some(_), Some(_)) => {
+            let edges_in = incoming(index, &port.name);
+            inputs.push(match (edges_in.as_slice(), constant) {
+                ([_, ..], Some(_)) => {
                     return Err(unsupported(format!(
                         "`{name}` has both an edge and a constant"
                     )));
                 }
-                (Some(_), None) if ranges.contains_key(&port.name) => {
+                ([_, ..], None) if ranges.contains_key(&port.name) => {
                     return Err(unsupported(format!(
                         "parameter `{name}` is connected to an edge, not a constant"
                     )));
                 }
-                (Some(edge), None) => InputSource::Edge { edge, required },
-                (None, Some((_, value))) => {
+                ([edge], None) => InputSource::Edge {
+                    edge: *edge,
+                    required,
+                },
+                (edges @ [_, _, ..], None) => InputSource::Fan {
+                    edges: edges.to_vec(),
+                    required,
+                },
+                ([], Some((_, value))) => {
                     let (value, expr) = constant_value(&port.key, value)
                         .map_err(|why| unsupported(format!("constant `{name}`: {why}")))?;
                     match ranges.get(&port.name) {
@@ -348,11 +399,11 @@ pub(crate) fn lower(
                         },
                     }
                 }
-                (None, None) if ranges.contains_key(&port.name) => {
+                ([], None) if ranges.contains_key(&port.name) => {
                     return Err(unsupported(format!("parameter `{name}` has no constant")));
                 }
-                (None, None) if port.optional => InputSource::Absent,
-                (None, None) => {
+                ([], None) if port.optional => InputSource::Absent,
+                ([], None) => {
                     return Err(CompileError::Planner(format!(
                         "required input `{name}` is not connected and has no constant"
                     )));
@@ -361,7 +412,7 @@ pub(crate) fn lower(
         }
         let has_required_edge = inputs
             .iter()
-            .any(|input| matches!(input, InputSource::Edge { required: true, .. }));
+            .any(|input| !input.required_edges().is_empty());
         nodes.push((
             index,
             PlanNode {
@@ -384,10 +435,8 @@ pub(crate) fn lower(
     // every tick, so an edge between two nodes into such a consumer never holds more than one
     // value: one slot, never full, whatever its policy.
     for (_, node) in nodes.iter().filter(|(_, node)| !node.wait_all) {
-        for input in &node.inputs {
-            if let InputSource::Edge { edge, .. } = *input
-                && matches!(edges[edge].from, Endpoint::Node { .. })
-            {
+        for &edge in node.inputs.iter().flat_map(InputSource::edges) {
+            if matches!(edges[edge].from, Endpoint::Node { .. }) {
                 edges[edge].capacity = 1;
                 edges[edge].overflow = Overflow::DropOldest;
             }
@@ -480,25 +529,48 @@ fn queue_shape(
     })
 }
 
-/// Whether an edge converts through the builtin widening adapter; other adapters need the
-/// full runtime.
-fn widens(explanation: &EdgeResolutionExplanation) -> Result<bool, String> {
+/// How an edge converts its values: nothing, the builtin widening, or a user adapter (an index
+/// into the device's adapters).
+enum Conversion {
+    Direct,
+    Widen,
+    Adapter(usize),
+}
+
+/// The conversion of an edge's adapter path. The device runs one step: builtin numeric widening
+/// or a user adapter; any other path needs the full runtime.
+fn conversion(
+    explanation: &EdgeResolutionExplanation,
+    adapters: &[AdapterSpec],
+) -> Result<Conversion, String> {
     match explanation.adapter_path.as_slice() {
-        [] => Ok(false),
-        [step] if step.adapter.as_str().starts_with("daedalus.builtin.widen.") => Ok(true),
+        [] => Ok(Conversion::Direct),
+        [step] if step.adapter.as_str().starts_with("daedalus.builtin.widen.") => {
+            Ok(Conversion::Widen)
+        }
+        [step] => adapters
+            .iter()
+            .position(|adapter| adapter.id == step.adapter.as_str())
+            .map(Conversion::Adapter)
+            .ok_or_else(|| {
+                format!(
+                    "adapter `{}` (the device runs builtin numeric widening and its own `#[adapt]` functions)",
+                    step.adapter.as_str()
+                )
+            }),
         steps => Err(format!(
-            "adapter path {:?} (only builtin numeric widening runs on the device)",
+            "adapter path {:?} (the device runs one adapter step per edge)",
             steps.iter().map(|s| s.adapter.as_str()).collect::<Vec<_>>()
         )),
     }
 }
 
 /// Rust type names per transport key: builtin scalars by name, other keys through the
-/// `In<k>`/`Out<k>` alias of a device port declaring them.
+/// `In<k>`/`Out<k>` alias of a device port declaring them, and user adapters' `In`/`Out`.
 pub(crate) struct TypeNames(BTreeMap<String, String>);
 
 impl TypeNames {
-    pub(crate) fn new(specs: &[NodeSpec]) -> Self {
+    pub(crate) fn new(specs: &[NodeSpec], adapters: &[AdapterSpec]) -> Self {
         let mut names = BTreeMap::new();
         for spec in specs {
             for (prefix, ports) in [("In", &spec.inputs), ("Out", &spec.outputs)] {
@@ -507,6 +579,13 @@ impl TypeNames {
                         .entry(port.key.clone())
                         .or_insert_with(|| format!("::{}::{prefix}{k}", spec.path));
                 }
+            }
+        }
+        for adapter in adapters {
+            for (key, alias) in [(&adapter.from, "In"), (&adapter.to, "Out")] {
+                names
+                    .entry(key.clone())
+                    .or_insert_with(|| format!("::{}::{alias}", adapter.path));
             }
         }
         Self(names)

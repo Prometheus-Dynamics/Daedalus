@@ -14,16 +14,17 @@ the mode each firmware chooses:
 Crates:
 
 - [`daedalus-mcu`](../crates/mcu/device/src/lib.rs) (`#![no_std]`, no `alloc`): fixed-capacity
-  edge `Queue`s, the node descriptor types, `McuType` keys, `NodeState`, `Ctx`/`Clock`, `Scalar`
-  values, parameters (`Tunable`, `ParamUpdate`), the wire codec and the error enums, plus the
-  `#[daedalus_mcu::node]` attribute (from `daedalus-mcu-macros`). Feature `loaded`: the plan
-  interpreter and the node library types.
+  edge `Queue`s, the node and adapter descriptor types, `McuType` keys, `NodeState`, `Ctx`/`Clock`,
+  `Scalar` values, parameters (`Tunable`, `ParamUpdate`), the wire codec and the error enums, plus
+  the `#[daedalus_mcu::node]` and `#[daedalus_mcu::adapt]` attributes (from `daedalus-mcu-macros`).
+  Feature `loaded`: the plan interpreter and the node library types.
 - [`daedalus-mcu-build`](../crates/mcu/build/src/lib.rs) (host, `std`): plans a graph against the
   device nodes and renders it as a compiled module, a node library or a plan blob, from a
   `build.rs` or the `daedalus-mcu` command line tool.
 - [`examples/mcu_blink`](../examples/mcu_blink): a five-node graph in all three modes, with
-  firmware for Cortex-M4F and Cortex-M0+ and native tests of the same code. Its planner output is
-  checked in under `examples/mcu_blink/generated/`, regenerated with
+  firmware for Cortex-M4F and Cortex-M0+ and native tests of the same code, and a second graph
+  with fan-in and a user adapter (`graph_fanin.json`) tested natively in all three modes. Its
+  planner output is checked in under `examples/mcu_blink/generated/`, regenerated with
   `cargo run -p daedalus-mcu-blink --example generate` and checked by its `tests/generated.rs`.
 
 ## Which Runtime
@@ -34,7 +35,7 @@ Crates:
 | Planning | on the host, at run time | on the device or the host | on the host |
 | Graph changes | patches, hot reload, plugins | rebuild the plan on the device | rebuild the firmware, set parameters, or load a plan blob |
 | Payloads | `Payload` (`Arc<dyn Any>`, type keys, lineage) | same | typed values in typed queues |
-| Adapters | any registered adapter, GPU, foreign interfaces | CPU adapters | builtin numeric widening only |
+| Adapters | any registered adapter, GPU, foreign interfaces | CPU adapters | builtin numeric widening and user `#[adapt]` functions (one step per edge) |
 | Flash / RAM (measured below) | - | ~236 KiB flash, ~20-29 KB heap (one node) | ~3-12 KiB flash, 112-584 B RAM (five nodes) |
 
 Use the MCU profile when the device is small (Cortex-M0+/M4 class, 32 KB of RAM or less) and
@@ -49,9 +50,9 @@ the full runtime everywhere else.
 | --- | --- | --- | --- |
 | Changes at run time | nothing | marked constants | wiring, constants, parameters, edge policies, which library nodes run |
 | Needs a firmware update for | any change | wiring, unmarked constants | new or changed node code |
-| Code | straight-line `tick`, nodes inlined | + parameter table, setters, update decoder | + interpreter, blob validator, one type-erased adapter per library node |
+| Code | straight-line `tick`, nodes inlined | + parameter table, setters, update decoder | + interpreter, blob validator, one type-erased entry per library node and user adapter |
 | RAM | queues + state | + one field per parameter | a fixed arena (plan tables, queues, state, constants) |
-| Blink example, M0+ | 3.2 KiB flash, 112 B RAM | 5.4 KiB, 128 B | 11.7 KiB, 584 B |
+| Blink example, M0+ | 3.2 KiB flash, 112 B RAM | 5.4 KiB, 128 B | 12.3 KiB, 584 B |
 
 Choose compiled for minimal devices and frozen graphs (a production build of a graph tuned on a
 tunable build is compiled with `freeze_params`). Choose tunable when the structure is settled but
@@ -86,19 +87,21 @@ and a few KiB more flash and an arena of RAM are acceptable.
    `const_inputs` set constants, `daedalus.host_input_types` declares host port types and
    `daedalus.mcu.params` marks tunable constants ([Parameters](#parameters)).
 
-3. **`build.rs`** plans and writes the module:
+3. **`build.rs`** plans and writes the module (`&[]` where the graph has no user adapters, see
+   [User Adapters](#user-adapters)):
 
    ```rust
    let nodes = [scale::NODE, lowpass::NODE, threshold::NODE];
    let json = std::fs::read_to_string("graph.json").unwrap();
-   let source = daedalus_mcu_build::compile_document(&json, &nodes, &Default::default())
+   let source = daedalus_mcu_build::compile_document(&json, &nodes, &[], &Default::default())
        .unwrap_or_else(|err| panic!("{err}"));
    daedalus_mcu_build::write_out_dir("graph.rs", &source).unwrap();
    println!("cargo:rerun-if-changed=graph.json");
    ```
 
    Planning errors (unknown nodes, type mismatches, missing converters, unconnected inputs) and
-   unsupported features fail the build with the planner's diagnostics.
+   unsupported features fail the build with the planner's diagnostics. Several edges into one
+   input are fan-in ([Semantics](#semantics)), not an error.
 
    A build script that plans compiles `daedalus-mcu-build` (the planner, registry and runtime) a
    second time for the host, and reruns on every change to the nodes or the runtime. A larger
@@ -145,6 +148,29 @@ allocation), so the device attribute is separate: it generates only the descript
 glue. `daedalus-mcu-build` turns the descriptor into the same `NodeDecl` a `#[node]` declares
 (port keys and schemas, optional inputs, fire mode, conditional outputs), so planning,
 readiness and lints treat device nodes like any other.
+
+### User Adapters
+
+`#[daedalus_mcu::adapt(id = "..", cost = 1)]` declares a conversion between two port types: a
+plain function of one input (`T` or `&T`) returning one value (not a `Result`, an `Option` or a
+tuple), with no generics:
+
+```rust
+#[daedalus_mcu::adapt(id = "blink.command_active", cost = 1)]
+pub fn command_active(command: u8) -> bool { command != 0 }
+```
+
+The module of the same name gets `ADAPTER` (an `AdapterDesc`: the id, the input and output port
+type keys and the planner's cost), the aliases `In`/`Out` and `run(input: In) -> Out`. The host
+passes the adapters to the planner with the nodes: `compile_document(json, &nodes, &adapters, ..)`,
+`plan(..)` and `library(&nodes, &adapters)`. The planner resolves an edge's conversion like any
+adapter (the cheapest path), and an edge whose path is one user adapter, or builtin numeric
+widening, converts at the push: compiled code calls `run` inline, and loaded mode calls the
+adapter's library entry through a type-erased pointer. A path of several steps, or an adapter
+the device does not declare, is a build error.
+
+The types need `McuType` keys, and loaded mode also needs them `Copy` (as port values). An adapter
+has no state and cannot fail; a conversion that can fail belongs in a node.
 
 ## Parameters
 
@@ -206,19 +232,20 @@ $ daedalus-mcu param tunable.json threshold.on 2.5
 A loaded-mode firmware contains a **node library** and the interpreter; plans are compiled on
 the host into **plan blobs** and loaded at run time.
 
-1. **`build.rs`** generates the library from the nodes the firmware includes, and writes its
-   manifest for host tools:
+1. **`build.rs`** generates the library from the nodes and user adapters the firmware includes,
+   and writes its manifest for host tools:
 
    ```rust
-   let library = daedalus_mcu_build::library(&[scale::NODE, lowpass::NODE, threshold::NODE])?;
+   let library = daedalus_mcu_build::library(&[scale::NODE, lowpass::NODE, threshold::NODE], &[])?;
    daedalus_mcu_build::write_out_dir("library.rs", library.to_rust()?)?;
    daedalus_mcu_build::write_out_dir("library.json", library.to_json())?;
    ```
 
    `library.rs` defines `LIBRARY` (a `daedalus_mcu::loaded::Library`): per node its input and
-   output type ids, its state layout and a type-erased `run` adapter over the node's `run` glue,
-   plus `LIBRARY_HASH`, a hash of the node interfaces (ids, port names, types, optional inputs,
-   conditional outputs, fire mode; not the node code).
+   output type ids, its state layout and a type-erased `run` adapter over the node's `run` glue;
+   per user adapter its input and output type ids and a type-erased call; plus `LIBRARY_HASH`, a
+   hash of the node and adapter interfaces (ids, port names, types, optional inputs, conditional
+   outputs, fire mode, adapter ids and types; not the code).
 
 2. **Plans** are compiled against the library manifest, with the same planning, lowering and
    checks as compiled mode (`daedalus_mcu_build::compile_loaded`, then `McuPlan::to_blob`), in a
@@ -255,8 +282,9 @@ the host into **plan blobs** and loaded at run time.
 **Validation** (`LoadError`): the `DMCU` magic and the format version (`Version`), the trailing
 CRC-32 (`Checksum`, which also catches truncated or padded blobs), the library hash (`Library`), library entries and input counts (`Node`), required inputs without a source
 and constants of another type than their input (`Input`), edges whose producer does not exist,
-does not run before its consumer, or whose capacity or overflow policy is invalid (`Edge`),
-producer and consumer types that differ and do not widen (`Type`), parameters whose value,
+does not run before its consumer, whose capacity or overflow policy is invalid, or whose adapter
+is not in the library (`Edge`), producer and consumer types that differ and do not widen or convert
+through the edge's adapter (`Type`), parameters whose value,
 range or type is invalid (`Param`), host ports of unknown types (`Port`), the arena size
 (`Arena { needed }`), and truncated input or trailing bytes (`Malformed`).
 
@@ -277,7 +305,7 @@ at most 8 inputs and outputs; constants and parameters are scalars.
 
 ### Formats and Versioning
 
-- **Plan blob** (`FORMAT_VERSION` 2), postcard encoding:
+- **Plan blob** (`FORMAT_VERSION` 3), postcard encoding:
 
   ```text
   magic [u8; 4] = "DMCU", version u8, library u64, plan u64,
@@ -285,18 +313,22 @@ at most 8 inputs and outputs; constants and parameters are scalars.
   host_inputs, host_outputs: seq<{ name: u32, ty: u16 }>
   nodes: seq<{ wait_all: bool, inputs: seq<Input> }>
     Input = Absent | Edge(Edge) | Const(Scalar) | Param { value, min, max: Scalar }
-    Edge  = { from: Host(u16) | Node(u16, u8), capacity: u16, overflow: u8 }
+          | Fan(seq<Edge>)               several edges into one input (at least two)
+    Edge  = { from: Host(u16) | Node(u16, u8), capacity: u16, overflow: u8,
+              convert: None | Adapter(u8) }
   outputs: seq<Edge>                   the edge into each host output
   crc: u32 little-endian               CRC-32 (IEEE, `daedalus_mcu::loaded::crc32`) of every byte before it
   ```
 
   Names are 32-bit FNV-1a hashes (`daedalus_mcu::name_hash`); type ids are the `ScalarKind`
   tags, then the library's other port types in manifest order; overflow is 0 drop oldest,
-  1 drop newest, 2 error. Edges and parameters are numbered in order of appearance (the plan
-  manifest lists them). A producer node must come before its consumer.
+  1 drop newest, 2 error; `Adapter` names a library adapter by index. Edges and parameters are
+  numbered in order of appearance (the plan manifest lists them): a fan-in's edges in their
+  order. A producer node must come before its consumer.
 - **Versioning.** The version byte changes whenever the blob layout or its meaning changes; a
   firmware rejects other versions (`LoadError::Version`), so host tools must target the
-  firmware's version. Node interface changes change the library hash. `ParamUpdate` has no
+  firmware's version (blobs of version 2, from before fan-in and user adapters, are rejected).
+  Node and adapter interface changes change the library hash. `ParamUpdate` has no
   version byte: it is the stable `(id, Scalar)` pair, and ids come from the manifest of the
   plan the device runs (check `plan_hash`).
 - **Manifests** (JSON): `daedalus.mcu.library` (hash, nodes with ports and type keys, extra types)
@@ -317,6 +349,15 @@ tests compare them):
   oldest value of each (what arrives while it is not ready is dropped). In fire mode `all` it
   waits, popping nothing, until every connected required edge holds a value, then pops one value
   per edge.
+- **Fan-in.** Several edges into one plain input (not `FanIn<T>`) deliver one value per tick. The
+  full runtime hands the node every value of every edge in one list, in edge order, and the node
+  reads the first entry of its port: the oldest value of the first edge in graph order that holds
+  one. The device does the same: every edge into the input is drained (fire mode `any`) or popped
+  once (`all`), the first value in graph order supplies the input, and the others are dropped
+  (the runtime drops them too, when the node returns). In fire mode `all` the node waits until
+  every edge into a required input holds a value. Each edge from a node producer into a fan-in
+  keeps one slot, as any edge into a consumer in mode `any`. Several edges into a host output
+  stay a build error: the application pops one queue per output.
 - **Constants** (`const_inputs`, builtin scalars and `bool`) are typed literals in compiled code
   and typed values in the arena in loaded mode. A required input with neither an edge nor a
   constant is a build error.
@@ -336,7 +377,10 @@ tests compare them):
   arithmetic (`daedalus_mcu::Ring`).
 - **Conversions.** An edge the planner resolves with the builtin numeric widening adapter
   (`u16 -> f32`, ...) converts at the push (`From` in compiled code, `Scalar::coerce` in the
-  interpreter); any other adapter is a build error.
+  interpreter). An edge resolved with a user adapter converts at the push too: each value the
+  producer pushes is converted once, then queued (or dropped by the edge's overflow policy). The
+  full runtime converts when the consumer collects a value, so the difference is only the number
+  of adapter calls, and a pure adapter cannot observe it. Other adapter paths are build errors.
 - **Errors** are small `Copy` enums without formatting: `McuError::Node { node, error }` (a node
   returned `Err`; the tick stops there), `McuError::QueueFull { edge }` and, in loaded mode,
   `McuError::Port { port }`. Indices refer to the generated `NODE_IDS` and `EDGES` (compiled)
@@ -360,7 +404,7 @@ is `.vector_table + .text + .rodata + .data`, static RAM `.data + .bss`; no heap
 | --- | --- | --- | --- | --- |
 | Compiled (`daedalus-mcu-blink`) | 2988 B | 3316 B | 112 B | 8 KiB / 512 B, and exactly these sizes |
 | Compiled + tunable, 4 parameters (`-tunable`) | 4424 B | 5488 B | 128 B | 6 KiB / 512 B |
-| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11060 B | 12024 B | 584 B | 13 KiB / 1 KiB |
+| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11496 B | 12572 B | 584 B | 13 KiB / 1 KiB |
 
 - **Compiled**: 1024 B (M4F) / 192 B (M0+) of vector table; the M0+ code includes soft-float.
   The 112 B of RAM are the whole `Graph` (eight queues, five state slots, the tick counter) plus
@@ -371,10 +415,14 @@ is `.vector_table + .text + .rodata + .data`, static RAM `.data + .bss`; no heap
   `daedalus-mcu` without its default `f64` feature, so no `f64` soft-float is linked (with it:
   +588 B M4F, +464 B M0+, in the tunable firmware); an `f64` update to an `f32` parameter still
   converts, in integer arithmetic.
-- **Loaded**: +7.9 KiB (M4F) / +8.5 KiB (M0+): the blob validator (about 2 KiB, with the CRC-32),
-  the interpreter, five adapters and the conversion code; the blobs are 177 B (plan A) and 127 B
-  (plan B), each with its 4-byte checksum. RAM is the 512 B arena plus the interpreter's state; plan A uses 424 B of the arena
-  (plan tables about 280 B, queues, states, constants and parameter bounds the rest), plan B 312 B.
+- **Loaded**: +8.3 KiB (M4F) / +9.0 KiB (M0+): the blob validator (about 2 KiB, with the CRC-32),
+  the interpreter, the five node entries and the conversion and fan-in code (the blink library has
+  no user adapter). The blobs are 185 B (plan A) and 134 B (plan B), each with its 4-byte checksum.
+  RAM is the 512 B arena plus the interpreter's state; plan A uses 448 B of the arena and plan B
+  328 B.
+- **Fan-in graph** (`graph_fanin.json`, the blink nodes plus the `command_active` adapter, all
+  three modes natively): plan A and plan B each use 440 B of a 512 B arena, with blobs of 188 B and
+  187 B. It has no firmware of its own, so its flash and RAM are not measured.
 
 For comparison, the `no_std` runtime running a one-node graph on the M4F takes ~213 KiB of code
 plus 23 KiB of rodata, a ~18-20 KB heap peak (32-bit) and 521 allocations, and ~560 KiB with
@@ -407,11 +455,14 @@ its budgets, or when the compiled firmware's size changes.
 ## Limitations
 
 Not supported by the MCU profile (each is a build error naming the node or edge): adapters other
-than builtin numeric widening (including user `#[adapt]`s, branch adapters and foreign
-interfaces), several edges into one input (fan-in, `FanIn<T>`), an input with both an edge and a
-constant, constants of non-scalar types, GPU nodes, coalescing and freshness policies other than
-latest-only, and more than one host bridge node. Loaded mode also needs `Copy` port values,
-states without drop glue, scalar constants and at most 8 ports per node. Plugins,
+than builtin numeric widening and user `#[adapt]` functions, adapter paths of several steps,
+branch adapters and foreign interfaces; several edges into a host output; indexed fan-in ports
+(`FanIn<T>`, `{prefix}{N}`: the device node attribute declares no such port, while plain fan-in
+into one input works, see [Semantics](#semantics)); an input with both an edge and a constant;
+constants of non-scalar types; GPU nodes; coalescing and freshness policies other than latest-only;
+and more than one host bridge node. A user adapter cannot fail and has no state. Loaded mode also
+needs `Copy` port values (adapter types included), states without drop glue, scalar constants and
+at most 8 ports per node. Plugins,
 `dylib-plugins`, patches, hot reload, telemetry, `Payload` lineage and the `HostGraph` API are
 runtime features with no device counterpart. Nodes that fail stop the tick (fail-fast). The
 example's `memory.x` is a generic 128 KiB/32 KiB layout for linking and measuring; adapt it, and

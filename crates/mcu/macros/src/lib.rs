@@ -392,3 +392,110 @@ fn last_ident(ty: &Type) -> Option<&syn::Ident> {
 fn same_type(a: &Type, b: &Type) -> bool {
     a.to_token_stream().to_string() == b.to_token_stream().to_string()
 }
+
+/// Declare a user adapter: `#[adapt(id = "..", cost = 1)] fn f(x: In) -> Out` (or `x: &In`).
+///
+/// The function is kept as written. The macro adds a module of the same name with `ADAPTER:
+/// daedalus_mcu::AdapterDesc` (the id, the input and output port type keys and the planner cost),
+/// `In`/`Out` (the types) and `run(x: In) -> Out`, the uniform call the generated code makes.
+/// Adapters are infallible and take one input and return one value; they must be plain
+/// `no_std` functions, and the input and output types need [`McuType`] keys.
+#[proc_macro_attribute]
+pub fn adapt(
+    args: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let item = syn::parse_macro_input!(item as ItemFn);
+    expand_adapter(args.into(), item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn expand_adapter(args: TokenStream, item: ItemFn) -> syn::Result<TokenStream> {
+    let mut id = None;
+    let mut cost: u32 = 1;
+    syn::meta::parser(|meta| {
+        if meta.path.is_ident("id") {
+            id = Some(meta.value()?.parse::<Expr>()?);
+        } else if meta.path.is_ident("cost") {
+            cost = meta.value()?.parse::<syn::LitInt>()?.base10_parse()?;
+        } else {
+            return Err(meta.error("expected id or cost"));
+        }
+        Ok(())
+    })
+    .parse2(args)?;
+    let sig = &item.sig;
+    let span = sig.ident.span();
+    let id = id.ok_or_else(|| syn::Error::new(span, "missing `id = \"...\"`"))?;
+    if !sig.generics.params.is_empty() || sig.asyncness.is_some() {
+        return Err(syn::Error::new(
+            span,
+            "device adapters are plain, non-generic functions",
+        ));
+    }
+    let mut inputs = sig.inputs.iter();
+    let (Some(FnArg::Typed(input)), None) = (inputs.next(), inputs.next()) else {
+        return Err(syn::Error::new(span, "an adapter takes exactly one input"));
+    };
+    let (in_ty, by_ref) = match &*input.ty {
+        Type::Reference(reference) if reference.mutability.is_none() => {
+            ((*reference.elem).clone(), true)
+        }
+        Type::Reference(_) => {
+            return Err(syn::Error::new_spanned(
+                &input.ty,
+                "an adapter borrows its input immutably or takes it by value",
+            ));
+        }
+        other => (other.clone(), false),
+    };
+    let ReturnType::Type(_, out_ty) = &sig.output else {
+        return Err(syn::Error::new(span, "an adapter returns its output value"));
+    };
+    if generic_arg(out_ty, "Result").is_some()
+        || option_inner(out_ty).is_some()
+        || matches!(&**out_ty, Type::Tuple(_))
+    {
+        return Err(syn::Error::new_spanned(
+            out_ty,
+            "device adapters are infallible and return one value (not Result, Option or a tuple)",
+        ));
+    }
+
+    let fn_name = &sig.ident;
+    let vis = &item.vis;
+    let call_arg = if by_ref {
+        quote!(&input)
+    } else {
+        quote!(input)
+    };
+    let doc =
+        format!("Adapter glue of the [`{fn_name}`](fn@{fn_name}) (`#[daedalus_mcu::adapt]`).");
+    Ok(quote! {
+        #item
+
+        #[doc = #doc]
+        #[allow(non_snake_case)]
+        #vis mod #fn_name {
+            #[allow(unused_imports)]
+            use super::*;
+
+            pub type In = #in_ty;
+            pub type Out = #out_ty;
+
+            pub const ADAPTER: ::daedalus_mcu::AdapterDesc = ::daedalus_mcu::AdapterDesc {
+                id: #id,
+                path: ::core::module_path!(),
+                from: <In as ::daedalus_mcu::McuType>::KEY,
+                to: <Out as ::daedalus_mcu::McuType>::KEY,
+                cost: #cost,
+            };
+
+            #[inline(always)]
+            pub fn run(input: In) -> Out {
+                super::#fn_name(#call_arg)
+            }
+        }
+    })
+}

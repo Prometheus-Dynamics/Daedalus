@@ -62,7 +62,14 @@ impl McuPlan {
                     InputSource::Absent => w.put(&[0]),
                     InputSource::Edge { edge, .. } => {
                         w.put(&[1]);
-                        self.write_edge(&mut w, *edge)?;
+                        self.write_edge(&mut w, *edge, library)?;
+                    }
+                    InputSource::Fan { edges, .. } => {
+                        w.put(&[4]);
+                        w.varint(edges.len() as u64);
+                        for &edge in edges {
+                            self.write_edge(&mut w, edge, library)?;
+                        }
                     }
                     InputSource::Const {
                         value: Some(value), ..
@@ -88,14 +95,19 @@ impl McuPlan {
         }
         w.varint(self.host_outputs.len() as u64);
         for port in &self.host_outputs {
-            self.write_edge(&mut w, port.edges[0])?;
+            self.write_edge(&mut w, port.edges[0], library)?;
         }
         let crc = crc32(&w.0);
         w.0.extend_from_slice(&crc.to_le_bytes());
         Ok(w.0)
     }
 
-    fn write_edge(&self, w: &mut Bytes, edge: usize) -> Result<(), CompileError> {
+    fn write_edge(
+        &self,
+        w: &mut Bytes,
+        edge: usize,
+        library: &LibraryManifest,
+    ) -> Result<(), CompileError> {
         let edge = &self.edges[edge];
         match edge.from {
             Endpoint::Host { port } => {
@@ -113,16 +125,27 @@ impl McuPlan {
         w.varint(capacity.into());
         let overflow = Overflow::ALL.iter().position(|o| *o == edge.overflow);
         w.put(&[overflow.unwrap_or_default() as u8]);
+        match &edge.adapter {
+            None => w.put(&[0]),
+            Some(adapter) => {
+                let index = library.adapter_index(&adapter.id).ok_or_else(|| {
+                    unsupported(format!("adapter `{}` not in the library", adapter.id))
+                })?;
+                w.put(&[1]);
+                w.varint(index.into());
+            }
+        }
         Ok(())
     }
 
-    /// Graph edge indices in blob order (`McuError::QueueFull::edge` of a loaded plan).
+    /// Graph edge indices in blob order (`McuError::QueueFull::edge` of a loaded plan): the
+    /// node inputs' edges in order (a fan-in's in its order), then the host outputs'.
     pub fn blob_edges(&self) -> Vec<usize> {
-        let inputs = self.nodes.iter().flat_map(|node| &node.inputs);
-        let into_nodes = inputs.filter_map(|input| match input {
-            InputSource::Edge { edge, .. } => Some(*edge),
-            _ => None,
-        });
+        let into_nodes = self
+            .nodes
+            .iter()
+            .flat_map(|node| &node.inputs)
+            .flat_map(|input| input.edges().iter().copied());
         into_nodes
             .chain(self.host_outputs.iter().map(|port| port.edges[0]))
             .collect()

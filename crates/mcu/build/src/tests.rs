@@ -1,6 +1,6 @@
 use super::*;
 use daedalus_data::model::{TypeExpr, ValueType};
-use daedalus_mcu::McuType;
+use daedalus_mcu::{AdapterDesc, McuType};
 use daedalus_planner::{Edge, HostPortTypes, NodeInstance};
 use daedalus_registry::typeexpr_transport_key;
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY};
@@ -8,7 +8,18 @@ use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY};
 // The functions are only called through their generated `run` glue.
 #[allow(dead_code)]
 mod nodes {
-    use daedalus_mcu::{NodeError, node};
+    use daedalus_mcu::{NodeError, adapt, node};
+
+    /// A user adapter: any nonzero command turns the latch on.
+    #[adapt(id = "t.u8_to_bool", cost = 2)]
+    pub fn active(command: u8) -> bool {
+        command != 0
+    }
+
+    #[node(id = "t.latch", inputs("on"), outputs("on"))]
+    pub fn latch(on: bool) -> bool {
+        on
+    }
 
     #[node(id = "t.gain", inputs("x", "k"), outputs("y"))]
     pub fn gain(x: f32, k: f32) -> f32 {
@@ -31,6 +42,8 @@ mod nodes {
 }
 
 const NODES: [NodeDesc; 3] = [nodes::gain::NODE, nodes::check::NODE, nodes::join::NODE];
+const LATCH: [NodeDesc; 1] = [nodes::latch::NODE];
+const ADAPTERS: [AdapterDesc; 1] = [nodes::active::ADAPTER];
 
 fn host() -> NodeInstance {
     NodeInstance::new(HOST_BRIDGE_ID)
@@ -114,7 +127,7 @@ fn descriptors_record_ports_and_readiness() {
 
 #[test]
 fn plans_schedule_queues_constants_and_host_ports() {
-    let plan = plan(pipeline(), &NODES, &CompileOptions::default()).unwrap();
+    let plan = plan(pipeline(), &NODES, &[], &CompileOptions::default()).unwrap();
     let names: Vec<_> = plan.nodes.iter().map(|n| n.name.as_str()).collect();
     assert_eq!(names, ["t.gain", "t.check"]);
     let shapes: Vec<_> = plan
@@ -180,7 +193,7 @@ fn declared_host_types_widen_at_the_push() {
     let mut types = HostPortTypes::default();
     types.declare(true, "x", TypeExpr::Scalar(ValueType::U16));
     types.write_to_node_metadata(&mut graph.nodes[0].metadata);
-    let plan = plan(graph, &NODES, &CompileOptions::default()).unwrap();
+    let plan = plan(graph, &NODES, &[], &CompileOptions::default()).unwrap();
     assert!(plan.edges[0].widen && !plan.edges[1].widen);
     assert_eq!(plan.host_inputs[0].ty, "u16");
     let source = plan.to_rust(&CompileOptions::default());
@@ -204,6 +217,7 @@ fn fire_all_waits_on_required_edges() {
     let plan = plan(
         graph,
         &NODES,
+        &[],
         &CompileOptions {
             fifo_capacity: 8,
             ..Default::default()
@@ -228,26 +242,27 @@ fn rejects_what_the_device_cannot_run() {
 
     let mut graph = pipeline();
     graph.nodes[1].const_inputs.clear();
-    assert!(unsupported(plan(graph, &NODES, &opts)).contains("`t.gain.k` is not connected"));
+    assert!(unsupported(plan(graph, &NODES, &[], &opts)).contains("`t.gain.k` is not connected"));
 
+    // Several edges into one host output: the host reads one queue per output.
     let mut graph = pipeline();
-    graph.edges.push(Edge::new(0, "x2", 2, "x"));
-    assert!(unsupported(plan(graph, &NODES, &opts)).contains("fan-in"));
+    graph.edges.push(Edge::new(1, "y", 0, "over"));
+    assert!(unsupported(plan(graph, &NODES, &[], &opts)).contains("fan-in into a host output"));
 
     let mut graph = pipeline();
     graph.nodes[1].const_inputs[0].1 = Value::String("two".into());
-    assert!(unsupported(plan(graph, &NODES, &opts)).contains("t.gain"));
+    assert!(unsupported(plan(graph, &NODES, &[], &opts)).contains("t.gain"));
 
     let mut graph = pipeline();
     graph.nodes.push(NodeInstance::new("t.unknown"));
-    assert!(unsupported(plan(graph, &NODES, &opts)).contains("t.unknown"));
+    assert!(unsupported(plan(graph, &NODES, &[], &opts)).contains("t.unknown"));
 
     // i32 -> f32 is not lossless: the planner finds no converter.
     let mut graph = pipeline();
     graph.nodes.push(NodeInstance::new("t.join"));
     graph.edges.push(Edge::new(3, "sum", 1, "k"));
     graph.nodes[1].const_inputs.clear();
-    assert!(unsupported(plan(graph, &NODES, &opts)).contains("ConverterMissing"));
+    assert!(unsupported(plan(graph, &NODES, &[], &opts)).contains("ConverterMissing"));
 }
 
 /// `pipeline()` with `gain.k` tunable in `0..=10`.
@@ -307,7 +322,7 @@ fn constants_rules_match_the_planner() {
 
 #[test]
 fn widening_table_matches_the_runtime() {
-    let registry = registry(&[]).unwrap();
+    let registry = registry(&[], &[]).unwrap();
     let adapters = registry.transport_capabilities.adapters();
     for from in ScalarKind::ALL {
         for to in ScalarKind::ALL {
@@ -324,7 +339,7 @@ fn widening_table_matches_the_runtime() {
 
 #[test]
 fn tunable_constants_become_parameters() {
-    let plan = plan(tunable_pipeline(), &NODES, &CompileOptions::default()).unwrap();
+    let plan = plan(tunable_pipeline(), &NODES, &[], &CompileOptions::default()).unwrap();
     assert_eq!(
         plan.params,
         [PlanParam {
@@ -372,10 +387,136 @@ fn tunable_constants_become_parameters() {
         ..Default::default()
     };
     let body = |graph| {
-        let source = compile(graph, &NODES, &frozen).unwrap();
+        let source = compile(graph, &NODES, &[], &frozen).unwrap();
         source.split_once("NODE_IDS").unwrap().1.to_string()
     };
     assert_eq!(body(tunable_pipeline()), body(pipeline()));
+}
+
+/// `pipeline()` with `host.x2` fanned in with `gain.y` into `check.x` (after `gain`'s edge).
+fn fan_in_pipeline() -> Graph {
+    let mut graph = pipeline();
+    graph.edges.push(Edge::new(0, "x2", 2, "x"));
+    graph
+}
+
+#[test]
+fn fan_in_takes_the_first_edge_with_a_value_in_plan_order() {
+    let plan = plan(fan_in_pipeline(), &NODES, &[], &CompileOptions::default()).unwrap();
+    assert_eq!(
+        plan.nodes[1].inputs[0],
+        InputSource::Fan {
+            edges: vec![1, 4],
+            required: true
+        }
+    );
+    // A node producer's edge into a fan-in drained every tick: one slot. The host's keeps its
+    // policy's queue.
+    assert_eq!((plan.edges[1].capacity, plan.edges[4].capacity), (1, 4));
+    assert_eq!(plan.nodes[1].inputs[0].edges(), &[1, 4]);
+
+    let source = plan.to_rust(&CompileOptions::default());
+    for expected in [
+        "let i0 = self.e1.take_oldest().or(self.e4.take_oldest());",
+        "::run(&mut self.s1, &ctx, i0, None)",
+    ] {
+        assert!(
+            source.contains(expected),
+            "missing `{expected}` in:\n{source}"
+        );
+    }
+    // The same plan encodes as a blob for a library (the fan-in is in the blob's input list).
+    let blob_library = library(&NODES, &[]).unwrap();
+    let blob = compile_loaded(fan_in_pipeline(), &blob_library, &CompileOptions::default())
+        .unwrap()
+        .to_blob(&blob_library)
+        .unwrap();
+    assert_eq!(
+        blob[..5],
+        [b'D', b'M', b'C', b'U', daedalus_mcu::loaded::FORMAT_VERSION]
+    );
+}
+
+#[test]
+fn fan_in_fire_all_waits_for_every_edge_and_pops_one_per_edge() {
+    let graph = Graph {
+        nodes: vec![host(), NodeInstance::new("t.join")],
+        edges: vec![
+            Edge::new(0, "a", 1, "a"),
+            Edge::new(0, "b", 1, "a"),
+            Edge::new(0, "b", 1, "b"),
+            Edge::new(1, "sum", 0, "sum"),
+        ],
+        metadata: Default::default(),
+    };
+    let plan = plan(graph, &NODES, &[], &CompileOptions::default()).unwrap();
+    assert!(plan.nodes[0].wait_all);
+    assert_eq!(
+        plan.nodes[0].inputs[0],
+        InputSource::Fan {
+            edges: vec![0, 1],
+            required: true
+        }
+    );
+    let source = plan.to_rust(&CompileOptions::default());
+    assert!(
+        source.contains("if !self.e0.is_empty() && !self.e1.is_empty() && !self.e2.is_empty() {"),
+        "{source}"
+    );
+    assert!(
+        source.contains("let i0 = self.e0.pop().or(self.e1.pop());"),
+        "{source}"
+    );
+}
+
+#[test]
+fn user_adapter_converts_each_value_at_the_push() {
+    let mut graph = Graph {
+        nodes: vec![host(), NodeInstance::new("t.latch")],
+        edges: vec![Edge::new(0, "cmd", 1, "on"), Edge::new(1, "on", 0, "on")],
+        metadata: Default::default(),
+    };
+    let mut types = HostPortTypes::default();
+    types.declare(true, "cmd", TypeExpr::Scalar(ValueType::U8));
+    types.write_to_node_metadata(&mut graph.nodes[0].metadata);
+
+    let plan = plan(graph.clone(), &LATCH, &ADAPTERS, &CompileOptions::default()).unwrap();
+    assert!(!plan.edges[0].widen);
+    assert_eq!(
+        plan.edges[0].adapter,
+        Some(PlanAdapter {
+            id: "t.u8_to_bool".into(),
+            path: "daedalus_mcu_build::tests::nodes::active".into(),
+        })
+    );
+    assert_eq!(plan.edges[1].adapter, None);
+    assert_eq!(plan.host_inputs[0].ty, "u8");
+    let source = plan.to_rust(&CompileOptions::default());
+    assert!(
+        source.contains(
+            "self.e0.push(::daedalus_mcu_build::tests::nodes::active::run(value), \
+             ::daedalus_mcu::Overflow::Error)"
+        ),
+        "{source}"
+    );
+
+    // The library carries the adapter as an entry of its own (type-erased for loaded mode).
+    let library = library(&LATCH, &ADAPTERS).unwrap();
+    assert_eq!(library.adapter_index("t.u8_to_bool"), Some(0));
+    assert_eq!(library.types, Vec::<String>::new());
+    let rust = library.to_rust().unwrap();
+    for expected in [
+        "AdapterEntry { input: 5, output: 0, run: adapt_0 }",
+        "unsafe fn adapt_0(input: *const u8, output: *mut u8)",
+        "::daedalus_mcu_build::tests::nodes::active::run(value)",
+    ] {
+        assert!(rust.contains(expected), "missing `{expected}` in:\n{rust}");
+    }
+    let blob = compile_loaded(graph, &library, &CompileOptions::default())
+        .unwrap()
+        .to_blob(&library)
+        .unwrap();
+    assert!(blob.len() > 20);
 }
 
 #[test]
@@ -387,7 +528,7 @@ fn rejects_invalid_parameters() {
             PARAMS_META_KEY.into(),
             Value::Map(vec![(Value::String(port.to_string().into()), range)]),
         );
-        unsupported(plan(graph, &NODES, &opts))
+        unsupported(plan(graph, &NODES, &[], &opts))
     };
     let range = |min, max| Value::List(vec![Value::Float(min), Value::Float(max)]);
     assert!(with("x", Value::Unit).contains("connected to an edge"));
@@ -398,7 +539,7 @@ fn rejects_invalid_parameters() {
 
 #[test]
 fn library_manifest_hashes_interfaces() {
-    let library = library(&NODES).unwrap();
+    let library = library(&NODES, &[]).unwrap();
     assert_eq!(library.types, Vec::<String>::new());
     assert_eq!(library.type_id(f32::KEY), Some(ScalarKind::F32 as u16));
     assert_eq!(
@@ -410,11 +551,14 @@ fn library_manifest_hashes_interfaces() {
     let mut moved = specs(&NODES);
     moved[0].path = "elsewhere::gain".into();
     assert_eq!(
-        LibraryManifest::new(moved.clone()).unwrap().hash,
+        LibraryManifest::new(moved.clone(), vec![]).unwrap().hash,
         library.hash
     );
     moved[0].inputs[1].optional = true;
-    assert_ne!(LibraryManifest::new(moved).unwrap().hash, library.hash);
+    assert_ne!(
+        LibraryManifest::new(moved, vec![]).unwrap().hash,
+        library.hash
+    );
     let mut tampered = library.clone();
     tampered.hash ^= 1;
     assert!(LibraryManifest::from_json(&tampered.to_json()).is_err());
@@ -437,7 +581,7 @@ fn library_manifest_hashes_interfaces() {
 
 #[test]
 fn blobs_are_deterministic_and_name_their_library() {
-    let library = library(&NODES).unwrap();
+    let library = library(&NODES, &[]).unwrap();
     let plan = compile_loaded(tunable_pipeline(), &library, &CompileOptions::default()).unwrap();
     let blob = plan.to_blob(&library).unwrap();
     let again = compile_loaded(tunable_pipeline(), &library, &CompileOptions::default())
