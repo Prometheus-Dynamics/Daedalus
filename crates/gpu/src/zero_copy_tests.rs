@@ -76,7 +76,7 @@ fn uninit_storage_takes_kernel_output() {
 
 #[cfg(feature = "gpu-dmabuf")]
 mod frames {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::{AsRawFd, OwnedFd};
     use std::time::Duration;
 
     use daedalus_transport::{
@@ -94,48 +94,15 @@ mod frames {
     }
 
     fn heap_frame(width: u32, height: u32, fill: &[u8]) -> Option<HeapFrame> {
-        #[repr(C)]
-        struct Alloc {
-            len: u64,
-            fd: u32,
-            fd_flags: u32,
-            heap_flags: u64,
-        }
         let len = (width * height) as usize + 4096;
-        let heap = std::fs::File::options()
-            .read(true)
-            .write(true)
-            .open("/dev/dma_heap/system")
+        let buf = lemnos_linux::dma::DmaHeap::open("system")
+            .ok()?
+            .allocate(len)
             .ok()?;
-        let mut req = Alloc {
-            len: len as u64,
-            fd: 0,
-            fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
-            heap_flags: 0,
-        };
-        // SAFETY: `req` is the DMA_HEAP_IOCTL_ALLOC argument.
-        if unsafe { libc::ioctl(heap.as_raw_fd(), 0xC018_4800u64 as _, &mut req) } != 0 {
-            return None;
-        }
-        // SAFETY: a new dmabuf fd we own.
-        let fd = unsafe { OwnedFd::from_raw_fd(req.fd as i32) };
-        // SAFETY: map, fill and unmap the whole buffer (CPU access bracketed by DMA_BUF_IOCTL_SYNC
-        // is not needed for this uncached-coherent test fill on the system heap).
-        unsafe {
-            let ptr = libc::mmap(
-                std::ptr::null_mut(),
-                len,
-                libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd.as_raw_fd(),
-                0,
-            );
-            if ptr == libc::MAP_FAILED {
-                return None;
-            }
-            std::ptr::copy_nonoverlapping(fill.as_ptr(), ptr.cast(), fill.len().min(len));
-            libc::munmap(ptr, len);
-        }
+        // The system heap's mapping is coherent for this test fill (no CPU-access bracket).
+        let n = fill.len().min(len);
+        buf.map().ok()?.as_mut_slice()[..n].copy_from_slice(&fill[..n]);
+        let fd = buf.into_fd();
         Some(HeapFrame { fd, width, height })
     }
 

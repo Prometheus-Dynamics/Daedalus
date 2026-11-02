@@ -446,6 +446,12 @@ plugin ABI and does not load.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
+- `daedalus-gpu`: the dma-buf basics come from Lemnos (`lemnos-linux`, feature `dma`, a git
+  dependency pinned at 63374c6 on Linux only): the system dma-heap behind host-cached storage on
+  devices without host-cached memory (v3dv), `DMA_BUF_IOCTL_SYNC` around its CPU access, the
+  dmabuf size query of imports, and `export_dmabuf_fence`. The Vulkan imports stay here. The
+  package lane packages without a lockfile (`--exclude-lockfile`): `lemnos-linux` is not on
+  crates.io yet, so publishing needs Lemnos published first.
 
 - **Breaks `ci.sh semver` reports against `v3.0.0` that had no entry of their own.**
   `ServiceResponse::Pong` is a struct variant with `protocol_version`. Struct literals need the new

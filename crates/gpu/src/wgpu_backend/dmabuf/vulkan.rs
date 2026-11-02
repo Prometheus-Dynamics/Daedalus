@@ -67,7 +67,7 @@
 //!   (checked with the modifier round-trip test), other drivers need not. The release mirrors the
 //!   acquire (`-> GENERAL`, to the foreign family).
 
-use std::os::fd::{AsFd, AsRawFd, OwnedFd};
+use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 
@@ -502,7 +502,7 @@ fn plane_memory(
         .into_iter()
         .enumerate()
         .map(|(index, (fd, need))| {
-            let len = dmabuf_len(&fd)?;
+            let (fd, len) = dmabuf_len(fd)?;
             if len < need {
                 return Err(ExternalImportError::invalid(format!(
                     "dmabuf {index} is {len} bytes but the plane layout needs {need}"
@@ -514,18 +514,13 @@ fn plane_memory(
     Ok((fds, !shared))
 }
 
-/// Size of a dmabuf (`lseek(SEEK_END)`, which dmabufs support); the offset is reset to 0.
-fn dmabuf_len(fd: &OwnedFd) -> Result<u64, ExternalImportError> {
-    // SAFETY: plain lseek calls on a valid descriptor.
-    let len = unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_END) };
-    // SAFETY: as above.
-    if len < 0 || unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_SET) } < 0 {
-        return Err(ExternalImportError::invalid(format!(
-            "cannot determine dmabuf size (lseek): {}",
-            std::io::Error::last_os_error()
-        )));
-    }
-    Ok(len as u64)
+/// Size of a dmabuf (`lseek(SEEK_END)`, which dmabufs support), with the descriptor handed back.
+fn dmabuf_len(fd: OwnedFd) -> Result<(OwnedFd, u64), ExternalImportError> {
+    let dmabuf = lemnos_linux::dma::DmaBuf::from_fd(fd).map_err(|err| {
+        ExternalImportError::invalid(format!("cannot determine dmabuf size (lseek): {err}"))
+    })?;
+    let len = dmabuf.len() as u64;
+    Ok((dmabuf.into_fd(), len))
 }
 
 /// Usage flags expressed for every layer that needs them.

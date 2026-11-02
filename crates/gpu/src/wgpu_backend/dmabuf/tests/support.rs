@@ -1,6 +1,6 @@
 //! Shared helpers of the hardware tests: dma-heap buffers, validation scopes, backends.
 
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
 use crate::{
@@ -8,83 +8,36 @@ use crate::{
     ExternalImportError, ExternalPlane, GpuBackend, WgpuBackend,
 };
 
-const DMA_HEAP_IOCTL_ALLOC: u64 = 0xC018_4800; // _IOWR('H', 0, dma_heap_allocation_data)
-const DMA_BUF_IOCTL_SYNC: u64 = 0x4008_6200; // _IOW('b', 0, dma_buf_sync)
-const DMA_BUF_SYNC_RW: u64 = 3;
-const DMA_BUF_SYNC_END: u64 = 4;
-
-#[repr(C)]
-struct DmaHeapAllocationData {
-    len: u64,
-    fd: u32,
-    fd_flags: u32,
-    heap_flags: u64,
-}
-
 /// A CPU-mapped dma-heap buffer.
 pub(super) struct DmaBuf {
-    pub fd: OwnedFd,
+    pub fd: lemnos_linux::dma::DmaBuf,
+    /// Points into `_map`, which stays mapped for the life of `self`.
     ptr: *mut u8,
     len: usize,
+    _map: lemnos_linux::dma::Mapping,
 }
 
 impl DmaBuf {
     pub fn alloc(len: usize) -> std::io::Result<Self> {
         let heap =
             std::env::var("DAEDALUS_DMA_HEAP").unwrap_or_else(|_| "/dev/dma_heap/system".into());
-        let heap = std::fs::File::open(&heap)?;
-        let mut data = DmaHeapAllocationData {
-            len: len as u64,
-            fd: 0,
-            fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
-            heap_flags: 0,
-        };
-        // SAFETY: valid heap fd and a correctly laid out argument struct.
-        let rc = unsafe { libc::ioctl(heap.as_raw_fd(), DMA_HEAP_IOCTL_ALLOC as _, &mut data) };
-        if rc != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: the kernel returned a fresh fd we now own.
-        let fd = unsafe { OwnedFd::from_raw_fd(data.fd as i32) };
-        // SAFETY: mapping `len` bytes of a dmabuf we own.
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                len,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd.as_raw_fd(),
-                0,
-            )
-        };
-        if ptr == libc::MAP_FAILED {
-            return Err(std::io::Error::last_os_error());
-        }
+        let fd = lemnos_linux::dma::DmaHeap::open_path(heap)?.allocate(len)?;
+        let mut map = fd.map()?;
         Ok(Self {
+            ptr: map.as_mut_slice().as_mut_ptr(),
             fd,
-            ptr: ptr.cast(),
             len,
+            _map: map,
         })
     }
 
     /// CPU write bracketed by DMA_BUF_IOCTL_SYNC so caches are coherent for the GPU.
     pub fn write(&self, f: impl FnOnce(&mut [u8])) {
-        let sync = |flags: u64| {
-            let mut arg = flags;
-            // SAFETY: valid dmabuf fd and u64 argument (struct dma_buf_sync).
-            unsafe { libc::ioctl(self.fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC as _, &mut arg) };
-        };
-        sync(DMA_BUF_SYNC_RW);
+        use lemnos_linux::dma::Access;
+        let _ = self.fd.begin_cpu_access(Access::ReadWrite);
         // SAFETY: `ptr` maps `len` bytes for the lifetime of `self`.
         f(unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) });
-        sync(DMA_BUF_SYNC_RW | DMA_BUF_SYNC_END);
-    }
-}
-
-impl Drop for DmaBuf {
-    fn drop(&mut self) {
-        // SAFETY: unmapping the mapping created in `alloc`.
-        unsafe { libc::munmap(self.ptr.cast(), self.len) };
+        let _ = self.fd.end_cpu_access(Access::ReadWrite);
     }
 }
 

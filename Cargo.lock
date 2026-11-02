@@ -639,6 +639,7 @@ dependencies = [
  "daedalus-transport",
  "daedalus-wgsl-infer",
  "image",
+ "lemnos-linux",
  "libc",
  "naga",
  "parking_lot",
@@ -1029,6 +1030,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
+name = "embedded-hal-async"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c4c685bbef7fe13c3c6dd4da26841ed3980ef33e841cddfa15ce8a8fb3f1884"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1332,6 +1342,79 @@ name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
+
+[[package]]
+name = "lemnos-bus"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=63374c6#63374c6a4334b07ae49ee4263502aa5022dd9f98"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "lemnos-core",
+ "lemnos-hal",
+ "thiserror",
+]
+
+[[package]]
+name = "lemnos-core"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=63374c6#63374c6a4334b07ae49ee4263502aa5022dd9f98"
+dependencies = [
+ "lemnos-device",
+ "lemnos-hal",
+ "ordered-float",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "lemnos-device"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=63374c6#63374c6a4334b07ae49ee4263502aa5022dd9f98"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "lemnos-hal",
+]
+
+[[package]]
+name = "lemnos-discovery"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=63374c6#63374c6a4334b07ae49ee4263502aa5022dd9f98"
+dependencies = [
+ "lemnos-core",
+ "thiserror",
+]
+
+[[package]]
+name = "lemnos-hal"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=63374c6#63374c6a4334b07ae49ee4263502aa5022dd9f98"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
+
+[[package]]
+name = "lemnos-linux"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=63374c6#63374c6a4334b07ae49ee4263502aa5022dd9f98"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+ "lemnos-bus",
+ "lemnos-core",
+ "lemnos-discovery",
+ "lemnos-hal",
+ "lemnos-linux-sys",
+]
+
+[[package]]
+name = "lemnos-linux-sys"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=63374c6#63374c6a4334b07ae49ee4263502aa5022dd9f98"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "libc"

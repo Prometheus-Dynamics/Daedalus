@@ -48,7 +48,7 @@ impl GpuStorage {
         if let Some(fence) = &acquire_fence {
             crate::external::wait_sync_file(fence.as_fd(), timeout)?;
         }
-        let dmabuf_len = dmabuf_len(&fd)?;
+        let (fd, dmabuf_len) = dmabuf_len(fd)?;
         // SAFETY: the hal device outlives this block; the buffer and memory created here go to
         // wgpu (`from_raw_managed`), which destroys and frees them when the buffer drops.
         let hal_buffer = unsafe {
@@ -136,18 +136,13 @@ fn buffer_info<'a>(len: u64) -> vk::BufferCreateInfo<'a> {
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
 }
 
-/// Size of a dmabuf (`lseek(SEEK_END)`); the offset is reset to 0.
-fn dmabuf_len(fd: &OwnedFd) -> Result<u64, ExternalImportError> {
-    // SAFETY: plain lseek calls on a valid descriptor.
-    let len = unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_END) };
-    // SAFETY: as above.
-    if len < 0 || unsafe { libc::lseek(fd.as_raw_fd(), 0, libc::SEEK_SET) } < 0 {
-        return Err(ExternalImportError::invalid(format!(
-            "cannot determine dmabuf size (lseek): {}",
-            std::io::Error::last_os_error()
-        )));
-    }
-    Ok(len as u64)
+/// Size of a dmabuf (`lseek(SEEK_END)`), with the descriptor handed back.
+fn dmabuf_len(fd: OwnedFd) -> Result<(OwnedFd, u64), ExternalImportError> {
+    let dmabuf = lemnos_linux::dma::DmaBuf::from_fd(fd).map_err(|err| {
+        ExternalImportError::invalid(format!("cannot determine dmabuf size (lseek): {err}"))
+    })?;
+    let len = dmabuf.len() as u64;
+    Ok((dmabuf.into_fd(), len))
 }
 
 /// Whether the driver imports dmabuf memory into storage buffers.
@@ -292,61 +287,22 @@ unsafe fn import(
 #[cfg(test)]
 #[allow(clippy::print_stderr)] // skip reasons
 mod tests {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::OwnedFd;
     use std::time::Duration;
 
     use crate::{ExternalImportError, GpuBackendKind, GpuOptions, GpuStorage, select_backend};
-
-    /// `_IOWR('H', 0, struct dma_heap_allocation_data)`.
-    const DMA_HEAP_IOCTL_ALLOC: u64 = 0xC018_4800;
-
-    #[repr(C)]
-    struct Alloc {
-        len: u64,
-        fd: u32,
-        fd_flags: u32,
-        heap_flags: u64,
-    }
 
     /// A dma-heap buffer of `len` bytes holding `fill(i)` at byte `i`.
     fn dmabuf(len: usize, fill: impl Fn(usize) -> u8) -> std::io::Result<OwnedFd> {
         let heap =
             std::env::var("DAEDALUS_DMA_HEAP").unwrap_or_else(|_| "/dev/dma_heap/system".into());
-        let heap = std::fs::File::options().read(true).write(true).open(heap)?;
-        let mut data = Alloc {
-            len: len as u64,
-            fd: 0,
-            fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
-            heap_flags: 0,
-        };
-        // SAFETY: valid heap fd and a correctly laid out argument struct.
-        if unsafe { libc::ioctl(heap.as_raw_fd(), DMA_HEAP_IOCTL_ALLOC as _, &mut data) } != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: the kernel returned a fresh fd we own.
-        let fd = unsafe { OwnedFd::from_raw_fd(data.fd as i32) };
-        // SAFETY: mapping `len` bytes of a dmabuf we own; unmapped below.
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                len,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                fd.as_raw_fd(),
-                0,
-            )
-        };
-        if ptr == libc::MAP_FAILED {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: the mapping is `len` bytes and ours.
-        let bytes = unsafe { std::slice::from_raw_parts_mut(ptr.cast::<u8>(), len) };
-        for (i, b) in bytes.iter_mut().enumerate() {
+        let buf = lemnos_linux::dma::DmaHeap::open_path(heap)?.allocate(len)?;
+        let mut map = buf.map()?;
+        for (i, b) in map.as_mut_slice().iter_mut().enumerate() {
             *b = fill(i);
         }
-        // SAFETY: unmapping the mapping above.
-        unsafe { libc::munmap(ptr, len) };
-        Ok(fd)
+        drop(map);
+        Ok(buf.into_fd())
     }
 
     #[test]

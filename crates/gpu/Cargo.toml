@@ -51,6 +51,7 @@ tracing = { workspace = true, features = ["std"] }
 daedalus-kernels = { workspace = true, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+lemnos-linux = { workspace = true, features = ["dma"] }
 ash = { workspace = true, optional = true }
 # poll/ioctl for dmabuf acquire fences.
 libc = { workspace = true }

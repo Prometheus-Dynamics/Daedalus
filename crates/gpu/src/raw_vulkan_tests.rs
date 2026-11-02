@@ -246,7 +246,6 @@ fn a_raw_spirv_dispatch_runs_on_daedalus_storage() {
 #[cfg(feature = "gpu-dmabuf")]
 #[test]
 fn a_raw_spirv_dispatch_reads_an_imported_frame_in_place() {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::time::Duration;
 
     let Some((ctx, raw)) = vulkan_ctx() else {
@@ -259,47 +258,15 @@ fn a_raw_spirv_dispatch_reads_an_imported_frame_in_place() {
         Err(err) => return eprintln!("skipping: {err}"),
     };
     eprintln!("a {frame_len}-byte import needs {needed} bytes of dmabuf");
-    let Ok(heap) = std::fs::File::options()
-        .read(true)
-        .write(true)
-        .open("/dev/dma_heap/system")
-    else {
+    let Ok(heap) = lemnos_linux::dma::DmaHeap::open("system") else {
         return eprintln!("skipping: no /dev/dma_heap/system access");
     };
-    #[repr(C)]
-    struct Alloc {
-        len: u64,
-        fd: u32,
-        fd_flags: u32,
-        heap_flags: u64,
-    }
-    let mut req = Alloc {
-        len: needed,
-        fd: 0,
-        fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
-        heap_flags: 0,
-    };
-    // SAFETY: `req` is the DMA_HEAP_IOCTL_ALLOC argument.
-    if unsafe { libc::ioctl(heap.as_raw_fd(), 0xC018_4800u64 as _, &mut req) } != 0 {
+    let Ok(buf) = heap.allocate(needed as usize) else {
         return eprintln!("skipping: dma-heap allocation failed");
-    }
-    // SAFETY: a new dmabuf fd we own.
-    let fd = unsafe { OwnedFd::from_raw_fd(req.fd as i32) };
+    };
     let pixels = pattern(frame_len as usize);
-    // SAFETY: map, fill and unmap the frame's bytes.
-    unsafe {
-        let ptr = libc::mmap(
-            std::ptr::null_mut(),
-            frame_len as usize,
-            libc::PROT_WRITE,
-            libc::MAP_SHARED,
-            fd.as_raw_fd(),
-            0,
-        );
-        assert_ne!(ptr, libc::MAP_FAILED);
-        std::ptr::copy_nonoverlapping(pixels.as_ptr(), ptr.cast(), pixels.len());
-        libc::munmap(ptr, frame_len as usize);
-    }
+    buf.map().unwrap().as_mut_slice()[..pixels.len()].copy_from_slice(&pixels);
+    let fd = buf.into_fd();
     let frame = match GpuStorage::import_dmabuf(
         &ctx,
         fd,

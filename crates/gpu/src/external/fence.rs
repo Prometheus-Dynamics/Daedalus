@@ -16,7 +16,7 @@
 //! [`AcquireFenceMode`]: super::AcquireFenceMode
 
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 use std::time::{Duration, Instant};
 
 use super::ExternalImportError;
@@ -33,44 +33,20 @@ pub enum DmabufAccess {
     ReadWrite,
 }
 
-/// `struct dma_buf_export_sync_file` from `linux/dma-buf.h`.
-#[repr(C)]
-struct DmaBufExportSyncFile {
-    flags: u32,
-    fd: i32,
-}
-
-const DMA_BUF_SYNC_READ: u32 = 1;
-const DMA_BUF_SYNC_WRITE: u32 = 2;
-/// `_IOWR('b', 2, struct dma_buf_export_sync_file)`.
-const DMA_BUF_IOCTL_EXPORT_SYNC_FILE: u32 = 0xC008_6202;
-
 /// Snapshot the implicit fences attached to a dmabuf as a `sync_file`
 /// (`DMA_BUF_IOCTL_EXPORT_SYNC_FILE`, Linux 6.0+).
 ///
 /// Use it for producers that synchronize through the dmabuf's reservation object instead of
 /// handing out fences. The result is already signaled when nothing is pending.
 pub fn export_dmabuf_fence(dmabuf: BorrowedFd<'_>, access: DmabufAccess) -> io::Result<OwnedFd> {
-    let mut arg = DmaBufExportSyncFile {
-        flags: match access {
-            DmabufAccess::Read => DMA_BUF_SYNC_READ,
-            DmabufAccess::ReadWrite => DMA_BUF_SYNC_READ | DMA_BUF_SYNC_WRITE,
-        },
-        fd: -1,
+    use lemnos_linux::dma::{Access, DmaBuf};
+    let access = match access {
+        DmabufAccess::Read => Access::Read,
+        DmabufAccess::ReadWrite => Access::ReadWrite,
     };
-    // SAFETY: valid fd and a correctly laid out argument the kernel fills in.
-    let rc = unsafe {
-        libc::ioctl(
-            dmabuf.as_raw_fd(),
-            DMA_BUF_IOCTL_EXPORT_SYNC_FILE as _,
-            &mut arg,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: on success the kernel returned a fresh fd owned by the caller.
-    Ok(unsafe { OwnedFd::from_raw_fd(arg.fd) })
+    // Lemnos's `DmaBuf` owns its descriptor, so it gets a duplicate of the caller's.
+    let fence = DmaBuf::from_fd(dmabuf.try_clone_to_owned()?)?.export_fence(access)?;
+    Ok(fence.into_fd())
 }
 
 /// `struct sync_file_info` from `linux/sync_file.h`.
