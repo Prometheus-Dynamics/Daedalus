@@ -163,6 +163,25 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Blocked by:** a host that needs it; none is known (MCU graphs use the heap-free MCU profile).
       **Measured:** n/a.
 
+- [ ] **What:** fixed-function nodes for Eidos on the RGA and the K230D Image 2D / 2.5D GPU
+      (VGLite), with a per-SoC capability descriptor. Requested by Eidos 2026-11-02 (Eidos
+      100cc356, `docs/accel/fixed-function-audit.md`); HeliOS confirmed Daedalus owns these
+      units. Eidos lowers its ops onto these nodes and never drives the units.
+      **Order:** (1) area and bilinear resize, for pyramids (Eidos `geometry.resize_area`,
+      `resize_linear`, `features.feature_pyramid`, `filter.build_pyramid`); (2) palette lookup and
+      colour-key range mask; (3) crop, flip, copy (partly in `daedalus-rga`); (4) blend with mask
+      alpha, fill, ROP, line draw. With (1): the capability descriptor (RGA2, RGA3, mainline V4L2
+      vs librga, K230 Image 2D, VGLite; ops and an exactness class per unit and SoC).
+      **Constraints:** mainline `rockchip-rga` (V4L2) reaches scale, crop, conversion, flip,
+      90/180/270 rotation and background fill only; blend, colour key, palette and ROP need librga
+      (vendor kernels). RGA scaling exactness is undocumented: tolerance until a board measures it.
+      K230: no code and no board; a design note on its interfaces comes first.
+      **Done when:** each node has a scalar reference, a fixed-function kernel cell in the registry,
+      and a test on `vim2m` where the path allows; board cells marked written, untested on board.
+      **Blocked by:** `daedalus-rga` on Lemnos's `M2mSession` first (waiting on Lemnos's crop
+      selection and device query); boards for measurement.
+      **Measured:** n/a.
+
 ### Release steps
 
 These run only when the user calls a release. None of them is pending until then.
