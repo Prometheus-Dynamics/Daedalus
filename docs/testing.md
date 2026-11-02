@@ -222,7 +222,15 @@ Boards should build that way: the Flame RV1106 (Cortex-A7) with `+neon`, the K23
 ### Board checklist: written, untested on board
 
 The code for these boards is written and tested off-board (qemu, lavapipe, desktop GPUs). A
-board run confirms it:
+board run confirms it. `scripts/board.sh PROFILE USER@HOST [RUNNER_NAME]` does each run in one
+command: it cross-builds the binaries here, runs them from the board's `/tmp` over ssh (GPU runs
+under `/run/lock/raze-gpu.lock` where the board has it), brings back the logs and writes the
+matrix evidence to `docs/accel-evidence/RUNNER_NAME-DATE.jsonl`, then cleans the board. Profiles:
+`flame` (armv7 `+neon`, run on the Luckfox Pico Pro), `k230d` (riscv64 `+v`), `rockchip` (aarch64:
+the CPU set, the GPU tests, `gpu_probe`, `gpu_bench` and the RGA tests) and `raze`. Only the
+`raze` profile has run (2026-11-02, the Raze: graph tests 90 + 5 + 2, kernel conformance 8 and
+the CRC-32 throughput, the GPU crate's 91 tests, `gpu_probe` and `gpu_bench`, all ok); the
+other three are written, untested on board.
 
 - **Rockchip (RK3588S / RK3576 G610, RK3566 G52), Mali through wgpu/Vulkan (libmali or panvk):**
   - `cargo test -p daedalus-gpu --features gpu-wgpu --lib` covers the GPU kernels (bit-exact
