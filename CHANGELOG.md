@@ -447,11 +447,11 @@ plugin ABI and does not load.
 
 ### Changed
 - `daedalus-gpu`: the dma-buf basics come from Lemnos (`lemnos-linux`, feature `dma`, a git
-  dependency pinned at 63374c6 on Linux only): the system dma-heap behind host-cached storage on
+  dependency on Lemnos `dev`, Linux only): the system dma-heap behind host-cached storage on
   devices without host-cached memory (v3dv), `DMA_BUF_IOCTL_SYNC` around its CPU access, the
   dmabuf size query of imports, and `export_dmabuf_fence`. The Vulkan imports stay here. The
   package lane packages without a lockfile (`--exclude-lockfile`): `lemnos-linux` is not on
-  crates.io yet, so publishing needs Lemnos published first. Lemnos is pinned at fdbb0c4:
+  crates.io yet, so publishing needs Lemnos published first. The lock file pins Lemnos at fdbb0c4:
   borrowed dmabufs go through `DmaBufRef` (no descriptor duplicate per frame), and the frame
   identity is Lemnos's too.
 - `daedalus-rga`: the V4L2 mem2mem session is Lemnos's `M2mSession` (feature `v4l2-m2m`); the
