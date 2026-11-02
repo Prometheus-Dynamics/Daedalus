@@ -45,6 +45,13 @@ fn scalar_references_match_known_answers() {
         && r::base64_encode(b"Ma") == *b"TWE="
         && r::base64_decode(b"TWE=").as_deref() == Some(&b"Ma"[..])
         && r::base64_decode(b"TWF=").is_none();
+    // 2x2 area: (a+b+c+d+2)>>2 per channel; the odd trailing column is dropped.
+    let area = r::resize_area(&[1, 2, 9, 4, 5, 9], 3, 2, 1, 2) == (vec![3], 1, 2 / 2)
+        && r::resize_area(&[0, 10, 1, 11, 2, 12, 3, 13], 2, 2, 2, 2) == (vec![2, 12], 1, 1)
+        && r::resize_area(&[7], 1, 1, 1, 2) == (vec![7], 1, 1);
+    // 2x up: OpenCV's quarter weights, edges clamped.
+    let bilinear = r::resize_bilinear(&[0, 100], 2, 1, 1, 4, 1) == [0, 25, 75, 100]
+        && r::resize_bilinear(&[0, 100, 200, 44], 2, 2, 1, 2, 2) == [0, 100, 200, 44];
     for op in [
         "daedalus.pixel.rgb_to_rgba",
         "daedalus.pixel.rgba_to_rgb",
@@ -60,6 +67,10 @@ fn scalar_references_match_known_answers() {
     ] {
         conform(op, Backend::Scalar, || ok);
     }
+    conform("daedalus.image.resize_area", Backend::Scalar, || area);
+    conform("daedalus.image.resize_bilinear", Backend::Scalar, || {
+        bilinear
+    });
 }
 
 /// A test input of a given length and the reference output.

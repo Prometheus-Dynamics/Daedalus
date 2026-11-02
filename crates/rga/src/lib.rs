@@ -18,14 +18,20 @@
 //! Status: written and tested against `vim2m` (conversion, scaling, dmabuf in and out); on a
 //! Rockchip board untested. [`Librga`] reaches the engine through the vendor's library instead,
 //! for RGA3 on vendor kernels, gray input and Y-only output (written, untested on board).
+//!
+//! Resizes ([`Filter`]: area and bilinear) refuse what a route cannot do as asked; [`caps`]
+//! describes each SoC's units, routes and what is known of their exactness.
 
+pub mod caps;
 #[cfg(target_os = "linux")]
 mod librga;
+mod resize;
 #[cfg(target_os = "linux")]
 mod v4l2;
 
 #[cfg(target_os = "linux")]
 pub use librga::{Image, Librga, RgaFormat};
+pub use resize::Filter;
 
 #[cfg(target_os = "linux")]
 pub use rga::Rga;
@@ -39,6 +45,8 @@ mod rga {
     use std::os::fd::BorrowedFd;
     use std::path::{Path, PathBuf};
 
+    use crate::caps::Route;
+    use crate::resize::{Filter, source_size};
     use crate::v4l2::{Layout, Memory, PixelFormat, Rect, Session, find_m2m_device};
 
     type Key = (Layout, Layout, Option<Rect>, Memory);
@@ -113,6 +121,98 @@ mod rga {
         /// The frame sizes the device expects for a conversion.
         pub fn frame_lens(&mut self, src: Layout, dst: Layout) -> io::Result<(usize, usize)> {
             Ok(self.session(src, dst, None, Memory::Mmap)?.frame_lens())
+        }
+
+        /// The source crop for a resize: the whole frame, or the top-left part an area
+        /// downscale reads when the size is not a multiple of the factor.
+        fn resize_crop(src: Layout, dst: Layout, filter: Filter) -> io::Result<Option<Rect>> {
+            let (width, height) = source_size(
+                (src.width, src.height),
+                (dst.width, dst.height),
+                filter,
+                Route::V4l2,
+            )?;
+            Ok(
+                ((width, height) != (src.width, src.height)).then_some(Rect {
+                    left: 0,
+                    top: 0,
+                    width,
+                    height,
+                }),
+            )
+        }
+
+        /// Resize dmabuf `src_fd` into dmabuf `dst_fd` (to `dst`'s size) with `filter`. The
+        /// mainline driver has no filter control: it averages when it downscales and
+        /// interpolates when it upscales, so [`Filter::Area`] must be an integer downscale and
+        /// [`Filter::Bilinear`] an upscale; anything else is `Unsupported`. See
+        /// [`crate::caps`] for what is known of each unit's exactness. Returns the bytes written.
+        #[allow(clippy::too_many_arguments)]
+        pub fn resize(
+            &mut self,
+            src: Layout,
+            src_fd: BorrowedFd<'_>,
+            src_len: usize,
+            dst: Layout,
+            dst_fd: BorrowedFd<'_>,
+            dst_len: usize,
+            filter: Filter,
+        ) -> io::Result<usize> {
+            let crop = Self::resize_crop(src, dst, filter)?;
+            self.blit(src, src_fd, src_len, crop, dst, dst_fd, dst_len)
+        }
+
+        /// [`Rga::resize`] between byte buffers. Returns the bytes written.
+        pub fn resize_bytes(
+            &mut self,
+            src: Layout,
+            src_bytes: &[u8],
+            dst: Layout,
+            dst_bytes: &mut [u8],
+            filter: Filter,
+        ) -> io::Result<usize> {
+            let crop = Self::resize_crop(src, dst, filter)?;
+            self.convert(src, src_bytes, crop, dst, dst_bytes)
+        }
+
+        /// Resize 8-bit luma, tightly packed, with `filter`. The mainline driver has no gray
+        /// format, so the luma goes through NV12 with neutral chroma, and only Y comes back:
+        /// the engine moves 1.5 times the bytes. A source that is already NV12 should go
+        /// through [`Rga::resize`] instead, without the copies.
+        #[allow(clippy::too_many_arguments)]
+        pub fn resize_luma(
+            &mut self,
+            width: u32,
+            height: u32,
+            src: &[u8],
+            out_width: u32,
+            out_height: u32,
+            dst: &mut [u8],
+            filter: Filter,
+        ) -> io::Result<()> {
+            let (luma, out_luma) = (
+                width as usize * height as usize,
+                out_width as usize * out_height as usize,
+            );
+            if src.len() < luma || dst.len() < out_luma {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "buffers of {} and {} bytes for {width}x{height} and \
+                         {out_width}x{out_height} luma",
+                        src.len(),
+                        dst.len()
+                    ),
+                ));
+            }
+            let s = Layout::packed(PixelFormat::Nv12, width, height);
+            let d = Layout::packed(PixelFormat::Nv12, out_width, out_height);
+            let mut staged = vec![128u8; s.frame_len()];
+            staged[..luma].copy_from_slice(&src[..luma]);
+            let mut out = vec![0u8; d.frame_len()];
+            self.resize_bytes(s, &staged, d, &mut out, filter)?;
+            dst[..out_luma].copy_from_slice(&out[..out_luma]);
+            Ok(())
         }
 
         /// RGB8 to RGBA8, tightly packed. The mainline driver has no R,G,B,A order, so the

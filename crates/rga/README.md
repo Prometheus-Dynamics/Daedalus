@@ -9,6 +9,15 @@ share.
   the kernel's `vim2m` test driver and `/dev/dma_heap/system` dmabufs.
 - **librga:** `Librga` reaches the engine through the vendor library instead, for RGA3 on vendor
   kernels, gray input and Y-only output.
+- **Resize:** `Rga::resize` / `resize_bytes` / `resize_luma` and `Librga::resize_dmabuf` /
+  `resize_bytes` take a `Filter`: `Area` (integer downscale, rounded block means, a trailing
+  partial block cropped) or `Bilinear`. The mainline driver has no filter control (it averages
+  when it downscales, interpolates when it upscales), so it refuses bilinear downscale with
+  `Unsupported` rather than substitute; librga does both. Mainline has no gray format, so
+  `resize_luma` goes through NV12 with neutral chroma (1.5 times the bytes).
+- **Capabilities:** `caps::caps(soc)` lists each SoC's units (RGA2, RGA3, K230D Image 2D and
+  VGLite), the route (mainline V4L2, librga, design only), size and scale limits, the luma cost,
+  and each filter's direction and exactness. Every exactness is `Unmeasured` until a board run.
 - **Status:** V4L2 path tested on `vim2m`; both paths written, untested on a Rockchip board.
 
 Linux-only. The V4L2 session is Lemnos's (`lemnos-linux`, `v4l2::m2m::M2mSession`); librga is

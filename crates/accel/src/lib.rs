@@ -226,6 +226,10 @@ pub struct Op {
     /// Where the op runs in the product: the matrix's `wired` column checks that each site
     /// calls the kernel and holds none of the old scalar code. No sites is a gap.
     pub call_sites: &'static [CallSite],
+    /// The only backends the op has rows on ([`Op::only_on`]); empty for all of them.
+    pub only: &'static [Backend],
+    /// Why the other backends do not apply.
+    pub only_reason: &'static str,
 }
 
 /// A place that must run an op through its kernel.
@@ -264,6 +268,8 @@ impl Op {
             per_element: true,
             candidates: &[],
             call_sites: &[],
+            only: &[],
+            only_reason: "",
         }
     }
 
@@ -276,6 +282,15 @@ impl Op {
     /// Not per-element work (a hash chain, setup code).
     pub const fn not_per_element(mut self) -> Self {
         self.per_element = false;
+        self
+    }
+
+    /// The op has rows only on `backends`; the other backends' columns, and the `wired` column
+    /// when no call sites are listed, do not apply. For a fixed-function node whose CPU kernels
+    /// and callers live in another repo. `reason` is required and shown with the op.
+    pub const fn only_on(mut self, backends: &'static [Backend], reason: &'static str) -> Self {
+        self.only = backends;
+        self.only_reason = reason;
         self
     }
 

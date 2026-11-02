@@ -7,7 +7,7 @@
 use std::fs::OpenOptions;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 
-use daedalus_rga::{Layout, PixelFormat, Rect, Rga, find_m2m_device};
+use daedalus_rga::{Filter, Layout, PixelFormat, Rect, Rga, find_m2m_device};
 
 fn vim2m() -> Option<Rga> {
     match find_m2m_device("vim2m") {
@@ -225,4 +225,117 @@ fn rga_converts_like_the_references() {
             (out == rgb).then_some(()).ok_or_else(|| "differs".into())
         },
     );
+}
+
+/// Resize plumbing on vim2m (it samples nearest, so values are not checked), and the filters
+/// the mainline driver cannot honour refused before any device call.
+#[test]
+fn vim2m_resizes_and_refuses_what_the_driver_cannot_do() {
+    let Some(mut rga) = vim2m() else { return };
+    let (src, dst) = (
+        Layout::packed(PixelFormat::Rgb24, 128, 96),
+        Layout::packed(PixelFormat::Rgb24, 64, 48),
+    );
+    let input = frame(src.frame_len(), 3);
+    let mut out = vec![0u8; dst.frame_len()];
+    match rga.resize_bytes(src, &input, dst, &mut out, Filter::Area) {
+        Ok(n) => assert_eq!(n, dst.frame_len()),
+        Err(err) => eprintln!("skipping the area resize: this vim2m does not scale ({err})"),
+    }
+    let refused = |rga: &mut Rga, dst: Layout, filter| {
+        let mut out = vec![0u8; dst.frame_len()];
+        rga.resize_bytes(src, &input, dst, &mut out, filter)
+            .unwrap_err()
+            .kind()
+    };
+    let unsupported = std::io::ErrorKind::Unsupported;
+    assert_eq!(refused(&mut rga, dst, Filter::Bilinear), unsupported);
+    let third = Layout::packed(PixelFormat::Rgb24, 60, 48);
+    assert_eq!(refused(&mut rga, third, Filter::Area), unsupported);
+}
+
+/// The largest difference between two frames, or an error when the lengths differ.
+fn max_diff(got: &[u8], want: &[u8]) -> Result<u8, String> {
+    if got.len() != want.len() {
+        return Err(format!("{} bytes, want {}", got.len(), want.len()));
+    }
+    Ok(got
+        .iter()
+        .zip(want)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .unwrap_or(0))
+}
+
+/// Within the tolerance Eidos accepts (one level), printing the measured difference.
+fn within_one(what: &str, got: &[u8], want: &[u8]) -> Result<(), String> {
+    let diff = max_diff(got, want)?;
+    eprintln!("{what}: max difference {diff}");
+    (diff <= 1)
+        .then_some(())
+        .ok_or_else(|| format!("max difference {diff}"))
+}
+
+/// Rockchip's RGA resizes against the references (within one level), recorded as the
+/// `rga-v4l2` variant. Written, untested on board: skips without `rockchip-rga`.
+#[test]
+fn rga_resizes_like_the_references() {
+    use daedalus_accel::{Backend, Evidence, conform_with};
+    use daedalus_kernels::reference as r;
+    let Some(mut rga) = Rga::find() else {
+        return eprintln!("skipping: no rockchip-rga device");
+    };
+    let evidence = |op| Evidence::new(op, Backend::FixedFunction).variant("rga-v4l2");
+    let (w, h) = (640u32, 480u32);
+    let luma: Vec<u8> = (0..w * h).map(|i| (i % 251) as u8).collect();
+    conform_with(evidence("daedalus.image.resize_area"), || {
+        // Luma through NV12, an odd size cropped, and RGB.
+        let mut out = vec![0u8; (w * h / 4) as usize];
+        rga.resize_luma(w, h, &luma, w / 2, h / 2, &mut out, Filter::Area)
+            .map_err(|e| e.to_string())?;
+        let want = r::resize_area(&luma, w as usize, h as usize, 1, 2).0;
+        within_one("area luma 640x480 / 2", &out, &want)?;
+        let (ow, oh) = ((w - 1) / 2, (h - 1) / 2);
+        let odd = r::resize_area(&luma, w as usize, h as usize, 1, 1).0;
+        let odd: Vec<u8> = odd
+            .chunks(w as usize)
+            .take((h - 1) as usize)
+            .flat_map(|row| row[..(w - 1) as usize].to_vec())
+            .collect();
+        let mut out = vec![0u8; (ow * oh) as usize];
+        rga.resize_luma(w - 1, h - 1, &odd, ow, oh, &mut out, Filter::Area)
+            .map_err(|e| e.to_string())?;
+        let want = r::resize_area(&odd, (w - 1) as usize, (h - 1) as usize, 1, 2).0;
+        within_one("area luma 639x479 / 2", &out, &want)?;
+        let rgb: Vec<u8> = (0..w * h * 3).map(|i| (i % 253) as u8).collect();
+        let (s, d) = (
+            Layout::packed(PixelFormat::Rgb24, w, h),
+            Layout::packed(PixelFormat::Rgb24, w / 4, h / 4),
+        );
+        let mut out = vec![0u8; d.frame_len()];
+        rga.resize_bytes(s, &rgb, d, &mut out, Filter::Area)
+            .map_err(|e| e.to_string())?;
+        let want = r::resize_area(&rgb, w as usize, h as usize, 3, 4).0;
+        within_one("area rgb 640x480 / 4", &out, &want)
+    });
+    conform_with(evidence("daedalus.image.resize_bilinear"), || {
+        let (sw, sh) = (160u32, 120u32);
+        let rgb: Vec<u8> = (0..sw * sh * 3).map(|i| (i % 253) as u8).collect();
+        let (s, d) = (
+            Layout::packed(PixelFormat::Rgb24, sw, sh),
+            Layout::packed(PixelFormat::Rgb24, sw * 2, sh * 2),
+        );
+        let mut out = vec![0u8; d.frame_len()];
+        rga.resize_bytes(s, &rgb, d, &mut out, Filter::Bilinear)
+            .map_err(|e| e.to_string())?;
+        let want = r::resize_bilinear(
+            &rgb,
+            sw as usize,
+            sh as usize,
+            3,
+            2 * sw as usize,
+            2 * sh as usize,
+        );
+        within_one("bilinear rgb 160x120 x 2", &out, &want)
+    });
 }

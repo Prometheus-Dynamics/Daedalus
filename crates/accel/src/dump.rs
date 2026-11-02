@@ -41,7 +41,7 @@ fn collect(
     };
     for op in registry.ops {
         ops.push(format!(
-            "{{\"repo\":{},\"table\":{},\"id\":{},\"summary\":{},\"scalar\":{},\"per_element\":{},\"candidates\":[{}],\"call_sites\":[{}]}}",
+            "{{\"repo\":{},\"table\":{},\"id\":{},\"summary\":{},\"scalar\":{},\"per_element\":{},\"candidates\":[{}],\"call_sites\":[{}],\"only\":[{}],\"only_reason\":{}}}",
             json_str(repo),
             json_str(registry.name),
             json_str(op.id),
@@ -66,7 +66,13 @@ fn collect(
                     c.forbid.iter().map(|f| json_str(f)).collect::<Vec<_>>().join(",")
                 ))
                 .collect::<Vec<_>>()
-                .join(",")
+                .join(","),
+            op.only
+                .iter()
+                .map(|b| json_str(b.name()))
+                .collect::<Vec<_>>()
+                .join(","),
+            json_str(op.only_reason)
         ));
     }
     for k in registry.kernels {

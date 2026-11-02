@@ -71,7 +71,19 @@ impl Inventory {
                     }
                 })
                 .collect();
-            let _ = writeln!(out, "| `{}` | {} |", op.id, marks.join(" | "));
+            let id = if op.only_reason.is_empty() {
+                format!("`{}`", op.id)
+            } else {
+                let only: Vec<&str> = op.only.iter().map(|b| b.name()).collect();
+                notes.push(format!(
+                    "- `{}` only on {}: {}",
+                    op.id,
+                    only.join(", "),
+                    op.only_reason
+                ));
+                format!("`{}`[{}]", op.id, notes.len())
+            };
+            let _ = writeln!(out, "| {id} | {} |", marks.join(" | "));
         }
         if !notes.is_empty() {
             out.push_str("\n## Reasons\n\n");

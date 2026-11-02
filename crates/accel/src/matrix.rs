@@ -25,6 +25,22 @@ pub struct OpRow {
     pub candidates: Vec<Column>,
     /// (path, the kernel call it must contain, scalar code it must not contain)
     pub call_sites: Vec<(String, String, Vec<String>)>,
+    /// The only backends the op has rows on; empty for all ([`crate::Op::only_on`]).
+    pub only: Vec<Backend>,
+    pub only_reason: String,
+}
+
+impl OpRow {
+    /// Whether `column` applies to the op.
+    fn applies(&self, column: &Column) -> bool {
+        if self.only.is_empty() {
+            return true;
+        }
+        if column.wired {
+            return !self.call_sites.is_empty();
+        }
+        self.only.contains(&column.backend)
+    }
 }
 
 /// A matrix column: a backend, plus the extensions of a variant (`neon64+dotprod`), plus the
@@ -255,6 +271,17 @@ impl Inventory {
                         (s(c, "path"), s(c, "calls"), forbid)
                     })
                     .collect(),
+                only: op
+                    .get("only")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|b| {
+                        let name = b.as_str().unwrap_or_default();
+                        Backend::from_name(name).ok_or_else(|| format!("unknown backend {name:?}"))
+                    })
+                    .collect::<Result<_, String>>()?,
+                only_reason: s(&op, "only_reason"),
             });
         }
         for k in list("kernels") {
@@ -319,11 +346,21 @@ impl Inventory {
             if !seen.insert(op.id.as_str()) {
                 errors.push(format!("op {} is declared twice", op.id));
             }
+            if !op.only.is_empty() && op.only_reason.trim().is_empty() {
+                errors.push(format!("op {}: only_on needs a reason", op.id));
+            }
         }
         for k in &self.kernels {
             let at = format!("{} on {}", k.op, k.backend.name());
             if !seen.contains(k.op.as_str()) {
                 errors.push(format!("{at}: op is not declared"));
+            }
+            if self
+                .ops
+                .iter()
+                .any(|o| o.id == k.op && !o.only.is_empty() && !o.only.contains(&k.backend))
+            {
+                errors.push(format!("{at}: the op is only_on other backends"));
             }
             if k.status == "implemented" && (k.source.is_empty() || k.test.is_empty()) {
                 errors.push(format!(
@@ -441,6 +478,13 @@ impl Inventory {
     /// The cell for `op` in `column`. A base kernel's evidence never counts for an extension
     /// column, and a core-tuned variant counts only in its own column.
     pub fn cell_in(&self, op: &str, column: &Column) -> CellValue {
+        if self.ops.iter().any(|o| o.id == op && !o.applies(column)) {
+            return CellValue {
+                cell: Cell::NotApplicable,
+                reason: String::new(),
+                evidence: String::new(),
+            };
+        }
         if column.wired {
             return self.wired_cell(op);
         }

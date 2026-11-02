@@ -160,3 +160,79 @@ pub fn base64_decode(src: &[u8]) -> Option<Vec<u8>> {
     }
     Some(out)
 }
+
+/// Area downscale by an integer `factor` of tightly packed `channels`-byte pixels. The output is
+/// `max(1, width / factor)` by `max(1, height / factor)`: blocks start at the origin and a
+/// trailing partial block is dropped, unless a side is shorter than `factor`, where its one
+/// block is what there is. Each output byte is the block's rounded mean, `(sum + n / 2) / n`
+/// (for 2x, `(a + b + c + d + 2) >> 2`). Returns the bytes and the output size.
+pub fn resize_area(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    factor: usize,
+) -> (Vec<u8>, usize, usize) {
+    let (ow, oh) = ((width / factor).max(1), (height / factor).max(1));
+    let mut out = Vec::new();
+    for oy in 0..oh {
+        for ox in 0..ow {
+            for c in 0..channels {
+                let (mut sum, mut n) = (0usize, 0usize);
+                for y in oy * factor..((oy + 1) * factor).min(height) {
+                    for x in ox * factor..((ox + 1) * factor).min(width) {
+                        sum += src[(y * width + x) * channels + c] as usize;
+                        n += 1;
+                    }
+                }
+                out.push(((sum + n / 2) / n) as u8);
+            }
+        }
+    }
+    (out, ow, oh)
+}
+
+/// The source index and 11-bit weight of the next sample for output `d` of `dst` along an
+/// axis of `src`: half-pixel centres, `(d + 0.5) * src / dst - 0.5`, clamped at the edges.
+fn linear_tap(d: usize, src: usize, dst: usize) -> (usize, u32) {
+    // In units of 1 / (2 * dst) source pixels.
+    let pos = ((2 * d + 1) * src) as i64 - dst as i64;
+    let unit = 2 * dst as i64;
+    if pos < 0 {
+        return (0, 0);
+    }
+    let (s, rem) = ((pos / unit) as usize, pos % unit);
+    if s >= src - 1 {
+        return (src - 1, 0);
+    }
+    (s, ((rem * 2048 + unit / 2) / unit) as u32)
+}
+
+/// Bilinear resize of tightly packed `channels`-byte pixels, as OpenCV's `INTER_LINEAR` on
+/// 8-bit data: half-pixel centres, clamped edges, 11-bit weights (rounded half up) and
+/// `(v + 2^21) >> 22` after both passes.
+pub fn resize_bilinear(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    out_width: usize,
+    out_height: usize,
+) -> Vec<u8> {
+    let at = |x: usize, y: usize, c: usize| src[(y * width + x) * channels + c] as u32;
+    let mut out = Vec::new();
+    for oy in 0..out_height {
+        let (y0, wy) = linear_tap(oy, height, out_height);
+        let y1 = (y0 + 1).min(height - 1);
+        for ox in 0..out_width {
+            let (x0, wx) = linear_tap(ox, width, out_width);
+            let x1 = (x0 + 1).min(width - 1);
+            for c in 0..channels {
+                let row = |y| at(x0, y, c) * (2048 - wx) + at(x1, y, c) * wx;
+                let v = row(y0) * (2048 - wy) + row(y1) * wy;
+                out.push(((v + (1 << 21)) >> 22) as u8);
+            }
+        }
+    }
+    out
+}

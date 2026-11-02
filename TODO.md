@@ -180,6 +180,11 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       and a test on `vim2m` where the path allows; board cells marked written, untested on board.
       **Blocked by:** `daedalus-rga` on Lemnos's `M2mSession` first (waiting on Lemnos's crop
       selection and device query); boards for measurement.
+      **Progress:** (1) written: `Filter::{Area, Bilinear}` on both routes, `resize_luma` through
+      NV12 on mainline, `caps::caps(soc)`, ops `daedalus.image.resize_{area,bilinear}` (scalar and
+      fixed_function rows only, `Op::only_on`); vim2m checks the plumbing. Board cells written,
+      untested on board; exactness `Unmeasured`. Open in (1): a GRAY8 dmabuf through NV12M with a
+      shared dummy chroma plane (mainline 7.2 lists NV12M on RGA2 and RGA3) if Eidos needs it.
       **Measured:** n/a.
 
 ### Release steps

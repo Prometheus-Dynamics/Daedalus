@@ -12,7 +12,9 @@ No dependencies and `no_std` by default-off `std`; Eidos uses it as a dev-depend
   `Impossible`, `NotDataParallel` or `Deferred` (possible but postponed), each with a reason.
   An entry with `with_extensions` decides that extension column, so an `Op::could_use`
   candidate that cannot be done is a `missing(.., Impossible(..))` entry with its extensions.
-  Tables nest through `children`. A backend without an entry is a gap.
+  Tables nest through `children`. A backend without an entry is a gap, unless the op is
+  `Op::only_on` some backends (a fixed-function node whose CPU kernels and callers are another
+  repo's): the other columns are n/a and the required reason is listed with the op.
 - **Prove.** Conformance tests call `conform(op, backend, || kernel == scalar)` (`std`). With
   `ACCEL_RESULTS_DIR` set it appends a JSON line: op, backend, variant, adapter, target
   (`ACCEL_TARGET`), runner (`ACCEL_RUNNER`), RVV `vlen` (read from `vlenb`), rev, result.

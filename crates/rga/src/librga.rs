@@ -10,6 +10,9 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 use std::io;
 use std::os::fd::{AsRawFd, BorrowedFd};
 
+use crate::caps::Route;
+use crate::resize::{Filter, source_size};
+
 /// `im_colorkey_range`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -81,6 +84,10 @@ const COLOR_SPACE_DEFAULT: c_int = 0;
 const INFO_VERSION: c_int = 1;
 /// The legacy `INTER_NEAREST`, also `IM_INTERP_DEFAULT`.
 const INTER_NEAREST: c_int = 0;
+/// `IM_INTERP_LINEAR`.
+const INTERP_LINEAR: c_int = 1;
+/// `IM_INTERP_AVERAGE`.
+const INTERP_AVERAGE: c_int = 3;
 
 /// A pixel format of [`Image`], with `RkRgaSurfaceFormat`'s value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,6 +273,66 @@ impl Librga {
         dst_fd: BorrowedFd<'_>,
     ) -> io::Result<()> {
         self.resize(self.wrap_fd(src, src_fd), self.wrap_fd(dst, dst_fd), 0)
+    }
+
+    /// The source image a resize reads (an area downscale crops the remainder away by
+    /// narrowing the image inside its strides) and librga's interpolation for `filter`.
+    fn resize_plan(src: Image, dst: Image, filter: Filter) -> io::Result<(Image, c_int)> {
+        let (width, height) = source_size(
+            (src.width, src.height),
+            (dst.width, dst.height),
+            filter,
+            Route::Librga,
+        )?;
+        let interpolation = match filter {
+            Filter::Area => INTERP_AVERAGE,
+            Filter::Bilinear => INTERP_LINEAR,
+        };
+        Ok((
+            Image {
+                width,
+                height,
+                ..src
+            },
+            interpolation,
+        ))
+    }
+
+    /// Resize between dmabufs of the same format, to `dst`'s size, with `filter`
+    /// (`IM_INTERP_AVERAGE` or `IM_INTERP_LINEAR`). Gray8 works directly. [`Filter::Area`]
+    /// must be an integer downscale; anything else is `Unsupported`.
+    pub fn resize_dmabuf(
+        &self,
+        src: Image,
+        src_fd: BorrowedFd<'_>,
+        dst: Image,
+        dst_fd: BorrowedFd<'_>,
+        filter: Filter,
+    ) -> io::Result<()> {
+        let (src, interpolation) = Self::resize_plan(src, dst, filter)?;
+        self.resize(
+            self.wrap_fd(src, src_fd),
+            self.wrap_fd(dst, dst_fd),
+            interpolation,
+        )
+    }
+
+    /// [`Librga::resize_dmabuf`] between byte buffers.
+    pub fn resize_bytes(
+        &self,
+        src: Image,
+        from: &[u8],
+        dst: Image,
+        to: &mut [u8],
+        filter: Filter,
+    ) -> io::Result<()> {
+        check(src, from.len(), dst, to.len())?;
+        let (src, interpolation) = Self::resize_plan(src, dst, filter)?;
+        self.resize(
+            self.wrap_ptr(src, from.as_ptr()),
+            self.wrap_ptr(dst, to.as_mut_ptr()),
+            interpolation,
+        )
     }
 
     /// Convert the pixel format between byte buffers of the same size.
@@ -456,7 +523,11 @@ mod tests {
         1
     }
 
-    /// Software `imresize_t`: nearest, sampling the first of each group.
+    /// The interpolation of the last `resize` call.
+    static LAST_INTERP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+    /// Software `imresize_t`: nearest, sampling the first of each group, or the rounded block
+    /// mean of gray for `IM_INTERP_AVERAGE`.
     unsafe extern "C" fn resize(
         src: RgaBuffer,
         dst: RgaBuffer,
@@ -465,7 +536,31 @@ mod tests {
         interpolation: c_int,
         sync: c_int,
     ) -> c_int {
-        assert_eq!((fx, fy, interpolation, sync), (0.0, 0.0, INTER_NEAREST, 1));
+        LAST_INTERP.store(interpolation, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!((fx, fy, sync), (0.0, 0.0, 1));
+        if interpolation == INTERP_AVERAGE {
+            let f = (src.width / dst.width) as usize;
+            let (s, d) = (src.vir_addr.cast::<u8>(), dst.vir_addr.cast::<u8>());
+            for oy in 0..dst.height as usize {
+                for ox in 0..dst.width as usize {
+                    let mut sum = 0usize;
+                    for y in 0..f {
+                        for x in 0..f {
+                            let at = (oy * f + y) * src.wstride as usize + ox * f + x;
+                            // SAFETY: the wrapped buffers cover their images.
+                            sum += unsafe { *s.add(at) } as usize;
+                        }
+                    }
+                    let n = f * f;
+                    // SAFETY: as above.
+                    unsafe { *d.add(oy * dst.wstride as usize + ox) = ((sum + n / 2) / n) as u8 };
+                }
+            }
+            return 1;
+        }
+        if interpolation != INTER_NEAREST {
+            return -1;
+        }
         let step = (src.width / dst.width) as usize;
         let (s, d) = (src.vir_addr.cast::<u8>(), dst.vir_addr.cast::<u8>());
         // SAFETY: the wrapped buffers cover their images.
@@ -524,6 +619,40 @@ mod tests {
             Image::packed(RgaFormat::Rgba8888, 1, 1),
         );
         let err = rga.convert(bgr, &[0; 3], rgba, &mut [0; 4]).unwrap_err();
+        assert!(err.to_string().contains("status -1"), "{err}");
+    }
+
+    #[test]
+    fn resize_crops_through_the_image_and_passes_the_filter() {
+        use std::sync::atomic::Ordering;
+        let rga = stand_in();
+        // 5x3 gray to 2x1: the trailing column and row are cropped by narrowing the image.
+        let src: Vec<u8> = (0..15).map(|i| i * 10).collect();
+        let (s, d) = (
+            Image::packed(RgaFormat::Gray8, 5, 3),
+            Image::packed(RgaFormat::Gray8, 2, 1),
+        );
+        let mut out = [0u8; 2];
+        rga.resize_bytes(s, &src, d, &mut out, Filter::Area)
+            .unwrap();
+        assert_eq!(LAST_INTERP.load(Ordering::Relaxed), INTERP_AVERAGE);
+        // (0 + 10 + 50 + 60 + 2) / 4 and (20 + 30 + 70 + 80 + 2) / 4.
+        assert_eq!(out, [30, 50]);
+        let err = rga
+            .resize_bytes(
+                s,
+                &src,
+                Image::packed(RgaFormat::Gray8, 3, 1),
+                &mut [0; 3],
+                Filter::Area,
+            )
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+        let up = Image::packed(RgaFormat::Gray8, 10, 6);
+        let err = rga
+            .resize_bytes(s, &src, up, &mut [0; 60], Filter::Bilinear)
+            .unwrap_err();
+        assert_eq!(LAST_INTERP.load(Ordering::Relaxed), INTERP_LINEAR);
         assert!(err.to_string().contains("status -1"), "{err}");
     }
 

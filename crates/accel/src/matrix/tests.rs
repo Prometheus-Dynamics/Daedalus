@@ -320,3 +320,75 @@ fn extension_candidates_can_be_impossible_and_cells_deferred() {
             .contains("t,t.mul,gpu,deferred,waiting on the SDK,")
     );
 }
+
+static NODE_OPS: [Op; 1] = [Op::new("t.shrink", "shrink", "t::shrink").only_on(
+    &[Backend::Scalar, Backend::FixedFunction],
+    "a fixed-function node; the CPU kernels and callers are another repo's",
+)];
+
+static NODE_ROOT: Registry = Registry {
+    repo: "t",
+    name: "node",
+    ops: &NODE_OPS,
+    kernels: &[
+        Kernel::implemented("t.shrink", Backend::Scalar, "src/s.rs:1", "s::scalar"),
+        Kernel::implemented("t.shrink", Backend::FixedFunction, "src/s.rs:9", "s::rga")
+            .with_variant("rga"),
+    ],
+    ..Registry::EMPTY
+};
+
+#[test]
+fn only_on_ops_have_no_other_columns() {
+    let mut inv = Inventory::default();
+    inv.add_registry(&crate::dump_json(&[&NODE_ROOT])).unwrap();
+    assert!(
+        inv.check_registry().is_empty(),
+        "{:?}",
+        inv.check_registry()
+    );
+    assert_eq!(
+        inv.cell("t.shrink", Backend::Neon64).cell,
+        Cell::NotApplicable
+    );
+    assert_eq!(inv.cell("t.shrink", Backend::Gpu).cell, Cell::NotApplicable);
+    assert_eq!(
+        inv.cell_in("t.shrink", &Column::wired()).cell,
+        Cell::NotApplicable
+    );
+    assert_eq!(inv.cell("t.shrink", Backend::Scalar).cell, Cell::Untested);
+    assert_eq!(
+        inv.cell("t.shrink", Backend::FixedFunction).cell,
+        Cell::Untested
+    );
+    assert!(
+        inv.markdown()
+            .contains("`t.shrink` only on scalar, fixed_function: a fixed-function node")
+    );
+
+    // An entry on an excluded backend, or no reason, is a registry error.
+    static BAD_OPS: [Op; 1] = [Op::new("t.bad", "bad", "t::bad").only_on(&[Backend::Scalar], " ")];
+    static BAD: Registry = Registry {
+        repo: "t",
+        name: "bad",
+        ops: &BAD_OPS,
+        kernels: &[Kernel::implemented(
+            "t.bad",
+            Backend::Rvv,
+            "src/b.rs:1",
+            "b::rvv",
+        )],
+        ..Registry::EMPTY
+    };
+    let mut inv = Inventory::default();
+    inv.add_registry(&crate::dump_json(&[&BAD])).unwrap();
+    let errors = inv.check_registry();
+    assert!(
+        errors.iter().any(|e| e.contains("needs a reason")),
+        "{errors:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e.contains("only_on other backends")),
+        "{errors:?}"
+    );
+}

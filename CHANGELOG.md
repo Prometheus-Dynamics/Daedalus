@@ -70,6 +70,23 @@ plugin ABI and does not load.
   lavapipe with a precompiled GLSL kernel reading `uint8_t` storage. `gpu-vulkan-raw` now
   implies `gpu-dmabuf`.
 
+- **RGA resize for Eidos's pyramids, and a capability descriptor.** `daedalus-rga` gains
+  `Filter::{Area, Bilinear}` with `Rga::resize`, `resize_bytes` and `resize_luma` (8-bit luma
+  through NV12, since the mainline driver has no gray format) and `Librga::resize_dmabuf` and
+  `resize_bytes` (`IM_INTERP_AVERAGE`, `IM_INTERP_LINEAR`). Area is an integer downscale whose
+  trailing partial block is cropped; what a route cannot do as asked is `Unsupported`, never a
+  substitute (mainline cannot downscale bilinearly). `caps::caps(soc)` describes RK3566, RK3568,
+  RK3576, RK3588, RK3562 and K230D: units, routes, size and scale limits, luma cost, and each
+  filter's exactness, all `Unmeasured` until a board run. New ops `daedalus.image.resize_area`
+  and `daedalus.image.resize_bilinear` with scalar references (`reference::resize_area`,
+  `reference::resize_bilinear`, OpenCV `INTER_LINEAR` on 8-bit data) and `rga-v4l2` and
+  `librga` fixed-function rows; vim2m checks the plumbing, the board tests are written, untested
+  on board.
+- **`Op::only_on(backends, reason)` in the acceleration inventory.** For a fixed-function node
+  whose CPU kernels and callers are another repo's: the other backends' columns, and `wired`
+  without call sites, are n/a, and the reason is listed with the op. `Op` gains the `only` and
+  `only_reason` fields.
+
 - **`Status::Deferred` in the acceleration inventory.** For a cell that is possible but
   postponed (waiting on a board, a vendor toolchain or an SDK), with its reason. It renders as
   **deferred**, has its own count in the totals, and `accel-matrix --release` still fails on it,

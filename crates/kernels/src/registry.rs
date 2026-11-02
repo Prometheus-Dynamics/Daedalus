@@ -2,6 +2,9 @@
 
 use daedalus_accel::{Backend, CallSite, Exempt, Ext, Kernel, Op, Registry, Status};
 
+mod fixed;
+use fixed::{IMAGE_TABLE, RGA_TABLE};
+
 /// Unused once every op has a `core::simd` kernel; kept for ops added without one.
 #[allow(dead_code)]
 const PORTABLE: Status = Status::Gap("no core::simd kernel yet (portable.rs)");
@@ -665,62 +668,6 @@ static F16C_TABLE: Registry = Registry {
     ..Registry::EMPTY
 };
 
-/// Rockchip's RGA (`daedalus-rga`): the `rockchip-rga` V4L2 mem2mem driver and the vendor's
-/// `librga`. Written, untested on board.
-const RGA_V4L2: (&str, &str) = ("crates/rga/src/lib.rs", "crates/rga/tests/v4l2.rs");
-const RGA_LIB: (&str, &str) = ("crates/rga/src/librga.rs", "crates/rga/tests/librga.rs");
-
-static RGA_KERNELS: [Kernel; 6] = [
-    Kernel::implemented(
-        "daedalus.pixel.rgb_to_rgba",
-        Backend::FixedFunction,
-        RGA_V4L2.0,
-        RGA_V4L2.1,
-    )
-    .with_variant("rga-v4l2"),
-    Kernel::implemented(
-        "daedalus.pixel.rgba_to_rgb",
-        Backend::FixedFunction,
-        RGA_V4L2.0,
-        RGA_V4L2.1,
-    )
-    .with_variant("rga-v4l2"),
-    Kernel::implemented(
-        "daedalus.pixel.rgb_to_rgba",
-        Backend::FixedFunction,
-        RGA_LIB.0,
-        RGA_LIB.1,
-    )
-    .with_variant("librga"),
-    Kernel::implemented(
-        "daedalus.pixel.rgba_to_rgb",
-        Backend::FixedFunction,
-        RGA_LIB.0,
-        RGA_LIB.1,
-    )
-    .with_variant("librga"),
-    Kernel::implemented(
-        "daedalus.pixel.gray_to_rgba",
-        Backend::FixedFunction,
-        RGA_LIB.0,
-        RGA_LIB.1,
-    )
-    .with_variant("librga"),
-    Kernel::implemented(
-        "daedalus.pixel.rgba_red",
-        Backend::FixedFunction,
-        RGA_LIB.0,
-        RGA_LIB.1,
-    )
-    .with_variant("librga"),
-];
-
-static RGA_TABLE: Registry = Registry {
-    name: "daedalus-kernels-rga",
-    kernels: &RGA_KERNELS,
-    ..Registry::EMPTY
-};
-
 static CRC_TABLE: Registry = Registry {
     name: "daedalus-kernels-crc",
     ops: &CRC_OPS,
@@ -756,5 +703,5 @@ pub static ACCEL: Registry = Registry {
             reason: "RISC-V extension detection (riscv_hwprobe syscall)",
         },
     ],
-    children: &[&GPU_OPS, &CRC_TABLE, &F16C_TABLE, &RGA_TABLE],
+    children: &[&GPU_OPS, &CRC_TABLE, &F16C_TABLE, &RGA_TABLE, &IMAGE_TABLE],
 };
