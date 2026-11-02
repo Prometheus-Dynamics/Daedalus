@@ -209,6 +209,15 @@ on 2026-11-02, at f7e05ac.
       Daedalus's device, bit-exact and validation-clean on v3dv (2026-11-01). Left: make it the
       only path when both are in a process (who creates the device, how Styx gets it when it runs
       without a Daedalus graph), and a test that a process has one `VkDevice`.
+      **Checked 2026-11-02** (Styx 7167ff5, HeliOS 21e2f613, Eidos f044a095): no process shares
+      today. Styx's production GPU ISP (`crates/styx/src/gpu_isp.rs`) opens its own device and
+      queue (`GpuContext::open`); `from_daedalus` is used only in gpuisp's tests. No HeliOS crate
+      enables Styx's `gpu-isp`, so no HeliOS process has both. The Eidos plugin's GPU nodes use
+      the engine's device (`GpuDevice::from_context`). Hazard for the shared case: the Eidos plugin
+      is a `cdylib` with its own copy of `daedalus-gpu`, so its statics (the submit lock
+      `QUEUE_SUBMIT`, `driver_lock`, the device caches) are separate from the engine's. A
+      `RawSubmitter` in the engine would not serialize against the plugin's submits on the same
+      `VkQueue`; the lock has to be reached through the context handle (or one shared image).
       **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
       **Blocked by:** the user's go; Styx's side.
       **Measured:** n/a.
