@@ -474,8 +474,10 @@ fn fill_rounds(ctx: &crate::GpuContextHandle, slots: usize, rounds: usize) {
     let mut out = vec![0u8; 4096];
     dst.read_mapped(0, &mut out).unwrap();
     assert!(
-        out.chunks_exact(4)
-            .all(|w| u32::from_le_bytes(w.try_into().unwrap()) == last)
+        out.as_chunks::<4>()
+            .0
+            .iter()
+            .all(|w| u32::from_le_bytes(*w) == last)
     );
 }
 
