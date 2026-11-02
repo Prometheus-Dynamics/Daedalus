@@ -80,6 +80,24 @@ pub struct FilterCaps {
     pub note: &'static str,
 }
 
+/// A fixed-function operation other than a resize.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FixedOp {
+    /// 8-bit indices to RGBA8 through 256 entries (`daedalus.image.palette`).
+    Palette,
+    /// Per-channel range test giving a mask (`daedalus.image.color_key_mask`).
+    ColorKey,
+}
+
+/// What a route does with one [`FixedOp`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpCaps {
+    pub op: FixedOp,
+    pub exactness: Exactness,
+    pub note: &'static str,
+}
+
 /// One unit on one SoC through one route.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnitCaps {
@@ -94,6 +112,7 @@ pub struct UnitCaps {
     /// when it takes gray directly, 1500 when luma goes through NV12 with dummy chroma.
     pub luma_cost_permille: u16,
     pub filters: &'static [FilterCaps],
+    pub ops: &'static [OpCaps],
 }
 
 const AREA_RGA2_V4L2: FilterCaps = FilterCaps {
@@ -140,6 +159,20 @@ const BILINEAR_LIBRGA: FilterCaps = FilterCaps {
     note: "imresize with IM_INTERP_LINEAR",
 };
 
+const RGA2_LIBRGA_OPS: &[OpCaps] = &[
+    OpCaps {
+        op: FixedOp::Palette,
+        exactness: Exactness::Unmeasured,
+        note: "impalette with a BPP8 source and a 256x1 RGBA8888 table",
+    },
+    OpCaps {
+        op: FixedOp::ColorKey,
+        exactness: Exactness::Unmeasured,
+        note: "imcolorkey INVERTED from RGBX8888 onto a cleared RGBA8888 destination, whose \
+               alpha is the mask; INVERTED keeping the in-range pixels is from its name only",
+    },
+];
+
 const RGA2_V4L2: &[FilterCaps] = &[AREA_RGA2_V4L2, BILINEAR_RGA2_V4L2];
 const RGA3_V4L2: &[FilterCaps] = &[AREA_RGA3_V4L2, BILINEAR_RGA3_V4L2];
 const LIBRGA: &[FilterCaps] = &[AREA_LIBRGA, BILINEAR_LIBRGA];
@@ -154,6 +187,8 @@ const fn v4l2(soc: Soc, unit: Unit) -> UnitCaps {
         max_scale: Some(if rga3 { 8 } else { 16 }),
         luma_cost_permille: 1500,
         filters: if rga3 { RGA3_V4L2 } else { RGA2_V4L2 },
+        // The mainline driver has no palette or colour key.
+        ops: &[],
     }
 }
 
@@ -166,6 +201,12 @@ const fn librga(soc: Soc, unit: Unit) -> UnitCaps {
         max_scale: None,
         luma_cost_permille: 1000,
         filters: LIBRGA,
+        // Palette and colour key are RGA2 features; librga sends them there.
+        ops: if matches!(unit, Unit::Rga2) {
+            RGA2_LIBRGA_OPS
+        } else {
+            &[]
+        },
     }
 }
 
@@ -178,6 +219,7 @@ const fn design(soc: Soc, unit: Unit) -> UnitCaps {
         max_scale: None,
         luma_cost_permille: 1000,
         filters: &[],
+        ops: &[],
     }
 }
 
@@ -203,6 +245,11 @@ pub fn caps(soc: Soc) -> impl Iterator<Item = &'static UnitCaps> {
 }
 
 impl UnitCaps {
+    /// What this route does with `op`, if anything.
+    pub fn op(&self, op: FixedOp) -> Option<&OpCaps> {
+        self.ops.iter().find(|o| o.op == op)
+    }
+
     /// What this route does with `filter`, if anything.
     pub fn filter(&self, filter: Filter) -> Option<&FilterCaps> {
         self.filters.iter().find(|f| f.filter == filter)
@@ -230,5 +277,14 @@ mod tests {
         assert!(area.down && !area.up);
         assert!(caps(Soc::K230d).all(|c| c.route == Route::Design && c.filters.is_empty()));
         assert!(caps(Soc::Rk3576).all(|c| c.route == Route::Librga));
+        // Palette and colour key: librga on RGA2 only.
+        for c in Soc::ALL.into_iter().flat_map(caps) {
+            let has = c.op(FixedOp::Palette).is_some();
+            assert_eq!(
+                has,
+                c.route == Route::Librga && c.unit == Unit::Rga2,
+                "{c:?}"
+            );
+        }
     }
 }

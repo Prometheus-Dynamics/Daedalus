@@ -52,6 +52,11 @@ fn scalar_references_match_known_answers() {
     // 2x up: OpenCV's quarter weights, edges clamped.
     let bilinear = r::resize_bilinear(&[0, 100], 2, 1, 1, 4, 1) == [0, 25, 75, 100]
         && r::resize_bilinear(&[0, 100, 200, 44], 2, 2, 1, 2, 2) == [0, 100, 200, 44];
+    let mut lut = [[0u8; 4]; 256];
+    lut[2] = [1, 2, 3, 4];
+    let palette = r::palette(&[2, 0], &lut) == [1, 2, 3, 4, 0, 0, 0, 0];
+    let key =
+        r::color_key_mask(&[5, 6, 7, 10, 6, 7, 5, 6, 8], 3, [5, 6, 7], [9, 6, 7]) == [255, 0, 0];
     for op in [
         "daedalus.pixel.rgb_to_rgba",
         "daedalus.pixel.rgba_to_rgb",
@@ -71,6 +76,8 @@ fn scalar_references_match_known_answers() {
     conform("daedalus.image.resize_bilinear", Backend::Scalar, || {
         bilinear
     });
+    conform("daedalus.image.palette", Backend::Scalar, || palette);
+    conform("daedalus.image.color_key_mask", Backend::Scalar, || key);
 }
 
 /// A test input of a given length and the reference output.

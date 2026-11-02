@@ -70,6 +70,17 @@ plugin ABI and does not load.
   lavapipe with a precompiled GLSL kernel reading `uint8_t` storage. `gpu-vulkan-raw` now
   implies `gpu-dmabuf`.
 
+- **RGA palette and colour key through librga.** `Librga::palette_bytes` and `palette_dmabuf`
+  (`impalette`, a `BPP8` source and a 256-entry RGBA8888 table), and `color_key_bytes`,
+  `color_key_dmabuf` and `color_key_mask` (`imcolorkey` `INVERTED` from RGBX8888 onto a cleared
+  RGBA8888 frame: the in-range pixels come out opaque, so the alpha is the mask). New
+  `RgaFormat::{Rgbx8888, Bpp8}`. The two entry points load as optional: a librga without one makes
+  that call `Unsupported`. `caps` gains `FixedOp::{Palette, ColorKey}` and `UnitCaps::ops`
+  (librga on RGA2 only; exactness `Unmeasured`). New ops `daedalus.image.palette` and
+  `daedalus.image.color_key_mask` with scalar references and a `librga` row. That `INVERTED`
+  keeps the in-range pixels is from its name; the board test decides. Written, untested on
+  board.
+
 - **RGA resize for Eidos's pyramids, and a capability descriptor.** `daedalus-rga` gains
   `Filter::{Area, Bilinear}` with `Rga::resize`, `resize_bytes` and `resize_luma` (8-bit luma
   through NV12, since the mainline driver has no gray format) and `Librga::resize_dmabuf` and

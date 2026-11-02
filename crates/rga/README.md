@@ -15,9 +15,14 @@ share.
   when it downscales, interpolates when it upscales), so it refuses bilinear downscale with
   `Unsupported` rather than substitute; librga does both. Mainline has no gray format, so
   `resize_luma` goes through NV12 with neutral chroma (1.5 times the bytes).
+- **Palette and colour key (librga only):** `Librga::palette_bytes` / `palette_dmabuf` (8-bit
+  indices through a 256-entry RGBA table) and `color_key_bytes` / `color_key_dmabuf` /
+  `color_key_mask` (the pixels whose R, G and B lie in a range drawn opaque onto a cleared RGBA
+  frame, whose alpha is the mask). The mainline driver has neither. A librga without
+  `impalette_t` or `imcolorkey_t` makes that call `Unsupported`.
 - **Capabilities:** `caps::caps(soc)` lists each SoC's units (RGA2, RGA3, K230D Image 2D and
   VGLite), the route (mainline V4L2, librga, design only), size and scale limits, the luma cost,
-  and each filter's direction and exactness. Every exactness is `Unmeasured` until a board run.
+  each filter's direction and exactness, and the other operations (palette, colour key). Every exactness is `Unmeasured` until a board run.
 - **Status:** V4L2 path tested on `vim2m`; both paths written, untested on a Rockchip board.
 
 Linux-only. The V4L2 session is Lemnos's (`lemnos-linux`, `v4l2::m2m::M2mSession`); librga is

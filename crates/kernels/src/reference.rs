@@ -236,3 +236,19 @@ pub fn resize_bilinear(
     }
     out
 }
+
+/// 8-bit indices to RGBA8 through a 256-entry palette.
+pub fn palette(indices: &[u8], lut: &[[u8; 4]; 256]) -> Vec<u8> {
+    indices.iter().flat_map(|&i| lut[i as usize]).collect()
+}
+
+/// A colour-key mask of `channels`-byte pixels (R, G, B first): 255 where each of R, G and B
+/// lies in `min..=max`, else 0.
+pub fn color_key_mask(src: &[u8], channels: usize, min: [u8; 3], max: [u8; 3]) -> Vec<u8> {
+    src.chunks_exact(channels)
+        .map(|p| {
+            let inside = (0..3).all(|c| min[c] <= p[c] && p[c] <= max[c]);
+            if inside { 255 } else { 0 }
+        })
+        .collect()
+}

@@ -13,10 +13,9 @@ const RGA_LIB: (&str, &str) = ("crates/rga/src/librga.rs", "crates/rga/tests/lib
 /// Fixed-function image nodes other repos lower onto (Eidos's pyramids): only the scalar
 /// reference and the fixed-function rows are Daedalus's.
 const NODE_ONLY: &[Backend] = &[Backend::Scalar, Backend::FixedFunction];
-const NODE_REASON: &str = "a fixed-function node: the CPU kernels and the callers are Eidos's \
-     (eidos.geometry.resize_*)";
+const NODE_REASON: &str = "a fixed-function node: the CPU kernels and the callers are Eidos's";
 
-static IMAGE_OPS: [Op; 2] = [
+static IMAGE_OPS: [Op; 4] = [
     op(
         "daedalus.image.resize_area",
         "Area downscale by an integer factor, rounded block means (pyramid levels)",
@@ -29,9 +28,21 @@ static IMAGE_OPS: [Op; 2] = [
         "daedalus_kernels::reference::resize_bilinear",
     )
     .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.palette",
+        "8-bit indices to RGBA8 through a 256-entry palette (heat and label maps)",
+        "daedalus_kernels::reference::palette",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.color_key_mask",
+        "Mask of the pixels whose R, G and B lie in a range (colour threshold)",
+        "daedalus_kernels::reference::color_key_mask",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
 ];
 
-static IMAGE_KERNELS: [Kernel; 6] = [
+static IMAGE_KERNELS: [Kernel; 10] = [
     Kernel::implemented(
         "daedalus.image.resize_area",
         Backend::Scalar,
@@ -44,6 +55,33 @@ static IMAGE_KERNELS: [Kernel; 6] = [
         "crates/kernels/src/reference.rs",
         T,
     ),
+    Kernel::implemented(
+        "daedalus.image.palette",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    Kernel::implemented(
+        "daedalus.image.color_key_mask",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    // The mainline driver has neither: librga only.
+    Kernel::implemented(
+        "daedalus.image.palette",
+        Backend::FixedFunction,
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
+        "daedalus.image.color_key_mask",
+        Backend::FixedFunction,
+        RGA_LIB.0,
+        RGA_LIB.1,
+    )
+    .with_variant("librga"),
     Kernel::implemented(
         "daedalus.image.resize_area",
         Backend::FixedFunction,

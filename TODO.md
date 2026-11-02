@@ -97,7 +97,11 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       samples; the headers do not promise that.
       **Done when:** `crates/rga/tests/{v4l2,librga}.rs` pass on a Rockchip board (the `rockchip`
       profile of `scripts/board.sh` runs them) and the cells read
-      pass, or `rgba_red` is recorded as failing.
+      pass, or `rgba_red` is recorded as failing. The same run measures the resize, palette and
+      colour-key cells (`daedalus.image.*`, max difference printed): 2x and 4x area on NV12 and
+      RGB (does 4x equal two 2x passes within 1?), and whether colour key `INVERTED` keeps the
+      in-range pixels; the results go into `daedalus_rga::caps` as `Exact` or `Tolerance(n)`.
+      Eidos's matrix cells for its 2x area lowering wait on it (nostd, 2026-11-02).
       **Blocked by:** a Rockchip board.
       **Measured:** no RGA hardware run. Route (b) passes end to end on `vim2m` with `dma_heap`
       dmabufs; route (a) passes against software stand-ins and a C stub built from the real header.
@@ -184,7 +188,9 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       NV12 on mainline, `caps::caps(soc)`, ops `daedalus.image.resize_{area,bilinear}` (scalar and
       fixed_function rows only, `Op::only_on`); vim2m checks the plumbing. Board cells written,
       untested on board; exactness `Unmeasured`. Open in (1): a GRAY8 dmabuf through NV12M with a
-      shared dummy chroma plane (mainline 7.2 lists NV12M on RGA2 and RGA3) if Eidos needs it.
+      shared dummy chroma plane (mainline 7.2 lists NV12M on RGA2 and RGA3): not wanted, Eidos
+      chains NV12 levels (nostd, 2026-11-02). (2) written: librga palette and colour key, ops
+      `daedalus.image.{palette,color_key_mask}`, `caps` `FixedOp`; written, untested on board.
       **Measured:** n/a.
 
 ### Release steps

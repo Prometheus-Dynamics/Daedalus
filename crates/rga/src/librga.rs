@@ -16,7 +16,7 @@ use crate::resize::{Filter, source_size};
 /// `im_colorkey_range`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-struct ColorkeyRange {
+pub(crate) struct ColorkeyRange {
     max: c_int,
     min: c_int,
 }
@@ -63,6 +63,8 @@ type WrapAddr = unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int, c_int, c_
 type CvtColor = unsafe extern "C" fn(RgaBuffer, RgaBuffer, c_int, c_int, c_int, c_int) -> c_int;
 type Resize = unsafe extern "C" fn(RgaBuffer, RgaBuffer, f64, f64, c_int, c_int) -> c_int;
 type QueryString = unsafe extern "C" fn(c_int) -> *const c_char;
+type Palette = unsafe extern "C" fn(RgaBuffer, RgaBuffer, RgaBuffer, c_int) -> c_int;
+type Colorkey = unsafe extern "C" fn(RgaBuffer, RgaBuffer, ColorkeyRange, c_int, c_int) -> c_int;
 
 /// The library's entry points.
 #[derive(Clone, Copy)]
@@ -72,6 +74,10 @@ pub(crate) struct Api {
     pub(crate) cvtcolor: CvtColor,
     pub(crate) resize: Resize,
     pub(crate) querystring: QueryString,
+    /// `impalette_t` and `imcolorkey_t`: every build we know exports them, but a missing one
+    /// only makes its operation `Unsupported`.
+    pub(crate) palette: Option<Palette>,
+    pub(crate) colorkey: Option<Colorkey>,
 }
 
 /// `IM_STATUS_SUCCESS` and `IM_STATUS_NOERROR`.
@@ -88,6 +94,9 @@ const INTER_NEAREST: c_int = 0;
 const INTERP_LINEAR: c_int = 1;
 /// `IM_INTERP_AVERAGE`.
 const INTERP_AVERAGE: c_int = 3;
+/// `IM_ALPHA_COLORKEY_INVERTED`: by its name, the foreground pixels outside the range are
+/// removed and those inside are drawn (`NORMAL` removes the range, per librga's sample).
+const COLORKEY_INVERTED: c_int = 1 << 18;
 
 /// A pixel format of [`Image`], with `RkRgaSurfaceFormat`'s value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +104,8 @@ const INTERP_AVERAGE: c_int = 3;
 pub enum RgaFormat {
     /// R, G, B, A bytes.
     Rgba8888 = 0x0 << 8,
+    /// R, G, B, X bytes: the fourth byte is ignored and the pixel is opaque.
+    Rgbx8888 = 0x1 << 8,
     /// R, G, B bytes.
     Rgb888 = 0x2 << 8,
     /// B, G, R, A bytes.
@@ -105,16 +116,18 @@ pub enum RgaFormat {
     Nv12 = 0xa << 8,
     /// `RK_FORMAT_YCbCr_400`: Y only.
     Gray8 = 0x15 << 8,
+    /// `RK_FORMAT_BPP8`: 8-bit palette indices.
+    Bpp8 = 0x13 << 8,
 }
 
 impl RgaFormat {
     /// The bytes of `pixels` pixels in the frame (the chroma of NV12 included).
     fn frame_len(self, pixels: usize) -> usize {
         match self {
-            Self::Rgba8888 | Self::Bgra8888 => pixels * 4,
+            Self::Rgba8888 | Self::Rgbx8888 | Self::Bgra8888 => pixels * 4,
             Self::Rgb888 | Self::Bgr888 => pixels * 3,
             Self::Nv12 => pixels * 3 / 2,
-            Self::Gray8 => pixels,
+            Self::Gray8 | Self::Bpp8 => pixels,
         }
     }
 }
@@ -206,6 +219,12 @@ impl Librga {
                 querystring: std::mem::transmute::<*mut c_void, QueryString>(symbol(
                     c"querystring",
                 )?),
+                palette: symbol(c"impalette_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Palette>(f)),
+                colorkey: symbol(c"imcolorkey_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Colorkey>(f)),
             }
         };
         Ok(Self {
@@ -335,6 +354,145 @@ impl Librga {
         )
     }
 
+    /// 8-bit indices to RGBA8 through a 256-entry palette (`impalette`, a `BPP8` source),
+    /// tightly packed byte buffers.
+    pub fn palette_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        indices: &[u8],
+        lut: &[[u8; 4]; 256],
+        dst: &mut [u8],
+    ) -> io::Result<()> {
+        let (s, d) = (
+            Image::packed(RgaFormat::Bpp8, width, height),
+            Image::packed(RgaFormat::Rgba8888, width, height),
+        );
+        check(s, indices.len(), d, dst.len())?;
+        self.palette(
+            self.wrap_ptr(s, indices.as_ptr()),
+            self.wrap_ptr(d, dst.as_mut_ptr()),
+            lut,
+        )
+    }
+
+    /// [`Librga::palette_bytes`] between dmabufs (`BPP8` indices into RGBA8); the palette is
+    /// read from host memory.
+    pub fn palette_dmabuf(
+        &self,
+        width: u32,
+        height: u32,
+        indices: BorrowedFd<'_>,
+        lut: &[[u8; 4]; 256],
+        dst: BorrowedFd<'_>,
+    ) -> io::Result<()> {
+        self.palette(
+            self.wrap_fd(Image::packed(RgaFormat::Bpp8, width, height), indices),
+            self.wrap_fd(Image::packed(RgaFormat::Rgba8888, width, height), dst),
+            lut,
+        )
+    }
+
+    fn palette(&self, src: RgaBuffer, dst: RgaBuffer, lut: &[[u8; 4]; 256]) -> io::Result<()> {
+        let call = self.api.palette.ok_or_else(|| missing("impalette_t"))?;
+        let table = self.wrap_ptr(
+            Image::packed(RgaFormat::Rgba8888, 256, 1),
+            lut.as_ptr().cast(),
+        );
+        // SAFETY: the three buffers describe live memory for the (synchronous) call.
+        status(unsafe { call(src, dst, table, 1) })
+    }
+
+    /// Colour key onto RGBA8: the pixels of `src` (R, G, B, X) whose every channel lies in
+    /// `min..=max` are drawn opaque onto `dst`; the others leave `dst` as it was. With `dst`
+    /// cleared to zero, its alpha is the mask. Byte buffers, tightly packed; `dst` is cleared
+    /// here.
+    pub fn color_key_bytes(
+        &self,
+        width: u32,
+        height: u32,
+        src: &[u8],
+        min: [u8; 3],
+        max: [u8; 3],
+        dst: &mut [u8],
+    ) -> io::Result<()> {
+        let (s, d) = (
+            Image::packed(RgaFormat::Rgbx8888, width, height),
+            Image::packed(RgaFormat::Rgba8888, width, height),
+        );
+        check(s, src.len(), d, dst.len())?;
+        dst[..d.frame_len()].fill(0);
+        self.colorkey(
+            self.wrap_ptr(s, src.as_ptr()),
+            self.wrap_ptr(d, dst.as_mut_ptr()),
+            min,
+            max,
+        )
+    }
+
+    /// [`Librga::color_key_bytes`] between dmabufs. The caller clears `dst` (alpha 0) first.
+    #[allow(clippy::too_many_arguments)]
+    pub fn color_key_dmabuf(
+        &self,
+        width: u32,
+        height: u32,
+        src: BorrowedFd<'_>,
+        min: [u8; 3],
+        max: [u8; 3],
+        dst: BorrowedFd<'_>,
+    ) -> io::Result<()> {
+        self.colorkey(
+            self.wrap_fd(Image::packed(RgaFormat::Rgbx8888, width, height), src),
+            self.wrap_fd(Image::packed(RgaFormat::Rgba8888, width, height), dst),
+            min,
+            max,
+        )
+    }
+
+    /// The 8-bit mask of [`Librga::color_key_bytes`]: 255 where every channel of `src` lies in
+    /// `min..=max`, else 0. The alpha is read out on the CPU.
+    pub fn color_key_mask(
+        &self,
+        width: u32,
+        height: u32,
+        src: &[u8],
+        min: [u8; 3],
+        max: [u8; 3],
+        mask: &mut [u8],
+    ) -> io::Result<()> {
+        let pixels = width as usize * height as usize;
+        if mask.len() < pixels {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("a mask of {} bytes for {pixels} pixels", mask.len()),
+            ));
+        }
+        let mut rgba = vec![0u8; pixels * 4];
+        self.color_key_bytes(width, height, src, min, max, &mut rgba)?;
+        for (m, p) in mask.iter_mut().zip(rgba.as_chunks::<4>().0) {
+            *m = p[3];
+        }
+        Ok(())
+    }
+
+    fn colorkey(
+        &self,
+        src: RgaBuffer,
+        dst: RgaBuffer,
+        min: [u8; 3],
+        max: [u8; 3],
+    ) -> io::Result<()> {
+        let call = self.api.colorkey.ok_or_else(|| missing("imcolorkey_t"))?;
+        // Packed A, B, G, R (librga's sample); X is not compared, so alpha spans everything.
+        let abgr = |[r, g, b]: [u8; 3], a: u8| i32::from_le_bytes([r, g, b, a]);
+        let range = ColorkeyRange {
+            max: abgr(max, 0xff),
+            min: abgr(min, 0),
+        };
+        // SAFETY: both buffers describe live memory for the (synchronous) call.
+        status(unsafe { call(src, dst, range, COLORKEY_INVERTED, 1) })
+    }
+
     /// Convert the pixel format between byte buffers of the same size.
     pub fn convert(&self, src: Image, from: &[u8], dst: Image, to: &mut [u8]) -> io::Result<()> {
         check(src, from.len(), dst, to.len())?;
@@ -422,6 +580,13 @@ fn check(src: Image, from: usize, dst: Image, to: usize) -> io::Result<()> {
     Ok(())
 }
 
+fn missing(symbol: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("this librga has no {symbol}"),
+    )
+}
+
 fn status(code: c_int) -> io::Result<()> {
     if STATUS_OK.contains(&code) {
         Ok(())
@@ -431,241 +596,4 @@ fn status(code: c_int) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    unsafe extern "C" fn wrap_addr(
-        ptr: *mut c_void,
-        width: c_int,
-        height: c_int,
-        wstride: c_int,
-        hstride: c_int,
-        format: c_int,
-    ) -> RgaBuffer {
-        RgaBuffer {
-            vir_addr: ptr,
-            phy_addr: std::ptr::null_mut(),
-            fd: -1,
-            width,
-            height,
-            wstride,
-            hstride,
-            format,
-            color_space_mode: 0,
-            global_alpha: 0xff,
-            rd_mode: 0,
-            color: 0,
-            colorkey_range: ColorkeyRange::default(),
-            nn: Nn::default(),
-            rop_code: 0,
-            handle: 0,
-        }
-    }
-
-    unsafe extern "C" fn wrap_fd(
-        fd: c_int,
-        width: c_int,
-        height: c_int,
-        wstride: c_int,
-        hstride: c_int,
-        format: c_int,
-    ) -> RgaBuffer {
-        let mut buffer = unsafe {
-            wrap_addr(
-                std::ptr::null_mut(),
-                width,
-                height,
-                wstride,
-                hstride,
-                format,
-            )
-        };
-        buffer.fd = fd;
-        buffer
-    }
-
-    /// Software `imcvtcolor_t` for the formats the helpers use.
-    unsafe extern "C" fn cvtcolor(
-        src: RgaBuffer,
-        dst: RgaBuffer,
-        sfmt: c_int,
-        dfmt: c_int,
-        mode: c_int,
-        sync: c_int,
-    ) -> c_int {
-        assert_eq!(sync, 1);
-        assert_eq!((src.format, dst.format), (sfmt, dfmt));
-        let n = (src.wstride * src.hstride) as usize;
-        let rgba = RgaFormat::Rgba8888 as c_int;
-        let rgb = RgaFormat::Rgb888 as c_int;
-        let gray = RgaFormat::Gray8 as c_int;
-        let (s, d) = (src.vir_addr.cast::<u8>(), dst.vir_addr.cast::<u8>());
-        // SAFETY: the wrapped buffers cover their images.
-        unsafe {
-            for i in 0..n {
-                match (sfmt, dfmt) {
-                    (a, b) if (a, b) == (rgb, rgba) => {
-                        std::ptr::copy(s.add(i * 3), d.add(i * 4), 3);
-                        *d.add(i * 4 + 3) = 0xff;
-                    }
-                    (a, b) if (a, b) == (rgba, rgb) => {
-                        std::ptr::copy(s.add(i * 4), d.add(i * 3), 3);
-                    }
-                    (a, b) if (a, b) == (gray, rgba) => {
-                        assert_eq!(mode, YUV_TO_RGB_BT601_FULL, "gray must keep its full range");
-                        std::ptr::write_bytes(d.add(i * 4), *s.add(i), 3);
-                        *d.add(i * 4 + 3) = 0xff;
-                    }
-                    _ => return -1,
-                }
-            }
-        }
-        1
-    }
-
-    /// The interpolation of the last `resize` call.
-    static LAST_INTERP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
-
-    /// Software `imresize_t`: nearest, sampling the first of each group, or the rounded block
-    /// mean of gray for `IM_INTERP_AVERAGE`.
-    unsafe extern "C" fn resize(
-        src: RgaBuffer,
-        dst: RgaBuffer,
-        fx: f64,
-        fy: f64,
-        interpolation: c_int,
-        sync: c_int,
-    ) -> c_int {
-        LAST_INTERP.store(interpolation, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!((fx, fy, sync), (0.0, 0.0, 1));
-        if interpolation == INTERP_AVERAGE {
-            let f = (src.width / dst.width) as usize;
-            let (s, d) = (src.vir_addr.cast::<u8>(), dst.vir_addr.cast::<u8>());
-            for oy in 0..dst.height as usize {
-                for ox in 0..dst.width as usize {
-                    let mut sum = 0usize;
-                    for y in 0..f {
-                        for x in 0..f {
-                            let at = (oy * f + y) * src.wstride as usize + ox * f + x;
-                            // SAFETY: the wrapped buffers cover their images.
-                            sum += unsafe { *s.add(at) } as usize;
-                        }
-                    }
-                    let n = f * f;
-                    // SAFETY: as above.
-                    unsafe { *d.add(oy * dst.wstride as usize + ox) = ((sum + n / 2) / n) as u8 };
-                }
-            }
-            return 1;
-        }
-        if interpolation != INTER_NEAREST {
-            return -1;
-        }
-        let step = (src.width / dst.width) as usize;
-        let (s, d) = (src.vir_addr.cast::<u8>(), dst.vir_addr.cast::<u8>());
-        // SAFETY: the wrapped buffers cover their images.
-        unsafe {
-            for i in 0..(dst.wstride * dst.hstride) as usize {
-                *d.add(i) = *s.add(i * step);
-            }
-        }
-        2 // IM_STATUS_NOERROR also counts as success.
-    }
-
-    unsafe extern "C" fn querystring(name: c_int) -> *const c_char {
-        assert_eq!(name, INFO_VERSION);
-        c"stand-in 1.0".as_ptr()
-    }
-
-    fn stand_in() -> Librga {
-        Librga::with_api(Api {
-            wrap_fd,
-            wrap_addr,
-            cvtcolor,
-            resize,
-            querystring,
-        })
-    }
-
-    #[test]
-    fn the_helpers_convert_with_the_right_formats_and_modes() {
-        let rga = stand_in();
-        assert_eq!(rga.version(), "stand-in 1.0");
-        let mut rgba = [0u8; 8];
-        rga.rgb_to_rgba(2, 1, &[1, 2, 3, 4, 5, 6], &mut rgba)
-            .unwrap();
-        assert_eq!(rgba, [1, 2, 3, 255, 4, 5, 6, 255]);
-        let mut rgb = [0u8; 6];
-        rga.rgba_to_rgb(2, 1, &rgba, &mut rgb).unwrap();
-        assert_eq!(rgb, [1, 2, 3, 4, 5, 6]);
-        rga.gray_to_rgba(2, 1, &[9, 7], &mut rgba).unwrap();
-        assert_eq!(rgba, [9, 9, 9, 255, 7, 7, 7, 255]);
-        let mut red = [0u8; 2];
-        rga.rgba_red(2, 1, &[1, 2, 3, 4, 5, 6, 7, 8], &mut red)
-            .unwrap();
-        assert_eq!(red, [1, 5]);
-    }
-
-    #[test]
-    fn short_buffers_and_library_errors_are_refused() {
-        let rga = stand_in();
-        let mut short = [0u8; 7];
-        let err = rga.rgb_to_rgba(2, 1, &[0; 6], &mut short).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(rga.rgb_to_rgba(2, 1, &[0; 5], &mut [0; 8]).is_err());
-        // The stand-in does not convert BGR: its error status comes back.
-        let (bgr, rgba) = (
-            Image::packed(RgaFormat::Bgr888, 1, 1),
-            Image::packed(RgaFormat::Rgba8888, 1, 1),
-        );
-        let err = rga.convert(bgr, &[0; 3], rgba, &mut [0; 4]).unwrap_err();
-        assert!(err.to_string().contains("status -1"), "{err}");
-    }
-
-    #[test]
-    fn resize_crops_through_the_image_and_passes_the_filter() {
-        use std::sync::atomic::Ordering;
-        let rga = stand_in();
-        // 5x3 gray to 2x1: the trailing column and row are cropped by narrowing the image.
-        let src: Vec<u8> = (0..15).map(|i| i * 10).collect();
-        let (s, d) = (
-            Image::packed(RgaFormat::Gray8, 5, 3),
-            Image::packed(RgaFormat::Gray8, 2, 1),
-        );
-        let mut out = [0u8; 2];
-        rga.resize_bytes(s, &src, d, &mut out, Filter::Area)
-            .unwrap();
-        assert_eq!(LAST_INTERP.load(Ordering::Relaxed), INTERP_AVERAGE);
-        // (0 + 10 + 50 + 60 + 2) / 4 and (20 + 30 + 70 + 80 + 2) / 4.
-        assert_eq!(out, [30, 50]);
-        let err = rga
-            .resize_bytes(
-                s,
-                &src,
-                Image::packed(RgaFormat::Gray8, 3, 1),
-                &mut [0; 3],
-                Filter::Area,
-            )
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
-        let up = Image::packed(RgaFormat::Gray8, 10, 6);
-        let err = rga
-            .resize_bytes(s, &src, up, &mut [0; 60], Filter::Bilinear)
-            .unwrap_err();
-        assert_eq!(LAST_INTERP.load(Ordering::Relaxed), INTERP_LINEAR);
-        assert!(err.to_string().contains("status -1"), "{err}");
-    }
-
-    #[test]
-    fn frame_lengths_follow_the_format_and_strides() {
-        assert_eq!(Image::packed(RgaFormat::Nv12, 4, 2).frame_len(), 12);
-        let image = Image {
-            format: RgaFormat::Rgb888,
-            width: 2,
-            height: 2,
-            wstride: 4,
-            hstride: 3,
-        };
-        assert_eq!(image.frame_len(), 36);
-    }
-}
+mod tests;

@@ -118,3 +118,32 @@ fn librga_resizes_like_the_references() {
         Ok(())
     });
 }
+
+#[test]
+fn librga_palettes_and_colour_keys_like_the_references() {
+    let Ok(rga) = Librga::load() else {
+        return eprintln!("skipping: no librga.so");
+    };
+    let (w, h) = (128u32, 64u32);
+    let pixels = (w * h) as usize;
+    let evidence = |op| Evidence::new(op, Backend::FixedFunction).variant("librga");
+    conform_with(evidence("daedalus.image.palette"), || {
+        let mut lut = [[0u8; 4]; 256];
+        for (i, e) in lut.iter_mut().enumerate() {
+            *e = [i as u8, (i * 7) as u8, 255 - i as u8, (i * 3) as u8];
+        }
+        let indices = pattern(pixels);
+        let mut dst = vec![0; pixels * 4];
+        rga.palette_bytes(w, h, &indices, &lut, &mut dst)
+            .map_err(|e| e.to_string())?;
+        same(&dst, &r::palette(&indices, &lut))
+    });
+    conform_with(evidence("daedalus.image.color_key_mask"), || {
+        let rgbx = pattern(pixels * 4);
+        let (min, max) = ([40, 0, 100], [200, 160, 255]);
+        let mut mask = vec![0; pixels];
+        rga.color_key_mask(w, h, &rgbx, min, max, &mut mask)
+            .map_err(|e| e.to_string())?;
+        same(&mask, &r::color_key_mask(&rgbx, 4, min, max))
+    });
+}
