@@ -412,6 +412,13 @@ missing hardware; a failed check prints its error in place of the value.
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
+### CM5 run (2026-11-02)
+
+The Raze again, at 65fd3a5 (cross-built, aarch64-unknown-linux-gnu): `ci.sh pi`'s dmabuf hardware
+tests plus the raw Vulkan ones, 16 ok, among them the 8-bit storage read, a raw SPIR-V dispatch on
+an imported frame and the per-dmabuf frame import cache. `gpu_probe` prints the same report as
+below, line for line. `gpu_bench` and the GPU crate's full test set were not re-run.
+
 ### CM5 run (2026-10-31)
 
 The Raze (CM5, V3D 7.1.10.2, Mesa 26.1.8, kernel 7.2.9), at 389bc7e:

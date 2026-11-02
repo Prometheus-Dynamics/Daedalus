@@ -53,15 +53,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       `vkDestroyInstance`. A distro arm64 package needs the user's OK for the download.
       **Measured:** the runs recorded in `docs/testing.md` print no validation message before the
       exit crash.
-- [ ] **What:** re-run `ci.sh pi` on the Raze at current `dev`.
-      **Why:** the GPU code has changed since the recorded full run (raw Vulkan, 8-bit storage,
-      cached readback, dmabuf import size).
-      **Done when:** the hardware tests pass and `docs/testing.md` carries the new report.
-      **Blocked by:** a Raze slot.
-      **Measured:** last full run 2026-10-31 (`docs/testing.md`, "CM5 run (2026-10-31)"), all four
-      `_verify` lines `ok`; evidence at `docs/accel-evidence/raze-cm5-v3d-2026-11-01-full-cost.jsonl`
-      was taken at f4ea43a.
-
 ### Boards
 
 - [ ] **[board] What:** armv7 RV1106, CPU-only (`armv7-unknown-linux-musleabihf`): the CPU graph
@@ -239,6 +230,8 @@ was searched for, the commit is the one that introduced it.
 - [x] Raw Vulkan access for external SPIR-V kernels: 29ae351; 8-bit storage: c572945.
 - [x] Cached readback on v3dv through a dma-heap buffer: 602b14b.
 - [x] Stable-ABI plugin path without per-call allocations: 5f5c51c.
+- [x] `ci.sh pi` re-run on the Raze at 65fd3a5 (2026-11-02): 16 dmabuf and raw Vulkan hardware tests
+      ok, `gpu_probe` unchanged (`docs/testing.md`, "CM5 run (2026-11-02)").
 - [x] Frame interface v3 (`SharedFrame`, colorimetry, dylib reload): 36d2af6, 2b09654, fad4b99,
       3b14534, d543c6c. The open "v3 follow-ups" item is removed: it held no work, only a wait for a
       consumer request, and none is open.
