@@ -58,8 +58,8 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
 - [ ] **[board] What:** armv7 RV1106, CPU-only (`armv7-unknown-linux-musleabihf`): the CPU graph
       tests and the kernel conformance binary on the board. Written, untested on board.
       **Why:** the user's platform list (2026-10-30); the RV1106 has no compute-capable GPU.
-      **Done when:** `ci.sh cross`'s CPU graph tests and the `+neon` conformance binary pass on the
-      board, and the evidence is committed.
+      **Done when:** `scripts/board.sh flame root@<luckfox>` passes (the CPU graph tests and the
+      `+neon` conformance binary) and its evidence is committed.
       **Blocked by:** a board. The target is Flame, our own RV1106G2 module; the Luckfox Pico Pro
       (same chip, off the shelf, Gaia is imaging it) stands in for it and is where it gets tested.
       **Measured:** qemu only: 91 + 5 + 2 tests pass in `ci.sh cross` at 03f55c5; `+neon` kernels
@@ -67,14 +67,15 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
 - [ ] **[board] What:** decide `crc32()`'s ARMv7 default from a measurement of
       `crc32::neon_vmull_p8` (50093a9) against slice-by-8. Written, untested on board.
       **Why:** selection follows measurements. `crc32()` stays on slice-by-8 on ARMv7 until then.
-      **Done when:** `conformance crc32_throughput -- --ignored --nocapture` has run on the Luckfox
-      Pico Pro (Flame's stand-in) and the default follows the numbers.
+      **Done when:** `crc32_throughput` has run on the Luckfox Pico Pro (Flame's stand-in; the
+      `flame` profile of `scripts/board.sh` runs it) and the default follows the numbers.
       **Blocked by:** the Luckfox board. The Raze cannot run AArch32 binaries.
       **Measured:** conformance under qemu only; no timing exists.
 - [ ] **[board] What:** K230D, CPU-only (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph
       tests and the kernel conformance binary on the board. Written, untested on board.
       **Why:** the K230D has no compute-capable GPU, and qemu cannot show a real VLEN.
-      **Done when:** both pass on a K230D and the evidence, with its VLEN, is committed.
+      **Done when:** `scripts/board.sh k230d root@<k230d>` passes and its evidence, with the board's
+      VLEN, is committed.
       **Blocked by:** a K230D board.
       **Measured:** qemu only: 91 + 5 + 2 tests in `ci.sh cross` at 03f55c5; `+v` kernels at VLEN
       128, 256 and 512, plus a run without Zvbc.
@@ -83,7 +84,8 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       board: `GpuDeviceProfile` (Mali Valhall, warp 16; b095018), the GPU kernels and fragment
       passes, the AFBC modifier helpers, the checklist in `docs/testing.md`.
       **Why:** proper hardware support on every board.
-      **Done when:** the reports are in `docs/testing.md`, the matrix has Mali evidence, and the
+      **Done when:** `scripts/board.sh rockchip` has run; the reports are in `docs/testing.md`, the
+      matrix has Mali evidence, and the
       hardware tests pass or each gap is documented, with the copy fallback in place.
       **Blocked by:** a board (the PCB dev board) and Gaia's driver choice. Both are as recorded on
       2026-10-30; neither can be checked from this repo.
@@ -101,7 +103,8 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Why:** these are the matrix's 4 untested cells. `rgba_red` relabels the frame as gray and
       scales it down by nearest, so it yields red only if the hardware takes the first of every four
       samples; the headers do not promise that.
-      **Done when:** `crates/rga/tests/{v4l2,librga}.rs` pass on a Rockchip board and the cells read
+      **Done when:** `crates/rga/tests/{v4l2,librga}.rs` pass on a Rockchip board (the `rockchip`
+      profile of `scripts/board.sh` runs them) and the cells read
       pass, or `rgba_red` is recorded as failing.
       **Blocked by:** a Rockchip board.
       **Measured:** no RGA hardware run. Route (b) passes end to end on `vim2m` with `dma_heap`
@@ -322,6 +325,9 @@ non-blocking, see above).
 - [x] `bench.yml` on `dev`, baseline on the same runner: 595a1b0 and later; see the workflow.
 - [x] Tags `v2.0.0` (8946223) and `v3.0.0` (e7e88fc); dev versioning.
 - [x] Faster local builds and `ci.sh -j`: f7edb7d.
+- [x] `scripts/board.sh`, one command per board run (profiles flame, k230d, rockchip, raze):
+      2680686. Proven on the Raze (2026-11-02); the other profiles are written, untested on
+      board.
 - [x] False bench flags on shared runners: a flagged bench is re-run twice more on both commits,
       alternating, and `bench` fails only if the median of three still regresses (bf07300).
       Docs-only commits never ran `bench` (its path filters). The one failure in 15 runs, 0e620c2's
