@@ -218,6 +218,21 @@ on 2026-11-02, at f7e05ac.
       `QUEUE_SUBMIT`, `driver_lock`, the device caches) are separate from the engine's. A
       `RawSubmitter` in the engine would not serialize against the plugin's submits on the same
       `VkQueue`; the lock has to be reached through the context handle (or one shared image).
+      Not a live bug: wgpu-to-wgpu submits are serialized by wgpu-core's locks inside the shared
+      queue object, and no HeliOS process creates a `RawSubmitter` (agreed with HeliOS 2026-11-02).
+      **Step 1, before any `RawSubmitter` shares the engine's device:**
+      1. The submit lock owned by the GPU context (an `Arc<Mutex>` in the shared context data)
+         instead of the static `QUEUE_SUBMIT` (`shader/submit_lock.rs`), so the engine and a
+         plugin `cdylib` reach the same lock through the handle. Daedalus's ~10 internal submit
+         sites (`submit_locked`, `on_submitted_work_done_locked`, `map_async_locked`, and
+         `RawSubmitter`) take it from the handle instead of a bare `&wgpu::Queue`.
+      2. A plain `GpuContextHandle::submit(commands)` under that lock (beside `GpuTicket::submit`).
+         Eidos moves its 9 direct `gpu.queue.submit(...)` calls onto it (Eidos f044a095,
+         `crates/daedalus/src/gpu/{mod,invert,sweep,tsdf}.rs`): Daedalus cannot force a lock onto
+         plain `wgpu::Queue` users, so without this they overlap a raw submit from either image.
+      3. A test that loads a plugin as a `cdylib` and submits concurrently from both sides
+         (`RawSubmitter` in the host, wgpu submits in the plugin) under the validation layer
+         with sync validation, with no VUIDs.
       **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
       **Blocked by:** the user's go; Styx's side.
       **Measured:** n/a.
