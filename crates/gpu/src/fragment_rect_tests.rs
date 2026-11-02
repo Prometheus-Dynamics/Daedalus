@@ -1,6 +1,7 @@
 //! `FragmentPass` bindings reused across encodes, rectangle draws, and integer formats (skipped
 //! without a wgpu device).
 
+use crate::shader::submit_lock::submit_locked;
 use crate::{
     FragmentPass, FragmentRects, GpuBackendKind, GpuContextHandle, GpuError, GpuOptions,
     GpuTexture, select_backend,
@@ -48,7 +49,7 @@ fn a_binding_is_reused_across_encodes() {
         };
         pass.encode_bound(&mut encoder, binding, &[target]).unwrap();
     }
-    queue.submit([encoder.finish()]);
+    submit_locked(queue, [encoder.finish()]);
     // 150 passes, the last into `a` (odd index 149 reads b, writes a).
     assert!(
         floats(&a).iter().all(|&v| v == 150.0),
@@ -90,7 +91,7 @@ fn rects_draw_only_their_pixels() {
             .unwrap();
         mark.encode_rects(&mut encoder, &unbound, &rects, &[&target], load)
             .unwrap();
-        queue.submit([encoder.finish()]);
+        submit_locked(queue, [encoder.finish()]);
         let values = floats(&target);
         for (i, &v) in values.iter().enumerate() {
             let want = if inside(i % 64) {

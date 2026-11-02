@@ -17,6 +17,14 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`RawSubmitter`, raw submits without allocation.** An opt-in ring of primary command buffers,
+  each with a fence, on Daedalus's queue (`gpu-vulkan-raw`, Linux): `RawSubmitter::new(&gpu)`,
+  then `unsafe submit(record)`, which records between the same full barriers as `submit_raw` and
+  returns a `RawTicket` (`try_complete`, `wait`). A steady-state submit and wait allocate nothing:
+  17 allocations per frame through `submit_raw` before, 0 after. Every Daedalus `queue.submit`
+  now takes one process-wide submit lock, and so do the `on_submitted_work_done` and `map_async`
+  calls that flush pending writes, so a raw submit never overlaps one. While a `RawSubmitter`
+  exists, code outside Daedalus must not submit on its device.
 - **Shared nodes for the MCU profile.** `#[daedalus_mcu::node(.., runtime = "feature")]` makes one
   function both the device node and a full-runtime `#[daedalus::macros::node]`, with the same id,
   ports, types, optional inputs, conditional outputs, fire mode and state, so one node crate serves

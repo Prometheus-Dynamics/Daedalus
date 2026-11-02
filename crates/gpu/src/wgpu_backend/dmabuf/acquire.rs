@@ -33,6 +33,8 @@
 //! fence: work submitted after an import does not start before the producer finished (or, on the
 //! timeline path, the timeout passed).
 
+use crate::shader::submit_lock::WorkDoneLocked;
+use crate::shader::submit_lock::submit_locked;
 use std::ffi::CStr;
 use std::os::fd::{AsFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -213,20 +215,20 @@ impl Acquire {
         };
         match fence {
             None => {
-                queue.submit(commands);
+                submit_locked(queue, commands);
             }
             Some(GpuFence::Timeline(fence, timeout)) => {
                 let watcher = self.timeline.as_ref().ok_or_else(not_vulkan)?;
                 let value = watcher.watch(fence, timeout, status());
                 stage_wait(watcher.semaphore(), Some(value))?;
-                queue.submit(commands);
+                submit_locked(queue, commands);
             }
             Some(GpuFence::SyncFd(semaphore)) => {
                 stage_wait(semaphore.semaphore, None)?;
-                queue.submit(commands);
+                submit_locked(queue, commands);
                 let (semaphore, pool) = semaphore.into_parts();
                 let status = status();
-                queue.on_submitted_work_done(move || {
+                queue.on_submitted_work_done_locked(move || {
                     status.set(AcquireStatus::Ready);
                     // A pool that is gone (backend dropped) leaks the semaphore rather than
                     // touching a device that may already be destroyed.
@@ -406,7 +408,7 @@ impl Drop for ImportDropToken {
         };
         match handoff.transfer(&texture, Transfer::Release) {
             Ok(commands) => {
-                handoff.queue.submit(commands);
+                submit_locked(&handoff.queue, commands);
             }
             Err(err) => tracing::warn!(
                 target: "daedalus_gpu::dmabuf",

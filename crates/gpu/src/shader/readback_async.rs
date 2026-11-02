@@ -1,3 +1,4 @@
+use crate::shader::submit_lock::MapAsyncLocked;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::poll_fn;
@@ -84,7 +85,7 @@ fn begin_map_read_async_with_state(
         waker: None,
     }));
 
-    slice.map_async(wgpu::MapMode::Read, {
+    slice.map_async_locked(wgpu::MapMode::Read, {
         let state = Arc::clone(&state);
         move |res| {
             let result = res.map_err(|error| GpuError::Internal(format!("map failed: {error:?}")));

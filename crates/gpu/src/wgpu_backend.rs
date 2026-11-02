@@ -1,3 +1,4 @@
+use crate::shader::submit_lock::MapAsyncLocked;
 use parking_lot::{Mutex, MutexGuard};
 use std::sync::Arc;
 
@@ -562,7 +563,7 @@ impl GpuBackend for WgpuBackend {
         self.submit_texture_readback(&tex, &staging, handle, padded_bpr);
         let slice = staging.slice(..staging_size(size));
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| {
+        slice.map_async_locked(wgpu::MapMode::Read, move |res| {
             let _ = tx.send(res);
         });
         // Synchronous texture readback is a compatibility API and may block the
@@ -618,7 +619,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
                 label: Some("readback-encoder"),
             });
         encoder.copy_buffer_to_buffer(&buf, 0, &staging, 0, handle.size_bytes);
-        self.queue.submit(Some(encoder.finish()));
+        crate::shader::submit_lock::submit_locked(&self.queue, Some(encoder.finish()));
         let buffer_slice = staging.slice(..staging_size(handle.size_bytes));
         crate::shader::map_read_async(&self.device, buffer_slice)
             .await

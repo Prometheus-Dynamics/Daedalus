@@ -5,6 +5,7 @@ use super::prepare::prepare_resources_async;
 use super::readback::{enqueue_readbacks, resolve_readbacks_async, return_pooled_textures};
 use super::workgroups::derive_workgroups;
 use super::{DispatchOptions, GpuBindings, ShaderBinding, ShaderRunOutput, ShaderSpec};
+use crate::shader::submit_lock::submit_locked;
 use crate::{GpuContextHandle, GpuError};
 
 /// Dispatch a shader without blocking the current thread for fallback context creation or readback.
@@ -118,7 +119,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
     let (readbacks, pool_textures_to_return, texture_handles) =
         enqueue_readbacks(device, &prepared, &mut encoder);
 
-    let submission_idx = queue.submit(Some(encoder.finish()));
+    let submission_idx = submit_locked(queue, Some(encoder.finish()));
     if let Some(tracker) = submission_tracker {
         tracker
             .track_and_throttle_async(device, submission_idx)

@@ -1,5 +1,7 @@
 //! Node-owned persistent storage buffers.
 
+use crate::shader::submit_lock::MapAsyncLocked;
+use crate::shader::submit_lock::submit_locked;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
@@ -221,7 +223,7 @@ impl GpuStorage {
         let staging = self.staging.take(&self.device, self.size);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&self.buffer, offset, &staging, 0, copy);
-        self.queue.submit([encoder.finish()]);
+        submit_locked(&self.queue, [encoder.finish()]);
         Ok(GpuReadback::begin(
             &self.device,
             &self.staging,
@@ -280,7 +282,7 @@ impl GpuReadback {
         let flag = state.clone();
         staging
             .slice(..copy)
-            .map_async(wgpu::MapMode::Read, move |result| {
+            .map_async_locked(wgpu::MapMode::Read, move |result| {
                 let value = if result.is_ok() { MAP_OK } else { MAP_FAILED };
                 flag.store(value, Ordering::Release);
             });

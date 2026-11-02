@@ -79,3 +79,7 @@ required-features = ["gpu-wgpu", "gpu-async"]
 [[test]]
 name = "gpu_allocations"
 required-features = ["gpu-wgpu"]
+
+[[test]]
+name = "raw_submitter_allocations"
+required-features = ["gpu-vulkan-raw"]

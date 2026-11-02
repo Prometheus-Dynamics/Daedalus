@@ -3,6 +3,7 @@
 //! readback, after a decode). Whether they beat the CPU kernels depends on the device: the
 //! matrix records the measured times, and the caller chooses.
 
+use crate::shader::submit_lock::MapAsyncLocked;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -650,7 +651,7 @@ impl GpuKernels {
         let (tx, rx) = std::sync::mpsc::channel();
         readback
             .slice(..)
-            .map_async(wgpu::MapMode::Read, move |r| drop(tx.send(r)));
+            .map_async_locked(wgpu::MapMode::Read, move |r| drop(tx.send(r)));
         let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,

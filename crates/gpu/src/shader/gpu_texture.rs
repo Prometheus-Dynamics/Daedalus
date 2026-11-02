@@ -1,5 +1,6 @@
 //! Node-owned persistent 2D textures: fragment-pass inputs and render targets.
 
+use crate::shader::submit_lock::submit_locked;
 use std::sync::Arc;
 
 use crate::{GpuContextHandle, GpuError};
@@ -377,7 +378,7 @@ impl GpuTexture {
             },
             self.texture.size(),
         );
-        self.queue.submit([encoder.finish()]);
+        submit_locked(&self.queue, [encoder.finish()]);
         Ok(GpuReadback::begin(
             &self.device,
             &self.staging,

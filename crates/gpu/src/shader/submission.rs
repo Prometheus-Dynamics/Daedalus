@@ -1,5 +1,7 @@
 //! Non-blocking GPU completion for nodes: submit on one tick, collect on a later one.
 
+use crate::shader::submit_lock::WorkDoneLocked;
+use crate::shader::submit_lock::submit_locked;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,10 +34,10 @@ impl GpuTicket {
         queue: &wgpu::Queue,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> Self {
-        let index = queue.submit(commands);
+        let index = submit_locked(queue, commands);
         let done = Arc::new(AtomicBool::new(false));
         let flag = done.clone();
-        queue.on_submitted_work_done(move || flag.store(true, Ordering::Release));
+        queue.on_submitted_work_done_locked(move || flag.store(true, Ordering::Release));
         Self {
             done,
             device: device.clone(),

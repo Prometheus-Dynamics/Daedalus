@@ -6,7 +6,7 @@
 
 use ash::vk;
 
-use super::RawVulkan;
+use super::{RawSubmitter, RawVulkan};
 use crate::{GpuBackendKind, GpuContextHandle, GpuOptions, GpuStorage, select_backend};
 
 /// Inverts every word of `src` into `dst`.
@@ -358,4 +358,166 @@ fn a_raw_kernel_reads_8_bit_storage() {
         .collect();
     let want: Vec<u32> = input.iter().map(|&b| u32::from(b) * 3).collect();
     assert_eq!(words, want);
+}
+
+/// `write_buffer` data reaches the device only with wgpu's next submit, and a raw submit is not
+/// one. Flush it with an empty wgpu submit (in queue order) before raw commands read the upload.
+fn flush_uploads(ctx: &GpuContextHandle) {
+    let (_, queue) = ctx.wgpu().unwrap();
+    crate::shader::submit_lock::submit_locked(queue, std::iter::empty::<wgpu::CommandBuffer>());
+}
+
+/// The `Invert` kernel recorded through a [`RawSubmitter`] gives the same bytes as `submit_raw`.
+#[test]
+fn a_raw_submitter_dispatch_matches_submit_raw() {
+    let Some((ctx, raw)) = vulkan_ctx() else {
+        return eprintln!("skipping: no Vulkan device");
+    };
+    let submitter = RawSubmitter::new(&ctx).unwrap();
+    let input = pattern(64 << 10);
+    let src = GpuStorage::with_data(&ctx, &input, Some("raw-src")).unwrap();
+    flush_uploads(&ctx);
+    let dst = GpuStorage::new_host_cached(&ctx, input.len() as u64, Some("raw-dst")).unwrap();
+    // SAFETY: both storages outlive the submission, which the ticket waits for.
+    let invert = unsafe { Invert::new(&raw.device, &src, &dst) };
+    let words = (input.len() / 4) as u32;
+    // SAFETY: valid commands; everything they use outlives the wait below.
+    let ticket = unsafe { submitter.submit(|_, cmd| invert.record(cmd, words)) }.unwrap();
+    ticket.wait();
+    assert_eq!(ticket.try_complete(), Some(()));
+    let mut out = vec![0u8; input.len()];
+    dst.read_mapped(0, &mut out).unwrap();
+    let expected: Vec<u8> = input.iter().map(|b| !b).collect();
+    assert_eq!(out, expected);
+}
+
+/// Raw submits interleaved with Daedalus's wgpu work run in queue order: raw inverts `src` into
+/// `mid`, a wgpu copy moves `mid` to `out`, and a second raw invert writes `out` inverted back.
+#[test]
+fn raw_submits_interleave_with_daedalus_work_in_order() {
+    let Some((ctx, raw)) = vulkan_ctx() else {
+        return eprintln!("skipping: no Vulkan device");
+    };
+    let submitter = RawSubmitter::new(&ctx).unwrap();
+    let input = pattern(64 << 10);
+    let len = input.len() as u64;
+    let src = GpuStorage::with_data(&ctx, &input, None).unwrap();
+    flush_uploads(&ctx);
+    let mid = GpuStorage::new_host_cached(&ctx, len, None).unwrap();
+    let out = GpuStorage::new(&ctx, len, None).unwrap();
+    let back = GpuStorage::new_host_cached(&ctx, len, None).unwrap();
+    let words = (input.len() / 4) as u32;
+    // SAFETY: every storage outlives the final wait, which orders all the work below.
+    let (first, second) = unsafe {
+        (
+            Invert::new(&raw.device, &src, &mid),
+            Invert::new(&raw.device, &out, &back),
+        )
+    };
+    // SAFETY: valid commands on the context's device.
+    let raw_first = unsafe { submitter.submit(|_, cmd| first.record(cmd, words)) }.unwrap();
+    let copy = crate::GpuKernels::new(&ctx)
+        .unwrap()
+        .run(crate::GpuKernel::Copy, &mid, &out, len)
+        .unwrap();
+    // SAFETY: as above; this one reads what the wgpu copy wrote.
+    let raw_second = unsafe { submitter.submit(|_, cmd| second.record(cmd, words)) }.unwrap();
+    raw_second.wait();
+    copy.wait();
+    assert_eq!(raw_first.try_complete(), Some(()));
+    let mut mid_out = vec![0u8; input.len()];
+    mid.read_mapped(0, &mut mid_out).unwrap();
+    let inverted: Vec<u8> = input.iter().map(|b| !b).collect();
+    assert_eq!(mid_out, inverted, "raw first submit wrote mid");
+    let mut result = vec![0u8; input.len()];
+    back.read_mapped(0, &mut result).unwrap();
+    assert_eq!(
+        result, input,
+        "wgpu copy and raw second submit ran in order"
+    );
+}
+
+/// Fill `value` into a storage through `slots` ring slots, `rounds` times: returns the storage's
+/// final word, and checks each ticket's staleness against the ring's wrap count.
+fn fill_rounds(ctx: &crate::GpuContextHandle, slots: usize, rounds: usize) {
+    let submitter = RawSubmitter::with_slots(ctx, slots).unwrap();
+    assert_eq!(submitter.slots(), slots);
+    let dst = GpuStorage::new_host_cached(ctx, 4096, None).unwrap();
+    // SAFETY: a buffer of this device, kept alive until the last ticket is waited for.
+    let buffer = unsafe { dst.raw_vk_buffer() }.unwrap();
+    let mut tickets = Vec::new();
+    for round in 0..rounds {
+        let value = 0x0101_0101u32.wrapping_mul(round as u32 + 1);
+        // SAFETY: a fill of the storage, valid on its device.
+        let ticket = unsafe {
+            submitter.submit(|d, cmd| {
+                d.cmd_fill_buffer(cmd, buffer.buffer, buffer.offset, buffer.size, value)
+            })
+        }
+        .unwrap();
+        tickets.push(ticket);
+    }
+    // Every submit before the last `slots` reused a slot: its ticket is stale and complete.
+    for ticket in &tickets[..rounds - slots] {
+        assert!(
+            !ticket.current(),
+            "a reused slot must not match an older ticket"
+        );
+        assert_eq!(ticket.try_complete(), Some(()));
+        ticket.wait();
+    }
+    for ticket in &tickets[rounds - slots..] {
+        assert!(ticket.current());
+    }
+    tickets.last().unwrap().wait();
+    let last = 0x0101_0101u32.wrapping_mul(rounds as u32);
+    let mut out = vec![0u8; 4096];
+    dst.read_mapped(0, &mut out).unwrap();
+    assert!(
+        out.chunks_exact(4)
+            .all(|w| u32::from_le_bytes(w.try_into().unwrap()) == last)
+    );
+}
+
+/// Wrapping a two-slot ring several times: stale tickets complete at once and never observe the
+/// reused slot's newer work; the last submission's result is the final fill.
+#[test]
+fn ring_wrap_keeps_stale_tickets_apart_from_reused_slots() {
+    let Some((ctx, _)) = vulkan_ctx() else {
+        return eprintln!("skipping: no Vulkan device");
+    };
+    fill_rounds(&ctx, 2, 7);
+}
+
+/// A one-slot ring: every submit waits for the previous one, and the results stay in order.
+#[test]
+fn a_one_slot_ring_waits_for_each_previous_submission() {
+    let Some((ctx, _)) = vulkan_ctx() else {
+        return eprintln!("skipping: no Vulkan device");
+    };
+    fill_rounds(&ctx, 1, 4);
+}
+
+/// Dropping a submitter with work in flight waits for it, then frees its objects.
+#[test]
+fn dropping_a_submitter_waits_for_its_work() {
+    let Some((ctx, _)) = vulkan_ctx() else {
+        return eprintln!("skipping: no Vulkan device");
+    };
+    let dst = GpuStorage::new_host_cached(&ctx, 4096, None).unwrap();
+    // SAFETY: a buffer of this device, used only until the submitter is dropped below.
+    let buffer = unsafe { dst.raw_vk_buffer() }.unwrap();
+    {
+        let submitter = RawSubmitter::with_slots(&ctx, 2).unwrap();
+        // SAFETY: a fill of the storage.
+        let _ = unsafe {
+            submitter.submit(|d, cmd| {
+                d.cmd_fill_buffer(cmd, buffer.buffer, buffer.offset, buffer.size, 0x5A5A_5A5A)
+            })
+        }
+        .unwrap();
+    }
+    let mut out = vec![0u8; 4096];
+    dst.read_mapped(0, &mut out).unwrap();
+    assert!(out.iter().all(|&b| b == 0x5A));
 }

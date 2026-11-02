@@ -1,3 +1,5 @@
+use crate::shader::submit_lock::MapAsyncLocked;
+use crate::shader::submit_lock::submit_locked;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -163,7 +165,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
                 label: Some("gpu-state-readback-encoder"),
             });
         encoder.copy_buffer_to_buffer(self.buffer.as_ref(), 0, &staging, 0, self.size);
-        self.queue.submit([encoder.finish()]);
+        submit_locked(&self.queue, [encoder.finish()]);
         staging
     }
 
@@ -184,7 +186,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
         let staging = self.copy_to_staging();
         let slice = staging.slice(..staging_size(self.size));
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| {
+        slice.map_async_locked(wgpu::MapMode::Read, move |res| {
             let _ = tx.send(res);
         });
         let _ = self.device.poll(wgpu::PollType::Wait {

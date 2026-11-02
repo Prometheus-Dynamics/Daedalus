@@ -1,5 +1,7 @@
 //! `GpuContextHandle` against a real wgpu device (skipped without one).
 
+use crate::shader::submit_lock::MapAsyncLocked;
+use crate::shader::submit_lock::submit_locked;
 use crate::{GpuBackendKind, GpuOptions, select_backend};
 
 /// A node-owned pipeline built and dispatched on the engine's own device through
@@ -60,9 +62,9 @@ fn wgpu_accessor_dispatches_on_the_engine_device() {
         pass.dispatch_workgroups(1, 1, 1);
     }
     encoder.copy_buffer_to_buffer(&buffer, 0, &readback, 0, 4);
-    queue.submit([encoder.finish()]);
+    submit_locked(queue, [encoder.finish()]);
     let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |_| {});
+    slice.map_async_locked(wgpu::MapMode::Read, |_| {});
     let _ = device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,

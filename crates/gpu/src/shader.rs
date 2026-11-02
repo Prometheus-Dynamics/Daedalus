@@ -28,6 +28,7 @@ mod readback_async;
 mod run_output;
 mod storage_pool;
 mod submission;
+pub(crate) mod submit_lock;
 mod types;
 mod workgroups;
 

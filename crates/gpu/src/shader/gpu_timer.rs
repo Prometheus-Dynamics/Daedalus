@@ -1,5 +1,6 @@
 //! GPU time per dispatch: timestamp queries where the device has them, else submit→completion.
 
+use crate::shader::submit_lock::WorkDoneLocked;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -116,7 +117,7 @@ impl GpuTimer {
         let done_at = Arc::new(Mutex::new(None));
         let mark = done_at.clone();
         self.queue
-            .on_submitted_work_done(move || *mark.lock() = Some(Instant::now()));
+            .on_submitted_work_done_locked(move || *mark.lock() = Some(Instant::now()));
         let readback = staging
             .map(|staging| GpuReadback::begin(&self.device, &self.staging, staging, 16, 16, None));
         GpuTimed {

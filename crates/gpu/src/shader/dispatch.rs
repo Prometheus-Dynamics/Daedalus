@@ -1,3 +1,4 @@
+use crate::shader::submit_lock::submit_locked;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "gpu-async")]
@@ -485,7 +486,7 @@ pub fn dispatch_shader_with_options(
     let (readbacks, pool_textures_to_return, texture_handles) =
         enqueue_readbacks(device, &prepared, &mut encoder);
 
-    let submission_idx = queue.submit(Some(encoder.finish()));
+    let submission_idx = submit_locked(queue, Some(encoder.finish()));
     if let Some(tracker) = submission_tracker {
         tracker.track_and_throttle(device, submission_idx);
     } else {

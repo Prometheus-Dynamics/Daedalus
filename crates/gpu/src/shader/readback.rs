@@ -1,3 +1,4 @@
+use crate::shader::submit_lock::MapAsyncLocked;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -209,7 +210,7 @@ pub(crate) fn resolve_readbacks(
         request
             .buffer
             .slice(..staging_size(request.size))
-            .map_async(wgpu::MapMode::Read, move |res| {
+            .map_async_locked(wgpu::MapMode::Read, move |res| {
                 let _ = tx.send(res);
             });
         receivers.push(rx);
@@ -326,7 +327,7 @@ mod tests {
                 padded_bpr: 0,
             });
         }
-        queue.submit(Some(encoder.finish()));
+        crate::shader::submit_lock::submit_locked(queue, Some(encoder.finish()));
 
         let out = resolve_readbacks(device, requests).expect("batched readback");
         assert_eq!(out.len(), sizes.len());
