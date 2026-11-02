@@ -73,7 +73,10 @@ impl Library {
 
 /// The scalar kind of type id `ty`, if it is one.
 pub(crate) fn scalar_kind(ty: u16) -> Option<ScalarKind> {
-    u8::try_from(ty).ok().and_then(ScalarKind::from_u8)
+    u8::try_from(ty)
+        .ok()
+        .and_then(ScalarKind::from_u8)
+        .filter(|kind| cfg!(feature = "f64") || *kind != ScalarKind::F64)
 }
 
 /// A port type: [`name_hash`](crate::name_hash) of its [`McuType::KEY`], size and alignment.

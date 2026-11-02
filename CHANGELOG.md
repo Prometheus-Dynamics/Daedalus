@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`daedalus-mcu` `f64` feature** (default): conversions to and from `f64` for parameters,
+  constants and widening edges. Without it no `f64` soft-float is linked: an `f64` parameter does not
+  compile, a loaded plan converting to or from `f64` fails to load (`LoadError::Type` or
+  `Malformed`), and `f64` updates to `f32` parameters still convert (`f64` to `f32` now narrows in
+  integer arithmetic, bit-identical to `as f32`). The workspace dependency turns default features
+  off; the blink tunable firmware shrinks by 588 B (M4F) / 464 B (M0+).
 - **`pipeline_cache_path_for(device)`**: the file of the pipeline cache installed for a device, so
   a node can keep what it measured once per device next to it.
 

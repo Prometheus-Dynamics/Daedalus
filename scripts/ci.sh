@@ -24,7 +24,7 @@ readonly NOSTD_CRATES=(-p daedalus-core -p daedalus-transport -p daedalus-data -
 # "mode:binary suffix:flash budget:static RAM budget", in bytes per target in NOSTD_TARGETS
 # (flash = .vector_table + .text + .rodata + .data, static RAM = .data + .bss + .uninit).
 # Measured sizes are in docs/mcu.md.
-readonly MCU_MODES=("compiled::8192:512" "tunable:-tunable:10240:512" "loaded:-loaded:16384:1024")
+readonly MCU_MODES=("compiled::8192:512" "tunable:-tunable:6144:512" "loaded:-loaded:13312:1024")
 # The compiled firmware's exact flash:RAM per target (NOSTD_TARGETS order): the tunable and
 # loaded modes cost a compiled firmware nothing, and constants without parameters stay literals.
 readonly MCU_COMPILED_SIZE=("2988:112" "3316:112")
@@ -287,6 +287,7 @@ cmd_mcu() {
   done
   step "Testing the MCU crates and the blink graph natively"
   cargo test -p daedalus-mcu --features loaded
+  cargo test -p daedalus-mcu --no-default-features --features loaded
   cargo test -p daedalus-mcu-build -p daedalus-mcu-blink
   return "$failed"
 }

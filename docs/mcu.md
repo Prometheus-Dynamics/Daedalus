@@ -51,7 +51,7 @@ the full runtime everywhere else.
 | Needs a firmware update for | any change | wiring, unmarked constants | new or changed node code |
 | Code | straight-line `tick`, nodes inlined | + parameter table, setters, update decoder | + interpreter, blob validator, one type-erased adapter per library node |
 | RAM | queues + state | + one field per parameter | a fixed arena (plan tables, queues, state, constants) |
-| Blink example, M0+ | 3.2 KiB flash, 112 B RAM | 5.8 KiB, 128 B | 12.2 KiB, 584 B |
+| Blink example, M0+ | 3.2 KiB flash, 112 B RAM | 5.4 KiB, 128 B | 11.7 KiB, 584 B |
 
 Choose compiled for minimal devices and frozen graphs (a production build of a graph tuned on a
 tunable build is compiled with `freeze_params`). Choose tunable when the structure is settled but
@@ -359,17 +359,19 @@ is `.vector_table + .text + .rodata + .data`, static RAM `.data + .bss`; no heap
 | Mode (firmware) | `thumbv7em-none-eabihf` (M4F) flash | `thumbv6m-none-eabi` (M0+) flash | Static RAM | Budget (flash / RAM) |
 | --- | --- | --- | --- | --- |
 | Compiled (`daedalus-mcu-blink`) | 2988 B | 3316 B | 112 B | 8 KiB / 512 B, and exactly these sizes |
-| Compiled + tunable, 4 parameters (`-tunable`) | 5012 B | 5952 B | 128 B | 10 KiB / 512 B |
-| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11672 B | 12488 B | 584 B | 16 KiB / 1 KiB |
+| Compiled + tunable, 4 parameters (`-tunable`) | 4424 B | 5488 B | 128 B | 6 KiB / 512 B |
+| Loaded, 5-node library, two blobs in flash (`-loaded`) | 11060 B | 12024 B | 584 B | 13 KiB / 1 KiB |
 
 - **Compiled**: 1024 B (M4F) / 192 B (M0+) of vector table; the M0+ code includes soft-float.
   The 112 B of RAM are the whole `Graph` (eight queues, five state slots, the tick counter) plus
   the `singleton!` flag; the stack adds what a tick's node calls need. Queues store only their
   values (`MaybeUninit`), so a queue costs its slots and its ring indices, not a tag per slot.
-- **Tunable**: +2.0 KiB (M4F) / +2.6 KiB (M0+): the type conversion and range check (with `f64`
-  soft-float for `f64` values and parameters), the update decoder and the setters; +16 B of RAM
-  for the four parameter fields.
-- **Loaded**: +8.5 KiB (M4F) / +9.0 KiB (M0+): the blob validator (about 2 KiB, with the CRC-32),
+- **Tunable**: +1.4 KiB (M4F) / +2.1 KiB (M0+): the type conversion and range check, the update
+  decoder and the setters; +16 B of RAM for the four parameter fields. The blink firmwares build
+  `daedalus-mcu` without its default `f64` feature, so no `f64` soft-float is linked (with it:
+  +588 B M4F, +464 B M0+, in the tunable firmware); an `f64` update to an `f32` parameter still
+  converts, in integer arithmetic.
+- **Loaded**: +7.9 KiB (M4F) / +8.5 KiB (M0+): the blob validator (about 2 KiB, with the CRC-32),
   the interpreter, five adapters and the conversion code; the blobs are 177 B (plan A) and 127 B
   (plan B), each with its 4-byte checksum. RAM is the 512 B arena plus the interpreter's state; plan A uses 424 B of the arena
   (plan tables about 280 B, queues, states, constants and parameter bounds the rest), plan B 312 B.

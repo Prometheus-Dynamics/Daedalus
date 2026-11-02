@@ -76,7 +76,7 @@ daedalus-ffi-python = { path = "crates/ffi/python", version = "3.0.1-dev" }
 daedalus-ffi-node = { path = "crates/ffi/node", version = "3.0.1-dev" }
 daedalus-ffi-java = { path = "crates/ffi/java", version = "3.0.1-dev" }
 daedalus-ffi-cpp = { path = "crates/ffi/cpp", version = "3.0.1-dev" }
-daedalus-mcu = { path = "crates/mcu/device", version = "3.0.1-dev" }
+daedalus-mcu = { path = "crates/mcu/device", version = "3.0.1-dev", default-features = false }
 daedalus-mcu-macros = { path = "crates/mcu/macros", version = "3.0.1-dev" }
 daedalus-mcu-build = { path = "crates/mcu/build", version = "3.0.1-dev" }
 daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "3.0.1-dev" }

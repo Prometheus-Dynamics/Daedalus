@@ -18,7 +18,12 @@ workspace = true
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["f64"]
+# Conversions to and from `f64` (parameters, constants and widening edges). Without it, `f64`
+# soft-float stays out of tunable and loaded firmware: an `f64` parameter does not compile, a
+# loaded plan converting to or from `f64` is rejected, and `f64` updates to `f32` parameters still
+# convert (in integer arithmetic).
+f64 = []
 # `McuType` keys for `String` and `Vec<u8>` (heap payloads). The executor itself never allocates.
 alloc = []
 # The loaded-plan interpreter (`loaded::Interpreter`) and node library types.
