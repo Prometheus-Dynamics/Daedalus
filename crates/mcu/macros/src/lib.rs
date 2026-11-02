@@ -31,6 +31,10 @@ use syn::{
 /// - `state(T)`: a `&mut T` parameter is the node's state slot (`T: daedalus_mcu::NodeState`).
 /// - A `&Ctx` parameter receives the tick context.
 /// - `fire = "all"`: wait until every connected required input holds a value (cross-tick join).
+/// - `runtime = "feature"`: a shared node. Under the crate's `feature`, the function is also a
+///   full-runtime `#[daedalus::macros::node]` with the same id, ports, state and fire mode, and
+///   stays callable under its own name. The function cannot take `&Ctx` (the runtime has no
+///   tick context) and must return plain values (no `Result`: the two `NodeError` types differ).
 #[proc_macro_attribute]
 pub fn node(
     args: proc_macro::TokenStream,
@@ -49,6 +53,8 @@ struct Args {
     outputs: Option<Vec<LitStr>>,
     state: Option<Type>,
     fire_all: bool,
+    /// Feature of the crate that also declares the function to the full runtime (a shared node).
+    runtime: Option<LitStr>,
 }
 
 fn parse_args(tokens: TokenStream) -> syn::Result<Args> {
@@ -78,8 +84,10 @@ fn parse_args(tokens: TokenStream) -> syn::Result<Args> {
                 "any" => false,
                 _ => return Err(syn::Error::new(mode.span(), "fire is \"any\" or \"all\"")),
             };
+        } else if meta.path.is_ident("runtime") {
+            args.runtime = Some(meta.value()?.parse()?);
         } else {
-            return Err(meta.error("expected id, inputs, outputs, state or fire"));
+            return Err(meta.error("expected id, inputs, outputs, state, fire or runtime"));
         }
         Ok(())
     })
@@ -177,6 +185,26 @@ fn expand(args: TokenStream, item: ItemFn) -> syn::Result<TokenStream> {
         ));
     }
 
+    let (runtime_attr, runtime_reexport) = match &args.runtime {
+        None => (TokenStream::new(), TokenStream::new()),
+        Some(feature) => {
+            if params.iter().any(|p| matches!(p, Param::Ctx)) {
+                return Err(syn::Error::new(
+                    span,
+                    "a shared node cannot take `&Ctx`: the full runtime has no tick context",
+                ));
+            }
+            if fallible {
+                return Err(syn::Error::new(
+                    span,
+                    "a shared node returns plain values, not `Result`: its `NodeError` is the \
+                     device's, and the full runtime's is another type",
+                ));
+            }
+            runtime_glue(feature, &args, &id, &item, &input_names, &output_names)
+        }
+    };
+
     let fn_name = &sig.ident;
     let vis = &item.vis;
     let state_ty = args
@@ -260,7 +288,9 @@ fn expand(args: TokenStream, item: ItemFn) -> syn::Result<TokenStream> {
         format!("Device glue of the [`{fn_name}`](fn@{fn_name}) node (`#[daedalus_mcu::node]`).");
 
     Ok(quote! {
+        #runtime_attr
         #item
+        #runtime_reexport
 
         #[doc = #doc]
         #[allow(non_snake_case, clippy::unused_unit)]
@@ -291,6 +321,44 @@ fn expand(args: TokenStream, item: ItemFn) -> syn::Result<TokenStream> {
             }
         }
     })
+}
+
+/// The full runtime's `#[node]` for a shared node (under `cfg(feature)`, so the device build never
+/// names the runtime), with the same id, ports, state and fire mode. The runtime renames the
+/// function to `<name>_impl`, so a `cfg` re-export keeps `<name>` callable in both builds: the
+/// device glue calls it, and host code may too.
+fn runtime_glue(
+    feature: &LitStr,
+    args: &Args,
+    id: &Expr,
+    item: &ItemFn,
+    inputs: &[LitStr],
+    outputs: &[LitStr],
+) -> (TokenStream, TokenStream) {
+    let mut node_args = vec![quote!(id = #id)];
+    if !inputs.is_empty() {
+        node_args.push(quote!(inputs(#(#inputs),*)));
+    }
+    if !outputs.is_empty() {
+        node_args.push(quote!(outputs(#(#outputs),*)));
+    }
+    if let Some(state) = &args.state {
+        node_args.push(quote!(state(#state)));
+    }
+    if args.fire_all {
+        node_args.push(quote!(fire = "all"));
+    }
+    let attr = quote! {
+        #[cfg_attr(feature = #feature, ::daedalus::macros::node(#(#node_args),*))]
+    };
+    let name = &item.sig.ident;
+    let runtime_name = format_ident!("{name}_impl");
+    let vis = &item.vis;
+    let reexport = quote! {
+        #[cfg(feature = #feature)]
+        #vis use self::#runtime_name as #name;
+    };
+    (attr, reexport)
 }
 
 fn port_desc(name: &LitStr, alias: &syn::Ident, optional: bool) -> TokenStream {

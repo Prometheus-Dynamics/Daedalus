@@ -214,6 +214,11 @@ fn refine(frame: &Frame, corners: &Corners) -> Result<Corners, NodeError> { /* .
 fn pose(frame: &Frame, refined: Option<&Corners>) -> Result<Pose, NodeError> { /* ... */ }
 ```
 
+A typed node that cannot fail may return the plain value instead: `-> T` pushes one value,
+`-> Option<T>` is a conditional output, and `-> (A, B)` has two outputs. The MCU profile's shared
+nodes use this form, so one function serves the device and the runtime
+([docs/mcu.md](mcu.md#shared-nodes)).
+
 The planner records each node's required inputs in its metadata
 (`NODE_REQUIRED_INPUTS_META_KEY`); nodes without a registry declaration are never gated.
 

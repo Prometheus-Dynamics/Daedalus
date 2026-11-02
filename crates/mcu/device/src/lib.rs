@@ -34,6 +34,7 @@ pub mod wire;
 pub use daedalus_mcu_macros::{adapt, node};
 pub use param::{ParamError, ParamSpec, ParamUpdate, Tunable};
 pub use queue::{Overflow, Queue, QueueFull, Ring};
+#[cfg(feature = "loaded")]
 pub(crate) use scalar::for_each_scalar;
 pub use scalar::{Scalar, ScalarKind, ScalarType};
 

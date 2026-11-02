@@ -1,0 +1,128 @@
+{
+  "format": "daedalus.mcu.library",
+  "hash": 4311352229107988079,
+  "nodes": [
+    {
+      "id": "shared:scale",
+      "path": "daedalus_mcu_shared::scale",
+      "inputs": [
+        {
+          "name": "raw",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "volts_per_count",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "volts",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "shared:lowpass",
+      "path": "daedalus_mcu_shared::lowpass",
+      "inputs": [
+        {
+          "name": "x",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "alpha",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "shared:clamp",
+      "path": "daedalus_mcu_shared::clamp",
+      "inputs": [
+        {
+          "name": "value",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "ceiling",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "shared:threshold",
+      "path": "daedalus_mcu_shared::threshold",
+      "inputs": [
+        {
+          "name": "level",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "on",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        },
+        {
+          "name": "off",
+          "key": "typeexpr:{\"Scalar\":\"F32\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "active",
+          "key": "typeexpr:{\"Scalar\":\"Bool\"}",
+          "optional": false
+        }
+      ],
+      "fire_all": false
+    },
+    {
+      "id": "shared:rising",
+      "path": "daedalus_mcu_shared::rising",
+      "inputs": [
+        {
+          "name": "active",
+          "key": "typeexpr:{\"Scalar\":\"Bool\"}",
+          "optional": false
+        }
+      ],
+      "outputs": [
+        {
+          "name": "count",
+          "key": "typeexpr:{\"Scalar\":\"U32\"}",
+          "optional": true
+        }
+      ],
+      "fire_all": false
+    }
+  ],
+  "adapters": [],
+  "types": []
+}

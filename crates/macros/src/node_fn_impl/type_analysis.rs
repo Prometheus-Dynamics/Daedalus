@@ -61,6 +61,15 @@ pub(super) fn payload_value_type(ty: &syn::Type) -> &syn::Type {
     inner.map_or(ty, payload_value_type)
 }
 
+/// Whether a typed node returns a `Result` (its `Err` is the handler's error); a plain return
+/// value is the node's output, pushed as it is.
+pub(super) fn returns_result(ret: &syn::ReturnType) -> bool {
+    let syn::ReturnType::Type(_, ty) = ret else {
+        return false;
+    };
+    matches!(last_segment(ty), Some(seg) if seg.ident == "Result")
+}
+
 /// The success type of a return type: `T` for `Result<T, _>`, the type itself otherwise.
 pub(super) fn ok_type_from_return(ret: &syn::ReturnType) -> Option<&syn::Type> {
     let syn::ReturnType::Type(_, ty) = ret else {

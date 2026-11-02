@@ -719,6 +719,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-mcu-shared"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-mcu",
+ "daedalus-mcu-build",
+ "daedalus-rs",
+]
+
+[[package]]
 name = "daedalus-nodes"
 version = "3.0.1-dev"
 dependencies = [

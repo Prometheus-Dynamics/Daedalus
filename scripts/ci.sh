@@ -270,6 +270,12 @@ cmd_mcu() {
     ensure_target "$target"
     cargo build --target "$target" --profile mcu -p daedalus-mcu-blink --bins
     cargo check --target "$target" -p daedalus-mcu --features "alloc,defmt,loaded"
+    # Shared nodes (examples/mcu_shared): the device build is `no_std` and does not pull the runtime.
+    cargo build --target "$target" --profile mcu -p daedalus-mcu-shared --lib
+    if cargo tree --target "$target" -p daedalus-mcu-shared -e normal | grep -q '^[├└│ ]*daedalus-rs '; then
+      echo "  $target: the shared nodes' device build pulls in the full runtime" >&2
+      failed=1
+    fi
     for mode in "${MCU_MODES[@]}"; do
       IFS=: read -r name suffix flash_budget ram_budget <<<"$mode"
       read -r flash ram < <(mcu_size "$out/$target/mcu/daedalus-mcu-blink$suffix")
@@ -285,10 +291,12 @@ cmd_mcu() {
     done
     index=$((index + 1))
   done
-  step "Testing the MCU crates and the blink graph natively"
+  step "Testing the MCU crates, the blink graph and the shared nodes natively"
   cargo test -p daedalus-mcu --features loaded
   cargo test -p daedalus-mcu --no-default-features --features loaded
   cargo test -p daedalus-mcu-build -p daedalus-mcu-blink
+  cargo test -p daedalus-mcu-shared
+  cargo test -p daedalus-mcu-shared --features runtime
   return "$failed"
 }
 
@@ -354,7 +362,7 @@ cmd_wasm() {
 readonly PACKAGE_EXCLUDES=(--exclude daedalus-examples
   --exclude daedalus-plugins-math --exclude daedalus-plugins-example-project
   --exclude daedalus-wasm-smoke --exclude daedalus-wasm-bindgen-host --exclude daedalus-nostd-smoke
-  --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes
+  --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-mcu-shared
   --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer
   --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi
   --exclude daedalus-plugins-stable-abi-counted

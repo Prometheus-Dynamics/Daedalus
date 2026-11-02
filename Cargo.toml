@@ -38,6 +38,7 @@ members = [
     "examples/nostd_smoke",
     "examples/mcu_blink",
     "examples/mcu_blink/nodes",
+    "examples/mcu_shared",
     "examples/wasm_bindgen_host",
 ]
 resolver = "3"

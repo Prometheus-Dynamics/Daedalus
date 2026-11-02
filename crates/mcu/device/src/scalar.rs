@@ -45,6 +45,7 @@ macro_rules! for_each_scalar {
         }
     };
 }
+#[cfg(feature = "loaded")]
 pub(crate) use for_each_scalar;
 
 impl ScalarKind {

@@ -17,6 +17,14 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Shared nodes for the MCU profile.** `#[daedalus_mcu::node(.., runtime = "feature")]` makes one
+  function both the device node and a full-runtime `#[daedalus::macros::node]`, with the same id,
+  ports, types, optional inputs, conditional outputs, fire mode and state, so one node crate serves
+  both (`examples/mcu_shared`). The runtime side is opt-in: without the feature the crate is
+  `no_std` and names no runtime item. Shared nodes cannot take `&Ctx`, return `Result` or be
+  adapters. The full runtime's `#[node]` now accepts a plain return value (a typed node returning
+  `T`, `Option<T>` or a tuple): its signature analysis already accepted one, but the handler only
+  compiled `Result` returns.
 - **`daedalus-mcu` fan-in and user adapters** (compiled, tunable and loaded modes). Several edges
   into one plain input now plan: the input takes the oldest value of the first edge, in graph
   order, that holds one, and the other values are dropped, as the full runtime does (`FanIn<T>`

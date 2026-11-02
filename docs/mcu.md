@@ -21,6 +21,9 @@ Crates:
 - [`daedalus-mcu-build`](../crates/mcu/build/src/lib.rs) (host, `std`): plans a graph against the
   device nodes and renders it as a compiled module, a node library or a plan blob, from a
   `build.rs` or the `daedalus-mcu` command line tool.
+- [`examples/mcu_shared`](../examples/mcu_shared): shared nodes, one function per node for the
+  device and the full runtime ([Shared Nodes](#shared-nodes)): the same graph document runs
+  under a `PluginRegistry`, compiled and loaded, against one reference.
 - [`examples/mcu_blink`](../examples/mcu_blink): a five-node graph in all three modes, with
   firmware for Cortex-M4F and Cortex-M0+ and native tests of the same code, and a second graph
   with fan-in and a user adapter (`graph_fanin.json`) tested natively in all three modes. Its
@@ -148,6 +151,68 @@ allocation), so the device attribute is separate: it generates only the descript
 glue. `daedalus-mcu-build` turns the descriptor into the same `NodeDecl` a `#[node]` declares
 (port keys and schemas, optional inputs, fire mode, conditional outputs), so planning,
 readiness and lints treat device nodes like any other.
+
+### Shared Nodes
+
+A shared node is one function that is both the device node and a full-runtime `#[node]`, so a
+node crate serves both ([`examples/mcu_shared`](../examples/mcu_shared)). Name a feature of the
+node crate with the `runtime` option:
+
+```rust
+#[daedalus_mcu::node(id = "shared:scale", inputs("raw", "volts_per_count"), outputs("volts"),
+                     runtime = "runtime")]
+pub fn scale(raw: f32, volts_per_count: f32) -> f32 { raw * volts_per_count }
+```
+
+Without the feature the function is the device node above, and the crate is `#![no_std]` and
+names no runtime item. With it, the attribute also expands (through `cfg_attr`) to
+`#[daedalus::macros::node(..)]` with the same id, ports, state and fire mode, and a `cfg`
+re-export keeps the function callable under its own name (the runtime renames it to
+`scale_impl`). The node crate's manifest names the facade `daedalus` (the expansion refers to
+`::daedalus`):
+
+```toml
+[features]
+runtime = ["dep:daedalus", "daedalus/engine", "daedalus/plugins"]
+
+[dependencies]
+daedalus-mcu = { workspace = true }
+daedalus = { workspace = true, optional = true }
+```
+
+Its plugin registers the nodes, under the same feature:
+
+```rust
+#[cfg(feature = "runtime")]
+#[daedalus::macros::plugin(id = "shared", nodes(scale, lowpass, clamp, threshold, rising))]
+pub struct SharedPlugin;
+```
+
+- **Ids** start with the plugin id and a `:` (`shared:scale`). The runtime prefixes a plugin's
+  node ids with its id unless they already start with it, so `shared.scale` would be registered
+  as `shared:shared.scale`, and a graph document could not name the node in both planners.
+- **Ports and state** are the same in both: names, type keys, `Option<T>` inputs, `Option<T>`
+  returns (conditional outputs), `fire = "all"`, and `state(T)`. The runtime starts a state from
+  `Default`, the device from `NodeState::INIT`: the state type must make the two equal (derive
+  `Default` on a state whose `INIT` is all zeros or defaults).
+- **Defaults** are the graph's: `const_inputs` set constants in both modes; the function declares
+  none.
+- **Not shared**: `&Ctx` (the full runtime has no tick context, so a node that uses the tick stays
+  device-only, as `blink` does in `examples/mcu_blink`), a `Result` return (the device's
+  `NodeError` and the runtime's are different types) and `#[adapt]` functions. Each is a build
+  error with the `runtime` option.
+- **Custom port types** need the same key on both sides: `daedalus_mcu::mcu_type!` and the
+  runtime's `#[type_key]` (or `DaedalusTypeExpr`) with one string. Builtin scalars already share
+  keys.
+
+The runtime's `NodeDecl` is checked against `daedalus-mcu-build`'s derivation from the device
+descriptor (`examples/mcu_shared/tests/agreement.rs`): id, ports, keys, schemas, optional inputs,
+conditional outputs and fire mode. Access modes and other runtime metadata are not compared: the
+device has no such notion. The graph test runs the same `graph.json` under the runtime, compiled
+and loaded, and compares each tick with the functions called by hand. `scripts/ci.sh mcu` builds the
+shared crate for the bare-metal targets and checks that the device build does not pull in the
+runtime. The crate has no firmware of its own, so it is not size-measured; the blink firmwares
+are unchanged.
 
 ### User Adapters
 
@@ -460,7 +525,9 @@ branch adapters and foreign interfaces; several edges into a host output; indexe
 (`FanIn<T>`, `{prefix}{N}`: the device node attribute declares no such port, while plain fan-in
 into one input works, see [Semantics](#semantics)); an input with both an edge and a constant;
 constants of non-scalar types; GPU nodes; coalescing and freshness policies other than latest-only;
-and more than one host bridge node. A user adapter cannot fail and has no state. Loaded mode also
+and more than one host bridge node. A user adapter cannot fail and has no state. A shared node
+([Shared Nodes](#shared-nodes)) with the `runtime` option cannot take `&Ctx`, return `Result`, or
+be an adapter. Without the option a node has none of these limits. Loaded mode also
 needs `Copy` port values (adapter types included), states without drop glue, scalar constants and
 at most 8 ports per node. Plugins,
 `dylib-plugins`, patches, hot reload, telemetry, `Payload` lineage and the `HostGraph` API are

@@ -1,0 +1,29 @@
+[package]
+name = "daedalus-mcu-shared"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "MCU profile example: shared nodes, one function per node for the device and the full runtime (docs/mcu.md, Shared Nodes)."
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+doctest = false
+
+[features]
+# The full runtime side of the shared nodes: each function is also a `#[daedalus::macros::node]`
+# and the plugin below registers them. Without it the crate is `no_std` and depends on the device
+# crate alone.
+runtime = ["dep:daedalus", "daedalus/engine", "daedalus/plugins"]
+
+[dependencies]
+daedalus-mcu = { workspace = true }
+daedalus = { workspace = true, optional = true }
+
+# The generator (`examples/generate.rs`) plans `graph.json` into `generated/`, and the tests
+# compile and load it as a host tool would. Nothing here runs at build time.
+[dev-dependencies]
+daedalus-mcu-build = { workspace = true }

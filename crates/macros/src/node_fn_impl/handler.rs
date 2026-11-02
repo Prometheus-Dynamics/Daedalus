@@ -8,7 +8,7 @@ use super::descriptor::is_fanin_ty;
 use super::handler_fetch;
 use super::parse::PortMeta;
 use super::shader;
-use super::type_analysis::{ok_type_from_return, payload_inner_type};
+use super::type_analysis::{ok_type_from_return, payload_inner_type, returns_result};
 use crate::type_expr::value_type_key;
 
 pub(super) struct GraphCtxArg {
@@ -366,6 +366,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
             }
         } else if !matches!(input.sig.output, syn::ReturnType::Default) {
             let ok_ty = ok_type_from_return(&input.sig.output);
+            let fallible = returns_result(&input.sig.output);
             if outputs_len > 1 {
                 let out_ports = output_names;
                 let out_idents = output_idents;
@@ -401,25 +402,16 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                         })
                         .collect(),
                 };
-                quote! {
-                    match #call {
-                        Ok(val) => {
-                            let (#(#out_idents),*) = val;
-                            #(#out_push_stmts)*
-                            Ok(())
-                        }
-                        Err(e) => Err(e),
-                    }
-                }
+                let body = quote! {
+                    let (#(#out_idents),*) = val;
+                    #(#out_push_stmts)*
+                    Ok(())
+                };
+                on_value(&call, fallible, body)
             } else if outputs_len == 0 && ok_ty.is_some_and(is_unit_type) {
                 // `Result<(), _>` without outputs: nothing to push (a unit payload would cost an
                 // allocation per call for a port that does not exist).
-                quote! {
-                    match #call {
-                        Ok(()) => Ok(()),
-                        Err(e) => Err(e),
-                    }
-                }
+                on_value(&call, fallible, quote! { Ok(()) })
             } else {
                 let push_stmt = ok_ty
                     .as_ref()
@@ -440,15 +432,14 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                             }
                         }
                     });
-                quote! {
-                    match #call {
-                        Ok(val) => {
-                            #push_stmt
-                            Ok(())
-                        }
-                        Err(e) => Err(e),
-                    }
-                }
+                on_value(
+                    &call,
+                    fallible,
+                    quote! {
+                        #push_stmt
+                        Ok(())
+                    },
+                )
             }
         } else {
             quote! { #call; Ok(()) }
@@ -624,6 +615,26 @@ fn push_output(
         None => {
             keys.push(value_type_key(ty, explicit));
             quote! { io.push_as_to(#port, #key, #value); }
+        }
+    }
+}
+
+/// The handler's return for a call: `body` runs on the call's value (a `Result` return's `Ok`
+/// payload, or the plain return value), and an `Err` is returned as it is.
+fn on_value(call: &TokenStream, fallible: bool, body: TokenStream) -> TokenStream {
+    if fallible {
+        quote! {
+            match #call {
+                #[allow(unused_variables)]
+                Ok(val) => { #body }
+                Err(e) => Err(e),
+            }
+        }
+    } else {
+        quote! {
+            #[allow(unused_variables)]
+            let val = #call;
+            #body
         }
     }
 }
