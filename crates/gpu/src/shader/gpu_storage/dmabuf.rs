@@ -175,7 +175,10 @@ fn importable(hal: &hal_vk::Device) -> Result<(), ExternalImportError> {
     }
 }
 
-/// Create the `VkBuffer`, import the dmabuf as its (dedicated) memory and bind it.
+/// Create the `VkBuffer`, import the dmabuf as its memory and bind it. The allocation is the
+/// whole dmabuf; it is dedicated only when the driver requires that, since a dedicated allocation
+/// must be exactly the buffer's size and bound at offset 0
+/// (`VUID-VkMemoryDedicatedAllocateInfo-buffer-02965`).
 ///
 /// # Safety
 /// `hal` must be the device the returned buffer is handed to.
@@ -207,8 +210,17 @@ unsafe fn import(
             raw.destroy_buffer(buffer, None);
         }
     };
-    // SAFETY: `buffer` is a valid buffer of `raw`.
-    let req = unsafe { raw.get_buffer_memory_requirements(buffer) };
+    let mut dedicated_req = vk::MemoryDedicatedRequirements::default();
+    let mut req2 = vk::MemoryRequirements2::default().push_next(&mut dedicated_req);
+    // SAFETY: `buffer` is a valid buffer of `raw` (Vulkan 1.1, which wgpu requires).
+    unsafe {
+        raw.get_buffer_memory_requirements2(
+            &vk::BufferMemoryRequirementsInfo2::default().buffer(buffer),
+            &mut req2,
+        );
+    }
+    let req = req2.memory_requirements;
+    let requires_dedicated = dedicated_req.requires_dedicated_allocation == vk::TRUE;
     if !offset.is_multiple_of(req.alignment.max(1)) || offset + req.size > dmabuf_len {
         destroy(None);
         return Err(ExternalImportError::invalid(format!(
@@ -238,15 +250,25 @@ unsafe fn import(
             ),
         });
     }
+    if requires_dedicated && (offset != 0 || req.size != dmabuf_len) {
+        destroy(None);
+        return Err(ExternalImportError::invalid(format!(
+            "the driver requires a dedicated allocation, which must be the whole dmabuf: a \
+             {len}-byte buffer at offset {offset} needs {} bytes, the dmabuf has {dmabuf_len}",
+            req.size
+        )));
+    }
     let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().buffer(buffer);
     let mut import = vk::ImportMemoryFdInfoKHR::default()
         .handle_type(handle_type)
         .fd(fd.as_raw_fd());
-    let alloc = vk::MemoryAllocateInfo::default()
+    let mut alloc = vk::MemoryAllocateInfo::default()
         .allocation_size(dmabuf_len)
         .memory_type_index(types.trailing_zeros())
-        .push_next(&mut import)
-        .push_next(&mut dedicated);
+        .push_next(&mut import);
+    if requires_dedicated {
+        alloc = alloc.push_next(&mut dedicated);
+    }
     // SAFETY: valid allocate info; on success Vulkan owns the fd.
     let memory = match unsafe { raw.allocate_memory(&alloc, None) } {
         Ok(memory) => {

@@ -890,6 +890,11 @@ plugin ABI and does not load.
   blocking. `ShaderRunOutput::into_texture_rgba8` returns the RGBA8 image without cloning the bytes.
 
 ### Fixed
+- **dmabuf storage imports are valid Vulkan.** `GpuStorage::import_dmabuf` (and the frame import
+  cache built on it) allocated the whole dmabuf as a *dedicated* allocation, which must equal the
+  buffer's memory requirement and bind at offset 0 (`VUID-VkMemoryDedicatedAllocateInfo-buffer-02965`,
+  found by the validation layer on v3dv). The allocation is now dedicated only when the driver
+  requires it, and then only for a buffer that covers the whole dmabuf.
 - **wgpu adapter selection falls back.** When the best adapter's device cannot be created (out
   of memory on a GPU another process fills, a lost device), `select_backend` now tries the next
   adapter by rank instead of failing.

@@ -389,8 +389,13 @@ static C++ runtime) the dmabuf tests passed with sync validation and no validati
 all; `gpu_probe` printed its whole report, also clean, then segfaulted at process exit, under
 the layer only. Root cause (2026-10-30): a bare `vkCreateInstance` + `vkDestroyInstance` program
 segfaults the same way, so the crash is in that cross-built layer's static destructors, not in
-Daedalus, wgpu or v3dv; messages printed before exit are valid. A properly built layer (a
-distro arm64 package) avoids it. Without lavapipe installed (as on that image), a `skipping: no
+Daedalus, wgpu or v3dv; messages printed before exit are valid. A properly built layer avoids
+it: with Debian trixie's arm64 `vulkan-validationlayers` 1.4.309 (its `.so` and manifest copied
+to a `/tmp` directory named by both `VK_LAYER_PATH` and `LD_LIBRARY_PATH`, since the manifest's
+`library_path` is a bare name), the dmabuf and raw Vulkan tests and `gpu_probe` all exit 0 on the
+Raze (2026-11-02). That run found one real error,
+`VUID-VkMemoryDedicatedAllocateInfo-buffer-02965` in the dmabuf storage import, now fixed;
+after the fix it reports no validation message. Without lavapipe installed (as on that image), a `skipping: no
 lavapipe consumer` line is expected: those tests then use a second v3dv device. Run with `-- --nocapture` to see the
 measurements (watcher hop, blocked submission) and the round-tripped modifiers.
 
