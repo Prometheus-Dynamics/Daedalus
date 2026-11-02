@@ -451,7 +451,12 @@ plugin ABI and does not load.
   devices without host-cached memory (v3dv), `DMA_BUF_IOCTL_SYNC` around its CPU access, the
   dmabuf size query of imports, and `export_dmabuf_fence`. The Vulkan imports stay here. The
   package lane packages without a lockfile (`--exclude-lockfile`): `lemnos-linux` is not on
-  crates.io yet, so publishing needs Lemnos published first.
+  crates.io yet, so publishing needs Lemnos published first. Lemnos is pinned at fdbb0c4:
+  borrowed dmabufs go through `DmaBufRef` (no descriptor duplicate per frame), and the frame
+  identity is Lemnos's too.
+- `daedalus-rga`: the V4L2 mem2mem session is Lemnos's `M2mSession` (feature `v4l2-m2m`); the
+  public API (`Rga`, `Layout`, `PixelFormat`, `Rect`, `find_m2m_device`) is unchanged. A crop the
+  device does not take is still an error.
 
 - **Breaks `ci.sh semver` reports against `v3.0.0` that had no entry of their own.**
   `ServiceResponse::Pong` is a struct variant with `protocol_version`. Struct literals need the new

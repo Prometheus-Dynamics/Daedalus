@@ -54,7 +54,7 @@ rust-version = "1.99"
 
 [workspace.dependencies]
 # DMA buffers (dma-heap, dma-buf sync, sync-file fences) and V4L2 mem2mem sessions.
-lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", rev = "63374c6", version = "2.0.1-dev", default-features = false }
+lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", rev = "fdbb0c4", version = "2.0.1-dev", default-features = false }
 # Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared
 # without default features; `std` consumers enable `features = ["std"]` themselves.
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.1-dev", default-features = false }

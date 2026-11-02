@@ -6,7 +6,7 @@
 //! so a buffer seen again maps to its existing import: no new `vkAllocateMemory`, no copy.
 
 use std::collections::HashMap;
-use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -202,16 +202,9 @@ impl GpuFrameImports {
 
 /// The dmabuf's identity: its inode is unique for its whole life.
 fn inode(fd: BorrowedFd<'_>) -> Result<(u64, u64), ExternalImportError> {
-    // SAFETY: an all-zero `stat` is valid; fstat fills it.
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: valid fd and out pointer.
-    if unsafe { libc::fstat(fd.as_raw_fd(), &mut st) } != 0 {
-        return Err(ExternalImportError::invalid(format!(
-            "fstat of the dma-buf: {}",
-            std::io::Error::last_os_error()
-        )));
-    }
-    Ok((st.st_dev as u64, st.st_ino as u64))
+    lemnos_linux::dma::DmaBufRef::from_fd(fd)
+        .and_then(|buf| buf.identity())
+        .map_err(|err| ExternalImportError::invalid(format!("fstat of the dma-buf: {err}")))
 }
 
 /// Wait for the dmabuf's pending writes (its implicit fence). A kernel without

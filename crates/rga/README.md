@@ -11,4 +11,5 @@ share.
   kernels, gray input and Y-only output.
 - **Status:** V4L2 path tested on `vim2m`; both paths written, untested on a Rockchip board.
 
-Depends only on `libc`, and is Linux-only.
+Linux-only. The V4L2 session is Lemnos's (`lemnos-linux`, `v4l2::m2m::M2mSession`); librga is
+loaded at run time.

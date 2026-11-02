@@ -218,8 +218,12 @@ on 2026-11-02, at f7e05ac.
       dma-heap) would switch too. `daedalus-rga`'s V4L2 buffers are the RGA's own and stay.
       **Done when:** the gpu crate allocates and syncs host-visible dmabufs through Lemnos, with the
       Raze readback numbers unchanged (host-cached read 3.6 ms per 16 MiB).
-      **Blocked by:** the user's go, and Lemnos's DMA basics existing.
-      **Measured:** n/a.
+      **Blocked by:** a Raze slot for the readback measurement (the user's go came 2026-11-02).
+      **Measured:** the code moved (803f310, Lemnos 63374c6; borrowed descriptors through
+      `DmaBufRef` and the frame identity with Lemnos fdbb0c4; the acquire-fence wait stays, see
+      `external/fence.rs`). The gpu
+      crate's tests pass on the desktop GPU with `/dev/dma_heap/system`. The Raze readback is not
+      re-measured yet.
 - [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.
       **Why:** two devices in one process duplicate pipelines and memory and need cross-device
       sync.
@@ -255,16 +259,6 @@ on 2026-11-02, at f7e05ac.
       **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
       **Blocked by:** the user's go; Styx's side.
       **Measured:** n/a.
-- [ ] **What:** the generic V4L2 mem2mem session (`REQBUFS`/`QBUF` over dmabufs) onto Lemnos, if
-      Lemnos takes Styx's `styx-kernel::v4l2::m2m` code.
-      **Why:** one RGA binding, in Daedalus (agreed with Styx 2026-11-02): `daedalus-rga` keeps
-      scaling, conversion and rotation (V4L2 M2M and librga); Styx keeps V4L2 M2M only for codecs
-      and hands frames to Daedalus by dmabuf for RGA. Two M2M session implementations remain
-      (`crates/rga/src/v4l2.rs`, Styx's `M2mSession`).
-      **Done when:** `daedalus-rga` builds its session on Lemnos's, with `crates/rga/tests/v4l2.rs`
-      passing on `vim2m`.
-      **Blocked by:** the user's go; the session existing in Lemnos.
-      **Measured:** n/a.
 - [ ] **What:** later, an accelerator interface (load program, import buffers, submit, fence) for
       NPUs and custom accelerators. Design doc first.
       **Why:** the GPU path's residency, `#[device]` transfers and completion API should extend to
@@ -277,6 +271,11 @@ on 2026-11-02, at f7e05ac.
 
 Each entry cites the commit that did the work, as far as history can attribute it. Where one symbol
 was searched for, the commit is the one that introduced it.
+
+- [x] `daedalus-rga`'s V4L2 mem2mem session is Lemnos's `M2mSession` (Lemnos fdbb0c4: crop in
+      `QueueSetup`, `v4l2::query`, `find_m2m`). `crates/rga/tests/v4l2.rs` passes on `vim2m`
+      (conversion, scaling, dmabuf in and out, a refused crop); the crop success path waits for an
+      RGA board. One RGA binding, in Daedalus; Styx keeps V4L2 M2M for codecs (agreed 2026-11-02).
 
 ### GPU and hardware support
 

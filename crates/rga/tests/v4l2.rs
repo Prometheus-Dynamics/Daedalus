@@ -7,7 +7,7 @@
 use std::fs::OpenOptions;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 
-use daedalus_rga::{Layout, PixelFormat, Rga, find_m2m_device};
+use daedalus_rga::{Layout, PixelFormat, Rect, Rga, find_m2m_device};
 
 fn vim2m() -> Option<Rga> {
     match find_m2m_device("vim2m") {
@@ -49,6 +49,30 @@ fn vim2m_converts_rgb24_to_bgr24() {
         assert_eq!(n, dst.frame_len());
         assert_eq!(out, swap_rb(&input), "frame {seed}");
     }
+}
+
+/// A crop the device does not take is an error, never a silent full-frame conversion. vim2m has
+/// no selection support, so asking it to crop must fail; on a device that crops (the RGA) the
+/// same call converts the rectangle.
+#[test]
+fn vim2m_refuses_a_crop_it_cannot_do() {
+    let Some(mut rga) = vim2m() else { return };
+    let (src, dst) = (
+        Layout::packed(PixelFormat::Rgb24, 640, 480),
+        Layout::packed(PixelFormat::Rgb24, 320, 240),
+    );
+    let crop = Rect {
+        left: 16,
+        top: 8,
+        width: 320,
+        height: 240,
+    };
+    let input = frame(src.frame_len(), 1);
+    let mut out = vec![0u8; dst.frame_len()];
+    let err = rga
+        .convert(src, &input, Some(crop), dst, &mut out)
+        .expect_err("vim2m cannot crop");
+    eprintln!("refused as expected: {err}");
 }
 
 /// Scaling down to the destination's size: vim2m samples the nearest source pixel.

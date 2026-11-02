@@ -39,14 +39,12 @@ pub enum DmabufAccess {
 /// Use it for producers that synchronize through the dmabuf's reservation object instead of
 /// handing out fences. The result is already signaled when nothing is pending.
 pub fn export_dmabuf_fence(dmabuf: BorrowedFd<'_>, access: DmabufAccess) -> io::Result<OwnedFd> {
-    use lemnos_linux::dma::{Access, DmaBuf};
+    use lemnos_linux::dma::{Access, DmaBufRef};
     let access = match access {
         DmabufAccess::Read => Access::Read,
         DmabufAccess::ReadWrite => Access::ReadWrite,
     };
-    // Lemnos's `DmaBuf` owns its descriptor, so it gets a duplicate of the caller's.
-    let fence = DmaBuf::from_fd(dmabuf.try_clone_to_owned()?)?.export_fence(access)?;
-    Ok(fence.into_fd())
+    Ok(DmaBufRef::from_fd(dmabuf)?.export_fence(access)?.into_fd())
 }
 
 /// `struct sync_file_info` from `linux/sync_file.h`.
@@ -86,7 +84,9 @@ pub(crate) fn sync_file_signaled(fence: BorrowedFd<'_>) -> bool {
     wait_sync_file(fence, Duration::ZERO).is_ok()
 }
 
-/// Block until `fence` is signaled (readable), failing after `timeout`.
+/// Block until `fence` is signaled (readable), failing after `timeout`. Kept here rather than
+/// Lemnos's `wait_fence`, which reports a descriptor that hangs up without becoming readable
+/// (not a sync_file) as "not signaled", where this rejects it at once.
 pub(crate) fn wait_sync_file(
     fence: BorrowedFd<'_>,
     timeout: Duration,
