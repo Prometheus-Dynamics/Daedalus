@@ -143,10 +143,13 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       Daedalus owns.
       **Done when:** Styx's test caps the path at 0, and the Raze GPU tests and VVL run stay clean.
       Report the count before and after.
-      **Blocked by:** Styx's answers: does it call `queue.submit` outside `submit_raw`, and does
-      its per-frame input go through `queue.write_buffer`? (wgpu flushes those writes only on its
-      own submit.) After shared nodes.
-      **Measured:** 17 per frame (Styx's count).
+      Contract (approved 2026-11-02): while a `RawSubmitter` exists, every submit in the process
+      goes through Daedalus's mutex. An input uploaded with `queue.write_buffer` moves into the
+      raw command buffer, copied from a persistent staging ring.
+      **Blocked by:** shared nodes first; Styx's answers (does it call `queue.submit` outside
+      `submit_raw`, and how it feeds `Input::Buffer`).
+      **Measured:** 17 per frame (Styx's count). V3D 7.1 on the Raze (v3dv) has one queue family
+      with `queueCount = 1` (vulkaninfo, 2026-11-02), so a second queue is no way around the lock.
 - [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
       under `crates/` (`build.rs`, `portable.rs`, `trace.rs`).
       **Why:** without it those crates do not build from a Windows checkout.
