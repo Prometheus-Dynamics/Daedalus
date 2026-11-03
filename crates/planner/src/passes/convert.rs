@@ -8,6 +8,7 @@ use daedalus_data::model::{TypeExpr, Value};
 use crate::diagnostics::{Diagnostic, DiagnosticCode};
 use crate::graph::Graph;
 use crate::metadata::{PLAN_EDGE_EXPLANATIONS_KEY, host_held_inputs, host_shared_inputs};
+use daedalus_transport::TypeKey;
 
 use super::{
     AdapterResolutionMode, EdgeResolutionExplanation, EdgeResolutionKind, PlannerCatalog,
@@ -68,6 +69,16 @@ pub(super) fn convert(
                 > 1);
         request.exclusive = target_exclusive;
         request.residency = target_residency_for_node(to_node, config);
+        // A bare GPU request lands on the device its neighbours are already on: the producer's (the
+        // registry's zero-cost path), else the one consumer's device key, so the value needs no
+        // transfer between devices. With no such neighbour it stays the cheapest key.
+        if request.residency == Some(daedalus_transport::Residency::Gpu)
+            && !is_device_of(config, &catalog.transport_key(&out_ty), &request.target)
+            && let Some(device) =
+                consumer_device_key(graph, catalog, config, edge.to.node.0, &request.target)
+        {
+            request.target = device;
+        }
         let target_access = request.access;
         let target_residency = request.residency;
         let allow_gpu = config.enable_gpu;
@@ -172,4 +183,45 @@ pub(super) fn convert(
             ),
         );
     }
+}
+
+/// Whether `key` is a registered device key of the CPU type `cpu`.
+fn is_device_of(config: &PlannerConfig, key: &TypeKey, cpu: &TypeKey) -> bool {
+    config.transport_capabilities.as_ref().is_some_and(|caps| {
+        caps.devices()
+            .values()
+            .any(|device| device.cpu == *cpu && device.device == *key)
+    })
+}
+
+/// The device key of the CPU type `cpu` that the consumers of node `node` take, when they agree on
+/// one: a device value flowing on to them needs no transfer from the node's own input.
+fn consumer_device_key(
+    graph: &Graph,
+    catalog: &PlannerCatalog,
+    config: &PlannerConfig,
+    node: usize,
+    cpu: &TypeKey,
+) -> Option<TypeKey> {
+    let mut found: Option<TypeKey> = None;
+    for edge in graph.edges.iter().filter(|e| e.from.node.0 == node) {
+        let Some(consumer) = graph.nodes.get(edge.to.node.0) else {
+            continue;
+        };
+        let Some(desc) = latest_node(catalog, &consumer.id) else {
+            continue;
+        };
+        let Some(in_ty) = port_type(consumer, desc, &edge.to.port, true) else {
+            continue;
+        };
+        let key = catalog.transport_key(&in_ty);
+        if !is_device_of(config, &key, cpu) {
+            continue;
+        }
+        match &found {
+            Some(existing) if *existing != key => return None,
+            _ => found = Some(key),
+        }
+    }
+    found
 }

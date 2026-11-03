@@ -207,6 +207,23 @@ impl CapabilityRegistry {
             });
         }
 
+        // A value already on a device the request accepts (a device key of the request's CPU type,
+        // such as `…@cuda` from a CUDA producer) needs no transfer: the empty path, at cost 0. It
+        // beats every path to another device, so a bare GPU request follows its neighbours.
+        if !request.exclusive
+            && request.residency == Some(Residency::Gpu)
+            && request.layout.is_none()
+            && from != &request.target
+            && targets.iter().any(|target| target == from)
+        {
+            return Ok(AdapterPathResolution {
+                steps: Vec::new(),
+                step_details: Vec::new(),
+                total_cost: 0,
+                resolved_target: Some(from.clone()),
+            });
+        }
+
         // Dijkstra with deterministic tie-breaking through ordered maps and path/id ordering.
         let mut dist: BTreeMap<&TypeKey, (u64, Path<'_>)> = BTreeMap::new();
         let mut heap: BinaryHeap<Frontier<'_>> = BinaryHeap::new();

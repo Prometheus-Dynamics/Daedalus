@@ -186,4 +186,6 @@ pub(super) fn latest_node<'a>(catalog: &'a PlannerCatalog, id: &NodeId) -> Optio
 }
 
 #[cfg(test)]
+mod residency_tests;
+#[cfg(test)]
 mod tests;
