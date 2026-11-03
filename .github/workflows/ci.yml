@@ -179,7 +179,7 @@ jobs:
       - *cache
       - name: Install qemu-user and zig
         run: |
-          sudo apt-get update && sudo apt-get install -y qemu-user-static
+          sudo apt-get update && sudo apt-get install -y qemu-user-static gcc-riscv64-linux-gnu libc6-dev-riscv64-cross
           pip install ziglang==0.15.2
           mkdir -p "$HOME/zigcc"
           for pair in "riscv64-cc riscv64-linux-musl" "armv7-cc arm-linux-musleabihf"; do
@@ -192,6 +192,10 @@ jobs:
           CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER: /home/runner/zigcc/riscv64-cc
           CC_riscv64gc_unknown_linux_musl: /home/runner/zigcc/riscv64-cc
           CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_RUNNER: qemu-riscv64-static
+          # glibc (the K230D's Linux SDK): Ubuntu's cross gcc and its sysroot for qemu.
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
+          CC_riscv64gc_unknown_linux_gnu: riscv64-linux-gnu-gcc
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUNNER: qemu-riscv64-static -L /usr/riscv64-linux-gnu
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: /home/runner/zigcc/armv7-cc
           CC_armv7_unknown_linux_musleabihf: /home/runner/zigcc/armv7-cc
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm-static
