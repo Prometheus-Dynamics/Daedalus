@@ -63,12 +63,15 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       `flame` profile of `scripts/board.sh` runs it) and the default follows the numbers.
       **Blocked by:** the Luckfox board. The Raze cannot run AArch32 binaries.
       **Measured:** conformance under qemu only; no timing exists.
-- [ ] **[board] What:** K230D, CPU-only (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph
-      tests and the kernel conformance binary on the board. Written, untested on board.
+- [ ] **[board] What:** K230D (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph tests
+      and the kernel conformance binary on the board, and `crates/vglite/tests/vglite.rs` (the
+      VGLite cells, each op's measured difference). Written, untested on board.
       **Why:** the K230D has no compute-capable GPU, and qemu cannot show a real VLEN.
       **Done when:** `scripts/board.sh k230d root@<k230d>` passes and its evidence, with the board's
       VLEN, is committed.
-      **Blocked by:** a K230D board.
+      **Blocked by:** a K230D board; for VGLite, an image with `libvg_lite.so` and a CMA
+      dma-heap (Gaia's K230D Zero defconfig leaves `BR2_PACKAGE_VG_LITE` out; routed to Gaia
+      2026-11-02; `libmmz` is not needed: contiguous frames come through Lemnos's heap API).
       **Measured:** qemu only: 91 + 5 + 2 tests in `ci.sh cross` at 03f55c5; `+v` kernels at VLEN
       128, 256 and 512, plus a run without Zvbc.
 - [ ] **[board] What:** RK3588S (Mali-G610): `gpu_probe`, the `ci.sh pi` hardware tests, `gpu_bench`
@@ -180,7 +183,7 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Constraints:** mainline `rockchip-rga` (V4L2) reaches scale, crop, conversion, flip,
       90/180/270 rotation and background fill only; blend, colour key, palette and ROP need librga
       (vendor kernels). RGA scaling exactness is undocumented: tolerance until a board measures it.
-      K230: no code and no board; a design note on its interfaces comes first.
+      K230: VGLite through `libvg_lite.so` (`daedalus-vglite`); no board yet.
       **Done when:** each node has a scalar reference, a fixed-function kernel cell in the registry,
       and a test on `vim2m` where the path allows; board cells marked written, untested on board.
       **Blocked by:** `daedalus-rga` on Lemnos's `M2mSession` first (waiting on Lemnos's crop
@@ -198,8 +201,12 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       four fills), mask AND/OR/XOR and Porter-Duff blend, ops
       `daedalus.image.{fill,mask_rop,blend}`; mainline has none (7.2 never programs
       `BG_COLOR`); RGA2 and RGA3 have no line mode (vendor drivers, radxa 6.1). K230 design note
-      written (`docs/k230-fixed-function.md`): VGLite through `libvg_lite.so` is the route; code
-      waits on a K230D board and an image with the library and MMZ.
+      written (`docs/k230-fixed-function.md`). `daedalus-vglite` written (nostd, 2026-11-02: the
+      board is not a blocker): the `vglite` variant on resize (area 2x only, as a half-phase
+      bilinear blit), crop, flip, rotate, fill, blend (straight alpha), palette and
+      `daedalus.image.line` (new op, Bresenham reference; the one fixed-function line route);
+      scattered dmabufs and byte buffers staged through a contiguous buffer, the cost returned
+      and in `caps` (`Staging`). Written, untested on board.
       **Measured:** n/a.
 
 ### Release steps

@@ -338,6 +338,42 @@ pub fn fill(
     out
 }
 
+/// `buf` with a one-pixel line from `from` to `to` (both ends included) set to the pixel
+/// `value`, for tightly packed `value.len()`-byte pixels in a `width` by `height` frame:
+/// Bresenham's steps, as Eidos's plain `draw_line`. Pixels outside the frame are skipped.
+pub fn line(
+    buf: &[u8],
+    width: usize,
+    height: usize,
+    from: (i32, i32),
+    to: (i32, i32),
+    value: &[u8],
+) -> Vec<u8> {
+    let mut out = buf.to_vec();
+    let n = value.len();
+    let (mut x, mut y) = from;
+    let (dx, dy) = ((to.0 - x).abs(), -(to.1 - y).abs());
+    let (sx, sy) = (if x < to.0 { 1 } else { -1 }, if y < to.1 { 1 } else { -1 });
+    let mut err = dx + dy;
+    loop {
+        if (0..width as i32).contains(&x) && (0..height as i32).contains(&y) {
+            out[(y as usize * width + x as usize) * n..][..n].copy_from_slice(value);
+        }
+        if (x, y) == to {
+            return out;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
 /// A bitwise operation on two masks: `'&'`, `'|'` or `'^'` of each `src` byte with the `dst`
 /// byte.
 pub fn mask_rop(src: &[u8], dst: &[u8], op: char) -> Vec<u8> {

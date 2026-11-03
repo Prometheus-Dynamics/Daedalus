@@ -17,6 +17,23 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`daedalus-vglite`: the K230's VGLite GPU through `libvg_lite`, loaded at runtime**
+  (written, untested on board). It covers resize (bilinear either way; area only at 2x, as a
+  half-phase bilinear blit, since VGLite has no averaging filter), crop, flips and quarter
+  turns, fill, blend (SRC, SRC_OVER and DST_OVER, straight alpha only) and palette expansion,
+  each between byte buffers or dmabufs. It is the matrix's fixed-function `vglite` variant on
+  those `daedalus.image.*` ops.
+  - **Lines:** `line_bytes` / `line_dmabuf` draw a 1-wide stroke with square caps through the
+    pixel centres. They are the cell of a new op, `daedalus.image.line` (reference:
+    Bresenham, as Eidos's plain line), and the one fixed-function line route on the target
+    SoCs.
+  - **Memory:** the kernel driver maps only physically contiguous dmabufs correctly. Byte
+    buffers and dmabufs marked `Backing::Scattered` go through a contiguous staging buffer, and
+    each call returns the bytes it copied.
+  - **Caps:** `daedalus_rga::caps` gains `Route::Vglite`, `Staging` (when a route copies
+    frames), and `FixedOp::Line`. The K230D entry is the VGLite route, with every op
+    `Unmeasured`.
+  - **Board script:** `scripts/board.sh k230d` runs the VGLite tests.
 - **`RawSubmitter`, raw submits without allocation.** An opt-in ring of primary command buffers,
   each with a fence, on Daedalus's queue (`gpu-vulkan-raw`, Linux): `RawSubmitter::new(&gpu)`,
   then `unsafe submit(record)`, which records between the same full barriers as `submit_raw` and

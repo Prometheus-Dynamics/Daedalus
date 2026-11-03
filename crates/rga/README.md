@@ -33,9 +33,12 @@ share.
   `color_key_mask` (the pixels whose R, G and B lie in a range drawn opaque onto a cleared RGBA
   frame, whose alpha is the mask). The mainline driver has neither. A librga without
   `impalette_t` or `imcolorkey_t` makes that call `Unsupported`.
-- **Capabilities:** `caps::caps(soc)` lists each SoC's units (RGA2, RGA3, K230D Image 2D and
-  VGLite), the route (mainline V4L2, librga, design only), size and scale limits, the luma cost,
-  each filter's direction and exactness, and the other operations (palette, colour key). Every exactness is `Unmeasured` until a board run.
+- **Capabilities:** `caps::caps(soc)` lists each SoC's units (RGA2, RGA3, K230D VGLite and
+  Image 2D). For each unit it gives the route (mainline V4L2, librga, VGLite through
+  `daedalus-vglite`, or design only), size and scale limits, the luma cost, and when frames are
+  staged through copies (`Staging`). It also gives each filter's direction and exactness, and
+  the other operations (palette, colour key, crop, flip, rotate, fill, ROP, blend, line). Every
+  exactness is `Unmeasured` until a board run.
 - **Status:** V4L2 path tested on `vim2m`; both paths written, untested on a Rockchip board.
 
 Linux-only. The V4L2 session is Lemnos's (`lemnos-linux`, `v4l2::m2m::M2mSession`); librga is

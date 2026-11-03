@@ -1,8 +1,9 @@
 # K230D fixed-function units: design note
 
 What Linux on the Kendryte K230D can reach for the fixed-function image ops Daedalus provides on
-the Rockchip RGA (`daedalus-rga`, `daedalus.image.*`), and how a binding would look. There is no code
-yet and no board run; everything below comes from reading the K230 Linux SDK and its kernel.
+the Rockchip RGA (`daedalus-rga`, `daedalus.image.*`), and the binding built on it
+(`daedalus-vglite`: written, untested on board). There has been no board run; everything below
+comes from reading the K230 Linux SDK and its kernel.
 
 **Sources:** the K230 Linux SDK v0.6.1 (`k230_linux_sdk`, `buildroot-overlay/package/`) and the
 kernel it builds (ruyisdk `linux-xuantie-kernel` at `ae4a7e65`, as Gaia's K230D Zero image builds
@@ -58,26 +59,39 @@ Zero-copy needs one of:
 
 Otherwise frames go through a VGLite-allocated buffer, with a copy.
 
-## How a binding would look
+## The binding (`daedalus-vglite`)
 
-- **Crate:** `daedalus-vglite`, beside `daedalus-rga`, Linux only. It would load `libvg_lite.so`
+- **Crate:** `daedalus-vglite`, beside `daedalus-rga`, Linux only. It loads `libvg_lite.so`
   at run time as `Librga` does, so nothing links a vendor library. Calling the ioctl directly
   would mean reimplementing the library's command-buffer building, which is most of its source.
-- **API:** the shapes `daedalus-rga` already has. `resize`, `crop`, `transform`, `fill` and
-  `blend` take an image (format, size, stride) and a buffer. Strict refusals stay: a format or
-  filter the unit lacks is `Unsupported`, never a substitute.
-- **Capabilities:** the K230D entries in `daedalus_rga::caps` gain the VGLite route and its ops,
-  each `Unmeasured`. The descriptor may move to its own crate once two vendors share it.
-- **Matrix:** `fixed_function` rows with a `vglite` variant on the existing `daedalus.image.*`
-  ops, with board tests like the RGA's.
+- **API:** the shapes `daedalus-rga` has. `resize`, `crop`, `transform`, `fill`, `blend`,
+  `palette` and `line` take an image (format, size, stride) and bytes or a dmabuf. Strict
+  refusals stay: a format or filter the unit lacks is `Unsupported`, never a substitute.
+- **Memory:** a dmabuf is mapped in place only when the caller marks it contiguous and its rows
+  meet VGLite's alignment. Everything else is copied through a staging buffer that
+  `vg_lite_allocate` makes (`dma_alloc_coherent`, contiguous), and each call returns the bytes
+  it copied. The library cleans the cache of a blit source and of the finished target; the
+  binding cleans what it staged, as the vendor's `thead.h` does.
+- **Choices read from the source:**
+  - Bilinear samples at the half-pixel phase (`vg_lite_blit`'s step setup), so `resize_area`
+    at 2x is a half-scale bilinear blit.
+  - `vg_lite_color_t` keeps R in the low byte (`rgb_to_l`).
+  - Every RGBA source has `in_premult` set, so blends take straight alpha only.
+  - The user-space map takes no user memory (`vg_lite_hal_map`: dmabuf only).
+- **Capabilities:** the K230D entry in `daedalus_rga::caps` is the VGLite route
+  (`Staging::UnlessContiguous`) with its ops, each `Unmeasured`. The Image 2D engine stays
+  `Design`.
+- **Matrix:** `fixed_function` rows with a `vglite` variant on `daedalus.image.*` (resize, crop,
+  flip, rotate, fill, blend, palette, and the new `line`). `crates/vglite/tests/vglite.rs` runs
+  on the board through `scripts/board.sh k230d`.
 - **AI2D:** not planned. It is reachable only through the nncase binary runtime and has no
   public register interface. Its resize and affine ops would come in through nncase if Eidos runs
   models there anyway.
 
-## Open before code
+## Open
 
 1. A K230D board slot, and an image with `BR2_PACKAGE_VG_LITE` and `libmmz` built in (Gaia's
-   K230D Zero defconfig leaves both out).
+   K230D Zero defconfig leaves both out; raised with HeliOS for Gaia, 2026-11-02).
 2. Whether a 2x bilinear blit at the half-pixel phase gives the rounded 2x2 mean (`resize_area`),
    and VGLite's rounding in general.
 3. The contiguous-buffer route for zero copy (MMZ or a CMA heap), or a copy budget.

@@ -3,6 +3,8 @@
 //!
 //! Sources: the mainline `rockchip-rga` driver in Linux 7.2 (`rga-hw.c`, `rga3-hw.c`, the
 //! RK356x and RK3588 device trees) and librga's `im2d_type.h` (airockchip/librga 2b32edc).
+//! The K230D's VGLite: `vg_lite.h`, `vg_lite.c` and `vg_lite_options.h` of the K230 Linux SDK
+//! v0.6.1 (`daedalus-vglite`).
 //! Nothing here has been measured on a board: every exactness is
 //! [`Exactness::Unmeasured`] until a board run records it.
 
@@ -17,7 +19,8 @@ pub enum Soc {
     Rk3576,
     Rk3588,
     Rk3562,
-    /// Kendryte K230D: Image 2D engine and VGLite 2.5D GPU. No code yet.
+    /// Kendryte K230D: VGLite 2.5D GPU (`daedalus-vglite`) and an Image 2D engine with no
+    /// Linux driver.
     K230d,
 }
 
@@ -54,6 +57,8 @@ pub enum Route {
     V4l2,
     /// The vendor's `librga` on a vendor kernel ([`crate::Librga`]).
     Librga,
+    /// The vendor's `libvg_lite` (`daedalus-vglite`).
+    Vglite,
     /// Not written: the interfaces need a design note first.
     Design,
 }
@@ -100,6 +105,23 @@ pub enum FixedOp {
     MaskRop,
     /// Porter-Duff SRC, SRC_OVER, DST_OVER (`daedalus.image.blend`).
     Blend,
+    /// A one-pixel line between two points (`daedalus.image.line`).
+    Line,
+}
+
+/// When a route copies frames through a staging buffer, beyond the unit's own work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Staging {
+    /// Never: the unit reads and writes the caller's memory (librga wraps virtual addresses and
+    /// dmabufs alike).
+    Never,
+    /// Byte buffers go through the driver's buffers, one copy in and one out; dmabufs are
+    /// queued as they are.
+    BytesOnly,
+    /// Byte buffers, and dmabufs that are not physically contiguous or whose rows are not
+    /// aligned as the unit needs, go through a contiguous staging buffer; contiguous dmabufs
+    /// are mapped in place. Each call reports the bytes it copied.
+    UnlessContiguous,
 }
 
 /// What a route does with one [`FixedOp`].
@@ -123,6 +145,7 @@ pub struct UnitCaps {
     /// Bytes the unit moves for an 8-bit luma resize, per byte of luma, in thousandths: 1000
     /// when it takes gray directly, 1500 when luma goes through NV12 with dummy chroma.
     pub luma_cost_permille: u16,
+    pub staging: Staging,
     pub filters: &'static [FilterCaps],
     pub ops: &'static [OpCaps],
 }
@@ -258,6 +281,7 @@ const fn v4l2(soc: Soc, unit: Unit) -> UnitCaps {
         min_size: Some(if rga3 { (128, 128) } else { (34, 34) }),
         max_scale: Some(if rga3 { 8 } else { 16 }),
         luma_cost_permille: 1500,
+        staging: Staging::BytesOnly,
         filters: if rga3 { RGA3_V4L2 } else { RGA2_V4L2 },
         // The mainline driver has no palette or colour key.
         ops: V4L2_OPS,
@@ -272,6 +296,7 @@ const fn librga(soc: Soc, unit: Unit) -> UnitCaps {
         min_size: None,
         max_scale: None,
         luma_cost_permille: 1000,
+        staging: Staging::Never,
         filters: LIBRGA,
         // Palette and colour key are RGA2 features; librga sends them there.
         ops: if matches!(unit, Unit::Rga2) {
@@ -290,8 +315,85 @@ const fn design(soc: Soc, unit: Unit) -> UnitCaps {
         min_size: None,
         max_scale: None,
         luma_cost_permille: 1000,
+        staging: Staging::Never,
         filters: &[],
         ops: &[],
+    }
+}
+
+const VGLITE_FILTERS: &[FilterCaps] = &[
+    FilterCaps {
+        filter: Filter::Area,
+        down: true,
+        up: false,
+        exactness: Exactness::Unmeasured,
+        note: "2x only: a bilinear blit at half scale, whose half-pixel phase puts each output \
+               centre on the corner of four source pixels (weights of a quarter each); VGLite \
+               has no averaging filter, and its rounding is unmeasured",
+    },
+    FilterCaps {
+        filter: Filter::Bilinear,
+        down: true,
+        up: true,
+        exactness: Exactness::Unmeasured,
+        note: "vg_lite_blit with a scale matrix and VG_LITE_FILTER_BI_LINEAR, sampled at the \
+               half-pixel phase as OpenCV; weights, rounding and edges unmeasured",
+    },
+];
+
+const VGLITE_OPS: &[OpCaps] = &[
+    OpCaps {
+        op: FixedOp::Crop,
+        exactness: Exactness::Unmeasured,
+        note: "a translated, point-sampled blit",
+    },
+    OpCaps {
+        op: FixedOp::Flip,
+        exactness: Exactness::Unmeasured,
+        note: "a mirror matrix, point sampled (gcFEATURE_VG_MIRROR is 0)",
+    },
+    OpCaps {
+        op: FixedOp::Rotate,
+        exactness: Exactness::Unmeasured,
+        note: "a quarter-turn matrix, point sampled",
+    },
+    OpCaps {
+        op: FixedOp::Fill,
+        exactness: Exactness::Unmeasured,
+        note: "vg_lite_clear; masks as A8 (an L8 target converts the colour with a truncating \
+               float sum, so it is refused)",
+    },
+    OpCaps {
+        op: FixedOp::Blend,
+        exactness: Exactness::Unmeasured,
+        note: "vg_lite_blit with BLEND_NONE, SRC_OVER or DST_OVER, straight alpha: the K230 \
+               build premultiplies every RGBA source itself, so premultiplied input is refused",
+    },
+    OpCaps {
+        op: FixedOp::Palette,
+        exactness: Exactness::Unmeasured,
+        note: "an INDEX_8 source through vg_lite_set_CLUT's 256 entries",
+    },
+    OpCaps {
+        op: FixedOp::Line,
+        exactness: Exactness::Unmeasured,
+        note: "vg_lite_draw of a 1-wide stroke with square caps through the pixel centres, no \
+               anti-aliasing; Bresenham's pixels on axes and diagonals in theory, other slopes \
+               differ where a centre is near the edge",
+    },
+];
+
+const fn vglite(soc: Soc) -> UnitCaps {
+    UnitCaps {
+        soc,
+        unit: Unit::K230Vglite,
+        route: Route::Vglite,
+        min_size: None,
+        max_scale: None,
+        luma_cost_permille: 1000,
+        staging: Staging::UnlessContiguous,
+        filters: VGLITE_FILTERS,
+        ops: VGLITE_OPS,
     }
 }
 
@@ -307,11 +409,13 @@ static TABLE: [UnitCaps; 12] = [
     v4l2(Soc::Rk3588, Unit::Rga2),
     librga(Soc::Rk3588, Unit::Rga3),
     librga(Soc::Rk3588, Unit::Rga2),
+    vglite(Soc::K230d),
+    // No Linux driver in the K230 SDK; the RT-Smart side may own it.
     design(Soc::K230d, Unit::K230Image2d),
-    design(Soc::K230d, Unit::K230Vglite),
 ];
 
-/// Every unit and route on `soc`, preferred first (mainline before librga, RGA3 before RGA2).
+/// Every unit and route on `soc`, preferred first (mainline before librga, RGA3 before RGA2,
+/// VGLite before the K230D's undriven Image 2D engine).
 pub fn caps(soc: Soc) -> impl Iterator<Item = &'static UnitCaps> {
     TABLE.iter().filter(move |c| c.soc == soc)
 }
@@ -347,10 +451,21 @@ mod tests {
         assert_eq!((first.unit, first.route), (Unit::Rga3, Route::V4l2));
         let area = first.filter(Filter::Area).unwrap();
         assert!(area.down && !area.up);
-        assert!(caps(Soc::K230d).all(|c| c.route == Route::Design && c.filters.is_empty()));
+        let k230: Vec<_> = caps(Soc::K230d).collect();
+        assert_eq!(
+            (k230[0].unit, k230[0].route),
+            (Unit::K230Vglite, Route::Vglite)
+        );
+        assert_eq!(k230[0].staging, Staging::UnlessContiguous);
+        assert!(k230[0].op(FixedOp::Line).is_some() && k230[0].op(FixedOp::ColorKey).is_none());
+        assert!(k230[1].route == Route::Design && k230[1].filters.is_empty());
         assert!(caps(Soc::Rk3576).all(|c| c.route == Route::Librga));
-        // Palette and colour key: librga on RGA2 only.
-        for c in Soc::ALL.into_iter().flat_map(caps) {
+        // Palette and colour key: librga on RGA2 only (palette on VGLite too).
+        for c in Soc::ALL
+            .into_iter()
+            .flat_map(caps)
+            .filter(|c| c.route != Route::Vglite)
+        {
             let has = c.op(FixedOp::Palette).is_some();
             assert_eq!(
                 has,

@@ -14,12 +14,16 @@ const RGA_DRAW: (&str, &str) = (
     "crates/rga/tests/librga.rs",
 );
 
+/// The K230's VGLite GPU (`daedalus-vglite`) through the vendor's `libvg_lite`. Written,
+/// untested on board.
+const VGLITE: (&str, &str) = ("crates/vglite/src/gpu.rs", "crates/vglite/tests/vglite.rs");
+
 /// Fixed-function image nodes other repos lower onto (Eidos's pyramids): only the scalar
 /// reference and the fixed-function rows are Daedalus's.
 const NODE_ONLY: &[Backend] = &[Backend::Scalar, Backend::FixedFunction];
 const NODE_REASON: &str = "a fixed-function node: the CPU kernels and the callers are Eidos's";
 
-static IMAGE_OPS: [Op; 10] = [
+static IMAGE_OPS: [Op; 11] = [
     op(
         "daedalus.image.resize_area",
         "Area downscale by an integer factor, rounded block means (pyramid levels)",
@@ -80,9 +84,15 @@ static IMAGE_OPS: [Op; 10] = [
         "daedalus_kernels::reference::blend",
     )
     .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.line",
+        "A one-pixel line between two points, both ends included (Bresenham, Eidos's plain line)",
+        "daedalus_kernels::reference::line",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
 ];
 
-static IMAGE_KERNELS: [Kernel; 25] = [
+static IMAGE_KERNELS: [Kernel; 35] = [
     Kernel::implemented(
         "daedalus.image.resize_area",
         Backend::Scalar,
@@ -250,6 +260,77 @@ static IMAGE_KERNELS: [Kernel; 25] = [
         RGA_LIB.1,
     )
     .with_variant("librga"),
+    Kernel::implemented(
+        "daedalus.image.line",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    // The K230's VGLite: no colour key, no ROP (`vg_lite_options.h`). Lines are the one
+    // fixed-function line route on the target SoCs: the RGA has no line mode.
+    Kernel::implemented(
+        "daedalus.image.resize_area",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.resize_bilinear",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.crop",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.flip",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.rotate",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.fill",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.blend",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.palette",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
+    Kernel::implemented(
+        "daedalus.image.line",
+        Backend::FixedFunction,
+        VGLITE.0,
+        VGLITE.1,
+    )
+    .with_variant("vglite"),
 ];
 
 pub(super) static IMAGE_TABLE: Registry = Registry {

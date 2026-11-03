@@ -920,6 +920,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-vglite"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-accel",
+ "daedalus-kernels",
+ "daedalus-rga",
+ "lemnos-linux",
+ "libc",
+]
+
+[[package]]
 name = "daedalus-wasm-bindgen-host"
 version = "3.0.1-dev"
 dependencies = [

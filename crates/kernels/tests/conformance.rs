@@ -56,6 +56,10 @@ fn scalar_references_match_known_answers() {
     lut[2] = [1, 2, 3, 4];
     let palette = r::palette(&[2, 0], &lut) == [1, 2, 3, 4, 0, 0, 0, 0];
     let fill = r::fill(&[0; 6], 3, (1, 0, 2, 2), &[7]) == [0, 7, 7, 0, 7, 7];
+    // Bresenham from (0, 0) to (3, 2) on 4x3, and a line leaving the frame.
+    let line = r::line(&[0; 12], 4, 3, (0, 0), (3, 2), &[7])
+        == [7, 0, 0, 0, 0, 7, 7, 0, 0, 0, 0, 7]
+        && r::line(&[0; 4], 2, 2, (-1, 1), (3, 1), &[5]) == [0, 0, 5, 5];
     let rop = r::mask_rop(&[0b1010], &[0b1100], '&') == [0b1000]
         && r::mask_rop(&[0b1010], &[0b1100], '|') == [0b1110]
         && r::mask_rop(&[0b1010], &[0b1100], '^') == [0b0110];
@@ -104,6 +108,7 @@ fn scalar_references_match_known_answers() {
     });
     conform("daedalus.image.palette", Backend::Scalar, || palette);
     conform("daedalus.image.fill", Backend::Scalar, || fill);
+    conform("daedalus.image.line", Backend::Scalar, || line);
     conform("daedalus.image.mask_rop", Backend::Scalar, || rop);
     conform("daedalus.image.blend", Backend::Scalar, || blend);
     conform("daedalus.image.crop", Backend::Scalar, || crop);
