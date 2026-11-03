@@ -258,7 +258,7 @@ pub(in crate::wgpu_backend) type ImportState = Option<ImportContext>;
 /// Decide whether the created device can import dmabufs, and how acquire fences are waited for.
 pub(in crate::wgpu_backend) fn probe(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::shader::submit_lock::LockedQueue,
 ) -> (ExternalImportSupport, ImportState) {
     // SAFETY: only queries are made through the hal device (and an ash device handle cloned).
     let Some(hal_dev) = (unsafe { device.as_hal::<Vulkan>() }) else {

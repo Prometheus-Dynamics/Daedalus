@@ -1,6 +1,6 @@
 //! GPU time per dispatch: timestamp queries where the device has them, else submit→completion.
 
-use crate::shader::submit_lock::WorkDoneLocked;
+use crate::shader::submit_lock::LockedQueue;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,7 +30,7 @@ pub struct GpuTimer {
     period_ns: f64,
     staging: Arc<StagingRing>,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: LockedQueue,
 }
 
 impl std::fmt::Debug for GpuTimer {
@@ -46,7 +46,7 @@ impl GpuTimer {
     /// (`GpuCapabilities::compute.features.timestamps`), else submit→completion timing.
     /// `Unsupported` on a non-wgpu backend.
     pub fn new(gpu: &GpuContextHandle) -> Result<Self, GpuError> {
-        let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
+        let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
         let queries = device
             .features()
             .contains(wgpu::Features::TIMESTAMP_QUERY)
@@ -66,7 +66,7 @@ impl GpuTimer {
             });
         Ok(Self {
             queries,
-            period_ns: f64::from(queue.get_timestamp_period()),
+            period_ns: f64::from(queue.raw().get_timestamp_period()),
             staging: Arc::default(),
             device: device.clone(),
             queue: queue.clone(),
@@ -117,9 +117,18 @@ impl GpuTimer {
         let done_at = Arc::new(Mutex::new(None));
         let mark = done_at.clone();
         self.queue
-            .on_submitted_work_done_locked(move || *mark.lock() = Some(Instant::now()));
-        let readback = staging
-            .map(|staging| GpuReadback::begin(&self.device, &self.staging, staging, 16, 16, None));
+            .on_submitted_work_done(move || *mark.lock() = Some(Instant::now()));
+        let readback = staging.map(|staging| {
+            GpuReadback::begin(
+                &self.device,
+                &self.queue,
+                &self.staging,
+                staging,
+                16,
+                16,
+                None,
+            )
+        });
         GpuTimed {
             ticket,
             readback,

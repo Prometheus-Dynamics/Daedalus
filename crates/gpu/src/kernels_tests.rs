@@ -380,7 +380,7 @@ fn gpu_base64_decode_reports_length_and_errors() {
 #[test]
 fn copy_engine_copies_gpu_resident_bytes() {
     let Some(ctx) = wgpu_ctx() else { return };
-    let (device, queue) = ctx.wgpu().unwrap();
+    let (device, queue) = ctx.wgpu_locked().unwrap();
     let kernels = GpuKernels::new(&ctx).unwrap();
     let data = bytes(4 << 20, 11);
     let (src, dst) = (storage(&ctx, &data), out_storage(&ctx, data.len() as u64));
@@ -392,7 +392,7 @@ fn copy_engine_copies_gpu_resident_bytes() {
         kernels
             .copy_with_engine(&mut encoder, &src, &dst, data.len() as u64)
             .unwrap();
-        crate::GpuTicket::submit_on(device, queue, [encoder.finish()]).wait();
+        crate::GpuTicket::submit_on(device, &queue, [encoder.finish()]).wait();
         times.push(start.elapsed());
     }
     times.sort();

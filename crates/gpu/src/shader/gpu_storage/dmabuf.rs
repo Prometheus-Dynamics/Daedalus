@@ -38,7 +38,7 @@ impl GpuStorage {
     ) -> Result<Self, ExternalImportError> {
         let unsupported = |reason: String| ExternalImportError::Unsupported { reason };
         let (device, queue) = gpu
-            .wgpu()
+            .wgpu_locked()
             .ok_or_else(|| unsupported("not a wgpu backend".into()))?;
         if len == 0 || !len.is_multiple_of(4) {
             return Err(ExternalImportError::invalid(format!(

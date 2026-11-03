@@ -52,14 +52,14 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       `VkQueue`; the lock has to be reached through the context handle (or one shared image).
       Not a live bug: wgpu-to-wgpu submits are serialized by wgpu-core's locks inside the shared
       queue object, and no HeliOS process creates a `RawSubmitter` (agreed with HeliOS 2026-11-02).
-      **Step 1, before any `RawSubmitter` shares the engine's device:**
-      1. The submit lock owned by the GPU context (an `Arc<Mutex>` in the shared context data)
-         instead of the static `QUEUE_SUBMIT` (`shader/submit_lock.rs`), so the engine and a
-         plugin `cdylib` reach the same lock through the handle. Daedalus's ~10 internal submit
-         sites (`submit_locked`, `on_submitted_work_done_locked`, `map_async_locked`, and
-         `RawSubmitter`) take it from the handle instead of a bare `&wgpu::Queue`.
-      2. A plain `GpuContextHandle::submit(commands)` under that lock (beside `GpuTicket::submit`).
-         Eidos moves its 9 direct `gpu.queue.submit(...)` calls onto it (Eidos f044a095,
+      **Step 1, before any `RawSubmitter` shares the engine's device** (1 and 2 done on the
+      `submit-lock` branch; 3 open):
+      1. Done: the submit lock is owned by the GPU context (`SubmitLock`, a `std` mutex in the
+         backend, reached through `GpuBackend::wgpu_submit_lock`) instead of the static
+         `QUEUE_SUBMIT`, so the engine and a plugin `cdylib` reach the same lock through the
+         handle. Every internal submit site goes through a `LockedQueue` (queue + lock).
+      2. Done on the Daedalus side: `GpuContextHandle::submit(commands)` and `submit_lock()`.
+         Eidos still moves its 9 direct `gpu.queue.submit(...)` calls onto it (Eidos f044a095,
          `crates/daedalus/src/gpu/{mod,invert,sweep,tsdf}.rs`): Daedalus cannot force a lock onto
          plain `wgpu::Queue` users, so without this they overlap a raw submit from either image.
       3. A test that loads a plugin as a `cdylib` and submits concurrently from both sides

@@ -33,8 +33,7 @@
 //! fence: work submitted after an import does not start before the producer finished (or, on the
 //! timeline path, the timeout passed).
 
-use crate::shader::submit_lock::WorkDoneLocked;
-use crate::shader::submit_lock::submit_locked;
+use crate::shader::submit_lock::LockedQueue;
 use std::ffi::CStr;
 use std::os::fd::{AsFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -88,7 +87,7 @@ pub(super) enum GpuFence {
 impl Acquire {
     pub(super) fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &LockedQueue,
         hal_dev: &hal_vk::Device,
     ) -> Self {
         let enabled = hal_dev.enabled_device_extensions();
@@ -209,26 +208,26 @@ impl Acquire {
         let stage_wait = |semaphore: vk::Semaphore, value: Option<u64>| {
             // SAFETY: the wait is consumed by the next submission (the one below, or an earlier
             // one from another thread; see the module docs).
-            let hal_queue = unsafe { queue.as_hal::<Vulkan>() }.ok_or_else(not_vulkan)?;
+            let hal_queue = unsafe { queue.raw().as_hal::<Vulkan>() }.ok_or_else(not_vulkan)?;
             hal_queue.add_wait_semaphore(semaphore, value, ALL_COMMANDS);
             Ok::<_, ExternalImportError>(())
         };
         match fence {
             None => {
-                submit_locked(queue, commands);
+                queue.submit(commands);
             }
             Some(GpuFence::Timeline(fence, timeout)) => {
                 let watcher = self.timeline.as_ref().ok_or_else(not_vulkan)?;
                 let value = watcher.watch(fence, timeout, status());
                 stage_wait(watcher.semaphore(), Some(value))?;
-                submit_locked(queue, commands);
+                queue.submit(commands);
             }
             Some(GpuFence::SyncFd(semaphore)) => {
                 stage_wait(semaphore.semaphore, None)?;
-                submit_locked(queue, commands);
+                queue.submit(commands);
                 let (semaphore, pool) = semaphore.into_parts();
                 let status = status();
-                queue.on_submitted_work_done_locked(move || {
+                queue.on_submitted_work_done(move || {
                     status.set(AcquireStatus::Ready);
                     // A pool that is gone (backend dropped) leaks the semaphore rather than
                     // touching a device that may already be destroyed.
@@ -254,7 +253,7 @@ fn not_vulkan() -> ExternalImportError {
 /// What a queue family transfer needs; import tokens hold it weakly for the release.
 pub(super) struct Handoff {
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: LockedQueue,
     raw: ash::Device,
     /// Queue family the producer owns the image in.
     foreign: u32,
@@ -408,7 +407,7 @@ impl Drop for ImportDropToken {
         };
         match handoff.transfer(&texture, Transfer::Release) {
             Ok(commands) => {
-                submit_locked(&handoff.queue, commands);
+                handoff.queue.submit(commands);
             }
             Err(err) => tracing::warn!(
                 target: "daedalus_gpu::dmabuf",

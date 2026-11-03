@@ -1,3 +1,4 @@
+use crate::shader::submit_lock::{LockedQueue, SubmitLock};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -142,7 +143,7 @@ mod tests {
 #[derive(Clone)]
 pub(crate) struct GpuCtx {
     pub device: Arc<wgpu::Device>,
-    pub queue: Arc<wgpu::Queue>,
+    pub queue: LockedQueue,
     pub submission_tracker: Arc<SubmissionTracker>,
 }
 
@@ -198,7 +199,7 @@ async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
 
     Ok(GpuCtx {
         device: Arc::new(device),
-        queue: Arc::new(queue),
+        queue: LockedQueue::new(queue, SubmitLock::default()),
         submission_tracker: Arc::new(SubmissionTracker::default()),
     })
 }

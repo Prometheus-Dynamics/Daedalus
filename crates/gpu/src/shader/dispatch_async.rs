@@ -5,7 +5,6 @@ use super::prepare::prepare_resources_async;
 use super::readback::{enqueue_readbacks, resolve_readbacks_async, return_pooled_textures};
 use super::workgroups::derive_workgroups;
 use super::{DispatchOptions, GpuBindings, ShaderBinding, ShaderRunOutput, ShaderSpec};
-use crate::shader::submit_lock::submit_locked;
 use crate::{GpuContextHandle, GpuError};
 
 /// Dispatch a shader without blocking the current thread for fallback context creation or readback.
@@ -40,7 +39,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
 ) -> Result<ShaderRunOutput, GpuError> {
     let (device, queue, backend_handle, submission_tracker) = if let Some(gpu_ctx) = gpu_ctx {
         let backend = gpu_ctx.backend_ref();
-        let (device, queue) = backend.wgpu_device_queue().ok_or(GpuError::Unsupported)?;
+        let (device, queue) = gpu_ctx.wgpu_locked().ok_or(GpuError::Unsupported)?;
         (
             device,
             queue,
@@ -51,7 +50,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
         let ctx = ctx_async().await?;
         (
             ctx.device.as_ref(),
-            ctx.queue.as_ref(),
+            ctx.queue.clone(),
             None,
             Some(ctx.submission_tracker.as_ref()),
         )
@@ -71,7 +70,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
 
     let prepared = prepare_resources_async(
         device,
-        queue,
+        queue.raw(),
         backend_handle,
         bindings,
         layout_bindings.as_ref(),
@@ -119,7 +118,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
     let (readbacks, pool_textures_to_return, texture_handles) =
         enqueue_readbacks(device, &prepared, &mut encoder);
 
-    let submission_idx = submit_locked(queue, Some(encoder.finish()));
+    let submission_idx = queue.submit(Some(encoder.finish()));
     if let Some(tracker) = submission_tracker {
         tracker
             .track_and_throttle_async(device, submission_idx)
@@ -132,7 +131,7 @@ pub async fn dispatch_shader_with_options_async<'a>(
         let _ = device.poll(wgpu::PollType::Poll);
     }
 
-    let result = resolve_readbacks_async(device, readbacks).await?;
+    let result = resolve_readbacks_async(device, &queue, readbacks).await?;
     return_pooled_textures(pool_textures_to_return);
 
     Ok(ShaderRunOutput {

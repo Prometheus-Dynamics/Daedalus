@@ -1,7 +1,6 @@
 //! `FragmentPass` bindings reused across encodes, rectangle draws, and integer formats (skipped
 //! without a wgpu device).
 
-use crate::shader::submit_lock::submit_locked;
 use crate::{
     FragmentPass, FragmentRects, GpuBackendKind, GpuContextHandle, GpuError, GpuOptions,
     GpuTexture, select_backend,
@@ -39,7 +38,7 @@ fn a_binding_is_reused_across_encodes() {
     let b = GpuTexture::new(&ctx, (16, 8), r32, None).unwrap();
     let from_a = pass.bind(&[&a], &[]).unwrap();
     let from_b = pass.bind(&[&b], &[]).unwrap();
-    let (device, queue) = ctx.wgpu().unwrap();
+    let (device, _) = ctx.wgpu().unwrap();
     let mut encoder = device.create_command_encoder(&Default::default());
     for i in 0..150 {
         let (binding, target) = if i % 2 == 0 {
@@ -49,7 +48,7 @@ fn a_binding_is_reused_across_encodes() {
         };
         pass.encode_bound(&mut encoder, binding, &[target]).unwrap();
     }
-    submit_locked(queue, [encoder.finish()]);
+    ctx.submit([encoder.finish()]).unwrap();
     // 150 passes, the last into `a` (odd index 149 reads b, writes a).
     assert!(
         floats(&a).iter().all(|&v| v == 150.0),
@@ -83,7 +82,7 @@ fn rects_draw_only_their_pixels() {
     // Two 8x8 tiles of the 64x8 atlas.
     rects.write(size, &[[8, 0, 8, 8], [40, 0, 8, 8]]).unwrap();
     let unbound = fill.bind(&[], &[]).unwrap();
-    let (device, queue) = ctx.wgpu().unwrap();
+    let (device, _) = ctx.wgpu().unwrap();
     let inside = |x: usize| (8..16).contains(&x) || (40..48).contains(&x);
     for load in [true, false] {
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -91,7 +90,7 @@ fn rects_draw_only_their_pixels() {
             .unwrap();
         mark.encode_rects(&mut encoder, &unbound, &rects, &[&target], load)
             .unwrap();
-        submit_locked(queue, [encoder.finish()]);
+        ctx.submit([encoder.finish()]).unwrap();
         let values = floats(&target);
         for (i, &v) in values.iter().enumerate() {
             let want = if inside(i % 64) {

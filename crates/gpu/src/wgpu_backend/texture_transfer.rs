@@ -1,6 +1,5 @@
 //! Texture readback helpers shared by the sync and async `WgpuBackend` paths.
 
-use crate::shader::submit_lock::submit_locked;
 use std::sync::Arc;
 
 use super::WgpuBackend;
@@ -84,7 +83,7 @@ impl WgpuBackend {
                 depth_or_array_layers: 1,
             },
         );
-        submit_locked(&self.queue, Some(encoder.finish()));
+        self.queue.submit(Some(encoder.finish()));
     }
 }
 

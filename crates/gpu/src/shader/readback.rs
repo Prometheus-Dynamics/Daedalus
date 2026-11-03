@@ -1,4 +1,4 @@
-use crate::shader::submit_lock::MapAsyncLocked;
+use crate::shader::submit_lock::LockedQueue;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -195,6 +195,7 @@ pub(crate) fn enqueue_readbacks(
 
 pub(crate) fn resolve_readbacks(
     device: &wgpu::Device,
+    queue: &LockedQueue,
     readbacks: Vec<ReadbackRequest>,
 ) -> Result<HashMap<u32, Vec<u8>>, GpuError> {
     // This is the synchronous compatibility readback path. It waits on the current thread; async
@@ -207,12 +208,10 @@ pub(crate) fn resolve_readbacks(
     let mut receivers = Vec::with_capacity(readbacks.len());
     for request in &readbacks {
         let (tx, rx) = std::sync::mpsc::channel();
-        request
-            .buffer
-            .slice(..staging_size(request.size))
-            .map_async_locked(wgpu::MapMode::Read, move |res| {
-                let _ = tx.send(res);
-            });
+        let slice = request.buffer.slice(..staging_size(request.size));
+        queue.map_async(slice, wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
         receivers.push(rx);
     }
     if !receivers.is_empty() {
@@ -309,7 +308,9 @@ mod tests {
                 usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&src, 0, &vec![binding as u8 + 1; len as usize]);
+            queue
+                .raw()
+                .write_buffer(&src, 0, &vec![binding as u8 + 1; len as usize]);
             let staging = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("staging"),
                 size: staging_size(len),
@@ -327,9 +328,9 @@ mod tests {
                 padded_bpr: 0,
             });
         }
-        crate::shader::submit_lock::submit_locked(queue, Some(encoder.finish()));
+        queue.submit(Some(encoder.finish()));
 
-        let out = resolve_readbacks(device, requests).expect("batched readback");
+        let out = resolve_readbacks(device, queue, requests).expect("batched readback");
         assert_eq!(out.len(), sizes.len());
         for (binding, len) in sizes {
             assert_eq!(out[&binding], vec![binding as u8 + 1; len as usize]);

@@ -1,7 +1,5 @@
 //! `GpuContextHandle` against a real wgpu device (skipped without one).
 
-use crate::shader::submit_lock::MapAsyncLocked;
-use crate::shader::submit_lock::submit_locked;
 use crate::{GpuBackendKind, GpuOptions, select_backend};
 
 /// A node-owned pipeline built and dispatched on the engine's own device through
@@ -13,7 +11,7 @@ fn wgpu_accessor_dispatches_on_the_engine_device() {
         ..Default::default()
     })
     .unwrap();
-    let Some((device, queue)) = ctx.wgpu() else {
+    let Some((device, _)) = ctx.wgpu() else {
         assert_ne!(ctx.backend_kind(), GpuBackendKind::Wgpu);
         return;
     };
@@ -62,9 +60,14 @@ fn wgpu_accessor_dispatches_on_the_engine_device() {
         pass.dispatch_workgroups(1, 1, 1);
     }
     encoder.copy_buffer_to_buffer(&buffer, 0, &readback, 0, 4);
-    submit_locked(queue, [encoder.finish()]);
+    ctx.submit([encoder.finish()]).unwrap();
     let slice = readback.slice(..);
-    slice.map_async_locked(wgpu::MapMode::Read, |_| {});
+    {
+        // `map_async` may flush pending writes, so code outside Daedalus holds the lock.
+        let lock = ctx.submit_lock().unwrap();
+        let _held = lock.lock();
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+    }
     let _ = device.poll(wgpu::PollType::Wait {
         submission_index: None,
         timeout: None,
@@ -301,4 +304,40 @@ fn storage_pool_reuses_within_its_cap() {
     assert!(stats.reuse_rate() > 0.9, "{stats:?}");
     pool.clear();
     assert_eq!(pool.stats().pooled_bytes, 0);
+}
+
+/// Every clone of a handle shares one submit lock, another context has its own, and a submit
+/// through the handle waits while the lock is held.
+#[test]
+fn the_submit_lock_belongs_to_the_context() {
+    let options = GpuOptions {
+        preferred_backend: Some(GpuBackendKind::Wgpu),
+        ..Default::default()
+    };
+    let ctx = select_backend(&options).unwrap();
+    let Some(lock) = ctx.submit_lock() else {
+        assert!(ctx.wgpu().is_none());
+        return;
+    };
+    assert!(lock.same_lock(&ctx.clone().submit_lock().unwrap()));
+    let other = select_backend(&options).unwrap();
+    assert!(!lock.same_lock(&other.submit_lock().unwrap()));
+
+    let held = lock.lock();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let submitter = {
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            ctx.submit([]).unwrap();
+            tx.send(()).unwrap();
+        })
+    };
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_millis(100))
+            .is_err(),
+        "submitted while the lock was held"
+    );
+    drop(held);
+    rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    submitter.join().unwrap();
 }

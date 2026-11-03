@@ -173,7 +173,7 @@ fn create(
     label: Option<&str>,
     placement: Placement,
 ) -> Result<GpuStorage, GpuError> {
-    let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
+    let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
     let max = gpu.capabilities().compute.max_storage_buffer_binding_size;
     if size == 0 || !size.is_multiple_of(4) || size > max {
         return Err(GpuError::InvalidInput(format!(

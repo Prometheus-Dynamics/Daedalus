@@ -1,7 +1,6 @@
 //! Node-owned persistent storage buffers.
 
-use crate::shader::submit_lock::MapAsyncLocked;
-use crate::shader::submit_lock::submit_locked;
+use crate::shader::submit_lock::LockedQueue;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
@@ -31,7 +30,7 @@ pub struct GpuStorage {
     pub(super) size: u64,
     label: Option<String>,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: LockedQueue,
     device_key: usize,
     staging: Arc<StagingRing>,
     /// The persistent CPU mapping of a host-mapped buffer.
@@ -82,7 +81,7 @@ impl GpuStorage {
     /// `InvalidInput` when `size` is 0, not a multiple of 4, or over the device's storage
     /// binding limit.
     pub fn new(gpu: &GpuContextHandle, size: u64, label: Option<&str>) -> Result<Self, GpuError> {
-        let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
+        let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
         let max = gpu.capabilities().compute.max_storage_buffer_binding_size;
         if size == 0 || !size.is_multiple_of(4) || size > max {
             return Err(GpuError::InvalidInput(format!(
@@ -141,8 +140,11 @@ impl GpuStorage {
         &self.device
     }
 
+    /// The queue the buffer's copies are submitted on. Submit on it through
+    /// [`crate::GpuContextHandle::submit`] (or under [`crate::GpuContextHandle::submit_lock`]),
+    /// not directly.
     pub fn queue(&self) -> &wgpu::Queue {
-        &self.queue
+        self.queue.raw()
     }
 
     /// Queue a write of `bytes` at `offset`; it lands before the next submission on the queue.
@@ -159,7 +161,7 @@ impl GpuStorage {
                 self.size
             )));
         }
-        self.queue.write_buffer(&self.buffer, offset, bytes);
+        self.queue.raw().write_buffer(&self.buffer, offset, bytes);
         Ok(())
     }
 
@@ -223,9 +225,10 @@ impl GpuStorage {
         let staging = self.staging.take(&self.device, self.size);
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_buffer_to_buffer(&self.buffer, offset, &staging, 0, copy);
-        submit_locked(&self.queue, [encoder.finish()]);
+        self.queue.submit([encoder.finish()]);
         Ok(GpuReadback::begin(
             &self.device,
+            &self.queue,
             &self.staging,
             staging,
             len as usize,
@@ -272,6 +275,7 @@ impl GpuReadback {
     /// Map the first `copy` bytes of `staging` (the copy into it is already submitted).
     pub(super) fn begin(
         device: &wgpu::Device,
+        queue: &LockedQueue,
         ring: &Arc<StagingRing>,
         staging: wgpu::Buffer,
         len: usize,
@@ -280,12 +284,10 @@ impl GpuReadback {
     ) -> Self {
         let state = Arc::new(AtomicU8::new(MAP_PENDING));
         let flag = state.clone();
-        staging
-            .slice(..copy)
-            .map_async_locked(wgpu::MapMode::Read, move |result| {
-                let value = if result.is_ok() { MAP_OK } else { MAP_FAILED };
-                flag.store(value, Ordering::Release);
-            });
+        queue.map_async(staging.slice(..copy), wgpu::MapMode::Read, move |result| {
+            let value = if result.is_ok() { MAP_OK } else { MAP_FAILED };
+            flag.store(value, Ordering::Release);
+        });
         Self {
             staging: Some(staging),
             ring: ring.clone(),

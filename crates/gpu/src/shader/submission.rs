@@ -1,7 +1,6 @@
 //! Non-blocking GPU completion for nodes: submit on one tick, collect on a later one.
 
-use crate::shader::submit_lock::WorkDoneLocked;
-use crate::shader::submit_lock::submit_locked;
+use crate::shader::submit_lock::{LockedQueue, SubmitLock};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,25 +18,26 @@ pub struct GpuTicket {
 }
 
 impl GpuTicket {
-    /// Submit `commands` on `gpu`'s queue. `Unsupported` on a non-wgpu backend.
+    /// Submit `commands` on `gpu`'s queue, under its submit lock. `Unsupported` on a non-wgpu
+    /// backend. [`GpuContextHandle::submit`] submits without a ticket.
     pub fn submit(
         gpu: &GpuContextHandle,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> Result<Self, GpuError> {
-        let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
-        Ok(Self::submit_on(device, queue, commands))
+        let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
+        Ok(Self::submit_on(device, &queue, commands))
     }
 
     /// Submit `commands` on `queue` (of `device`).
-    pub fn submit_on(
+    pub(crate) fn submit_on(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &LockedQueue,
         commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> Self {
-        let index = submit_locked(queue, commands);
+        let index = queue.submit(commands);
         let done = Arc::new(AtomicBool::new(false));
         let flag = done.clone();
-        queue.on_submitted_work_done_locked(move || flag.store(true, Ordering::Release));
+        queue.on_submitted_work_done(move || flag.store(true, Ordering::Release));
         Self {
             done,
             device: device.clone(),
@@ -71,14 +71,43 @@ impl GpuTicket {
 }
 
 impl GpuContextHandle {
+    /// Submit `commands` on the context's queue under its submit lock, the lock every Daedalus
+    /// submit on that queue takes (see [`GpuTicket::submit`] for a ticket that completes with the
+    /// work). Code outside Daedalus that shares the context's device submits through this (or
+    /// holds [`Self::submit_lock`] around its own submit), so its submits never overlap Daedalus's
+    /// raw ones on the same `VkQueue`. `Unsupported` on a non-wgpu backend.
+    pub fn submit(
+        &self,
+        commands: impl IntoIterator<Item = wgpu::CommandBuffer>,
+    ) -> Result<wgpu::SubmissionIndex, GpuError> {
+        let (_, queue) = self.wgpu_locked().ok_or(GpuError::Unsupported)?;
+        Ok(queue.submit(commands))
+    }
+
+    /// The context's queue submit lock, shared by every clone of this handle (also across a
+    /// plugin `cdylib`'s copy of this crate). Hold it around anything outside Daedalus that can
+    /// submit on the queue: `queue.submit`, `queue.on_submitted_work_done`, `Buffer::map_async`
+    /// (both may flush pending writes) and raw `vkQueueSubmit`. Never submit through Daedalus while
+    /// holding it. `None` on a non-wgpu backend.
+    pub fn submit_lock(&self) -> Option<SubmitLock> {
+        self.backend.wgpu_submit_lock().cloned()
+    }
+
+    /// The device and its queue with the context's submit lock.
+    pub(crate) fn wgpu_locked(&self) -> Option<(&wgpu::Device, LockedQueue)> {
+        let (device, queue) = self.wgpu()?;
+        let lock = self.backend.wgpu_submit_lock()?.clone();
+        Some((device, LockedQueue::new(queue.clone(), lock)))
+    }
+
     /// Submit the `queue.write_buffer` / `write_texture` data wgpu still holds (it uploads that
     /// data only with its next submit). Call it after such writes, and after creating a storage
     /// with data (`GpuStorage::with_data`), before work that wgpu does not submit reads them:
     /// `raw_vulkan::RawSubmitter` commands, or another queue. Daedalus's own wgpu
     /// submissions need no flush. `Unsupported` on a non-wgpu backend.
     pub fn flush_uploads(&self) -> Result<(), GpuError> {
-        let (_, queue) = self.wgpu().ok_or(GpuError::Unsupported)?;
-        submit_locked(queue, []);
+        let (_, queue) = self.wgpu_locked().ok_or(GpuError::Unsupported)?;
+        queue.submit([]);
         Ok(())
     }
 }

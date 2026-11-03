@@ -1,6 +1,6 @@
 //! Node-owned persistent 2D textures: fragment-pass inputs and render targets.
 
-use crate::shader::submit_lock::submit_locked;
+use crate::shader::submit_lock::LockedQueue;
 use std::sync::Arc;
 
 use crate::{GpuContextHandle, GpuError};
@@ -19,7 +19,7 @@ pub struct GpuTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: LockedQueue,
     staging: Arc<StagingRing>,
     /// Padded rows for [`GpuTexture::copy_from_storage`] when a frame's stride is not a multiple
     /// of 256 (made on first need, reused).
@@ -58,14 +58,14 @@ impl GpuTexture {
         format: wgpu::TextureFormat,
         label: Option<&str>,
     ) -> Result<Self, GpuError> {
-        let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
-        Self::with_device(device, queue, (width, height), format, label)
+        let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
+        Self::with_device(device, &queue, (width, height), format, label)
     }
 
     /// [`GpuTexture::new`] on a device and queue directly.
     pub(super) fn with_device(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &LockedQueue,
         (width, height): (u32, u32),
         format: wgpu::TextureFormat,
         label: Option<&str>,
@@ -149,7 +149,7 @@ impl GpuTexture {
             )));
         }
         let (width, height) = self.size();
-        self.queue.write_texture(
+        self.queue.raw().write_texture(
             self.texture.as_image_copy(),
             bytes,
             wgpu::TexelCopyBufferLayout {
@@ -378,9 +378,10 @@ impl GpuTexture {
             },
             self.texture.size(),
         );
-        submit_locked(&self.queue, [encoder.finish()]);
+        self.queue.submit([encoder.finish()]);
         Ok(GpuReadback::begin(
             &self.device,
+            &self.queue,
             &self.staging,
             staging,
             unpadded * height as usize,

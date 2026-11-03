@@ -58,7 +58,7 @@ use wgpu::hal::api::Vulkan;
 
 pub use ash;
 
-use crate::shader::submit_lock;
+use crate::shader::submit_lock::SubmitLock;
 use crate::{GpuContextHandle, GpuError, GpuStorage, GpuTicket};
 
 #[cfg(test)]
@@ -150,7 +150,7 @@ impl GpuContextHandle {
         &self,
         record: impl FnOnce(&ash::Device, vk::CommandBuffer),
     ) -> Result<GpuTicket, GpuError> {
-        let (device, queue) = self.wgpu().ok_or(GpuError::Unsupported)?;
+        let (device, queue) = self.wgpu_locked().ok_or(GpuError::Unsupported)?;
         // SAFETY: the device handle is only used to record into wgpu's open command buffer.
         let raw = unsafe { device.as_hal::<Vulkan>() }
             .ok_or(GpuError::Unsupported)?
@@ -169,7 +169,7 @@ impl GpuContextHandle {
             })
         };
         recorded.ok_or(GpuError::Unsupported)?;
-        Ok(GpuTicket::submit_on(device, queue, [encoder.finish()]))
+        Ok(GpuTicket::submit_on(device, &queue, [encoder.finish()]))
     }
 }
 
@@ -232,6 +232,8 @@ pub const DEFAULT_RAW_SLOTS: usize = 3;
 pub struct RawSubmitter {
     /// Keeps the device alive for as long as this submitter's Vulkan objects exist.
     _ctx: GpuContextHandle,
+    /// The context's submit lock, taken around each `vkQueueSubmit`.
+    lock: SubmitLock,
     device: ash::Device,
     queue: vk::Queue,
     pool: vk::CommandPool,
@@ -267,6 +269,7 @@ impl RawSubmitter {
     pub fn with_slots(ctx: &GpuContextHandle, slots: usize) -> Result<Self, GpuError> {
         // SAFETY: only reads the handles; this submitter uses them under the sync contract.
         let raw = unsafe { ctx.raw_vulkan() }.ok_or(GpuError::Unsupported)?;
+        let lock = ctx.submit_lock().ok_or(GpuError::Unsupported)?;
         let count = slots.max(1);
         let d = &raw.device;
         // SAFETY: valid create infos on the context's live device; each object created here is
@@ -307,6 +310,7 @@ impl RawSubmitter {
             }
             Ok(Self {
                 _ctx: ctx.clone(),
+                lock,
                 device: d.clone(),
                 queue: raw.queue,
                 pool,
@@ -357,15 +361,15 @@ impl RawSubmitter {
         let commands = [cmd];
         let submits = [vk::SubmitInfo::default().command_buffers(&commands)];
         let submitted = {
-            let _lock = submit_lock::lock();
-            // SAFETY: the queue is Daedalus's; the submit lock serializes it with every other
-            // Daedalus submit.
+            let _lock = self.lock.lock();
+            // SAFETY: the queue is Daedalus's; the context's submit lock serializes it with every
+            // other submit on it.
             unsafe { d.queue_submit(self.queue, &submits, slot.fence) }
         };
         if let Err(err) = submitted {
             // Nothing ran, so the fence would never signal and the slot would stay busy. An empty
             // submission signals it once the queue's earlier work has finished.
-            let _lock = submit_lock::lock();
+            let _lock = self.lock.lock();
             // SAFETY: as above; the empty submission only signals the fence.
             let _ = unsafe { d.queue_submit(self.queue, &[], slot.fence) };
             return Err(vk_error(err));

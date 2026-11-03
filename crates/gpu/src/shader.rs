@@ -74,6 +74,7 @@ pub use readback_async::{
 pub use run_output::*;
 pub use storage_pool::{GpuStoragePool, GpuStoragePoolStats};
 pub use submission::{GpuInFlight, GpuTicket};
+pub use submit_lock::{SubmitGuard, SubmitLock};
 pub use types::*;
 
 // Needed by gpu_state and inference helpers.

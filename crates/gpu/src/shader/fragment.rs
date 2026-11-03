@@ -5,6 +5,7 @@
 //! than the same kernel as a compute shader (`gpu_bench` `[image-paths]`), and its ALU throughput
 //! matches the four CPU cores. The same WGSL runs on Mali and desktop GPUs.
 
+use crate::shader::submit_lock::LockedQueue;
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
@@ -78,7 +79,7 @@ pub struct FragmentPass {
     /// One full-target instance per target size.
     full: Mutex<HashMap<(u32, u32), wgpu::Buffer>>,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: LockedQueue,
 }
 
 impl std::fmt::Debug for FragmentPass {
@@ -105,7 +106,7 @@ pub struct FragmentRects {
     capacity: usize,
     count: u32,
     size: (u32, u32),
-    queue: wgpu::Queue,
+    queue: LockedQueue,
     scratch: Vec<u32>,
 }
 
@@ -122,7 +123,7 @@ impl std::fmt::Debug for FragmentRects {
 impl FragmentRects {
     /// Room for `capacity` rectangles. `Unsupported` on a non-wgpu backend.
     pub fn new(gpu: &GpuContextHandle, capacity: usize) -> Result<Self, GpuError> {
-        let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
+        let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
         let capacity = capacity.max(1);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("daedalus-fragment-rects"),
@@ -177,6 +178,7 @@ impl FragmentRects {
         }
         if !self.scratch.is_empty() {
             self.queue
+                .raw()
                 .write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.scratch));
         }
         self.count = rects.len() as u32;
@@ -194,14 +196,14 @@ impl FragmentPass {
         fragment_wgsl: &str,
         targets: &[wgpu::TextureFormat],
     ) -> Result<Self, GpuError> {
-        let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
-        Self::with_device(device, queue, fragment_wgsl, targets)
+        let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
+        Self::with_device(device, &queue, fragment_wgsl, targets)
     }
 
     /// [`FragmentPass::new`] on a device and queue directly.
     pub(super) fn with_device(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &LockedQueue,
         fragment_wgsl: &str,
         targets: &[wgpu::TextureFormat],
     ) -> Result<Self, GpuError> {

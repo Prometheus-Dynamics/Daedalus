@@ -1,5 +1,3 @@
-use crate::shader::submit_lock::WorkDoneLocked;
-use crate::shader::submit_lock::submit_locked;
 use std::io::Write;
 use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
@@ -605,7 +603,9 @@ for (var y = 0u; y < dims.y; y++) {
 
     fn dispatch(&self) {
         let (device, queue) = self.backend.device_queue();
-        queue.write_buffer(&self.spins, 0, &self.iterations.to_le_bytes());
+        queue
+            .raw()
+            .write_buffer(&self.spins, 0, &self.iterations.to_le_bytes());
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
@@ -613,7 +613,7 @@ for (var y = 0u; y < dims.y; y++) {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        submit_locked(queue, Some(encoder.finish()));
+        queue.submit(Some(encoder.finish()));
     }
 
     /// Submit the late write and export a `sync_file` of its completion.
@@ -632,6 +632,7 @@ for (var y = 0u; y < dims.y; y++) {
                 )
                 .expect("exportable semaphore");
             queue
+                .raw()
                 .as_hal::<Vulkan>()
                 .expect("Vulkan queue")
                 .add_signal_semaphore(semaphore, None);
@@ -644,7 +645,7 @@ for (var y = 0u; y < dims.y; y++) {
                 .semaphore(semaphore)
                 .handle_type(SYNC_FD);
             let fd = fd_api.get_semaphore_fd(&info).expect("export sync_file");
-            queue.on_submitted_work_done_locked(move || raw.destroy_semaphore(semaphore, None));
+            queue.on_submitted_work_done(move || raw.destroy_semaphore(semaphore, None));
             OwnedFd::from_raw_fd(fd)
         }
     }

@@ -39,9 +39,10 @@ plugin ABI and does not load.
   then `unsafe submit(record)`, which records between the same full barriers as `submit_raw` and
   returns a `RawTicket` (`try_complete`, `wait`). A steady-state submit and wait allocate nothing:
   17 allocations per frame through `submit_raw` before, 0 after. Every Daedalus `queue.submit`
-  now takes one process-wide submit lock, and so do the `on_submitted_work_done` and `map_async`
-  calls that flush pending writes, so a raw submit never overlaps one. While a `RawSubmitter`
-  exists, code outside Daedalus must not submit on its device. `GpuContextHandle::flush_uploads()`
+  takes the context's submit lock, and so do the `on_submitted_work_done` and `map_async` calls
+  that flush pending writes, so a raw submit never overlaps one. While a `RawSubmitter` exists,
+  code outside Daedalus submits on its device only through `GpuContextHandle::submit` or under
+  `GpuContextHandle::submit_lock`. `GpuContextHandle::flush_uploads()`
   submits pending `write_buffer` data (`GpuStorage::with_data` included), which raw commands
   otherwise do not see.
 - **Shared nodes for the MCU profile.** `#[daedalus_mcu::node(.., runtime = "feature")]` makes one
@@ -529,6 +530,15 @@ plugin ABI and does not load.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
+- `daedalus-gpu`: the queue submit lock belongs to the GPU context instead of a process-wide
+  static, so a plugin `cdylib` (its own copy of `daedalus-gpu`, with its own statics) holding the
+  host's `GpuContextHandle` takes the host's lock. It is a `std` mutex, which waits on the mutex
+  word itself; a `parking_lot` mutex parks waiters in a table that each copy of the crate has
+  separately. New: `GpuContextHandle::submit(commands)` (a submit under the lock, for wgpu users
+  sharing the device, such as Eidos's direct `queue.submit` calls), `GpuContextHandle::submit_lock()`
+  (`SubmitLock` / `SubmitGuard`, to hold around other submitting calls), and
+  `GpuBackend::wgpu_submit_lock`. `GpuTicket::submit_on` is crate-private; `GpuTicket::submit`
+  covers it.
 - `daedalus-gpu`: the dma-buf basics come from Lemnos (`lemnos-linux`, feature `dma`, a git
   dependency on Lemnos `dev`, Linux only): the system dma-heap behind host-cached storage on
   devices without host-cached memory (v3dv), `DMA_BUF_IOCTL_SYNC` around its CPU access, the

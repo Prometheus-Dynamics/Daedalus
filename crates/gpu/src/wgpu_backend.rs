@@ -1,4 +1,4 @@
-use crate::shader::submit_lock::MapAsyncLocked;
+use crate::shader::submit_lock::{LockedQueue, SubmitLock};
 use parking_lot::{Mutex, MutexGuard};
 use std::sync::Arc;
 
@@ -54,7 +54,8 @@ pub struct WgpuBackend {
     _features: Features,
     _limits: Limits,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    /// The queue with the context's submit lock (see `shader::submit_lock`).
+    queue: LockedQueue,
     resources: Arc<WgpuResources>,
     staging_pool: Mutex<StagingPool>,
     copy_limiter: CopyLimiter,
@@ -189,6 +190,7 @@ impl WgpuBackend {
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
         drop(driver);
         caps.compute.features = capabilities::compute_features(device.features());
+        let queue = LockedQueue::new(queue, SubmitLock::default());
         let (dmabuf_support, dmabuf) = dmabuf::probe(&device, &queue);
 
         let device_key = crate::shader::register_device(&device);
@@ -238,7 +240,7 @@ impl WgpuBackend {
         }
     }
 
-    pub(crate) fn device_queue(&self) -> (&wgpu::Device, &wgpu::Queue) {
+    pub(crate) fn device_queue(&self) -> (&wgpu::Device, &LockedQueue) {
         (&self.device, &self.queue)
     }
 
@@ -340,7 +342,11 @@ impl GpuBackend for WgpuBackend {
     }
 
     fn wgpu_device_queue(&self) -> Option<(&wgpu::Device, &wgpu::Queue)> {
-        Some((&self.device, &self.queue))
+        Some((&self.device, self.queue.raw()))
+    }
+
+    fn wgpu_submit_lock(&self) -> Option<&SubmitLock> {
+        Some(self.queue.submit_lock())
     }
 
     fn dmabuf_import_support(&self) -> crate::ExternalImportSupport {
@@ -539,7 +545,7 @@ impl GpuBackend for WgpuBackend {
                 height: req.height,
                 depth_or_array_layers: 1,
             };
-            self.queue.write_texture(
+            self.queue.raw().write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &tex,
                     mip_level: 0,
@@ -563,9 +569,10 @@ impl GpuBackend for WgpuBackend {
         self.submit_texture_readback(&tex, &staging, handle, padded_bpr);
         let slice = staging.slice(..staging_size(size));
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async_locked(wgpu::MapMode::Read, move |res| {
-            let _ = tx.send(res);
-        });
+        self.queue
+            .map_async(slice, wgpu::MapMode::Read, move |res| {
+                let _ = tx.send(res);
+            });
         // Synchronous texture readback is a compatibility API and may block the
         // current thread. Async runtimes should use `GpuAsyncBackend` readback
         // methods with the `gpu-async` feature instead.
@@ -598,7 +605,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
         let _guard = self.copy_limiter.acquire_async().await;
         let handle = self.create_buffer(req)?;
         if let Some(buf) = self.resources.buffers.lock().get(&handle.id).cloned() {
-            self.queue.write_buffer(&buf, 0, data);
+            self.queue.raw().write_buffer(&buf, 0, data);
         }
         Ok(handle)
     }
@@ -619,9 +626,9 @@ impl crate::GpuAsyncBackend for WgpuBackend {
                 label: Some("readback-encoder"),
             });
         encoder.copy_buffer_to_buffer(&buf, 0, &staging, 0, handle.size_bytes);
-        crate::shader::submit_lock::submit_locked(&self.queue, Some(encoder.finish()));
+        self.queue.submit(Some(encoder.finish()));
         let buffer_slice = staging.slice(..staging_size(handle.size_bytes));
-        crate::shader::map_read_async(&self.device, buffer_slice)
+        crate::shader::map_read_async(&self.device, &self.queue, buffer_slice)
             .await
             .map_err(|err| GpuError::Internal(format!("map failed: {err}")))?;
         let data = {
@@ -651,7 +658,7 @@ impl crate::GpuAsyncBackend for WgpuBackend {
         let _guard = self.copy_limiter.acquire_async().await;
         self.submit_texture_readback(&tex, &staging, handle, padded_bpr);
         let buffer_slice = staging.slice(..staging_size(size));
-        crate::shader::map_read_async(&self.device, buffer_slice)
+        crate::shader::map_read_async(&self.device, &self.queue, buffer_slice)
             .await
             .map_err(|err| GpuError::Internal(format!("texture map failed: {err}")))?;
         let data = {

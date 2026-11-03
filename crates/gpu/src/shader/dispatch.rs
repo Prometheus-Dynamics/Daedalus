@@ -1,4 +1,3 @@
-use crate::shader::submit_lock::submit_locked;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "gpu-async")]
@@ -408,7 +407,7 @@ pub fn dispatch_shader_with_options(
 ) -> Result<ShaderRunOutput, GpuError> {
     let (device, queue, backend_handle, submission_tracker) = if let Some(gpu_ctx) = gpu_ctx {
         let backend = gpu_ctx.backend_ref();
-        let (device, queue) = backend.wgpu_device_queue().ok_or(GpuError::Unsupported)?;
+        let (device, queue) = gpu_ctx.wgpu_locked().ok_or(GpuError::Unsupported)?;
         (
             device,
             queue,
@@ -419,7 +418,7 @@ pub fn dispatch_shader_with_options(
         let ctx = ctx()?;
         (
             ctx.device.as_ref(),
-            ctx.queue.as_ref(),
+            ctx.queue.clone(),
             None,
             Some(ctx.submission_tracker.as_ref()),
         )
@@ -439,7 +438,7 @@ pub fn dispatch_shader_with_options(
 
     let prepared = prepare_resources(
         device,
-        queue,
+        queue.raw(),
         backend_handle,
         bindings,
         layout_bindings.as_ref(),
@@ -486,7 +485,7 @@ pub fn dispatch_shader_with_options(
     let (readbacks, pool_textures_to_return, texture_handles) =
         enqueue_readbacks(device, &prepared, &mut encoder);
 
-    let submission_idx = submit_locked(queue, Some(encoder.finish()));
+    let submission_idx = queue.submit(Some(encoder.finish()));
     if let Some(tracker) = submission_tracker {
         tracker.track_and_throttle(device, submission_idx);
     } else {
@@ -497,7 +496,7 @@ pub fn dispatch_shader_with_options(
         let _ = device.poll(wgpu::PollType::Poll);
     }
 
-    let result = resolve_readbacks(device, readbacks)?;
+    let result = resolve_readbacks(device, &queue, readbacks)?;
     return_pooled_textures(pool_textures_to_return);
 
     Ok(ShaderRunOutput {

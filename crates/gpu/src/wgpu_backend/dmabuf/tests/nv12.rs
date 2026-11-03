@@ -1,5 +1,3 @@
-use crate::shader::submit_lock::MapAsyncLocked;
-use crate::shader::submit_lock::submit_locked;
 use std::os::fd::AsFd;
 
 use super::support::{DmaBuf, device_poll, exclusive, import_backend, note, skip};
@@ -215,10 +213,10 @@ out[id.y * dims.x + id.x] = u32(round(y * 255.0))
         pass.dispatch_workgroups(handle.width.div_ceil(8), handle.height.div_ceil(8), 1);
     }
     encoder.copy_buffer_to_buffer(&out, 0, &readback, 0, size);
-    submit_locked(queue, Some(encoder.finish()));
-    readback
-        .slice(..)
-        .map_async_locked(wgpu::MapMode::Read, |res| res.expect("map"));
+    queue.submit(Some(encoder.finish()));
+    queue.map_async(readback.slice(..), wgpu::MapMode::Read, |res| {
+        res.expect("map")
+    });
     device_poll(backend);
     let view = readback.slice(..).get_mapped_range().expect("mapped range");
     let words = bytemuck::cast_slice::<u8, u32>(&view).to_vec();

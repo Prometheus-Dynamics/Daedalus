@@ -1,5 +1,4 @@
-use crate::shader::submit_lock::MapAsyncLocked;
-use crate::shader::submit_lock::submit_locked;
+use crate::shader::submit_lock::LockedQueue;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -85,7 +84,7 @@ pub struct GpuState<T: bytemuck::Pod + Copy> {
     buffer: Arc<wgpu::Buffer>,
     size: u64,
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: LockedQueue,
     device_key: usize,
     _marker: std::marker::PhantomData<T>,
 }
@@ -93,7 +92,7 @@ pub struct GpuState<T: bytemuck::Pod + Copy> {
 impl<T: bytemuck::Pod + Copy> GpuState<T> {
     pub fn new(initial: T) -> Result<Self, GpuError> {
         let ctx = ctx()?;
-        Self::new_with_device(initial, ctx.device.as_ref(), ctx.queue.as_ref())
+        Self::new_with_device(initial, ctx.device.as_ref(), &ctx.queue)
     }
 
     #[cfg(feature = "gpu-wgpu")]
@@ -111,7 +110,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
     fn new_with_device(
         initial: T,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &LockedQueue,
     ) -> Result<Self, GpuError> {
         let size = std::mem::size_of::<T>() as u64;
         let usage = wgpu::BufferUsages::STORAGE
@@ -121,7 +120,9 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
             .lock()
             .take(super::device_key(device), size, usage);
         let buffer = if let Some(buf) = pooled {
-            queue.write_buffer(buf.as_ref(), 0, bytemuck::bytes_of(&initial));
+            queue
+                .raw()
+                .write_buffer(buf.as_ref(), 0, bytemuck::bytes_of(&initial));
             buf
         } else {
             let buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -130,7 +131,9 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
                 usage,
                 mapped_at_creation: false,
             });
-            queue.write_buffer(&buf, 0, bytemuck::bytes_of(&initial));
+            queue
+                .raw()
+                .write_buffer(&buf, 0, bytemuck::bytes_of(&initial));
             Arc::new(buf)
         };
         Ok(Self {
@@ -165,7 +168,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
                 label: Some("gpu-state-readback-encoder"),
             });
         encoder.copy_buffer_to_buffer(self.buffer.as_ref(), 0, &staging, 0, self.size);
-        submit_locked(&self.queue, [encoder.finish()]);
+        self.queue.submit([encoder.finish()]);
         staging
     }
 
@@ -186,9 +189,10 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
         let staging = self.copy_to_staging();
         let slice = staging.slice(..staging_size(self.size));
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async_locked(wgpu::MapMode::Read, move |res| {
-            let _ = tx.send(res);
-        });
+        self.queue
+            .map_async(slice, wgpu::MapMode::Read, move |res| {
+                let _ = tx.send(res);
+            });
         let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
@@ -207,7 +211,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
     pub async fn read_async(&self) -> Result<T, GpuError> {
         let staging = self.copy_to_staging();
         let slice = staging.slice(..staging_size(self.size));
-        super::map_read_async(&self.device, slice).await?;
+        super::map_read_async(&self.device, &self.queue, slice).await?;
         let val = self.value_from_mapped(slice)?;
         staging.unmap();
         self.return_staging(staging);
@@ -217,6 +221,7 @@ impl<T: bytemuck::Pod + Copy> GpuState<T> {
     /// Write a new value to the GPU buffer.
     pub fn write(&self, value: T) -> Result<(), GpuError> {
         self.queue
+            .raw()
             .write_buffer(&self.buffer, 0, bytemuck::bytes_of(&value));
         Ok(())
     }

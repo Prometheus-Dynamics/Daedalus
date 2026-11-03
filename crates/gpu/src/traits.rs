@@ -73,6 +73,13 @@ pub trait GpuBackend: Send + Sync {
         None
     }
 
+    /// The lock around every submit on the queue of [`Self::wgpu_device_queue`]; see
+    /// [`crate::GpuContextHandle::submit_lock`].
+    #[cfg(feature = "gpu-wgpu")]
+    fn wgpu_submit_lock(&self) -> Option<&crate::SubmitLock> {
+        None
+    }
+
     #[cfg(feature = "gpu-wgpu")]
     fn wgpu_submission_tracker(&self) -> Option<&SubmissionTracker> {
         None

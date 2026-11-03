@@ -47,7 +47,7 @@ pub(super) fn set_fence_mode(
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
 pub(super) fn probe(
     _device: &wgpu::Device,
-    _queue: &wgpu::Queue,
+    _queue: &crate::shader::submit_lock::LockedQueue,
 ) -> (crate::ExternalImportSupport, ImportState) {
     let reason = if cfg!(target_os = "linux") {
         "daedalus-gpu was built without the `gpu-dmabuf` feature"

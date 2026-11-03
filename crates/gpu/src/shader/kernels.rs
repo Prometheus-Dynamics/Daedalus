@@ -3,7 +3,7 @@
 //! readback, after a decode). Whether they beat the CPU kernels depends on the device: the
 //! matrix records the measured times, and the caller chooses.
 
-use crate::shader::submit_lock::MapAsyncLocked;
+use crate::shader::submit_lock::LockedQueue;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -127,7 +127,7 @@ fn crc_table() -> Vec<u8> {
 /// installed pipeline cache).
 pub struct GpuKernels {
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: LockedQueue,
     module: wgpu::ShaderModule,
     layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
@@ -176,7 +176,7 @@ fn entry(binding: u32, read_only: bool, min: u64) -> wgpu::BindGroupLayoutEntry 
 impl GpuKernels {
     /// The kernels on `gpu`'s device. `Unsupported` on a non-wgpu backend.
     pub fn new(gpu: &GpuContextHandle) -> Result<Self, GpuError> {
-        let (device, queue) = gpu.wgpu().ok_or(GpuError::Unsupported)?;
+        let (device, queue) = gpu.wgpu_locked().ok_or(GpuError::Unsupported)?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("daedalus-kernels"),
@@ -649,9 +649,10 @@ impl GpuKernels {
         encoder.copy_buffer_to_buffer(&status, 0, &readback, 0, 8);
         GpuTicket::submit_on(&self.device, &self.queue, [encoder.finish()]).wait();
         let (tx, rx) = std::sync::mpsc::channel();
-        readback
-            .slice(..)
-            .map_async_locked(wgpu::MapMode::Read, move |r| drop(tx.send(r)));
+        self.queue
+            .map_async(readback.slice(..), wgpu::MapMode::Read, move |r| {
+                drop(tx.send(r))
+            });
         let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,

@@ -5,7 +5,6 @@
 //! metadata), and drops it (release to the foreign family). A second device then imports it from
 //! the dmabuf and reads it back.
 
-use crate::shader::submit_lock::submit_locked;
 use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 
 use ash::{khr, vk};
@@ -464,5 +463,5 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {{
         pass.set_scissor_rect(0, 0, WIDTH / 2, HEIGHT);
         pass.draw(0..3, 0..1);
     }
-    submit_locked(queue, Some(encoder.finish()));
+    queue.submit(Some(encoder.finish()));
 }

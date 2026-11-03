@@ -1,4 +1,4 @@
-use crate::shader::submit_lock::MapAsyncLocked;
+use crate::shader::submit_lock::LockedQueue;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::poll_fn;
@@ -60,13 +60,15 @@ struct MapState {
 
 fn begin_map_read_async(
     device: &wgpu::Device,
+    queue: &LockedQueue,
     slice: wgpu::BufferSlice<'_>,
 ) -> impl std::future::Future<Output = Result<(), GpuError>> + Send + 'static {
-    begin_map_read_async_with_state(device, slice, true).1
+    begin_map_read_async_with_state(device, queue, slice, true).1
 }
 
 fn begin_map_read_async_with_state(
     device: &wgpu::Device,
+    queue: &LockedQueue,
     slice: wgpu::BufferSlice<'_>,
     spawn_poller: bool,
 ) -> (
@@ -85,7 +87,7 @@ fn begin_map_read_async_with_state(
         waker: None,
     }));
 
-    slice.map_async_locked(wgpu::MapMode::Read, {
+    queue.map_async(slice, wgpu::MapMode::Read, {
         let state = Arc::clone(&state);
         move |res| {
             let result = res.map_err(|error| GpuError::Internal(format!("map failed: {error:?}")));
@@ -189,13 +191,15 @@ fn submit_map_poll_job_with_timeout(
 
 pub(crate) async fn map_read_async(
     device: &wgpu::Device,
+    queue: &LockedQueue,
     slice: wgpu::BufferSlice<'_>,
 ) -> Result<(), GpuError> {
-    begin_map_read_async(device, slice).await
+    begin_map_read_async(device, queue, slice).await
 }
 
 pub(crate) async fn resolve_readbacks_async(
     device: &wgpu::Device,
+    queue: &LockedQueue,
     readbacks: Vec<ReadbackRequest>,
 ) -> Result<HashMap<u32, Vec<u8>>, GpuError> {
     let device_key = super::device_key(device);
@@ -210,7 +214,7 @@ pub(crate) async fn resolve_readbacks_async(
         .iter()
         .map(|readback| {
             let range = readback.buffer.slice(..staging_size(readback.size));
-            begin_map_read_async_with_state(device, range, false)
+            begin_map_read_async_with_state(device, queue, range, false)
         })
         .collect();
     submit_map_poll_job(
