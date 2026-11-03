@@ -9,21 +9,26 @@
 //! (`cudaImportExternalMemory`), which would need both backends on one device.
 
 mod device;
+mod external;
 mod ffi;
+mod image;
 mod ptx;
 
 use std::collections::HashMap;
+use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::handles::GpuDropToken;
 use crate::{
     GpuAdapterInfo, GpuBackend, GpuBackendKind, GpuBufferHandle, GpuBufferId, GpuCapabilities,
-    GpuComputeCaps, GpuContextHandle, GpuError, GpuImageHandle, GpuImageRequest, GpuMemoryLocation,
-    GpuOptions, GpuRequest, GpuUsage, TransferStats,
+    GpuComputeCaps, GpuContextHandle, GpuError, GpuImageHandle, GpuImageId, GpuImageRequest,
+    GpuMemoryLocation, GpuOptions, GpuRequest, GpuUsage, TransferStats,
 };
 use device::{CudaDevice, DeviceMemory};
+use image::DeviceImage;
 
 pub use device::CudaFence;
+pub use external::CudaImport;
 
 /// The NVIDIA vendor's PCI id.
 const NVIDIA_VENDOR_ID: u32 = 0x10DE;
@@ -38,6 +43,8 @@ pub struct CudaBackend {
     caps: GpuCapabilities,
     /// Live device buffers by id; weak, so a buffer's memory goes with its last handle.
     live: Mutex<HashMap<GpuBufferId, Weak<DeviceMemory>>>,
+    /// Live CUDA images by id, weak like `live`.
+    live_images: Mutex<HashMap<GpuImageId, Weak<DeviceImage>>>,
     stats: Mutex<TransferStats>,
 }
 
@@ -70,6 +77,7 @@ impl CudaBackend {
             adapter,
             caps,
             live: Mutex::new(HashMap::new()),
+            live_images: Mutex::new(HashMap::new()),
             stats: Mutex::new(TransferStats::default()),
         })
     }
@@ -110,6 +118,52 @@ impl CudaBackend {
         let count = u32::try_from(mem.bytes / 4)
             .map_err(|_| GpuError::InvalidInput("buffer too large for scale_f32".into()))?;
         self.dev.scale_f32(&mem, count, factor)
+    }
+
+    /// Import memory exported as an opaque fd of `bytes` (a Vulkan `vkGetMemoryFdKHR` of an
+    /// allocation on the same GPU, see [`CudaBackend::device_uuid`]) as a device buffer of this
+    /// backend, without a copy. The driver consumes the fd; on failure the error carries the
+    /// driver's code. Imports are not counted in [`TransferStats`]: nothing moves.
+    pub fn import_opaque_fd(&self, fd: OwnedFd, bytes: u64) -> Result<CudaImport, GpuError> {
+        self.dev.import_opaque_fd(fd, bytes)
+    }
+
+    /// This device's UUID: the Vulkan `deviceUUID` of the same GPU, which is how a caller finds
+    /// the wgpu device that can share memory with this backend.
+    pub fn device_uuid(&self) -> Result<[u8; 16], GpuError> {
+        self.dev.uuid()
+    }
+
+    /// The image of `handle`, which must be a live CUDA image of this backend.
+    fn image(&self, handle: &GpuImageHandle) -> Result<Arc<DeviceImage>, GpuError> {
+        self.live_images
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&handle.id)
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| {
+                GpuError::InvalidInput(format!(
+                    "image {} is not a live CUDA image of this backend",
+                    handle.id
+                ))
+            })
+    }
+
+    /// A handle for `img`, which lives as long as the handle does.
+    fn register_image(&self, req: &GpuImageRequest, img: Arc<DeviceImage>) -> GpuImageHandle {
+        let mut handle = GpuImageHandle::new(
+            req.format,
+            req.width,
+            req.height,
+            GpuMemoryLocation::Gpu,
+            req.usage,
+        );
+        let token: Arc<dyn GpuDropToken> = Arc::clone(&img) as Arc<dyn GpuDropToken>;
+        handle.drop_token = Some(token);
+        let mut live = self.live_images.lock().unwrap_or_else(|e| e.into_inner());
+        live.retain(|_, weak| weak.strong_count() > 0);
+        live.insert(handle.id, Arc::downgrade(&img));
+        handle
     }
 
     fn alloc(&self, bytes: u64, usage: GpuUsage) -> Result<GpuBufferHandle, GpuError> {
@@ -207,8 +261,33 @@ impl GpuBackend for CudaBackend {
         self.alloc(req.size_bytes, req.usage)
     }
 
-    fn create_image(&self, _req: &GpuImageRequest) -> Result<GpuImageHandle, GpuError> {
-        Err(GpuError::Unsupported)
+    fn create_image(&self, req: &GpuImageRequest) -> Result<GpuImageHandle, GpuError> {
+        if req.samples > 1 {
+            return Err(GpuError::Unsupported);
+        }
+        let img = self.dev.alloc_image(req.format, req.width, req.height)?;
+        Ok(self.register_image(req, img))
+    }
+
+    fn upload_texture(
+        &self,
+        req: &GpuImageRequest,
+        data: &[u8],
+    ) -> Result<GpuImageHandle, GpuError> {
+        if req.samples > 1 {
+            return Err(GpuError::Unsupported);
+        }
+        let img = self.dev.alloc_image(req.format, req.width, req.height)?;
+        self.dev.image_upload(&img, data)?;
+        self.with_stats(|s| s.record_upload(data.len() as u64));
+        Ok(self.register_image(req, img))
+    }
+
+    fn read_texture(&self, handle: &GpuImageHandle) -> Result<Vec<u8>, GpuError> {
+        let img = self.image(handle)?;
+        let out = self.dev.image_download(&img)?;
+        self.with_stats(|s| s.record_download(out.len() as u64));
+        Ok(out)
     }
 
     fn stats(&self) -> TransferStats {

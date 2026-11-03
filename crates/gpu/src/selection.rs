@@ -87,6 +87,21 @@ pub fn shared_context(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
     Ok(handle)
 }
 
+/// A wgpu context on the best adapter of PCI vendor `vendor` (`0x10DE` is NVIDIA), for code that
+/// shares a device with another API, such as CUDA interop (see `GpuBackendKind::Cuda`). It is
+/// not the shared device: each call opens its own.
+#[cfg(feature = "gpu-wgpu")]
+pub fn select_wgpu_on_vendor(vendor: u32) -> Result<GpuContextHandle, GpuError> {
+    let backend = WgpuBackend::new_on_vendor(vendor)?;
+    let adapter = crate::GpuBackend::adapter_info(&backend);
+    Ok(GpuContextHandle {
+        chosen: GpuBackendKind::Wgpu,
+        adapter,
+        skipped: Vec::new(),
+        backend: Arc::new(backend),
+    })
+}
+
 /// The process's GPU device if one is open (made by [`shared_context`] and still held), without
 /// opening one.
 pub fn process_context() -> Option<GpuContextHandle> {

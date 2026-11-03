@@ -108,3 +108,7 @@ required-features = ["gpu-vulkan-raw"]
 [[test]]
 name = "cuda_device"
 required-features = ["gpu-cuda"]
+
+[[test]]
+name = "cuda_interop"
+required-features = ["gpu-cuda", "gpu-vulkan-raw"]

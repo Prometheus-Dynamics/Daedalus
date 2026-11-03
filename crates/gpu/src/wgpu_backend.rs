@@ -90,6 +90,26 @@ impl WgpuBackend {
         }
     }
 
+    /// The wgpu backend on the best adapter of PCI vendor `vendor` (`0x10DE` is NVIDIA), for code
+    /// that shares a device with another API (CUDA interop). Fails when no such adapter opens.
+    /// Synchronous, like [`WgpuBackend::new`].
+    pub fn new_on_vendor(vendor: u32) -> Result<Self, GpuError> {
+        let staging_config = WgpuStagingPoolConfig::from_env().map_err(GpuError::Internal)?;
+        let res = std::panic::catch_unwind(|| {
+            Self::new_selected_async(
+                staging_config,
+                None,
+                crate::GpuMemoryHints::Auto,
+                Some(vendor),
+            )
+            .block_on()
+        });
+        match res {
+            Ok(ok) => ok,
+            Err(_) => Err(GpuError::AdapterUnavailable),
+        }
+    }
+
     /// Create a wgpu backend with explicit staging-pool config using the synchronous compatibility
     /// path.
     ///
@@ -119,20 +139,21 @@ impl WgpuBackend {
         memory_hints: crate::GpuMemoryHints,
     ) -> Result<Self, GpuError> {
         let staging_config = WgpuStagingPoolConfig::from_env().map_err(GpuError::Internal)?;
-        Self::new_selected_async(staging_config, requested, memory_hints).await
+        Self::new_selected_async(staging_config, requested, memory_hints, None).await
     }
 
     /// Creates the wgpu backend with a staging-pool configuration, asynchronously.
     pub async fn new_with_staging_pool_config_async(
         staging_config: WgpuStagingPoolConfig,
     ) -> Result<Self, GpuError> {
-        Self::new_selected_async(staging_config, None, crate::GpuMemoryHints::Auto).await
+        Self::new_selected_async(staging_config, None, crate::GpuMemoryHints::Auto, None).await
     }
 
     async fn new_selected_async(
         staging_config: WgpuStagingPoolConfig,
         requested: Option<GpuBackends>,
         memory_hints: crate::GpuMemoryHints,
+        vendor: Option<u32>,
     ) -> Result<Self, GpuError> {
         let adapters = {
             let driver = driver_lock();
@@ -141,6 +162,9 @@ impl WgpuBackend {
             let mut adapters: Vec<Adapter> = instance.enumerate_adapters(preferred_backends).await;
             if adapters.is_empty() && preferred_backends != Backends::all() {
                 adapters = instance.enumerate_adapters(Backends::all()).await;
+            }
+            if let Some(vendor) = vendor {
+                adapters.retain(|a| a.get_info().vendor == vendor);
             }
             rank_adapters(adapters)
         };

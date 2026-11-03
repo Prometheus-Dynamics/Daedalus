@@ -30,10 +30,10 @@ pub(crate) struct CudaDevice {
     pub(crate) name: String,
     pub(crate) compute: (i32, i32),
     pub(crate) total_mem: u64,
-    dev: CuDevice,
+    pub(crate) dev: CuDevice,
     // Null until created; `Drop` releases only what was created, so a failed `open` cleans up.
     ctx: CuContext,
-    stream: CuStream,
+    pub(crate) stream: CuStream,
     module: CuModule,
     scale: CuFunction,
 }
@@ -223,8 +223,19 @@ impl CudaDevice {
                 mem.bytes
             )));
         }
+        self.launch_scale(mem.ptr, count, factor)
+    }
+
+    /// Queue `data[i] *= factor` over `count` f32 at the device pointer `data` (memory of this
+    /// device: its own, or an import of external memory), and record a fence after it.
+    pub(crate) fn launch_scale(
+        self: &Arc<Self>,
+        data: CuDeviceptr,
+        count: u32,
+        factor: f32,
+    ) -> Result<CudaFence, GpuError> {
         self.make_current()?;
-        let mut data = mem.ptr;
+        let mut data = data;
         let mut n = count;
         let mut k = factor;
         let mut params: [*mut c_void; 3] = [

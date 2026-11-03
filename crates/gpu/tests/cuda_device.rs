@@ -101,3 +101,81 @@ fn select_backend_opens_cuda_when_it_is_preferred() {
     let cuda = ctx.cuda().expect("the CUDA backend");
     assert!(cuda.compute_capability().0 >= 1);
 }
+
+/// Bytes per texel of the formats the CUDA image test covers.
+fn texel_bytes(format: daedalus_gpu::GpuFormat) -> usize {
+    use daedalus_gpu::GpuFormat;
+    match format {
+        GpuFormat::R8Unorm => 1,
+        GpuFormat::Rg8Unorm => 2,
+        GpuFormat::Rgba16Float => 8,
+        _ => 4,
+    }
+}
+
+/// Upload to a CUDA array and read it back: the bytes match, row by row, in each format.
+#[test]
+fn an_image_round_trips_through_a_cuda_array() {
+    use daedalus_gpu::{GpuFormat, GpuImageRequest, GpuUsage};
+    let Some(cuda) = cuda_or_skip("an_image_round_trips_through_a_cuda_array") else {
+        return;
+    };
+    for (format, width, height) in [
+        (GpuFormat::R8Unorm, 5u32, 3u32),
+        (GpuFormat::Rg8Unorm, 7, 2),
+        (GpuFormat::Rgba8Unorm, 9, 4),
+        (GpuFormat::Rgba16Float, 3, 2),
+    ] {
+        let req = GpuImageRequest {
+            format,
+            width,
+            height,
+            samples: 1,
+            usage: GpuUsage::UPLOAD | GpuUsage::DOWNLOAD,
+        };
+        let row = width as usize * texel_bytes(format);
+        let data: Vec<u8> = (0..row * height as usize)
+            .map(|i| (i * 7 % 251) as u8)
+            .collect();
+        let before = cuda.stats();
+        let image = cuda.upload_texture(&req, &data).expect("upload");
+        let back = cuda.read_texture(&image).expect("read");
+        assert_eq!(back, data, "{format:?}");
+        let stats = cuda.stats();
+        assert_eq!(
+            stats.bytes_uploaded - before.bytes_uploaded,
+            data.len() as u64
+        );
+        assert_eq!(
+            stats.bytes_downloaded - before.bytes_downloaded,
+            data.len() as u64
+        );
+    }
+}
+
+#[test]
+fn an_image_refuses_a_wrong_size_and_an_unsupported_format() {
+    use daedalus_gpu::{GpuFormat, GpuImageRequest, GpuUsage};
+    let Some(cuda) = cuda_or_skip("an_image_refuses_a_wrong_size_and_an_unsupported_format") else {
+        return;
+    };
+    let req = GpuImageRequest {
+        format: GpuFormat::Rgba8Unorm,
+        width: 4,
+        height: 4,
+        samples: 1,
+        usage: GpuUsage::UPLOAD,
+    };
+    assert!(matches!(
+        cuda.upload_texture(&req, &[0u8; 15]),
+        Err(GpuError::InvalidInput(_))
+    ));
+    let depth = GpuImageRequest {
+        format: GpuFormat::Depth24Stencil8,
+        ..req
+    };
+    assert!(matches!(
+        cuda.create_image(&depth),
+        Err(GpuError::Unsupported)
+    ));
+}

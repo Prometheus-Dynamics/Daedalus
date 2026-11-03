@@ -20,6 +20,8 @@ mod cuda;
 mod device_profile;
 mod external;
 mod handles;
+#[cfg(all(feature = "gpu-vulkan-raw", feature = "gpu-cuda", target_os = "linux"))]
+pub mod interop;
 mod kind;
 mod memory_hints;
 #[cfg(feature = "gpu-mock")]
@@ -43,7 +45,7 @@ pub use compute_caps::{GpuComputeCaps, GpuComputeFeatures};
 pub use convert::dynamic_to_rgba8;
 pub use convert::{Backing, Compute, DeviceBridge};
 #[cfg(feature = "gpu-cuda")]
-pub use cuda::{CudaBackend, CudaFence};
+pub use cuda::{CudaBackend, CudaFence, CudaImport};
 pub use device_profile::{GpuDeviceProfile, GpuFamily, vendor_ids};
 pub use external::{
     AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, DRM_FORMAT_MOD_INVALID,
@@ -65,6 +67,8 @@ pub use mock::MockImportRecord;
 pub use noop::NoopBackend;
 #[cfg(feature = "gpu-async")]
 pub use selection::select_backend_async;
+#[cfg(feature = "gpu-wgpu")]
+pub use selection::select_wgpu_on_vendor;
 pub use selection::{devices_created, process_context, select_backend, shared_context};
 #[cfg(feature = "gpu-wgpu")]
 pub use shader::{

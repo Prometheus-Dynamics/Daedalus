@@ -19,6 +19,8 @@ pub(crate) type CuModule = *mut c_void;
 pub(crate) type CuFunction = *mut c_void;
 pub(crate) type CuStream = *mut c_void;
 pub(crate) type CuEvent = *mut c_void;
+pub(crate) type CuExternalMemory = *mut c_void;
+pub(crate) type CuArray = *mut c_void;
 
 pub(crate) const CUDA_SUCCESS: CuResult = 0;
 /// `CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR` and `_MINOR`.
@@ -28,6 +30,81 @@ pub(crate) const ATTR_COMPUTE_MINOR: c_int = 76;
 pub(crate) const STREAM_NON_BLOCKING: c_uint = 0x1;
 /// `CU_EVENT_DISABLE_TIMING`: fences need no timestamps.
 pub(crate) const EVENT_DISABLE_TIMING: c_uint = 0x2;
+/// `CU_AD_FORMAT_UNSIGNED_INT8` and `CU_AD_FORMAT_HALF`: the texel formats of the CUDA images.
+pub(crate) const AD_FORMAT_UNSIGNED_INT8: c_uint = 0x01;
+pub(crate) const AD_FORMAT_HALF: c_uint = 0x10;
+/// `CU_MEMORYTYPE_HOST` and `CU_MEMORYTYPE_ARRAY`: the ends of a 2D copy.
+pub(crate) const MEMORYTYPE_HOST: c_uint = 0x01;
+pub(crate) const MEMORYTYPE_ARRAY: c_uint = 0x03;
+/// `CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD`: a memory fd from `vkGetMemoryFdKHR` (Linux).
+pub(crate) const EXTERNAL_MEMORY_OPAQUE_FD: c_uint = 1;
+
+/// `CUuuid`: a device's 16-byte UUID, as `VkPhysicalDeviceIDProperties::deviceUUID` spells it.
+#[repr(C)]
+pub(crate) struct CuUuid {
+    pub(crate) bytes: [u8; 16],
+}
+
+/// The handle of a `CUDA_EXTERNAL_MEMORY_HANDLE_DESC`: an fd for `OPAQUE_FD` (the other members
+/// are the Windows and NvSci forms, here only to give the union its size).
+#[repr(C)]
+pub(crate) union ExternalMemoryHandle {
+    pub(crate) fd: c_int,
+    pub(crate) win32: [*mut c_void; 2],
+    pub(crate) nv_sci_buf: *const c_void,
+}
+
+/// `CUDA_EXTERNAL_MEMORY_HANDLE_DESC` of cuda.h (104 bytes): the handle type, the handle, the size
+/// of the memory, the flags, and the reserved words cuda.h keeps zeroed.
+#[repr(C)]
+pub(crate) struct ExternalMemoryHandleDesc {
+    pub(crate) handle_type: c_uint,
+    pub(crate) handle: ExternalMemoryHandle,
+    pub(crate) size: u64,
+    pub(crate) flags: c_uint,
+    pub(crate) reserved: [c_uint; 16],
+}
+
+/// `CUDA_ARRAY3D_DESCRIPTOR` of cuda.h: a 2D array has depth 0.
+#[repr(C)]
+pub(crate) struct ArrayDesc {
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) depth: usize,
+    pub(crate) format: c_uint,
+    pub(crate) num_channels: c_uint,
+    pub(crate) flags: c_uint,
+}
+
+/// `CUDA_MEMCPY2D` of cuda.h: a copy of rows between host memory, device memory or an array.
+#[repr(C)]
+pub(crate) struct Memcpy2d {
+    pub(crate) src_x_in_bytes: usize,
+    pub(crate) src_y: usize,
+    pub(crate) src_memory_type: c_uint,
+    pub(crate) src_host: *const c_void,
+    pub(crate) src_device: CuDeviceptr,
+    pub(crate) src_array: CuArray,
+    pub(crate) src_pitch: usize,
+    pub(crate) dst_x_in_bytes: usize,
+    pub(crate) dst_y: usize,
+    pub(crate) dst_memory_type: c_uint,
+    pub(crate) dst_host: *mut c_void,
+    pub(crate) dst_device: CuDeviceptr,
+    pub(crate) dst_array: CuArray,
+    pub(crate) dst_pitch: usize,
+    pub(crate) width_in_bytes: usize,
+    pub(crate) height: usize,
+}
+
+/// `CUDA_EXTERNAL_MEMORY_BUFFER_DESC` of cuda.h: the range of the memory mapped as a device buffer.
+#[repr(C)]
+pub(crate) struct ExternalMemoryBufferDesc {
+    pub(crate) offset: u64,
+    pub(crate) size: u64,
+    pub(crate) flags: c_uint,
+    pub(crate) reserved: [c_uint; 16],
+}
 
 type FnInit = unsafe extern "C" fn(c_uint) -> CuResult;
 type FnDeviceGetCount = unsafe extern "C" fn(*mut c_int) -> CuResult;
@@ -68,6 +145,18 @@ type FnEventCreate = unsafe extern "C" fn(*mut CuEvent, c_uint) -> CuResult;
 type FnEventRecord = unsafe extern "C" fn(CuEvent, CuStream) -> CuResult;
 type FnEventSynchronize = unsafe extern "C" fn(CuEvent) -> CuResult;
 type FnEventDestroy = unsafe extern "C" fn(CuEvent) -> CuResult;
+type FnImportExternalMemory =
+    unsafe extern "C" fn(*mut CuExternalMemory, *const ExternalMemoryHandleDesc) -> CuResult;
+type FnExternalMemoryGetMappedBuffer = unsafe extern "C" fn(
+    *mut CuDeviceptr,
+    CuExternalMemory,
+    *const ExternalMemoryBufferDesc,
+) -> CuResult;
+type FnDestroyExternalMemory = unsafe extern "C" fn(CuExternalMemory) -> CuResult;
+type FnDeviceGetUuid = unsafe extern "C" fn(*mut CuUuid, CuDevice) -> CuResult;
+type FnArray3DCreate = unsafe extern "C" fn(*mut CuArray, *const ArrayDesc) -> CuResult;
+type FnArrayDestroy = unsafe extern "C" fn(CuArray) -> CuResult;
+type FnMemcpy2DAsync = unsafe extern "C" fn(*const Memcpy2d, CuStream) -> CuResult;
 type FnGetErrorName = unsafe extern "C" fn(CuResult, *mut *const c_char) -> CuResult;
 type FnGetErrorString = unsafe extern "C" fn(CuResult, *mut *const c_char) -> CuResult;
 
@@ -98,6 +187,13 @@ pub(crate) struct Driver {
     pub(crate) event_record: FnEventRecord,
     pub(crate) event_synchronize: FnEventSynchronize,
     pub(crate) event_destroy: FnEventDestroy,
+    pub(crate) import_external_memory: FnImportExternalMemory,
+    pub(crate) external_memory_get_mapped_buffer: FnExternalMemoryGetMappedBuffer,
+    pub(crate) destroy_external_memory: FnDestroyExternalMemory,
+    pub(crate) device_get_uuid: FnDeviceGetUuid,
+    pub(crate) array_create: FnArray3DCreate,
+    pub(crate) array_destroy: FnArrayDestroy,
+    pub(crate) memcpy_2d_async: FnMemcpy2DAsync,
     get_error_name: FnGetErrorName,
     get_error_string: FnGetErrorString,
 }
@@ -158,6 +254,13 @@ fn load() -> Result<Driver, String> {
             event_record: sym(&lib, b"cuEventRecord\0")?,
             event_synchronize: sym(&lib, b"cuEventSynchronize\0")?,
             event_destroy: sym(&lib, b"cuEventDestroy_v2\0")?,
+            import_external_memory: sym(&lib, b"cuImportExternalMemory\0")?,
+            external_memory_get_mapped_buffer: sym(&lib, b"cuExternalMemoryGetMappedBuffer\0")?,
+            destroy_external_memory: sym(&lib, b"cuDestroyExternalMemory\0")?,
+            device_get_uuid: sym(&lib, b"cuDeviceGetUuid_v2\0")?,
+            array_create: sym(&lib, b"cuArray3DCreate_v2\0")?,
+            array_destroy: sym(&lib, b"cuArrayDestroy\0")?,
+            memcpy_2d_async: sym(&lib, b"cuMemcpy2DAsync_v2\0")?,
             get_error_name: sym(&lib, b"cuGetErrorName\0")?,
             get_error_string: sym(&lib, b"cuGetErrorString\0")?,
             _lib: lib,
