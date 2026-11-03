@@ -151,8 +151,9 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Done (2026-11-03):** the 14 symlinks are copies checked by
       `scripts/check-shared-sources.sh` (in `ci.sh lints`), checkouts are LF everywhere, and CI's
       `windows` job runs clippy and the workspace tests on `windows-latest` (green on
-      `ci/windows`, run 41707584216). Linux-only paths are compiled out; six FFI host tests are
-      ignored there (`/bin/sh` workers, and JVM-mapped files that Windows cannot delete);
+      `ci/windows`, run 41707584216). Linux-only paths are compiled out;
+      the lifecycle tests' fake workers are the test binary (`tests/worker_lifecycle.rs`, no shell);
+      two Java payload tests stay ignored there (JVM-mapped files that Windows cannot delete);
       `docs/development.md`, "Windows".
 - [ ] **What:** CUDA interop and backend-aware planning: CUDA↔Vulkan memory sharing
       (`cudaImportExternalMemory`) so a wgpu buffer can reach a CUDA node without a host copy, and a

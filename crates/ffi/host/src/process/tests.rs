@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use daedalus_ffi_core::{
     BackendConfig, BackendKind, InvokeEventLevel, InvokeRequest, WORKER_PROTOCOL_VERSION,
@@ -359,38 +358,6 @@ public final class Worker {
     classes
 }
 
-fn backend_json_name(backend: &BackendKind) -> &'static str {
-    match backend {
-        BackendKind::Python => "python",
-        BackendKind::Node => "node",
-        BackendKind::Java => "java",
-        _ => panic!("restart fixture only covers subprocess worker backends"),
-    }
-}
-
-fn write_one_shot_worker(dir: &Path, backend: &BackendKind, worker_id: &str) -> PathBuf {
-    let script = dir.join(format!("{worker_id}.sh"));
-    let backend = backend_json_name(backend);
-    std::fs::write(
-            &script,
-            format!(
-                r#"#!/bin/sh
-printf '%s\n' '{{"protocol_version":1,"correlation_id":"startup","payload":{{"type":"hello","payload":{{"protocol_version":1,"min_protocol_version":1,"worker_id":"{worker_id}","backend":"{backend}","supported_nodes":["demo:add"],"capabilities":["persistent_worker","restart"]}}}}}}'
-while IFS= read -r line; do
-  case "$line" in
-    *'"type":"ack"'*) continue ;;
-  esac
-  printf '%s\n' '{{"protocol_version":1,"correlation_id":"req-1","payload":{{"type":"event","payload":{{"level":"info","message":"restart fixture invoked","metadata":{{"worker_id":"{worker_id}"}}}}}}}}'
-  printf '%s\n' '{{"protocol_version":1,"correlation_id":"req-1","payload":{{"type":"response","payload":{{"protocol_version":1,"correlation_id":"req-1","outputs":{{"out":{{"kind":"int","value":42}}}},"events":[]}}}}}}'
-  exit 0
-done
-"#
-            ),
-        )
-        .expect("write one-shot worker");
-    script
-}
-
 fn write_python_payload_worker(dir: &Path) -> PathBuf {
     let worker_path = dir.join("payload_worker.py");
     std::fs::write(
@@ -648,28 +615,6 @@ public final class PayloadWorker {
         .expect("spawn javac");
     assert!(status.success(), "javac failed for Java payload fixture");
     classes
-}
-
-fn one_shot_worker_config(backend: BackendKind, worker: &Path, dir: &Path) -> BackendConfig {
-    let config = BackendConfig::persistent_worker(backend.clone(), "/bin/sh", "add")
-        .with_args([worker.display().to_string()])
-        .with_working_dir(dir.display().to_string());
-    match backend {
-        BackendKind::Python => config.with_entry_module("restart_fixture.py"),
-        BackendKind::Node => config.with_entry_module("restart_fixture.mjs"),
-        BackendKind::Java => config.with_entry_class("RestartFixture"),
-        _ => panic!("restart fixture only covers subprocess worker backends"),
-    }
-}
-
-fn wait_for_stopped(runner: &PersistentWorkerRunner) {
-    for _ in 0..50 {
-        if runner.health() == RunnerHealth::Stopped {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert_eq!(runner.health(), RunnerHealth::Stopped);
 }
 
 fn assert_payload_ownership_modes(runner: &PersistentWorkerRunner, dir: &Path) {

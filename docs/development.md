@@ -362,9 +362,10 @@ What differs:
 - Linux-only paths are compiled out: dmabuf import, V4L2 and the RGA, VGLite, `perf_event`
   sampling (`IpSampler` is a stub that never starts), and the dlopen allocation test.
 - The FFI host waits on a worker's stdout with `PeekNamedPipe` instead of `poll`.
-- Six FFI host tests are ignored on Windows. Four script their workers with `/bin/sh`. Two delete
-  a payload file the JVM still maps, which Windows refuses, so the Java worker's move ownership
-  keeps the file there.
+- Two FFI host tests are ignored on Windows: they delete a payload file the JVM still maps, which
+  Windows refuses, so the Java worker's move ownership keeps the file there. The worker lifecycle
+  tests (`crates/ffi/host/tests/worker_lifecycle.rs`) use the test binary itself as the fake
+  worker, so they run everywhere without a shell.
 - The GPU tests skip on the runner, which has no adapter.
 
 ### WebAssembly

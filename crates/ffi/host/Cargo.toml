@@ -61,3 +61,8 @@ path = "../../../examples/08_ffi/all_plugins_giant_graph/giant_graph.rs"
 [[test]]
 name = "ffi_all_plugins_giant_graph_smoke"
 path = "../../../examples/08_ffi/all_plugins_giant_graph/smoke_tests.rs"
+
+# Its own `main`: the test binary is also the fake worker the tests start.
+[[test]]
+name = "worker_lifecycle"
+harness = false
