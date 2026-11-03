@@ -44,11 +44,17 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       2. Done on the Daedalus side (700be30): `GpuContextHandle::submit(commands)` and
          `submit_lock()`. Eidos moves its 9 direct `gpu.queue.submit(...)` calls onto it (Eidos
          f044a095, `crates/daedalus/src/gpu/{mod,invert,sweep,tsdf}.rs`; passed on by HeliOS).
-      3. A test that loads a plugin as a `cdylib` and submits concurrently from both sides
-         (`RawSubmitter` in the host, wgpu submits in the plugin) under the validation layer
-         with sync validation, with no VUIDs.
-      **Done when:** the test in 3 passes, and shows the plugin and the host on one lock.
-      **Blocked by:** nothing; in progress.
+      3. Done: `crates/gpu/tests/plugin_submit.rs` loads `crates/gpu/tests/plugin` as a
+         `cdylib` (its own copy of `daedalus-gpu`, built with the test's features) and checks
+         that the plugin's `submit_lock()` is the host's (and not another context's), that its
+         `GpuContextHandle::submit` waits while the host holds the lock (a plugin submitting on
+         the bare queue fails it), and that 200 host `RawSubmitter` fills run alongside 200
+         plugin round trips (upload, `submit`, readback) with every byte right; 5 of 5 runs on
+         RADV. `ci.sh vvl` runs it under the validation layer with sync validation.
+      **Done when:** the test in 3 also runs clean under the validation layer with sync
+      validation.
+      **Blocked by:** a host with the layer: the development host has none; the Raze takes the
+      Debian arm64 layer from `/tmp` (`docs/testing.md`), so the next Raze slot.
       **Measured:** n/a.
 
 ## Open

@@ -1,0 +1,32 @@
+[package]
+name = "daedalus-plugins-gpu-submit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# A `cdylib` with its own copy of `daedalus-gpu`, as a GPU plugin has: `daedalus-gpu`'s
+# `plugin_submit` test loads it and submits from both sides on one context.
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+test = false
+doctest = false
+
+# `daedalus-gpu`'s features, one for one: the test builds this crate with exactly the features
+# it was built with, so both copies agree on the layout of the types they share. Its default
+# feature (`gpu-noop`) is always on here, so the test runs only on builds that have it too.
+[features]
+gpu-mock = ["daedalus-gpu/gpu-mock"]
+gpu-wgpu = ["daedalus-gpu/gpu-wgpu"]
+gpu-gles = ["daedalus-gpu/gpu-gles"]
+gpu-image = ["daedalus-gpu/gpu-image"]
+gpu-async = ["daedalus-gpu/gpu-async"]
+gpu-dmabuf = ["daedalus-gpu/gpu-dmabuf"]
+gpu-vulkan-raw = ["daedalus-gpu/gpu-vulkan-raw"]
+
+[dependencies]
+daedalus-gpu = { workspace = true }

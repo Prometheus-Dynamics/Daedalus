@@ -82,8 +82,8 @@ usage: scripts/ci.sh [-j] [subcommand...]
               must be warning-free
   bench       host bridge, runtime executor and graph frame criterion benches
   pi          on-device dmabuf hardware tests and the gpu_probe report (Raspberry Pi 5 / CM5)
-  vvl         the dmabuf hardware and raw Vulkan tests and gpu_probe under the Khronos
-              validation layer
+  vvl         the dmabuf hardware, raw Vulkan and plugin submit tests and gpu_probe under the
+              Khronos validation layer
 EOF
 }
 
@@ -369,7 +369,7 @@ readonly PACKAGE_EXCLUDES=(--exclude daedalus-examples
   --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-mcu-shared
   --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer
   --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi
-  --exclude daedalus-plugins-stable-abi-counted
+  --exclude daedalus-plugins-stable-abi-counted --exclude daedalus-plugins-gpu-submit
   --exclude daedalus-frame-bench)
 
 cmd_package() {
@@ -485,10 +485,11 @@ cmd_vvl() {
     return 1
   fi
   mkdir -p "$(dirname "$log")"
-  step "Running dmabuf hardware tests and gpu_probe under the validation layer (log: $log)"
+  step "Running the dmabuf, raw Vulkan and plugin submit tests and gpu_probe under the layer (log: $log)"
   {
     cargo test -p daedalus-gpu --features gpu-dmabuf -- --include-ignored dmabuf --test-threads=1
     cargo test -p daedalus-gpu --features gpu-dmabuf,gpu-vulkan-raw -- raw_vulkan --test-threads=1
+    cargo test -p daedalus-gpu --features gpu-dmabuf,gpu-vulkan-raw --test plugin_submit
     cargo run -p daedalus-gpu --features gpu-dmabuf --example gpu_probe
   } 2>&1 | tee "$log"
   step "Validation messages"

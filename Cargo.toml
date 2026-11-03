@@ -35,6 +35,7 @@ members = [
     "examples/plugins/dependent",
     "examples/plugins/stable_abi",
     "examples/plugins/stable_abi_counted",
+    "crates/gpu/tests/plugin",
     "examples/wasm_smoke",
     "examples/nostd_smoke",
     "examples/mcu_blink",

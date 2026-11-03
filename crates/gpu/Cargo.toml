@@ -63,6 +63,9 @@ bytemuck = { workspace = true }
 # SPIR-V for the raw Vulkan dispatch test (the version wgpu already builds).
 naga = { workspace = true }
 daedalus-accel = { workspace = true, features = ["std"] }
+# Loading the plugin `cdylib` of the `plugin_submit` test, and reading cargo's build report.
+libloading = { workspace = true }
+serde_json = { workspace = true }
 
 [[example]]
 name = "gpu_probe"
@@ -87,4 +90,8 @@ required-features = ["gpu-wgpu"]
 
 [[test]]
 name = "raw_submitter_allocations"
+required-features = ["gpu-vulkan-raw"]
+
+[[test]]
+name = "plugin_submit"
 required-features = ["gpu-vulkan-raw"]

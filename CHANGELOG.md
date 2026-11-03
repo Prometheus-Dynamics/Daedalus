@@ -539,6 +539,10 @@ plugin ABI and does not load.
   (`SubmitLock` / `SubmitGuard`, to hold around other submitting calls), and
   `GpuBackend::wgpu_submit_lock`. `GpuTicket::submit_on` is crate-private; `GpuTicket::submit`
   covers it.
+  `daedalus-gpu`'s `plugin_submit` test checks it across a real `cdylib`
+  (`crates/gpu/tests/plugin`, a fixture crate): the plugin sees the host's lock, its submit
+  waits while the host holds it, and the host's `RawSubmitter` runs alongside the plugin's wgpu
+  uploads, submits and readbacks; `ci.sh vvl` runs it under the validation layer.
 - `daedalus-gpu`: the dma-buf basics come from Lemnos (`lemnos-linux`, feature `dma`, a git
   dependency on Lemnos `dev`, Linux only): the system dma-heap behind host-cached storage on
   devices without host-cached memory (v3dv), `DMA_BUF_IOCTL_SYNC` around its CPU access, the
