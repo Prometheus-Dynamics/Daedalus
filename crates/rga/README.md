@@ -21,6 +21,13 @@ share.
   An output that is not the rectangle's or the turn's size is refused. On mainline,
   `Rga::transform` / `transform_bytes` set the context's `V4L2_CID_HFLIP`, `VFLIP` or `ROTATE`
   control through Lemnos and refuse a value the driver does not keep.
+- **Fill, ROP, blend (librga only):** `Librga::fill_bytes` / `fill_dmabuf` / `fill_mask_bytes`
+  / `rectangle_bytes` (a box as four fills), `rop_mask_bytes` / `rop_mask_dmabuf` (`Rop`: AND,
+  OR, XOR) and `blend_bytes` / `blend_dmabuf` (`BlendMode`: SRC_OVER, SRC, DST_OVER, straight
+  or premultiplied). 8-bit masks go to the engine as RGBA8888 at a quarter of the width, so
+  their rows and rectangles align to four bytes. Linux 7.2's mainline driver stores
+  `V4L2_CID_BG_COLOR` but never programs it, and has no ROP or blend. librga's C entry points
+  draw no lines.
 - **Palette and colour key (librga only):** `Librga::palette_bytes` / `palette_dmabuf` (8-bit
   indices through a 256-entry RGBA table) and `color_key_bytes` / `color_key_dmabuf` /
   `color_key_mask` (the pixels whose R, G and B lie in a range drawn opaque onto a cleared RGBA

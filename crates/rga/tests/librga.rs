@@ -5,7 +5,7 @@
 
 use daedalus_accel::{Backend, Evidence, conform_with};
 use daedalus_kernels::reference as r;
-use daedalus_rga::{Filter, Image, Librga, RgaFormat, Transform};
+use daedalus_rga::{BlendMode, Filter, Image, Librga, RgaFormat, Rop, Transform};
 
 fn pattern(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i * 31 + 7) as u8).collect()
@@ -188,6 +188,64 @@ fn librga_crops_flips_and_turns_like_the_references() {
             (Transform::Rotate270, 3),
         ] {
             turn(t, &r::rotate(&rgba, wu, hu, 4, q).0)?;
+        }
+        Ok(())
+    });
+}
+
+#[test]
+fn librga_fills_rops_and_blends_like_the_references() {
+    let Ok(rga) = Librga::load() else {
+        return eprintln!("skipping: no librga.so");
+    };
+    let (w, h) = (128u32, 64u32);
+    let pixels = (w * h) as usize;
+    let image = Image::packed(RgaFormat::Rgba8888, w, h);
+    let evidence = |op| Evidence::new(op, Backend::FixedFunction).variant("librga");
+    conform_with(evidence("daedalus.image.fill"), || {
+        let base = pattern(pixels * 4);
+        let mut buf = base.clone();
+        rga.fill_bytes(image, &mut buf, (5, 3, 40, 20), [1, 2, 3, 4])
+            .map_err(|e| e.to_string())?;
+        same(
+            &buf,
+            &r::fill(&base, w as usize, (5, 3, 40, 20), &[1, 2, 3, 4]),
+        )?;
+        let base = pattern(pixels);
+        let mut mask = base.clone();
+        rga.fill_mask_bytes(w, h, &mut mask, (8, 4, 64, 16), 255)
+            .map_err(|e| e.to_string())?;
+        same(&mask, &r::fill(&base, w as usize, (8, 4, 64, 16), &[255]))
+    });
+    conform_with(evidence("daedalus.image.mask_rop"), || {
+        let (a, b) = (pattern(pixels), pattern(pixels * 2)[pixels..].to_vec());
+        for (op, c) in [(Rop::And, '&'), (Rop::Or, '|'), (Rop::Xor, '^')] {
+            let mut dst = b.clone();
+            rga.rop_mask_bytes(w, h, &a, &mut dst, op)
+                .map_err(|e| format!("{op:?}: {e}"))?;
+            same(&dst, &r::mask_rop(&a, &b, c)).map_err(|e| format!("{op:?}: {e}"))?;
+        }
+        Ok(())
+    });
+    conform_with(evidence("daedalus.image.blend"), || {
+        let fg = pattern(pixels * 4);
+        let bg: Vec<u8> = pattern(pixels * 5)[pixels..].to_vec();
+        for (mode, m) in [
+            (BlendMode::SrcOver, r::Blend::SrcOver),
+            (BlendMode::Src, r::Blend::Src),
+            (BlendMode::DstOver, r::Blend::DstOver),
+        ] {
+            for premultiplied in [false, true] {
+                let mut dst = bg.clone();
+                rga.blend_bytes(image, &fg, &mut dst, mode, premultiplied)
+                    .map_err(|e| format!("{mode:?}: {e}"))?;
+                let want = r::blend(&fg, &bg, m, premultiplied);
+                within_one(
+                    &format!("blend {mode:?} premultiplied {premultiplied}"),
+                    &dst,
+                    &want,
+                )?;
+            }
         }
         Ok(())
     });

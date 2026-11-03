@@ -9,13 +9,17 @@ use super::{T, op};
 /// `librga`. Written, untested on board.
 const RGA_V4L2: (&str, &str) = ("crates/rga/src/lib.rs", "crates/rga/tests/v4l2.rs");
 const RGA_LIB: (&str, &str) = ("crates/rga/src/librga.rs", "crates/rga/tests/librga.rs");
+const RGA_DRAW: (&str, &str) = (
+    "crates/rga/src/librga/draw.rs",
+    "crates/rga/tests/librga.rs",
+);
 
 /// Fixed-function image nodes other repos lower onto (Eidos's pyramids): only the scalar
 /// reference and the fixed-function rows are Daedalus's.
 const NODE_ONLY: &[Backend] = &[Backend::Scalar, Backend::FixedFunction];
 const NODE_REASON: &str = "a fixed-function node: the CPU kernels and the callers are Eidos's";
 
-static IMAGE_OPS: [Op; 7] = [
+static IMAGE_OPS: [Op; 10] = [
     op(
         "daedalus.image.resize_area",
         "Area downscale by an integer factor, rounded block means (pyramid levels)",
@@ -58,9 +62,27 @@ static IMAGE_OPS: [Op; 7] = [
         "daedalus_kernels::reference::rotate",
     )
     .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.fill",
+        "Set a rectangle to one colour (mask fill, border clear, boxes)",
+        "daedalus_kernels::reference::fill",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.mask_rop",
+        "AND, OR or XOR of two 8-bit masks",
+        "daedalus_kernels::reference::mask_rop",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
+    op(
+        "daedalus.image.blend",
+        "Porter-Duff SRC, SRC_OVER or DST_OVER of RGBA8, straight or premultiplied",
+        "daedalus_kernels::reference::blend",
+    )
+    .only_on(NODE_ONLY, NODE_REASON),
 ];
 
-static IMAGE_KERNELS: [Kernel; 19] = [
+static IMAGE_KERNELS: [Kernel; 25] = [
     Kernel::implemented(
         "daedalus.image.resize_area",
         Backend::Scalar,
@@ -143,6 +165,46 @@ static IMAGE_KERNELS: [Kernel; 19] = [
         Backend::FixedFunction,
         RGA_LIB.0,
         RGA_LIB.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
+        "daedalus.image.fill",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    Kernel::implemented(
+        "daedalus.image.mask_rop",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    Kernel::implemented(
+        "daedalus.image.blend",
+        Backend::Scalar,
+        "crates/kernels/src/reference.rs",
+        T,
+    ),
+    // Linux 7.2's mainline driver never programs its fill colour and has no ROP or blend.
+    Kernel::implemented(
+        "daedalus.image.fill",
+        Backend::FixedFunction,
+        RGA_DRAW.0,
+        RGA_DRAW.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
+        "daedalus.image.mask_rop",
+        Backend::FixedFunction,
+        RGA_DRAW.0,
+        RGA_DRAW.1,
+    )
+    .with_variant("librga"),
+    Kernel::implemented(
+        "daedalus.image.blend",
+        Backend::FixedFunction,
+        RGA_DRAW.0,
+        RGA_DRAW.1,
     )
     .with_variant("librga"),
     // The mainline driver has neither: librga only.

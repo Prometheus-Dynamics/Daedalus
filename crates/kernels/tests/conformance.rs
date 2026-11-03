@@ -55,6 +55,25 @@ fn scalar_references_match_known_answers() {
     let mut lut = [[0u8; 4]; 256];
     lut[2] = [1, 2, 3, 4];
     let palette = r::palette(&[2, 0], &lut) == [1, 2, 3, 4, 0, 0, 0, 0];
+    let fill = r::fill(&[0; 6], 3, (1, 0, 2, 2), &[7]) == [0, 7, 7, 0, 7, 7];
+    let rop = r::mask_rop(&[0b1010], &[0b1100], '&') == [0b1000]
+        && r::mask_rop(&[0b1010], &[0b1100], '|') == [0b1110]
+        && r::mask_rop(&[0b1010], &[0b1100], '^') == [0b0110];
+    // Half-transparent white over opaque black, straight and premultiplied.
+    let blend = r::blend(
+        &[255, 255, 255, 128],
+        &[0, 0, 0, 255],
+        r::Blend::SrcOver,
+        false,
+    ) == [128, 128, 128, 255]
+        && r::blend(
+            &[128, 128, 128, 128],
+            &[0, 0, 0, 255],
+            r::Blend::SrcOver,
+            true,
+        ) == [128, 128, 128, 255]
+        && r::blend(&[1, 2, 3, 4], &[9, 9, 9, 9], r::Blend::Src, false) == [1, 2, 3, 4]
+        && r::blend(&[200, 0, 0, 255], &[0, 0, 0, 0], r::Blend::DstOver, false) == [200, 0, 0, 255];
     // [[A, B], [C, D]] as 0, 1, 2, 3.
     let crop = r::crop(&[0, 1, 2, 3, 4, 5], 3, 1, (1, 0, 2, 2)) == [1, 2, 4, 5];
     let flip = r::flip(&[0, 1, 2, 3], 2, 2, 1, true, false) == [1, 0, 3, 2]
@@ -84,6 +103,9 @@ fn scalar_references_match_known_answers() {
         bilinear
     });
     conform("daedalus.image.palette", Backend::Scalar, || palette);
+    conform("daedalus.image.fill", Backend::Scalar, || fill);
+    conform("daedalus.image.mask_rop", Backend::Scalar, || rop);
+    conform("daedalus.image.blend", Backend::Scalar, || blend);
     conform("daedalus.image.crop", Backend::Scalar, || crop);
     conform("daedalus.image.flip", Backend::Scalar, || flip);
     conform("daedalus.image.rotate", Backend::Scalar, || rotate);

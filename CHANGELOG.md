@@ -70,6 +70,19 @@ plugin ABI and does not load.
   lavapipe with a precompiled GLSL kernel reading `uint8_t` storage. `gpu-vulkan-raw` now
   implies `gpu-dmabuf`.
 
+- **RGA fill, mask ROP and blend through librga.** `Librga::fill_bytes`, `fill_dmabuf`,
+  `fill_mask_bytes` and `rectangle_bytes` (`imfill`; a box is four fills),
+  `rop_mask_bytes` and `rop_mask_dmabuf` (`imrop`, new `Rop::{And, Or, Xor}`) and `blend_bytes`
+  and `blend_dmabuf` (`imblend`, new `BlendMode::{SrcOver, Src, DstOver}`, straight or
+  premultiplied). 8-bit masks go to the engine as RGBA8888 at a quarter of the width (exact for
+  fills and bitwise operations); unaligned masks and rectangles are `Unsupported`. The entry
+  points load as optional. `caps::FixedOp` gains `Fill`, `MaskRop` and `Blend` (librga; RGA3
+  blend only). Ops `daedalus.image.fill`, `mask_rop` and `blend` with scalar references
+  (`reference::Blend`). Mainline has none: Linux 7.2 stores `V4L2_CID_BG_COLOR` but never
+  programs it. librga's C API draws no lines. `IM_ROP_XOR` is 0xf6, which in ROP3 terms is
+  pattern OR (src XOR dst); the board test decides whether it is plain XOR. Written, untested
+  on board.
+
 - **RGA flip and rotate on the mainline driver.** `Rga::transform` and `transform_bytes` set
   the context's `V4L2_CID_HFLIP`, `VFLIP` or `ROTATE` control (Lemnos's
   `M2mSession::set_control`) before streaming; a driver that refuses or does not keep the value

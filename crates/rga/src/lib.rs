@@ -31,7 +31,7 @@ mod transform;
 mod v4l2;
 
 #[cfg(target_os = "linux")]
-pub use librga::{Image, Librga, RgaFormat};
+pub use librga::{BlendMode, Image, Librga, RgaFormat, Rop};
 pub use resize::Filter;
 pub use transform::Transform;
 

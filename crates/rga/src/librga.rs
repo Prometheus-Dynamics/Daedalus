@@ -67,8 +67,10 @@ type QueryString = unsafe extern "C" fn(c_int) -> *const c_char;
 type Palette = unsafe extern "C" fn(RgaBuffer, RgaBuffer, RgaBuffer, c_int) -> c_int;
 type Colorkey = unsafe extern "C" fn(RgaBuffer, RgaBuffer, ColorkeyRange, c_int, c_int) -> c_int;
 type Crop = unsafe extern "C" fn(RgaBuffer, RgaBuffer, ImRect, c_int) -> c_int;
-/// `imflip_t` and `imrotate_t`: a mode or a rotation, then `sync`.
+/// `imflip_t`, `imrotate_t` and `imrop_t`: a mode, then `sync`.
 type Turn = unsafe extern "C" fn(RgaBuffer, RgaBuffer, c_int, c_int) -> c_int;
+type Fill = unsafe extern "C" fn(RgaBuffer, ImRect, c_int, c_int) -> c_int;
+type Blend = unsafe extern "C" fn(RgaBuffer, RgaBuffer, RgaBuffer, c_int, c_int) -> c_int;
 
 /// `im_rect`.
 #[repr(C)]
@@ -96,6 +98,10 @@ pub(crate) struct Api {
     pub(crate) crop: Option<Crop>,
     pub(crate) flip: Option<Turn>,
     pub(crate) rotate: Option<Turn>,
+    /// `imfill_t`, `imrop_t`, `imblend_t` ([`draw`]): optional likewise.
+    pub(crate) fill: Option<Fill>,
+    pub(crate) rop: Option<Turn>,
+    pub(crate) blend: Option<Blend>,
 }
 
 /// `IM_STATUS_SUCCESS` and `IM_STATUS_NOERROR`.
@@ -258,6 +264,15 @@ impl Librga {
                 rotate: symbol(c"imrotate_t")
                     .ok()
                     .map(|f| std::mem::transmute::<*mut c_void, Turn>(f)),
+                fill: symbol(c"imfill_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Fill>(f)),
+                rop: symbol(c"imrop_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Turn>(f)),
+                blend: symbol(c"imblend_t")
+                    .ok()
+                    .map(|f| std::mem::transmute::<*mut c_void, Blend>(f)),
             }
         };
         Ok(Self {
@@ -748,5 +763,8 @@ fn status(code: c_int) -> io::Result<()> {
     }
 }
 
+mod draw;
 #[cfg(test)]
 mod tests;
+
+pub use draw::{BlendMode, Rop};

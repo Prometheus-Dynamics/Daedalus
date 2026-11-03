@@ -319,3 +319,80 @@ pub fn rotate(
     }
     (out, ow, oh)
 }
+
+/// `buf` with `rect` (left, top, width, height) set to the pixel `value`, for tightly packed
+/// `value.len()`-byte pixels in rows of `width`.
+pub fn fill(
+    buf: &[u8],
+    width: usize,
+    (left, top, w, h): (usize, usize, usize, usize),
+    value: &[u8],
+) -> Vec<u8> {
+    let mut out = buf.to_vec();
+    let n = value.len();
+    for y in top..top + h {
+        for x in left..left + w {
+            out[(y * width + x) * n..][..n].copy_from_slice(value);
+        }
+    }
+    out
+}
+
+/// A bitwise operation on two masks: `'&'`, `'|'` or `'^'` of each `src` byte with the `dst`
+/// byte.
+pub fn mask_rop(src: &[u8], dst: &[u8], op: char) -> Vec<u8> {
+    src.iter()
+        .zip(dst)
+        .map(|(&s, &d)| match op {
+            '&' => s & d,
+            '|' => s | d,
+            '^' => s ^ d,
+            _ => panic!("unknown mask operation {op:?}"),
+        })
+        .collect()
+}
+
+/// A Porter-Duff blend of RGBA8 pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blend {
+    /// The foreground over the destination.
+    SrcOver,
+    /// The foreground replaces the destination.
+    Src,
+    /// The destination over the foreground.
+    DstOver,
+}
+
+/// `fg` blended onto `dst` with `mode`. Straight alpha: colour `(top * a + under * (255 - a)
+/// + 127) / 255`; premultiplied: `top + (under * (255 - a) + 127) / 255`, saturated. Alpha
+/// is `a + (under_alpha * (255 - a) + 127) / 255` either way.
+pub fn blend(fg: &[u8], dst: &[u8], mode: Blend, premultiplied: bool) -> Vec<u8> {
+    let over = |top: &[u8; 4], under: &[u8; 4]| -> [u8; 4] {
+        let a = top[3] as u32;
+        let mix = |t: u8, u: u8| {
+            let rest = (u as u32 * (255 - a) + 127) / 255;
+            if premultiplied {
+                (t as u32 + rest).min(255) as u8
+            } else {
+                ((t as u32 * a + u as u32 * (255 - a) + 127) / 255) as u8
+            }
+        };
+        let alpha = (a + (under[3] as u32 * (255 - a) + 127) / 255).min(255) as u8;
+        [
+            mix(top[0], under[0]),
+            mix(top[1], under[1]),
+            mix(top[2], under[2]),
+            alpha,
+        ]
+    };
+    fg.as_chunks::<4>()
+        .0
+        .iter()
+        .zip(dst.as_chunks::<4>().0)
+        .flat_map(|(f, d)| match mode {
+            Blend::SrcOver => over(f, d),
+            Blend::Src => *f,
+            Blend::DstOver => over(d, f),
+        })
+        .collect()
+}

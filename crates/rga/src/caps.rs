@@ -94,6 +94,12 @@ pub enum FixedOp {
     Flip,
     /// Quarter turns (`daedalus.image.rotate`).
     Rotate,
+    /// A solid rectangle (`daedalus.image.fill`); boxes are four.
+    Fill,
+    /// AND, OR, XOR of masks (`daedalus.image.mask_rop`).
+    MaskRop,
+    /// Porter-Duff SRC, SRC_OVER, DST_OVER (`daedalus.image.blend`).
+    Blend,
 }
 
 /// What a route does with one [`FixedOp`].
@@ -197,13 +203,35 @@ const ROTATE_V4L2: OpCaps = OpCaps {
     note: "V4L2_CID_ROTATE 90, 180 or 270 on the context; clockwise is assumed, unmeasured",
 };
 
+const FILL_LIBRGA: OpCaps = OpCaps {
+    op: FixedOp::Fill,
+    exactness: Exactness::Unmeasured,
+    note: "imfill; a mask is RGBA8888 at a quarter width, so its rectangles align to 4 bytes",
+};
+const ROP_LIBRGA: OpCaps = OpCaps {
+    op: FixedOp::MaskRop,
+    exactness: Exactness::Unmeasured,
+    note: "imrop on masks as RGBA8888 at a quarter width; IM_ROP_XOR is 0xf6, which reads as \
+           pattern OR (src XOR dst) in ROP3 terms, so plain XOR is unmeasured",
+};
+const BLEND_LIBRGA: OpCaps = OpCaps {
+    op: FixedOp::Blend,
+    exactness: Exactness::Unmeasured,
+    note: "imblend; the hardware's rounding is undocumented",
+};
+
+/// Mainline (Linux 7.2): no fill (it stores `V4L2_CID_BG_COLOR` and never programs it), no
+/// ROP, no blend.
 const V4L2_OPS: &[OpCaps] = &[CROP_V4L2, FLIP_V4L2, ROTATE_V4L2];
-const RGA3_LIBRGA_OPS: &[OpCaps] = &[CROP_LIBRGA, FLIP_LIBRGA, ROTATE_LIBRGA];
+const RGA3_LIBRGA_OPS: &[OpCaps] = &[CROP_LIBRGA, FLIP_LIBRGA, ROTATE_LIBRGA, BLEND_LIBRGA];
 
 const RGA2_LIBRGA_OPS: &[OpCaps] = &[
     CROP_LIBRGA,
     FLIP_LIBRGA,
     ROTATE_LIBRGA,
+    FILL_LIBRGA,
+    ROP_LIBRGA,
+    BLEND_LIBRGA,
     OpCaps {
         op: FixedOp::Palette,
         exactness: Exactness::Unmeasured,
@@ -333,6 +361,8 @@ mod tests {
             assert_eq!(crop, c.route != Route::Design, "{c:?}");
             let flip = c.op(FixedOp::Flip).is_some();
             assert_eq!(flip, c.route != Route::Design, "{c:?}");
+            let fill = c.op(FixedOp::Fill).is_some();
+            assert_eq!(fill, has, "{c:?}");
         }
     }
 }

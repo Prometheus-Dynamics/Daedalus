@@ -235,6 +235,55 @@ unsafe extern "C" fn rotate(_: RgaBuffer, _: RgaBuffer, rotation: c_int, sync: c
     1
 }
 
+/// Software `imfill_t` on RGBA8888: the colour is packed A, B, G, R.
+unsafe extern "C" fn fill(dst: RgaBuffer, rect: ImRect, color: c_int, sync: c_int) -> c_int {
+    assert_eq!((sync, dst.format), (1, RgaFormat::Rgba8888 as c_int));
+    let d = dst.vir_addr.cast::<u8>();
+    for y in rect.y..rect.y + rect.height {
+        for x in rect.x..rect.x + rect.width {
+            let at = (y * dst.wstride + x) as usize * 4;
+            for (c, v) in color.to_le_bytes().into_iter().enumerate() {
+                // SAFETY: the wrapped buffer covers its image.
+                unsafe { *d.add(at + c) = v };
+            }
+        }
+    }
+    1
+}
+
+/// Software `imrop_t` for AND, OR and XOR, per byte.
+unsafe extern "C" fn rop(src: RgaBuffer, dst: RgaBuffer, code: c_int, sync: c_int) -> c_int {
+    assert_eq!(sync, 1);
+    let (s, d) = (src.vir_addr.cast::<u8>(), dst.vir_addr.cast::<u8>());
+    for i in 0..(dst.wstride * dst.hstride * 4) as usize {
+        // SAFETY: the wrapped buffers cover their images.
+        unsafe {
+            let (a, b) = (*s.add(i), *d.add(i));
+            *d.add(i) = match code {
+                0x88 => a & b,
+                0xee => a | b,
+                0xf6 => a ^ b,
+                _ => return -1,
+            };
+        }
+    }
+    1
+}
+
+/// Records the mode and checks the empty second source; the arithmetic is the board's.
+unsafe extern "C" fn blend(
+    _: RgaBuffer,
+    src_b: RgaBuffer,
+    _: RgaBuffer,
+    mode: c_int,
+    sync: c_int,
+) -> c_int {
+    assert_eq!(sync, 1);
+    assert!(src_b.vir_addr.is_null() && src_b.fd == 0 && src_b.width == 0);
+    LAST_TURN.set(mode);
+    1
+}
+
 fn stand_in() -> Librga {
     Librga::with_api(Api {
         wrap_fd,
@@ -247,6 +296,9 @@ fn stand_in() -> Librga {
         crop: Some(crop),
         flip: Some(flip),
         rotate: Some(rotate),
+        fill: Some(fill),
+        rop: Some(rop),
+        blend: Some(blend),
     })
 }
 
@@ -396,4 +448,52 @@ fn crops_and_transforms_check_sizes_and_pass_the_mode() {
         )
         .unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+}
+
+#[test]
+fn fills_rops_and_blends_reach_the_library_as_it_expects() {
+    let rga = stand_in();
+    let rgba = Image::packed(RgaFormat::Rgba8888, 3, 2);
+    let mut buf = [0u8; 24];
+    rga.fill_bytes(rgba, &mut buf, (1, 1, 2, 1), [1, 2, 3, 4])
+        .unwrap();
+    assert_eq!(&buf[16..], &[1, 2, 3, 4, 1, 2, 3, 4]);
+    assert!(buf[..16].iter().all(|&b| b == 0));
+    // An 8 by 2 mask: a 4-aligned rectangle fills exactly, an unaligned one is refused.
+    let mut mask = [0u8; 16];
+    rga.fill_mask_bytes(8, 2, &mut mask, (4, 1, 4, 1), 255)
+        .unwrap();
+    assert_eq!(
+        mask,
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255]
+    );
+    let err = rga
+        .fill_mask_bytes(8, 2, &mut mask, (2, 0, 4, 1), 1)
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    let err = rga
+        .fill_mask_bytes(6, 2, &mut [0; 12], (0, 0, 4, 1), 1)
+        .unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    // Outline: four fills leave the inside alone.
+    let image = Image::packed(RgaFormat::Rgba8888, 4, 4);
+    let mut boxed = [0u8; 64];
+    rga.rectangle_bytes(image, &mut boxed, (0, 0, 4, 4), [9, 9, 9, 9], 1)
+        .unwrap();
+    let px = |x: usize, y: usize| boxed[(y * 4 + x) * 4];
+    assert_eq!((px(0, 0), px(3, 3), px(1, 1), px(2, 2)), (9, 9, 0, 0));
+    let mut dst = [0b1100u8; 4];
+    rga.rop_mask_bytes(4, 1, &[0b1010; 4], &mut dst, Rop::And)
+        .unwrap();
+    assert_eq!(dst, [0b1000; 4]);
+    rga.rop_mask_bytes(4, 1, &[0b0011; 4], &mut dst, Rop::Xor)
+        .unwrap();
+    assert_eq!(dst, [0b1011; 4]);
+    let one = Image::packed(RgaFormat::Rgba8888, 1, 1);
+    rga.blend_bytes(one, &[0; 4], &mut [0; 4], BlendMode::SrcOver, true)
+        .unwrap();
+    assert_eq!(LAST_TURN.get(), (1 << 6) | (1 << 25));
+    rga.blend_bytes(one, &[0; 4], &mut [0; 4], BlendMode::DstOver, false)
+        .unwrap();
+    assert_eq!(LAST_TURN.get(), 1 << 13);
 }

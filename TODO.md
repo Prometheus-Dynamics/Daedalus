@@ -100,7 +100,8 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       pass, or `rgba_red` is recorded as failing. The same run measures the resize, palette and
       colour-key cells (`daedalus.image.*`, max difference printed): 2x and 4x area on NV12 and
       RGB (does 4x equal two 2x passes within 1?), and whether colour key `INVERTED` keeps the
-      in-range pixels; the results go into `daedalus_rga::caps` as `Exact` or `Tolerance(n)`.
+      in-range pixels; the turn direction; whether `IM_ROP_XOR` (0xf6) is plain XOR; the blend
+      rounding; the results go into `daedalus_rga::caps` as `Exact` or `Tolerance(n)`.
       Eidos's matrix cells for its 2x area lowering wait on it (nostd, 2026-11-02).
       **Blocked by:** a Rockchip board.
       **Measured:** no RGA hardware run. Route (b) passes end to end on `vim2m` with `dma_heap`
@@ -193,7 +194,10 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       `daedalus.image.{palette,color_key_mask}`, `caps` `FixedOp`; written, untested on board.
       (3) written: crop on both routes (full frame = copy), flip and rotate on librga, ops
       `daedalus.image.{crop,flip,rotate}`; mainline flip and rotate through Lemnos's
-      `set_control` (01939e9), flips checked exactly on vim2m.
+      `set_control` (01939e9), flips checked exactly on vim2m. (4) written: librga fill (boxes as
+      four fills), mask AND/OR/XOR and Porter-Duff blend, ops
+      `daedalus.image.{fill,mask_rop,blend}`; mainline has none (7.2 never programs
+      `BG_COLOR`); no line drawing in librga's C API. Open: K230 design note.
       **Measured:** n/a.
 
 ### Release steps
