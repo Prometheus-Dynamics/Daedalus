@@ -640,7 +640,7 @@ impl Engine {
     pub(crate) fn get_gpu_handle(
         &self,
     ) -> Result<Option<Arc<daedalus_gpu::GpuContextHandle>>, EngineError> {
-        use daedalus_gpu::{GpuBackendKind, GpuOptions, select_backend};
+        use daedalus_gpu::{GpuBackendKind, GpuOptions, select_backend, shared_context};
         if matches!(self.config.gpu, GpuBackend::Cpu) {
             return Ok(None);
         }
@@ -669,7 +669,12 @@ impl Engine {
                 ..Default::default()
             },
         };
-        let handle = Arc::new(select_backend(&opts)?);
+        // A device is the process's (`shared_context`), shared with every other engine and library
+        // that takes it there; the mock stays per engine.
+        let handle = Arc::new(match self.config.gpu {
+            GpuBackend::Device => shared_context(&opts)?,
+            _ => select_backend(&opts)?,
+        });
         #[cfg(feature = "gpu-wgpu")]
         if let Some(dir) = self.config.cache.gpu_pipeline_dir.as_deref() {
             *self.pipeline_cache.lock() = Some(Arc::new(

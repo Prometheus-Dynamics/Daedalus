@@ -189,6 +189,7 @@ impl WgpuBackend {
             .await
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
         drop(driver);
+        crate::selection::DEVICES_CREATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         caps.compute.features = capabilities::compute_features(device.features());
         let queue = LockedQueue::new(queue, SubmitLock::default());
         let (dmabuf_support, dmabuf) = dmabuf::probe(&device, &queue);

@@ -103,6 +103,19 @@ returned `GpuTimed` with `try_elapsed()`, which never waits, and report the dura
 from submit to the completion callback, which includes queue wait and poll latency. The backend
 requests timestamp queries whenever the adapter has them.
 
+## One device per process
+
+`shared_context(&GpuOptions)` returns the process's wgpu device, opening one only when none is
+alive: the first caller's options choose it, later callers get it whatever theirs. Every engine
+with `GpuBackend::Device` takes its device there, so two engines in a process run on one device,
+one queue and one submit lock. A library that runs its own Vulkan work in the process (Styx's GPU
+ISP, through `GpuContext::from_daedalus`) takes it there too instead of opening a second device.
+`process_context()` returns the open device without opening one. The device is held weakly: it
+closes with its last handle, and the next call opens a new one. Mock and noop requests are never
+shared. `select_backend` still opens a private device. `devices_created()` counts the wgpu devices
+the crate opened in the process, which is how a test asserts there is one
+(`tests/shared_device.rs`, `daedalus/tests/gpu_shared_device.rs`).
+
 ## Host-created Vulkan instances
 
 The Vulkan loader is not safe when several threads set up a graphics driver at once: the NVIDIA ICD

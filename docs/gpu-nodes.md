@@ -20,7 +20,8 @@ The consumer chooses the device; Daedalus never picks one on cost. There are two
   GPU backend, and otherwise the reason is `config backend = gpu, no GPU backend: CPU fallback`.
 - **Per graph:** the engine's GPU backend (`EngineConfig::gpu(GpuBackend::Device)`, with
   `with_planner_gpu(true)` for GPU-resident ports). Without one, `fallback` nodes run their CPU
-  node.
+  node. The device is the process's (`daedalus::gpu::shared_context`): every engine in the
+  process, and Styx's GPU ISP, use one device and one queue.
 
 `explain_plan()` reports each node's resolved `device` and `device_reason`. A CPU fallback names
 the GPU node it replaced, and a `gpu_preferred` node without a GPU says it runs on the CPU. When

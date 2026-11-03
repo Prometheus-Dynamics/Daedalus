@@ -175,6 +175,11 @@ path = "tests/gpu_storage.rs"
 required-features = ["engine", "plugins", "gpu-wgpu"]
 
 [[test]]
+name = "gpu_shared_device"
+path = "tests/gpu_shared_device.rs"
+required-features = ["engine", "plugins", "gpu-wgpu"]
+
+[[test]]
 name = "gpu_ticket"
 path = "tests/gpu_ticket.rs"
 required-features = ["engine", "plugins", "gpu-wgpu"]

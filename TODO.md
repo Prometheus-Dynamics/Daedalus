@@ -222,32 +222,28 @@ These run only when the user calls a release. None of them is pending until then
       **Measured:** `dev` is `3.0.1-dev`; `docs/migration-4.0.md` is written (b422ec0) but its check
       against the semver report predates the 319 items above; CI as above.
 
-## After the release: dependency layers (planned, not started)
+## Dependency layers
 
-The DMA-buffer move moved up into Alpha (Raze) on 2026-11-02 and is done; the shared Vulkan device's
-Daedalus-side lock is in the alpha, Styx's use of the device is below.
-
-The user slated this for after the release (HeliOS architecture-overhaul f2a15c8f, TODO.md, "After
-the release: dependency layers"). Nothing here starts without the user's go. The split: Daedalus
+The DMA-buffer move moved up into Alpha (Raze) on 2026-11-02 and is done. The user slated the rest
+for after the release (HeliOS architecture-overhaul f2a15c8f), then on 2026-11-03 said to do the
+whole list now (relayed by HeliOS): the shared device and the accelerator interface below are
+under way. The split: Daedalus
 decides whether and how data moves; a compute device's own copies stay in its driver (GPU, RGA,
 later NPU); Lemnos owns the DMA buffer basics and bus transfers. Overlap checked against the code
 on 2026-11-02, at f7e05ac.
 
-- [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp (Styx's
-      `gpu_isp::use_device(&GpuContextHandle)`, so its context is `from_daedalus` when a Daedalus
-      device exists).
+- [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.
       **Why:** two devices in one process duplicate pipelines and memory and need cross-device
       sync.
-      **Scope, as the code stands:** the mechanism exists: `GpuContextHandle::wgpu()`,
-      `raw_vulkan()` / `submit_raw` (29ae351), and the context-owned submit lock with
-      `GpuContextHandle::submit` / `submit_lock` (700be30). Styx's production GPU ISP opens its
-      own device (`GpuContext::open`); `from_daedalus` passes on v3dv in gpuisp's tests. Styx's
-      plan (agreed 2026-11-02): `use_device`, every submit on a `from_daedalus` device under
+      **Daedalus side, done (2026-11-03):** `shared_context` / `process_context` /
+      `devices_created`; every engine with `GpuBackend::Device` takes the process's device
+      (`tests/shared_device.rs`, `daedalus/tests/gpu_shared_device.rs`: two engines and a library,
+      one device).
+      **Open:** Styx's `gpu_isp::context()` takes `shared_context` and builds
+      `GpuContext::from_daedalus` on it (the Styx session has the API); every submit on it under
       `submit_lock()`, tests under sync validation.
-      **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
-      **Blocked by:** the user's go (Styx lists it under "After the release" too). Moved out of
-      the alpha on 2026-11-02 (HeliOS): the Raze runs the CPU ISP (Styx 12b63eb), so nothing in
-      the alpha path shares the device.
+      **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a Styx
+      test, and it passes on the Raze under VVL.
       **Measured:** n/a.
 
 - [ ] **What:** later, an accelerator interface (load program, import buffers, submit, fence) for

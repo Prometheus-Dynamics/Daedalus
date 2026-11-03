@@ -85,6 +85,10 @@ name = "gpu_allocations"
 required-features = ["gpu-wgpu"]
 
 [[test]]
+name = "shared_device"
+required-features = ["gpu-wgpu"]
+
+[[test]]
 name = "driver_stress"
 required-features = ["gpu-wgpu"]
 

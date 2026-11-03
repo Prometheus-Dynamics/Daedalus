@@ -56,9 +56,9 @@ pub use mock::MockBackend;
 #[cfg(all(feature = "gpu-mock", target_os = "linux"))]
 pub use mock::MockImportRecord;
 pub use noop::NoopBackend;
-pub use selection::select_backend;
 #[cfg(feature = "gpu-async")]
 pub use selection::select_backend_async;
+pub use selection::{devices_created, process_context, select_backend, shared_context};
 #[cfg(feature = "gpu-wgpu")]
 pub use shader::{
     FragmentBinding, FragmentPass, FragmentRects, GpuInFlight, GpuKernel, GpuKernels,

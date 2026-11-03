@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::{
     BackendSkip, BackendSkipReason, GpuAdapterInfo, GpuBackend, GpuBackendKind, GpuContextHandle,
@@ -54,6 +55,79 @@ pub fn select_backend(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
     }
 
     Err(GpuError::AdapterUnavailable)
+}
+
+/// The process's GPU device: the one a previous call made, while any handle to it is alive, else
+/// a new one from [`select_backend`]. Every Daedalus engine with a device backend takes its
+/// context here, and so can any other library in the process that runs Vulkan work (Styx's GPU
+/// ISP), so the process opens one device and one queue, with one submit lock, instead of one
+/// per user: no duplicate pipelines and memory, no cross-device sync.
+///
+/// The first call's `opts` choose the device; later calls get that device whatever their
+/// options. A request for the mock or noop backend is not shared: it gets its own, as from
+/// [`select_backend`]. The device is destroyed when the last handle to it drops, and the next call
+/// opens a new one.
+pub fn shared_context(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
+    if matches!(
+        opts.preferred_backend,
+        Some(GpuBackendKind::Mock | GpuBackendKind::Noop)
+    ) {
+        return select_backend(opts);
+    }
+    // Held while a device is created, so two first callers cannot open two.
+    let mut shared = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(handle) = shared.as_ref().and_then(Shared::upgrade) {
+        return Ok(handle);
+    }
+    let handle = select_backend(opts)?;
+    *shared = (handle.chosen == GpuBackendKind::Wgpu).then(|| Shared::of(&handle));
+    Ok(handle)
+}
+
+/// The process's GPU device if one is open (made by [`shared_context`] and still held), without
+/// opening one.
+pub fn process_context() -> Option<GpuContextHandle> {
+    SHARED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(Shared::upgrade)
+}
+
+/// The number of wgpu devices this copy of the crate has created in the process, through any
+/// selector. A test asserts one device per process with it.
+pub fn devices_created() -> usize {
+    DEVICES_CREATED.load(Ordering::Relaxed)
+}
+
+pub(crate) static DEVICES_CREATED: AtomicUsize = AtomicUsize::new(0);
+
+static SHARED: Mutex<Option<Shared>> = Mutex::new(None);
+
+/// The shared device, held weakly so it goes with its last user.
+struct Shared {
+    backend: Weak<dyn GpuBackend>,
+    chosen: GpuBackendKind,
+    adapter: GpuAdapterInfo,
+}
+
+impl Shared {
+    fn of(handle: &GpuContextHandle) -> Self {
+        Self {
+            backend: Arc::downgrade(&handle.backend),
+            chosen: handle.chosen,
+            adapter: handle.adapter.clone(),
+        }
+    }
+
+    fn upgrade(&self) -> Option<GpuContextHandle> {
+        Some(GpuContextHandle {
+            backend: self.backend.upgrade()?,
+            chosen: self.chosen,
+            adapter: self.adapter.clone(),
+            skipped: Vec::new(),
+        })
+    }
 }
 
 /// The real wgpu backend uses `WgpuBackend::new_async`; mock and noop backends remain immediate.

@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Added
 
+- **One GPU device per process.** `daedalus_gpu::shared_context` returns the process's wgpu device,
+  opened on first use and closed with its last handle; `process_context` finds it without opening
+  one, and `devices_created` counts the devices opened. Engines with `GpuBackend::Device` take their
+  device there, so engines in one process (and a library such as Styx's GPU ISP that takes it there)
+  share one device, queue and submit lock. Before, each engine opened its own.
 - **`HostGraph::recycle_telemetry` / `OwnedExecutor::recycle_telemetry`.** Hand back the
   `ExecutionTelemetry` a tick returned: the next serial tick records into its buffers, so ticks
   at `MetricsLevel::Timing` and above allocate nothing for telemetry (3 allocations per tick
