@@ -591,6 +591,10 @@ static GPU_OPS: Registry = Registry {
             path: "crates/gpu/src/shader/fallback.rs",
             reason: "test shaders for the spec cache (in its test module)",
         },
+        Exempt {
+            path: "crates/gpu/src/interop/shared_value.rs",
+            reason: "SharedValue::dispatch_wgsl: builds a pipeline for the caller's WGSL",
+        },
     ],
     children: &[&PORTABLE_GPU, &FRAGMENT_TABLE],
     ..Registry::EMPTY
