@@ -5,8 +5,10 @@
 //! in CUDA device memory are keyed `…@cuda` (see [`GpuBackendKind::device_type_suffix`]), so a
 //! wgpu device value is never handed to a CUDA node, and the other way round.
 //!
-//! Not implemented: images and textures, dmabuf import, and CUDA↔Vulkan interop
-//! (`cudaImportExternalMemory`), which would need both backends on one device.
+//! Images are 2D CUDA arrays ([`CudaBackend::create_image`]). CUDA↔Vulkan buffer sharing is in
+//! [`crate::interop`]: memory exported from the wgpu device as an opaque fd is imported here
+//! (`cuImportExternalMemory`). Not implemented: dmabuf import (the driver refuses a dma-buf fd),
+//! and a graph-level handoff between a wgpu node and a CUDA node.
 
 mod device;
 mod external;

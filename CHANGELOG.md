@@ -41,8 +41,13 @@ plugin ABI and does not load.
   to build; device memory with `upload`/`download`; a PTX `scale_f32` kernel and `CudaFence`.
   CUDA device memory is a different port type from wgpu's: the `…@cuda` key
   (`GpuBackendKind::device_type_suffix`) against `…@gpu`. `#[device]` transfers keyed `@cuda` run
-  through the executor's context (`GpuContextHandle::cuda`). Tests skip without a device. Not yet:
-  images, CUDA↔Vulkan interop, and planner selection by backend (`docs/gpu-nodes.md`).
+  through the executor's context (`GpuContextHandle::cuda`). Tests skip without a device.
+  Also: CUDA images (2D cuArrays, `create_image`/`upload_texture`/`read_texture`, R8, RG8, RGBA8,
+  RGBA16F); CUDA↔Vulkan buffer sharing (`daedalus_gpu::interop::SharedBuffer`, an opaque fd
+  imported with `CudaBackend::import_opaque_fd`, zero copies at the handoff, the device UUID
+  checked); and planner selection by neighbour: a bare `Residency::Gpu` request lands on the
+  device key of its producer or its one consumer, with no transfer (`docs/gpu-nodes.md`). Not
+  yet: dmabuf import, which the driver refuses (`CUDA_ERROR_UNKNOWN`), and a graph-level handoff.
 - **One GPU device per process.** `daedalus_gpu::shared_context` returns the process's wgpu device,
   opened on first use and closed with its last handle; `process_context` finds it without opening
   one, and `devices_created` counts the devices opened. Engines with `GpuBackend::Device` take their

@@ -157,14 +157,25 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       `docs/development.md`, "Windows".
 - [ ] **What:** CUDA interop and backend-aware planning: CUDA↔Vulkan memory sharing
       (`cudaImportExternalMemory`) so a wgpu buffer can reach a CUDA node without a host copy, and a
-      `Residency::Gpu` request that picks its device key by the engine's backend (today the cheapest
-      `@cuda` or `@gpu` device of the CPU type wins).
+      `Residency::Gpu` request that picks its device key by its neighbours.
       **Why:** the CUDA backend (done below) keeps the two residencies distinct; these two are what a
       mixed graph would need.
       **Done when:** a graph with a wgpu node feeding a CUDA node (and back) runs on the RTX 4060
       with checked values, and a planner test shows a `@gpu` request never picks a CUDA device.
-      **Blocked by:** nothing; not requested yet, so the user decides whether it is wanted.
-      **Measured:** none.
+      **Status (2026-11-03, branch `cuda-open`):** done, measured: the planner picks the neighbour's
+      device key (`residency_tests.rs`: a CUDA producer inserts 0 adapter steps and keeps `@cuda`; a
+      wgpu producer keeps `@gpu`; a host producer follows its one consumer's device key); buffer
+      interop (`crates/gpu/tests/cuda_interop.rs`: a device-local Vulkan buffer exported as an opaque
+      fd, imported into CUDA and scaled in place, two round trips of 1000 `f32` on the RTX 4060 with
+      the CUDA and wgpu transfer counters unchanged); CUDA images (`cuda_device.rs`). Refused by the
+      driver: dma-buf import, `cuImportExternalMemory` returns `CUDA_ERROR_UNKNOWN` (999) for a
+      dma-buf fd. **Still open:** the graph-level case, a wgpu node feeding a CUDA node in one
+      executor run with no host copy (the executor does not hand a wgpu buffer to a CUDA node yet;
+      wgpu cannot export its own buffers, so the shared buffer is a Vulkan allocation on the wgpu
+      device).
+      **Blocked by:** nothing; the graph-level case is not requested yet, so the user decides whether
+      it is wanted.
+      **Measured:** the counters above; no timing.
 - [ ] **What:** signing and registry work.
       **Why:** pinned for later by the user (2026-10-30).
       **Done when:** the user has scoped it.
@@ -291,8 +302,8 @@ was searched for, the commit is the one that introduced it.
       checked exactly; a download waits for the kernel queued before it), `executor_cuda.rs` (a graph
       whose GPU node runs upload, kernel, download and whose sink checks the values) and
       `device_cuda.rs` (the `@cuda` transfers). All ran on an RTX 4060, driver 595.104.02, and skip
-      with the reason under `CUDA_VISIBLE_DEVICES=-1` (2026-11-03). Not done: images, interop and
-      backend-aware planning (see Open).
+      with the reason under `CUDA_VISIBLE_DEVICES=-1` (2026-11-03). Images, buffer interop and
+      neighbour-based planning came after it (see Open for what remains).
 - [x] The engine and a plugin `cdylib` on one device share its submit lock (alpha item): the
       lock is the context's (700be30, `GpuContextHandle::submit` / `submit_lock`), and
       `crates/gpu/tests/plugin_submit.rs` (9861b18) loads a plugin `cdylib` with its own copy of

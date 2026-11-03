@@ -301,16 +301,39 @@ on (`crates/gpu/src/cuda/ptx.rs`; the one shipped is `scale_f32`).
   and download. `crates/runtime/tests/it/executor_cuda.rs` runs a source, a CUDA node and a sink
   through `Executor::with_gpu` and checks the values.
 
-Limits, stated plainly:
+Details and limits, stated plainly:
 
-- **Planner.** A request with `Residency::Gpu` for a CPU type matches every device key of that
-  CPU type, so when a wgpu and a CUDA device are both registered for it, the planner takes the
-  cheaper one whatever the engine runs. Name the port type explicitly (`test:f32@cuda`) where
-  the backend matters, until the planner takes the backend into account.
-- **Interop.** No CUDA↔Vulkan memory sharing (`cudaImportExternalMemory`): a graph cannot pass a
-  wgpu buffer to a CUDA node on the device. Each side copies through the host.
+- **Planner.** A bare `Residency::Gpu` request for a CPU type matches every device key of that
+  CPU type. The planner now picks the device its neighbours are already on: a producer whose
+  value is `…@cuda` (or `…@gpu`) keeps it there at cost 0, with no adapter step; with a host
+  producer, the one consumer that takes a device key decides the upload's device. With no such
+  neighbour the cheapest key still wins. `crates/planner/src/passes/residency_tests.rs` counts the
+  converter steps of each edge (five cases: a CUDA producer, a wgpu producer, a host producer
+  feeding a CUDA or a wgpu consumer, and a device producer feeding the other device).
+- **Images.** `create_image`, `upload_texture` and `read_texture` hold a 2D CUDA array for R8,
+  RG8, RGBA8 and RGBA16F (`crates/gpu/src/cuda/image.rs`). The copies are host transfers and are
+  counted; `cuda_device.rs` round-trips each format.
+- **Interop.** `daedalus_gpu::interop::SharedBuffer` (Linux, `gpu-vulkan-raw`) allocates
+  device-local memory on the wgpu device's Vulkan device, exportable as an opaque fd. Its
+  descriptor (`export_fd`) imports into CUDA (`CudaBackend::import_opaque_fd`), where
+  `CudaImport::scale_f32` works on it in place. Vulkan reads the same allocation. The
+  handoff copies nothing: the test in `crates/gpu/tests/cuda_interop.rs` checks that the CUDA and
+  wgpu transfer counters do not move over two round trips of 1000 `f32`. The host reaches the
+  shared memory through a staging buffer and a Vulkan copy. Host-visible memory cannot be the
+  shared one: on this driver a CUDA kernel kept reading the contents of its first host write
+  after later host writes, so the device-local allocation is used. `select_wgpu_on_vendor(0x10DE)`
+  picks the NVIDIA wgpu device, and the buffer's UUID must match the CUDA device.
+  wgpu's own buffers cannot be exported (wgpu does not expose their memory), so a graph does not
+  yet hand a wgpu buffer to a CUDA node: that handoff is still open.
+- **dma-buf.** The driver refuses a dma-buf fd: `cuImportExternalMemory` returns
+  `CUDA_ERROR_UNKNOWN` (999) for a dma-heap buffer and for a dma-buf that Vulkan exports from the
+  NVIDIA device (the probe in `cuda_interop.rs` prints both). The CUDA API has no dma-buf handle
+  type (only opaque fd, Win32, D3D and NvSci), so a zero-copy dma-buf import is not available on
+  this driver; the opaque-fd route above is the one that works.
 
 Test on this machine (RTX 4060, driver 595.104.02): `cargo test -p daedalus-gpu --features
 gpu-cuda --test cuda_device`, `-p daedalus-runtime --features gpu-cuda --test it executor_cuda`,
 and `-p daedalus-rs --features gpu-cuda,engine,plugins --test it device_cuda`. With
-`CUDA_VISIBLE_DEVICES=-1` they skip and pass.
+`CUDA_VISIBLE_DEVICES=-1` they skip and pass. The interop and image tests run with
+`-p daedalus-gpu --features gpu-cuda,gpu-vulkan-raw --test cuda_interop` and `--test cuda_device`.
+The planner tests run with `-p daedalus-planner residency`.
