@@ -120,6 +120,10 @@ fn persistent_node_worker_exercises_payload_ownership_modes() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a file the JVM has mapped cannot be deleted on Windows"
+)]
 fn persistent_java_worker_resolves_payload_handle_to_direct_byte_buffer_mmap() {
     let Some((javac, java)) = java_available() else {
         return;
@@ -161,6 +165,10 @@ fn persistent_java_worker_resolves_payload_handle_to_direct_byte_buffer_mmap() {
 }
 
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "a file the JVM has mapped cannot be deleted on Windows"
+)]
 fn persistent_java_worker_exercises_payload_ownership_modes() {
     let Some((javac, java)) = java_available() else {
         return;

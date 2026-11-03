@@ -30,6 +30,8 @@
 //!   `Unmeasured` until a board run.
 
 mod ffi;
+// The shared checks serve the Linux routes only.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod plan;
 
 pub use daedalus_rga::{Filter, Transform};

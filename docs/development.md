@@ -231,8 +231,8 @@ optional features (`json`, `schema`, `proto`, `bundle`, `plugin`, `metrics`, ...
 What `std` switches:
 
 - Locks and lazy globals: `std::sync::{Mutex, OnceLock}` with `std`, `spin` without, through the
-  crate-private `portable` module (`crates/portable.rs`, symlinked into each crate's `src/` like
-  `crates/build_features.rs`). `data` and `planner` keep `parking_lot` locks only with `std`.
+  crate-private `portable` module (`crates/portable.rs`, copied into each crate's `src/` like
+  `crates/build_features.rs`; `scripts/check-shared-sources.sh --fix` refreshes the copies). `data` and `planner` keep `parking_lot` locks only with `std`.
 - Hash maps keyed by `TypeId` (`data`'s type registry, `transport`'s boundary vtables): `std`'s
   `HashMap` with `std`, `hashbrown` without. Planner passes use `BTreeMap`/`BTreeSet`.
 - 64-bit counters: `AtomicU64`, from `portable-atomic` on targets without 64-bit atomics.
@@ -320,7 +320,7 @@ The other switches:
 
 - Tracing: the `tracing` feature (default on, independent of `std`, host-only in the
   fingerprint; the engine's enables the runtime's, the facade's also the planner's) keeps the `tracing` spans and events. Without it the
-  crate's `trace` module (`crates/trace.rs`, symlinked into each crate's `src/` like
+  crate's `trace` module (`crates/trace.rs`, copied into each crate's `src/` like
   `portable.rs`) expands `trace!`/`debug!`/`warn!`/`error!` to nothing, without evaluating their
   arguments, and `debug_span!` to an inert span, so `tracing` is not a dependency. It builds
   without `std` where the target has compare-and-swap (`thumbv7em`).
@@ -349,6 +349,23 @@ The other switches:
   (`handle.clock()`, `io.clock()`) before `feed_payload`/`push_payload` when it is a custom one.
   Engines set their clock on the bridges they create; a `HostBridgeManager` you pass to
   `Engine::execute_with_host` keeps its own.
+
+### Windows
+
+The workspace builds and tests on Windows (MSVC): CI's `windows` job runs clippy and the
+workspace tests on `windows-latest`. A plain checkout works:
+- the shared sources (`build_features.rs`, `portable.rs`, `trace.rs`) are copies, not symlinks,
+  so `core.symlinks` is not needed (`scripts/check-shared-sources.sh` keeps them identical);
+- `.gitattributes` keeps LF line endings, so checked-in generated files compare byte for byte.
+
+What differs:
+- Linux-only paths are compiled out: dmabuf import, V4L2 and the RGA, VGLite, `perf_event`
+  sampling (`IpSampler` is a stub that never starts), and the dlopen allocation test.
+- The FFI host waits on a worker's stdout with `PeekNamedPipe` instead of `poll`.
+- Six FFI host tests are ignored on Windows. Four script their workers with `/bin/sh`. Two delete
+  a payload file the JVM still maps, which Windows refuses, so the Java worker's move ownership
+  keeps the file there.
+- The GPU tests skip on the runner, which has no adapter.
 
 ### WebAssembly
 

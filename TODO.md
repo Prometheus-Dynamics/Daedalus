@@ -141,12 +141,13 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       a CRC-32 per chunk, duplicates ignored, a gap answered with `resend_from`. The tests receive
       a plan blob in chunks (with a corrupted frame, a retransmission and a gap) and load and run
       it. Untested on a board.
-- [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
-      under `crates/` (`build.rs`, `portable.rs`, `trace.rs`).
-      **Why:** without it those crates do not build from a Windows checkout.
-      **Done when:** the user has decided, and the symlinks are replaced or the limit is documented.
-      **Blocked by:** the user's decision.
-      **Measured:** 14 symlinks.
+- [x] **What:** Windows. The user said to make it work (2026-11-03, relayed by HeliOS).
+      **Done (2026-11-03):** the 14 symlinks are copies checked by
+      `scripts/check-shared-sources.sh` (in `ci.sh lints`), checkouts are LF everywhere, and CI's
+      `windows` job runs clippy and the workspace tests on `windows-latest` (green on
+      `ci/windows`, run 41707584216). Linux-only paths are compiled out; six FFI host tests are
+      ignored there (`/bin/sh` workers, and JVM-mapped files that Windows cannot delete);
+      `docs/development.md`, "Windows".
 - [ ] **What:** CUDA interop and backend-aware planning: CUDA↔Vulkan memory sharing
       (`cudaImportExternalMemory`) so a wgpu buffer can reach a CUDA node without a host copy, and a
       `Residency::Gpu` request that picks its device key by the engine's backend (today the cheapest

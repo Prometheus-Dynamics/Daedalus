@@ -1,7 +1,6 @@
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::fd::AsRawFd;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -358,39 +357,6 @@ fn worker_id_from_parts(executable: &str, args: &[String]) -> String {
     }
 }
 
-fn wait_stdout_readable(
-    stdout: &BufReader<ChildStdout>,
-    timeout: Duration,
-) -> Result<bool, RunnerPoolError> {
-    if !stdout.buffer().is_empty() {
-        return Ok(true);
-    }
-    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
-    let mut fd = libc::pollfd {
-        fd: stdout.get_ref().as_raw_fd(),
-        events: libc::POLLIN | libc::POLLHUP | libc::POLLERR,
-        revents: 0,
-    };
-    loop {
-        // SAFETY: `fd` contains a valid descriptor owned by `ChildStdout`, and the pointer/count
-        // describe exactly one initialized `pollfd` for the duration of this call.
-        let result = unsafe { libc::poll(&mut fd, 1, timeout_ms) };
-        if result > 0 {
-            return Ok(true);
-        }
-        if result == 0 {
-            return Ok(false);
-        }
-        let err = std::io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::EINTR) {
-            continue;
-        }
-        return Err(RunnerPoolError::Runner(format!(
-            "failed to wait for worker stdout: {err}"
-        )));
-    }
-}
-
 fn accumulate_payload_value(
     value: &daedalus_ffi_core::WireValue,
     payloads: &mut FfiPayloadTelemetry,
@@ -738,6 +704,9 @@ impl Drop for PersistentWorkerProcess {
         self.stderr.finish();
     }
 }
+
+mod readable;
+use readable::wait_stdout_readable;
 
 #[cfg(test)]
 mod tests;

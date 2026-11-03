@@ -589,6 +589,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror",
+ "windows-sys",
 ]
 
 [[package]]

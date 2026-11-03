@@ -104,6 +104,7 @@ defmt = "1.1.1"
 glob = "0.3.4"
 hashbrown = "0.17.1"
 libc = "0.2"
+windows-sys = { version = "0.61", default-features = false }
 libloading = "0.9.0"
 once_cell = "1.21.4"
 panic-halt = "1.0.0"

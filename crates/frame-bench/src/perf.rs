@@ -262,9 +262,6 @@ mod sys {
     pub fn open(_kind: u32, _config: u64) -> Option<c_int> {
         None
     }
-    pub fn open_sampling(_period: u64, _sample_type: u64) -> Option<c_int> {
-        None
-    }
     pub fn enable(_fd: c_int) {}
     pub fn disable(_fd: c_int) {}
     pub fn reset(_fd: c_int) {}
@@ -272,6 +269,29 @@ mod sys {
         0
     }
     pub fn close(_fd: c_int) {}
+}
+
+/// Instruction-pointer samples of the calling thread: one sample per `period` retired user
+/// instructions (`PERF_SAMPLE_IP` into a ring buffer), for a per-function profile of a run.
+/// Linux only: elsewhere `start` returns `None`.
+#[cfg(not(target_os = "linux"))]
+pub struct IpSampler {
+    _never: core::convert::Infallible,
+}
+
+#[cfg(not(target_os = "linux"))]
+impl IpSampler {
+    pub fn start(_period: u64) -> Option<Self> {
+        None
+    }
+
+    pub fn start_callchain(_period: u64) -> Option<Self> {
+        None
+    }
+
+    pub fn finish(self) -> Vec<Vec<u64>> {
+        match self._never {}
+    }
 }
 
 /// Instruction-pointer samples of the calling thread: one sample per `period` retired user

@@ -405,6 +405,7 @@ pub enum ExternalImportError {
 }
 
 impl ExternalImportError {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // the import paths are Linux-only
     pub(crate) fn invalid(reason: impl Into<String>) -> Self {
         Self::InvalidDescriptor {
             reason: reason.into(),

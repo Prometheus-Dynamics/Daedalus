@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- **Windows builds and tests.** The shared sources that were symlinks are copies
+  (`scripts/check-shared-sources.sh` keeps them identical), so a Windows checkout needs no
+  `core.symlinks`; checkouts keep LF line endings; CI runs clippy and the workspace tests on
+  `windows-latest`. See docs/development.md, "Windows".
 - **`daedalus-accelerator`: the accelerator interface.** `Accelerator` (object safe): load a
   program, allocate, upload or import (dmabuf with an acquire fence) buffers, submit after waits,
   and complete through a `Fence` that can export a `sync_file`. Interface only; see
