@@ -240,7 +240,7 @@ fn an_upstream_failure_fails_the_submission() {
 fn bad_programs_bindings_handles_and_reads_are_refused() {
     let npu = Adder::new();
     assert!(matches!(
-        npu.load_program(&ProgramDesc::new("rknn", &[])),
+        npu.load_program(&ProgramDesc::new("unknown-format", &[])),
         Err(AcceleratorError::Unsupported { .. })
     ));
     assert!(matches!(

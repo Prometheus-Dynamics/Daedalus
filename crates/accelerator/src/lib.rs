@@ -12,7 +12,7 @@
 //! use daedalus_accelerator::{Accelerator, Access, Binding, BufferSource, ProgramDesc, Submission};
 //!
 //! fn run(npu: &dyn Accelerator, model: &[u8], input: &[u8]) -> Result<Vec<u8>, daedalus_accelerator::AcceleratorError> {
-//!     let program = npu.load_program(&ProgramDesc::new("rknn", model))?;
+//!     let program = npu.load_program(&ProgramDesc::new("rknpu-cmd", model))?;
 //!     let info = npu.program_info(&program)?;
 //!     let input = npu.buffer(BufferSource::Copy(input))?;
 //!     let output = npu.buffer(BufferSource::Allocate { len: info.outputs[0].len })?;
@@ -42,9 +42,11 @@ pub use program::{ProgramDesc, ProgramInfo, SlotInfo, validate_bindings};
 pub struct AcceleratorInfo {
     /// The device, as its driver names it (for logs).
     pub name: String,
-    /// The family, which keys residency and program formats (for example `rknpu`, `k230-kpu`).
+    /// The family, which keys residency and program formats (for example `rknpu`, `k230-kpu`,
+    /// `edgetpu`).
     pub kind: String,
-    /// The program formats [`Accelerator::load_program`] takes (for example `rknn`, `kmodel`).
+    /// The program formats [`Accelerator::load_program`] takes: our own compiled command streams,
+    /// one per device family.
     pub program_formats: Vec<String>,
     /// Whether [`BufferSource::DmaBuf`] imports without a copy.
     pub dmabuf_import: bool,

@@ -2,8 +2,10 @@
 
 `daedalus-accelerator` is the interface Daedalus nodes use to drive an NPU or a custom
 accelerator: load a program, allocate or import buffers, submit, and wait on a fence. It is the
-interface only. No accelerator implements it yet; RKNPU (RK3588S / RK3576) and the K230 KPU are
-the expected first ones, and each needs the user's go.
+interface only. No accelerator implements it yet; RKNPU (RK3588S / RK3576), the K230 KPU and the
+Coral Edge TPU are the expected first ones, and each needs the user's go. They will be our own
+drivers, submitting at the register or ioctl level over Lemnos's transports, not vendor runtimes
+(HeliOS TODO "AI accelerators: our own stack rather than vendor runtimes").
 
 The split is the same as for the GPU (TODO "Dependency layers"):
 - Daedalus decides whether and how data moves between devices.
@@ -59,9 +61,9 @@ Wait:  Fence(FenceHandle) | SyncFd(OwnedFd)
   - the buffer is large enough;
   - inputs are read and outputs are written.
 - **Programs are opaque bytes plus a format tag.**
-  - The tag is one of `AcceleratorInfo::program_formats`, such as `rknn` or `kmodel`.
-  - Compilation and quantisation stay in the vendor toolchain; loading is done once, when the
-    graph is built.
+  - The tag is one of `AcceleratorInfo::program_formats`: our own compiled command-stream format
+    for each device, produced by our own compiler, not a vendor model file.
+  - Loading is done once, when the graph is built.
 
 ## In a graph
 
@@ -77,17 +79,32 @@ These parts are not built yet; they are for the first implementation.
 
 ## Mapping onto the expected devices
 
-- **RKNPU (rknpu2 / `librknnrt`).**
-  - `load_program`: `rknn_init` on an `.rknn` image.
-  - `program_info`: `rknn_query` (input/output attributes).
-  - Buffers: `rknn_create_mem` for `Allocate`; `rknn_create_mem_from_fd` for `DmaBuf`.
-  - `submit`: `rknn_set_io_mem` + `rknn_run`, on a worker thread signalling a `CpuFence`.
-    `rknn_run` blocks, and the runtime exposes no sync_file.
-- **K230 KPU (nncase runtime).**
-  - `load_program`: a `.kmodel`.
-  - Buffers: `Allocate` / `Copy` through the runtime's host tensors; `DmaBuf` where its MMZ
-    buffers can wrap one.
-  - `submit`: runs the model and signals a `CpuFence`.
+Each implementation is our own driver behind the trait. Lemnos provides the transport: DRM ioctls,
+MMIO register access, USB, and the DMA buffers. No vendor runtime (`librknnrt`, nncase,
+`libedgetpu`) is linked or loaded.
+
+- **RKNPU (RK3588S / RK3576), through the kernel's NPU DRM driver.**
+  - `load_program`: validates our command-stream image for the NPU's cores.
+  - `buffer`: the driver's GEM buffer objects, created through Lemnos's DRM ioctls. `DmaBuf`
+    imports a PRIME fd, so a camera frame reaches the NPU without a copy.
+  - `submit`: the driver's submit ioctl, with the task list and the bound buffer objects.
+  - Completion: a DRM syncobj where the driver signals one, exported as a `sync_file`.
+    Otherwise a completion thread waits on the job and signals a `CpuFence`.
+- **K230 KPU, through its registers.**
+  - Lemnos maps the KPU's MMIO window and the shared memory it reads from.
+  - `load_program`: places our instruction stream and its constants in that memory.
+  - `buffer`: carves input and output tensors from the same memory. `DmaBuf` is accepted where
+    the buffer is physically contiguous and visible to the KPU.
+  - `submit`: writes the start registers.
+  - Completion: the KPU's done interrupt, through Lemnos's interrupt or uio wait, signals a
+    `CpuFence`.
+- **Coral Edge TPU, over Lemnos's USB.**
+  - `load_program`: our compiled instruction bitstream and parameters, sent as the device
+    protocol's bulk transfers.
+  - `buffer`: host memory staged per transfer (`Copy` / `Allocate`). The TPU cannot read a
+    dmabuf in place, so `info().dmabuf_import` is `false`.
+  - `submit`: queues the input bulk-out and output bulk-in transfers.
+  - Completion: the output transfer's completion signals a `CpuFence`.
 
 ## Testing
 

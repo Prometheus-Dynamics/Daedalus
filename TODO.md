@@ -260,7 +260,8 @@ on 2026-11-02, at f7e05ac.
       runs on an accelerator defined in the test.
       **Open:** the design's graph integration (residency key, `ExecutionContext` capability,
       fences between nodes) with the first implementation.
-      **Blocked by:** the user's go for an NPU implementation (RKNPU, K230 KPU).
+      **Blocked by:** the user's go for an implementation (RKNPU, K230 KPU, Coral Edge TPU), as
+      our own drivers over Lemnos's transports, not vendor runtimes.
       **Measured:** n/a.
 
 ## Done
