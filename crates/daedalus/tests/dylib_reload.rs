@@ -3,6 +3,8 @@
 //! `reload-incompatible` adds a port), and a running graph switches builds between two ticks.
 //! Node state resets across the reload, and the old build stays loaded exactly as long as a
 //! buffer it produced is held.
+// musl executables are static and cannot dlopen (see `dylib::library`): no loader there.
+#![cfg(not(target_env = "musl"))]
 
 #[path = "support/cdylib.rs"]
 mod cdylib;

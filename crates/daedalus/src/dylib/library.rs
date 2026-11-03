@@ -5,7 +5,16 @@ use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+#[cfg(not(target_env = "musl"))]
 use libloading::Library;
+#[cfg(target_env = "musl")]
+use musl::Library;
+
+/// Why the OS loader could not open a library.
+#[cfg(not(target_env = "musl"))]
+pub type LoadError = libloading::Error;
+#[cfg(target_env = "musl")]
+pub use musl::LoadError;
 
 /// A loaded library. Everything that may point into its code or data holds an `Arc` of it
 /// (stable install generations, buffers the plugin produced); what cannot be tracked pins it.
@@ -89,7 +98,7 @@ impl Drop for LibraryHandle {
 #[derive(Debug)]
 pub enum OpenError {
     Copy(std::io::Error),
-    Load(libloading::Error),
+    Load(LoadError),
 }
 
 /// Copy `path` to a fresh file under the temp dir.
@@ -108,4 +117,40 @@ fn shadow_copy(path: &Path) -> std::io::Result<PathBuf> {
     ));
     std::fs::copy(path, &copy)?;
     Ok(copy)
+}
+
+/// musl executables are static, and a static executable cannot `dlopen` (musl's `dlopen` there
+/// always fails; Rust's self-contained musl has no `libdl` to link either). So there is no
+/// loader: opening any library fails with [`LoadError`], and plugin crates still build (the
+/// export side needs no loader).
+#[cfg(target_env = "musl")]
+mod musl {
+    use std::ffi::OsStr;
+
+    /// Dynamic loading is unavailable on musl targets.
+    #[derive(Debug)]
+    pub struct LoadError;
+
+    impl std::fmt::Display for LoadError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(
+                "dynamic plugin loading is unavailable on musl (static executables cannot dlopen)",
+            )
+        }
+    }
+
+    impl std::error::Error for LoadError {}
+
+    /// Never constructed: [`Library::new`] always fails.
+    pub enum Library {}
+
+    impl Library {
+        pub unsafe fn new(_path: impl AsRef<OsStr>) -> Result<Self, LoadError> {
+            Err(LoadError)
+        }
+
+        pub unsafe fn get<T>(&self, _symbol: &[u8]) -> Result<Box<T>, LoadError> {
+            match *self {}
+        }
+    }
 }

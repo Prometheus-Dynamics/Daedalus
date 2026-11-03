@@ -530,6 +530,12 @@ plugin ABI and does not load.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
+- `daedalus` (`dylib-plugins`) on musl: no `libloading` and no `-ldl`. musl executables are
+  static and cannot `dlopen`, and Rust's self-contained musl ships no `libdl` to link, so a
+  plugin crate or host test for `aarch64-unknown-linux-musl` failed to link (`unable to find
+  library -ldl`). There `PluginLibrary` loads nothing and reports
+  `PluginLibraryError::Load` ("dynamic plugin loading is unavailable on musl"); the export side
+  (`export_plugin!`) is unchanged. The facade's tests that load a `cdylib` are off on musl.
 - `daedalus-gpu`: the queue submit lock belongs to the GPU context instead of a process-wide
   static, so a plugin `cdylib` (its own copy of `daedalus-gpu`, with its own statics) holding the
   host's `GpuContextHandle` takes the host's lock. It is a `std` mutex, which waits on the mutex

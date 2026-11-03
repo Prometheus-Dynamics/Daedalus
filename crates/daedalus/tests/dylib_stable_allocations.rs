@@ -8,6 +8,8 @@
 //! handler's own output payload is allocated (as when installed statically): the arenas, the
 //! port lists and the decoded inputs' payloads are reused call after call, and `SharedBytes`
 //! and frames cross as handles both ways.
+// musl executables are static and cannot dlopen (see `dylib::library`): no loader there.
+#![cfg(not(target_env = "musl"))]
 
 #[path = "support/cdylib.rs"]
 mod cdylib;

@@ -4,6 +4,8 @@
 //! `examples/plugins/foreign_consumer`, built with a different copy of the example crate, which
 //! reads host counters through a foreign interface instead; and loads
 //! `examples/plugins/dependent`, which depends on (and links) the example plugin.
+// musl executables are static and cannot dlopen (see `dylib::library`): no loader there.
+#![cfg(not(target_env = "musl"))]
 
 #[path = "support/cdylib.rs"]
 mod cdylib;

@@ -4,6 +4,8 @@
 //! derived struct, bytes, an optional input, node state, a host frame read in place through
 //! `daedalus:frame`, conditional outputs and a `fire = "all"` join. A panic inside the plugin
 //! becomes a node error the host survives.
+// musl executables are static and cannot dlopen (see `dylib::library`): no loader there.
+#![cfg(not(target_env = "musl"))]
 
 #[path = "support/cdylib.rs"]
 mod cdylib;

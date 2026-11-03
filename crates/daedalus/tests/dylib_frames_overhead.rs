@@ -6,6 +6,8 @@
 //!
 //! `cargo test -p daedalus-rs --features engine,dylib-plugins --release --test
 //! dylib_frames_overhead -- --ignored --nocapture`
+// musl executables are static and cannot dlopen (see `dylib::library`): no loader there.
+#![cfg(not(target_env = "musl"))]
 
 #[path = "support/cdylib.rs"]
 mod cdylib;

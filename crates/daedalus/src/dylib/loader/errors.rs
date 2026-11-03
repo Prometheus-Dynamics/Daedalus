@@ -42,7 +42,7 @@ pub enum PluginLibraryError {
     Load {
         path: PathBuf,
         #[source]
-        source: libloading::Error,
+        source: crate::dylib::library::LoadError,
     },
     #[error("failed to copy plugin library `{}` for loading: {source}", path.display())]
     ShadowCopy {

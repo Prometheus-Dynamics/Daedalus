@@ -138,9 +138,13 @@ daedalus-macros = { workspace = true }
 daedalus-nodes = { workspace = true }
 daedalus-engine = { workspace = true, optional = true }
 daedalus-ffi-host = { workspace = true, optional = true }
-libloading = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true, features = ["std"] }
 thiserror = { workspace = true, optional = true, features = ["std"] }
+
+# Not on musl: its executables are static, where `dlopen` cannot load anything, and Rust's
+# self-contained musl has no `libdl` to link (`PluginLibrary` reports it unavailable there).
+[target.'cfg(not(target_env = "musl"))'.dependencies]
+libloading = { workspace = true, optional = true }
 
 [dev-dependencies]
 parking_lot = { workspace = true }

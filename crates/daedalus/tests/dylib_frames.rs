@@ -4,6 +4,8 @@
 //! registers). Every case counts the host frame's drops: its owner must drop exactly once, and
 //! only after the last reference on either side is gone. Pixels are never copied: pointers seen
 //! by the plugin and in returned frames are the host's.
+// musl executables are static and cannot dlopen (see `dylib::library`): no loader there.
+#![cfg(not(target_env = "musl"))]
 
 #[path = "support/cdylib.rs"]
 mod cdylib;
