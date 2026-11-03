@@ -446,9 +446,24 @@ kernel conformance 8, the GPU crate's tests with the dmabuf and raw Vulkan hardw
 | 8 kernels: 8 submits / 1 submit | 1.29 / 1.31 ms | 1.30 / 1.32 ms |
 | 1280x720 padded dmabuf import (no copy) | 25 us | |
 
-The readback is the first measurement since the DMA-buffer basics moved onto Lemnos (803f310):
-the read is the same `DMA_BUF_IOCTL_SYNC` / copy / sync sequence as before, and its median sits
-3% above the earlier single figure, inside this run's spread.
+The readback is the first measurement since the DMA-buffer basics moved onto Lemnos (803f310).
+A same-session A/B settles it: `gpu_bench` built at 5e97c0d (before the move) and at 6a0c73f,
+run interleaved, 12 times each, `GPU_BENCH_SECTIONS=readback`:
+
+| Median (range) | Before the move | After |
+|---|---|---|
+| 16 MiB host-cached read | 3.83 ms (3.57 to 4.36) | 3.79 ms (3.59 to 4.45) |
+| 16 MiB dma-heap sync + copy | 3.78 ms | 3.72 ms |
+| 1 MiB host-cached read | 0.270 ms | 0.275 ms |
+
+Unchanged; the earlier 3.6 ms was a single low sample.
+
+Styx's software-ISP frames import without a copy: Styx's `daedalus_import_check` (Styx d837f22,
+with `helios-engine` and `helios-peripherals` stopped for the camera) takes an NV12 1280x800 frame
+from the soft ISP's dma-heap output (`softisp_dmabuf`: Y at 0, UV at 1024000, one 1544192-byte
+dma-buf for an import that needs 1536256), imports it with `GpuStorage::import_dmabuf` in 95 to
+97 us, reads back the frame's 1536000 bytes exactly, and reads a sentinel the CPU then wrote into
+the dma-buf: the storage is the frame's memory. 3 of 3 runs pass.
 
 ### CM5 run (2026-11-02)
 

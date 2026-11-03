@@ -33,29 +33,6 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Blocked by:** a HeliOS deploy on the Raze, which the HeliOS coordinator owns. HeliOS `dev`'s
       `backend/Cargo.lock` pins b148918, which carries bb07e3b; what the Raze runs was not checked.
       **Measured:** planner tests only (`planner/src/refresh/tests.rs`); no Raze run is recorded.
-- [ ] **[board] What:** readback timing on the Raze: the host-cached dma-heap readback after the
-      DMA-buffer move onto Lemnos (803f310).
-      **Why:** the move must not cost readback time; the cached path (602b14b) is what makes
-      readback usable on v3dv.
-      **Done when:** a host-cached read of 16 MiB measures no slower than 3.6 ms on the Raze,
-      recorded in `docs/testing.md`.
-      **Blocked by:** a Raze slot for a same-session A/B (HeliOS, 2026-11-02): `gpu_bench` built
-      at 803f310^ (before the move) against the current one, interleaved, n >= 10 each. If the
-      median gap holds, bisect it; if not, record "unchanged" with the A/B as the evidence.
-      **Measured:** 3.6 ms per 16 MiB before the move. After it (6a0c73f, 2026-11-02): median
-      3.73 ms over 6 runs, 3.58 to 3.76; 1 MiB 0.28 ms (was 0.30); memcpy 2.94 ms (was 2.9).
-      `docs/testing.md`, "CM5 run (2026-11-02, alpha)".
-- [ ] **[board] What:** zero-copy import of Styx's software-ISP frames on the Raze: a frame
-      Styx's soft ISP writes into a dmabuf, imported into Daedalus GPU storage or a texture
-      without a copy (`SharedFrame`, `GpuStorage::import_dmabuf`, the dmabuf import from a
-      `SharedFrame`, 3b14534), with its acquire fence honoured.
-      **Why:** the camera path on the Raze; a copy per frame is what the frame interface exists
-      to avoid.
-      **Done when:** a Raze test imports a Styx soft-ISP frame, reads back the same bytes the ISP
-      wrote, and the import is shown to make no CPU copy.
-      **Blocked by:** a Raze slot; Styx's soft-ISP output in a dmabuf Daedalus can import.
-      **Measured:** imports pass on RADV and the Raze with test buffers (fd455a4, `ci.sh pi`);
-      no Styx ISP frame has been imported.
 - [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.
       **Why:** two devices in one process duplicate pipelines and memory and need cross-device
       sync.
@@ -92,24 +69,6 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Blocked by:** Styx's side (who creates the device when both run); the user moved this
       into the alpha on 2026-11-02.
       **Measured:** n/a.
-- [ ] **What:** move the gpu crate's DMA-buffer basics onto Lemnos's.
-      **Why:** one owner for dma-heap allocation and dmabuf CPU access across the stack.
-      **Scope, as the code stands:** the part that moves is small and Linux-syscall level:
-      `dma_heap_storage` (a `/dev/dma_heap` allocation, `gpu_storage/host.rs`), the
-      `DMA_BUF_IOCTL_SYNC` CPU bracket on its mapping (`host.rs`), the dmabuf size query by `lseek`
-      (`dmabuf_import_len`'s input) and `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` (`external/fence.rs`).
-      The rest of the "dmabuf code" is the GPU driver's own and stays: the Vulkan imports
-      (`gpu_storage/dmabuf.rs`, `frames.rs`, `wgpu_backend/dmabuf/`: modifiers, planes, dedicated
-      allocation, fence waits). Test fixtures (gpu, rga and frame-bench tests allocate from
-      dma-heap) would switch too. `daedalus-rga`'s V4L2 buffers are the RGA's own and stay.
-      **Done when:** the gpu crate allocates and syncs host-visible dmabufs through Lemnos (done
-      on the desktop GPU), and the readback timing item above holds the Raze numbers.
-      **Blocked by:** the readback timing item's Raze slot (the user's go came 2026-11-02).
-      **Measured:** the code moved (803f310, Lemnos 63374c6; borrowed descriptors through
-      `DmaBufRef`, the frame identity and the acquire-fence wait with Lemnos fdbb0c4 and
-      2610455). The gpu
-      crate's tests pass on the desktop GPU with `/dev/dma_heap/system`. The Raze readback is not
-      re-measured yet.
 
 ## Open
 
@@ -333,6 +292,18 @@ was searched for, the commit is the one that introduced it.
 
 ### GPU and hardware support
 
+- [x] Readback timing on the Raze after the DMA-buffer move onto Lemnos (alpha item): unchanged.
+      Same-session A/B, `gpu_bench` at 5e97c0d (before 803f310) against 6a0c73f, interleaved,
+      12 runs each: 16 MiB host-cached read median 3.83 -> 3.79 ms, 1 MiB 0.270 -> 0.275 ms
+      (`docs/testing.md`, "CM5 run (2026-11-02, alpha)").
+- [x] The gpu crate's DMA-buffer basics on Lemnos's (alpha item): 803f310, Lemnos 63374c6
+      (`DmaBufRef`, the frame identity and the acquire-fence wait with Lemnos fdbb0c4 and
+      2610455); the Raze readback is unchanged (above).
+- [x] Zero-copy import of Styx's software-ISP frames on the Raze (alpha item): Styx's
+      `daedalus_import_check` (Styx d837f22 plus a descriptor fix): an NV12 1280x800
+      `softisp_dmabuf` frame imported with `GpuStorage::import_dmabuf` in 95 to 97 us, the GPU's
+      read equal to the frame's 1536000 bytes, and a CPU-written sentinel read back by the GPU
+      (same memory, no copy); 3 of 3 runs.
 - [x] The GPU path on the CM5 at 6a0c73f (alpha item): `board.sh raze` (graph, kernels, the GPU
       crate's 96 tests with the dmabuf and raw Vulkan hardware tests, `gpu_probe`, `gpu_bench`,
       `GpuKernels` evidence) and `driver_stress` pass; numbers in `docs/testing.md`, "CM5 run
