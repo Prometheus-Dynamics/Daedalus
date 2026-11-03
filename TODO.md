@@ -56,8 +56,13 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Why:** selection follows measurements. `crc32()` stays on slice-by-8 on ARMv7 until then.
       **Done when:** `crc32_throughput` has run on the Luckfox Pico Pro (Flame's stand-in; the
       `flame` profile of `scripts/board.sh` runs it) and the default follows the numbers.
-      **Blocked by:** the Luckfox board. The Raze cannot run AArch32 binaries.
-      **Measured:** conformance under qemu only; no timing exists.
+      **Blocked by:** the Luckfox board (not imaged or reachable, Gaia 2026-11-03). The Raze
+      cannot run AArch32 binaries.
+      **Measured (qemu-arm `-cpu cortex-a7`, 2026-11-03, provisional):** slice-by-8 454 / 963 /
+      970 / 954 MB/s, `neon_vmull_p8` 404 / 43 / 47 / 47 MB/s at 64 B / 1 KiB / 64 KiB / 4 MiB.
+      Decision until a board run: slice-by-8 stays the ARMv7 default. QEMU TCG emulates
+      `vmull.p8` in software, so this says nothing about the A7's NEON; only the board number
+      can move the default.
 - [ ] **[board] What:** K230D (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph tests
       and the kernel conformance binary on the board, and `crates/vglite/tests/vglite.rs` (the
       VGLite cells, each op's measured difference). Written, untested on board.
