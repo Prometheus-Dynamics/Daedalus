@@ -60,6 +60,9 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       cannot run AArch32 binaries.
       **Measured (qemu-arm `-cpu cortex-a7`, 2026-11-03, provisional):** slice-by-8 454 / 963 /
       970 / 954 MB/s, `neon_vmull_p8` 404 / 43 / 47 / 47 MB/s at 64 B / 1 KiB / 64 KiB / 4 MiB.
+      Raze #2 (CM5, HeliOS dev.904, kernel 7.2.9-v8-16k, 2026-11-03): the kernel does not execute
+      AArch32 binaries (the static armv7 musl bench fails exec and the shell reads it as a
+      script), so the A76 cannot stand in; no COMPAT on the 16K-page kernel.
       Decision until a board run: slice-by-8 stays the ARMv7 default. QEMU TCG emulates
       `vmull.p8` in software, so this says nothing about the A7's NEON; only the board number
       can move the default.
