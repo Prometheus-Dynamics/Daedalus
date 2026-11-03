@@ -96,6 +96,8 @@ cmd_lints() {
   ./scripts/check-gpu-async-blocking.sh
   step "Checking GPU driver-lock paths"
   ./scripts/check-gpu-driver-lock.sh
+  step "Checking the shared source copies"
+  ./scripts/check-shared-sources.sh
   step "Checking formatting"
   cargo fmt --all -- --check
 }

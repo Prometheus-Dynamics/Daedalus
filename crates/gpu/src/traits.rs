@@ -1,10 +1,10 @@
-#[cfg(target_os = "linux")]
-use crate::ExternalFrameDescriptor;
 #[cfg(feature = "gpu-wgpu")]
 use crate::shader::SubmissionTracker;
+#[cfg(target_os = "linux")]
+use crate::{ExternalFrameDescriptor, ExternalImportError};
 use crate::{
-    ExternalImportError, ExternalImportSupport, GpuAdapterInfo, GpuBackendKind, GpuCapabilities,
-    GpuError, GpuImageHandle, GpuImageRequest, GpuOptions, GpuRequest, buffer::TransferStats,
+    ExternalImportSupport, GpuAdapterInfo, GpuBackendKind, GpuCapabilities, GpuError,
+    GpuImageHandle, GpuImageRequest, GpuOptions, GpuRequest, buffer::TransferStats,
     handles::GpuBufferHandle,
 };
 use std::any::Any;

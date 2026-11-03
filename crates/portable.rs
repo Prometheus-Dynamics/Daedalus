@@ -6,8 +6,8 @@
 //!   otherwise `portable-atomic` (`critical-section` based) and `portable-atomic-util::Arc`.
 //!   `AtomicU64` falls back to `portable-atomic` on targets without 64-bit atomics.
 //!
-//! Shared module: each crate's `src/portable.rs` is a symlink to this file (like
-//! `build_features.rs`), and each crate uses a subset of it.
+//! Shared module: each crate's `src/portable.rs` is a copy of this file (like
+//! `build_features.rs`; `scripts/check-shared-sources.sh`), and each crate uses a subset of it.
 #![allow(dead_code, unused_imports, unused_macros)]
 
 #[cfg(feature = "std")]

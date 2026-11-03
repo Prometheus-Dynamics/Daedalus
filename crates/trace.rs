@@ -5,7 +5,7 @@
 //! With the feature these are `tracing`'s macros. Without it the event macros expand to nothing
 //! (their arguments are not evaluated) and `debug_span!` to an inert [`Span`].
 //!
-//! Shared module: each crate's `src/trace.rs` is a symlink to this file (like `portable.rs`).
+//! Shared module: each crate's `src/trace.rs` is a copy of this file (like `portable.rs`).
 #![allow(dead_code, unused_imports, unused_macros)]
 
 #[cfg(feature = "tracing")]

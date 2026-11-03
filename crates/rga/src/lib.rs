@@ -25,7 +25,10 @@
 pub mod caps;
 #[cfg(target_os = "linux")]
 mod librga;
+// The shared checks serve the Linux routes only.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod resize;
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod transform;
 #[cfg(target_os = "linux")]
 mod v4l2;

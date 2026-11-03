@@ -37,6 +37,10 @@ serde_json = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 libc = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+# The worker stdout wait (`PeekNamedPipe`).
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Pipes"] }
+
 [dev-dependencies]
 criterion = { workspace = true }
 daedalus-ffi-core = { workspace = true, features = ["conformance"] }

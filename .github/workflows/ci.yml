@@ -6,6 +6,8 @@ on:
       - main
       - master
       - dev
+      # Scratch branches for trying a CI change before it lands on dev.
+      - 'ci/**'
   pull_request:
 
 env:
@@ -55,6 +57,24 @@ jobs:
       # under feature unification.
       - name: Build all features
         run: ./scripts/ci.sh link
+
+  # Windows (MSVC): clippy over the workspace and the workspace tests. The crates' shared sources
+  # are copies (scripts/check-shared-sources.sh), so the checkout needs no `core.symlinks`. The
+  # runner has no GPU: the GPU tests skip without an adapter. Linux-only paths (dmabuf, V4L2,
+  # RGA, VGLite, `perf_event`) are compiled out.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - *checkout
+      - *toolchain-lint
+      - *cache
+      - name: Clippy
+        shell: bash
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run workspace tests
+        shell: bash
+        run: cargo test --workspace --all-targets --features "engine,plugins"
 
   # The facade alone: native `cdylib` plugin loading, then the trybuild macro UI tests (`plugins`
   # only, ignored in the regular test run; trybuild compiles its own project).
