@@ -425,6 +425,13 @@ missing hardware; a failed check prints its error in place of the value.
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
+### CM5 run (2026-11-03): plugin and host on one submit lock
+
+Raze #2 (CM5, V3D 7.1, kernel 7.2.9-v8-16k), at c919b14: `plugin_submit` (the plugin `cdylib`
+prebuilt and named by `DAEDALUS_CDYLIB_DAEDALUS_PLUGINS_GPU_SUBMIT`) under Debian trixie's arm64
+`VK_LAYER_KHRONOS_validation` 1.4.309 with sync validation, set up as for `ci.sh vvl`: the layer
+was inserted, and 5 of 5 runs passed both tests with no validation message.
+
 ### CM5 run (2026-11-02, alpha)
 
 The Raze at 6a0c73f, `scripts/board.sh raze` (cross-built, aarch64-unknown-linux-gnu; HeliOS's

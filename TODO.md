@@ -25,30 +25,6 @@ The next release is an alpha that covers the Raze (CM5, V3D 7.1) hardware only (
 HeliOS, 2026-11-02). These items come first. The other boards (Rockchip, K230D, RV1106), the MCU
 and CUDA follow after it, under Open. When to release, and what blocks it, stays the user's call.
 
-- [ ] **What:** the engine and a plugin `cdylib` on one device share its submit lock (the Eidos
-      plugin's GPU nodes run on the engine's device, `GpuDevice::from_context`).
-      **Why:** the plugin has its own copy of `daedalus-gpu`, so a per-image static lock did not
-      serialize its submits against the engine's raw ones on the same `VkQueue`.
-      **Scope, as the code stands:**
-      1. Done (700be30): the submit lock is owned by the GPU context (`SubmitLock`, a `std` mutex
-         in the backend, reached through `GpuBackend::wgpu_submit_lock`) instead of the static
-         `QUEUE_SUBMIT`; every internal submit site goes through a `LockedQueue` (queue + lock).
-      2. Done on the Daedalus side (700be30): `GpuContextHandle::submit(commands)` and
-         `submit_lock()`. Eidos moves its 9 direct `gpu.queue.submit(...)` calls onto it (Eidos
-         f044a095, `crates/daedalus/src/gpu/{mod,invert,sweep,tsdf}.rs`; passed on by HeliOS).
-      3. Done: `crates/gpu/tests/plugin_submit.rs` loads `crates/gpu/tests/plugin` as a
-         `cdylib` (its own copy of `daedalus-gpu`, built with the test's features) and checks
-         that the plugin's `submit_lock()` is the host's (and not another context's), that its
-         `GpuContextHandle::submit` waits while the host holds the lock (a plugin submitting on
-         the bare queue fails it), and that 200 host `RawSubmitter` fills run alongside 200
-         plugin round trips (upload, `submit`, readback) with every byte right; 5 of 5 runs on
-         RADV. `ci.sh vvl` runs it under the validation layer with sync validation.
-      **Done when:** the test in 3 also runs clean under the validation layer with sync
-      validation.
-      **Blocked by:** a host with the layer: the development host has none; the Raze takes the
-      Debian arm64 layer from `/tmp` (`docs/testing.md`), so the next Raze slot.
-      **Measured:** n/a.
-
 ## Open
 
 ### CI on `dev`
@@ -289,6 +265,14 @@ was searched for, the commit is the one that introduced it.
 
 ### GPU and hardware support
 
+- [x] The engine and a plugin `cdylib` on one device share its submit lock (alpha item): the
+      lock is the context's (700be30, `GpuContextHandle::submit` / `submit_lock`), and
+      `crates/gpu/tests/plugin_submit.rs` (9861b18) loads a plugin `cdylib` with its own copy of
+      `daedalus-gpu`: it sees the host's lock, waits while the host holds it, and 200 host
+      `RawSubmitter` fills alongside 200 plugin round trips stay correct. Raze #2 (CM5, V3D) at
+      c919b14 under the Debian arm64 validation layer 1.4.309 with sync validation: 5 of 5 runs,
+      no validation message (2026-11-03). Eidos's own direct submits move onto `ctx.submit` on
+      its side.
 - [x] The stale-graph refresh confirmed on the Raze (alpha item; `refresh_graph_ports_with` +
       `drop_stale_consts`, bb07e3b, 0398d4a): Raze #1 on HeliOS dev.890 (469cb6f3) logs "stored
       graph ports refreshed from the plugins" for each Eidos node of the stored default graph,
