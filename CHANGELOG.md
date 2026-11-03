@@ -23,8 +23,14 @@ plugin ABI and does not load.
   signals values without a host wait. `RawSubmitter::submit_synced` sets and waits the values on
   the raw queue. Test: `cuda_interop.rs::a_timeline_semaphore_hands_a_buffer_between_vulkan_and_cuda`
   on the RTX 4060. Host-fence against semaphore round trips are measured in
-  `docs/benchmarks-log.md` (about 201 µs against 221 µs median). The graph-level handoff through
-  the planner is not done.
+  `docs/benchmarks-log.md` (release build: about 198 µs against 216 µs median in runs 2 and 3).
+- **A wgpu node, a CUDA node and a wgpu node share one buffer through the planner.**
+  `interop::SharedValue` gives one Vulkan allocation a `wgpu::Buffer` view, a CUDA import and a
+  timeline semaphore. The planner's device edges are cost-0 `SharedView` adapters
+  (`share.gpu_to_cuda`, `share.cuda_to_gpu`), so the plan has no transfer step. Test:
+  `crates/runtime/tests/it/executor_shared.rs`, three ticks on the RTX 4060, values checked, transfer
+  counters at 0. Fixed on the way: a wgpu view built with `from_raw` destroyed the buffer on drop;
+  `from_raw_externally_owned` is used instead.
 - **Windows builds and tests.** The shared sources that were symlinks are copies
   (`scripts/check-shared-sources.sh` keeps them identical), so a Windows checkout needs no
   `core.symlinks`; checkouts keep LF line endings; CI runs clippy and the workspace tests on

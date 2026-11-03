@@ -24,6 +24,9 @@ pub struct CudaSemaphore {
     fns: SemaphoreFns,
 }
 
+// SAFETY: as `CudaImport`: a driver object, used only with its context made current.
+unsafe impl Send for CudaSemaphore {}
+
 impl std::fmt::Debug for CudaSemaphore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CudaSemaphore")

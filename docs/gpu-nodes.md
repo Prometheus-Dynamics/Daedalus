@@ -323,8 +323,8 @@ Details and limits, stated plainly:
   shared one: on this driver a CUDA kernel kept reading the contents of its first host write
   after later host writes, so the device-local allocation is used. `select_wgpu_on_vendor(0x10DE)`
   picks the NVIDIA wgpu device, and the buffer's UUID must match the CUDA device.
-  wgpu's own buffers cannot be exported (wgpu does not expose their memory), so a graph does not
-  yet hand a wgpu buffer to a CUDA node: that handoff is still open.
+  wgpu's own buffers cannot be exported (wgpu does not expose their memory), so a wgpu node's output
+  is a shared allocation of its own: see "Graph handoff" below.
 - **Semaphores.** `interop::SharedSemaphore` is a Vulkan timeline semaphore on the wgpu device,
   exported as an opaque fd (`VK_KHR_external_semaphore_fd`, enabled by the `gpu-dmabuf` device
   request; `Unsupported` without it). `CudaBackend::import_timeline_semaphore` imports it as a
@@ -333,8 +333,27 @@ Details and limits, stated plainly:
   the raw queue under the context's submit lock. The import uses CUDA's timeline handle type (9);
   the binary `OPAQUE_FD` type (1) imports the same payload, but its signals did not change the
   timeline's value on this driver. wgpu's own submits take no caller semaphores (`wgpu-hal`'s
-  `Queue::submit` takes command buffers, surface textures and a fence), so a wgpu stage is still
-  ordered by a host fence. A graph-level handoff through these is not wired into the planner yet.
+  `Queue::submit` takes command buffers, surface textures and a fence), so a wgpu stage is ordered
+  by a host fence. The graph handoff below uses both.
+- **Graph handoff (wgpu, CUDA, wgpu).** `interop::SharedValue` is one device-local Vulkan allocation
+  with three views: a `wgpu::Buffer` (`create_buffer_from_hal` over the Vulkan buffer, created with
+  `from_raw_externally_owned`: `from_raw` would make wgpu-hal call `vkDestroyBuffer` on drop, a double
+  destroy), a CUDA import (made on first use by a device), and a timeline semaphore. Two boundary
+  calls move it across with no copy: `enter_cuda` (a host fence on the wgpu work, then a raw submit
+  sets the timeline and the CUDA stream waits for it) and `leave_cuda` (the stream sets the next value
+  after the kernels, and the host waits for a raw submit that waits for it). `cuda_scale` queues the
+  kernel in place between them; `dispatch_wgsl` runs a wgpu compute entry over the memory.
+  The planner edges are cost-0 adapters: `share.gpu_to_cuda` (`test:f32@gpu` to `test:f32@cuda`) and
+  `share.cuda_to_gpu`, registered with `AdaptKind::SharedView` (no bytes copied) and residency `Gpu`,
+  so a `Residency::Gpu` consumer matches them. They are chosen over a shared residency key: a key
+  would give a third device type that every node must declare, while the adapters keep each key the
+  memory of one backend and let the planner price the edge. The executable adapters are
+  `RuntimeTransport::register_adapter_fn` entries, run on the edge with the executor's GPU context in
+  scope. The executor itself needed no change. Its one GPU handle is wgpu, so the CUDA backend is
+  captured by the adapters and the CUDA node.
+  `crates/runtime/tests/it/executor_shared.rs` plans gen (wgpu) -> scale (CUDA) -> addone (wgpu) ->
+  sink, checks the plan has only the two shared steps, runs three ticks on the RTX 4060 and checks the
+  values and that both transfer counters stay at 0.
 - **Handoff latency.** One Vulkan→CUDA→Vulkan round trip (two Vulkan submits, one kernel): the host
   fence path waits on each side before the next starts; the semaphore path orders the same steps on
   the GPU and the host waits once at the end. RTX 4060, release build, 2000 round trips after 200
@@ -360,6 +379,7 @@ gpu-cuda --test cuda_device`, `-p daedalus-runtime --features gpu-cuda --test it
 and `-p daedalus-rs --features gpu-cuda,engine,plugins --test it device_cuda`. With
 `CUDA_VISIBLE_DEVICES=-1` they skip and pass. The interop, semaphore and image tests run with
 `-p daedalus-gpu --features gpu-cuda,gpu-vulkan-raw --test cuda_interop` and `--test cuda_device`.
+The graph handoff runs as `-p daedalus-runtime --features gpu-cuda,gpu-vulkan-raw --test it a_wgpu_cuda_wgpu`.
 The handoff benchmark is the ignored test `handoff_latency_host_fence_vs_semaphore` in that binary:
 `cargo test -p daedalus-gpu --features gpu-cuda,gpu-vulkan-raw --test cuda_interop -- --ignored --nocapture`.
 The planner tests run with `-p daedalus-planner residency`.

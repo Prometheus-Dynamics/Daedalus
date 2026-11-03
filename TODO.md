@@ -155,38 +155,37 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       the lifecycle tests' fake workers are the test binary (`tests/worker_lifecycle.rs`, no shell);
       two Java payload tests stay ignored there (JVM-mapped files that Windows cannot delete);
       `docs/development.md`, "Windows".
-- [ ] **What:** CUDA interop and backend-aware planning: CUDA↔Vulkan memory sharing
+- [x] **What:** CUDA interop and backend-aware planning: CUDA↔Vulkan memory sharing
       (`cudaImportExternalMemory`) so a wgpu buffer can reach a CUDA node without a host copy, and a
       `Residency::Gpu` request that picks its device key by its neighbours.
       **Why:** the CUDA backend (done below) keeps the two residencies distinct; these two are what a
       mixed graph would need.
       **Done when:** a graph with a wgpu node feeding a CUDA node (and back) runs on the RTX 4060
       with checked values, and a planner test shows a `@gpu` request never picks a CUDA device.
-      **Status (2026-11-03, branch `cuda-open`):** done, measured: the planner picks the neighbour's
-      device key (`residency_tests.rs`: a CUDA producer inserts 0 adapter steps and keeps `@cuda`; a
-      wgpu producer keeps `@gpu`; a host producer follows its one consumer's device key); buffer
-      interop (`crates/gpu/tests/cuda_interop.rs`: a device-local Vulkan buffer exported as an opaque
-      fd, imported into CUDA and scaled in place, two round trips of 1000 `f32` on the RTX 4060 with
-      the CUDA and wgpu transfer counters unchanged); CUDA images (`cuda_device.rs`). Refused by the
-      driver: dma-buf import, `cuImportExternalMemory` returns `CUDA_ERROR_UNKNOWN` (999) for a
-      dma-buf fd.
-      **Status (2026-11-03, branch `cuda-handoff`):** the semaphore part is done and measured:
-      `SharedSemaphore` (a Vulkan timeline semaphore, opaque fd) is imported by
-      `CudaBackend::import_timeline_semaphore` and the CUDA stream waits and signals it;
-      `RawSubmitter::submit_synced` sets and waits its values on the raw queue
-      (`cuda_interop.rs::a_timeline_semaphore_hands_a_buffer_between_vulkan_and_cuda`, 3 rounds, values
-      checked, both counters unchanged). Host fence against semaphore, RTX 4060, 2000 round trips:
-      median 221 µs against 201 µs (`docs/benchmarks-log.md`).
-      **Still open (the graph-level case):** a wgpu node feeding a CUDA node in one executor run with
-      no host copy. (1) The planner has no cost-0 `…@gpu` to `…@cuda` edge for the shared allocation;
-      it needs a payload type both device keys accept. (2) The executor does not hand a wgpu node's
-      output as a `SharedBuffer`: a `wgpu::Buffer` over the Vulkan allocation is needed
-      (`create_buffer_from_hal` with `vulkan::Buffer::from_raw`, as `wgpu_backend/dmabuf` does for
-      imports). (3) wgpu's own submits take no semaphores (`wgpu-hal` `Queue::submit`), so a wgpu
-      stage in a graph is ordered by a host fence until its work is recorded through `submit_synced`.
-      **Blocked by:** nothing; (1) to (3) are the work, and the user decides whether the graph-level
-      case is wanted now.
-      **Measured:** the counters above; the semaphore latency above.
+      **Status (2026-11-03, branch `cuda-graph`):** done, measured.
+      - Planner: a bare `Residency::Gpu` request picks the neighbour's device key
+        (`residency_tests.rs`: a CUDA producer inserts 0 adapter steps and keeps `@cuda`; a wgpu
+        producer keeps `@gpu`; a host producer follows its one consumer's device key).
+      - Graph: `crates/runtime/tests/it/executor_shared.rs` plans gen (wgpu) -> scale (CUDA) -> addone
+        (wgpu) -> sink with the planner and runs three ticks on the RTX 4060. The two device edges
+        are cost-0 `SharedView` adapters (`share.gpu_to_cuda`, `share.cuda_to_gpu`, residency `Gpu`),
+        so the plan's only converter steps are those two, and both transfer counters stay at 0. Values
+        are checked on each tick. The memory is one `interop::SharedValue`: a Vulkan allocation with a
+        `wgpu::Buffer` view (`create_buffer_from_hal`, externally owned), a CUDA import, and a timeline
+        semaphore. The wgpu side is ordered by a host fence, the CUDA side by the timeline.
+      - Buffer interop (`cuda_interop.rs`): a device-local Vulkan buffer exported as an opaque fd,
+        imported into CUDA and scaled in place, with the transfer counters unchanged.
+      - Timeline semaphores (`cuda_interop.rs::a_timeline_semaphore_hands_a_buffer_between_vulkan_and_cuda`):
+        ordered on the GPU, values checked. Host fence against semaphore round trip, RTX 4060, release
+        build, 2000 round trips: fence 215-217 µs median, semaphore 198-199 µs (`docs/benchmarks-log.md`).
+      - CUDA images (`cuda_device.rs`).
+      Refused by the driver: dma-buf import, `cuImportExternalMemory` returns `CUDA_ERROR_UNKNOWN` (999)
+      for a dma-buf fd.
+      **Limits:** wgpu cannot take caller semaphores (`wgpu-hal` `Queue::submit`), so the wgpu boundaries
+      are host fences. A wgpu view must be `from_raw_externally_owned`: `from_raw` makes wgpu-hal call
+      `vkDestroyBuffer` on drop. The executor holds one GPU handle (wgpu here), so the CUDA backend is
+      captured by the adapters and the CUDA node.
+      **Measured:** the counters above; the release-build latency above.
 - [ ] **What:** signing and registry work.
       **Why:** pinned for later by the user (2026-10-30).
       **Done when:** the user has scoped it.

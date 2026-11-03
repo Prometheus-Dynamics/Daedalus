@@ -7,6 +7,8 @@ mod executor;
 #[cfg(feature = "gpu-cuda")]
 mod executor_cuda;
 mod executor_gpu;
+#[cfg(all(feature = "gpu-cuda", feature = "gpu-vulkan-raw"))]
+mod executor_shared;
 mod fusion_equivalence;
 mod graph_document_requirements;
 mod node_error;

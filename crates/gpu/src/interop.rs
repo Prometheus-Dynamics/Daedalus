@@ -30,7 +30,10 @@ use ash::{khr, vk};
 use wgpu::hal::api::Vulkan;
 
 use crate::raw_vulkan::RawVulkan;
+
+mod shared_value;
 use crate::{GpuContextHandle, GpuError};
+pub use shared_value::{SharedValue, WORKGROUP_SIZE};
 
 /// How the shared memory is exported: an opaque fd (CUDA's `OPAQUE_FD`), or a dma-buf (the Linux
 /// dmabuf every other API can import).
@@ -71,6 +74,11 @@ impl std::fmt::Debug for SharedBuffer {
             .finish_non_exhaustive()
     }
 }
+
+// SAFETY: the staging mapping is host memory owned by the buffer and only read or written through
+// `write` and `read`; moving the buffer to another thread moves that mapping with it, and
+// `SharedValue` serializes access behind a mutex.
+unsafe impl Send for SharedBuffer {}
 
 /// A buffer and its memory, freed on drop (after unmapping, if mapped).
 struct Owned {
@@ -233,6 +241,11 @@ impl SharedBuffer {
             device_uuid,
             ctx: ctx.clone(),
         })
+    }
+
+    /// The Vulkan buffer of the shared memory, for a wgpu view (`SharedValue`). Not destroyed here.
+    pub(crate) fn vk_buffer(&self) -> vk::Buffer {
+        self.shared.buffer
     }
 
     /// The buffer's size in bytes.

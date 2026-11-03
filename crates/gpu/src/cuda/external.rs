@@ -34,6 +34,10 @@ impl std::fmt::Debug for CudaImport {
     }
 }
 
+// SAFETY: the import is a driver object of its device's context; every method makes that context
+// current on the calling thread first, so it may be moved between threads.
+unsafe impl Send for CudaImport {}
+
 impl CudaDevice {
     /// Import `fd` (an opaque fd of `bytes` of memory) as a device buffer of this device. The
     /// driver consumes the fd either way; on failure the error names the driver's code.
