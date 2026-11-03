@@ -271,3 +271,46 @@ Packed `u32` and integer textures port everywhere.
 - The CPU path is the reference: compare GPU results to it, bit-exact with integer formats.
 - `./scripts/ci.sh pi` runs the GPU hardware tests on a CM5, and `gpu_bench` reports the
   device's budget (`crates/gpu/README.md`).
+
+## CUDA (`gpu-cuda`)
+
+`gpu-cuda` adds NVIDIA's driver API as a second device backend, `GpuBackendKind::Cuda`, with
+`daedalus::gpu::CudaBackend`. The driver (`libcuda.so.1`, `nvcuda.dll`) is opened at runtime, so a
+build needs no CUDA toolkit (`nvcc`, `nvrtc`), and a machine without a driver or device skips the
+CUDA tests with the reason. The kernels are PTX text the driver compiles for the device it runs
+on (`crates/gpu/src/cuda/ptx.rs`; the one shipped is `scale_f32`).
+
+- **Selection.** CUDA is chosen only with `GpuOptions::preferred_backend = Some(Cuda)` (the default
+  order is unchanged). `shared_context` shares the CUDA device per process as it does the wgpu one.
+  `CudaBackend::new()` opens device 0 and returns the reason when it cannot.
+- **Memory.** `create_buffer` allocates device memory, `upload` copies host bytes in (waiting for
+  the copy), `download` copies a buffer out after the work queued before it. Each buffer belongs to
+  the backend that made it; another backend refuses it. Images and textures are not implemented.
+- **Kernels and fences.** `scale_f32(&buffer, factor)` launches on the backend's stream and
+  returns a `CudaFence` (`wait`). Copies and launches share one non-blocking stream, so a
+  download waits for the kernel without a device-wide synchronize.
+- **Residency key.** A CUDA value is a different port type from a wgpu one. The key is the type
+  key's suffix: `…@cuda` for CUDA device memory, `…@gpu` for wgpu (`GpuBackendKind::device_type_suffix`).
+  A request for the `@gpu` key never resolves to a `@cuda` transfer (and the other way round);
+  a request for the bare CPU type with `Residency::Gpu` can still pick either (see Limits). Chosen over a new `Residency` variant: `Residency` is a stable-ABI enum (the
+  plugin boundary encodes it), and the type key already identifies a port type.
+- **Transfers.** `#[device]` functions taking `&GpuContextHandle` get the executor's context, so
+  one function can call `ctx.cuda()` (`Option<&CudaBackend>`) and run on CUDA when the engine is
+  a CUDA one, or report `Unsupported` otherwise. `crates/daedalus/tests/it/device_cuda.rs` shows it.
+- **Nodes.** A GPU node reads `ctx.gpu`, takes the backend with `cuda()`, and runs upload, kernel
+  and download. `crates/runtime/tests/it/executor_cuda.rs` runs a source, a CUDA node and a sink
+  through `Executor::with_gpu` and checks the values.
+
+Limits, stated plainly:
+
+- **Planner.** A request with `Residency::Gpu` for a CPU type matches every device key of that
+  CPU type, so when a wgpu and a CUDA device are both registered for it, the planner takes the
+  cheaper one whatever the engine runs. Name the port type explicitly (`test:f32@cuda`) where
+  the backend matters, until the planner takes the backend into account.
+- **Interop.** No CUDA↔Vulkan memory sharing (`cudaImportExternalMemory`): a graph cannot pass a
+  wgpu buffer to a CUDA node on the device. Each side copies through the host.
+
+Test on this machine (RTX 4060, driver 595.104.02): `cargo test -p daedalus-gpu --features
+gpu-cuda --test cuda_device`, `-p daedalus-runtime --features gpu-cuda --test it executor_cuda`,
+and `-p daedalus-rs --features gpu-cuda,engine,plugins --test it device_cuda`. With
+`CUDA_VISIBLE_DEVICES=-1` they skip and pass.

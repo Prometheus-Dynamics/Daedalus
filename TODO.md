@@ -147,13 +147,15 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Done when:** the user has decided, and the symlinks are replaced or the limit is documented.
       **Blocked by:** the user's decision.
       **Measured:** 14 symlinks.
-- [ ] **What:** a CUDA backend: a second `GpuBackend`, a residency key per backend so CUDA and wgpu
-      device memory are distinct port types, upload/download adapters, CUDA↔Vulkan interop
-      (`cudaImportExternalMemory`) if both run in one graph, and `#[device]` implementations keyed by
-      backend.
-      **Why:** only if one is wanted; no request is recorded.
-      **Done when:** a graph runs a node on CUDA, with tests.
-      **Blocked by:** a decision to do it.
+- [ ] **What:** CUDA interop and backend-aware planning: CUDA↔Vulkan memory sharing
+      (`cudaImportExternalMemory`) so a wgpu buffer can reach a CUDA node without a host copy, and a
+      `Residency::Gpu` request that picks its device key by the engine's backend (today the cheapest
+      `@cuda` or `@gpu` device of the CPU type wins).
+      **Why:** the CUDA backend (done below) keeps the two residencies distinct; these two are what a
+      mixed graph would need.
+      **Done when:** a graph with a wgpu node feeding a CUDA node (and back) runs on the RTX 4060
+      with checked values, and a planner test shows a `@gpu` request never picks a CUDA device.
+      **Blocked by:** nothing; not requested yet, so the user decides whether it is wanted.
       **Measured:** none.
 - [ ] **What:** signing and registry work.
       **Why:** pinned for later by the user (2026-10-30).
@@ -272,6 +274,16 @@ was searched for, the commit is the one that introduced it.
 
 ### GPU and hardware support
 
+- [x] A CUDA backend (`gpu-cuda`, `daedalus_gpu::CudaBackend`): the driver API loaded at runtime
+      (`libcuda.so.1`, no toolkit at build time), PTX kernels compiled by the driver, device memory,
+      streams and events. A residency key per backend: CUDA values are `…@cuda` port types, wgpu's
+      `…@gpu`, so the two never meet. `#[device]` transfers keyed `@cuda` run through the executor's
+      context. Tests: `crates/gpu/tests/cuda_device.rs` (upload, `scale_f32`, download, 1000 values
+      checked exactly; a download waits for the kernel queued before it), `executor_cuda.rs` (a graph
+      whose GPU node runs upload, kernel, download and whose sink checks the values) and
+      `device_cuda.rs` (the `@cuda` transfers). All ran on an RTX 4060, driver 595.104.02, and skip
+      with the reason under `CUDA_VISIBLE_DEVICES=-1` (2026-11-03). Not done: images, interop and
+      backend-aware planning (see Open).
 - [x] The engine and a plugin `cdylib` on one device share its submit lock (alpha item): the
       lock is the context's (700be30, `GpuContextHandle::submit` / `submit_lock`), and
       `crates/gpu/tests/plugin_submit.rs` (9861b18) loads a plugin `cdylib` with its own copy of

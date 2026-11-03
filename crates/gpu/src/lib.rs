@@ -3,6 +3,7 @@
 //! - `gpu-noop` (default): deterministic noop backend, always available; zero-GPU environments still compile.
 //! - `gpu-mock`: deterministic mock backend for tests/CI.
 //! - `gpu-wgpu`: real wgpu backend (types remain internal), placeholder for now.
+//! - `gpu-cuda`: NVIDIA CUDA backend (`CudaBackend`), the driver loaded at runtime; no toolkit.
 //!   Concurrency: backends are `Send + Sync`; clone the handle (cheap `Arc`) to share across tasks.
 //!   Planner/runtime expectation: call `select_backend` once, or `select_backend_async` from
 //!   async applications, inspect skipped reasons (for “why not GPU?”),
@@ -14,9 +15,12 @@ mod backends;
 mod buffer;
 mod compute_caps;
 mod convert;
+#[cfg(feature = "gpu-cuda")]
+mod cuda;
 mod device_profile;
 mod external;
 mod handles;
+mod kind;
 mod memory_hints;
 #[cfg(feature = "gpu-mock")]
 mod mock;
@@ -38,6 +42,8 @@ pub use compute_caps::{GpuComputeCaps, GpuComputeFeatures};
 #[cfg(feature = "gpu-image")]
 pub use convert::dynamic_to_rgba8;
 pub use convert::{Backing, Compute, DeviceBridge};
+#[cfg(feature = "gpu-cuda")]
+pub use cuda::{CudaBackend, CudaFence};
 pub use device_profile::{GpuDeviceProfile, GpuFamily, vendor_ids};
 pub use external::{
     AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, DRM_FORMAT_MOD_INVALID,
@@ -50,6 +56,7 @@ pub use external::{
     MAX_MEMORY_PLANES, ValidatedLayout, export_dmabuf_fence,
 };
 pub use handles::{GpuBufferHandle, GpuBufferId, GpuImageHandle, GpuImageId};
+pub use kind::GpuBackendKind;
 pub use memory_hints::GpuMemoryHints;
 #[cfg(feature = "gpu-mock")]
 pub use mock::MockBackend;
@@ -80,26 +87,6 @@ pub use wgpu_backend::{
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::Arc};
-
-/// Backend kind identifiers.
-///
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GpuBackendKind {
-    Noop,
-    Mock,
-    Wgpu,
-}
-
-impl GpuBackendKind {
-    /// Return a stable string representation.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            GpuBackendKind::Noop => "noop",
-            GpuBackendKind::Mock => "mock",
-            GpuBackendKind::Wgpu => "wgpu",
-        }
-    }
-}
 
 /// Memory location hint for GPU resources.
 ///

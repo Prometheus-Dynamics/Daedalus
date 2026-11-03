@@ -33,7 +33,8 @@ fn backend_order(opts: &GpuOptions) -> Vec<GpuBackendKind> {
 /// This synchronous compatibility selector can block when the real wgpu backend is enabled because
 /// it calls the synchronous wgpu constructor. Async applications should use
 /// `select_backend_async` with the `gpu-async` feature.
-/// Order: preferred backend (if set), then wgpu, mock, noop.
+/// Order: preferred backend (if set), then wgpu, mock, noop. CUDA is tried only when it is the
+/// preferred backend, so the default order is unchanged.
 pub fn select_backend(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
     let mut skipped = Vec::new();
 
@@ -58,10 +59,11 @@ pub fn select_backend(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
 }
 
 /// The process's GPU device: the one a previous call made, while any handle to it is alive, else
-/// a new one from [`select_backend`]. Every Daedalus engine with a device backend takes its
-/// context here, and so can any other library in the process that runs Vulkan work (Styx's GPU
-/// ISP), so the process opens one device and one queue, with one submit lock, instead of one
-/// per user: no duplicate pipelines and memory, no cross-device sync.
+/// a new one from [`select_backend`] (a CUDA device is shared the same way as a wgpu one). Every
+/// Daedalus engine with a device backend takes its context here, and so can any other library
+/// in the process that runs Vulkan work (Styx's GPU ISP), so the process opens one device and one
+/// queue, with one submit lock, instead of one per user: no duplicate pipelines and memory, no
+/// cross-device sync.
 ///
 /// The first call's `opts` choose the device; later calls get that device whatever their
 /// options. A request for the mock or noop backend is not shared: it gets its own, as from
@@ -80,7 +82,8 @@ pub fn shared_context(opts: &GpuOptions) -> Result<GpuContextHandle, GpuError> {
         return Ok(handle);
     }
     let handle = select_backend(opts)?;
-    *shared = (handle.chosen == GpuBackendKind::Wgpu).then(|| Shared::of(&handle));
+    *shared = matches!(handle.chosen, GpuBackendKind::Wgpu | GpuBackendKind::Cuda)
+        .then(|| Shared::of(&handle));
     Ok(handle)
 }
 
@@ -190,6 +193,21 @@ fn try_build_backend(
                 Err(BackendSkipReason::FeatureNotEnabled)
             }
         }
+        GpuBackendKind::Cuda => {
+            #[cfg(feature = "gpu-cuda")]
+            {
+                let backend = crate::CudaBackend::new()
+                    .map_err(|e| BackendSkipReason::Error(e.to_string()))?;
+                let adapter = backend
+                    .select_adapter(opts)
+                    .map_err(|_| BackendSkipReason::AdapterUnavailable)?;
+                Ok((Arc::new(backend), adapter))
+            }
+            #[cfg(not(feature = "gpu-cuda"))]
+            {
+                Err(BackendSkipReason::FeatureNotEnabled)
+            }
+        }
         GpuBackendKind::Noop => {
             let backend = NoopBackend::default();
             let adapter = backend
@@ -234,6 +252,21 @@ async fn try_build_backend_async(
                 Ok((Arc::new(backend), adapter))
             }
             #[cfg(not(feature = "gpu-mock"))]
+            {
+                Err(BackendSkipReason::FeatureNotEnabled)
+            }
+        }
+        GpuBackendKind::Cuda => {
+            #[cfg(feature = "gpu-cuda")]
+            {
+                let backend = crate::CudaBackend::new()
+                    .map_err(|e| BackendSkipReason::Error(e.to_string()))?;
+                let adapter = backend
+                    .select_adapter(opts)
+                    .map_err(|_| BackendSkipReason::AdapterUnavailable)?;
+                Ok((Arc::new(backend), adapter))
+            }
+            #[cfg(not(feature = "gpu-cuda"))]
             {
                 Err(BackendSkipReason::FeatureNotEnabled)
             }

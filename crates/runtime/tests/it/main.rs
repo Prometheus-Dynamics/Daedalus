@@ -4,6 +4,8 @@
 
 mod backpressure;
 mod executor;
+#[cfg(feature = "gpu-cuda")]
+mod executor_cuda;
 mod executor_gpu;
 mod fusion_equivalence;
 mod graph_document_requirements;

@@ -35,6 +35,9 @@ gpu-dmabuf = ["gpu-wgpu"]
 # Raw Vulkan handles of a context and its storage, for SPIR-V kernels from outside Daedalus run
 # on its device (Linux; `daedalus_gpu::raw_vulkan`).
 gpu-vulkan-raw = ["gpu-wgpu", "gpu-dmabuf"]
+# NVIDIA CUDA backend: the driver API, loaded at runtime from libcuda (no CUDA toolkit at build
+# time, no link-time dependency). Kernels are PTX text the driver JIT-compiles.
+gpu-cuda = ["dep:libloading"]
 
 [dependencies]
 parking_lot = { workspace = true }
@@ -49,6 +52,8 @@ daedalus-wgsl-infer = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["std"] }
 # Vectorized conversions and row copies (`docs/backend-matrix.md`).
 daedalus-kernels = { workspace = true, features = ["std"] }
+# Opening libcuda at runtime for `gpu-cuda`.
+libloading = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 lemnos-linux = { workspace = true, features = ["dma"] }
@@ -99,3 +104,7 @@ required-features = ["gpu-vulkan-raw"]
 [[test]]
 name = "plugin_submit"
 required-features = ["gpu-vulkan-raw"]
+
+[[test]]
+name = "cuda_device"
+required-features = ["gpu-cuda"]

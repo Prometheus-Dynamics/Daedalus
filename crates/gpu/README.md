@@ -6,7 +6,7 @@ GPU-facing handles, backend selection, and shader helpers.
 
 - GPU buffer/image handles and ids,
 - memory location, usage, format, and capability descriptors,
-- noop, mock, and `wgpu` backend selection,
+- noop, mock, `wgpu`, and (behind `gpu-cuda`) NVIDIA CUDA backend selection,
 - buffer pools and transfer statistics,
 - optional async backend trait,
 - WGSL shader dispatch, staging, readback, and resource helpers behind `gpu-wgpu` (Vulkan, plus
@@ -15,6 +15,12 @@ GPU-facing handles, backend selection, and shader helpers.
   `ShaderRunOutput` image readbacks) behind `gpu-image`.
 
 Use `gpu-mock` for deterministic tests. Use `gpu-wgpu` only where hardware and drivers are available.
+
+`gpu-cuda` adds `CudaBackend`: the CUDA driver API loaded at runtime (no toolkit at build time),
+device memory with `upload`/`download`, and a `scale_f32` PTX kernel with `CudaFence`. It is chosen
+only with `preferred_backend = Some(GpuBackendKind::Cuda)`; `ctx.cuda()` gives the backend from a
+handle. CUDA values are the `@cuda` port types (`device_type_suffix`), distinct from `@gpu`. See
+`docs/gpu-nodes.md` (CUDA) for the limits.
 
 The `wgpu` backend list is chosen in this order:
 

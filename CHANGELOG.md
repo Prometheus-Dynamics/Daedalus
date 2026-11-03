@@ -28,6 +28,13 @@ plugin ABI and does not load.
 - **Per-executor port buffer pools without `std`.** A `no_std` build gives each executor its own
   port buffer pool instead of one process-wide pool, so graphs ticking on several threads allocate
   no more per tick than one thread alone. With `std` the pool stays per thread.
+- **NVIDIA CUDA backend (`gpu-cuda`).** `daedalus_gpu::CudaBackend` (`GpuBackendKind::Cuda`,
+  chosen with `preferred_backend = Cuda`): the driver API loaded at runtime, so no toolkit is needed
+  to build; device memory with `upload`/`download`; a PTX `scale_f32` kernel and `CudaFence`.
+  CUDA device memory is a different port type from wgpu's: the `…@cuda` key
+  (`GpuBackendKind::device_type_suffix`) against `…@gpu`. `#[device]` transfers keyed `@cuda` run
+  through the executor's context (`GpuContextHandle::cuda`). Tests skip without a device. Not yet:
+  images, CUDA↔Vulkan interop, and planner selection by backend (`docs/gpu-nodes.md`).
 - **One GPU device per process.** `daedalus_gpu::shared_context` returns the process's wgpu device,
   opened on first use and closed with its last handle; `process_context` finds it without opening
   one, and `devices_created` counts the devices opened. Engines with `GpuBackend::Device` take their

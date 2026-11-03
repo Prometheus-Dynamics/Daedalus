@@ -31,6 +31,7 @@ boundary-features = [
     "gpu-gles",
     "gpu-async",
     "gpu-mock",
+    "gpu-cuda",
     "schema",
     "proto",
     "plugins",
@@ -83,6 +84,8 @@ gpu-image = ["gpu-wgpu", "daedalus-gpu/gpu-image"]
 gpu-async = ["gpu-wgpu", "daedalus-gpu/gpu-async"]
 gpu-dmabuf = ["gpu-wgpu", "daedalus-gpu/gpu-dmabuf"]
 gpu-mock = ["gpu-runtime", "daedalus-gpu/gpu-mock"]
+# NVIDIA CUDA backend in `daedalus::gpu` (`CudaBackend`), its `#[device]` transfers keyed `@cuda`.
+gpu-cuda = ["gpu-runtime", "daedalus-gpu/gpu-cuda"]
 schema = ["daedalus-data/schema", "daedalus-planner/schema"]
 proto = ["daedalus-data/proto", "daedalus-planner/proto"]
 plugins = ["daedalus-registry/plugin", "daedalus-runtime/plugins", "daedalus-nodes/plugins"]

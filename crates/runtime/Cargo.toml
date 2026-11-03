@@ -22,7 +22,7 @@ path = "src/lib.rs"
 # Classifies every feature for the dynamic plugin build fingerprint (`daedalus::dylib`):
 # boundary features change types that cross the plugin boundary and must match between host
 # and plugin; host-only features only change host-side execution.
-boundary-features = ["gpu", "gpu-mock", "plugins", "std"]
+boundary-features = ["gpu", "gpu-mock", "gpu-cuda", "plugins", "std"]
 host-only-features = [
     "alloc-probe",
     "lockfree-queues",
@@ -59,6 +59,8 @@ tracing = ["dep:tracing"]
 threads = ["std"]
 gpu = ["std", "daedalus-gpu"]
 gpu-mock = ["gpu", "daedalus-gpu/gpu-mock"]
+# NVIDIA CUDA backend for the executor tests (`tests/it/executor_cuda.rs`); skips without a device.
+gpu-cuda = ["gpu", "daedalus-gpu/gpu-cuda"]
 # Bounded edges on `crossbeam-queue`'s `ArrayQueue`; locked queues on targets without
 # compare-and-swap, where it has none.
 lockfree-queues = ["crossbeam-queue"]
