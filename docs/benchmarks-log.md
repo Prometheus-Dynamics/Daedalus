@@ -71,3 +71,24 @@ tick + take p50: 2 detectors 17 666 separate, 17 611 shared, 17 685 structural n
 35 630 separate, 30 852 shared (-13%), 30 944 structural ns. Over 2000 frames with 4 detectors
 the domain avoided 6000 graph runs and 12 000 node runs.
 
+## CUDA handoff: host fence against timeline semaphore
+
+Vulkan→CUDA→Vulkan round trips on the RTX 4060 (driver 595.104.02, `CudaBackend` device 0, the
+wgpu device on the same GPU), 1000 `f32` in a shared device-local buffer, one `scale_f32` by 1.0
+per round trip. Each path does two Vulkan submits and one kernel per round. The host-fence path
+waits on each side before the next side starts; the semaphore path (`SharedSemaphore`,
+`RawSubmitter::submit_synced`, `CudaSemaphore`) orders the steps on the GPU and the host waits once
+at the end. The two paths alternate within each run. Measured by
+`crates/gpu/tests/cuda_interop.rs::handoff_latency_host_fence_vs_semaphore` (ignored test),
+2000 round trips after 200 warm-up, an unoptimized test build, three runs:
+
+| run | fence median | fence p99 | fence mean | semaphore median | semaphore p99 | semaphore mean |
+|---|---|---|---|---|---|---|
+| 1 | 221.3 µs | 247.4 µs | 228.4 µs | 202.5 µs | 219.9 µs | 210.4 µs |
+| 2 | 220.8 µs | 257.5 µs | 227.5 µs | 201.3 µs | 223.2 µs | 209.4 µs |
+| 3 | 221.0 µs | 244.7 µs | 226.1 µs | 201.8 µs | 219.5 µs | 208.1 µs |
+
+The semaphore path is about 20 µs faster per round trip (9% at the median). The gap is the host
+round trips the fence path adds; the Vulkan submits and the kernel launch with its event are common
+to both and were not timed separately. A release build was not measured: the NVMe had about 14 GB
+free, so the run used the test profile with debuginfo off.

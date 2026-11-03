@@ -325,6 +325,29 @@ Details and limits, stated plainly:
   picks the NVIDIA wgpu device, and the buffer's UUID must match the CUDA device.
   wgpu's own buffers cannot be exported (wgpu does not expose their memory), so a graph does not
   yet hand a wgpu buffer to a CUDA node: that handoff is still open.
+- **Semaphores.** `interop::SharedSemaphore` is a Vulkan timeline semaphore on the wgpu device,
+  exported as an opaque fd (`VK_KHR_external_semaphore_fd`, enabled by the `gpu-dmabuf` device
+  request; `Unsupported` without it). `CudaBackend::import_timeline_semaphore` imports it as a
+  `CudaSemaphore`: the CUDA stream waits for a value (`wait`) and signals one (`signal`) without
+  blocking the host. Vulkan submits set and wait the values with `RawSubmitter::submit_synced`, on
+  the raw queue under the context's submit lock. The import uses CUDA's timeline handle type (9);
+  the binary `OPAQUE_FD` type (1) imports the same payload, but its signals did not change the
+  timeline's value on this driver. wgpu's own submits take no caller semaphores (`wgpu-hal`'s
+  `Queue::submit` takes command buffers, surface textures and a fence), so a wgpu stage is still
+  ordered by a host fence. A graph-level handoff through these is not wired into the planner yet.
+- **Handoff latency.** One Vulkan→CUDA→Vulkan round trip (two Vulkan submits, one kernel): the host
+  fence path waits on each side before the next starts; the semaphore path orders the same steps on
+  the GPU and the host waits once at the end. RTX 4060, 2000 round trips after 200 warm-up, an
+  unoptimized test build, three runs:
+
+  | path | median | p99 | mean |
+  |---|---|---|---|
+  | host fence | 221 µs (221.0–221.3) | 245–257 µs | 226–228 µs |
+  | semaphore | 201 µs (201.3–202.5) | 219–223 µs | 208–210 µs |
+
+  The semaphore path is about 20 µs (9%) faster per round trip. The two Vulkan submits and the
+  kernel launch are common to both paths and were not broken down, so the saving is the host
+  round trips the fence path adds. Full runs and conditions: `docs/benchmarks-log.md`.
 - **dma-buf.** The driver refuses a dma-buf fd: `cuImportExternalMemory` returns
   `CUDA_ERROR_UNKNOWN` (999) for a dma-heap buffer and for a dma-buf that Vulkan exports from the
   NVIDIA device (the probe in `cuda_interop.rs` prints both). The CUDA API has no dma-buf handle
@@ -334,6 +357,8 @@ Details and limits, stated plainly:
 Test on this machine (RTX 4060, driver 595.104.02): `cargo test -p daedalus-gpu --features
 gpu-cuda --test cuda_device`, `-p daedalus-runtime --features gpu-cuda --test it executor_cuda`,
 and `-p daedalus-rs --features gpu-cuda,engine,plugins --test it device_cuda`. With
-`CUDA_VISIBLE_DEVICES=-1` they skip and pass. The interop and image tests run with
+`CUDA_VISIBLE_DEVICES=-1` they skip and pass. The interop, semaphore and image tests run with
 `-p daedalus-gpu --features gpu-cuda,gpu-vulkan-raw --test cuda_interop` and `--test cuda_device`.
+The handoff benchmark is the ignored test `handoff_latency_host_fence_vs_semaphore` in that binary:
+`cargo test -p daedalus-gpu --features gpu-cuda,gpu-vulkan-raw --test cuda_interop -- --ignored --nocapture`.
 The planner tests run with `-p daedalus-planner residency`.

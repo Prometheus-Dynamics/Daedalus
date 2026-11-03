@@ -20,6 +20,7 @@ pub(crate) type CuFunction = *mut c_void;
 pub(crate) type CuStream = *mut c_void;
 pub(crate) type CuEvent = *mut c_void;
 pub(crate) type CuExternalMemory = *mut c_void;
+pub(crate) type CuExternalSemaphore = *mut c_void;
 pub(crate) type CuArray = *mut c_void;
 
 pub(crate) const CUDA_SUCCESS: CuResult = 0;
@@ -38,6 +39,10 @@ pub(crate) const MEMORYTYPE_HOST: c_uint = 0x01;
 pub(crate) const MEMORYTYPE_ARRAY: c_uint = 0x03;
 /// `CU_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD`: a memory fd from `vkGetMemoryFdKHR` (Linux).
 pub(crate) const EXTERNAL_MEMORY_OPAQUE_FD: c_uint = 1;
+/// `CU_EXTERNAL_SEMAPHORE_HANDLE_TYPE_TIMELINE_SEMAPHORE_FD`: a fd of a Vulkan timeline semaphore
+/// (`vkGetSemaphoreFdKHR` with the opaque fd handle type). The binary `OPAQUE_FD` type (1) imports
+/// the same payload, but its signals do not change the timeline's value.
+pub(crate) const EXTERNAL_SEMAPHORE_TIMELINE_FD: c_uint = 9;
 
 /// `CUuuid`: a device's 16-byte UUID, as `VkPhysicalDeviceIDProperties::deviceUUID` spells it.
 #[repr(C)]
@@ -61,6 +66,29 @@ pub(crate) struct ExternalMemoryHandleDesc {
     pub(crate) handle_type: c_uint,
     pub(crate) handle: ExternalMemoryHandle,
     pub(crate) size: u64,
+    pub(crate) flags: c_uint,
+    pub(crate) reserved: [c_uint; 16],
+}
+
+/// `CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC` of cuda.h: the handle type, the handle (an fd for
+/// `OPAQUE_FD`; the union has the same shape as the memory one), the flags and the reserved words.
+#[repr(C)]
+pub(crate) struct ExternalSemaphoreHandleDesc {
+    pub(crate) handle_type: c_uint,
+    pub(crate) handle: ExternalMemoryHandle,
+    pub(crate) flags: c_uint,
+    pub(crate) reserved: [c_uint; 16],
+}
+
+/// The wait and signal parameters of cuda.h (`CUDA_EXTERNAL_SEMAPHORE_{WAIT,SIGNAL}_PARAMS`, one
+/// layout, 144 bytes): `params` holds the timeline value (`fence.value`), the NvSci fence and the
+/// keyed-mutex key (both unused, zero) and 12 reserved words; then the flags and 16 more words.
+#[repr(C)]
+pub(crate) struct ExternalSemaphoreParams {
+    pub(crate) value: u64,
+    pub(crate) nv_sci_fence: u64,
+    pub(crate) keyed_mutex_key: u64,
+    pub(crate) params_reserved: [c_uint; 12],
     pub(crate) flags: c_uint,
     pub(crate) reserved: [c_uint; 16],
 }
@@ -153,6 +181,25 @@ type FnExternalMemoryGetMappedBuffer = unsafe extern "C" fn(
     *const ExternalMemoryBufferDesc,
 ) -> CuResult;
 type FnDestroyExternalMemory = unsafe extern "C" fn(CuExternalMemory) -> CuResult;
+type FnImportExternalSemaphore =
+    unsafe extern "C" fn(*mut CuExternalSemaphore, *const ExternalSemaphoreHandleDesc) -> CuResult;
+type FnExternalSemaphoresAsync = unsafe extern "C" fn(
+    *const CuExternalSemaphore,
+    *const ExternalSemaphoreParams,
+    c_uint,
+    CuStream,
+) -> CuResult;
+type FnDestroyExternalSemaphore = unsafe extern "C" fn(CuExternalSemaphore) -> CuResult;
+
+/// The external-semaphore entry points. Optional in [`Driver`]: a driver without them still runs
+/// the rest of the backend, and [`crate::CudaBackend::import_timeline_semaphore`] says so.
+#[derive(Clone, Copy)]
+pub(crate) struct SemaphoreFns {
+    pub(crate) import: FnImportExternalSemaphore,
+    pub(crate) signal: FnExternalSemaphoresAsync,
+    pub(crate) wait: FnExternalSemaphoresAsync,
+    pub(crate) destroy: FnDestroyExternalSemaphore,
+}
 type FnDeviceGetUuid = unsafe extern "C" fn(*mut CuUuid, CuDevice) -> CuResult;
 type FnArray3DCreate = unsafe extern "C" fn(*mut CuArray, *const ArrayDesc) -> CuResult;
 type FnArrayDestroy = unsafe extern "C" fn(CuArray) -> CuResult;
@@ -191,6 +238,8 @@ pub(crate) struct Driver {
     pub(crate) external_memory_get_mapped_buffer: FnExternalMemoryGetMappedBuffer,
     pub(crate) destroy_external_memory: FnDestroyExternalMemory,
     pub(crate) device_get_uuid: FnDeviceGetUuid,
+    /// `None` when the driver lacks the external-semaphore entry points.
+    pub(crate) semaphores: Option<SemaphoreFns>,
     pub(crate) array_create: FnArray3DCreate,
     pub(crate) array_destroy: FnArrayDestroy,
     pub(crate) memcpy_2d_async: FnMemcpy2DAsync,
@@ -258,12 +307,29 @@ fn load() -> Result<Driver, String> {
             external_memory_get_mapped_buffer: sym(&lib, b"cuExternalMemoryGetMappedBuffer\0")?,
             destroy_external_memory: sym(&lib, b"cuDestroyExternalMemory\0")?,
             device_get_uuid: sym(&lib, b"cuDeviceGetUuid_v2\0")?,
+            semaphores: load_semaphores(&lib).ok(),
             array_create: sym(&lib, b"cuArray3DCreate_v2\0")?,
             array_destroy: sym(&lib, b"cuArrayDestroy\0")?,
             memcpy_2d_async: sym(&lib, b"cuMemcpy2DAsync_v2\0")?,
             get_error_name: sym(&lib, b"cuGetErrorName\0")?,
             get_error_string: sym(&lib, b"cuGetErrorString\0")?,
             _lib: lib,
+        })
+    }
+}
+
+/// The external-semaphore entry points of `lib`, or why one is missing.
+///
+/// # Safety
+/// `lib` is a driver library; each prototype matches the cuda.h function of that name.
+unsafe fn load_semaphores(lib: &Library) -> Result<SemaphoreFns, String> {
+    // SAFETY: the prototypes are those of cuda.h (see the type aliases above).
+    unsafe {
+        Ok(SemaphoreFns {
+            import: sym(lib, b"cuImportExternalSemaphore\0")?,
+            signal: sym(lib, b"cuSignalExternalSemaphoresAsync\0")?,
+            wait: sym(lib, b"cuWaitExternalSemaphoresAsync\0")?,
+            destroy: sym(lib, b"cuDestroyExternalSemaphore\0")?,
         })
     }
 }

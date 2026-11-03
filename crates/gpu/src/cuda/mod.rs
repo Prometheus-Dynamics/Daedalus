@@ -15,6 +15,7 @@ mod external;
 mod ffi;
 mod image;
 mod ptx;
+mod semaphore;
 
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
@@ -31,6 +32,7 @@ use image::DeviceImage;
 
 pub use device::CudaFence;
 pub use external::CudaImport;
+pub use semaphore::CudaSemaphore;
 
 /// The NVIDIA vendor's PCI id.
 const NVIDIA_VENDOR_ID: u32 = 0x10DE;
@@ -128,6 +130,14 @@ impl CudaBackend {
     /// driver's code. Imports are not counted in [`TransferStats`]: nothing moves.
     pub fn import_opaque_fd(&self, fd: OwnedFd, bytes: u64) -> Result<CudaImport, GpuError> {
         self.dev.import_opaque_fd(fd, bytes)
+    }
+
+    /// Import a timeline semaphore exported as an opaque fd (`vkGetSemaphoreFdKHR` of a Vulkan
+    /// timeline semaphore on the same GPU, see [`CudaBackend::device_uuid`]). The returned
+    /// [`CudaSemaphore`] waits on and signals values on this device's stream. `Unsupported` when
+    /// the driver lacks the external-semaphore entry points.
+    pub fn import_timeline_semaphore(&self, fd: OwnedFd) -> Result<CudaSemaphore, GpuError> {
+        self.dev.import_timeline_semaphore(fd)
     }
 
     /// This device's UUID: the Vulkan `deviceUUID` of the same GPU, which is how a caller finds

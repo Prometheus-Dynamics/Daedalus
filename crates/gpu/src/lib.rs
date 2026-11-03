@@ -45,7 +45,7 @@ pub use compute_caps::{GpuComputeCaps, GpuComputeFeatures};
 pub use convert::dynamic_to_rgba8;
 pub use convert::{Backing, Compute, DeviceBridge};
 #[cfg(feature = "gpu-cuda")]
-pub use cuda::{CudaBackend, CudaFence, CudaImport};
+pub use cuda::{CudaBackend, CudaFence, CudaImport, CudaSemaphore};
 pub use device_profile::{GpuDeviceProfile, GpuFamily, vendor_ids};
 pub use external::{
     AcquireFenceMode, AcquireFenceWait, AcquireFenceWaits, AcquireStatus, DRM_FORMAT_MOD_INVALID,

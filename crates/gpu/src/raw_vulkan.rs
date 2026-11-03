@@ -338,6 +338,25 @@ impl RawSubmitter {
         &self,
         record: impl FnOnce(&ash::Device, vk::CommandBuffer),
     ) -> Result<RawTicket<'_>, GpuError> {
+        // SAFETY: the contract of `submit_synced`, with no semaphores.
+        unsafe { self.submit_synced(record, &[], &[]) }
+    }
+
+    /// [`RawSubmitter::submit`] with timeline semaphores: the submission waits, before its work,
+    /// until each `(semaphore, value)` of `waits` is reached, and sets each of `signals` to its
+    /// value after its work. The host waits only if it waits on the returned ticket, so a chain of
+    /// submits and CUDA stream waits (see `CudaSemaphore`) hands work across with no host round
+    /// trip. The semaphores must be timeline semaphores of this device (see `interop`), and each
+    /// signal value must be greater than the semaphore's current value.
+    ///
+    /// # Safety
+    /// As [`RawSubmitter::submit`], and the semaphores must be live until the ticket completes.
+    pub unsafe fn submit_synced(
+        &self,
+        record: impl FnOnce(&ash::Device, vk::CommandBuffer),
+        waits: &[(vk::Semaphore, u64)],
+        signals: &[(vk::Semaphore, u64)],
+    ) -> Result<RawTicket<'_>, GpuError> {
         let index = self.next.get();
         let slot = &self.slots[index];
         let d = &self.device;
@@ -359,7 +378,23 @@ impl RawSubmitter {
             d.reset_fences(&[slot.fence]).map_err(vk_error)?;
         }
         let commands = [cmd];
-        let submits = [vk::SubmitInfo::default().command_buffers(&commands)];
+        let wait_semaphores: Vec<vk::Semaphore> = waits.iter().map(|w| w.0).collect();
+        let wait_values: Vec<u64> = waits.iter().map(|w| w.1).collect();
+        let wait_stages = vec![vk::PipelineStageFlags::ALL_COMMANDS; waits.len()];
+        let signal_semaphores: Vec<vk::Semaphore> = signals.iter().map(|s| s.0).collect();
+        let signal_values: Vec<u64> = signals.iter().map(|s| s.1).collect();
+        let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
+            .wait_semaphore_values(&wait_values)
+            .signal_semaphore_values(&signal_values);
+        let mut info = vk::SubmitInfo::default()
+            .command_buffers(&commands)
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_stages)
+            .signal_semaphores(&signal_semaphores);
+        if !(waits.is_empty() && signals.is_empty()) {
+            info = info.push_next(&mut timeline);
+        }
+        let submits = [info];
         let submitted = {
             let _lock = self.lock.lock();
             // SAFETY: the queue is Daedalus's; the context's submit lock serializes it with every

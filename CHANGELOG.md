@@ -17,6 +17,14 @@ plugin ABI and does not load.
 
 ### Added
 
+- **CUDA and Vulkan order a shared buffer with timeline semaphores.** `interop::SharedSemaphore`
+  (a Vulkan timeline semaphore exported as an opaque fd) is imported into CUDA as a
+  `CudaSemaphore` (`CudaBackend::import_timeline_semaphore`): the CUDA stream waits for and
+  signals values without a host wait. `RawSubmitter::submit_synced` sets and waits the values on
+  the raw queue. Test: `cuda_interop.rs::a_timeline_semaphore_hands_a_buffer_between_vulkan_and_cuda`
+  on the RTX 4060. Host-fence against semaphore round trips are measured in
+  `docs/benchmarks-log.md` (about 201 µs against 221 µs median). The graph-level handoff through
+  the planner is not done.
 - **Windows builds and tests.** The shared sources that were symlinks are copies
   (`scripts/check-shared-sources.sh` keeps them identical), so a Windows checkout needs no
   `core.symlinks`; checkouts keep LF line endings; CI runs clippy and the workspace tests on

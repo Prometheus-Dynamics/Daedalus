@@ -6,8 +6,13 @@
 #![cfg(all(feature = "gpu-cuda", feature = "gpu-vulkan-raw", target_os = "linux"))]
 #![allow(clippy::print_stderr)] // the skip reasons and the driver's answers
 
-use daedalus_gpu::interop::{ShareKind, SharedBuffer};
-use daedalus_gpu::{CudaBackend, GpuBackend, GpuContextHandle, select_wgpu_on_vendor};
+use std::time::Instant;
+
+use daedalus_gpu::interop::{ShareKind, SharedBuffer, SharedSemaphore};
+use daedalus_gpu::raw_vulkan::RawSubmitter;
+use daedalus_gpu::{
+    CudaBackend, CudaImport, CudaSemaphore, GpuBackend, GpuContextHandle, select_wgpu_on_vendor,
+};
 
 /// PCI vendor id of NVIDIA.
 const NVIDIA: u32 = 0x10DE;
@@ -176,4 +181,198 @@ fn a_vulkan_dmabuf_is_probed_against_the_cuda_import() {
         }
         Err(e) => eprintln!("{test}: CUDA refused the Vulkan dma-buf: {e}"),
     }
+}
+
+/// One CUDA device and one wgpu device on it, with the objects of a Vulkan<->CUDA handoff: a shared
+/// buffer, a timeline semaphore on each side, and the CUDA import of the buffer. Fields drop in
+/// order: the CUDA objects first, then the memory they refer to.
+struct Handoff {
+    import: CudaImport,
+    csem: CudaSemaphore,
+    ring: RawSubmitter,
+    sem: SharedSemaphore,
+    shared: SharedBuffer,
+    cuda: CudaBackend,
+    ctx: GpuContextHandle,
+}
+
+/// The handoff objects on NVIDIA, or `None` after saying why (the test then passes as skipped).
+fn handoff(test: &str) -> Option<Handoff> {
+    let (cuda, ctx) = devices(test)?;
+    let bytes = (COUNT * 4) as u64;
+    let shared = match SharedBuffer::create(&ctx, bytes) {
+        Ok(shared) => shared,
+        Err(e) => {
+            eprintln!("skipped {test}: shared buffer: {e}");
+            return None;
+        }
+    };
+    if cuda.device_uuid().expect("CUDA device UUID") != shared.device_uuid() {
+        eprintln!("skipped {test}: the wgpu device is not the CUDA device");
+        return None;
+    }
+    let sem = match SharedSemaphore::create(&ctx) {
+        Ok(sem) => sem,
+        Err(e) => {
+            eprintln!("skipped {test}: timeline semaphore: {e}");
+            return None;
+        }
+    };
+    let csem = match cuda.import_timeline_semaphore(sem.export_fd().expect("export semaphore")) {
+        Ok(csem) => csem,
+        Err(e) => {
+            eprintln!("skipped {test}: CUDA refused the timeline semaphore: {e}");
+            return None;
+        }
+    };
+    let import = cuda
+        .import_opaque_fd(shared.export_fd().expect("export buffer"), bytes)
+        .expect("CUDA imports the Vulkan buffer");
+    let ring = RawSubmitter::with_slots(&ctx, 4).expect("raw submitter");
+    Some(Handoff {
+        import,
+        csem,
+        ring,
+        sem,
+        shared,
+        cuda,
+        ctx,
+    })
+}
+
+/// Vulkan and CUDA hand one buffer back and forth on one timeline semaphore, with no host wait at
+/// the boundaries: Vulkan sets value `v`, CUDA waits for `v`, scales the buffer in place and sets
+/// `v + 1`, and Vulkan's next submit waits for `v + 1`. The host waits once per round, at the end,
+/// and reads the result back.
+#[test]
+fn a_timeline_semaphore_hands_a_buffer_between_vulkan_and_cuda() {
+    let test = "a_timeline_semaphore_hands_a_buffer_between_vulkan_and_cuda";
+    let Some(h) = handoff(test) else {
+        return;
+    };
+    let before_cuda = h.cuda.stats();
+    let before_wgpu = h.ctx.stats();
+    let mut value = 0u64;
+    for (round, factor) in [3.0f32, 0.25, -2.0].into_iter().enumerate() {
+        let input: Vec<f32> = (0..COUNT).map(|i| i as f32 * 0.5 + round as f32).collect();
+        h.shared.write(&f32_bytes(&input)).expect("write");
+        let ready = value + 1;
+        // Vulkan: the data is in place, set the semaphore (no host wait).
+        // SAFETY: no commands are recorded; the semaphore is live until the ticket below completes.
+        let _signal = unsafe {
+            h.ring
+                .submit_synced(|_, _| {}, &[], &[(h.sem.raw_handle(), ready)])
+        }
+        .expect("Vulkan signals");
+        // CUDA: wait for it on the stream, scale in place, set the next value.
+        h.csem.wait(ready).expect("CUDA waits");
+        let fence = h.import.scale_f32(factor).expect("launch");
+        h.csem.signal(ready + 1).expect("CUDA signals");
+        // Vulkan: wait for CUDA's signal, then the host waits for this submission and reads back.
+        // SAFETY: as above.
+        unsafe {
+            h.ring
+                .submit_synced(|_, _| {}, &[(h.sem.raw_handle(), ready + 1)], &[])
+        }
+        .expect("Vulkan waits")
+        .wait();
+        drop(fence);
+        value = ready + 1;
+        let out = f32_values(&h.shared.read().expect("read"));
+        for (i, (got, src)) in out.iter().zip(&input).enumerate() {
+            assert_eq!(*got, src * factor, "round {round}, element {i}");
+        }
+    }
+    assert_eq!(h.cuda.stats(), before_cuda, "CUDA transfer counters moved");
+    assert_eq!(h.ctx.stats(), before_wgpu, "wgpu transfer counters moved");
+    eprintln!(
+        "{test}: 3 rounds of {COUNT} f32 on {}, semaphore-ordered, values checked",
+        h.cuda.adapter_info().name
+    );
+}
+
+/// Per-handoff latency, Vulkan -> CUDA -> Vulkan, on the RTX 4060: the host-fence path (the host
+/// waits on each side's completion before the next side starts) against the semaphore path (the
+/// same work, ordered on the GPU by a timeline semaphore, with the host waiting once at the end).
+/// Both do two Vulkan submits and one CUDA kernel per round. Ignored by default: run with
+/// `cargo test -p daedalus-gpu --features gpu-cuda,gpu-vulkan-raw --test cuda_interop -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark: run with --ignored --nocapture on an NVIDIA GPU"]
+fn handoff_latency_host_fence_vs_semaphore() {
+    const WARMUP: usize = 200;
+    const ROUNDS: usize = 2000;
+    let test = "handoff_latency_host_fence_vs_semaphore";
+    let Some(h) = handoff(test) else {
+        return;
+    };
+    let input: Vec<f32> = (0..COUNT).map(|i| i as f32).collect();
+    h.shared.write(&f32_bytes(&input)).expect("write");
+    let mut value = 0u64;
+    let mut fence_ns = Vec::with_capacity(ROUNDS);
+    let mut sem_ns = Vec::with_capacity(ROUNDS);
+    for round in 0..WARMUP + ROUNDS {
+        // Host fences: Vulkan completes, then CUDA runs, then Vulkan.
+        let t = Instant::now();
+        // SAFETY: no commands are recorded.
+        unsafe { h.ring.submit(|_, _| {}) }
+            .expect("Vulkan submit")
+            .wait();
+        h.import
+            .scale_f32(1.0)
+            .expect("launch")
+            .wait()
+            .expect("CUDA completes");
+        // SAFETY: as above.
+        unsafe { h.ring.submit(|_, _| {}) }
+            .expect("Vulkan submit")
+            .wait();
+        let fence = t.elapsed();
+
+        // Semaphores: the same three steps ordered on the GPU, the host waits once at the end.
+        let t = Instant::now();
+        let ready = value + 1;
+        // SAFETY: as above; the semaphore outlives the round.
+        let _signal = unsafe {
+            h.ring
+                .submit_synced(|_, _| {}, &[], &[(h.sem.raw_handle(), ready)])
+        }
+        .expect("Vulkan signals");
+        h.csem.wait(ready).expect("CUDA waits");
+        let _kernel = h.import.scale_f32(1.0).expect("launch");
+        h.csem.signal(ready + 1).expect("CUDA signals");
+        // SAFETY: as above.
+        unsafe {
+            h.ring
+                .submit_synced(|_, _| {}, &[(h.sem.raw_handle(), ready + 1)], &[])
+        }
+        .expect("Vulkan waits")
+        .wait();
+        let sem = t.elapsed();
+        value = ready + 1;
+
+        if round >= WARMUP {
+            fence_ns.push(fence.as_nanos() as u64);
+            sem_ns.push(sem.as_nanos() as u64);
+        }
+    }
+    // Scale by 1.0 each round, so the data is unchanged by the whole run.
+    let out = f32_values(&h.shared.read().expect("read"));
+    assert!(
+        out.iter().zip(&input).all(|(a, b)| a == b),
+        "data changed in the benchmark"
+    );
+
+    let stats = |mut v: Vec<u64>| {
+        v.sort_unstable();
+        let at =
+            |q: f64| v[((v.len() as f64 * q).ceil() as usize - 1).min(v.len() - 1)] as f64 / 1000.0;
+        let mean = v.iter().sum::<u64>() as f64 / v.len() as f64 / 1000.0;
+        (at(0.5), at(0.99), mean)
+    };
+    let (fm, fp, fmean) = stats(fence_ns);
+    let (sm, sp, smean) = stats(sem_ns);
+    eprintln!(
+        "{test}: {ROUNDS} round trips (after {WARMUP} warm-up) on {}\n  host fence: median {fm:.1} us, p99 {fp:.1} us, mean {fmean:.1} us\n  semaphore:  median {sm:.1} us, p99 {sp:.1} us, mean {smean:.1} us",
+        h.cuda.adapter_info().name
+    );
 }

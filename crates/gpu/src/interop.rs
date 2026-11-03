@@ -14,15 +14,20 @@
 //!
 //! # Handoff
 //!
-//! Synchronization is by the host: [`SharedBuffer::write`] returns after the copy has finished,
-//! before CUDA work is queued, and a read follows a [`CudaFence::wait`](crate::CudaFence::wait)
-//! on the CUDA work.
+//! Two ways to order the handoff. By the host: [`SharedBuffer::write`] returns after the copy has
+//! finished, before CUDA work is queued, and a read follows a
+//! [`CudaFence::wait`](crate::CudaFence::wait) on the CUDA work. On the GPU: a [`SharedSemaphore`]
+//! (a Vulkan timeline semaphore exported as an opaque fd) is imported into CUDA as a
+//! [`CudaSemaphore`](crate::CudaSemaphore); Vulkan submits set and wait its values
+//! ([`RawSubmitter::submit_synced`](crate::raw_vulkan::RawSubmitter::submit_synced)) and CUDA waits and signals
+//! them on its stream, so the host does not wait at the boundary.
 //!
 //! [`CudaBackend::import_opaque_fd`]: crate::CudaBackend::import_opaque_fd
 
 use std::os::fd::{FromRawFd, OwnedFd};
 
-use ash::vk;
+use ash::{khr, vk};
+use wgpu::hal::api::Vulkan;
 
 use crate::raw_vulkan::RawVulkan;
 use crate::{GpuContextHandle, GpuError};
@@ -294,6 +299,89 @@ impl SharedBuffer {
         }?;
         ticket.wait();
         Ok(())
+    }
+}
+
+/// A Vulkan timeline semaphore of one wgpu context's device, exported as an opaque fd for CUDA
+/// ([`CudaBackend::import_timeline_semaphore`](crate::CudaBackend::import_timeline_semaphore)).
+///
+/// Its values are set by [`RawSubmitter::submit_synced`](crate::raw_vulkan::RawSubmitter::submit_synced) and by
+/// CUDA signals. Drop the CUDA import before the semaphore; the context outlives both.
+pub struct SharedSemaphore {
+    semaphore: vk::Semaphore,
+    fd_api: khr::external_semaphore_fd::Device,
+    device: ash::Device,
+    /// Declared last: the device is destroyed only after the semaphore is.
+    _ctx: GpuContextHandle,
+}
+
+impl std::fmt::Debug for SharedSemaphore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedSemaphore").finish_non_exhaustive()
+    }
+}
+
+impl SharedSemaphore {
+    /// A timeline semaphore on `ctx`'s device, exportable as an opaque fd, at value 0.
+    ///
+    /// Fails with `Unsupported` when `ctx` is not wgpu on Vulkan, or when the device does not
+    /// have `VK_KHR_external_semaphore_fd` (the `gpu-dmabuf` device request enables it).
+    pub fn create(ctx: &GpuContextHandle) -> Result<Self, GpuError> {
+        let (wgpu_device, _) = ctx.wgpu().ok_or(GpuError::Unsupported)?;
+        // SAFETY: only reads the device's enabled extensions.
+        let enabled = unsafe { wgpu_device.as_hal::<Vulkan>() }
+            .ok_or(GpuError::Unsupported)?
+            .enabled_device_extensions()
+            .contains(&khr::external_semaphore_fd::NAME);
+        if !enabled {
+            return Err(GpuError::Unsupported);
+        }
+        // SAFETY: only reads the handles; the semaphore is destroyed before the context.
+        let raw = unsafe { ctx.raw_vulkan() }.ok_or(GpuError::Unsupported)?;
+        let mut kind = vk::SemaphoreTypeCreateInfo::default()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(0);
+        let mut export = vk::ExportSemaphoreCreateInfo::default()
+            .handle_types(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD);
+        let info = vk::SemaphoreCreateInfo::default()
+            .push_next(&mut kind)
+            .push_next(&mut export);
+        // SAFETY: valid create info on the context's live device.
+        let semaphore = unsafe { raw.device.create_semaphore(&info, None) }
+            .map_err(|e| vk_err("vkCreateSemaphore (timeline, opaque fd)", e))?;
+        let fd_api = khr::external_semaphore_fd::Device::new(&raw.instance, &raw.device);
+        Ok(Self {
+            semaphore,
+            fd_api,
+            device: raw.device.clone(),
+            _ctx: ctx.clone(),
+        })
+    }
+
+    /// The Vulkan semaphore, for [`RawSubmitter::submit_synced`](crate::raw_vulkan::RawSubmitter::submit_synced).
+    pub fn raw_handle(&self) -> vk::Semaphore {
+        self.semaphore
+    }
+
+    /// A new opaque fd of the semaphore (`vkGetSemaphoreFdKHR`), owned by the caller. It imports
+    /// into CUDA with [`CudaBackend::import_timeline_semaphore`](crate::CudaBackend::import_timeline_semaphore).
+    pub fn export_fd(&self) -> Result<OwnedFd, GpuError> {
+        let info = vk::SemaphoreGetFdInfoKHR::default()
+            .semaphore(self.semaphore)
+            .handle_type(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD);
+        // SAFETY: the semaphore is live and exportable (created with the opaque fd handle type).
+        let fd = unsafe { self.fd_api.get_semaphore_fd(&info) }
+            .map_err(|e| vk_err("vkGetSemaphoreFdKHR", e))?;
+        // SAFETY: Vulkan returned a new descriptor that nothing else owns.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+}
+
+impl Drop for SharedSemaphore {
+    fn drop(&mut self) {
+        // SAFETY: created on `self.device` by `create` and destroyed once. The CUDA import is the
+        // caller's to drop first (see the type docs).
+        unsafe { self.device.destroy_semaphore(self.semaphore, None) };
     }
 }
 
