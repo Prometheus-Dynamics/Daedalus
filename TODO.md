@@ -25,14 +25,6 @@ The next release is an alpha that covers the Raze (CM5, V3D 7.1) hardware only (
 HeliOS, 2026-11-02). These items come first. The other boards (Rockchip, K230D, RV1106), the MCU
 and CUDA follow after it, under Open. When to release, and what blocks it, stays the user's call.
 
-- [ ] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
-      `drop_stale_consts`, bb07e3b, 0398d4a).
-      **Why:** HeliOS's stored rev-215 graph failed to plan (`PortExtra` on folded Eidos knobs).
-      **Done when:** HeliOS dev on the Raze plans and runs the default pipeline from the stored
-      rev-215 graph and logs the dropped consts.
-      **Blocked by:** a HeliOS deploy on the Raze, which the HeliOS coordinator owns. HeliOS `dev`'s
-      `backend/Cargo.lock` pins b148918, which carries bb07e3b; what the Raze runs was not checked.
-      **Measured:** planner tests only (`planner/src/refresh/tests.rs`); no Raze run is recorded.
 - [ ] **What:** the engine and a plugin `cdylib` on one device share its submit lock (the Eidos
       plugin's GPU nodes run on the engine's device, `GpuDevice::from_context`).
       **Why:** the plugin has its own copy of `daedalus-gpu`, so a per-image static lock did not
@@ -297,6 +289,11 @@ was searched for, the commit is the one that introduced it.
 
 ### GPU and hardware support
 
+- [x] The stale-graph refresh confirmed on the Raze (alpha item; `refresh_graph_ports_with` +
+      `drop_stale_consts`, bb07e3b, 0398d4a): Raze #1 on HeliOS dev.890 (469cb6f3) logs "stored
+      graph ports refreshed from the plugins" for each Eidos node of the stored default graph,
+      drops the stale settings, and plans and runs it (state running, revision 218; reported by
+      the HeliOS coordinator, 2026-11-02).
 - [x] The dmabuf fence-timing tests pass under plain multi-threaded `cargo test` (alpha item):
       the non-blocking import margins are 300 ms, the late producer's spin is calibrated on the
       fastest of three runs, and a check the producer loses (its job done before the check needs it
