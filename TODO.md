@@ -33,24 +33,18 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Blocked by:** a HeliOS deploy on the Raze, which the HeliOS coordinator owns. HeliOS `dev`'s
       `backend/Cargo.lock` pins b148918, which carries bb07e3b; what the Raze runs was not checked.
       **Measured:** planner tests only (`planner/src/refresh/tests.rs`); no Raze run is recorded.
-- [ ] **[board] What:** the GPU path on the CM5 at the current `dev`: `ci.sh pi` (the dmabuf
-      and raw Vulkan hardware tests), `gpu_probe`, `gpu_bench` and the `GpuKernels` evidence,
-      with the bench numbers recorded.
-      **Why:** the CM5 runs (e56840d, 2026-10-31; `ci.sh pi` at 65fd3a5, 2026-11-02) predate the
-      frame interface v3, `RawSubmitter` (fd18808) and the typed driver lock (5a1404c).
-      **Done when:** the runs pass on the Raze at a named `dev` commit, and `docs/testing.md` has
-      the `gpu_bench` numbers and `driver_stress` passes there.
-      **Blocked by:** a Raze slot, booked through HeliOS.
-      **Measured:** the 2026-10-31 `gpu_bench` and 2026-11-02 `ci.sh pi` runs in `docs/testing.md`;
-      nothing at the current `dev`.
 - [ ] **[board] What:** readback timing on the Raze: the host-cached dma-heap readback after the
       DMA-buffer move onto Lemnos (803f310).
       **Why:** the move must not cost readback time; the cached path (602b14b) is what makes
       readback usable on v3dv.
       **Done when:** a host-cached read of 16 MiB measures no slower than 3.6 ms on the Raze,
       recorded in `docs/testing.md`.
-      **Blocked by:** a Raze slot; HeliOS queues it after Styx and the HeliOS update test.
-      **Measured:** 3.6 ms per 16 MiB before the move; not re-measured since.
+      **Blocked by:** a Raze slot for a same-session A/B (HeliOS, 2026-11-02): `gpu_bench` built
+      at 803f310^ (before the move) against the current one, interleaved, n >= 10 each. If the
+      median gap holds, bisect it; if not, record "unchanged" with the A/B as the evidence.
+      **Measured:** 3.6 ms per 16 MiB before the move. After it (6a0c73f, 2026-11-02): median
+      3.73 ms over 6 runs, 3.58 to 3.76; 1 MiB 0.28 ms (was 0.30); memcpy 2.94 ms (was 2.9).
+      `docs/testing.md`, "CM5 run (2026-11-02, alpha)".
 - [ ] **[board] What:** zero-copy import of Styx's software-ISP frames on the Raze: a frame
       Styx's soft ISP writes into a dmabuf, imported into Daedalus GPU storage or a texture
       without a copy (`SharedFrame`, `GpuStorage::import_dmabuf`, the dmabuf import from a
@@ -339,6 +333,10 @@ was searched for, the commit is the one that introduced it.
 
 ### GPU and hardware support
 
+- [x] The GPU path on the CM5 at 6a0c73f (alpha item): `board.sh raze` (graph, kernels, the GPU
+      crate's 96 tests with the dmabuf and raw Vulkan hardware tests, `gpu_probe`, `gpu_bench`,
+      `GpuKernels` evidence) and `driver_stress` pass; numbers in `docs/testing.md`, "CM5 run
+      (2026-11-02, alpha)".
 - [x] `gpu_bench` and `gpu_probe` report on the Raze CM5: e56840d (`docs/testing.md`, "CM5 run
       (2026-10-31)").
 - [x] Compute limits and features in `GpuCapabilities`: fb5ba91;

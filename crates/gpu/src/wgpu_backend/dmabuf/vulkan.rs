@@ -236,6 +236,7 @@ fn record_enabled(device: &wgpu::Device, eight_bit: EightBitStorage) {
 
 /// The 8-bit storage `device` (a `VkDevice` of Daedalus's) was created with; none for a device
 /// Daedalus did not open with them.
+#[cfg(feature = "gpu-vulkan-raw")]
 pub(crate) fn enabled_eight_bit(device: vk::Device) -> EightBitStorage {
     ENABLED
         .lock()

@@ -425,6 +425,31 @@ missing hardware; a failed check prints its error in place of the value.
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
+### CM5 run (2026-11-02, alpha)
+
+The Raze at 6a0c73f, `scripts/board.sh raze` (cross-built, aarch64-unknown-linux-gnu; HeliOS's
+services left running, every GPU run under `/run/lock/raze-gpu.lock`): graph tests 90 + 5 + 2,
+kernel conformance 8, the GPU crate's tests with the dmabuf and raw Vulkan hardware tests 96,
+`gpu_probe`, `gpu_bench` and `driver_stress` (200 contexts over 4 threads) all pass. Evidence:
+`docs/accel-evidence/raze-cm5-v3d-2026-11-02.jsonl`.
+
+`gpu_bench`, the lines the alpha tracks:
+
+| Measurement | 2026-11-02 | Before |
+|---|---|---|
+| dispatch floor, record + submit (raw wgpu / `GpuKernels`) | 23.8 / 25.7 us | 23 / 23 us |
+| dispatch floor, submit to done (raw wgpu / `GpuKernels`) | 172 / 191 us | 173 / 186 us |
+| empty dispatch, submit to fence | 76 us | |
+| 16 MiB host-cached read (`new_host_cached`, dma-heap path) | 3.73 ms (median of 6 runs, 3.58 to 3.76) | 3.6 ms |
+| 1 MiB host-cached read | 0.28 ms | 0.30 ms |
+| CPU memcpy, 16 MiB | 2.94 ms | 2.9 ms |
+| 8 kernels: 8 submits / 1 submit | 1.29 / 1.31 ms | 1.30 / 1.32 ms |
+| 1280x720 padded dmabuf import (no copy) | 25 us | |
+
+The readback is the first measurement since the DMA-buffer basics moved onto Lemnos (803f310):
+the read is the same `DMA_BUF_IOCTL_SYNC` / copy / sync sequence as before, and its median sits
+3% above the earlier single figure, inside this run's spread.
+
 ### CM5 run (2026-11-02)
 
 The Raze again, at 65fd3a5 (cross-built, aarch64-unknown-linux-gnu): `ci.sh pi`'s dmabuf hardware
