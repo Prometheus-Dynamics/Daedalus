@@ -69,9 +69,9 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Why:** the K230D has no compute-capable GPU, and qemu cannot show a real VLEN.
       **Done when:** `scripts/board.sh k230d root@<k230d>` passes and its evidence, with the board's
       VLEN, is committed.
-      **Blocked by:** a K230D board; for VGLite, an image with `libvg_lite.so` and a CMA
-      dma-heap (Gaia's K230D Zero defconfig leaves `BR2_PACKAGE_VG_LITE` out; routed to Gaia
-      2026-11-02; `libmmz` is not needed: contiguous frames come through Lemnos's heap API).
+      **Blocked by:** a K230D board. The image is ready: Gaia feb262c ships `libvg_lite.so`,
+      `/dev/dma_heap/linux,cma` and an 8 MiB CMA pool shared with VGLite's staging buffers
+      (no `libmmz`: contiguous frames come through Lemnos's heap API).
       **Measured:** qemu only: 91 + 5 + 2 tests in `ci.sh cross` at 03f55c5; `+v` kernels at VLEN
       128, 256 and 512, plus a run without Zvbc.
 - [ ] **[board] What:** RK3588S (Mali-G610): `gpu_probe`, the `ci.sh pi` hardware tests, `gpu_bench`

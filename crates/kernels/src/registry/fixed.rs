@@ -1,7 +1,7 @@
 //! The fixed-function entries: Rockchip's RGA on the pixel ops, and the image nodes other repos
 //! lower onto.
 
-use daedalus_accel::{Backend, Kernel, Op, Registry};
+use daedalus_accel::{Backend, Exempt, Kernel, Op, Registry};
 
 use super::{T, op};
 
@@ -337,6 +337,10 @@ pub(super) static IMAGE_TABLE: Registry = Registry {
     name: "daedalus-kernels-image",
     ops: &IMAGE_OPS,
     kernels: &IMAGE_KERNELS,
+    exempt: &[Exempt {
+        path: "crates/vglite/src/surface.rs",
+        reason: "cache maintenance (th.dcache.civa) before VGLite reads a staged frame; not a kernel",
+    }],
     ..Registry::EMPTY
 };
 
