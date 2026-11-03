@@ -197,7 +197,9 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       `set_control` (01939e9), flips checked exactly on vim2m. (4) written: librga fill (boxes as
       four fills), mask AND/OR/XOR and Porter-Duff blend, ops
       `daedalus.image.{fill,mask_rop,blend}`; mainline has none (7.2 never programs
-      `BG_COLOR`); no line drawing in librga's C API. Open: K230 design note.
+      `BG_COLOR`); RGA2 and RGA3 have no line mode (vendor drivers, radxa 6.1). K230 design note
+      written (`docs/k230-fixed-function.md`): VGLite through `libvg_lite.so` is the route; code
+      waits on a K230D board and an image with the library and MMZ.
       **Measured:** n/a.
 
 ### Release steps
