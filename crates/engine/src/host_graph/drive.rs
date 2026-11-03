@@ -111,6 +111,14 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
         self.host.inbound_fd()
     }
 
+    /// Hand back the telemetry a tick returned, once read: the next serial tick records into its
+    /// buffers instead of allocating new ones, so steady-state ticks at
+    /// [`MetricsLevel::Timing`](crate::MetricsLevel::Timing) and above allocate nothing for
+    /// telemetry. The drive loops do this after each `on_outputs` call.
+    pub fn recycle_telemetry(&mut self, telemetry: ExecutionTelemetry) {
+        self.runner.executor.recycle_telemetry(telemetry);
+    }
+
     /// One turn of a `poll(2)` loop on [`Self::inbound_fd`]: clear the fd, run one tick if host
     /// input is pending, then signal the fd again if input is still pending (or the bridge is
     /// closed), so the next `poll` returns at once. Input pushed at any point either lands in
@@ -279,6 +287,9 @@ impl<H: NodeHandler + Send + Sync + 'static> HostGraph<H> {
                         "host graph drive tick complete"
                     );
                     on_outputs(self, &turn)?;
+                }
+                if let Some(telemetry) = turn.telemetry {
+                    self.recycle_telemetry(telemetry);
                 }
                 Ok(None)
             }

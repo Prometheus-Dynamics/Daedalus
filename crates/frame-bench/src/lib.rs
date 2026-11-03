@@ -171,7 +171,8 @@ pub fn run_frame_bench<H: NodeHandler + Send + Sync + 'static>(
     let input = daedalus::runtime::PortId::new(config.input.as_str());
     let frame = |host: &mut HostGraph<H>, source: &mut SyntheticFrameSource| {
         host.push_payload(input.clone(), source.next_payload());
-        host.tick()?;
+        let telemetry = host.tick()?;
+        host.recycle_telemetry(telemetry);
         for output in &config.outputs {
             while host.take_payload(output).is_some() {}
         }

@@ -93,7 +93,8 @@ fn measure(
         host.push_payload(frame_port.clone(), source.next_payload());
         host.push_payload(camera_port.clone(), camera.clone());
         host.push_payload(extrinsics_port.clone(), extrinsics.clone());
-        host.tick()?;
+        let telemetry = host.tick()?;
+        host.recycle_telemetry(telemetry);
         for output in HOST_OUTPUTS {
             while host.take_payload(output).is_some() {}
         }
@@ -330,7 +331,8 @@ fn profile(ticks: usize, warmup: usize) -> Result<(), Error> {
         host.push_payload(frame_port.clone(), source.next_payload());
         host.push_payload(camera_port.clone(), camera.clone());
         host.push_payload(extrinsics_port.clone(), extrinsics.clone());
-        host.tick()?;
+        let telemetry = host.tick()?;
+        host.recycle_telemetry(telemetry);
         for output in HOST_OUTPUTS {
             while host.take_payload(output).is_some() {}
         }

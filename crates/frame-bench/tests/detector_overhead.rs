@@ -61,6 +61,16 @@ fn detector_frames_allocate_nothing() {
 }
 
 #[test]
+fn timing_metrics_allocate_nothing_once_telemetry_is_recycled() {
+    for shape in [DetectorShape::Flat, DetectorShape::Group] {
+        let run = run(shape, MetricsLevel::Timing);
+        let context = format!("{}\n{run}", shape.as_str());
+        let [runtime, node, host, _other] = run.allocs_per_frame.expect("alloc probe");
+        assert_eq!((runtime, node, host), (0.0, 0.0, 0.0), "{context}");
+    }
+}
+
+#[test]
 fn group_expands_to_the_flat_graph() {
     let edges = |shape| {
         let run = run(shape, MetricsLevel::Off);

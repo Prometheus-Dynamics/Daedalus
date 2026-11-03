@@ -425,6 +425,37 @@ missing hardware; a failed check prints its error in place of the value.
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
+### CM5 run (2026-11-03): HeliOS graph paths
+
+Raze #2, camera `ov9782` through Styx (native NV12 1280x800 at 30 fps, frames as dmabufs).
+`helios-vision-probe` ran HeliOS's three detector graphs through the Eidos plugin (CPU, serial,
+300 frames each), built against Daedalus `33791c9` and against HeliOS's pinned `19e9650`. The
+numbers matched.
+
+| graph | nodes run | handlers p50 | graph overhead p50 | copies | GPU uploads/downloads |
+| --- | --- | --- | --- | --- | --- |
+| `apriltag-36h11` | 3 | 247 µs | 56 µs | 0 | 0 / 0 |
+| `apriltag-36h11-staged` | 12 of 22 | 422 µs | 87 µs | 0 | 0 / 0 |
+| `aruco-4x4_50` | 2 | 237 µs | 53 µs | 0 | 0 / 0 |
+
+About 35 µs of each graph overhead is the frame release, not the runtime. Wherever the last
+reference to Styx's frame drops (a node's inputs after it runs, or a node not ready this tick),
+Styx's `SharedFdBacking` runs a `DMA_BUF_IOCTL_SYNC` end and `munmap`s the frame. Timed per
+drop: 33 to 37 µs. Without it the runtime costs about 20 µs a tick for three nodes and about 52 µs
+for the staged graph's 22.
+
+`apriltag_mirror`, the same stages in process with synthetic frames, at 33791c9 and with
+recycled telemetry:
+
+| metrics | tick p50 | allocations per tick |
+| --- | --- | --- |
+| `Off` | 25.0 µs | 0 |
+| `Timing` | 29.0 µs | 3 (runtime) |
+| `Timing`, telemetry recycled | 28.5 µs | 0 |
+
+The 3 were the node-metrics table, a group key and its tree node, rebuilt each tick because the
+telemetry went to the caller.
+
 ### CM5 run (2026-11-03): acquire fence waits
 
 v3dv samples only `UIF`, so the fence tests on dma-heap (`LINEAR`) frames skip there.

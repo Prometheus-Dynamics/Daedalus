@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`HostGraph::recycle_telemetry` / `OwnedExecutor::recycle_telemetry`.** Hand back the
+  `ExecutionTelemetry` a tick returned: the next serial tick records into its buffers, so ticks
+  at `MetricsLevel::Timing` and above allocate nothing for telemetry (3 allocations per tick
+  before, on a 21-stage graph). `drive_blocking` does it after each `on_outputs` call, and the
+  frame-bench harness after each tick. A group no node ran in is still left out of
+  `group_metrics`.
 - **`daedalus-vglite`: the K230's VGLite GPU through `libvg_lite`, loaded at runtime**
   (written, untested on board). It covers resize (bilinear either way; area only at 2x, as a
   half-phase bilinear blit, since VGLite has no averaging filter), crop, flips and quarter

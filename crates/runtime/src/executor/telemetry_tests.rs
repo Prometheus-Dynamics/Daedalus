@@ -164,6 +164,33 @@ fn reset_for_reuse_clears_accumulated_state() {
 
 #[test]
 #[cfg(feature = "metrics")]
+fn reset_for_run_keeps_group_keys_until_aggregation_drops_idle_ones() {
+    let groups: Vec<Option<crate::portable::Arc<str>>> = vec![Some("a".into()), Some("b".into())];
+    let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Timing);
+    telemetry.record_node_duration(0, Duration::from_micros(3));
+    telemetry.record_node_duration(1, Duration::from_micros(4));
+    telemetry.aggregate_group_ids(&groups);
+    assert_eq!(telemetry.group_metrics.len(), 2);
+
+    // Only node 0 runs next time: group "b" stays zeroed through the run, then goes.
+    telemetry.reset_for_run(MetricsLevel::Timing);
+    assert_eq!(telemetry.group_metrics["b"], super::NodeMetrics::default());
+    telemetry.record_node_duration(0, Duration::from_micros(5));
+    telemetry.aggregate_group_ids(&groups);
+    assert_eq!(
+        telemetry.group_metrics.keys().collect::<Vec<_>>(),
+        ["a"],
+        "an idle group is dropped"
+    );
+    assert_eq!(telemetry.group_metrics["a"].calls, 1);
+    assert_eq!(
+        telemetry.group_metrics["a"].total_duration,
+        Duration::from_micros(5)
+    );
+}
+
+#[test]
+#[cfg(feature = "metrics")]
 fn report_exposes_release_diagnostic_metrics() {
     let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Detailed);
     telemetry.backpressure_events = 1;

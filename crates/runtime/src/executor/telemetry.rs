@@ -239,6 +239,18 @@ impl ExecutionTelemetry {
         self.in_flight_node_transport_metrics.clear();
     }
 
+    /// [`Self::reset_for_reuse`] before a run, keeping the group keys (and their tree nodes)
+    /// with zeroed metrics, so a run on a recycled telemetry merges into them without allocating.
+    /// [`Self::aggregate_group_ids`] drops the ones no node merged into.
+    pub(crate) fn reset_for_run(&mut self, level: MetricsLevel) {
+        let mut groups = core::mem::take(&mut self.group_metrics);
+        self.reset_for_reuse(level);
+        groups
+            .values_mut()
+            .for_each(|metrics| *metrics = NodeMetrics::default());
+        self.group_metrics = groups;
+    }
+
     pub fn merge(&mut self, other: ExecutionTelemetry) {
         self.nodes_executed += other.nodes_executed;
         self.cpu_segments += other.cpu_segments;
@@ -374,6 +386,9 @@ impl ExecutionTelemetry {
                     .merge(metrics.clone()),
             }
         }
+        // Groups kept from a recycled telemetry whose nodes did not run this time.
+        self.group_metrics
+            .retain(|_, metrics| *metrics != NodeMetrics::default());
     }
 }
 

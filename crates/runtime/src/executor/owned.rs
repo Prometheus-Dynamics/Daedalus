@@ -199,12 +199,21 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.storage_needs_reset = false;
     }
 
+    /// Hand back the telemetry a run returned, once read: the next serial run
+    /// ([`Self::run_in_place`]) records into its buffers instead of allocating new ones, so
+    /// steady-state ticks at [`MetricsLevel::Timing`](super::MetricsLevel::Timing) and above allocate
+    /// nothing for telemetry.
+    pub fn recycle_telemetry(&mut self, telemetry: ExecutionTelemetry) {
+        self.core.telemetry = telemetry;
+    }
+
     pub(super) fn reset_for_run(&mut self) {
         let metrics_level = self.core.run_config.metrics_level;
-        // A serial run hands its telemetry (this one) to the caller and leaves a default behind.
+        // A serial run hands its telemetry (this one) to the caller and leaves a default behind,
+        // or the one the caller handed back with `recycle_telemetry`.
         let clock = self.core.clock.clone();
         self.core.telemetry.set_clock(clock);
-        self.core.telemetry.reset_for_reuse(metrics_level);
+        self.core.telemetry.reset_for_run(metrics_level);
         self.core.warnings_seen.lock().clear();
         if self.storage_needs_reset {
             self.reset_storage();
