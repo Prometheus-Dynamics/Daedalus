@@ -13,7 +13,7 @@ use crate::{
 #[cfg(all(feature = "gpu-async", feature = "gpu-wgpu"))]
 use async_trait::async_trait;
 use pollster::FutureExt;
-use wgpu::{Adapter, Backends, Features, Instance, Limits};
+use wgpu::{Adapter, Backends, Features, Limits};
 
 mod adapter_select;
 mod capabilities;
@@ -30,8 +30,8 @@ use adapter_select::{preferred_backends, rank_adapters};
 use capabilities::{build_info_from_adapter, caps_from_adapter};
 use copy_limiter::CopyLimiter;
 pub use dmabuf::texture_plane_views;
-pub(crate) use driver::instance_descriptor;
 pub use driver::{DriverGuard, driver_lock, with_driver_lock};
+pub(crate) use driver::{LockedInstance, open_device};
 pub(crate) use mapping::{gpu_format_from_wgpu, map_format};
 use mapping::{gpu_usage_from_wgpu, map_texture_usage, map_usage};
 use resources::{ResourceDropToken, ResourceKind, WgpuResources};
@@ -134,9 +134,9 @@ impl WgpuBackend {
         memory_hints: crate::GpuMemoryHints,
     ) -> Result<Self, GpuError> {
         let adapters = {
-            let _driver = driver_lock();
+            let driver = driver_lock();
             let preferred_backends = preferred_backends(requested);
-            let instance = Instance::new(instance_descriptor(preferred_backends));
+            let instance = LockedInstance::new(&driver, preferred_backends);
             let mut adapters: Vec<Adapter> = instance.enumerate_adapters(preferred_backends).await;
             if adapters.is_empty() && preferred_backends != Backends::all() {
                 adapters = instance.enumerate_adapters(Backends::all()).await;
@@ -184,7 +184,7 @@ impl WgpuBackend {
         };
         // With `gpu-dmabuf` on Linux/Vulkan this also enables the dmabuf import extensions.
         let driver = driver_lock();
-        let (device, queue) = dmabuf::request_device(&adapter, &device_desc)
+        let (device, queue) = dmabuf::request_device(&driver, &adapter, &device_desc)
             .await
             .map_err(|err| GpuError::Internal(format!("wgpu device request failed: {err}")))?;
         drop(driver);

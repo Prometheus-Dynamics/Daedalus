@@ -167,10 +167,8 @@ struct GpuCtxInitWaiter {
 
 async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
     // Released when the function returns, after the instance handle is gone.
-    let _driver = crate::wgpu_backend::driver_lock();
-    let instance = wgpu::Instance::new(crate::wgpu_backend::instance_descriptor(
-        wgpu::Backends::all(),
-    ));
+    let driver = crate::wgpu_backend::driver_lock();
+    let instance = crate::wgpu_backend::LockedInstance::new(&driver, wgpu::Backends::all());
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -181,8 +179,10 @@ async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
         .await
         .map_err(|_| GpuError::AdapterUnavailable)?;
 
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
+    let (device, queue) = crate::wgpu_backend::open_device(
+        &driver,
+        &adapter,
+        &wgpu::DeviceDescriptor {
             label: Some("device"),
             required_features: wgpu::Features::empty(),
             required_limits: adapter.limits(),
@@ -191,9 +191,10 @@ async fn create_ctx_async() -> Result<GpuCtx, GpuError> {
                 .resolve(adapter.get_info().device_type)
                 .to_wgpu(),
             trace: wgpu::Trace::default(),
-        })
-        .await
-        .map_err(|e| GpuError::Internal(e.to_string()))?;
+        },
+    )
+    .await
+    .map_err(|e| GpuError::Internal(e.to_string()))?;
 
     Ok(GpuCtx {
         device: Arc::new(device),

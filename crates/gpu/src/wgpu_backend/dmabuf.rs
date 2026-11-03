@@ -24,10 +24,11 @@ pub(super) use vulkan::{ImportState, import, probe, request_device, set_fence_mo
 
 #[cfg(not(all(feature = "gpu-dmabuf", target_os = "linux")))]
 pub(super) async fn request_device(
+    held: &super::DriverGuard,
     adapter: &wgpu::Adapter,
     desc: &wgpu::DeviceDescriptor<'_>,
 ) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
-    adapter.request_device(desc).await
+    super::open_device(held, adapter, desc).await
 }
 
 /// No import state without `gpu-dmabuf`.

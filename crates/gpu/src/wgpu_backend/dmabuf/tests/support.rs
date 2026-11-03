@@ -150,9 +150,8 @@ pub(super) fn consumer_backend() -> (WgpuBackend, bool) {
             .is_some_and(|waits| waits.sync_fd || waits.timeline)
     };
     let adapter = {
-        let _driver = crate::wgpu_backend::driver_lock();
-        let desc = crate::wgpu_backend::instance_descriptor(wgpu::Backends::VULKAN);
-        wgpu::Instance::new(desc)
+        let driver = crate::wgpu_backend::driver_lock();
+        crate::wgpu_backend::LockedInstance::new(&driver, wgpu::Backends::VULKAN)
             .enumerate_adapters(wgpu::Backends::VULKAN)
             .block_on()
             .into_iter()

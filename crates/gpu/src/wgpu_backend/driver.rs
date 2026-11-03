@@ -6,8 +6,14 @@
 //!   negotiate with every installed ICD. With the NVIDIA ICD installed next to Mesa (even without
 //!   an NVIDIA GPU), two threads doing that at once crash in the loader's terminator calling a null
 //!   ICD entry point while the other thread is inside `vk_icdNegotiateLoaderICDInterfaceVersion`
-//!   of `libGLX_nvidia.so`. Every place in this crate that creates a wgpu instance, enumerates or
-//!   requests adapters, or opens a device does so under the lock.
+//!   of `libGLX_nvidia.so`. Loader 1.4.341's `vkEnumeratePhysicalDevices` also rescans the ICDs
+//!   and `dlclose`s the previous scan (`loader_unload_scanned_icd`): a thread opening a device at
+//!   the same time (`vkGetDeviceProcAddr` in `loader_get_icd_and_device`) faults. In this crate an
+//!   instance comes only from [`LockedInstance::new`], which borrows a held [`DriverGuard`] and
+//!   is the one way to enumerate or request adapters, and a device only from [`open_device`] (or
+//!   the dmabuf `request_device`), which takes the guard too: none can run unlocked.
+//!   `tests/driver_stress.rs` opens and closes 200 contexts on 4 threads; dropping the lock
+//!   around the enumeration makes it crash.
 //! - **Debug labels** ([`instance_descriptor`]). The loader implements the `VK_EXT_debug_utils`
 //!   device commands (`vkSetDebugUtilsObjectNameEXT`, labels) with terminators that look the device
 //!   up by walking every instance's ICD and device lists, which another thread creating or
@@ -20,7 +26,8 @@
 //! The lock guard is `Send` (it holds no borrowed lock), so async constructors may keep it across
 //! the `.await`s of wgpu's adapter and device futures, which resolve immediately on native
 //! backends. Tearing instances and devices down needs no lock: the loader serializes creation and
-//! destruction itself.
+//! destruction itself, and a destroyed instance's ICDs stay loaded while another instance holds
+//! them.
 
 use parking_lot::{Condvar, Mutex};
 
@@ -59,9 +66,46 @@ impl Drop for DriverGuard {
     }
 }
 
+/// A wgpu instance whose adapter calls run under the driver lock: it borrows the guard, so it
+/// cannot outlive it, and the wgpu instance is not handed out.
+pub(crate) struct LockedInstance<'g> {
+    instance: wgpu::Instance,
+    _held: &'g DriverGuard,
+}
+
+impl<'g> LockedInstance<'g> {
+    /// A wgpu instance on `backends`, without debug labels unless `WGPU_DEBUG=1`.
+    pub(crate) fn new(held: &'g DriverGuard, backends: wgpu::Backends) -> Self {
+        Self {
+            instance: wgpu::Instance::new(instance_descriptor(backends)),
+            _held: held,
+        }
+    }
+
+    pub(crate) async fn enumerate_adapters(&self, backends: wgpu::Backends) -> Vec<wgpu::Adapter> {
+        self.instance.enumerate_adapters(backends).await
+    }
+
+    pub(crate) async fn request_adapter(
+        &self,
+        options: &wgpu::RequestAdapterOptions<'_, '_>,
+    ) -> Result<wgpu::Adapter, wgpu::RequestAdapterError> {
+        self.instance.request_adapter(options).await
+    }
+}
+
+/// Open a device on `adapter`, under the driver lock.
+pub(crate) async fn open_device(
+    _held: &DriverGuard,
+    adapter: &wgpu::Adapter,
+    desc: &wgpu::DeviceDescriptor<'_>,
+) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
+    adapter.request_device(desc).await
+}
+
 /// The descriptor for wgpu instances on `backends`: wgpu's defaults without debug labels unless
 /// `WGPU_DEBUG=1` (see the module docs).
-pub(crate) fn instance_descriptor(backends: wgpu::Backends) -> wgpu::InstanceDescriptor {
+fn instance_descriptor(backends: wgpu::Backends) -> wgpu::InstanceDescriptor {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
     desc.backends = backends;
     desc.flags = (desc.flags - wgpu::InstanceFlags::DEBUG).with_env();

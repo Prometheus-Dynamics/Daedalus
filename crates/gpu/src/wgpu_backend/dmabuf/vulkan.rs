@@ -95,6 +95,7 @@ const REQUIRED_EXTENSIONS: [&std::ffi::CStr; 3] = [
 /// from outside Daedalus, `raw_vulkan`) where the device has it, and `TEXTURE_FORMAT_NV12` when
 /// available.
 pub(in crate::wgpu_backend) async fn request_device(
+    held: &crate::wgpu_backend::DriverGuard,
     adapter: &wgpu::Adapter,
     desc: &wgpu::DeviceDescriptor<'_>,
 ) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
@@ -115,7 +116,7 @@ pub(in crate::wgpu_backend) async fn request_device(
             ),
         }
     }
-    adapter.request_device(&desc).await
+    crate::wgpu_backend::open_device(held, adapter, &desc).await
 }
 
 fn open_with_modifier_extension(
