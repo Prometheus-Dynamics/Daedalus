@@ -19,6 +19,104 @@ GPU or a fixed-function unit does. "Impossible" means physically impossible only
 are built, measured per device and kept selectable. `docs/backend-matrix.md` is the evidence and
 `ci.sh accel` the gate.
 
+## Alpha (Raze)
+
+The next release is an alpha that covers the Raze (CM5, V3D 7.1) hardware only (user, relayed by
+HeliOS, 2026-11-02). These items come first. The other boards (Rockchip, K230D, RV1106), the MCU
+and CUDA follow after it, under Open. When to release, and what blocks it, stays the user's call.
+
+- [ ] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
+      `drop_stale_consts`, bb07e3b, 0398d4a).
+      **Why:** HeliOS's stored rev-215 graph failed to plan (`PortExtra` on folded Eidos knobs).
+      **Done when:** HeliOS dev on the Raze plans and runs the default pipeline from the stored
+      rev-215 graph and logs the dropped consts.
+      **Blocked by:** a HeliOS deploy on the Raze, which the HeliOS coordinator owns. HeliOS `dev`'s
+      `backend/Cargo.lock` pins b148918, which carries bb07e3b; what the Raze runs was not checked.
+      **Measured:** planner tests only (`planner/src/refresh/tests.rs`); no Raze run is recorded.
+- [ ] **[board] What:** the GPU path on the CM5 at the current `dev`: `ci.sh pi` (the dmabuf
+      and raw Vulkan hardware tests), `gpu_probe`, `gpu_bench` and the `GpuKernels` evidence,
+      with the bench numbers recorded.
+      **Why:** the CM5 runs (e56840d, 2026-10-31; `ci.sh pi` at 65fd3a5, 2026-11-02) predate the
+      frame interface v3, `RawSubmitter` (fd18808) and the typed driver lock (5a1404c).
+      **Done when:** the runs pass on the Raze at a named `dev` commit, and `docs/testing.md` has
+      the `gpu_bench` numbers and `driver_stress` passes there.
+      **Blocked by:** a Raze slot, booked through HeliOS.
+      **Measured:** the 2026-10-31 `gpu_bench` and 2026-11-02 `ci.sh pi` runs in `docs/testing.md`;
+      nothing at the current `dev`.
+- [ ] **[board] What:** readback timing on the Raze: the host-cached dma-heap readback after the
+      DMA-buffer move onto Lemnos (803f310).
+      **Why:** the move must not cost readback time; the cached path (602b14b) is what makes
+      readback usable on v3dv.
+      **Done when:** a host-cached read of 16 MiB measures no slower than 3.6 ms on the Raze,
+      recorded in `docs/testing.md`.
+      **Blocked by:** a Raze slot; HeliOS queues it after Styx and the HeliOS update test.
+      **Measured:** 3.6 ms per 16 MiB before the move; not re-measured since.
+- [ ] **[board] What:** zero-copy import of Styx's software-ISP frames on the Raze: a frame
+      Styx's soft ISP writes into a dmabuf, imported into Daedalus GPU storage or a texture
+      without a copy (`SharedFrame`, `GpuStorage::import_dmabuf`, the dmabuf import from a
+      `SharedFrame`, 3b14534), with its acquire fence honoured.
+      **Why:** the camera path on the Raze; a copy per frame is what the frame interface exists
+      to avoid.
+      **Done when:** a Raze test imports a Styx soft-ISP frame, reads back the same bytes the ISP
+      wrote, and the import is shown to make no CPU copy.
+      **Blocked by:** a Raze slot; Styx's soft-ISP output in a dmabuf Daedalus can import.
+      **Measured:** imports pass on RADV and the Raze with test buffers (fd455a4, `ci.sh pi`);
+      no Styx ISP frame has been imported.
+- [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.
+      **Why:** two devices in one process duplicate pipelines and memory and need cross-device
+      sync.
+      **Scope, as the code stands:** the sharing mechanism exists: `GpuContextHandle::wgpu()`, and
+      `raw_vulkan()` / `submit_raw` for external SPIR-V (29ae351). Styx reported gpuisp running on
+      Daedalus's device, bit-exact and validation-clean on v3dv (2026-11-01). Left: make it the
+      only path when both are in a process (who creates the device, how Styx gets it when it runs
+      without a Daedalus graph), and a test that a process has one `VkDevice`.
+      **Checked 2026-11-02** (Styx 7167ff5, HeliOS 21e2f613, Eidos f044a095): no process shares
+      today. Styx's production GPU ISP (`crates/styx/src/gpu_isp.rs`) opens its own device and
+      queue (`GpuContext::open`); `from_daedalus` is used only in gpuisp's tests. No HeliOS crate
+      enables Styx's `gpu-isp`, so no HeliOS process has both. The Eidos plugin's GPU nodes use
+      the engine's device (`GpuDevice::from_context`). Hazard for the shared case: the Eidos plugin
+      is a `cdylib` with its own copy of `daedalus-gpu`, so its statics (the submit lock
+      `QUEUE_SUBMIT`, `driver_lock`, the device caches) are separate from the engine's. A
+      `RawSubmitter` in the engine would not serialize against the plugin's submits on the same
+      `VkQueue`; the lock has to be reached through the context handle (or one shared image).
+      Not a live bug: wgpu-to-wgpu submits are serialized by wgpu-core's locks inside the shared
+      queue object, and no HeliOS process creates a `RawSubmitter` (agreed with HeliOS 2026-11-02).
+      **Step 1, before any `RawSubmitter` shares the engine's device:**
+      1. The submit lock owned by the GPU context (an `Arc<Mutex>` in the shared context data)
+         instead of the static `QUEUE_SUBMIT` (`shader/submit_lock.rs`), so the engine and a
+         plugin `cdylib` reach the same lock through the handle. Daedalus's ~10 internal submit
+         sites (`submit_locked`, `on_submitted_work_done_locked`, `map_async_locked`, and
+         `RawSubmitter`) take it from the handle instead of a bare `&wgpu::Queue`.
+      2. A plain `GpuContextHandle::submit(commands)` under that lock (beside `GpuTicket::submit`).
+         Eidos moves its 9 direct `gpu.queue.submit(...)` calls onto it (Eidos f044a095,
+         `crates/daedalus/src/gpu/{mod,invert,sweep,tsdf}.rs`): Daedalus cannot force a lock onto
+         plain `wgpu::Queue` users, so without this they overlap a raw submit from either image.
+      3. A test that loads a plugin as a `cdylib` and submits concurrently from both sides
+         (`RawSubmitter` in the host, wgpu submits in the plugin) under the validation layer
+         with sync validation, with no VUIDs.
+      **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
+      **Blocked by:** Styx's side (who creates the device when both run); the user moved this
+      into the alpha on 2026-11-02.
+      **Measured:** n/a.
+- [ ] **What:** move the gpu crate's DMA-buffer basics onto Lemnos's.
+      **Why:** one owner for dma-heap allocation and dmabuf CPU access across the stack.
+      **Scope, as the code stands:** the part that moves is small and Linux-syscall level:
+      `dma_heap_storage` (a `/dev/dma_heap` allocation, `gpu_storage/host.rs`), the
+      `DMA_BUF_IOCTL_SYNC` CPU bracket on its mapping (`host.rs`), the dmabuf size query by `lseek`
+      (`dmabuf_import_len`'s input) and `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` (`external/fence.rs`).
+      The rest of the "dmabuf code" is the GPU driver's own and stays: the Vulkan imports
+      (`gpu_storage/dmabuf.rs`, `frames.rs`, `wgpu_backend/dmabuf/`: modifiers, planes, dedicated
+      allocation, fence waits). Test fixtures (gpu, rga and frame-bench tests allocate from
+      dma-heap) would switch too. `daedalus-rga`'s V4L2 buffers are the RGA's own and stay.
+      **Done when:** the gpu crate allocates and syncs host-visible dmabufs through Lemnos (done
+      on the desktop GPU), and the readback timing item above holds the Raze numbers.
+      **Blocked by:** the readback timing item's Raze slot (the user's go came 2026-11-02).
+      **Measured:** the code moved (803f310, Lemnos 63374c6; borrowed descriptors through
+      `DmaBufRef`, the frame identity and the acquire-fence wait with Lemnos fdbb0c4 and
+      2610455). The gpu
+      crate's tests pass on the desktop GPU with `/dev/dma_heap/system`. The Raze readback is not
+      re-measured yet.
+
 ## Open
 
 ### CI on `dev`
@@ -33,17 +131,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Blocked by:** the user's decision.
       **Measured (519b022):** the report finishes over 20 crates; 324 listed items, each named in
       CHANGELOG `[Unreleased]` or `docs/api-review.md` (an identifier match, ab7cadd).
-
-### Raze (CM5, V3D)
-
-- [ ] **What:** confirm the stale-graph refresh on the Raze (`refresh_graph_ports_with` +
-      `drop_stale_consts`, bb07e3b, 0398d4a).
-      **Why:** HeliOS's stored rev-215 graph failed to plan (`PortExtra` on folded Eidos knobs).
-      **Done when:** HeliOS dev on the Raze plans and runs the default pipeline from the stored
-      rev-215 graph and logs the dropped consts.
-      **Blocked by:** a HeliOS deploy on the Raze, which the HeliOS coordinator owns. HeliOS `dev`'s
-      `backend/Cargo.lock` pins b148918, which carries bb07e3b; what the Raze runs was not checked.
-      **Measured:** planner tests only (`planner/src/refresh/tests.rs`); no Raze run is recorded.
 
 ### Boards
 
@@ -135,9 +222,6 @@ are built, measured per device and kept selectable. `docs/backend-matrix.md` is 
       **Done when:** a test receives a plan blob in chunks and loads it.
       **Blocked by:** a consumer needing it; none is recorded.
       **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
-      **Blocked by:** nothing; next after shared nodes (done).
-      **Measured:** 17 per frame (Styx's count). V3D 7.1 on the Raze (v3dv) has one queue family
-      with `queueCount = 1` (vulkaninfo, 2026-11-02), so a second queue is no way around the lock.
 - [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
       under `crates/` (`build.rs`, `portable.rs`, `trace.rs`).
       **Why:** without it those crates do not build from a Windows checkout.
@@ -227,65 +311,14 @@ These run only when the user calls a release. None of them is pending until then
 
 ## After the release: dependency layers (planned, not started)
 
+The DMA-buffer move and the shared Vulkan device moved up into Alpha (Raze) on 2026-11-02.
+
 The user slated this for after the release (HeliOS architecture-overhaul f2a15c8f, TODO.md, "After
 the release: dependency layers"). Nothing here starts without the user's go. The split: Daedalus
 decides whether and how data moves; a compute device's own copies stay in its driver (GPU, RGA,
 later NPU); Lemnos owns the DMA buffer basics and bus transfers. Overlap checked against the code
 on 2026-11-02, at f7e05ac.
 
-- [ ] **What:** move the gpu crate's DMA-buffer basics onto Lemnos's.
-      **Why:** one owner for dma-heap allocation and dmabuf CPU access across the stack.
-      **Scope, as the code stands:** the part that moves is small and Linux-syscall level:
-      `dma_heap_storage` (a `/dev/dma_heap` allocation, `gpu_storage/host.rs`), the
-      `DMA_BUF_IOCTL_SYNC` CPU bracket on its mapping (`host.rs`), the dmabuf size query by `lseek`
-      (`dmabuf_import_len`'s input) and `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` (`external/fence.rs`).
-      The rest of the "dmabuf code" is the GPU driver's own and stays: the Vulkan imports
-      (`gpu_storage/dmabuf.rs`, `frames.rs`, `wgpu_backend/dmabuf/`: modifiers, planes, dedicated
-      allocation, fence waits). Test fixtures (gpu, rga and frame-bench tests allocate from
-      dma-heap) would switch too. `daedalus-rga`'s V4L2 buffers are the RGA's own and stay.
-      **Done when:** the gpu crate allocates and syncs host-visible dmabufs through Lemnos, with the
-      Raze readback numbers unchanged (host-cached read 3.6 ms per 16 MiB).
-      **Blocked by:** a Raze slot for the readback measurement (the user's go came 2026-11-02).
-      **Measured:** the code moved (803f310, Lemnos 63374c6; borrowed descriptors through
-      `DmaBufRef`, the frame identity and the acquire-fence wait with Lemnos fdbb0c4 and
-      2610455). The gpu
-      crate's tests pass on the desktop GPU with `/dev/dma_heap/system`. The Raze readback is not
-      re-measured yet.
-- [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.
-      **Why:** two devices in one process duplicate pipelines and memory and need cross-device
-      sync.
-      **Scope, as the code stands:** the sharing mechanism exists: `GpuContextHandle::wgpu()`, and
-      `raw_vulkan()` / `submit_raw` for external SPIR-V (29ae351). Styx reported gpuisp running on
-      Daedalus's device, bit-exact and validation-clean on v3dv (2026-11-01). Left: make it the
-      only path when both are in a process (who creates the device, how Styx gets it when it runs
-      without a Daedalus graph), and a test that a process has one `VkDevice`.
-      **Checked 2026-11-02** (Styx 7167ff5, HeliOS 21e2f613, Eidos f044a095): no process shares
-      today. Styx's production GPU ISP (`crates/styx/src/gpu_isp.rs`) opens its own device and
-      queue (`GpuContext::open`); `from_daedalus` is used only in gpuisp's tests. No HeliOS crate
-      enables Styx's `gpu-isp`, so no HeliOS process has both. The Eidos plugin's GPU nodes use
-      the engine's device (`GpuDevice::from_context`). Hazard for the shared case: the Eidos plugin
-      is a `cdylib` with its own copy of `daedalus-gpu`, so its statics (the submit lock
-      `QUEUE_SUBMIT`, `driver_lock`, the device caches) are separate from the engine's. A
-      `RawSubmitter` in the engine would not serialize against the plugin's submits on the same
-      `VkQueue`; the lock has to be reached through the context handle (or one shared image).
-      Not a live bug: wgpu-to-wgpu submits are serialized by wgpu-core's locks inside the shared
-      queue object, and no HeliOS process creates a `RawSubmitter` (agreed with HeliOS 2026-11-02).
-      **Step 1, before any `RawSubmitter` shares the engine's device:**
-      1. The submit lock owned by the GPU context (an `Arc<Mutex>` in the shared context data)
-         instead of the static `QUEUE_SUBMIT` (`shader/submit_lock.rs`), so the engine and a
-         plugin `cdylib` reach the same lock through the handle. Daedalus's ~10 internal submit
-         sites (`submit_locked`, `on_submitted_work_done_locked`, `map_async_locked`, and
-         `RawSubmitter`) take it from the handle instead of a bare `&wgpu::Queue`.
-      2. A plain `GpuContextHandle::submit(commands)` under that lock (beside `GpuTicket::submit`).
-         Eidos moves its 9 direct `gpu.queue.submit(...)` calls onto it (Eidos f044a095,
-         `crates/daedalus/src/gpu/{mod,invert,sweep,tsdf}.rs`): Daedalus cannot force a lock onto
-         plain `wgpu::Queue` users, so without this they overlap a raw submit from either image.
-      3. A test that loads a plugin as a `cdylib` and submits concurrently from both sides
-         (`RawSubmitter` in the host, wgpu submits in the plugin) under the validation layer
-         with sync validation, with no VUIDs.
-      **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a test.
-      **Blocked by:** the user's go; Styx's side.
-      **Measured:** n/a.
 - [ ] **What:** later, an accelerator interface (load program, import buffers, submit, fence) for
       NPUs and custom accelerators. Design doc first.
       **Why:** the GPU path's residency, `#[device]` transfers and completion API should extend to
