@@ -515,6 +515,22 @@ plus 23 KiB of rodata, a ~18-20 KB heap peak (32-bit) and 521 allocations, and ~
 on-device planning. `scripts/ci.sh mcu` prints every mode's numbers per target and fails above
 its budgets, or when the compiled firmware's size changes.
 
+### On a board
+
+`examples/mcu_board` runs the blink graph on a Raspberry Pi Pico (RP2040, `thumbv6m-none-eabi`)
+through `rp2040-hal`: ADC0 (GPIO26) in, the LED (GPIO25) out. It runs each mode (compiled,
+tunable, loaded with plan A) for 10 000 ticks and reports over defmt-RTT, then repeats. Each
+report gives the tick time on the RP2040's 1 MHz timer (minimum, mean, maximum) and the stack
+high-water mark: the free stack is painted before each run, and the report gives the deepest
+word the run overwrote. The graphs live in statics, so the stack measured is the tick's own.
+- **The firmware.** `ci.sh mcu` builds it and prints its size: 14 388 B of flash and 1 916 B of static RAM with all three modes, plus the 256 B second stage bootloader (the RTT buffers are in that RAM). It runs with
+  `probe-rs run --chip RP2040`.
+- **The loop on the host.** The loop is generic over a `Board` trait (`read_adc`, `set_led`,
+  `now_us`), which is all the firmware needs from a HAL; `tests/host.rs` runs it with a mock
+  board and checks that the three modes drive the LED alike.
+- **Status.** Written, untested on a board, so the stack and tick numbers above do not exist
+  yet. Another board needs its own `Board` implementation, memory layout and entry point.
+
 ## Design Decisions
 
 - **One plan, three renderings.** `daedalus-mcu-build` lowers the planner's output once

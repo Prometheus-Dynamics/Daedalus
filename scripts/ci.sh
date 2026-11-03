@@ -297,10 +297,15 @@ cmd_mcu() {
     done
     index=$((index + 1))
   done
+  step "Building the Raspberry Pi Pico board firmware (examples/mcu_board)"
+  ensure_target thumbv6m-none-eabi
+  cargo build --target thumbv6m-none-eabi --profile mcu -p daedalus-mcu-board --bins
+  read -r flash ram < <(mcu_size "$out/thumbv6m-none-eabi/mcu/daedalus-mcu-pico")
+  echo "  thumbv6m-none-eabi pico (all three modes, rp2040-hal, defmt-RTT): flash $flash B, static RAM $ram B"
   step "Testing the MCU crates, the blink graph and the shared nodes natively"
   cargo test -p daedalus-mcu --features loaded,receive
   cargo test -p daedalus-mcu --no-default-features --features loaded
-  cargo test -p daedalus-mcu-build -p daedalus-mcu-blink
+  cargo test -p daedalus-mcu-build -p daedalus-mcu-blink -p daedalus-mcu-board
   cargo test -p daedalus-mcu-shared
   cargo test -p daedalus-mcu-shared --features runtime
   return "$failed"

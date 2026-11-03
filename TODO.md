@@ -130,7 +130,10 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       measure stack use and tick time in each mode.
       **Why:** sizes are linked and measured, but the firmware has never run on hardware.
       **Done when:** the stack and tick numbers per mode are in `docs/mcu.md`.
-      **Blocked by:** an MCU board and a HAL.
+      **Blocked by:** an MCU board. The HAL side is written: `examples/mcu_board` runs all three
+      modes on a Raspberry Pi Pico (`rp2040-hal`: ADC0 in, GPIO25 out) and reports tick time
+      and the stack high-water mark per mode over defmt-RTT (2026-11-03); flashing it needs a
+      Pico and a probe.
       **Measured (`ci.sh mcu`, 2026-11-02), flash / static RAM, M4F and M0+:** compiled 2988 / 3316 B
       and 112 B; tunable 4424 / 5488 B and 128 B; loaded 11496 / 12572 B and 584 B. Stack and tick
       time: none.

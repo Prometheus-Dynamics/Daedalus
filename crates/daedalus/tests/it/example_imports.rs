@@ -28,7 +28,7 @@ fn examples_use_only_facade() {
         let uses_internal_crates = path.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
-                Some("08_ffi" | "nostd_smoke" | "mcu_blink" | "mcu_shared")
+                Some("08_ffi" | "nostd_smoke" | "mcu_blink" | "mcu_shared" | "mcu_board")
             )
         });
         let content = fs::read_to_string(&path).expect("read example");
