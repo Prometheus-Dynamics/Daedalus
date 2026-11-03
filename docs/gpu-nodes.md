@@ -337,17 +337,18 @@ Details and limits, stated plainly:
   ordered by a host fence. A graph-level handoff through these is not wired into the planner yet.
 - **Handoff latency.** One Vulkan→CUDA→Vulkan round trip (two Vulkan submits, one kernel): the host
   fence path waits on each side before the next starts; the semaphore path orders the same steps on
-  the GPU and the host waits once at the end. RTX 4060, 2000 round trips after 200 warm-up, an
-  unoptimized test build, three runs:
+  the GPU and the host waits once at the end. RTX 4060, release build, 2000 round trips after 200
+  warm-up, three runs (run 1 is an outlier on both paths, see the log):
 
   | path | median | p99 | mean |
   |---|---|---|---|
-  | host fence | 221 µs (221.0–221.3) | 245–257 µs | 226–228 µs |
-  | semaphore | 201 µs (201.3–202.5) | 219–223 µs | 208–210 µs |
+  | host fence | 215–217 µs (run 1: 256 µs) | 252–255 µs (run 1: 1275 µs) | 222–225 µs |
+  | semaphore | 198–199 µs (run 1: 216 µs) | 218–227 µs (run 1: 1203 µs) | 205–208 µs |
 
-  The semaphore path is about 20 µs (9%) faster per round trip. The two Vulkan submits and the
-  kernel launch are common to both paths and were not broken down, so the saving is the host
-  round trips the fence path adds. Full runs and conditions: `docs/benchmarks-log.md`.
+  In runs 2 and 3 the semaphore path is about 18 µs (8%) faster per round trip. The two Vulkan
+  submits and the kernel launch are common to both paths and were not broken down, so the saving is
+  the host round trips the fence path adds. Full runs and conditions: `docs/benchmarks-log.md`.
+  (Earlier unoptimized test-build figures: fence 221 µs, semaphore 201 µs median.)
 - **dma-buf.** The driver refuses a dma-buf fd: `cuImportExternalMemory` returns
   `CUDA_ERROR_UNKNOWN` (999) for a dma-heap buffer and for a dma-buf that Vulkan exports from the
   NVIDIA device (the probe in `cuda_interop.rs` prints both). The CUDA API has no dma-buf handle

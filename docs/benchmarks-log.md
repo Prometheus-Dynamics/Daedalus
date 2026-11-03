@@ -80,15 +80,18 @@ waits on each side before the next side starts; the semaphore path (`SharedSemap
 `RawSubmitter::submit_synced`, `CudaSemaphore`) orders the steps on the GPU and the host waits once
 at the end. The two paths alternate within each run. Measured by
 `crates/gpu/tests/cuda_interop.rs::handoff_latency_host_fence_vs_semaphore` (ignored test),
-2000 round trips after 200 warm-up, an unoptimized test build, three runs:
+2000 round trips after 200 warm-up, release build (`cargo test --release`), three runs:
 
 | run | fence median | fence p99 | fence mean | semaphore median | semaphore p99 | semaphore mean |
 |---|---|---|---|---|---|---|
-| 1 | 221.3 µs | 247.4 µs | 228.4 µs | 202.5 µs | 219.9 µs | 210.4 µs |
-| 2 | 220.8 µs | 257.5 µs | 227.5 µs | 201.3 µs | 223.2 µs | 209.4 µs |
-| 3 | 221.0 µs | 244.7 µs | 226.1 µs | 201.8 µs | 219.5 µs | 208.1 µs |
+| 1 | 256.4 µs | 1274.8 µs | 322.1 µs | 215.6 µs | 1202.8 µs | 273.3 µs |
+| 2 | 217.1 µs | 252.4 µs | 225.0 µs | 198.6 µs | 227.3 µs | 207.8 µs |
+| 3 | 215.2 µs | 254.7 µs | 222.0 µs | 197.6 µs | 217.8 µs | 205.1 µs |
 
-The semaphore path is about 20 µs faster per round trip (9% at the median). The gap is the host
-round trips the fence path adds; the Vulkan submits and the kernel launch with its event are common
-to both and were not timed separately. A release build was not measured: the NVMe had about 14 GB
-free, so the run used the test profile with debuginfo off.
+In runs 2 and 3 the semaphore path is about 18 µs faster per round trip (8% at the median). Run 1
+is an outlier on both paths (p99 above 1 ms, the first run after the build), so read its p99 with
+care. The gap is the host round trips the fence path adds; the Vulkan submits and the kernel launch
+with its event are common to both and were not timed separately.
+
+Earlier debug (unoptimized test profile) figures, for comparison: fence median 221 µs, semaphore
+median 201 µs.
