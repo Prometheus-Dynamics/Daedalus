@@ -191,7 +191,7 @@ fn run_order_timed<H: NodeHandler>(
             // Not ready this tick: a connected required input has no value (its producer was
             // skipped or pushed nothing). Optional inputs never block.
             crate::trace::trace!(target: "daedalus_runtime::executor", node_id = %node.id, "node not ready");
-            crate::io::recycle_ports(inputs);
+            v.core.port_pool.recycle(inputs);
             continue;
         }
 
@@ -242,7 +242,7 @@ fn run_order_timed<H: NodeHandler>(
         };
         let consts = super::node_consts(v.const_inputs, node_idx);
         let retry_inputs = recovering
-            .then(|| resilience::retry_inputs(recovery, &inputs))
+            .then(|| resilience::retry_inputs(recovery, &v.core.port_pool, &inputs))
             .flatten();
         let mut io = v.core.node_io(node_idx, inputs, consts.as_ref());
         let ctx = &contexts[node_idx];

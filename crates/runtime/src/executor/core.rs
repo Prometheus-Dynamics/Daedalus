@@ -2,7 +2,7 @@ use super::{
     DirectSlot, EdgeStorage, ExecutionTelemetry, ExecutorInit, ExecutorRunConfig, MaybeGpu,
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
 };
-use crate::io::{NodeConstInputs, NodeIo, NodeIoEnv, NodePort};
+use crate::io::{NodeConstInputs, NodeIo, NodeIoEnv, NodePort, PortPool};
 use crate::portable::Arc;
 use crate::prelude::*;
 use crate::state::{ExecutionContext, StateStore};
@@ -88,6 +88,8 @@ pub(crate) struct ExecutorCore {
     pub(crate) contexts: Arc<[ExecutionContext]>,
     /// Each node's `NodeIo` environment, built when the coercers, type index or clock change.
     pub(crate) io_envs: Arc<[Arc<NodeIoEnv>]>,
+    /// The port buffers this executor's node calls reuse (`io::PortPool`).
+    pub(crate) port_pool: PortPool,
 }
 
 impl ExecutorCore {
@@ -139,6 +141,7 @@ impl ExecutorCore {
             clock: Clock::default(),
             contexts: Arc::from(Vec::new()),
             io_envs: Arc::from(Vec::new()),
+            port_pool: PortPool::new(),
         };
         core.refresh_contexts();
         core.refresh_io_envs();
@@ -158,6 +161,7 @@ impl ExecutorCore {
                     self.type_index.clone(),
                     Some(ports.clone()),
                     self.clock.clone(),
+                    self.port_pool.clone(),
                 ))
             })
             .collect();
@@ -201,7 +205,8 @@ impl ExecutorCore {
     }
 
     pub(crate) fn snapshot(&self) -> Self {
-        Self {
+        #[cfg_attr(feature = "std", allow(unused_mut))]
+        let mut snapshot = Self {
             state: self.state.clone(),
             gpu_available: self.gpu_available,
             #[cfg(feature = "gpu")]
@@ -235,6 +240,11 @@ impl ExecutorCore {
             clock: self.clock.clone(),
             contexts: self.contexts.clone(),
             io_envs: self.io_envs.clone(),
-        }
+            port_pool: PortPool::new(),
+        };
+        // A snapshot may tick on another thread: give it its own pool (a no-op with `std`).
+        #[cfg(not(feature = "std"))]
+        snapshot.refresh_io_envs();
+        snapshot
     }
 }

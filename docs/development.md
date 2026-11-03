@@ -302,11 +302,13 @@ fingerprint; `dylib-plugins` turns it on):
   compare-and-swap, as above). The API is the same either way; `Condvar` exists only with `std`.
 - Hash maps: [`daedalus_runtime::collections`](../crates/runtime/src/lib.rs) (`HashMap`,
   `HashSet`, the types in runtime signatures) are `std`'s with `std` and `hashbrown`'s without.
-- The per-thread port buffer pool (`NodeIo` input/output lists) is a `thread_local!` with `std`
-  and one `spin`-locked pool without (taken with `try_lock`, so a contended or interrupted
-  caller allocates instead of waiting). Without `std`, graphs ticking on several threads share
-  that pool, so their ticks can allocate (re-growing a buffer another thread swapped in, or
-  finding the pool locked); allocation-free ticks across threads need `std`.
+- The port buffer pool (`NodeIo` input/output lists, `io::PortPool`) is a `thread_local!` with
+  `std`. Without `std` each executor owns a `spin`-locked pool, carried in its `NodeIoEnv`s (a
+  snapshot gets its own), so executors ticking on different threads do not share buffers and
+  their ticks allocate no more than on one thread
+  ([`parallel_executors.rs`](../examples/nostd_smoke/tests/parallel_executors.rs)). A `NodeIo`
+  built outside an executor uses one process-wide pool, taken with `try_lock`: a contended or
+  interrupted caller allocates instead of waiting.
 - `std`-only: Linux perf counters and thread CPU time (`RuntimeDebugConfig::node_perf_counters`/
   `node_cpu_time` read nothing elsewhere), `RuntimeDebugConfig::from_env` and
   `EngineConfig::from_env` (`config-env` without `std` keeps the serde config types only), and

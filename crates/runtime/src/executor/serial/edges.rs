@@ -28,7 +28,7 @@ pub(super) fn collect_inputs(
     let collect_lifecycle = cfg!(feature = "metrics")
         && (v.core.run_config.metrics_level.is_profile()
             || v.core.run_config.metrics_level.is_trace());
-    let mut inputs = crate::io::port_buffer();
+    let mut inputs = v.core.port_pool.take();
     let edges = v.edges;
     let incoming = v.incoming_edges;
     for &edge_idx in incoming.get(node_idx).into_iter().flatten() {
@@ -353,7 +353,7 @@ pub(super) fn publish_outputs(
         };
         fan_out(v, outgoing, routes, payload)?;
     }
-    crate::io::recycle_ports(outputs);
+    v.core.port_pool.recycle(outputs);
     Ok(())
 }
 

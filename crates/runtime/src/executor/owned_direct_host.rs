@@ -222,7 +222,7 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             if self.storage_needs_reset {
                 self.reset_for_run();
             }
-            let mut inputs = crate::io::port_buffer();
+            let mut inputs = self.core.port_pool.take();
             inputs.push((
                 route.input_port.clone(),
                 CorrelatedPayload::from_edge(payload),

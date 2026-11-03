@@ -21,6 +21,9 @@ plugin ABI and does not load.
   `encode_chunk` frames a blob with a CRC-32 per chunk, and `BlobReceiver` assembles it into a
   buffer or a flash partition (`BlobSink`), ignoring duplicates and reporting gaps. See
   docs/mcu.md, "Chunked receive".
+- **Per-executor port buffer pools without `std`.** A `no_std` build gives each executor its own
+  port buffer pool instead of one process-wide pool, so graphs ticking on several threads allocate
+  no more per tick than one thread alone. With `std` the pool stays per thread.
 - **One GPU device per process.** `daedalus_gpu::shared_context` returns the process's wgpu device,
   opened on first use and closed with its last handle; `process_context` finds it without opening
   one, and `devices_created` counts the devices opened. Engines with `GpuBackend::Device` take their

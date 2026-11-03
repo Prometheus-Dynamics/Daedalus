@@ -10,7 +10,7 @@ use crate::executor::{
     ExecuteError, ExecutionTelemetry, FusionTables, NodeConstInputs, NodeError, NodeHandler,
     NodeRecovery,
 };
-use crate::io::{NodeIo, NodePort, port_buffer, recycle_ports};
+use crate::io::{NodeIo, NodePort, PortPool};
 use crate::plan::RuntimeNode;
 use crate::portable::Arc;
 use crate::state::ExecutionContext;
@@ -48,12 +48,16 @@ pub(super) fn run_handler<H: NodeHandler>(
 /// A copy of `inputs` for later attempts when `recovery` retries (a pooled port buffer whose
 /// payloads share the originals); `None` otherwise.
 #[inline]
-pub(super) fn retry_inputs(recovery: NodeRecovery, inputs: &[NodePort]) -> Option<Vec<NodePort>> {
-    matches!(recovery, NodeRecovery::Retry { max, .. } if max > 0).then(|| copy_ports(inputs))
+pub(super) fn retry_inputs(
+    recovery: NodeRecovery,
+    pool: &PortPool,
+    inputs: &[NodePort],
+) -> Option<Vec<NodePort>> {
+    matches!(recovery, NodeRecovery::Retry { max, .. } if max > 0).then(|| copy_ports(pool, inputs))
 }
 
-fn copy_ports(ports: &[NodePort]) -> Vec<NodePort> {
-    let mut copy = port_buffer();
+fn copy_ports(pool: &PortPool, ports: &[NodePort]) -> Vec<NodePort> {
+    let mut copy = pool.take();
     copy.extend(ports.iter().cloned());
     copy
 }
@@ -75,7 +79,7 @@ pub(super) fn retry<H: NodeHandler>(
     recovery: NodeRecovery,
 ) -> Result<(), NodeError> {
     let NodeRecovery::Retry { max, backoff } = recovery else {
-        recycle_ports(saved);
+        v.core.port_pool.recycle(saved);
         return result;
     };
     let mut attempts = 0u32;
@@ -98,14 +102,16 @@ pub(super) fn retry<H: NodeHandler>(
         backoff_wait(backoff);
         let telemetry = &mut v.core.telemetry;
         telemetry.recovery_mut().retries += 1;
-        *io = v.core.node_io(node_idx, copy_ports(&saved), consts);
+        *io = v
+            .core
+            .node_io(node_idx, copy_ports(&v.core.port_pool, &saved), consts);
         result = run_handler(handler, node, ctx, io, recovery, &mut v.core.telemetry);
     }
     if attempts > 0 && result.is_ok() {
         let telemetry = &mut v.core.telemetry;
         telemetry.recovery_mut().recovered_retries += 1;
     }
-    recycle_ports(saved);
+    v.core.port_pool.recycle(saved);
     result
 }
 

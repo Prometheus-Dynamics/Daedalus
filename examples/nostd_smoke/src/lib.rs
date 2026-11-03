@@ -24,7 +24,7 @@ use portable_atomic::AtomicU32;
 
 use daedalus_core::platform::Clock;
 use daedalus_data::model::{TypeExpr, Value, ValueType};
-use daedalus_engine::{Engine, EngineConfig};
+use daedalus_engine::{Engine, EngineConfig, HostGraph};
 use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
@@ -37,7 +37,7 @@ use daedalus_runtime::{Executor, NodeError, RuntimeNode, SchedulerConfig, build_
 const INT: &str = "typeexpr:{\"Scalar\":\"Int\"}";
 
 /// Stands in for a target timer: advances 1 ms per reading.
-fn counter_clock() -> Clock {
+pub fn counter_clock() -> Clock {
     static MILLIS: AtomicU32 = AtomicU32::new(0);
     Clock::new(|| Duration::from_millis(MILLIS.fetch_add(1, Ordering::Relaxed).into()))
 }
@@ -90,9 +90,21 @@ pub fn runtime_increment(x: i64) -> Option<(i64, Duration)> {
     Some((*output.get_ref::<i64>()?, output.lineage().age(&clock)))
 }
 
+/// The node handler of [`engine_graph`].
+pub type Increment = fn(&RuntimeNode, &ExecutionContext, &mut NodeIo) -> Result<(), NodeError>;
+
 /// Through the engine: declare the nodes, compile a `HostGraph`, push, tick, take.
 pub fn engine_increment(x: i64) -> Option<(i64, Duration)> {
     let clock = counter_clock();
+    let mut host = engine_graph(clock.clone())?;
+    host.push("in", x);
+    host.tick().ok()?;
+    let output = host.take_payload("out")?;
+    Some((*output.get_ref::<i64>()?, output.lineage().age(&clock)))
+}
+
+/// `host.in -> inc -> host.out` compiled through a plugin registry into a `HostGraph` on `clock`.
+pub fn engine_graph(clock: Clock) -> Option<HostGraph<Increment>> {
     let port = |name: &str| PortDecl::new(name, INT).schema(TypeExpr::Scalar(ValueType::Int));
     let mut plugins = PluginRegistry::new();
     plugins
@@ -106,20 +118,16 @@ pub fn engine_increment(x: i64) -> Option<(i64, Duration)> {
     plugins
         .register_node_decl(NodeDecl::new("inc").input(port("in")).output(port("out")))
         .ok()?;
-    let mut host = Engine::new(EngineConfig::default().with_clock(clock.clone()))
+    Engine::new(EngineConfig::default().with_clock(clock))
         .ok()?
         .compile_host_graph_plugin_registry(
             &plugins,
             graph(),
-            increment,
+            increment as Increment,
             HostBridgeManager::new(),
             "host",
         )
-        .ok()?;
-    host.push("in", x);
-    host.tick().ok()?;
-    let output = host.take_payload("out")?;
-    Some((*output.get_ref::<i64>()?, output.lineage().age(&clock)))
+        .ok()
 }
 
 #[cfg(test)]

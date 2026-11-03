@@ -161,18 +161,13 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Blocked by:** the user's decision.
       **Measured:** none.
 
-- [ ] **What:** per-executor port buffer pools without `std`, if a multi-threaded `no_std` host
-      needs allocation-free ticks.
-      **Why:** without `std` the pool (`crates/runtime/src/io.rs`, `PORT_BUFFERS`) is one
-      process-wide `spin` pool taken with `try_lock`; there are no thread-locals. Graphs ticking on
-      several threads swap differently sized buffers through it, or find it locked, and allocate.
-      Ticks stay correct. Eidos hit it in a test running 5 graphs in parallel in a binary that
-      builds the runtime without `std` (15/80 runs allocated at cad62f3; fixed on its side by
-      serializing, Eidos 203b2376). With `std` the pool is per thread and this does not apply.
-      **Done when:** a `no_std` build's pool belongs to the executor (carried in `NodeIoEnv`), and a
-      test with two executors on two threads allocates nothing per tick.
-      **Blocked by:** a host that needs it; none is known (MCU graphs use the heap-free MCU profile).
-      **Measured:** n/a.
+- [x] **What:** per-executor port buffer pools without `std`, for multi-threaded `no_std` hosts
+      (Eidos saw 15/80 runs of 5 parallel graphs allocate, cad62f3).
+      **Done (2026-11-03):** without `std` each executor owns its pool (`io::PortPool`, carried
+      in `NodeIoEnv`; a snapshot gets its own). `examples/nostd_smoke/tests/parallel_executors.rs`
+      ticks 4 engine graphs on 4 threads with every crate's `std` off: 2 allocations per tick on
+      each thread, the same as one thread alone (8000 over 4000 ticks). With the old
+      process-wide pool the same test counted 8515 to 12725 per thread (3/3 runs failed).
 
 - [ ] **What:** fixed-function nodes for Eidos on the RGA and the K230D Image 2D / 2.5D GPU
       (VGLite), with a per-SoC capability descriptor. Requested by Eidos 2026-11-02 (Eidos

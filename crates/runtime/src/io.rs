@@ -49,47 +49,76 @@ std::thread_local! {
         const { core::cell::RefCell::new(Vec::new()) };
 }
 
-/// Cleared port buffers reused by `NodeIo`s and the executor (one pool without threads).
+/// Cleared port buffers reused by `NodeIo`s built outside an executor (without `std`).
 #[cfg(not(feature = "std"))]
 static PORT_BUFFERS: crate::sync::Mutex<Vec<Vec<NodePort>>> = crate::sync::Mutex::new(Vec::new());
 
-/// Runs `f` on the port buffer pool; `None` if it is unavailable (thread teardown, or held by
-/// an interrupted caller without `std`).
-fn with_port_buffers<R>(f: impl FnOnce(&mut Vec<Vec<NodePort>>) -> R) -> Option<R> {
-    #[cfg(feature = "std")]
-    return PORT_BUFFERS.try_with(|pool| f(&mut pool.borrow_mut())).ok();
+/// Where an executor's port buffers are recycled. With `std` it is the running thread's pool, so
+/// it carries nothing. Without `std` there are no thread-locals: each executor owns a pool
+/// (`PortPool::new`, carried in its `NodeIoEnv`s), so executors ticking on different threads do
+/// not contend for one; the default is a process-wide pool for `NodeIo`s built outside an executor.
+#[derive(Clone, Default)]
+pub(crate) struct PortPool {
     #[cfg(not(feature = "std"))]
-    PORT_BUFFERS.try_lock().map(|mut pool| f(&mut pool))
+    buffers: Option<Arc<crate::sync::Mutex<Vec<Vec<NodePort>>>>>,
 }
 
-/// An empty port buffer, reusing a recycled one's capacity when the pool has one.
-pub(crate) fn port_buffer() -> Vec<NodePort> {
-    with_port_buffers(Vec::pop).flatten().unwrap_or_default()
-}
-
-/// Port buffers one thread keeps for reuse.
-const POOLED_PORT_BUFFERS: usize = 16;
-
-/// Clear `ports` and keep its capacity for [`port_buffer`] (a few modest buffers per thread).
-pub(crate) fn recycle_ports(mut ports: Vec<NodePort>) {
-    const MAX_CAPACITY: usize = 256;
-    ports.clear();
-    if ports.capacity() == 0 || ports.capacity() > MAX_CAPACITY {
-        return;
-    }
-    with_port_buffers(|pool| {
-        if pool.len() < POOLED_PORT_BUFFERS {
-            pool.push(ports);
+impl PortPool {
+    /// A pool of the executor's own (the thread's pool with `std`).
+    pub(crate) fn new() -> Self {
+        Self {
+            #[cfg(not(feature = "std"))]
+            buffers: Some(Arc::default()),
         }
-    });
+    }
+
+    /// Runs `f` on the pool; `None` if it is unavailable (thread teardown, or held by an
+    /// interrupted or concurrent caller without `std`).
+    fn with<R>(&self, f: impl FnOnce(&mut Vec<Vec<NodePort>>) -> R) -> Option<R> {
+        #[cfg(feature = "std")]
+        return PORT_BUFFERS.try_with(|pool| f(&mut pool.borrow_mut())).ok();
+        #[cfg(not(feature = "std"))]
+        self.buffers
+            .as_deref()
+            .unwrap_or(&PORT_BUFFERS)
+            .try_lock()
+            .map(|mut pool| f(&mut pool))
+    }
+
+    /// An empty port buffer, reusing a recycled one's capacity when the pool has one.
+    pub(crate) fn take(&self) -> Vec<NodePort> {
+        self.with(Vec::pop).flatten().unwrap_or_default()
+    }
+
+    /// Clear `ports` and keep its capacity for [`Self::take`] (a few modest buffers per pool).
+    pub(crate) fn recycle(&self, mut ports: Vec<NodePort>) {
+        const MAX_CAPACITY: usize = 256;
+        ports.clear();
+        if ports.capacity() == 0 || ports.capacity() > MAX_CAPACITY {
+            return;
+        }
+        self.with(|pool| {
+            if pool.len() < POOLED_PORT_BUFFERS {
+                pool.push(ports);
+            }
+        });
+    }
 }
+
+/// An empty port buffer from the default pool (see [`PortPool`]).
+pub(crate) fn port_buffer() -> Vec<NodePort> {
+    PortPool::default().take()
+}
+
+/// Port buffers one pool keeps for reuse.
+const POOLED_PORT_BUFFERS: usize = 16;
 
 /// Stock this thread's port-buffer pool with empty buffers, so the first nodes it runs take
 /// their buffers from the pool instead of allocating (worker threads call this at pool start).
 #[cfg(feature = "threads")]
 pub(crate) fn prewarm_port_buffers() {
     const PREWARM_CAPACITY: usize = 8;
-    with_port_buffers(|pool| {
+    PortPool::default().with(|pool| {
         pool.reserve(POOLED_PORT_BUFFERS.saturating_sub(pool.len()));
         while pool.len() < POOLED_PORT_BUFFERS {
             pool.push(Vec::with_capacity(PREWARM_CAPACITY));
@@ -115,6 +144,8 @@ pub struct NodeIoEnv {
     output_ports: Option<Arc<[PortId]>>,
     /// Stamps the payloads pushes build (the executor's clock).
     clock: Clock,
+    /// The executor's port buffers.
+    pool: PortPool,
 }
 
 impl NodeIoEnv {
@@ -123,12 +154,14 @@ impl NodeIoEnv {
         types: Option<TypeIndex>,
         output_ports: Option<Arc<[PortId]>>,
         clock: Clock,
+        pool: PortPool,
     ) -> Self {
         Self {
             const_coercers,
             types,
             output_ports,
             clock,
+            pool,
         }
     }
 }
@@ -139,7 +172,7 @@ static PLATFORM_CLOCK: Clock = Clock::platform();
 /// Most const inputs a call shares instead of copying (one bit each in `NodeIo::consts_taken`).
 const SHARED_CONSTS: usize = 64;
 
-/// A node's inputs and outputs for one call. Its port lists reuse per-thread buffers, so a
+/// A node's inputs and outputs for one call. Its port lists reuse pooled buffers, so a
 /// steady-state tick does not allocate them however many ports a node has, and its const inputs
 /// are the node's shared list rather than per-call copies.
 pub struct NodeIo {
@@ -191,7 +224,7 @@ impl NodeIo {
         };
         Self {
             inputs,
-            outputs: port_buffer(),
+            outputs: env.pool.take(),
             env: Some(env),
             consts,
             consts_taken: 0,
@@ -587,8 +620,10 @@ impl NodeIo {
 
 impl Drop for NodeIo {
     fn drop(&mut self) {
-        recycle_ports(core::mem::take(&mut self.inputs));
-        recycle_ports(core::mem::take(&mut self.outputs));
+        let default = PortPool::default();
+        let pool = self.env.as_ref().map_or(&default, |env| &env.pool);
+        pool.recycle(core::mem::take(&mut self.inputs));
+        pool.recycle(core::mem::take(&mut self.outputs));
     }
 }
 
