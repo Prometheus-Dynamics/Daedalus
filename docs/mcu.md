@@ -355,9 +355,30 @@ range or type is invalid (`Param`), host ports of unknown types (`Port`), the ar
 
 **Transport and persistence** are the application's: receive the blob over UART, USB, BLE or
 CAN into a RAM buffer, or write it to a flash partition and pass the `&[u8]` from there, then
-call `load` between ticks. The blob carries its own CRC-32, which `load` checks; the transport's
-framing and retransmission are the application's, and it should keep the last good blob to load
-at boot.
+call `load` between ticks. The blob carries its own CRC-32, which `load` checks. The application
+should keep the last good blob to load at boot.
+
+**Chunked receive** (feature `receive`, `loaded::receive`) is optional framing for links that
+carry small packets. The sender splits the blob with `encode_chunk`; each frame is
+`'C' | blob length u32 | offset u32 | payload length u16 | payload | CRC-32` (little-endian,
+15 bytes of overhead). On the device a `BlobReceiver` writes the payloads in order into a
+`BlobSink`, either a `[u8]` buffer or the application's flash partition, which only ever sees
+contiguous writes at increasing offsets:
+
+```rust
+let mut rx = BlobReceiver::new(&mut buffer[..]);
+match rx.push(frame) {
+    Ok(Progress::Complete { len }) => interpreter.load(&rx.sink()[..len as usize])?,
+    Ok(Progress::Partial { .. }) => {}
+    Err(ReceiveError::Gap { resend_from }) => { /* ask the sender for resend_from onwards */ }
+    Err(_) => { /* corrupted or oversized: drop the frame */ }
+}
+```
+
+A frame that fails its CRC changes nothing; a chunk already received is ignored, so
+retransmissions are harmless; a chunk past the received bytes returns `Gap { resend_from }`; the
+first chunk of a different blob (or of the same one after it completed) starts over. Acknowledgement
+and retry timing stay the application's.
 
 **Over-the-air updates of node code are out of scope.** A blob can only use nodes the firmware's
 library contains; new or changed node functions need a firmware update (for example with

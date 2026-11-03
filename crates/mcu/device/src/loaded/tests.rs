@@ -46,7 +46,7 @@ static ADAPTERS: [AdapterEntry; 1] = [AdapterEntry {
     run: command_to_bool,
 }];
 
-static LIBRARY: Library = Library {
+pub(super) static LIBRARY: Library = Library {
     hash: 0x51ab,
     types: &[],
     nodes: &NODES,
@@ -117,7 +117,7 @@ fn fan_in_blob(fan: u64, edges: &[(u64, Option<u64>)]) -> Vec<u8> {
     w.0
 }
 
-fn plan() -> Vec<u8> {
+pub(super) fn plan() -> Vec<u8> {
     fan_in_blob(2, &[(0, None), (1, Some(0))])
 }
 

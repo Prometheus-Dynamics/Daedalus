@@ -129,12 +129,13 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Measured (`ci.sh mcu`, 2026-11-02), flash / static RAM, M4F and M0+:** compiled 2988 / 3316 B
       and 112 B; tunable 4424 / 5488 B and 128 B; loaded 11496 / 12572 B and 584 B. Stack and tick
       time: none.
-- [ ] **What:** a chunked blob receive helper for the MCU (feature-gated framing + CRC-32 into a
+- [x] **What:** a chunked blob receive helper for the MCU (feature-gated framing + CRC-32 into a
       buffer or flash partition).
-      **Why:** only if applications keep writing the same transport code.
-      **Done when:** a test receives a plan blob in chunks and loads it.
-      **Blocked by:** a consumer needing it; none is recorded.
-      **Measured:** none. `daedalus_mcu::loaded::crc32` exists; the framing does not.
+      **Done (2026-11-03):** `daedalus_mcu::loaded::receive` (feature `receive`): `encode_chunk` on
+      the sender, `BlobReceiver` over a `BlobSink` (`[u8]` or a flash partition) on the device;
+      a CRC-32 per chunk, duplicates ignored, a gap answered with `resend_from`. The tests receive
+      a plan blob in chunks (with a corrupted frame, a retransmission and a gap) and load and run
+      it. Untested on a board.
 - [ ] **What:** decide whether Windows matters. Checkouts need `core.symlinks` for the 14 symlinks
       under `crates/` (`build.rs`, `portable.rs`, `trace.rs`).
       **Why:** without it those crates do not build from a Windows checkout.

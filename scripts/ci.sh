@@ -271,7 +271,7 @@ cmd_mcu() {
     step "Building the MCU blink firmwares for $target"
     ensure_target "$target"
     cargo build --target "$target" --profile mcu -p daedalus-mcu-blink --bins
-    cargo check --target "$target" -p daedalus-mcu --features "alloc,defmt,loaded"
+    cargo check --target "$target" -p daedalus-mcu --features "alloc,defmt,loaded,receive"
     # Shared nodes (examples/mcu_shared): the device build is `no_std` and does not pull the runtime.
     cargo build --target "$target" --profile mcu -p daedalus-mcu-shared --lib
     if cargo tree --target "$target" -p daedalus-mcu-shared -e normal | grep -q '^[├└│ ]*daedalus-rs '; then
@@ -294,7 +294,7 @@ cmd_mcu() {
     index=$((index + 1))
   done
   step "Testing the MCU crates, the blink graph and the shared nodes natively"
-  cargo test -p daedalus-mcu --features loaded
+  cargo test -p daedalus-mcu --features loaded,receive
   cargo test -p daedalus-mcu --no-default-features --features loaded
   cargo test -p daedalus-mcu-build -p daedalus-mcu-blink
   cargo test -p daedalus-mcu-shared

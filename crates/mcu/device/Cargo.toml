@@ -28,6 +28,9 @@ f64 = []
 alloc = []
 # The loaded-plan interpreter (`loaded::Interpreter`) and node library types.
 loaded = []
+# Chunked plan-blob receive (`loaded::receive`): framing with a CRC-32 per chunk, into a buffer
+# or a flash partition.
+receive = ["loaded"]
 # `defmt::Format` for the error types.
 defmt = ["dep:defmt"]
 

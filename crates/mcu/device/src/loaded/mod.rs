@@ -13,6 +13,8 @@
 
 mod interp;
 mod plan;
+#[cfg(feature = "receive")]
+pub mod receive;
 
 use core::mem::{align_of, needs_drop, size_of};
 
@@ -258,6 +260,8 @@ impl From<crate::wire::WireError> for LoadError {
     }
 }
 
+#[cfg(all(test, feature = "receive"))]
+mod receive_tests;
 #[cfg(test)]
 mod tests;
 

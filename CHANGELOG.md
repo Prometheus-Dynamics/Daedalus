@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- **MCU chunked plan-blob receive.** `daedalus_mcu::loaded::receive` (feature `receive`):
+  `encode_chunk` frames a blob with a CRC-32 per chunk, and `BlobReceiver` assembles it into a
+  buffer or a flash partition (`BlobSink`), ignoring duplicates and reporting gaps. See
+  docs/mcu.md, "Chunked receive".
 - **One GPU device per process.** `daedalus_gpu::shared_context` returns the process's wgpu device,
   opened on first use and closed with its last handle; `process_context` finds it without opening
   one, and `devices_created` counts the devices opened. Engines with `GpuBackend::Device` take their
