@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[cfg_attr(windows, ignore = "the workers are /bin/sh scripts")]
 fn persistent_worker_restarts_exited_python_node_and_java_backends() {
     for (backend, worker_id) in [
         (BackendKind::Python, "python-restart-worker"),
@@ -34,6 +35,7 @@ fn persistent_worker_restarts_exited_python_node_and_java_backends() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "the workers are /bin/sh scripts")]
 fn persistent_worker_reports_crash_and_malformed_messages() {
     let crash_telemetry = FfiHostTelemetry::new();
     let crash = PersistentWorkerRunner::from_backend(&BackendConfig {
@@ -122,6 +124,7 @@ fn persistent_worker_rejects_unsupported_runner_limits() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "the workers are /bin/sh scripts")]
 fn persistent_worker_honors_request_timeout() {
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend_with_limits_and_telemetry(
@@ -153,6 +156,7 @@ fn persistent_worker_honors_request_timeout() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "the workers are /bin/sh scripts")]
 fn persistent_worker_drains_stderr_while_waiting_for_stdout() {
     let telemetry = FfiHostTelemetry::new();
     let runner = PersistentWorkerRunner::from_backend_with_limits_and_telemetry(

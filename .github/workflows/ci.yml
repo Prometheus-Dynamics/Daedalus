@@ -74,7 +74,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run workspace tests
         shell: bash
-        run: cargo test --workspace --all-targets --features "engine,plugins"
+        run: cargo test --workspace --all-targets --no-fail-fast --features "engine,plugins"
 
   # The facade alone: native `cdylib` plugin loading, then the trybuild macro UI tests (`plugins`
   # only, ignored in the regular test run; trybuild compiles its own project).
