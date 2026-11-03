@@ -105,7 +105,8 @@ fn dmabuf_fence_mode_selection() {
     note(format!("fence waits: {waits:?}, default {support:?}"));
     let frame = Frame::new();
     let desc = || frame.desc(DrmFourcc::XRGB8888);
-    let timeout = Duration::from_millis(30);
+    // Wide enough that a non-blocking import under a loaded GPU still returns well inside it.
+    let timeout = Duration::from_millis(300);
 
     // A never-signaling pipe is not a sync_file: `Auto` hands it to the timeline watcher (the GPU
     // goes ahead after the timeout), an explicit `SyncFd` or `Cpu` waits on the CPU.
@@ -199,7 +200,8 @@ fn check_fences(backend: &WgpuBackend, frame: &Frame, wait: AcquireFenceWait) {
     // flags the image; the others fail before any Vulkan object is created.
     let (never, _writer) = pipe_fence();
     let guard = Arc::new(());
-    let timeout = Duration::from_millis(30);
+    // Wide enough that a non-blocking import under a loaded GPU still returns well inside it.
+    let timeout = Duration::from_millis(300);
     let start = Instant::now();
     let result = backend.import_dmabuf(
         desc()
@@ -396,26 +398,30 @@ fn dmabuf_import_gpu_waits_for_late_fence() {
             continue;
         }
         for _ in 0..2 {
-            frame.buf.write(|bytes| bytes.fill(0));
-            let fence = writer.write();
-            let probe = fence.try_clone().unwrap();
-            let start = Instant::now();
-            let handle = validated(&consumer, || {
-                consumer
-                    .import_dmabuf(desc().with_acquire_fence(fence))
-                    .expect("import with pending fence")
-            });
-            let elapsed = start.elapsed();
-            assert!(
-                !sync_file_signaled(probe.as_fd()),
-                "the producer finished before the import returned ({elapsed:?}); the import \
-                 blocked or the producer job is too short"
+            retry_while_short(
+                &writer,
+                &producer,
+                "the import waited for the producer",
+                || {
+                    frame.buf.write(|bytes| bytes.fill(0));
+                    let fence = writer.write();
+                    let probe = fence.try_clone().unwrap();
+                    let handle = validated(&consumer, || {
+                        consumer
+                            .import_dmabuf(desc().with_acquire_fence(fence))
+                            .expect("import with pending fence")
+                    });
+                    if sync_file_signaled(probe.as_fd()) {
+                        return false;
+                    }
+                    assert_eq!(handle.acquire_status(), AcquireStatus::Pending);
+                    let context = format!("{mode:?}, independent: {independent}");
+                    assert_pattern(&consumer, &handle, &context);
+                    assert!(sync_file_signaled(probe.as_fd()));
+                    assert_eq!(handle.acquire_status(), AcquireStatus::Ready);
+                    true
+                },
             );
-            assert_eq!(handle.acquire_status(), AcquireStatus::Pending);
-            let context = format!("{mode:?}, independent: {independent}");
-            assert_pattern(&consumer, &handle, &context);
-            assert!(sync_file_signaled(probe.as_fd()));
-            assert_eq!(handle.acquire_status(), AcquireStatus::Ready);
         }
 
         let fence = writer.write();
@@ -457,54 +463,54 @@ fn dmabuf_import_gpu_waits_for_late_fence() {
             break;
         }
         hardware.set_acquire_fence_mode(mode);
-        let fence = writer.write();
-        let probe = fence.try_clone().unwrap();
-        let handle = hardware
-            .import_dmabuf(
-                desc()
-                    .with_acquire_fence(fence)
-                    .with_acquire_timeout(timeout),
-            )
-            .expect("import");
-        let start = Instant::now();
-        let next = hardware.import_dmabuf(desc()).expect("unfenced import");
-        let blocked = start.elapsed();
-        assert!(
-            !sync_file_signaled(probe.as_fd()),
-            "{mode:?}: the next submission waited for the producer ({blocked:?})"
-        );
-        drop(next);
-        assert_pattern(
-            &hardware,
-            &handle,
-            &format!("{mode:?}, timeout {timeout:?}"),
-        );
+        let what = format!("{mode:?}: the next submission waited for the producer");
+        retry_while_short(&writer, &producer, &what, || {
+            let fence = writer.write();
+            let probe = fence.try_clone().unwrap();
+            let handle = hardware
+                .import_dmabuf(
+                    desc()
+                        .with_acquire_fence(fence)
+                        .with_acquire_timeout(timeout),
+                )
+                .expect("import");
+            let next = hardware.import_dmabuf(desc()).expect("unfenced import");
+            let conclusive = !sync_file_signaled(probe.as_fd());
+            drop(next);
+            assert_pattern(
+                &hardware,
+                &handle,
+                &format!("{mode:?}, timeout {timeout:?}"),
+            );
+            conclusive
+        });
     }
 
     // A real sync_file that misses a short timeout: the consumer goes ahead without the producer.
     if use_fence_wait(&mut consumer, AcquireFenceWait::Timeline) {
-        let fence = writer.write();
-        let probe = fence.try_clone().unwrap();
-        let timeout = Duration::from_millis(50);
-        let handle = consumer
-            .import_dmabuf(
-                desc()
-                    .with_acquire_fence(fence)
-                    .with_acquire_timeout(timeout),
-            )
-            .expect("import");
-        wait_until(Duration::from_secs(2), "timeout", || {
-            handle.acquire_status() != AcquireStatus::Pending
+        let what = "the consumer waited for the producer despite the timeout";
+        retry_while_short(&writer, &producer, what, || {
+            let fence = writer.write();
+            let probe = fence.try_clone().unwrap();
+            let timeout = Duration::from_millis(50);
+            let handle = consumer
+                .import_dmabuf(
+                    desc()
+                        .with_acquire_fence(fence)
+                        .with_acquire_timeout(timeout),
+                )
+                .expect("import");
+            wait_until(Duration::from_secs(2), "timeout", || {
+                handle.acquire_status() != AcquireStatus::Pending
+            });
+            if sync_file_signaled(probe.as_fd()) {
+                return false;
+            }
+            assert_eq!(handle.acquire_status(), AcquireStatus::TimedOut);
+            let _ = consumer.read_texture(&handle).expect("readback");
+            // Only an independent consumer can finish while the producer still runs.
+            !independent || !sync_file_signaled(probe.as_fd())
         });
-        assert_eq!(handle.acquire_status(), AcquireStatus::TimedOut);
-        assert!(!sync_file_signaled(probe.as_fd()), "producer job too short");
-        let _ = consumer.read_texture(&handle).expect("readback");
-        if independent {
-            assert!(
-                !sync_file_signaled(probe.as_fd()),
-                "the consumer waited for the producer despite the timeout"
-            );
-        }
         device_poll(&producer);
     }
 
@@ -526,7 +532,34 @@ struct LateWriter<'a> {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     spins: wgpu::Buffer,
-    iterations: u32,
+    iterations: std::cell::Cell<u32>,
+}
+
+/// Runs of a late-fence check the producer may lose before the test fails; each one doubles the
+/// producer's job.
+const MAX_ATTEMPTS: usize = 4;
+
+/// Run `check` until it is conclusive: it returns false when the producer's job had already
+/// finished at the point the check needs it running. That happens when the calibration ran on a
+/// GPU busy with other tests and came out short, so the job is doubled and the check run again.
+/// A consumer that really waits for the producer is never conclusive, and fails with `what`.
+fn retry_while_short(
+    writer: &LateWriter<'_>,
+    producer: &WgpuBackend,
+    what: &str,
+    mut check: impl FnMut() -> bool,
+) {
+    for _ in 0..MAX_ATTEMPTS {
+        if check() {
+            return;
+        }
+        device_poll(producer);
+        writer.lengthen();
+    }
+    panic!(
+        "{what}: the producer finished first in {MAX_ATTEMPTS} runs, the last with a {} spin",
+        writer.iterations.get()
+    );
 }
 
 impl<'a> LateWriter<'a> {
@@ -585,27 +618,42 @@ for (var y = 0u; y < dims.y; y++) {
                 },
             ],
         });
-        let mut writer = Self {
+        let writer = Self {
             backend,
             pipeline,
             bind_group,
             spins,
-            iterations: 1 << 20,
+            iterations: std::cell::Cell::new(1 << 20),
         };
-        // Calibrate the spin to about `duration` on this GPU.
-        let start = std::time::Instant::now();
-        writer.dispatch();
-        device_poll(backend);
-        let per_spin = start.elapsed().as_secs_f64() / f64::from(writer.iterations);
-        writer.iterations = (duration.as_secs_f64() / per_spin).clamp(1e6, 2e9) as u32;
+        // Calibrate the spin to about `duration` on this GPU: the fastest of three runs, since
+        // other work on the GPU only makes a run slower (and the job then too short).
+        let fastest = (0..3)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                writer.dispatch();
+                device_poll(backend);
+                start.elapsed()
+            })
+            .min()
+            .unwrap();
+        let per_spin = fastest.as_secs_f64() / f64::from(writer.iterations.get());
         writer
+            .iterations
+            .set((duration.as_secs_f64() / per_spin).clamp(1e6, 2e9) as u32);
+        writer
+    }
+
+    /// Double the job, for a calibration that came out short.
+    fn lengthen(&self) {
+        let longer = self.iterations.get().saturating_mul(2).min(2_000_000_000);
+        self.iterations.set(longer);
     }
 
     fn dispatch(&self) {
         let (device, queue) = self.backend.device_queue();
         queue
             .raw()
-            .write_buffer(&self.spins, 0, &self.iterations.to_le_bytes());
+            .write_buffer(&self.spins, 0, &self.iterations.get().to_le_bytes());
         let mut encoder = device.create_command_encoder(&Default::default());
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());

@@ -458,7 +458,7 @@ run interleaved, 12 times each, `GPU_BENCH_SECTIONS=readback`:
 
 Unchanged; the earlier 3.6 ms was a single low sample.
 
-Styx's software-ISP frames import without a copy: Styx's `daedalus_import_check` (Styx d837f22,
+Styx's software-ISP frames import without a copy: Styx's `daedalus_import_check` (Styx 4c6e9b7,
 with `helios-engine` and `helios-peripherals` stopped for the camera) takes an NV12 1280x800 frame
 from the soft ISP's dma-heap output (`softisp_dmabuf`: Y at 0, UV at 1024000, one 1544192-byte
 dma-buf for an import that needs 1536256), imports it with `GpuStorage::import_dmabuf` in 95 to

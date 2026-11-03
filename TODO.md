@@ -50,15 +50,6 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Done when:** the test in 3 passes, and shows the plugin and the host on one lock.
       **Blocked by:** nothing; in progress.
       **Measured:** n/a.
-- [ ] **What:** the dmabuf fence-timing tests (`wgpu_backend/dmabuf/tests/fences.rs`) pass under
-      plain `cargo test`, multi-threaded.
-      **Why:** they cover the acquire-fence path the Raze imports use; a test that only passes
-      single-threaded is a finding (HeliOS, 2026-11-02).
-      **Done when:** five multi-threaded `--include-ignored` runs pass on RADV.
-      **Blocked by:** nothing.
-      **Measured:** on RADV, multi-threaded: `dmabuf_import_gpu_waits_for_late_fence` failed 2 of 3
-      runs at 700be30 ("producer job too short"), `dmabuf_fence_mode_selection` 1 of 3 at
-      ed6a6d3; single-threaded 97 of 97, twice.
 
 ## Open
 
@@ -300,6 +291,12 @@ was searched for, the commit is the one that introduced it.
 
 ### GPU and hardware support
 
+- [x] The dmabuf fence-timing tests pass under plain multi-threaded `cargo test` (alpha item):
+      the non-blocking import margins are 300 ms, the late producer's spin is calibrated on the
+      fastest of three runs, and a check the producer loses (its job done before the check needs it
+      running) is rerun with a doubled job, up to 4 times; a consumer that really waits still
+      fails. RADV: 5 of 5 multi-threaded `--include-ignored` runs and a single-threaded run, 97 of
+      97 (before: 2 of 3 and 1 of 3 runs failed).
 - [x] Readback timing on the Raze after the DMA-buffer move onto Lemnos (alpha item): unchanged.
       Same-session A/B, `gpu_bench` at 5e97c0d (before 803f310) against 6a0c73f, interleaved,
       12 runs each: 16 MiB host-cached read median 3.83 -> 3.79 ms, 1 MiB 0.270 -> 0.275 ms
@@ -308,7 +305,7 @@ was searched for, the commit is the one that introduced it.
       (`DmaBufRef`, the frame identity and the acquire-fence wait with Lemnos fdbb0c4 and
       2610455); the Raze readback is unchanged (above).
 - [x] Zero-copy import of Styx's software-ISP frames on the Raze (alpha item): Styx's
-      `daedalus_import_check` (Styx d837f22 plus a descriptor fix): an NV12 1280x800
+      `daedalus_import_check` (Styx 4c6e9b7): an NV12 1280x800
       `softisp_dmabuf` frame imported with `GpuStorage::import_dmabuf` in 95 to 97 us, the GPU's
       read equal to the frame's 1536000 bytes, and a CPU-written sentinel read back by the GPU
       (same memory, no copy); 3 of 3 runs.
