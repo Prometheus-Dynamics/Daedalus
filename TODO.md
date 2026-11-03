@@ -115,7 +115,12 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Done when:** `Timeline` neither blocks nor violates the VUID under `ci.sh vvl`.
       **Blocked by:** wgpu-hal relaying with timeline semaphores; 30.0.1 still uses binary
       `RelaySemaphores`.
-      **Measured:** 100 ms blocked with a 100 ms timeout (`crates/gpu/README.md`).
+      **Measured:** 100 ms blocked with a 100 ms timeout (`crates/gpu/README.md`). The next
+      submission behind a pending acquire (a producer job finishing 200 ms later, `fence_cost`):
+      v3dv (Raze #2, UIF): `SyncFd` 0.2 ms, `Timeline` 197 ms; RADV: 0.2 ms and 196 ms
+      (2026-11-03). `Auto`, the default, resolves to `SyncFd` on both, and no consumer (Styx,
+      Eidos, HeliOS) selects `Timeline` or a timeout; their V3D frames are storage imports, whose
+      fence is waited on the CPU. wgpu-hal 30.0.1 still relays with binary semaphores.
 - [ ] **What:** flash the MCU firmwares on a real board (with a HAL: ADC input, GPIO output) and
       measure stack use and tick time in each mode.
       **Why:** sizes are linked and measured, but the firmware has never run on hardware.

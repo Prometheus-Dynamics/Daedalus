@@ -41,6 +41,17 @@ mod linear;
 #[path = "tests/fences.rs"]
 mod fences;
 
+/// The late producer of the fence tests.
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+#[path = "tests/late_writer.rs"]
+mod late_writer;
+
+/// What a pending acquire costs the next submission in each GPU-side wait, on a frame in the
+/// driver's own modifier (so it also runs where `LINEAR` cannot be sampled, as on v3dv).
+#[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
+#[path = "tests/fence_cost.rs"]
+mod fence_cost;
+
 /// NV12 in one dmabuf and disjoint.
 #[cfg(all(feature = "gpu-dmabuf", target_os = "linux"))]
 #[path = "tests/nv12.rs"]

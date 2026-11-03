@@ -246,7 +246,8 @@ if ctx.supports_dmabuf_import() {
     reports `Pending`, `Ready`, or `TimedOut` (the GPU went ahead; the contents are undefined).
     The watcher hop adds about 10 us. On Mesa drivers the *next* submission to the device
     (another import, a dispatch, a readback) blocks its thread until the wait is released (100 ms
-    measured with a 100 ms timeout), because Mesa runs wait-before-signal submissions on a submit
+    measured with a 100 ms timeout; behind a producer job 200 ms long, 197 ms on v3dv and 196 ms
+    on RADV, against 0.2 ms with `SyncFd`: `fence_cost` test, 2026-11-03), because Mesa runs wait-before-signal submissions on a submit
     thread and wgpu chains submissions with binary semaphores: the CPU wait moves from the import
     to the next submission, still bounded by the timeout. The validation layer reports that chain
     as `VUID-vkQueueSubmit-pWaitSemaphores-03238`.

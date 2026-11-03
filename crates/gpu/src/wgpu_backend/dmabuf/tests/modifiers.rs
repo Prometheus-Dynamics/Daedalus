@@ -25,8 +25,8 @@ const MEMORY_PLANES: [vk::ImageAspectFlags; MAX_MEMORY_PLANES] = [
     vk::ImageAspectFlags::MEMORY_PLANE_2_EXT,
     vk::ImageAspectFlags::MEMORY_PLANE_3_EXT,
 ];
-const WIDTH: u32 = 200;
-const HEIGHT: u32 = 120;
+pub(super) const WIDTH: u32 = 200;
+pub(super) const HEIGHT: u32 = 120;
 
 /// A renderable format under test.
 struct Case {
@@ -238,7 +238,7 @@ fn check_pattern(read: &[u8], case: &Case, context: &str) {
 }
 
 /// Modifiers the device can render to, sample and copy from.
-fn renderable_modifiers(backend: &WgpuBackend, format: vk::Format) -> Vec<(u64, u32)> {
+pub(super) fn renderable_modifiers(backend: &WgpuBackend, format: vk::Format) -> Vec<(u64, u32)> {
     let needed = vk::FormatFeatureFlags::COLOR_ATTACHMENT
         | vk::FormatFeatureFlags::SAMPLED_IMAGE
         | vk::FormatFeatureFlags::TRANSFER_SRC;
@@ -282,13 +282,13 @@ fn format_modifiers(
 
 /// A dmabuf exported from a `DRM_FORMAT_MODIFIER` image, with its memory plane layouts
 /// (offset, row pitch).
-struct Exported {
-    fd: OwnedFd,
-    planes: Vec<(u64, u64)>,
+pub(super) struct Exported {
+    pub(super) fd: OwnedFd,
+    pub(super) planes: Vec<(u64, u64)>,
 }
 
 /// Allocate a `WIDTH`x`HEIGHT` image with `modifier` on `backend`'s device and export its memory.
-fn export_image(
+pub(super) fn export_image(
     backend: &WgpuBackend,
     format: vk::Format,
     modifier: u64,

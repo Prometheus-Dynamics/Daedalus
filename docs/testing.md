@@ -425,6 +425,15 @@ missing hardware; a failed check prints its error in place of the value.
 | `/dev/dma_heap/<heap>` | each dma-heap and whether it opens read/write (`open failed: Permission denied` means the `video` group is missing) |
 | `heap`, `export_sync_file`, `fence_signaled` | a page allocated from that heap and whether `DMA_BUF_IOCTL_EXPORT_SYNC_FILE` works on it (`unsupported` on kernels before 6.0); an idle buffer's fence is already signaled |
 
+### CM5 run (2026-11-03): acquire fence waits
+
+v3dv samples only `UIF`, so the fence tests on dma-heap (`LINEAR`) frames skip there.
+`fence_cost` imports an image a Vulkan producer exports in the driver's own modifier, with a
+pending `sync_file` from a GPU job on another device that finishes about 200 ms later, and times
+the next submission to the consumer's device. Raze #2 at 746308e plus the test (UIF
+`0x700000000000006`), three runs of five: `SyncFd` 0.20, 0.23 and 0.20 ms (median), `Timeline`
+196.9, 197.2 and 197.2 ms. RADV: 0.21 and 196 ms. `Auto`, the default, resolves to `SyncFd`.
+
 ### CM5 run (2026-11-03): plugin and host on one submit lock
 
 Raze #2 (CM5, V3D 7.1, kernel 7.2.9-v8-16k), at c919b14: `plugin_submit` (the plugin `cdylib`
