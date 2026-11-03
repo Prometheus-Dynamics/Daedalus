@@ -247,12 +247,17 @@ on 2026-11-02, at f7e05ac.
       test, and it passes on the Raze under VVL.
       **Measured:** n/a.
 
-- [ ] **What:** later, an accelerator interface (load program, import buffers, submit, fence) for
-      NPUs and custom accelerators. Design doc first.
+- [ ] **What:** an accelerator interface (load program, import buffers, submit, fence) for
+      NPUs and custom accelerators.
       **Why:** the GPU path's residency, `#[device]` transfers and completion API should extend to
       other accelerators without a backend per device type.
-      **Done when:** the design doc is agreed; implementation is a later item.
-      **Blocked by:** the user's go.
+      **Interface, done (2026-11-03):** `daedalus-accelerator` (`Accelerator`, handles with
+      deferred release, `BufferSource::DmaBuf` with an acquire fence, `Fence` with `sync_file`
+      export, `Wait`, `validate_bindings`) and `docs/accelerator-interface.md`; the contract test
+      runs on an accelerator defined in the test.
+      **Open:** the design's graph integration (residency key, `ExecutionContext` capability,
+      fences between nodes) with the first implementation.
+      **Blocked by:** the user's go for an NPU implementation (RKNPU, K230 KPU).
       **Measured:** n/a.
 
 ## Done

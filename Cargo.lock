@@ -463,6 +463,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-accelerator"
+version = "3.0.1-dev"
+
+[[package]]
 name = "daedalus-core"
 version = "3.0.1-dev"
 dependencies = [

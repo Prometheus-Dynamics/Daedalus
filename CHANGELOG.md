@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- **`daedalus-accelerator`: the accelerator interface.** `Accelerator` (object safe): load a
+  program, allocate, upload or import (dmabuf with an acquire fence) buffers, submit after waits,
+  and complete through a `Fence` that can export a `sync_file`. Interface only; see
+  docs/accelerator-interface.md.
 - **MCU chunked plan-blob receive.** `daedalus_mcu::loaded::receive` (feature `receive`):
   `encode_chunk` frames a blob with a CRC-32 per chunk, and `BlobReceiver` assembles it into a
   buffer or a flash partition (`BlobSink`), ignoring duplicates and reporting gaps. See

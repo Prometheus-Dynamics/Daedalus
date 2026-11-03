@@ -3,6 +3,7 @@ members = [
     "crates/daedalus",
     "crates/core",
     "crates/accel",
+    "crates/accelerator",
     "crates/kernels",
     "crates/rga",
     "crates/vglite",
@@ -62,6 +63,7 @@ lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", bran
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.1-dev", default-features = false }
 daedalus-core = { path = "crates/core", version = "3.0.1-dev", default-features = false }
 daedalus-kernels = { path = "crates/kernels", version = "3.0.1-dev", default-features = false }
+daedalus-accelerator = { path = "crates/accelerator", version = "3.0.1-dev" }
 daedalus-rga = { path = "crates/rga", version = "3.0.1-dev" }
 daedalus-vglite = { path = "crates/vglite", version = "3.0.1-dev" }
 daedalus-accel = { path = "crates/accel", version = "3.0.1-dev", default-features = false }

@@ -23,6 +23,7 @@ This directory is the repository-level documentation index. Crate-specific detai
 - [runtime-diagnostics.md](runtime-diagnostics.md): release/debug flow for runtime telemetry, host bridge diagnostics, stream workers, and FFI workers.
 - [migration-4.0.md](migration-4.0.md): upgrading from 3.0.0 to 4.0.0: plugin rebuilds, removed features and APIs, structs that gained fields, enum changes, behavior changes.
 - [gpu-nodes.md](gpu-nodes.md): writing GPU nodes with a CPU pair: device choice, node-owned GPU state, fragment passes, non-blocking completion, readback, timing, camera frames, startup, portability.
+- [accelerator-interface.md](accelerator-interface.md): the NPU / custom accelerator interface (`daedalus-accelerator`): programs, buffers and dmabuf import, submit, fences across devices; interface only.
 - [node-authoring.md](node-authoring.md): node authoring, adapters, payload residency, host APIs, graph documents, and external frame sources.
 - [host-bridge-lock-granularity.md](host-bridge-lock-granularity.md): release review note for host bridge shared-state locking.
 - [../crates/engine/README.md](../crates/engine/README.md): high-level host facade and warm reuse model.
