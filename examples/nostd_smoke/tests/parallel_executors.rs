@@ -1,12 +1,12 @@
 //! Executors ticking on several threads with every Daedalus crate's `std` off: a steady-state
-//! tick allocates nothing at each metrics level up to `Hardware`, on one thread and on each of
-//! several, once the tick's telemetry is handed back with `HostGraph::recycle_telemetry`. Primitive
-//! payloads (the host's input, the node's output) are held inline, and each executor owns its port
-//! buffer pool (there are no thread-locals), so no thread's ticks depend on another's.
+//! tick allocates nothing at each metrics level, `Profile` and `Trace` included, on one thread and
+//! on each of several, once the tick's telemetry is handed back with `HostGraph::recycle_telemetry`.
+//! Primitive payloads (the host's input, the node's output) are held inline, and each executor owns
+//! its port buffer pool (there are no thread-locals), so no thread's ticks depend on another's.
 //!
-//! `Profile` and `Trace` are not in the set: their data-lifecycle records own `String`s (port,
-//! payload, adapter steps, detail), so each recorded event allocates. A caller that does not hand
-//! its telemetry back rebuilds it on every tick (see `ticks_that_drop_their_telemetry_rebuild_it`).
+//! A lifecycle record shares its port name and its `Payload(..)` text with the plan and the
+//! telemetry (clones, not copies), and the telemetry reuses its record storage. A caller that does
+//! not hand its telemetry back rebuilds it on every tick (see `ticks_that_drop_their_telemetry_rebuild_it`).
 #![allow(clippy::print_stderr)] // the per-tick counts
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -46,12 +46,14 @@ static ALLOC: Counting = Counting;
 const TICKS: usize = 4000;
 const THREADS: usize = 4;
 /// The levels whose steady-state tick allocates nothing once its telemetry is recycled.
-const ZERO_LEVELS: [MetricsLevel; 5] = [
+const ZERO_LEVELS: [MetricsLevel; 7] = [
     MetricsLevel::Off,
     MetricsLevel::Basic,
     MetricsLevel::Timing,
     MetricsLevel::Detailed,
     MetricsLevel::Hardware,
+    MetricsLevel::Profile,
+    MetricsLevel::Trace,
 ];
 
 /// This thread's allocations over `TICKS` push -> tick -> take rounds of a warmed-up graph at
@@ -107,12 +109,26 @@ fn ticks_allocate_nothing_at_each_level_on_one_thread_or_on_four() {
 
 /// A caller that drops each tick's telemetry instead of recycling it pays for the rebuild: at
 /// `Basic` the node-metrics table is reserved again every tick, one allocation per tick when the
-/// `metrics` feature is built (none without it), so the rebuild costs at most one per tick.
+/// `metrics` feature is built (none without it), so the rebuild costs at most one per tick. The
+/// per-tick counts at every level are printed for the docs.
 #[test]
 fn ticks_that_drop_their_telemetry_rebuild_it() {
-    let dropped = tick_allocations(MetricsLevel::Basic, &Barrier::new(1), false);
-    assert!(
-        dropped <= TICKS,
-        "without recycling, Basic rebuilds at most its node-metrics table per tick ({dropped} over {TICKS} ticks)"
-    );
+    for level in [
+        MetricsLevel::Off,
+        MetricsLevel::Basic,
+        MetricsLevel::Timing,
+        MetricsLevel::Detailed,
+        MetricsLevel::Hardware,
+        MetricsLevel::Profile,
+        MetricsLevel::Trace,
+    ] {
+        let dropped = tick_allocations(level, &Barrier::new(1), false);
+        eprintln!("{level:?}: not recycled {dropped} allocations over {TICKS} ticks");
+        if level == MetricsLevel::Basic {
+            assert!(
+                dropped <= TICKS,
+                "without recycling, Basic rebuilds at most its node-metrics table per tick ({dropped} over {TICKS} ticks)"
+            );
+        }
+    }
 }

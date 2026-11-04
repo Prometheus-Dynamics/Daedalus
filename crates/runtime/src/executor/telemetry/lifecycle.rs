@@ -1,4 +1,6 @@
+use crate::handles::PortId;
 use crate::prelude::*;
+use daedalus_transport::IdStr;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TraceEvent {
@@ -44,10 +46,13 @@ pub struct DataLifecycleEvent {
     pub node_idx: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge_idx: Option<usize>,
+    /// The port the event concerns. A clone of the port's shared name: no text is copied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub port: Option<String>,
+    pub port: Option<PortId>,
+    /// `Payload(<type key>)`, shared by every event that names the type: the telemetry builds each
+    /// text once and clones it after that.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub payload: Option<String>,
+    pub payload: Option<IdStr>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub adapter_steps: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -60,8 +65,8 @@ pub struct DataLifecycleRecord {
     pub stage: DataLifecycleStage,
     pub node_idx: Option<usize>,
     pub edge_idx: Option<usize>,
-    pub port: Option<String>,
-    pub payload: Option<String>,
+    pub port: Option<PortId>,
+    pub payload: Option<IdStr>,
     pub adapter_steps: Vec<String>,
     pub detail: Option<String>,
 }

@@ -33,7 +33,10 @@ pub(crate) fn push_direct_edge(
         let mut lifecycle =
             DataLifecycleRecord::new(payload.correlation_id, DataLifecycleStage::EdgeEnqueued);
         lifecycle.edge_idx = Some(edge_idx);
-        lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+        lifecycle.payload = Some(
+            core.telemetry
+                .payload_text(payload.inner.type_key().as_str()),
+        );
         core.telemetry.record_data_lifecycle(lifecycle);
     }
     let replaced = core

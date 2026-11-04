@@ -258,8 +258,8 @@ fn report_exposes_release_diagnostic_metrics() {
 fn report_filter_uses_typed_transport_ids_without_changing_json_shape() {
     let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Trace);
     let mut record = super::DataLifecycleRecord::new(99, super::DataLifecycleStage::AdapterStart);
-    record.port = Some("image".to_string());
-    record.payload = Some("type=example:image bytes=4".to_string());
+    record.port = Some(crate::handles::PortId::new("image"));
+    record.payload = Some(daedalus_transport::IdStr::new("type=example:image bytes=4"));
     record.adapter_steps = vec!["example.image.upload".to_string()];
     telemetry.record_data_lifecycle(record);
 
@@ -558,4 +558,32 @@ fn pooled_telemetry_keeps_its_counts_when_the_next_worker_begins_the_run() {
     assert!(first.node_metrics.is_empty());
     assert!(first.edge_metrics[&2] == super::EdgeMetrics::default());
     assert!(first.errors.is_empty());
+}
+
+/// A lifecycle event's JSON keeps the port's name and the payload's text as strings, and reads
+/// back to the same event.
+#[test]
+#[cfg(feature = "metrics")]
+fn lifecycle_event_json_keeps_port_and_payload_text() {
+    use super::{DataLifecycleEvent, DataLifecycleStage};
+    let event = DataLifecycleEvent {
+        correlation_id: 7,
+        stage: DataLifecycleStage::EdgeDequeued,
+        at_ns: 3,
+        node_idx: Some(1),
+        edge_idx: Some(2),
+        port: Some(crate::handles::PortId::new("in")),
+        payload: Some(daedalus_transport::IdStr::new("Payload(i64)")),
+        adapter_steps: Vec::new(),
+        detail: None,
+    };
+    let json = serde_json::to_value(&event).expect("serialize");
+    assert_eq!(json["port"], "in");
+    assert_eq!(json["payload"], "Payload(i64)");
+    assert!(
+        json.get("adapter_steps").is_none(),
+        "empty steps are skipped"
+    );
+    let back: DataLifecycleEvent = serde_json::from_value(json).expect("deserialize");
+    assert_eq!(back, event);
 }

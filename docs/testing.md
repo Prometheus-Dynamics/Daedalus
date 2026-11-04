@@ -486,11 +486,13 @@ allocator), at each metrics level, with the tick's telemetry recycled and droppe
 | `Timing` | 0 | 1 (node-metrics table) |
 | `Detailed` | 0 | 4 (table, two edge leaves, in-flight leaf) |
 | `Hardware` | 0 | 4 |
-| `Profile` | 7 | 12 (data-lifecycle strings) |
-| `Trace` | 7 | 13 (data-lifecycle strings) |
+| `Profile` | 0 | 10 (the tables and the payload texts, rebuilt) |
+| `Trace` | 0 | 11 |
 
 `Off` through `Hardware` recycled are asserted by `parallel_executors.rs`, on one thread and on
-four; `Profile` and `Trace` are not budgeted.
+four, `Profile` and `Trace` included. The smoke crate enables `metrics`: before that, its runtime
+and engine were built without it and the levels above `Off` recorded nothing. The table was
+measured with the feature on, and the not-recycled column with the telemetry dropped each tick.
 
 ### CM5 run (2026-11-03): acquire fence waits
 

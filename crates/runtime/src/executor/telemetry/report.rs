@@ -92,8 +92,12 @@ impl TelemetryReport {
             self.adapter_paths.retain(|path| path.edge == Some(edge));
         }
         if let Some(port) = &filter.port {
-            self.lifecycle
-                .retain(|event| event.port.as_deref() == Some(port.as_str()));
+            self.lifecycle.retain(|event| {
+                event
+                    .port
+                    .as_ref()
+                    .is_some_and(|event_port| event_port.as_str() == port.as_str())
+            });
             self.adapter_paths
                 .retain(|path| path.port.as_deref() == Some(port.as_str()));
         }

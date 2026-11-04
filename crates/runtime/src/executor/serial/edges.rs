@@ -1,5 +1,6 @@
 //! Edge input collection, adapter application and output publishing for serial execution.
 
+use crate::handles::PortId;
 use crate::prelude::*;
 use daedalus_transport::{AdaptRequest, Payload};
 
@@ -51,8 +52,12 @@ pub(super) fn collect_inputs(
                     );
                     lifecycle.node_idx = Some(node_idx);
                     lifecycle.edge_idx = Some(edge_idx);
-                    lifecycle.port = Some(to_port.to_string());
-                    lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+                    lifecycle.port = Some(to_port.clone());
+                    lifecycle.payload = Some(
+                        v.core
+                            .telemetry
+                            .payload_text(payload.inner.type_key().as_str()),
+                    );
                     v.core.telemetry.record_data_lifecycle(lifecycle);
                 }
                 if collect_detailed_metrics {
@@ -83,8 +88,12 @@ pub(super) fn collect_inputs(
                 );
                 lifecycle.node_idx = Some(node_idx);
                 lifecycle.edge_idx = Some(edge_idx);
-                lifecycle.port = Some(to_port.to_string());
-                lifecycle.payload = Some(format!("Payload({})", payload.inner.type_key()));
+                lifecycle.port = Some(to_port.clone());
+                lifecycle.payload = Some(
+                    v.core
+                        .telemetry
+                        .payload_text(payload.inner.type_key().as_str()),
+                );
                 v.core.telemetry.record_data_lifecycle(lifecycle);
             }
             if collect_detailed_metrics {
@@ -185,8 +194,8 @@ fn adapt_edge_payload(
         let mut lifecycle = DataLifecycleRecord::new(correlation_id, stage);
         lifecycle.node_idx = Some(node_idx);
         lifecycle.edge_idx = Some(edge_idx);
-        lifecycle.port = Some(port.to_string());
-        lifecycle.payload = Some(format!("Payload({})", payload.type_key()));
+        lifecycle.port = Some(PortId::new(port));
+        lifecycle.payload = Some(v.core.telemetry.payload_text(payload.type_key().as_str()));
         lifecycle.adapter_steps = edge_transport
             .adapter_steps
             .iter()

@@ -588,6 +588,16 @@ plugin ABI and does not load.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
+- **Lifecycle records share their port and payload text (public API change).**
+  `DataLifecycleEvent` and `DataLifecycleRecord` hold `port: Option<PortId>` (was `Option<String>`)
+  and `payload: Option<IdStr>` (was `Option<String>`), so recording an event clones a shared name
+  rather than allocating. `IdStr` is `daedalus_transport::IdStr`, a `&'static str` or shared text
+  that derefs to `str`. Reads through `as_deref()`, `as_str()` or `Deref` keep working; constructing
+  one needs `PortId::new(..)` and `IdStr::new(..)` (or `IdStr::from_static(..)`) where a `String` was
+  assigned before. The JSON text is unchanged (`"port": "in"`, `"payload": "Payload(i64)"`), and so
+  are `AdapterPathReport` and the adapter-path fields, which keep their `String`s. An executor builds
+  a payload's text once per type key and keeps it in the telemetry (not part of its value).
+
 - **Telemetry recycling covers `Detailed` and `Hardware`, and the no_std smoke graph runs at the
   default metrics level.** The per-edge metrics and the in-flight transport table are reused
   across ticks: `edge_metrics` keeps its edges zeroed (a `BTreeMap` cleared each tick freed its
@@ -599,13 +609,10 @@ plugin ABI and does not load.
   `Detailed` and `Hardware`, on one thread and on four, with telemetry recycled. Allocations per
   tick on that graph, recycled and not: `Basic` and `Timing` 0 and 1 (the node-metrics table),
   `Detailed` and `Hardware` 0 and 4 (that table, two edge leaves and the in-flight leaf), and
-  `Profile` and `Trace` 7 and 12 (13 at `Trace`). `Profile` and `Trace` keep their data-lifecycle
-  strings (`port`, `payload`, `adapter_steps`, `detail` are `String`s on each recorded event), so
-  they are not budgeted. The detector frame budget (`graph_frame_allocations`) is 9 at every
-  level up to `Hardware` in serial mode, with the telemetry recycled, so its `Basic` term of 1
-  is gone. A parallel fan-out at `Basic` is not zero: its worker snapshots build their own tables
-  each frame (25 per frame on that graph, against 9 at `Off`); reusing them needs per-worker
-  telemetry kept by the worker pool.
+  `Profile` and `Trace` 7 and 12 (13 at `Trace`); the next entries bring those to 0. The
+  detector frame budget (`graph_frame_allocations`) is 9 at every level up to `Hardware` in serial
+  mode, with the telemetry recycled, so its `Basic` term of 1 is gone. A parallel fan-out at
+  `Basic` is fixed in the entry below.
 - `daedalus` (`dylib-plugins`) on musl: no `libloading` and no `-ldl`. musl executables are
   static and cannot `dlopen`, and Rust's self-contained musl ships no `libdl` to link, so a
   plugin crate or host test for `aarch64-unknown-linux-musl` failed to link (`unable to find
@@ -1108,6 +1115,11 @@ plugin ABI and does not load.
   blocking. `ShaderRunOutput::into_texture_rgba8` returns the RGBA8 image without cloning the bytes.
 
 ### Fixed
+- **The no_std smoke crate builds with `metrics` on.** It built `daedalus-runtime` and
+  `daedalus-engine` with `default-features = false`, so every metrics level above `Off` recorded
+  nothing there and its zero assertions above `Off` held trivially. It enables `metrics` now, and
+  the numbers in the docs are measured with it on.
+
 - `daedalus-runtime`: `GraphBuilder` shares its capability registry, so connecting through the
   host bridge or a nested graph, and `GraphCtx`'s builder steps, no longer copy the whole node
   registry per edge. With 2000 registered nodes, a host-bridge connect went from about 24,600
@@ -1305,6 +1317,13 @@ plugin ABI and does not load.
     tests).
 
 ### Performance
+- **`Profile` and `Trace` allocate nothing per tick once telemetry is recycled.** Their lifecycle
+  records shared a `String` port and a formatted `Payload(..)` text per event, so each event
+  allocated (7 per tick on the no_std smoke graph, recycled). A record now clones the port's name,
+  and the payload text is built once per type key, so a recycled tick allocates nothing at any
+  level, on one thread and on four (`examples/nostd_smoke` asserts this at `Profile` and `Trace`
+  too). Not recycled: `Profile` 10 per tick (12 before), `Trace` 11 (13 before).
+
 
 - **A parallel fan-out allocates nothing per frame.** Each worker records into a telemetry the
   worker pool keeps, and the run absorbs them into the owned executor's recycled telemetry; a

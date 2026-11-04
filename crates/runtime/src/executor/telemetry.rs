@@ -3,6 +3,7 @@ use alloc::collections::BTreeMap;
 use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};
 use daedalus_planner::GroupMetadata;
+use daedalus_transport::IdStr;
 
 mod basics;
 mod dense;
@@ -96,7 +97,24 @@ pub struct ExecutionTelemetry {
     edge_touched: DenseSlots<()>,
     #[serde(skip)]
     in_flight_node_transport_metrics: DenseSlots<InFlightNodeTransportMetrics>,
+    /// The `Payload(<type key>)` texts lifecycle records share (see [`Self::payload_text`]). Kept
+    /// across runs, and not part of a telemetry's value.
+    #[serde(skip)]
+    payload_texts: PayloadTexts,
 }
+
+/// The lifecycle payload texts a telemetry has built, by type key.
+#[derive(Clone, Debug, Default)]
+struct PayloadTexts(BTreeMap<String, IdStr>);
+
+impl PartialEq for PayloadTexts {
+    /// Caches never make two telemetries differ.
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for PayloadTexts {}
 
 impl ExecutionTelemetry {
     /// The run's recoveries ([`Self::recovery`]), zero when none happened.
@@ -169,7 +187,7 @@ impl ExecutionTelemetry {
             .map(|event| AdapterPathReport {
                 edge: event.edge_idx,
                 node: event.node_idx,
-                port: event.port.clone(),
+                port: event.port.as_ref().map(|port| port.as_str().to_string()),
                 correlation_id: event.correlation_id,
                 steps: event.adapter_steps.clone(),
                 detail: event.detail.clone(),
@@ -324,6 +342,20 @@ impl ExecutionTelemetry {
             MetricsLevel::Off
         };
         self.lifecycle_origin = origin;
+    }
+
+    /// The lifecycle text `Payload(<type_key>)`, shared by the records that name the type: built
+    /// the first time a type key is seen and cloned after that, so recording a payload's lifecycle
+    /// allocates nothing once its type is warm.
+    pub(crate) fn payload_text(&mut self, type_key: &str) -> IdStr {
+        if let Some(text) = self.payload_texts.0.get(type_key) {
+            return text.clone();
+        }
+        let text = IdStr::new(format!("Payload({type_key})"));
+        self.payload_texts
+            .0
+            .insert(type_key.to_string(), text.clone());
+        text
     }
 
     /// Give each of `edges` edge indices an empty entry, so a worker that records into any of them

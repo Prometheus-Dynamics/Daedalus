@@ -478,12 +478,14 @@ with `-- --save-baseline <name>` and compare with `-- --baseline <name>`. The
 input and output payloads, one each: `Value` payloads are not inline); it was 31 before the
 hot-path pass and 4 before the tick-cost pass below. The no_std smoke graph with `i64` payloads
 (`cargo test -p daedalus-nostd-smoke --test parallel_executors`) allocates 0 per tick on one thread
-and on each of four, at every metrics level up to `Hardware`, once each tick's telemetry is handed
+and on each of four, at every metrics level (`Profile` and `Trace` included), once each tick's telemetry is handed
 back with `HostGraph::recycle_telemetry`: primitive payloads are held inline (see "Graph frame
 allocations"), and the telemetry's tables keep their storage across ticks (see "Telemetry
 recycling" below). A caller that drops its telemetry rebuilds the node-metrics table each tick
-(one allocation at `Basic`), and `Detailed`/`Hardware` rebuild four; `Profile`/`Trace` allocate
-for their string-carrying lifecycle records wherever the telemetry goes.
+(one allocation at `Basic`), and `Detailed`/`Hardware` rebuild four. `Profile`/`Trace` allocate
+nothing once recycled: their lifecycle records share the port's name and the payload's text (see
+"Telemetry recycling"), so a recycled tick is zero at every level. Dropped, `Profile` rebuilds 10
+per tick and `Trace` 11.
 
 ### Telemetry recycling
 
@@ -495,7 +497,8 @@ the run when no node or edge touched them), and reuses the in-flight transport t
 dense slot table rather than a `BTreeMap` that freed its leaves each node. Measured on the
 no_std smoke graph (`host.in -> inc -> host.out`, 4000 ticks), allocations per tick at each level
 recycled / not recycled: `Off` 0 / 0, `Basic` 0 / 1, `Timing` 0 / 1, `Detailed` 0 / 4,
-`Hardware` 0 / 4, `Profile` 7 / 12, `Trace` 7 / 13. Before this pass the recycled column was 0,
+`Hardware` 0 / 4, `Profile` 0 / 10, `Trace` 0 / 11 (7 / 12 and 7 / 13 before the lifecycle records
+shared their text). Before the telemetry-recycling pass the recycled column was 0,
 0, 0, 3, 3, 10, 10.
 
 Hot-path pass (x86_64 Linux, shared 24-core machine at load ~6-8, criterion medians; before is

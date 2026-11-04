@@ -18,10 +18,10 @@ doctest = false
 [dependencies]
 daedalus-core = { workspace = true }
 daedalus-data = { workspace = true }
-daedalus-engine = { workspace = true, features = ["plugins"] }
+daedalus-engine = { workspace = true, features = ["metrics", "plugins"] }
 daedalus-planner = { workspace = true }
 daedalus-registry = { workspace = true }
-daedalus-runtime = { workspace = true, features = ["plugins"] }
+daedalus-runtime = { workspace = true, features = ["metrics", "plugins"] }
 
 # Targets without compare-and-swap (`thumbv6m`): the counter clock's `fetch_add`.
 [target.'cfg(not(target_has_atomic = "ptr"))'.dependencies]

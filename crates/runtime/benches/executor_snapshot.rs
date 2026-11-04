@@ -443,7 +443,7 @@ fn telemetry_sample(level: MetricsLevel) -> ExecutionTelemetry {
         for idx in 0..64 {
             let mut record = DataLifecycleRecord::new(idx as u64, DataLifecycleStage::EdgeEnqueued);
             record.edge_idx = Some(idx);
-            record.payload = Some("Payload(bench:i64)".to_string());
+            record.payload = Some(daedalus_transport::IdStr::from_static("Payload(bench:i64)"));
             telemetry.record_data_lifecycle(record);
         }
     }

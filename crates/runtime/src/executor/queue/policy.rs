@@ -123,9 +123,6 @@ fn elapsed_since(clock: &Clock, start: Option<Instant>) -> core::time::Duration 
     start.map(|start| clock.elapsed(start)).unwrap_or_default()
 }
 
-fn payload_lifecycle_desc(payload: &daedalus_transport::Payload) -> String {
-    format!("Payload({})", payload.type_key())
-}
 #[cfg(all(feature = "lockfree-queues", target_has_atomic = "ptr"))]
 fn push_lockfree_with_policy(
     queue: &ArrayQueue<CorrelatedPayload>,
@@ -197,7 +194,7 @@ pub fn apply_policy_owned(args: ApplyPolicyOwnedArgs<'_>) -> Result<(), NodeErro
             None
         };
         let payload_desc = if cfg!(feature = "metrics") && telem.metrics_level.is_profile() {
-            Some(payload_lifecycle_desc(&payload.inner))
+            Some(telem.payload_text(payload.inner.type_key().as_str()))
         } else {
             None
         };

@@ -179,8 +179,10 @@ fn detector_graph_frame_allocation_budget() {
     // Every mode allocates only the payloads and the owned string clone per frame, at every level
     // up to `Hardware`, once the frame's telemetry is recycled (`drive_frame`). Parallel frames
     // fan out to parked workers that pull segments from one shared queue and record into
-    // telemetry the pool keeps, so a fan-out adds nothing either. `Profile` records
-    // data-lifecycle strings and is not budgeted (see `parallel_executors.rs`).
+    // telemetry the pool keeps, so a fan-out adds nothing either. `Profile` and `Trace` are not
+    // budgeted: the metadata-only adapter edge formats its step list, detail and port text on each
+    // lifecycle record (75 per frame at `Profile`). Without adapters they allocate nothing (see
+    // `parallel_executors.rs`).
     //
     // The metrics feature is on in the workspace's feature set (`engine-full`) and off in
     // `--features engine,plugins`; the rows hold in both.
