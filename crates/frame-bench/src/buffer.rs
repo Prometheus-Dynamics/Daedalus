@@ -311,7 +311,6 @@ mod other {
     #[derive(Clone, Copy)]
     pub(super) enum Access {
         Read,
-        ReadWrite,
     }
 
     pub(super) fn memfd(_len: usize) -> io::Result<i32> {
