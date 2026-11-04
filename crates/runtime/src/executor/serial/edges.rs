@@ -2,12 +2,13 @@
 
 use crate::handles::PortId;
 use crate::prelude::*;
-use daedalus_transport::{AdaptRequest, Payload};
+use daedalus_transport::{AdaptRequest, IdStr, Payload};
 
 use crate::io::NodePort;
 
 use crate::executor::queue::{ApplyPolicyOwnedArgs, apply_policy_owned, pop_edge};
 use crate::executor::serial_direct_slot::{pop_direct_edge, push_direct_edge};
+use crate::executor::telemetry::AdapterText;
 use crate::executor::{
     CorrelatedPayload, DataLifecycleRecord, DataLifecycleStage, ExecuteError, NodeError, ProbeCount,
 };
@@ -68,7 +69,7 @@ pub(super) fn collect_inputs(
                     v.core.telemetry.record_node_transport_in(node_idx, bytes);
                 }
                 if edge_adapts(v, edge_idx) {
-                    payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
+                    payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port)?;
                 }
                 inputs.push((to_port.clone(), payload));
                 if one_per_edge {
@@ -104,7 +105,7 @@ pub(super) fn collect_inputs(
                 v.core.telemetry.record_node_transport_in(node_idx, bytes);
             }
             if edge_adapts(v, edge_idx) {
-                payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port.as_str())?;
+                payload = adapt_edge_payload(v, edge_idx, payload, node_idx, to_port)?;
             }
             inputs.push((to_port.clone(), payload));
             if one_per_edge {
@@ -155,7 +156,7 @@ fn adapt_edge_payload(
     edge_idx: usize,
     payload: CorrelatedPayload,
     node_idx: usize,
-    port: &str,
+    port: &PortId,
 ) -> Result<CorrelatedPayload, ExecuteError> {
     let Some(edge_transport) = v.edge_transports.get(edge_idx).and_then(Option::as_ref) else {
         return Ok(payload);
@@ -183,24 +184,25 @@ fn adapt_edge_payload(
     request.exclusive = edge_transport.target_exclusive;
     request.residency = edge_transport.target_residency;
 
-    // Lifecycle records (profile/trace metrics only) carry formatted step and path text.
+    // Lifecycle records (profile/trace metrics only) name the path by its shared text.
     let collect_lifecycle = cfg!(feature = "metrics")
         && (v.core.run_config.metrics_level.is_profile()
             || v.core.run_config.metrics_level.is_trace());
-    let record = |v: &mut SerialView<'_>, stage, payload: &Payload, detail| {
+    let path = if collect_lifecycle {
+        v.core.telemetry.adapter_text(edge_idx, edge_transport)
+    } else {
+        AdapterText::default()
+    };
+    let record = |v: &mut SerialView<'_>, stage, payload: &Payload, detail: Option<IdStr>| {
         if !collect_lifecycle {
             return;
         }
         let mut lifecycle = DataLifecycleRecord::new(correlation_id, stage);
         lifecycle.node_idx = Some(node_idx);
         lifecycle.edge_idx = Some(edge_idx);
-        lifecycle.port = Some(PortId::new(port));
+        lifecycle.port = Some(port.clone());
         lifecycle.payload = Some(v.core.telemetry.payload_text(payload.type_key().as_str()));
-        lifecycle.adapter_steps = edge_transport
-            .adapter_steps
-            .iter()
-            .map(ToString::to_string)
-            .collect();
+        lifecycle.adapter_steps = path.steps.clone();
         lifecycle.detail = detail;
         v.core.telemetry.record_data_lifecycle(lifecycle);
     };
@@ -208,15 +210,13 @@ fn adapt_edge_payload(
         v,
         DataLifecycleStage::AdapterStart,
         &inner,
-        collect_lifecycle
-            .then(|| adapter_path_detail(edge_transport))
-            .flatten(),
+        path.detail.clone(),
     );
     crate::trace::debug!(
         target: "daedalus_runtime::transport",
         edge_index = edge_idx,
         node_index = node_idx,
-        port,
+        port = port.as_str(),
         source_type = %inner.type_key(),
         target_type = %request.target,
         target_residency = ?request.residency,
@@ -258,15 +258,13 @@ fn adapt_edge_payload(
                 v,
                 DataLifecycleStage::AdapterEnd,
                 &adapted,
-                collect_lifecycle
-                    .then(|| adapter_path_detail(edge_transport))
-                    .flatten(),
+                path.detail.clone(),
             );
             crate::trace::debug!(
                 target: "daedalus_runtime::transport",
                 edge_index = edge_idx,
                 node_index = node_idx,
-                port,
+                port = port.as_str(),
                 output_type = %adapted.type_key(),
                 "adapter path finished"
             );
@@ -282,7 +280,7 @@ fn adapt_edge_payload(
                 target: "daedalus_runtime::transport",
                 edge_index = edge_idx,
                 node_index = node_idx,
-                port,
+                port = port.as_str(),
                 error = %error,
                 "adapter path failed"
             );
@@ -291,7 +289,7 @@ fn adapt_edge_payload(
                     v,
                     DataLifecycleStage::AdapterError,
                     source,
-                    Some(error.to_string()),
+                    Some(IdStr::new(error.to_string())),
                 );
             }
             Err(ExecuteError::HandlerFailed {
@@ -304,26 +302,6 @@ fn adapt_edge_payload(
             })
         }
     }
-}
-
-fn adapter_path_detail(edge_transport: &crate::plan::RuntimeEdgeTransport) -> Option<String> {
-    if edge_transport.adapter_path.is_empty() && edge_transport.expected_adapter_cost.is_none() {
-        return None;
-    }
-    let steps = edge_transport
-        .adapter_path
-        .iter()
-        .map(|step| format!("{}:{:?}", step.adapter, step.kind))
-        .collect::<Vec<_>>()
-        .join(" -> ");
-    Some(format!(
-        "adapter_path=[{}]; expected_cost={}",
-        steps,
-        edge_transport
-            .expected_adapter_cost
-            .map(|cost| cost.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    ))
 }
 
 /// Deliver `node_idx`'s outputs to its edges; `fused` carries those of fused ports to the next

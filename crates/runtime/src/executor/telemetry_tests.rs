@@ -260,7 +260,9 @@ fn report_filter_uses_typed_transport_ids_without_changing_json_shape() {
     let mut record = super::DataLifecycleRecord::new(99, super::DataLifecycleStage::AdapterStart);
     record.port = Some(crate::handles::PortId::new("image"));
     record.payload = Some(daedalus_transport::IdStr::new("type=example:image bytes=4"));
-    record.adapter_steps = vec!["example.image.upload".to_string()];
+    record.adapter_steps = super::AdapterSteps::new(vec![daedalus_transport::AdapterId::new(
+        "example.image.upload",
+    )]);
     telemetry.record_data_lifecycle(record);
 
     let report = telemetry.report();
@@ -574,7 +576,7 @@ fn lifecycle_event_json_keeps_port_and_payload_text() {
         edge_idx: Some(2),
         port: Some(crate::handles::PortId::new("in")),
         payload: Some(daedalus_transport::IdStr::new("Payload(i64)")),
-        adapter_steps: Vec::new(),
+        adapter_steps: Default::default(),
         detail: None,
     };
     let json = serde_json::to_value(&event).expect("serialize");
@@ -586,4 +588,39 @@ fn lifecycle_event_json_keeps_port_and_payload_text() {
     );
     let back: DataLifecycleEvent = serde_json::from_value(json).expect("deserialize");
     assert_eq!(back, event);
+}
+
+/// An adapter record's JSON keeps its step ids as an array of strings and its detail as a string,
+/// the shapes a `Vec<String>` and an `Option<String>` wrote, and reads back to the same event.
+#[test]
+#[cfg(feature = "metrics")]
+fn lifecycle_event_json_keeps_adapter_steps_and_detail_text() {
+    use super::{AdapterSteps, DataLifecycleEvent, DataLifecycleStage};
+    use daedalus_transport::{AdapterId, IdStr};
+    let event = DataLifecycleEvent {
+        correlation_id: 8,
+        stage: DataLifecycleStage::AdapterEnd,
+        at_ns: 5,
+        node_idx: Some(0),
+        edge_idx: Some(1),
+        port: Some(crate::handles::PortId::new("frame")),
+        payload: Some(IdStr::new("Payload(bench:frame)")),
+        adapter_steps: AdapterSteps::new(vec![AdapterId::new("a.one"), AdapterId::new("a.two")]),
+        detail: Some(IdStr::new(
+            "adapter_path=[a.one:Metadata -> a.two:Copy]; expected_cost=3",
+        )),
+    };
+    let json = serde_json::to_string(&event).expect("serialize");
+    assert_eq!(
+        json,
+        concat!(
+            r#"{"correlation_id":8,"stage":"adapter_end","at_ns":5,"node_idx":0,"edge_idx":1,"#,
+            r#""port":"frame","payload":"Payload(bench:frame)","#,
+            r#""adapter_steps":["a.one","a.two"],"#,
+            r#""detail":"adapter_path=[a.one:Metadata -> a.two:Copy]; expected_cost=3"}"#
+        )
+    );
+    let back: DataLifecycleEvent = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back, event);
+    assert_eq!(back.adapter_steps.len(), 2);
 }

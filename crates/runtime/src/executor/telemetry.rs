@@ -5,6 +5,7 @@ use daedalus_core::platform::{Clock, Instant};
 use daedalus_planner::GroupMetadata;
 use daedalus_transport::IdStr;
 
+mod adapter_text;
 mod basics;
 mod dense;
 mod frame;
@@ -18,13 +19,16 @@ mod report;
 mod resources;
 mod summary;
 
+pub(crate) use adapter_text::AdapterText;
+use adapter_text::AdapterTexts;
 pub use basics::{Histogram, MetricsLevel, ProfileLevel, Profiler};
 use dense::DenseSlots;
 pub use frame::{EdgeAdapterClass, EdgeTickSample, FrameProbe, FrameTickSample};
 pub(crate) use frame::{ProbeCount, ProbeTime, TickStart};
 pub use frame_report::{EdgeOverheadStats, FrameOverheadReport, FrameOverheadWindow, FrameStat};
 pub use lifecycle::{
-    DataLifecycleEvent, DataLifecycleRecord, DataLifecycleStage, NodeFailure, TraceEvent,
+    AdapterSteps, DataLifecycleEvent, DataLifecycleRecord, DataLifecycleStage, NodeFailure,
+    TraceEvent,
 };
 pub use metrics::{
     CustomMetricValue, EdgeMetrics, EdgePressureMetrics, EdgePressureReason, FfiAdapterTelemetry,
@@ -101,6 +105,10 @@ pub struct ExecutionTelemetry {
     /// across runs, and not part of a telemetry's value.
     #[serde(skip)]
     payload_texts: PayloadTexts,
+    /// The adapter path texts lifecycle records share (see [`Self::adapter_text`]). Kept across
+    /// runs, and not part of a telemetry's value.
+    #[serde(skip)]
+    adapter_texts: AdapterTexts,
 }
 
 /// The lifecycle payload texts a telemetry has built, by type key.
@@ -189,8 +197,12 @@ impl ExecutionTelemetry {
                 node: event.node_idx,
                 port: event.port.as_ref().map(|port| port.as_str().to_string()),
                 correlation_id: event.correlation_id,
-                steps: event.adapter_steps.clone(),
-                detail: event.detail.clone(),
+                steps: event
+                    .adapter_steps
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                detail: event.detail.as_ref().map(ToString::to_string),
             })
             .collect();
         let skipped_nodes = self
@@ -356,6 +368,31 @@ impl ExecutionTelemetry {
             .0
             .insert(type_key.to_string(), text.clone());
         text
+    }
+
+    /// The adapter path text of `transport`, the path of edge `edge_idx`: built the first time
+    /// and cloned after that (see [`AdapterTexts`]).
+    pub(crate) fn adapter_text(
+        &mut self,
+        edge_idx: usize,
+        transport: &crate::plan::RuntimeEdgeTransport,
+    ) -> AdapterText {
+        self.adapter_texts.get(edge_idx, transport)
+    }
+
+    /// Build the adapter path texts of `transports` now, so the first lifecycle record of each
+    /// adapter edge does not build one.
+    pub(crate) fn reserve_adapter_texts(
+        &mut self,
+        transports: &[Option<crate::plan::RuntimeEdgeTransport>],
+    ) {
+        for (edge, transport) in transports.iter().enumerate() {
+            if let Some(transport) = transport
+                && !transport.adapter_steps.is_empty()
+            {
+                let _ = self.adapter_texts.get(edge, transport);
+            }
+        }
     }
 
     /// Size the per-index tables for a plan of `nodes` nodes and `edges` edges, so a telemetry

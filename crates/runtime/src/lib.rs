@@ -191,15 +191,16 @@ pub fn apply_node_prefix(prefix: &str, id: &str) -> String {
 pub use config::*;
 pub use daedalus_core::metadata::{EMBEDDED_GRAPH_KEY, EMBEDDED_HOST_KEY, NODE_OVERLOADS_KEY};
 pub use executor::{
-    AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleStage, DirectPayloadFn,
-    EdgeAdapterClass, EdgeOverheadStats, EdgePressureMetrics, EdgePressureReason, EdgeTickSample,
-    ExecuteError, ExecutionTelemetry, Executor, ExecutorMaskError, FfiAdapterTelemetry,
-    FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry, FfiTelemetryReport,
-    FfiWorkerTelemetry, FrameOverheadReport, FrameOverheadWindow, FrameProbe, FrameStat,
-    FrameTickSample, InternalTransferMetrics, MetricsLevel, NodeAllocationSpikeExplanation,
-    NodeError, NodeHandler, NodeMetrics, NodeMetricsMap, NodeResourceMetrics, OwnedExecutor,
-    OwnershipReport, ProfileLevel, Profiler, ResourceMetrics, TelemetryReport,
-    TelemetryReportFilter, estimate_payload_bytes, register_runtime_data_size_inspector,
+    AdapterPathReport, AdapterSteps, CustomMetricValue, DataLifecycleEvent, DataLifecycleStage,
+    DirectPayloadFn, EdgeAdapterClass, EdgeOverheadStats, EdgePressureMetrics, EdgePressureReason,
+    EdgeTickSample, ExecuteError, ExecutionTelemetry, Executor, ExecutorMaskError,
+    FfiAdapterTelemetry, FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry,
+    FfiTelemetryReport, FfiWorkerTelemetry, FrameOverheadReport, FrameOverheadWindow, FrameProbe,
+    FrameStat, FrameTickSample, InternalTransferMetrics, MetricsLevel,
+    NodeAllocationSpikeExplanation, NodeError, NodeHandler, NodeMetrics, NodeMetricsMap,
+    NodeResourceMetrics, OwnedExecutor, OwnershipReport, ProfileLevel, Profiler, ResourceMetrics,
+    TelemetryReport, TelemetryReportFilter, estimate_payload_bytes,
+    register_runtime_data_size_inspector,
 };
 pub use executor::{
     NODE_PRIORITY_META_KEY, NODE_RECOVERY_META_KEY, NodeRecovery, RecoveryTelemetry,

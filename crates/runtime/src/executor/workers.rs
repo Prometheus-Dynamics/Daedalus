@@ -79,11 +79,18 @@ impl WorkerPool {
     /// plan. A parallel run takes one per call and gives it back, so with these in place a run
     /// never creates one. Creating them lazily let an adaptive frame that first ran `workers`
     /// calls in parallel after serial frames allocate the missing ones inside the measured window.
-    pub(crate) fn reserve_telemetry(&self, workers: usize, nodes: usize, edges: usize) {
+    pub(crate) fn reserve_telemetry(
+        &self,
+        workers: usize,
+        nodes: usize,
+        edges: usize,
+        transports: &[Option<crate::plan::RuntimeEdgeTransport>],
+    ) {
         let mut kept = self.telemetry.lock();
         while kept.len() < workers {
             let mut telemetry = ExecutionTelemetry::default();
             telemetry.reserve_plan(nodes, edges);
+            telemetry.reserve_adapter_texts(transports);
             kept.push(telemetry);
         }
     }

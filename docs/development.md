@@ -533,7 +533,7 @@ connected and unconnected `Option<T>` inputs, two conditional producers, one of 
 emits so its consumer is skipped, fan-in, four host outputs) whose handlers allocate nothing,
 and asserts the allocations per frame in serial (metrics off through hardware), parallel and
 adaptive modes. The frame's telemetry is recycled (`drive_frame`). Serial, parallel and adaptive
-modes are all 9 per frame at every level up to `Hardware`, in both feature sets (`engine,plugins`,
+modes are all 9 per frame at every level up to `Trace`, in both feature sets (`engine,plugins`,
 and `engine-full` where `metrics` is on). Those 9 are the frame's payloads and one owned `String`
 clone, the same in serial and parallel: eight are `Arc` allocations, one per new node output or
 adapter result (`FrameInfo` and `Roi` twice each, and one each of `Histogram`, `Report`, `Stats`
@@ -550,7 +550,11 @@ allocates nothing either. The pool creates one telemetry per worker, sized to th
 executor is prepared (`prewarm_worker_pool`), so a parallel or adaptive frame that runs for the
 first time after warm-up takes one without allocating; each run's absorb then gives every pooled
 telemetry the union of the payload texts and reserves the run's record count, so a worker that a
-later frame gives most of the records does not grow its buffers. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`)
+later frame gives most of the records does not grow its buffers. `Profile` and `Trace` were 75 per
+frame: the metadata-only adapter edge formatted its step list, detail and port text on each
+lifecycle record. A record now names its path by an `AdapterText` built once per edge (and kept
+by each pooled telemetry), so those levels are 9 too. `engine,plugins` has no metrics, so its
+`Profile` and `Trace` rows hold trivially. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`)
 to print the allocations per call site, grouped by the first Daedalus frame and its callers.
 `cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame` times the same
 frame.

@@ -58,7 +58,7 @@ pub(crate) use schedule_compile::{
     resolve_parallel_workers,
 };
 pub use telemetry::{
-    AdapterPathReport, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
+    AdapterPathReport, AdapterSteps, CustomMetricValue, DataLifecycleEvent, DataLifecycleRecord,
     DataLifecycleStage, EdgeAdapterClass, EdgeMetrics, EdgeOverheadStats, EdgePressureMetrics,
     EdgePressureReason, EdgeTickSample, ExecutionTelemetry, FfiAdapterTelemetry,
     FfiBackendTelemetry, FfiPackageTelemetry, FfiPayloadTelemetry, FfiTelemetryReport,
@@ -348,7 +348,12 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
         let workers = self.parallel_workers();
         let pool = WorkerPool::get_or_init(&self.core.worker_pool, workers)?;
-        pool.reserve_telemetry(workers, self.nodes.len(), self.edges.len());
+        pool.reserve_telemetry(
+            workers,
+            self.nodes.len(),
+            self.edges.len(),
+            self.edge_transports,
+        );
         Ok(())
     }
 

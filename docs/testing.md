@@ -494,6 +494,13 @@ four, `Profile` and `Trace` included. The smoke crate enables `metrics`: before 
 and engine were built without it and the levels above `Off` recorded nothing. The table was
 measured with the feature on, and the not-recycled column with the telemetry dropped each tick.
 
+The detector-like frame (`cargo test -p daedalus-rs --features engine-full,plugins --test
+graph_frame_allocations`, 16 warm-up frames, 20 measured) is 9 allocations per frame in serial,
+parallel and adaptive modes at every metrics level up to `Trace`, the payloads and one owned
+`String` clone; the budget is exact. At `Profile` and `Trace` the adapter edge's records were 75
+per frame before the adapter text was shared. `engine,plugins` has no metrics, so those two
+levels hold there only trivially.
+
 ### CM5 run (2026-11-03): acquire fence waits
 
 v3dv samples only `UIF`, so the fence tests on dma-heap (`LINEAR`) frames skip there.

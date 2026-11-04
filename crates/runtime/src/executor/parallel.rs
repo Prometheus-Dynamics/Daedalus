@@ -76,7 +76,7 @@ where
         costs,
         priorities,
     );
-    pool.reserve_telemetry(workers, exec.nodes.len(), edges);
+    pool.reserve_telemetry(workers, exec.nodes.len(), edges, exec.edge_transports);
     {
         let shared: &Executor<'_, H> = exec;
         pool.fan_out(workers, &|| {

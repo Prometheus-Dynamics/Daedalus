@@ -1349,6 +1349,18 @@ plugin ABI and does not load.
     tests).
 
 ### Performance
+- **Adapter lifecycle records allocate nothing at `Profile` and `Trace`.** A record on an adapter
+  edge formatted its step list, its detail and its port text, 75 allocations per frame on the
+  detector graph (`graph_frame_allocations`), all on its metadata-only adapter edge. Now the path's
+  step ids and detail are built once per edge (`AdapterText`, kept by the telemetry and rebuilt if
+  the edge's path changes), a record clones handles, and pooled telemetries build theirs when the
+  pool is prewarmed. The detector frame is 9 per frame at `Profile` and `Trace` in serial and
+  parallel modes, as at every other level (the payloads and the owned `String` clone). The budget
+  rows are added, not loosened. Public API change: `DataLifecycleEvent::adapter_steps` and
+  `DataLifecycleRecord::adapter_steps` are now `AdapterSteps` (dereferences to `[AdapterId]`,
+  serializes as the same array of step ids), and `detail` is `Option<IdStr>` (serializes as the
+  same string), where both were `String`s. `AdapterPathReport` is unchanged. The JSON of a lifecycle
+  event is pinned by `lifecycle_event_json_keeps_adapter_steps_and_detail_text`.
 - **`Profile` and `Trace` allocate nothing per tick once telemetry is recycled.** Their lifecycle
   records shared a `String` port and a formatted `Payload(..)` text per event, so each event
   allocated (7 per tick on the no_std smoke graph, recycled). A record now clones the port's name,

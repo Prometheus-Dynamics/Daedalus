@@ -177,15 +177,15 @@ const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
 #[test]
 fn detector_graph_frame_allocation_budget() {
     // Every mode allocates only the payloads and the owned string clone per frame, at every level
-    // up to `Hardware`, once the frame's telemetry is recycled (`drive_frame`). Parallel frames
-    // fan out to parked workers that pull segments from one shared queue and record into
-    // telemetry the pool keeps, so a fan-out adds nothing either. `Profile` and `Trace` are not
-    // budgeted: the metadata-only adapter edge formats its step list, detail and port text on each
-    // lifecycle record (75 per frame at `Profile`). Without adapters they allocate nothing (see
-    // `parallel_executors.rs`).
+    // up to `Trace`, once the frame's telemetry is recycled (`drive_frame`). Parallel frames fan
+    // out to parked workers that pull segments from one shared queue and record into telemetry the
+    // pool keeps, so a fan-out adds nothing either. At `Profile` and `Trace` the metadata-only
+    // adapter edge names its path by a text built once per edge (`AdapterText`), so its lifecycle
+    // records add nothing either (75 per frame before that).
     //
     // The metrics feature is on in the workspace's feature set (`engine-full`) and off in
-    // `--features engine,plugins`; the rows hold in both.
+    // `--features engine,plugins`, where the `Profile` and `Trace` rows record nothing and so hold
+    // trivially; the other rows hold in both.
     for (mode, metrics, budget) in [
         (RuntimeMode::Serial, MetricsLevel::Off, SERIAL_BUDGET),
         (RuntimeMode::Serial, MetricsLevel::Basic, SERIAL_BUDGET),
@@ -199,6 +199,10 @@ fn detector_graph_frame_allocation_budget() {
         (RuntimeMode::Parallel, MetricsLevel::Hardware, SERIAL_BUDGET),
         (RuntimeMode::Adaptive, MetricsLevel::Off, SERIAL_BUDGET),
         (RuntimeMode::Adaptive, MetricsLevel::Basic, SERIAL_BUDGET),
+        (RuntimeMode::Serial, MetricsLevel::Profile, SERIAL_BUDGET),
+        (RuntimeMode::Serial, MetricsLevel::Trace, SERIAL_BUDGET),
+        (RuntimeMode::Parallel, MetricsLevel::Profile, SERIAL_BUDGET),
+        (RuntimeMode::Parallel, MetricsLevel::Trace, SERIAL_BUDGET),
     ] {
         let per_frame = allocations_per_frame(mode.clone(), metrics);
         assert!(

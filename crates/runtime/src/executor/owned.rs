@@ -154,7 +154,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
         let workers = self.parallel_workers();
         let pool = super::WorkerPool::get_or_init(&self.core.worker_pool, workers)?;
-        pool.reserve_telemetry(workers, self.nodes.len(), self.plan.edges.len());
+        pool.reserve_telemetry(
+            workers,
+            self.nodes.len(),
+            self.plan.edges.len(),
+            &self.plan.edge_transports,
+        );
         Ok(())
     }
 

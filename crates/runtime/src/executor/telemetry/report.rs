@@ -114,7 +114,7 @@ impl TelemetryReport {
                 event
                     .adapter_steps
                     .iter()
-                    .any(|step| step == adapter_id.as_str())
+                    .any(|step| step.as_str() == adapter_id.as_str())
             });
             self.adapter_paths
                 .retain(|path| path.steps.iter().any(|step| step == adapter_id.as_str()));
