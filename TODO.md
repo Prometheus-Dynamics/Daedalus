@@ -46,20 +46,21 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       **Measured:** 9 per frame: 8 node outputs the runtime wraps (`FrameInfo` x2, `Roi` x2,
       `Histogram`, `Stats`, `Track`, `Report`), and `exposure`'s owned `String` parameter, which is
       the node's.
-- [ ] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
+- [x] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
       `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
-      move onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays until `crates/rga` goes to
+      moved onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays until `crates/rga` goes to
       Lemnos.
-      **Why:** Lemnos owns device access.
-      **Done when:** none of the three opens `/dev/dma_heap` itself.
-      **Blocked by:** the payload allocations.
-      **Measured:** not applicable.
+      **Done (2026-11-04):** allocation, sync and mapping go through Lemnos. Two things stay:
+      `gpu_probe`'s per-heap report still opens each heap read-write itself, because that open is
+      what it reports and Lemnos's `open_path` is read-only; and `frame-bench`'s dma-buf mapping is
+      now writable, because Lemnos's `DmaBuf::map` is. `frame_chain` was not re-measured.
 - [ ] **[board]** **What:** the stable-path bench on Raze #1 (CM5), under
       `flock /run/lock/raze-gpu.lock`, no slot changes: cost per constant, a `Detections`-shaped
       crossing at 0, 4 and 16 tags, a prototype plugin-local handle, and a 12-node chain.
       **Why:** it replaces the weakest estimates in the audit of running Eidos on the stable path.
       **Done when:** the numbers are reported against the estimates.
-      **Blocked by:** the items above. The bench is being written meanwhile, off the board.
+      **Blocked by:** the payload allocations, so it measures the final runtime. The bench is
+      written and cross-built, on a local branch.
       **Measured:** none on the CM5. Estimates: 20-50 µs per frame with handles on every edge,
       10-80 µs more with constants sent on every call.
 
