@@ -2,14 +2,20 @@
 //! frame spawns no threads and allocates nothing to dispatch work.
 
 use crate::prelude::*;
+use crate::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 
-use super::{ExecuteError, NodeError};
+use super::{ExecuteError, ExecutionTelemetry, MetricsLevel, NodeError};
+use daedalus_core::platform::{Clock, Instant};
 
 /// Calls `work` on up to `workers` threads at once ([`WorkerPool::fan_out`]); each call pulls
 /// segments from a shared queue until the run drains.
 pub(crate) struct WorkerPool {
     helpers: parked::Helpers,
+    /// Telemetry the workers record into, kept between runs: a worker takes one and gives it
+    /// back, and the run absorbs them all, leaving each zeroed with its storage. At most one per
+    /// concurrent call, so the list never grows past `workers` (its capacity).
+    telemetry: Mutex<Vec<ExecutionTelemetry>>,
 }
 
 impl WorkerPool {
@@ -34,7 +40,44 @@ impl WorkerPool {
             })?;
         // Returns once every helper has started and stocked its port-buffer pool, then parked.
         helpers.warm_all(&crate::io::prewarm_port_buffers);
-        Ok(Self { helpers })
+        Ok(Self {
+            helpers,
+            telemetry: Mutex::new(Vec::with_capacity(workers)),
+        })
+    }
+
+    /// A worker's telemetry for a run at `level` over `edges` edges, timed by `clock` from the
+    /// run's `origin`: a kept one (its storage reused), or a new one before the pool has as many
+    /// as its calls need. A kept one may already hold this run's counts (a worker that finished
+    /// gave its telemetry back for the next worker of the run), so it is not zeroed here: the run
+    /// absorbs every kept telemetry once all its workers are done, which zeroes them.
+    pub(crate) fn take_telemetry(
+        &self,
+        clock: &Clock,
+        level: MetricsLevel,
+        origin: Option<Instant>,
+        edges: usize,
+    ) -> ExecutionTelemetry {
+        let kept = self.telemetry.lock().pop();
+        let mut telemetry = kept.unwrap_or_else(|| {
+            let mut telemetry = ExecutionTelemetry::default();
+            telemetry.reserve_edges(edges);
+            telemetry
+        });
+        telemetry.begin_pooled_run(clock, level, origin);
+        telemetry
+    }
+
+    /// Keep a worker's telemetry for the next run.
+    pub(crate) fn give_telemetry(&self, telemetry: ExecutionTelemetry) {
+        self.telemetry.lock().push(telemetry);
+    }
+
+    /// Fold every kept worker's telemetry into `target`, zeroing them but keeping their storage.
+    pub(crate) fn absorb_telemetry(&self, target: &mut ExecutionTelemetry) {
+        for telemetry in self.telemetry.lock().iter_mut() {
+            target.absorb(telemetry);
+        }
     }
 
     /// Run `work` on `workers` threads concurrently (fewer when the pool is smaller) and return

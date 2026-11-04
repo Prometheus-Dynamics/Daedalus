@@ -173,34 +173,30 @@ const OWNED_STRING_CLONE: f64 = 1.0;
 /// allocate nothing else, so everything beyond the payloads is runtime bookkeeping, which must
 /// stay at zero.
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
-/// Parallel frames fan out to persistent parked workers that pull segments from one shared
-/// queue: no task, channel or thread per frame. What remains is amortized (a node's first run on
-/// a worker grows that thread's port buffers). Adaptive mode runs this graph serially in
-/// optimized builds; unoptimized, its nodes are slow enough to go parallel.
-const PARALLEL_ALLOCATIONS: f64 = 0.0;
 
 #[test]
 fn detector_graph_frame_allocation_budget() {
-    // Serial mode allocates nothing per frame at every level up to `Hardware` once the frame's
-    // telemetry is recycled (`drive_frame`); `Profile` records data-lifecycle strings and is not
-    // budgeted. A parallel fan-out at `Basic` and above is not budgeted: its worker snapshots
-    // build their own node tables each frame (16 allocations on this graph).
+    // Every mode allocates only the payloads and the owned string clone per frame, at every level
+    // up to `Hardware`, once the frame's telemetry is recycled (`drive_frame`). Parallel frames
+    // fan out to parked workers that pull segments from one shared queue and record into
+    // telemetry the pool keeps, so a fan-out adds nothing either. `Profile` records
+    // data-lifecycle strings and is not budgeted (see `parallel_executors.rs`).
+    //
+    // The metrics feature is on in the workspace's feature set (`engine-full`) and off in
+    // `--features engine,plugins`; the rows hold in both.
     for (mode, metrics, budget) in [
         (RuntimeMode::Serial, MetricsLevel::Off, SERIAL_BUDGET),
         (RuntimeMode::Serial, MetricsLevel::Basic, SERIAL_BUDGET),
         (RuntimeMode::Serial, MetricsLevel::Timing, SERIAL_BUDGET),
         (RuntimeMode::Serial, MetricsLevel::Detailed, SERIAL_BUDGET),
         (RuntimeMode::Serial, MetricsLevel::Hardware, SERIAL_BUDGET),
-        (
-            RuntimeMode::Parallel,
-            MetricsLevel::Off,
-            SERIAL_BUDGET + PARALLEL_ALLOCATIONS,
-        ),
-        (
-            RuntimeMode::Adaptive,
-            MetricsLevel::Off,
-            SERIAL_BUDGET + PARALLEL_ALLOCATIONS,
-        ),
+        (RuntimeMode::Parallel, MetricsLevel::Off, SERIAL_BUDGET),
+        (RuntimeMode::Parallel, MetricsLevel::Basic, SERIAL_BUDGET),
+        (RuntimeMode::Parallel, MetricsLevel::Timing, SERIAL_BUDGET),
+        (RuntimeMode::Parallel, MetricsLevel::Detailed, SERIAL_BUDGET),
+        (RuntimeMode::Parallel, MetricsLevel::Hardware, SERIAL_BUDGET),
+        (RuntimeMode::Adaptive, MetricsLevel::Off, SERIAL_BUDGET),
+        (RuntimeMode::Adaptive, MetricsLevel::Basic, SERIAL_BUDGET),
     ] {
         let per_frame = allocations_per_frame(mode.clone(), metrics);
         assert!(

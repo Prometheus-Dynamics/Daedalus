@@ -382,7 +382,10 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         let _scope = super::runtime_alloc_scope();
         let tick = self.begin_probe_tick();
         self.reset_for_run();
+        // The run records into this executor's recycled telemetry and returns it, as a serial run.
+        let telemetry = core::mem::take(&mut self.core.telemetry);
         let mut exec = self.snapshot(DirectSlotAccess::Shared);
+        exec.core.telemetry = telemetry;
         let res = run_parallel_on(&mut exec);
         drop(exec);
         self.end_probe_tick(tick);
@@ -410,7 +413,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         } else {
             DirectSlotAccess::Serial
         };
+        let telemetry = core::mem::take(&mut self.core.telemetry);
         let mut exec = self.snapshot(access);
+        exec.core.telemetry = telemetry;
         let res = run_adaptive_on(&mut exec, &mut adaptive, parallel, workers);
         drop(exec);
         self.end_probe_tick(tick);

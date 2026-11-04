@@ -114,7 +114,8 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         }
         let mut exec = self.snapshot(DirectSlotAccess::Serial);
         exec.core.run_config.active_direct_edges = Some(route.active_direct_edges.clone());
-        let telemetry = serial::run_order(&mut exec, self.plan.schedule_order.as_slice());
+        let telemetry =
+            serial::run_order_telemetry(&mut exec, self.plan.schedule_order.as_slice(), false);
         if telemetry.is_err() {
             self.storage_needs_reset = true;
         }

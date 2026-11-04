@@ -1306,6 +1306,13 @@ plugin ABI and does not load.
 
 ### Performance
 
+- **A parallel fan-out allocates nothing per frame.** Each worker records into a telemetry the
+  worker pool keeps, and the run absorbs them into the owned executor's recycled telemetry; a
+  parallel or adaptive run takes that telemetry in place of a fresh one. The detector frame
+  (`graph_frame_allocations`) went from 25 allocations per frame at `Basic` in parallel mode to 9,
+  the frame's payloads and one owned string clone that serial frames allocate too, at every level
+  up to `Hardware` and in both feature sets. Each row of the budget is 9, with no budget loosened:
+  the `Parallel` and `Adaptive` rows at `Basic` are back.
 - **Primitive payloads allocate nothing.** `Payload::owned` holds the integers, floats, `bool`,
   `char` and `()` inline instead of in an `Arc` (a `Payload` is 184 bytes, 8 more than before).
   A steady-state tick of the no_std smoke graph (`examples/nostd_smoke`, `i64` in and out) now
@@ -1562,6 +1569,13 @@ for every item below, for upgrades from 2.0.0 and from pre-release `dev` commits
   `daedalus::signature<F>()` registration option.
 
 ### Fixed
+
+- **Parallel runs count each group once.** A parallel run added each segment's node metrics to
+  their groups, then added them again over the merged run, so a group's `calls` and
+  `total_duration` came out twice the serial run's (4 calls against 2 for a two-node group). A
+  parallel run now aggregates its groups once, as a serial run does. Test:
+  `crates/runtime/tests/it/parallel_telemetry.rs`, which runs grouped ticks in parallel and
+  serially and compares them tick by tick.
 
 - **`Payload::to_foreign_handle` no longer has undefined behaviour for a shared owner value.** A
   `provide_foreign` payload over an `Arc<T>` built the handle's `Arc` from `&self`, whose provenance

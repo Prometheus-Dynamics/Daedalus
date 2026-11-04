@@ -529,12 +529,22 @@ a five-input node, a metadata-only adapter edge,
 connected and unconnected `Option<T>` inputs, two conditional producers, one of which never
 emits so its consumer is skipped, fan-in, four host outputs) whose handlers allocate nothing,
 and asserts the allocations per frame in serial (metrics off through hardware), parallel and
-adaptive modes. The frame's telemetry is recycled (`drive_frame`); serial mode is 9 at every
-level up to `Hardware`, the same as with metrics off. A parallel fan-out at `Basic` and above is
-not zero yet: each fan-out's worker snapshots build their own node-metrics tables and per-segment
-telemetry, which the recycled telemetry does not reach (25 per frame on this graph at `Basic`,
-9 at `Off`). Reusing them needs the worker pool to keep per-worker telemetry across frames. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`) to print them per
-call site, grouped by the first Daedalus frame and its callers.
+adaptive modes. The frame's telemetry is recycled (`drive_frame`). Serial, parallel and adaptive
+modes are all 9 per frame at every level up to `Hardware`, in both feature sets (`engine,plugins`,
+and `engine-full` where `metrics` is on). Those 9 are the frame's payloads and one owned `String`
+clone, the same in serial and parallel: eight are `Arc` allocations, one per new node output or
+adapter result (`FrameInfo` and `Roi` twice each, and one each of `Histogram`, `Report`, `Stats`
+and `Track`), and one is the `String` clone of `exposure`'s owned constant. They are payload
+storage, not fan-out overhead, so they stay.
+
+A parallel fan-out used to add 16 per frame at `Basic` and above (25 in all): each segment built
+a fresh telemetry that was merged afresh, and each worker snapshot built its own node tables. The
+worker pool now keeps per-worker telemetry (`WorkerPool::take_telemetry`): a worker records into
+its kept telemetry, the run absorbs them all into the owned executor's recycled one
+(`ExecutionTelemetry::absorb`), and the run hands that back as a serial run does. Each kept
+telemetry has an entry for every edge, so a worker that a later frame hands another edge to
+allocates nothing either. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`)
+to print the allocations per call site, grouped by the first Daedalus frame and its callers.
 `cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame` times the same
 frame.
 

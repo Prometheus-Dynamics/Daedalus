@@ -78,10 +78,7 @@ pub(crate) fn run_with_boundaries_timed<H: NodeHandler>(
         probe.add_time(ProbeTime::Inject, exec.core.clock.elapsed(start));
     }
     let order = exec.schedule_order;
-    run_order_timed(exec, order, costs, true).map(|mut telemetry| {
-        telemetry.recompute_unattributed_runtime_duration();
-        telemetry
-    })
+    run_order_telemetry_timed(exec, order, costs, true)
 }
 
 /// Per-segment wall-time accumulators (ns) and the segment of each node.
@@ -90,30 +87,53 @@ pub(crate) struct SegmentCosts<'c> {
     pub(crate) costs: &'c mut [u64],
 }
 
-/// Run `order` on `exec`, leaving its host outputs queued: a parallel worker's segments, or a
-/// direct host route that takes its output itself.
+/// Run `order` on `exec`, leaving its host outputs queued, and add its telemetry to the
+/// executor's: a parallel worker runs several segments this way, then its telemetry is taken once.
 pub(crate) fn run_order<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
-) -> Result<ExecutionTelemetry, ExecuteError> {
+) -> Result<(), ExecuteError> {
     run_order_timed(exec, order, None, false)
 }
 
-/// [`run_order`] for the whole tick: the host outputs it produced are drained into its telemetry.
-#[cfg(feature = "threads")]
-pub(crate) fn run_order_draining<H: NodeHandler>(
+/// [`run_order`] as a whole run: its telemetry is finished and taken. With `drain_outputs`, the
+/// host outputs it produced are drained into that telemetry first.
+pub(crate) fn run_order_telemetry<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
+    drain_outputs: bool,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
-    run_order_timed(exec, order, None, true)
+    run_order_telemetry_timed(exec, order, None, drain_outputs)
 }
 
+fn run_order_telemetry_timed<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    order: &[daedalus_planner::NodeRef],
+    costs: Option<SegmentCosts<'_>>,
+    drain_outputs: bool,
+) -> Result<ExecutionTelemetry, ExecuteError> {
+    run_order_timed(exec, order, costs, drain_outputs)?;
+    Ok(finish_telemetry(&mut exec.core))
+}
+
+/// Finish the telemetry a run recorded into `core`: its unattributed time, its group totals (once,
+/// over the nodes the run recorded), and take it, keeping the metrics level for the next run.
+pub(crate) fn finish_telemetry(core: &mut ExecutorCore) -> ExecutionTelemetry {
+    core.telemetry.recompute_unattributed_runtime_duration();
+    core.telemetry.aggregate_group_ids(&core.node_groups);
+    let level = core.telemetry.metrics_level;
+    let telemetry = core::mem::take(&mut core.telemetry);
+    core.telemetry.metrics_level = level;
+    telemetry
+}
+
+/// Run `order` on `exec`'s core, adding to its telemetry (not finished, see [`finish_telemetry`]).
 fn run_order_timed<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
     mut costs: Option<SegmentCosts<'_>>,
     drain_outputs: bool,
-) -> Result<ExecutionTelemetry, ExecuteError> {
+) -> Result<(), ExecuteError> {
     let handler = Arc::clone(&exec.handler);
     let nodes = Arc::clone(&exec.nodes);
     let schedule_fusion = exec.schedule.fusion.clone();
@@ -402,26 +422,25 @@ fn run_order_timed<H: NodeHandler>(
     }
 
     if let Some(graph_start) = graph_start {
-        v.core.telemetry.graph_duration = clock.elapsed(graph_start);
+        // The longest segment's time for a parallel worker, which runs several segments on one
+        // telemetry: the merged run keeps the longest.
+        v.core.telemetry.graph_duration = v
+            .core
+            .telemetry
+            .graph_duration
+            .max(clock.elapsed(graph_start));
     }
-    // Before the telemetry is taken: the queue waits of the outputs this tick hands to the host
+    // Before the telemetry is finished: the queue waits of the outputs this tick hands to the host
     // belong to this tick's telemetry, and a recycled telemetry would drop them otherwise.
     if drain_outputs {
         host_io::drain(&mut v);
     }
-    v.core.telemetry.recompute_unattributed_runtime_duration();
-    v.core.telemetry.aggregate_group_ids(&v.core.node_groups);
-
     if v.core.run_config.fail_fast
         && let Some(error) = first_error
     {
         return Err(error);
     }
-    // A parallel worker runs several segments on one snapshot: what it leaves keeps the level.
-    let level = v.core.telemetry.metrics_level;
-    let telemetry = core::mem::take(&mut v.core.telemetry);
-    v.core.telemetry.metrics_level = level;
-    Ok(telemetry)
+    Ok(())
 }
 
 fn node_is_active(v: &SerialView<'_>, node_idx: usize) -> bool {

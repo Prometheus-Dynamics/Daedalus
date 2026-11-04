@@ -304,6 +304,76 @@ impl ExecutionTelemetry {
         }
     }
 
+    /// The run's lifecycle origin (see [`Self::begin_pooled_run`]).
+    pub(crate) fn lifecycle_origin(&self) -> Option<Instant> {
+        self.lifecycle_origin
+    }
+
+    /// Start a run on a telemetry the worker pool keeps: its clock, metrics level and lifecycle
+    /// origin are the run's, and what it already holds is kept (see [`Self::absorb`]).
+    pub(crate) fn begin_pooled_run(
+        &mut self,
+        clock: &Clock,
+        level: MetricsLevel,
+        origin: Option<Instant>,
+    ) {
+        self.set_clock(clock.clone());
+        self.metrics_level = if cfg!(feature = "metrics") {
+            level
+        } else {
+            MetricsLevel::Off
+        };
+        self.lifecycle_origin = origin;
+    }
+
+    /// Give each of `edges` edge indices an empty entry, so a worker that records into any of them
+    /// allocates nothing: a telemetry the pool hands to another worker keeps its entries.
+    pub(crate) fn reserve_edges(&mut self, edges: usize) {
+        for edge in 0..edges {
+            self.edge_metrics.entry(edge).or_default();
+        }
+    }
+
+    /// Fold `other`, a worker's telemetry for the run in progress, into this run's telemetry, and
+    /// zero `other` while keeping its storage. [`Self::merge`] folds an owned telemetry instead,
+    /// and reads the same as this.
+    pub(crate) fn absorb(&mut self, other: &mut ExecutionTelemetry) {
+        self.nodes_executed += core::mem::take(&mut other.nodes_executed);
+        self.cpu_segments += core::mem::take(&mut other.cpu_segments);
+        self.gpu_segments += core::mem::take(&mut other.gpu_segments);
+        self.gpu_fallbacks += core::mem::take(&mut other.gpu_fallbacks);
+        self.backpressure_events += core::mem::take(&mut other.backpressure_events);
+        self.backpressure_deferrals += core::mem::take(&mut other.backpressure_deferrals);
+        self.warnings.append(&mut other.warnings);
+        self.errors.append(&mut other.errors);
+        self.graph_duration = self
+            .graph_duration
+            .max(core::mem::take(&mut other.graph_duration));
+        self.unattributed_runtime_duration = self
+            .unattributed_runtime_duration
+            .saturating_add(core::mem::take(&mut other.unattributed_runtime_duration));
+        self.metrics_level = self.metrics_level.max(other.metrics_level);
+        for (node, metrics) in other.node_metrics.take_present() {
+            self.node_metrics.entry(node).merge(metrics);
+        }
+        // Only the edges the worker recorded into; the rest are zeroed by `reset_for_run`.
+        for (edge, metrics) in other.edge_metrics.iter_mut() {
+            if other.edge_touched.get(*edge).is_some() {
+                let metrics = core::mem::take(metrics);
+                self.edge_entry(*edge).merge(metrics);
+            }
+        }
+        other.edge_touched.clear();
+        if let Some(trace) = other.trace.as_mut() {
+            self.trace.get_or_insert_with(Vec::new).append(trace);
+        }
+        self.data_lifecycle.append(&mut other.data_lifecycle);
+        self.ffi.merge(core::mem::take(&mut other.ffi));
+        if let Some(recovery) = other.recovery.take() {
+            self.recovery_mut().merge(*recovery);
+        }
+    }
+
     pub fn record_ffi(&mut self, ffi: FfiTelemetryReport) {
         if !cfg!(feature = "metrics") {
             return;

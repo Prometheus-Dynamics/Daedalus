@@ -15,6 +15,8 @@ mod node_error;
 mod node_io_ports;
 mod order_property;
 mod parallel_invariants;
+#[cfg(all(feature = "metrics", feature = "threads"))]
+mod parallel_telemetry;
 mod plugin_system;
 mod policies;
 mod resilience;

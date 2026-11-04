@@ -517,3 +517,45 @@ fn merge_combines_ffi_telemetry() {
     assert_eq!(backend.bytes_sent, 30);
     assert_eq!(report.ffi.payloads.handles_created, 1);
 }
+
+/// A pooled worker telemetry that finished gave its counts back, and the next worker of the same
+/// run takes it: beginning the run keeps those counts, and absorbing the run's telemetries moves
+/// every count into the run's once and zeroes them.
+#[test]
+#[cfg(feature = "metrics")]
+fn pooled_telemetry_keeps_its_counts_when_the_next_worker_begins_the_run() {
+    let clock = daedalus_core::platform::Clock::default();
+    let mut first = ExecutionTelemetry::default();
+    first.begin_pooled_run(&clock, MetricsLevel::Basic, None);
+    first.nodes_executed = 9;
+    first.record_node_duration(3, Duration::from_micros(5));
+    first.edge_entry(2).samples = 4;
+    first.errors.push(super::NodeFailure {
+        node_idx: 3,
+        node_id: "n".into(),
+        code: "c".into(),
+        message: "m".into(),
+    });
+
+    // The second worker of the same run begins on the same telemetry.
+    first.begin_pooled_run(&clock, MetricsLevel::Basic, None);
+    assert_eq!(
+        first.nodes_executed, 9,
+        "a run's counts survive the next worker"
+    );
+    assert_eq!(first.node_metrics.get(3).map(|m| m.calls), Some(1));
+
+    let mut run = ExecutionTelemetry::default();
+    run.absorb(&mut first);
+    assert_eq!(run.nodes_executed, 9);
+    assert_eq!(run.node_metrics.get(3).map(|m| m.calls), Some(1));
+    assert_eq!(run.edge_metrics[&2].samples, 4);
+    assert_eq!(run.errors.len(), 1);
+    assert_eq!(
+        first.nodes_executed, 0,
+        "absorbing zeroes the worker's counts"
+    );
+    assert!(first.node_metrics.is_empty());
+    assert!(first.edge_metrics[&2] == super::EdgeMetrics::default());
+    assert!(first.errors.is_empty());
+}

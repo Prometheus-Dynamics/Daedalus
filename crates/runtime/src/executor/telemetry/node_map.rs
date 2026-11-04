@@ -72,6 +72,14 @@ impl NodeMetricsMap {
         self.values().next().is_none()
     }
 
+    /// Move every entry out, in index order: the table keeps its size, with the slots empty.
+    pub(crate) fn take_present(&mut self) -> impl Iterator<Item = (usize, NodeMetrics)> + '_ {
+        self.slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| Some((idx, slot.take()?)))
+    }
+
     /// Remove every entry, keeping the allocation.
     pub fn clear(&mut self) {
         self.slots.fill_with(|| None);

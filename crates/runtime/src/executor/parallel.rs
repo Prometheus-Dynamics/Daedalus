@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 use super::{
     CompiledSegmentGraph, DirectSlotAccess, ExecuteError, ExecutionTelemetry, Executor,
-    NodeHandler, WorkerPool, panic_message, segment_failure, serial,
+    NodeFailure, NodeHandler, WorkerPool, panic_message, segment_failure, serial,
 };
 
 /// Per-run segment bookkeeping; inline for graphs up to 32 segments, so a run allocates none.
@@ -34,6 +34,9 @@ impl SegmentPriorities<'_> {
 /// Also returns the segment time of the busiest thread (the one that ran the most segment work
 /// this frame, the calling thread included), which bounds the frame's wall time from below.
 ///
+/// Each worker records into a telemetry the pool keeps, and the workers' telemetry is folded into
+/// the run's once they have all returned: a tick reuses the storage of the last one.
+///
 /// With fail-fast, the first segment error stops further scheduling; segments already running
 /// finish before the error is returned.
 pub(crate) fn run<H>(
@@ -49,11 +52,14 @@ where
     let workers = exec.core.parallel_workers.min(graph.width);
     if graph.ready_segments.is_empty() || workers <= 1 {
         let order = exec.schedule_order;
-        return serial::run_order_draining(exec, order).map(|telemetry| (telemetry, 0));
+        return serial::run_order_telemetry(exec, order, true).map(|telemetry| (telemetry, 0));
     }
 
     let pool = WorkerPool::get_or_init(&exec.core.worker_pool, workers)?;
-    let clock = costs.is_some().then(|| exec.core.clock.clone());
+    let clock = exec.core.clock.clone();
+    let level = exec.core.run_config.metrics_level;
+    let origin = exec.core.telemetry.lifecycle_origin();
+    let edges = exec.edges.len();
     let priorities = exec
         .core
         .run_config
@@ -66,7 +72,7 @@ where
     let queue = SegmentQueue::new(
         graph,
         exec.core.run_config.fail_fast,
-        clock,
+        costs.is_some().then(|| clock.clone()),
         costs,
         priorities,
     );
@@ -74,6 +80,7 @@ where
         let shared: &Executor<'_, H> = exec;
         pool.fan_out(workers, &|| {
             let mut worker = shared.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
+            worker.core.telemetry = pool.take_telemetry(&clock, level, origin, edges);
             queue.drain(|segment| {
                 let order = schedule
                     .segments
@@ -81,20 +88,18 @@ where
                     .map_or(&[][..], |segment| segment.nodes.as_slice());
                 serial::run_order(&mut worker, order)
             });
+            pool.give_telemetry(core::mem::take(&mut worker.core.telemetry));
         });
     }
-    let (telemetry, error, busiest) = queue.finish();
+    let (failures, error, busiest) = queue.finish();
+    // Every worker's telemetry folds into the run's, which is then finished and taken as one.
+    pool.absorb_telemetry(&mut exec.core.telemetry);
+    exec.core.telemetry.errors.extend(failures);
     serial::drain_host_outputs(exec);
     if let Some(error) = error {
         return Err(error);
     }
-    exec.core.telemetry.merge(telemetry);
-    exec.core
-        .telemetry
-        .recompute_unattributed_runtime_duration();
-    let groups = exec.core.node_groups.clone();
-    exec.core.telemetry.aggregate_group_ids(&groups);
-    Ok((core::mem::take(&mut exec.core.telemetry), busiest))
+    Ok((serial::finish_telemetry(&mut exec.core), busiest))
 }
 
 struct SegmentQueue<'g, 'c> {
@@ -120,7 +125,8 @@ struct QueueState<'c> {
     idle: usize,
     /// First error under fail-fast; stops scheduling.
     error: Option<ExecuteError>,
-    telemetry: ExecutionTelemetry,
+    /// Segments that failed without fail-fast: the run's errors.
+    failures: Vec<NodeFailure>,
     costs: Option<&'c mut [u64]>,
     /// Largest segment time (ns) any one thread's [`SegmentQueue::drain`] ran.
     busiest_ns: u64,
@@ -147,7 +153,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 completed: 0,
                 idle: 0,
                 error: None,
-                telemetry: ExecutionTelemetry::default(),
+                failures: Vec::new(),
                 costs,
                 busiest_ns: 0,
             }),
@@ -157,7 +163,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
 
     /// Pull and run ready segments until the run drains or fails fast. The segment time this
     /// thread runs is folded into `busiest_ns` on the way out.
-    fn drain(&self, mut run: impl FnMut(usize) -> Result<ExecutionTelemetry, ExecuteError>) {
+    fn drain(&self, mut run: impl FnMut(usize) -> Result<(), ExecuteError>) {
         let mut state = self.state.lock();
         let mut busy = 0u64;
         loop {
@@ -188,16 +194,13 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 *cost = nanos;
             }
             match result {
-                Ok(partial) => state.telemetry.merge(partial),
+                Ok(()) => {}
                 Err(error) if self.fail_fast => {
                     state.error.get_or_insert(error);
                     self.wake.notify_all();
                     break;
                 }
-                Err(error) => state
-                    .telemetry
-                    .errors
-                    .push(segment_failure(segment, &error)),
+                Err(error) => state.failures.push(segment_failure(segment, &error)),
             }
             state.unblock(self.graph, segment);
             let queued = state.ready.len() - state.next_ready;
@@ -213,7 +216,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
         state.busiest_ns = state.busiest_ns.max(busy);
     }
 
-    fn finish(self) -> (ExecutionTelemetry, Option<ExecuteError>, u64) {
+    fn finish(self) -> (Vec<NodeFailure>, Option<ExecuteError>, u64) {
         let state = self.state.into_inner();
         if state.error.is_none() && state.completed < self.graph.total_segments {
             crate::trace::debug!(
@@ -223,7 +226,7 @@ impl<'g, 'c> SegmentQueue<'g, 'c> {
                 "daedalus-runtime: parallel executor: incomplete schedule"
             );
         }
-        (state.telemetry, state.error, state.busiest_ns)
+        (state.failures, state.error, state.busiest_ns)
     }
 }
 
@@ -273,8 +276,8 @@ impl QueueState<'_> {
 
 fn run_segment(
     segment: usize,
-    run: &mut impl FnMut(usize) -> Result<ExecutionTelemetry, ExecuteError>,
-) -> Result<ExecutionTelemetry, ExecuteError> {
+    run: &mut impl FnMut(usize) -> Result<(), ExecuteError>,
+) -> Result<(), ExecuteError> {
     let _span = crate::trace::debug_span!(
         target: "daedalus_runtime::executor",
         "runtime_segment_run",
@@ -304,7 +307,7 @@ mod tests {
             completed: 0,
             idle: 0,
             error: None,
-            telemetry: ExecutionTelemetry::default(),
+            failures: Vec::new(),
             costs: None,
             busiest_ns: 0,
         }
