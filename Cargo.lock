@@ -929,6 +929,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-plugins-stable-bench"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-rs",
+]
+
+[[package]]
+name = "daedalus-plugins-stable-bench-counted"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-plugins-stable-bench",
+]
+
+[[package]]
 name = "daedalus-registry"
 version = "3.0.1-dev"
 dependencies = [
@@ -966,6 +980,7 @@ dependencies = [
  "daedalus-planner",
  "daedalus-plugins-example-project",
  "daedalus-plugins-stable-abi",
+ "daedalus-plugins-stable-bench",
  "daedalus-registry",
  "daedalus-runtime",
  "daedalus-transport",

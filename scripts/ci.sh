@@ -386,7 +386,8 @@ readonly PACKAGE_EXCLUDES=(--exclude daedalus-examples
   --exclude daedalus-mcu-blink --exclude daedalus-mcu-blink-nodes --exclude daedalus-mcu-shared
   --exclude daedalus-plugins-dependent --exclude daedalus-plugins-foreign-consumer
   --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi
-  --exclude daedalus-plugins-stable-abi-counted --exclude daedalus-plugins-gpu-submit
+  --exclude daedalus-plugins-stable-abi-counted --exclude daedalus-plugins-stable-bench
+  --exclude daedalus-plugins-stable-bench-counted --exclude daedalus-plugins-gpu-submit
   --exclude daedalus-frame-bench)
 
 cmd_package() {

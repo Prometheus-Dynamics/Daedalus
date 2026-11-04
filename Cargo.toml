@@ -36,6 +36,8 @@ members = [
     "examples/plugins/dependent",
     "examples/plugins/stable_abi",
     "examples/plugins/stable_abi_counted",
+    "examples/plugins/stable_bench",
+    "examples/plugins/stable_bench_counted",
     "crates/gpu/tests/plugin",
     "examples/wasm_smoke",
     "examples/nostd_smoke",
@@ -92,6 +94,7 @@ daedalus-mcu-blink = { path = "examples/mcu_blink", version = "3.0.1-dev" }
 daedalus-mcu-blink-nodes = { path = "examples/mcu_blink/nodes", version = "3.0.1-dev" }
 daedalus-plugins-example-project = { path = "examples/plugins/example_project" }
 daedalus-plugins-stable-abi = { path = "examples/plugins/stable_abi" }
+daedalus-plugins-stable-bench = { path = "examples/plugins/stable_bench" }
 ash = { version = "0.38", default-features = false, features = ["std"] }
 naga = { version = "30.0.1", default-features = false, features = ["wgsl-in", "spv-out"] }
 async-trait = "0.1.92"
