@@ -266,21 +266,25 @@ decides whether and how data moves; a compute device's own copies stay in its dr
 later NPU); Lemnos owns the DMA buffer basics and bus transfers. Overlap checked against the code
 on 2026-11-02, at f7e05ac.
 
-- [ ] **What:** one Vulkan device per process, shared with Styx's gpuisp.
+- [x] **What:** one Vulkan device per process, shared with Styx's gpuisp.
       **Why:** two devices in one process duplicate pipelines and memory and need cross-device
       sync.
       **Daedalus side, done (2026-11-03):** `shared_context` / `process_context` /
       `devices_created`; every engine with `GpuBackend::Device` takes the process's device
       (`tests/shared_device.rs`, `daedalus/tests/gpu_shared_device.rs`: two engines and a library,
       one device).
-      **Open:** Styx's `gpu_isp::context()` takes `shared_context` and builds
-      `GpuContext::from_daedalus` on it (the Styx session has the API); every submit on it under
-      `submit_lock()`, tests under sync validation.
+      **Styx side, done (2026-11-03):** Styx's `gpu_isp::context()` takes `shared_context` and
+      builds `GpuContext::from_daedalus` on it; every submit on it goes through `RawSubmitter`,
+      under `submit_lock()`.
       **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a Styx
       test, and it passes on the Raze under VVL.
       **Measured:** Styx aa95fb4 takes `shared_context`. `crates/gpuisp/tests/one_device.rs` on
       Raze #2's V3D: `devices_created()==1`, 0 validation messages after Styx's `convert.comp`
-      fix (2026-11-03). Synthetic frame. Whether sync validation was on is not confirmed yet.
+      fix (2026-11-03). Synthetic frame. Sync validation confirmed on V3D with Debian's layer
+      1.4.309: `sync_hazard_control` reports one `SYNC-HAZARD-WRITE-AFTER-WRITE` with it on and
+      none with it off; `one_device` reports no hazard and no VUID, exit 0, one run each. The
+      control uses fill buffers, so it shows sync validation runs, not that it catches every
+      compute hazard.
 
 - [ ] **What:** an accelerator interface (load program, import buffers, submit, fence) for
       NPUs and custom accelerators.
