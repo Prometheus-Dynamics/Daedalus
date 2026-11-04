@@ -278,7 +278,9 @@ on 2026-11-02, at f7e05ac.
       `submit_lock()`, tests under sync validation.
       **Done when:** a Styx + Daedalus process creates exactly one device, asserted in a Styx
       test, and it passes on the Raze under VVL.
-      **Measured:** n/a.
+      **Measured:** Styx aa95fb4 takes `shared_context`. `crates/gpuisp/tests/one_device.rs` on
+      Raze #2's V3D: `devices_created()==1`, 0 validation messages after Styx's `convert.comp`
+      fix (2026-11-03). Synthetic frame. Whether sync validation was on is not confirmed yet.
 
 - [ ] **What:** an accelerator interface (load program, import buffers, submit, fence) for
       NPUs and custom accelerators.

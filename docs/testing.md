@@ -398,8 +398,10 @@ static C++ runtime) the dmabuf tests passed with sync validation and no validati
 all; `gpu_probe` printed its whole report, also clean, then segfaulted at process exit, under
 the layer only. Root cause (2026-10-30): a bare `vkCreateInstance` + `vkDestroyInstance` program
 segfaults the same way, so the crash is in that cross-built layer's static destructors, not in
-Daedalus, wgpu or v3dv; messages printed before exit are valid. A properly built layer avoids
-it: with Debian trixie's arm64 `vulkan-validationlayers` 1.4.309 (its `.so` and manifest copied
+Daedalus, wgpu or v3dv; messages printed before exit are valid. The fault is at an address in
+the unmapped layer, reached from libc's exit handlers: that layer imports `__cxa_atexit` but not
+`__cxa_finalize`, so its destructors outlive its `dlclose`. Pinning it with `LD_PRELOAD` gives
+exit 0 (2026-11-03, Styx's stack dump on the Raze). A properly built layer avoids it: with Debian trixie's arm64 `vulkan-validationlayers` 1.4.309 (its `.so` and manifest copied
 to a `/tmp` directory named by both `VK_LAYER_PATH` and `LD_LIBRARY_PATH`, since the manifest's
 `library_path` is a bare name), the dmabuf and raw Vulkan tests and `gpu_probe` all exit 0 on the
 Raze (2026-11-02). That run found one real error,
@@ -455,8 +457,11 @@ Styx's drop costs that time was not profiled in that run. A later run on Raze #2
 `SharedFdBacking`, and timed `BeBacking::drop`: `DMA_BUF_IOCTL_SYNC` end 18.5 µs, the pool return
 2.2 µs, 20.7 µs in all, averaged over 600 drops. There is no `munmap` on this path. The 600 drops
 were not explained (probably two per frame), and the field drops after `Drop::drop` and the total
-at the payload drop were not timed, so this does not account for the 33 to 37 µs exactly. Without
-the drop
+at the payload drop were not timed. Styx timed the ioctl alone on that board, on 1.5 MB buffers: a
+cached buffer attached to the device takes 20.7 µs p50 with nothing read and 35 µs after a full
+read, the driver's uncached buffers 0.24 µs, and a buffer with no device attached 0.25 µs, so a
+bench without an attachment reports nothing. The sync end after a read is the likely source of
+the 33 to 37 µs, though the two runs differ in revisions and no run timed both. Without the drop
 the runtime costs about 20 µs a tick for three nodes and about 52 µs for the staged graph's 22.
 
 `apriltag_mirror`, the same stages in process with synthetic frames, at 33791c9 and with
