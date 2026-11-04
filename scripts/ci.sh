@@ -474,7 +474,14 @@ cmd_pi() {
 readonly VVL_KNOWN='VUID-vkQueueSubmit-pWaitSemaphores-03238'
 
 cmd_vvl() {
-  local dir lib log="${CARGO_TARGET_DIR:-target}/vvl.log"
+  local dir lib log="${CARGO_TARGET_DIR:-target}/vvl.log" radv_icd=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json
+  # The loader's default device order can pick NVIDIA's proprietary driver (`~implicit~` below
+  # changes it), which closes a refused dmabuf fd itself (595.104.02; see docs/testing.md).
+  # Pin RADV, the documented run, unless the caller chose an ICD (an empty value counts as chosen).
+  if [[ -z "${VK_ICD_FILENAMES+x}" && -f "$radv_icd" ]]; then
+    export VK_ICD_FILENAMES="$radv_icd"
+    step "VK_ICD_FILENAMES unset: pinned the Vulkan loader to RADV ($radv_icd)"
+  fi
   if [[ -n "${VK_LAYER_PATH:-}" ]]; then
     local -a dirs
     IFS=: read -r -a dirs <<<"$VK_LAYER_PATH"

@@ -7,6 +7,7 @@ use std::time::Duration;
 use ash::{khr, vk};
 use wgpu::hal::{api::Vulkan, vulkan as hal_vk};
 
+use crate::wgpu_backend::dmabuf::settle_refused_fd;
 use crate::{ExternalImportError, GpuContextHandle};
 
 use super::GpuStorage;
@@ -272,6 +273,8 @@ unsafe fn import(
         }
         Err(err) => {
             destroy(None);
+            // SAFETY: the driver refused the import, so the fd is still ours to settle.
+            settle_refused_fd(instance, hal.raw_physical_device(), fd);
             return Err(failed("vkAllocateMemory (dmabuf import)", err));
         }
     };
@@ -287,6 +290,7 @@ unsafe fn import(
 #[cfg(test)]
 #[allow(clippy::print_stderr)] // skip reasons
 mod tests {
+    use std::io::{Seek, SeekFrom};
     use std::os::fd::OwnedFd;
     use std::time::Duration;
 
@@ -303,6 +307,27 @@ mod tests {
         }
         drop(map);
         Ok(buf.into_fd())
+    }
+
+    /// The driver refused the import of a `len`-byte dmabuf: skip, with the reason. NVIDIA's
+    /// proprietary driver (595.104.02) refuses some dma-heap fds with `ERROR_OUT_OF_DEVICE_MEMORY`.
+    /// The refusal must leave the caller's fd open and naming the same dmabuf, which is checked.
+    fn skip_refused(fd: &OwnedFd, len: u64, reason: &str) {
+        eprintln!("skipping: the driver refused the dmabuf import: {reason}");
+        let clone = fd
+            .try_clone()
+            .expect("the refused import closed the caller's fd");
+        let mut file = std::fs::File::from(clone);
+        assert_eq!(
+            file.seek(SeekFrom::End(0)).unwrap(),
+            len,
+            "the fd still names the dmabuf"
+        );
+    }
+
+    /// The driver's refusal of a dmabuf import (`vkAllocateMemory`), as opposed to a bad request.
+    fn refused(err: &ExternalImportError) -> bool {
+        matches!(err, ExternalImportError::ImportFailed { reason } if reason.starts_with("vkAllocateMemory"))
     }
 
     #[test]
@@ -337,6 +362,9 @@ mod tests {
             Err(ExternalImportError::Unsupported { reason }) => {
                 return eprintln!("skipping: {reason}");
             }
+            Err(err) if refused(&err) => {
+                return skip_refused(&fd, frame as u64 + 4096, &err.to_string());
+            }
             Err(err) => panic!("import: {err}"),
         };
         assert_eq!(storage.size(), frame as u64);
@@ -350,7 +378,7 @@ mod tests {
         let exact = dmabuf(frame, pattern).unwrap();
         match GpuStorage::import_dmabuf(
             &ctx,
-            exact,
+            exact.try_clone().unwrap(),
             0,
             frame as u64,
             None,
@@ -360,6 +388,9 @@ mod tests {
             Ok(storage) => assert_eq!(storage.size(), frame as u64),
             Err(ExternalImportError::InvalidDescriptor { reason }) => {
                 assert!(reason.contains("slack"), "{reason}")
+            }
+            Err(err) if refused(&err) => {
+                return skip_refused(&exact, frame as u64, &err.to_string());
             }
             Err(err) => panic!("unexpected: {err}"),
         }

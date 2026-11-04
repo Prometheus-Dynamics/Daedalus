@@ -815,6 +815,17 @@ the default `Auto` mode (`SyncFd` first) does not produce it.
 Last run (RADV, RX 6800 XT, Mesa 26.2, validation layer 1.4.341): no other errors, warnings or
 performance warnings, with synchronization validation on.
 
+NVIDIA's proprietary driver (595.104.02, RTX 4060) closes a dmabuf fd inside a
+`vkAllocateMemory` that refuses the import, though the spec gives the fd to the driver only on
+success. Daedalus therefore releases a refused fd without a second close on that driver
+(`settle_refused_fd` in `crates/gpu/src/wgpu_backend/dmabuf/image.rs`, also in the `gpu_bench`
+frame import), so a release build cannot close a reused number. A fixed driver that keeps the fd
+would leak it: the lesser harm. The dmabuf tests skip with the driver's reason when a refusal
+happens. Other drivers keep the close. The loader's default order can pick that card here
+(`~implicit~` changes it), so `vvl` pins RADV when `VK_ICD_FILENAMES` is unset. Separately, with
+the layer on NVIDIA the nv12 dmabuf test segfaults inside the layer (SIGBUS in
+`UpdateBindImageMemoryState`), before and after this change.
+
 Positive control: a run with no `SYNC-HAZARD` line proves nothing unless synchronization
 validation was on. `sync_hazard_control` (`crates/gpu/examples`, deliberately wrong) records two
 `vkCmdFillBuffer` writes to one buffer with no barrier, a write-after-write hazard. `vvl` runs it

@@ -182,6 +182,17 @@ fn import_buffer(
         }
         Err(err) => {
             destroy(None);
+            // The guard of `daedalus_gpu`'s `settle_refused_fd` (not public): NVIDIA's proprietary
+            // driver (595.104.02) closes a refused dmabuf fd itself, so it is not closed again.
+            let mut driver = vk::PhysicalDeviceDriverProperties::default();
+            let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
+            // SAFETY: the physical device belongs to `instance`; query only.
+            unsafe {
+                instance.get_physical_device_properties2(hal.raw_physical_device(), &mut props)
+            };
+            if driver.driver_id == vk::DriverId::NVIDIA_PROPRIETARY {
+                let _ = fd.into_raw_fd();
+            }
             return Err(format!("vkAllocateMemory (import): {err}"));
         }
     };

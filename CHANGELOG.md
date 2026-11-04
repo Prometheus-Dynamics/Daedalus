@@ -557,6 +557,17 @@ plugin ABI and does not load.
   Call chains need frame pointers (`RUSTFLAGS="-C force-frame-pointers=yes"`); without them the
   callers are not reliable.
 
+### Fixed
+
+- A dmabuf import that the driver refuses no longer double-closes its fd on NVIDIA's proprietary
+  driver. NVIDIA 595.104.02 closes the fd inside a refused `vkAllocateMemory`, against the spec,
+  and the import then closed it again: a debug abort (`IO Safety violation`), and in release a
+  close of a number another thread may have reused. The refused fd is now released without a
+  close on that driver (`settle_refused_fd`, also in the `gpu_bench` frame import). Other drivers
+  are unchanged. The dmabuf tests skip with the driver's reason when NVIDIA refuses an import.
+- `scripts/ci.sh vvl` pins the Vulkan loader to RADV when `VK_ICD_FILENAMES` is unset, since the
+  loader can otherwise pick the NVIDIA card here.
+
 ### Removed
 - `crates/daedalus/assets/*.wgsl`: six shaders no code referenced since 0.1.0.
 

@@ -1,7 +1,7 @@
 //! Creating a `VkImage` over dmabuf memory and wrapping it as a wgpu-hal texture.
 
 use std::collections::HashMap;
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd};
 
 use ash::{khr, vk};
 use wgpu::hal::vulkan as hal_vk;
@@ -146,7 +146,7 @@ pub(super) unsafe fn create_imported_texture(
     for (plane, (fd, len)) in fds.into_iter().enumerate() {
         let aspect = req.disjoint.then(|| MEMORY_PLANES[plane]);
         // SAFETY: `image` is valid; the memory is recorded in `owned` right away.
-        let memory = unsafe { import_memory(device, &fd_api, image, aspect, fd, len)? };
+        let memory = unsafe { import_memory(hal_dev, &fd_api, image, aspect, fd, len)? };
         owned.memories.push(memory);
     }
     let bind = |plane: usize| {
@@ -211,19 +211,40 @@ pub(super) unsafe fn create_imported_texture(
     })
 }
 
+/// Settle `fd` after `vkAllocateMemory` refused to import it as dmabuf memory.
+///
+/// The spec gives the fd to the driver only on a successful import, so a refused fd is still
+/// ours and is closed on drop. NVIDIA's proprietary driver (595.104.02) closes it inside the
+/// refused `vkAllocateMemory` already, and a second close can hit a number another thread has
+/// reused (release builds have no `OwnedFd` check). So on that driver the fd is released without
+/// a close here. A fixed NVIDIA driver that keeps the fd open would then leak it: the lesser harm.
+/// Every other driver gets the close.
+pub(crate) fn settle_refused_fd(instance: &ash::Instance, phys: vk::PhysicalDevice, fd: OwnedFd) {
+    let mut driver = vk::PhysicalDeviceDriverProperties::default();
+    let mut props = vk::PhysicalDeviceProperties2::default().push_next(&mut driver);
+    // SAFETY: `phys` belongs to `instance`; query only.
+    unsafe { instance.get_physical_device_properties2(phys, &mut props) };
+    if driver.driver_id == vk::DriverId::NVIDIA_PROPRIETARY {
+        let _ = fd.into_raw_fd();
+    } else {
+        drop(fd);
+    }
+}
+
 /// Import one dmabuf as memory for `image` (or for one memory plane of a disjoint image).
 ///
 /// # Safety
 ///
-/// `image` must be a valid image of `device` that was created for dmabuf import.
+/// `image` must be a valid image of the device of `hal` that was created for dmabuf import.
 unsafe fn import_memory(
-    device: &ash::Device,
+    hal: &hal_vk::Device,
     fd_api: &khr::external_memory_fd::Device,
     image: vk::Image,
     plane: Option<vk::ImageAspectFlags>,
     fd: OwnedFd,
     dmabuf_len: u64,
 ) -> Result<vk::DeviceMemory, ExternalImportError> {
+    let device = hal.raw_device();
     let mut fd_props = vk::MemoryFdPropertiesKHR::default();
     // SAFETY: `fd` is a valid open descriptor for the duration of the call.
     unsafe { fd_api.get_memory_fd_properties(DMA_BUF, fd.as_raw_fd(), &mut fd_props) }.map_err(
@@ -258,10 +279,9 @@ unsafe fn import_memory(
         )));
     }
 
-    let raw_fd = fd.into_raw_fd();
     let mut import = vk::ImportMemoryFdInfoKHR::default()
         .handle_type(DMA_BUF)
-        .fd(raw_fd);
+        .fd(fd.as_raw_fd());
     // Dedicated allocations are not allowed for disjoint images.
     let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
     let mut alloc_info = vk::MemoryAllocateInfo::default()
@@ -271,14 +291,23 @@ unsafe fn import_memory(
     if plane.is_none() {
         alloc_info = alloc_info.push_next(&mut dedicated);
     }
-    // SAFETY: on success Vulkan owns `raw_fd`; on failure it does not, so we close it.
-    unsafe { device.allocate_memory(&alloc_info, None) }.map_err(|err| {
-        // SAFETY: Vulkan did not take ownership of `raw_fd` on failure.
-        drop(unsafe { OwnedFd::from_raw_fd(raw_fd) });
-        ExternalImportError::ImportFailed {
-            reason: format!("vkAllocateMemory (dmabuf import) failed: {err}"),
+    // SAFETY: on success Vulkan owns the fd; on failure it does not (see `settle_refused_fd`).
+    match unsafe { device.allocate_memory(&alloc_info, None) } {
+        Ok(memory) => {
+            let _ = fd.into_raw_fd();
+            Ok(memory)
         }
-    })
+        Err(err) => {
+            settle_refused_fd(
+                hal.shared_instance().raw_instance(),
+                hal.raw_physical_device(),
+                fd,
+            );
+            Err(ExternalImportError::ImportFailed {
+                reason: format!("vkAllocateMemory (dmabuf import) failed: {err}"),
+            })
+        }
+    }
 }
 
 /// Check that the device advertises the modifier for this format with the needed features and
