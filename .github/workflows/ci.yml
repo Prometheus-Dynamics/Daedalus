@@ -254,6 +254,19 @@ jobs:
       - name: Test lean preset (no metrics)
         run: ./scripts/ci.sh lean
 
+  # The transport library's unsafe code under Miri, on the nightly the accel job pins.
+  miri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *toolchain
+      - *cache
+      - name: Install the pinned nightly with Miri
+        run: rustup toolchain install nightly-2026-10-15 --profile minimal --component miri,rust-src
+      - name: Test the transport library under Miri
+        run: ./scripts/ci.sh miri
+
   # no_std + alloc check of the tier-1 crates on bare metal (with and without compare-and-swap)
   # and of the serial runtime and engine (plus the no_std smoke graph run natively), the MCU
   # profile firmware against its size budgets, and the embedded preset on wasm32-unknown-unknown

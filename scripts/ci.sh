@@ -48,7 +48,7 @@ usage: scripts/ci.sh [-j] [subcommand...]
   -j          run the subcommands concurrently, grouped into lanes by crate graph, each lane in
               its own target directory and log ($CARGO_TARGET_DIR/ci/), under one jobserver
   all         lints features clippy link test macro-ui smoke (default)
-  full        every CI subcommand: all, then doc lean aarch64 cross nostd mcu wasm
+  full        every CI subcommand: all, then doc lean miri aarch64 cross nostd mcu wasm
   quick       pre-push subset: lints, clippy (CI features), and the tests of the packages changed
               since $CI_BASE (default: the upstream branch, else HEAD) and their dependents
   lints       file-size, workspace-deps, GPU async lints and rustfmt
@@ -69,6 +69,8 @@ usage: scripts/ci.sh [-j] [subcommand...]
               the Vulkan adapter, asm checks of the vector code, and docs/backend-matrix.{md,csv};
               fails on failing, regressed or unregistered cells (ACCEL_RELEASE=1: also gaps)
   lean        tests for the lean preset (no metrics) and without threads
+  miri        the transport library tests under Miri, on the pinned nightly: every frame crosses
+              this crate's unsafe code
   nostd       no_std + alloc checks for thumbv7em and thumbv6m (no CAS): tier-1 crates, the
               serial runtime and engine, and the no_std smoke graph
   mcu         MCU profile: build the blink firmwares (compiled, tunable, loaded) for thumbv7em
@@ -231,6 +233,12 @@ cmd_lean() {
   step "Testing without threads (serial-only runtime and engine)"
   cargo test -p daedalus-runtime -p daedalus-engine --all-targets --no-default-features \
     --features "daedalus-runtime/plugins,daedalus-engine/plugins,daedalus-engine/config-env"
+}
+
+# Leaks are ignored because a test leaks a `Box` on purpose.
+cmd_miri() {
+  step "Testing the transport library under Miri"
+  MIRIFLAGS="-Zmiri-ignore-leaks" cargo +nightly-2026-10-15 miri test -p daedalus-transport --lib
 }
 
 # On each bare-metal target: the tier-1 crates without `std`, with and without their alloc-only
@@ -560,7 +568,7 @@ cmd_quick() {
 }
 
 readonly ALL=(lints features clippy link test macro-ui smoke)
-readonly FULL=("${ALL[@]}" doc lean aarch64 cross accel nostd mcu wasm package)
+readonly FULL=("${ALL[@]}" doc lean miri aarch64 cross accel nostd mcu wasm package)
 readonly SUBCOMMANDS=" all full ${FULL[*]} quick bench pi vvl semver "
 
 run() { "cmd_${1//-/_}"; }

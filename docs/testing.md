@@ -250,6 +250,7 @@ other three are written, untested on board.
 
 ```bash
 scripts/ci.sh lean
+scripts/ci.sh miri         # the transport library under Miri (pinned nightly)
 # = cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets --no-default-features \
 #     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"
 #   then runtime + engine without `threads`:

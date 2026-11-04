@@ -17,6 +17,8 @@ plugin ABI and does not load.
 
 ### Added
 
+- CI runs the transport library's tests under Miri (`scripts/ci.sh miri`, the `miri` job).
+
 - **CUDA and Vulkan order a shared buffer with timeline semaphores.** `interop::SharedSemaphore`
   (a Vulkan timeline semaphore exported as an opaque fd) is imported into CUDA as a
   `CudaSemaphore` (`CudaBackend::import_timeline_semaphore`): the CUDA stream waits for and
