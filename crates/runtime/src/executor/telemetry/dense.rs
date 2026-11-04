@@ -16,6 +16,13 @@ impl<T> DenseSlots<T> {
         self.slots.get(index)?.as_ref()
     }
 
+    /// Make room for `len` indices, so recording into any of them allocates nothing.
+    pub(crate) fn reserve(&mut self, len: usize) {
+        if self.slots.len() < len {
+            self.slots.resize_with(len, || None);
+        }
+    }
+
     /// The slot at `index`, growing the table to reach it.
     fn slot_mut(&mut self, index: usize) -> &mut Option<T> {
         if index >= self.slots.len() {

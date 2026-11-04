@@ -152,7 +152,10 @@ impl<H: NodeHandler> OwnedExecutor<H> {
     /// Start the parallel worker threads now instead of on the first parallel run.
     #[cfg(feature = "threads")]
     pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
-        super::WorkerPool::get_or_init(&self.core.worker_pool, self.parallel_workers()).map(drop)
+        let workers = self.parallel_workers();
+        let pool = super::WorkerPool::get_or_init(&self.core.worker_pool, workers)?;
+        pool.reserve_telemetry(workers, self.nodes.len(), self.plan.edges.len());
+        Ok(())
     }
 
     fn parallel_workers(&self) -> usize {

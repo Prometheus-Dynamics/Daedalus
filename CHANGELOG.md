@@ -567,6 +567,17 @@ plugin ABI and does not load.
   are unchanged. The dmabuf tests skip with the driver's reason when NVIDIA refuses an import.
 - `scripts/ci.sh vvl` pins the Vulkan loader to RADV when `VK_ICD_FILENAMES` is unset, since the
   loader can otherwise pick the NVIDIA card here.
+- **The detector frame's allocation budget holds on every run.** `graph_frame_allocations` read
+  9.05 per frame on one parallel row in CI (run 41777030660, `Parallel/Hardware`), and 11 on an
+  adaptive row under load. A pooled worker telemetry built its node table, its in-flight slots,
+  its payload texts and its lifecycle buffers the first time its worker met them, and which worker
+  runs which segment varies; an adaptive frame that went parallel after warm-up created its
+  telemetries inside the measured window. Now the pool's telemetries are created and sized to the
+  plan when the executor is prepared (`prewarm_worker_pool`, which `HostGraph::prepare` calls), a
+  parallel run keeps one per worker call, and each run's absorb gives every pooled telemetry the
+  union of the payload texts and reserves the run's record count. No budget changed. Measured
+  under load on the test binary: 200 of 200 runs pass (before, 10 of 200 failed on the adaptive
+  rows).
 
 ### Removed
 - `crates/daedalus/assets/*.wgsl`: six shaders no code referenced since 0.1.0.

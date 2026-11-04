@@ -358,6 +358,24 @@ impl ExecutionTelemetry {
         text
     }
 
+    /// Size the per-index tables for a plan of `nodes` nodes and `edges` edges, so a telemetry
+    /// that a worker takes later records into any node or edge without growing its tables.
+    pub(crate) fn reserve_plan(&mut self, nodes: usize, edges: usize) {
+        self.node_metrics.reserve_nodes(nodes);
+        self.in_flight_node_transport_metrics.reserve(nodes);
+        self.edge_touched.reserve(edges);
+        self.reserve_edges(edges);
+    }
+
+    /// Copy into this telemetry the payload texts of `other` that it lacks.
+    pub(crate) fn share_payload_texts(&mut self, other: &ExecutionTelemetry) {
+        for (key, text) in &other.payload_texts.0 {
+            if !self.payload_texts.0.contains_key(key) {
+                self.payload_texts.0.insert(key.clone(), text.clone());
+            }
+        }
+    }
+
     /// Give each of `edges` edge indices an empty entry, so a worker that records into any of them
     /// allocates nothing: a telemetry the pool hands to another worker keeps its entries.
     pub(crate) fn reserve_edges(&mut self, edges: usize) {

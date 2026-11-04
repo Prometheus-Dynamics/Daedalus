@@ -546,7 +546,11 @@ worker pool now keeps per-worker telemetry (`WorkerPool::take_telemetry`): a wor
 its kept telemetry, the run absorbs them all into the owned executor's recycled one
 (`ExecutionTelemetry::absorb`), and the run hands that back as a serial run does. Each kept
 telemetry has an entry for every edge, so a worker that a later frame hands another edge to
-allocates nothing either. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`)
+allocates nothing either. The pool creates one telemetry per worker, sized to the plan, when the
+executor is prepared (`prewarm_worker_pool`), so a parallel or adaptive frame that runs for the
+first time after warm-up takes one without allocating; each run's absorb then gives every pooled
+telemetry the union of the payload texts and reserves the run's record count, so a worker that a
+later frame gives most of the records does not grow its buffers. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`)
 to print the allocations per call site, grouped by the first Daedalus frame and its callers.
 `cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame` times the same
 frame.

@@ -46,22 +46,24 @@ impl WorkerPool {
         })
     }
 
-    /// A worker's telemetry for a run at `level` over `edges` edges, timed by `clock` from the
-    /// run's `origin`: a kept one (its storage reused), or a new one before the pool has as many
-    /// as its calls need. A kept one may already hold this run's counts (a worker that finished
-    /// gave its telemetry back for the next worker of the run), so it is not zeroed here: the run
-    /// absorbs every kept telemetry once all its workers are done, which zeroes them.
+    /// A worker's telemetry for a run at `level` over a plan of `nodes` nodes and `edges` edges,
+    /// timed by `clock` from the run's `origin`: a kept one (its storage reused), or a new one
+    /// before the pool has as many as its calls need. A kept one may already hold this run's counts
+    /// (a worker that finished gave its telemetry back for the next worker of the run), so it is
+    /// not zeroed here: the run absorbs every kept telemetry once all its workers are done, which
+    /// zeroes them.
     pub(crate) fn take_telemetry(
         &self,
         clock: &Clock,
         level: MetricsLevel,
         origin: Option<Instant>,
+        nodes: usize,
         edges: usize,
     ) -> ExecutionTelemetry {
         let kept = self.telemetry.lock().pop();
         let mut telemetry = kept.unwrap_or_else(|| {
             let mut telemetry = ExecutionTelemetry::default();
-            telemetry.reserve_edges(edges);
+            telemetry.reserve_plan(nodes, edges);
             telemetry
         });
         telemetry.begin_pooled_run(clock, level, origin);
@@ -73,10 +75,43 @@ impl WorkerPool {
         self.telemetry.lock().push(telemetry);
     }
 
+    /// Make sure the pool keeps a telemetry for each of `workers` concurrent calls, sized to the
+    /// plan. A parallel run takes one per call and gives it back, so with these in place a run
+    /// never creates one. Creating them lazily let an adaptive frame that first ran `workers`
+    /// calls in parallel after serial frames allocate the missing ones inside the measured window.
+    pub(crate) fn reserve_telemetry(&self, workers: usize, nodes: usize, edges: usize) {
+        let mut kept = self.telemetry.lock();
+        while kept.len() < workers {
+            let mut telemetry = ExecutionTelemetry::default();
+            telemetry.reserve_plan(nodes, edges);
+            kept.push(telemetry);
+        }
+    }
+
     /// Fold every kept worker's telemetry into `target`, zeroing them but keeping their storage.
+    ///
+    /// Two things a worker builds the first time it meets them, and which worker meets them varies
+    /// from frame to frame, so each kept telemetry is brought to the union of what the workers
+    /// hold. Payload texts: a worker builds a type's text on its first lifecycle record of that
+    /// type. Buffers: a worker holds at most the run's records, so each reserves that many, and a
+    /// frame that gives a worker most of them does not grow its buffers. Both settle after one
+    /// frame, whatever the schedule.
     pub(crate) fn absorb_telemetry(&self, target: &mut ExecutionTelemetry) {
-        for telemetry in self.telemetry.lock().iter_mut() {
+        let mut kept = self.telemetry.lock();
+        for telemetry in kept.iter_mut() {
             target.absorb(telemetry);
+        }
+        for telemetry in kept.iter() {
+            target.share_payload_texts(telemetry);
+        }
+        let lifecycle = target.data_lifecycle.len();
+        let trace = target.trace.as_ref().map_or(0, Vec::len);
+        for telemetry in kept.iter_mut() {
+            telemetry.share_payload_texts(target);
+            telemetry.data_lifecycle.reserve(lifecycle);
+            if trace > 0 {
+                telemetry.trace.get_or_insert_with(Vec::new).reserve(trace);
+            }
         }
     }
 

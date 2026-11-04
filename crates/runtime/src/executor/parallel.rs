@@ -76,11 +76,13 @@ where
         costs,
         priorities,
     );
+    pool.reserve_telemetry(workers, exec.nodes.len(), edges);
     {
         let shared: &Executor<'_, H> = exec;
         pool.fan_out(workers, &|| {
             let mut worker = shared.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
-            worker.core.telemetry = pool.take_telemetry(&clock, level, origin, edges);
+            worker.core.telemetry =
+                pool.take_telemetry(&clock, level, origin, shared.nodes.len(), edges);
             queue.drain(|segment| {
                 let order = schedule
                     .segments
