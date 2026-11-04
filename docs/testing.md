@@ -246,11 +246,19 @@ other three are written, untested on board.
 - **Flame RV1106G2 (armv7 Cortex-A7, NEON):** the `+neon` build is proven under qemu
   cortex-a7. On the board, run the same binary and the CPU graph tests (`ci.sh cross`).
 
+### Miri
+
+```bash
+scripts/ci.sh miri
+```
+
+The transport library's tests under Miri, on the pinned nightly. Every frame crosses this crate's
+unsafe code.
+
 ### Lean preset
 
 ```bash
 scripts/ci.sh lean
-scripts/ci.sh miri         # the transport library under Miri (pinned nightly)
 # = cargo test -p daedalus-rs -p daedalus-engine -p daedalus-runtime --all-targets --no-default-features \
 #     --features "daedalus-rs/embedded,daedalus-engine/config-env,daedalus-engine/plugins,daedalus-runtime/plugins"
 #   then runtime + engine without `threads`:
