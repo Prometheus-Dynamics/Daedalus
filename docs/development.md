@@ -478,7 +478,25 @@ with `-- --save-baseline <name>` and compare with `-- --baseline <name>`. The
 input and output payloads, one each: `Value` payloads are not inline); it was 31 before the
 hot-path pass and 4 before the tick-cost pass below. The no_std smoke graph with `i64` payloads
 (`cargo test -p daedalus-nostd-smoke --test parallel_executors`) allocates 0 per tick on one thread
-and on each of four: primitive payloads are held inline (see "Graph frame allocations").
+and on each of four, at every metrics level up to `Hardware`, once each tick's telemetry is handed
+back with `HostGraph::recycle_telemetry`: primitive payloads are held inline (see "Graph frame
+allocations"), and the telemetry's tables keep their storage across ticks (see "Telemetry
+recycling" below). A caller that drops its telemetry rebuilds the node-metrics table each tick
+(one allocation at `Basic`), and `Detailed`/`Hardware` rebuild four; `Profile`/`Trace` allocate
+for their string-carrying lifecycle records wherever the telemetry goes.
+
+### Telemetry recycling
+
+Each run hands its `ExecutionTelemetry` to the caller by value. The tables it holds are reused
+only when the caller passes it back (`HostGraph::recycle_telemetry`, `OwnedExecutor::recycle_telemetry`,
+or the drive loops, which do it after each `on_outputs` call). Recycled, a run clears the
+per-node table in place, keeps the group and edge keys with zeroed metrics (dropped at the end of
+the run when no node or edge touched them), and reuses the in-flight transport table, which is a
+dense slot table rather than a `BTreeMap` that freed its leaves each node. Measured on the
+no_std smoke graph (`host.in -> inc -> host.out`, 4000 ticks), allocations per tick at each level
+recycled / not recycled: `Off` 0 / 0, `Basic` 0 / 1, `Timing` 0 / 1, `Detailed` 0 / 4,
+`Hardware` 0 / 4, `Profile` 7 / 12, `Trace` 7 / 13. Before this pass the recycled column was 0,
+0, 0, 3, 3, 10, 10.
 
 Hot-path pass (x86_64 Linux, shared 24-core machine at load ~6-8, criterion medians; before is
 the previous build benched back to back with after, so treat differences under ~10%
@@ -510,8 +528,12 @@ fanned out, config-struct and const inputs (one config with a serde enum and a `
 a five-input node, a metadata-only adapter edge,
 connected and unconnected `Option<T>` inputs, two conditional producers, one of which never
 emits so its consumer is skipped, fan-in, four host outputs) whose handlers allocate nothing,
-and asserts the allocations per frame in serial (metrics off and basic), parallel and adaptive
-modes. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`) to print them per
+and asserts the allocations per frame in serial (metrics off through hardware), parallel and
+adaptive modes. The frame's telemetry is recycled (`drive_frame`); serial mode is 9 at every
+level up to `Hardware`, the same as with metrics off. A parallel fan-out at `Basic` and above is
+not zero yet: each fan-out's worker snapshots build their own node-metrics tables and per-segment
+telemetry, which the recycled telemetry does not reach (25 per frame on this graph at `Basic`,
+9 at `Off`). Reusing them needs the worker pool to keep per-worker telemetry across frames. Set `DAEDALUS_ALLOC_TRACE=1` (with `-- --nocapture --test-threads 1`) to print them per
 call site, grouped by the first Daedalus frame and its callers.
 `cargo bench -p daedalus-rs --features engine-full,plugins --bench graph_frame` times the same
 frame.

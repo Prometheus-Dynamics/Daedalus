@@ -467,6 +467,22 @@ recycled telemetry:
 The 3 were the node-metrics table, a group key and its tree node, rebuilt each tick because the
 telemetry went to the caller.
 
+The no_std smoke graph (`examples/nostd_smoke`, `i64` in and out, 4000 ticks per run, counting
+allocator), at each metrics level, with the tick's telemetry recycled and dropped:
+
+| metrics | allocations per tick, recycled | not recycled |
+| --- | --- | --- |
+| `Off` | 0 | 0 |
+| `Basic` | 0 | 1 (node-metrics table) |
+| `Timing` | 0 | 1 (node-metrics table) |
+| `Detailed` | 0 | 4 (table, two edge leaves, in-flight leaf) |
+| `Hardware` | 0 | 4 |
+| `Profile` | 7 | 12 (data-lifecycle strings) |
+| `Trace` | 7 | 13 (data-lifecycle strings) |
+
+`Off` through `Hardware` recycled are asserted by `parallel_executors.rs`, on one thread and on
+four; `Profile` and `Trace` are not budgeted.
+
 ### CM5 run (2026-11-03): acquire fence waits
 
 v3dv samples only `UIF`, so the fence tests on dma-heap (`LINEAR`) frames skip there.

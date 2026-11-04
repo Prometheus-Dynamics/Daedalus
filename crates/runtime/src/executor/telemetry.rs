@@ -5,6 +5,7 @@ use daedalus_core::platform::{Clock, Instant};
 use daedalus_planner::GroupMetadata;
 
 mod basics;
+mod dense;
 mod frame;
 mod frame_report;
 mod lifecycle;
@@ -17,6 +18,7 @@ mod resources;
 mod summary;
 
 pub use basics::{Histogram, MetricsLevel, ProfileLevel, Profiler};
+use dense::DenseSlots;
 pub use frame::{EdgeAdapterClass, EdgeTickSample, FrameProbe, FrameTickSample};
 pub(crate) use frame::{ProbeCount, ProbeTime, TickStart};
 pub use frame_report::{EdgeOverheadStats, FrameOverheadReport, FrameOverheadWindow, FrameStat};
@@ -88,8 +90,12 @@ pub struct ExecutionTelemetry {
     clock: Clock,
     #[serde(skip)]
     lifecycle_origin: Option<Instant>,
+    /// Edges recorded since the run began: [`Self::aggregate_group_ids`] keeps those and drops the
+    /// other edges, which [`Self::reset_for_run`] zeroed.
     #[serde(skip)]
-    in_flight_node_transport_metrics: BTreeMap<usize, InFlightNodeTransportMetrics>,
+    edge_touched: DenseSlots<()>,
+    #[serde(skip)]
+    in_flight_node_transport_metrics: DenseSlots<InFlightNodeTransportMetrics>,
 }
 
 impl ExecutionTelemetry {
@@ -225,6 +231,7 @@ impl ExecutionTelemetry {
         self.node_metrics.clear();
         self.group_metrics.clear();
         self.edge_metrics.clear();
+        self.edge_touched.clear();
         if let Some(trace) = self.trace.as_mut() {
             trace.clear();
         }
@@ -239,16 +246,28 @@ impl ExecutionTelemetry {
         self.in_flight_node_transport_metrics.clear();
     }
 
-    /// [`Self::reset_for_reuse`] before a run, keeping the group keys (and their tree nodes)
-    /// with zeroed metrics, so a run on a recycled telemetry merges into them without allocating.
-    /// [`Self::aggregate_group_ids`] drops the ones no node merged into.
+    /// [`Self::reset_for_reuse`] before a run, keeping the group and edge keys (and their tree
+    /// nodes) with zeroed metrics, so a run on a recycled telemetry records into them without
+    /// allocating. [`Self::aggregate_group_ids`] drops the groups and edges the run did not touch.
     pub(crate) fn reset_for_run(&mut self, level: MetricsLevel) {
         let mut groups = core::mem::take(&mut self.group_metrics);
+        let mut edges = core::mem::take(&mut self.edge_metrics);
         self.reset_for_reuse(level);
         groups
             .values_mut()
             .for_each(|metrics| *metrics = NodeMetrics::default());
+        edges
+            .values_mut()
+            .for_each(|metrics| *metrics = EdgeMetrics::default());
         self.group_metrics = groups;
+        self.edge_metrics = edges;
+    }
+
+    /// The metrics of edge `edge_idx`, inserted empty if missing; the edge counts as touched by
+    /// the current run.
+    pub(crate) fn edge_entry(&mut self, edge_idx: usize) -> &mut EdgeMetrics {
+        self.edge_touched.set(edge_idx, ());
+        self.edge_metrics.entry(edge_idx).or_default()
     }
 
     pub fn merge(&mut self, other: ExecutionTelemetry) {
@@ -272,7 +291,7 @@ impl ExecutionTelemetry {
             self.group_metrics.entry(group).or_default().merge(metrics);
         }
         for (edge, metrics) in other.edge_metrics {
-            self.edge_metrics.entry(edge).or_default().merge(metrics);
+            self.edge_entry(edge).merge(metrics);
         }
         if let Some(other_trace) = other.trace {
             let trace = self.trace.get_or_insert_with(Vec::new);
@@ -389,6 +408,12 @@ impl ExecutionTelemetry {
         // Groups kept from a recycled telemetry whose nodes did not run this time.
         self.group_metrics
             .retain(|_, metrics| *metrics != NodeMetrics::default());
+        // Likewise the edges no run touched (zeroed by `reset_for_run`).
+        let touched = &self.edge_touched;
+        self.edge_metrics.retain(|edge, metrics| {
+            touched.get(*edge).is_some() || *metrics != EdgeMetrics::default()
+        });
+        self.edge_touched.clear();
     }
 }
 

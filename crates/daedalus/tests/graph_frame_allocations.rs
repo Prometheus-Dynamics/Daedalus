@@ -173,9 +173,6 @@ const OWNED_STRING_CLONE: f64 = 1.0;
 /// allocate nothing else, so everything beyond the payloads is runtime bookkeeping, which must
 /// stay at zero.
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
-/// Basic metrics reserve the per-node metrics map once a tick, one allocation, when the
-/// `metrics` feature is built (the workspace's feature set; without it, Basic adds nothing).
-const BASIC_METRICS_ALLOCATIONS: f64 = 1.0;
 /// Parallel frames fan out to persistent parked workers that pull segments from one shared
 /// queue: no task, channel or thread per frame. What remains is amortized (a node's first run on
 /// a worker grows that thread's port buffers). Adaptive mode runs this graph serially in
@@ -184,13 +181,16 @@ const PARALLEL_ALLOCATIONS: f64 = 0.0;
 
 #[test]
 fn detector_graph_frame_allocation_budget() {
+    // Serial mode allocates nothing per frame at every level up to `Hardware` once the frame's
+    // telemetry is recycled (`drive_frame`); `Profile` records data-lifecycle strings and is not
+    // budgeted. A parallel fan-out at `Basic` and above is not budgeted: its worker snapshots
+    // build their own node tables each frame (16 allocations on this graph).
     for (mode, metrics, budget) in [
         (RuntimeMode::Serial, MetricsLevel::Off, SERIAL_BUDGET),
-        (
-            RuntimeMode::Serial,
-            MetricsLevel::Basic,
-            SERIAL_BUDGET + BASIC_METRICS_ALLOCATIONS,
-        ),
+        (RuntimeMode::Serial, MetricsLevel::Basic, SERIAL_BUDGET),
+        (RuntimeMode::Serial, MetricsLevel::Timing, SERIAL_BUDGET),
+        (RuntimeMode::Serial, MetricsLevel::Detailed, SERIAL_BUDGET),
+        (RuntimeMode::Serial, MetricsLevel::Hardware, SERIAL_BUDGET),
         (
             RuntimeMode::Parallel,
             MetricsLevel::Off,

@@ -12,10 +12,11 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_basic() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let detailed = self.metrics_level.is_detailed();
+        let entry = self.edge_entry(edge_idx);
         entry.total_wait += duration;
         entry.samples += 1;
-        if self.metrics_level.is_detailed() {
+        if detailed {
             entry
                 .wait_histogram
                 .get_or_insert_with(Histogram::default)
@@ -30,7 +31,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         let depth_u64 = depth as u64;
         entry.current_depth = depth_u64;
         entry.max_depth = entry.max_depth.max(depth_u64);
@@ -50,7 +51,7 @@ impl ExecutionTelemetry {
         let Some(capacity) = capacity else {
             return;
         };
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         entry.capacity = Some(entry.capacity.unwrap_or(0).max(capacity as u64));
     }
 
@@ -61,7 +62,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         entry.current_queue_bytes = current_bytes;
         entry.peak_queue_bytes = entry.peak_queue_bytes.max(current_bytes);
     }
@@ -73,7 +74,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         entry.transport_count = entry.transport_count.saturating_add(1);
         if let Some(bytes) = bytes {
             entry.transport_bytes = entry.transport_bytes.saturating_add(bytes);
@@ -93,7 +94,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         if unique {
             entry.unique_handoffs = entry.unique_handoffs.saturating_add(1);
         } else {
@@ -110,7 +111,7 @@ impl ExecutionTelemetry {
         if !cfg!(feature = "metrics") || !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         if unique {
             entry.unique_handoffs = entry.unique_handoffs.saturating_add(1);
         } else {
@@ -126,10 +127,11 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let profile = self.metrics_level.is_profile();
+        let entry = self.edge_entry(edge_idx);
         entry.transport_apply_duration += duration;
         entry.transport_apply_count = entry.transport_apply_count.saturating_add(1);
-        if self.metrics_level.is_profile() {
+        if profile {
             entry
                 .transport_apply_histogram
                 .get_or_insert_with(Histogram::default)
@@ -144,10 +146,11 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let profile = self.metrics_level.is_profile();
+        let entry = self.edge_entry(edge_idx);
         entry.adapter_duration += duration;
         entry.adapter_count = entry.adapter_count.saturating_add(1);
-        if self.metrics_level.is_profile() {
+        if profile {
             entry
                 .adapter_histogram
                 .get_or_insert_with(Histogram::default)
@@ -162,7 +165,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         entry.adapter_errors = entry.adapter_errors.saturating_add(1);
     }
 
@@ -173,7 +176,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() || count == 0 {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         entry.drops = entry.drops.saturating_add(count);
     }
 
@@ -189,7 +192,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_detailed() {
             return;
         }
-        let entry = self.edge_metrics.entry(edge_idx).or_default();
+        let entry = self.edge_entry(edge_idx);
         entry.pressure_events.total = entry.pressure_events.total.saturating_add(1);
         match reason {
             EdgePressureReason::DropIncoming => {

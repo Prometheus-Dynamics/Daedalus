@@ -134,11 +134,12 @@ fn clear_edge(v: &mut SerialView<'_>, edge_idx: usize) {
 }
 
 /// Drain the host outputs of `exec` (see [`drain`]).
+#[cfg(feature = "threads")]
 pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
     drain(&mut super::view(exec));
 }
 
-fn drain(v: &mut SerialView<'_>) {
+pub(super) fn drain(v: &mut SerialView<'_>) {
     let _scope = crate::executor::runtime_alloc_scope();
     let start = v
         .core

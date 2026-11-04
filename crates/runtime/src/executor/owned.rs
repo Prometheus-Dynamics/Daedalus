@@ -362,7 +362,6 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.reset_for_run();
         let mut exec = self.serial_view();
         let res = serial::run_with_boundaries(&mut exec);
-        serial::drain_host_outputs(&mut exec);
         drop(exec);
         self.end_probe_tick(tick);
         if res.is_err() {
@@ -385,7 +384,6 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self.reset_for_run();
         let mut exec = self.snapshot(DirectSlotAccess::Shared);
         let res = run_parallel_on(&mut exec);
-        serial::drain_host_outputs(&mut exec);
         drop(exec);
         self.end_probe_tick(tick);
         if res.is_err() {
@@ -414,7 +412,6 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         };
         let mut exec = self.snapshot(access);
         let res = run_adaptive_on(&mut exec, &mut adaptive, parallel, workers);
-        serial::drain_host_outputs(&mut exec);
         drop(exec);
         self.end_probe_tick(tick);
         self.adaptive = adaptive;

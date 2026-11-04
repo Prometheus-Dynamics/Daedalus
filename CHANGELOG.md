@@ -70,11 +70,11 @@ plugin ABI and does not load.
   device there, so engines in one process (and a library such as Styx's GPU ISP that takes it there)
   share one device, queue and submit lock. Before, each engine opened its own.
 - **`HostGraph::recycle_telemetry` / `OwnedExecutor::recycle_telemetry`.** Hand back the
-  `ExecutionTelemetry` a tick returned: the next serial tick records into its buffers, so ticks
-  at `MetricsLevel::Timing` and above allocate nothing for telemetry (3 allocations per tick
-  before, on a 21-stage graph). `drive_blocking` does it after each `on_outputs` call, and the
-  frame-bench harness after each tick. A group no node ran in is still left out of
-  `group_metrics`.
+  `ExecutionTelemetry` a tick returned: the next serial tick records into its buffers, so a
+  steady-state tick allocates nothing for telemetry at every `MetricsLevel` up to `Hardware`
+  (3 allocations per tick at `Timing` and above before, on a 21-stage graph). `drive_blocking`
+  does it after each `on_outputs` call, and the frame-bench harness after each tick. A group or
+  edge no run touched is left out of `group_metrics`/`edge_metrics`.
 - **`daedalus-vglite`: the K230's VGLite GPU through `libvg_lite`, loaded at runtime**
   (written, untested on board). It covers resize (bilinear either way; area only at 2x, as a
   half-phase bilinear blit, since VGLite has no averaging filter), crop, flips and quarter
@@ -588,6 +588,24 @@ plugin ABI and does not load.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
+- **Telemetry recycling covers `Detailed` and `Hardware`, and the no_std smoke graph runs at the
+  default metrics level.** The per-edge metrics and the in-flight transport table are reused
+  across ticks: `edge_metrics` keeps its edges zeroed (a `BTreeMap` cleared each tick freed its
+  leaves) and drops the ones no run touched, and the in-flight table is a dense slot table.
+  Host outputs are drained inside the tick, before its telemetry is taken, so the queue waits
+  of the outputs a tick hands to the host are in that tick's telemetry (they were reported one
+  tick late, or dropped once telemetry was recycled). `examples/nostd_smoke` no longer pins
+  `MetricsLevel::Off`; its tests assert zero allocations per tick at `Off`, `Basic`, `Timing`,
+  `Detailed` and `Hardware`, on one thread and on four, with telemetry recycled. Allocations per
+  tick on that graph, recycled and not: `Basic` and `Timing` 0 and 1 (the node-metrics table),
+  `Detailed` and `Hardware` 0 and 4 (that table, two edge leaves and the in-flight leaf), and
+  `Profile` and `Trace` 7 and 12 (13 at `Trace`). `Profile` and `Trace` keep their data-lifecycle
+  strings (`port`, `payload`, `adapter_steps`, `detail` are `String`s on each recorded event), so
+  they are not budgeted. The detector frame budget (`graph_frame_allocations`) is 9 at every
+  level up to `Hardware` in serial mode, with the telemetry recycled, so its `Basic` term of 1
+  is gone. A parallel fan-out at `Basic` is not zero: its worker snapshots build their own tables
+  each frame (25 per frame on that graph, against 9 at `Off`); reusing them needs per-worker
+  telemetry kept by the worker pool.
 - `daedalus` (`dylib-plugins`) on musl: no `libloading` and no `-ldl`. musl executables are
   static and cannot `dlopen`, and Rust's self-contained musl ships no `libdl` to link, so a
   plugin crate or host test for `aarch64-unknown-linux-musl` failed to link (`unable to find

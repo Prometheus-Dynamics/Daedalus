@@ -191,6 +191,33 @@ fn reset_for_run_keeps_group_keys_until_aggregation_drops_idle_ones() {
 
 #[test]
 #[cfg(feature = "metrics")]
+fn reset_for_run_keeps_edge_keys_until_aggregation_drops_untouched_ones() {
+    let groups: Vec<Option<crate::portable::Arc<str>>> = Vec::new();
+    let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Timing);
+    telemetry.record_edge_wait(0, Duration::from_micros(3));
+    telemetry.record_edge_wait(1, Duration::from_micros(4));
+    telemetry.aggregate_group_ids(&groups);
+    assert_eq!(telemetry.edge_metrics.len(), 2);
+
+    // Only edge 0 is recorded next time: edge 1 stays zeroed through the run, then goes.
+    telemetry.reset_for_run(MetricsLevel::Timing);
+    assert_eq!(telemetry.edge_metrics[&1], super::EdgeMetrics::default());
+    telemetry.record_edge_wait(0, Duration::from_micros(5));
+    telemetry.aggregate_group_ids(&groups);
+    assert_eq!(
+        telemetry.edge_metrics.keys().collect::<Vec<_>>(),
+        [&0],
+        "an untouched edge is dropped"
+    );
+    assert_eq!(telemetry.edge_metrics[&0].samples, 1);
+    assert_eq!(
+        telemetry.edge_metrics[&0].total_wait,
+        Duration::from_micros(5)
+    );
+}
+
+#[test]
+#[cfg(feature = "metrics")]
 fn report_exposes_release_diagnostic_metrics() {
     let mut telemetry = ExecutionTelemetry::with_level(MetricsLevel::Detailed);
     telemetry.backpressure_events = 1;

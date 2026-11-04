@@ -18,7 +18,7 @@ impl ExecutionTelemetry {
         if !self.metrics_level.is_basic() {
             return;
         }
-        self.in_flight_node_transport_metrics.remove(&node_idx);
+        self.in_flight_node_transport_metrics.take(node_idx);
         let entry = self.node_metrics.entry(node_idx);
         entry.record(duration);
         if self.metrics_level.is_detailed() {
@@ -93,7 +93,7 @@ impl ExecutionTelemetry {
             return;
         }
         self.in_flight_node_transport_metrics
-            .insert(node_idx, InFlightNodeTransportMetrics::default());
+            .set(node_idx, InFlightNodeTransportMetrics::default());
     }
 
     pub fn record_node_transport_in(&mut self, node_idx: usize, bytes: Option<u64>) {
@@ -110,10 +110,7 @@ impl ExecutionTelemetry {
         payload.in_count = payload.in_count.saturating_add(1);
         if let Some(bytes) = bytes {
             payload.in_bytes = payload.in_bytes.saturating_add(bytes);
-            let in_flight = self
-                .in_flight_node_transport_metrics
-                .entry(node_idx)
-                .or_default();
+            let in_flight = self.in_flight_node_transport_metrics.entry(node_idx);
             in_flight.input_bytes = in_flight.input_bytes.saturating_add(bytes);
             payload.peak_input_bytes = payload.peak_input_bytes.max(in_flight.input_bytes);
             payload.peak_working_set_bytes = payload
@@ -136,10 +133,7 @@ impl ExecutionTelemetry {
         payload.out_count = payload.out_count.saturating_add(1);
         if let Some(bytes) = bytes {
             payload.out_bytes = payload.out_bytes.saturating_add(bytes);
-            let in_flight = self
-                .in_flight_node_transport_metrics
-                .entry(node_idx)
-                .or_default();
+            let in_flight = self.in_flight_node_transport_metrics.entry(node_idx);
             in_flight.output_bytes = in_flight.output_bytes.saturating_add(bytes);
             payload.peak_output_bytes = payload.peak_output_bytes.max(in_flight.output_bytes);
             payload.peak_working_set_bytes = payload

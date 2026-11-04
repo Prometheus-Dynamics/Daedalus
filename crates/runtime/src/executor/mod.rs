@@ -431,7 +431,6 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
         self.reset();
         let exec = self.snapshot();
         let result = serial::run(exec);
-        serial::drain_host_outputs(self);
         if result.is_err() {
             self.reset();
         }
@@ -501,10 +500,9 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
 
     fn finish_in_place(
         &mut self,
-        mut exec: Executor<'a, H>,
+        exec: Executor<'a, H>,
         result: Result<ExecutionTelemetry, ExecuteError>,
     ) -> Result<ExecutionTelemetry, ExecuteError> {
-        serial::drain_host_outputs(&mut exec);
         drop(exec);
         if result.is_err() {
             self.reset();

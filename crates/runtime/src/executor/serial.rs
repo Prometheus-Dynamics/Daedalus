@@ -16,7 +16,9 @@ mod resilience;
 
 use edges::{collect_inputs, publish_outputs};
 use fused::{Carry, FusedOutputs};
-pub(crate) use host_io::{HostNodeIo, drain_host_outputs, inject_host_inputs, resolve_host_nodes};
+#[cfg(feature = "threads")]
+pub(crate) use host_io::drain_host_outputs;
+pub(crate) use host_io::{HostNodeIo, inject_host_inputs, resolve_host_nodes};
 
 /// The executor state a serial run reads and writes apart from its handler. The helpers take
 /// this rather than `Executor<H>`, so each is compiled once instead of once per handler type.
@@ -76,7 +78,7 @@ pub(crate) fn run_with_boundaries_timed<H: NodeHandler>(
         probe.add_time(ProbeTime::Inject, exec.core.clock.elapsed(start));
     }
     let order = exec.schedule_order;
-    run_order_timed(exec, order, costs).map(|mut telemetry| {
+    run_order_timed(exec, order, costs, true).map(|mut telemetry| {
         telemetry.recompute_unattributed_runtime_duration();
         telemetry
     })
@@ -88,17 +90,29 @@ pub(crate) struct SegmentCosts<'c> {
     pub(crate) costs: &'c mut [u64],
 }
 
+/// Run `order` on `exec`, leaving its host outputs queued: a parallel worker's segments, or a
+/// direct host route that takes its output itself.
 pub(crate) fn run_order<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
 ) -> Result<ExecutionTelemetry, ExecuteError> {
-    run_order_timed(exec, order, None)
+    run_order_timed(exec, order, None, false)
+}
+
+/// [`run_order`] for the whole tick: the host outputs it produced are drained into its telemetry.
+#[cfg(feature = "threads")]
+pub(crate) fn run_order_draining<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    order: &[daedalus_planner::NodeRef],
+) -> Result<ExecutionTelemetry, ExecuteError> {
+    run_order_timed(exec, order, None, true)
 }
 
 fn run_order_timed<H: NodeHandler>(
     exec: &mut Executor<'_, H>,
     order: &[daedalus_planner::NodeRef],
     mut costs: Option<SegmentCosts<'_>>,
+    drain_outputs: bool,
 ) -> Result<ExecutionTelemetry, ExecuteError> {
     let handler = Arc::clone(&exec.handler);
     let nodes = Arc::clone(&exec.nodes);
@@ -389,6 +403,11 @@ fn run_order_timed<H: NodeHandler>(
 
     if let Some(graph_start) = graph_start {
         v.core.telemetry.graph_duration = clock.elapsed(graph_start);
+    }
+    // Before the telemetry is taken: the queue waits of the outputs this tick hands to the host
+    // belong to this tick's telemetry, and a recycled telemetry would drop them otherwise.
+    if drain_outputs {
+        host_io::drain(&mut v);
     }
     v.core.telemetry.recompute_unattributed_runtime_duration();
     v.core.telemetry.aggregate_group_ids(&v.core.node_groups);

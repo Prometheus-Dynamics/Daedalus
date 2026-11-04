@@ -49,7 +49,7 @@ where
     let workers = exec.core.parallel_workers.min(graph.width);
     if graph.ready_segments.is_empty() || workers <= 1 {
         let order = exec.schedule_order;
-        return serial::run_order(exec, order).map(|telemetry| (telemetry, 0));
+        return serial::run_order_draining(exec, order).map(|telemetry| (telemetry, 0));
     }
 
     let pool = WorkerPool::get_or_init(&exec.core.worker_pool, workers)?;
@@ -84,6 +84,7 @@ where
         });
     }
     let (telemetry, error, busiest) = queue.finish();
+    serial::drain_host_outputs(exec);
     if let Some(error) = error {
         return Err(error);
     }

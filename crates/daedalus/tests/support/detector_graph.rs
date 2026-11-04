@@ -513,7 +513,8 @@ pub fn compile(
 /// One frame: push the shared frame, tick, drain every host output. Returns the report.
 pub fn drive_frame(host: &mut HostGraph<HandlerRegistry>, frame: &Arc<Frame>) -> Option<Report> {
     host.push_payload("frame", Payload::shared(FRAME_KEY, frame.clone()));
-    host.tick().expect("tick");
+    let telemetry = host.tick().expect("tick");
+    host.recycle_telemetry(telemetry);
     let report = host
         .take_payload("report")
         .and_then(|payload| payload.get_ref::<Report>().copied());

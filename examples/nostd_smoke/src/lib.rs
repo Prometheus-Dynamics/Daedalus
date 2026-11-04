@@ -103,8 +103,14 @@ pub fn engine_increment(x: i64) -> Option<(i64, Duration)> {
     Some((*output.get_ref::<i64>()?, output.lineage().age(&clock)))
 }
 
-/// `host.in -> inc -> host.out` compiled through a plugin registry into a `HostGraph` on `clock`.
+/// `host.in -> inc -> host.out` compiled through a plugin registry into a `HostGraph` on `clock`,
+/// recording metrics at the engine's default level ([`MetricsLevel::Basic`]).
 pub fn engine_graph(clock: Clock) -> Option<HostGraph<Increment>> {
+    engine_graph_at(clock, MetricsLevel::default())
+}
+
+/// [`engine_graph`] recording metrics at `metrics`.
+pub fn engine_graph_at(clock: Clock, metrics: MetricsLevel) -> Option<HostGraph<Increment>> {
     let port = |name: &str| PortDecl::new(name, INT).schema(TypeExpr::Scalar(ValueType::Int));
     let mut plugins = PluginRegistry::new();
     plugins
@@ -118,12 +124,10 @@ pub fn engine_graph(clock: Clock) -> Option<HostGraph<Increment>> {
     plugins
         .register_node_decl(NodeDecl::new("inc").input(port("in")).output(port("out")))
         .ok()?;
-    // Metrics off whatever features the build unifies: their per-tick telemetry is not what
-    // the no_std graph measures.
     Engine::new(
         EngineConfig::default()
             .with_clock(clock)
-            .with_metrics_level(MetricsLevel::Off),
+            .with_metrics_level(metrics),
     )
     .ok()?
     .compile_host_graph_plugin_registry(
