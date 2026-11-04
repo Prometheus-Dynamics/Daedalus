@@ -95,8 +95,9 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       **Done when:** as above, per chip.
       **Blocked by:** boards and Gaia's driver choice.
       **Measured:** nothing on Mali.
-- [ ] **[board] What:** the Rockchip RGA fixed-function cells in `daedalus-rga`, the crate shared
-      with Styx. Route (b) is V4L2 mem2mem (`rgb_to_rgba`, `rgba_to_rgb`); route (a) is `Librga`
+- [ ] **[board] What:** (Lemnos's as of 2026-11-03: Lemnos owns hardware blocks, including RGA,
+      librga and M2M bindings; whether `crates/rga` moves is undecided.) The Rockchip RGA
+      fixed-function cells in `daedalus-rga`, the crate shared with Styx. Route (b) is V4L2 mem2mem (`rgb_to_rgba`, `rgba_to_rgb`); route (a) is `Librga`
       (2f7c880; `gray_to_rgba`, `rgba_red`). Both written, untested on board.
       **Why:** these are the matrix's 4 untested cells. `rgba_red` relabels the frame as gray and
       scales it down by nearest, so it yields red only if the hardware takes the first of every four
@@ -200,7 +201,8 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
       each thread, the same as one thread alone (8000 over 4000 ticks). With the old
       process-wide pool the same test counted 8515 to 12725 per thread (3/3 runs failed).
 
-- [ ] **What:** fixed-function nodes for Eidos on the RGA and the K230D Image 2D / 2.5D GPU
+- [ ] **What:** (As of 2026-11-03 these nodes sit on Lemnos's drivers and open no devices
+      themselves.) Fixed-function nodes for Eidos on the RGA and the K230D Image 2D / 2.5D GPU
       (VGLite), with a per-SoC capability descriptor. Requested by Eidos 2026-11-02 (Eidos
       100cc356, `docs/accel/fixed-function-audit.md`); HeliOS confirmed Daedalus owns these
       units. Eidos lowers its ops onto these nodes and never drives the units.
