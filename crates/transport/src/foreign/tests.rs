@@ -163,6 +163,23 @@ fn payloads_carry_handles_built_from_shared_or_boundary_storage() {
 }
 
 #[test]
+fn provided_payloads_in_typed_storage_hand_out_the_owner_arc() {
+    let value = Arc::new(Counter {
+        value: 12,
+        drops: None,
+    });
+    // A byte estimate keeps the value in typed storage rather than its own allocation.
+    let provided = Payload::shared_with("x", value.clone(), Residency::Cpu, None, Some(8))
+        .provide_foreign::<Counter, CounterV1>()
+        .unwrap();
+    assert_eq!(Arc::strong_count(&value), 2);
+    let handle = provided.to_foreign_handle().unwrap();
+    assert_eq!((read(&handle), Arc::strong_count(&value)), (12, 3));
+    drop((handle, provided));
+    assert_eq!(Arc::strong_count(&value), 1);
+}
+
+#[test]
 fn provided_payloads_lend_the_owner_value_without_a_handle() {
     let value = Arc::new(Counter {
         value: 9,

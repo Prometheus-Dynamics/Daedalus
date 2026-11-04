@@ -1543,6 +1543,11 @@ for every item below, for upgrades from 2.0.0 and from pre-release `dev` commits
 
 ### Fixed
 
+- **`Payload::to_foreign_handle` no longer has undefined behaviour for a shared owner value.** A
+  `provide_foreign` payload over an `Arc<T>` built the handle's `Arc` from `&self`, whose provenance
+  covers the value but not the reference counts beside it (Miri reported it under Stacked Borrows).
+  The handle now comes from the `Arc` holding the storage, passed through a hidden provided method,
+  `PayloadStorage::to_foreign_handle_in`. It costs the same reference count and no allocation.
 - Plugins with `i64` and `i32` ports no longer conflict, and an `i64` host input fanned out to two
   `i64` inputs no longer fails with `payload type mismatch`.
 - Enum `NodeConfig` fields and enum handler inputs no longer fail with `missing <port>` (the

@@ -52,6 +52,13 @@ pub trait PayloadStorage: Send + Sync + fmt::Debug {
     fn to_foreign_handle(&self) -> Option<ForeignHandle> {
         self.foreign_handle().cloned()
     }
+    /// [`Self::to_foreign_handle`] for storage held in `storage`, which an owner value's handle
+    /// needs: it shares that `Arc`. `storage` must be the `Arc` holding `self`.
+    #[doc(hidden)]
+    fn to_foreign_handle_in(&self, storage: &Arc<dyn PayloadStorage>) -> Option<ForeignHandle> {
+        let _ = storage;
+        self.to_foreign_handle()
+    }
 }
 
 pub(super) struct TypedStorage<T: Send + Sync + 'static> {

@@ -14,6 +14,8 @@ use core::marker::PhantomData;
 #[cfg(target_has_atomic = "ptr")]
 use super::ArcValue;
 use super::inline::Body;
+#[cfg(target_has_atomic = "ptr")]
+use super::storage::arc_value;
 use super::{Payload, PayloadStorage, ResidencyCache, TypedStorage};
 use crate::{
     ForeignBorrow, ForeignHandle, ForeignInterface, PayloadLineage, ProvideForeign, Residency,
@@ -64,7 +66,9 @@ impl PayloadStorage for ForeignStorage {
 /// allocation ([`ArcValue`]).
 trait OwnerStorage<O>: PayloadStorage {
     fn owner(&self) -> &O;
-    fn owner_arc(&self) -> Arc<O>;
+    /// The owner's `Arc`, given the `Arc` holding this storage: a reference to the storage
+    /// reaches the value alone, not the reference counts beside it.
+    fn owner_arc(&self, storage: &Arc<dyn PayloadStorage>) -> Option<Arc<O>>;
 }
 
 impl<O: Send + Sync + 'static> OwnerStorage<O> for TypedStorage<O> {
@@ -72,8 +76,8 @@ impl<O: Send + Sync + 'static> OwnerStorage<O> for TypedStorage<O> {
         &self.value
     }
 
-    fn owner_arc(&self) -> Arc<O> {
-        self.value.clone()
+    fn owner_arc(&self, _storage: &Arc<dyn PayloadStorage>) -> Option<Arc<O>> {
+        Some(self.value.clone())
     }
 }
 
@@ -83,14 +87,8 @@ impl<O: Send + Sync + 'static> OwnerStorage<O> for ArcValue<O> {
         &self.0
     }
 
-    fn owner_arc(&self) -> Arc<O> {
-        let value = (self as *const Self).cast::<O>();
-        // Safety: an `ArcValue<O>` only lives in an `Arc` allocation laid out as `ArcInner<O>`
-        // (`arc_storage`), alive while `self` is borrowed; the new reference is the returned one.
-        unsafe {
-            Arc::increment_strong_count(value);
-            Arc::from_raw(value)
-        }
+    fn owner_arc(&self, storage: &Arc<dyn PayloadStorage>) -> Option<Arc<O>> {
+        arc_value(storage)
     }
 }
 
@@ -147,8 +145,9 @@ where
         Some(ForeignBorrow::of::<O, I>(self.inner.owner()))
     }
 
-    fn to_foreign_handle(&self) -> Option<ForeignHandle> {
-        Some(ForeignHandle::from_arc::<O, I>(self.inner.owner_arc()))
+    fn to_foreign_handle_in(&self, storage: &Arc<dyn PayloadStorage>) -> Option<ForeignHandle> {
+        let owner = self.inner.owner_arc(storage)?;
+        Some(ForeignHandle::from_arc::<O, I>(owner))
     }
 }
 
@@ -258,6 +257,9 @@ impl Payload {
     /// handle, or the owner's `Arc`), for consumers the borrow cannot cover, such as the stable
     /// plugin boundary.
     pub fn to_foreign_handle(&self) -> Option<ForeignHandle> {
-        self.storage.get().to_foreign_handle()
+        match &self.storage {
+            Body::Shared(storage) => storage.to_foreign_handle_in(storage),
+            Body::Inline(value) => value.to_foreign_handle(),
+        }
     }
 }
