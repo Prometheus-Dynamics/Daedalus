@@ -6,6 +6,17 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, OnceLock};
 
+#[cfg(target_os = "linux")]
+use linux::{
+    Access, DmaBuf, Mapping, dma_bytes, dma_fill, dma_heap, dma_map, dma_raw_fd, map, memfd, sync,
+    unmap,
+};
+#[cfg(not(target_os = "linux"))]
+use other::{
+    Access, DmaBuf, Mapping, dma_bytes, dma_fill, dma_heap, dma_map, dma_raw_fd, map, memfd, sync,
+    unmap,
+};
+
 /// Where a [`FrameBuffer`]'s bytes live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FrameBacking {
@@ -28,13 +39,18 @@ impl FrameBacking {
     }
 }
 
-/// Owned frame memory: an fd (mapped on first CPU access) or a heap buffer.
+/// Owned frame memory: a dma-buf or memfd (mapped on first CPU access) or a heap buffer.
 pub struct FrameBuffer {
     len: usize,
+    /// A memfd's descriptor (`-1` for the other backings; a dma-buf is in `dma`).
     fd: i32,
     backing: FrameBacking,
     heap: Option<Box<[u8]>>,
-    /// Lazy shared read-only mapping of `fd` (address), kept until drop.
+    /// The dma-buf of a `DmaHeap` buffer, allocated and owned through Lemnos.
+    dma: Option<DmaBuf>,
+    /// Lazy shared mapping of `dma` (`None` if mapping failed), kept until drop.
+    dma_map: OnceLock<Option<Mapping>>,
+    /// Lazy shared read-only mapping of a memfd (address), kept until drop.
     mapping: OnceLock<usize>,
     maps: AtomicU64,
     accesses: AtomicU64,
@@ -55,16 +71,18 @@ impl FrameBuffer {
         len: usize,
         fill: impl FnOnce(&mut [u8]),
     ) -> io::Result<Self> {
-        let (fd, heap) = match backing {
-            FrameBacking::DmaHeap => (dma_heap(len)?, None),
-            FrameBacking::Memfd => (memfd(len)?, None),
-            FrameBacking::Heap => (-1, Some(vec![0u8; len].into_boxed_slice())),
+        let (fd, dma, heap) = match backing {
+            FrameBacking::DmaHeap => (-1, Some(dma_heap(len)?), None),
+            FrameBacking::Memfd => (memfd(len)?, None, None),
+            FrameBacking::Heap => (-1, None, Some(vec![0u8; len].into_boxed_slice())),
         };
         let mut buffer = Self {
             len,
             fd,
             backing,
             heap,
+            dma,
+            dma_map: OnceLock::new(),
             mapping: OnceLock::new(),
             maps: AtomicU64::new(0),
             accesses: AtomicU64::new(0),
@@ -101,7 +119,7 @@ impl FrameBuffer {
 
     /// The dma-buf file descriptor (`DmaHeap` only).
     pub fn dmabuf_fd(&self) -> Option<i32> {
-        (self.backing == FrameBacking::DmaHeap).then_some(self.fd)
+        self.dma.as_ref().map(dma_raw_fd)
     }
 
     /// `mmap` calls made for CPU access so far (at most one per fd-backed buffer, none for
@@ -120,8 +138,10 @@ impl FrameBuffer {
     pub fn begin_cpu_access(&self) -> Option<&[u8]> {
         let bytes = self.bytes()?;
         let mut readers = self.readers.lock().unwrap_or_else(|e| e.into_inner());
-        if *readers == 0 {
-            sync(self, DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ);
+        if *readers == 0
+            && let Some(dma) = &self.dma
+        {
+            sync(dma, true, Access::Read);
         }
         *readers += 1;
         self.accesses.fetch_add(1, Relaxed);
@@ -132,8 +152,10 @@ impl FrameBuffer {
     pub fn end_cpu_access(&self) {
         let mut readers = self.readers.lock().unwrap_or_else(|e| e.into_inner());
         *readers = readers.saturating_sub(1);
-        if *readers == 0 {
-            sync(self, DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ);
+        if *readers == 0
+            && let Some(dma) = &self.dma
+        {
+            sync(dma, false, Access::Read);
         }
     }
 
@@ -142,6 +164,13 @@ impl FrameBuffer {
     pub fn bytes(&self) -> Option<&[u8]> {
         if let Some(heap) = &self.heap {
             return Some(heap);
+        }
+        if let Some(dma) = &self.dma {
+            let mapping = self.dma_map.get_or_init(|| {
+                self.maps.fetch_add(1, Relaxed);
+                dma_map(dma).ok()
+            });
+            return mapping.as_ref().map(dma_bytes);
         }
         let addr = *self.mapping.get_or_init(|| {
             self.maps.fetch_add(1, Relaxed);
@@ -153,39 +182,27 @@ impl FrameBuffer {
 
     /// Fill an fd-backed buffer through a temporary writable mapping.
     fn write(&mut self, fill: impl FnOnce(&mut [u8])) -> io::Result<()> {
+        if let Some(dma) = &self.dma {
+            return dma_fill(dma, fill);
+        }
         let ptr = map(self.fd, self.len, true)?;
-        sync(self, DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW);
         // Safety: `ptr` maps `len` writable bytes nobody else sees yet.
         fill(unsafe { std::slice::from_raw_parts_mut(ptr, self.len) });
-        sync(self, DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW);
         unmap(ptr, self.len);
         Ok(())
     }
 }
 
-const DMA_BUF_SYNC_READ: u64 = 1;
-const DMA_BUF_SYNC_RW: u64 = 3;
-const DMA_BUF_SYNC_START: u64 = 0;
-const DMA_BUF_SYNC_END: u64 = 4;
-
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
     use std::ffi::CString;
+    use std::os::fd::{AsFd, AsRawFd};
 
-    /// `_IOWR('H', 0, struct dma_heap_allocation_data)`.
-    const DMA_HEAP_IOCTL_ALLOC: u64 = 0xC018_4800;
-    /// `_IOW('b', 0, struct dma_buf_sync)`.
-    const DMA_BUF_IOCTL_SYNC: u64 = 0x4008_6200;
-    const HEAPS: [&str; 2] = ["/dev/dma_heap/system", "/dev/dma_heap/linux,cma"];
+    pub(super) use lemnos_linux::dma::{Access, DmaBuf, DmaHeap, Mapping};
 
-    #[repr(C)]
-    struct DmaHeapAllocationData {
-        len: u64,
-        fd: u32,
-        fd_flags: u32,
-        heap_flags: u64,
-    }
+    /// The dma-heaps tried in order, by name under `/dev/dma_heap`.
+    const HEAPS: [&str; 2] = ["system", "linux,cma"];
 
     pub(super) fn memfd(len: usize) -> io::Result<i32> {
         let name = CString::new("daedalus-frame").expect("static name");
@@ -204,34 +221,39 @@ mod linux {
         Ok(fd)
     }
 
-    pub(super) fn dma_heap(len: usize) -> io::Result<i32> {
+    /// A dma-buf of `len` bytes from the first of [`HEAPS`] that allocates it; the error is the
+    /// last heap's.
+    pub(super) fn dma_heap(len: usize) -> io::Result<DmaBuf> {
         let mut last = io::Error::from(io::ErrorKind::NotFound);
         for heap in HEAPS {
-            let path = CString::new(heap).expect("static path");
-            // Safety: opening a device node by path.
-            let heap_fd = unsafe { libc::open(path.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
-            if heap_fd < 0 {
-                last = io::Error::last_os_error();
-                continue;
+            match DmaHeap::open(heap).and_then(|heap| heap.allocate(len)) {
+                Ok(buf) => return Ok(buf),
+                Err(error) => last = error,
             }
-            let mut data = DmaHeapAllocationData {
-                len: len as u64,
-                fd: 0,
-                fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
-                heap_flags: 0,
-            };
-            // Safety: the ioctl reads and writes `data`, laid out as the kernel's struct.
-            let result = unsafe { libc::ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC as _, &mut data) };
-            let error = io::Error::last_os_error();
-            // Safety: closing our own fd; the allocated dma-buf has its own.
-            unsafe { libc::close(heap_fd) };
-            if result < 0 {
-                last = error;
-                continue;
-            }
-            return Ok(data.fd as i32);
         }
         Err(last)
+    }
+
+    pub(super) fn dma_raw_fd(dma: &DmaBuf) -> i32 {
+        dma.as_fd().as_raw_fd()
+    }
+
+    /// Map a dma-buf read-write (Lemnos maps dma-bufs writable only; the mapping costs the same).
+    pub(super) fn dma_map(dma: &DmaBuf) -> io::Result<Mapping> {
+        dma.map()
+    }
+
+    pub(super) fn dma_bytes(mapping: &Mapping) -> &[u8] {
+        mapping.as_slice()
+    }
+
+    /// Fill a dma-buf through one mapping, bracketed by its CPU-access sync.
+    pub(super) fn dma_fill(dma: &DmaBuf, fill: impl FnOnce(&mut [u8])) -> io::Result<()> {
+        let mut mapping = dma.map()?;
+        sync(dma, true, Access::ReadWrite);
+        fill(mapping.as_mut_slice());
+        sync(dma, false, Access::ReadWrite);
+        Ok(())
     }
 
     /// Map `len` bytes of `fd` shared (read-only unless `writable`).
@@ -253,13 +275,13 @@ mod linux {
         unsafe { libc::munmap(ptr.cast(), len) };
     }
 
-    /// Bracket CPU access to a dma-buf (`DMA_BUF_IOCTL_SYNC`); a no-op for other backings.
-    pub(super) fn sync(buffer: &FrameBuffer, flags: u64) {
-        if buffer.backing == FrameBacking::DmaHeap {
-            let mut flags = flags;
-            // Safety: the ioctl reads one `u64` of flags.
-            unsafe { libc::ioctl(buffer.fd, DMA_BUF_IOCTL_SYNC as _, &mut flags) };
-        }
+    /// Bracket CPU access to a dma-buf through Lemnos (`DMA_BUF_IOCTL_SYNC`). Its result is
+    /// ignored, as the raw ioctl's always was: a failed bracket never failed a frame.
+    pub(super) fn sync(dma: &DmaBuf, begin: bool, access: Access) {
+        let _ = match begin {
+            true => dma.begin_cpu_access(access),
+            false => dma.end_cpu_access(access),
+        };
     }
 
     impl Drop for FrameBuffer {
@@ -277,19 +299,43 @@ mod linux {
     }
 }
 
-#[cfg(target_os = "linux")]
-use linux::{dma_heap, map, memfd, sync, unmap};
-
 #[cfg(not(target_os = "linux"))]
 mod other {
     use super::*;
+
+    /// Uninhabited: no dma-bufs exist off Linux.
+    pub(super) enum DmaBuf {}
+    /// Uninhabited: no dma-buf mappings exist off Linux.
+    pub(super) enum Mapping {}
+
+    #[derive(Clone, Copy)]
+    pub(super) enum Access {
+        Read,
+        ReadWrite,
+    }
 
     pub(super) fn memfd(_len: usize) -> io::Result<i32> {
         Err(io::ErrorKind::Unsupported.into())
     }
 
-    pub(super) fn dma_heap(_len: usize) -> io::Result<i32> {
+    pub(super) fn dma_heap(_len: usize) -> io::Result<DmaBuf> {
         Err(io::ErrorKind::Unsupported.into())
+    }
+
+    pub(super) fn dma_raw_fd(dma: &DmaBuf) -> i32 {
+        match *dma {}
+    }
+
+    pub(super) fn dma_map(dma: &DmaBuf) -> io::Result<Mapping> {
+        match *dma {}
+    }
+
+    pub(super) fn dma_bytes(mapping: &Mapping) -> &[u8] {
+        match *mapping {}
+    }
+
+    pub(super) fn dma_fill(dma: &DmaBuf, _fill: impl FnOnce(&mut [u8])) -> io::Result<()> {
+        match *dma {}
     }
 
     pub(super) fn map(_fd: i32, _len: usize, _writable: bool) -> io::Result<*mut u8> {
@@ -298,8 +344,7 @@ mod other {
 
     pub(super) fn unmap(_ptr: *mut u8, _len: usize) {}
 
-    pub(super) fn sync(_buffer: &FrameBuffer, _flags: u64) {}
+    pub(super) fn sync(dma: &DmaBuf, _begin: bool, _access: Access) {
+        match *dma {}
+    }
 }
-
-#[cfg(not(target_os = "linux"))]
-use other::{dma_heap, map, memfd, sync, unmap};

@@ -19,6 +19,10 @@ daedalus = { workspace = true, features = ["engine", "plugins", "threads", "allo
 libc = { workspace = true }
 serde = { workspace = true }
 
+# dma-buf allocation, CPU access and mapping (`dma`), as `crates/gpu` takes them.
+[target.'cfg(target_os = "linux")'.dependencies]
+lemnos-linux = { workspace = true, features = ["dma"] }
+
 [dev-dependencies]
 criterion = { workspace = true }
 

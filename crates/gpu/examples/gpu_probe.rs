@@ -25,7 +25,7 @@ mod linux {
     use std::ffi::{CStr, c_char};
     use std::fmt::Display;
     use std::fs::File;
-    use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::{AsFd, AsRawFd};
 
     use ash::{ext, khr, vk};
     use daedalus_gpu::wgpu::{self, hal::api::Vulkan, hal::vulkan as hal_vk};
@@ -33,19 +33,10 @@ mod linux {
         DRM_FORMAT_MOD_LINEAR, DmabufAccess, ExternalImportSupport, GpuBackend, WgpuBackend,
         export_dmabuf_fence,
     };
+    use lemnos_linux::dma::{DmaBuf, DmaHeap};
 
     const HEAP_DIR: &str = "/dev/dma_heap";
-    /// `_IOWR('H', 0, struct dma_heap_allocation_data)`.
-    const DMA_HEAP_IOCTL_ALLOC: u64 = 0xC018_4800;
     const NV12: vk::Format = vk::Format::G8_B8R8_2PLANE_420_UNORM;
-
-    #[repr(C)]
-    struct DmaHeapAllocationData {
-        len: u64,
-        fd: u32,
-        fd_flags: u32,
-        heap_flags: u64,
-    }
 
     fn heading(title: &str) {
         println!("\n[{title}]");
@@ -424,7 +415,7 @@ mod linux {
         };
         kv("heap", &heap);
         let dmabuf = match alloc(&heap, 4096) {
-            Ok(fd) => fd,
+            Ok(buf) => buf,
             Err(err) => {
                 return kv(
                     "export_sync_file",
@@ -452,20 +443,7 @@ mod linux {
         }
     }
 
-    fn alloc(heap: &str, len: u64) -> std::io::Result<OwnedFd> {
-        let heap = File::options().read(true).write(true).open(heap)?;
-        let mut data = DmaHeapAllocationData {
-            len,
-            fd: 0,
-            fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
-            heap_flags: 0,
-        };
-        // SAFETY: valid heap fd and a correctly laid out argument struct.
-        let rc = unsafe { libc::ioctl(heap.as_raw_fd(), DMA_HEAP_IOCTL_ALLOC as _, &mut data) };
-        if rc != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: the kernel returned a fresh fd the caller now owns.
-        Ok(unsafe { OwnedFd::from_raw_fd(data.fd as i32) })
+    fn alloc(heap: &str, len: usize) -> std::io::Result<DmaBuf> {
+        DmaHeap::open_path(heap)?.allocate(len)
     }
 }

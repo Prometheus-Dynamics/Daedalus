@@ -1,7 +1,6 @@
 //! Per-frame cost of a `LINEAR` dmabuf camera frame reaching a compute kernel.
 
-use std::fs::File;
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 
 use ash::{khr, vk};
@@ -11,81 +10,27 @@ use daedalus_gpu::{
     WgpuBackend,
 };
 
+use lemnos_linux::dma::{Access, DmaBuf, DmaHeap};
+
 use super::{bind, iters, kv, pipeline, run_once, stats, storage, wait};
 
-/// `_IOWR('H', 0, struct dma_heap_allocation_data)`.
-const DMA_HEAP_IOCTL_ALLOC: u64 = 0xC018_4800;
-/// `_IOW('b', 0, struct dma_buf_sync)`.
-const DMA_BUF_IOCTL_SYNC: u64 = 0x4008_6200;
-const DMA_BUF_SYNC_RW: u64 = 3;
-const DMA_BUF_SYNC_START: u64 = 0;
-const DMA_BUF_SYNC_END: u64 = 4;
 /// Frame sizes for the import benchmark (XRGB8888).
 const FRAMES: [(u32, u32); 2] = [(640, 480), (1280, 720)];
 
-#[repr(C)]
-struct DmaHeapAllocationData {
-    len: u64,
-    fd: u32,
-    fd_flags: u32,
-    heap_flags: u64,
+/// A dma-heap buffer of `len` bytes from `DAEDALUS_DMA_HEAP` (default `/dev/dma_heap/system`).
+fn alloc_dmabuf(len: usize) -> std::io::Result<DmaBuf> {
+    let heap = std::env::var("DAEDALUS_DMA_HEAP").unwrap_or_else(|_| "/dev/dma_heap/system".into());
+    DmaHeap::open_path(heap)?.allocate(len)
 }
 
-/// A CPU-mapped dma-heap buffer.
-struct DmaBuf {
-    fd: OwnedFd,
-    len: usize,
-}
-
-impl DmaBuf {
-    fn alloc(len: usize) -> std::io::Result<Self> {
-        let heap =
-            std::env::var("DAEDALUS_DMA_HEAP").unwrap_or_else(|_| "/dev/dma_heap/system".into());
-        let heap = File::options().read(true).write(true).open(&heap)?;
-        let mut data = DmaHeapAllocationData {
-            len: len as u64,
-            fd: 0,
-            fd_flags: (libc::O_RDWR | libc::O_CLOEXEC) as u32,
-            heap_flags: 0,
-        };
-        // SAFETY: valid heap fd and a correctly laid out argument struct.
-        let rc = unsafe { libc::ioctl(heap.as_raw_fd(), DMA_HEAP_IOCTL_ALLOC as _, &mut data) };
-        if rc != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: the kernel returned a fresh fd we now own.
-        let fd = unsafe { OwnedFd::from_raw_fd(data.fd as i32) };
-        Ok(Self { fd, len })
-    }
-
-    /// Fill through a CPU mapping, bracketed by `DMA_BUF_IOCTL_SYNC`.
-    fn write(&self, fill: impl FnOnce(&mut [u8])) -> std::io::Result<()> {
-        // SAFETY: mapping `len` bytes of a dmabuf we own.
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                self.len,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_SHARED,
-                self.fd.as_raw_fd(),
-                0,
-            )
-        };
-        if ptr == libc::MAP_FAILED {
-            return Err(std::io::Error::last_os_error());
-        }
-        let sync = |flags: u64| {
-            // SAFETY: valid dmabuf fd and a u64 `dma_buf_sync` argument.
-            unsafe { libc::ioctl(self.fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC as _, &flags) };
-        };
-        sync(DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW);
-        // SAFETY: the mapping is `len` bytes and exclusively ours here.
-        fill(unsafe { std::slice::from_raw_parts_mut(ptr.cast::<u8>(), self.len) });
-        sync(DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW);
-        // SAFETY: unmapping the mapping created above.
-        unsafe { libc::munmap(ptr, self.len) };
-        Ok(())
-    }
+/// Fill through a CPU mapping, bracketed by the dma-buf's CPU access sync. The sync's result is
+/// ignored, as the raw ioctl's always was.
+fn write_dmabuf(buf: &DmaBuf, fill: impl FnOnce(&mut [u8])) -> std::io::Result<()> {
+    let mut map = buf.map()?;
+    let _ = buf.begin_cpu_access(Access::ReadWrite);
+    fill(map.as_mut_slice());
+    let _ = buf.end_cpu_access(Access::ReadWrite);
+    Ok(())
 }
 
 /// Whether the driver imports dmabuf memory into a storage buffer, per
@@ -285,8 +230,8 @@ pub(super) fn frame_import(backend: &WgpuBackend, device: &wgpu::Device, queue: 
         // A frame-sized dmabuf, as a camera allocates it, and one with a page of slack after the
         // frame (some drivers need the buffer's memory requirement to fit inside the dmabuf).
         let alloc = |len: usize| -> Result<DmaBuf, String> {
-            let buf = DmaBuf::alloc(len).map_err(|err| format!("dma-heap alloc failed: {err}"))?;
-            buf.write(|bytes| {
+            let buf = alloc_dmabuf(len).map_err(|err| format!("dma-heap alloc failed: {err}"))?;
+            write_dmabuf(&buf, |bytes| {
                 for y in 0..height {
                     for x in 0..width {
                         let at = y as usize * stride as usize + x as usize * 4;
@@ -317,10 +262,10 @@ pub(super) fn frame_import(backend: &WgpuBackend, device: &wgpu::Device, queue: 
         verify(device, queue, &out, width, height, &format!("{tag}_upload"));
         if probe.is_ok() {
             let exact = buf
-                .fd
-                .try_clone()
+                .as_fd()
+                .try_clone_to_owned()
                 .map_err(|err| err.to_string())
-                .and_then(|fd| import_buffer(device, fd, len as u64, buf.len as u64));
+                .and_then(|fd| import_buffer(device, fd, len as u64, buf.len() as u64));
             kv(
                 &format!("{tag}_buffer_import_frame_sized_dmabuf"),
                 match exact {
@@ -379,11 +324,11 @@ fn upload_path(
         contents: bytemuck::cast_slice(&params),
         usage: wgpu::BufferUsages::STORAGE,
     });
-    let src = storage(device, buf.len as u64);
+    let src = storage(device, buf.len() as u64);
     let bind_group = bind(device, unpack, &[&src, out, &frame]);
     let groups = (width.div_ceil(8), height.div_ceil(8));
     let (mut upload, mut total) = (Vec::new(), Vec::new());
-    let mapped = buf.write(|bytes| {
+    let mapped = write_dmabuf(buf, |bytes| {
         for _ in 0..iters() {
             let start = Instant::now();
             queue.write_buffer(&src, 0, bytes);
@@ -421,7 +366,7 @@ fn buffer_path(
     let mut cached = None;
     for _ in 0..iters() {
         let start = Instant::now();
-        let fd = match buf.fd.try_clone() {
+        let fd = match buf.as_fd().try_clone_to_owned() {
             Ok(fd) => fd,
             Err(err) => {
                 kv(&format!("{tag}_buffer"), format!("dup failed: {err}"));
@@ -429,7 +374,7 @@ fn buffer_path(
             }
         };
         let frame_len = stride * u64::from(height);
-        let src = match import_buffer(device, fd, frame_len, buf.len as u64) {
+        let src = match import_buffer(device, fd, frame_len, buf.len() as u64) {
             Ok(src) => src,
             Err(err) => {
                 kv(&format!("{tag}_buffer"), format!("import failed: {err}"));
@@ -502,7 +447,7 @@ fn image_path(
     let (mut import, mut copy, mut total) = (Vec::new(), Vec::new(), Vec::new());
     for _ in 0..iters() {
         let start = Instant::now();
-        let plane = match ExternalPlane::from_borrowed(buf.fd.as_fd(), 0, stride) {
+        let plane = match ExternalPlane::from_borrowed(buf.as_fd(), 0, stride) {
             Ok(plane) => plane,
             Err(err) => {
                 kv(&format!("{tag}_image"), format!("plane failed: {err}"));
@@ -637,7 +582,7 @@ fn tfu_copy(
 }
 
 /// Readback through a system dma-heap buffer: the GPU writes it through a storage-buffer import,
-/// the CPU reads it through its own (cached) mapping, with `DMA_BUF_IOCTL_SYNC` doing the cache
+/// the CPU reads it through its own (cached) mapping, with the dma-buf CPU access sync doing the cache
 /// maintenance. For devices whose host-visible memory is uncached (v3dv has only
 /// `DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT`), against `read_mapped` of host-cached storage.
 pub(super) fn readback() {
@@ -691,13 +636,13 @@ pub(super) fn readback() {
             Ok(need) => need as usize,
             Err(err) => return kv(&label, format!("dmabuf: {err}")),
         };
-        let buf = match DmaBuf::alloc(need.next_multiple_of(4096)) {
+        let buf = match alloc_dmabuf(need.next_multiple_of(4096)) {
             Ok(buf) => buf,
             Err(err) => return kv(&label, format!("dma-heap: {err}")),
         };
         let imported = match GpuStorage::import_dmabuf(
             &ctx,
-            buf.fd.try_clone().unwrap(),
+            buf.as_fd().try_clone_to_owned().unwrap(),
             0,
             size as u64,
             None,
@@ -707,25 +652,10 @@ pub(super) fn readback() {
             Ok(storage) => storage,
             Err(err) => return kv(&label, format!("import: {err}")),
         };
-        // SAFETY: a read-only mapping of the dmabuf, unmapped below.
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                buf.len,
-                libc::PROT_READ,
-                libc::MAP_SHARED,
-                buf.fd.as_raw_fd(),
-                0,
-            )
+        let map = match buf.map() {
+            Ok(map) => map,
+            Err(_) => return kv(&label, "mmap failed"),
         };
-        if ptr == libc::MAP_FAILED {
-            return kv(&label, "mmap failed");
-        }
-        let sync = |flags: u64| {
-            // SAFETY: valid dmabuf fd and a u64 `dma_buf_sync` argument.
-            unsafe { libc::ioctl(buf.fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC as _, &flags) };
-        };
-        const READ: u64 = 1;
         let (mut sync_only, mut copy_only) = (Vec::new(), Vec::new());
         let (t, ok) = time(&mut |out| {
             kernels
@@ -733,12 +663,12 @@ pub(super) fn readback() {
                 .unwrap()
                 .wait();
             let start = Instant::now();
-            sync(DMA_BUF_SYNC_START | READ);
+            let _ = buf.begin_cpu_access(Access::Read);
             let synced = start.elapsed();
-            // SAFETY: `size` bytes of the mapping; the GPU work writing them completed.
-            out.copy_from_slice(unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), size) });
+            // The GPU work writing the bytes completed before the sync above.
+            out.copy_from_slice(&map.as_slice()[..size]);
             let copied = start.elapsed();
-            sync(DMA_BUF_SYNC_END | READ);
+            let _ = buf.end_cpu_access(Access::Read);
             sync_only.push(synced);
             copy_only.push(copied - synced);
         });
@@ -751,7 +681,5 @@ pub(super) fn readback() {
                 super::median(&mut copy_only).as_secs_f64() * 1e3
             ),
         );
-        // SAFETY: the mapping made above.
-        unsafe { libc::munmap(ptr, buf.len) };
     }
 }
