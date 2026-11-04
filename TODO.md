@@ -31,24 +31,21 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
 
 Now, in this order. Items not listed here keep their place below. Nothing new is taken on.
 
-- [ ] **What:** the allocation flake: `detector_graph_frame_allocation_budget` read
-      `Parallel/Hardware: 9.05` against a budget of 9 (CI run 41777030660; a rerun passed).
-      **Why:** a timing-dependent failure on `dev`; a rerun hides it and does not fix it.
-      **Done when:** the cause is found and fixed without loosening the budget, stable over 200
-      runs under load.
-      **Blocked by:** nothing.
-      **Measured:** one failure in CI; the worker's fix is in the gates.
-- [ ] **What:** the Profile and Trace adapter edge to 0 allocations per frame
-      (`AdapterPathReport`'s `String` fields may change).
-      **Why:** the zero-allocation rule. The detector graph allocates 75 per frame there.
-      **Done when:** the allocation smoke asserts 0 at Profile and Trace.
-      **Blocked by:** the flake fix.
-      **Measured:** 75 per frame.
+- [x] **What:** the allocation flake: `detector_graph_frame_allocation_budget` read
+      `Parallel/Hardware: 9.05` against a budget of 9.
+      **Done (2026-11-03):** 7c48145, CI run 41787751284. No budget changed; 200 of 200 runs under
+      load, 10 of 200 failing before.
+- [x] **What:** the Profile and Trace adapter edge to 0 allocations per frame.
+      **Done (2026-11-03):** the adapter edge allocates 0; the detector frame went from 75 to 9 at
+      Profile, serial and parallel, and Trace is 9. `AdapterPathReport` did not need to change.
+      Adaptive rows at those levels have no budget.
 - [ ] **What:** the 9 payload allocations per frame at Basic (8 `Arc` outputs, 1 `String` clone).
       **Why:** they are on the default frame path, under the same rule.
       **Done when:** 0 at Basic, or each remaining one is named as a node's and not the runtime's.
-      **Blocked by:** the adapter edge.
-      **Measured:** 9 per frame.
+      **Blocked by:** nothing.
+      **Measured:** 9 per frame: 8 node outputs the runtime wraps (`FrameInfo` x2, `Roi` x2,
+      `Histogram`, `Stats`, `Track`, `Report`), and `exposure`'s owned `String` parameter, which is
+      the node's.
 - [ ] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
       `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
       move onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays until `crates/rga` goes to
