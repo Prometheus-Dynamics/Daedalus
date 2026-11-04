@@ -29,7 +29,7 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
 
 ### Current list (HeliOS coordinator, 2026-11-03)
 
-Now, in this order. Items not listed here keep their place below.
+Now, in this order. Items not listed here keep their place below. Nothing new is taken on.
 
 - [ ] **What:** the allocation flake: `detector_graph_frame_allocation_budget` read
       `Parallel/Hardware: 9.05` against a budget of 9 (CI run 41777030660; a rerun passed).
@@ -66,12 +66,21 @@ Now, in this order. Items not listed here keep their place below.
       **Measured:** none on the CM5. Estimates: 20-50 µs per frame with handles on every edge,
       10-80 µs more with constants sent on every call.
 
-Not started; each waits for the user's go:
+### Waiting on the user's go
 
-- [ ] Stable path: adapters, serializers, `repr(C)` values, plugin-local handles, a telemetry sink,
-      constants sent once, GPU across the boundary.
-- [ ] Hand `crates/rga` and `crates/vglite` to Lemnos, then repoint
-      `crates/kernels/src/registry/fixed.rs` and delete ours.
+Not started. Agents finish the current list, then pause (user, relayed by HeliOS, 2026-11-03).
+
+1. Stable path gains adapters and serializers (C function pointers keyed by type name), typed
+   `repr(C)` values and views, plugin-local handles, a telemetry sink, constants sent once, and
+   codecs for the catalog nodes.
+2. `FrameLease` adapter cached per frame on the stable path.
+3. Host-side GPU ops and the C vtable for plugins, per
+   `/mnt/ssd-samsung/helios-notes/gpu-seam.md`.
+4. One real Eidos node on the stable path as a trial, then Eidos as a `cdylib` plugin.
+5. Whole-subgraph crossing: only if the numbers justify it.
+6. Use `lemnos-abi` primitives; hand `crates/rga` and `crates/vglite` to Lemnos, then repoint
+   `crates/kernels/src/registry/fixed.rs` and delete ours.
+7. Shared and static build forms and plugin linking, depending on Gaia's LTO test.
 
 ### CI on `dev`
 
