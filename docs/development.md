@@ -475,8 +475,10 @@ firmware is linked and measured, not flashed).
 bridge and a one-node `HostGraph` (`host.in -> inc -> host.out`, serial mode). Save a baseline
 with `-- --save-baseline <name>` and compare with `-- --baseline <name>`. The
 `hot_path_allocations` engine test pins the metrics-off round trip at 2 heap allocations (the
-input and output payloads, one each); it was 31 before the hot-path pass and 4 before the
-tick-cost pass below.
+input and output payloads, one each: `Value` payloads are not inline); it was 31 before the
+hot-path pass and 4 before the tick-cost pass below. The no_std smoke graph with `i64` payloads
+(`cargo test -p daedalus-nostd-smoke --test parallel_executors`) allocates 0 per tick on one thread
+and on each of four: primitive payloads are held inline (see "Graph frame allocations").
 
 Hot-path pass (x86_64 Linux, shared 24-core machine at load ~6-8, criterion medians; before is
 the previous build benched back to back with after, so treat differences under ~10%
@@ -547,8 +549,13 @@ growth (a node's first run on a worker growing that thread's port buffers). The 
 nodes are slow enough that adaptive mode runs it in parallel; optimized, it runs serially.
 
 Each created payload is one allocation, the value's own `Arc`, which is the payload's storage
-(`ArcValue<T>`, retyped in place); a handler returning an `Arc` it already holds allocates
-nothing (until the tick-cost pass, two and one: a `TypedStorage` wrapper around the value's
+(`ArcValue<T>`, retyped in place), except a primitive (the integers, floats, `bool`, `char`,
+`()`), which `Payload::owned` holds inline in the payload (`payload/inline.rs`) and which allocates
+nothing. The detector graph's primitive outputs (`count`, `exposure`, `sharpness`, `quality`) and
+`count`'s built-in branch are inline, so the frame is 9 allocations per frame in every mode (8
+payloads and the `String` clone; with basic metrics under the `metrics` feature, 10), down from 14
+(13 payloads and the clone, measured without the `metrics` feature). A handler returning an
+`Arc` it already holds allocates nothing (until the tick-cost pass, two and one: a `TypedStorage` wrapper around the value's
 `Arc`, which made the serial metrics-off frame 31 allocations; it is 14 now). Boundary contracts
 are registry-scoped and checked when a graph is compiled, and only `Payload::boundary_owned`
 builds contract-restricted storage.
@@ -594,8 +601,9 @@ and `detector_frames_allocate_nothing`.
 
 | Path | Per execution | Status |
 | --- | --- | --- |
-| Payload created by a node or adapter | one `Arc` (the value's storage) | inherent; returning an `Arc` the node holds costs 0 |
-| Detector graph frame (`graph_frame_allocations`) | 14: 12 payloads, 1 built-in branch (`count` fanned out to an owned consumer), 1 `String` const taken by value | budget exact; no runtime bookkeeping |
+| Payload created by a node or adapter | one `Arc` (the value's storage), or none for a primitive (held inline); returning an `Arc` the node holds costs 0 | inherent for non-primitives |
+| Steady-state tick, no_std smoke graph (`i64` in and out, 1 and 4 threads) | was 2 (the input and output payloads) | 0 (`parallel_executors`) |
+| Detector graph frame (`graph_frame_allocations`) | 9: 8 payloads, 1 `String` const taken by value; was 14 before primitives were inline | budget exact; no runtime bookkeeping |
 | `tick_direct_payload` (route by port name) | was 5 (route, mask `Vec`, node clone) | fixed: routes cached per port pair, single-node part `Arc`-shared; 1 now (`hot_path_allocations`) |
 | `drain_payloads` | a `Vec` per call | `drain_payloads_into(&mut Vec)` reuses one: 0 |
 | Edge pop size estimate | `RwLock` read per pop | skipped when no size inspector is registered |

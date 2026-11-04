@@ -1286,6 +1286,16 @@ plugin ABI and does not load.
 
 ### Performance
 
+- **Primitive payloads allocate nothing.** `Payload::owned` holds the integers, floats, `bool`,
+  `char` and `()` inline instead of in an `Arc` (a `Payload` is 184 bytes, 8 more than before).
+  A steady-state tick of the no_std smoke graph (`examples/nostd_smoke`, `i64` in and out) now
+  allocates 0 times on one thread and on each of four (it was 2 per tick): the
+  `parallel_executors` test asserts it. The detector graph frame (`graph_frame_allocations`) goes
+  from 14 to 9 allocations per frame in serial, parallel and adaptive modes (basic metrics: 10 with the
+`metrics` feature, whose per-tick metrics map is the extra one). Other types, and `Payload::shared`, keep the
+  `Arc` path. For an inline value, `is_storage_unique`, `try_into_owned` and `get_mut` always
+  succeed, `shares_storage` holds for equal values of one type (floats compare by bits), and
+  `get_arc` hands out a new `Arc` of a copy. Public API and the plugin ABI are unchanged.
 - **Per-tick runtime overhead on the serial executor.** Measured on the new `daedalus-frame-bench`
   example `apriltag_mirror`: the tracked AprilTag detector group (19 stages, planner-expanded from
   its embedded graph), the pose and multi-tag pose nodes and the host bridge edges, 21 planned

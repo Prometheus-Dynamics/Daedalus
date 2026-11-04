@@ -24,7 +24,7 @@ use portable_atomic::AtomicU32;
 
 use daedalus_core::platform::Clock;
 use daedalus_data::model::{TypeExpr, Value, ValueType};
-use daedalus_engine::{Engine, EngineConfig, HostGraph};
+use daedalus_engine::{Engine, EngineConfig, HostGraph, MetricsLevel};
 use daedalus_planner::{Edge, ExecutionPlan, Graph, NodeInstance};
 use daedalus_registry::capability::{NodeDecl, PortDecl};
 use daedalus_runtime::host_bridge::{HOST_BRIDGE_ID, HOST_BRIDGE_META_KEY, HostBridgeManager};
@@ -118,16 +118,22 @@ pub fn engine_graph(clock: Clock) -> Option<HostGraph<Increment>> {
     plugins
         .register_node_decl(NodeDecl::new("inc").input(port("in")).output(port("out")))
         .ok()?;
-    Engine::new(EngineConfig::default().with_clock(clock))
-        .ok()?
-        .compile_host_graph_plugin_registry(
-            &plugins,
-            graph(),
-            increment as Increment,
-            HostBridgeManager::new(),
-            "host",
-        )
-        .ok()
+    // Metrics off whatever features the build unifies: their per-tick telemetry is not what
+    // the no_std graph measures.
+    Engine::new(
+        EngineConfig::default()
+            .with_clock(clock)
+            .with_metrics_level(MetricsLevel::Off),
+    )
+    .ok()?
+    .compile_host_graph_plugin_registry(
+        &plugins,
+        graph(),
+        increment as Increment,
+        HostBridgeManager::new(),
+        "host",
+    )
+    .ok()
 }
 
 #[cfg(test)]

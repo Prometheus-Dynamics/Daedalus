@@ -131,10 +131,18 @@ fn round_trip_allocations(node_id: &str) -> usize {
     })
 }
 
+/// The round trip's one allocation is its frame's `Arc`: the `i64` input and output are held
+/// inline (no allocation).
+const ROUND_TRIP_ALLOCATIONS: usize = 1;
+
 #[test]
 fn typed_macro_nodes_allocate_no_more_than_hand_written_ones() {
     let manual = round_trip_allocations("manual");
     let typed = round_trip_allocations("typed");
+    assert!(
+        manual <= ROUND_TRIP_ALLOCATIONS && typed <= ROUND_TRIP_ALLOCATIONS,
+        "round trips allocated {manual} (hand-written) and {typed} (typed) times, budget {ROUND_TRIP_ALLOCATIONS}"
+    );
     assert!(
         typed <= manual,
         "typed #[node] round trip allocated {typed} times, a hand-written node {manual}"

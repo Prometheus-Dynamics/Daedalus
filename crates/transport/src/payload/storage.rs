@@ -4,6 +4,7 @@ use crate::portable::Arc;
 use core::any::{Any, TypeId};
 use core::fmt;
 
+use super::inline::{Body, InlineValue};
 use crate::{ForeignBorrow, ForeignHandle, ReleaseMode, TypeKey};
 
 /// Type-erased payload storage.
@@ -231,9 +232,12 @@ impl PayloadStorage for BytesStorage {
     }
 }
 
-/// The `T` in `storage`: a shared value's own allocation or typed storage.
+/// The `T` in `storage`: an inline value, a shared value's own allocation, or typed storage.
 pub(super) fn typed_ref<T: Send + Sync + 'static>(storage: &dyn PayloadStorage) -> Option<&T> {
     let any = storage.as_any();
+    if let Some(value) = any.downcast_ref::<InlineValue>() {
+        return value.value_ref::<T>();
+    }
     if let Some(value) = any.downcast_ref::<ArcValue<T>>() {
         return Some(&value.0);
     }
@@ -241,14 +245,16 @@ pub(super) fn typed_ref<T: Send + Sync + 'static>(storage: &dyn PayloadStorage) 
         .map(|storage| storage.value.as_ref())
 }
 
-/// The `Arc<T>` in `storage` (see [`typed_ref`]).
-pub(super) fn typed_arc<T: Send + Sync + 'static>(
-    storage: &Arc<dyn PayloadStorage>,
-) -> Option<Arc<T>> {
-    arc_value::<T>(storage).or_else(|| {
-        storage
-            .as_any()
-            .downcast_ref::<TypedStorage<T>>()
-            .map(|storage| storage.value.clone())
-    })
+/// The `Arc<T>` of `body` (see [`typed_ref`]): an inline value is copied into a new allocation,
+/// shared storage hands out its own (one more strong reference).
+pub(super) fn typed_arc<T: Send + Sync + 'static>(body: &Body) -> Option<Arc<T>> {
+    match body {
+        Body::Inline(value) => (*value).take::<T>().map(Arc::new),
+        Body::Shared(storage) => arc_value::<T>(storage).or_else(|| {
+            storage
+                .as_any()
+                .downcast_ref::<TypedStorage<T>>()
+                .map(|storage| storage.value.clone())
+        }),
+    }
 }

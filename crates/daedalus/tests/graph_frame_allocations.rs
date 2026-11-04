@@ -157,12 +157,13 @@ fn call_site(trace: &str) -> String {
     chain.join("\n            <- ")
 }
 
-/// Payloads one frame creates, one allocation each (the value's `Arc`, which is the payload's
-/// storage) unless noted: 14 node outputs (four return an `Arc` they already hold, wrapped
-/// without allocating; `alarm` emits nothing and `escalate` is skipped), two metadata-only
-/// adapter results, one built-in branch for the fanned-out `count`, and the host's frame (none,
-/// it is `Arc`-shared).
-const PAYLOAD_ALLOCATIONS: f64 = 10.0 + 2.0 + 1.0;
+/// Payloads one frame creates that allocate, one allocation each (the value's `Arc`, which is the
+/// payload's storage): six node outputs and two metadata-only adapter results. Four of the 14
+/// node outputs return an `Arc` they already hold (wrapped without allocating); `alarm` emits
+/// nothing and `escalate` is skipped. The primitive outputs (`count`, `exposure`, `sharpness`,
+/// `quality`) and the built-in branch of `count` are held inline (no allocation), as is the
+/// host's frame (`Arc`-shared, none).
+const PAYLOAD_ALLOCATIONS: f64 = 6.0 + 2.0;
 /// The one allocation a handler makes: `exposure` takes its `String` constant by value, so it
 /// gets a clone of the decoded string (its serde enum constant is decoded once and copied).
 const OWNED_STRING_CLONE: f64 = 1.0;
@@ -172,13 +173,14 @@ const OWNED_STRING_CLONE: f64 = 1.0;
 /// allocate nothing else, so everything beyond the payloads is runtime bookkeeping, which must
 /// stay at zero.
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
-/// Basic metrics return each tick's per-node metrics in one fresh vector.
+/// Basic metrics reserve the per-node metrics map once a tick, one allocation, when the
+/// `metrics` feature is built (the workspace's feature set; without it, Basic adds nothing).
 const BASIC_METRICS_ALLOCATIONS: f64 = 1.0;
 /// Parallel frames fan out to persistent parked workers that pull segments from one shared
 /// queue: no task, channel or thread per frame. What remains is amortized (a node's first run on
 /// a worker grows that thread's port buffers). Adaptive mode runs this graph serially in
 /// optimized builds; unoptimized, its nodes are slow enough to go parallel.
-const PARALLEL_ALLOCATIONS: f64 = 1.0;
+const PARALLEL_ALLOCATIONS: f64 = 0.0;
 
 #[test]
 fn detector_graph_frame_allocation_budget() {

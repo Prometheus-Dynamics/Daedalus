@@ -1,7 +1,7 @@
-//! Executors ticking on several threads with every Daedalus crate's `std` off: each owns its port
-//! buffer pool (there are no thread-locals), so a tick allocates exactly what it does on one
-//! thread alone. With one process-wide pool, threads found it locked or swapped differently
-//! sized buffers through it, and some ticks allocated more.
+//! Executors ticking on several threads with every Daedalus crate's `std` off: a steady-state
+//! tick allocates nothing, on one thread and on each of several. Primitive payloads (the host's
+//! input, the node's output) are held inline, and each executor owns its port buffer pool (there
+//! are no thread-locals), so no thread's ticks depend on another's.
 #![allow(clippy::print_stderr)] // the per-tick counts
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -61,9 +61,9 @@ fn tick_allocations(start: &Barrier) -> usize {
 }
 
 #[test]
-fn executors_on_several_threads_allocate_what_one_does_alone() {
+fn ticks_allocate_nothing_on_one_thread_or_on_four() {
     let alone = tick_allocations(&Barrier::new(1));
-    assert_eq!(alone % TICKS, 0, "every tick allocates the same");
+    assert_eq!(alone, 0, "a tick allocates on one thread");
     let start = Barrier::new(THREADS);
     let parallel: Vec<usize> = std::thread::scope(|scope| {
         let threads: Vec<_> = (0..THREADS)
@@ -71,14 +71,11 @@ fn executors_on_several_threads_allocate_what_one_does_alone() {
             .collect();
         threads.into_iter().map(|t| t.join().unwrap()).collect()
     });
-    eprintln!(
-        "alone: {} per tick; in parallel: {parallel:?} over {TICKS} ticks",
-        alone / TICKS
-    );
+    eprintln!("alone: {alone}; in parallel: {parallel:?} allocations over {TICKS} ticks");
     for allocations in parallel {
         assert_eq!(
-            allocations, alone,
-            "a thread's ticks allocate more than one thread alone"
+            allocations, 0,
+            "a thread's ticks allocate on {THREADS} threads"
         );
     }
 }

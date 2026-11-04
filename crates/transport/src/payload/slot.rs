@@ -4,6 +4,7 @@ use crate::portable::Arc;
 use core::any::Any;
 
 use super::foreign::ForeignStorage;
+use super::inline::Body;
 use super::{Payload, PayloadStorage, ResidencyCache};
 use crate::{ForeignHandle, PayloadLineage, Residency, TypeKey};
 
@@ -93,7 +94,7 @@ impl PayloadSlot {
     fn payload(&self, type_key: TypeKey, residency: Residency) -> Payload {
         Payload {
             type_key,
-            storage: self.storage.clone().expect("filled above"),
+            storage: Body::Shared(self.storage.clone().expect("filled above")),
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),

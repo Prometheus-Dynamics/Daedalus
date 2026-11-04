@@ -1,6 +1,5 @@
 //! Boundary-contract borrow/take paths on [`Payload`] and their error type.
 
-use crate::portable::Arc;
 use alloc::boxed::Box;
 use core::fmt;
 
@@ -11,6 +10,7 @@ use super::Payload;
 impl Payload {
     pub fn boundary_contract(&self) -> Option<&BoundaryTypeContract> {
         self.storage
+            .get()
             .as_any()
             .downcast_ref::<BoundaryStorage>()
             .map(BoundaryStorage::contract)
@@ -25,6 +25,7 @@ impl Payload {
         T: Send + Sync + 'static,
     {
         self.storage
+            .get()
             .as_any()
             .downcast_ref::<BoundaryStorage>()
             .ok_or(BoundaryTakeError::NotBoundary)?
@@ -39,7 +40,7 @@ impl Payload {
     where
         T: Send + Sync + 'static,
     {
-        let storage = Arc::get_mut(&mut self.storage).ok_or(BoundaryTakeError::Shared)?;
+        let storage = self.storage.get_mut().ok_or(BoundaryTakeError::Shared)?;
         storage
             .as_any_mut()
             .downcast_mut::<BoundaryStorage>()
@@ -55,8 +56,9 @@ impl Payload {
     where
         T: Send + Sync + 'static,
     {
-        let taken = if self.storage.as_any().is::<BoundaryStorage>() {
-            Arc::get_mut(&mut self.storage)
+        let taken = if self.storage.get().as_any().is::<BoundaryStorage>() {
+            self.storage
+                .get_mut()
                 .ok_or(BoundaryTakeError::Shared)
                 .and_then(|storage| {
                     storage
@@ -78,8 +80,9 @@ impl Payload {
         T: Send + Sync + 'static,
     {
         let type_key = &self.type_key;
-        let taken = if self.storage.as_any().is::<BoundaryStorage>() {
-            Arc::get_mut(&mut self.storage)
+        let taken = if self.storage.get().as_any().is::<BoundaryStorage>() {
+            self.storage
+                .get_mut()
                 .ok_or(BoundaryTakeError::Shared)
                 .and_then(|storage| {
                     storage

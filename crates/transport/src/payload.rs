@@ -11,18 +11,18 @@ use crate::{
 
 mod boundary;
 mod foreign;
+mod inline;
 mod residency;
 mod slot;
 mod storage;
 
 pub use boundary::BoundaryPayloadError;
+use inline::{Body, InlineValue};
 use residency::ResidencyCache;
 pub use residency::ResidencyCacheKey;
 pub use slot::PayloadSlot;
 pub use storage::PayloadStorage;
-use storage::{
-    ArcValue, BytesStorage, TypedStorage, arc_storage, into_arc_value, typed_arc, typed_ref,
-};
+use storage::{ArcValue, BytesStorage, TypedStorage, arc_storage, typed_arc, typed_ref};
 
 /// Opaque host-owned payload handle for Rust plugin fast paths.
 #[derive(Clone, Debug)]
@@ -52,8 +52,8 @@ pub struct Payload {
     type_key: TypeKey,
     /// Single allocation: a shared Rust value's own `Arc` (`ArcValue`), so wrapping an `Arc<T>`
     /// allocates nothing; unique payloads recover the owned value in place
-    /// ([`Payload::try_into_owned`]).
-    storage: Arc<dyn PayloadStorage>,
+    /// ([`Payload::try_into_owned`]). A primitive ([`Payload::owned`]) is held inline instead.
+    storage: Body,
     residency: Residency,
     layout: Option<Layout>,
     /// Empty (and allocation-free) until a resident is cached.
@@ -71,8 +71,8 @@ impl fmt::Debug for Payload {
                 "cached_residencies",
                 &self.cached_residencies().collect::<Vec<_>>(),
             )
-            .field("rust_type_name", &self.storage.rust_type_name())
-            .field("bytes_estimate", &self.storage.bytes_estimate())
+            .field("rust_type_name", &self.storage.get().rust_type_name())
+            .field("bytes_estimate", &self.storage.get().bytes_estimate())
             .field("lineage", &self.lineage)
             .finish()
     }
@@ -86,14 +86,31 @@ impl Payload {
         Self::shared_with(type_key, value, Residency::Cpu, None, None)
     }
 
-    /// A payload owning `value` (one allocation, the value's `Arc`). Boundary contracts are
-    /// checked when a graph is compiled (against its registry's contracts); use
-    /// [`Self::boundary_owned`] for a value whose access a contract must restrict at runtime.
+    /// A payload owning `value`. A primitive (the integers, floats, `bool`,
+    /// `char` and `()`) is held in the payload itself, with no allocation; any other value takes
+    /// one allocation, the value's `Arc`. Boundary contracts are checked when a graph is compiled
+    /// (against its registry's contracts); use [`Self::boundary_owned`] for a value whose access
+    /// a contract must restrict at runtime.
     pub fn owned<T>(type_key: impl Into<TypeKey>, value: T) -> Self
     where
         T: Send + Sync + 'static,
     {
-        Self::shared(type_key, Arc::new(value))
+        let type_key = type_key.into();
+        match InlineValue::of(&value) {
+            Some(inline) => Self::with_body(type_key, Body::Inline(inline)),
+            None => Self::shared(type_key, Arc::new(value)),
+        }
+    }
+
+    fn with_body(type_key: TypeKey, storage: Body) -> Self {
+        Self {
+            type_key,
+            storage,
+            residency: Residency::Cpu,
+            layout: None,
+            residency_cache: ResidencyCache::default(),
+            lineage: PayloadLineage::new(),
+        }
     }
 
     pub fn boundary_owned<T>(
@@ -106,14 +123,7 @@ impl Payload {
     {
         let storage = BoundaryStorage::owned(type_key, value, capabilities);
         let type_key = storage.type_key.clone();
-        Self {
-            type_key,
-            storage: arc_dyn!(storage),
-            residency: Residency::Cpu,
-            layout: None,
-            residency_cache: ResidencyCache::default(),
-            lineage: PayloadLineage::new(),
-        }
+        Self::with_body(type_key, Body::Shared(arc_dyn!(storage)))
     }
 
     #[cfg(test)]
@@ -151,7 +161,7 @@ impl Payload {
         };
         Self {
             type_key,
-            storage,
+            storage: Body::Shared(storage),
             residency,
             layout,
             residency_cache: ResidencyCache::default(),
@@ -164,14 +174,10 @@ impl Payload {
     }
 
     pub fn bytes_with_type_key(type_key: impl Into<TypeKey>, bytes: Arc<[u8]>) -> Self {
-        Self {
-            type_key: type_key.into(),
-            storage: arc_dyn!(BytesStorage { bytes }),
-            residency: Residency::Cpu,
-            layout: None,
-            residency_cache: ResidencyCache::default(),
-            lineage: PayloadLineage::new(),
-        }
+        Self::with_body(
+            type_key.into(),
+            Body::Shared(arc_dyn!(BytesStorage { bytes })),
+        )
     }
 
     pub fn with_lineage(mut self, lineage: PayloadLineage) -> Self {
@@ -199,7 +205,7 @@ impl Payload {
     }
 
     pub fn release_mode(&self) -> ReleaseMode {
-        self.storage.release_mode()
+        self.storage.get().release_mode()
     }
 
     pub fn type_key(&self) -> &TypeKey {
@@ -215,20 +221,20 @@ impl Payload {
     }
 
     pub fn bytes_estimate(&self) -> Option<u64> {
-        self.storage.bytes_estimate()
+        self.storage.get().bytes_estimate()
     }
 
     pub fn storage_rust_type_name(&self) -> Option<&'static str> {
-        self.storage.rust_type_name()
+        self.storage.get().rust_type_name()
     }
 
     /// `TypeId` of the stored Rust value (`None` for bytes payloads).
     pub fn storage_rust_type_id(&self) -> Option<core::any::TypeId> {
-        self.storage.rust_type_id()
+        self.storage.get().rust_type_id()
     }
 
     pub fn value_any(&self) -> Option<&dyn Any> {
-        self.storage.value_any()
+        self.storage.get().value_any()
     }
 
     /// Borrow the payload value as `&(dyn Any + Send + Sync)`.
@@ -236,17 +242,22 @@ impl Payload {
     /// Returns `None` for storage that does not expose a borrowable value (for example boundary
     /// storage without `borrow_ref` capability, or a boundary value that was already taken).
     pub fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        self.storage.value_any_sync()
+        self.storage.get().value_any_sync()
     }
 
     pub fn get_ref<T>(&self) -> Option<&T>
     where
         T: Send + Sync + 'static,
     {
-        if let Some(value) = typed_ref::<T>(self.storage.as_ref()) {
+        if let Some(value) = typed_ref::<T>(self.storage.get()) {
             return Some(value);
         }
-        if let Some(storage) = self.storage.as_any().downcast_ref::<BoundaryStorage>() {
+        if let Some(storage) = self
+            .storage
+            .get()
+            .as_any()
+            .downcast_ref::<BoundaryStorage>()
+        {
             if storage.holds::<T>() || !storage.may_hold::<T>() {
                 return storage.borrow_ref_as::<T>(&self.type_key);
             }
@@ -254,7 +265,7 @@ impl Payload {
         }
         // Storage built by another copy of this crate (a separately built dynamic plugin) has
         // other wrapper `TypeId`s; its value can still be `T` (e.g. a std type).
-        self.storage.value_any_sync()?.downcast_ref::<T>()
+        self.storage.get().value_any_sync()?.downcast_ref::<T>()
     }
 
     pub fn get_arc<T>(&self) -> Option<Arc<T>>
@@ -268,15 +279,19 @@ impl Payload {
     where
         T: Send + Sync + 'static,
     {
-        if self.storage.as_any().is::<BoundaryStorage>() {
-            let storage = Arc::get_mut(&mut self.storage)?;
+        let type_key = &self.type_key;
+        let storage = match &mut self.storage {
+            Body::Inline(value) => return value.value_mut::<T>(),
+            Body::Shared(storage) => Arc::get_mut(storage)?,
+        };
+        if storage.as_any().is::<BoundaryStorage>() {
             let storage = storage.as_any_mut().downcast_mut::<BoundaryStorage>()?;
             if storage.holds::<T>() || !storage.may_hold::<T>() {
-                return storage.borrow_mut_as::<T>(&self.type_key);
+                return storage.borrow_mut_as::<T>(type_key);
             }
-            return storage.try_borrow_mut_as::<T>(&self.type_key).ok();
+            return storage.try_borrow_mut_as::<T>(type_key).ok();
         }
-        let storage = Arc::get_mut(&mut self.storage)?.as_any_mut();
+        let storage = storage.as_any_mut();
         if storage.is::<ArcValue<T>>() {
             return storage
                 .downcast_mut::<ArcValue<T>>()
@@ -290,13 +305,24 @@ impl Payload {
     where
         T: Send + Sync + 'static,
     {
-        if let Some(storage) = self.storage.as_any().downcast_ref::<BoundaryStorage>() {
+        if let Body::Inline(value) = self.storage {
+            // Inline values are unique: the copy out of the payload always succeeds.
+            return value.take::<T>().ok_or_else(|| Box::new(self));
+        }
+        if let Some(storage) = self
+            .storage
+            .get()
+            .as_any()
+            .downcast_ref::<BoundaryStorage>()
+        {
             let (holds, may_hold) = (storage.holds::<T>(), storage.may_hold::<T>());
-            if !may_hold || Arc::strong_count(&self.storage) != 1 {
+            if !may_hold || self.storage.strong_count() != 1 {
                 return Err(Box::new(self));
             }
             if holds {
-                let taken = Arc::get_mut(&mut self.storage)
+                let taken = self
+                    .storage
+                    .get_mut()
                     .and_then(|storage| storage.as_any_mut().downcast_mut::<BoundaryStorage>())
                     .and_then(|storage| storage.take_owned_as::<T>(&self.type_key));
                 return taken.ok_or_else(|| Box::new(self));
@@ -306,35 +332,41 @@ impl Payload {
                 .try_take_boundary_owned_as::<T>()
                 .map_err(|payload| payload.0);
         }
-        if self.storage.as_any().is::<ArcValue<T>>() {
-            if Arc::strong_count(&self.storage) != 1 {
+        if self.storage.get().as_any().is::<ArcValue<T>>() {
+            if self.storage.strong_count() != 1 {
                 return Err(Box::new(self));
             }
             // A weak reference elsewhere may upgrade meanwhile: then the payload is handed back.
-            let storage = match into_arc_value::<T>(self.storage) {
+            let storage = match storage::into_arc_value::<T>(self.storage.into_arc()) {
                 Ok(value) => match Arc::try_unwrap(value) {
                     Ok(value) => return Ok(value),
                     Err(value) => arc_storage(&self.type_key, value),
                 },
                 Err(storage) => storage,
             };
-            self.storage = storage;
+            self.storage = Body::Shared(storage);
             return Err(Box::new(self));
         }
-        let Some(storage) = self.storage.as_any().downcast_ref::<TypedStorage<T>>() else {
+        let Some(storage) = self
+            .storage
+            .get()
+            .as_any()
+            .downcast_ref::<TypedStorage<T>>()
+        else {
             return Err(Box::new(self));
         };
-        if Arc::strong_count(&self.storage) != 1
+        if self.storage.strong_count() != 1
             || Arc::strong_count(&storage.value) != 1
-            || !core::ptr::addr_eq(storage, Arc::as_ptr(&self.storage))
+            || !core::ptr::addr_eq(storage, self.storage.addr())
         {
             return Err(Box::new(self));
         }
         // Both handles are unique and owned by `self`, so nothing can clone them concurrently.
         // Safety: the allocation's value is the `TypedStorage<T>` checked above (same address),
         // so the pointer keeps its size and alignment.
-        let storage =
-            unsafe { Arc::from_raw(Arc::into_raw(self.storage).cast::<TypedStorage<T>>()) };
+        let storage = unsafe {
+            Arc::from_raw(Arc::into_raw(self.storage.into_arc()).cast::<TypedStorage<T>>())
+        };
         let storage =
             Arc::into_inner(storage).expect("payload storage uniqueness was checked before move");
         Ok(Arc::into_inner(storage.value)
@@ -342,25 +374,30 @@ impl Payload {
     }
 
     /// Whether `self` and `other` are clones of one payload (they share its storage), e.g. the
-    /// copies of a graph constant handed out on every tick.
+    /// copies of a graph constant handed out on every tick. Inline values share when they hold
+    /// the same value of the same type: they are indistinguishable.
     pub fn shares_storage(&self, other: &Payload) -> bool {
-        core::ptr::addr_eq(Arc::as_ptr(&self.storage), Arc::as_ptr(&other.storage))
+        self.storage.shares_with(&other.storage)
     }
 
     /// Whether no other payload or `Arc` shares this payload's storage (for a shared value, its
-    /// own allocation: other holders of the value count).
+    /// own allocation: other holders of the value count). An inline value is always unique.
     pub fn is_storage_unique(&self) -> bool {
-        Arc::strong_count(&self.storage) == 1
+        self.storage.strong_count() == 1
     }
 
-    /// Strong references to the `T` the payload holds (payload clones and other holders).
+    /// Strong references to the `T` the payload holds (payload clones and other holders). An
+    /// inline value is held by its payload alone: one.
     pub fn typed_strong_count<T>(&self) -> Option<usize>
     where
         T: Send + Sync + 'static,
     {
-        let any = self.storage.as_any();
+        if let Body::Inline(value) = &self.storage {
+            return value.value_ref::<T>().map(|_| 1);
+        }
+        let any = self.storage.get().as_any();
         if any.is::<ArcValue<T>>() {
-            return Some(Arc::strong_count(&self.storage));
+            return Some(self.storage.strong_count());
         }
         any.downcast_ref::<TypedStorage<T>>()
             .map(|storage| Arc::strong_count(&storage.value))
@@ -375,6 +412,7 @@ impl Payload {
 
     pub fn get_bytes(&self) -> Option<Arc<[u8]>> {
         self.storage
+            .get()
             .as_any()
             .downcast_ref::<BytesStorage>()
             .map(|storage| storage.bytes.clone())

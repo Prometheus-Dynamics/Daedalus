@@ -6,7 +6,8 @@ use core::fmt;
 
 use crate::{Layout, PayloadLineage, Residency, TypeKey};
 
-use super::{Payload, PayloadStorage, typed_ref};
+use super::inline::Body;
+use super::{Payload, typed_ref};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ResidencyCacheKey {
@@ -51,7 +52,7 @@ impl ResidencyCache {
 #[derive(Clone)]
 pub(super) struct ResidentPayload {
     pub(super) type_key: TypeKey,
-    pub(super) storage: Arc<dyn PayloadStorage>,
+    pub(super) storage: Body,
     pub(super) residency: Residency,
     pub(super) layout: Option<Layout>,
     pub(super) lineage: PayloadLineage,
@@ -63,8 +64,8 @@ impl fmt::Debug for ResidentPayload {
             .field("type_key", &self.type_key)
             .field("residency", &self.residency)
             .field("layout", &self.layout)
-            .field("rust_type_name", &self.storage.rust_type_name())
-            .field("bytes_estimate", &self.storage.bytes_estimate())
+            .field("rust_type_name", &self.storage.get().rust_type_name())
+            .field("bytes_estimate", &self.storage.get().bytes_estimate())
             .finish()
     }
 }
@@ -202,6 +203,6 @@ impl Payload {
         }
         self.residency_cache
             .get(&key)
-            .and_then(|resident| typed_ref::<T>(resident.storage.as_ref()))
+            .and_then(|resident| typed_ref::<T>(resident.storage.get()))
     }
 }

@@ -13,6 +13,7 @@ use core::marker::PhantomData;
 
 #[cfg(target_has_atomic = "ptr")]
 use super::ArcValue;
+use super::inline::Body;
 use super::{Payload, PayloadStorage, ResidencyCache, TypedStorage};
 use crate::{
     ForeignBorrow, ForeignHandle, ForeignInterface, PayloadLineage, ProvideForeign, Residency,
@@ -181,10 +182,10 @@ impl Payload {
     ) -> Self {
         Self {
             type_key,
-            storage: arc_dyn!(ForeignStorage {
+            storage: Body::Shared(arc_dyn!(ForeignStorage {
                 handle: Some(handle),
                 local
-            }),
+            })),
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),
@@ -195,12 +196,12 @@ impl Payload {
     /// The foreign handle this payload carries, if any (see [`Self::foreign_borrow`] for any
     /// foreign-readable payload).
     pub fn foreign_handle(&self) -> Option<&ForeignHandle> {
-        self.storage.foreign_handle()
+        self.storage.get().foreign_handle()
     }
 
     /// Whether [`Self::foreign_handle`] was created by this build ([`Self::foreign_local`]).
     pub fn foreign_handle_is_local(&self) -> bool {
-        self.storage.foreign_handle_is_local()
+        self.storage.get().foreign_handle_is_local()
     }
 
     /// Retype a payload holding the owner type `O` as interface `I` (key `I::KEY`), readable
@@ -216,8 +217,8 @@ impl Payload {
         I: ForeignInterface,
         O: ProvideForeign<I>,
     {
-        let any = self.storage.as_any();
-        let at = |value: &dyn Any| core::ptr::addr_eq(value, Arc::as_ptr(&self.storage));
+        let any = self.storage.get().as_any();
+        let at = |value: &dyn Any| core::ptr::addr_eq(value, self.storage.addr());
         if any.downcast_ref::<TypedStorage<O>>().is_some_and(|v| at(v)) {
             return Ok(self.provided::<TypedStorage<O>, O, I>());
         }
@@ -238,11 +239,11 @@ impl Payload {
         O: ProvideForeign<I>,
         I: ForeignInterface,
     {
-        let raw: *const ProvidedStorage<S, O, I> = Arc::into_raw(self.storage).cast();
+        let raw: *const ProvidedStorage<S, O, I> = Arc::into_raw(self.storage.into_arc()).cast();
         // Safety: the allocation holds an `S` at this address (checked by the caller), and
         // `ProvidedStorage<S, O, I>` is a `repr(transparent)` wrapper of it: same size, alignment
         // and drop, so the `Arc` takes back its reference under the new vtable.
-        self.storage = unsafe { Arc::from_raw(raw as *const dyn PayloadStorage) };
+        self.storage = Body::Shared(unsafe { Arc::from_raw(raw as *const dyn PayloadStorage) });
         self.type_key = TypeKey::from_static(I::KEY);
         self
     }
@@ -250,13 +251,13 @@ impl Payload {
     /// Lend the payload's value through a foreign interface: the [`ForeignHandle`] it carries,
     /// or the owner value of a [`Self::provide_foreign`] payload. `None` for other payloads.
     pub fn foreign_borrow(&self) -> Option<ForeignBorrow<'_>> {
-        self.storage.foreign_borrow()
+        self.storage.get().foreign_borrow()
     }
 
     /// An owning [`ForeignHandle`] of [`Self::foreign_borrow`]'s value (a retain of the carried
     /// handle, or the owner's `Arc`), for consumers the borrow cannot cover, such as the stable
     /// plugin boundary.
     pub fn to_foreign_handle(&self) -> Option<ForeignHandle> {
-        self.storage.to_foreign_handle()
+        self.storage.get().to_foreign_handle()
     }
 }
