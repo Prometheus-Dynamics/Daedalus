@@ -450,9 +450,10 @@ numbers matched.
 About 35 µs of each graph overhead is the frame release, not the runtime. Wherever the last
 reference to Styx's frame drops (a node's inputs after it runs, or a node not ready this tick),
 the drop takes 33 to 37 µs, timed per drop; every other payload drop took under 5 µs. What inside
-Styx's drop costs that time is not measured: no profile was taken, and the run did not print the
-frame's `external_backing_kind()`. Styx's in-process and service frames keep one mapping per
-buffer, so the cost may be the `DMA_BUF_IOCTL_SYNC` end rather than an `munmap`. Without the drop
+Styx's drop costs that time is not measured: no profile was taken. A later probe run on Raze #1
+(Styx `12b63eb`) printed `external_backing_kind()` as `pispbe_dmabuf` on every frame logged, so
+the frames are not `SharedFdBacking`. Styx keeps one mapping per buffer on that path, so the cost
+may be the `DMA_BUF_IOCTL_SYNC` end rather than an `munmap`. Without the drop
 the runtime costs about 20 µs a tick for three nodes and about 52 µs for the staged graph's 22.
 
 `apriltag_mirror`, the same stages in process with synthetic frames, at 33791c9 and with
