@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- `vvl` has a positive control for synchronization validation. The `sync_hazard_control` example
+  (`crates/gpu/examples`, feature `gpu-vulkan-raw`) records two `vkCmdFillBuffer` writes to one
+  buffer with no barrier, a deliberate write-after-write hazard, and `scripts/ci.sh vvl` fails
+  unless the layer reports a `SYNC-HAZARD` message for it. The example is deliberately wrong and
+  nothing depends on it.
+
 - CI runs the transport library's tests under Miri (`scripts/ci.sh miri`, the `miri` job).
 
 - **CUDA and Vulkan order a shared buffer with timeline semaphores.** `interop::SharedSemaphore`

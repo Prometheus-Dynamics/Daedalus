@@ -815,6 +815,13 @@ the default `Auto` mode (`SyncFd` first) does not produce it.
 Last run (RADV, RX 6800 XT, Mesa 26.2, validation layer 1.4.341): no other errors, warnings or
 performance warnings, with synchronization validation on.
 
+Positive control: a run with no `SYNC-HAZARD` line proves nothing unless synchronization
+validation was on. `sync_hazard_control` (`crates/gpu/examples`, deliberately wrong) records two
+`vkCmdFillBuffer` writes to one buffer with no barrier, a write-after-write hazard. `vvl` runs it
+after the checks above and fails unless the layer reports a `SYNC-HAZARD` message. Its output is
+kept in `$CARGO_TARGET_DIR/vvl-sync-control.log`, apart from `vvl.log`, so `VVL_KNOWN` does not
+cover it. Without the layer it exits 0 and says that nothing was checked.
+
 ## Release Feature Surface
 
 ```bash

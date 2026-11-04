@@ -515,6 +515,20 @@ cmd_vvl() {
     echo "unexpected validation messages; see $log" >&2
     return 1
   fi
+  # A positive control: the deliberately wrong program must draw a hazard from the layer, so a
+  # run with no SYNC-HAZARD messages above shows that synchronization validation was on. Its log
+  # is kept apart from $log, so its intended message does not reach the VVL_KNOWN check.
+  local control="${CARGO_TARGET_DIR:-target}/vvl-sync-control.log"
+  step "Checking that synchronization validation reports the deliberate hazard (log: $control)"
+  if ! cargo run -q -p daedalus-gpu --features gpu-vulkan-raw --example sync_hazard_control \
+    >"$control" 2>&1; then
+    cat "$control" >&2
+    return 1
+  fi
+  if ! grep -q '^Validation .*SYNC-HAZARD' "$control"; then
+    echo "sync_hazard_control drew no SYNC-HAZARD message: synchronization validation was off or the layer did not load; see $control" >&2
+    return 1
+  fi
 }
 
 cmd_doc() {

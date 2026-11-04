@@ -80,6 +80,10 @@ required-features = ["gpu-dmabuf"]
 name = "gpu_bench"
 required-features = ["gpu-dmabuf"]
 
+[[example]]
+name = "sync_hazard_control"
+required-features = ["gpu-vulkan-raw"]
+
 [[bench]]
 name = "dispatch_readback"
 harness = false
