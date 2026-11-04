@@ -41,7 +41,7 @@ pub mod collections {
     /// A map with a fast, unseeded hasher ([`FxHasher`]), for hot-path maps keyed by ids the
     /// runtime itself assigns (stable node ids, port names). Not DoS-resistant; deterministic,
     /// so a map built by a separately compiled plugin hashes like the host's.
-    pub type FastHashMap<K, V> = hashbrown::HashMap<K, V, core::hash::BuildHasherDefault<FxHasher>>;
+    pub type FastHashMap<K, V> = HashMap<K, V, core::hash::BuildHasherDefault<FxHasher>>;
 
     /// The Fx hash (rotate, xor, multiply per word), as rustc uses for its own maps.
     #[derive(Clone, Copy, Default)]

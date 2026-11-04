@@ -605,6 +605,10 @@ plugin ABI and does not load.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
 
 ### Changed
+
+- `daedalus_runtime::collections::FastHashMap` is built on the module's `HashMap`, so `hashbrown`
+  is no longer in the runtime's public API with `std`. `daedalus_data::convert::SharedConverterGraph`
+  is removed: nothing used it, and it put `parking_lot` in the public API.
 - **Lifecycle records share their port and payload text (public API change).**
   `DataLifecycleEvent` and `DataLifecycleRecord` hold `port: Option<PortId>` (was `Option<String>`)
   and `payload: Option<IdStr>` (was `Option<String>`), so recording an event clones a shared name
