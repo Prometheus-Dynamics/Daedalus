@@ -27,6 +27,52 @@ and CUDA follow after it, under Open. When to release, and what blocks it, stays
 
 ## Open
 
+### Current list (HeliOS coordinator, 2026-11-03)
+
+Now, in this order. Items not listed here keep their place below.
+
+- [ ] **What:** the allocation flake: `detector_graph_frame_allocation_budget` read
+      `Parallel/Hardware: 9.05` against a budget of 9 (CI run 41777030660; a rerun passed).
+      **Why:** a timing-dependent failure on `dev`; a rerun hides it and does not fix it.
+      **Done when:** the cause is found and fixed without loosening the budget, stable over 200
+      runs under load.
+      **Blocked by:** nothing.
+      **Measured:** one failure in CI; the worker's fix is in the gates.
+- [ ] **What:** the Profile and Trace adapter edge to 0 allocations per frame
+      (`AdapterPathReport`'s `String` fields may change).
+      **Why:** the zero-allocation rule. The detector graph allocates 75 per frame there.
+      **Done when:** the allocation smoke asserts 0 at Profile and Trace.
+      **Blocked by:** the flake fix.
+      **Measured:** 75 per frame.
+- [ ] **What:** the 9 payload allocations per frame at Basic (8 `Arc` outputs, 1 `String` clone).
+      **Why:** they are on the default frame path, under the same rule.
+      **Done when:** 0 at Basic, or each remaining one is named as a node's and not the runtime's.
+      **Blocked by:** the adapter edge.
+      **Measured:** 9 per frame.
+- [ ] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
+      `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
+      move onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays while the block move is
+      paused.
+      **Why:** Lemnos owns device access.
+      **Done when:** none of the three opens `/dev/dma_heap` itself.
+      **Blocked by:** the payload allocations.
+      **Measured:** not applicable.
+- [ ] **[board]** **What:** the stable-path bench on Raze #1 (CM5), under
+      `flock /run/lock/raze-gpu.lock`, no slot changes: cost per constant, a `Detections`-shaped
+      crossing at 0, 4 and 16 tags, a prototype plugin-local handle, and a 12-node chain.
+      **Why:** it replaces the weakest estimates in the audit of running Eidos on the stable path.
+      **Done when:** the numbers are reported against the estimates.
+      **Blocked by:** the items above. The bench is being written meanwhile, off the board.
+      **Measured:** none on the CM5. Estimates: 20-50 µs per frame with handles on every edge,
+      10-80 µs more with constants sent on every call.
+
+Not started; each waits for the user's go:
+
+- [ ] Stable path: adapters, serializers, `repr(C)` values, plugin-local handles, a telemetry sink,
+      constants sent once, GPU across the boundary.
+- [ ] Hand `crates/rga` and `crates/vglite` to Lemnos, then repoint
+      `crates/kernels/src/registry/fixed.rs` and delete ours.
+
 ### CI on `dev`
 
 - [ ] **What:** the `semver` job stays red. It is non-blocking (`continue-on-error`), so the `CI`
