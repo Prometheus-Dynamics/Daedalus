@@ -51,8 +51,8 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       **Measured:** 9 per frame.
 - [ ] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
       `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
-      move onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays while the block move is
-      paused.
+      move onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays until `crates/rga` goes to
+      Lemnos.
       **Why:** Lemnos owns device access.
       **Done when:** none of the three opens `/dev/dma_heap` itself.
       **Blocked by:** the payload allocations.
@@ -66,9 +66,10 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       **Measured:** none on the CM5. Estimates: 20-50 µs per frame with handles on every edge,
       10-80 µs more with constants sent on every call.
 
-### Waiting on the user's go
+### Decided, starts when the user says
 
-Not started. Agents finish the current list, then pause (user, relayed by HeliOS, 2026-11-03).
+Decided, not started. Agents finish the current list, then pause (user, relayed by HeliOS,
+2026-11-03).
 
 1. Stable path gains adapters and serializers (C function pointers keyed by type name), typed
    `repr(C)` values and views, plugin-local handles, a telemetry sink, constants sent once, and
@@ -80,7 +81,10 @@ Not started. Agents finish the current list, then pause (user, relayed by HeliOS
 5. Whole-subgraph crossing: only if the numbers justify it.
 6. Use `lemnos-abi` primitives; hand `crates/rga` and `crates/vglite` to Lemnos, then repoint
    `crates/kernels/src/registry/fixed.rs` and delete ours.
-7. Shared and static build forms and plugin linking, depending on Gaia's LTO test.
+7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
+   plugin linking. Gaia's LTO test informs how the shared mode gets built, not whether it happens.
+8. Lemnos's kernel module and its Rust userspace drivers: Daedalus's fixed-function nodes and
+   accelerator implementations sit on them.
 
 ### CI on `dev`
 
@@ -150,10 +154,11 @@ Not started. Agents finish the current list, then pause (user, relayed by HeliOS
       **Done when:** as above, per chip.
       **Blocked by:** boards and Gaia's driver choice.
       **Measured:** nothing on Mali.
-- [ ] **[board] What:** (Lemnos's as of 2026-11-03: Lemnos owns hardware blocks, including RGA,
-      librga and M2M bindings; whether `crates/rga` moves is undecided.) The Rockchip RGA
-      fixed-function cells in `daedalus-rga`, the crate shared with Styx. Route (b) is V4L2 mem2mem (`rgb_to_rgba`, `rgba_to_rgb`); route (a) is `Librga`
-      (2f7c880; `gray_to_rgba`, `rgba_red`). Both written, untested on board.
+- [ ] **[board] What:** (Lemnos's: Lemnos owns hardware blocks, and `crates/rga` goes to it when
+      the user says, item 6 above. Lemnos's Rust userspace drivers decide the routes from then on.)
+      The Rockchip RGA fixed-function cells in `daedalus-rga`, the crate shared with Styx. Route (b)
+      is V4L2 mem2mem (`rgb_to_rgba`, `rgba_to_rgb`); route (a) is `Librga` (2f7c880;
+      `gray_to_rgba`, `rgba_red`). Both written, untested on board.
       **Why:** these are the matrix's 4 untested cells. `rgba_red` relabels the frame as gray and
       scales it down by nearest, so it yields red only if the hardware takes the first of every four
       samples; the headers do not promise that.
@@ -259,21 +264,23 @@ Not started. Agents finish the current list, then pause (user, relayed by HeliOS
 - [ ] **What:** (As of 2026-11-03 these nodes sit on Lemnos's drivers and open no devices
       themselves.) Fixed-function nodes for Eidos on the RGA and the K230D Image 2D / 2.5D GPU
       (VGLite), with a per-SoC capability descriptor. Requested by Eidos 2026-11-02 (Eidos
-      100cc356, `docs/accel/fixed-function-audit.md`); HeliOS confirmed Daedalus owns these
+      100cc356, `docs/accel/fixed-function-audit.md`). Daedalus owns the nodes and Lemnos the
       units. Eidos lowers its ops onto these nodes and never drives the units.
       **Order:** (1) area and bilinear resize, for pyramids (Eidos `geometry.resize_area`,
       `resize_linear`, `features.feature_pyramid`, `filter.build_pyramid`); (2) palette lookup and
       colour-key range mask; (3) crop, flip, copy (partly in `daedalus-rga`); (4) blend with mask
       alpha, fill, ROP, line draw. With (1): the capability descriptor (RGA2, RGA3, mainline V4L2
       vs librga, K230 Image 2D, VGLite; ops and an exactness class per unit and SoC).
-      **Constraints:** mainline `rockchip-rga` (V4L2) reaches scale, crop, conversion, flip,
-      90/180/270 rotation and background fill only; blend, colour key, palette and ROP need librga
-      (vendor kernels). RGA scaling exactness is undocumented: tolerance until a board measures it.
+      **Constraints:** today's routes: mainline `rockchip-rga` (V4L2) reaches scale, crop,
+      conversion, flip, 90/180/270 rotation and background fill only; blend, colour key, palette and
+      ROP need librga (vendor kernels). Lemnos's kernel module and Rust userspace drivers may change
+      what each unit reaches. RGA scaling exactness is undocumented: tolerance until a board
+      measures it.
       K230: VGLite through `libvg_lite.so` (`daedalus-vglite`); no board yet.
       **Done when:** each node has a scalar reference, a fixed-function kernel cell in the registry,
       and a test on `vim2m` where the path allows; board cells marked written, untested on board.
-      **Blocked by:** `daedalus-rga` on Lemnos's `M2mSession` first (waiting on Lemnos's crop
-      selection and device query); boards for measurement.
+      **Blocked by:** Lemnos's drivers and the `crates/rga` and `crates/vglite` hand-off (items 6
+      and 8 above); boards for measurement.
       **Progress:** (1) written: `Filter::{Area, Bilinear}` on both routes, `resize_luma` through
       NV12 on mainline, `caps::caps(soc)`, ops `daedalus.image.resize_{area,bilinear}` (scalar and
       fixed_function rows only, `Op::only_on`); vim2m checks the plumbing. Board cells written,
@@ -351,8 +358,8 @@ on 2026-11-02, at f7e05ac.
       runs on an accelerator defined in the test.
       **Open:** the design's graph integration (residency key, `ExecutionContext` capability,
       fences between nodes) with the first implementation.
-      **Blocked by:** the user's go for an implementation (RKNPU, K230 KPU, Coral Edge TPU), as
-      our own drivers over Lemnos's transports, not vendor runtimes.
+      **Blocked by:** the user's go for an implementation (RKNPU, K230 KPU, Coral Edge TPU), on
+      Lemnos's kernel module and Rust userspace drivers, not vendor runtimes.
       **Measured:** n/a.
 
 ## Done
