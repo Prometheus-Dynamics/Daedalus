@@ -39,13 +39,16 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       **Done (2026-11-03):** the adapter edge allocates 0; the detector frame went from 75 to 9 at
       Profile, serial and parallel, and Trace is 9. `AdapterPathReport` did not need to change.
       Adaptive rows at those levels have no budget.
-- [ ] **What:** the 9 payload allocations per frame at Basic (8 `Arc` outputs, 1 `String` clone).
-      **Why:** they are on the default frame path, under the same rule.
-      **Done when:** 0 at Basic, or each remaining one is named as a node's and not the runtime's.
-      **Blocked by:** nothing.
-      **Measured:** 9 per frame: 8 node outputs the runtime wraps (`FrameInfo` x2, `Roi` x2,
-      `Histogram`, `Stats`, `Track`, `Report`), and `exposure`'s owned `String` parameter, which is
-      the node's.
+- [ ] **What:** the payload allocations per frame at Basic: 9, now 8.
+      **Why:** they are on the default frame path, under the zero-allocation rule.
+      **Done when:** 0 at Basic.
+      **Blocked by:** a design change, which waits for the user's go. A per-output `PayloadSlot`
+      took it to 2 but broke unique handoff (`gpu_fallback`'s `drain_owned`), so it was reverted.
+      Candidates: small plain-data outputs held inline in the payload, or a return buffer the
+      consumer hands back.
+      **Measured (2026-11-05):** 8 per frame, all payload `Arc`s the runtime wraps: six node outputs
+      (`Roi` x2, `Histogram`, `Report`, `Stats`, `Track`) and two `FrameInfo` adapter outputs. The
+      ninth was `exposure`'s owned `String` parameter, the node's: it borrows it now (b9df7ac).
 - [x] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
       `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
       moved onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays until `crates/rga` goes to
@@ -59,8 +62,7 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       crossing at 0, 4 and 16 tags, a prototype plugin-local handle, and a 12-node chain.
       **Why:** it replaces the weakest estimates in the audit of running Eidos on the stable path.
       **Done when:** the numbers are reported against the estimates.
-      **Blocked by:** the payload allocations, so it measures the final runtime. The bench is
-      written and cross-built, on a local branch.
+      **Blocked by:** nothing. The bench is written and cross-built, on a local branch.
       **Measured:** none on the CM5. Estimates: 20-50 µs per frame with handles on every edge,
       10-80 µs more with constants sent on every call.
 
