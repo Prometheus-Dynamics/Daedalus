@@ -19,7 +19,7 @@ use daedalus::macros::node;
 use daedalus::runtime::{ExecutionContext, NodeError, NodeIo, RuntimeNode};
 use daedalus::transport::{ForeignRef, Payload, ProvideForeign, Residency, foreign_interface};
 
-use crate::detections::Detections;
+use super::detections::Detections;
 
 foreign_interface! {
     /// `Detections` read in place through its owning build (the stable-bench handle prototype).

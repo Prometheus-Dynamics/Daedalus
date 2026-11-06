@@ -57,14 +57,13 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       `gpu_probe`'s per-heap report still opens each heap read-write itself, because that open is
       what it reports and Lemnos's `open_path` is read-only; and `frame-bench`'s dma-buf mapping is
       now writable, because Lemnos's `DmaBuf::map` is. `frame_chain` was not re-measured.
-- [ ] **[board]** **What:** the stable-path bench on Raze #1 (CM5), under
-      `flock /run/lock/raze-gpu.lock`, no slot changes: cost per constant, a `Detections`-shaped
-      crossing at 0, 4 and 16 tags, a prototype plugin-local handle, and a 12-node chain.
-      **Why:** it replaces the weakest estimates in the audit of running Eidos on the stable path.
-      **Done when:** the numbers are reported against the estimates.
-      **Blocked by:** nothing. The bench is written and cross-built, on a local branch.
-      **Measured:** none on the CM5. Estimates: 20-50 µs per frame with handles on every edge,
-      10-80 µs more with constants sent on every call.
+- [x] **[board]** **What:** the stable-path bench on Raze #1 (CM5): cost per constant, a
+      `Detections`-shaped crossing at 0, 4 and 16 tags, a prototype plugin-local handle, and a
+      12-node chain.
+      **Done (2026-11-05):** 52f1199, one run; numbers against the estimates in
+      `docs/benchmarks-log.md` ("Stable plugin path"). Handles on 12 edges cost 18.7 µs; constants
+      0.27-0.36 µs each; `Detections` through `Value` 38 µs per crossing at 4 tags, as a handle
+      2.5 µs at any count.
 
 ### Decided, starts when the user says
 

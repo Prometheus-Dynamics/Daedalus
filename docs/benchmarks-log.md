@@ -95,3 +95,43 @@ with its event are common to both and were not timed separately.
 
 Earlier debug (unoptimized test profile) figures, for comparison: fence median 221 µs, semaphore
 median 201 µs.
+
+## Stable plugin path: constants, struct values and handles
+
+Raze #1 (CM5, kernel 7.2.9-v8-16k, HeliOS services running, load average 0.2), 2026-11-05, one
+run at 52f1199's bench on 1930539, release, aarch64 glibc. Unpinned: the board has no `taskset`.
+`run.sh` from the cross-build, held under `/run/lock/raze-gpu.lock` for 13 s. Static and stable
+installs alternate within the run; p50 over 101 repeats. Commands:
+`cargo test -p daedalus-rs --features engine,dylib-plugins --release --test dylib_stable_bench --
+--ignored --nocapture` and `--test dylib_stable_bench_allocations`.
+
+The fixture (`examples/plugins/stable_bench`) mirrors the shape of Eidos's `Detections` (per tag:
+id, rotation, hamming, four integer corners, four float sub-pixel corners), but it is not Eidos's
+code: Eidos has no way back from a `Value`, so the fixture writes the `from_value` it would need.
+Its constants are fixed values and a fixed 17-byte string, and the staged frame is a 64x32 host
+frame whose stages pass the handle on, so the staged rows measure edge cost only.
+
+| case | static p50 | stable p50 | stable extra |
+| --- | --- | --- | --- |
+| node with 0 / 8 / 16 / 49 scalar constants | 2.0 / 3.0 / 3.7 / 7.7 µs | 3.2 / 6.2 / 9.3 / 26.2 µs | 1.2 / 3.3 / 5.6 / 18.5 µs |
+| fit, scalars / quarter strings | 116 / 162 ns per constant | 476 / 533 ns per constant | 360 / 370 ns per constant |
+| `Detections` through `Value`, 0 / 4 / 16 tags | 2.9 / 3.0 / 3.2 µs | 7.0 / 40.6 / 141.7 µs | 4.2 / 37.6 / 138.5 µs |
+| `Detections` as a plugin-local handle, 0 / 4 / 16 tags | 2.6 / 2.6 / 2.8 µs | 5.2 / 5.2 / 5.4 µs | 2.7 / 2.5 / 2.7 µs |
+| 12 stages, handle in and out plus a frame, 0 constants | 14.3 µs | 33.0 µs | 18.7 µs |
+| the same, 10 constants per stage | 38.3 µs | 89.6 µs | 51.3 µs |
+
+Allocations per tick (host / plugin): `Detections` through `Value` at 4 tags 132 / 276, at 16
+tags 508 / 1052 (static: 3); as a handle 1 / 4 at every tag count. Each string constant costs the
+plugin two per call (49 constants with a quarter strings: 24). The 12-stage chain allocates 13 on
+the host on the stable path against 3 statically: one payload wrapper per handle edge.
+
+Against the estimates in the audit of running Eidos on the stable path:
+
+- Handles on every edge, 20-50 µs per frame: 18.7 µs for 12 stages, about 1.6 µs per stage, at
+  the low end. Not the zero-allocation rule's 0: one host allocation per handle edge.
+- Constants sent on every call, 10-80 µs more: about 0.27 µs per constant in the chain (32.6 µs
+  for 120) and 0.36 µs in isolation. Eidos's tracked stages hold 310 if all run, so 85-110 µs:
+  above the estimate.
+- Structs through `Value`, several hundred µs per frame: 38 µs per crossing at 4 tags and 139 µs
+  at 16, so 20 struct edges cost about 0.75 ms at 4 tags. Confirmed, and it allocates per tag.
+- A handle costs the same at 0, 4 and 16 tags.
