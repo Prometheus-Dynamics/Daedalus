@@ -304,6 +304,11 @@ path = "tests/dylib_stable_demo.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_stable_generated"
+path = "tests/dylib_stable_generated.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_stable_version"
 path = "tests/dylib_stable_version.rs"
 required-features = ["dylib-plugins"]

@@ -264,6 +264,12 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
   Plugins of stable ABI 6 and older have no table and install as before. The host runs a host
   output edge's adapters when it drains it, so any planner-inserted conversion to a host output
   port runs (before, only node inputs ran them).
+- **Nodes registered at runtime.** A node built without `#[node]` (a `NodeDecl` plus a
+  `handlers.try_on` handler, as a data-driven catalog makes them) declares how each port crosses,
+  which the node macros otherwise record: `registry.declare_stable_port("app:blur", "boxes",
+  &StablePortCodec::pod::<Vec<BoxPod>>())`, or `StablePortCodec::local::<T>()`,
+  `value_of::<T>()` / `value::<T>(to, from)`, `foreign::<I>()`. An undeclared port arrives as
+  the stable path's generic form (a `Value`, a `PodValue`, a bare handle).
 - **Limits.** Only nodes and codecs install: a plugin's adapters, serializers, capabilities, named
   type schemas, device transports and boundary contracts stay in the plugin. Typed values the
   host lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type
@@ -273,7 +279,8 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
 `dylib_stable` test installs it through the stable path and compares every node with the static
 install, `dylib_stable_local` its `Local` nodes (one address across edges and ticks, and a
 reload), `dylib_stable_codecs` its tracker codec (to a host `Value` port and back through the
-planner's adapters, inspection and bytes), `dylib_stable_pod` covers its `StablePod` nodes (typed, as `PodValue`s, and a layout
+planner's adapters, inspection and bytes), `dylib_stable_generated` its runtime-registered
+nodes, `dylib_stable_pod` covers its `StablePod` nodes (typed, as `PodValue`s, and a layout
 mismatch each way), and `dylib_reload` rebuilds it between loads.
 
 **Performance** (release, x86-64 desktop, `cargo test -p daedalus-rs --features

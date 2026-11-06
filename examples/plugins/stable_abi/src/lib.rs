@@ -8,7 +8,8 @@
 //! The [`frames`] nodes take and return owned `SharedFrame`s (the `dylib_frames` test); the
 //! [`pods`] nodes take and return a `StablePod` struct and `Vec`s of them (`dylib_stable_pod`);
 //! the [`locals`] nodes pass a plugin-local object by handle (`dylib_stable_local`), which its
-//! codec converts to a `Value` and bytes (`dylib_stable_codecs`).
+//! codec converts to a `Value` and bytes (`dylib_stable_codecs`); the [`generated`] nodes are
+//! registered at runtime with declared port codecs (`dylib_stable_generated`).
 //! `SharedBytes` nodes show buffers crossing by reference both ways, and the `generation` node
 //! changes with the `reload-v2` / `reload-incompatible` features, so the `dylib_reload` test can
 //! rebuild the plugin between loads.
@@ -20,6 +21,7 @@ use daedalus::transport::FrameView;
 use daedalus::{DaedalusToValue, DaedalusTypeExpr, SharedBytes};
 
 pub mod frames;
+pub mod generated;
 pub mod locals;
 pub mod pods;
 #[allow(clippy::wildcard_imports)] // The node macro's generated items.
@@ -158,7 +160,7 @@ pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
 
 #[plugin(
     id = "stable_abi",
-    install = install_codecs,
+    install = install,
     nodes(
         scale,
         point,
@@ -194,6 +196,14 @@ pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
     )
 )]
 pub struct StableAbiPlugin;
+
+/// The install hook: the tracker's codec and the [`generated`] nodes.
+fn install(
+    registry: &mut daedalus::runtime::plugins::PluginInstallContext<'_>,
+) -> daedalus::runtime::plugins::PluginResult<()> {
+    install_codecs(registry)?;
+    generated::install_generated(registry)
+}
 
 /// The rustc the exported descriptor claims.
 pub const SIMULATED_RUSTC: &str = "rustc 1.85.0 (4d91de4e4 2025-02-17; simulated)";

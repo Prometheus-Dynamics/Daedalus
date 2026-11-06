@@ -27,6 +27,15 @@ plugin ABI and does not load.
   -Werror -pedantic`) built against `daedalus_surface.h` and linked to the surface library installs
   the `stable_abi` plugin, compiles a graph, and runs 50 frames with ports by index and a batch
   push; its outputs equal the static graph's. Linux; skipped without a C compiler.
+- Port codecs for nodes registered at runtime: `PluginRegistry::declare_stable_port(node, port,
+  &StablePortCodec)` records how a port of a node built without `#[node]` (a `NodeDecl` and a
+  `handlers.try_on` handler, as a data-driven catalog builds them) crosses the stable plugin
+  path, as the node macros do for theirs: `StablePortCodec::pod::<P>()` (a `StablePod` `T` or
+  `Vec<T>`), `local::<T>()` (a `Local<T>`), `value::<T>(to_value, from_value)` / `value_of::<T>()`
+  (a `Value`), `foreign::<I>()` (a handle read through interface `I`, which it records). Without
+  it such a node's handler gets a `PodValue`, a bare handle or a `Value` on the stable path.
+  Test: `dylib_stable_generated` (`examples/plugins/stable_abi`'s `gen_boxes` and `gen_tracker`,
+  statically and through the stable path).
 - The `daedalus-nodes` demo bundle crosses the stable plugin path: `Detection` is a
   `#[repr(C)]` `StablePod` (a `Vec<Detection>` crosses as a typed byte view) and `Frame` derives
   `DaedalusToValue` (it crosses as a `Value`, read back through its serde `Deserialize`). The

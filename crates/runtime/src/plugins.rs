@@ -41,6 +41,7 @@ mod registry_admin;
 mod registry_transport;
 mod requirements;
 mod stable_codecs;
+mod stable_ports;
 
 pub use adapters::{SmartAdapter, TransportAdapterOptions};
 pub use boundary_types::{BoundaryTypeConflict, ExternalTypeRef, PortTypeUse};
@@ -53,6 +54,7 @@ pub use payload_codecs::{
     PayloadCodec, ToBytesFn, ToValueFn, ValueCodec,
 };
 pub use stable_codecs::{StableCodec, StableDecodeFn, StableEncodeFn};
+pub use stable_ports::StablePortCodec;
 
 pub const BUILTIN_PRIMITIVE_TYPES_ID: &str = "daedalus.builtin.primitive_types";
 pub const BUILTIN_PRIMITIVE_SERIALIZERS_ID: &str = "daedalus.builtin.primitive_serializers";
