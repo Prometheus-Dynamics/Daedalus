@@ -336,7 +336,8 @@ impl StateStore {
         self.custom_metrics.write().remove(node_id);
     }
 
-    pub(crate) fn drain_node_custom_metrics(
+    /// The custom metrics `node_id` recorded since the last drain (none without an allocation).
+    pub fn drain_node_custom_metrics(
         &self,
         node_id: &str,
     ) -> BTreeMap<String, crate::executor::CustomMetricValue> {

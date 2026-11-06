@@ -134,6 +134,15 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
   `StableHandlers` keeps its layout and `PLUGIN_ABI_VERSION` stays 11. A stable ABI 2 plugin,
   or a version 3 plugin without the symbol, still installs: the host sends its consts with
   every call, as before. More than 64 consts are always sent per call.
+- **Metrics and metadata (stable ABI 4).** The host delivers a services table once per instance,
+  right after create (`SetServicesFn`, the same optional extension as consts): a record callback
+  that queues the custom metrics a plugin node records (`ExecutionContext::record_metric` and
+  its typed helpers), and the node's and graph's metadata as `Value` maps, which the plugin's
+  context carries. After each call the plugin forwards the metrics the call recorded, and the host
+  records them into the node's telemetry once the call returns, so a stable node's metrics read
+  as a static node's do. The host keeps no handle to its state store from the instance (the
+  instance lives in the node's state, so such a handle would be a reference cycle). A plugin
+  built before version 4 keeps its consts per call and records no metrics.
 - **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
   schemas, device transports and boundary contracts stay in the plugin. Typed values the host
   lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type converts.

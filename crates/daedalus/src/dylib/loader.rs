@@ -4,8 +4,8 @@ use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::intern::intern;
 use super::library::{LibraryHandle, OpenError};
 use super::stable::{
-    Generation, PluginSlot, STABLE_ABI_VERSION, STABLE_EXTENSION_SYMBOL, SetConstsFn,
-    StableExtension, StablePlugin, stable_abi_supported,
+    Generation, PluginSlot, STABLE_ABI_VERSION, STABLE_EXTENSION_SYMBOL, StableExtension,
+    StablePlugin, stable_abi_supported,
 };
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
@@ -38,8 +38,8 @@ pub struct PluginLibrary {
     path: PathBuf,
     /// `None` for a descriptor of this process (tests).
     library: Option<Arc<LibraryHandle>>,
-    /// The build's `set_consts` (see [`StableExtension`]), when it exports the extension.
-    stable_set_consts: Option<SetConstsFn>,
+    /// The build's stable extension (see [`StableExtension`]), when it exports one.
+    stable_extension: Option<StableExtension>,
     descriptor: PluginDescriptor,
     /// `descriptor.info` with host copies of its strings.
     info: PluginInfo,
@@ -185,13 +185,13 @@ impl PluginLibrary {
         // Safety: the plugin returned a `'static` table of `len` entries.
         let crate_builds = unsafe { crate_builds::read_table(table) }
             .map_err(|message| schema_error(format!("crate builds: {message}")))?;
-        let stable_set_consts = library
+        let stable_extension = library
             .as_deref()
-            .and_then(|library| unsafe { stable_set_consts(library, descriptor.stable.version) });
+            .and_then(|library| unsafe { stable_extension(library, descriptor.stable.version) });
         Ok(Self {
             path,
             library,
-            stable_set_consts,
+            stable_extension,
             rust_abi: check_rust_abi(&info),
             info,
             descriptor,
@@ -404,7 +404,7 @@ impl PluginLibrary {
                 self.descriptor.stable,
                 (0..self.schema.nodes.len() as u32).collect(),
                 self.library.clone(),
-                self.stable_set_consts,
+                self.stable_extension,
             );
             Arc::new(PluginSlot::new(&self.schema, generation))
         })
@@ -488,7 +488,7 @@ impl PluginLibrary {
                 next.descriptor.stable,
                 nodes,
                 next.library.clone(),
-                next.stable_set_consts,
+                next.stable_extension,
             ));
             *next.slot.get_mut().unwrap_or_else(|err| err.into_inner()) = Some(slot);
         }
@@ -565,12 +565,13 @@ impl PluginLibrary {
     }
 }
 
-/// The `set_consts` of a library whose [`StableExtension`] is for `version`, if it exports one.
+/// The stable extension of a library, if it exports one for `version` (only version-4 builds
+/// have the current layout, so an older build's extension is not read).
 ///
 /// # Safety
 /// `library` must be a loaded plugin library, and the extension symbol must have the
 /// [`StableExtension`] layout of this build.
-unsafe fn stable_set_consts(library: &LibraryHandle, version: u32) -> Option<SetConstsFn> {
+unsafe fn stable_extension(library: &LibraryHandle, version: u32) -> Option<StableExtension> {
     if version != STABLE_ABI_VERSION {
         return None;
     }
@@ -585,7 +586,7 @@ unsafe fn stable_set_consts(library: &LibraryHandle, version: u32) -> Option<Set
     .ok()?;
     // Safety: the plugin's own function, which only builds the struct.
     let extension = unsafe { extension() };
-    (extension.version == version).then_some(extension.set_consts)
+    (extension.version == version).then_some(extension)
 }
 
 /// # Safety

@@ -4,6 +4,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 
+use super::services::{self, HostServices, PluginSink};
 use super::value::{Arena, StableValue, to_value};
 use super::{NO_FANIN, StableInput, StableOutputSink, builtin, status};
 use crate::bytes::{SHARED_BYTES_KEY, SharedBytes};
@@ -99,6 +100,8 @@ struct StableInstance {
     /// The const inputs the host set ([`set_consts_entry`]), decoded once and shared by every
     /// call's io; `None` when there are none.
     consts: Option<Arc<NodeConstInputs>>,
+    /// The host's metric sink ([`set_services_entry`]); `None` without one.
+    sink: Option<PluginSink>,
 }
 
 impl StableRuntime {
@@ -171,6 +174,7 @@ impl StableRuntime {
             slots: Vec::new(),
             arena: Arena::default(),
             consts: None,
+            sink: None,
         })
     }
 
@@ -217,6 +221,45 @@ impl StableRuntime {
 }
 
 impl StableInstance {
+    /// Forward the custom metrics the call recorded to the host's telemetry. Nothing is built
+    /// when nothing was recorded.
+    fn forward_metrics(&self) {
+        let Some(sink) = self.sink else {
+            return;
+        };
+        let metrics = self.ctx.state.drain_node_custom_metrics(&self.ctx.node_id);
+        for (name, value) in &metrics {
+            // Safety: the host keeps its sink for this instance's life, and this call runs under it.
+            unsafe { services::forward(sink, name, value) };
+        }
+    }
+
+    /// Deliver the host services: the node's and graph's metadata become this instance's context
+    /// (its state starts empty, so this runs once, right after create), and metrics go to the
+    /// host's sink from now on.
+    ///
+    /// # Safety
+    /// The services must be the host's, valid for the call; the sink must outlive the instance.
+    unsafe fn set_services(&mut self, services: &HostServices) -> Result<(), Failure> {
+        // Safety: forwarded from the caller.
+        let metadata =
+            unsafe { to_value(&services.metadata) }.map_err(|message| (status::FAILED, message))?;
+        let graph = unsafe { to_value(&services.graph_metadata) }
+            .map_err(|message| (status::FAILED, message))?;
+        self.ctx = ExecutionContext::new(
+            StateStore::default(),
+            self.ctx.node_id.clone(),
+            Arc::new(services::metadata_map(metadata)),
+            Arc::new(services::metadata_map(graph)),
+            Arc::new(crate::runtime::capabilities::CapabilityRegistry::new()),
+        );
+        self.sink = Some(PluginSink {
+            sink: services.sink,
+            record: services.record_metric,
+        });
+        Ok(())
+    }
+
     /// Replace the instance's const inputs with `inputs` (decoded here, so their strings and
     /// bytes are copied once); an empty list clears them.
     ///
@@ -300,10 +343,9 @@ impl StableInstance {
         if let Some(failure) = failure {
             return Err(failure);
         }
-        runtime
-            .handlers
-            .run(&node.node, &self.ctx, &mut io)
-            .map_err(|error| (error_status(&error), error.to_string()))?;
+        let ran = runtime.handlers.run(&node.node, &self.ctx, &mut io);
+        self.forward_metrics();
+        ran.map_err(|error| (error_status(&error), error.to_string()))?;
 
         let push = outputs
             .push
@@ -545,6 +587,31 @@ pub unsafe extern "C" fn set_consts_entry(
             };
             // Safety: the host's consts are valid for the call.
             instance.set_consts(inputs)
+        })
+    }
+}
+
+/// The `set_services` entry point (see [`super::services::SetServicesFn`]).
+///
+/// # Safety
+/// The arguments must follow [`super::services::SetServicesFn`]'s contract.
+pub unsafe extern "C" fn set_services_entry(
+    instance: u64,
+    services: *const HostServices,
+    error: StrSink,
+) -> u32 {
+    // Safety: forwarded from the caller.
+    unsafe {
+        guarded(error, || {
+            // Safety: a live handle from `create`, never used concurrently.
+            let instance = (instance as *mut StableInstance)
+                .as_mut()
+                .ok_or_else(|| (status::FAILED, "null instance".to_string()))?;
+            let services = services
+                .as_ref()
+                .ok_or_else(|| (status::FAILED, "null services".to_string()))?;
+            // Safety: the host's services, valid for the call.
+            instance.set_services(services)
         })
     }
 }

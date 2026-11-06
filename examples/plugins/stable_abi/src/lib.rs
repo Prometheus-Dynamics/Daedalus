@@ -10,8 +10,9 @@
 //! changes with the `reload-v2` / `reload-incompatible` features, so the `dylib_reload` test can
 //! rebuild the plugin between loads.
 
+use daedalus::data::model::Value;
 use daedalus::macros::{node, plugin};
-use daedalus::runtime::NodeError;
+use daedalus::runtime::{ExecutionContext, NodeError};
 use daedalus::transport::FrameView;
 use daedalus::{DaedalusToValue, DaedalusTypeExpr, SharedBytes};
 
@@ -169,6 +170,7 @@ pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
         frame_pass,
         frame_tag,
         frame_hold,
+        metrics_probe,
         frame_explode,
         frame_info
     )
@@ -201,4 +203,17 @@ mod export {
     pub extern "C" fn daedalus_plugin_stable_extension() -> StableExtension {
         daedalus::dylib::stable_extension()
     }
+}
+
+/// Records a counter per call and its graph's `title` metadata as a text metric, through the
+/// host's telemetry (the `dylib_stable_telemetry` test reads them back).
+#[node(id = "metrics_probe", inputs("x"), outputs("out"))]
+pub fn metrics_probe(x: i64, ctx: &ExecutionContext) -> Result<i64, NodeError> {
+    ctx.increment_metric("probe_calls", 1);
+    let title = match ctx.graph_metadata.get("title") {
+        Some(Value::String(title)) => title.to_string(),
+        _ => "none".to_string(),
+    };
+    ctx.text_metric("probe_title", title);
+    Ok(x + 1)
 }

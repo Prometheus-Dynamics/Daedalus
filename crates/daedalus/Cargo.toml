@@ -279,6 +279,11 @@ path = "tests/dylib_stable_consts.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_stable_telemetry"
+path = "tests/dylib_stable_telemetry.rs"
+required-features = ["engine", "dylib-plugins", "metrics"]
+
+[[test]]
 name = "dylib_linked_deps"
 path = "tests/dylib_linked_deps.rs"
 required-features = ["engine", "dylib-plugins"]

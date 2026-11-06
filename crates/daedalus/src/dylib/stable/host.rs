@@ -7,9 +7,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
+use super::services::{self, HostServices, HostSink};
 use super::value::{Arena, StableValue, to_value};
 use super::{
-    NO_FANIN, SetConstsFn, StableHandlers, StableInput, StableOutputSink, builtin, status, tag,
+    NO_FANIN, StableExtension, StableHandlers, StableInput, StableOutputSink, builtin, status, tag,
 };
 use crate::bytes::{SHARED_BYTES_KEY, SharedBytes};
 use crate::data::model::{Value, ValueType};
@@ -36,9 +37,9 @@ pub struct Generation {
     nodes: Vec<u32>,
     /// `None` for a descriptor of this process (tests).
     library: Option<Arc<LibraryHandle>>,
-    /// The build's `set_consts`, when it exports the stable extension (see [`super::StableExtension`]);
-    /// without it consts are sent with every call.
-    set_consts: Option<SetConstsFn>,
+    /// The build's stable extension, when it exports one (see [`super::StableExtension`]);
+    /// without it consts are sent with every call and no services are delivered.
+    extension: Option<StableExtension>,
 }
 
 impl Generation {
@@ -47,14 +48,14 @@ impl Generation {
         handlers: StableHandlers,
         nodes: Vec<u32>,
         library: Option<Arc<LibraryHandle>>,
-        set_consts: Option<SetConstsFn>,
+        extension: Option<StableExtension>,
     ) -> Self {
         Self {
             number,
             handlers,
             nodes,
             library,
-            set_consts,
+            extension,
         }
     }
 
@@ -295,6 +296,9 @@ struct Instance {
     /// write, changes its identity); `None` when it holds none or the plugin sends consts per
     /// call.
     consts: Option<Arc<NodeConstInputs>>,
+    /// What the plugin's record callback writes to; the instance's services point at it, so it
+    /// outlives the instance's handle (released first, in `Drop`).
+    services: Option<Box<HostSink>>,
 }
 
 // Safety: `inputs` and `arena` hold pointers only during a call (they are empty between calls),
@@ -318,13 +322,22 @@ impl HostNode {
             // is released on its own generation).
             stale => {
                 drop(stale);
-                Box::new(self.create()?)
+                let mut created = Box::new(self.create()?);
+                self.deliver_services(&mut created, ctx)?;
+                created
             }
         };
         let mut instance = instance;
         let result = self
             .sync_consts(&mut instance, io)
             .and_then(|()| self.call(&mut instance, io));
+        // The metrics the plugin recorded during the call, into this node's telemetry.
+        if let Some(sink) = instance.services.as_mut() {
+            for (name, value) in sink.pending.drain(..) {
+                ctx.state
+                    .record_node_custom_metric(&ctx.node_id, name, value);
+            }
+        }
         ctx.set_node_state(instance);
         result
     }
@@ -349,13 +362,57 @@ impl HostNode {
             arena: Arena::default(),
             scalars: Vec::new(),
             consts: None,
+            services: None,
         })
+    }
+
+    /// Deliver the host services to a new instance, once: its metric sink is the node's state
+    /// store, and its context carries the node's and the graph's metadata.
+    fn deliver_services(
+        &self,
+        instance: &mut Instance,
+        ctx: &ExecutionContext,
+    ) -> Result<(), NodeError> {
+        let Some(set_services) = instance
+            .generation
+            .extension
+            .map(|extension| extension.set_services)
+        else {
+            return Ok(());
+        };
+        let mut sink = Box::<HostSink>::default();
+        // The encoded maps borrow these values' strings, so they live through the call.
+        let (metadata, graph_metadata) = (
+            services::metadata_value(&ctx.metadata),
+            services::metadata_value(&ctx.graph_metadata),
+        );
+        let mut arena = Arena::default();
+        let services = HostServices {
+            // Mutable provenance: the record callback writes through this pointer.
+            sink: (&mut *sink as *mut HostSink).cast::<c_void>(),
+            record_metric: services::record_metric,
+            metadata: arena.encode(&metadata),
+            graph_metadata: arena.encode(&graph_metadata),
+        };
+        let mut message: Option<String> = None;
+        // Safety: the generation's entry point; the services borrow `ctx`'s maps and `arena`, both
+        // alive for the call; the sink is boxed, so it stays where the services point.
+        let code = unsafe { set_services(instance.handle, &services, string_sink(&mut message)) };
+        if code != status::OK {
+            return Err(self.error(code, message));
+        }
+        instance.services = Some(sink);
+        Ok(())
     }
 
     /// Make the instance hold the const inputs `io` has now (when its plugin takes them once):
     /// on create, and after a patch changed them. A call with the same list sends nothing.
     fn sync_consts(&self, instance: &mut Instance, io: &NodeIo) -> Result<(), NodeError> {
-        let Some(set_consts) = instance.generation.set_consts else {
+        let Some(set_consts) = instance
+            .generation
+            .extension
+            .map(|extension| extension.set_consts)
+        else {
             return Ok(());
         };
         let wanted = io.shared_consts();
@@ -419,6 +476,7 @@ impl HostNode {
             arena,
             scalars,
             consts,
+            services: _,
         } = instance;
         // The consts the instance holds are not sent again; otherwise every input is.
         if consts.is_some() {

@@ -45,6 +45,7 @@
 mod builtin;
 mod host;
 mod plugin;
+pub mod services;
 mod value;
 
 pub(super) use host::{Generation, PluginSlot, StablePlugin};
@@ -53,6 +54,7 @@ pub use plugin::{
     StableRuntimeCell, create as __create, invoke as __invoke, release as __release,
     unload as __unload,
 };
+pub use services::{HostServices, MetricRecord, SetServicesFn};
 pub use value::{Arena, StableEnum, StableField, StableValue, tag, to_value};
 
 /// The stable extension symbol a version-3 plugin exports (see [`StableExtension`]).
@@ -73,7 +75,11 @@ use std::ffi::c_void;
 /// changes them ([`SetConstsFn`], through [`StableExtension`]), instead of with every call. The
 /// [`StableHandlers`] layout is unchanged, so a version-2 plugin still loads: the host keeps
 /// sending its consts per call.
-pub const STABLE_ABI_VERSION: u32 = 3;
+///
+/// Version 4: [`StableExtension`] gains [`SetServicesFn`]: custom metrics a plugin node records
+/// reach the host node's telemetry, and the plugin context carries the node and graph metadata
+/// (see [`services`]). A version-4 extension is read only from a version-4 plugin.
+pub const STABLE_ABI_VERSION: u32 = 4;
 
 /// The oldest [`STABLE_ABI_VERSION`] the stable path still installs.
 pub const STABLE_ABI_MIN_VERSION: u32 = 2;
@@ -168,6 +174,8 @@ pub struct StableExtension {
     /// [`STABLE_ABI_VERSION`] of the build that exports it.
     pub version: u32,
     pub set_consts: SetConstsFn,
+    /// Delivers the host services once, right after the instance's create (see [`services`]).
+    pub set_services: SetServicesFn,
 }
 
 /// The [`StableExtension`] of this build, for the plugin's `daedalus_plugin_stable_extension`
@@ -176,6 +184,7 @@ pub fn stable_extension() -> StableExtension {
     StableExtension {
         version: STABLE_ABI_VERSION,
         set_consts: plugin::set_consts_entry,
+        set_services: plugin::set_services_entry,
     }
 }
 
