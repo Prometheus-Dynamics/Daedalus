@@ -49,11 +49,20 @@ copy. Handles are generation-counted (a stale handle is refused, not dereference
 point runs under the `catch_unwind` guard, and buffers come from recycled slabs, so a warm frame
 allocates nothing on either side.
 
-## What stays static-only
+## Where node code goes in shared mode
 
-Anything per node: typed `#[node]` handlers linked into the host, Rust-ABI plugins, host-side
-adapters written in Rust. In shared mode those run as stable-ABI plugins inside the surface. GPU
-access in shared mode is the stable plugin GPU vtable (see `gpu-seam.md`), not `GpuContextHandle`.
+- **Node crates built in the same image build** (HeliOS's own nodes; Eidos when it reopens) link
+  into the `daedalus-surface` `cdylib` itself. They are ordinary `#[node]` handlers with full Rust
+  calls and LTO, and pay no stable-ABI cost. The surface build takes the list of in-image node
+  crates as its input.
+- **Separately built plugins** load through the stable ABI inside the surface. The bench in
+  `benchmarks-log.md` ("Stable plugin path") is the cost they pay: about 2.5 µs per handle, and
+  85–110 µs per frame if Eidos's 310 constants crossed on every call. So anything on a hot path
+  should be in-image.
+- Rust-ABI plugins and host-side Rust adapters are static mode only.
+
+GPU access for stable-ABI plugins in shared mode is the stable plugin GPU vtable (see
+`gpu-seam.md`); in-image nodes inside the surface keep `GpuContextHandle`.
 
 ## Order
 

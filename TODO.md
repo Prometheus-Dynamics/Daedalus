@@ -65,7 +65,11 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       0.27-0.36 µs each; `Detections` through `Value` 38 µs per crossing at 4 tags, as a handle
       2.5 µs at any count.
 
-### Decided, starts when the user says
+#> 2026-11-05 (user, via HeliOS): Lemnos goes first. Anything that depends on Lemnos APIs (the
+> rga/vglite hand-off, surfaces on `lemnos-abi`, dma-heap or device changes) waits until HeliOS says
+> Lemnos is ready. Daedalus-only items continue.
+
+## Decided, starts when the user says
 
 Decided, not started. Agents finish the current list, then pause (user, relayed by HeliOS,
 2026-11-03).
@@ -82,7 +86,8 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    `crates/kernels/src/registry/fixed.rs` and delete ours.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
    plugin linking. Design in `docs/shared-library.md` (2026-11-05). Started; blocked by Lemnos's
-   `lemnos-abi`. Gaia's A/B: per-node calls across a library cost 26% on the mirror bench, so the
+   `lemnos-abi`. In-image node crates link into the surface `cdylib`; only separate plugins use the
+   stable ABI. Gaia's A/B: per-node calls across a library cost 26% on the mirror bench, so the
    surface is per frame.
 8. Lemnos's kernel module and its Rust userspace drivers: Daedalus's fixed-function nodes and
    accelerator implementations sit on them.
