@@ -36,6 +36,7 @@ mod context;
 mod crate_builds;
 mod foreign;
 mod install;
+mod payload_codecs;
 mod registry_admin;
 mod registry_transport;
 mod requirements;
@@ -47,6 +48,10 @@ pub use context::{PluginGroup, PluginInstallContext, PluginInstallable};
 pub use crate_builds::{CrateBuildDiff, CrateBuildInfo};
 pub use install::install_all;
 use install::{InstalledCapabilityKeys, normalize_plugin_manifest};
+pub use payload_codecs::{
+    CodecFromBytesFn, CodecFromValueFn, CodecToBytesFn, CodecToValueFn, FromBytesFn, FromValueFn,
+    PayloadCodec, ToBytesFn, ToValueFn, ValueCodec,
+};
 pub use stable_codecs::{StableCodec, StableDecodeFn, StableEncodeFn};
 
 pub const BUILTIN_PRIMITIVE_TYPES_ID: &str = "daedalus.builtin.primitive_types";
@@ -352,6 +357,8 @@ pub struct PluginRegistry {
     stable_codecs: Option<stable_codecs::StableCodecMap>,
     /// The host's `StablePod` port types by key (see [`PluginRegistry::register_stable_pod`]).
     stable_pods: BTreeMap<TypeKey, daedalus_transport::PodCodec>,
+    /// Codecs by type key (see [`PluginRegistry::register_payload_codec`]).
+    payload_codecs: BTreeMap<TypeKey, PayloadCodec>,
     pub current_prefix: Option<String>,
     pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,

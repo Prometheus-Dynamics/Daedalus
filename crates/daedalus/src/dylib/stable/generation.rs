@@ -16,6 +16,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, TryLockError};
 
+use super::codec_host::HostCodec;
 use super::{LiveObjectsFn, SetConstsFn, SetServicesFn, StableHandlers};
 use crate::dylib::PluginSchema;
 use crate::dylib::library::LibraryHandle;
@@ -45,6 +46,8 @@ pub struct Generation {
     /// The build output a plugin-local object to the host: its library is never closed (see the
     /// module docs).
     lent_locals: AtomicBool,
+    /// The build's codec table (see [`super::codecs`]); empty before version 7.
+    pub(super) codecs: Vec<HostCodec>,
 }
 
 impl Generation {
@@ -54,6 +57,7 @@ impl Generation {
         nodes: Vec<u32>,
         library: Option<Arc<LibraryHandle>>,
         extension: Option<LoadedExtension>,
+        codecs: Vec<HostCodec>,
     ) -> Self {
         Self {
             number,
@@ -61,6 +65,7 @@ impl Generation {
             nodes,
             library,
             extension,
+            codecs,
             lent_locals: AtomicBool::new(false),
         }
     }
@@ -150,6 +155,19 @@ impl PluginSlot {
             .read()
             .unwrap_or_else(|err| err.into_inner())
             .clone()
+    }
+
+    /// The current generation, else the first retired one still loaded, that `pred` accepts.
+    pub(super) fn find(&self, pred: impl Fn(&Generation) -> bool) -> Option<Arc<Generation>> {
+        let current = self.current();
+        if pred(&current) {
+            return Some(current);
+        }
+        if self.retired_len.load(Ordering::Acquire) == 0 {
+            return None;
+        }
+        let retired = self.retired.lock().unwrap_or_else(|err| err.into_inner());
+        retired.iter().find(|generation| pred(generation)).cloned()
     }
 
     /// The current generation's number (one atomic load).

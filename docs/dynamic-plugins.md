@@ -93,7 +93,7 @@ path for a same-build plugin, to test it):
 | --- | --- | --- |
 | Taken when | `rust_abi()` is `Ok` | `rust_abi()` differs and `stable_abi_version()` equals the host's `STABLE_ABI_VERSION` |
 | Requires | same Daedalus version, rustc and build fingerprint; boundary types identical to the host's | same `PLUGIN_ABI_VERSION` and `STABLE_ABI_VERSION`; foreign interfaces identical |
-| Installs | everything the plugin registers (nodes, adapters, serializers, capabilities, types) | the schema's nodes, each with a host handler calling the plugin |
+| Installs | everything the plugin registers (nodes, adapters, serializers, capabilities, types) | the schema's nodes, each with a host handler calling the plugin, and the plugin's codecs |
 | Values | Rust payloads, no conversion | builtins, `Value`s, `ToValue`/`Deserialize` types, `StablePod` structs, foreign handles |
 | Per call | nothing | about 1 µs (below) |
 
@@ -219,16 +219,61 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
     is held: its runtime is unloaded and the generation dropped. Its library file stays mapped,
     though (see the reload cost below). A version-4 or version-5 plugin does not count: the host
     pins it for any object it outputs.
-  - The host cannot read the object; take it to a node of the plugin. The ports need a
-    `type_key`, and consumers should borrow (`&Local<T>`) so one output can fan out.
-- **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
-  schemas, device transports and boundary contracts stay in the plugin. Typed values the host
-  lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type converts.
+  - The host cannot read the object itself; take it to a node of the plugin, or give it a codec
+    (next). The ports need a `type_key`, and consumers should borrow (`&Local<T>`) so one output
+    can fan out.
+- **Codecs (stable ABI 7).** A plugin registers, per type key, conversions of its payloads to and
+  from a `Value` and bytes, as plain functions on the Rust type; every one is optional:
+
+  ```rust
+  use daedalus::runtime::plugins::{PluginInstallContext, PluginResult, ValueCodec};
+
+  #[plugin(id = "app", install = codecs, nodes(track, draw))]
+  pub struct AppPlugin;
+
+  fn codecs(registry: &mut PluginInstallContext<'_>) -> PluginResult<()> {
+      // `register_value_codec::<T>` for a key whose payloads are `T`.
+      registry.register_local_codec::<TrackSet>(
+          "app:tracks",
+          ValueCodec::new(track_set_schema()) // the `Value`'s `TypeExpr`
+              .to_value(|tracks| Ok(tracks.to_value()))
+              .from_value(TrackSet::from_value)
+              .to_bytes(TrackSet::encode)
+              .from_bytes(TrackSet::decode),
+      )
+  }
+  ```
+
+  `PluginRegistry::register_payload_codec` (which both call) registers `to_value` as the planner
+  adapter `daedalus.codec:<key>->value` (`Opaque(key)` to the schema) and as the host bridge's
+  serializer of the key (`ValueSerializers::insert_for_key`, so `inspect_payload` and
+  `inspect_outputs` show the object as its `Value`), and `from_value` as the adapter back
+  (`daedalus.codec:value-><key>`). So a graph edge from a `Local<TrackSet>` output to a host port
+  declared `output_as("tracks", track_set_schema())` gets the conversion inserted, and a `Value`
+  the host pushes to a port of that schema reaches the plugin's nodes as a `Local<TrackSet>`. The
+  byte conversions are not adapters (bytes of two keys are not interchangeable); a host calls them
+  through `PluginRegistry::payload_codec(key)`. Statically installed, the codec runs as Rust.
+  Through the stable path, `export_plugin!` exports `daedalus_plugin_stable_codecs`
+  (`STABLE_CODECS_SYMBOL`), a table of `StableCodecEntry`s (key, schema as JSON `TypeExpr`, a
+  context pointer and one `CodecFn` per conversion), and the host registers each entry the same
+  way, with conversions that call the plugin: the input crosses as a node input does (a
+  `Local<T>` by handle) and the plugin pushes one value back (a `Local<T>` it built by handle,
+  kept like a node's output). A plugin-local object is converted by the build that made it (the
+  table carries the build's mark, which the object's header names), so an object from before a
+  reload is still read by its own code; a `Value` or bytes are converted by the current build. A reload must keep the codecs (keys, schemas, conversions).
+  Plugins of stable ABI 6 and older have no table and install as before. The host runs a host
+  output edge's adapters when it drains it, so any planner-inserted conversion to a host output
+  port runs (before, only node inputs ran them).
+- **Limits.** Only nodes and codecs install: a plugin's adapters, serializers, capabilities, named
+  type schemas, device transports and boundary contracts stay in the plugin. Typed values the
+  host lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type
+  converts.
 
 `examples/plugins/stable_abi` is a plugin whose descriptor claims another rustc; the facade's
 `dylib_stable` test installs it through the stable path and compares every node with the static
 install, `dylib_stable_local` its `Local` nodes (one address across edges and ticks, and a
-reload), `dylib_stable_pod` covers its `StablePod` nodes (typed, as `PodValue`s, and a layout
+reload), `dylib_stable_codecs` its tracker codec (to a host `Value` port and back through the
+planner's adapters, inspection and bytes), `dylib_stable_pod` covers its `StablePod` nodes (typed, as `PodValue`s, and a layout
 mismatch each way), and `dylib_reload` rebuilds it between loads.
 
 **Performance** (release, x86-64 desktop, `cargo test -p daedalus-rs --features

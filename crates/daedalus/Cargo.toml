@@ -289,6 +289,11 @@ path = "tests/dylib_reload_race.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_stable_codecs"
+path = "tests/dylib_stable_codecs.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_stable_version"
 path = "tests/dylib_stable_version.rs"
 required-features = ["dylib-plugins"]

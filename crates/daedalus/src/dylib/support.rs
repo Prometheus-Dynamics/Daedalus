@@ -9,7 +9,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 pub use super::stable::{
     __create as create, __invoke as invoke, __release as release, __unload as unload,
-    StableRuntimeCell,
+    CodecTableCell, StableRuntimeCell, codec_table,
 };
 
 /// A dependency plugin linked into a dynamic plugin (`export_plugin!(P, deps [D])`).
@@ -221,6 +221,13 @@ macro_rules! export_plugin {
             $crate::dylib::stable_extension()
         }
 
+        /// Returns the codec table (see `StableCodecTable`).
+        #[unsafe(no_mangle)]
+        pub extern "C" fn daedalus_plugin_stable_codecs()
+        -> *const $crate::dylib::StableCodecTable {
+            $crate::plugin_codec_table!($($args)*)
+        }
+
         /// The stable ABI version, as data: readable from the file without loading it.
         #[unsafe(no_mangle)]
         #[allow(non_upper_case_globals)]
@@ -353,5 +360,33 @@ macro_rules! plugin_descriptor {
                 unload,
             },
         }
+    }};
+}
+
+/// The [`StableCodecTable`](crate::dylib::StableCodecTable) of a [`Plugin`](crate::Plugin)
+/// implementor, for its `daedalus_plugin_stable_codecs` symbol, exactly as
+/// [`export_plugin!`](crate::export_plugin) exports it; takes the same arguments. For plugins
+/// that export their symbols themselves.
+#[macro_export]
+macro_rules! plugin_codec_table {
+    ($ty:ty $(,)?) => {
+        $crate::plugin_codec_table!($ty, deps [], boundary_contracts [])
+    };
+    ($ty:ty, boundary_contracts [ $( $contract:expr ),* $(,)? ] $(,)?) => {
+        $crate::plugin_codec_table!($ty, deps [], boundary_contracts [])
+    };
+    ($ty:ty, deps [ $( $dep:ty ),* $(,)? ] $(,)?) => {
+        $crate::plugin_codec_table!($ty, deps [ $( $dep ),* ], boundary_contracts [])
+    };
+    (
+        $ty:ty,
+        deps [ $( $dep:ty ),* $(,)? ],
+        boundary_contracts [ $( $contract:expr ),* $(,)? ] $(,)?
+    ) => {{
+        use $crate::dylib::__support;
+
+        const DEPS: &[__support::LinkedDep] = &[ $( __support::linked::<$dep> ),* ];
+        static CODECS: __support::CodecTableCell = __support::CodecTableCell::new();
+        __support::codec_table::<$ty>(&CODECS, DEPS)
     }};
 }

@@ -7,7 +7,8 @@
 //! `daedalus:frame` without copying, a conditional output, a `fire = "all"` join, and a panic. The facade's `dylib_stable` test runs them statically and dynamically and compares.
 //! The [`frames`] nodes take and return owned `SharedFrame`s (the `dylib_frames` test); the
 //! [`pods`] nodes take and return a `StablePod` struct and `Vec`s of them (`dylib_stable_pod`);
-//! the [`locals`] nodes pass a plugin-local object by handle (`dylib_stable_local`).
+//! the [`locals`] nodes pass a plugin-local object by handle (`dylib_stable_local`), which its
+//! codec converts to a `Value` and bytes (`dylib_stable_codecs`).
 //! `SharedBytes` nodes show buffers crossing by reference both ways, and the `generation` node
 //! changes with the `reload-v2` / `reload-incompatible` features, so the `dylib_reload` test can
 //! rebuild the plugin between loads.
@@ -157,6 +158,7 @@ pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
 
 #[plugin(
     id = "stable_abi",
+    install = install_codecs,
     nodes(
         scale,
         point,
@@ -218,6 +220,12 @@ mod export {
     #[unsafe(no_mangle)]
     pub extern "C" fn daedalus_plugin_stable_extension() -> StableExtension {
         daedalus::dylib::stable_extension()
+    }
+
+    /// The codec table (see `StableCodecTable`).
+    #[unsafe(no_mangle)]
+    pub extern "C" fn daedalus_plugin_stable_codecs() -> *const daedalus::dylib::StableCodecTable {
+        daedalus::plugin_codec_table!(super::StableAbiPlugin)
     }
 
     /// The stable ABI version, as data (see `STABLE_VERSION_SYMBOL`).

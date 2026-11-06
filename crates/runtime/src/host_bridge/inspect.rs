@@ -149,7 +149,8 @@ impl PayloadInspection {
 ///
 /// `Value` payloads are returned as-is. Other payloads are looked up by the `TypeId` of the stored
 /// value (the inner `T` for `Arc<T>`-backed payloads), so registrations made with
-/// `register_value_serializer_in::<T, _>` match both owned and shared payloads.
+/// `register_value_serializer_in::<T, _>` match both owned and shared payloads, then by the
+/// payload's type key ([`ValueSerializers::insert_for_key`](super::ValueSerializers)).
 pub fn serialize_payload_value(
     payload: &Payload,
     serializers: &ValueSerializerMap,
@@ -160,7 +161,12 @@ pub fn serialize_payload_value(
     }
     let type_id = <dyn Any>::type_id(value);
     let guard = serializers.read();
-    guard.get(&type_id).and_then(|serializer| serializer(value))
+    if let Some(serializer) = guard.get(&type_id) {
+        return serializer(value);
+    }
+    guard
+        .for_key(payload.type_key())
+        .and_then(|serializer| serializer(payload))
 }
 
 /// Inspect a payload using `serializers`, falling back to a structured summary.

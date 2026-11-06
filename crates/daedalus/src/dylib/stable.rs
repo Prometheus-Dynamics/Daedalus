@@ -39,6 +39,10 @@
 //! elements as a [`PodValue`](crate::transport::PodValue), which it passes on unchanged; a host
 //! that registered the type (`PluginRegistry::register_stable_pod`) gets `T`/`Vec<T>`.
 //!
+//! **Codecs.** A plugin's per-type-key conversions to and from a `Value` and bytes cross as a
+//! table of C functions ([`codecs`]); the host registers them as planner adapters and host bridge
+//! serializers, so a plugin type (a `Local<T>` among them) reaches a host `Value` port.
+//!
 //! **Host side.** [`PluginLibrary::install_into`](super::PluginLibrary::install_into) uses this
 //! path when [`rust_abi`](super::PluginLibrary::rust_abi) reports a mismatch and
 //! [`StableHandlers::version`] equals [`STABLE_ABI_VERSION`]: it registers the schema's node
@@ -50,6 +54,8 @@
 //! `SharedBytes` in place, everything else as a `Value` payload under the port's key).
 
 mod builtin;
+mod codec_host;
+pub mod codecs;
 mod generation;
 mod host;
 mod plugin;
@@ -57,6 +63,11 @@ mod pod;
 pub mod services;
 mod value;
 
+pub(super) use codec_host::{HostCodec, load_codecs};
+pub use codecs::{
+    CODECS_VERSION, CodecFn, CodecTableCell, CodecTableFn, STABLE_CODECS_SYMBOL, StableCodecEntry,
+    StableCodecTable, codec_table,
+};
 pub(super) use generation::{Generation, LoadedExtension, PluginSlot};
 pub(super) use host::StablePlugin;
 #[doc(hidden)]
@@ -107,7 +118,13 @@ use std::ffi::c_void;
 /// as a plain handle, holding nothing per object, and closes an old build after a reload once its
 /// count is 0. The host still reads a version-4 or version-5 extension (without the entry), and
 /// pins a build that does not count.
-pub const STABLE_ABI_VERSION: u32 = 6;
+///
+/// Version 7: codecs. A plugin exports [`STABLE_CODECS_SYMBOL`], a table of per-type-key C
+/// conversions to and from a `Value` and bytes ([`codecs`]), which the host registers as planner
+/// adapters and host bridge serializers, so a plugin type (a `Local<T>` among them) reaches a
+/// host `Value` port and comes back. The handler tables and the extension keep version 6's
+/// layout; a plugin of version 6 or older has no codec table.
+pub const STABLE_ABI_VERSION: u32 = 7;
 
 /// The first [`STABLE_ABI_VERSION`] whose [`StableExtension`] has [`LiveObjectsFn`].
 pub const LIVE_OBJECTS_VERSION: u32 = 6;

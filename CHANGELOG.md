@@ -27,6 +27,27 @@ plugin ABI and does not load.
   -Werror -pedantic`) built against `daedalus_surface.h` and linked to the surface library installs
   the `stable_abi` plugin, compiles a graph, and runs 50 frames with ports by index and a batch
   push; its outputs equal the static graph's. Linux; skipped without a C compiler.
+- Stable ABI 7: codecs. A plugin registers, per type key, conversions of its payloads to and from
+  a `Value` and bytes (`PluginRegistry::register_value_codec::<T>`, or `register_local_codec::<T>`
+  for a key whose payloads are `Local<T>`; `ValueCodec` holds the schema and the optional
+  functions). `register_payload_codec` makes `to_value` the planner adapter
+  `daedalus.codec:<key>->value` (`Opaque(key)` to the schema) and the host bridge's serializer of
+  the key, and `from_value` the adapter back; `PluginRegistry::payload_codec` gives a host the byte
+  conversions. Through the stable path, `export_plugin!` exports `daedalus_plugin_stable_codecs`
+  (`STABLE_CODECS_SYMBOL`, a `StableCodecTable` of `StableCodecEntry`s, each a key, a JSON schema,
+  a context pointer and a `CodecFn` per conversion; `plugin_codec_table!` for plugins exporting
+  their own symbols), and the host registers each entry the same way with conversions that call
+  the plugin. A plugin-local object converts on the build that made it (the table carries the
+  build's mark, `transport::local_build_mark`, which the object's header names,
+  `local_handle_build`); a `Value` or bytes on the current build; a reload must keep the codecs.
+  The handler tables and the extension keep version 6's layout; plugins of stable ABI 2 to 6
+  install as before, with no codecs. Host bridge value
+  serializers can be keyed by type key (`ValueSerializerMap` is now an
+  `Arc<RwLock<ValueSerializers>>`, which dereferences to the `TypeId` map, plus `insert_for_key`),
+  for payloads whose Rust type is a foreign handle. Test: `dylib_stable_codecs` (a plugin's
+  `Local<Tracker>` to a host `Value` port and back through the planner's adapters, inspection, and
+  bytes; statically and through the stable path) and `dylib_reload` (a tracker made before a
+  reload still converts on its build after it, and keeps that build loaded until dropped).
 - Surface ABI 1.2: `daedalus_surface_host_create_with` writes a failing image install's reason
   to a message sink (`daedalus-host`'s `create_host` puts it in the error), and
   `daedalus_surface_host_schemas` lists an image surface's in-image plugins, ahead of the
@@ -793,13 +814,13 @@ plugin ABI and does not load.
   the buffer's inode over 40 frames: back to baseline after every tick of a graph that consumes
   the frame (`frame_info`), and after every take and release of a passthrough graph with two
   leases out at once; the wrapper frame test checks the same after each release.
-- `daedalus::dylib::STABLE_ABI_VERSION` is 6 (was 2; 6 adds `live_objects`, see Added). The
-  stable path installs versions `STABLE_ABI_MIN_VERSION` (2) to 6 (`stable_abi_supported`);
-  `StableHandlers` is unchanged, so `PLUGIN_ABI_VERSION` stays 11. Version 5 adds the `tag::POD`
+- `daedalus::dylib::STABLE_ABI_VERSION` is 7 (was 2; 6 adds `live_objects`, 7 the codec table,
+  see Added). The stable path installs versions `STABLE_ABI_MIN_VERSION` (2) to 7
+  (`stable_abi_supported`); `StableHandlers` is unchanged, so `PLUGIN_ABI_VERSION` stays 11. Version 5 adds the `tag::POD`
   value (the tables keep their layout): the host sends one only to a version-5 or later plugin,
   and a version-4 host refuses a version-5 plugin. A version-4 or version-5 plugin's
   `daedalus_plugin_stable_extension` is read in its own layout (`StableExtensionV4`), a version-6
-  one with `live_objects`; a version-3 plugin's consts go per call.
+  or version-7 one with `live_objects`; a version-3 plugin's consts go per call.
 - **Plain values are held inline in the payload (public API change).** `Payload::plain` holds a
   `Copy` value of at most 32 bytes with alignment at most 8 in the payload, instead of in an `Arc`:
   the detector's `Stats`, `Roi`, `Track`, `Report`, `Histogram` and `FrameInfo` outputs now

@@ -95,7 +95,11 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
      that output a `Local` is unloaded but stays mapped (a last release may still be returning
      through its code on another thread); `dylib_reload_race` hammers it. The `stable_bench` handle prototype still uses its
      own interface; moving it to `Local` is open.
-   - Adapters and serializers (C function pointers keyed by type name): not started.
+   - Adapters and serializers (C function pointers keyed by type name): done (stable ABI 7,
+     `daedalus_plugin_stable_codecs`, `register_value_codec` / `register_local_codec`; the host
+     registers each as a planner adapter to and from its `Value` schema and as the host bridge's
+     serializer of the key; `dylib_stable_codecs`). First client: `Local<T>`. Open: no codec for
+     `StablePod` views or for foreign payloads of another plugin's interface has a user yet.
    - Codecs for the catalog nodes: not started.
    - Known: one `Serial/Off` allocation in 200 loaded runs of `graph_frame_allocations` (2026-11-06),
      not reproduced in 1,060 traced runs; site unknown.

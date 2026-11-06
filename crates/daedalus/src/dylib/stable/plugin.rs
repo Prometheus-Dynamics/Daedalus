@@ -49,7 +49,7 @@ impl Default for StableRuntimeCell {
     }
 }
 
-type Failure = (u32, String);
+pub(super) type Failure = (u32, String);
 
 /// What instances run nodes with: the plugin's handlers and conversions and its nodes in schema
 /// order.
@@ -507,7 +507,7 @@ fn error_status(error: &NodeError) -> u32 {
 ///
 /// # Safety
 /// `error` must be the host's sink for the call.
-unsafe fn guarded(error: StrSink, body: impl FnOnce() -> Result<(), Failure>) -> u32 {
+pub(super) unsafe fn guarded(error: StrSink, body: impl FnOnce() -> Result<(), Failure>) -> u32 {
     let (code, message) = match catch_unwind(AssertUnwindSafe(body)) {
         Ok(Ok(())) => return status::OK,
         Ok(Err(failure)) => failure,

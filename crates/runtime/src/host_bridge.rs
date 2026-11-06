@@ -45,7 +45,8 @@ use ports::{PortDirection, PortEntry, PortKey, PortState};
 #[cfg(feature = "plugins")]
 pub(crate) use serializers::for_each_builtin_primitive;
 pub use serializers::{
-    ValueSerializer, ValueSerializerMap, new_value_serializer_map, primitive_value_serializer_map,
+    PayloadSerializer, ValueSerializer, ValueSerializerMap, ValueSerializers,
+    new_value_serializer_map, primitive_value_serializer_map,
     register_primitive_value_serializers_in, register_value_serializer_in,
 };
 pub use types::{

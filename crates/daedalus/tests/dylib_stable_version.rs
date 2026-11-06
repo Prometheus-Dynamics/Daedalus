@@ -18,6 +18,8 @@ fn the_plugin_exports_its_stable_version_as_data() {
     let symbol = unsafe { library.get::<*const u32>(STABLE_VERSION_SYMBOL.as_bytes()) }.unwrap();
     // Safety: the address of a live static of the loaded library.
     assert_eq!(unsafe { **symbol }, STABLE_ABI_VERSION);
+    // 7: the codec table (6 added `live_objects`).
+    assert_eq!(STABLE_ABI_VERSION, 7);
     drop(library);
 
     // The loader cross-checks it against the descriptor and loads the plugin.

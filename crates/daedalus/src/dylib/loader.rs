@@ -4,9 +4,9 @@ use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::intern::intern;
 use super::library::{LibraryHandle, OpenError};
 use super::stable::{
-    Generation, LIVE_OBJECTS_VERSION, LoadedExtension, PluginSlot, STABLE_ABI_VERSION,
+    Generation, HostCodec, LIVE_OBJECTS_VERSION, LoadedExtension, PluginSlot, STABLE_ABI_VERSION,
     STABLE_EXTENSION_SYMBOL, STABLE_VERSION_SYMBOL, StableExtension, StableExtensionV4,
-    StablePlugin, stable_abi_supported,
+    StablePlugin, load_codecs, stable_abi_supported,
 };
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
@@ -41,6 +41,8 @@ pub struct PluginLibrary {
     library: Option<Arc<LibraryHandle>>,
     /// The build's stable extension (see [`StableExtension`]), when it exports one.
     stable_extension: Option<LoadedExtension>,
+    /// The build's codec table (see [`super::stable::codecs`]); empty before version 7.
+    stable_codecs: Vec<HostCodec>,
     descriptor: PluginDescriptor,
     /// `descriptor.info` with host copies of its strings.
     info: PluginInfo,
@@ -203,10 +205,17 @@ impl PluginLibrary {
         let stable_extension = library
             .as_deref()
             .and_then(|library| unsafe { stable_extension(library, descriptor.stable.version) });
+        let stable_codecs = match library.as_deref() {
+            // Safety: a loaded plugin library, whose codec symbol has its version's signature.
+            Some(library) => unsafe { load_codecs(library, descriptor.stable.version) }
+                .map_err(|message| schema_error(format!("stable codecs: {message}")))?,
+            None => Vec::new(),
+        };
         Ok(Self {
             path,
             library,
             stable_extension,
+            stable_codecs,
             rust_abi: check_rust_abi(&info),
             info,
             descriptor,
@@ -421,6 +430,7 @@ impl PluginLibrary {
                 (0..self.schema.nodes.len() as u32).collect(),
                 self.library.clone(),
                 self.stable_extension,
+                self.stable_codecs.clone(),
             );
             Arc::new(PluginSlot::new(&self.schema, generation))
         });
@@ -501,6 +511,12 @@ impl PluginLibrary {
             if next.foreign_interfaces != self.foreign_interfaces {
                 changes.push("its foreign interfaces changed".into());
             }
+            let codecs = |codecs: &[HostCodec]| -> Vec<_> {
+                codecs.iter().map(HostCodec::interface).collect()
+            };
+            if codecs(&next.stable_codecs) != codecs(&self.stable_codecs) {
+                changes.push("its codecs changed".into());
+            }
             if !changes.is_empty() {
                 return Err(PluginLibraryError::ReloadIncompatible { plugin, changes });
             }
@@ -510,6 +526,7 @@ impl PluginLibrary {
                 nodes,
                 next.library.clone(),
                 next.stable_extension,
+                next.stable_codecs.clone(),
             ));
             *next.slot.get_mut().unwrap_or_else(|err| err.into_inner()) = Some(slot);
         }
@@ -588,7 +605,7 @@ impl PluginLibrary {
 }
 
 /// The stable extension of a library, if it exports one for `version`: versions 4 and 5 have
-/// the [`StableExtensionV4`] layout (read without `live_objects`), version 6 the current one; an
+/// the [`StableExtensionV4`] layout (read without `live_objects`), versions 6 and 7 the current one; an
 /// older build's extension is not read.
 ///
 /// # Safety

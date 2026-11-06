@@ -202,8 +202,9 @@ pub use loader::{
     discover_plugin_libraries,
 };
 pub use stable::{
-    LIVE_OBJECTS_VERSION, LiveObjectsFn, NO_FANIN, STABLE_ABI_MIN_VERSION, STABLE_ABI_VERSION,
-    STABLE_EXTENSION_SYMBOL, STABLE_VERSION_SYMBOL, SetConstsFn, StableExtension,
+    CODECS_VERSION, CodecFn, CodecTableFn, LIVE_OBJECTS_VERSION, LiveObjectsFn, NO_FANIN,
+    STABLE_ABI_MIN_VERSION, STABLE_ABI_VERSION, STABLE_CODECS_SYMBOL, STABLE_EXTENSION_SYMBOL,
+    STABLE_VERSION_SYMBOL, SetConstsFn, StableCodecEntry, StableCodecTable, StableExtension,
     StableExtensionV4, StableHandlers, StableInput, StableOutputSink, StableValue,
     stable_abi_supported, stable_extension,
 };

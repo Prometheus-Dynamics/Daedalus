@@ -113,7 +113,7 @@ impl Plugin for StablePlugin<'_> {
             // So the host feeds and takes `SharedBytes` by type.
             ctx.register_boundary_type::<SharedBytes>(SHARED_BYTES_KEY)?;
         }
-        Ok(())
+        super::codec_host::register(ctx, &self.slot)
     }
 }
 
@@ -527,7 +527,7 @@ impl HostNode {
 }
 
 /// A sink writing into `slot`.
-fn string_sink(slot: &mut Option<String>) -> StrSink {
+pub(super) fn string_sink(slot: &mut Option<String>) -> StrSink {
     StrSink {
         ctx: (slot as *mut Option<String>).cast(),
         write: Some(loader::write_string),

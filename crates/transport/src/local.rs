@@ -47,6 +47,22 @@ fn build_mark() -> *const c_void {
     (&raw const BUILD_MARK).cast()
 }
 
+/// This build's mark: the address a [`LocalHeader::build`] of an object this build created holds.
+/// A plugin hands it to the host (in its codec table) so the host can tell which build made a
+/// plugin-local handle ([`local_handle_build`]).
+pub fn local_build_mark() -> *const c_void {
+    build_mark()
+}
+
+/// The mark of the build that created the plugin-local object of `handle` (compare it with that
+/// build's [`local_build_mark`]); `None` when `handle` is not a `daedalus:plugin_local` handle.
+pub fn local_handle_build(handle: &ForeignHandle) -> Option<*const c_void> {
+    let view = handle.view::<LocalInterface>().ok()?;
+    // Safety: the vtable is the interface's; the creating build returns the header of the live
+    // object, which the handle keeps alive.
+    Some(unsafe { (*(view.vtable().header)(view.data())).build })
+}
+
 /// This build's plugin-local objects still alive (see the module docs).
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 

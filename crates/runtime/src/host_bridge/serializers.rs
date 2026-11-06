@@ -1,16 +1,57 @@
 use crate::portable::Arc;
 use crate::prelude::*;
 use crate::sync::RwLock;
+use alloc::collections::BTreeMap;
 use core::any::{Any, TypeId};
+use core::ops::{Deref, DerefMut};
 
 use daedalus_data::model::Value;
+use daedalus_transport::{Payload, TypeKey};
 
 pub type ValueSerializer =
     Box<dyn Fn(&(dyn Any + Send + Sync)) -> Option<Value> + Send + Sync + 'static>;
-pub type ValueSerializerMap = Arc<RwLock<HashMap<TypeId, ValueSerializer>>>;
+/// Serializes a whole payload (see [`ValueSerializers::insert_for_key`]).
+pub type PayloadSerializer = Box<dyn Fn(&Payload) -> Option<Value> + Send + Sync + 'static>;
+pub type ValueSerializerMap = Arc<RwLock<ValueSerializers>>;
+
+/// Value serializers: by the payload value's `TypeId` (the map this dereferences to), and by
+/// type key for payloads whose Rust type does not tell them apart, such as foreign handles of a
+/// stable plugin's codec ([`Self::insert_for_key`]). [`super::serialize_payload_value`] tries
+/// the `TypeId` first.
+#[derive(Default)]
+pub struct ValueSerializers {
+    by_type: HashMap<TypeId, ValueSerializer>,
+    by_key: BTreeMap<TypeKey, PayloadSerializer>,
+}
+
+impl ValueSerializers {
+    /// Serialize payloads of type key `key` with `serializer` (replacing an earlier one).
+    pub fn insert_for_key(&mut self, key: TypeKey, serializer: PayloadSerializer) {
+        self.by_key.insert(key, serializer);
+    }
+
+    /// The serializer of type key `key` ([`Self::insert_for_key`]).
+    pub fn for_key(&self, key: &TypeKey) -> Option<&PayloadSerializer> {
+        self.by_key.get(key)
+    }
+}
+
+impl Deref for ValueSerializers {
+    type Target = HashMap<TypeId, ValueSerializer>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.by_type
+    }
+}
+
+impl DerefMut for ValueSerializers {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.by_type
+    }
+}
 
 pub fn new_value_serializer_map() -> ValueSerializerMap {
-    Arc::new(RwLock::new(HashMap::new()))
+    Arc::new(RwLock::new(ValueSerializers::default()))
 }
 
 pub fn register_value_serializer_in<T, F>(map: &ValueSerializerMap, serializer: F)
