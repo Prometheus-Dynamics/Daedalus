@@ -323,8 +323,20 @@ impl NodeIo {
 
     /// The node's shared const inputs when no call has taken one, and whether an edge input
     /// feeds `port` (for caches keyed by the const list: see `const_cache`).
-    pub(crate) fn shared_consts(&self) -> Option<&Arc<NodeConstInputs>> {
+    pub fn shared_consts(&self) -> Option<&Arc<NodeConstInputs>> {
         self.consts.as_ref().filter(|_| self.consts_taken == 0)
+    }
+
+    /// Use `consts` as this io's shared const inputs (an empty list is none): every call of a
+    /// node whose consts a host keeps decoded passes the same `Arc`, without copying them.
+    pub fn with_shared_consts(mut self, consts: Option<Arc<NodeConstInputs>>) -> Self {
+        self.consts = consts.filter(|consts| !consts.is_empty());
+        self
+    }
+
+    /// The edge inputs only (no const inputs, taken or not).
+    pub fn edge_inputs(&self) -> &[NodePort] {
+        &self.inputs
     }
 
     pub(crate) fn has_edge_input(&self, port: &str) -> bool {

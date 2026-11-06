@@ -17,7 +17,14 @@ plugin ABI and does not load.
 
 ### Added
 
-- `vvl` has a positive control for synchronization validation. The `sync_hazard_control` example
+- Stable ABI 3: a plugin's const inputs are sent to its node instance once, on create and again
+  when a graph patch changes them (`HostGraph::apply_patch`), instead of with every call. The
+  plugin exports `daedalus_plugin_stable_extension` (`StableExtension`, `SetConstsFn`); a plugin
+  without it, and every stable ABI 2 plugin, still installs and gets its consts per call. Strings
+  in consts are decoded once. Stable-path constants cost the host no allocation, and a
+  `String` const costs the plugin only what its handler allocates.
+- `dylib_stable_consts` checks a patched const against the static install, per tick.
+ for synchronization validation. The `sync_hazard_control` example
   (`crates/gpu/examples`, feature `gpu-vulkan-raw`) records two `vkCmdFillBuffer` writes to one
   buffer with no barrier, a deliberate write-after-write hazard, and `scripts/ci.sh vvl` fails
   unless the layer reports a `SYNC-HAZARD` message for it. The example is deliberately wrong and
@@ -617,6 +624,9 @@ plugin ABI and does not load.
 
 ### Changed
 
+- `daedalus::dylib::STABLE_ABI_VERSION` is 3 (was 2). The stable path installs versions
+  `STABLE_ABI_MIN_VERSION` (2) to 3 (`stable_abi_supported`); `StableHandlers` is unchanged, so
+  `PLUGIN_ABI_VERSION` stays 11.
 - `daedalus_runtime::collections::FastHashMap` is built on the module's `HashMap`, so `hashbrown`
   is no longer in the runtime's public API with `std`. `daedalus_data::convert::SharedConverterGraph`
   is removed: nothing used it, and it put `parking_lot` in the public API.

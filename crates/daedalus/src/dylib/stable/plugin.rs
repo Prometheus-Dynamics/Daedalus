@@ -14,7 +14,7 @@ use crate::runtime::executor::{CorrelatedPayload, NodeHandler, panic_message};
 use crate::runtime::handler_registry::HandlerRegistry;
 use crate::runtime::handles::PortId;
 use crate::runtime::host_bridge::ValueSerializerMap;
-use crate::runtime::io::{ConstCoercerMap, NodeIo, NodeIoEnv};
+use crate::runtime::io::{ConstCoercerMap, NodeConstInputs, NodeIo, NodeIoEnv};
 use crate::runtime::plugins::{Plugin, StableCodec};
 use crate::runtime::{ExecutionContext, NodeError, RuntimeNode, StateStore, TypeIndex};
 use crate::transport::{Payload, PayloadSlot, Residency, TypeKey};
@@ -96,6 +96,9 @@ struct StableInstance {
     slots: Vec<PayloadSlot>,
     /// What the encoded outputs borrow; cleared after a call.
     arena: Arena,
+    /// The const inputs the host set ([`set_consts_entry`]), decoded once and shared by every
+    /// call's io; `None` when there are none.
+    consts: Option<Arc<NodeConstInputs>>,
 }
 
 impl StableRuntime {
@@ -167,6 +170,7 @@ impl StableRuntime {
             env,
             slots: Vec::new(),
             arena: Arena::default(),
+            consts: None,
         })
     }
 
@@ -213,6 +217,36 @@ impl StableRuntime {
 }
 
 impl StableInstance {
+    /// Replace the instance's const inputs with `inputs` (decoded here, so their strings and
+    /// bytes are copied once); an empty list clears them.
+    ///
+    /// # Safety
+    /// Every pointer in `inputs` must be valid for the call.
+    unsafe fn set_consts(&mut self, inputs: &[StableInput]) -> Result<(), Failure> {
+        if inputs.len() > MAX_SHARED_CONSTS {
+            return Err((
+                status::FAILED,
+                format!(
+                    "{} const inputs; at most {MAX_SHARED_CONSTS} are shared",
+                    inputs.len()
+                ),
+            ));
+        }
+        let runtime = self.runtime.clone();
+        let node = &runtime.nodes[self.node];
+        let mut decoded = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            // A fresh slot per const: the decoded payload keeps its own allocation.
+            let mut slot = PayloadSlot::default();
+            // Safety: forwarded from the caller.
+            let port = unsafe { decode_port(node, &mut self.fanin, &mut slot, input) }
+                .map_err(|message| (status::INVALID_INPUT, message))?;
+            decoded.push(port);
+        }
+        self.consts = (!decoded.is_empty()).then(|| Arc::new(decoded));
+        Ok(())
+    }
+
     /// # Safety
     /// Every pointer in `inputs` must be valid for the call, and `outputs` must be the host's
     /// sink for it.
@@ -260,7 +294,9 @@ impl StableInstance {
                     }
                 }
             });
-        let mut io = NodeIo::from_inputs(ports).with_env(self.env.clone());
+        let mut io = NodeIo::from_inputs(ports)
+            .with_env(self.env.clone())
+            .with_shared_consts(self.consts.clone());
         if let Some(failure) = failure {
             return Err(failure);
         }
@@ -479,6 +515,38 @@ pub unsafe fn release(instance: u64) {
         // Safety: guaranteed by the caller.
         drop(unsafe { Box::from_raw(instance) });
     }));
+}
+
+/// Most const inputs one instance shares (see `NodeIo`'s shared consts).
+const MAX_SHARED_CONSTS: usize = 64;
+
+/// The `set_consts` entry point (see [`super::SetConstsFn`]).
+///
+/// # Safety
+/// The arguments must follow [`super::SetConstsFn`]'s contract.
+pub unsafe extern "C" fn set_consts_entry(
+    instance: u64,
+    consts: *const StableInput,
+    len: usize,
+    error: StrSink,
+) -> u32 {
+    // Safety: forwarded from the caller.
+    unsafe {
+        guarded(error, || {
+            // Safety: a live handle from `create`, never used concurrently.
+            let instance = (instance as *mut StableInstance)
+                .as_mut()
+                .ok_or_else(|| (status::FAILED, "null instance".to_string()))?;
+            let inputs = if len == 0 || consts.is_null() {
+                &[][..]
+            } else {
+                // Safety: the host passes `len` inputs.
+                std::slice::from_raw_parts(consts, len)
+            };
+            // Safety: the host's consts are valid for the call.
+            instance.set_consts(inputs)
+        })
+    }
 }
 
 /// The `unload` entry point (see [`super::UnloadFn`]).

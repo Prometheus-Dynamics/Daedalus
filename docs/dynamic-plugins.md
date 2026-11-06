@@ -125,6 +125,15 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
   `SharedBytes` in place, everything else as a `Value` payload under the port's key (downstream
   nodes coerce it as they do graph constants). Host inputs must be builtins, `Value`s,
   `SharedBytes`, types with a registered value serializer, or foreign handles.
+- **Constants (stable ABI 3).** A const input is not sent with every call. The host sends a
+  node instance its const list once, on the instance's first call, and again when a graph patch
+  (`HostGraph::apply_patch`) changes it; the plugin decodes them once (strings included) and
+  merges them into each call's io. The host finds the list changed by the identity of the
+  `Arc` it holds, which a patch copies on write. This is `daedalus_plugin_stable_extension`
+  (`StableExtension`, `SetConstsFn`), an optional symbol next to the descriptor, so
+  `StableHandlers` keeps its layout and `PLUGIN_ABI_VERSION` stays 11. A stable ABI 2 plugin,
+  or a version 3 plugin without the symbol, still installs: the host sends its consts with
+  every call, as before. More than 64 consts are always sent per call.
 - **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
   schemas, device transports and boundary contracts stay in the plugin. Typed values the host
   lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type converts.
@@ -147,6 +156,12 @@ and is rebuilt through serde. Frames cross as handles at the scalar cost: a 1080
 per-call overhead by roughly a fifth to a third against version 1 (no per-call port-name
 search, UTF-8 validation, instance-map lock or context clone; reused call buffers; direct scalar
 decoding).
+
+**Constants** (stable ABI 3, x86-64 release, `--test dylib_stable_bench`, machine loaded at a
+load average of about 50, so timings are noisy): the per-constant slope on the stable path fell
+from 250 to 110 ns for scalars (static 87 ns; 54 ns on the base run) and from 385 to 162 ns for
+quarter strings (static 126 ns). Allocations per tick on the host are now zero for constants,
+against two and twelve for the quarter-string cases before (`--test dylib_stable_bench_allocations`).
 
 **Allocations** (`--test dylib_stable_allocations`): after warm-up a tick through a stable
 plugin allocates no more on the host than the same graph with the plugin installed statically.

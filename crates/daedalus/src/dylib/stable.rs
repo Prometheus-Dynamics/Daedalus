@@ -55,6 +55,9 @@ pub use plugin::{
 };
 pub use value::{Arena, StableEnum, StableField, StableValue, tag, to_value};
 
+/// The stable extension symbol a version-3 plugin exports (see [`StableExtension`]).
+pub const STABLE_EXTENSION_SYMBOL: &str = "daedalus_plugin_stable_extension";
+
 use super::StrSink;
 use std::ffi::c_void;
 
@@ -65,7 +68,21 @@ use std::ffi::c_void;
 ///
 /// Version 2: per-instance handles ([`CreateFn`]), ports by index ([`StableInput::port`],
 /// [`OutputPushFn`]), [`UnloadFn`], and the [`tag::HANDLE_FROM_SENDER`] flag.
-pub const STABLE_ABI_VERSION: u32 = 2;
+///
+/// Version 3: const inputs are sent to an instance once, on create and again when a graph patch
+/// changes them ([`SetConstsFn`], through [`StableExtension`]), instead of with every call. The
+/// [`StableHandlers`] layout is unchanged, so a version-2 plugin still loads: the host keeps
+/// sending its consts per call.
+pub const STABLE_ABI_VERSION: u32 = 3;
+
+/// The oldest [`STABLE_ABI_VERSION`] the stable path still installs.
+pub const STABLE_ABI_MIN_VERSION: u32 = 2;
+
+/// Whether a plugin whose [`StableHandlers::version`] is `version` installs through the stable
+/// path (versions [`STABLE_ABI_MIN_VERSION`] to [`STABLE_ABI_VERSION`]).
+pub const fn stable_abi_supported(version: u32) -> bool {
+    version >= STABLE_ABI_MIN_VERSION && version <= STABLE_ABI_VERSION
+}
 
 /// [`StableInput::fanin`] of an input that is not an indexed fan-in port.
 pub const NO_FANIN: u32 = u32::MAX;
@@ -130,6 +147,37 @@ pub type InvokeFn = unsafe extern "C" fn(
 
 /// Drops the plugin-side state of `instance`.
 pub type ReleaseFn = unsafe extern "C" fn(instance: u64);
+
+/// Replaces the const inputs of `instance` with `consts` (ports by index into the schema node's
+/// `inputs`, as [`StableInput`]s, borrowed for the call); returns a [`status`] code, writing a
+/// message to `error` unless it is `OK`. The instance keeps them decoded, and every later
+/// [`InvokeFn`] call merges them into its inputs; an empty list clears them.
+pub type SetConstsFn = unsafe extern "C" fn(
+    instance: u64,
+    consts: *const StableInput,
+    len: usize,
+    error: StrSink,
+) -> u32;
+
+/// The optional stable extension a plugin exports as [`STABLE_EXTENSION_SYMBOL`] (a
+/// `extern "C" fn() -> StableExtension`), next to its descriptor. A version-3 host calls
+/// `set_consts` only for a plugin that exports it; without it the host sends consts per call.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct StableExtension {
+    /// [`STABLE_ABI_VERSION`] of the build that exports it.
+    pub version: u32,
+    pub set_consts: SetConstsFn,
+}
+
+/// The [`StableExtension`] of this build, for the plugin's `daedalus_plugin_stable_extension`
+/// symbol (exported by [`export_plugin!`](crate::export_plugin)).
+pub fn stable_extension() -> StableExtension {
+    StableExtension {
+        version: STABLE_ABI_VERSION,
+        set_consts: plugin::set_consts_entry,
+    }
+}
 
 /// Drops the plugin's stable runtime (its private registry). The host calls it once it released
 /// every instance and is about to close the library; a later `create` builds a new runtime.

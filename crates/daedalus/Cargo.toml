@@ -269,6 +269,11 @@ path = "tests/dylib_stable_bench_allocations.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_stable_consts"
+path = "tests/dylib_stable_consts.rs"
+required-features = ["engine", "dylib-plugins"]
+
+[[test]]
 name = "dylib_linked_deps"
 path = "tests/dylib_linked_deps.rs"
 required-features = ["engine", "dylib-plugins"]

@@ -213,6 +213,27 @@ fn mismatched_toolchain_installs_and_runs_through_the_stable_path() {
     assert_eq!(run_add(&registry, &state, 2), Ok((Some(3), Some(3))));
 }
 
+/// Stable ABI 2 plugins (no const extension) install through the stable path too, and the
+/// stable ABI range is exactly `STABLE_ABI_MIN_VERSION..=STABLE_ABI_VERSION`.
+#[test]
+fn version_two_plugins_still_install_through_the_stable_path() {
+    use crate::dylib::{STABLE_ABI_MIN_VERSION, stable_abi_supported};
+    assert_eq!(STABLE_ABI_MIN_VERSION, 2);
+    assert!(stable_abi_supported(2) && stable_abi_supported(STABLE_ABI_VERSION));
+    assert!(!stable_abi_supported(1) && !stable_abi_supported(STABLE_ABI_VERSION + 1));
+    let library = load_with(|descriptor| {
+        old_toolchain(descriptor);
+        descriptor.stable.version = 2;
+    })
+    .unwrap();
+    assert_eq!(library.install_mode(), Some(InstallPath::Stable));
+    let mut registry = PluginRegistry::new();
+    assert_eq!(
+        library.install_into(&mut registry).unwrap(),
+        InstallPath::Stable
+    );
+}
+
 #[test]
 fn stable_abi_mismatch_is_a_typed_refusal() {
     let library = load_with(|descriptor| {

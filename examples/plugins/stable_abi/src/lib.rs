@@ -180,7 +180,7 @@ pub const SIMULATED_RUSTC: &str = "rustc 1.85.0 (4d91de4e4 2025-02-17; simulated
 
 #[cfg(feature = "dylib")]
 mod export {
-    use daedalus::dylib::{PLUGIN_ABI_VERSION, PluginDescriptor, StrView};
+    use daedalus::dylib::{PLUGIN_ABI_VERSION, PluginDescriptor, StableExtension, StrView};
 
     /// Returns the Daedalus dynamic plugin ABI version.
     #[unsafe(no_mangle)]
@@ -194,5 +194,11 @@ mod export {
         let mut descriptor = daedalus::plugin_descriptor!(super::StableAbiPlugin);
         descriptor.info.rustc_version = StrView::from_static(super::SIMULATED_RUSTC);
         descriptor
+    }
+
+    /// The stable extension (const inputs sent once, see `StableExtension`).
+    #[unsafe(no_mangle)]
+    pub extern "C" fn daedalus_plugin_stable_extension() -> StableExtension {
+        daedalus::dylib::stable_extension()
     }
 }

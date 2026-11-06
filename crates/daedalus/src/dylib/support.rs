@@ -214,6 +214,12 @@ macro_rules! export_plugin {
         pub extern "C" fn daedalus_plugin_descriptor() -> $crate::dylib::PluginDescriptor {
             $crate::plugin_descriptor!($($args)*)
         }
+
+        /// Returns the stable extension (const inputs, see `StableExtension`).
+        #[unsafe(no_mangle)]
+        pub extern "C" fn daedalus_plugin_stable_extension() -> $crate::dylib::StableExtension {
+            $crate::dylib::stable_extension()
+        }
     };
 }
 

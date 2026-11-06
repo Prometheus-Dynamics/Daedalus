@@ -28,6 +28,7 @@ mod frame_overhead;
 mod introspect;
 #[cfg(any(feature = "threads", all(feature = "std", target_os = "linux")))]
 mod multicam;
+mod patch;
 mod pipeline_cache;
 mod reload;
 

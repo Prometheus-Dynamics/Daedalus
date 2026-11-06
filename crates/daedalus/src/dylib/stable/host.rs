@@ -8,7 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::value::{Arena, StableValue, to_value};
-use super::{NO_FANIN, StableHandlers, StableInput, StableOutputSink, builtin, status, tag};
+use super::{
+    NO_FANIN, SetConstsFn, StableHandlers, StableInput, StableOutputSink, builtin, status, tag,
+};
 use crate::bytes::{SHARED_BYTES_KEY, SharedBytes};
 use crate::data::model::{Value, ValueType};
 use crate::dylib::library::LibraryHandle;
@@ -16,7 +18,7 @@ use crate::dylib::{PluginSchema, StrSink, loader};
 use crate::registry::capability::PluginManifest;
 use crate::runtime::handles::PortId;
 use crate::runtime::host_bridge::ValueSerializerMap;
-use crate::runtime::io::NodeIo;
+use crate::runtime::io::{NodeConstInputs, NodeIo};
 use crate::runtime::plugins::{Plugin, PluginError, PluginInstallContext, PluginResult};
 use crate::runtime::{ExecutionContext, NodeError};
 use crate::transport::{
@@ -34,6 +36,9 @@ pub struct Generation {
     nodes: Vec<u32>,
     /// `None` for a descriptor of this process (tests).
     library: Option<Arc<LibraryHandle>>,
+    /// The build's `set_consts`, when it exports the stable extension (see [`super::StableExtension`]);
+    /// without it consts are sent with every call.
+    set_consts: Option<SetConstsFn>,
 }
 
 impl Generation {
@@ -42,12 +47,14 @@ impl Generation {
         handlers: StableHandlers,
         nodes: Vec<u32>,
         library: Option<Arc<LibraryHandle>>,
+        set_consts: Option<SetConstsFn>,
     ) -> Self {
         Self {
             number,
             handlers,
             nodes,
             library,
+            set_consts,
         }
     }
 
@@ -284,6 +291,10 @@ struct Instance {
     /// Scalar outputs' payload allocations, by output port (a scalar holds no resource, so
     /// keeping the last one until the next call holds nothing back).
     scalars: Vec<PayloadSlot>,
+    /// The const list the instance holds, as the host's `Arc` (so a patch, which copies on
+    /// write, changes its identity); `None` when it holds none or the plugin sends consts per
+    /// call.
+    consts: Option<Arc<NodeConstInputs>>,
 }
 
 // Safety: `inputs` and `arena` hold pointers only during a call (they are empty between calls),
@@ -311,7 +322,9 @@ impl HostNode {
             }
         };
         let mut instance = instance;
-        let result = self.call(&mut instance, io);
+        let result = self
+            .sync_consts(&mut instance, io)
+            .and_then(|()| self.call(&mut instance, io));
         ctx.set_node_state(instance);
         result
     }
@@ -335,7 +348,56 @@ impl HostNode {
             pushed: Vec::new(),
             arena: Arena::default(),
             scalars: Vec::new(),
+            consts: None,
         })
+    }
+
+    /// Make the instance hold the const inputs `io` has now (when its plugin takes them once):
+    /// on create, and after a patch changed them. A call with the same list sends nothing.
+    fn sync_consts(&self, instance: &mut Instance, io: &NodeIo) -> Result<(), NodeError> {
+        let Some(set_consts) = instance.generation.set_consts else {
+            return Ok(());
+        };
+        let wanted = io.shared_consts();
+        let same = match (&instance.consts, wanted) {
+            (None, None) => true,
+            (Some(held), Some(wanted)) => Arc::ptr_eq(held, wanted),
+            _ => false,
+        };
+        if same {
+            return Ok(());
+        }
+        let mut arena = Arena::default();
+        let mut encoded = Vec::new();
+        for (port, payload) in wanted.into_iter().flat_map(|consts| consts.iter()) {
+            let (index, fanin) = self.lookup_input(port.as_str()).ok_or_else(|| {
+                NodeError::InvalidInput(format!(
+                    "plugin `{}` node `{}` has no input `{port}`",
+                    self.plugin, self.node
+                ))
+            })?;
+            encoded.push(StableInput {
+                port: index,
+                fanin,
+                value: self.encode_input(port.as_str(), &payload.inner, &mut arena)?,
+            });
+        }
+        let mut message: Option<String> = None;
+        // Safety: the generation's entry point; the encoded inputs borrow `io` and the arena,
+        // both alive for the call; the sink points to a local.
+        let code = unsafe {
+            set_consts(
+                instance.handle,
+                encoded.as_ptr(),
+                encoded.len(),
+                string_sink(&mut message),
+            )
+        };
+        if code != status::OK {
+            return Err(self.error(code, message));
+        }
+        instance.consts = wanted.cloned();
+        Ok(())
     }
 
     fn call(&self, instance: &mut Instance, io: &mut NodeIo) -> Result<(), NodeError> {
@@ -356,14 +418,17 @@ impl HostNode {
             pushed,
             arena,
             scalars,
+            consts,
         } = instance;
-        for (position, (port, payload)) in io.inputs().enumerate() {
-            let (index, fanin) = self.resolve_input(resolved, position, port)?;
-            inputs.push(StableInput {
-                port: index,
-                fanin,
-                value: self.encode_input(port.as_str(), &payload.inner, arena)?,
-            });
+        // The consts the instance holds are not sent again; otherwise every input is.
+        if consts.is_some() {
+            for (position, (port, payload)) in io.edge_inputs().iter().enumerate() {
+                self.push_input(resolved, inputs, arena, position, port, payload)?;
+            }
+        } else {
+            for (position, (port, payload)) in io.inputs().enumerate() {
+                self.push_input(resolved, inputs, arena, position, port, payload)?;
+            }
         }
         if scalars.len() < self.outputs.len() {
             scalars.resize_with(self.outputs.len(), PayloadSlot::default);
@@ -399,6 +464,25 @@ impl HostNode {
             return Ok(());
         }
         Err(self.error(code, error.or(message)))
+    }
+
+    /// Encode one input of a call at `position` onto `inputs`.
+    fn push_input(
+        &self,
+        resolved: &mut Vec<(PortId, u32, u32)>,
+        inputs: &mut Vec<StableInput>,
+        arena: &mut Arena,
+        position: usize,
+        port: &PortId,
+        payload: &crate::runtime::executor::CorrelatedPayload,
+    ) -> Result<(), NodeError> {
+        let (index, fanin) = self.resolve_input(resolved, position, port)?;
+        inputs.push(StableInput {
+            port: index,
+            fanin,
+            value: self.encode_input(port.as_str(), &payload.inner, arena)?,
+        });
+        Ok(())
     }
 
     fn error(&self, code: u32, message: Option<String>) -> NodeError {

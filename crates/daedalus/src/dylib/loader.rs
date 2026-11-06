@@ -3,7 +3,10 @@ use super::crate_builds::{self, CrateBuildTable};
 use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::intern::intern;
 use super::library::{LibraryHandle, OpenError};
-use super::stable::{Generation, PluginSlot, STABLE_ABI_VERSION, StablePlugin};
+use super::stable::{
+    Generation, PluginSlot, STABLE_ABI_VERSION, STABLE_EXTENSION_SYMBOL, SetConstsFn,
+    StableExtension, StablePlugin, stable_abi_supported,
+};
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
     PluginInfo, PluginSchema, StrSink, StrView,
@@ -35,6 +38,8 @@ pub struct PluginLibrary {
     path: PathBuf,
     /// `None` for a descriptor of this process (tests).
     library: Option<Arc<LibraryHandle>>,
+    /// The build's `set_consts` (see [`StableExtension`]), when it exports the extension.
+    stable_set_consts: Option<SetConstsFn>,
     descriptor: PluginDescriptor,
     /// `descriptor.info` with host copies of its strings.
     info: PluginInfo,
@@ -180,9 +185,13 @@ impl PluginLibrary {
         // Safety: the plugin returned a `'static` table of `len` entries.
         let crate_builds = unsafe { crate_builds::read_table(table) }
             .map_err(|message| schema_error(format!("crate builds: {message}")))?;
+        let stable_set_consts = library
+            .as_deref()
+            .and_then(|library| unsafe { stable_set_consts(library, descriptor.stable.version) });
         Ok(Self {
             path,
             library,
+            stable_set_consts,
             rust_abi: check_rust_abi(&info),
             info,
             descriptor,
@@ -202,7 +211,7 @@ impl PluginLibrary {
     pub fn install_mode(&self) -> Option<InstallPath> {
         if self.rust_abi.is_ok() {
             Some(InstallPath::RustAbi)
-        } else if self.descriptor.stable.version == STABLE_ABI_VERSION {
+        } else if stable_abi_supported(self.descriptor.stable.version) {
             Some(InstallPath::Stable)
         } else {
             None
@@ -265,7 +274,7 @@ impl PluginLibrary {
             }
             InstallPath::Stable => {
                 let found = self.descriptor.stable.version;
-                if found != STABLE_ABI_VERSION {
+                if !stable_abi_supported(found) {
                     return Err(PluginLibraryError::StableAbiMismatch {
                         plugin: plugin(),
                         expected: STABLE_ABI_VERSION,
@@ -328,7 +337,7 @@ impl PluginLibrary {
                 .any(|conflict| port.type_key.as_ref() == Some(&conflict.key))
                 || quoted.iter().any(|key| ty.contains(key.as_str()))
         };
-        let stable_compatible = self.descriptor.stable.version == STABLE_ABI_VERSION
+        let stable_compatible = stable_abi_supported(self.descriptor.stable.version)
             && !self
                 .schema
                 .nodes
@@ -395,6 +404,7 @@ impl PluginLibrary {
                 self.descriptor.stable,
                 (0..self.schema.nodes.len() as u32).collect(),
                 self.library.clone(),
+                self.stable_set_consts,
             );
             Arc::new(PluginSlot::new(&self.schema, generation))
         })
@@ -446,7 +456,7 @@ impl PluginLibrary {
             .clone();
         if let Some(slot) = slot {
             let found = next.descriptor.stable.version;
-            if found != STABLE_ABI_VERSION {
+            if !stable_abi_supported(found) {
                 return Err(PluginLibraryError::StableAbiMismatch {
                     plugin,
                     expected: STABLE_ABI_VERSION,
@@ -478,6 +488,7 @@ impl PluginLibrary {
                 next.descriptor.stable,
                 nodes,
                 next.library.clone(),
+                next.stable_set_consts,
             ));
             *next.slot.get_mut().unwrap_or_else(|err| err.into_inner()) = Some(slot);
         }
@@ -552,6 +563,29 @@ impl PluginLibrary {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+/// The `set_consts` of a library whose [`StableExtension`] is for `version`, if it exports one.
+///
+/// # Safety
+/// `library` must be a loaded plugin library, and the extension symbol must have the
+/// [`StableExtension`] layout of this build.
+unsafe fn stable_set_consts(library: &LibraryHandle, version: u32) -> Option<SetConstsFn> {
+    if version != STABLE_ABI_VERSION {
+        return None;
+    }
+    type ExtensionFn = unsafe extern "C" fn() -> StableExtension;
+    // Safety: the symbol's signature is `ExtensionFn` (see above).
+    let extension: ExtensionFn = unsafe {
+        library
+            .library()
+            .get::<ExtensionFn>(STABLE_EXTENSION_SYMBOL.as_bytes())
+    }
+    .map(|sym| *sym)
+    .ok()?;
+    // Safety: the plugin's own function, which only builds the struct.
+    let extension = unsafe { extension() };
+    (extension.version == version).then_some(extension.set_consts)
 }
 
 /// # Safety
