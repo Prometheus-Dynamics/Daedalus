@@ -77,7 +77,9 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
 1. Stable path gains adapters and serializers (C function pointers keyed by type name), typed
    `repr(C)` values and views, plugin-local handles, a telemetry sink, constants sent once, and
    codecs for the catalog nodes.
-2. `FrameLease` adapter cached per frame on the stable path.
+2. `FrameLease` adapter cached per frame on the stable path. Done in Styx (dev 025f346,
+   `from_shared_frame`): a v3 `SharedFrame` becomes a cached `FrameLease`, read in place. Tell Styx
+   if `SharedFrame`, `FrameSource` or `ForeignHandle` change.
 3. Host-side GPU ops and the C vtable for plugins, per
    `/mnt/ssd-samsung/helios-notes/gpu-seam.md`.
 4. One real Eidos node on the stable path as a trial, then Eidos as a `cdylib` plugin.
