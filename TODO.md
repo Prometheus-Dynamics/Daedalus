@@ -97,6 +97,8 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    - 2026-11-06: `lemnos-drivers-vglite` phase 1 is on Lemnos dev afd5079: libvg_lite replaced by
      Rust encoding (init, clear, blit, palette); lines and path fill return `Unsupported` (CPU)
      until phase 2. Untested on board.
+     Lines (086d6ce): non-antialiased on the GPU, but caps keep `daedalus.image.line` on CPU until
+     `tests/lines.rs` (exact Bresenham per direction, against `reference::line`) runs on a K230.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
    plugin linking. Design in `docs/shared-library.md` (2026-11-05). Started; blocked by Lemnos's
    `lemnos-abi`. In-image node crates link into the surface `cdylib`; only separate plugins use the
