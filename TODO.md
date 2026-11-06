@@ -77,6 +77,11 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
 1. Stable path gains adapters and serializers (C function pointers keyed by type name), typed
    `repr(C)` values and views, plugin-local handles, a telemetry sink, constants sent once, and
    codecs for the catalog nodes.
+   - Constants sent once: done (stable ABI 3, `set_consts`; v2 plugins still load). 110 ns per
+     constant against 250 ns, 0 host allocations per tick.
+   - Handle edges at 0 host allocations: parked until the payload layout change lands. The
+     allocation is transport's `ForeignStorage` `Arc`; it needs a recycled per-port storage that
+     releases the owner on the last drop.
 2. `FrameLease` adapter cached per frame on the stable path. Done in Styx (dev 025f346,
    `from_shared_frame`): a v3 `SharedFrame` becomes a cached `FrameLease`, read in place. Tell Styx
    if `SharedFrame`, `FrameSource` or `ForeignHandle` change.
