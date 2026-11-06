@@ -242,11 +242,14 @@ fn static_and_shared_modes_agree() {
         surface_allocs[0], 0,
         "a warm scalar frame through the surface must allocate nothing in the surface"
     );
-    // Bytes: the surface adds no allocation to the engine's own (the static path's count for the
-    // same window).
-    assert_eq!(
-        surface_allocs[1], static_allocs[1],
-        "the surface's bytes frames allocate exactly what the static graph's do"
+    // Bytes: the surface adds no allocation to the engine's own: at most the static path's count
+    // for the same window. Not equal: this binary's static engine is built with whatever features
+    // the workspace unifies for the test (metrics, for one), while the surface cdylib has its own.
+    assert!(
+        surface_allocs[1] <= static_allocs[1],
+        "the surface's bytes frames allocate more than the static graph's: {} > {}",
+        surface_allocs[1],
+        static_allocs[1]
     );
     drop(shared);
     drop(host);
