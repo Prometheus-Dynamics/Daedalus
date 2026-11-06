@@ -108,7 +108,7 @@ release numbers are the ones that count.
 
 ## Order
 
-1. `lemnos-abi` lands (Lemnos). Done: pinned at `952e1c7`.
+1. `lemnos-abi` lands (Lemnos). Done: pinned at `cf3a4ac`.
 2. The stable plugin ABI moves onto its primitives (handles, status codes, guard, slabs), keeping
    `STABLE_ABI_VERSION` compatibility. Not started.
 3. `daedalus-surface` and `daedalus-host`, with a test that runs the same graph statically and

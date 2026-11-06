@@ -98,7 +98,7 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    `lemnos-abi` use for the C surface. Untested on board.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
    plugin linking. Design in `docs/shared-library.md` (2026-11-05). State (2026-11-06): step 1,
-   `lemnos-abi`, is pinned at `952e1c7`. Step 2, moving the stable plugin ABI onto `lemnos-abi`
+   `lemnos-abi`, is pinned at `cf3a4ac`. Step 2, moving the stable plugin ABI onto `lemnos-abi`
    primitives, is NOT done. Step 3 is built as a first version: `daedalus-surface` and
    `daedalus-host`, with the static-versus-shared test; the frame entry points are stubs, and the
    per-frame cost on the CM5 is not measured. Step 4 (Gaia's link modes) is not started. In-image

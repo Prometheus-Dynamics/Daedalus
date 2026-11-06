@@ -18,7 +18,7 @@ plugin ABI and does not load.
 ### Added
 
 - Shared-library surface, first version: `daedalus-surface` (`crates/surface`, a `cdylib` and
-  `rlib`) is a C ABI over the in-process graph runtime, on `lemnos-abi` (pinned at `952e1c7`). It
+  `rlib`) is a C ABI over the in-process graph runtime, on `lemnos-abi` (pinned at `cf3a4ac`). It
   has the version handshake (`daedalus_surface_version`, `daedalus_surface_features`), host
   create and release, plugin install by path through the stable handler path, schemas, graph
   compile from a `daedalus.graph` document, per-frame push, tick and take of scalars and
