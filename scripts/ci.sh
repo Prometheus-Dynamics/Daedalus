@@ -410,7 +410,10 @@ cmd_package() {
   # on stderr, which is not a packaging warning.
   cargo fetch --quiet
   local warnings
-  warnings="$(cargo package -p daedalus-rs --list --allow-dirty 2>&1 >/dev/null)"
+  # A concurrent cargo (another build on the machine) makes this one wait for the package-cache
+  # lock and say so on stderr; that line is not a packaging warning.
+  warnings="$(cargo package -p daedalus-rs --list --allow-dirty 2>&1 >/dev/null |
+    grep -v -E '^ *Blocking waiting for file lock on ' || true)"
   if [[ -n $warnings ]]; then
     echo "$warnings" >&2
     return 1
