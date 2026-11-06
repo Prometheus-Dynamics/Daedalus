@@ -17,6 +17,10 @@ plugin ABI and does not load.
 
 ### Added
 
+- `crates/host-wrapper/tests/c_host.rs`: a C program (`tests/c/host.c`, C11 with `-Wall -Wextra
+  -Werror -pedantic`) built against `daedalus_surface.h` and linked to the surface library installs
+  the `stable_abi` plugin, compiles a graph, and runs 50 frames with ports by index and a batch
+  push; its outputs equal the static graph's. Linux; skipped without a C compiler.
 - Surface ABI 1.2: `daedalus_surface_host_create_with` writes a failing image install's reason
   to a message sink (`daedalus-host`'s `create_host` puts it in the error), and
   `daedalus_surface_host_schemas` lists an image surface's in-image plugins, ahead of the
