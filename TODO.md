@@ -81,7 +81,9 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
 6. Use `lemnos-abi` primitives; hand `crates/rga` and `crates/vglite` to Lemnos, then repoint
    `crates/kernels/src/registry/fixed.rs` and delete ours.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
-   plugin linking. Gaia's LTO test informs how the shared mode gets built, not whether it happens.
+   plugin linking. Design in `docs/shared-library.md` (2026-11-05). Started; blocked by Lemnos's
+   `lemnos-abi`. Gaia's A/B: per-node calls across a library cost 26% on the mirror bench, so the
+   surface is per frame.
 8. Lemnos's kernel module and its Rust userspace drivers: Daedalus's fixed-function nodes and
    accelerator implementations sit on them.
 
