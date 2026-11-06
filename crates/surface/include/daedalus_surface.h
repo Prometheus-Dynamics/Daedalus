@@ -34,7 +34,7 @@ extern "C" {
 
 /* The surface ABI: major changes break callers, minor adds. */
 #define DAEDALUS_SURFACE_ABI_MAJOR 1
-#define DAEDALUS_SURFACE_ABI_MINOR 0
+#define DAEDALUS_SURFACE_ABI_MINOR 1
 
 /* lemnos-abi's LAYOUT_HASH for this build: a caller and a surface must agree on it. */
 #define DAEDALUS_LAYOUT_HASH 0xA02CFB4A8DD4545BULL
@@ -58,6 +58,12 @@ extern "C" {
 #define DAEDALUS_FEATURE_GRAPHS (1ULL << 1)
 #define DAEDALUS_FEATURE_TELEMETRY (1ULL << 2)
 #define DAEDALUS_FEATURE_ALLOC_COUNT (1ULL << 3)
+
+/* daedalus_push_entry.kind: what a batch entry pushes (ABI 1.1). */
+#define DAEDALUS_PUSH_I64 1U
+#define DAEDALUS_PUSH_F64 2U
+#define DAEDALUS_PUSH_BOOL 3U
+#define DAEDALUS_PUSH_BYTES 4U
 
 /* Status codes (daedalus_status). */
 typedef int32_t daedalus_status;
@@ -120,7 +126,22 @@ typedef struct daedalus_message_sink {
   void (*write)(void *context, const uint8_t *text, size_t len);
 } daedalus_message_sink;
 
+/* One push of daedalus_surface_push_batch (ABI 1.1): the input port's index, what is pushed
+ * (DAEDALUS_PUSH_*), and the value in the field that kind reads: int_value for I64 and BOOL (0 or
+ * non-zero), float_value for F64, data and len for BYTES (copied during the call). The other fields
+ * are ignored. */
+typedef struct daedalus_push_entry {
+  uint32_t port;
+  uint32_t kind;
+  int64_t int_value;
+  double float_value;
+  const uint8_t *data;
+  size_t len;
+} daedalus_push_entry;
+
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(sizeof(daedalus_push_entry) == 24 + sizeof(void *) + sizeof(size_t),
+               "PushEntry layout");
 _Static_assert(sizeof(daedalus_abi_version) == DAEDALUS_ABI_VERSION_SIZE, "AbiVersion layout");
 _Static_assert(sizeof(daedalus_plane_desc) == DAEDALUS_PLANE_DESC_SIZE, "PlaneDesc layout");
 _Static_assert(sizeof(daedalus_buffer_desc) == DAEDALUS_BUFFER_DESC_SIZE, "BufferDesc layout");
@@ -196,6 +217,38 @@ daedalus_status daedalus_surface_take_bool(daedalus_handle graph, const uint8_t 
 daedalus_status daedalus_surface_take_bytes(daedalus_handle graph, const uint8_t *port,
                                             size_t port_len, uint8_t *buf, size_t cap,
                                             size_t *needed);
+
+/* ---- Per frame by port index (ABI 1.1) ---- */
+
+/* A port's index is its position in the inputs or outputs array of daedalus_surface_graph_ports.
+ * These two look one up by name (whatever its kind); DAEDALUS_NOT_FOUND for an unknown name. A
+ * caller resolves each port once and then pushes and takes by index: no name is matched per call.
+ */
+daedalus_status daedalus_surface_graph_input_index(daedalus_handle graph, const uint8_t *port,
+                                                   size_t port_len, uint32_t *index);
+daedalus_status daedalus_surface_graph_output_index(daedalus_handle graph, const uint8_t *port,
+                                                    size_t port_len, uint32_t *index);
+
+/* As the push and take calls above, with the port by index. DAEDALUS_NOT_FOUND past the last port,
+ * DAEDALUS_INVALID_ARGUMENT for a port of another kind. */
+daedalus_status daedalus_surface_push_i64_at(daedalus_handle graph, uint32_t port, int64_t value);
+daedalus_status daedalus_surface_push_f64_at(daedalus_handle graph, uint32_t port, double value);
+daedalus_status daedalus_surface_push_bool_at(daedalus_handle graph, uint32_t port, uint8_t value);
+daedalus_status daedalus_surface_push_bytes_at(daedalus_handle graph, uint32_t port,
+                                               const uint8_t *data, size_t len);
+daedalus_status daedalus_surface_take_i64_at(daedalus_handle graph, uint32_t port, int64_t *out);
+daedalus_status daedalus_surface_take_f64_at(daedalus_handle graph, uint32_t port, double *out);
+daedalus_status daedalus_surface_take_bool_at(daedalus_handle graph, uint32_t port, uint8_t *out);
+daedalus_status daedalus_surface_take_bytes_at(daedalus_handle graph, uint32_t port, uint8_t *buf,
+                                               size_t cap, size_t *needed);
+
+/* Pushes count entries in order, under one lock and one panic guard. Every entry is checked first
+ * (port index, kind, bytes pointer): a bad one pushes nothing and returns DAEDALUS_NOT_FOUND or
+ * DAEDALUS_INVALID_ARGUMENT with *done 0. A push the engine refuses (DAEDALUS_AGAIN for a full
+ * input) stops the batch there, with *done the number pushed before it. done may be NULL. */
+daedalus_status daedalus_surface_push_batch(daedalus_handle graph,
+                                            const daedalus_push_entry *entries, size_t count,
+                                            size_t *done);
 
 /* ---- Frames: dma-buf frames into and out of daedalus:frame ports (Linux) ---- */
 

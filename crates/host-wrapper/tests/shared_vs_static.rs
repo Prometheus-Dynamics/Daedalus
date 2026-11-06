@@ -1,8 +1,10 @@
 //! The same graph run two ways over N frames: statically (the core linked into this process, with
 //! the `stable_abi` plugin's Rust handlers) and in shared mode (`daedalus-host` loading the surface
 //! library, which installs the same plugin through the stable path). Asserts the outputs match
-//! frame by frame, and that a warm frame through the surface allocates nothing in the surface.
-//! Prints the per-frame cost of both paths (no timing assertion).
+//! frame by frame, that a warm scalar frame through the surface allocates nothing in the surface,
+//! and that a bytes frame allocates no more there than the static graph does. The shared side
+//! alternates the by-name calls with ports resolved once and one batch push per frame. Prints the
+//! per-frame cost of both paths (no timing assertion).
 //!
 //! Unix only: the test reads the surface's allocation counter through `libloading`, and the
 //! `alloc-count` surface is built here. The plugin and surface are built by nested cargo calls.
@@ -22,7 +24,7 @@ use daedalus::data::model::{TypeExpr, ValueType};
 use daedalus::dylib::SharedBytes;
 use daedalus::engine::{Engine, EngineConfig};
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
-use daedalus_host::Surface;
+use daedalus_host::{Push, Surface};
 use daedalus_plugins_stable_abi::StableAbiPlugin;
 
 struct Counting;
@@ -139,6 +141,16 @@ fn static_and_shared_modes_agree() {
     host.install(&plugin_path).unwrap();
     let shared = host.compile(&json).unwrap();
     let surface_count = surface_allocations(&surface_path);
+    let (step_in, period_in, bytes_in) = (
+        shared.input("step").unwrap(),
+        shared.input("period").unwrap(),
+        shared.input("bytes").unwrap(),
+    );
+    let (total_out, hits_out, tail_out) = (
+        shared.output("total").unwrap(),
+        shared.output("hits").unwrap(),
+        shared.output("tail").unwrap(),
+    );
 
     let mut bytes_out = Vec::new();
     let mut static_frames = Vec::new();
@@ -184,18 +196,37 @@ fn static_and_shared_modes_agree() {
             tail: tail.map(|b| b.to_vec()),
         });
 
-        // Shared: one call per push, tick and take.
+        // Shared: even frames call per push and take by name; odd frames push in one batch and
+        // take by resolved port.
         let (surface_before, host_before) = (surface_count(), HOST_ALLOCS.load(Relaxed));
         let start = Instant::now();
-        shared.push_i64("step", step).unwrap();
-        shared.push_i64("period", 3).unwrap();
-        if with_bytes(i) {
-            shared.push_bytes("bytes", &bytes).unwrap();
-        }
-        shared.tick().unwrap();
-        let total = shared.take_i64("total").unwrap();
-        let hits = shared.take_i64("hits").unwrap();
-        let has_tail = shared.take_bytes("tail", &mut bytes_out).unwrap();
+        let (total, hits, has_tail) = if i % 2 == 0 {
+            shared.push_i64("step", step).unwrap();
+            shared.push_i64("period", 3).unwrap();
+            if with_bytes(i) {
+                shared.push_bytes("bytes", &bytes).unwrap();
+            }
+            shared.tick().unwrap();
+            (
+                shared.take_i64("total").unwrap(),
+                shared.take_i64("hits").unwrap(),
+                shared.take_bytes("tail", &mut bytes_out).unwrap(),
+            )
+        } else {
+            let pushes = [
+                Push::i64(step_in, step),
+                Push::i64(period_in, 3),
+                Push::bytes(bytes_in, &bytes),
+            ];
+            let count = if with_bytes(i) { 3 } else { 2 };
+            shared.push_batch(&pushes[..count]).unwrap();
+            shared.tick().unwrap();
+            (
+                shared.take_i64_at(total_out).unwrap(),
+                shared.take_i64_at(hits_out).unwrap(),
+                shared.take_bytes_at(tail_out, &mut bytes_out).unwrap(),
+            )
+        };
         let elapsed = start.elapsed();
         let (surface_now, host_now) = (surface_count(), HOST_ALLOCS.load(Relaxed));
         if warm {
@@ -242,8 +273,8 @@ fn static_and_shared_modes_agree() {
         surface_allocs[0], 0,
         "a warm scalar frame through the surface must allocate nothing in the surface"
     );
-    // Bytes: the surface adds no allocation to the engine's own: at most the static path's count
-    // for the same window. Not equal: this binary's static engine is built with whatever features
+    // Bytes: the surface adds no allocation to the engine's own (the port's vector and payload
+    // are reused): at most the static path's count for the same window. Not equal: this binary's static engine is built with whatever features
     // the workspace unifies for the test (metrics, for one), while the surface cdylib has its own.
     assert!(
         surface_allocs[1] <= static_allocs[1],

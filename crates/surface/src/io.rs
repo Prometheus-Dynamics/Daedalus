@@ -1,7 +1,8 @@
-//! Per-frame calls: push a scalar or bytes into a host port, tick the graph, take from a host
-//! port. One call each, never per node. A warm frame allocates nothing here: ports are looked up
-//! by name without copying, the engine's port ids are reused, and bytes go through recycled
-//! vectors.
+//! Per-frame calls by port name: push a scalar or bytes into a host port, tick the graph, take
+//! from a host port. One call each, never per node. A warm frame allocates nothing here: ports are
+//! looked up by name without copying, the engine's port ids are static (interned names), and
+//! bytes go through recycled vectors and payload allocations. The `*_at` calls (`indexed`) take a
+//! port index instead of a name, and share the bodies below.
 
 use std::sync::Arc;
 
@@ -11,6 +12,93 @@ use lemnos_abi::{Handle, MessageSink, Status};
 
 use crate::ffi::{self, run};
 use crate::state::{Graph, Kind, lock};
+
+/// Pushes a scalar into input `index` (already checked against its kind).
+pub(crate) fn push_scalar<T: Send + Sync + 'static>(
+    graph: &Graph,
+    index: usize,
+    value: T,
+) -> Result<(), Status> {
+    feed(graph.graph.push(&graph.inputs[index].id, value))
+}
+
+/// Pushes a copy of `data` into bytes input `index`. Both the vector and the payload's allocation
+/// are the port's own, reused once the graph has let go of the last push: a warm push allocates
+/// nothing. While the graph still holds the last one, a new vector (and payload) is made.
+pub(crate) fn push_bytes_into(graph: &mut Graph, index: usize, data: &[u8]) -> Result<(), Status> {
+    let key = graph.bytes_key.clone().ok_or(Status::INVALID_ARGUMENT)?;
+    let slot = &mut graph.slots[index];
+    // The slot's last payload still holds the last vector: drop it in place (keeping the
+    // allocation when the graph is done with it), so the vector's count says whether anything
+    // else holds it.
+    slot.release();
+    let mut shared = graph.spare[index]
+        .take()
+        .filter(|arc| Arc::strong_count(arc) == 1)
+        .unwrap_or_else(|| Arc::new(Vec::with_capacity(data.len())));
+    let vector = Arc::get_mut(&mut shared).ok_or(Status::BUSY)?;
+    vector.clear();
+    vector.extend_from_slice(data);
+    graph.spare[index] = Some(Arc::clone(&shared));
+    let payload = slot.owned(key, SharedBytes::from_arc(shared));
+    feed(graph.graph.push_payload(&graph.inputs[index].id, payload))
+}
+
+/// Takes the next scalar from output `index` (already checked against its kind).
+pub(crate) fn take_scalar<T: Clone + Send + Sync + 'static>(
+    graph: &Graph,
+    index: usize,
+) -> Result<T, Status> {
+    graph
+        .graph
+        .take::<T>(graph.outputs[index].name)
+        .ok_or(Status::AGAIN)
+}
+
+/// Takes the next bytes from bytes output `index` into the caller's buffer; see
+/// [`daedalus_surface_take_bytes`].
+///
+/// # Safety
+/// As `ffi::write_out`.
+pub(crate) unsafe fn take_bytes_into(
+    graph: &mut Graph,
+    index: usize,
+    buf: *mut u8,
+    cap: usize,
+    needed: *mut usize,
+) -> Result<(), Status> {
+    if needed.is_null() {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    let bytes = match graph.stash.iter().position(|(i, _)| *i == index) {
+        Some(at) => graph.stash.swap_remove(at).1,
+        None => graph
+            .graph
+            .take::<SharedBytes>(graph.outputs[index].name)
+            .ok_or(Status::AGAIN)?,
+    };
+    // Safety: forwarded (`buf`, `cap`, `needed`).
+    match unsafe { ffi::write_out(&bytes, buf, cap, needed) } {
+        Err(status) if status == Status::BUFFER_TOO_SMALL => {
+            graph.stash.push((index, bytes));
+            Err(status)
+        }
+        other => other,
+    }
+}
+
+/// Writes a scalar to the caller's out-pointer, [`Status::INVALID_ARGUMENT`] for null.
+///
+/// # Safety
+/// `out` must be valid for a write of a `T` when it is not null.
+pub(crate) unsafe fn write<T>(out: *mut T, value: T) -> Result<(), Status> {
+    if out.is_null() {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    // Safety: `out` is writable (checked above).
+    unsafe { out.write(value) };
+    Ok(())
+}
 
 /// Maps the engine's feed outcome: accepted (or replaced an older payload) is success, a full
 /// or backpressured input is [`Status::AGAIN`], a closed one is [`Status::STALE_HANDLE`], and a
@@ -41,7 +129,7 @@ pub unsafe extern "C" fn daedalus_surface_push_i64(
         let mut tables = lock();
         let graph = tables.graphs.get_mut(graph)?;
         let index = graph.input(name, Kind::Int)?;
-        feed(graph.graph.push(graph.inputs[index].id.clone(), value))
+        push_scalar(graph, index, value)
     })
 }
 
@@ -62,7 +150,7 @@ pub unsafe extern "C" fn daedalus_surface_push_f64(
         let mut tables = lock();
         let graph = tables.graphs.get_mut(graph)?;
         let index = graph.input(name, Kind::Float)?;
-        feed(graph.graph.push(graph.inputs[index].id.clone(), value))
+        push_scalar(graph, index, value)
     })
 }
 
@@ -83,7 +171,7 @@ pub unsafe extern "C" fn daedalus_surface_push_bool(
         let mut tables = lock();
         let graph = tables.graphs.get_mut(graph)?;
         let index = graph.input(name, Kind::Bool)?;
-        feed(graph.graph.push(graph.inputs[index].id.clone(), value != 0))
+        push_scalar(graph, index, value != 0)
     })
 }
 
@@ -109,20 +197,7 @@ pub unsafe extern "C" fn daedalus_surface_push_bytes(
         let mut tables = lock();
         let graph: &mut Graph = tables.graphs.get_mut(graph)?;
         let index = graph.input(name, Kind::Bytes)?;
-        // Reuse the port's vector when the graph no longer holds the last one; otherwise start a
-        // new one (the old one is still in flight).
-        let mut shared = graph.spare[index]
-            .take()
-            .filter(|arc| Arc::strong_count(arc) == 1)
-            .unwrap_or_else(|| Arc::new(Vec::with_capacity(data.len())));
-        let vector = Arc::get_mut(&mut shared).ok_or(Status::BUSY)?;
-        vector.clear();
-        vector.extend_from_slice(data);
-        graph.spare[index] = Some(Arc::clone(&shared));
-        feed(graph.graph.push(
-            graph.inputs[index].id.clone(),
-            SharedBytes::from_arc(shared),
-        ))
+        push_bytes_into(graph, index, data)
     })
 }
 
@@ -167,13 +242,12 @@ pub unsafe extern "C" fn daedalus_surface_take_i64(
         if out.is_null() {
             return Err(Status::INVALID_ARGUMENT);
         }
-        let mut tables = lock();
-        let graph = tables.graphs.get_mut(graph)?;
-        graph.output(name, Kind::Int)?;
-        let value = graph.graph.take::<i64>(name).ok_or(Status::AGAIN)?;
-        // Safety: `out` is writable (checked above).
-        unsafe { out.write(value) };
-        Ok(())
+        let tables = lock();
+        let graph = tables.graphs.get(graph)?;
+        let index = graph.output(name, Kind::Int)?;
+        let value = take_scalar::<i64>(graph, index)?;
+        // Safety: forwarded.
+        unsafe { write(out, value) }
     })
 }
 
@@ -194,13 +268,12 @@ pub unsafe extern "C" fn daedalus_surface_take_f64(
         if out.is_null() {
             return Err(Status::INVALID_ARGUMENT);
         }
-        let mut tables = lock();
-        let graph = tables.graphs.get_mut(graph)?;
-        graph.output(name, Kind::Float)?;
-        let value = graph.graph.take::<f64>(name).ok_or(Status::AGAIN)?;
-        // Safety: `out` is writable (checked above).
-        unsafe { out.write(value) };
-        Ok(())
+        let tables = lock();
+        let graph = tables.graphs.get(graph)?;
+        let index = graph.output(name, Kind::Float)?;
+        let value = take_scalar::<f64>(graph, index)?;
+        // Safety: forwarded.
+        unsafe { write(out, value) }
     })
 }
 
@@ -221,13 +294,12 @@ pub unsafe extern "C" fn daedalus_surface_take_bool(
         if out.is_null() {
             return Err(Status::INVALID_ARGUMENT);
         }
-        let mut tables = lock();
-        let graph = tables.graphs.get_mut(graph)?;
-        graph.output(name, Kind::Bool)?;
-        let value = graph.graph.take::<bool>(name).ok_or(Status::AGAIN)?;
-        // Safety: `out` is writable (checked above).
-        unsafe { out.write(u8::from(value)) };
-        Ok(())
+        let tables = lock();
+        let graph = tables.graphs.get(graph)?;
+        let index = graph.output(name, Kind::Bool)?;
+        let value = take_scalar::<bool>(graph, index)?;
+        // Safety: forwarded.
+        unsafe { write(out, u8::from(value)) }
     })
 }
 
@@ -257,17 +329,7 @@ pub unsafe extern "C" fn daedalus_surface_take_bytes(
         let mut tables = lock();
         let graph = tables.graphs.get_mut(graph)?;
         let index = graph.output(name, Kind::Bytes)?;
-        let bytes = match graph.stash.iter().position(|(i, _)| *i == index) {
-            Some(at) => graph.stash.swap_remove(at).1,
-            None => graph.graph.take::<SharedBytes>(name).ok_or(Status::AGAIN)?,
-        };
-        // Safety: forwarded (`buf`, `cap`, `needed`).
-        match unsafe { ffi::write_out(&bytes, buf, cap, needed) } {
-            Err(status) if status == Status::BUFFER_TOO_SMALL => {
-                graph.stash.push((index, bytes));
-                Err(status)
-            }
-            other => other,
-        }
+        // Safety: forwarded.
+        unsafe { take_bytes_into(graph, index, buf, cap, needed) }
     })
 }

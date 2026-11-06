@@ -70,7 +70,7 @@ GPU access for stable-ABI plugins in shared mode is the stable plugin GPU vtable
 Built (3.0.1-dev, Linux tested):
 
 - **Version handshake.** `daedalus_surface_version` writes the surface's `AbiVersion` (major 1,
-  minor 0, `lemnos-abi`'s `LAYOUT_HASH`). `daedalus_surface_features` writes the feature bits: an
+  minor 1, `lemnos-abi`'s `LAYOUT_HASH`). `daedalus_surface_features` writes the feature bits: an
   `AbiVersion` has no room for them, so they are a second call. The wrapper refuses a surface that
   does not accept its own version.
 - **Host.** Create (an empty registry and a default engine), release (`BUSY` while graphs compiled
@@ -80,8 +80,22 @@ Built (3.0.1-dev, Linux tested):
   release; the host's input and output ports as JSON; the plan explanation as JSON; the last tick's
   telemetry as JSON.
 - **Per frame.** Push `i64`, `f64`, `bool` and bytes (`SharedBytes` ports); tick; take `i64`, `f64`,
-  `bool` and bytes. Each is one call. A warm scalar frame allocates nothing in the surface. A bytes
-  frame allocates what the engine's own bytes path does, the same as the static graph.
+  `bool` and bytes. Each is one call. A warm scalar frame allocates nothing in the surface. A warm
+  bytes push allocates nothing either: each bytes port keeps its vector and its payload allocation
+  (a `PayloadSlot`) and reuses both once the graph lets go of the last push, so a bytes frame
+  allocates only what the engine's tick does (1 per frame in the test graph, against 2 for the
+  static graph, which boxes each pushed `SharedBytes`).
+- **Ports by index (ABI 1.1).** `daedalus_surface_graph_input_index` / `_output_index` resolve a
+  name once to its position in the port table; the `*_at` pushes and takes take that index, so a
+  call checks an index and a kind instead of validating and matching a name.
+  `daedalus_surface_push_batch` pushes an array of `daedalus_push_entry` (index, kind, value) under
+  one lock and one panic guard; every entry is checked before any is pushed. Port names are
+  interned (one allocation per distinct name, for the life of the process), so the engine's port
+  ids are static and handing one over per push costs no reference count. `daedalus-host` reads the
+  port table at compile: `Graph::push_i64("step", ..)` finds the index in the caller, outside the
+  lock, and calls by index; `Graph::input` / `Graph::output` resolve a port once for the `*_at`
+  calls, and `Graph::push_batch` hands its `&[Push]` to the surface as is. `take_bytes` writes into
+  the vector's spare capacity, with no zero-fill.
 - **Errors and handles.** Every entry point runs under the `lemnos-abi` guard. Handles are
   generation-counted: a stale or null one is `STALE_HANDLE`. Messages (a bad document, a failing
   node, a plugin the stable ABI refuses) go to a caller sink. Buffers use the needed-size protocol;

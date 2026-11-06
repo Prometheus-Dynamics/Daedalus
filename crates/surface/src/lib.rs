@@ -6,7 +6,8 @@
 //! `lemnos-abi` panic guard, and calls are per frame or per job, never per node.
 //!
 //! What is built: the version handshake, host lifecycle, stable-path plugin install, graph
-//! compile from a `daedalus.graph` document, scalar and byte push, tick, scalar and byte take,
+//! compile from a `daedalus.graph` document, scalar and byte push, tick, scalar and byte take (by
+//! port name, or by port index with the `*_at` calls and `daedalus_surface_push_batch`, ABI 1.1),
 //! the node schema, explain and telemetry JSON, and dma-buf frames on Linux: push a frame into a
 //! `daedalus:frame` port, take one out as a lease (`daedalus_surface_push_frame`,
 //! `daedalus_surface_take_frame`, `daedalus_surface_frame_release`). Frames cross as file
@@ -22,11 +23,16 @@ mod ffi;
 mod frames;
 mod graph;
 mod host;
+mod indexed;
 mod io;
 mod state;
 
 #[cfg(test)]
+mod indexed_tests;
+#[cfg(test)]
 mod tests;
+
+pub use indexed::{PUSH_BOOL, PUSH_BYTES, PUSH_F64, PUSH_I64, PushEntry};
 
 pub use abi::{
     FEATURE_ALLOC_COUNT, FEATURE_GRAPHS, FEATURE_PLUGINS, FEATURE_TELEMETRY, SURFACE_MAJOR,

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use daedalus_surface::{FEATURE_ALLOC_COUNT, FEATURE_GRAPHS, FEATURE_PLUGINS, FEATURE_TELEMETRY};
+use daedalus_surface::{PUSH_BOOL, PUSH_BYTES, PUSH_F64, PUSH_I64, PushEntry};
 use daedalus_surface::{SURFACE_MAJOR, SURFACE_MINOR};
 use lemnos_abi::{AbiVersion, BufferDesc, FenceDesc, LAYOUT_HASH, Status};
 
@@ -58,6 +59,7 @@ fn norm_c(ty: &str) -> String {
         "daedalus_buffer_desc" => "BufferDesc".into(),
         "daedalus_fence_desc" => "FenceDesc".into(),
         "daedalus_message_sink" => "MessageSink".into(),
+        "daedalus_push_entry" => "PushEntry".into(),
         other => other.into(),
     }
 }
@@ -214,7 +216,7 @@ fn integer(value: &str) -> i128 {
 fn header_declares_exactly_the_rust_exports_with_the_same_signatures() {
     let rust = rust_exports();
     let c = header_decls();
-    assert_eq!(rust.len(), 23, "the surface exports 23 functions");
+    assert_eq!(rust.len(), 34, "the surface exports 34 functions");
     for (name, sig) in &rust {
         let declared = c
             .get(name)
@@ -295,6 +297,19 @@ fn header_constants_match_lemnos_abi_and_the_build() {
     assert_eq!(
         header_define("DAEDALUS_FENCE_SYNCOBJ"),
         i128::from(FenceDesc::SYNCOBJ)
+    );
+    for (name, kind) in [
+        ("DAEDALUS_PUSH_I64", PUSH_I64),
+        ("DAEDALUS_PUSH_F64", PUSH_F64),
+        ("DAEDALUS_PUSH_BOOL", PUSH_BOOL),
+        ("DAEDALUS_PUSH_BYTES", PUSH_BYTES),
+    ] {
+        assert_eq!(header_define(name), i128::from(kind), "{name}");
+    }
+    // The C struct's size is asserted in the header against the same formula.
+    assert_eq!(
+        std::mem::size_of::<PushEntry>(),
+        24 + std::mem::size_of::<*const u8>() + std::mem::size_of::<usize>()
     );
     let statuses = [
         ("DAEDALUS_OK", Status::OK),

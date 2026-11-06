@@ -27,6 +27,13 @@ Graphs: `daedalus_surface_graph_compile` (a `daedalus.graph` document, prepared)
 Per frame, one call each: `daedalus_surface_push_{i64,f64,bool,bytes}`,
 `daedalus_surface_tick`, `daedalus_surface_take_{i64,f64,bool,bytes}`.
 
+By port index (ABI 1.1): `daedalus_surface_graph_input_index` and
+`daedalus_surface_graph_output_index` resolve a name once (the index is the port's position in
+`daedalus_surface_graph_ports`), then `daedalus_surface_push_{i64,f64,bool,bytes}_at` and
+`daedalus_surface_take_{i64,f64,bool,bytes}_at` take it, and `daedalus_surface_push_batch` pushes an
+array of `daedalus_push_entry` under one lock and one panic guard (every entry is checked before
+any is pushed).
+
 Frames (Linux; `NOT_SUPPORTED` elsewhere): `daedalus_surface_push_frame` pushes a dma-buf frame
 (one `BufferDesc` descriptor per plane, with an acquire fence) into a `daedalus:frame` port,
 `daedalus_surface_take_frame` takes one out as a lease (owned, duplicated descriptors), and

@@ -40,6 +40,19 @@ plugin ABI and does not load.
   `other`). The tests (`crates/host-wrapper/tests/frames.rs`, `crates/surface/src/frames/tests.rs`)
   check a round trip (the same dma-buf inode, the same pixels), fd counts over many frames, stale
   leases, a panic inside a call, and descriptor ownership.
+- Surface ABI 1.1 (additive): ports by index. `daedalus_surface_graph_input_index` and
+  `daedalus_surface_graph_output_index` resolve a name to its position in the port table once;
+  `daedalus_surface_push_{i64,f64,bool,bytes}_at` and
+  `daedalus_surface_take_{i64,f64,bool,bytes}_at` take the index; `daedalus_surface_push_batch` pushes an array of `daedalus_push_entry` under one
+  lock and one panic guard, checking every entry before pushing any. The surface interns port names,
+  so the engine's port ids are static and a push no longer bumps a reference count. A warm bytes
+  push reuses the port's payload allocation as well as its vector (`PayloadSlot`), so it allocates
+  nothing (it allocated the engine's payload box before; the vector was already reused).
+  `daedalus-host` reads the port table at compile, so `Graph::push_i64("step", ..)` resolves the
+  index in the caller and calls by index; `Graph::input` / `Graph::output` return `InputPort` /
+  `OutputPort` for the `*_at` calls, and `Graph::push_batch(&[Push])` hands its slice to the
+  surface as is. `take_bytes` no longer zero-fills the caller's buffer (it writes into the spare
+  capacity). `daedalus-host` requires surface 1.1.
 - Stable ABI 3: a plugin's const inputs are sent to its node instance once, on create and again
   when a graph patch changes them (`HostGraph::apply_patch`), instead of with every call. The
   plugin exports `daedalus_plugin_stable_extension` (`StableExtension`, `SetConstsFn`); a plugin

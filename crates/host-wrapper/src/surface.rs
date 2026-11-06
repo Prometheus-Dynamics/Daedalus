@@ -9,10 +9,12 @@ use lemnos_abi::{BufferDesc, FenceDesc};
 use libloading::Library;
 
 use crate::error::HostError;
+use crate::ports::Push;
 
-/// The surface ABI this crate was built against: major 1, minor 0, the `lemnos-abi` layout hash.
-/// A surface accepts it when its own version is at least this (same major, layout equal).
-pub const SURFACE_ABI: AbiVersion = AbiVersion::new(1, 0, LAYOUT_HASH);
+/// The surface ABI this crate was built against: major 1, minor 1 (port indices and the batch
+/// push), the `lemnos-abi` layout hash. A surface accepts it when its own version is at least this
+/// (same major, layout equal).
+pub const SURFACE_ABI: AbiVersion = AbiVersion::new(1, 1, LAYOUT_HASH);
 
 /// A loaded surface library: the symbol table and the handshake result. The library stays open
 /// for as long as this value (and every host and graph borrowed from it) lives.
@@ -39,7 +41,9 @@ impl SurfaceFeatures {
     }
 }
 
-/// The surface's C functions, copied out of the library (the `Library` keeps them valid).
+/// The surface's C functions this crate calls, copied out of the library (the `Library` keeps
+/// them valid). Pushes and takes go by port index; the wrapper resolves names itself (from the
+/// port table it reads at compile), so the by-name entry points are not among them.
 pub(crate) struct Api {
     pub version: unsafe extern "C" fn(*mut AbiVersion) -> Status,
     pub features: unsafe extern "C" fn(*mut u64) -> Status,
@@ -53,16 +57,16 @@ pub(crate) struct Api {
     pub graph_ports: Out1,
     pub graph_explain: Out1,
     pub graph_telemetry: Out1,
-    pub push_i64: unsafe extern "C" fn(Handle, *const u8, usize, i64) -> Status,
-    pub push_f64: unsafe extern "C" fn(Handle, *const u8, usize, f64) -> Status,
-    pub push_bool: unsafe extern "C" fn(Handle, *const u8, usize, u8) -> Status,
-    pub push_bytes: unsafe extern "C" fn(Handle, *const u8, usize, *const u8, usize) -> Status,
     pub tick: unsafe extern "C" fn(Handle, MessageSink) -> Status,
-    pub take_i64: unsafe extern "C" fn(Handle, *const u8, usize, *mut i64) -> Status,
-    pub take_f64: unsafe extern "C" fn(Handle, *const u8, usize, *mut f64) -> Status,
-    pub take_bool: unsafe extern "C" fn(Handle, *const u8, usize, *mut u8) -> Status,
-    pub take_bytes:
-        unsafe extern "C" fn(Handle, *const u8, usize, *mut u8, usize, *mut usize) -> Status,
+    pub push_i64_at: unsafe extern "C" fn(Handle, u32, i64) -> Status,
+    pub push_f64_at: unsafe extern "C" fn(Handle, u32, f64) -> Status,
+    pub push_bool_at: unsafe extern "C" fn(Handle, u32, u8) -> Status,
+    pub push_bytes_at: unsafe extern "C" fn(Handle, u32, *const u8, usize) -> Status,
+    pub push_batch: unsafe extern "C" fn(Handle, *const Push<'_>, usize, *mut usize) -> Status,
+    pub take_i64_at: unsafe extern "C" fn(Handle, u32, *mut i64) -> Status,
+    pub take_f64_at: unsafe extern "C" fn(Handle, u32, *mut f64) -> Status,
+    pub take_bool_at: unsafe extern "C" fn(Handle, u32, *mut u8) -> Status,
+    pub take_bytes_at: unsafe extern "C" fn(Handle, u32, *mut u8, usize, *mut usize) -> Status,
     #[cfg(target_os = "linux")]
     pub push_frame: unsafe extern "C" fn(
         Handle,
@@ -157,15 +161,16 @@ impl Api {
             graph_ports: sym(library, "daedalus_surface_graph_ports")?,
             graph_explain: sym(library, "daedalus_surface_graph_explain")?,
             graph_telemetry: sym(library, "daedalus_surface_graph_telemetry")?,
-            push_i64: sym(library, "daedalus_surface_push_i64")?,
-            push_f64: sym(library, "daedalus_surface_push_f64")?,
-            push_bool: sym(library, "daedalus_surface_push_bool")?,
-            push_bytes: sym(library, "daedalus_surface_push_bytes")?,
             tick: sym(library, "daedalus_surface_tick")?,
-            take_i64: sym(library, "daedalus_surface_take_i64")?,
-            take_f64: sym(library, "daedalus_surface_take_f64")?,
-            take_bool: sym(library, "daedalus_surface_take_bool")?,
-            take_bytes: sym(library, "daedalus_surface_take_bytes")?,
+            push_i64_at: sym(library, "daedalus_surface_push_i64_at")?,
+            push_f64_at: sym(library, "daedalus_surface_push_f64_at")?,
+            push_bool_at: sym(library, "daedalus_surface_push_bool_at")?,
+            push_bytes_at: sym(library, "daedalus_surface_push_bytes_at")?,
+            push_batch: sym(library, "daedalus_surface_push_batch")?,
+            take_i64_at: sym(library, "daedalus_surface_take_i64_at")?,
+            take_f64_at: sym(library, "daedalus_surface_take_f64_at")?,
+            take_bool_at: sym(library, "daedalus_surface_take_bool_at")?,
+            take_bytes_at: sym(library, "daedalus_surface_take_bytes_at")?,
             #[cfg(target_os = "linux")]
             push_frame: sym(library, "daedalus_surface_push_frame")?,
             #[cfg(target_os = "linux")]

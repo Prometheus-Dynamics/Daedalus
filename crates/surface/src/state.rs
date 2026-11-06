@@ -2,6 +2,7 @@
 //! compiled from them. One process-wide table, behind one lock; a call holds it for its own
 //! work only.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use daedalus::data::model::{TypeExpr, ValueType};
@@ -11,7 +12,7 @@ use daedalus::runtime::ExecutionTelemetry;
 use daedalus::runtime::handler_registry::HandlerRegistry;
 use daedalus::runtime::handles::PortId;
 use daedalus::runtime::plugins::PluginRegistry;
-use daedalus::transport::{FRAME_INTERFACE_KEY, SharedFrame};
+use daedalus::transport::{FRAME_INTERFACE_KEY, PayloadSlot, SharedFrame, TypeKey};
 use lemnos_abi::{Handle, Slab, Status};
 
 #[cfg(target_os = "linux")]
@@ -37,6 +38,12 @@ pub struct Graph {
     /// Per input port: the shared vector of the last bytes pushed to it. Reused while the graph
     /// has let go of it, so a steady stream of pushes allocates nothing.
     pub spare: Vec<Option<Arc<Vec<u8>>>>,
+    /// Per input port: the payload allocation of the last bytes pushed to it, reused the same way
+    /// (the engine would otherwise box each pushed `SharedBytes`).
+    pub slots: Vec<PayloadSlot>,
+    /// The key the graph's type index gives `SharedBytes`, resolved at compile; `None` when the
+    /// index has no single key for it (a bytes push then fails with `INVALID_ARGUMENT`).
+    pub bytes_key: Option<TypeKey>,
     /// Bytes taken from an output but not yet copied out (the caller's buffer was too small),
     /// with their output port index. They come back first on the next take.
     pub stash: Vec<(usize, SharedBytes)>,
@@ -53,11 +60,38 @@ pub struct Graph {
     pub telemetry: Option<ExecutionTelemetry>,
 }
 
-/// A host port: its name, the id the engine takes, and the value kind the surface checks.
+/// A host port: its name, the id the engine takes, and the value kind the surface checks. The
+/// name is interned ([`intern`]), so the id is a static one and handing it to the engine on each
+/// push copies a pointer instead of touching a reference count.
 pub struct Port {
-    pub name: String,
+    pub name: &'static str,
     pub id: PortId,
     pub kind: Kind,
+}
+
+impl Port {
+    pub fn new(name: &str, kind: Kind) -> Self {
+        let name = intern(name);
+        Self {
+            name,
+            id: PortId::from_static(name),
+            kind,
+        }
+    }
+}
+
+/// `name`, interned for the life of the process: one allocation the first time a name is seen,
+/// none after. Port names are few and fixed by the graph documents a process compiles, so the
+/// set stays small; it is never freed.
+pub fn intern(name: &str) -> &'static str {
+    static NAMES: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+    let mut names = NAMES.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(known) = names.get(name) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(name.into());
+    names.insert(leaked);
+    leaked
 }
 
 /// The kinds of value the surface moves. Anything else is listed in the port table but cannot be
@@ -118,6 +152,17 @@ pub fn lock() -> MutexGuard<'static, Tables> {
 }
 
 impl Graph {
+    /// Input port `index`, checked against `kind`: [`Status::NOT_FOUND`] past the last port,
+    /// [`Status::INVALID_ARGUMENT`] for another kind.
+    pub fn input_at(&self, index: u32, kind: Kind) -> Result<usize, Status> {
+        at(&self.inputs, index, kind)
+    }
+
+    /// Output port `index`, checked against `kind`; as [`Self::input_at`].
+    pub fn output_at(&self, index: u32, kind: Kind) -> Result<usize, Status> {
+        at(&self.outputs, index, kind)
+    }
+
     /// The index of input port `name`, checked against `kind`.
     pub fn input(&self, name: &str, kind: Kind) -> Result<usize, Status> {
         find(&self.inputs, name, kind)
@@ -129,11 +174,22 @@ impl Graph {
     }
 }
 
+fn at(ports: &[Port], index: u32, kind: Kind) -> Result<usize, Status> {
+    let index = usize::try_from(index).map_err(|_| Status::NOT_FOUND)?;
+    match ports.get(index) {
+        Some(port) if port.kind == kind => Ok(index),
+        Some(_) => Err(Status::INVALID_ARGUMENT),
+        None => Err(Status::NOT_FOUND),
+    }
+}
+
+/// The position of port `name`, whatever its kind.
+pub fn position(ports: &[Port], name: &str) -> Option<usize> {
+    ports.iter().position(|port| port.name == name)
+}
+
 fn find(ports: &[Port], name: &str, kind: Kind) -> Result<usize, Status> {
-    let index = ports
-        .iter()
-        .position(|port| port.name == name)
-        .ok_or(Status::NOT_FOUND)?;
+    let index = position(ports, name).ok_or(Status::NOT_FOUND)?;
     if ports[index].kind == kind {
         Ok(index)
     } else {
