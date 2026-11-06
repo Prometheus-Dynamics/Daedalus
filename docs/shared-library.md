@@ -53,9 +53,9 @@ allocates nothing on either side.
 ## Where node code goes in shared mode
 
 - **Node crates built in the same image build** (HeliOS's own nodes; Eidos when it reopens) link
-  into the `daedalus-surface` `cdylib` itself. They are ordinary `#[node]` handlers with full Rust
-  calls and LTO, and pay no stable-ABI cost. The surface build takes the list of in-image node
-  crates as its input.
+  into the surface library itself. They are ordinary `#[node]` handlers with full Rust calls and
+  LTO, and pay no stable-ABI cost. The image builds its own surface `cdylib` with
+  `export_surface!` (see "In-image nodes" below).
 - **Separately built plugins** load through the stable ABI inside the surface. The bench in
   `benchmarks-log.md` ("Stable plugin path") is the cost they pay: about 2.5 µs per handle, and
   85–110 µs per frame if Eidos's 310 constants crossed on every call. So anything on a hot path
@@ -126,11 +126,35 @@ outside the frame path.
 `Graph::take_frame(port)` returning a `FrameLease` that closes its descriptors and releases the
 frame on `Drop`.
 
+In-image nodes (`export_surface!`). An image crate built as `crate-type = ["cdylib"]`, depending
+on `daedalus-surface` (as an `rlib`) and on its node crates, writes
+`daedalus_surface::export_surface!(install)` with `install: fn(&mut PluginRegistry) -> Result<(),
+E>` (`E: Display`). That `cdylib` is a complete surface library: every host it creates has
+`install` run on its registry first (`install_plugin`, Rust handlers, no stable ABI), and plugins
+built separately still install on top, by path, through the stable ABI. A failing `install` makes
+`daedalus_surface_host_create` return `IO`. The image reports `FEATURE_IMAGE_NODES`. Its nodes are
+not in `daedalus_surface_host_schemas`, which lists loaded plugin libraries.
+
+How the exports stay single: they always come from `daedalus-surface`'s `rlib`. Rust exports the
+`#[no_mangle]` functions of every crate a `cdylib` links, so the image exports the whole C ABI
+exactly once, as the plain `libdaedalus_surface.so` does, and the macro emits no export. It emits a
+load-time constructor instead (an `.init_array` entry on ELF targets, `__mod_init_func` on Apple
+targets, `.CRT$XCU` on Windows; other targets do not compile it) that registers `install` with the
+`rlib` before any entry point can be called. The plain surface registers nothing and its hosts
+start empty. A cargo feature switching the `rlib`'s exports off was the alternative; feature
+unification would turn them back on in any build that also selects `daedalus-surface` itself
+(`cargo build --workspace`), and the image would then fail to link with duplicate symbols.
+
+`examples/surface_image` is the fixture: the `stable_abi` plugin's nodes in-image.
+`crates/host-wrapper/tests/shared_in_image.rs` runs the `shared_vs_static` graph through it with
+no plugin installed by path: identical outputs to the static graph over 300 frames, no allocation
+in the surface on a warm scalar frame, fewer on a bytes frame than the static graph, no plugin
+entry point exported and no plugin library loaded (the stable path needs one).
+
 Not built yet: patching constants and setting input or output policies through the surface;
 `inspect_outputs` across the surface; graph ports for `Vec<u8>` (the ABI moves `SharedBytes`
 only; a `Vec<u8>` port is listed as `other`); the stable plugin ABI on `lemnos-abi` primitives
-(order step 2 below). Node crates linked into the surface (in-image nodes) are not wired: the
-surface loads separate plugins only.
+(order step 2 below).
 
 Measured in a debug build (`cargo test -p daedalus-host --test shared_vs_static -- --nocapture`):
 about 50 µs per scalar frame through the static graph and about 90 µs through the surface, with

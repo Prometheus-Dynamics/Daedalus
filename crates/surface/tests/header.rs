@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use daedalus_surface::{FEATURE_ALLOC_COUNT, FEATURE_GRAPHS, FEATURE_PLUGINS, FEATURE_TELEMETRY};
+use daedalus_surface::{FEATURE_ALLOC_COUNT, FEATURE_GRAPHS, FEATURE_IMAGE_NODES};
+use daedalus_surface::{FEATURE_PLUGINS, FEATURE_TELEMETRY};
 use daedalus_surface::{PUSH_BOOL, PUSH_BYTES, PUSH_F64, PUSH_I64, PushEntry};
 use daedalus_surface::{SURFACE_MAJOR, SURFACE_MINOR};
 use lemnos_abi::{AbiVersion, BufferDesc, FenceDesc, LAYOUT_HASH, Status};
@@ -281,6 +282,10 @@ fn header_constants_match_lemnos_abi_and_the_build() {
     assert_eq!(
         header_define("DAEDALUS_FEATURE_ALLOC_COUNT"),
         i128::from(FEATURE_ALLOC_COUNT)
+    );
+    assert_eq!(
+        header_define("DAEDALUS_FEATURE_IMAGE_NODES"),
+        i128::from(FEATURE_IMAGE_NODES)
     );
     assert_eq!(
         header_define("DAEDALUS_BUFFER_OWNED"),

@@ -44,6 +44,15 @@ Every call returns a `daedalus_status`: 0 for success, a negative errno, or one 
 `DAEDALUS_*` codes. A handle that was released, or never issued, is `DAEDALUS_STALE_HANDLE` and
 is never dereferenced.
 
+## In-image nodes
+
+An image's own surface library: a `cdylib` crate depending on this crate and on its node crates
+writes `daedalus_surface::export_surface!(install)`. Every host it creates has `install` run on its
+registry (the nodes' Rust handlers, no stable ABI); separately built plugins still install by path.
+The exports come from this crate's `rlib`, once; the macro only adds a load-time constructor that
+registers `install`. The image reports `DAEDALUS_FEATURE_IMAGE_NODES`. Example:
+`examples/surface_image`.
+
 ## Building
 
     cargo build -p daedalus-surface --release

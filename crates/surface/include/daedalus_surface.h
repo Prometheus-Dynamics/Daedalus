@@ -58,6 +58,9 @@ extern "C" {
 #define DAEDALUS_FEATURE_GRAPHS (1ULL << 1)
 #define DAEDALUS_FEATURE_TELEMETRY (1ULL << 2)
 #define DAEDALUS_FEATURE_ALLOC_COUNT (1ULL << 3)
+/* An image surface (export_surface!): every new host has the image's own nodes installed through
+ * the Rust path. */
+#define DAEDALUS_FEATURE_IMAGE_NODES (1ULL << 4)
 
 /* daedalus_push_entry.kind: what a batch entry pushes (ABI 1.1). */
 #define DAEDALUS_PUSH_I64 1U
@@ -157,6 +160,8 @@ daedalus_status daedalus_surface_features(uint64_t *out);
 
 /* ---- Host: a plugin registry and its engine ---- */
 
+/* A new host's registry is empty, or, in an image surface (DAEDALUS_FEATURE_IMAGE_NODES), holds the
+ * image's nodes; a failing image install is DAEDALUS_IO. */
 daedalus_status daedalus_surface_host_create(daedalus_handle *out);
 /* DAEDALUS_BUSY while graphs compiled from the host are alive. */
 daedalus_status daedalus_surface_host_release(daedalus_handle host);

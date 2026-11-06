@@ -10,7 +10,9 @@ use lemnos_abi::{Handle, MessageSink, Status};
 use crate::ffi::{self, run};
 use crate::state::{Host, lock};
 
-/// Creates a host: an empty plugin registry and an engine with the default configuration.
+/// Creates a host: a plugin registry and an engine with the default configuration. The registry
+/// is empty, or, in an image surface (`export_surface!`), has the image's nodes installed through
+/// the Rust path; a failing image install is [`Status::IO`].
 ///
 /// # Safety
 /// `out` must be valid for a write of a `Handle` (a `u64`).
@@ -21,8 +23,12 @@ pub unsafe extern "C" fn daedalus_surface_host_create(out: *mut Handle) -> Statu
             return Err(Status::INVALID_ARGUMENT);
         }
         let engine = Engine::new(EngineConfig::default()).map_err(|_| Status::IO)?;
+        let mut registry = PluginRegistry::new();
+        if let Some(install) = crate::image::install() {
+            install(&mut registry).map_err(|_| Status::IO)?;
+        }
         let handle = lock().hosts.insert(Host {
-            registry: PluginRegistry::new(),
+            registry,
             engine,
             libraries: Vec::new(),
             graphs: 0,

@@ -13,6 +13,10 @@
 //! `daedalus_surface_take_frame`, `daedalus_surface_frame_release`). Frames cross as file
 //! descriptors that are shared, never copied; off Linux those calls return `NOT_SUPPORTED`.
 //!
+//! In-image nodes: a downstream `cdylib` that links this crate and its own node crates and writes
+//! [`export_surface!`]`(install)` is a complete surface library whose hosts start with those nodes
+//! installed through the Rust path; see [`export_surface!`] for how the exports stay single.
+//!
 //! Linux is the tested platform. The code is portable Rust; only the shared-mode test is
 //! Unix-only.
 
@@ -23,6 +27,7 @@ mod ffi;
 mod frames;
 mod graph;
 mod host;
+mod image;
 mod indexed;
 mod io;
 mod state;
@@ -35,6 +40,14 @@ mod tests;
 pub use indexed::{PUSH_BOOL, PUSH_BYTES, PUSH_F64, PUSH_I64, PushEntry};
 
 pub use abi::{
-    FEATURE_ALLOC_COUNT, FEATURE_GRAPHS, FEATURE_PLUGINS, FEATURE_TELEMETRY, SURFACE_MAJOR,
-    SURFACE_MINOR, feature_set,
+    FEATURE_ALLOC_COUNT, FEATURE_GRAPHS, FEATURE_IMAGE_NODES, FEATURE_PLUGINS, FEATURE_TELEMETRY,
+    SURFACE_MAJOR, SURFACE_MINOR, feature_set,
 };
+pub use image::ImageInstall;
+
+/// What [`export_surface!`] expands to; not an API.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::image::register;
+    pub use daedalus::runtime::plugins::PluginRegistry;
+}

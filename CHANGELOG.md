@@ -53,6 +53,19 @@ plugin ABI and does not load.
   `OutputPort` for the `*_at` calls, and `Graph::push_batch(&[Push])` hands its slice to the
   surface as is. `take_bytes` no longer zero-fills the caller's buffer (it writes into the spare
   capacity). `daedalus-host` requires surface 1.1.
+- In-image nodes in shared mode: `daedalus_surface::export_surface!(install)`, used once in a
+  downstream `cdylib` that links `daedalus-surface` (its `rlib`) and its node crates, makes that
+  `cdylib` a complete surface library whose every new host runs `install` (a
+  `fn(&mut PluginRegistry) -> Result<(), impl Display>`) on its registry: the image's nodes run
+  their Rust handlers, with no stable ABI. Separately built plugins still install on top, by path.
+  The C exports come only from the `rlib` (a `cdylib` exports every linked crate's `#[no_mangle]`
+  functions), so they exist once; the macro adds a load-time constructor (`.init_array`,
+  `__mod_init_func` or `.CRT$XCU`) that registers `install`. The plain `libdaedalus_surface.so`
+  registers none. An image reports `FEATURE_IMAGE_NODES` (bit 4). `examples/surface_image` is the
+  fixture (the `stable_abi` nodes in-image, excluded from `ci.sh package`), and
+  `crates/host-wrapper/tests/shared_in_image.rs` checks it against the static graph over 300 frames
+  (identical outputs, the same allocation bounds as `shared_vs_static`, no plugin entry point or
+  plugin library involved).
 - Stable ABI 3: a plugin's const inputs are sent to its node instance once, on create and again
   when a graph patch changes them (`HostGraph::apply_patch`), instead of with every call. The
   plugin exports `daedalus_plugin_stable_extension` (`StableExtension`, `SetConstsFn`); a plugin

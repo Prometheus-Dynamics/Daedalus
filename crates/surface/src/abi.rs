@@ -17,12 +17,18 @@ pub const FEATURE_GRAPHS: u64 = 1 << 1;
 pub const FEATURE_TELEMETRY: u64 = 1 << 2;
 /// Built with the `alloc-count` feature (`daedalus_surface_allocations` is exported).
 pub const FEATURE_ALLOC_COUNT: u64 = 1 << 3;
+/// An image surface (`export_surface!`): every new host has the image's nodes installed through
+/// the Rust path.
+pub const FEATURE_IMAGE_NODES: u64 = 1 << 4;
 
-/// The feature set of this build.
+/// The feature set of this build (and, for an image, of the library it is linked into).
 pub fn feature_set() -> u64 {
     let mut bits = FEATURE_PLUGINS | FEATURE_GRAPHS | FEATURE_TELEMETRY;
     if cfg!(feature = "alloc-count") {
         bits |= FEATURE_ALLOC_COUNT;
+    }
+    if crate::image::install().is_some() {
+        bits |= FEATURE_IMAGE_NODES;
     }
     bits
 }

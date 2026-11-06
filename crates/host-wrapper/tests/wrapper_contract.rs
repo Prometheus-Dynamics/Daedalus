@@ -19,6 +19,8 @@ fn typed_errors_and_optional_takes() {
     assert_eq!(surface.version().accepts(&SURFACE_ABI), Status::OK);
     // FEATURE_GRAPHS (`daedalus-surface`'s `abi::FEATURE_GRAPHS`, bit 1).
     assert!(surface.features().contains(1 << 1));
+    // Not an image surface (`FEATURE_IMAGE_NODES`, bit 4): its hosts start empty.
+    assert!(!surface.features().contains(1 << 4));
 
     // A missing library is a load error, not a panic.
     let missing = Surface::load("/nonexistent/libdaedalus_surface.so");

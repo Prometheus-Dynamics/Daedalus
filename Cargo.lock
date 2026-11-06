@@ -1043,6 +1043,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-surface-image"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-plugins-stable-abi",
+ "daedalus-rs",
+ "daedalus-surface",
+]
+
+[[package]]
 name = "daedalus-transport"
 version = "3.0.1-dev"
 dependencies = [
