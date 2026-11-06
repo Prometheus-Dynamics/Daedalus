@@ -733,6 +733,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "daedalus-host"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-plugins-stable-abi",
+ "daedalus-rs",
+ "lemnos-abi",
+ "libloading 0.9.0",
+ "serde_json",
+]
+
+[[package]]
 name = "daedalus-kernels"
 version = "3.0.1-dev"
 dependencies = [
@@ -1017,6 +1028,15 @@ dependencies = [
  "spin",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "daedalus-surface"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-rs",
+ "lemnos-abi",
+ "serde_json",
 ]
 
 [[package]]
@@ -1670,6 +1690,11 @@ name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
+
+[[package]]
+name = "lemnos-abi"
+version = "2.0.1-dev"
+source = "git+https://github.com/Prometheus-Dynamics/Lemnos.git?rev=cf3a4ac1b6e0043fde5bc80175a162a982b1239f#cf3a4ac1b6e0043fde5bc80175a162a982b1239f"
 
 [[package]]
 name = "lemnos-bus"

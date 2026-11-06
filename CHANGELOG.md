@@ -17,6 +17,17 @@ plugin ABI and does not load.
 
 ### Added
 
+- Shared-library surface, first version: `daedalus-surface` (`crates/surface`, a `cdylib` and
+  `rlib`) is a C ABI over the in-process graph runtime, on `lemnos-abi` (pinned at `952e1c7`). It
+  has the version handshake (`daedalus_surface_version`, `daedalus_surface_features`), host
+  create and release, plugin install by path through the stable handler path, schemas, graph
+  compile from a `daedalus.graph` document, per-frame push, tick and take of scalars and
+  `SharedBytes`, and port, explain and telemetry JSON. The header is `crates/surface/include/
+  daedalus_surface.h`. The frame entry points are declared and built as stubs returning
+  `NOT_SUPPORTED`. `daedalus-host` (`crates/host-wrapper`) is the safe Rust wrapper: it loads the
+  library by path, checks the handshake and layout hash, and returns RAII host and graph handles.
+  `crates/host-wrapper/tests/shared_vs_static.rs` runs one graph statically and through the surface
+  and asserts identical outputs; a warm scalar frame through the surface allocates nothing.
 - Stable ABI 3: a plugin's const inputs are sent to its node instance once, on create and again
   when a graph patch changes them (`HostGraph::apply_patch`), instead of with every call. The
   plugin exports `daedalus_plugin_stable_extension` (`StableExtension`, `SetConstsFn`); a plugin

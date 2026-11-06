@@ -120,6 +120,14 @@ cmd_features() {
   cargo check -p daedalus-gpu --no-default-features --features "gpu-cuda"
   cargo check -p daedalus-rs --features "gpu-cuda,engine,plugins"
   cargo check -p daedalus-gpu --all-targets --no-default-features --features "gpu-gles,gpu-image"
+  # Shared mode: the surface cdylib with and without its counting allocator, and the wrapper with no
+  # core in its normal dependency tree (a process links one of the two modes, see
+  # docs/shared-library.md).
+  cargo check -p daedalus-surface --all-targets
+  cargo check -p daedalus-surface --all-targets --features "alloc-count"
+  cargo check -p daedalus-host --all-targets
+  [[ -z "$(cargo tree -p daedalus-host -e normal,build --prefix none | grep -E '^daedalus-(core|runtime|engine|rs|planner|registry|transport|data|nodes|macros|gpu) ')" ]] ||
+    { echo "daedalus-host links the core in shared mode: its normal dependencies must not name it" >&2; return 1; }
 }
 
 cmd_clippy() {
@@ -378,6 +386,8 @@ cmd_wasm() {
 # `--exclude-lockfile`: a packaged lockfile resolves against crates.io too, which has no
 # `lemnos-linux` 2.0.1-dev, the git dependency of daedalus-gpu and lemnos-drivers-rga, which
 # daedalus-kernels takes as a Linux dev-dependency).
+# `daedalus-surface` and `daedalus-host` are `publish = false`: the surface's shared-mode test and
+# the wrapper's tests are the consumers, and `lemnos-abi` is a git dependency.
 # Dev-dependencies on the fixture crates carry no `version`, so they are left out of the published
 # manifests. The facade cannot be packaged alone for the same reason, so its file list is also
 # checked on its own: the listing must print nothing on stderr.
@@ -389,7 +399,8 @@ readonly PACKAGE_EXCLUDES=(--exclude daedalus-examples
   --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi
   --exclude daedalus-plugins-stable-abi-counted --exclude daedalus-plugins-stable-bench
   --exclude daedalus-plugins-stable-bench-counted --exclude daedalus-plugins-gpu-submit
-  --exclude daedalus-frame-bench --exclude daedalus-bench-counters)
+  --exclude daedalus-frame-bench --exclude daedalus-bench-counters
+  --exclude daedalus-surface --exclude daedalus-host)
 
 cmd_package() {
   step "Validating the package surface"

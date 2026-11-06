@@ -1,0 +1,28 @@
+[package]
+name = "daedalus-surface"
+version = "3.0.1-dev"
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared-library surface for Daedalus: a small C ABI (cdylib) over the in-process graph runtime, built on lemnos-abi."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# A counting global allocator, exported as `daedalus_surface_allocations`: the shared-mode test
+# reads the surface's allocations through it. Test builds only; never enabled by a consumer.
+alloc-count = []
+
+[dependencies]
+# Stable plugin install, the graph runtime and its engine, with the executor's worker pool (as the
+# static side of the shared-mode test runs it).
+daedalus = { workspace = true, features = ["engine", "plugins", "dylib-plugins", "threads"] }
+lemnos-abi = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }

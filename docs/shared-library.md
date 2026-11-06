@@ -1,8 +1,9 @@
 # Shared and static builds
 
 Design note for Daedalus's part of the shared-library plan (user decision, 2026-11-03; the
-core/surface/wrapper split is HeliOS's design). Nothing here is built yet: the surface waits on
-Lemnos's `lemnos-abi` primitives.
+core/surface/wrapper split is HeliOS's design). The first version is built: `daedalus-surface`
+(`crates/surface`) and `daedalus-host` (`crates/host-wrapper`), on `lemnos-abi` at the workspace
+revision. The status section below says what is built and what is not.
 
 ## The split
 
@@ -64,11 +65,53 @@ allocates nothing on either side.
 GPU access for stable-ABI plugins in shared mode is the stable plugin GPU vtable (see
 `gpu-seam.md`); in-image nodes inside the surface keep `GpuContextHandle`.
 
+## Status
+
+Built (3.0.1-dev, Linux tested):
+
+- **Version handshake.** `daedalus_surface_version` writes the surface's `AbiVersion` (major 1,
+  minor 0, `lemnos-abi`'s `LAYOUT_HASH`). `daedalus_surface_features` writes the feature bits: an
+  `AbiVersion` has no room for them, so they are a second call. The wrapper refuses a surface that
+  does not accept its own version.
+- **Host.** Create (an empty registry and a default engine), release (`BUSY` while graphs compiled
+  from it are alive), install a plugin library by path through the stable handler path
+  (`InstallPath::Stable`), and the node schemas as JSON.
+- **Graphs.** Compile a `daedalus.graph` document (`GraphDocument::from_json`) and prepare it;
+  release; the host's input and output ports as JSON; the plan explanation as JSON; the last tick's
+  telemetry as JSON.
+- **Per frame.** Push `i64`, `f64`, `bool` and bytes (`SharedBytes` ports); tick; take `i64`, `f64`,
+  `bool` and bytes. Each is one call. A warm scalar frame allocates nothing in the surface. A bytes
+  frame allocates what the engine's own bytes path does, the same as the static graph.
+- **Errors and handles.** Every entry point runs under the `lemnos-abi` guard. Handles are
+  generation-counted: a stale or null one is `STALE_HANDLE`. Messages (a bad document, a failing
+  node, a plugin the stable ABI refuses) go to a caller sink. Buffers use the needed-size protocol;
+  a take that does not fit keeps the bytes for the next take.
+- **Test.** `crates/host-wrapper/tests/shared_vs_static.rs` runs one graph (the `stable_abi`
+  plugin's `accumulate`, a conditional `every`, and `shared_sum` on bytes) over 300 frames, once
+  statically and once through `daedalus-host` and the surface. The outputs are identical on every
+  frame. The surface's allocations are counted by its `alloc-count` build.
+
+Declared, built as stubs (`NOT_SUPPORTED`): `daedalus_surface_push_frame` and
+`daedalus_surface_take_frame`. A frame crosses as a `lemnos-abi` `BufferDesc` with its
+`FenceDesc`; wiring those to the `daedalus:frame` host ports is the next step for frames.
+
+Not built yet: patching constants and setting input or output policies through the surface;
+`inspect_outputs` across the surface; graph ports for `Vec<u8>` (the ABI moves `SharedBytes`
+only; a `Vec<u8>` port is listed as `other`); the stable plugin ABI on `lemnos-abi` primitives
+(order step 2 below). Node crates linked into the surface (in-image nodes) are not wired: the
+surface loads separate plugins only.
+
+Measured in a debug build (`cargo test -p daedalus-host --test shared_vs_static -- --nocapture`):
+about 50 µs per scalar frame through the static graph and about 90 µs through the surface, with
+the same outputs and the same allocations (none for scalars). The gap is not profiled yet; the
+release numbers are the ones that count.
+
 ## Order
 
-1. `lemnos-abi` lands (Lemnos).
+1. `lemnos-abi` lands (Lemnos). Done: pinned at `952e1c7`.
 2. The stable plugin ABI moves onto its primitives (handles, status codes, guard, slabs), keeping
-   `STABLE_ABI_VERSION` compatibility.
+   `STABLE_ABI_VERSION` compatibility. Not started.
 3. `daedalus-surface` and `daedalus-host`, with a test that runs the same graph statically and
-   through wrapper + surface and compares outputs, allocations and per-frame cost on the CM5.
+   through wrapper + surface and compares outputs and allocations. Built (see Status); the per-frame
+   cost on the CM5 is still to measure, and the frame entry points are still stubs.
 4. Hand the result to Gaia for the link modes and the combined build.

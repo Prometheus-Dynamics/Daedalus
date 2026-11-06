@@ -1,0 +1,24 @@
+[package]
+name = "daedalus-host"
+version = "3.0.1-dev"
+edition.workspace = true
+rust-version.workspace = true
+description = "Safe Rust wrapper over the daedalus-surface C ABI: loads the shared library, checks its handshake, and gives typed handles and calls."
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Shared mode: this crate and the surface library, never the core. The core appears only as a
+# dev-dependency of the test that compares the two modes.
+[dependencies]
+lemnos-abi = { workspace = true }
+libloading = { workspace = true }
+
+[dev-dependencies]
+daedalus = { workspace = true, features = ["engine", "plugins", "dylib-plugins", "threads"] }
+daedalus-plugins-stable-abi = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
