@@ -37,6 +37,10 @@ pub mod tag {
     /// payload's residency (see `residency_code`) in the low byte, plus
     /// [`HANDLE_FROM_SENDER`].
     pub const HANDLE: u32 = 12;
+    /// `ptr`: one [`StablePodView`](super::StablePodView) (plain-old-data elements, see
+    /// [`StablePod`](crate::transport::StablePod)); `len`: the element count; `scalar`: 1 for a
+    /// slice (`Vec<T>`), 0 for one `T`. Sent only to and by plugins of stable ABI 5 or later.
+    pub const POD: u32 = 13;
 
     /// Set in a `HANDLE`'s `scalar` when the sender's build created the handle (its vtable,
     /// interface and owner functions live in the sender's library), rather than passing on one
@@ -64,6 +68,22 @@ pub struct StableField {
     pub name_ptr: *const u8,
     pub name_len: usize,
     pub value: StableValue,
+}
+
+/// Plain-old-data elements lent for the call (a [`tag::POD`] value): `count` elements of `size`
+/// bytes at `data`, aligned to `align`, of the layout named `name` with hash `hash` (see
+/// [`PodLayout`](crate::transport::PodLayout)). The receiver checks all four against its own
+/// type's layout before reading.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct StablePodView {
+    pub hash: u64,
+    pub size: usize,
+    pub align: usize,
+    pub count: usize,
+    pub data: *const c_void,
+    pub name_ptr: *const u8,
+    pub name_len: usize,
 }
 
 /// An enum value: borrowed UTF-8 variant name and an optional (null) payload.
@@ -220,6 +240,7 @@ struct Parts {
     values: Vec<Vec<StableValue>>,
     fields: Vec<Vec<StableField>>,
     enums: Vec<Box<StableEnum>>,
+    pods: Vec<Box<StablePodView>>,
     owned: Vec<Box<Value>>,
     /// `None` once cleared.
     handles: Vec<Box<Option<ForeignHandle>>>,
@@ -245,6 +266,7 @@ impl Arena {
             values,
             fields,
             enums,
+            pods,
             owned,
             handles,
         } = &mut self.held;
@@ -257,6 +279,7 @@ impl Arena {
             items
         }));
         self.spare.enums.append(enums);
+        self.spare.pods.append(pods);
         self.spare.owned.extend(owned.drain(..).map(|mut value| {
             *value = Value::Unit;
             value
@@ -303,6 +326,21 @@ impl Arena {
         self.held.handles.push(handle);
         // Safety: the box lives (unmoved) until the arena is dropped or cleared.
         StableValue::handle(unsafe { &*ptr }, residency, from_sender)
+    }
+
+    /// Lend `view` (whose `data` and name the caller keeps alive for the call) as a
+    /// [`tag::POD`] value; `slice` marks a `Vec<T>` rather than one `T`.
+    pub fn pod(&mut self, view: StablePodView, slice: bool) -> StableValue {
+        let count = view.count;
+        let view = boxed(&mut self.spare.pods, view);
+        let ptr: *const StablePodView = &*view;
+        self.held.pods.push(view);
+        StableValue {
+            tag: tag::POD,
+            scalar: u64::from(slice),
+            ptr: ptr.cast(),
+            len: count,
+        }
     }
 
     /// Keep `value` alive with the arena and encode it.
@@ -458,6 +496,7 @@ pub unsafe fn to_value(value: &StableValue) -> Result<Value, String> {
             })
         }
         tag::HANDLE => return Err("a foreign handle has no Value form".into()),
+        tag::POD => return Err("plain-old-data elements have no Value form".into()),
         other => return Err(format!("unknown stable value tag {other}")),
     })
 }

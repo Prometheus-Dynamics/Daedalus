@@ -10,6 +10,7 @@ mod node_fn_impl;
 mod node_handler_impl;
 mod plugin_impl;
 mod shader_bindings;
+mod stable_pod_derive;
 mod to_value_derive;
 mod type_expr;
 mod type_key_impl;
@@ -223,6 +224,15 @@ pub fn branch_payload(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
 #[proc_macro_derive(DaedalusTypeExpr, attributes(daedalus))]
 pub fn daedalus_type_expr(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     daedalus_type_derive::daedalus_type_expr(item)
+}
+
+/// Derive `StablePod` for a `#[repr(C)]` struct of plain-old-data fields (numbers, fixed
+/// arrays, other `StablePod` structs) with no padding, so it crosses the stable plugin boundary as
+/// a typed byte view, checked by name and layout hash on both sides. `#[stable_pod(name = "..")]`
+/// overrides the name (the struct's own name by default). The struct must also be `Copy`.
+#[proc_macro_derive(StablePod, attributes(stable_pod))]
+pub fn stable_pod(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    stable_pod_derive::stable_pod(item)
 }
 
 /// Derive `ToValue` for a struct/enum to enable JSON-friendly host export.

@@ -30,6 +30,7 @@ impl PluginRegistry {
             crate_builds: BTreeMap::new(),
             external_types: None,
             stable_codecs: None,
+            stable_pods: BTreeMap::new(),
             current_prefix: None,
             capabilities: RuntimeCapabilityRegistry::new(),
             const_coercers: crate::io::new_const_coercer_map(),

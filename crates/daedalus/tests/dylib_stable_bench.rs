@@ -1,5 +1,6 @@
 //! Timing of the stable handler path against the static install, for the cost per constant, a
-//! `Detections` crossing through `Value` and as a plugin-local handle, and a 12-stage handle chain
+//! `Detections` crossing through `Value`, as a plugin-local handle and as `StablePod` structs, and
+//! a 12-stage handle chain
 //! (`examples/plugins/stable_bench`). Each case alternates the two installs within a run, so cache
 //! and frequency drift hit both; the output is one `BENCH` line per case and path, and a `fit`
 //! line per constant series.
@@ -132,6 +133,12 @@ fn stable_bench_overhead() {
             200,
             Box::new(move |registry: &PluginRegistry| bench::detections_case(registry, true, tags)),
         ));
+        cases.push((
+            "detections_pod",
+            format!("Detections as StablePod structs, tags={tags}"),
+            200,
+            Box::new(move |registry: &PluginRegistry| bench::pod_case(registry, tags)),
+        ));
     }
     for constants in [false, true] {
         cases.push((
@@ -233,6 +240,22 @@ fn stable_bench_counters() {
         &statics,
         &stables,
     );
+    for tags in [4, 16] {
+        counters_row(
+            &mut counters,
+            &format!("Detections through Value, tags={tags}"),
+            &|r| bench::detections_case(r, false, tags),
+            &statics,
+            &stables,
+        );
+        counters_row(
+            &mut counters,
+            &format!("Detections as StablePod structs, tags={tags}"),
+            &|r| bench::pod_case(r, tags),
+            &statics,
+            &stables,
+        );
+    }
 }
 
 /// One case, both installs: interleaved repeats of a fixed number of calls each.

@@ -184,6 +184,26 @@ pub mod derive_support {
     }
 
     impl<T> NoCloneProbe<T> for &Probe<T> {}
+
+    /// `(&Probe::<T>(PhantomData)).pod_codec()` is `Some` when `T` is a `StablePod` type or a
+    /// `Vec` of one (it crosses the stable plugin boundary as a typed byte view), else `None`.
+    pub trait PodProbe<T> {
+        fn pod_codec(&self) -> Option<daedalus_transport::PodCodec>;
+    }
+
+    impl<T: daedalus_transport::PodPort + daedalus_transport::Reusable> PodProbe<T> for Probe<T> {
+        fn pod_codec(&self) -> Option<daedalus_transport::PodCodec> {
+            Some(daedalus_transport::PodCodec::of::<T>())
+        }
+    }
+
+    pub trait NoPodProbe<T> {
+        fn pod_codec(&self) -> Option<daedalus_transport::PodCodec> {
+            None
+        }
+    }
+
+    impl<T> NoPodProbe<T> for &Probe<T> {}
 }
 
 #[cfg(test)]

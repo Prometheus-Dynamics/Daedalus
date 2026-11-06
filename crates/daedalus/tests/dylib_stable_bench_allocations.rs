@@ -129,6 +129,11 @@ fn stable_bench_allocations() {
             format!("Detections as a plugin-local handle, tags={tags}"),
             Box::new(move |registry: &PluginRegistry| bench::detections_case(registry, true, tags)),
         ));
+        cases.push((
+            "detections_pod",
+            format!("Detections as StablePod structs, tags={tags}"),
+            Box::new(move |registry: &PluginRegistry| bench::pod_case(registry, tags)),
+        ));
     }
     for constants in [false, true] {
         cases.push((

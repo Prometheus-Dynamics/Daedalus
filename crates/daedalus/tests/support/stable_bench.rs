@@ -164,6 +164,25 @@ pub fn detections_case(registry: &PluginRegistry, handle: bool, tags: i64) -> (H
     (host, step)
 }
 
+/// The `Detections` tags as a `Vec` of `StablePod` structs, source to sink.
+#[allow(dead_code)] // Not every bench binary runs it.
+pub fn pod_case(registry: &PluginRegistry, tags: i64) -> (Host, Step) {
+    let host = Spec::default()
+        .node("src", "pod_source")
+        .node("sink", "pod_sink")
+        .input("tags", int())
+        .edge("tags", "src.tags")
+        .edge("src.det", "sink.det")
+        .edge("sink.out", "out")
+        .compile(registry);
+    let step: Step = Box::new(move |host| {
+        host.push("tags", tags);
+        host.tick().unwrap();
+        host.take::<i64>("out").unwrap_or(-1)
+    });
+    (host, step)
+}
+
 /// The staged shape: a source, twelve `stage` nodes (one handle in, one out, the frame, and
 /// ten constants or none), and a sink. `tags` is 4. The frame is `Counted`, read in place.
 pub fn staged_case(registry: &PluginRegistry, constants: bool) -> (Host, Step) {

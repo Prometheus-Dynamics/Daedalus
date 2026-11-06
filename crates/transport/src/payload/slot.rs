@@ -44,6 +44,34 @@ impl PayloadSlot {
         self.payload(type_key, Residency::Cpu)
     }
 
+    /// A payload owning a [`Reusable`](crate::Reusable) value: when the slot is free and holds
+    /// a `T`, `refill` refills it in place (a `Vec` keeps its capacity), else `make` builds one.
+    /// [`Self::release`] [resets](crate::Reusable::reset) it rather than dropping it.
+    pub fn owned_reused<T: crate::Reusable>(
+        &mut self,
+        type_key: impl Into<TypeKey>,
+        make: impl FnOnce() -> T,
+        refill: impl FnOnce(&mut T),
+    ) -> Payload {
+        let type_key = type_key.into();
+        #[cfg(target_has_atomic = "ptr")]
+        if let Some(slot) = self.free::<super::ArcValue<T>>() {
+            refill(&mut slot.0);
+            return self.payload(type_key, Residency::Cpu);
+        }
+        let _ = refill;
+        self.storage = Some(super::arc_storage(&type_key, Arc::new(make())));
+        self.clear = Some(|any| {
+            #[cfg(target_has_atomic = "ptr")]
+            if let Some(slot) = any.downcast_mut::<super::ArcValue<T>>() {
+                slot.0.reset();
+            }
+            #[cfg(not(target_has_atomic = "ptr"))]
+            let _ = any;
+        });
+        self.payload(type_key, Residency::Cpu)
+    }
+
     /// A payload carrying `handle`, as [`Payload::foreign`] (or [`Payload::foreign_local`] when
     /// `local`), in the slot's allocation when free.
     pub fn foreign(

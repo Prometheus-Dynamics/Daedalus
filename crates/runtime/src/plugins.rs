@@ -350,6 +350,8 @@ pub struct PluginRegistry {
     /// `Some` in a dynamic plugin's stable `invoke` registry: node port codecs (see
     /// [`PluginRegistry::record_stable_codecs`]).
     stable_codecs: Option<stable_codecs::StableCodecMap>,
+    /// The host's `StablePod` port types by key (see [`PluginRegistry::register_stable_pod`]).
+    stable_pods: BTreeMap<TypeKey, daedalus_transport::PodCodec>,
     pub current_prefix: Option<String>,
     pub capabilities: RuntimeCapabilityRegistry,
     pub const_coercers: crate::io::ConstCoercerMap,

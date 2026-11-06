@@ -77,6 +77,13 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    codecs for the catalog nodes.
    - Constants sent once: done (stable ABI 3, `set_consts`; v2 plugins still load). 110 ns per
      constant against 250 ns, 0 host allocations per tick.
+   - Telemetry sink and metadata: done (stable ABI 4, `set_services`).
+   - Typed `repr(C)` values and views: done (stable ABI 5, `#[derive(StablePod)]`, `tag::POD`,
+     `PodValue`, `register_stable_pod`). x86 only: `Detections` at 4 tags 4.9 µs against 33 µs
+     through `Value`, 1 / 4 allocations per tick. Still to do: the CM5 row.
+   - Plugin-local handles: not started.
+   - Adapters and serializers (C function pointers keyed by type name): not started.
+   - Codecs for the catalog nodes: not started.
    - Known: one `Serial/Off` allocation in 200 loaded runs of `graph_frame_allocations` (2026-11-06),
      not reproduced in 1,060 traced runs; site unknown.
    - Handle edges at 0 host allocations: parked until the payload layout change lands. The

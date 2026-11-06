@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::services::{self, HostServices, PluginSink};
 use super::value::{Arena, StableValue, to_value};
-use super::{NO_FANIN, StableInput, StableOutputSink, builtin, status};
+use super::{NO_FANIN, StableInput, StableOutputSink, builtin, pod, status};
 use crate::bytes::{SHARED_BYTES_KEY, SharedBytes};
 use crate::data::model::{TypeExpr, Value, ValueType};
 use crate::dylib::__support::LinkedDep;
@@ -18,7 +18,7 @@ use crate::runtime::host_bridge::ValueSerializerMap;
 use crate::runtime::io::{ConstCoercerMap, NodeConstInputs, NodeIo, NodeIoEnv};
 use crate::runtime::plugins::{Plugin, StableCodec};
 use crate::runtime::{ExecutionContext, NodeError, RuntimeNode, StateStore, TypeIndex};
-use crate::transport::{Payload, PayloadSlot, Residency, TypeKey};
+use crate::transport::{Payload, PayloadSlot, PodCodec, PodValue, Residency, TypeKey};
 
 /// The plugin's stable runtime: built by the first `create` (again after `unload`), shared by
 /// every instance created from it.
@@ -79,6 +79,8 @@ struct StablePort {
     scalar: Option<ValueType>,
     /// A [`SharedBytes`] port: crosses as a `daedalus:bytes` handle.
     shared_bytes: bool,
+    /// A `StablePod` struct port (`T` or `Vec<T>`): crosses as a typed byte view.
+    pod: Option<PodCodec>,
 }
 
 /// One host node instance: its node, execution context (and with it node state), the port ids
@@ -122,6 +124,7 @@ impl StableRuntime {
                 .clone()
                 .unwrap_or_else(|| crate::registry::typeexpr_transport_key(&port.ty));
             StablePort {
+                pod: codec.as_ref().and_then(|codec| codec.pod),
                 id: PortId::new(port.name.clone()),
                 shared_bytes: key.as_str() == SHARED_BYTES_KEY,
                 key,
@@ -201,6 +204,16 @@ impl StableRuntime {
         }
         if let Some(value) = any.downcast_ref::<Value>() {
             return Ok(arena.encode(value));
+        }
+        if let Some(value) = port
+            .pod
+            .as_ref()
+            .and_then(|codec| pod::encode(arena, codec, any))
+        {
+            return Ok(value);
+        }
+        if let Some(value) = any.downcast_ref::<PodValue>() {
+            return Ok(pod::encode_value(arena, value));
         }
         if let Some(value) = builtin::encode(any) {
             return Ok(value);
@@ -448,6 +461,12 @@ unsafe fn decode_input(
     if port.shared_bytes && value.tag == super::tag::BYTES {
         // Borrowed bytes (a host without a handle for them): copied, as nothing owns them.
         return Ok(slot.owned(key, SharedBytes::from(unsafe { value.as_bytes() })));
+    }
+    if value.tag == super::tag::POD {
+        return match &port.pod {
+            Some(codec) => unsafe { pod::decode(codec, key, slot, value) },
+            None => unsafe { pod::decode_value(key, slot, value) },
+        };
     }
     if let Some(scalar) = port.scalar {
         return unsafe { builtin::decode(scalar, key, slot, value) };

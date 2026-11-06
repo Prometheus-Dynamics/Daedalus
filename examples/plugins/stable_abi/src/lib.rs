@@ -5,7 +5,8 @@
 //! entry points. Its nodes cover what crosses that path: scalars (`u64` beyond `i64::MAX`
 //! included), a derived struct, bytes, an optional input, node state, a frame read through
 //! `daedalus:frame` without copying, a conditional output, a `fire = "all"` join, and a panic. The facade's `dylib_stable` test runs them statically and dynamically and compares.
-//! The [`frames`] nodes take and return owned `SharedFrame`s (the `dylib_frames` test).
+//! The [`frames`] nodes take and return owned `SharedFrame`s (the `dylib_frames` test); the
+//! [`pods`] nodes take and return a `StablePod` struct and `Vec`s of them (`dylib_stable_pod`).
 //! `SharedBytes` nodes show buffers crossing by reference both ways, and the `generation` node
 //! changes with the `reload-v2` / `reload-incompatible` features, so the `dylib_reload` test can
 //! rebuild the plugin between loads.
@@ -17,8 +18,11 @@ use daedalus::transport::FrameView;
 use daedalus::{DaedalusToValue, DaedalusTypeExpr, SharedBytes};
 
 pub mod frames;
+pub mod pods;
 #[allow(clippy::wildcard_imports)] // The node macro's generated items.
 use frames::*;
+#[allow(clippy::wildcard_imports)]
+use pods::*;
 
 /// A derived struct: built from a `Value` through serde, turned into one through `ToValue`.
 #[derive(Clone, Debug, PartialEq, DaedalusTypeExpr, DaedalusToValue, serde::Deserialize)]
@@ -172,7 +176,11 @@ pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
         frame_hold,
         metrics_probe,
         frame_explode,
-        frame_info
+        frame_info,
+        pod_scale,
+        pod_make,
+        pod_shift,
+        pod_count
     )
 )]
 pub struct StableAbiPlugin;

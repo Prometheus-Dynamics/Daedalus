@@ -6,6 +6,7 @@
 //!   strings, for the cost per constant.
 //! - [`detections`]: `Detections` (mirroring Eidos's) through `Value`, a source and a sink.
 //! - [`handle`]: the same `Detections` as a plugin-local foreign handle, a source and a sink.
+//! - [`pod`]: the same tags as a `Vec` of `StablePod` structs, a source and a sink.
 //! - [`staged`]: a stage with one handle in, one out, a frame input and 0 or 10 constants.
 //!
 //! The `dylib` feature exports the plugin from a `cdylib` whose descriptor claims another rustc,
@@ -14,6 +15,7 @@
 pub mod config;
 pub mod detections;
 pub mod handle;
+pub mod pod;
 pub mod staged;
 
 use daedalus::macros::plugin;
@@ -24,6 +26,8 @@ use config::*;
 use detections::*;
 #[allow(clippy::wildcard_imports)]
 use handle::*;
+#[allow(clippy::wildcard_imports)]
+use pod::*;
 #[allow(clippy::wildcard_imports)]
 use staged::*;
 
@@ -39,6 +43,8 @@ pub use handle::DetectionsInterface;
         value_sink,
         handle_source,
         handle_sink,
+        pod_source,
+        pod_sink,
         stage0,
         stage10,
         config_s0,

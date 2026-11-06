@@ -26,6 +26,8 @@ pub struct StableCodec {
     pub encode: Option<StableEncodeFn>,
     /// Builtin conversions, then `DaedalusTypeExpr::from_value`, then serde.
     pub decode: StableDecodeFn,
+    /// `T` or `Vec<T>` of a `StablePod` `T`: crosses as a typed byte view, not a `Value`.
+    pub pod: Option<daedalus_transport::PodCodec>,
 }
 
 impl core::fmt::Debug for StableCodec {
@@ -33,6 +35,7 @@ impl core::fmt::Debug for StableCodec {
         f.debug_struct("StableCodec")
             .field("rust_type", &self.rust_type)
             .field("encode", &self.encode.is_some())
+            .field("pod", &self.pod)
             .finish_non_exhaustive()
     }
 }
@@ -55,6 +58,28 @@ impl PluginRegistry {
             .get(&(node.to_string(), port.to_string()))
     }
 
+    /// Read stable plugin ports of type `key` that carry `StablePod` values as `P` (`T` or
+    /// `Vec<T>`): a plugin's elements arrive as `P` (after their layout is checked against
+    /// `T`'s) rather than as a `PodValue`, and a `P` the host feeds to such a port crosses as a
+    /// view. `P` is also registered as `key`'s boundary type, so the host feeds and takes it by
+    /// type. Replaces an earlier registration for `key`.
+    pub fn register_stable_pod<P>(&mut self, key: impl Into<TypeKey>) -> PluginResult<()>
+    where
+        P: daedalus_transport::PodPort + daedalus_transport::Reusable,
+    {
+        self.ensure_open()?;
+        let key = key.into();
+        self.register_boundary_type::<P>(key.clone())?;
+        self.stable_pods
+            .insert(key, daedalus_transport::PodCodec::of::<P>());
+        Ok(())
+    }
+
+    /// The `StablePod` port type registered for `key` ([`Self::register_stable_pod`]).
+    pub fn stable_pod(&self, key: &TypeKey) -> Option<&daedalus_transport::PodCodec> {
+        self.stable_pods.get(key)
+    }
+
     /// Macro support: node `node`'s port `port` carries `T`. A no-op unless
     /// [`Self::record_stable_codecs`] is on.
     #[doc(hidden)]
@@ -65,6 +90,7 @@ impl PluginRegistry {
         schema: Option<CoerceFn<T>>,
         serde: Option<CoerceFn<T>>,
         to_value: Option<fn(&T) -> Value>,
+        pod: Option<daedalus_transport::PodCodec>,
     ) where
         T: Send + Sync + 'static,
     {
@@ -87,6 +113,8 @@ impl PluginRegistry {
                 rust_type: core::any::type_name::<T>(),
                 encode,
                 decode,
+                // Scalars and their `Vec`s keep their builtin encodings.
+                pod: pod.filter(|pod| pod.layout.structure),
             },
         );
     }
@@ -99,11 +127,18 @@ mod tests {
     #[test]
     fn codecs_are_recorded_only_when_enabled() {
         let mut registry = PluginRegistry::new();
-        registry.register_stable_port::<i32>("n", "a", None, None, None);
+        registry.register_stable_port::<i32>("n", "a", None, None, None, None);
         assert!(registry.stable_codec("n", "a").is_none());
 
         registry.record_stable_codecs();
-        registry.register_stable_port::<i32>("n", "a", None, None, Some(|v| Value::Int(*v as i64)));
+        registry.register_stable_port::<i32>(
+            "n",
+            "a",
+            None,
+            None,
+            Some(|v| Value::Int(*v as i64)),
+            None,
+        );
         let codec = registry.stable_codec("n", "a").expect("recorded");
         assert_eq!(codec.type_id, TypeId::of::<i32>());
         let payload = (codec.decode)(TypeKey::new("i32"), &Value::Int(7)).expect("decodes");

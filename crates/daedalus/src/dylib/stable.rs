@@ -32,6 +32,13 @@
 //! made is) carries [`tag::HANDLE_FROM_SENDER`]; the host then keeps the plugin loaded. A
 //! plugin built against `daedalus:frame` v2 gets the host's v3 frames lent as v2.
 //!
+//! **Plain data.** A port whose Rust type is a `#[derive(StablePod)]` struct `T` or a `Vec<T>`
+//! crosses as a [`StablePodView`] of the sender's elements (pointer, count, element size and
+//! alignment, layout name and hash), checked against the receiver's layout and copied once into
+//! its `T`/`Vec<T>` (no `Value`, no per-field allocation). A host without the Rust type keeps the
+//! elements as a [`PodValue`](crate::transport::PodValue), which it passes on unchanged; a host
+//! that registered the type (`PluginRegistry::register_stable_pod`) gets `T`/`Vec<T>`.
+//!
 //! **Host side.** [`PluginLibrary::install_into`](super::PluginLibrary::install_into) uses this
 //! path when [`rust_abi`](super::PluginLibrary::rust_abi) reports a mismatch and
 //! [`StableHandlers::version`] equals [`STABLE_ABI_VERSION`]: it registers the schema's node
@@ -43,19 +50,22 @@
 //! `SharedBytes` in place, everything else as a `Value` payload under the port's key).
 
 mod builtin;
+mod generation;
 mod host;
 mod plugin;
+mod pod;
 pub mod services;
 mod value;
 
-pub(super) use host::{Generation, PluginSlot, StablePlugin};
+pub(super) use generation::{Generation, PluginSlot};
+pub(super) use host::StablePlugin;
 #[doc(hidden)]
 pub use plugin::{
     StableRuntimeCell, create as __create, invoke as __invoke, release as __release,
     unload as __unload,
 };
 pub use services::{HostServices, MetricRecord, SetServicesFn};
-pub use value::{Arena, StableEnum, StableField, StableValue, tag, to_value};
+pub use value::{Arena, StableEnum, StableField, StablePodView, StableValue, tag, to_value};
 
 /// The stable extension symbol a version-3 plugin exports (see [`StableExtension`]).
 pub const STABLE_EXTENSION_SYMBOL: &str = "daedalus_plugin_stable_extension";
@@ -79,7 +89,13 @@ use std::ffi::c_void;
 /// Version 4: [`StableExtension`] gains [`SetServicesFn`]: custom metrics a plugin node records
 /// reach the host node's telemetry, and the plugin context carries the node and graph metadata
 /// (see [`services`]). A version-4 extension is read only from a version-4 plugin.
-pub const STABLE_ABI_VERSION: u32 = 4;
+///
+/// Version 5: [`tag::POD`] values, plain-old-data elements lent as a [`StablePodView`] (see
+/// [`StablePod`](crate::transport::StablePod)). The tables keep their layout; the version marks
+/// that both sides read the new tag, so the host sends one only to a version-5 plugin, and a
+/// version-4 host refuses a plugin that may send one. Versions 4 and 5 share the extension
+/// layout.
+pub const STABLE_ABI_VERSION: u32 = 5;
 
 /// The oldest [`STABLE_ABI_VERSION`] the stable path still installs.
 pub const STABLE_ABI_MIN_VERSION: u32 = 2;

@@ -80,7 +80,7 @@ path for a same-build plugin, to test it):
 | Taken when | `rust_abi()` is `Ok` | `rust_abi()` differs and `stable_abi_version()` equals the host's `STABLE_ABI_VERSION` |
 | Requires | same Daedalus version, rustc and build fingerprint; boundary types identical to the host's | same `PLUGIN_ABI_VERSION` and `STABLE_ABI_VERSION`; foreign interfaces identical |
 | Installs | everything the plugin registers (nodes, adapters, serializers, capabilities, types) | the schema's nodes, each with a host handler calling the plugin |
-| Values | Rust payloads, no conversion | builtins, `Value`s, `ToValue`/`Deserialize` types, foreign handles |
+| Values | Rust payloads, no conversion | builtins, `Value`s, `ToValue`/`Deserialize` types, `StablePod` structs, foreign handles |
 | Per call | nothing | about 1 µs (below) |
 
 Both check dependencies and foreign interfaces first; only the Rust ABI path compares boundary
@@ -91,7 +91,7 @@ with `PluginLibraryError::StableAbiMismatch`, naming the Rust ABI mismatch too.
 
 The descriptor carries `StableHandlers { version, create, invoke, release, unload }` (since
 `PLUGIN_ABI_VERSION` 10; version 8 introduced it), versioned on its own by `STABLE_ABI_VERSION`
-(2), so the value encoding can evolve without breaking loading and introspection.
+(5; versions 2 to 5 install), so the value encoding can evolve without breaking loading and introspection.
 
 - **Plugin side.** On its first `create` the plugin builds a private registry (linked
   dependencies, then itself) with node port codecs recorded: for every port with a concrete Rust
@@ -143,13 +143,39 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
   as a static node's do. The host keeps no handle to its state store from the instance (the
   instance lives in the node's state, so such a handle would be a reference cycle). A plugin
   built before version 4 keeps its consts per call and records no metrics.
+- **Plain data (stable ABI 5).** A port whose Rust type is a `#[derive(StablePod)]` struct `T`
+  (`#[repr(C)]`, no padding, fields that are numbers, fixed arrays or other `StablePod` structs,
+  alignment at most 8) or a `Vec<T>` crosses as a typed byte view (`tag::POD`, a `StablePodView`:
+  pointer, element count, element size and alignment, the layout's name and hash), not through
+  `Value`. The receiver checks name, hash, size and alignment against its own `T` before reading,
+  then copies the elements once into its `T`/`Vec<T>` (refilling the previous call's allocation
+  when it is free). A different layout under the same name fails the call with a typed error
+  (`plain data layout mismatch: expected ..., found ...`), on whichever side reads it. A host
+  without the Rust type holds the elements as a `PodValue` and lends them on to the next plugin
+  node as they came; `PodValue::as_slice::<T>()` reads them by layout. A host that defines the
+  type too registers it (`registry.register_stable_pod::<BoxPod>("app:box")`,
+  `register_stable_pod::<Vec<BoxPod>>("app:boxes")`) to get and feed `T`/`Vec<T>` directly.
+  Numbers and their `Vec`s keep their builtin encodings. The host sends a view only to a
+  version-5 plugin.
+
+  ```rust
+  #[derive(Clone, Copy, Default, daedalus::StablePod)]
+  #[repr(C)]
+  #[daedalus::type_key("app:box")]
+  pub struct BoxPod { pub id: u32, pub score: f32, pub corners: [[i32; 2]; 4] }
+
+  #[node(id = "shift", inputs(port(name = "boxes", type_key = "app:boxes"), "dx"),
+      outputs(port(name = "out", type_key = "app:boxes")))]
+  fn shift(boxes: Vec<BoxPod>, dx: i32) -> Result<Vec<BoxPod>, NodeError> { /* ... */ }
+  ```
 - **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
   schemas, device transports and boundary contracts stay in the plugin. Typed values the host
   lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type converts.
 
 `examples/plugins/stable_abi` is a plugin whose descriptor claims another rustc; the facade's
 `dylib_stable` test installs it through the stable path and compares every node with the static
-install, and `dylib_reload` rebuilds it between loads.
+install, `dylib_stable_pod` covers its `StablePod` nodes (typed, as `PodValue`s, and a layout
+mismatch each way), and `dylib_reload` rebuilds it between loads.
 
 **Performance** (release, x86-64 desktop, `cargo test -p daedalus-rs --features
 engine,dylib-plugins --release --test dylib_stable -- --ignored --nocapture`): a scalar node
@@ -171,6 +197,22 @@ load average of about 50, so timings are noisy): the per-constant slope on the s
 from 250 to 110 ns for scalars (static 87 ns; 54 ns on the base run) and from 385 to 162 ns for
 quarter strings (static 126 ns). Allocations per tick on the host are now zero for constants,
 against two and twelve for the quarter-string cases before (`--test dylib_stable_bench_allocations`).
+
+**Plain data** (stable ABI 5, x86-64 release, `--test dylib_stable_bench`, machine at a load
+average of about 62, so timings are noisy): a `Detections`-shaped value (per tag an id, rotation,
+hamming distance, four integer and four sub-pixel corners) from a source node to a sink node costs,
+per tick through the stable path:
+
+| tags | through `Value` | as `Vec<TagPod>` (`StablePod`) | as a plugin-local handle | static |
+| --- | --- | --- | --- | --- |
+| 0 | 5.8 µs | 4.8 µs | 4.4 µs | 2.5-2.8 µs |
+| 4 | 33.1 µs | 4.9 µs | 4.5 µs | 2.6-2.9 µs |
+| 16 | 128.0 µs | 4.0 µs | 5.2 µs | 2.4-3.3 µs |
+
+Allocations per tick (host / plugin, `--test dylib_stable_bench_allocations`): through `Value`
+133 / 276 at 4 tags and 509 / 1052 at 16; as `StablePod` structs 1 / 4 at every tag count (the
+plugin's 4 are the source building its `Vec`; the decode refills the previous call's `Vec`).
+`DAEDALUS_BENCH_COUNTERS=1` prints hardware counters for the 4- and 16-tag rows of both.
 
 **Allocations** (`--test dylib_stable_allocations`): after warm-up a tick through a stable
 plugin allocates no more on the host than the same graph with the plugin installed statically.

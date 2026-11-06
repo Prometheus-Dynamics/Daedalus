@@ -22,6 +22,23 @@ plugin ABI and does not load.
   `daedalus_surface_host_schemas` lists an image surface's in-image plugins, ahead of the
   installed libraries. `daedalus::dylib::registry_plugin_schema` builds a `PluginSchema` for a
   plugin installed through the Rust path.
+- Plain-old-data values on the stable plugin path (stable ABI 5): `#[derive(StablePod)]` (re-exported
+  as `daedalus::StablePod`) on a `#[repr(C)]`, padding-free struct of numbers, fixed arrays and
+  other `StablePod` structs gives it a `PodLayout` (name, size, alignment, and an FNV-1a hash of its
+  field names, offsets and field layouts; `daedalus::transport::StablePod`). A node port of such a
+  `T` or a `Vec<T>` crosses as a `StablePodView` (`tag::POD`: pointer, element count, element size
+  and alignment, layout name and hash), checked against the receiver's layout and copied once into
+  its own `T`/`Vec<T>`, not through `Value`; a different layout under the same name is a typed error
+  (`PodMismatch`, "plain data layout mismatch") on either side. A host without the Rust type gets a
+  `PodValue` (the elements and their layout, read back with `as_slice::<T>()`/`get::<T>()`), which
+  it passes on to the next plugin node unchanged; `PluginRegistry::register_stable_pod::<T or
+  Vec<T>>(key)` gives it the typed value instead and lets it feed one. Only struct layouts cross
+  as views; numbers and their `Vec`s keep their builtin encodings. `PayloadSlot::owned_reused`
+  refills a payload in place (a `Vec` keeps its capacity), so a warm decode allocates nothing. On
+  x86-64 (release, load average about 62), a `Detections`-shaped value at 4 / 16 tags costs
+  4.9 / 4.0 µs per tick through the stable path as `Vec<TagPod>`, against 33 / 128 µs through
+  `Value`, and 1 / 4 host / plugin allocations per tick against 133 / 276 and 509 / 1052
+  (`dylib_stable_bench`, `dylib_stable_bench_allocations`, case `detections_pod`).
 - Shared-library surface, first version: `daedalus-surface` (`crates/surface`, a `cdylib` and
   `rlib`) is a C ABI over the in-process graph runtime, on `lemnos-abi` (pinned at `cf3a4ac`). It
   has the version handshake (`daedalus_surface_version`, `daedalus_surface_features`), host
@@ -688,10 +705,12 @@ plugin ABI and does not load.
 
 ### Changed
 
-- `daedalus::dylib::STABLE_ABI_VERSION` is 4 (was 2). The stable path installs versions
-  `STABLE_ABI_MIN_VERSION` (2) to 4 (`stable_abi_supported`); `StableHandlers` is unchanged, so
-  `PLUGIN_ABI_VERSION` stays 11. Only a version-4 plugin's `daedalus_plugin_stable_extension` is
-  read, so a version-3 plugin's consts go per call.
+- `daedalus::dylib::STABLE_ABI_VERSION` is 5 (was 2). The stable path installs versions
+  `STABLE_ABI_MIN_VERSION` (2) to 5 (`stable_abi_supported`); `StableHandlers` is unchanged, so
+  `PLUGIN_ABI_VERSION` stays 11. Version 5 adds the `tag::POD` value (the tables keep their
+  layout): the host sends one only to a version-5 plugin, and a version-4 host refuses a version-5
+  plugin. A version-4 or version-5 plugin's `daedalus_plugin_stable_extension` is read (same
+  layout); a version-3 plugin's consts go per call.
 - **Plain values are held inline in the payload (public API change).** `Payload::plain` holds a
   `Copy` value of at most 32 bytes with alignment at most 8 in the payload, instead of in an `Arc`:
   the detector's `Stats`, `Roi`, `Track`, `Report`, `Histogram` and `FrameInfo` outputs now

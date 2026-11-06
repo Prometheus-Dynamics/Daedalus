@@ -33,6 +33,7 @@ mod ids;
 mod kinds;
 mod payload;
 mod payload_lifecycle;
+mod pod;
 mod rust_type;
 mod stream_policy;
 
@@ -64,6 +65,10 @@ pub use payload::{
 pub use payload_lifecycle::{
     BranchKind, BranchPayload, CorrelationId, PayloadLifecycleStage, PayloadLineage,
     PayloadRelease, PayloadReleaseQueue, ReleaseContext, ReleaseMode,
+};
+pub use pod::{
+    POD_MAX_ALIGN, PodCodec, PodField, PodLayout, PodMismatch, PodPort, PodValue, Reusable,
+    StablePod, pod_slice,
 };
 pub use rust_type::{RustTypeIdentity, TypeKeyError};
 pub use stream_policy::{

@@ -136,6 +136,25 @@ Against the estimates in the audit of running Eidos on the stable path:
   at 16, so 20 struct edges cost about 0.75 ms at 4 tags. Confirmed, and it allocates per tag.
 - A handle costs the same at 0, 4 and 16 tags.
 
+## Stable plugin path: `Detections` as `StablePod` structs (x86-64)
+
+x86-64 desktop, NOT the CM5: 2026-11-06, release, load average about 62 (other builds running),
+so treat the timings as rough. One run of `cargo test -p daedalus-rs --features
+engine,dylib-plugins --release --test dylib_stable_bench -- --ignored --nocapture` and
+`--test dylib_stable_bench_allocations`. Case `detections_pod`: the same tags as the `Detections`
+fixture as a `Vec<TagPod>` (`#[derive(StablePod)]`, 72 bytes per tag), crossing as a typed byte
+view (stable ABI 5).
+
+| case | static p50 | stable p50 | host / plugin allocations per tick (stable) |
+| --- | --- | --- | --- |
+| through `Value`, 0 / 4 / 16 tags | 2.8 / 2.9 / 3.3 µs | 5.8 / 33.1 / 128.0 µs | 7 / 12, 133 / 276, 509 / 1052 |
+| plugin-local handle, 0 / 4 / 16 tags | 2.5 / 2.6 / 2.9 µs | 4.4 / 4.5 / 5.2 µs | 2 / 2, 2 / 4, 2 / 4 |
+| `StablePod` structs, 0 / 4 / 16 tags | 2.7 / 2.7 / 2.4 µs | 4.8 / 4.9 / 4.0 µs | 1 / 1, 1 / 4, 1 / 4 |
+
+The plain-data crossing costs about what a handle does and does not grow with the tag count at
+these sizes (one copy of 72 bytes per tag each way); through `Value` it grows by about 8 µs per
+tag here. The CM5 row is still to be measured.
+
 ## Inline plain payloads (208 B) and stable ABI 3 on the CM5
 
 Raze #1 (CM5, kernel 7.2.9-v8-16k, HeliOS services running), 2026-11-06. Release, aarch64 glibc,

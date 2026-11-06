@@ -4,17 +4,14 @@
 use std::any::Any;
 use std::ffi::c_void;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::Arc;
 
+use super::generation::{Generation, PluginSlot};
 use super::services::{self, HostServices, HostSink};
 use super::value::{Arena, StableValue, to_value};
-use super::{
-    NO_FANIN, StableExtension, StableHandlers, StableInput, StableOutputSink, builtin, status, tag,
-};
+use super::{NO_FANIN, StableInput, StableOutputSink, builtin, pod, status, tag};
 use crate::bytes::{SHARED_BYTES_KEY, SharedBytes};
 use crate::data::model::{Value, ValueType};
-use crate::dylib::library::LibraryHandle;
 use crate::dylib::{PluginSchema, StrSink, loader};
 use crate::registry::capability::PluginManifest;
 use crate::runtime::handles::PortId;
@@ -23,157 +20,12 @@ use crate::runtime::io::{NodeConstInputs, NodeIo};
 use crate::runtime::plugins::{Plugin, PluginError, PluginInstallContext, PluginResult};
 use crate::runtime::{ExecutionContext, NodeError};
 use crate::transport::{
-    ForeignInterface, ForeignInterfaceInfo, FrameInterface, Payload, PayloadSlot, Residency,
-    TypeKey, frame_handle_from_v2, is_frame_v2,
+    ForeignInterface, ForeignInterfaceInfo, FrameInterface, Payload, PayloadSlot, PodCodec,
+    PodValue, Residency, TypeKey, frame_handle_from_v2, is_frame_v2,
 };
 
-/// One loaded build of a plugin: its stable entry points and the library they live in. Node
-/// instances and buffers the build produced hold it; when the last one drops, the plugin's
-/// runtime is unloaded and the library closed (unless pinned).
-pub struct Generation {
-    number: u64,
-    handlers: StableHandlers,
-    /// The schema index, in this build, of each node the slot's installs registered.
-    nodes: Vec<u32>,
-    /// `None` for a descriptor of this process (tests).
-    library: Option<Arc<LibraryHandle>>,
-    /// The build's stable extension, when it exports one (see [`super::StableExtension`]);
-    /// without it consts are sent with every call and no services are delivered.
-    extension: Option<StableExtension>,
-}
-
-impl Generation {
-    pub fn new(
-        number: u64,
-        handlers: StableHandlers,
-        nodes: Vec<u32>,
-        library: Option<Arc<LibraryHandle>>,
-        extension: Option<StableExtension>,
-    ) -> Self {
-        Self {
-            number,
-            handlers,
-            nodes,
-            library,
-            extension,
-        }
-    }
-
-    /// Never close this build's library: the host keeps something that points into it.
-    fn pin(&self) {
-        if let Some(library) = &self.library {
-            library.pin();
-        }
-    }
-}
-
-impl Drop for Generation {
-    fn drop(&mut self) {
-        // Safety: the plugin's entry point; every instance of this generation was released
-        // (each holds the generation), and the library is still open (dropped after this).
-        unsafe { (self.handlers.unload)() };
-    }
-}
-
-/// What a stable install's handlers call: a plugin's current [`Generation`], swapped in place by
-/// a reload. Node instances bound to an older generation are reset on their next call.
-pub struct PluginSlot {
-    current: RwLock<Arc<Generation>>,
-    number: AtomicU64,
-    /// Every generation published, to report the live ones.
-    published: Mutex<Vec<Weak<Generation>>>,
-    /// Each installed node's id and ports (JSON), which a reload must keep.
-    interface: Vec<(String, String)>,
-}
-
-impl PluginSlot {
-    /// A slot for `schema`'s nodes, running `generation` (whose `nodes` index `schema.nodes`).
-    pub fn new(schema: &PluginSchema, generation: Generation) -> Self {
-        let number = generation.number;
-        let generation = Arc::new(generation);
-        Self {
-            published: Mutex::new(vec![Arc::downgrade(&generation)]),
-            current: RwLock::new(generation),
-            number: AtomicU64::new(number),
-            interface: schema.nodes.iter().map(node_interface).collect(),
-        }
-    }
-
-    pub fn current(&self) -> Arc<Generation> {
-        self.current
-            .read()
-            .unwrap_or_else(|err| err.into_inner())
-            .clone()
-    }
-
-    /// The current generation's number (one atomic load).
-    fn number(&self) -> u64 {
-        self.number.load(Ordering::Acquire)
-    }
-
-    /// The schema index in `schema` of each installed node, or what changed in its interface.
-    pub fn node_indices(&self, schema: &PluginSchema) -> Result<Vec<u32>, Vec<String>> {
-        let mut changes = Vec::new();
-        let indices = self
-            .interface
-            .iter()
-            .filter_map(|(id, ports)| {
-                let Some(index) = schema.nodes.iter().position(|node| &node.id == id) else {
-                    changes.push(format!("node `{id}` was removed"));
-                    return None;
-                };
-                if node_interface(&schema.nodes[index]).1 != *ports {
-                    changes.push(format!("node `{id}` changed its ports"));
-                }
-                Some(index as u32)
-            })
-            .collect();
-        if changes.is_empty() {
-            Ok(indices)
-        } else {
-            Err(changes)
-        }
-    }
-
-    /// Make `generation` current: calls already running finish on the old one, and every node
-    /// instance's next call resets it onto the new one.
-    pub fn publish(&self, generation: Generation) {
-        let number = generation.number;
-        let generation = Arc::new(generation);
-        {
-            let mut published = self.published.lock().unwrap_or_else(|err| err.into_inner());
-            published.retain(|generation| generation.strong_count() > 0);
-            published.push(Arc::downgrade(&generation));
-        }
-        let old = std::mem::replace(
-            &mut *self.current.write().unwrap_or_else(|err| err.into_inner()),
-            generation,
-        );
-        self.number.store(number, Ordering::Release);
-        drop(old);
-    }
-
-    /// The numbers of the generations still loaded (current first).
-    pub fn live_generations(&self) -> Vec<u64> {
-        let current = self.number();
-        let mut live: Vec<u64> = self
-            .published
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .iter()
-            .filter_map(Weak::upgrade)
-            .map(|generation| generation.number)
-            .filter(|number| *number != current)
-            .collect();
-        live.insert(0, current);
-        live
-    }
-}
-
-fn node_interface(node: &daedalus_ffi_host::core::NodeSchema) -> (String, String) {
-    let ports = serde_json::to_string(&(&node.inputs, &node.outputs)).unwrap_or_default();
-    (node.id.clone(), ports)
-}
+/// The first [`super::STABLE_ABI_VERSION`] that reads [`tag::POD`] values.
+const POD_VERSION: u32 = 5;
 
 /// A plugin installed through its schema and stable entry points.
 pub struct StablePlugin<'a> {
@@ -209,6 +61,16 @@ impl Plugin for StablePlugin<'_> {
             };
             ctx.register_foreign_interface_info(*interface)?;
         }
+        let pods: std::collections::BTreeMap<TypeKey, PodCodec> = self
+            .schema
+            .nodes
+            .iter()
+            .flat_map(|node| node.inputs.iter().chain(&node.outputs))
+            .filter_map(|port| {
+                let key = port.type_key.clone()?;
+                Some((key.clone(), *ctx.stable_pod(&key)?))
+            })
+            .collect();
         let port = |port: &daedalus_ffi_host::core::WirePort| {
             let key = port
                 .type_key
@@ -219,6 +81,7 @@ impl Plugin for StablePlugin<'_> {
                 name: port.name.clone(),
                 scalar: builtin::scalar_of(&port.ty, &key),
                 shared_bytes: key.as_str() == SHARED_BYTES_KEY,
+                pod: pods.get(&key).copied(),
                 key,
             }
         };
@@ -260,6 +123,8 @@ struct HostPort {
     key: TypeKey,
     scalar: Option<ValueType>,
     shared_bytes: bool,
+    /// The host's `StablePod` type for the port's key (`PluginRegistry::register_stable_pod`).
+    pod: Option<PodCodec>,
 }
 
 struct HostNode {
@@ -436,7 +301,13 @@ impl HostNode {
             encoded.push(StableInput {
                 port: index,
                 fanin,
-                value: self.encode_input(port.as_str(), &payload.inner, &mut arena)?,
+                value: self.encode_input(
+                    port.as_str(),
+                    index,
+                    &payload.inner,
+                    &mut arena,
+                    instance.generation.handlers.version >= POD_VERSION,
+                )?,
             });
         }
         let mut message: Option<String> = None;
@@ -479,13 +350,14 @@ impl HostNode {
             services: _,
         } = instance;
         // The consts the instance holds are not sent again; otherwise every input is.
+        let pods = generation.handlers.version >= POD_VERSION;
         if consts.is_some() {
             for (position, (port, payload)) in io.edge_inputs().iter().enumerate() {
-                self.push_input(resolved, inputs, arena, position, port, payload)?;
+                self.push_input(resolved, inputs, arena, position, port, payload, pods)?;
             }
         } else {
             for (position, (port, payload)) in io.inputs().enumerate() {
-                self.push_input(resolved, inputs, arena, position, port, payload)?;
+                self.push_input(resolved, inputs, arena, position, port, payload, pods)?;
             }
         }
         if scalars.len() < self.outputs.len() {
@@ -524,7 +396,9 @@ impl HostNode {
         Err(self.error(code, error.or(message)))
     }
 
-    /// Encode one input of a call at `position` onto `inputs`.
+    /// Encode one input of a call at `position` onto `inputs` (`pods`: the plugin reads
+    /// [`tag::POD`] values).
+    #[allow(clippy::too_many_arguments)]
     fn push_input(
         &self,
         resolved: &mut Vec<(PortId, u32, u32)>,
@@ -533,12 +407,13 @@ impl HostNode {
         position: usize,
         port: &PortId,
         payload: &crate::runtime::executor::CorrelatedPayload,
+        pods: bool,
     ) -> Result<(), NodeError> {
         let (index, fanin) = self.resolve_input(resolved, position, port)?;
         inputs.push(StableInput {
             port: index,
             fanin,
-            value: self.encode_input(port.as_str(), &payload.inner, arena)?,
+            value: self.encode_input(port.as_str(), index, &payload.inner, arena, pods)?,
         });
         Ok(())
     }
@@ -594,8 +469,10 @@ impl HostNode {
     fn encode_input(
         &self,
         port: &str,
+        index: u32,
         payload: &Payload,
         arena: &mut Arena,
+        pods: bool,
     ) -> Result<StableValue, NodeError> {
         if self.frame_v2
             && let Some(value) = arena.lend_frame_as_v2(payload)
@@ -612,6 +489,15 @@ impl HostNode {
             }
             if let Some(value) = any.downcast_ref::<Value>() {
                 return Ok(arena.encode(value));
+            }
+            if pods {
+                let codec = self.inputs.get(index as usize).and_then(|port| port.pod);
+                if let Some(value) = codec.and_then(|codec| pod::encode(arena, &codec, any)) {
+                    return Ok(value);
+                }
+                if let Some(value) = any.downcast_ref::<PodValue>() {
+                    return Ok(pod::encode_value(arena, value));
+                }
             }
             if let Some(value) = builtin::encode(any) {
                 return Ok(value);
@@ -680,6 +566,12 @@ impl Outputs<'_> {
                 }
                 // A frame from a plugin built against frame v2 is read through v3.
                 Payload::foreign(key, frame_handle_from_v2(handle.clone()), value.residency())
+            }
+        } else if value.tag == tag::POD {
+            let slot = &mut self.scalars[index as usize];
+            match &port.pod {
+                Some(codec) => unsafe { pod::decode(codec, key, slot, value) }?,
+                None => unsafe { pod::decode_value(key, slot, value) }?,
             }
         } else if port.shared_bytes && value.tag == tag::BYTES {
             Payload::owned(key, SharedBytes::from(unsafe { value.as_bytes() }))

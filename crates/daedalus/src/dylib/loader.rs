@@ -565,14 +565,14 @@ impl PluginLibrary {
     }
 }
 
-/// The stable extension of a library, if it exports one for `version` (only version-4 builds
-/// have the current layout, so an older build's extension is not read).
+/// The stable extension of a library, if it exports one for `version` (versions 4 and 5 have
+/// the current layout; an older build's extension is not read).
 ///
 /// # Safety
 /// `library` must be a loaded plugin library, and the extension symbol must have the
 /// [`StableExtension`] layout of this build.
 unsafe fn stable_extension(library: &LibraryHandle, version: u32) -> Option<StableExtension> {
-    if version != STABLE_ABI_VERSION {
+    if !(4..=STABLE_ABI_VERSION).contains(&version) {
         return None;
     }
     type ExtensionFn = unsafe extern "C" fn() -> StableExtension;
