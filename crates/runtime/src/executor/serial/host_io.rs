@@ -20,7 +20,7 @@ use crate::executor::{
     CorrelatedPayload, ExecuteError, Executor, NodeError, NodeHandler, ProbeCount, ProbeTime,
 };
 
-use super::edges::fan_out;
+use super::edges::{adapt_edge_payload, edge_adapts, fan_out};
 use super::{SerialView, edge_is_active, edge_uses_direct_slot, node_is_active};
 
 /// One host-bridge node with its bridge handle and edge wiring.
@@ -135,11 +135,32 @@ fn clear_edge(v: &mut SerialView<'_>, edge_idx: usize) {
 
 /// Drain the host outputs of `exec` (see [`drain`]).
 #[cfg(feature = "threads")]
-pub(crate) fn drain_host_outputs<H: NodeHandler>(exec: &mut Executor<'_, H>) {
-    drain(&mut super::view(exec));
+pub(crate) fn drain_host_outputs<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+) -> Result<(), ExecuteError> {
+    drain(&mut super::view(exec))
 }
 
-pub(super) fn drain(v: &mut SerialView<'_>) {
+/// `payload`, taken from the edge `edge_idx` into a host output, through the edge's adapters (the
+/// direct host route takes its output this way instead of draining).
+pub(crate) fn adapt_host_output<H: NodeHandler>(
+    exec: &mut Executor<'_, H>,
+    edge_idx: usize,
+    payload: CorrelatedPayload,
+) -> Result<CorrelatedPayload, ExecuteError> {
+    let mut v = super::view(exec);
+    if !edge_adapts(&v, edge_idx) {
+        return Ok(payload);
+    }
+    let edge = &v.edges[edge_idx];
+    let (host, to) = (edge.to().0, edge.target_port_id());
+    adapt_edge_payload(&mut v, edge_idx, payload, host, to)
+}
+
+/// Hand what the edges into host outputs hold to their host bridges, through each edge's
+/// adapters (a planner-inserted conversion to the host port's type); an adapter's failure stops
+/// the drain.
+pub(super) fn drain(v: &mut SerialView<'_>) -> Result<(), ExecuteError> {
     let _scope = crate::executor::runtime_alloc_scope();
     let start = v
         .core
@@ -161,19 +182,30 @@ pub(super) fn drain(v: &mut SerialView<'_>) {
             {
                 continue;
             }
+            let adapts = edge_adapts(v, edge_idx);
             if edge_uses_direct_slot(v, edge_idx) {
-                while let Some(payload) = pop_direct_edge(v.core, v.direct_slot_access, edge_idx) {
+                while let Some(mut payload) =
+                    pop_direct_edge(v.core, v.direct_slot_access, edge_idx)
+                {
+                    if adapts {
+                        let to = edges[edge_idx].target_port_id();
+                        payload = adapt_edge_payload(v, edge_idx, payload, host.node_idx, to)?;
+                    }
                     host.handle.push_outbound_ref(port, payload.inner);
                 }
                 continue;
             }
-            while let Some(payload) =
+            while let Some(mut payload) =
                 pop_edge(edge_idx, &v.core.queues, &v.core.data_size_inspectors)
             {
                 if let (Some(probe), Some(enqueued_at)) =
                     (&v.core.run_config.frame_probe, payload.enqueued_at)
                 {
                     probe.record_queue_wait(edge_idx, v.core.clock.elapsed(enqueued_at));
+                }
+                if adapts {
+                    let to = edges[edge_idx].target_port_id();
+                    payload = adapt_edge_payload(v, edge_idx, payload, host.node_idx, to)?;
                 }
                 host.handle.push_outbound_ref(port, payload.inner);
             }
@@ -182,4 +214,5 @@ pub(super) fn drain(v: &mut SerialView<'_>) {
     if let (Some(probe), Some(start)) = (&v.core.run_config.frame_probe, start) {
         probe.add_time(ProbeTime::Drain, v.core.clock.elapsed(start));
     }
+    Ok(())
 }

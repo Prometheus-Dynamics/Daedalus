@@ -109,10 +109,11 @@ where
     // Every worker's telemetry folds into the run's, which is then finished and taken as one.
     pool.absorb_telemetry(&mut exec.core.telemetry);
     exec.core.telemetry.errors.extend(failures);
-    serial::drain_host_outputs(exec);
+    let drained = serial::drain_host_outputs(exec);
     if let Some(error) = error {
         return Err(error);
     }
+    drained?;
     Ok((serial::finish_telemetry(&mut exec.core), busiest))
 }
 

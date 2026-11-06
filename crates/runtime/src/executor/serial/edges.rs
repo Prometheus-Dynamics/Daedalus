@@ -143,7 +143,7 @@ fn record_queue_wait(
 
 /// Whether `edge_idx` runs an adapter path on its payloads: the check [`adapt_edge_payload`] makes
 /// first, so an edge that adapts nothing never moves its payload through that call.
-fn edge_adapts(v: &SerialView<'_>, edge_idx: usize) -> bool {
+pub(super) fn edge_adapts(v: &SerialView<'_>, edge_idx: usize) -> bool {
     v.edge_transports
         .get(edge_idx)
         .and_then(Option::as_ref)
@@ -151,7 +151,7 @@ fn edge_adapts(v: &SerialView<'_>, edge_idx: usize) -> bool {
         && v.core.runtime_transport.is_some()
 }
 
-fn adapt_edge_payload(
+pub(super) fn adapt_edge_payload(
     v: &mut SerialView<'_>,
     edge_idx: usize,
     payload: CorrelatedPayload,

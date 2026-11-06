@@ -691,6 +691,13 @@ plugin ABI and does not load.
 
 ### Fixed
 
+- A graph edge into a host output now runs its adapters when the host bridge drains it. The
+  planner put an adapter on such an edge when the host port's type differed from the producer's,
+  but the drain handed the payload over unconverted (only node inputs ran adapters), so the host
+  took the producer's type. A failing adapter fails the tick, as on a node input. The direct host
+  route (`tick_direct_payload`, `tick_direct_route`) runs its output edge's adapters too, and its
+  single-node path steps aside when either edge adapts. Test: the engine's
+  `host_output_adapters` (serial and parallel executors, a tick and the direct route).
 - A dmabuf import that the driver refuses no longer double-closes its fd on NVIDIA's proprietary
   driver. NVIDIA 595.104.02 closes the fd inside a refused `vkAllocateMemory`, against the spec,
   and the import then closed it again: a debug abort (`IO Safety violation`), and in release a

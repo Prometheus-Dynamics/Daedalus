@@ -18,7 +18,7 @@ use edges::{collect_inputs, publish_outputs};
 use fused::{Carry, FusedOutputs};
 #[cfg(feature = "threads")]
 pub(crate) use host_io::drain_host_outputs;
-pub(crate) use host_io::{HostNodeIo, inject_host_inputs, resolve_host_nodes};
+pub(crate) use host_io::{HostNodeIo, adapt_host_output, inject_host_inputs, resolve_host_nodes};
 
 /// The executor state a serial run reads and writes apart from its handler. The helpers take
 /// this rather than `Executor<H>`, so each is compiled once instead of once per handler type.
@@ -433,7 +433,7 @@ fn run_order_timed<H: NodeHandler>(
     // Before the telemetry is finished: the queue waits of the outputs this tick hands to the host
     // belong to this tick's telemetry, and a recycled telemetry would drop them otherwise.
     if drain_outputs {
-        host_io::drain(&mut v);
+        host_io::drain(&mut v)?;
     }
     if v.core.run_config.fail_fast
         && let Some(error) = first_error

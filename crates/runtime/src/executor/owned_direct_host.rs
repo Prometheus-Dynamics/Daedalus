@@ -126,17 +126,21 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             .copied()
             .unwrap_or(false)
         {
-            self.core.direct_slots[route.output_edge]
-                .serial()
-                .take()
-                .map(|payload| payload.inner)
+            self.core.direct_slots[route.output_edge].serial().take()
         } else {
             queue::pop_edge(
                 route.output_edge,
                 &self.core.queues,
                 &self.core.data_size_inspectors,
             )
-            .map(|payload| payload.inner)
+        };
+        // The output edge's adapters (a conversion to the host port's type), as a drain runs them.
+        let output = match output {
+            Some(payload) if self.adapts(route.output_edge) => {
+                let mut exec = self.snapshot(DirectSlotAccess::Serial);
+                Some(serial::adapt_host_output(&mut exec, route.output_edge, payload)?.inner)
+            }
+            output => output.map(|payload| payload.inner),
         };
         self.end_probe_tick(tick);
         Ok((telemetry, output))
@@ -270,6 +274,11 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         input_edge: usize,
         output_edge: usize,
     ) -> Option<DirectHostSingleNodeRoute> {
+        // The single-node path hands payloads over as they are: an edge with adapters takes the
+        // serial path, which runs them.
+        if self.adapts(input_edge) || self.adapts(output_edge) {
+            return None;
+        }
         let input_edge = self.plan.edges.get(input_edge)?;
         let output_edge = self.plan.edges.get(output_edge)?;
         let input_node = input_edge.to();
@@ -290,6 +299,15 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             output_port: output_edge.source_port_id().clone(),
             direct_payload: self.handler.direct_payload_handler(node.stable_id),
         })
+    }
+
+    /// Whether edge `edge` runs adapters.
+    fn adapts(&self, edge: usize) -> bool {
+        self.plan
+            .edge_transports
+            .get(edge)
+            .and_then(Option::as_ref)
+            .is_some_and(|transport| !transport.adapter_steps.is_empty())
     }
 
     fn direct_host_input_edge(&self, input_port: &str) -> Option<usize> {
