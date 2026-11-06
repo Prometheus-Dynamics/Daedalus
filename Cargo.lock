@@ -1035,10 +1035,12 @@ dependencies = [
 name = "daedalus-surface"
 version = "3.0.1-dev"
 dependencies = [
+ "ash",
  "daedalus-plugins-stable-abi",
  "daedalus-rs",
  "lemnos-abi",
  "lemnos-linux",
+ "libloading 0.9.0",
  "serde_json",
 ]
 

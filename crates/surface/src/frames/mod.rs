@@ -18,6 +18,10 @@ mod pool;
 use dma as platform;
 
 #[cfg(all(test, target_os = "linux"))]
+mod fence_board;
+#[cfg(all(test, target_os = "linux"))]
+mod gpu_job;
+#[cfg(all(test, target_os = "linux"))]
 mod tests;
 #[cfg(all(test, target_os = "linux"))]
 mod tests_release;

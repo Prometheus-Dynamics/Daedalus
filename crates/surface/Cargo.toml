@@ -34,3 +34,9 @@ serde_json = { workspace = true, features = ["std"] }
 [dev-dependencies]
 # The in-process `frame_pass` node the frame tests run frames through.
 daedalus-plugins-stable-abi = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# The board fence test (`frames/fence_board.rs`, ignored): a Vulkan job's `sync_file`, through the
+# loader opened at run time.
+ash = { workspace = true }
+libloading = { workspace = true }

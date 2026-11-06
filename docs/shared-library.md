@@ -110,7 +110,10 @@ Frames (Linux; `NOT_SUPPORTED` elsewhere). `daedalus_surface_push_frame` takes a
 the frame into a `daedalus:frame` port as a `SharedFrame` that owns the descriptors; the pixels are
 never copied. Descriptors are borrowed for the call, or taken over under `BufferDesc::OWNED`. The
 acquire fence is attached to each dma-buf as a write fence, so a consumer that syncs through dma-buf
-(a CPU access, a GPU import) waits for it; a syncobj fence is refused. `daedalus_surface_take_frame`
+(a CPU access, a GPU import) waits for it; a syncobj fence is refused. Tested on the CM5 with
+a real one: a v3dv job's `SYNC_FD` delays a node reading the frame until the job is done (about
+250 ms), and the same tick without the fence takes 0.1 ms (`frames::fence_board`, ignored, board
+only; `docs/benchmarks-log.md`). `daedalus_surface_take_frame`
 returns a lease: the frame's descriptors, duplicated and owned by the caller, and a fence of none
 (pending writes are carried by the dma-buf reservations). The frame stays alive until
 `daedalus_surface_frame_release`. The frame keeps its identity through the graph: a taken frame's

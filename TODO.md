@@ -125,7 +125,8 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    was 2, the payload storage at push and at tick). A frame's dma-bufs are released
    once the graph consumed it or at the lease's release (2026-11-06: recycled frame objects
    cleared by their last holder; before, each port kept its last frame's buffers until the next
-   push). Open on frames: an imported acquire fence is not tested to delay a consumer. Step 4 (Gaia's link modes) is not started. In-image
+   push). An imported acquire fence delays the consumer:
+   tested on Raze #1 with a v3dv `SYNC_FD` (`frames::fence_board`, `benchmarks-log.md`). Step 4 (Gaia's link modes) is not started. In-image
    node crates link into the surface `cdylib`; only separate plugins use the stable ABI. Gaia's A/B:
    per-node calls across a library cost 26% on the mirror bench, so the surface is per frame.
 8. Lemnos's kernel module and its Rust userspace drivers: Daedalus's fixed-function nodes and

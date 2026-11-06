@@ -248,6 +248,31 @@ moved into the body's tag word (`Payload` 208 B again), which is what landed. Lo
 - C against A: 1-4% fewer cycles on all four rows; instructions +0.4-1.1% on `scalars n=0`,
   −1.5% on `Detections`. A frame still allocates nothing.
 
+## Acquire fence on a dma-buf frame: a real GPU sync_file on the CM5 (2026-11-06)
+
+Raze #1 (CM5, kernel 7.2.9-v8-16k, V3D 7.1.10.2 through v3dv), release aarch64, under `flock -w 600
+/run/lock/raze-gpu.lock`, load average 0.3. `frames::fence_board` in `daedalus-surface` (ignored;
+`surface_tests --ignored --nocapture fence`): a Vulkan job of buffer copies (no shader), calibrated
+to about 250 ms, signals a semaphore exported as a `SYNC_FD`; the `sync_file` is pushed with a
+system-heap dma-buf frame into `frame` -> `frame_info` (the node maps the frame and reads its bytes,
+so `plane_data` and `DMA_BUF_IOCTL_SYNC` start). Five rounds each, three runs:
+
+| | push + tick, min / median / max |
+| --- | --- |
+| with the GPU's `sync_file` | 245-260 / 246-262 / 250-266 ms |
+| without a fence (the same job running) | 0.090 / 0.098-0.104 / 0.109-0.126 ms |
+| the GPU job (submit to fence wait) | 245-260 / 249-263 / 260-282 ms |
+
+- With the fence the tick returns only after the job: the `sync_file` is unsignalled at the push
+  and signalled when the tick returns, every round, and a poll of the dma-buf
+  (`DMA_BUF_IOCTL_EXPORT_SYNC_FILE` for a read, Lemnos's `export_fence`) shows the job's write
+  pending between the push and the tick.
+- Without it the tick takes 0.1 ms while the job is still running (its `sync_file` unsignalled
+  when the tick returns): the wait is the fence's, not the GPU's.
+- The same binary passed the other frame tests on the board, including the release tests
+  (descriptor and mapping counts back to baseline). On the x86 desktop (RADV, RX 6800 XT) the
+  test passes the same way (154 ms job, 154 ms fenced tick, 0.65 ms without).
+
 ## C surface: static, static through the stable ABI, and shared (2026-11-06)
 
 Raze #1 (CM5), release aarch64, 5091e67, pinned to CPU 3, every run inside one

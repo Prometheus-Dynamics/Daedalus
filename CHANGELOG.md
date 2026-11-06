@@ -742,6 +742,12 @@ plugin ABI and does not load.
   graph and through a stable-ABI plugin, host and plugin side (it was 2 through the surface and
   the static graph, and 1 per handle edge on the stable path); the surface, wrapper,
   `dylib_stable_allocations` and `dylib_frames_overhead` tests assert 0.
+- A board test that a frame's acquire fence holds back its reader: `frames::fence_board` in
+  `daedalus-surface` (ignored; needs a Vulkan device exporting `SYNC_FD`) pushes a dma-buf frame
+  with a `sync_file` from a long Vulkan job into a node that reads the frame's bytes. On Raze #1
+  (V3D 7.1, v3dv) the tick waits out the ~250 ms job and the `sync_file` is signalled when it
+  returns; without the fence the tick takes 0.1 ms with the job still running. Vulkan is loaded at
+  run time (`ash` and `libloading`, Linux dev-dependencies of the surface).
 - **The surface holds no frame past its consumers.** Each frame input recycles its frame objects
   (`crates/surface/src/frames/pool.rs`, up to 4 per port) under a surface-owned
   `ForeignOwner`: the last holder of a frame (the graph once a tick consumed it, or the lease at
