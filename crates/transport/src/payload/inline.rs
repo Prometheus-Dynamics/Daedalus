@@ -8,6 +8,7 @@ use core::mem::{MaybeUninit, align_of, size_of};
 
 use super::foreign::ForeignStorage;
 use super::storage::PayloadStorage;
+use crate::Residency;
 
 /// A payload's value: type-erased storage shared through an `Arc`, a value held inline, or a
 /// foreign handle held inline.
@@ -23,49 +24,60 @@ use super::storage::PayloadStorage;
 /// soon as the graph lets go of them.
 #[derive(Clone)]
 pub(super) enum Body {
-    Shared(Arc<dyn PayloadStorage>),
-    Inline(InlineValue),
-    Foreign(ForeignStorage<false>),
+    Shared(Arc<dyn PayloadStorage>, Residency),
+    Inline(InlineValue, Residency),
+    Foreign(ForeignStorage<false>, Residency),
     /// A handle this build created ([`Payload::foreign_local`](super::Payload::foreign_local)).
-    LocalForeign(ForeignStorage<true>),
+    LocalForeign(ForeignStorage<true>, Residency),
 }
 
 impl Body {
+    /// The payload's residency, which the body holds: its tag word has the spare bytes, so the
+    /// payload stays 208 bytes with a handle held inline.
+    pub(super) fn residency(&self) -> Residency {
+        match self {
+            Self::Shared(_, residency)
+            | Self::Inline(_, residency)
+            | Self::Foreign(_, residency)
+            | Self::LocalForeign(_, residency) => *residency,
+        }
+    }
+
     /// The storage, whichever form the value takes.
     pub(super) fn get(&self) -> &dyn PayloadStorage {
         match self {
-            Self::Shared(storage) => storage.as_ref(),
-            Self::Inline(value) => value,
-            Self::Foreign(value) => value,
-            Self::LocalForeign(value) => value,
+            Self::Shared(storage, _) => storage.as_ref(),
+            Self::Inline(value, _) => value,
+            Self::Foreign(value, _) => value,
+            Self::LocalForeign(value, _) => value,
         }
     }
 
     /// Mutable access to the storage: `None` while shared storage has other holders.
     pub(super) fn get_mut(&mut self) -> Option<&mut (dyn PayloadStorage + '_)> {
         match self {
-            Self::Shared(storage) => Arc::get_mut(storage).map(|storage| storage as _),
-            Self::Inline(value) => Some(value),
-            Self::Foreign(value) => Some(value),
-            Self::LocalForeign(value) => Some(value),
+            Self::Shared(storage, _) => Arc::get_mut(storage).map(|storage| storage as _),
+            Self::Inline(value, _) => Some(value),
+            Self::Foreign(value, _) => Some(value),
+            Self::LocalForeign(value, _) => Some(value),
         }
     }
 
     /// Strong references to the shared storage. An inline value or handle has one: its payload.
     pub(super) fn strong_count(&self) -> usize {
         match self {
-            Self::Shared(storage) => Arc::strong_count(storage),
-            Self::Inline(_) | Self::Foreign(_) | Self::LocalForeign(_) => 1,
+            Self::Shared(storage, _) => Arc::strong_count(storage),
+            Self::Inline(_, _) | Self::Foreign(_, _) | Self::LocalForeign(_, _) => 1,
         }
     }
 
     /// The storage's address, for identity checks against a reference into it.
     pub(super) fn addr(&self) -> *const (dyn PayloadStorage + '_) {
         match self {
-            Self::Shared(storage) => Arc::as_ptr(storage),
-            Self::Inline(value) => value as *const (dyn PayloadStorage + '_),
-            Self::Foreign(value) => value as *const (dyn PayloadStorage + '_),
-            Self::LocalForeign(value) => value as *const (dyn PayloadStorage + '_),
+            Self::Shared(storage, _) => Arc::as_ptr(storage),
+            Self::Inline(value, _) => value as *const (dyn PayloadStorage + '_),
+            Self::Foreign(value, _) => value as *const (dyn PayloadStorage + '_),
+            Self::LocalForeign(value, _) => value as *const (dyn PayloadStorage + '_),
         }
     }
 
@@ -73,10 +85,10 @@ impl Body {
     /// the owner-retyping paths need this, and they never see either).
     pub(super) fn into_arc(self) -> Arc<dyn PayloadStorage> {
         match self {
-            Self::Shared(storage) => storage,
-            Self::Inline(value) => arc_dyn!(value),
-            Self::Foreign(value) => arc_dyn!(value),
-            Self::LocalForeign(value) => arc_dyn!(value),
+            Self::Shared(storage, _) => storage,
+            Self::Inline(value, _) => arc_dyn!(value),
+            Self::Foreign(value, _) => arc_dyn!(value),
+            Self::LocalForeign(value, _) => arc_dyn!(value),
         }
     }
 
@@ -85,12 +97,12 @@ impl Body {
     /// [`Payload::shares_storage`](super::Payload::shares_storage)).
     pub(super) fn shares_with(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Shared(a), Self::Shared(b)) => {
+            (Self::Shared(a, _), Self::Shared(b, _)) => {
                 core::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b))
             }
-            (Self::Inline(a), Self::Inline(b)) => a.same_value(b),
-            (Self::Foreign(a), Self::Foreign(b)) => a.same_value(b),
-            (Self::LocalForeign(a), Self::LocalForeign(b)) => a.same_value(b),
+            (Self::Inline(a, _), Self::Inline(b, _)) => a.same_value(b),
+            (Self::Foreign(a, _), Self::Foreign(b, _)) => a.same_value(b),
+            (Self::LocalForeign(a, _), Self::LocalForeign(b, _)) => a.same_value(b),
             _ => false,
         }
     }
@@ -483,14 +495,14 @@ mod tests {
     #[test]
     fn a_non_primitive_takes_the_arc_path() {
         let payload = Payload::owned("test:string", String::from("hi"));
-        assert!(matches!(payload.storage, super::Body::Shared(_)));
+        assert!(matches!(payload.storage, super::Body::Shared(..)));
         assert_eq!(payload.get_ref::<String>().map(String::as_str), Some("hi"));
         assert_eq!(
             payload.try_into_owned::<String>().ok().as_deref(),
             Some("hi")
         );
         let pair = Payload::owned("test:pair", (1u8, 2u8));
-        assert!(matches!(pair.storage, super::Body::Shared(_)));
+        assert!(matches!(pair.storage, super::Body::Shared(..)));
     }
 
     #[test]
@@ -503,14 +515,15 @@ mod tests {
     #[test]
     fn inline_payloads_are_small() {
         // The storage is an `Arc<dyn PayloadStorage>`, an inline value (a plain value's 32 bytes
-        // and its vtable pointer) or a foreign handle (56 bytes). Guard against further growth.
+        // and its vtable pointer) or a foreign handle (48 bytes), with the residency in the tag
+        // word. Guard against further growth.
         let size = core::mem::size_of::<Payload>();
         assert!(size <= SIZE_BOUND, "a payload is {size} bytes");
     }
 
-    /// The largest `Payload`: the storage's largest inline form is a foreign handle (56 bytes),
-    /// so the payload is 216 bytes (208 with plain values only, 184 before them).
-    const SIZE_BOUND: usize = 216;
+    /// The largest `Payload`: 208 bytes (184 before plain values). A foreign handle held inline
+    /// would make it 216, but the residency sits in the body's tag word.
+    const SIZE_BOUND: usize = 208;
 
     #[derive(Clone, Copy, Debug, PartialEq)]
     #[allow(dead_code, reason = "the fields are compared, not read")]
@@ -534,7 +547,7 @@ mod tests {
             h: 4,
         };
         let payload = Payload::plain("test:roi", roi);
-        assert!(matches!(payload.storage, super::Body::Inline(_)));
+        assert!(matches!(payload.storage, super::Body::Inline(..)));
         assert_eq!(payload.get_ref::<Roi>(), Some(&roi));
         assert_eq!(payload.get_ref::<u32>(), None);
         assert_eq!(payload.typed_strong_count::<Roi>(), Some(1));
@@ -582,7 +595,7 @@ mod tests {
     #[test]
     fn a_plain_value_too_large_takes_the_arc_path() {
         let payload = Payload::plain("test:wide", [7u64; 5]);
-        assert!(matches!(payload.storage, super::Body::Shared(_)));
+        assert!(matches!(payload.storage, super::Body::Shared(..)));
         assert_eq!(payload.get_ref::<[u64; 5]>(), Some(&[7u64; 5]));
     }
 
@@ -593,7 +606,7 @@ mod tests {
         #[allow(dead_code, reason = "the value is compared, not read")]
         struct Aligned(u8);
         let payload = Payload::plain("test:aligned", Aligned(3));
-        assert!(matches!(payload.storage, super::Body::Shared(_)));
+        assert!(matches!(payload.storage, super::Body::Shared(..)));
         assert_eq!(payload.get_ref::<Aligned>(), Some(&Aligned(3)));
     }
 
@@ -601,11 +614,11 @@ mod tests {
     fn a_probe_holds_a_copy_inline_and_moves_any_other_value() {
         use crate::{CopyOutput as _, OutputProbe, OwnedOutput as _};
         let copied = OutputProbe::new(Histogram([1; 8])).output_payload("test:hist".into());
-        assert!(matches!(copied.storage, super::Body::Inline(_)));
+        assert!(matches!(copied.storage, super::Body::Inline(..)));
         assert_eq!(copied.get_ref::<Histogram>(), Some(&Histogram([1; 8])));
 
         let moved = OutputProbe::new(String::from("owned")).output_payload("test:string".into());
-        assert!(matches!(moved.storage, super::Body::Shared(_)));
+        assert!(matches!(moved.storage, super::Body::Shared(..)));
         assert_eq!(moved.get_ref::<String>().map(String::as_str), Some("owned"));
     }
 

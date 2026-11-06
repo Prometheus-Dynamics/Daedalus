@@ -733,7 +733,10 @@ plugin ABI and does not load.
   or any other handle edge allocates nothing, at push or at tick, static or stable. A payload
   clone retains the handle, and the last payload to drop releases it, so nothing holds the owner
   past its payloads. `PayloadSlot::foreign` builds the same inline payload and no longer keeps a
-  reference. `size_of::<Payload>()` is 216 bytes (208 before). `daedalus_surface_tick` hands the
+  reference. `size_of::<Payload>()` stays 208 bytes: the payload's `Residency` moved into the
+  body's tag word (`Body` variants carry it), which pays for the 48-byte handle (216 bytes without
+  it; on the CM5 the 216 B layout cost +2.2% cycles on `scalars n=0`, and the 208 B one is 1-4%
+  faster than before the change, `docs/benchmarks-log.md`). `daedalus_surface_tick` hands the
   previous tick's telemetry back to the graph (`recycle_telemetry`) before ticking. Measured: a
   warm frame (push, tick, take, release) allocates 0 through the surface, through the static
   graph and through a stable-ABI plugin, host and plugin side (it was 2 through the surface and

@@ -235,11 +235,10 @@ impl Payload {
         Self {
             type_key,
             storage: if local {
-                Body::LocalForeign(ForeignStorage(handle))
+                Body::LocalForeign(ForeignStorage(handle), residency)
             } else {
-                Body::Foreign(ForeignStorage(handle))
+                Body::Foreign(ForeignStorage(handle), residency)
             },
-            residency,
             layout: None,
             residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
@@ -259,8 +258,7 @@ impl Payload {
     ) -> Self {
         Self {
             type_key: type_key.into(),
-            storage: Body::Shared(arc_dyn!(KeptStorage { handle, keepalive })),
-            residency,
+            storage: Body::Shared(arc_dyn!(KeptStorage { handle, keepalive }), residency),
             layout: None,
             residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
@@ -308,7 +306,7 @@ impl Payload {
         let Some(handle) = ForeignHandle::from_payload::<O, I>(&self) else {
             return Err(Box::new(self));
         };
-        Ok(Payload::foreign_local(I::KEY, handle, self.residency).with_lineage(self.lineage))
+        Ok(Payload::foreign_local(I::KEY, handle, self.residency()).with_lineage(self.lineage))
     }
 
     /// Retype storage that is an `S` at the allocation's address as `ProvidedStorage<S, O, I>`.
@@ -318,11 +316,13 @@ impl Payload {
         O: ProvideForeign<I>,
         I: ForeignInterface,
     {
+        let residency = self.storage.residency();
         let raw: *const ProvidedStorage<S, O, I> = Arc::into_raw(self.storage.into_arc()).cast();
         // Safety: the allocation holds an `S` at this address (checked by the caller), and
         // `ProvidedStorage<S, O, I>` is a `repr(transparent)` wrapper of it: same size, alignment
         // and drop, so the `Arc` takes back its reference under the new vtable.
-        self.storage = Body::Shared(unsafe { Arc::from_raw(raw as *const dyn PayloadStorage) });
+        let storage = unsafe { Arc::from_raw(raw as *const dyn PayloadStorage) };
+        self.storage = Body::Shared(storage, residency);
         self.type_key = TypeKey::from_static(I::KEY);
         self
     }
@@ -338,10 +338,10 @@ impl Payload {
     /// plugin boundary.
     pub fn to_foreign_handle(&self) -> Option<ForeignHandle> {
         match &self.storage {
-            Body::Shared(storage) => storage.to_foreign_handle_in(storage),
-            Body::Inline(value) => value.to_foreign_handle(),
-            Body::Foreign(value) => value.to_foreign_handle(),
-            Body::LocalForeign(value) => value.to_foreign_handle(),
+            Body::Shared(storage, _) => storage.to_foreign_handle_in(storage),
+            Body::Inline(value, _) => value.to_foreign_handle(),
+            Body::Foreign(value, _) => value.to_foreign_handle(),
+            Body::LocalForeign(value, _) => value.to_foreign_handle(),
         }
     }
 }

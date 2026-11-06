@@ -52,8 +52,8 @@ impl ResidencyCache {
 #[derive(Clone)]
 pub(super) struct ResidentPayload {
     pub(super) type_key: TypeKey,
+    /// Holds the resident's residency (see `Payload::storage`).
     pub(super) storage: Body,
-    pub(super) residency: Residency,
     pub(super) layout: Option<Layout>,
     pub(super) lineage: PayloadLineage,
 }
@@ -62,7 +62,7 @@ impl fmt::Debug for ResidentPayload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResidentPayload")
             .field("type_key", &self.type_key)
-            .field("residency", &self.residency)
+            .field("residency", &self.storage.residency())
             .field("layout", &self.layout)
             .field("rust_type_name", &self.storage.get().rust_type_name())
             .field("bytes_estimate", &self.storage.get().bytes_estimate())
@@ -72,14 +72,17 @@ impl fmt::Debug for ResidentPayload {
 
 impl ResidentPayload {
     pub(super) fn key(&self) -> ResidencyCacheKey {
-        ResidencyCacheKey::new(self.type_key.clone(), self.residency, self.layout.clone())
+        ResidencyCacheKey::new(
+            self.type_key.clone(),
+            self.storage.residency(),
+            self.layout.clone(),
+        )
     }
 
     pub(super) fn from_payload(payload: &Payload) -> Self {
         Self {
             type_key: payload.type_key.clone(),
             storage: payload.storage.clone(),
-            residency: payload.residency,
             layout: payload.layout.clone(),
             lineage: payload.lineage.clone(),
         }
@@ -89,7 +92,6 @@ impl ResidentPayload {
         Payload {
             type_key: self.type_key,
             storage: self.storage,
-            residency: self.residency,
             layout: self.layout,
             residency_cache: cache,
             lineage: self.lineage,
@@ -99,7 +101,7 @@ impl ResidentPayload {
 
 impl Payload {
     pub fn key(&self) -> ResidencyCacheKey {
-        ResidencyCacheKey::new(self.type_key.clone(), self.residency, self.layout.clone())
+        ResidencyCacheKey::new(self.type_key.clone(), self.residency(), self.layout.clone())
     }
 
     pub fn with_cached_resident(mut self, resident: Payload) -> Self {
@@ -145,7 +147,7 @@ impl Payload {
         layout: Option<&Layout>,
     ) -> Option<Payload> {
         if &self.type_key == type_key
-            && self.residency == residency
+            && self.residency() == residency
             && self.layout.as_ref() == layout
         {
             return Some(self.clone());

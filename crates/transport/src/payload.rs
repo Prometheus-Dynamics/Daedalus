@@ -53,8 +53,8 @@ pub struct Payload {
     /// Single allocation: a shared Rust value's own `Arc` (`ArcValue`), so wrapping an `Arc<T>`
     /// allocates nothing; unique payloads recover the owned value in place
     /// ([`Payload::try_into_owned`]). A primitive ([`Payload::owned`]) is held inline instead.
+    /// Holds the payload's [`Residency`] too, in its tag word's spare bytes.
     storage: Body,
-    residency: Residency,
     layout: Option<Layout>,
     /// Empty (and allocation-free) until a resident is cached.
     residency_cache: ResidencyCache,
@@ -65,7 +65,7 @@ impl fmt::Debug for Payload {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Payload")
             .field("type_key", &self.type_key)
-            .field("residency", &self.residency)
+            .field("residency", &self.storage.residency())
             .field("layout", &self.layout)
             .field(
                 "cached_residencies",
@@ -97,7 +97,7 @@ impl Payload {
     {
         let type_key = type_key.into();
         match InlineValue::of(&value) {
-            Some(inline) => Self::with_body(type_key, Body::Inline(inline)),
+            Some(inline) => Self::with_body(type_key, Body::Inline(inline, Residency::Cpu)),
             None => Self::shared(type_key, Arc::new(value)),
         }
     }
@@ -111,7 +111,7 @@ impl Payload {
     {
         let type_key = type_key.into();
         match InlineValue::copied(&value) {
-            Some(inline) => Self::with_body(type_key, Body::Inline(inline)),
+            Some(inline) => Self::with_body(type_key, Body::Inline(inline, Residency::Cpu)),
             None => Self::shared(type_key, Arc::new(value)),
         }
     }
@@ -120,7 +120,6 @@ impl Payload {
         Self {
             type_key,
             storage,
-            residency: Residency::Cpu,
             layout: None,
             residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
@@ -137,7 +136,7 @@ impl Payload {
     {
         let storage = BoundaryStorage::owned(type_key, value, capabilities);
         let type_key = storage.type_key.clone();
-        Self::with_body(type_key, Body::Shared(arc_dyn!(storage)))
+        Self::with_body(type_key, Body::Shared(arc_dyn!(storage), Residency::Cpu))
     }
 
     #[cfg(test)]
@@ -175,8 +174,7 @@ impl Payload {
         };
         Self {
             type_key,
-            storage: Body::Shared(storage),
-            residency,
+            storage: Body::Shared(storage, residency),
             layout,
             residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
@@ -190,7 +188,7 @@ impl Payload {
     pub fn bytes_with_type_key(type_key: impl Into<TypeKey>, bytes: Arc<[u8]>) -> Self {
         Self::with_body(
             type_key.into(),
-            Body::Shared(arc_dyn!(BytesStorage { bytes })),
+            Body::Shared(arc_dyn!(BytesStorage { bytes }), Residency::Cpu),
         )
     }
 
@@ -227,7 +225,7 @@ impl Payload {
     }
 
     pub fn residency(&self) -> Residency {
-        self.residency
+        self.storage.residency()
     }
 
     pub fn layout(&self) -> Option<&Layout> {
@@ -295,10 +293,10 @@ impl Payload {
     {
         let type_key = &self.type_key;
         let storage = match &mut self.storage {
-            Body::Inline(value) => return value.value_mut::<T>(),
+            Body::Inline(value, _) => return value.value_mut::<T>(),
             // A handle is lent, never mutated through the payload.
-            Body::Foreign(_) | Body::LocalForeign(_) => return None,
-            Body::Shared(storage) => Arc::get_mut(storage)?,
+            Body::Foreign(..) | Body::LocalForeign(..) => return None,
+            Body::Shared(storage, _) => Arc::get_mut(storage)?,
         };
         if storage.as_any().is::<BoundaryStorage>() {
             let storage = storage.as_any_mut().downcast_mut::<BoundaryStorage>()?;
@@ -321,7 +319,7 @@ impl Payload {
     where
         T: Send + Sync + 'static,
     {
-        if let Body::Inline(value) = self.storage {
+        if let Body::Inline(value, _) = self.storage {
             // Inline values are unique: the copy out of the payload always succeeds.
             return value.take::<T>().ok_or_else(|| Box::new(self));
         }
@@ -353,6 +351,7 @@ impl Payload {
                 return Err(Box::new(self));
             }
             // A weak reference elsewhere may upgrade meanwhile: then the payload is handed back.
+            let residency = self.storage.residency();
             let storage = match storage::into_arc_value::<T>(self.storage.into_arc()) {
                 Ok(value) => match Arc::try_unwrap(value) {
                     Ok(value) => return Ok(value),
@@ -360,7 +359,7 @@ impl Payload {
                 },
                 Err(storage) => storage,
             };
-            self.storage = Body::Shared(storage);
+            self.storage = Body::Shared(storage, residency);
             return Err(Box::new(self));
         }
         let Some(storage) = self
@@ -408,7 +407,7 @@ impl Payload {
     where
         T: Send + Sync + 'static,
     {
-        if let Body::Inline(value) = &self.storage {
+        if let Body::Inline(value, _) = &self.storage {
             return value.value_ref::<T>().map(|_| 1);
         }
         let any = self.storage.get().as_any();

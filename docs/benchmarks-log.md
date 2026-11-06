@@ -222,6 +222,32 @@ instructions; the ~115-instruction growth both paths share is the payload and te
 Branch misses rise on the stable path (L1D misses were too noisy to read). Closed as layout: no
 extra work on the A76 either.
 
+## Foreign handles held inline: the payload layout on the CM5 (2026-11-06)
+
+Raze #1 (CM5), release aarch64, `stable_bench_counters` (`daedalus-bench-counters`,
+`DAEDALUS_BENCH_COUNTERS=1`), pinned to CPU 3, every run inside one `flock -w 600
+/run/lock/raze-gpu.lock` hold, arms alternated five times, 15 repeats of 20,000 calls each; medians
+per call. A: 3dcdf2b (`Payload` 208 B, a foreign handle in an `Arc`'d storage). B: c1b42d5 (the
+handle held inline in the payload body: `Body` 56 B, `Payload` 216 B). C: B with the `Residency`
+moved into the body's tag word (`Payload` 208 B again), which is what landed. Load average 0.4 to
+1.0. The rows have no foreign handle: they measure what the layout costs every payload.
+
+| row | cycles A / B / C | instructions A / B / C |
+| --- | --- | --- |
+| `scalars n=0`, static | 6,105 / 6,131 / 5,965 | 9,221 / 9,431 / 9,322 |
+| `scalars n=0`, stable | 9,737 / 9,789 / 9,411 | 12,805 / 13,067 / 12,858 |
+| `Detections` through `Value`, 0 tags, static | 8,810 / 8,688 / 8,427 | 12,945 / 13,001 / 12,744 |
+| `Detections` through `Value`, 0 tags, stable | 20,304 / 20,174 / 20,091 | 28,920 / 28,836 / 28,499 |
+
+- B against A, first session (A and B only, five alternations): `scalars n=0` +2.3% cycles
+  static and +2.2% stable, tracking +2.3-2.6% instructions (about 240-300 more per call); the
+  `Detections` rows moved −1.0% / +0.6%. L1D misses stayed at noise level. On x86 the instruction
+  growth reproduced (+91 to +350 per call), and boxing the handle (a test build, `Payload` 208 B,
+  same code paths) took `scalars n=0` back to A's count: the extra instructions are the larger
+  payload's moves, not the added match arms.
+- C against A: 1-4% fewer cycles on all four rows; instructions +0.4-1.1% on `scalars n=0`,
+  −1.5% on `Detections`. A frame still allocates nothing.
+
 ## C surface: static, static through the stable ABI, and shared (2026-11-06)
 
 Raze #1 (CM5), release aarch64, 5091e67, pinned to CPU 3, every run inside one

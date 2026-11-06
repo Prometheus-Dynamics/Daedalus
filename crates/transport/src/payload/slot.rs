@@ -108,8 +108,7 @@ impl PayloadSlot {
     fn payload(&self, type_key: TypeKey, residency: Residency) -> Payload {
         Payload {
             type_key,
-            storage: Body::Shared(self.storage.clone().expect("filled above")),
-            residency,
+            storage: Body::Shared(self.storage.clone().expect("filled above"), residency),
             layout: None,
             residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
