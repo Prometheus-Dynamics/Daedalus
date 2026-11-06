@@ -93,7 +93,10 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    `crates/kernels/src/registry/fixed.rs` and delete ours.
    - 2026-11-06: `lemnos-drivers-rga` is on Lemnos dev e6103b1 (V4L2 M2M `Rga` and `/dev/rga`
      `MultiRga`, no dlopen, `caps::route_for`; `Route::Librga` is a deprecated alias). Untested on
-     board. VGLite's command encoding is not ported yet. Repoint only on HeliOS's go.
+     board. Repoint only on HeliOS's go.
+   - 2026-11-06: `lemnos-drivers-vglite` phase 1 is on Lemnos dev afd5079: libvg_lite replaced by
+     Rust encoding (init, clear, blit, palette); lines and path fill return `Unsupported` (CPU)
+     until phase 2. Untested on board.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
    plugin linking. Design in `docs/shared-library.md` (2026-11-05). Started; blocked by Lemnos's
    `lemnos-abi`. In-image node crates link into the surface `cdylib`; only separate plugins use the
