@@ -16,9 +16,10 @@ handshake and the panic guard.
 Version and features: `daedalus_surface_version`, `daedalus_surface_features`.
 
 Host (a plugin registry and its engine): `daedalus_surface_host_create`,
+`daedalus_surface_host_create_with` (ABI 1.2: a failing image install's reason to a sink),
 `daedalus_surface_host_release` (`BUSY` while graphs from it are alive),
 `daedalus_surface_host_install` (a library by path, through the stable handler path),
-`daedalus_surface_host_schemas` (JSON).
+`daedalus_surface_host_schemas` (JSON: an image surface's in-image plugins, then the libraries).
 
 Graphs: `daedalus_surface_graph_compile` (a `daedalus.graph` document, prepared),
 `daedalus_surface_graph_release`, `daedalus_surface_graph_ports`,

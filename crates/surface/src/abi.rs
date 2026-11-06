@@ -6,8 +6,9 @@ use lemnos_abi::{AbiVersion, LAYOUT_HASH, Status, guard};
 pub const SURFACE_MAJOR: u16 = 1;
 /// The surface's ABI minor: additions only. 1 added port indices
 /// (`daedalus_surface_graph_input_index`, `_output_index`), the `*_at` pushes and takes, and
-/// `daedalus_surface_push_batch`.
-pub const SURFACE_MINOR: u16 = 1;
+/// `daedalus_surface_push_batch`; 2 added `daedalus_surface_host_create_with` (a message sink for a
+/// failing image install).
+pub const SURFACE_MINOR: u16 = 2;
 
 /// Stable-path plugin install (`daedalus_surface_host_install`).
 pub const FEATURE_PLUGINS: u64 = 1 << 0;

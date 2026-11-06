@@ -217,7 +217,7 @@ fn integer(value: &str) -> i128 {
 fn header_declares_exactly_the_rust_exports_with_the_same_signatures() {
     let rust = rust_exports();
     let c = header_decls();
-    assert_eq!(rust.len(), 34, "the surface exports 34 functions");
+    assert_eq!(rust.len(), 35, "the surface exports 35 functions");
     for (name, sig) in &rust {
         let declared = c
             .get(name)

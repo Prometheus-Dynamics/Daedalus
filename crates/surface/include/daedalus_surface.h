@@ -34,7 +34,7 @@ extern "C" {
 
 /* The surface ABI: major changes break callers, minor adds. */
 #define DAEDALUS_SURFACE_ABI_MAJOR 1
-#define DAEDALUS_SURFACE_ABI_MINOR 1
+#define DAEDALUS_SURFACE_ABI_MINOR 2
 
 /* lemnos-abi's LAYOUT_HASH for this build: a caller and a surface must agree on it. */
 #define DAEDALUS_LAYOUT_HASH 0xA02CFB4A8DD4545BULL
@@ -163,6 +163,8 @@ daedalus_status daedalus_surface_features(uint64_t *out);
 /* A new host's registry is empty, or, in an image surface (DAEDALUS_FEATURE_IMAGE_NODES), holds the
  * image's nodes; a failing image install is DAEDALUS_IO. */
 daedalus_status daedalus_surface_host_create(daedalus_handle *out);
+/* As daedalus_surface_host_create, with a failing image install's reason written to sink (ABI 1.2). */
+daedalus_status daedalus_surface_host_create_with(daedalus_handle *out, daedalus_message_sink sink);
 /* DAEDALUS_BUSY while graphs compiled from the host are alive. */
 daedalus_status daedalus_surface_host_release(daedalus_handle host);
 /* Installs the plugin library at path (UTF-8) through the stable handler path. A missing file is
@@ -170,7 +172,8 @@ daedalus_status daedalus_surface_host_release(daedalus_handle host);
  * sink. */
 daedalus_status daedalus_surface_host_install(daedalus_handle host, const uint8_t *path,
                                               size_t path_len, daedalus_message_sink sink);
-/* Writes the installed plugins' schemas as a JSON array. */
+/* Writes the host's plugin schemas as a JSON array: an image surface's in-image plugins, then the
+ * installed libraries. */
 daedalus_status daedalus_surface_host_schemas(daedalus_handle host, uint8_t *buf, size_t cap,
                                               size_t *needed);
 

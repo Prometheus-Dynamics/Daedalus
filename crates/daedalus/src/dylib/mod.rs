@@ -194,6 +194,7 @@ pub use crate::bytes::{BytesInterface, BytesVTable, SHARED_BYTES_KEY, SharedByte
 pub use boundary::{BoundaryTypeEntry, BoundaryTypeTable, BoundaryTypesFn};
 pub use crate_builds::{CrateBuildEntry, CrateBuildTable, CrateBuildsFn};
 pub use daedalus_ffi_host::core::PluginSchema;
+pub use extract::registry_plugin_schema;
 pub use fingerprint::{boundary_features, build_fingerprint, describe_fingerprint_mismatch};
 pub use foreign::{ForeignInterfaceMismatch, ForeignInterfaceTable, ForeignInterfacesFn};
 pub use loader::{

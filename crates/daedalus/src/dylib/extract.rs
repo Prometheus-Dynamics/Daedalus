@@ -38,18 +38,7 @@ pub(super) fn schema(
     plugin: &dyn Plugin,
     deps: &[LinkedDep],
 ) -> Result<PluginSchema, String> {
-    // Not `combined_transport_capabilities`: its validation fails on the plugin's `deps` the
-    // registry lacks, which only the host provides (and checks).
-    let mut capabilities = registry.transport_capabilities.clone();
-    for manifest in registry.plugin_manifests.values() {
-        if capabilities.plugin_manifest(&manifest.id).is_none() {
-            capabilities
-                .register_plugin(manifest.clone())
-                .map_err(|err| err.to_string())?;
-        }
-    }
-    let mut schema = daedalus_ffi_host::export_registry_plugin_schema(&capabilities, plugin.id())
-        .map_err(|err| err.to_string())?;
+    let mut schema = registry_plugin_schema(registry, plugin.id())?;
     schema
         .dependencies
         .extend(deps.iter().map(|dep| dep().id().to_string()));
@@ -73,4 +62,26 @@ pub(super) fn schema(
             .insert("external_types".into(), external.into());
     }
     Ok(schema)
+}
+
+/// The [`PluginSchema`] of the plugin `plugin_id` installed in `registry`: its manifest and nodes,
+/// as a plugin library's schema has them (without the library-only parts: linked dependencies and
+/// external port types). For plugins installed through the Rust path, e.g. an image surface's
+/// in-image nodes.
+pub fn registry_plugin_schema(
+    registry: &PluginRegistry,
+    plugin_id: &str,
+) -> Result<PluginSchema, String> {
+    // Not `combined_transport_capabilities`: its validation fails on the plugin's `deps` the
+    // registry lacks, which only the host provides (and checks).
+    let mut capabilities = registry.transport_capabilities.clone();
+    for manifest in registry.plugin_manifests.values() {
+        if capabilities.plugin_manifest(&manifest.id).is_none() {
+            capabilities
+                .register_plugin(manifest.clone())
+                .map_err(|err| err.to_string())?;
+        }
+    }
+    daedalus_ffi_host::export_registry_plugin_schema(&capabilities, plugin_id)
+        .map_err(|err| err.to_string())
 }

@@ -11,10 +11,10 @@ use libloading::Library;
 use crate::error::HostError;
 use crate::ports::Push;
 
-/// The surface ABI this crate was built against: major 1, minor 1 (port indices and the batch
-/// push), the `lemnos-abi` layout hash. A surface accepts it when its own version is at least this
+/// The surface ABI this crate was built against: major 1, minor 2 (port indices and the batch
+/// push; `host_create_with`), the `lemnos-abi` layout hash. A surface accepts it when its own version is at least this
 /// (same major, layout equal).
-pub const SURFACE_ABI: AbiVersion = AbiVersion::new(1, 1, LAYOUT_HASH);
+pub const SURFACE_ABI: AbiVersion = AbiVersion::new(1, 2, LAYOUT_HASH);
 
 /// A loaded surface library: the symbol table and the handshake result. The library stays open
 /// for as long as this value (and every host and graph borrowed from it) lives.
@@ -47,7 +47,7 @@ impl SurfaceFeatures {
 pub(crate) struct Api {
     pub version: unsafe extern "C" fn(*mut AbiVersion) -> Status,
     pub features: unsafe extern "C" fn(*mut u64) -> Status,
-    pub host_create: unsafe extern "C" fn(*mut Handle) -> Status,
+    pub host_create_with: unsafe extern "C" fn(*mut Handle, MessageSink) -> Status,
     pub host_release: unsafe extern "C" fn(Handle) -> Status,
     pub host_install: unsafe extern "C" fn(Handle, *const u8, usize, MessageSink) -> Status,
     pub host_schemas: Out1,
@@ -152,7 +152,7 @@ impl Api {
         Ok(Self {
             version: sym(library, "daedalus_surface_version")?,
             features: sym(library, "daedalus_surface_features")?,
-            host_create: sym(library, "daedalus_surface_host_create")?,
+            host_create_with: sym(library, "daedalus_surface_host_create_with")?,
             host_release: sym(library, "daedalus_surface_host_release")?,
             host_install: sym(library, "daedalus_surface_host_install")?,
             host_schemas: sym(library, "daedalus_surface_host_schemas")?,

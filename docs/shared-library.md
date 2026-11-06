@@ -70,7 +70,7 @@ GPU access for stable-ABI plugins in shared mode is the stable plugin GPU vtable
 Built (3.0.1-dev, Linux tested):
 
 - **Version handshake.** `daedalus_surface_version` writes the surface's `AbiVersion` (major 1,
-  minor 1, `lemnos-abi`'s `LAYOUT_HASH`). `daedalus_surface_features` writes the feature bits: an
+  minor 2, `lemnos-abi`'s `LAYOUT_HASH`). `daedalus_surface_features` writes the feature bits: an
   `AbiVersion` has no room for them, so they are a second call. The wrapper refuses a surface that
   does not accept its own version.
 - **Host.** Create (an empty registry and a default engine), release (`BUSY` while graphs compiled
@@ -132,8 +132,11 @@ on `daedalus-surface` (as an `rlib`) and on its node crates, writes
 E>` (`E: Display`). That `cdylib` is a complete surface library: every host it creates has
 `install` run on its registry first (`install_plugin`, Rust handlers, no stable ABI), and plugins
 built separately still install on top, by path, through the stable ABI. A failing `install` makes
-`daedalus_surface_host_create` return `IO`. The image reports `FEATURE_IMAGE_NODES`. Its nodes are
-not in `daedalus_surface_host_schemas`, which lists loaded plugin libraries.
+`daedalus_surface_host_create` return `IO`; `daedalus_surface_host_create_with` (ABI 1.2) also
+writes the reason to a message sink, and the wrapper's `create_host` uses it. The image reports
+`FEATURE_IMAGE_NODES`. `daedalus_surface_host_schemas` lists the image's plugins first, their
+schemas built from the host's registry (`daedalus::dylib::registry_plugin_schema`), then the
+installed libraries.
 
 How the exports stay single: they always come from `daedalus-surface`'s `rlib`. Rust exports the
 `#[no_mangle]` functions of every crate a `cdylib` links, so the image exports the whole C ABI

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use daedalus::dylib::{InstallPath, PluginLibrary};
+use daedalus::dylib::{InstallPath, PluginLibrary, registry_plugin_schema};
 use daedalus::engine::{Engine, EngineConfig};
 use daedalus::runtime::plugins::PluginRegistry;
 use lemnos_abi::{Handle, MessageSink, Status};
@@ -12,25 +12,55 @@ use crate::state::{Host, lock};
 
 /// Creates a host: a plugin registry and an engine with the default configuration. The registry
 /// is empty, or, in an image surface (`export_surface!`), has the image's nodes installed through
-/// the Rust path; a failing image install is [`Status::IO`].
+/// the Rust path; a failing image install is [`Status::IO`], with no message (see
+/// [`daedalus_surface_host_create_with`]).
 ///
 /// # Safety
 /// `out` must be valid for a write of a `Handle` (a `u64`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn daedalus_surface_host_create(out: *mut Handle) -> Status {
+    // Safety: forwarded.
+    unsafe { daedalus_surface_host_create_with(out, MessageSink::NONE) }
+}
+
+/// [`daedalus_surface_host_create`], with the reason a failing image install is [`Status::IO`]
+/// written to `sink` (surface ABI 1.2).
+///
+/// # Safety
+/// `out` must be valid for a write of a `Handle` (a `u64`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn daedalus_surface_host_create_with(
+    out: *mut Handle,
+    sink: MessageSink,
+) -> Status {
     run(|| {
         if out.is_null() {
             return Err(Status::INVALID_ARGUMENT);
         }
-        let engine = Engine::new(EngineConfig::default()).map_err(|_| Status::IO)?;
+        let engine = Engine::new(EngineConfig::default()).map_err(|error| {
+            ffi::report(sink, &error);
+            Status::IO
+        })?;
         let mut registry = PluginRegistry::new();
+        let mut image_plugins = Vec::new();
         if let Some(install) = crate::image::install() {
-            install(&mut registry).map_err(|_| Status::IO)?;
+            let before: Vec<String> = registry.plugin_manifests.keys().cloned().collect();
+            install(&mut registry).map_err(|error| {
+                ffi::report(sink, format_args!("the image install failed: {error}"));
+                Status::IO
+            })?;
+            image_plugins = registry
+                .plugin_manifests
+                .keys()
+                .filter(|id| !before.contains(id))
+                .cloned()
+                .collect();
         }
         let handle = lock().hosts.insert(Host {
             registry,
             engine,
             libraries: Vec::new(),
+            image_plugins,
             graphs: 0,
         })?;
         // Safety: `out` is writable (checked above).
@@ -98,8 +128,9 @@ pub unsafe extern "C" fn daedalus_surface_host_install(
     })
 }
 
-/// Writes the node schemas of the host's installed plugins as a JSON array (one
-/// `PluginSchema` per library, the `daedalus.plugin` schema the loader reads). The needed-size
+/// Writes the node schemas of the host's plugins as a JSON array: one `PluginSchema` (the
+/// `daedalus.plugin` schema the loader reads) per in-image plugin of an image surface, then one
+/// per installed library. The needed-size
 /// protocol of `ffi::write_out` applies.
 ///
 /// # Safety
@@ -116,7 +147,16 @@ pub unsafe extern "C" fn daedalus_surface_host_schemas(
         let json = {
             let tables = lock();
             let host = tables.hosts.get(host)?;
-            let schemas: Vec<_> = host.libraries.iter().map(PluginLibrary::schema).collect();
+            // The image's plugins first (their schemas from the registry), then the libraries.
+            let mut schemas = Vec::with_capacity(host.image_plugins.len() + host.libraries.len());
+            for id in &host.image_plugins {
+                schemas.push(registry_plugin_schema(&host.registry, id).map_err(|_| Status::IO)?);
+            }
+            schemas.extend(
+                host.libraries
+                    .iter()
+                    .map(|library| library.schema().clone()),
+            );
             serde_json::to_vec(&schemas).map_err(|_| Status::IO)?
         };
         // Safety: forwarded.

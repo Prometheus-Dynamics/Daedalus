@@ -43,9 +43,17 @@ fn an_image_surface_runs_its_nodes_in_image() {
     assert!(unsafe { library.get::<extern "C" fn()>(b"daedalus_surface_push_batch\0") }.is_ok());
     drop(library);
 
-    // A fresh host has the nodes and no plugin library: they run their Rust handlers.
+    // A fresh host has the nodes and no plugin library: they run their Rust handlers. Their
+    // schema is listed, from the registry.
     let host = surface.create_host().unwrap();
-    assert_eq!(host.schemas().unwrap(), "[]");
+    let schemas: serde_json::Value = serde_json::from_str(&host.schemas().unwrap()).unwrap();
+    let schemas = schemas.as_array().unwrap();
+    assert_eq!(schemas.len(), 1, "one in-image plugin: {schemas:?}");
+    let nodes = schemas[0]["nodes"].to_string();
+    assert!(
+        nodes.contains("accumulate") && nodes.contains("shared_sum"),
+        "the in-image plugin's nodes are listed: {nodes}"
+    );
     compare::compare(&image, None, "shared-in-image");
 
     // A separately built plugin installs on top, through the stable path.
@@ -55,5 +63,11 @@ fn an_image_surface_runs_its_nodes_in_image() {
         "dylib",
     );
     host.install(&bench).unwrap();
-    assert!(host.schemas().unwrap().contains("stable_bench"));
+    let schemas: serde_json::Value = serde_json::from_str(&host.schemas().unwrap()).unwrap();
+    assert_eq!(
+        schemas.as_array().unwrap().len(),
+        2,
+        "the image's plugin, then the library"
+    );
+    assert!(schemas[1].to_string().contains("stable_bench"));
 }

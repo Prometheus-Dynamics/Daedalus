@@ -17,6 +17,11 @@ plugin ABI and does not load.
 
 ### Added
 
+- Surface ABI 1.2: `daedalus_surface_host_create_with` writes a failing image install's reason
+  to a message sink (`daedalus-host`'s `create_host` puts it in the error), and
+  `daedalus_surface_host_schemas` lists an image surface's in-image plugins, ahead of the
+  installed libraries. `daedalus::dylib::registry_plugin_schema` builds a `PluginSchema` for a
+  plugin installed through the Rust path.
 - Shared-library surface, first version: `daedalus-surface` (`crates/surface`, a `cdylib` and
   `rlib`) is a C ABI over the in-process graph runtime, on `lemnos-abi` (pinned at `cf3a4ac`). It
   has the version handshake (`daedalus_surface_version`, `daedalus_surface_features`), host

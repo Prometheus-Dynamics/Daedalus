@@ -24,6 +24,9 @@ pub struct Host {
     pub registry: PluginRegistry,
     pub engine: Engine,
     pub libraries: Vec<PluginLibrary>,
+    /// The plugins an image surface installed through the Rust path (`export_surface!`), by id,
+    /// in install order: their schemas come from the registry, not from a library.
+    pub image_plugins: Vec<String>,
     /// Graphs compiled from this host and not yet released. A host with graphs cannot be
     /// released: their handlers run code from `libraries`.
     pub graphs: usize,

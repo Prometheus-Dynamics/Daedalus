@@ -34,13 +34,14 @@ pub struct Graph<'a> {
 }
 
 impl Surface {
-    /// Creates a host: an empty plugin registry, then [`Host::install`] plugins into it.
+    /// Creates a host: an empty plugin registry (or, in an image surface, the image's nodes), then
+    /// [`Host::install`] plugins into it. A failing image install's reason is in the error.
     pub fn create_host(&self) -> Result<Host<'_>, HostError> {
         let mut handle = Handle::NULL;
-        // Safety: `handle` is a valid out-pointer for the call.
-        check("daedalus_surface_host_create", unsafe {
-            (self.api.host_create)(&mut handle)
-        })?;
+        let mut messages = Messages::new();
+        // Safety: `handle` is a valid out-pointer for the call; the sink outlives the call.
+        let status = unsafe { (self.api.host_create_with)(&mut handle, messages.sink()) };
+        check_with("daedalus_surface_host_create_with", status, messages)?;
         Ok(Host {
             surface: self,
             handle,
