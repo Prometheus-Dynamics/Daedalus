@@ -39,16 +39,14 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       **Done (2026-11-03):** the adapter edge allocates 0; the detector frame went from 75 to 9 at
       Profile, serial and parallel, and Trace is 9. `AdapterPathReport` did not need to change.
       Adaptive rows at those levels have no budget.
-- [ ] **What:** the payload allocations per frame at Basic: 9, now 8.
+- [x] **What:** the payload allocations per frame at every metrics level: 0.
       **Why:** they are on the default frame path, under the zero-allocation rule.
-      **Done when:** 0 at Basic.
-      **Blocked by:** a design change, which waits for the user's go. A per-output `PayloadSlot`
-      took it to 2 but broke unique handoff (`gpu_fallback`'s `drain_owned`), so it was reverted.
-      Candidates: small plain-data outputs held inline in the payload, or a return buffer the
-      consumer hands back.
-      **Measured (2026-11-05):** 8 per frame, all payload `Arc`s the runtime wraps: six node outputs
-      (`Roi` x2, `Histogram`, `Report`, `Stats`, `Track`) and two `FrameInfo` adapter outputs. The
-      ninth was `exposure`'s owned `String` parameter, the node's: it borrows it now (b9df7ac).
+      **Done (2026-11-05):** `Copy` outputs of at most 32 bytes and alignment 8 are held in the
+      payload (`Payload::plain`, a `PlainValue`), and the node and adapter macros route outputs
+      through `OutputProbe`. The detector frame is 0 in serial, parallel and adaptive modes at all
+      seven levels (`graph_frame_allocations`). A `Payload` is 208 bytes (184 before), so Rust-ABI
+      plugins are rebuilt with the host. Rejected: a per-output `PayloadSlot`, which took it to 2
+      but broke unique handoff (`gpu_fallback`'s `drain_owned`).
 - [x] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
       `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
       moved onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays until `crates/rga` goes to

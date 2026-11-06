@@ -495,11 +495,11 @@ and engine were built without it and the levels above `Off` recorded nothing. Th
 measured with the feature on, and the not-recycled column with the telemetry dropped each tick.
 
 The detector-like frame (`cargo test -p daedalus-rs --features engine-full,plugins --test
-graph_frame_allocations`, 16 warm-up frames, 20 measured) is 8 allocations per frame in serial,
-parallel and adaptive modes at every metrics level up to `Trace`: six node-output `Arc`s and the two
-adapter `FrameInfo` `Arc`s. The budget is 8 (was 9: `exposure` borrows its `String` constant). At `Profile` and `Trace` the adapter edge's records were 75
-per frame before the adapter text was shared. `engine,plugins` has no metrics, so those two
-levels hold there only trivially.
+graph_frame_allocations`, 16 warm-up frames, 20 measured) is 0 allocations per frame in serial,
+parallel and adaptive modes at every metrics level, `Off` through `Trace`, and the budget is 0.
+Before plain values were held inline it was 8: six node-output `Arc`s and the two adapter
+`FrameInfo` `Arc`s. The test binary enables the runtime's metrics feature, so the levels above
+`Off` record under `engine,plugins` as they do under `engine-full`.
 
 ### CM5 run (2026-11-03): acquire fence waits
 
