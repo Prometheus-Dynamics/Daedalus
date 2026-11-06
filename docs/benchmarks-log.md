@@ -184,3 +184,21 @@ helper: the stable bench to CPU 3, the graph bench to CPUs 1-3 (CPU 0 keeps IRQs
 - Instructions (x86, `perf stat`, pinned, one stable zero-constant node per tick): B 13,461, C 13,393
   per tick. C does no extra work; the remaining gap is code layout or caching, not the payload
   size. Cycles on the shared desktop were too noisy to compare. Raze #1 has no `perf`.
+
+### The same rows on the A76's counters (2026-11-06)
+
+`daedalus-bench-counters` (`perf_event_open`, user space, one group, no multiplexing;
+`perf_event_paranoid` is 2 on Raze #1), `DAEDALUS_BENCH_COUNTERS=1`, pinned to CPU 3, B (9ac2d6d)
+and C (ceacfc6) alternated five times each; medians per call.
+
+| row | cycles B / C | instructions B / C | branch misses B / C |
+| --- | --- | --- | --- |
+| `scalars n=0`, static | 5,992 / 5,961 | 9,262 / 9,376 | 5.7 / 3.7 |
+| `scalars n=0`, stable | 9,242 / 9,522 | 12,654 / 12,807 | 8.7 / 12.5 |
+| `Detections` through `Value`, 0 tags, static | 8,977 / 9,007 | 13,340 / 13,487 | 12.4 / 15.7 |
+| `Detections` through `Value`, 0 tags, stable | 20,141 / 20,422 | 29,100 / 29,320 | 34.8 / 46.6 |
+
+The stable-only part of `scalars n=0` (stable minus static) grows 311 cycles but only 39
+instructions; the ~115-instruction growth both paths share is the payload and telemetry change.
+Branch misses rise on the stable path (L1D misses were too noisy to read). Closed as layout: no
+extra work on the A76 either.
