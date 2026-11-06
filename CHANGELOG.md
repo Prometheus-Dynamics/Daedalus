@@ -27,6 +27,12 @@ plugin ABI and does not load.
   -Werror -pedantic`) built against `daedalus_surface.h` and linked to the surface library installs
   the `stable_abi` plugin, compiles a graph, and runs 50 frames with ports by index and a batch
   push; its outputs equal the static graph's. Linux; skipped without a C compiler.
+- The `daedalus-nodes` demo bundle crosses the stable plugin path: `Detection` is a
+  `#[repr(C)]` `StablePod` (a `Vec<Detection>` crosses as a typed byte view) and `Frame` derives
+  `DaedalusToValue` (it crosses as a `Value`, read back through its serde `Deserialize`). The
+  test fixture `crates/nodes/tests/demo_plugin` exports the bundle as a plugin claiming another
+  rustc; test: `dylib_stable_demo` (the demo graph statically and through the stable path, the
+  host reading `Vec<Detection>` through `register_stable_pod`).
 - Stable ABI 7: codecs. A plugin registers, per type key, conversions of its payloads to and from
   a `Value` and bytes (`PluginRegistry::register_value_codec::<T>`, or `register_local_codec::<T>`
   for a key whose payloads are `Local<T>`; `ValueCodec` holds the schema and the optional

@@ -1,17 +1,21 @@
 //! Demo bundle with built-in handlers and descriptors for producer/decoder/sink using typed payloads.
 
 use crate::declare_plugin;
-use daedalus_macros::node;
+use daedalus_macros::{DaedalusToValue, StablePod, node};
 use daedalus_runtime::NodeError;
 use daedalus_runtime::handler_registry::HandlerRegistry;
 use daedalus_runtime::plugins::{PluginRegistry, PluginResult};
 
-#[derive(Clone, Debug, serde::Deserialize)]
+/// A frame's bytes. Crosses the stable plugin path as a `Value` (`ToValue` out, serde in).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, DaedalusToValue)]
 pub struct Frame {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Clone, Debug, serde::Deserialize)]
+/// One detection: plain data, so a `Vec<Detection>` crosses the stable plugin path as a typed
+/// byte view (`StablePod`), not a `Value`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, StablePod)]
 pub struct Detection {
     pub id: i32,
 }

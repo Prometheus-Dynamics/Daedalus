@@ -37,6 +37,7 @@ members = [
     "examples/plugins/dependent",
     "examples/plugins/stable_abi",
     "examples/plugins/stable_abi_counted",
+    "crates/nodes/tests/demo_plugin",
     "examples/plugins/stable_bench",
     "examples/plugins/stable_bench_counted",
     "examples/surface_image",

@@ -34,6 +34,7 @@ daedalus-macros = { workspace = true }
 daedalus-registry = { workspace = true, features = ["std"] }
 daedalus-planner = { workspace = true, features = ["std"] }
 daedalus-runtime = { workspace = true }
+daedalus-transport = { workspace = true }
 daedalus-data = { workspace = true, features = ["std", "json"] }
 daedalus-core = { workspace = true, features = ["std"] }
 paste = { workspace = true }

@@ -1,0 +1,24 @@
+[package]
+name = "daedalus-nodes-demo-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+# Only a `cdylib`: the `daedalus-nodes` demo bundle exported as a plugin that claims another
+# rustc, so a host installs it through the stable path (the facade's `dylib_stable_demo` test).
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+doctest = false
+test = false
+
+[features]
+dylib = ["daedalus/dylib-plugins"]
+
+[dependencies]
+daedalus = { workspace = true, features = ["plugins"] }
+daedalus-nodes = { workspace = true, features = ["plugins"] }

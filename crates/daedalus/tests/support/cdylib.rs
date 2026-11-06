@@ -87,3 +87,17 @@ pub fn stable_abi_cdylib() -> &'static Path {
         )
     })
 }
+
+/// The `daedalus-nodes-demo-plugin` cdylib (the `daedalus-nodes` demo bundle claiming another
+/// rustc), built once per test binary with its `dylib` feature only.
+#[allow(dead_code)] // Not every test binary loads the demo plugin.
+pub fn demo_stable_cdylib() -> &'static Path {
+    static PATH: OnceLock<PathBuf> = OnceLock::new();
+    PATH.get_or_init(|| {
+        build_cdylib(
+            "daedalus-nodes-demo-plugin",
+            "daedalus_nodes_demo_plugin",
+            "dylib",
+        )
+    })
+}

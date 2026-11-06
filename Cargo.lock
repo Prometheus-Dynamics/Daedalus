@@ -850,9 +850,18 @@ dependencies = [
  "daedalus-planner",
  "daedalus-registry",
  "daedalus-runtime",
+ "daedalus-transport",
  "paste",
  "serde",
  "tracing",
+]
+
+[[package]]
+name = "daedalus-nodes-demo-plugin"
+version = "3.0.1-dev"
+dependencies = [
+ "daedalus-nodes",
+ "daedalus-rs",
 ]
 
 [[package]]
