@@ -168,5 +168,6 @@ release numbers are the ones that count.
    `STABLE_ABI_VERSION` compatibility. Not started.
 3. `daedalus-surface` and `daedalus-host`, with a test that runs the same graph statically and
    through wrapper + surface and compares outputs and allocations. Built (see Status), and the
-   frame entry points are built too (Linux); the per-frame cost on the CM5 is still to measure.
+   frame entry points are built too (Linux). The CM5 per-frame cost is in `benchmarks-log.md`:
+   in-image nodes run a scalar frame 0.4-0.5 µs over static, plugins on the stable path 2.9 µs.
 4. Hand the result to Gaia for the link modes and the combined build.

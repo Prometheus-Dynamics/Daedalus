@@ -226,3 +226,41 @@ surface does) and `shared` (`daedalus-host` over `daedalus-surface`). Counters f
   (`docs/shared-library.md`); separately built plugins do.
 - Fixes queued: ports resolved to indices at compile, a batch push taking the lock once, no
   zero-fill in the wrapper's `take_bytes`, and reuse of the bytes port's spare vector.
+
+## C surface with in-image nodes, and the per-call fixes (2026-11-06)
+
+Raze #1 (CM5), release aarch64, pinned to CPU 3, every run inside one `flock -w 600
+/run/lock/raze-gpu.lock` hold; load average 1.49 at the start and 1.69 at the end (higher than the
+0.13 of the run above). The same three-node graph from `examples/plugins/stable_abi` and the same
+scratch harness, with a fourth arm: `shared-in-image`, `daedalus-host` over an `export_surface!`
+image (`examples/surface_image`) whose hosts have the plugin installed in-image, through the Rust
+path. Two builds alternated five times, every arm in each: `before` (c82f568 plus `export_surface!`
+alone) and `after` (8b7b993: ports by index, the batch push, interned port ids, the bytes port's
+payload slot, no zero-fill in `take_bytes`). `after` adds `-batch` arms: ports resolved once, one
+`push_batch` per frame, takes by index. Medians; instructions per frame from
+`daedalus-bench-counters`.
+
+| arm | scalar frame before / after | bytes frame before / after | instr. per scalar frame |
+| --- | --- | --- | --- |
+| static | 4.28 / 4.18 µs | 6.28 / 6.19 µs | 17,176 / 17,176 |
+| static-stable | 6.93 / 6.70 µs | 11.35 / 10.85 µs | 25,001 / 25,001 |
+| shared | 7.13 / 7.09 µs | 11.52 / 11.24 µs | 26,467 / 26,355 |
+| shared-in-image | 4.67 / 4.74 µs | 6.76 / 6.67 µs | 18,642 / 18,530 |
+| shared, batch | - / 7.13 µs | - / 11.43 µs | - / 25,995 |
+| shared-in-image, batch | - / 4.61 µs | - / 6.48 µs | - / 18,170 |
+
+- In-image nodes remove the stable-ABI cost: `shared-in-image` runs a scalar frame in 4.6-4.7 µs
+  against 7.1 µs for `shared`, 0.4-0.5 µs over `static`. What is left over static is the surface
+  itself: 1,466 instructions per scalar frame before, 1,354 after by name, 994 with the batch push.
+- The per-call fixes are small. By name, the wrapper now resolves the index and the surface skips
+  the UTF-8 check, the name match and the reference count: 112 instructions per scalar frame (six
+  calls), within timing noise. One batch instead of two or three pushes saves the lock and guard
+  of the others: 472 instructions per scalar frame; in time, about 0.1 µs in-image and none
+  measurable for `shared`, where the stable path dominates. Bytes frames save 254 instructions by
+  name and 761 with the batch (`shared`), 339 and 846 in-image.
+- Allocations per warm frame: scalar frames 0 everywhere. Bytes frames: the surface now allocates
+  1 (the engine's, in the tick) instead of 2: the bytes port reuses its payload allocation as well
+  as its vector (the vector was already reused). The static graph allocates 2 (it boxes each pushed
+  `SharedBytes`). The wrapper allocates nothing.
+- `static` and `static-stable` run the same code in both builds (identical instructions); their
+  0.1-0.5 µs differences between builds are run-to-run noise under this load.
