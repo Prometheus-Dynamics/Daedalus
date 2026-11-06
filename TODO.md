@@ -96,9 +96,10 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    - Codecs for the catalog nodes: not started.
    - Known: one `Serial/Off` allocation in 200 loaded runs of `graph_frame_allocations` (2026-11-06),
      not reproduced in 1,060 traced runs; site unknown.
-   - Handle edges at 0 host allocations: parked until the payload layout change lands. The
-     allocation is transport's `ForeignStorage` `Arc`; it needs a recycled per-port storage that
-     releases the owner on the last drop.
+   - [x] Handle edges at 0 host allocations: done (2026-11-06, branch `frames-zero`). A payload
+     holds its `ForeignHandle` inline (`Body::Foreign`), so the stable path's handle outputs and
+     a frame's push allocate nothing, and nothing keeps the owner past its payloads.
+     `dylib_stable_allocations` asserts 0 for a frame, host and plugin side, static and stable.
 2. `FrameLease` adapter cached per frame on the stable path. Done in Styx (dev 025f346,
    `from_shared_frame`): a v3 `SharedFrame` becomes a cached `FrameLease`, read in place. Tell Styx
    if `SharedFrame`, `FrameSource` or `ForeignHandle` change.
@@ -119,9 +120,9 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    moving the stable plugin ABI onto `lemnos-abi` primitives, is NOT done. Step 3 is built as a
    first version: `daedalus-surface` and `daedalus-host`, with the static-versus-shared test, and
    dma-buf frames (`push_frame`, `take_frame`, `frame_release`) with no copy. The CM5 cost is in
-   `benchmarks-log.md` (0.43 µs per frame over static-through-stable). Open on frames: a warm
-   frame makes 2 allocations, the engine's payload storage at push and at tick, the same as the
-   static graph (needs payload recycling in `daedalus-transport`); each port keeps its last pushed
+   `benchmarks-log.md` (0.43 µs per frame over static-through-stable). A warm frame allocates
+   nothing (2026-11-06: payloads hold foreign handles inline, the tick reuses its telemetry; it
+   was 2, the payload storage at push and at tick). Open on frames: each port keeps its last pushed
    frame's dma-bufs referenced until the next push (the spare object reused to avoid an
    allocation), which holds a caller's buffer longer than the graph does; an imported acquire
    fence is not tested to delay a consumer. Step 4 (Gaia's link modes) is not started. In-image

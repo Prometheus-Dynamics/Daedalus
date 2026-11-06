@@ -201,7 +201,8 @@ pub unsafe extern "C" fn daedalus_surface_push_bytes(
     })
 }
 
-/// Ticks the graph once. The telemetry of the tick is kept for `daedalus_surface_graph_telemetry`.
+/// Ticks the graph once. The telemetry of the tick is kept for `daedalus_surface_graph_telemetry`
+/// (until the next tick reuses it).
 /// A failing node's message goes to `sink` with [`Status::IO`].
 ///
 /// # Safety
@@ -211,6 +212,10 @@ pub unsafe extern "C" fn daedalus_surface_tick(graph: Handle, sink: MessageSink)
     run(|| {
         let mut tables = lock();
         let graph = tables.graphs.get_mut(graph)?;
+        // The last tick's telemetry goes back to the graph, which fills it again: no allocation.
+        if let Some(last) = graph.telemetry.take() {
+            graph.graph.recycle_telemetry(last);
+        }
         match graph.graph.tick() {
             Ok(telemetry) => {
                 graph.telemetry = Some(telemetry);

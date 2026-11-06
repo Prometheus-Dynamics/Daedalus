@@ -116,10 +116,11 @@ returns a lease: the frame's descriptors, duplicated and owned by the caller, an
 `daedalus_surface_frame_release`. The frame keeps its identity through the graph: a taken frame's
 `handle().data()` is the pushed frame's, so a cache keyed on it (Styx's) sees the same frame.
 Each port keeps its last frame object and reuses it once the graph lets go, so the surface's own
-frame code allocates nothing per warm frame. What it does allocate is the engine's payload storage,
-one at the push and one at the tick, which the static graph pays too (measured: 2 per warm frame,
-both paths). Removing those needs payload storage recycled in `daedalus-transport`, which is
-outside the frame path.
+frame code allocates nothing per warm frame. A payload holds a frame's handle in place (no payload
+storage is allocated, at the push or at the tick), and the tick reuses the previous tick's
+telemetry, so a warm frame allocates nothing: push, tick, take and release, measured 0 through the
+surface and 0 through the static graph (`crates/host-wrapper/tests/frames.rs`,
+`crates/surface/src/frames/tests.rs`).
 
 `daedalus-host` gives the same as a safe API: `Graph::push_frame(port, &Frame, acquire)` with a
 `Frame` built from borrowed descriptors (`Frame::image(..).plane(fd, offset, stride, size)`), and

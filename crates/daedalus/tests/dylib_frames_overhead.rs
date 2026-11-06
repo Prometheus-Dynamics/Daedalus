@@ -122,10 +122,12 @@ fn frame_handoff_overhead() {
         let mut host = graph(&registry, "frame_pass", TypeExpr::opaque(COUNTED_KEY));
         let (ns, allocs) = measure(|| {
             host.push_payload("in", frame.payload());
-            host.tick().unwrap();
+            let telemetry = host.tick().unwrap();
+            host.recycle_telemetry(telemetry);
             assert!(host.take_payload("out").is_some());
         });
         println!("  {install:17} SharedFrame:          {ns:>9.0} ns  {allocs:>5.1} allocs");
+        assert_eq!(allocs, 0.0, "{install}: a frame allocates nothing per tick");
 
         let mut host = graph(
             &registry,
@@ -134,7 +136,8 @@ fn frame_handoff_overhead() {
         );
         let (ns, allocs) = measure(|| {
             host.push("in", shared.clone());
-            host.tick().unwrap();
+            let telemetry = host.tick().unwrap();
+            host.recycle_telemetry(telemetry);
             assert!(host.take_payload("out").is_some());
         });
         println!("  {install:17} SharedBytes:          {ns:>9.0} ns  {allocs:>5.1} allocs");
@@ -142,7 +145,8 @@ fn frame_handoff_overhead() {
         let mut host = graph(&registry, "vec_pass", TypeExpr::Scalar(ValueType::Bytes));
         let (ns, allocs) = measure(|| {
             host.push("in", vec.clone());
-            host.tick().unwrap();
+            let telemetry = host.tick().unwrap();
+            host.recycle_telemetry(telemetry);
             assert!(host.take_payload("out").is_some());
         });
         println!("  {install:17} Vec<u8> (by value):   {ns:>9.0} ns  {allocs:>5.1} allocs");

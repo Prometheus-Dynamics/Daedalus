@@ -6,17 +6,28 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{MaybeUninit, align_of, size_of};
 
+use super::foreign::ForeignStorage;
 use super::storage::PayloadStorage;
 
-/// A payload's value: type-erased storage shared through an `Arc`, or a value held inline.
+/// A payload's value: type-erased storage shared through an `Arc`, a value held inline, or a
+/// foreign handle held inline.
 ///
 /// An inline value is unique: it is held by its payload alone, and cloning the payload copies the
 /// value. Only the types of [`InlineValue`] are held inline, so the copy is always the value
 /// itself, never a second handle to shared state.
+///
+/// A foreign handle ([`Payload::foreign`](super::Payload::foreign)) is held in the payload too,
+/// so carrying a frame or another handle allocates nothing. Cloning the payload retains the
+/// handle (the owner's reference count, as an `Arc` clone would), and the last payload to drop
+/// releases it: nothing outlives the payloads, so a frame's buffers go back to their owner as
+/// soon as the graph lets go of them.
 #[derive(Clone)]
 pub(super) enum Body {
     Shared(Arc<dyn PayloadStorage>),
     Inline(InlineValue),
+    Foreign(ForeignStorage<false>),
+    /// A handle this build created ([`Payload::foreign_local`](super::Payload::foreign_local)).
+    LocalForeign(ForeignStorage<true>),
 }
 
 impl Body {
@@ -25,6 +36,8 @@ impl Body {
         match self {
             Self::Shared(storage) => storage.as_ref(),
             Self::Inline(value) => value,
+            Self::Foreign(value) => value,
+            Self::LocalForeign(value) => value,
         }
     }
 
@@ -33,14 +46,16 @@ impl Body {
         match self {
             Self::Shared(storage) => Arc::get_mut(storage).map(|storage| storage as _),
             Self::Inline(value) => Some(value),
+            Self::Foreign(value) => Some(value),
+            Self::LocalForeign(value) => Some(value),
         }
     }
 
-    /// Strong references to the shared storage. An inline value has one: its payload.
+    /// Strong references to the shared storage. An inline value or handle has one: its payload.
     pub(super) fn strong_count(&self) -> usize {
         match self {
             Self::Shared(storage) => Arc::strong_count(storage),
-            Self::Inline(_) => 1,
+            Self::Inline(_) | Self::Foreign(_) | Self::LocalForeign(_) => 1,
         }
     }
 
@@ -49,19 +64,24 @@ impl Body {
         match self {
             Self::Shared(storage) => Arc::as_ptr(storage),
             Self::Inline(value) => value as *const (dyn PayloadStorage + '_),
+            Self::Foreign(value) => value as *const (dyn PayloadStorage + '_),
+            Self::LocalForeign(value) => value as *const (dyn PayloadStorage + '_),
         }
     }
 
-    /// The storage as an `Arc`: an inline value is moved into a new allocation (only the
-    /// foreign paths need this, as the inline types are never lent through them).
+    /// The storage as an `Arc`: an inline value or handle is moved into a new allocation (only
+    /// the owner-retyping paths need this, and they never see either).
     pub(super) fn into_arc(self) -> Arc<dyn PayloadStorage> {
         match self {
             Self::Shared(storage) => storage,
             Self::Inline(value) => arc_dyn!(value),
+            Self::Foreign(value) => arc_dyn!(value),
+            Self::LocalForeign(value) => arc_dyn!(value),
         }
     }
 
-    /// Whether two bodies hold one shared storage, or equal inline values (see
+    /// Whether two bodies hold one shared storage, equal inline values, or one foreign value
+    /// (same data and owner) (see
     /// [`Payload::shares_storage`](super::Payload::shares_storage)).
     pub(super) fn shares_with(&self, other: &Self) -> bool {
         match (self, other) {
@@ -69,6 +89,8 @@ impl Body {
                 core::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b))
             }
             (Self::Inline(a), Self::Inline(b)) => a.same_value(b),
+            (Self::Foreign(a), Self::Foreign(b)) => a.same_value(b),
+            (Self::LocalForeign(a), Self::LocalForeign(b)) => a.same_value(b),
             _ => false,
         }
     }
@@ -480,15 +502,15 @@ mod tests {
 
     #[test]
     fn inline_payloads_are_small() {
-        // The storage is an `Arc<dyn PayloadStorage>` or an inline value, which holds a plain
-        // value's 32 bytes and its vtable pointer. Guard against further growth.
+        // The storage is an `Arc<dyn PayloadStorage>`, an inline value (a plain value's 32 bytes
+        // and its vtable pointer) or a foreign handle (56 bytes). Guard against further growth.
         let size = core::mem::size_of::<Payload>();
         assert!(size <= SIZE_BOUND, "a payload is {size} bytes");
     }
 
-    /// The largest `Payload`: the storage's inline form is a plain value (32 bytes and a vtable
-    /// pointer), so the payload is 208 bytes (184 before plain values).
-    const SIZE_BOUND: usize = 208;
+    /// The largest `Payload`: the storage's largest inline form is a foreign handle (56 bytes),
+    /// so the payload is 216 bytes (208 with plain values only, 184 before them).
+    const SIZE_BOUND: usize = 216;
 
     #[derive(Clone, Copy, Debug, PartialEq)]
     #[allow(dead_code, reason = "the fields are compared, not read")]

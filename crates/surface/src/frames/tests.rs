@@ -16,6 +16,7 @@ use lemnos_abi::{BufferDesc, FenceDesc, Handle, MessageSink, PlaneDesc, Status};
 use lemnos_linux::dma::{Access, DmaBuf, DmaBufRef, DmaHeap};
 
 use super::dma::arm_panic;
+use crate::alloc::thread_allocations;
 use crate::frames::{
     daedalus_surface_frame_release, daedalus_surface_push_frame, daedalus_surface_take_frame,
 };
@@ -222,9 +223,11 @@ fn a_frame_round_trips_with_its_pixels_its_dma_buf_and_its_identity() {
     let (lease, _, _) = take(graph).unwrap();
     assert_eq!(unsafe { daedalus_surface_frame_release(lease) }, Status::OK);
     let before = open_fds();
+    let mut allocations = 0;
 
     for round in 0..50 {
         let desc = r8_desc(&buf);
+        let counted = thread_allocations();
         assert_eq!(push(graph, &desc, ptr::null()), Status::OK, "push {round}");
         // Safety: the handle is the surface's.
         assert_eq!(
@@ -232,6 +235,7 @@ fn a_frame_round_trips_with_its_pixels_its_dma_buf_and_its_identity() {
             Status::OK
         );
         let (lease, out, fence) = take(graph).expect("the frame comes back");
+        allocations += thread_allocations() - counted;
         assert_eq!(fence.kind, FenceDesc::NONE, "a take hands out no fence");
         assert_eq!(out.flags & BufferDesc::OWNED, BufferDesc::OWNED);
         assert_eq!((out.width, out.height, out.fourcc), (SIDE, SIDE, R8));
@@ -255,12 +259,18 @@ fn a_frame_round_trips_with_its_pixels_its_dma_buf_and_its_identity() {
             "round {round}: the frame keeps its identity through the graph"
         );
         drop(owned);
+        let counted = thread_allocations();
         assert_eq!(unsafe { daedalus_surface_frame_release(lease) }, Status::OK);
+        allocations += thread_allocations() - counted;
     }
     assert_eq!(
         open_fds(),
         before,
         "no descriptor is left open after 50 frames"
+    );
+    assert_eq!(
+        allocations, 0,
+        "a warm frame (push, tick, take, release) allocates nothing"
     );
 
     release(graph, host);

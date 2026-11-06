@@ -119,7 +119,7 @@ impl SharedFrame {
     }
 
     /// A payload carrying the frame under `daedalus:frame` (what a node output of this type
-    /// pushes): one allocation for the payload storage, no copy.
+    /// pushes): the payload holds the handle in place, so nothing is allocated or copied.
     pub fn into_payload(self) -> Payload {
         let residency = self.payload_residency();
         let key = <FrameInterface as ForeignInterface>::KEY;

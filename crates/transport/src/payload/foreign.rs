@@ -22,25 +22,22 @@ use crate::{
     TypeKey,
 };
 
-#[derive(Debug)]
-pub(super) struct ForeignStorage {
-    /// `None` only in a released [`super::PayloadSlot`], which no payload sees.
-    pub(super) handle: Option<ForeignHandle>,
-    /// This build created the handle (see [`Payload::foreign_local`]).
-    pub(super) local: bool,
-    /// Kept alive while the payload holds the handle, dropped after it (see
-    /// [`Payload::foreign_kept`]): what the handle's code needs, e.g. the library it lives in.
-    pub(super) keepalive: Option<Arc<dyn Any + Send + Sync>>,
-}
+/// A foreign handle as a payload holds it, in place ([`Body::Foreign`] and
+/// [`Body::LocalForeign`]): a clone retains it. `LOCAL` is whether this build created the handle
+/// (see [`Payload::foreign_local`]); it is in the type, not a field, so the payload stays small.
+#[derive(Clone, Debug)]
+#[repr(transparent)]
+pub(super) struct ForeignStorage<const LOCAL: bool>(pub(super) ForeignHandle);
 
-impl Drop for ForeignStorage {
-    fn drop(&mut self) {
-        // The handle's release runs while its keepalive still holds its code.
-        drop(self.handle.take());
+impl<const LOCAL: bool> ForeignStorage<LOCAL> {
+    /// Whether both hold one foreign value: the same data under the same owner.
+    pub(super) fn same_value(&self, other: &Self) -> bool {
+        core::ptr::eq(self.0.data(), other.0.data())
+            && core::ptr::eq(self.0.owner().ptr, other.0.owner().ptr)
     }
 }
 
-impl PayloadStorage for ForeignStorage {
+impl<const LOCAL: bool> PayloadStorage for ForeignStorage<LOCAL> {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -50,13 +47,11 @@ impl PayloadStorage for ForeignStorage {
     }
 
     fn value_any(&self) -> Option<&dyn Any> {
-        self.handle.as_ref().map(|handle| handle as &dyn Any)
+        Some(&self.0)
     }
 
     fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        self.handle
-            .as_ref()
-            .map(|handle| handle as &(dyn Any + Send + Sync))
+        Some(&self.0)
     }
 
     fn rust_type_name(&self) -> Option<&'static str> {
@@ -64,27 +59,58 @@ impl PayloadStorage for ForeignStorage {
     }
 
     fn foreign_handle(&self) -> Option<&ForeignHandle> {
-        self.handle.as_ref()
+        Some(&self.0)
     }
 
     fn foreign_handle_is_local(&self) -> bool {
-        self.local
+        LOCAL
+    }
+}
+
+/// A foreign handle with a keepalive dropped after it ([`Payload::foreign_kept`]), shared.
+#[derive(Debug)]
+struct KeptStorage {
+    /// Dropped first (fields drop in order): the handle's release runs while its keepalive
+    /// still holds its code.
+    handle: ForeignHandle,
+    keepalive: Arc<dyn Any + Send + Sync>,
+}
+
+impl PayloadStorage for KeptStorage {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn value_any(&self) -> Option<&dyn Any> {
+        Some(&self.handle)
+    }
+
+    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
+        Some(&self.handle)
+    }
+
+    fn rust_type_name(&self) -> Option<&'static str> {
+        Some(core::any::type_name::<ForeignHandle>())
+    }
+
+    fn foreign_handle(&self) -> Option<&ForeignHandle> {
+        Some(&self.handle)
     }
 
     fn foreign_keepalive(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
-        self.keepalive.as_ref()
+        Some(&self.keepalive)
     }
 
     fn to_foreign_handle_in(&self, storage: &Arc<dyn PayloadStorage>) -> Option<ForeignHandle> {
-        let handle = self.handle.as_ref()?;
-        if self.keepalive.is_none() {
-            return Some(handle.clone());
-        }
         // A handle that outlives the payload holds the payload's storage (the handle and its
         // keepalive): same data, vtable and interface.
         let owner = crate::ForeignOwner::from_arc(Arc::new(storage.clone()));
         // Safety: the owner keeps the storage, and with it the handle's object and code, alive.
-        Some(unsafe { handle.with_owner(owner) })
+        Some(unsafe { self.handle.with_owner(owner) })
     }
 }
 
@@ -199,7 +225,8 @@ impl Payload {
         Self::foreign_with(type_key.into(), handle, residency, true)
     }
 
-    fn foreign_with(
+    /// The payload holding `handle` in place: no allocation (see [`Body::Foreign`]).
+    pub(super) fn foreign_with(
         type_key: TypeKey,
         handle: ForeignHandle,
         residency: Residency,
@@ -207,11 +234,11 @@ impl Payload {
     ) -> Self {
         Self {
             type_key,
-            storage: Body::Shared(arc_dyn!(ForeignStorage {
-                handle: Some(handle),
-                local,
-                keepalive: None,
-            })),
+            storage: if local {
+                Body::LocalForeign(ForeignStorage(handle))
+            } else {
+                Body::Foreign(ForeignStorage(handle))
+            },
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),
@@ -232,11 +259,7 @@ impl Payload {
     ) -> Self {
         Self {
             type_key: type_key.into(),
-            storage: Body::Shared(arc_dyn!(ForeignStorage {
-                handle: Some(handle),
-                local: false,
-                keepalive: Some(keepalive),
-            })),
+            storage: Body::Shared(arc_dyn!(KeptStorage { handle, keepalive })),
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),
@@ -317,6 +340,8 @@ impl Payload {
         match &self.storage {
             Body::Shared(storage) => storage.to_foreign_handle_in(storage),
             Body::Inline(value) => value.to_foreign_handle(),
+            Body::Foreign(value) => value.to_foreign_handle(),
+            Body::LocalForeign(value) => value.to_foreign_handle(),
         }
     }
 }

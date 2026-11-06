@@ -3,11 +3,11 @@
 //! taken back. A taken frame is the same dma-buf as the pushed one (same device and inode), with
 //! the same pixels, and no descriptor is left open over the run.
 //!
-//! Allocations: a warm frame through the surface allocates what the same frame does through a
-//! statically installed graph, and no more. Both are measured here (the surface through its own
-//! counter, the static graph through this binary's counting allocator). The frame code itself
-//! allocates nothing; the rest is the engine's payload storage, one at each push and one at each
-//! tick, which the static graph pays too.
+//! Allocations: a warm frame allocates nothing, through the surface (push, tick, take and
+//! release) and through a statically installed graph (push, tick, take, with the tick's telemetry
+//! handed back). Both are measured here (the surface through its own counter, the static graph
+//! through this binary's counting allocator). A payload holds a frame's handle in place, and the
+//! surface reuses its frame objects and the tick's telemetry.
 //!
 //! Linux only, and it needs `/dev/dma_heap/system`: without it the test says so and passes.
 
@@ -192,7 +192,8 @@ fn static_allocations_per_frame() -> f64 {
         let shared = SharedFrame::new(Arc::clone(&object));
         let before = HOST_ALLOCS.load(Relaxed);
         host.push_payload("frame", shared.into_payload());
-        host.tick().unwrap();
+        let telemetry = host.tick().unwrap();
+        host.recycle_telemetry(telemetry);
         let out = host.take_payload("out");
         let allocs = HOST_ALLOCS.load(Relaxed) - before;
         drop(out);
@@ -301,7 +302,11 @@ fn frames_round_trip_as_the_same_dma_bufs_with_the_same_pixels() {
             *chroma,
             "frame {i}: chroma bytes"
         );
+        let before = surface_count();
         drop(lease);
+        if i >= WARM {
+            warm_allocs += surface_count() - before;
+        }
         drop(acquire);
     }
     assert_eq!(
@@ -320,10 +325,13 @@ fn frames_round_trip_as_the_same_dma_bufs_with_the_same_pixels() {
          allocations per warm frame: surface {surface_per_frame:.2}, static graph \
          {static_per_frame:.2}; {per_frame:.1} us per frame (debug build)"
     );
-    assert!(
-        surface_per_frame <= static_per_frame,
-        "a warm frame through the surface allocates more than the static graph does: \
-         {surface_per_frame:.2} > {static_per_frame:.2}"
+    assert_eq!(
+        static_per_frame, 0.0,
+        "a warm frame through the static graph allocates nothing"
+    );
+    assert_eq!(
+        surface_per_frame, 0.0,
+        "a warm frame through the surface allocates nothing"
     );
 
     // A plane that is not a frame's: an invalid descriptor is refused, and the port keeps working.

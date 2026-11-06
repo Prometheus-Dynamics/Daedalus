@@ -727,6 +727,18 @@ plugin ABI and does not load.
 
 ### Changed
 
+- **A foreign handle is held inline in its payload.** `Payload::foreign` and
+  `Payload::foreign_local` (and so `SharedFrame::into_payload` and the stable path's handle
+  outputs) keep the `ForeignHandle` in the payload instead of an `Arc`'d `ForeignStorage`: a frame
+  or any other handle edge allocates nothing, at push or at tick, static or stable. A payload
+  clone retains the handle, and the last payload to drop releases it, so nothing holds the owner
+  past its payloads. `PayloadSlot::foreign` builds the same inline payload and no longer keeps a
+  reference. `size_of::<Payload>()` is 216 bytes (208 before). `daedalus_surface_tick` hands the
+  previous tick's telemetry back to the graph (`recycle_telemetry`) before ticking. Measured: a
+  warm frame (push, tick, take, release) allocates 0 through the surface, through the static
+  graph and through a stable-ABI plugin, host and plugin side (it was 2 through the surface and
+  the static graph, and 1 per handle edge on the stable path); the surface, wrapper,
+  `dylib_stable_allocations` and `dylib_frames_overhead` tests assert 0.
 - `daedalus::dylib::STABLE_ABI_VERSION` is 5 (was 2). The stable path installs versions
   `STABLE_ABI_MIN_VERSION` (2) to 5 (`stable_abi_supported`); `StableHandlers` is unchanged, so
   `PLUGIN_ABI_VERSION` stays 11. Version 5 adds the `tag::POD` value (the tables keep their

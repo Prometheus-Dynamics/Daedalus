@@ -3,16 +3,15 @@
 use crate::portable::Arc;
 use core::any::Any;
 
-use super::foreign::ForeignStorage;
 use super::inline::Body;
 use super::{Payload, PayloadStorage, ResidencyCache};
 use crate::{ForeignHandle, PayloadLineage, Residency, TypeKey};
 
-/// A decoder's payload allocation, reused call after call: [`PayloadSlot::owned`] and
-/// [`PayloadSlot::foreign`] build the payload in the allocation the previous one used when
-/// nothing else holds it any more, and allocate only when it is still held or held another
-/// type. [`PayloadSlot::release`] drops the value the slot last held (a buffer or a frame goes
-/// back to its owner) and keeps the allocation.
+/// A decoder's payload allocation, reused call after call: [`PayloadSlot::owned`] builds the
+/// payload in the allocation the previous one used when nothing else holds it any more, and
+/// allocates only when it is still held or held another type. [`PayloadSlot::release`] drops the
+/// value the slot last held (a buffer goes back to its owner) and keeps the allocation.
+/// [`PayloadSlot::foreign`] needs no allocation at all: the payload holds the handle itself.
 #[derive(Default)]
 pub struct PayloadSlot {
     storage: Option<Arc<dyn PayloadStorage>>,
@@ -73,7 +72,8 @@ impl PayloadSlot {
     }
 
     /// A payload carrying `handle`, as [`Payload::foreign`] (or [`Payload::foreign_local`] when
-    /// `local`), in the slot's allocation when free.
+    /// `local`). The payload holds the handle in place, so this allocates nothing and the slot
+    /// keeps no reference to it: the handle's owner is released when the last payload drops.
     pub fn foreign(
         &mut self,
         type_key: impl Into<TypeKey>,
@@ -81,24 +81,7 @@ impl PayloadSlot {
         residency: Residency,
         local: bool,
     ) -> Payload {
-        if let Some(slot) = self.free::<ForeignStorage>() {
-            slot.handle = Some(handle);
-            slot.local = local;
-            slot.keepalive = None;
-        } else {
-            self.storage = Some(crate::portable::arc_dyn!(ForeignStorage {
-                handle: Some(handle),
-                local,
-                keepalive: None,
-            }));
-            self.clear = Some(|any| {
-                if let Some(slot) = any.downcast_mut::<ForeignStorage>() {
-                    slot.handle = None;
-                    slot.keepalive = None;
-                }
-            });
-        }
-        self.payload(type_key.into(), residency)
+        Payload::foreign_with(type_key.into(), handle, residency, local)
     }
 
     /// Drop the value the slot holds when no payload holds it any more (keeping the
@@ -172,5 +155,46 @@ mod tests {
         assert_eq!(Arc::strong_count(&value), 2, "the payload still holds it");
         drop(held);
         assert_eq!(Arc::strong_count(&value), 1, "the slot let go of it");
+    }
+
+    #[test]
+    fn a_foreign_payload_holds_its_handle_alone() {
+        use crate::{FrameInterface, FramePlane, FrameResidency, FrameSource, SharedFrame};
+        struct Empty;
+        impl FrameSource for Empty {
+            fn width(&self) -> u32 {
+                1
+            }
+            fn height(&self) -> u32 {
+                1
+            }
+            fn format(&self) -> u32 {
+                0
+            }
+            fn residency(&self) -> FrameResidency {
+                FrameResidency::Cpu
+            }
+            fn plane_count(&self) -> u32 {
+                0
+            }
+            fn plane(&self, _: u32) -> Option<FramePlane> {
+                None
+            }
+        }
+        let frame = Arc::new(Empty);
+        let mut slot = PayloadSlot::default();
+        let handle = SharedFrame::new(frame.clone()).into_handle();
+        let payload = slot.foreign(
+            <FrameInterface as crate::ForeignInterface>::KEY,
+            handle,
+            Residency::Cpu,
+            true,
+        );
+        assert_eq!(Arc::strong_count(&frame), 2, "the payload holds the frame");
+        let copy = payload.clone();
+        assert_eq!(Arc::strong_count(&frame), 3, "a clone retains it");
+        assert!(copy.shares_storage(&payload));
+        drop((payload, copy));
+        assert_eq!(Arc::strong_count(&frame), 1, "the slot keeps nothing");
     }
 }

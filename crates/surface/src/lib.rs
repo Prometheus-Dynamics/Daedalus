@@ -21,7 +21,8 @@
 //! Unix-only.
 
 mod abi;
-#[cfg(feature = "alloc-count")]
+// The tests count their allocations too.
+#[cfg(any(test, feature = "alloc-count"))]
 mod alloc;
 mod ffi;
 mod frames;

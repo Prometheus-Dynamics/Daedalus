@@ -36,7 +36,7 @@ impl NodeIo {
     }
 
     /// Push `frame` to output `port` as a `daedalus:frame` payload (what a `SharedFrame` node
-    /// output does): no copy, one allocation for the payload storage.
+    /// output does): no copy and no allocation (the payload holds the handle in place).
     pub fn push_frame(&mut self, port: impl Into<PortId>, frame: SharedFrame) {
         let payload = frame.into_payload().stamp(self.clock());
         self.push_payload(port, payload);

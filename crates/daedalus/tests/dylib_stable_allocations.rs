@@ -7,7 +7,11 @@
 //! After warm-up the stable path adds nothing on the host side, and on the plugin side only the
 //! handler's own output payload is allocated (as when installed statically): the arenas, the
 //! port lists and the decoded inputs' payloads are reused call after call, and `SharedBytes`
-//! and frames cross as handles both ways.
+//! and frames cross as handles both ways. Each tick hands its telemetry back
+//! (`recycle_telemetry`), as a frame loop does.
+//!
+//! A frame (a handle edge) allocates nothing on either install, host or plugin: a payload holds
+//! its foreign handle in place.
 // musl executables are static and cannot dlopen (see `dylib::library`): no loader there. The
 // plugin's counter is read through `dlopen(RTLD_NOLOAD)`, so Unix only.
 #![cfg(all(unix, not(target_env = "musl")))]
@@ -143,7 +147,8 @@ fn cases(registry: &PluginRegistry, plugin: Option<Counter>) -> Vec<(&'static st
     let (h, p) = per_run(plugin, || {
         host.push("value", 7_i32);
         host.push("factor", 1.5_f64);
-        host.tick().unwrap();
+        let telemetry = host.tick().unwrap();
+        host.recycle_telemetry(telemetry);
         assert_eq!(host.take::<f64>("out"), Some(10.5));
     });
     results.push(("scalars", h, p));
@@ -157,7 +162,8 @@ fn cases(registry: &PluginRegistry, plugin: Option<Counter>) -> Vec<(&'static st
     );
     let (h, p) = per_run(plugin, || {
         host.push("bytes", bytes.clone());
-        host.tick().unwrap();
+        let telemetry = host.tick().unwrap();
+        host.recycle_telemetry(telemetry);
         let out = host.take::<SharedBytes>("out").unwrap();
         assert_eq!(
             out.as_ptr(),
@@ -176,7 +182,8 @@ fn cases(registry: &PluginRegistry, plugin: Option<Counter>) -> Vec<(&'static st
     );
     let (h, p) = per_run(plugin, || {
         host.push_payload("frame", frame.payload());
-        host.tick().unwrap();
+        let telemetry = host.tick().unwrap();
+        host.recycle_telemetry(telemetry);
         assert!(host.take_payload("out").is_some());
     });
     results.push(("SharedFrame", h, p));
@@ -194,6 +201,23 @@ fn a_stable_plugin_tick_allocates_no_more_than_the_static_install() {
             "{name}: static {base:.2}, stable host {host:.2}, plugin {plugin:.2} allocs/tick"
         );
     }
+    let frame = |results: &[(&str, f64, f64)]| {
+        let (_, host, plugin) = results
+            .iter()
+            .find(|(name, ..)| *name == "SharedFrame")
+            .unwrap();
+        (*host, *plugin)
+    };
+    assert_eq!(
+        frame(&baseline).0,
+        0.0,
+        "a static frame tick allocates nothing"
+    );
+    assert_eq!(
+        frame(&measured),
+        (0.0, 0.0),
+        "a frame through the stable path allocates nothing, host or plugin"
+    );
     for ((name, base, _), (_, host, plugin)) in baseline.iter().zip(&measured) {
         assert!(
             host <= base,

@@ -296,6 +296,8 @@ impl Payload {
         let type_key = &self.type_key;
         let storage = match &mut self.storage {
             Body::Inline(value) => return value.value_mut::<T>(),
+            // A handle is lent, never mutated through the payload.
+            Body::Foreign(_) | Body::LocalForeign(_) => return None,
             Body::Shared(storage) => Arc::get_mut(storage)?,
         };
         if storage.as_any().is::<BoundaryStorage>() {

@@ -353,8 +353,9 @@ Rules:
   made run that plugin's code, so a host that receives one through the stable path keeps the
   plugin's library loaded for good (as for any handle the plugin created).
 
-Within one build a `SharedFrame` output costs one allocation (the payload storage). Crossing the
-stable boundary adds a few small allocations per frame on each side and no pixel work: about
+Within one build a `SharedFrame` output allocates nothing: the payload holds the frame's handle in
+place. Crossing the stable boundary allocates nothing per frame either, host or plugin side
+(`dylib_stable_allocations`), and does no pixel work: about
 0.6 µs over a statically installed node for a 1080p NV12 frame in and back out, the same as a
 `SharedBytes` buffer (see `docs/dynamic-plugins.md`).
 
