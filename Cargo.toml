@@ -19,6 +19,7 @@ members = [
     "crates/engine",
     "crates/daemon",
     "crates/frame-bench",
+    "crates/bench-counters",
     "crates/ffi/core",
     "crates/ffi/host",
     "crates/ffi/python",
@@ -64,6 +65,7 @@ lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", bran
 # Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared
 # without default features; `std` consumers enable `features = ["std"]` themselves.
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.1-dev", default-features = false }
+daedalus-bench-counters = { path = "crates/bench-counters", version = "3.0.1-dev" }
 daedalus-core = { path = "crates/core", version = "3.0.1-dev", default-features = false }
 daedalus-kernels = { path = "crates/kernels", version = "3.0.1-dev", default-features = false }
 daedalus-accelerator = { path = "crates/accelerator", version = "3.0.1-dev" }

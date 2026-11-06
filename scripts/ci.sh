@@ -388,7 +388,7 @@ readonly PACKAGE_EXCLUDES=(--exclude daedalus-examples
   --exclude daedalus-plugins-example-project-dylib --exclude daedalus-plugins-stable-abi
   --exclude daedalus-plugins-stable-abi-counted --exclude daedalus-plugins-stable-bench
   --exclude daedalus-plugins-stable-bench-counted --exclude daedalus-plugins-gpu-submit
-  --exclude daedalus-frame-bench)
+  --exclude daedalus-frame-bench --exclude daedalus-bench-counters)
 
 cmd_package() {
   step "Validating the package surface"

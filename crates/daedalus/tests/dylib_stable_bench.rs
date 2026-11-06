@@ -188,3 +188,111 @@ fn stable_bench_overhead() {
         }
     }
 }
+
+/// Hardware counters for the zero-constant rows, opt-in: `DAEDALUS_BENCH_COUNTERS=1`. It prints one
+/// `COUNTERS` line per repeat and path (static, stable) with the per-call values. Without the env
+/// var it returns at once, so the timing run above is unchanged.
+#[test]
+#[ignore = "timing; run manually with DAEDALUS_BENCH_COUNTERS=1"]
+#[allow(clippy::print_stdout)]
+fn stable_bench_counters() {
+    if std::env::var_os("DAEDALUS_BENCH_COUNTERS").is_none() {
+        return;
+    }
+    let path = cdylib::build_cdylib(
+        "daedalus-plugins-stable-bench",
+        "daedalus_plugins_stable_bench",
+        "dylib",
+    );
+    // Safety: a trusted test plugin, kept loaded for the process.
+    let library: &'static PluginLibrary =
+        Box::leak(Box::new(unsafe { PluginLibrary::load(&path) }.unwrap()));
+    let (statics, stables) = (static_registry(), stable_registry(library));
+    let mut counters =
+        match daedalus_bench_counters::Counters::new(&daedalus_bench_counters::Event::ALL) {
+            Ok(counters) => counters,
+            Err(err) => {
+                println!("COUNTERS unavailable: {err}");
+                return;
+            }
+        };
+    for missing in counters.missing() {
+        println!("COUNTERS missing event={}", missing.name());
+    }
+    counters_row(
+        &mut counters,
+        "scalars n=0",
+        &|r| bench::config_case(r, false, 0),
+        &statics,
+        &stables,
+    );
+    counters_row(
+        &mut counters,
+        "Detections through Value, tags=0",
+        &|r| bench::detections_case(r, false, 0),
+        &statics,
+        &stables,
+    );
+}
+
+/// One case, both installs: interleaved repeats of a fixed number of calls each.
+#[allow(clippy::print_stdout)]
+fn counters_row(
+    counters: &mut daedalus_bench_counters::Counters,
+    case: &str,
+    build: &dyn Fn(&PluginRegistry) -> (Host, Step),
+    statics: &PluginRegistry,
+    stables: &PluginRegistry,
+) {
+    const ITERATIONS: u64 = 20_000;
+    const COUNTER_REPEATS: usize = 15;
+    let (mut static_host, mut static_step) = build(statics);
+    let (mut stable_host, mut stable_step) = build(stables);
+    for _ in 0..WARM_UP {
+        std::hint::black_box(static_step(&mut static_host));
+        std::hint::black_box(stable_step(&mut stable_host));
+    }
+    for repeat in 0..COUNTER_REPEATS {
+        let order = if repeat % 2 == 0 { [0, 1] } else { [1, 0] };
+        for which in order {
+            let (name, result) = if which == 0 {
+                (
+                    "static",
+                    counters.measure(ITERATIONS, || {
+                        std::hint::black_box(static_step(&mut static_host));
+                    }),
+                )
+            } else {
+                (
+                    "stable",
+                    counters.measure(ITERATIONS, || {
+                        std::hint::black_box(stable_step(&mut stable_host));
+                    }),
+                )
+            };
+            match result {
+                Ok(sample) => {
+                    let value = |e| {
+                        sample
+                            .per_call(e)
+                            .map_or("n/a".to_string(), |v| format!("{v:.2}"))
+                    };
+                    println!(
+                        "COUNTERS case=\"{case}\" path={name} repeat={repeat} iterations={} ns_per_call={:.1} running={:.3} cycles={} instructions={} branch_misses={} l1d_read_misses={} llc_read_misses={}",
+                        sample.iterations(),
+                        sample.elapsed().as_nanos() as f64 / sample.iterations() as f64,
+                        sample.running_fraction(),
+                        value(daedalus_bench_counters::Event::Cycles),
+                        value(daedalus_bench_counters::Event::Instructions),
+                        value(daedalus_bench_counters::Event::BranchMisses),
+                        value(daedalus_bench_counters::Event::L1dReadMisses),
+                        value(daedalus_bench_counters::Event::LlcReadMisses),
+                    );
+                }
+                Err(err) => {
+                    println!("COUNTERS case=\"{case}\" path={name} repeat={repeat} error=\"{err}\"")
+                }
+            }
+        }
+    }
+}

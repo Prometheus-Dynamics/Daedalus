@@ -535,6 +535,13 @@ name = "daedalus-accelerator"
 version = "3.0.1-dev"
 
 [[package]]
+name = "daedalus-bench-counters"
+version = "3.0.1-dev"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "daedalus-core"
 version = "3.0.1-dev"
 dependencies = [
@@ -970,6 +977,7 @@ name = "daedalus-rs"
 version = "3.0.1-dev"
 dependencies = [
  "criterion",
+ "daedalus-bench-counters",
  "daedalus-core",
  "daedalus-data",
  "daedalus-engine",

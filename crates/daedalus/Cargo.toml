@@ -162,6 +162,8 @@ criterion = { workspace = true }
 # Metrics on for the test binaries, as in `engine-full`: the levels above `Off` record (and so
 # allocate) only with the feature on, and their allocation budgets must hold with it on.
 daedalus-runtime = { workspace = true, features = ["metrics"] }
+# Hardware counters for `tests/dylib_stable_bench.rs` (`DAEDALUS_BENCH_COUNTERS=1`); dev-only.
+daedalus-bench-counters = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # memfd frames standing in for dma-bufs (`tests/support/frames.rs`).
