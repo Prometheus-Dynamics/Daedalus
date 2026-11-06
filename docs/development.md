@@ -550,7 +550,19 @@ allocates nothing either. The pool creates one telemetry per worker, sized to th
 executor is prepared (`prewarm_worker_pool`), so a parallel or adaptive frame that runs for the
 first time after warm-up takes one without allocating; each run's absorb then gives every pooled
 telemetry the union of the payload texts and reserves the run's record count, so a worker that a
-later frame gives most of the records does not grow its buffers. `Profile` and `Trace` were 75 per
+later frame gives most of the records does not grow its buffers. The pool keeps a high-water mark of lifecycle and trace events over a whole frame: after each
+parallel or adaptive frame the run's telemetry (all workers absorbed) raises the maximum, and every
+pooled telemetry is reserved to it before the next frame. `prewarm_worker_pool` seeds the maximum
+from the plan (10 lifecycle sites per edge hop at Profile and above, one trace event per node at
+Trace), and it also reserves the executor's own telemetry to that maximum, since that telemetry
+absorbs the workers' records and was the one site a first parallel frame still grew. So after
+prewarm, no frame allocates for its telemetry whichever path Adaptive picks; a host that does not
+prewarm pays that once, on its first parallel frame. Payload texts are one table per executor
+(`PayloadTexts`): its telemetries point at it, a hit reads it, and a miss writes once per type.
+Measured: unloaded, the detector frame allocates nothing at any level in any mode; under a
+64-process load, 200 of 200 runs of the allocation test pass (`DAEDALUS_ALLOC_TRACE` pins any
+site that does not).
+`Profile` and `Trace` were 75 per
 frame: the metadata-only adapter edge formatted its step list, detail and port text on each
 lifecycle record. A record now names its path by an `AdapterText` built once per edge (and kept
 by each pooled telemetry), so those levels are 9 too. `engine,plugins` has no metrics, so its
