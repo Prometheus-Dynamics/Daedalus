@@ -624,7 +624,7 @@ plugin ABI and does not load.
 - `crates/rga` (`daedalus-rga`) and `crates/vglite` (`daedalus-vglite`): the RGA and VGLite
   bindings moved to Lemnos, and both crates are deleted from this workspace. Nothing in this
   repo depended on them except `crates/kernels`' fixed-function rows. Styx builds on
-  `daedalus-rga` and must move to `lemnos-drivers-rga` (Lemnos 952e1c7) too.
+  `daedalus-rga` and must move to `lemnos-drivers-rga` (Lemnos cf3a4ac) too.
 
 ### Changed
 
@@ -1445,7 +1445,7 @@ plugin ABI and does not load.
   `tracing` features, which the live engine runs with; without `metrics` the Timing level compiles
   out.
 - The RGA and VGLite fixed-function rows (`crates/kernels/src/registry/fixed.rs`) use
-  `lemnos-drivers-rga` and `lemnos-drivers-vglite`, pinned to Lemnos rev `952e1c7` in the
+  `lemnos-drivers-rga` and `lemnos-drivers-vglite`, pinned to Lemnos rev `cf3a4ac` in the
   workspace `Cargo.toml` (`lemnos-linux` was `branch = "dev"`). The `librga` variant is now
   `multirga` (`/dev/rga`, Lemnos's `MultiRga`), and `v4l2` is the mainline route. A Linux test
   ties each row to Lemnos's `caps::route_for`. `daedalus.image.line` on VGLite is deferred and

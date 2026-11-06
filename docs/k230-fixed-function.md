@@ -2,7 +2,7 @@
 
 What Linux on the Kendryte K230D can reach for the fixed-function image ops (`daedalus.image.*`),
 and the VGLite binding built on it. The binding is Lemnos's now (`lemnos-drivers-vglite`, pinned at
-Lemnos 952e1c7; the Rockchip RGA is `lemnos-drivers-rga`). Written, untested on board. There has been
+Lemnos cf3a4ac; the Rockchip RGA is `lemnos-drivers-rga`). Written, untested on board. There has been
 no board run; everything below comes from reading the K230 Linux SDK and its kernel.
 
 **Sources:** the K230 Linux SDK v0.6.1 (`k230_linux_sdk`, `buildroot-overlay/package/`) and the

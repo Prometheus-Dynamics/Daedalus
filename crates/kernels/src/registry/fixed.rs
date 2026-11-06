@@ -15,19 +15,19 @@ use super::{T, op};
 
 /// The mainline `rockchip-rga` V4L2 mem2mem route (`v4l2`).
 const V4L2: (&str, &str) = (
-    "lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/src/v4l2.rs",
-    "lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs",
+    "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/src/v4l2.rs",
+    "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs",
 );
 /// The vendor kernel's multi-RGA node, `/dev/rga` (`multirga`): fill, mask ROP, blend, palette,
 /// colour key, flips and turns, gray input.
 const MULTIRGA: (&str, &str) = (
-    "lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/src/multirga/device.rs",
-    "lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/multirga.rs",
+    "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/src/multirga/device.rs",
+    "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/multirga.rs",
 );
 /// The K230's VGLite GPU through `/dev/vg_lite` (`vglite`).
 const VGLITE: (&str, &str) = (
-    "lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-vglite/src/gpu.rs",
-    "lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-vglite/tests/vglite.rs",
+    "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-vglite/src/gpu.rs",
+    "lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-vglite/tests/vglite.rs",
 );
 
 /// Fixed-function image nodes other repos lower onto (Eidos's pyramids): only the scalar

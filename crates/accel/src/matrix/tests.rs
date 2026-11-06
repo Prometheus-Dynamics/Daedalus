@@ -179,8 +179,8 @@ static EXTERNAL_ROOT: Registry = Registry {
     kernels: &[Kernel::implemented(
         "t.dot",
         Backend::Neon64,
-        "lemnos@952e1c7:crates/lemnos-drivers-rga/src/v4l2.rs",
-        "lemnos@952e1c7:crates/lemnos-drivers-rga/tests/v4l2.rs",
+        "lemnos@cf3a4ac:crates/lemnos-drivers-rga/src/v4l2.rs",
+        "lemnos@cf3a4ac:crates/lemnos-drivers-rga/tests/v4l2.rs",
     )],
     ..Registry::EMPTY
 };

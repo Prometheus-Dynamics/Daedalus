@@ -91,7 +91,7 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
 5. Whole-subgraph crossing: only if the numbers justify it.
 6. [x] Hand-off to Lemnos, done 2026-11-06 (worker branch `lemnos-switch`): `crates/rga` and
    `crates/vglite` are deleted. `crates/kernels/src/registry/fixed.rs` names `lemnos-drivers-rga`
-   and `lemnos-drivers-vglite` at Lemnos 952e1c7 (pinned in the workspace `Cargo.toml`), and a
+   and `lemnos-drivers-vglite` at Lemnos cf3a4ac (pinned in the workspace `Cargo.toml`), and a
    Linux test ties every row to `caps::route_for`. The librga route is gone: `/dev/rga` is
    `MultiRga` (`Librga` is a deprecated alias of it in Lemnos). `daedalus.image.line` on VGLite
    is deferred and runs on the CPU until Lemnos's K230 slope-sweep test passes. Still to come: the
@@ -175,7 +175,7 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
       **Blocked by:** boards and Gaia's driver choice.
       **Measured:** nothing on Mali.
 - [ ] **[board] What:** (Lemnos's: Lemnos owns hardware blocks. The RGA is `lemnos-drivers-rga` at
-      Lemnos 952e1c7, item 6 above, and its routes are Lemnos's.) The Rockchip RGA fixed-function
+      Lemnos cf3a4ac, item 6 above, and its routes are Lemnos's.) The Rockchip RGA fixed-function
       cells: route (b) is the mainline V4L2 mem2mem driver (`rgb_to_rgba`, `rgba_to_rgb`, and the
       resize, crop, flip and turn rows); route (c) is the vendor multi-RGA node `/dev/rga`
       (`MultiRga`: `gray_to_rgba`, fill, mask ROP, blend, palette, colour key, flip and turn). Both

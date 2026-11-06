@@ -78,36 +78,36 @@ Totals: pass 87, impossible 18, deferred 2, untested 49.
 40. `daedalus.gpu.storage_to_texture` on neon64: the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes
 41. `daedalus.gpu.storage_to_texture` on neon32: the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes
 42. `daedalus.gpu.storage_to_texture` on rvv: the data is GPU-resident (a storage buffer to a texture on the device); the CPU path is the upload, daedalus.copy.bytes
-43. `daedalus.image.blend` on fixed_function: multirga: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/multirga.rs
+43. `daedalus.image.blend` on fixed_function: multirga: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/multirga.rs
 44. `daedalus.image.blend` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-45. `daedalus.image.color_key_mask` on fixed_function: multirga: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/multirga.rs
+45. `daedalus.image.color_key_mask` on fixed_function: multirga: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/multirga.rs
 46. `daedalus.image.color_key_mask` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-47. `daedalus.image.crop` on fixed_function: v4l2: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs
+47. `daedalus.image.crop` on fixed_function: v4l2: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs
 48. `daedalus.image.crop` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-49. `daedalus.image.fill` on fixed_function: multirga: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/multirga.rs
+49. `daedalus.image.fill` on fixed_function: multirga: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/multirga.rs
 50. `daedalus.image.fill` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-51. `daedalus.image.flip` on fixed_function: v4l2: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs
+51. `daedalus.image.flip` on fixed_function: v4l2: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs
 52. `daedalus.image.flip` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
 53. `daedalus.image.line` on fixed_function: Lemnos's VGLite route does not serve lines until a K230 slope-sweep test matches Bresenham; this op is exact Bresenham, so lines run on the CPU
 54. `daedalus.image.line` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-55. `daedalus.image.mask_rop` on fixed_function: multirga: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/multirga.rs
+55. `daedalus.image.mask_rop` on fixed_function: multirga: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/multirga.rs
 56. `daedalus.image.mask_rop` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-57. `daedalus.image.palette` on fixed_function: multirga: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/multirga.rs
+57. `daedalus.image.palette` on fixed_function: multirga: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/multirga.rs
 58. `daedalus.image.palette` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-59. `daedalus.image.resize_area` on fixed_function: v4l2: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs
+59. `daedalus.image.resize_area` on fixed_function: v4l2: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs
 60. `daedalus.image.resize_area` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-61. `daedalus.image.resize_bilinear` on fixed_function: v4l2: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs
+61. `daedalus.image.resize_bilinear` on fixed_function: v4l2: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs
 62. `daedalus.image.resize_bilinear` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
-63. `daedalus.image.rotate` on fixed_function: v4l2: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs
+63. `daedalus.image.rotate` on fixed_function: v4l2: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs
 64. `daedalus.image.rotate` only on scalar, fixed_function: a fixed-function node: the CPU kernels and the callers are Eidos's
 65. `daedalus.pixel.gray_to_rgba` on neon64: no asm check of the vector code
 66. `daedalus.pixel.gray_to_rgba` on neon32: no CI run of crates/kernels/tests/conformance.rs, no asm check of the vector code
 67. `daedalus.pixel.gray_to_rgba` on rvv: no CI run of crates/kernels/tests/conformance.rs, no run at VLEN 128, no run at VLEN 256, no run at VLEN 512, no asm check of the vector code
-68. `daedalus.pixel.gray_to_rgba` on fixed_function: multirga: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/multirga.rs
+68. `daedalus.pixel.gray_to_rgba` on fixed_function: multirga: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/multirga.rs
 69. `daedalus.pixel.rgb_to_rgba` on neon64: no asm check of the vector code
 70. `daedalus.pixel.rgb_to_rgba` on neon32: no CI run of crates/kernels/tests/conformance.rs, no asm check of the vector code
 71. `daedalus.pixel.rgb_to_rgba` on rvv: no CI run of crates/kernels/tests/conformance.rs, no run at VLEN 128, no run at VLEN 256, no run at VLEN 512, no asm check of the vector code
-72. `daedalus.pixel.rgb_to_rgba` on fixed_function: v4l2: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs
+72. `daedalus.pixel.rgb_to_rgba` on fixed_function: v4l2: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs
 73. `daedalus.pixel.rgba_red` on neon64: no asm check of the vector code
 74. `daedalus.pixel.rgba_red` on neon32: no CI run of crates/kernels/tests/conformance.rs, no asm check of the vector code
 75. `daedalus.pixel.rgba_red` on rvv: no CI run of crates/kernels/tests/conformance.rs, no run at VLEN 128, no run at VLEN 256, no run at VLEN 512, no asm check of the vector code
@@ -115,4 +115,4 @@ Totals: pass 87, impossible 18, deferred 2, untested 49.
 77. `daedalus.pixel.rgba_to_rgb` on neon64: no asm check of the vector code
 78. `daedalus.pixel.rgba_to_rgb` on neon32: no CI run of crates/kernels/tests/conformance.rs, no asm check of the vector code
 79. `daedalus.pixel.rgba_to_rgb` on rvv: no CI run of crates/kernels/tests/conformance.rs, no run at VLEN 128, no run at VLEN 256, no run at VLEN 512, no asm check of the vector code
-80. `daedalus.pixel.rgba_to_rgb` on fixed_function: v4l2: no CI run of lemnos@952e1c7dd37c698daa477f5caf82fad20d182ca8:crates/lemnos-drivers-rga/tests/v4l2.rs
+80. `daedalus.pixel.rgba_to_rgb` on fixed_function: v4l2: no CI run of lemnos@cf3a4ac1b6e0043fde5bc80175a162a982b1239f:crates/lemnos-drivers-rga/tests/v4l2.rs
