@@ -200,7 +200,13 @@ fn an_empty_graph_runs_and_reports_json() {
         unsafe { io::daedalus_surface_push_i64(graph, bad.as_ptr(), 1, 1) },
         Status::INVALID_ARGUMENT
     );
-    // A frame needs a descriptor: a null one is refused, and so is a scalar port.
+    // A frame needs a descriptor: a null one is refused, and so is a scalar port. Off Linux the
+    // frame calls are not supported at all.
+    let expected = if cfg!(target_os = "linux") {
+        Status::INVALID_ARGUMENT
+    } else {
+        Status::NOT_SUPPORTED
+    };
     assert_eq!(
         unsafe {
             frames::daedalus_surface_push_frame(
@@ -211,7 +217,7 @@ fn an_empty_graph_runs_and_reports_json() {
                 ptr::null(),
             )
         },
-        Status::INVALID_ARGUMENT
+        expected
     );
     assert_eq!(
         unsafe { graph::daedalus_surface_graph_release(graph) },
