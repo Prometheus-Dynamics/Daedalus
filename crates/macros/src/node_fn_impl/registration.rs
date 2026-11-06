@@ -121,10 +121,11 @@ pub(super) fn direct_payload_registration(inputs: DirectPayloadInputs<'_>) -> To
                 match {
                     #fetch_and_call
                 } {
-                    Ok(__value) => Ok(Some(#runtime_crate::transport_types::Payload::owned(
-                        __direct_output_key.clone(),
-                        __value,
-                    ))),
+                    Ok(__value) => Ok(Some({
+                        use #runtime_crate::transport_types::{CopyOutput as _, OwnedOutput as _};
+                        #runtime_crate::transport_types::OutputProbe::new(__value)
+                            .output_payload(__direct_output_key.clone())
+                    })),
                     Err(__error) => Err(__error),
                 }
             });

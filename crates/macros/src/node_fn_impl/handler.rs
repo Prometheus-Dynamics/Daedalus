@@ -1,5 +1,5 @@
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{ItemFn, LitStr};
 
 use crate::helpers::{arc_inner_type, compile_error, is_unit_type, last_segment, strip_ref};
@@ -382,6 +382,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                                 quote! { io.push_compute::<#inner>(Some(#port), #ident); }
                             } else {
                                 push_output(
+                                    runtime_crate,
                                     elem_ty,
                                     port,
                                     key.as_ref(),
@@ -394,11 +395,9 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                     _ => out_ports
                         .iter()
                         .zip(out_idents.iter())
-                        .map(|(port, ident)| quote! {
-                            {
-                                let __key = #runtime_crate::transport_types::TypeKey::from_static("rust:unknown");
-                                io.push_as_to(#port, __key, #ident);
-                            }
+                        .map(|(port, ident)| {
+                            let key = quote! { #runtime_crate::transport_types::TypeKey::from_static("rust:unknown") };
+                            push_value(runtime_crate, port, key, quote! { #ident })
                         })
                         .collect(),
                 };
@@ -422,14 +421,10 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
                     .unwrap_or_else(|| {
                         if let Some(ok_ty) = ok_ty.as_ref() {
                             let key = output_type_keys.first().and_then(Option::as_ref);
-                            push_output(ok_ty, &out_port, key, quote! { val }, &mut output_keys)
+                            push_output(runtime_crate, ok_ty, &out_port, key, quote! { val }, &mut output_keys)
                         } else {
-                            quote! {
-                                {
-                                    let __key = #runtime_crate::transport_types::TypeKey::from_static("rust:unknown");
-                                    io.push_as_to(#out_port, __key, val);
-                                }
-                            }
+                            let key = quote! { #runtime_crate::transport_types::TypeKey::from_static("rust:unknown") };
+                            push_value(runtime_crate, &out_port, key, quote! { val })
                         }
                     });
                 on_value(
@@ -590,6 +585,7 @@ pub(super) fn build_handler(inputs: HandlerInputs<'_>) -> Result<HandlerBuild, T
 /// or leaf type key, which is appended to `keys` and read from `__output_keys` (computed once,
 /// not per push).
 fn push_output(
+    runtime: &TokenStream,
     ty: &syn::Type,
     port: &LitStr,
     explicit: Option<&LitStr>,
@@ -598,7 +594,7 @@ fn push_output(
 ) -> TokenStream {
     // A conditional output: nothing is pushed for `None`.
     if let Some(inner) = crate::helpers::generic_arg(ty, "Option", 0) {
-        let push = push_output(inner, port, explicit, quote! { __value }, keys);
+        let push = push_output(runtime, inner, port, explicit, quote! { __value }, keys);
         return quote! { if let Some(__value) = #value { #push } };
     }
     if crate::foreign_type::is_shared_frame(ty) {
@@ -614,7 +610,28 @@ fn push_output(
         }
         None => {
             keys.push(value_type_key(ty, explicit));
-            quote! { io.push_as_to(#port, #key, #value); }
+            push_value(runtime, port, key, value)
+        }
+    }
+}
+
+/// Push `value` on `port` under `key`, as the payload of `OutputProbe` (see the transport crate):
+/// a `Copy` output is held inline in the payload, any other is `Payload::owned`, stamped with the
+/// run's clock as `NodeIo::push_as_to` stamps it. The probe's traits are imported for the call
+/// only, so the generated code names neither.
+fn push_value(
+    runtime: &TokenStream,
+    port: impl ToTokens,
+    key: impl ToTokens,
+    value: impl ToTokens,
+) -> TokenStream {
+    quote! {
+        {
+            use #runtime::transport_types::{CopyOutput as _, OwnedOutput as _};
+            let __payload = #runtime::transport_types::OutputProbe::new(#value)
+                .output_payload(#key)
+                .stamp(io.clock());
+            io.push_payload(#port, __payload);
         }
     }
 }

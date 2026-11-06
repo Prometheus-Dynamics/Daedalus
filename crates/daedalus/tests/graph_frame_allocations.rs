@@ -157,14 +157,10 @@ fn call_site(trace: &str) -> String {
     chain.join("\n            <- ")
 }
 
-/// Payloads one frame creates, one `Arc` each (the value's storage): six node outputs (`stats`,
-/// `roi`, `histogram`, `track`, `report`, and `refine`'s `Option<Roi>`) and two adapter results
-/// (the `FrameInfo` of each `frame_info` edge). The primitive outputs (`count`, `exposure`,
-/// `sharpness`, `quality`) are held inline, `preview` and the merged detections are `Arc`s the
-/// node already holds, and `exposure` borrows its `String` constant (`&String`).
-const PAYLOAD_ALLOCATIONS: f64 = 6.0 + 2.0;
-/// Budget per frame, every mode and every metrics level. Lower it, never raise it.
-const FRAME_BUDGET: f64 = PAYLOAD_ALLOCATIONS;
+/// Budget per frame, every mode and every metrics level: zero. The detector's outputs are held in
+/// their payloads (the plain values inline, see `Payload::plain`), its shared outputs are `Arc`s the
+/// nodes hold, and its adapter results are inline too. Lower it, never raise it.
+const FRAME_BUDGET: f64 = 0.0;
 
 /// Every metrics level, from `Off` up to `Trace`.
 const METRICS_LEVELS: [MetricsLevel; 7] = [

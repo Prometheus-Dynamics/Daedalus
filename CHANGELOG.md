@@ -627,6 +627,16 @@ plugin ABI and does not load.
 - `daedalus::dylib::STABLE_ABI_VERSION` is 3 (was 2). The stable path installs versions
   `STABLE_ABI_MIN_VERSION` (2) to 3 (`stable_abi_supported`); `StableHandlers` is unchanged, so
   `PLUGIN_ABI_VERSION` stays 11.
+- **Plain values are held inline in the payload (public API change).** `Payload::plain` holds a
+  `Copy` value of at most 32 bytes with alignment at most 8 in the payload, instead of in an `Arc`:
+  the detector's `Stats`, `Roi`, `Track`, `Report`, `Histogram` and `FrameInfo` outputs now
+  allocate nothing. The node and adapter macros route their outputs through it (a hidden
+  `OutputProbe`): a `Copy` output is inline, any other is `Payload::owned` as before. A plain value
+  is unique (a clone copies it) and shares no storage (`shares_storage` is false for it); `get_arc`
+  on one allocates a fresh `Arc`. A `Payload` is 208 bytes (184 before), so Rust-ABI plugins are
+  rebuilt against this host. The detector frame (`graph_frame_allocations`) is 0 per frame in
+  serial, parallel and adaptive modes at every metrics level (8 before).
+
 - `daedalus_runtime::collections::FastHashMap` is built on the module's `HashMap`, so `hashbrown`
   is no longer in the runtime's public API with `std`. `daedalus_data::convert::SharedConverterGraph`
   is removed: nothing used it, and it put `parking_lot` in the public API.

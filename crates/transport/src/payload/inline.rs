@@ -1,11 +1,14 @@
-//! Where a payload's value lives: shared storage in an `Arc`, or a primitive held in the payload.
+//! Where a payload's value lives: shared storage in an `Arc`, or a value held in the payload.
 
 use crate::portable::{Arc, arc_dyn};
 use core::any::{Any, TypeId};
+use core::fmt;
+use core::marker::PhantomData;
+use core::mem::{MaybeUninit, align_of, size_of};
 
 use super::storage::PayloadStorage;
 
-/// A payload's value: type-erased storage shared through an `Arc`, or a primitive held inline.
+/// A payload's value: type-erased storage shared through an `Arc`, or a value held inline.
 ///
 /// An inline value is unique: it is held by its payload alone, and cloning the payload copies the
 /// value. Only the types of [`InlineValue`] are held inline, so the copy is always the value
@@ -71,20 +74,23 @@ impl Body {
     }
 }
 
-/// Generates [`InlineValue`] from the list of inline types: its variants, and the typed
-/// accessors that the variants' payloads answer.
+/// Generates [`InlineValue`] from the list of inline primitive types: its variants, and the typed
+/// accessors that the variants' payloads answer. [`InlineValue::Plain`] is the one variant outside
+/// the list.
 macro_rules! inline_values {
     ($($variant:ident($ty:ty)),* $(,)?) => {
-        /// A primitive Rust value held in a payload instead of an `Arc`: what
-        /// [`Payload::owned`](super::Payload::owned) keeps inline. Each type is `Copy` with no
-        /// drop glue, so a copy of the value is as good as the value itself.
+        /// A value a payload holds instead of an `Arc`: a primitive that
+        /// [`Payload::owned`](super::Payload::owned) keeps inline (each type is `Copy` with no drop
+        /// glue, so a copy of the value is as good as the value itself), or a plain value of
+        /// another `Copy` type that fits ([`Payload::plain`](super::Payload::plain)).
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub(super) enum InlineValue {
-            $($variant($ty)),*
+            $($variant($ty),)*
+            Plain(PlainValue),
         }
 
         impl InlineValue {
-            /// The inline value holding `value`, when `T` is one of the inline types.
+            /// The inline value holding `value`, when `T` is one of the inline primitives.
             pub(super) fn of<T: Send + Sync + 'static>(value: &T) -> Option<Self> {
                 let any: &dyn Any = value;
                 $(
@@ -97,31 +103,36 @@ macro_rules! inline_values {
 
             fn any(&self) -> &dyn Any {
                 match self {
-                    $(Self::$variant(v) => v),*
+                    $(Self::$variant(v) => v,)*
+                    Self::Plain(v) => v.any(),
                 }
             }
 
             fn any_mut(&mut self) -> &mut dyn Any {
                 match self {
-                    $(Self::$variant(v) => v),*
+                    $(Self::$variant(v) => v,)*
+                    Self::Plain(v) => v.any_mut(),
                 }
             }
 
             fn any_sync(&self) -> &(dyn Any + Send + Sync) {
                 match self {
-                    $(Self::$variant(v) => v),*
+                    $(Self::$variant(v) => v,)*
+                    Self::Plain(v) => v.any_sync(),
                 }
             }
 
             fn type_id(&self) -> TypeId {
                 match self {
-                    $(Self::$variant(_) => TypeId::of::<$ty>()),*
+                    $(Self::$variant(_) => TypeId::of::<$ty>(),)*
+                    Self::Plain(v) => v.type_id(),
                 }
             }
 
             fn type_name(&self) -> &'static str {
                 match self {
-                    $(Self::$variant(_) => core::any::type_name::<$ty>()),*
+                    $(Self::$variant(_) => core::any::type_name::<$ty>(),)*
+                    Self::Plain(v) => v.type_name(),
                 }
             }
         }
@@ -192,14 +203,140 @@ impl InlineValue {
         Some(unsafe { core::ptr::read(value) })
     }
 
+    /// The inline value holding a `Copy` `value`: a primitive as [`Self::of`], or a plain value
+    /// when `T` fits ([`PlainValue::fits`]).
+    pub(super) fn copied<T: Copy + Send + Sync + 'static>(value: &T) -> Option<Self> {
+        Self::of(value)
+            .or_else(|| PlainValue::fits::<T>().then(|| Self::Plain(PlainValue::new(*value))))
+    }
+
     /// Whether `self` and `other` hold the same value of the same type. Floats compare by bits,
-    /// so a NaN equals itself.
+    /// so a NaN equals itself. A plain value equals nothing (see [`PlainValue`]).
     pub(super) fn same_value(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::F32(a), Self::F32(b)) => a.to_bits() == b.to_bits(),
             (Self::F64(a), Self::F64(b)) => a.to_bits() == b.to_bits(),
             _ => self == other,
         }
+    }
+}
+
+/// Words a [`PlainValue`] holds: 32 bytes, the largest output the detector graph passes
+/// (`Histogram`), aligned for any value that fits ([`PlainValue::fits`]).
+const PLAIN_WORDS: usize = 4;
+type PlainWords = [MaybeUninit<u64>; PLAIN_WORDS];
+
+/// A `Copy` value of at most `PLAIN_WORDS * 8` bytes and alignment at most 8, held in its own
+/// bytes: a payload of it allocates nothing.
+///
+/// The value's type is described by a static [`PlainVtable`], which views the bytes as the type
+/// through `Any`. A plain value is unique (a clone copies its bytes), and it equals no other:
+/// its bytes may hold padding, which is not compared, so
+/// [`Payload::shares_storage`](super::Payload::shares_storage) is false for it.
+#[derive(Clone, Copy)]
+pub(super) struct PlainValue {
+    vtable: &'static PlainVtable,
+    words: PlainWords,
+}
+
+/// What a plain value's type provides: its name, and the held bytes viewed as the type.
+struct PlainVtable {
+    name: fn() -> &'static str,
+    any: fn(&PlainWords) -> &dyn Any,
+    any_sync: fn(&PlainWords) -> &(dyn Any + Send + Sync),
+    any_mut: fn(&mut PlainWords) -> &mut dyn Any,
+}
+
+/// The vtable of `T`: one static per type, which every plain value of `T` points at.
+struct PlainOf<T>(PhantomData<fn() -> T>);
+
+impl<T: Copy + Send + Sync + 'static> PlainOf<T> {
+    const VTABLE: PlainVtable = PlainVtable {
+        name: core::any::type_name::<T>,
+        any: view::<T>,
+        any_sync: view_sync::<T>,
+        any_mut: view_mut::<T>,
+    };
+}
+
+/// `T` in `words`: the bytes [`PlainValue::new`] wrote for it.
+fn words_ref<T>(words: &PlainWords) -> &T {
+    // Safety: a `PlainValue` of `T` wrote a `T` at the start of `words` (its vtable is `T`'s),
+    // and the words are aligned for `T` (`PlainValue::fits`).
+    unsafe { &*words.as_ptr().cast::<T>() }
+}
+
+/// `T` in `words`, mutably: see [`words_ref`].
+fn words_mut<T>(words: &mut PlainWords) -> &mut T {
+    // Safety: as [`words_ref`].
+    unsafe { &mut *words.as_mut_ptr().cast::<T>() }
+}
+
+fn view<T: Any>(words: &PlainWords) -> &dyn Any {
+    words_ref::<T>(words)
+}
+
+fn view_sync<T: Any + Send + Sync>(words: &PlainWords) -> &(dyn Any + Send + Sync) {
+    words_ref::<T>(words)
+}
+
+fn view_mut<T: Any>(words: &mut PlainWords) -> &mut dyn Any {
+    words_mut::<T>(words)
+}
+
+impl PlainValue {
+    /// Whether a `T` fits in a plain value: at most the words' bytes, aligned no more than them.
+    pub(super) const fn fits<T>() -> bool {
+        size_of::<T>() <= PLAIN_WORDS * size_of::<u64>() && align_of::<T>() <= align_of::<u64>()
+    }
+
+    /// A plain value holding `value`, which must fit ([`Self::fits`]).
+    pub(super) fn new<T: Copy + Send + Sync + 'static>(value: T) -> Self {
+        assert!(Self::fits::<T>(), "a plain value must fit its words");
+        let mut words = [MaybeUninit::<u64>::uninit(); PLAIN_WORDS];
+        // Safety: `fits` holds, so the value's bytes fill the start of `words`, and the words are
+        // aligned for `T`.
+        unsafe { words.as_mut_ptr().cast::<T>().write(value) };
+        Self {
+            vtable: &PlainOf::<T>::VTABLE,
+            words,
+        }
+    }
+
+    fn any(&self) -> &dyn Any {
+        (self.vtable.any)(&self.words)
+    }
+
+    fn any_sync(&self) -> &(dyn Any + Send + Sync) {
+        (self.vtable.any_sync)(&self.words)
+    }
+
+    fn any_mut(&mut self) -> &mut dyn Any {
+        (self.vtable.any_mut)(&mut self.words)
+    }
+
+    fn type_id(&self) -> TypeId {
+        Any::type_id(self.any())
+    }
+
+    fn type_name(&self) -> &'static str {
+        (self.vtable.name)()
+    }
+}
+
+/// A plain value equals nothing, not even itself (see [`PlainValue`]): comparing its bytes would
+/// read padding.
+impl PartialEq for PlainValue {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
+
+impl fmt::Debug for PlainValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PlainValue")
+            .field("type", &self.type_name())
+            .finish()
     }
 }
 
@@ -343,10 +480,111 @@ mod tests {
 
     #[test]
     fn inline_payloads_are_small() {
-        // The storage is an `Arc<dyn PayloadStorage>` or an inline value: the enum adds 8 bytes
-        // to the 176 bytes a payload took with the `Arc` alone. Guard against further growth.
+        // The storage is an `Arc<dyn PayloadStorage>` or an inline value, which holds a plain
+        // value's 32 bytes and its vtable pointer. Guard against further growth.
         let size = core::mem::size_of::<Payload>();
-        assert!(size <= 184, "a payload is {size} bytes");
+        assert!(size <= SIZE_BOUND, "a payload is {size} bytes");
+    }
+
+    /// The largest `Payload`: the storage's inline form is a plain value (32 bytes and a vtable
+    /// pointer), so the payload is 208 bytes (184 before plain values).
+    const SIZE_BOUND: usize = 208;
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[allow(dead_code, reason = "the fields are compared, not read")]
+    struct Roi {
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[allow(dead_code, reason = "the bins are compared, not read")]
+    struct Histogram([u32; 8]);
+
+    #[test]
+    fn a_plain_value_is_held_inline_and_read_back_as_its_type() {
+        let roi = Roi {
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+        };
+        let payload = Payload::plain("test:roi", roi);
+        assert!(matches!(payload.storage, super::Body::Inline(_)));
+        assert_eq!(payload.get_ref::<Roi>(), Some(&roi));
+        assert_eq!(payload.get_ref::<u32>(), None);
+        assert_eq!(payload.typed_strong_count::<Roi>(), Some(1));
+        assert!(payload.is_typed_unique::<Roi>());
+        assert!(payload.bytes_estimate().is_none());
+        assert_eq!(
+            payload.storage_rust_type_name(),
+            Some(core::any::type_name::<Roi>())
+        );
+        assert_eq!(
+            payload.try_into_owned::<Roi>().ok(),
+            Some(roi),
+            "the owned value comes back whole"
+        );
+    }
+
+    #[test]
+    fn the_detector_outputs_fit_inline() {
+        // The largest detector output is `Histogram` (32 bytes), and `Report` is 24.
+        assert!(super::PlainValue::fits::<Histogram>());
+        assert!(super::PlainValue::fits::<[u64; 4]>());
+        assert!(!super::PlainValue::fits::<[u64; 5]>());
+        assert!(!super::PlainValue::fits::<[u8; 33]>());
+    }
+
+    #[test]
+    fn a_plain_clone_is_an_independent_copy() {
+        let mut original = Payload::plain(
+            "test:roi",
+            Roi {
+                x: 9,
+                y: 0,
+                w: 0,
+                h: 0,
+            },
+        );
+        let copy = original.clone();
+        assert!(!original.shares_storage(&copy), "plain values never share");
+        assert!(original.is_typed_unique::<Roi>());
+        original.get_mut::<Roi>().unwrap().x = 10;
+        assert_eq!(original.get_ref::<Roi>().map(|r| r.x), Some(10));
+        assert_eq!(copy.get_ref::<Roi>().map(|r| r.x), Some(9));
+    }
+
+    #[test]
+    fn a_plain_value_too_large_takes_the_arc_path() {
+        let payload = Payload::plain("test:wide", [7u64; 5]);
+        assert!(matches!(payload.storage, super::Body::Shared(_)));
+        assert_eq!(payload.get_ref::<[u64; 5]>(), Some(&[7u64; 5]));
+    }
+
+    #[test]
+    fn a_plain_value_over_aligned_takes_the_arc_path() {
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        #[repr(align(16))]
+        #[allow(dead_code, reason = "the value is compared, not read")]
+        struct Aligned(u8);
+        let payload = Payload::plain("test:aligned", Aligned(3));
+        assert!(matches!(payload.storage, super::Body::Shared(_)));
+        assert_eq!(payload.get_ref::<Aligned>(), Some(&Aligned(3)));
+    }
+
+    #[test]
+    fn a_probe_holds_a_copy_inline_and_moves_any_other_value() {
+        use crate::{CopyOutput as _, OutputProbe, OwnedOutput as _};
+        let copied = OutputProbe::new(Histogram([1; 8])).output_payload("test:hist".into());
+        assert!(matches!(copied.storage, super::Body::Inline(_)));
+        assert_eq!(copied.get_ref::<Histogram>(), Some(&Histogram([1; 8])));
+
+        let moved = OutputProbe::new(String::from("owned")).output_payload("test:string".into());
+        assert!(matches!(moved.storage, super::Body::Shared(_)));
+        assert_eq!(moved.get_ref::<String>().map(String::as_str), Some("owned"));
     }
 
     #[test]

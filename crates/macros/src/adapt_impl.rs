@@ -420,7 +420,10 @@ pub fn adapt(args: TokenStream, item: TokenStream) -> TokenStream {
             quote! { #transport_crate::Payload::shared(__to_key.clone(), __output) }
         }
         AdaptOutput::Owned | AdaptOutput::Unit => {
-            quote! { #transport_crate::Payload::owned(__to_key.clone(), __output) }
+            quote! {{
+                use #transport_crate::{CopyOutput as _, OwnedOutput as _};
+                #transport_crate::OutputProbe::new(__output).output_payload(__to_key.clone())
+            }}
         }
     };
     let adapt_body = match input_kind {

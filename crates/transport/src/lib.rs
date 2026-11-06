@@ -58,8 +58,8 @@ pub use id_str::IdStr;
 pub use ids::{AdapterId, Layout, LayoutHash, SourceId, TypeKey};
 pub use kinds::{AccessMode, AdaptKind, AdapterKind, Residency};
 pub use payload::{
-    BoundaryPayloadError, OpaquePayloadHandle, Payload, PayloadSlot, PayloadStorage,
-    ResidencyCacheKey,
+    BoundaryPayloadError, CopyOutput, OpaquePayloadHandle, OutputProbe, OwnedOutput, Payload,
+    PayloadSlot, PayloadStorage, ResidencyCacheKey,
 };
 pub use payload_lifecycle::{
     BranchKind, BranchPayload, CorrelationId, PayloadLifecycleStage, PayloadLineage,

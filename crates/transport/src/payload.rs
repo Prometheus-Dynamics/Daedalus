@@ -102,6 +102,20 @@ impl Payload {
         }
     }
 
+    /// A payload owning a `Copy` `value`: held in the payload itself when it fits (a primitive,
+    /// or at most 32 bytes with alignment at most 8), so it allocates nothing and a clone copies
+    /// the value. A larger value takes [`Self::owned`]'s path, one allocation.
+    pub fn plain<T>(type_key: impl Into<TypeKey>, value: T) -> Self
+    where
+        T: Copy + Send + Sync + 'static,
+    {
+        let type_key = type_key.into();
+        match InlineValue::copied(&value) {
+            Some(inline) => Self::with_body(type_key, Body::Inline(inline)),
+            None => Self::shared(type_key, Arc::new(value)),
+        }
+    }
+
     fn with_body(type_key: TypeKey, storage: Body) -> Self {
         Self {
             type_key,
@@ -416,6 +430,57 @@ impl Payload {
             .as_any()
             .downcast_ref::<BytesStorage>()
             .map(|storage| storage.bytes.clone())
+    }
+}
+
+/// Output wrapping for the code the node and adapter macros generate. Not for other use.
+///
+/// The generated code writes `OutputProbe::new(value).output_payload(key)` for each output, and
+/// method resolution picks the payload's path from the output's type: [`CopyOutput`] for a `Copy`
+/// type (held in the payload, as [`Payload::plain`]), [`OwnedOutput`] for any other (as
+/// [`Payload::owned`]). The macro never names the type's traits, so the compiler makes the choice
+/// at the call site.
+#[doc(hidden)]
+pub struct OutputProbe<T>(Option<T>);
+
+impl<T> OutputProbe<T> {
+    /// The probe of `value`.
+    pub fn new(value: T) -> Self {
+        Self(Some(value))
+    }
+}
+
+/// The `Copy` path of [`OutputProbe`]: it applies to a probe of a `Copy` type, by value.
+#[doc(hidden)]
+pub trait CopyOutput {
+    /// The payload of the probed value.
+    fn output_payload(self, type_key: TypeKey) -> Payload;
+}
+
+impl<T: Copy + Send + Sync + 'static> CopyOutput for OutputProbe<T> {
+    fn output_payload(self, type_key: TypeKey) -> Payload {
+        let value = self
+            .0
+            .expect("an output probe holds its value until it is taken");
+        Payload::plain(type_key, value)
+    }
+}
+
+/// The owned path of [`OutputProbe`]: for a type that is not `Copy`, the probe is taken by
+/// reference, so the value is moved out of it.
+#[doc(hidden)]
+pub trait OwnedOutput {
+    /// The payload of the probed value, which the probe no longer holds.
+    fn output_payload(&mut self, type_key: TypeKey) -> Payload;
+}
+
+impl<T: Send + Sync + 'static> OwnedOutput for OutputProbe<T> {
+    fn output_payload(&mut self, type_key: TypeKey) -> Payload {
+        let value = self
+            .0
+            .take()
+            .expect("an output probe holds its value until it is taken");
+        Payload::owned(type_key, value)
     }
 }
 

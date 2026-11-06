@@ -99,6 +99,10 @@ pub(crate) struct InboundPorts<'a> {
 }
 
 /// What [`InboundPorts::take`] found on a port.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "the held payload is returned by value on the stack, and boxing it would allocate on every held take"
+)]
 pub(crate) enum InboundTake {
     /// A queued port: its payloads went to the sink.
     Drained,
