@@ -202,3 +202,27 @@ The stable-only part of `scalars n=0` (stable minus static) grows 311 cycles but
 instructions; the ~115-instruction growth both paths share is the payload and telemetry change.
 Branch misses rise on the stable path (L1D misses were too noisy to read). Closed as layout: no
 extra work on the A76 either.
+
+## C surface: static, static through the stable ABI, and shared (2026-11-06)
+
+Raze #1 (CM5), release aarch64, 5091e67, pinned to CPU 3, every run inside one
+`flock -w 600 /run/lock/raze-gpu.lock` hold, load average 0.13. A three-node graph from
+`examples/plugins/stable_abi`, three arms alternated five times: `static` (Rust-ABI install),
+`static-stable` (the same `HostGraph`, the plugin installed through `InstallPath::Stable`, as the
+surface does) and `shared` (`daedalus-host` over `daedalus-surface`). Counters from
+`daedalus-bench-counters`; medians.
+
+| arm | scalar frame | bytes frame | instructions per scalar frame |
+| --- | --- | --- | --- |
+| static | 4.24 µs | 6.15 µs | 17,176 |
+| static-stable | 6.89 µs | 11.04 µs | 25,001 |
+| shared | 7.32 µs | 11.46 µs | 26,469 |
+
+- The surface adds 0.43 µs a frame (about 1,470 instructions): 200-280 instructions per push or
+  take (lock, port lookup by name, `PortId` clone, panic guard) and 200 on tick. Allocations are
+  the engine's own; the wrapper allocates nothing.
+- The stable plugin path is the rest: about 3,100 instructions per node per tick, 86-92% of the
+  gap. In shared mode, node crates built into the image link into the surface and do not pay it
+  (`docs/shared-library.md`); separately built plugins do.
+- Fixes queued: ports resolved to indices at compile, a batch push taking the lock once, no
+  zero-fill in the wrapper's `take_bytes`, and reuse of the bytes port's spare vector.
