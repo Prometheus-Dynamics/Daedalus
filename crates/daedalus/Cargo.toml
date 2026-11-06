@@ -159,6 +159,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 trybuild = { workspace = true }
 criterion = { workspace = true }
+# Metrics on for the test binaries, as in `engine-full`: the levels above `Off` record (and so
+# allocate) only with the feature on, and their allocation budgets must hold with it on.
+daedalus-runtime = { workspace = true, features = ["metrics"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # memfd frames standing in for dma-bufs (`tests/support/frames.rs`).

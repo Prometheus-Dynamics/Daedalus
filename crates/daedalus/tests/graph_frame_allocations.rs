@@ -157,56 +157,42 @@ fn call_site(trace: &str) -> String {
     chain.join("\n            <- ")
 }
 
-/// Payloads one frame creates that allocate, one `Arc` each (the value's storage): six node outputs
-/// (`stats`, `roi`, `histogram`, `track`, `report`, and `refine`'s `Option<Roi>`) and two adapter
-/// results (the `FrameInfo` of each `frame_info` edge). The primitive outputs (`count`, `exposure`,
-/// `sharpness`, `quality`) are held inline, and `preview` and the merged detections are `Arc`s the
-/// node already holds.
+/// Payloads one frame creates, one `Arc` each (the value's storage): six node outputs (`stats`,
+/// `roi`, `histogram`, `track`, `report`, and `refine`'s `Option<Roi>`) and two adapter results
+/// (the `FrameInfo` of each `frame_info` edge). The primitive outputs (`count`, `exposure`,
+/// `sharpness`, `quality`) are held inline, `preview` and the merged detections are `Arc`s the
+/// node already holds, and `exposure` borrows its `String` constant (`&String`).
 const PAYLOAD_ALLOCATIONS: f64 = 6.0 + 2.0;
-/// `exposure` borrows its `String` constant (`&String`), so its handler clones nothing per call.
-/// The node's own signature chose the borrow: an owned `String` parameter clones the decoded text
-/// on every call, and that allocation would belong to the node.
-const OWNED_STRING_CLONE: f64 = 0.0;
-/// Serial budget, measured: 8 per frame (the payloads above), and everything else the frame
-/// allocates is zero. Handlers keep their state, decoded configs and constants in the node's state
-/// slot, so the runtime's own bookkeeping allocates nothing.
-const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
+/// Budget per frame, every mode and every metrics level. Lower it, never raise it.
+const FRAME_BUDGET: f64 = PAYLOAD_ALLOCATIONS;
+
+/// Every metrics level, from `Off` up to `Trace`.
+const METRICS_LEVELS: [MetricsLevel; 7] = [
+    MetricsLevel::Off,
+    MetricsLevel::Basic,
+    MetricsLevel::Timing,
+    MetricsLevel::Detailed,
+    MetricsLevel::Hardware,
+    MetricsLevel::Profile,
+    MetricsLevel::Trace,
+];
 
 #[test]
 fn detector_graph_frame_allocation_budget() {
-    // Every mode allocates only the payloads and the owned string clone per frame, at every level
-    // up to `Trace`, once the frame's telemetry is recycled (`drive_frame`). Parallel frames fan
-    // out to parked workers that pull segments from one shared queue and record into telemetry the
-    // pool keeps, so a fan-out adds nothing either. At `Profile` and `Trace` the metadata-only
-    // adapter edge names its path by a text built once per edge (`AdapterText`), so its lifecycle
-    // records add nothing either (75 per frame before that).
-    //
-    // The metrics feature is on in the workspace's feature set (`engine-full`) and off in
-    // `--features engine,plugins`, where the `Profile` and `Trace` rows record nothing and so hold
-    // trivially; the other rows hold in both.
-    for (mode, metrics, budget) in [
-        (RuntimeMode::Serial, MetricsLevel::Off, SERIAL_BUDGET),
-        (RuntimeMode::Serial, MetricsLevel::Basic, SERIAL_BUDGET),
-        (RuntimeMode::Serial, MetricsLevel::Timing, SERIAL_BUDGET),
-        (RuntimeMode::Serial, MetricsLevel::Detailed, SERIAL_BUDGET),
-        (RuntimeMode::Serial, MetricsLevel::Hardware, SERIAL_BUDGET),
-        (RuntimeMode::Parallel, MetricsLevel::Off, SERIAL_BUDGET),
-        (RuntimeMode::Parallel, MetricsLevel::Basic, SERIAL_BUDGET),
-        (RuntimeMode::Parallel, MetricsLevel::Timing, SERIAL_BUDGET),
-        (RuntimeMode::Parallel, MetricsLevel::Detailed, SERIAL_BUDGET),
-        (RuntimeMode::Parallel, MetricsLevel::Hardware, SERIAL_BUDGET),
-        (RuntimeMode::Adaptive, MetricsLevel::Off, SERIAL_BUDGET),
-        (RuntimeMode::Adaptive, MetricsLevel::Basic, SERIAL_BUDGET),
-        (RuntimeMode::Serial, MetricsLevel::Profile, SERIAL_BUDGET),
-        (RuntimeMode::Serial, MetricsLevel::Trace, SERIAL_BUDGET),
-        (RuntimeMode::Parallel, MetricsLevel::Profile, SERIAL_BUDGET),
-        (RuntimeMode::Parallel, MetricsLevel::Trace, SERIAL_BUDGET),
+    // The metrics feature is on for this test binary (the dev-dependency on `daedalus-runtime`
+    // with `metrics`), so the levels above `Off` record, and allocate, as they do in `engine-full`.
+    for mode in [
+        RuntimeMode::Serial,
+        RuntimeMode::Parallel,
+        RuntimeMode::Adaptive,
     ] {
-        let per_frame = allocations_per_frame(mode.clone(), metrics);
-        assert!(
-            per_frame <= budget,
-            "{mode:?}/{metrics:?}: {per_frame} allocations per frame, budget {budget}"
-        );
+        for metrics in METRICS_LEVELS {
+            let per_frame = allocations_per_frame(mode.clone(), metrics);
+            assert!(
+                per_frame <= FRAME_BUDGET,
+                "{mode:?}/{metrics:?}: {per_frame} allocations per frame, budget {FRAME_BUDGET}"
+            );
+        }
     }
 }
 
