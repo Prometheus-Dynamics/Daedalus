@@ -5,10 +5,10 @@
 
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::ptr;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use daedalus::GraphDocument;
-use daedalus::data::model::TypeExpr;
+use daedalus::data::model::{TypeExpr, ValueType};
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
 use daedalus::transport::{FRAME_INTERFACE_KEY, fourcc};
 use daedalus_plugins_stable_abi::StableAbiPlugin;
@@ -27,18 +27,18 @@ use crate::state::lock;
 
 const R8: u32 = fourcc(b"R8  ");
 const SIDE: u32 = 256;
-const FRAME_LEN: usize = (SIDE * SIDE) as usize;
+pub(super) const FRAME_LEN: usize = (SIDE * SIDE) as usize;
 
 /// Serializes the tests: the fd counts are process-wide, so two tests opening descriptors at once
 /// would skew each other's counts.
-fn serial() -> MutexGuard<'static, ()> {
+pub(super) fn serial() -> MutexGuard<'static, ()> {
     static SERIAL: Mutex<()> = Mutex::new(());
     SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The `stable_abi` plugin's `frame_pass` node, which hands a `SharedFrame` straight back out:
 /// the graph `frame` -> `pass` -> `out`.
-fn passthrough() -> String {
+pub(super) fn passthrough() -> String {
     let mut registry = PluginRegistry::new();
     registry.install_plugin(&StableAbiPlugin::new()).unwrap();
     let frame = TypeExpr::opaque(FRAME_INTERFACE_KEY);
@@ -54,8 +54,30 @@ fn passthrough() -> String {
     GraphDocument::new(graph).to_json().unwrap()
 }
 
+/// The `stable_abi` plugin's `frame_info` node, which reads the frame's bytes and outputs where it
+/// read them (`ptr`), not the frame: the graph `frame` -> `info`, its `ptr` -> `ptr`.
+pub(super) fn consumer() -> String {
+    let mut registry = PluginRegistry::new();
+    registry.install_plugin(&StableAbiPlugin::new()).unwrap();
+    let graph = registry
+        .graph_builder()
+        .unwrap()
+        .node_id("stable_abi:frame_info", "info")
+        .input_as("frame", TypeExpr::opaque(FRAME_INTERFACE_KEY))
+        .output_as("ptr", TypeExpr::Scalar(ValueType::Int))
+        .connect("frame", "info.frame")
+        .connect("info.ptr", "ptr")
+        .build();
+    GraphDocument::new(graph).to_json().unwrap()
+}
+
 /// A host with the plugin installed, and a compiled passthrough graph.
 fn graph() -> (Handle, Handle) {
+    graph_with(&passthrough())
+}
+
+/// A host with the plugin installed, and `document` compiled on it.
+pub(super) fn graph_with(document: &str) -> (Handle, Handle) {
     let mut host = Handle::NULL;
     // Safety: a valid out-pointer.
     assert_eq!(
@@ -70,7 +92,6 @@ fn graph() -> (Handle, Handle) {
             .install_plugin(&StableAbiPlugin::new())
             .unwrap();
     }
-    let document = passthrough();
     let mut graph = Handle::NULL;
     // Safety: the document and out-pointer are valid for the call.
     let status = unsafe {
@@ -82,11 +103,11 @@ fn graph() -> (Handle, Handle) {
             MessageSink::NONE,
         )
     };
-    assert_eq!(status, Status::OK, "the passthrough graph compiles");
+    assert_eq!(status, Status::OK, "the graph compiles");
     (host, graph)
 }
 
-fn release(graph: Handle, host: Handle) {
+pub(super) fn release(graph: Handle, host: Handle) {
     // Safety: both are this test's live handles.
     unsafe {
         assert_eq!(
@@ -99,7 +120,7 @@ fn release(graph: Handle, host: Handle) {
 
 /// The system heap, or `None` (with a note on stderr) when this machine has none to use.
 #[allow(clippy::print_stderr)]
-fn system_heap() -> Option<DmaHeap> {
+pub(super) fn system_heap() -> Option<DmaHeap> {
     match DmaHeap::open("system") {
         Ok(heap) => Some(heap),
         Err(error) => {
@@ -110,12 +131,12 @@ fn system_heap() -> Option<DmaHeap> {
 }
 
 /// The number of open descriptors of this process.
-fn open_fds() -> usize {
+pub(super) fn open_fds() -> usize {
     std::fs::read_dir("/proc/self/fd").unwrap().count()
 }
 
 /// A dma-buf of one frame, filled with `seed`-dependent bytes through a mapping.
-fn filled(heap: &DmaHeap, len: usize, seed: u8) -> DmaBuf {
+pub(super) fn filled(heap: &DmaHeap, len: usize, seed: u8) -> DmaBuf {
     let buf = heap.allocate(len).unwrap();
     let mut map = buf.map().unwrap();
     buf.begin_cpu_access(Access::ReadWrite).unwrap();
@@ -136,12 +157,12 @@ fn read_through_mapping(fd: BorrowedFd<'_>, len: usize) -> Vec<u8> {
     bytes
 }
 
-fn identity(fd: BorrowedFd<'_>) -> (u64, u64) {
+pub(super) fn identity(fd: BorrowedFd<'_>) -> (u64, u64) {
     DmaBufRef::from_fd(fd).unwrap().identity().unwrap()
 }
 
 /// A one-plane R8 frame over `buf`.
-fn r8_desc(buf: &DmaBuf) -> BufferDesc {
+pub(super) fn r8_desc(buf: &DmaBuf) -> BufferDesc {
     BufferDesc::image(SIDE, SIDE, R8, 0)
         .with_plane(PlaneDesc {
             fd: buf.as_fd().as_raw_fd(),
@@ -154,14 +175,14 @@ fn r8_desc(buf: &DmaBuf) -> BufferDesc {
 }
 
 /// Pushes `desc` (with `fence`) into the graph's `frame` input.
-fn push(graph: Handle, desc: &BufferDesc, fence: *const FenceDesc) -> Status {
+pub(super) fn push(graph: Handle, desc: &BufferDesc, fence: *const FenceDesc) -> Status {
     let port = "frame";
     // Safety: the port and descriptors are valid for the call; the descriptor is borrowed.
     unsafe { daedalus_surface_push_frame(graph, port.as_ptr(), port.len(), desc, fence) }
 }
 
 /// Takes the graph's `out` frame: the lease, its descriptor and its fence.
-fn take(graph: Handle) -> Result<(Handle, BufferDesc, FenceDesc), Status> {
+pub(super) fn take(graph: Handle) -> Result<(Handle, BufferDesc, FenceDesc), Status> {
     let port = "out";
     let mut desc = BufferDesc::image(0, 0, 0, 0);
     let mut fence = FenceDesc::none();
@@ -185,7 +206,7 @@ fn take(graph: Handle) -> Result<(Handle, BufferDesc, FenceDesc), Status> {
 }
 
 /// The owned plane descriptors of a taken frame, as `OwnedFd`s the test closes.
-fn owned_planes(desc: &BufferDesc) -> Vec<OwnedFd> {
+pub(super) fn owned_planes(desc: &BufferDesc) -> Vec<OwnedFd> {
     desc.planes()
         .iter()
         // Safety: a taken frame's descriptors are the caller's, duplicated for it.
@@ -194,16 +215,18 @@ fn owned_planes(desc: &BufferDesc) -> Vec<OwnedFd> {
 }
 
 /// The data pointer of the frame the lease holds (its `handle().data()`).
-fn lease_data(lease: Handle) -> usize {
+pub(super) fn lease_data(lease: Handle) -> usize {
     let tables = lock();
     tables.frames.get(lease).unwrap().handle().data() as usize
 }
 
-/// The data pointer of the frame object a port last pushed (its spare).
-fn spare_data(graph: Handle, index: usize) -> usize {
+/// Whether `data` is one of the frame objects of input `index` (a pushed frame's identity).
+fn pooled(graph: Handle, index: usize, data: usize) -> bool {
     let tables = lock();
     let graph = tables.graphs.get(graph).unwrap();
-    Arc::as_ptr(graph.frame_spare[index].as_ref().unwrap()) as usize
+    graph.frame_spare[index]
+        .as_ref()
+        .is_some_and(|pool| pool.holds(data as *const std::ffi::c_void))
 }
 
 #[test]
@@ -253,9 +276,8 @@ fn a_frame_round_trips_with_its_pixels_its_dma_buf_and_its_identity() {
             read_through_mapping(buf.as_fd(), FRAME_LEN),
             "round {round}: the pixels are the same bytes"
         );
-        assert_eq!(
-            lease_data(lease),
-            spare_data(graph, 0),
+        assert!(
+            pooled(graph, 0, lease_data(lease)),
             "round {round}: the frame keeps its identity through the graph"
         );
         drop(owned);
@@ -455,7 +477,13 @@ fn a_panic_in_push_or_take_returns_a_status_and_leaks_nothing() {
         )
     };
     assert_eq!(status, Status::PANIC);
-    assert_eq!(open_fds(), before, "the panicking take leaks no descriptor");
+    // The dups are closed, and so is the frame's own descriptor: the panic dropped the frame,
+    // and nothing else held its buffer.
+    assert_eq!(
+        open_fds(),
+        before - 1,
+        "the panicking take leaks no descriptor"
+    );
 
     release(graph, host);
 }

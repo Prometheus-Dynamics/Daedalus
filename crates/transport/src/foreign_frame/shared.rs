@@ -62,6 +62,19 @@ impl SharedFrame {
         Self::checked(handle, false)
     }
 
+    /// Own a frame this build made as a handle (the handle's reference moves in): a
+    /// [`ForeignHandle::from_raw_parts`] over its own [`FrameSource`] with an owner of its own,
+    /// such as a recycled object that clears itself when its last holder releases it. It is
+    /// [`Self::is_local`], as [`Self::new`]'s is.
+    ///
+    /// # Safety
+    /// The handle's vtable and its owner's retain and release must be this build's code.
+    pub unsafe fn from_local_handle(
+        handle: ForeignHandle,
+    ) -> Result<Self, ForeignInterfaceMismatch> {
+        Self::checked(handle, true)
+    }
+
     fn checked(handle: ForeignHandle, local: bool) -> Result<Self, ForeignInterfaceMismatch> {
         let vtable: *const FrameVTable = handle.view::<FrameInterface>()?.vtable();
         Ok(Self {

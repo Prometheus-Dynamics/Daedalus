@@ -115,8 +115,11 @@ returns a lease: the frame's descriptors, duplicated and owned by the caller, an
 (pending writes are carried by the dma-buf reservations). The frame stays alive until
 `daedalus_surface_frame_release`. The frame keeps its identity through the graph: a taken frame's
 `handle().data()` is the pushed frame's, so a cache keyed on it (Styx's) sees the same frame.
-Each port keeps its last frame object and reuses it once the graph lets go, so the surface's own
-frame code allocates nothing per warm frame. A payload holds a frame's handle in place (no payload
+Each port recycles its frame objects (up to 4), so the surface's own frame code allocates nothing
+per warm frame, and an object holds no buffer while it waits: the last holder of a frame (the
+graph once a tick consumed it, or the lease at `daedalus_surface_frame_release`) closes and unmaps
+its dma-bufs on the spot. The surface never holds a caller's buffer past the graph and the lease,
+which matters for small camera pools (PiSP outputs, a CMA raw ring). A payload holds a frame's handle in place (no payload
 storage is allocated, at the push or at the tick), and the tick reuses the previous tick's
 telemetry, so a warm frame allocates nothing: push, tick, take and release, measured 0 through the
 surface and 0 through the static graph (`crates/host-wrapper/tests/frames.rs`,

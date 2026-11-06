@@ -1,7 +1,8 @@
 //! Dma-buf frames through the surface library, as a Rust caller uses them: each frame is pushed to
 //! the `stable_abi` plugin's `frame_pass` node (installed through the stable handler path) and
 //! taken back. A taken frame is the same dma-buf as the pushed one (same device and inode), with
-//! the same pixels, and no descriptor is left open over the run.
+//! the same pixels, no descriptor is left open over the run, and once a frame is released the
+//! surface holds no descriptor of its buffer.
 //!
 //! Allocations: a warm frame allocates nothing, through the surface (push, tick, take and
 //! release) and through a statically installed graph (push, tick, take, with the tick's telemetry
@@ -159,6 +160,18 @@ fn read(fd: BorrowedFd<'_>, offset: usize, len: usize) -> Vec<u8> {
     bytes
 }
 
+/// This process's descriptors of `buf`'s dma-buf: the surface keeps none once a frame is
+/// released (its recycled frame objects hold no buffer).
+fn descriptors_of(buf: &DmaBuf) -> usize {
+    use std::os::unix::fs::MetadataExt;
+    let (device, inode) = buf.identity().unwrap();
+    std::fs::read_dir("/proc/self/fd")
+        .unwrap()
+        .filter_map(|entry| std::fs::metadata(entry.ok()?.path()).ok())
+        .filter(|meta| meta.dev() == device && meta.ino() == inode)
+        .count()
+}
+
 fn identity(fd: BorrowedFd<'_>) -> (u64, u64) {
     DmaBufRef::from_fd(fd).unwrap().identity().unwrap()
 }
@@ -307,6 +320,11 @@ fn frames_round_trip_as_the_same_dma_bufs_with_the_same_pixels() {
         if i >= WARM {
             warm_allocs += surface_count() - before;
         }
+        assert_eq!(
+            descriptors_of(buf),
+            1,
+            "frame {i}: once released, only the test's own descriptor refers to the buffer"
+        );
         drop(acquire);
     }
     assert_eq!(

@@ -122,10 +122,10 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    dma-buf frames (`push_frame`, `take_frame`, `frame_release`) with no copy. The CM5 cost is in
    `benchmarks-log.md` (0.43 µs per frame over static-through-stable). A warm frame allocates
    nothing (2026-11-06: payloads hold foreign handles inline, the tick reuses its telemetry; it
-   was 2, the payload storage at push and at tick). Open on frames: each port keeps its last pushed
-   frame's dma-bufs referenced until the next push (the spare object reused to avoid an
-   allocation), which holds a caller's buffer longer than the graph does; an imported acquire
-   fence is not tested to delay a consumer. Step 4 (Gaia's link modes) is not started. In-image
+   was 2, the payload storage at push and at tick). A frame's dma-bufs are released
+   once the graph consumed it or at the lease's release (2026-11-06: recycled frame objects
+   cleared by their last holder; before, each port kept its last frame's buffers until the next
+   push). Open on frames: an imported acquire fence is not tested to delay a consumer. Step 4 (Gaia's link modes) is not started. In-image
    node crates link into the surface `cdylib`; only separate plugins use the stable ABI. Gaia's A/B:
    per-node calls across a library cost 26% on the mirror bench, so the surface is per frame.
 8. Lemnos's kernel module and its Rust userspace drivers: Daedalus's fixed-function nodes and

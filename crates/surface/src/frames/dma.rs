@@ -10,11 +10,13 @@
 
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use daedalus::transport::{
     FrameFormatKind, FramePlane, FrameResidency, FrameSource, PlaneMapping, SharedFrame,
 };
+
+use super::pool::FramePool;
 use lemnos_abi::{BufferDesc, FenceDesc, Handle, MAX_PLANES, PlaneDesc, Status};
 use lemnos_linux::dma::{Access, DmaBuf, Mapping, SyncFence};
 
@@ -23,7 +25,8 @@ use crate::io::feed;
 use crate::state::{Kind, Tables, lock};
 
 /// A frame the surface holds: its metadata, one dma-buf per plane, and each plane's lazily mapped
-/// bytes. Immutable once built; a push that reuses the object overwrites it whole.
+/// bytes. Immutable while a frame refers to it; a recycled object is cleared by its last holder
+/// ([`Self::clear`]) and overwritten whole by the push that reuses it.
 pub struct FrameObject {
     width: u32,
     height: u32,
@@ -44,7 +47,7 @@ pub struct FrameObject {
 impl FrameObject {
     /// A frame over `desc`'s planes, with `bufs[i]` the dma-buf of plane `i`. `desc` has been
     /// validated, so its plane count is at most [`MAX_PLANES`].
-    fn new(desc: &BufferDesc, bufs: [Option<DmaBuf>; MAX_PLANES]) -> Self {
+    pub(super) fn new(desc: &BufferDesc, bufs: [Option<DmaBuf>; MAX_PLANES]) -> Self {
         Self {
             width: desc.width,
             height: desc.height,
@@ -56,6 +59,18 @@ impl FrameObject {
             maps: [const { OnceLock::new() }; MAX_PLANES],
             readers: Mutex::new([0; MAX_PLANES]),
         }
+    }
+
+    /// Lets go of the frame: its dma-bufs close and its mappings go, so a recycled object holds
+    /// none of a caller's buffers.
+    pub(super) fn clear(&mut self) {
+        self.count = 0;
+        self.maps = [const { OnceLock::new() }; MAX_PLANES];
+        self.bufs = [const { None }; MAX_PLANES];
+        *self
+            .readers
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner) = [0; MAX_PLANES];
     }
 
     /// The index of plane `index` when it is in use.
@@ -292,19 +307,10 @@ pub(super) unsafe fn push(
 
     fault_point();
 
-    // Reuse the port's last object when the graph has let go of it; otherwise a new one.
-    let object = match graph.frame_spare[index].take() {
-        Some(mut spare) => match Arc::get_mut(&mut spare) {
-            Some(slot) => {
-                *slot = FrameObject::new(&desc, bufs);
-                spare
-            }
-            None => Arc::new(FrameObject::new(&desc, bufs)),
-        },
-        None => Arc::new(FrameObject::new(&desc, bufs)),
-    };
-    let frame = SharedFrame::new(Arc::clone(&object));
-    graph.frame_spare[index] = Some(object);
+    // In a free object of the port's when there is one: no allocation, and no buffer kept.
+    let frame = graph.frame_spare[index]
+        .get_or_insert_with(FramePool::default)
+        .share(FrameObject::new(&desc, bufs));
     let id = graph.inputs[index].id.clone();
     feed(graph.graph.push_payload(id, frame.into_payload()))
 }

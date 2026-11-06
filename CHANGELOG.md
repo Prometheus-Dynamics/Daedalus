@@ -739,6 +739,18 @@ plugin ABI and does not load.
   graph and through a stable-ABI plugin, host and plugin side (it was 2 through the surface and
   the static graph, and 1 per handle edge on the stable path); the surface, wrapper,
   `dylib_stable_allocations` and `dylib_frames_overhead` tests assert 0.
+- **The surface holds no frame past its consumers.** Each frame input recycles its frame objects
+  (`crates/surface/src/frames/pool.rs`, up to 4 per port) under a surface-owned
+  `ForeignOwner`: the last holder of a frame (the graph once a tick consumed it, or the lease at
+  `daedalus_surface_frame_release`) clears the object, closing its dma-bufs and unmapping them,
+  and a later push reuses the empty object. Before, each port kept its last pushed frame's
+  dma-bufs until the next push, one extra lease per input on a small camera pool. Warm frames
+  still allocate nothing, with up to 4 frames of a port out at once. New:
+  `SharedFrame::from_local_handle` (unsafe) for a local frame with an owner of its own.
+  `crates/surface/src/frames/tests_release.rs` counts the process's descriptors and mappings of
+  the buffer's inode over 40 frames: back to baseline after every tick of a graph that consumes
+  the frame (`frame_info`), and after every take and release of a passthrough graph with two
+  leases out at once; the wrapper frame test checks the same after each release.
 - `daedalus::dylib::STABLE_ABI_VERSION` is 5 (was 2). The stable path installs versions
   `STABLE_ABI_MIN_VERSION` (2) to 5 (`stable_abi_supported`); `StableHandlers` is unchanged, so
   `PLUGIN_ABI_VERSION` stays 11. Version 5 adds the `tag::POD` value (the tables keep their

@@ -16,7 +16,7 @@ use daedalus::transport::{FRAME_INTERFACE_KEY, PayloadSlot, SharedFrame, TypeKey
 use lemnos_abi::{Handle, Slab, Status};
 
 #[cfg(target_os = "linux")]
-use crate::frames::FrameObject;
+use crate::frames::FramePool;
 
 /// A host: the plugin registry graphs compile from, the engine that compiles them, and the
 /// plugin libraries installed into the registry (kept loaded while anything may run their code).
@@ -50,11 +50,11 @@ pub struct Graph {
     /// Bytes taken from an output but not yet copied out (the caller's buffer was too small),
     /// with their output port index. They come back first on the next take.
     pub stash: Vec<(usize, SharedBytes)>,
-    /// Per input port: the frame object of the last dma-buf frame pushed to it. Reused (its
-    /// descriptors replaced in place) once the graph has let go of it, so a steady stream of
-    /// pushes allocates no frame object.
+    /// Per input port: its recycled frame objects, made on the first frame push. An object is
+    /// reused once no frame refers to it, so a steady stream of pushes allocates none, and it
+    /// holds no dma-buf meanwhile (its last holder cleared it).
     #[cfg(target_os = "linux")]
-    pub frame_spare: Vec<Option<Arc<FrameObject>>>,
+    pub frame_spare: Vec<Option<FramePool>>,
     /// Frames taken from an output but not handed to the caller (a descriptor could not be
     /// made), with their output port index. They come back first on the next take.
     #[cfg(target_os = "linux")]

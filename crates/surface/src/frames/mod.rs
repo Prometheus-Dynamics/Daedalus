@@ -13,10 +13,14 @@
 #[cfg(target_os = "linux")]
 mod dma;
 #[cfg(target_os = "linux")]
+mod pool;
+#[cfg(target_os = "linux")]
 use dma as platform;
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests;
+#[cfg(all(test, target_os = "linux"))]
+mod tests_release;
 
 #[cfg(not(target_os = "linux"))]
 mod platform {
@@ -53,7 +57,7 @@ mod platform {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) use platform::FrameObject;
+pub(crate) use pool::FramePool;
 
 use lemnos_abi::{BufferDesc, FenceDesc, Handle, Status};
 
