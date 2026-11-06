@@ -60,15 +60,17 @@ homepage = "https://github.com/Prometheus-Dynamics/Daedalus"
 rust-version = "1.99"
 
 [workspace.dependencies]
-# Lemnos is pinned by revision, and every Lemnos git dependency names the same one so cargo builds
-# one copy. Bump them together. `lemnos-linux`: DMA buffers (dma-heap, dma-buf sync, sync-file
+# Lemnos is declared `branch = "dev"`, like every Prometheus Dynamics git dependency, and the
+# exact commit lives only in Cargo.lock (`cargo update -p <crate> --precise <sha>`): a `rev =`
+# here would be a different cargo source from a consumer's `branch = "dev"` and split the crates.
+# Move all Lemnos crates together. `lemnos-linux`: DMA buffers (dma-heap, dma-buf sync, sync-file
 # fences) and V4L2 mem2mem sessions. `lemnos-drivers-rga`: the RGA and VGLite fixed-function
 # routes and their capability table (the K230's VGLite rows are `lemnos-drivers-rga::caps`).
-lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", rev = "cf3a4ac1b6e0043fde5bc80175a162a982b1239f", version = "2.0.1-dev", default-features = false }
-lemnos-drivers-rga = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", rev = "cf3a4ac1b6e0043fde5bc80175a162a982b1239f", version = "2.0.1-dev" }
+lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", branch = "dev", version = "2.0.1-dev", default-features = false }
+lemnos-drivers-rga = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", branch = "dev", version = "2.0.1-dev" }
 # `lemnos-abi`: the C-ABI primitives (status, handles, descriptors, handshake, panic guard) that
 # `daedalus-surface` and `daedalus-host` use. Same revision as the lines above.
-lemnos-abi = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", rev = "cf3a4ac1b6e0043fde5bc80175a162a982b1239f", version = "2.0.1-dev", default-features = false }
+lemnos-abi = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", branch = "dev", version = "2.0.1-dev", default-features = false }
 # Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared
 # without default features; `std` consumers enable `features = ["std"]` themselves.
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.1-dev", default-features = false }
