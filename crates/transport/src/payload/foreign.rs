@@ -237,6 +237,22 @@ impl Payload {
         Ok(Payload::foreign_local(I::KEY, handle, self.residency()).with_lineage(self.lineage))
     }
 
+    /// A payload sharing `owner`, readable through interface `I` (key `I::KEY`): what a node
+    /// returns for an owner type with a provider (a camera's frame type providing
+    /// `daedalus:frame`, say), so a consumer of another build, such as a stable plugin's node or
+    /// its host, gets a [`ForeignHandle`] of the owner (no copy), while a consumer of this build
+    /// still reads `get_ref::<O>()`. [`Self::shared_with`] then [`Self::provide_foreign`].
+    pub fn providing<O, I>(owner: Arc<O>, residency: Residency) -> Self
+    where
+        I: ForeignInterface,
+        O: ProvideForeign<I>,
+    {
+        Self::shared_with(I::KEY, owner, residency, None, None)
+            .provide_foreign::<O, I>()
+            // Shared storage holds an `O`, so this never fails; keep the payload if it did.
+            .unwrap_or_else(|payload| *payload)
+    }
+
     /// Retype storage that is an `S` at the allocation's address as `ProvidedStorage<S, O, I>`.
     fn provided<S, O, I>(mut self) -> Self
     where

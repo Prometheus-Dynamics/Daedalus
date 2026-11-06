@@ -27,6 +27,13 @@ plugin ABI and does not load.
   -Werror -pedantic`) built against `daedalus_surface.h` and linked to the surface library installs
   the `stable_abi` plugin, compiles a graph, and runs 50 frames with ports by index and a batch
   push; its outputs equal the static graph's. Linux; skipped without a C compiler.
+- `Payload::providing::<O, I>(owner, residency)`: a payload sharing an owner value readable
+  through foreign interface `I`, in one call (`shared_with` then `provide_foreign`). A node
+  returning an owner type with a provider (a camera's frame type providing `daedalus:frame`)
+  publishes it this way, so a consumer of another build, such as a stable plugin's node or its
+  host, gets a handle of the owner without a copy, while one of this build still reads
+  `get_ref::<O>()`. A plain `Payload::shared` of the owner has no handle to lend, so on the stable
+  path it falls back to the owner's value serializer.
 - Port codecs for nodes registered at runtime: `PluginRegistry::declare_stable_port(node, port,
   &StablePortCodec)` records how a port of a node built without `#[node]` (a `NodeDecl` and a
   `handlers.try_on` handler, as a data-driven catalog builds them) crosses the stable plugin

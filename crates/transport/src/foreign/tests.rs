@@ -253,3 +253,17 @@ fn provided_payloads_lend_the_owner_value_without_a_handle() {
     let wrong = Payload::owned("test:counter_owner", 1u8);
     assert!(wrong.provide_foreign::<Counter, CounterV1>().is_err());
 }
+
+#[test]
+fn a_provided_payload_lends_its_owner_by_handle_and_by_type() {
+    let value = Arc::new(Counter {
+        value: 21,
+        drops: None,
+    });
+    let provided = Payload::providing::<Counter, CounterV1>(value.clone(), Residency::Cpu);
+    assert_eq!(provided.type_key().as_str(), "test:counter");
+    assert_eq!(provided.get_ref::<Counter>().map(|c| c.value), Some(21));
+    let handle = provided.to_foreign_handle().expect("a handle of the owner");
+    assert_eq!(read(&handle), 21);
+    assert_eq!(handle.data(), Arc::as_ptr(&value).cast());
+}
