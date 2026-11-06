@@ -49,8 +49,8 @@ Now, in this order. Items not listed here keep their place below. Nothing new is
       but broke unique handoff (`gpu_fallback`'s `drain_owned`).
 - [x] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
       `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
-      moved onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stays until `crates/rga` goes to
-      Lemnos.
+      moved onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stayed until `crates/rga` went to
+      Lemnos (2026-11-06).
       **Done (2026-11-04):** allocation, sync and mapping go through Lemnos. Two things stay:
       `gpu_probe`'s per-heap report still opens each heap read-write itself, because that open is
       what it reports and Lemnos's `open_path` is read-only; and `frame-bench`'s dma-buf mapping is
@@ -89,16 +89,13 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    `/mnt/ssd-samsung/helios-notes/gpu-seam.md`.
 4. One real Eidos node on the stable path as a trial, then Eidos as a `cdylib` plugin.
 5. Whole-subgraph crossing: only if the numbers justify it.
-6. Use `lemnos-abi` primitives; hand `crates/rga` and `crates/vglite` to Lemnos, then repoint
-   `crates/kernels/src/registry/fixed.rs` and delete ours.
-   - 2026-11-06: `lemnos-drivers-rga` is on Lemnos dev e6103b1 (V4L2 M2M `Rga` and `/dev/rga`
-     `MultiRga`, no dlopen, `caps::route_for`; `Route::Librga` is a deprecated alias). Untested on
-     board. Repoint only on HeliOS's go.
-   - 2026-11-06: `lemnos-drivers-vglite` phase 1 is on Lemnos dev afd5079: libvg_lite replaced by
-     Rust encoding (init, clear, blit, palette); lines and path fill return `Unsupported` (CPU)
-     until phase 2. Untested on board.
-     Lines (086d6ce): non-antialiased on the GPU, but caps keep `daedalus.image.line` on CPU until
-     `tests/lines.rs` (exact Bresenham per direction, against `reference::line`) runs on a K230.
+6. [x] Hand-off to Lemnos, done 2026-11-06 (worker branch `lemnos-switch`): `crates/rga` and
+   `crates/vglite` are deleted. `crates/kernels/src/registry/fixed.rs` names `lemnos-drivers-rga`
+   and `lemnos-drivers-vglite` at Lemnos 952e1c7 (pinned in the workspace `Cargo.toml`), and a
+   Linux test ties every row to `caps::route_for`. The librga route is gone: `/dev/rga` is
+   `MultiRga` (`Librga` is a deprecated alias of it in Lemnos). `daedalus.image.line` on VGLite
+   is deferred and runs on the CPU until Lemnos's K230 slope-sweep test passes. Still to come: the
+   `lemnos-abi` use for the C surface. Untested on board.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
    plugin linking. Design in `docs/shared-library.md` (2026-11-05). Started; blocked by Lemnos's
    `lemnos-abi`. In-image node crates link into the surface `cdylib`; only separate plugins use the
@@ -147,11 +144,13 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
       `vmull.p8` in software, so this says nothing about the A7's NEON; only the board number
       can move the default.
 - [ ] **[board] What:** K230D (`riscv64gc-unknown-linux-gnu` and `-musl`): the CPU graph tests
-      and the kernel conformance binary on the board, and `crates/vglite/tests/vglite.rs` (the
-      VGLite cells, each op's measured difference). Written, untested on board.
+      and the kernel conformance binary on the board, and Lemnos's
+      `lemnos-drivers-vglite/tests/vglite.rs` (the VGLite cells, each op's measured difference).
+      Written, untested on board.
       **Why:** the K230D has no compute-capable GPU, and qemu cannot show a real VLEN.
       **Done when:** `scripts/board.sh k230d root@<k230d>` passes and its evidence, with the board's
-      VLEN, is committed.
+      VLEN, is committed. `board.sh` no longer builds the VGLite tests: Lemnos runs them, so that
+      run needs them run separately on the K230D.
       **Blocked by:** a K230D board. The image is ready: Gaia feb262c ships `libvg_lite.so`,
       `/dev/dma_heap/linux,cma`; Gaia 6e4ede8: a 16 MiB CMA pool shared with VGLite's staging
       (no `libmmz`: contiguous frames come through Lemnos's heap API).
@@ -175,25 +174,25 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
       **Done when:** as above, per chip.
       **Blocked by:** boards and Gaia's driver choice.
       **Measured:** nothing on Mali.
-- [ ] **[board] What:** (Lemnos's: Lemnos owns hardware blocks, and `crates/rga` goes to it when
-      the user says, item 6 above. Lemnos's Rust userspace drivers decide the routes from then on.)
-      The Rockchip RGA fixed-function cells in `daedalus-rga`, the crate shared with Styx. Route (b)
-      is V4L2 mem2mem (`rgb_to_rgba`, `rgba_to_rgb`); route (a) is `Librga` (2f7c880;
-      `gray_to_rgba`, `rgba_red`). Both written, untested on board.
-      **Why:** these are the matrix's 4 untested cells. `rgba_red` relabels the frame as gray and
-      scales it down by nearest, so it yields red only if the hardware takes the first of every four
-      samples; the headers do not promise that.
-      **Done when:** `crates/rga/tests/{v4l2,librga}.rs` pass on a Rockchip board (the `rockchip`
-      profile of `scripts/board.sh` runs them) and the cells read
-      pass, or `rgba_red` is recorded as failing. The same run measures the resize, palette and
-      colour-key cells (`daedalus.image.*`, max difference printed): 2x and 4x area on NV12 and
-      RGB (does 4x equal two 2x passes within 1?), and whether colour key `INVERTED` keeps the
-      in-range pixels; the turn direction; whether `IM_ROP_XOR` (0xf6) is plain XOR; the blend
-      rounding; the results go into `daedalus_rga::caps` as `Exact` or `Tolerance(n)`.
+- [ ] **[board] What:** (Lemnos's: Lemnos owns hardware blocks. The RGA is `lemnos-drivers-rga` at
+      Lemnos 952e1c7, item 6 above, and its routes are Lemnos's.) The Rockchip RGA fixed-function
+      cells: route (b) is the mainline V4L2 mem2mem driver (`rgb_to_rgba`, `rgba_to_rgb`, and the
+      resize, crop, flip and turn rows); route (c) is the vendor multi-RGA node `/dev/rga`
+      (`MultiRga`: `gray_to_rgba`, fill, mask ROP, blend, palette, colour key, flip and turn). Both
+      written, untested on board. The librga route (`Librga`) is gone.
+      **Why:** these are the matrix's untested RGA cells. `rgba_red` (Y-only output) has no route in
+      Lemnos's caps, so it is a gap in `registry.rs`, not a cell to measure.
+      **Done when:** Lemnos's `lemnos-drivers-rga/tests/{v4l2,multirga}.rs` pass on a Rockchip board
+      (Lemnos runs them; `scripts/board.sh rockchip` no longer builds them) and the cells read
+      pass. The same run measures the resize, palette and colour-key cells (`daedalus.image.*`,
+      max difference printed): 2x and 4x area on NV12 and RGB (does 4x equal two 2x passes within
+      1?), and whether colour key `INVERTED` keeps the in-range pixels; the turn direction; whether
+      `IM_ROP_XOR` (0xf6) is plain XOR; the blend rounding. The results go into Lemnos's
+      `caps` as `Exact` or `Tolerance(n)`, not Daedalus's.
       Eidos's matrix cells for its 2x area lowering wait on it (nostd, 2026-11-02).
       **Blocked by:** a Rockchip board.
-      **Measured:** no RGA hardware run. Route (b) passes end to end on `vim2m` with `dma_heap`
-      dmabufs; route (a) passes against software stand-ins and a C stub built from the real header.
+      **Measured:** no RGA hardware run. Route (b) passes end to end on `vim2m` (Lemnos's test) with
+      `dma_heap` dmabufs; the multi-RGA route was written from the vendor header and has no run.
 
 ### Upstream and low priority
 
@@ -289,33 +288,34 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
       units. Eidos lowers its ops onto these nodes and never drives the units.
       **Order:** (1) area and bilinear resize, for pyramids (Eidos `geometry.resize_area`,
       `resize_linear`, `features.feature_pyramid`, `filter.build_pyramid`); (2) palette lookup and
-      colour-key range mask; (3) crop, flip, copy (partly in `daedalus-rga`); (4) blend with mask
+      colour-key range mask; (3) crop, flip, copy (partly in `lemnos-drivers-rga`); (4) blend with mask
       alpha, fill, ROP, line draw. With (1): the capability descriptor (RGA2, RGA3, mainline V4L2
       vs librga, K230 Image 2D, VGLite; ops and an exactness class per unit and SoC).
       **Constraints:** today's routes: mainline `rockchip-rga` (V4L2) reaches scale, crop,
       conversion, flip, 90/180/270 rotation and background fill only; blend, colour key, palette and
-      ROP need librga (vendor kernels). Lemnos's kernel module and Rust userspace drivers may change
+      ROP need the multi-RGA node (vendor kernels). Lemnos's kernel module and Rust userspace drivers may change
       what each unit reaches. RGA scaling exactness is undocumented: tolerance until a board
       measures it.
-      K230: VGLite through `libvg_lite.so` (`daedalus-vglite`); no board yet.
+      K230: VGLite through Lemnos's `lemnos-drivers-vglite` (no `libvg_lite.so`); no board yet.
       **Done when:** each node has a scalar reference, a fixed-function kernel cell in the registry,
       and a test on `vim2m` where the path allows; board cells marked written, untested on board.
-      **Blocked by:** Lemnos's drivers and the `crates/rga` and `crates/vglite` hand-off (items 6
-      and 8 above); boards for measurement.
+      **Blocked by:** Lemnos's drivers (item 8 above) and boards for measurement. The hand-off
+      (item 6) is done (2026-11-06).
       **Progress:** (1) written: `Filter::{Area, Bilinear}` on both routes, `resize_luma` through
       NV12 on mainline, `caps::caps(soc)`, ops `daedalus.image.resize_{area,bilinear}` (scalar and
       fixed_function rows only, `Op::only_on`); vim2m checks the plumbing. Board cells written,
       untested on board; exactness `Unmeasured`. Open in (1): a GRAY8 dmabuf through NV12M with a
       shared dummy chroma plane (mainline 7.2 lists NV12M on RGA2 and RGA3): not wanted, Eidos
-      chains NV12 levels (nostd, 2026-11-02). (2) written: librga palette and colour key, ops
+      chains NV12 levels (nostd, 2026-11-02). (2) written: multi-RGA palette and colour key, ops
       `daedalus.image.{palette,color_key_mask}`, `caps` `FixedOp`; written, untested on board.
-      (3) written: crop on both routes (full frame = copy), flip and rotate on librga, ops
+      (3) written: crop on both routes (full frame = copy), flip and rotate on multi-RGA, ops
       `daedalus.image.{crop,flip,rotate}`; mainline flip and rotate through Lemnos's
-      `set_control` (01939e9), flips checked exactly on vim2m. (4) written: librga fill (boxes as
+      `set_control` (01939e9), flips checked exactly on vim2m. (4) written: multi-RGA fill (boxes as
       four fills), mask AND/OR/XOR and Porter-Duff blend, ops
       `daedalus.image.{fill,mask_rop,blend}`; mainline has none (7.2 never programs
       `BG_COLOR`); RGA2 and RGA3 have no line mode (vendor drivers, radxa 6.1). K230 design note
-      written (`docs/k230-fixed-function.md`). `daedalus-vglite` written (nostd, 2026-11-02: the
+      written (`docs/k230-fixed-function.md`). `daedalus-vglite` written (nostd, 2026-11-02, now
+      `lemnos-drivers-vglite`: the
       board is not a blocker): the `vglite` variant on resize (area 2x only, as a half-phase
       bilinear blit), crop, flip, rotate, fill, blend (straight alpha), palette and
       `daedalus.image.line` (new op, Bresenham reference; the one fixed-function line route);
@@ -391,7 +391,8 @@ was searched for, the commit is the one that introduced it.
 - [x] `daedalus-rga`'s V4L2 mem2mem session is Lemnos's `M2mSession` (Lemnos fdbb0c4: crop in
       `QueueSetup`, `v4l2::query`, `find_m2m`). `crates/rga/tests/v4l2.rs` passes on `vim2m`
       (conversion, scaling, dmabuf in and out, a refused crop); the crop success path waits for an
-      RGA board. One RGA binding, in Daedalus; Styx keeps V4L2 M2M for codecs (agreed 2026-11-02).
+      RGA board. One RGA binding, in Daedalus until 2026-11-06, now `lemnos-drivers-rga`; Styx
+      keeps V4L2 M2M for codecs (agreed 2026-11-02).
 
 ### GPU and hardware support
 

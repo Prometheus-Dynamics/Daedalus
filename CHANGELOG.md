@@ -621,6 +621,10 @@ plugin ABI and does not load.
   - `daedalus-registry`: `prelude::CapabilityRegistry::replace_serializer`, `prelude::CapabilityRegistry::serializer_decl`, `prelude::NodeFire::write_to_metadata`.
   - `daedalus-runtime`: `ExecutionContext::record_frame_scratch_bytes`, `ExecutionContext::record_warm_cache_bytes`, `ExecutionTelemetry::is_lifecycle_enabled`, `ExecutionTelemetry::record_edge_gpu_transfer`, `FrameOverheadWindow::latest_mut`, `HostBridgeHandle::drain_arcs`, `MetricsLevel::is_hardware`, `NodeHandle::alias_id`, `NodeIo::from_single_input`, `NodeIo::get_typed_mut`, `NodeIo::push_arc_as_default`, `NodeIo::push_as_default`, `NodeIo::push_payload_default`, `PortHandle::node_alias_id`, `PortHandle::port_id`, `Profiler::export_json`, `Profiler::telemetry_mut`, `RuntimeEdgePolicy::is_latest_only`, `RuntimeResources::record_frame_scratch_bytes`, `RuntimeResources::record_warm_cache_bytes`, `StateStore::set_typed`, `StreamGraph::export_profile_json`, `StreamGraph::profiler_snapshot`, `graph_builder::GraphBuilder::node_port`, `io::CowArcMut::as_arc`, `plugins::PluginInstallContext::manifest_mut`, `plugins::PluginRegistry::install_and_freeze`, `plugins::PluginRegistry::take_runtime_transport`, `plugins::PluginRegistry::take_transport_capabilities`.
   - `daedalus-transport`: `Payload::cache_current`, `Payload::resident_arc`.
+- `crates/rga` (`daedalus-rga`) and `crates/vglite` (`daedalus-vglite`): the RGA and VGLite
+  bindings moved to Lemnos, and both crates are deleted from this workspace. Nothing in this
+  repo depended on them except `crates/kernels`' fixed-function rows. Styx builds on
+  `daedalus-rga` and must move to `lemnos-drivers-rga` (Lemnos 952e1c7) too.
 
 ### Changed
 
@@ -1440,6 +1444,12 @@ plugin ABI and does not load.
   contents, public API and plugin ABI are unchanged. The harness enables daedalus's `metrics` and
   `tracing` features, which the live engine runs with; without `metrics` the Timing level compiles
   out.
+- The RGA and VGLite fixed-function rows (`crates/kernels/src/registry/fixed.rs`) use
+  `lemnos-drivers-rga` and `lemnos-drivers-vglite`, pinned to Lemnos rev `952e1c7` in the
+  workspace `Cargo.toml` (`lemnos-linux` was `branch = "dev"`). The `librga` variant is now
+  `multirga` (`/dev/rga`, Lemnos's `MultiRga`), and `v4l2` is the mainline route. A Linux test
+  ties each row to Lemnos's `caps::route_for`. `daedalus.image.line` on VGLite is deferred and
+  runs on the CPU: Lemnos does not route lines there until a K230 test passes.
 
 ## [3.0.0] - 2026-10-05
 

@@ -1,9 +1,9 @@
 # K230D fixed-function units: design note
 
-What Linux on the Kendryte K230D can reach for the fixed-function image ops Daedalus provides on
-the Rockchip RGA (`daedalus-rga`, `daedalus.image.*`), and the binding built on it
-(`daedalus-vglite`: written, untested on board). There has been no board run; everything below
-comes from reading the K230 Linux SDK and its kernel.
+What Linux on the Kendryte K230D can reach for the fixed-function image ops (`daedalus.image.*`),
+and the VGLite binding built on it. The binding is Lemnos's now (`lemnos-drivers-vglite`, pinned at
+Lemnos 952e1c7; the Rockchip RGA is `lemnos-drivers-rga`). Written, untested on board. There has been
+no board run; everything below comes from reading the K230 Linux SDK and its kernel.
 
 **Sources:** the K230 Linux SDK v0.6.1 (`k230_linux_sdk`, `buildroot-overlay/package/`) and the
 kernel it builds (ruyisdk `linux-xuantie-kernel` at `ae4a7e65`, as Gaia's K230D Zero image builds
@@ -38,7 +38,7 @@ narrow the header's format list a lot.
 | `palette` | `INDEX_8` source with a colour table | to confirm against the blit path |
 | `color_key_mask` | none | `gcFEATURE_VG_COLOR_KEY` is 0 |
 | `mask_rop` | none | no raster operations |
-| line drawing | `vg_lite_draw` paths | the one fixed-function line route on the target SoCs (RGA2 and RGA3 have no line mode) |
+| line drawing | `vg_lite_draw` paths | a width-1 GPU stroke, not shown to match Bresenham on a K230. Lemnos's route does not serve `daedalus.image.line`, so lines run on the CPU until its slope-sweep test passes (RGA2 and RGA3 have no line mode) |
 
 **Formats:** RGBA / BGRA / ARGB / ABGR / XRGB 8888, 565, 4444, 5551, A8, L8 and the indexed
 formats. Planar YUV input is off (`YUV_INPUT` 0), so NV12 is not a source; YUY2 is a source
@@ -59,14 +59,14 @@ Zero-copy needs one of:
 
 Otherwise frames go through a VGLite-allocated buffer, with a copy.
 
-## The binding (`daedalus-vglite`)
+## The binding (`lemnos-drivers-vglite`)
 
-- **Crate:** `daedalus-vglite`, beside `daedalus-rga`, Linux only. It loads `libvg_lite.so`
-  at run time as `Librga` does, so nothing links a vendor library. Calling the ioctl directly
-  would mean reimplementing the library's command-buffer building, which is most of its source.
-- **API:** the shapes `daedalus-rga` has. `resize`, `crop`, `transform`, `fill`, `blend`,
-  `palette` and `line` take an image (format, size, stride) and bytes or a dmabuf. Strict
-  refusals stay: a format or filter the unit lacks is `Unsupported`, never a substitute.
+- **Crate:** `lemnos-drivers-vglite` in Lemnos, beside `lemnos-drivers-rga`, Linux only. It
+  does not load `libvg_lite.so`: the command streams are the vendor library's (MIT), ported to
+  Rust, and the binding calls `/dev/vg_lite` directly. Nothing links a vendor library.
+- **API:** `Vglite` with `resize_*`, `crop_*`, `transform_*`, `fill_*`, `blend_*`, `palette_*`
+  and `line_*` (bytes and dmabuf variants). Strict refusals stay: a format or filter the unit
+  lacks is `Unsupported`, never a substitute.
 - **Memory:** a dmabuf is mapped in place only when the caller marks it contiguous and its rows
   meet VGLite's alignment. Everything else is copied through a staging buffer that
   `vg_lite_allocate` makes (`dma_alloc_coherent`, contiguous), and each call returns the bytes
@@ -78,12 +78,13 @@ Otherwise frames go through a VGLite-allocated buffer, with a copy.
   - `vg_lite_color_t` keeps R in the low byte (`rgb_to_l`).
   - Every RGBA source has `in_premult` set, so blends take straight alpha only.
   - The user-space map takes no user memory (`vg_lite_hal_map`: dmabuf only).
-- **Capabilities:** the K230D entry in `daedalus_rga::caps` is the VGLite route
-  (`Staging::UnlessContiguous`) with its ops, each `Unmeasured`. The Image 2D engine stays
-  `Design`.
+- **Capabilities:** the K230D entry in `lemnos_drivers_rga::caps` is the VGLite route
+  (`Staging::UnlessContiguous`) with its ops, each `Unmeasured`. `FixedOp::Line` is not in it,
+  so `route_for` returns nothing for lines. The Image 2D engine stays `Design`.
 - **Matrix:** `fixed_function` rows with a `vglite` variant on `daedalus.image.*` (resize, crop,
-  flip, rotate, fill, blend, palette, and the new `line`). `crates/vglite/tests/vglite.rs` runs
-  on the board through `scripts/board.sh k230d`.
+  flip, rotate, fill, blend, palette). The `line` row is deferred: it runs on the CPU. The
+  VGLite tests are `lemnos-drivers-vglite/tests/vglite.rs`, which Lemnos runs; `scripts/board.sh
+  k230d` no longer builds them.
 - **AI2D:** not planned. It is reachable only through the nncase binary runtime and has no
   public register interface. Its resize and affine ops would come in through nncase if Eidos runs
   models there anyway.

@@ -227,7 +227,8 @@ command: it cross-builds the binaries here, runs them from the board's `/tmp` ov
 under `/run/lock/raze-gpu.lock` where the board has it), brings back the logs and writes the
 matrix evidence to `docs/accel-evidence/RUNNER_NAME-DATE.jsonl`, then cleans the board. Profiles:
 `flame` (armv7 `+neon`, run on the Luckfox Pico Pro), `k230d` (riscv64 `+v`), `rockchip` (aarch64:
-the CPU set, the GPU tests, `gpu_probe`, `gpu_bench` and the RGA tests) and `raze`. Only the
+the CPU set, the GPU tests, `gpu_probe` and `gpu_bench`) and `raze`. The RGA and VGLite tests are
+Lemnos's (`lemnos-drivers-rga`, `lemnos-drivers-vglite`), not built by these profiles. Only the
 `raze` profile has run (2026-11-02, the Raze: graph tests 90 + 5 + 2, kernel conformance 8 and
 the CRC-32 throughput, the GPU crate's 91 tests, `gpu_probe` and `gpu_bench`, all ok); the
 other three are written, untested on board.
