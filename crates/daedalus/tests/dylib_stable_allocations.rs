@@ -11,7 +11,9 @@
 //! (`recycle_telemetry`), as a frame loop does.
 //!
 //! A frame (a handle edge) allocates nothing on either install, host or plugin: a payload holds
-//! its foreign handle in place.
+//! its foreign handle in place. Neither does a plugin-local object (`Local`) on the host side of
+//! the stable path: the plugin counts its live objects, so the host holds nothing per object to
+//! keep the build (the plugin allocates its output payload, as when installed statically).
 // musl executables are static and cannot dlopen (see `dylib::library`): no loader there. The
 // plugin's counter is read through `dlopen(RTLD_NOLOAD)`, so Unix only.
 #![cfg(all(unix, not(target_env = "musl")))]
@@ -187,6 +189,21 @@ fn cases(registry: &PluginRegistry, plugin: Option<Counter>) -> Vec<(&'static st
         assert!(host.take_payload("out").is_some());
     });
     results.push(("SharedFrame", h, p));
+
+    // A plugin-local object: the node keeps one `Local` and outputs it every tick.
+    let mut host = graph(
+        registry,
+        "local_make",
+        &[("id", TypeExpr::Scalar(ValueType::Int))],
+        "obj",
+    );
+    let (h, p) = per_run(plugin, || {
+        host.push("id", 3_i64);
+        let telemetry = host.tick().unwrap();
+        host.recycle_telemetry(telemetry);
+        assert!(host.take_payload("out").is_some());
+    });
+    results.push(("Local", h, p));
     results
 }
 
@@ -201,22 +218,25 @@ fn a_stable_plugin_tick_allocates_no_more_than_the_static_install() {
             "{name}: static {base:.2}, stable host {host:.2}, plugin {plugin:.2} allocs/tick"
         );
     }
-    let frame = |results: &[(&str, f64, f64)]| {
-        let (_, host, plugin) = results
-            .iter()
-            .find(|(name, ..)| *name == "SharedFrame")
-            .unwrap();
+    let case = |results: &[(&str, f64, f64)], case: &str| {
+        let (_, host, plugin) = results.iter().find(|(name, ..)| *name == case).unwrap();
         (*host, *plugin)
     };
     assert_eq!(
-        frame(&baseline).0,
+        case(&baseline, "SharedFrame").0,
         0.0,
         "a static frame tick allocates nothing"
     );
     assert_eq!(
-        frame(&measured),
+        case(&measured, "SharedFrame"),
         (0.0, 0.0),
         "a frame through the stable path allocates nothing, host or plugin"
+    );
+    assert_eq!(
+        case(&measured, "Local").0,
+        0.0,
+        "a plugin-local object through the stable path allocates nothing on the host: its \
+         build's count keeps the build loaded, not a keepalive per payload"
     );
     for ((name, base, _), (_, host, plugin)) in baseline.iter().zip(&measured) {
         assert!(

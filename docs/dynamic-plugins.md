@@ -208,13 +208,17 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
     address of a static in that build) and that it is a `Local<T>` of its `T`, before reading it.
     A handle from another plugin, or from this plugin before a reload, fails the call with a typed
     error (`plugin-local ... was created by another build`); it is never cast.
-  - **Release on its own build, reload-safe.** Retain and release are the creating build's
-    functions. The host payload holding the handle also holds that build's generation and drops it
-    only after the handle, so the build's code outlives every release. Unlike other handles a
-    plugin makes, it does not pin the plugin for the process: after a reload the old build closes
-    once the last of its objects the host holds is dropped (`live_generations()` shows it). A handle
-    taken out of such a payload (`Payload::to_foreign_handle`), or lent to a node of another build,
-    holds the payload instead.
+  - **Release on its own build, reload-safe (stable ABI 6).** Retain and release are the creating
+    build's functions. Each build counts its live objects (`transport::live_local_objects`,
+    reported through the extension's `live_objects`): creating one counts it, and its last
+    release uncounts it as its final step, after the value is dropped and freed. The host's
+    payload is the plain handle, holding nothing per object (0 host allocations per edge), and an
+    old build is closed only once its count is 0, so the build's code outlives every release.
+    After a reload the old build is let go at the next sweep (a node call, an install, a reload,
+    or `live_generations()`, which shows it) once the last of its objects is dropped, wherever it
+    is held: its runtime is unloaded and the generation dropped. Its library file stays mapped,
+    though (see the reload cost below). A version-4 or version-5 plugin does not count: the host
+    pins it for any object it outputs.
   - The host cannot read the object; take it to a node of the plugin. The ports need a
     `type_key`, and consumers should borrow (`&Local<T>`) so one output can fan out.
 - **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
@@ -405,11 +409,20 @@ loop {
 - **Node state resets.** Plugin-side node state lives in the old build's types, so it is never
   migrated: each node instance's next call releases its old state (on the old build) and starts
   fresh on the new one. Host-side graph state (queues, held inputs) is untouched.
-- **Release before close.** The old generation is dropped once its node instances (each moves
-  on at its next call, or when its graph drops) and the `SharedBytes` and `Local` objects it
-  produced are gone. Then
+- **Release before close.** The old generation is closed once its node instances (each moves
+  on at its next call, or when its graph drops) and the `SharedBytes` buffers and `Local` objects
+  it produced are gone, at the next sweep point: a call of an installed node (one atomic load
+  when nothing is retired), an install, a reload, or `live_generations()`. No thread polls. Then
   the plugin's `unload` drops its runtime and the library is closed (`live_generations()` lists
-  the builds still loaded). Strings the host keeps from a plugin (its id, `info()`, boundary
+  the builds still loaded).
+- **Reload cost: a build that output a `Local` stays mapped.** An object's last release can run
+  on any host thread (wherever its payload is dropped), and after its decrement it still returns
+  through the build's code, so nothing orders a sweep on another thread after that return. A
+  build that ever output a `Local` to the host is therefore unloaded at count 0 (its runtime
+  dropped, nothing of it running) but its library is never closed: its text and read-only pages
+  stay mapped until the process exits, one mapping per such reload. A build that never output
+  one closes as above. `dylib_reload_race` drops the last objects of old builds on many threads
+  while another thread sweeps, reload after reload. Strings the host keeps from a plugin (its id, `info()`, boundary
   types, crate builds, foreign interface keys) are host copies. A foreign handle the plugin
   created that reaches the host through another port type pins its library for the process (the
   host cannot track the payload holding it). The OS may keep a closed library mapped until

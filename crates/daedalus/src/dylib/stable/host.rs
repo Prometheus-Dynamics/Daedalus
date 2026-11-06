@@ -204,6 +204,9 @@ impl HostNode {
             }
         }
         ctx.set_node_state(instance);
+        // A sweep point: close a build a reload retired once nothing can run it (one atomic load
+        // when there is none).
+        self.slot.sweep();
         result
     }
 
@@ -473,15 +476,6 @@ impl HostNode {
         generation: &Arc<Generation>,
     ) -> Result<StableValue, NodeError> {
         let pods = generation.handlers.version >= POD_VERSION;
-        if let Some(keepalive) = payload.foreign_keepalive()
-            && !std::ptr::addr_eq(Arc::as_ptr(keepalive), Arc::as_ptr(generation))
-            && let Some(handle) = payload.to_foreign_handle()
-        {
-            // A plugin-local object of another build (or of this plugin before a reload): lent
-            // under an owner that holds the payload, so the receiver can never outlive the code
-            // the handle runs. Its own build lends it as it is.
-            return Ok(arena.lend(handle, payload.residency(), false));
-        }
         if self.frame_v2
             && let Some(value) = arena.lend_frame_as_v2(payload)
         {
@@ -568,20 +562,21 @@ impl Outputs<'_> {
                     .map_err(|err| format!("expected `daedalus:bytes`: {err:?}"))?;
                 Payload::owned(key, bytes)
             } else {
-                if value.from_sender() && handle.view::<LocalInterface>().is_ok() {
-                    // A plugin-local object: its payload keeps this build loaded, and its release
-                    // runs on this build before the build is let go. No pin, so a reload can close
-                    // the old build once its objects are gone.
-                    let keepalive: Arc<dyn Any + Send + Sync> = self.generation.clone();
-                    Payload::foreign_kept(key, handle.clone(), value.residency(), keepalive)
-                } else {
-                    if value.from_sender() {
-                        // The handle's code is the plugin's and nothing tracks the payload.
+                // A plugin-local object of a build that counts them keeps the build loaded by
+                // its count (the slot unloads the build once it is 0), so its payload is the plain
+                // handle: nothing per object, and it goes wherever any handle goes. Any other
+                // handle the plugin made runs its code with nothing tracking the payload.
+                if value.from_sender() {
+                    if self.generation.counts_objects() && handle.view::<LocalInterface>().is_ok() {
+                        // Its last release may run on any host thread: the build's code stays
+                        // mapped once it is retired (unloaded, never closed).
+                        self.generation.lend_local();
+                    } else {
                         self.generation.pin();
                     }
-                    // A frame from a plugin built against frame v2 is read through v3.
-                    Payload::foreign(key, frame_handle_from_v2(handle.clone()), value.residency())
                 }
+                // A frame from a plugin built against frame v2 is read through v3.
+                Payload::foreign(key, frame_handle_from_v2(handle.clone()), value.residency())
             }
         } else if value.tag == tag::POD {
             let slot = &mut self.scalars[index as usize];

@@ -88,9 +88,12 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
      handler's own; the host's 1 and the plugin's remaining 1 are not yet attributed (the sink's
      decode refills the previous call's `Vec`, and the host's `PodValue` slot is reused).
    - Plugin-local handles: done (`daedalus::transport::Local<T>`, `daedalus:plugin_local`
-     handles, `Payload::foreign_kept`; no stable ABI change). `handle().data()` is one address
-     across edges and ticks (`dylib_stable_local`). Still one host allocation per handle edge
-     (the `ForeignStorage` `Arc`, as below). The `stable_bench` handle prototype still uses its
+     handles). `handle().data()` is one address across edges and ticks (`dylib_stable_local`).
+     0 host allocations per handle edge (2026-11-06, stable ABI 6): the plugin counts its live
+     objects (`live_objects` in the extension) and the host closes an old build at a sweep once
+     the count is 0, so no payload holds a keepalive (`Payload::foreign_kept` is gone). A build
+     that output a `Local` is unloaded but stays mapped (a last release may still be returning
+     through its code on another thread); `dylib_reload_race` hammers it. The `stable_bench` handle prototype still uses its
      own interface; moving it to `Local` is open.
    - Adapters and serializers (C function pointers keyed by type name): not started.
    - Codecs for the catalog nodes: not started.
@@ -125,7 +128,9 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    was 2, the payload storage at push and at tick). A frame's dma-bufs are released
    once the graph consumed it or at the lease's release (2026-11-06: recycled frame objects
    cleared by their last holder; before, each port kept its last frame's buffers until the next
-   push). An imported acquire fence delays the consumer:
+   push). A plugin-local object's edge allocates nothing on the host either (stable ABI 6: the
+   plugin counts its live objects; `dylib_stable_allocations` asserts 0). An imported acquire
+   fence delays the consumer:
    tested on Raze #1 with a v3dv `SYNC_FD` (`frames::fence_board`, `benchmarks-log.md`). Step 4 (Gaia's link modes) is not started. In-image
    node crates link into the surface `cdylib`; only separate plugins use the stable ABI. Gaia's A/B:
    per-node calls across a library cost 26% on the mirror bench, so the surface is per frame.

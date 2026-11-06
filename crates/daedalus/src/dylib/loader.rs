@@ -4,8 +4,9 @@ use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::intern::intern;
 use super::library::{LibraryHandle, OpenError};
 use super::stable::{
-    Generation, PluginSlot, STABLE_ABI_VERSION, STABLE_EXTENSION_SYMBOL, STABLE_VERSION_SYMBOL,
-    StableExtension, StablePlugin, stable_abi_supported,
+    Generation, LIVE_OBJECTS_VERSION, LoadedExtension, PluginSlot, STABLE_ABI_VERSION,
+    STABLE_EXTENSION_SYMBOL, STABLE_VERSION_SYMBOL, StableExtension, StableExtensionV4,
+    StablePlugin, stable_abi_supported,
 };
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
@@ -39,7 +40,7 @@ pub struct PluginLibrary {
     /// `None` for a descriptor of this process (tests).
     library: Option<Arc<LibraryHandle>>,
     /// The build's stable extension (see [`StableExtension`]), when it exports one.
-    stable_extension: Option<StableExtension>,
+    stable_extension: Option<LoadedExtension>,
     descriptor: PluginDescriptor,
     /// `descriptor.info` with host copies of its strings.
     info: PluginInfo,
@@ -409,10 +410,11 @@ impl PluginLibrary {
         }
     }
 
-    /// The slot the stable installs share, created (running this build) on first use.
+    /// The slot the stable installs share, created (running this build) on first use. An
+    /// install is a sweep point for the builds a reload retired.
     fn stable_slot(&self) -> Arc<PluginSlot> {
         let mut slot = self.slot.lock().unwrap_or_else(|err| err.into_inner());
-        slot.get_or_insert_with(|| {
+        let slot = slot.get_or_insert_with(|| {
             let generation = Generation::new(
                 self.generation,
                 self.descriptor.stable,
@@ -421,8 +423,9 @@ impl PluginLibrary {
                 self.stable_extension,
             );
             Arc::new(PluginSlot::new(&self.schema, generation))
-        })
-        .clone()
+        });
+        slot.sweep();
+        slot.clone()
     }
 
     /// Load the file at [`path`](Self::path) again (through a private copy) and switch every
@@ -437,9 +440,13 @@ impl PluginLibrary {
     /// graph ticking on another thread meanwhile may mix the two within one tick.
     ///
     /// The old build is released once nothing uses it: its instances released (each releases on
-    /// its next call or when its graph drops), then its stable runtime unloaded and the library
-    /// closed, unless a foreign handle it created is still referenced
-    /// ([`live_generations`](Self::live_generations) lists the builds still loaded).
+    /// its next call or when its graph drops), no buffer it produced held, and none of its
+    /// plugin-local objects alive (a version-6 build counts them); then, at the next sweep (a
+    /// node call, an install, a reload or [`live_generations`](Self::live_generations), which
+    /// lists the builds still loaded), its stable runtime is unloaded and the library closed; a
+    /// build that output a plugin-local object keeps its library mapped for the process (its
+    /// objects' last releases may still be returning through its code).
+    /// A build that handed out another foreign handle of its own stays loaded (pinned).
     ///
     /// Fails, changing nothing, with [`PluginLibraryError::NotReloadable`] after a Rust-ABI
     /// install, with [`PluginLibraryError::ReloadIncompatible`] when the rebuilt plugin changed
@@ -517,7 +524,8 @@ impl PluginLibrary {
 
     /// The generations of this library still loaded for its stable installs, current first
     /// (just the current one when none was installed). An older one stays until its node
-    /// instances and the buffers it produced are dropped.
+    /// instances, the buffers it produced and its plugin-local objects are dropped. A sweep point:
+    /// an old build found unused is closed first.
     pub fn live_generations(&self) -> Vec<u64> {
         let slot = self.slot.lock().unwrap_or_else(|err| err.into_inner());
         slot.as_ref()
@@ -579,28 +587,44 @@ impl PluginLibrary {
     }
 }
 
-/// The stable extension of a library, if it exports one for `version` (versions 4 and 5 have
-/// the current layout; an older build's extension is not read).
+/// The stable extension of a library, if it exports one for `version`: versions 4 and 5 have
+/// the [`StableExtensionV4`] layout (read without `live_objects`), version 6 the current one; an
+/// older build's extension is not read.
 ///
 /// # Safety
-/// `library` must be a loaded plugin library, and the extension symbol must have the
-/// [`StableExtension`] layout of this build.
-unsafe fn stable_extension(library: &LibraryHandle, version: u32) -> Option<StableExtension> {
+/// `library` must be a loaded plugin library, and the extension symbol must have the layout of
+/// `version` (see above).
+unsafe fn stable_extension(library: &LibraryHandle, version: u32) -> Option<LoadedExtension> {
     if !(4..=STABLE_ABI_VERSION).contains(&version) {
         return None;
     }
+    let symbol = STABLE_EXTENSION_SYMBOL.as_bytes();
+    if version < LIVE_OBJECTS_VERSION {
+        type ExtensionFn = unsafe extern "C" fn() -> StableExtensionV4;
+        // Safety: a version-4 or version-5 symbol's signature is `ExtensionFn`.
+        let extension: ExtensionFn = unsafe { library.library().get::<ExtensionFn>(symbol) }
+            .map(|sym| *sym)
+            .ok()?;
+        // Safety: the plugin's own function, which only builds the struct.
+        let extension = unsafe { extension() };
+        return (extension.version == version).then_some(LoadedExtension {
+            set_consts: extension.set_consts,
+            set_services: extension.set_services,
+            live_objects: None,
+        });
+    }
     type ExtensionFn = unsafe extern "C" fn() -> StableExtension;
     // Safety: the symbol's signature is `ExtensionFn` (see above).
-    let extension: ExtensionFn = unsafe {
-        library
-            .library()
-            .get::<ExtensionFn>(STABLE_EXTENSION_SYMBOL.as_bytes())
-    }
-    .map(|sym| *sym)
-    .ok()?;
+    let extension: ExtensionFn = unsafe { library.library().get::<ExtensionFn>(symbol) }
+        .map(|sym| *sym)
+        .ok()?;
     // Safety: the plugin's own function, which only builds the struct.
     let extension = unsafe { extension() };
-    (extension.version == version).then_some(extension)
+    (extension.version == version).then_some(LoadedExtension {
+        set_consts: extension.set_consts,
+        set_services: extension.set_services,
+        live_objects: Some(extension.live_objects),
+    })
 }
 
 /// A plugin's `daedalus_plugin_stable_version` (when it exports one) must equal its

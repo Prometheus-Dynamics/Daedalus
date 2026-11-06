@@ -61,6 +61,7 @@ pub use ids::{AdapterId, Layout, LayoutHash, SourceId, TypeKey};
 pub use kinds::{AccessMode, AdaptKind, AdapterKind, Residency};
 pub use local::{
     Local, LocalCodec, LocalError, LocalHeader, LocalInterface, LocalPort, LocalVTable,
+    live_local_objects,
 };
 pub use payload::{
     BoundaryPayloadError, CopyOutput, OpaquePayloadHandle, OutputProbe, OwnedOutput, Payload,

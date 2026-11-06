@@ -57,7 +57,7 @@ mod pod;
 pub mod services;
 mod value;
 
-pub(super) use generation::{Generation, PluginSlot};
+pub(super) use generation::{Generation, LoadedExtension, PluginSlot};
 pub(super) use host::StablePlugin;
 #[doc(hidden)]
 pub use plugin::{
@@ -101,7 +101,16 @@ use std::ffi::c_void;
 /// that both sides read the new tag, so the host sends one only to a version-5 plugin, and a
 /// version-4 host refuses a plugin that may send one. Versions 4 and 5 share the extension
 /// layout.
-pub const STABLE_ABI_VERSION: u32 = 5;
+///
+/// Version 6: [`StableExtension`] gains [`LiveObjectsFn`]: the plugin counts its own live
+/// plugin-local objects ([`Local`](crate::transport::Local)), so the host carries one it outputs
+/// as a plain handle, holding nothing per object, and closes an old build after a reload once its
+/// count is 0. The host still reads a version-4 or version-5 extension (without the entry), and
+/// pins a build that does not count.
+pub const STABLE_ABI_VERSION: u32 = 6;
+
+/// The first [`STABLE_ABI_VERSION`] whose [`StableExtension`] has [`LiveObjectsFn`].
+pub const LIVE_OBJECTS_VERSION: u32 = 6;
 
 /// The oldest [`STABLE_ABI_VERSION`] the stable path still installs.
 pub const STABLE_ABI_MIN_VERSION: u32 = 2;
@@ -198,6 +207,28 @@ pub struct StableExtension {
     pub set_consts: SetConstsFn,
     /// Delivers the host services once, right after the instance's create (see [`services`]).
     pub set_services: SetServicesFn,
+    /// The build's live plugin-local objects (version 6, see [`LiveObjectsFn`]).
+    pub live_objects: LiveObjectsFn,
+}
+
+/// The [`StableExtension`] layout of versions 4 and 5, which the host still reads.
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct StableExtensionV4 {
+    pub version: u32,
+    pub set_consts: SetConstsFn,
+    pub set_services: SetServicesFn,
+}
+
+/// How many plugin-local objects ([`Local`](crate::transport::Local)) of the plugin's build are
+/// alive: created and not yet released by their last holder
+/// ([`live_local_objects`](crate::transport::live_local_objects)). A build decrements it as the
+/// last step of an object's last release, so at 0 every release has run its code up to the
+/// return: the host closes an old build's library only then.
+pub type LiveObjectsFn = unsafe extern "C" fn() -> usize;
+
+unsafe extern "C" fn live_objects_entry() -> usize {
+    crate::transport::live_local_objects()
 }
 
 /// The [`StableExtension`] of this build, for the plugin's `daedalus_plugin_stable_extension`
@@ -207,6 +238,7 @@ pub fn stable_extension() -> StableExtension {
         version: STABLE_ABI_VERSION,
         set_consts: plugin::set_consts_entry,
         set_services: plugin::set_services_entry,
+        live_objects: live_objects_entry,
     }
 }
 

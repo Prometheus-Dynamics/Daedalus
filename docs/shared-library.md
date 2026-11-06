@@ -126,7 +126,9 @@ which matters for small camera pools (PiSP outputs, a CMA raw ring). A payload h
 storage is allocated, at the push or at the tick), and the tick reuses the previous tick's
 telemetry, so a warm frame allocates nothing: push, tick, take and release, measured 0 through the
 surface and 0 through the static graph (`crates/host-wrapper/tests/frames.rs`,
-`crates/surface/src/frames/tests.rs`).
+`crates/surface/src/frames/tests.rs`). A plugin's own objects (`Local<T>`) cross the same way: a
+stable ABI 6 plugin counts its live objects, so the host's payload is the plain handle (0 host
+allocations per edge) and an old build is closed after a reload once its count is 0.
 
 `daedalus-host` gives the same as a safe API: `Graph::push_frame(port, &Frame, acquire)` with a
 `Frame` built from borrowed descriptors (`Frame::image(..).plane(fd, offset, stride, size)`), and

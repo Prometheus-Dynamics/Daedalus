@@ -202,9 +202,10 @@ pub use loader::{
     discover_plugin_libraries,
 };
 pub use stable::{
-    NO_FANIN, STABLE_ABI_MIN_VERSION, STABLE_ABI_VERSION, STABLE_EXTENSION_SYMBOL,
-    STABLE_VERSION_SYMBOL, SetConstsFn, StableExtension, StableHandlers, StableInput,
-    StableOutputSink, StableValue, stable_abi_supported, stable_extension,
+    LIVE_OBJECTS_VERSION, LiveObjectsFn, NO_FANIN, STABLE_ABI_MIN_VERSION, STABLE_ABI_VERSION,
+    STABLE_EXTENSION_SYMBOL, STABLE_VERSION_SYMBOL, SetConstsFn, StableExtension,
+    StableExtensionV4, StableHandlers, StableInput, StableOutputSink, StableValue,
+    stable_abi_supported, stable_extension,
 };
 
 use std::ffi::c_void;

@@ -43,11 +43,6 @@ pub trait PayloadStorage: Send + Sync + fmt::Debug {
     fn foreign_handle_is_local(&self) -> bool {
         false
     }
-    /// What [`Self::foreign_handle`]'s code needs kept alive (see
-    /// [`Payload::foreign_kept`](crate::Payload::foreign_kept)).
-    fn foreign_keepalive(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
-        None
-    }
     /// The value lent through a foreign interface: the carried handle's, or an owner value its
     /// provider exposes (see [`Payload::provide_foreign`](crate::Payload::provide_foreign)).
     fn foreign_borrow(&self) -> Option<ForeignBorrow<'_>> {

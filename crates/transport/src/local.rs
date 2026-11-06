@@ -13,6 +13,12 @@
 //! The object stays at one address for its whole life: [`Local::as_ptr`],
 //! [`ForeignHandle::data`] of [`Local::handle`], and the handle's data on every edge and tick are
 //! the same pointer.
+//!
+//! Each build counts its own live objects ([`live_local_objects`]): creating one counts it, and
+//! the release of its last reference, a [`Local`] dropped or a handle released, uncounts it as
+//! its very last step, after the value is dropped and its memory freed. A host that sees the
+//! count of a build at zero knows every release of that build's objects has run its code (all
+//! but the return), so it can close the build's library without holding anything per object.
 
 use alloc::string::String;
 use core::any::TypeId;
@@ -20,8 +26,9 @@ use core::ffi::c_void;
 use core::fmt;
 use core::ops::Deref;
 
-use crate::portable::Arc;
-use crate::{ForeignHandle, ProvideForeign};
+use crate::portable::{Arc, AtomicUsize};
+use crate::{ForeignHandle, ForeignOwner, ProvideForeign};
+use core::sync::atomic::Ordering;
 
 crate::foreign_interface! {
     /// An object of the build that created it, carried opaquely (see [`Local`]).
@@ -38,6 +45,26 @@ static BUILD_MARK: u8 = 0;
 
 fn build_mark() -> *const c_void {
     (&raw const BUILD_MARK).cast()
+}
+
+/// This build's plugin-local objects still alive (see the module docs).
+static LIVE: AtomicUsize = AtomicUsize::new(0);
+
+/// How many plugin-local objects of this build are alive: created and not yet released by
+/// their last holder. Zero means every release of one has run (up to its return), so the build's
+/// code is no longer needed for any of them. A plugin reports it to the host through its stable
+/// extension (`live_objects`).
+pub fn live_local_objects() -> usize {
+    LIVE.load(Ordering::Acquire)
+}
+
+/// Gives up one reference of `object`: the last one drops the value, frees the box, and then,
+/// last of all, uncounts it.
+fn release_box<T>(object: Arc<LocalBox<T>>) {
+    if let Some(object) = Arc::into_inner(object) {
+        drop(object);
+        LIVE.fetch_sub(1, Ordering::Release);
+    }
 }
 
 /// What any build reads of a plugin-local object: the creating build and the Rust type's name.
@@ -101,6 +128,7 @@ pub struct Local<T: Send + Sync + 'static>(Option<Arc<LocalBox<T>>>);
 impl<T: Send + Sync + 'static> Local<T> {
     pub fn new(value: T) -> Self {
         let type_name = core::any::type_name::<T>();
+        LIVE.fetch_add(1, Ordering::Relaxed);
         Self(Some(Arc::new(LocalBox {
             header: LocalHeader {
                 build: build_mark(),
@@ -134,9 +162,33 @@ impl<T: Send + Sync + 'static> Local<T> {
         a.as_ptr() == b.as_ptr()
     }
 
-    /// A handle of the object (one more reference; the data pointer is [`Self::as_ptr`]).
+    /// A handle of the object (one more reference; the data pointer is [`Self::as_ptr`]). Its
+    /// release is this build's, and the last release uncounts the object (see the module docs).
     pub fn handle(&self) -> ForeignHandle {
-        ForeignHandle::from_arc::<LocalBox<T>, LocalInterface>(self.inner().clone())
+        unsafe extern "C" fn retain<T>(ptr: *const c_void) {
+            // Safety: `ptr` came from `Arc::into_raw` and the caller holds a reference.
+            unsafe { Arc::increment_strong_count(ptr.cast::<LocalBox<T>>()) }
+        }
+        unsafe extern "C" fn release<T>(ptr: *const c_void) {
+            // Safety: `ptr` came from `Arc::into_raw` and the caller gives up a reference.
+            release_box(unsafe { Arc::from_raw(ptr.cast::<LocalBox<T>>()) });
+        }
+        let object = self.inner().clone();
+        let data: *const c_void = Arc::as_ptr(&object).cast();
+        let owner = ForeignOwner {
+            ptr: Arc::into_raw(object).cast(),
+            retain: retain::<T>,
+            release: release::<T>,
+        };
+        // Safety: `data` is the box the owner keeps alive, and `LocalBox<T>` provides the
+        // interface.
+        unsafe {
+            ForeignHandle::from_raw_parts::<LocalInterface>(
+                data,
+                <LocalBox<T> as ProvideForeign<LocalInterface>>::vtable(),
+                owner,
+            )
+        }
     }
 
     /// The object of `handle`, when this build created it as a `Local<T>`.
@@ -178,6 +230,14 @@ impl<T: Send + Sync + 'static> Local<T> {
 impl<T: Send + Sync + 'static> Clone for Local<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
+    }
+}
+
+impl<T: Send + Sync + 'static> Drop for Local<T> {
+    fn drop(&mut self) {
+        if let Some(object) = self.0.take() {
+            release_box(object);
+        }
     }
 }
 
@@ -304,5 +364,27 @@ mod tests {
         ));
         drop((local, handle));
         assert_eq!(*back, 41, "the last clone keeps it");
+    }
+
+    #[test]
+    fn the_last_release_uncounts_a_local_object() {
+        // Other tests of this binary make objects too: count only this one's references.
+        let local = Local::new(alloc::string::String::from("counted"));
+        let counted = live_local_objects();
+        assert!(counted >= 1);
+        let handle = local.handle();
+        let clone = handle.clone();
+        drop(local);
+        let back = Local::<alloc::string::String>::from_handle(&clone).unwrap();
+        drop((handle, clone));
+        assert_eq!(
+            &*back, "counted",
+            "the last holder keeps it alive and counted"
+        );
+        drop(back);
+        assert!(
+            live_local_objects() < counted,
+            "uncounted at the last release"
+        );
     }
 }

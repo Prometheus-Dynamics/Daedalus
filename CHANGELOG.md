@@ -37,13 +37,29 @@ plugin ABI and does not load.
   handle from another plugin, or from this plugin before a reload, is refused (`LocalError`, "created
   by another build"). The object keeps one address for its life: `Local::as_ptr` and `data()` of
   every handle of it, on every edge and tick, are the same pointer (`dylib_stable_local` asserts it,
-  statically and through the stable path). The host keeps the creating build loaded through the
-  payload (`Payload::foreign_kept`, whose handle is released before the build is let go) instead of
-  pinning it for the process, so after a reload the old build closes once the host drops its last
-  object; a kept handle taken out of its payload (`to_foreign_handle`), or lent to another build,
-  holds the payload. `ForeignHandle::with_owner` builds such a handle with the same data, vtable and
-  interface. No stable ABI change: the objects cross as `tag::HANDLE` values, and an older host pins
-  the plugin as before.
+  statically and through the stable path). The objects cross as `tag::HANDLE` values.
+  `ForeignHandle::with_owner` builds a handle with the same data, vtable and interface under
+  another owner.
+- **Stable ABI 6: a plugin counts its live plugin-local objects; the host holds nothing per
+  object.** `daedalus::dylib::STABLE_ABI_VERSION` is 6. `StableExtension` gains `live_objects`
+  (`LiveObjectsFn`, returning `daedalus::transport::live_local_objects()`): `Local::new` counts
+  an object, and its last release (a `Local` dropped or a handle released) uncounts it as its last
+  step, after the value is dropped and its box freed. The host carries a version-6 plugin's
+  `Local` output as a plain `Payload::foreign` (no keepalive: `Payload::foreign_kept` and
+  `Payload::foreign_keepalive` are removed, along with the lend-under-the-payload's-owner for
+  another build's object), so the edge allocates nothing on the host (`dylib_stable_allocations`
+  asserts 0; it was 1). The slot keeps the generations a reload retired and closes one (plugin
+  `unload`, then the library) once nothing holds it and its count is 0, checked at a reload, an
+  install, every installed node's call (one atomic load when nothing is retired) and
+  `PluginLibrary::live_generations`; no thread polls. A generation dropped with objects still
+  alive (the host dropped the library first) pins its library and skips `unload`. The loader still
+  reads a version-4 or version-5 extension (`StableExtensionV4`, without the entry); such a plugin
+  is pinned for any object it outputs. A build that output a `Local` to the host is unloaded at
+  count 0 but its library is never closed: the last release may run on any host thread and still
+  returns through the build's code after its decrement, so its pages stay mapped until the
+  process exits (the reload cost, `docs/dynamic-plugins.md`); a build that never did closes as
+  before. `dylib_reload_race` drops the last objects of old builds on 8 threads while another
+  thread ticks (and so sweeps), over many reloads.
 - Plain-old-data values on the stable plugin path (stable ABI 5): `#[derive(StablePod)]` (re-exported
   as `daedalus::StablePod`) on a `#[repr(C)]`, padding-free struct of numbers, fixed arrays and
   other `StablePod` structs gives it a `PodLayout` (name, size, alignment, and an FNV-1a hash of its
@@ -760,12 +776,13 @@ plugin ABI and does not load.
   the buffer's inode over 40 frames: back to baseline after every tick of a graph that consumes
   the frame (`frame_info`), and after every take and release of a passthrough graph with two
   leases out at once; the wrapper frame test checks the same after each release.
-- `daedalus::dylib::STABLE_ABI_VERSION` is 5 (was 2). The stable path installs versions
-  `STABLE_ABI_MIN_VERSION` (2) to 5 (`stable_abi_supported`); `StableHandlers` is unchanged, so
-  `PLUGIN_ABI_VERSION` stays 11. Version 5 adds the `tag::POD` value (the tables keep their
-  layout): the host sends one only to a version-5 plugin, and a version-4 host refuses a version-5
-  plugin. A version-4 or version-5 plugin's `daedalus_plugin_stable_extension` is read (same
-  layout); a version-3 plugin's consts go per call.
+- `daedalus::dylib::STABLE_ABI_VERSION` is 6 (was 2; 6 adds `live_objects`, see Added). The
+  stable path installs versions `STABLE_ABI_MIN_VERSION` (2) to 6 (`stable_abi_supported`);
+  `StableHandlers` is unchanged, so `PLUGIN_ABI_VERSION` stays 11. Version 5 adds the `tag::POD`
+  value (the tables keep their layout): the host sends one only to a version-5 or later plugin,
+  and a version-4 host refuses a version-5 plugin. A version-4 or version-5 plugin's
+  `daedalus_plugin_stable_extension` is read in its own layout (`StableExtensionV4`), a version-6
+  one with `live_objects`; a version-3 plugin's consts go per call.
 - **Plain values are held inline in the payload (public API change).** `Payload::plain` holds a
   `Copy` value of at most 32 bytes with alignment at most 8 in the payload, instead of in an `Arc`:
   the detector's `Stats`, `Roi`, `Track`, `Report`, `Histogram` and `FrameInfo` outputs now

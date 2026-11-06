@@ -5,7 +5,7 @@
 //! `TypeId` downcast, so a separately built plugin finds the handle even when its copy of this
 //! crate has other `TypeId`s.
 
-use crate::portable::{Arc, arc_dyn};
+use crate::portable::Arc;
 use alloc::boxed::Box;
 use core::any::{Any, TypeId};
 use core::fmt;
@@ -64,53 +64,6 @@ impl<const LOCAL: bool> PayloadStorage for ForeignStorage<LOCAL> {
 
     fn foreign_handle_is_local(&self) -> bool {
         LOCAL
-    }
-}
-
-/// A foreign handle with a keepalive dropped after it ([`Payload::foreign_kept`]), shared.
-#[derive(Debug)]
-struct KeptStorage {
-    /// Dropped first (fields drop in order): the handle's release runs while its keepalive
-    /// still holds its code.
-    handle: ForeignHandle,
-    keepalive: Arc<dyn Any + Send + Sync>,
-}
-
-impl PayloadStorage for KeptStorage {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn value_any(&self) -> Option<&dyn Any> {
-        Some(&self.handle)
-    }
-
-    fn value_any_sync(&self) -> Option<&(dyn Any + Send + Sync)> {
-        Some(&self.handle)
-    }
-
-    fn rust_type_name(&self) -> Option<&'static str> {
-        Some(core::any::type_name::<ForeignHandle>())
-    }
-
-    fn foreign_handle(&self) -> Option<&ForeignHandle> {
-        Some(&self.handle)
-    }
-
-    fn foreign_keepalive(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
-        Some(&self.keepalive)
-    }
-
-    fn to_foreign_handle_in(&self, storage: &Arc<dyn PayloadStorage>) -> Option<ForeignHandle> {
-        // A handle that outlives the payload holds the payload's storage (the handle and its
-        // keepalive): same data, vtable and interface.
-        let owner = crate::ForeignOwner::from_arc(Arc::new(storage.clone()));
-        // Safety: the owner keeps the storage, and with it the handle's object and code, alive.
-        Some(unsafe { self.handle.with_owner(owner) })
     }
 }
 
@@ -243,31 +196,6 @@ impl Payload {
             residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
         }
-    }
-
-    /// [`Self::foreign`] with `keepalive` held while the payload holds the handle and dropped
-    /// after it: the stable plugin path keeps the plugin build whose code the handle runs this way
-    /// (instead of pinning it), so the build is closed once the last such payload is gone. A
-    /// handle taken out of the payload ([`Self::to_foreign_handle`]) holds the payload's storage,
-    /// keepalive included.
-    pub fn foreign_kept(
-        type_key: impl Into<TypeKey>,
-        handle: ForeignHandle,
-        residency: Residency,
-        keepalive: Arc<dyn Any + Send + Sync>,
-    ) -> Self {
-        Self {
-            type_key: type_key.into(),
-            storage: Body::Shared(arc_dyn!(KeptStorage { handle, keepalive }), residency),
-            layout: None,
-            residency_cache: ResidencyCache::default(),
-            lineage: PayloadLineage::new(),
-        }
-    }
-
-    /// The keepalive of a [`Self::foreign_kept`] payload.
-    pub fn foreign_keepalive(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
-        self.storage.get().foreign_keepalive()
     }
 
     /// The foreign handle this payload carries, if any (see [`Self::foreign_borrow`] for any
