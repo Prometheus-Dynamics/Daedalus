@@ -7,8 +7,9 @@ pub const SURFACE_MAJOR: u16 = 1;
 /// The surface's ABI minor: additions only. 1 added port indices
 /// (`daedalus_surface_graph_input_index`, `_output_index`), the `*_at` pushes and takes, and
 /// `daedalus_surface_push_batch`; 2 added `daedalus_surface_host_create_with` (a message sink for a
-/// failing image install).
-pub const SURFACE_MINOR: u16 = 2;
+/// failing image install); 3 added the data symbols `daedalus_surface_stable_abi_min` and
+/// `daedalus_surface_stable_abi_max`.
+pub const SURFACE_MINOR: u16 = 3;
 
 /// Stable-path plugin install (`daedalus_surface_host_install`).
 pub const FEATURE_PLUGINS: u64 = 1 << 0;
@@ -33,6 +34,19 @@ pub fn feature_set() -> u64 {
     }
     bits
 }
+
+/// The oldest stable plugin ABI version this surface installs, as data: an image checker reads it
+/// from the file, with [`daedalus_surface_stable_abi_max`], and checks each plugin's
+/// `daedalus_plugin_stable_version` against the range, without loading anything.
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+pub static daedalus_surface_stable_abi_min: u32 = daedalus::dylib::STABLE_ABI_MIN_VERSION;
+
+/// The newest stable plugin ABI version this surface installs, as data (see
+/// [`daedalus_surface_stable_abi_min`]).
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+pub static daedalus_surface_stable_abi_max: u32 = daedalus::dylib::STABLE_ABI_VERSION;
 
 /// The version this surface serves: [`SURFACE_MAJOR`].[`SURFACE_MINOR`] over this build's
 /// [`LAYOUT_HASH`].

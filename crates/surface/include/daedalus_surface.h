@@ -34,7 +34,7 @@ extern "C" {
 
 /* The surface ABI: major changes break callers, minor adds. */
 #define DAEDALUS_SURFACE_ABI_MAJOR 1
-#define DAEDALUS_SURFACE_ABI_MINOR 2
+#define DAEDALUS_SURFACE_ABI_MINOR 3
 
 /* lemnos-abi's LAYOUT_HASH for this build: a caller and a surface must agree on it. */
 #define DAEDALUS_LAYOUT_HASH 0xA02CFB4A8DD4545BULL
@@ -152,6 +152,11 @@ _Static_assert(sizeof(daedalus_fence_desc) == DAEDALUS_FENCE_DESC_SIZE, "FenceDe
 #endif
 
 /* ---- Version and features ---- */
+
+/* The stable plugin ABI versions this surface installs, oldest and newest (data, since 1.3): a
+ * plugin's daedalus_plugin_stable_version must lie in [min, max]. */
+extern const uint32_t daedalus_surface_stable_abi_min;
+extern const uint32_t daedalus_surface_stable_abi_max;
 
 /* Writes the surface's version (its ABI version and LAYOUT_HASH) to *out. */
 daedalus_status daedalus_surface_version(daedalus_abi_version *out);

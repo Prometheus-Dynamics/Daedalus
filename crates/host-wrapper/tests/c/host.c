@@ -76,6 +76,12 @@ int main(int argc, char **argv) {
             DAEDALUS_SURFACE_ABI_MAJOR, DAEDALUS_SURFACE_ABI_MINOR);
     return 1;
   }
+  if (daedalus_surface_stable_abi_min == 0 ||
+      daedalus_surface_stable_abi_min > daedalus_surface_stable_abi_max) {
+    fprintf(stderr, "stable ABI range %" PRIu32 "..%" PRIu32 "\n", daedalus_surface_stable_abi_min,
+            daedalus_surface_stable_abi_max);
+    return 1;
+  }
 
   daedalus_handle host = 0;
   check("host_create_with", daedalus_surface_host_create_with(&host, sink));

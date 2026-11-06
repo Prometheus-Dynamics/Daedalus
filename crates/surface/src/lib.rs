@@ -42,7 +42,8 @@ pub use indexed::{PUSH_BOOL, PUSH_BYTES, PUSH_F64, PUSH_I64, PushEntry};
 
 pub use abi::{
     FEATURE_ALLOC_COUNT, FEATURE_GRAPHS, FEATURE_IMAGE_NODES, FEATURE_PLUGINS, FEATURE_TELEMETRY,
-    SURFACE_MAJOR, SURFACE_MINOR, feature_set,
+    SURFACE_MAJOR, SURFACE_MINOR, daedalus_surface_stable_abi_max, daedalus_surface_stable_abi_min,
+    feature_set,
 };
 pub use image::ImageInstall;
 

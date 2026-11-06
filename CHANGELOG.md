@@ -17,6 +17,12 @@ plugin ABI and does not load.
 
 ### Added
 
+- Surface ABI 1.3: `daedalus_surface_stable_abi_min` and `daedalus_surface_stable_abi_max`, the
+  stable plugin ABI range the surface installs (`STABLE_ABI_MIN_VERSION`, `STABLE_ABI_VERSION`)
+  as `u32` data in `.rodata`, declared in `daedalus_surface.h`. An image checker reads them from
+  the surface library and checks each plugin's `daedalus_plugin_stable_version` against them
+  without loading anything; image surfaces built on `daedalus-surface` carry them too.
+  `tests/stable_range.rs` checks the values, section and size.
 - `crates/host-wrapper/tests/c_host.rs`: a C program (`tests/c/host.c`, C11 with `-Wall -Wextra
   -Werror -pedantic`) built against `daedalus_surface.h` and linked to the surface library installs
   the `stable_abi` plugin, compiles a graph, and runs 50 frames with ports by index and a batch
