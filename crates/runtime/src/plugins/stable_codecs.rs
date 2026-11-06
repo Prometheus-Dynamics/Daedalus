@@ -28,6 +28,8 @@ pub struct StableCodec {
     pub decode: StableDecodeFn,
     /// `T` or `Vec<T>` of a `StablePod` `T`: crosses as a typed byte view, not a `Value`.
     pub pod: Option<daedalus_transport::PodCodec>,
+    /// `Local<_>`: crosses as an opaque plugin-local handle.
+    pub local: Option<daedalus_transport::LocalCodec>,
 }
 
 impl core::fmt::Debug for StableCodec {
@@ -83,6 +85,7 @@ impl PluginRegistry {
     /// Macro support: node `node`'s port `port` carries `T`. A no-op unless
     /// [`Self::record_stable_codecs`] is on.
     #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)] // One per probe the node macros run.
     pub fn register_stable_port<T>(
         &mut self,
         node: &str,
@@ -91,6 +94,7 @@ impl PluginRegistry {
         serde: Option<CoerceFn<T>>,
         to_value: Option<fn(&T) -> Value>,
         pod: Option<daedalus_transport::PodCodec>,
+        local: Option<daedalus_transport::LocalCodec>,
     ) where
         T: Send + Sync + 'static,
     {
@@ -115,6 +119,7 @@ impl PluginRegistry {
                 decode,
                 // Scalars and their `Vec`s keep their builtin encodings.
                 pod: pod.filter(|pod| pod.layout.structure),
+                local,
             },
         );
     }
@@ -127,7 +132,7 @@ mod tests {
     #[test]
     fn codecs_are_recorded_only_when_enabled() {
         let mut registry = PluginRegistry::new();
-        registry.register_stable_port::<i32>("n", "a", None, None, None, None);
+        registry.register_stable_port::<i32>("n", "a", None, None, None, None, None);
         assert!(registry.stable_codec("n", "a").is_none());
 
         registry.record_stable_codecs();
@@ -137,6 +142,7 @@ mod tests {
             None,
             None,
             Some(|v| Value::Int(*v as i64)),
+            None,
             None,
         );
         let codec = registry.stable_codec("n", "a").expect("recorded");

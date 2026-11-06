@@ -165,8 +165,9 @@ fn stable_port_registration(
             // Only the trait matching each probe is used; which one depends on the type.
             #[allow(unused_imports)]
             use #support::{
-                NoPodProbe as _, NoSchemaCoerce as _, NoSerdeCoerce as _, NoToValueProbe as _,
-                PodProbe as _, SchemaCoerce as _, SerdeCoerce as _, ToValueProbe as _,
+                LocalProbe as _, NoLocalProbe as _, NoPodProbe as _, NoSchemaCoerce as _,
+                NoSerdeCoerce as _, NoToValueProbe as _, PodProbe as _, SchemaCoerce as _,
+                SerdeCoerce as _, ToValueProbe as _,
             };
             let __probe = &#support::Probe::<#ty>(::core::marker::PhantomData);
             into.register_stable_port::<#ty>(
@@ -176,6 +177,7 @@ fn stable_port_registration(
                 __probe.serde_coercer(),
                 __probe.value_encoder(),
                 __probe.pod_codec(),
+                __probe.local_codec(),
             );
         }
     }

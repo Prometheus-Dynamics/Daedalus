@@ -290,6 +290,21 @@ impl ForeignHandle {
         self.borrow().view()
     }
 
+    /// The same object (data pointer, vtable and interface) under another owner, which takes the
+    /// place of this handle's reference: `self` keeps its own.
+    ///
+    /// # Safety
+    /// `owner` must keep the handle's data and the code behind its vtable alive while it holds a
+    /// reference (e.g. it holds a clone of this handle).
+    pub unsafe fn with_owner(&self, owner: ForeignOwner) -> Self {
+        Self {
+            data: self.data,
+            vtable: self.vtable,
+            interface: self.interface,
+            owner,
+        }
+    }
+
     /// The same handle (data, vtable and owner reference) under another interface identity.
     ///
     /// # Safety

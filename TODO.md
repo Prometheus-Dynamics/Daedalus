@@ -80,8 +80,18 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    - Telemetry sink and metadata: done (stable ABI 4, `set_services`).
    - Typed `repr(C)` values and views: done (stable ABI 5, `#[derive(StablePod)]`, `tag::POD`,
      `PodValue`, `register_stable_pod`). x86 only: `Detections` at 4 tags 4.9 µs against 33 µs
-     through `Value`, 1 / 4 allocations per tick. Still to do: the CM5 row.
-   - Plugin-local handles: not started.
+     through `Value`, 1 / 4 allocations per tick. The CM5 row: the coordinator takes it at the next
+     joint board run.
+   - `StablePod` path to 0 warm allocations (the frame path's target). Per tick at 4 tags the
+     bench counts 1 on the host and 4 in the plugin. The plugin's 4 include the fixture source
+     building its `Vec` (`Detections::sample` then the `TagPod` collect, 3), so they are the
+     handler's own; the host's 1 and the plugin's remaining 1 are not yet attributed (the sink's
+     decode refills the previous call's `Vec`, and the host's `PodValue` slot is reused).
+   - Plugin-local handles: done (`daedalus::transport::Local<T>`, `daedalus:plugin_local`
+     handles, `Payload::foreign_kept`; no stable ABI change). `handle().data()` is one address
+     across edges and ticks (`dylib_stable_local`). Still one host allocation per handle edge
+     (the `ForeignStorage` `Arc`, as below). The `stable_bench` handle prototype still uses its
+     own interface; moving it to `Local` is open.
    - Adapters and serializers (C function pointers keyed by type name): not started.
    - Codecs for the catalog nodes: not started.
    - Known: one `Serial/Off` allocation in 200 loaded runs of `graph_frame_allocations` (2026-11-06),

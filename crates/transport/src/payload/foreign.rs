@@ -28,6 +28,16 @@ pub(super) struct ForeignStorage {
     pub(super) handle: Option<ForeignHandle>,
     /// This build created the handle (see [`Payload::foreign_local`]).
     pub(super) local: bool,
+    /// Kept alive while the payload holds the handle, dropped after it (see
+    /// [`Payload::foreign_kept`]): what the handle's code needs, e.g. the library it lives in.
+    pub(super) keepalive: Option<Arc<dyn Any + Send + Sync>>,
+}
+
+impl Drop for ForeignStorage {
+    fn drop(&mut self) {
+        // The handle's release runs while its keepalive still holds its code.
+        drop(self.handle.take());
+    }
 }
 
 impl PayloadStorage for ForeignStorage {
@@ -59,6 +69,22 @@ impl PayloadStorage for ForeignStorage {
 
     fn foreign_handle_is_local(&self) -> bool {
         self.local
+    }
+
+    fn foreign_keepalive(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
+        self.keepalive.as_ref()
+    }
+
+    fn to_foreign_handle_in(&self, storage: &Arc<dyn PayloadStorage>) -> Option<ForeignHandle> {
+        let handle = self.handle.as_ref()?;
+        if self.keepalive.is_none() {
+            return Some(handle.clone());
+        }
+        // A handle that outlives the payload holds the payload's storage (the handle and its
+        // keepalive): same data, vtable and interface.
+        let owner = crate::ForeignOwner::from_arc(Arc::new(storage.clone()));
+        // Safety: the owner keeps the storage, and with it the handle's object and code, alive.
+        Some(unsafe { handle.with_owner(owner) })
     }
 }
 
@@ -183,13 +209,44 @@ impl Payload {
             type_key,
             storage: Body::Shared(arc_dyn!(ForeignStorage {
                 handle: Some(handle),
-                local
+                local,
+                keepalive: None,
             })),
             residency,
             layout: None,
             residency_cache: ResidencyCache::default(),
             lineage: PayloadLineage::new(),
         }
+    }
+
+    /// [`Self::foreign`] with `keepalive` held while the payload holds the handle and dropped
+    /// after it: the stable plugin path keeps the plugin build whose code the handle runs this way
+    /// (instead of pinning it), so the build is closed once the last such payload is gone. A
+    /// handle taken out of the payload ([`Self::to_foreign_handle`]) holds the payload's storage,
+    /// keepalive included.
+    pub fn foreign_kept(
+        type_key: impl Into<TypeKey>,
+        handle: ForeignHandle,
+        residency: Residency,
+        keepalive: Arc<dyn Any + Send + Sync>,
+    ) -> Self {
+        Self {
+            type_key: type_key.into(),
+            storage: Body::Shared(arc_dyn!(ForeignStorage {
+                handle: Some(handle),
+                local: false,
+                keepalive: Some(keepalive),
+            })),
+            residency,
+            layout: None,
+            residency_cache: ResidencyCache::default(),
+            lineage: PayloadLineage::new(),
+        }
+    }
+
+    /// The keepalive of a [`Self::foreign_kept`] payload.
+    pub fn foreign_keepalive(&self) -> Option<&Arc<dyn Any + Send + Sync>> {
+        self.storage.get().foreign_keepalive()
     }
 
     /// The foreign handle this payload carries, if any (see [`Self::foreign_borrow`] for any

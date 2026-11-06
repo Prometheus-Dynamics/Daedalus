@@ -84,14 +84,17 @@ impl PayloadSlot {
         if let Some(slot) = self.free::<ForeignStorage>() {
             slot.handle = Some(handle);
             slot.local = local;
+            slot.keepalive = None;
         } else {
             self.storage = Some(crate::portable::arc_dyn!(ForeignStorage {
                 handle: Some(handle),
-                local
+                local,
+                keepalive: None,
             }));
             self.clear = Some(|any| {
                 if let Some(slot) = any.downcast_mut::<ForeignStorage>() {
                     slot.handle = None;
+                    slot.keepalive = None;
                 }
             });
         }

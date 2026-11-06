@@ -6,7 +6,8 @@
 //! included), a derived struct, bytes, an optional input, node state, a frame read through
 //! `daedalus:frame` without copying, a conditional output, a `fire = "all"` join, and a panic. The facade's `dylib_stable` test runs them statically and dynamically and compares.
 //! The [`frames`] nodes take and return owned `SharedFrame`s (the `dylib_frames` test); the
-//! [`pods`] nodes take and return a `StablePod` struct and `Vec`s of them (`dylib_stable_pod`).
+//! [`pods`] nodes take and return a `StablePod` struct and `Vec`s of them (`dylib_stable_pod`);
+//! the [`locals`] nodes pass a plugin-local object by handle (`dylib_stable_local`).
 //! `SharedBytes` nodes show buffers crossing by reference both ways, and the `generation` node
 //! changes with the `reload-v2` / `reload-incompatible` features, so the `dylib_reload` test can
 //! rebuild the plugin between loads.
@@ -18,9 +19,12 @@ use daedalus::transport::FrameView;
 use daedalus::{DaedalusToValue, DaedalusTypeExpr, SharedBytes};
 
 pub mod frames;
+pub mod locals;
 pub mod pods;
 #[allow(clippy::wildcard_imports)] // The node macro's generated items.
 use frames::*;
+#[allow(clippy::wildcard_imports)]
+use locals::*;
 #[allow(clippy::wildcard_imports)]
 use pods::*;
 
@@ -180,7 +184,11 @@ pub const GENERATION: i64 = if cfg!(feature = "reload-v2") { 2 } else { 1 };
         pod_scale,
         pod_make,
         pod_shift,
-        pod_count
+        pod_count,
+        local_make,
+        local_touch,
+        local_read,
+        local_drops
     )
 )]
 pub struct StableAbiPlugin;

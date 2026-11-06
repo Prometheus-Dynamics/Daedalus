@@ -31,6 +31,7 @@ mod foreign_frame;
 mod id_str;
 mod ids;
 mod kinds;
+mod local;
 mod payload;
 mod payload_lifecycle;
 mod pod;
@@ -58,6 +59,9 @@ pub use foreign_frame::{
 pub use id_str::IdStr;
 pub use ids::{AdapterId, Layout, LayoutHash, SourceId, TypeKey};
 pub use kinds::{AccessMode, AdaptKind, AdapterKind, Residency};
+pub use local::{
+    Local, LocalCodec, LocalError, LocalHeader, LocalInterface, LocalPort, LocalVTable,
+};
 pub use payload::{
     BoundaryPayloadError, CopyOutput, OpaquePayloadHandle, OutputProbe, OwnedOutput, Payload,
     PayloadSlot, PayloadStorage, ResidencyCacheKey,

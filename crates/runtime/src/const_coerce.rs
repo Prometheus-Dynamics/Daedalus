@@ -204,6 +204,26 @@ pub mod derive_support {
     }
 
     impl<T> NoPodProbe<T> for &Probe<T> {}
+
+    /// `(&Probe::<T>(PhantomData)).local_codec()` is `Some` when `T` is a `Local<_>` (it crosses
+    /// the stable plugin boundary as an opaque handle), else `None`.
+    pub trait LocalProbe<T> {
+        fn local_codec(&self) -> Option<daedalus_transport::LocalCodec>;
+    }
+
+    impl<T: daedalus_transport::LocalPort> LocalProbe<T> for Probe<T> {
+        fn local_codec(&self) -> Option<daedalus_transport::LocalCodec> {
+            Some(T::codec())
+        }
+    }
+
+    pub trait NoLocalProbe<T> {
+        fn local_codec(&self) -> Option<daedalus_transport::LocalCodec> {
+            None
+        }
+    }
+
+    impl<T> NoLocalProbe<T> for &Probe<T> {}
 }
 
 #[cfg(test)]

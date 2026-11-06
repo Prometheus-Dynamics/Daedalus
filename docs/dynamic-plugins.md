@@ -168,13 +168,49 @@ The descriptor carries `StableHandlers { version, create, invoke, release, unloa
       outputs(port(name = "out", type_key = "app:boxes")))]
   fn shift(boxes: Vec<BoxPod>, dx: i32) -> Result<Vec<BoxPod>, NodeError> { /* ... */ }
   ```
+- **Plugin-local objects.** `daedalus::transport::Local<T>` is an object of the plugin's own
+  build that other nodes of the same plugin read, and nothing else needs to: a tracker, a model,
+  a decoded `Detections` with `Vec`s. A `Local<T>` port crosses as an opaque `daedalus:plugin_local`
+  handle that the host passes along graph edges without encoding it, and a node of the same build
+  reads it back as the same object (no copy, no `Value`).
+
+  ```rust
+  use daedalus::transport::Local;
+
+  #[node(id = "track", inputs("frame"), outputs(port(name = "tracks", type_key = "app:tracks")),
+      state(Tracks))]
+  fn track(frame: FrameView<'_>, state: &mut Tracks) -> Result<Local<TrackSet>, NodeError> {
+      Ok(state.update(frame)) // a `Local` kept in node state, handed out every tick
+  }
+
+  #[node(id = "draw", inputs(port(name = "tracks", type_key = "app:tracks")), outputs("count"))]
+  fn draw(tracks: &Local<TrackSet>) -> Result<i64, NodeError> { Ok(tracks.len() as i64) }
+  ```
+
+  - **One address.** The object never moves: `Local::as_ptr()`, `Local::handle().data()` and the
+    `data()` of the handle the host carries are the same pointer on every edge and every tick, for
+    as long as any clone or handle of it lives (caches may key on it).
+  - **Same build only.** The receiving node checks that its own build made the object (the
+    address of a static in that build) and that it is a `Local<T>` of its `T`, before reading it.
+    A handle from another plugin, or from this plugin before a reload, fails the call with a typed
+    error (`plugin-local ... was created by another build`); it is never cast.
+  - **Release on its own build, reload-safe.** Retain and release are the creating build's
+    functions. The host payload holding the handle also holds that build's generation and drops it
+    only after the handle, so the build's code outlives every release. Unlike other handles a
+    plugin makes, it does not pin the plugin for the process: after a reload the old build closes
+    once the last of its objects the host holds is dropped (`live_generations()` shows it). A handle
+    taken out of such a payload (`Payload::to_foreign_handle`), or lent to a node of another build,
+    holds the payload instead.
+  - The host cannot read the object; take it to a node of the plugin. The ports need a
+    `type_key`, and consumers should borrow (`&Local<T>`) so one output can fan out.
 - **Limits.** Only nodes install: a plugin's adapters, serializers, capabilities, named type
   schemas, device transports and boundary contracts stay in the plugin. Typed values the host
   lacks the Rust type for arrive as `Value`s. Fan-in inputs work when the inner type converts.
 
 `examples/plugins/stable_abi` is a plugin whose descriptor claims another rustc; the facade's
 `dylib_stable` test installs it through the stable path and compares every node with the static
-install, `dylib_stable_pod` covers its `StablePod` nodes (typed, as `PodValue`s, and a layout
+install, `dylib_stable_local` its `Local` nodes (one address across edges and ticks, and a
+reload), `dylib_stable_pod` covers its `StablePod` nodes (typed, as `PodValue`s, and a layout
 mismatch each way), and `dylib_reload` rebuilds it between loads.
 
 **Performance** (release, x86-64 desktop, `cargo test -p daedalus-rs --features
@@ -356,7 +392,8 @@ loop {
   migrated: each node instance's next call releases its old state (on the old build) and starts
   fresh on the new one. Host-side graph state (queues, held inputs) is untouched.
 - **Release before close.** The old generation is dropped once its node instances (each moves
-  on at its next call, or when its graph drops) and the `SharedBytes` it produced are gone. Then
+  on at its next call, or when its graph drops) and the `SharedBytes` and `Local` objects it
+  produced are gone. Then
   the plugin's `unload` drops its runtime and the library is closed (`live_generations()` lists
   the builds still loaded). Strings the host keeps from a plugin (its id, `info()`, boundary
   types, crate builds, foreign interface keys) are host copies. A foreign handle the plugin

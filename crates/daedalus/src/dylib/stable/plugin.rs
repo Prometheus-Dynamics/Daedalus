@@ -18,7 +18,7 @@ use crate::runtime::host_bridge::ValueSerializerMap;
 use crate::runtime::io::{ConstCoercerMap, NodeConstInputs, NodeIo, NodeIoEnv};
 use crate::runtime::plugins::{Plugin, StableCodec};
 use crate::runtime::{ExecutionContext, NodeError, RuntimeNode, StateStore, TypeIndex};
-use crate::transport::{Payload, PayloadSlot, PodCodec, PodValue, Residency, TypeKey};
+use crate::transport::{LocalCodec, Payload, PayloadSlot, PodCodec, PodValue, Residency, TypeKey};
 
 /// The plugin's stable runtime: built by the first `create` (again after `unload`), shared by
 /// every instance created from it.
@@ -81,6 +81,8 @@ struct StablePort {
     shared_bytes: bool,
     /// A `StablePod` struct port (`T` or `Vec<T>`): crosses as a typed byte view.
     pod: Option<PodCodec>,
+    /// A `Local<T>` port: crosses as an opaque handle of this build.
+    local: Option<LocalCodec>,
 }
 
 /// One host node instance: its node, execution context (and with it node state), the port ids
@@ -125,6 +127,7 @@ impl StableRuntime {
                 .unwrap_or_else(|| crate::registry::typeexpr_transport_key(&port.ty));
             StablePort {
                 pod: codec.as_ref().and_then(|codec| codec.pod),
+                local: codec.as_ref().and_then(|codec| codec.local),
                 id: PortId::new(port.name.clone()),
                 shared_bytes: key.as_str() == SHARED_BYTES_KEY,
                 key,
@@ -201,6 +204,10 @@ impl StableRuntime {
         if let Some(bytes) = any.downcast_ref::<SharedBytes>() {
             // A local buffer lends this build's handle; a received one passes the host's on.
             return Ok(arena.lend(bytes.to_handle(), Residency::Cpu, !bytes.is_foreign()));
+        }
+        if let Some(handle) = port.local.as_ref().and_then(|codec| (codec.to_handle)(any)) {
+            // This build's object, lent by handle: the host carries it without reading it.
+            return Ok(arena.lend(handle, Residency::Cpu, true));
         }
         if let Some(value) = any.downcast_ref::<Value>() {
             return Ok(arena.encode(value));
@@ -455,6 +462,10 @@ unsafe fn decode_input(
             let bytes = SharedBytes::from_handle(handle.clone(), None)
                 .map_err(|err| format!("expected `daedalus:bytes`: {err:?}"))?;
             return Ok(slot.owned(key, bytes));
+        }
+        if let Some(codec) = &port.local {
+            // The same object this build lent, checked to be this build's `Local<T>`.
+            return (codec.decode)(slot, key, handle).map_err(|err| err.to_string());
         }
         return Ok(slot.foreign(key, handle.clone(), value.residency(), false));
     }

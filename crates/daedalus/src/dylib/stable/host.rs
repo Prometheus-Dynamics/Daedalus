@@ -20,8 +20,8 @@ use crate::runtime::io::{NodeConstInputs, NodeIo};
 use crate::runtime::plugins::{Plugin, PluginError, PluginInstallContext, PluginResult};
 use crate::runtime::{ExecutionContext, NodeError};
 use crate::transport::{
-    ForeignInterface, ForeignInterfaceInfo, FrameInterface, Payload, PayloadSlot, PodCodec,
-    PodValue, Residency, TypeKey, frame_handle_from_v2, is_frame_v2,
+    ForeignInterface, ForeignInterfaceInfo, FrameInterface, LocalInterface, Payload, PayloadSlot,
+    PodCodec, PodValue, Residency, TypeKey, frame_handle_from_v2, is_frame_v2,
 };
 
 /// The first [`super::STABLE_ABI_VERSION`] that reads [`tag::POD`] values.
@@ -306,7 +306,7 @@ impl HostNode {
                     index,
                     &payload.inner,
                     &mut arena,
-                    instance.generation.handlers.version >= POD_VERSION,
+                    &instance.generation,
                 )?,
             });
         }
@@ -350,14 +350,13 @@ impl HostNode {
             services: _,
         } = instance;
         // The consts the instance holds are not sent again; otherwise every input is.
-        let pods = generation.handlers.version >= POD_VERSION;
         if consts.is_some() {
             for (position, (port, payload)) in io.edge_inputs().iter().enumerate() {
-                self.push_input(resolved, inputs, arena, position, port, payload, pods)?;
+                self.push_input(resolved, inputs, arena, position, port, payload, generation)?;
             }
         } else {
             for (position, (port, payload)) in io.inputs().enumerate() {
-                self.push_input(resolved, inputs, arena, position, port, payload, pods)?;
+                self.push_input(resolved, inputs, arena, position, port, payload, generation)?;
             }
         }
         if scalars.len() < self.outputs.len() {
@@ -396,8 +395,7 @@ impl HostNode {
         Err(self.error(code, error.or(message)))
     }
 
-    /// Encode one input of a call at `position` onto `inputs` (`pods`: the plugin reads
-    /// [`tag::POD`] values).
+    /// Encode one input of a call at `position` onto `inputs`, for a call on `generation`.
     #[allow(clippy::too_many_arguments)]
     fn push_input(
         &self,
@@ -407,13 +405,13 @@ impl HostNode {
         position: usize,
         port: &PortId,
         payload: &crate::runtime::executor::CorrelatedPayload,
-        pods: bool,
+        generation: &Arc<Generation>,
     ) -> Result<(), NodeError> {
         let (index, fanin) = self.resolve_input(resolved, position, port)?;
         inputs.push(StableInput {
             port: index,
             fanin,
-            value: self.encode_input(port.as_str(), index, &payload.inner, arena, pods)?,
+            value: self.encode_input(port.as_str(), index, &payload.inner, arena, generation)?,
         });
         Ok(())
     }
@@ -472,8 +470,18 @@ impl HostNode {
         index: u32,
         payload: &Payload,
         arena: &mut Arena,
-        pods: bool,
+        generation: &Arc<Generation>,
     ) -> Result<StableValue, NodeError> {
+        let pods = generation.handlers.version >= POD_VERSION;
+        if let Some(keepalive) = payload.foreign_keepalive()
+            && !std::ptr::addr_eq(Arc::as_ptr(keepalive), Arc::as_ptr(generation))
+            && let Some(handle) = payload.to_foreign_handle()
+        {
+            // A plugin-local object of another build (or of this plugin before a reload): lent
+            // under an owner that holds the payload, so the receiver can never outlive the code
+            // the handle runs. Its own build lends it as it is.
+            return Ok(arena.lend(handle, payload.residency(), false));
+        }
         if self.frame_v2
             && let Some(value) = arena.lend_frame_as_v2(payload)
         {
@@ -560,12 +568,20 @@ impl Outputs<'_> {
                     .map_err(|err| format!("expected `daedalus:bytes`: {err:?}"))?;
                 Payload::owned(key, bytes)
             } else {
-                if value.from_sender() {
-                    // The handle's code is the plugin's and nothing tracks the payload.
-                    self.generation.pin();
+                if value.from_sender() && handle.view::<LocalInterface>().is_ok() {
+                    // A plugin-local object: its payload keeps this build loaded, and its release
+                    // runs on this build before the build is let go. No pin, so a reload can close
+                    // the old build once its objects are gone.
+                    let keepalive: Arc<dyn Any + Send + Sync> = self.generation.clone();
+                    Payload::foreign_kept(key, handle.clone(), value.residency(), keepalive)
+                } else {
+                    if value.from_sender() {
+                        // The handle's code is the plugin's and nothing tracks the payload.
+                        self.generation.pin();
+                    }
+                    // A frame from a plugin built against frame v2 is read through v3.
+                    Payload::foreign(key, frame_handle_from_v2(handle.clone()), value.residency())
                 }
-                // A frame from a plugin built against frame v2 is read through v3.
-                Payload::foreign(key, frame_handle_from_v2(handle.clone()), value.residency())
             }
         } else if value.tag == tag::POD {
             let slot = &mut self.scalars[index as usize];

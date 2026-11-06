@@ -22,6 +22,22 @@ plugin ABI and does not load.
   `daedalus_surface_host_schemas` lists an image surface's in-image plugins, ahead of the
   installed libraries. `daedalus::dylib::registry_plugin_schema` builds a `PluginSchema` for a
   plugin installed through the Rust path.
+- Plugin-local objects on the stable plugin path: `daedalus::transport::Local<T>`, a shared object of
+  the build that made it. A node port of `Local<T>` crosses as an opaque `daedalus:plugin_local`
+  handle (`LocalInterface`, whose data pointer is the object's and whose retain and release are the
+  creating build's), which the host carries along graph edges without encoding or reading it. A node
+  of the same build reads it back as the same `Local<T>` after checking the header (the creating
+  build, by the address of a static in its copy of `daedalus-transport`, then `T`'s `TypeId`); a
+  handle from another plugin, or from this plugin before a reload, is refused (`LocalError`, "created
+  by another build"). The object keeps one address for its life: `Local::as_ptr` and `data()` of
+  every handle of it, on every edge and tick, are the same pointer (`dylib_stable_local` asserts it,
+  statically and through the stable path). The host keeps the creating build loaded through the
+  payload (`Payload::foreign_kept`, whose handle is released before the build is let go) instead of
+  pinning it for the process, so after a reload the old build closes once the host drops its last
+  object; a kept handle taken out of its payload (`to_foreign_handle`), or lent to another build,
+  holds the payload. `ForeignHandle::with_owner` builds such a handle with the same data, vtable and
+  interface. No stable ABI change: the objects cross as `tag::HANDLE` values, and an older host pins
+  the plugin as before.
 - Plain-old-data values on the stable plugin path (stable ABI 5): `#[derive(StablePod)]` (re-exported
   as `daedalus::StablePod`) on a `#[repr(C)]`, padding-free struct of numbers, fixed arrays and
   other `StablePod` structs gives it a `PodLayout` (name, size, alignment, and an FNV-1a hash of its
