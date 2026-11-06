@@ -12,8 +12,10 @@ use crate::prelude::*;
 use super::{SerialView, edge_is_active, edge_uses_direct_slot, node_is_active};
 
 /// Payloads on their way along fused edges to the next node: `(edge, payload)` in push order.
-/// Two inline, so a chain allocates nothing.
-pub(crate) type Carry = SmallVec<[(usize, CorrelatedPayload); 2]>;
+/// Four inline, so a snapshot's run (a parallel tick's) allocates nothing for a node with up to four
+/// fused outputs; the executor keeps its own between runs (`ExecutorCore::fused_carry`), so a
+/// serial run reuses a spilled buffer and a warm tick allocates nothing however many there are.
+pub(crate) type Carry = SmallVec<[(usize, CorrelatedPayload); 4]>;
 
 /// What [`super::edges::publish_outputs`] needs to fuse a node's outputs.
 pub(crate) struct FusedOutputs<'a> {

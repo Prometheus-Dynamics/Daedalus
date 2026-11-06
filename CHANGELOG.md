@@ -712,6 +712,11 @@ plugin ABI and does not load.
 
 ### Fixed
 
+- Serial runs: the fused-edge carry no longer allocates per tick for a node with more than two
+  fused outputs (Eidos's `tracked_detect`, three). It holds four inline and the executor keeps it
+  between runs (`ExecutorCore::fused_carry`), so a spilled buffer is reused. Test:
+  `fused_carry_allocations` (three fused edges into one node, 0 allocations per warm tick on
+  Serial at Off, Basic and Detailed, and on Parallel).
 - A graph edge into a host output now runs its adapters when the host bridge drains it. The
   planner put an adapter on such an edge when the host port's type differed from the producer's,
   but the drain handed the payload over unconverted (only node inputs ran adapters), so the host

@@ -15,7 +15,8 @@ mod host_io;
 mod resilience;
 
 use edges::{collect_inputs, publish_outputs};
-use fused::{Carry, FusedOutputs};
+pub(crate) use fused::Carry;
+use fused::FusedOutputs;
 #[cfg(feature = "threads")]
 pub(crate) use host_io::drain_host_outputs;
 pub(crate) use host_io::{HostNodeIo, adapt_host_output, inject_host_inputs, resolve_host_nodes};
@@ -165,7 +166,7 @@ fn run_order_timed<H: NodeHandler>(
         !(cfg!(feature = "metrics")
             && (v.core.run_config.metrics_level.is_profile() || collect_trace))
     });
-    let mut carry = Carry::new();
+    let mut carry = ::core::mem::take(&mut v.core.fused_carry);
     let blocking = v.core.run_config.policies.blocking();
     // Without recovery policies every node fails as before: skip the per-node lookups.
     let recovering = v.core.run_config.policies.any_recovery();
@@ -420,6 +421,9 @@ fn run_order_timed<H: NodeHandler>(
             *cost += clock.elapsed(start).as_nanos() as u64;
         }
     }
+    // Back for the next run, with its buffer (a run that fails early drops it).
+    carry.clear();
+    v.core.fused_carry = carry;
 
     if let Some(graph_start) = graph_start {
         // The longest segment's time for a parallel worker, which runs several segments on one

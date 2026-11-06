@@ -93,6 +93,9 @@ pub(crate) struct ExecutorCore {
     pub(crate) io_envs: Arc<[Arc<NodeIoEnv>]>,
     /// The port buffers this executor's node calls reuse (`io::PortPool`).
     pub(crate) port_pool: PortPool,
+    /// The serial run's fused-edge carry, kept between ticks so its buffer is reused: a node
+    /// with more fused outputs than any before grows it once, on its first tick.
+    pub(crate) fused_carry: super::serial::Carry,
 }
 
 impl ExecutorCore {
@@ -147,6 +150,7 @@ impl ExecutorCore {
             contexts: Arc::from(Vec::new()),
             io_envs: Arc::from(Vec::new()),
             port_pool: PortPool::new(),
+            fused_carry: super::serial::Carry::new(),
         };
         core.telemetry.share_texts_with(&core.payload_texts);
         core.refresh_contexts();
@@ -248,6 +252,7 @@ impl ExecutorCore {
             contexts: self.contexts.clone(),
             io_envs: self.io_envs.clone(),
             port_pool: PortPool::new(),
+            fused_carry: super::serial::Carry::new(),
         };
         snapshot.telemetry.share_texts_with(&snapshot.payload_texts);
         // A snapshot may tick on another thread: give it its own pool (a no-op with `std`).
