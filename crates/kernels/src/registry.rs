@@ -288,11 +288,14 @@ static PIXEL_KERNELS: [[Kernel; 9]; 4] = [
             Kernel::missing(
                 "daedalus.pixel.rgba_red",
                 Backend::FixedFunction,
-                Status::Gap(
-                    "Y-only output (one byte a pixel): Lemnos's RGA caps serve no Y-only output \
-                     on any route, and librga's gray output is gone",
+                Status::Deferred(
+                    "implemented on /dev/rga RGA2 (Lemnos 02c8396, `MultiRga::channel_to_gray`: \
+                     full_csc Y = 1023/1024 R + 383/1024, exact for every byte), waiting on its \
+                     board exactness test; Lemnos's caps route it once that passes. Mainline \
+                     rockchip-rga can't: no Y-only output format and no programmable CSC",
                 ),
             )
+            .with_variant("multirga")
         ),
         gpu_compute("daedalus.pixel.rgba_red"),
     ),

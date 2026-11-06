@@ -341,8 +341,9 @@ pub(super) static IMAGE_TABLE: Registry = Registry {
 };
 
 /// The pixel conversions on RGA. Lemnos's `caps` serves a conversion through the mainline driver
-/// when neither side is gray, and through multi-RGA only from gray to RGBA-class. The Y-only
-/// output of `rgba_red` has no route, so its row is a gap in `registry.rs`.
+/// when neither side is gray, and through multi-RGA only from gray to RGBA-class. `rgba_red`'s
+/// Y-only output is Lemnos's `MultiRga::channel_to_gray`, deferred in `registry.rs` until its
+/// board exactness test passes.
 static RGA_KERNELS: [Kernel; 3] = [
     Kernel::implemented(
         "daedalus.pixel.rgb_to_rgba",
@@ -382,7 +383,8 @@ mod lemnos_routes {
     //! - `image.resize_area` and `resize_bilinear` are `Op::Resize(Filter::Area | Bilinear)`.
     //! - `pixel.rgb_to_rgba`, `rgba_to_rgb`, `gray_to_rgba`, `rgba_red` are `Op::Convert`; the
     //!   formats (both sides, gray included) decide the route, so they are not separate ops.
-    //!   `rgba_red` writes one byte a pixel, Y-only output, which no route serves.
+    //!   `rgba_red` writes one byte a pixel: Lemnos's `FixedOp::Channel` (02c8396), which no
+    //!   route serves until its board exactness test passes.
     //! - Lemnos has no op for `Line` on VGLite: its row is `FixedOp::Line`, unserved by design.
     //!
     //! Our RGBA8 is Lemnos's `Abgr32` (both are the four-byte RGBA class; the layout here only
