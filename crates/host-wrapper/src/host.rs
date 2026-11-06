@@ -6,7 +6,15 @@ use std::path::Path;
 use lemnos_abi::{Handle, Status};
 
 use crate::error::HostError;
+#[cfg(target_os = "linux")]
+use crate::frame::{Frame, FrameLease};
 use crate::surface::{Messages, Surface, check, check_with};
+#[cfg(target_os = "linux")]
+use lemnos_abi::{BufferDesc, FenceDesc};
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+#[cfg(target_os = "linux")]
+use std::ptr;
 
 /// A host in the loaded surface. Released on drop.
 pub struct Host<'s> {
@@ -247,6 +255,68 @@ impl Graph<'_> {
             // Safety: as `ports`.
             unsafe { (api.graph_telemetry)(self.handle, buf, cap, needed) }
         })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Graph<'_> {
+    /// Pushes `frame` into the input port `port`, as a dma-buf frame: shared, not copied. With
+    /// `acquire` (a sync-file), the frame's dma-bufs carry it as a write fence, so a consumer that
+    /// syncs through dma-buf waits for it; the descriptor is only borrowed for the call.
+    pub fn push_frame(
+        &self,
+        port: &str,
+        frame: &Frame<'_>,
+        acquire: Option<BorrowedFd<'_>>,
+    ) -> Result<(), HostError> {
+        let api = &self.host.surface.api;
+        let fence = acquire.map(|fd| FenceDesc::sync_file(fd.as_raw_fd()));
+        let fence_ptr = fence.as_ref().map_or(ptr::null(), ptr::from_ref);
+        // Safety: `port` is valid for its length; the frame's descriptor and the fence (when
+        // present) are valid for reads for the call. The descriptors are borrowed, so the surface
+        // duplicates them and the caller keeps its own.
+        check("daedalus_surface_push_frame", unsafe {
+            (api.push_frame)(
+                self.handle,
+                port.as_ptr(),
+                port.len(),
+                frame.desc(),
+                fence_ptr,
+            )
+        })
+    }
+
+    /// Takes the next frame from the output port `port` as a lease, or `None` when nothing is
+    /// queued. The lease owns the frame's dma-buf descriptors and keeps the frame until it drops.
+    pub fn take_frame(&self, port: &str) -> Result<Option<FrameLease<'_>>, HostError> {
+        let surface = self.host.surface;
+        let mut desc = BufferDesc::image(0, 0, 0, 0);
+        let mut fence = FenceDesc::none();
+        let mut handle = Handle::NULL;
+        // Safety: `port` is valid for its length; the out-pointers are valid for writes.
+        let status = unsafe {
+            (surface.api.take_frame)(
+                self.handle,
+                port.as_ptr(),
+                port.len(),
+                &mut desc,
+                &mut fence,
+                &mut handle,
+            )
+        };
+        if status == Status::AGAIN {
+            return Ok(None);
+        }
+        check("daedalus_surface_take_frame", status)?;
+        if fence.fd >= 0 {
+            // Owned by the caller under the surface's contract: closed here, which the surface does
+            // not do for us. (The surface writes none today.)
+            // Safety: the surface handed this descriptor over.
+            drop(unsafe { OwnedFd::from_raw_fd(fence.fd) });
+        }
+        // Safety: the surface wrote the descriptors of `desc` as owned (`BufferDesc::OWNED`), one
+        // per plane, and nothing else holds them.
+        Ok(Some(unsafe { FrameLease::new(surface, handle, desc) }))
     }
 }
 

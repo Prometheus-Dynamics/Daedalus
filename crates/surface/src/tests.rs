@@ -200,7 +200,7 @@ fn an_empty_graph_runs_and_reports_json() {
         unsafe { io::daedalus_surface_push_i64(graph, bad.as_ptr(), 1, 1) },
         Status::INVALID_ARGUMENT
     );
-    // Frames are stubs.
+    // A frame needs a descriptor: a null one is refused, and so is a scalar port.
     assert_eq!(
         unsafe {
             frames::daedalus_surface_push_frame(
@@ -211,7 +211,7 @@ fn an_empty_graph_runs_and_reports_json() {
                 ptr::null(),
             )
         },
-        Status::NOT_SUPPORTED
+        Status::INVALID_ARGUMENT
     );
     assert_eq!(
         unsafe { graph::daedalus_surface_graph_release(graph) },

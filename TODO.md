@@ -98,10 +98,16 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    `lemnos-abi` use for the C surface. Untested on board.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
    plugin linking. Design in `docs/shared-library.md` (2026-11-05). State (2026-11-06): step 1,
-   `lemnos-abi`, is pinned at `cf3a4ac`. Step 2, moving the stable plugin ABI onto `lemnos-abi`
-   primitives, is NOT done. Step 3 is built as a first version: `daedalus-surface` and
-   `daedalus-host`, with the static-versus-shared test; the frame entry points are stubs, and the
-   per-frame cost on the CM5 is not measured. Step 4 (Gaia's link modes) is not started. In-image
+   `lemnos-abi`, is at `cf3a4ac` (declared `branch = "dev"`, the commit in the lock). Step 2,
+   moving the stable plugin ABI onto `lemnos-abi` primitives, is NOT done. Step 3 is built as a
+   first version: `daedalus-surface` and `daedalus-host`, with the static-versus-shared test, and
+   dma-buf frames (`push_frame`, `take_frame`, `frame_release`) with no copy. The CM5 cost is in
+   `benchmarks-log.md` (0.43 µs per frame over static-through-stable). Open on frames: a warm
+   frame makes 2 allocations, the engine's payload storage at push and at tick, the same as the
+   static graph (needs payload recycling in `daedalus-transport`); each port keeps its last pushed
+   frame's dma-bufs referenced until the next push (the spare object reused to avoid an
+   allocation), which holds a caller's buffer longer than the graph does; an imported acquire
+   fence is not tested to delay a consumer. Step 4 (Gaia's link modes) is not started. In-image
    node crates link into the surface `cdylib`; only separate plugins use the stable ABI. Gaia's A/B:
    per-node calls across a library cost 26% on the mirror bench, so the surface is per frame.
 8. Lemnos's kernel module and its Rust userspace drivers: Daedalus's fixed-function nodes and

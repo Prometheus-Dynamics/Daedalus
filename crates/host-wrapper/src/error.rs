@@ -30,6 +30,8 @@ pub enum HostError {
     },
     /// A port name or a document was not UTF-8 text (checked before the surface is called).
     NotUtf8(&'static str),
+    /// A frame was built with a layout the surface cannot carry (checked before the call).
+    InvalidFrame(&'static str),
 }
 
 impl HostError {
@@ -71,6 +73,7 @@ impl fmt::Display for HostError {
                 Ok(())
             }
             Self::NotUtf8(what) => write!(f, "{what} is not valid UTF-8"),
+            Self::InvalidFrame(why) => write!(f, "invalid frame: {why}"),
         }
     }
 }

@@ -26,6 +26,19 @@ pub unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> Result<&'a [u8], Status> 
     Ok(unsafe { core::slice::from_raw_parts(ptr, len) })
 }
 
+/// The `T` at `ptr`, read without requiring alignment: [`Status::INVALID_ARGUMENT`] for null.
+///
+/// # Safety
+/// `ptr` must be valid for a read of a `T` when it is not null.
+#[cfg(target_os = "linux")]
+pub unsafe fn value<T: Copy>(ptr: *const T) -> Result<T, Status> {
+    if ptr.is_null() {
+        return Err(Status::INVALID_ARGUMENT);
+    }
+    // Safety: the caller guarantees a readable `T` at a non-null pointer.
+    Ok(unsafe { ptr.read_unaligned() })
+}
+
 /// The UTF-8 text at `ptr`, `len` long (not NUL-terminated).
 ///
 /// # Safety

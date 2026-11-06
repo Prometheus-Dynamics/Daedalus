@@ -3,7 +3,9 @@
 use std::ffi::c_void;
 use std::path::Path;
 
-use lemnos_abi::{AbiVersion, BufferDesc, FenceDesc, Handle, LAYOUT_HASH, MessageSink, Status};
+use lemnos_abi::{AbiVersion, Handle, LAYOUT_HASH, MessageSink, Status};
+#[cfg(target_os = "linux")]
+use lemnos_abi::{BufferDesc, FenceDesc};
 use libloading::Library;
 
 use crate::error::HostError;
@@ -61,8 +63,7 @@ pub(crate) struct Api {
     pub take_bool: unsafe extern "C" fn(Handle, *const u8, usize, *mut u8) -> Status,
     pub take_bytes:
         unsafe extern "C" fn(Handle, *const u8, usize, *mut u8, usize, *mut usize) -> Status,
-    /// Declared and exported as stubs; not used by the wrapper yet.
-    #[allow(dead_code)]
+    #[cfg(target_os = "linux")]
     pub push_frame: unsafe extern "C" fn(
         Handle,
         *const u8,
@@ -70,6 +71,17 @@ pub(crate) struct Api {
         *const BufferDesc,
         *const FenceDesc,
     ) -> Status,
+    #[cfg(target_os = "linux")]
+    pub take_frame: unsafe extern "C" fn(
+        Handle,
+        *const u8,
+        usize,
+        *mut BufferDesc,
+        *mut FenceDesc,
+        *mut Handle,
+    ) -> Status,
+    #[cfg(target_os = "linux")]
+    pub frame_release: unsafe extern "C" fn(Handle) -> Status,
 }
 
 /// A call that writes JSON into a caller buffer: `(handle, buf, cap, needed)`.
@@ -154,7 +166,12 @@ impl Api {
             take_f64: sym(library, "daedalus_surface_take_f64")?,
             take_bool: sym(library, "daedalus_surface_take_bool")?,
             take_bytes: sym(library, "daedalus_surface_take_bytes")?,
+            #[cfg(target_os = "linux")]
             push_frame: sym(library, "daedalus_surface_push_frame")?,
+            #[cfg(target_os = "linux")]
+            take_frame: sym(library, "daedalus_surface_take_frame")?,
+            #[cfg(target_os = "linux")]
+            frame_release: sym(library, "daedalus_surface_frame_release")?,
         })
     }
 }

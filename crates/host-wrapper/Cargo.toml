@@ -22,3 +22,7 @@ libloading = { workspace = true }
 daedalus = { workspace = true, features = ["engine", "plugins", "dylib-plugins", "threads"] }
 daedalus-plugins-stable-abi = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+
+# Dma-buf frames are Linux only: the tests allocate the buffers the frames are made of.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+lemnos-linux = { workspace = true, features = ["dma"] }

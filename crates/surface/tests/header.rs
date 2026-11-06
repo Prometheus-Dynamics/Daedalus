@@ -214,7 +214,7 @@ fn integer(value: &str) -> i128 {
 fn header_declares_exactly_the_rust_exports_with_the_same_signatures() {
     let rust = rust_exports();
     let c = header_decls();
-    assert_eq!(rust.len(), 22, "the surface exports 22 functions");
+    assert_eq!(rust.len(), 23, "the surface exports 23 functions");
     for (name, sig) in &rust {
         let declared = c
             .get(name)
@@ -279,6 +279,22 @@ fn header_constants_match_lemnos_abi_and_the_build() {
     assert_eq!(
         header_define("DAEDALUS_FEATURE_ALLOC_COUNT"),
         i128::from(FEATURE_ALLOC_COUNT)
+    );
+    assert_eq!(
+        header_define("DAEDALUS_BUFFER_OWNED"),
+        i128::from(BufferDesc::OWNED)
+    );
+    assert_eq!(
+        header_define("DAEDALUS_FENCE_NONE"),
+        i128::from(FenceDesc::NONE)
+    );
+    assert_eq!(
+        header_define("DAEDALUS_FENCE_SYNC_FILE"),
+        i128::from(FenceDesc::SYNC_FILE)
+    );
+    assert_eq!(
+        header_define("DAEDALUS_FENCE_SYNCOBJ"),
+        i128::from(FenceDesc::SYNCOBJ)
     );
     let statuses = [
         ("DAEDALUS_OK", Status::OK),

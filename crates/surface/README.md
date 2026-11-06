@@ -27,8 +27,11 @@ Graphs: `daedalus_surface_graph_compile` (a `daedalus.graph` document, prepared)
 Per frame, one call each: `daedalus_surface_push_{i64,f64,bool,bytes}`,
 `daedalus_surface_tick`, `daedalus_surface_take_{i64,f64,bool,bytes}`.
 
-Frames: `daedalus_surface_push_frame` and `daedalus_surface_take_frame` are declared and exported
-as stubs that return `NOT_SUPPORTED`. They are not wired to the `daedalus:frame` ports yet.
+Frames (Linux; `NOT_SUPPORTED` elsewhere): `daedalus_surface_push_frame` pushes a dma-buf frame
+(one `BufferDesc` descriptor per plane, with an acquire fence) into a `daedalus:frame` port,
+`daedalus_surface_take_frame` takes one out as a lease (owned, duplicated descriptors), and
+`daedalus_surface_frame_release` releases the lease. Descriptor ownership follows
+`BufferDesc::OWNED`; see the header.
 
 Every call returns a `daedalus_status`: 0 for success, a negative errno, or one of the
 `DAEDALUS_*` codes. A handle that was released, or never issued, is `DAEDALUS_STALE_HANDLE` and

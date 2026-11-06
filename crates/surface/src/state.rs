@@ -11,7 +11,11 @@ use daedalus::runtime::ExecutionTelemetry;
 use daedalus::runtime::handler_registry::HandlerRegistry;
 use daedalus::runtime::handles::PortId;
 use daedalus::runtime::plugins::PluginRegistry;
+use daedalus::transport::{FRAME_INTERFACE_KEY, SharedFrame};
 use lemnos_abi::{Handle, Slab, Status};
+
+#[cfg(target_os = "linux")]
+use crate::frames::FrameObject;
 
 /// A host: the plugin registry graphs compile from, the engine that compiles them, and the
 /// plugin libraries installed into the registry (kept loaded while anything may run their code).
@@ -36,6 +40,15 @@ pub struct Graph {
     /// Bytes taken from an output but not yet copied out (the caller's buffer was too small),
     /// with their output port index. They come back first on the next take.
     pub stash: Vec<(usize, SharedBytes)>,
+    /// Per input port: the frame object of the last dma-buf frame pushed to it. Reused (its
+    /// descriptors replaced in place) once the graph has let go of it, so a steady stream of
+    /// pushes allocates no frame object.
+    #[cfg(target_os = "linux")]
+    pub frame_spare: Vec<Option<Arc<FrameObject>>>,
+    /// Frames taken from an output but not handed to the caller (a descriptor could not be
+    /// made), with their output port index. They come back first on the next take.
+    #[cfg(target_os = "linux")]
+    pub frame_stash: Vec<(usize, SharedFrame)>,
     /// The last tick's telemetry.
     pub telemetry: Option<ExecutionTelemetry>,
 }
@@ -55,6 +68,8 @@ pub enum Kind {
     Float,
     Bool,
     Bytes,
+    /// A `daedalus:frame` (v3) port: a dma-buf frame through `push_frame` and `take_frame`.
+    Frame,
     Other,
 }
 
@@ -65,6 +80,7 @@ impl Kind {
             Some(TypeExpr::Scalar(ValueType::Float)) => Self::Float,
             Some(TypeExpr::Scalar(ValueType::Bool)) => Self::Bool,
             Some(TypeExpr::Opaque(key)) if key == SHARED_BYTES_KEY => Self::Bytes,
+            Some(TypeExpr::Opaque(key)) if key == FRAME_INTERFACE_KEY => Self::Frame,
             _ => Self::Other,
         }
     }
@@ -75,20 +91,24 @@ impl Kind {
             Self::Float => "float",
             Self::Bool => "bool",
             Self::Bytes => "bytes",
+            Self::Frame => "frame",
             Self::Other => "other",
         }
     }
 }
 
-/// Every object the surface holds.
+/// Every object the surface holds. `frames` are the leases of taken frames: each holds one
+/// reference to its frame until the caller releases it.
 pub struct Tables {
     pub hosts: Slab<Host>,
     pub graphs: Slab<Graph>,
+    pub frames: Slab<SharedFrame>,
 }
 
 static TABLES: Mutex<Tables> = Mutex::new(Tables {
     hosts: Slab::new(),
     graphs: Slab::new(),
+    frames: Slab::new(),
 });
 
 /// The tables, locked. A panic while locked poisons the mutex; the state is still usable (a

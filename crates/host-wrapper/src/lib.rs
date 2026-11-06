@@ -19,9 +19,13 @@
 //! ```
 
 mod error;
+#[cfg(target_os = "linux")]
+mod frame;
 mod host;
 mod surface;
 
 pub use error::HostError;
+#[cfg(target_os = "linux")]
+pub use frame::{Frame, FrameLease};
 pub use host::{Graph, Host};
 pub use surface::{SURFACE_ABI, Surface, SurfaceFeatures};

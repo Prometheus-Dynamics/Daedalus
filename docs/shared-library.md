@@ -91,9 +91,26 @@ Built (3.0.1-dev, Linux tested):
   statically and once through `daedalus-host` and the surface. The outputs are identical on every
   frame. The surface's allocations are counted by its `alloc-count` build.
 
-Declared, built as stubs (`NOT_SUPPORTED`): `daedalus_surface_push_frame` and
-`daedalus_surface_take_frame`. A frame crosses as a `lemnos-abi` `BufferDesc` with its
-`FenceDesc`; wiring those to the `daedalus:frame` host ports is the next step for frames.
+Frames (Linux; `NOT_SUPPORTED` elsewhere). `daedalus_surface_push_frame` takes a `lemnos-abi`
+`BufferDesc` (one dma-buf descriptor per plane) and an optional sync-file acquire fence, and pushes
+the frame into a `daedalus:frame` port as a `SharedFrame` that owns the descriptors; the pixels are
+never copied. Descriptors are borrowed for the call, or taken over under `BufferDesc::OWNED`. The
+acquire fence is attached to each dma-buf as a write fence, so a consumer that syncs through dma-buf
+(a CPU access, a GPU import) waits for it; a syncobj fence is refused. `daedalus_surface_take_frame`
+returns a lease: the frame's descriptors, duplicated and owned by the caller, and a fence of none
+(pending writes are carried by the dma-buf reservations). The frame stays alive until
+`daedalus_surface_frame_release`. The frame keeps its identity through the graph: a taken frame's
+`handle().data()` is the pushed frame's, so a cache keyed on it (Styx's) sees the same frame.
+Each port keeps its last frame object and reuses it once the graph lets go, so the surface's own
+frame code allocates nothing per warm frame. What it does allocate is the engine's payload storage,
+one at the push and one at the tick, which the static graph pays too (measured: 2 per warm frame,
+both paths). Removing those needs payload storage recycled in `daedalus-transport`, which is
+outside the frame path.
+
+`daedalus-host` gives the same as a safe API: `Graph::push_frame(port, &Frame, acquire)` with a
+`Frame` built from borrowed descriptors (`Frame::image(..).plane(fd, offset, stride, size)`), and
+`Graph::take_frame(port)` returning a `FrameLease` that closes its descriptors and releases the
+frame on `Drop`.
 
 Not built yet: patching constants and setting input or output policies through the surface;
 `inspect_outputs` across the surface; graph ports for `Vec<u8>` (the ABI moves `SharedBytes`
@@ -112,6 +129,6 @@ release numbers are the ones that count.
 2. The stable plugin ABI moves onto its primitives (handles, status codes, guard, slabs), keeping
    `STABLE_ABI_VERSION` compatibility. Not started.
 3. `daedalus-surface` and `daedalus-host`, with a test that runs the same graph statically and
-   through wrapper + surface and compares outputs and allocations. Built (see Status); the per-frame
-   cost on the CM5 is still to measure, and the frame entry points are still stubs.
+   through wrapper + surface and compares outputs and allocations. Built (see Status), and the
+   frame entry points are built too (Linux); the per-frame cost on the CM5 is still to measure.
 4. Hand the result to Gaia for the link modes and the combined build.

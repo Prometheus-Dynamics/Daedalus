@@ -50,6 +50,8 @@ pub unsafe extern "C" fn daedalus_surface_graph_compile(
         let inputs = ports(graph.host_inputs());
         let outputs = ports(graph.host_outputs());
         let spare = (0..inputs.len()).map(|_| None).collect();
+        #[cfg(target_os = "linux")]
+        let frame_spare = (0..inputs.len()).map(|_| None).collect();
         let handle = tables.graphs.insert(Graph {
             host,
             graph,
@@ -57,6 +59,10 @@ pub unsafe extern "C" fn daedalus_surface_graph_compile(
             outputs,
             spare,
             stash: Vec::new(),
+            #[cfg(target_os = "linux")]
+            frame_spare,
+            #[cfg(target_os = "linux")]
+            frame_stash: Vec::new(),
             telemetry: None,
         })?;
         host_state.graphs += 1;
@@ -95,7 +101,7 @@ pub unsafe extern "C" fn daedalus_surface_graph_release(graph: Handle) -> Status
 }
 
 /// Writes the graph's host ports as JSON: `{"inputs":[{"name","kind"}],"outputs":[...]}`, where
-/// `kind` is `int`, `float`, `bool`, `bytes` or `other` (the ABI moves only the first four).
+/// `kind` is `int`, `float`, `bool`, `bytes`, `frame` or `other` (the ABI moves the first five).
 ///
 /// # Safety
 /// As `ffi::write_out`: `needed` valid for a `usize`, `buf` for `cap` bytes when it fits.

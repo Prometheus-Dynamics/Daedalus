@@ -10,6 +10,11 @@
  * with DAEDALUS_STALE_HANDLE, never dereferenced. Every call runs under a panic guard: a panic
  * comes back as DAEDALUS_PANIC. Calls are per frame or per job, never per node.
  *
+ * Dma-buf frames (Linux; elsewhere the frame calls return DAEDALUS_NOT_SUPPORTED): the descriptors
+ * follow the BufferDesc::OWNED flag. Without it a push borrows them for the call, and a take gives
+ * out duplicates the caller closes. With it the receiver takes the descriptors over and closes them
+ * whether or not the call succeeds, so a failed call never leaks the caller's fds.
+ *
  * Buffers: a call that writes data into a caller buffer takes (buf, cap, needed). It always writes
  * the length of the data to *needed. If cap is too small it returns DAEDALUS_BUFFER_TOO_SMALL and
  * writes nothing; the caller allocates *needed bytes and calls again.
@@ -40,6 +45,13 @@ extern "C" {
 #define DAEDALUS_BUFFER_DESC_SIZE 160
 #define DAEDALUS_FENCE_DESC_SIZE 16
 #define DAEDALUS_MAX_PLANES 4
+
+/* Descriptor flags and fence kinds (lemnos-abi BufferDesc::OWNED and FenceDesc::{NONE, SYNC_FILE,
+ * SYNCOBJ}). */
+#define DAEDALUS_BUFFER_OWNED 1U
+#define DAEDALUS_FENCE_NONE 0
+#define DAEDALUS_FENCE_SYNC_FILE 1
+#define DAEDALUS_FENCE_SYNCOBJ 2
 
 /* Feature bits, from daedalus_surface_features(). */
 #define DAEDALUS_FEATURE_PLUGINS (1ULL << 0)
@@ -143,8 +155,8 @@ daedalus_status daedalus_surface_graph_compile(daedalus_handle host, const uint8
                                                size_t json_len, daedalus_handle *out,
                                                daedalus_message_sink sink);
 daedalus_status daedalus_surface_graph_release(daedalus_handle graph);
-/* Writes {"inputs": [{"name", "kind"}], "outputs": [...]} as JSON. kind: int, float, bool, bytes or
- * other. */
+/* Writes {"inputs": [{"name", "kind"}], "outputs": [...]} as JSON. kind: int, float, bool, bytes,
+ * frame or other. */
 daedalus_status daedalus_surface_graph_ports(daedalus_handle graph, uint8_t *buf, size_t cap,
                                              size_t *needed);
 /* Writes the plan explanation as JSON. */
@@ -157,7 +169,8 @@ daedalus_status daedalus_surface_graph_telemetry(daedalus_handle graph, uint8_t 
 /* ---- Per frame: push, tick, take ---- */
 
 /* Pushes a value into an input port. DAEDALUS_INVALID_ARGUMENT when the port's type is not the
- * one pushed; DAEDALUS_AGAIN when the input is full. */
+ * one pushed; DAEDALUS_AGAIN when the input is full. The port's kind is what daedalus_surface_
+ * graph_ports reports (int, float, bool, bytes, frame or other). */
 daedalus_status daedalus_surface_push_i64(daedalus_handle graph, const uint8_t *port,
                                           size_t port_len, int64_t value);
 daedalus_status daedalus_surface_push_f64(daedalus_handle graph, const uint8_t *port,
@@ -184,15 +197,28 @@ daedalus_status daedalus_surface_take_bytes(daedalus_handle graph, const uint8_t
                                             size_t port_len, uint8_t *buf, size_t cap,
                                             size_t *needed);
 
-/* ---- Frames (declared; built as stubs returning DAEDALUS_NOT_SUPPORTED in this version) ---- */
+/* ---- Frames: dma-buf frames into and out of daedalus:frame ports (Linux) ---- */
 
-/* A frame as a dma-buf descriptor, with its fence. Not wired to graph ports yet. */
+/* Pushes the dma-buf frame described by desc (one descriptor per plane) into an input port. The
+ * frame is shared, not copied. fence is NULL or a sync-file acquire fence: it is attached to the
+ * frame's dma-bufs as a write fence, so a consumer that syncs through dma-buf waits for it.
+ * Ownership of the descriptors and of the fence follows desc->flags (see above). A SYNCOBJ fence is
+ * DAEDALUS_NOT_SUPPORTED. DAEDALUS_INVALID_ARGUMENT for a descriptor that does not validate, or a
+ * port that is not a frame port; DAEDALUS_AGAIN when the input is full. */
 daedalus_status daedalus_surface_push_frame(daedalus_handle graph, const uint8_t *port,
                                             size_t port_len, const daedalus_buffer_desc *desc,
                                             const daedalus_fence_desc *fence);
+/* Takes the next frame from an output port. desc receives one owned (duplicated) descriptor per
+ * plane, with desc->flags set to DAEDALUS_BUFFER_OWNED: the caller closes them. fence receives
+ * DAEDALUS_FENCE_NONE: pending writes on the dma-bufs are carried by their reservations. frame
+ * receives a lease: the frame stays alive until daedalus_surface_frame_release. DAEDALUS_AGAIN when
+ * nothing is queued; DAEDALUS_NOT_SUPPORTED for a frame with no dma-buf plane (it stays queued). */
 daedalus_status daedalus_surface_take_frame(daedalus_handle graph, const uint8_t *port,
                                             size_t port_len, daedalus_buffer_desc *desc,
-                                            daedalus_fence_desc *fence);
+                                            daedalus_fence_desc *fence, daedalus_handle *frame);
+/* Releases a frame lease from daedalus_surface_take_frame. A released lease is
+ * DAEDALUS_STALE_HANDLE. */
+daedalus_status daedalus_surface_frame_release(daedalus_handle frame);
 
 #ifdef __cplusplus
 }

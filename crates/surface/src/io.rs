@@ -15,7 +15,7 @@ use crate::state::{Graph, Kind, lock};
 /// Maps the engine's feed outcome: accepted (or replaced an older payload) is success, a full
 /// or backpressured input is [`Status::AGAIN`], a closed one is [`Status::STALE_HANDLE`], and a
 /// payload the input's type does not take is [`Status::INVALID_ARGUMENT`].
-fn feed(outcome: FeedOutcome) -> Result<(), Status> {
+pub(crate) fn feed(outcome: FeedOutcome) -> Result<(), Status> {
     match outcome {
         FeedOutcome::Accepted { .. } | FeedOutcome::Replaced { .. } => Ok(()),
         FeedOutcome::Dropped { .. } | FeedOutcome::Backpressured => Err(Status::AGAIN),

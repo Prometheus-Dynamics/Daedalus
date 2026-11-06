@@ -7,9 +7,10 @@
 //!
 //! What is built: the version handshake, host lifecycle, stable-path plugin install, graph
 //! compile from a `daedalus.graph` document, scalar and byte push, tick, scalar and byte take,
-//! the node schema, explain and telemetry JSON. The frame entry points
-//! (`daedalus_surface_push_frame` and `daedalus_surface_take_frame`) are declared in
-//! `include/daedalus_surface.h` and exported as stubs that return `NOT_SUPPORTED`.
+//! the node schema, explain and telemetry JSON, and dma-buf frames on Linux: push a frame into a
+//! `daedalus:frame` port, take one out as a lease (`daedalus_surface_push_frame`,
+//! `daedalus_surface_take_frame`, `daedalus_surface_frame_release`). Frames cross as file
+//! descriptors that are shared, never copied; off Linux those calls return `NOT_SUPPORTED`.
 //!
 //! Linux is the tested platform. The code is portable Rust; only the shared-mode test is
 //! Unix-only.

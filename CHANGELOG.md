@@ -23,11 +23,23 @@ plugin ABI and does not load.
   create and release, plugin install by path through the stable handler path, schemas, graph
   compile from a `daedalus.graph` document, per-frame push, tick and take of scalars and
   `SharedBytes`, and port, explain and telemetry JSON. The header is `crates/surface/include/
-  daedalus_surface.h`. The frame entry points are declared and built as stubs returning
-  `NOT_SUPPORTED`. `daedalus-host` (`crates/host-wrapper`) is the safe Rust wrapper: it loads the
+  daedalus_surface.h`. `daedalus-host` (`crates/host-wrapper`) is the safe Rust wrapper: it loads the
   library by path, checks the handshake and layout hash, and returns RAII host and graph handles.
   `crates/host-wrapper/tests/shared_vs_static.rs` runs one graph statically and through the surface
   and asserts identical outputs; a warm scalar frame through the surface allocates nothing.
+- Dma-buf frames across the shared-library surface (Linux; `NOT_SUPPORTED` elsewhere):
+  `daedalus_surface_push_frame` pushes a `lemnos-abi` `BufferDesc` (one dma-buf per plane, with an
+  optional sync-file acquire fence) into a `daedalus:frame` port without copying pixels;
+  `daedalus_surface_take_frame` takes a frame out as a lease whose descriptors are duplicated and
+  owned by the caller; `daedalus_surface_frame_release` releases the lease. Descriptor ownership
+  follows `BufferDesc::OWNED` (borrowed for the call, or taken over and closed on any failure). The
+  acquire fence is attached to each dma-buf as a write fence; a syncobj fence is refused. A taken
+  frame keeps its `handle().data()` identity. `daedalus-host` gives `Graph::push_frame(port,
+  &Frame, acquire)` and `Graph::take_frame(port)` (a `FrameLease` that closes its descriptors and
+  releases the frame on drop). A `frame` port is reported as kind `frame` in the port table (it was
+  `other`). The tests (`crates/host-wrapper/tests/frames.rs`, `crates/surface/src/frames/tests.rs`)
+  check a round trip (the same dma-buf inode, the same pixels), fd counts over many frames, stale
+  leases, a panic inside a call, and descriptor ownership.
 - Stable ABI 3: a plugin's const inputs are sent to its node instance once, on create and again
   when a graph patch changes them (`HostGraph::apply_patch`), instead of with every call. The
   plugin exports `daedalus_plugin_stable_extension` (`StableExtension`, `SetConstsFn`); a plugin
