@@ -209,9 +209,12 @@ so a kernel the compiler left scalar fails. `accel-matrix render` then writes
 - a pass cell lost against the committed CSV;
 - a source file with SIMD or GPU markers and no registry entry.
 
-The cross targets use zig wrappers in `$ZIGCC_DIR` (`aarch64-musl-cc`, `armv7-cc`,
-`riscv64-cc`; as above, plus `-Wl,--fix-cortex-a53-843419` dropped for aarch64). A missing tool
-skips its target, which leaves its cells untested.
+The cross targets use zig wrappers (`aarch64-musl-cc`, `armv7-cc`, `riscv64-cc`; as above,
+plus `-Wl,--fix-cortex-a53-843419` dropped for aarch64): from `$ZIGCC_DIR` (default `~/zigcc`)
+when it has all three, else `scripts/zigcc.sh` writes them under the target dir from `zig` on
+PATH or pip's `ziglang`. With zig and qemu-user installed the lane needs no setup, locally or in
+CI. A missing tool skips its target, which leaves its cells untested; the baseline records those
+cells as pass, so the lane then fails on them as regressions.
 
 Stable Rust cannot detect ARMv7 NEON or RVV at runtime, and does not expose them to
 `cfg(target_feature)` either. A build with `+neon` / `+v` sets `daedalus_neon32` /

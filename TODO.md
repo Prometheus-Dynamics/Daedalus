@@ -516,7 +516,9 @@ was searched for, the commit is the one that introduced it.
 
 - [x] `daedalus-accel`, registry, evidence, matrix and gate: 7b85ad7, 6f9bd4b, 002d1f4, d5b55f7.
 - [x] `daedalus-kernels` on every backend, wired into every call site: 6f9bd4b, 002d1f4, d5b55f7,
-      c27f9c9, c797a47, 3196a4e, 1a6e8de. Committed matrix: pass 112, impossible 18, untested 4.
+      c27f9c9, c797a47, 3196a4e, 1a6e8de. Committed matrix (2026-11-06, every rvv and neon cell
+      on qemu runs and asm checks; `ci.sh accel` writes its own zig wrappers): pass 123,
+      impossible 18, deferred 2, untested 13, the 13 board-only fixed-function cells.
 - [x] The `portable_simd` column on nightly-2026-10-15: 80eb8cb.
 - [x] NEON32 CRC-32 by `vmull.p8` folding: 50093a9. Its default is open above.
 - [x] Core-tuned variants as their own matrix columns: 03cb4a8.

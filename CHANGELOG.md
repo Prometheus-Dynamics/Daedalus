@@ -719,6 +719,14 @@ plugin ABI and does not load.
   route (`tick_direct_payload`, `tick_direct_route`) runs its output edge's adapters too, and its
   single-node path steps aside when either edge adapts. Test: the engine's
   `host_output_adapters` (serial and parallel executors, a tick and the direct route).
+- `scripts/ci.sh accel` writes its own zig linker wrappers (`scripts/zigcc.sh`, from `zig` or
+  pip's `ziglang`) when `$ZIGCC_DIR` lacks them. Local runs had no `~/zigcc`, skipped the
+  aarch64, armv7 and riscv64 targets, and committed a matrix of pass 87, untested 49, while CI
+  rendered pass 123. The committed `docs/backend-matrix.{md,csv}` now carries the qemu runs and
+  asm checks: every `rvv`, `rvv+zvbc`, `neon64`, `neon64+crc` and `neon32` cell is pass (pass 123,
+  impossible 18, deferred 2, untested 13, all 13 the board-only fixed-function cells). The CI
+  accel job uses the same script instead of its inline wrappers.
+
 - A dmabuf import that the driver refuses no longer double-closes its fd on NVIDIA's proprietary
   driver. NVIDIA 595.104.02 closes the fd inside a refused `vkAllocateMemory`, against the spec,
   and the import then closed it again: a debug abort (`IO Safety violation`), and in release a

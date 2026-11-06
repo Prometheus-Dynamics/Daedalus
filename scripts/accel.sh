@@ -9,9 +9,11 @@
 #   aarch64-unknown-linux-musl under qemu-aarch64-static (NEON)
 #   armv7-unknown-linux-musleabihf with +neon under qemu-arm-static -cpu cortex-a7 (NEON32)
 #   riscv64gc-unknown-linux-musl with +v under qemu-riscv64-static at VLEN 128, 256, 512 (RVV)
-# Cross targets need zig linker wrappers in $ZIGCC_DIR (default ~/zigcc: aarch64-musl-cc,
-# armv7-cc, riscv64-cc; see docs/testing.md) and qemu-user (`qemu-ARCH-static` or `qemu-ARCH`);
-# a missing one is skipped with a note, and its cells stay untested. qemu must be 9.0 or newer:
+# Cross targets need zig linker wrappers (aarch64-musl-cc, armv7-cc, riscv64-cc; see
+# docs/testing.md) and qemu-user (`qemu-ARCH-static` or `qemu-ARCH`). The wrappers come from
+# $ZIGCC_DIR when it has them, else scripts/zigcc.sh writes them under the target dir from zig
+# (or pip's ziglang). A missing tool skips its target with a note, its cells stay untested, and
+# a cell the baseline records as pass then fails as a regression. qemu must be 9.0 or newer:
 # older qemu-user does not report Zvbc through riscv_hwprobe, so the CRC's rvv+zvbc cell falls
 # back to untested.
 set -euo pipefail
@@ -19,6 +21,10 @@ cd "$(dirname "$0")/.."
 
 ZIGCC_DIR=${ZIGCC_DIR:-$HOME/zigcc}
 TARGET_DIR=${CARGO_TARGET_DIR:-target}
+if [[ ! -x $ZIGCC_DIR/aarch64-musl-cc || ! -x $ZIGCC_DIR/armv7-cc || ! -x $ZIGCC_DIR/riscv64-cc ]] &&
+  scripts/zigcc.sh "$TARGET_DIR/zigcc"; then
+  ZIGCC_DIR=$(realpath "$TARGET_DIR/zigcc")
+fi
 OUT=$TARGET_DIR/accel
 RESULTS=$OUT/results
 rm -rf "$OUT"
