@@ -135,3 +135,34 @@ Against the estimates in the audit of running Eidos on the stable path:
 - Structs through `Value`, several hundred µs per frame: 38 µs per crossing at 4 tags and 139 µs
   at 16, so 20 struct edges cost about 0.75 ms at 4 tags. Confirmed, and it allocates per tag.
 - A handle costs the same at 0, 4 and 16 tags.
+
+## Inline plain payloads (208 B) and stable ABI 3 on the CM5
+
+Raze #1 (CM5, kernel 7.2.9-v8-16k, HeliOS services running), 2026-11-06. Release, aarch64 glibc,
+unpinned (no `taskset`), held under `/run/lock/raze-gpu.lock`. 671715b (`Payload` 184 B, stable ABI
+2) against ceacfc6 (`Payload` 208 B with `Payload::plain`, stable ABI 3 with constants sent once),
+alternated base, new, base, new, base, new; median of three runs. Load average rose from 1.1 to 2.9
+over the session. Base was built with the same `metrics` dev-dependency ceacfc6 adds, so both
+measure the same features. The A/B bundles both changes; the rows below say which one moves.
+
+| row | 671715b | ceacfc6 | change |
+| --- | --- | --- | --- |
+| 12 stages, handle and frame, 0 constants: static / stable | 17.9 / 36.7 µs | 18.0 / 37.1 µs | +0.4% / +1.1% |
+| 12 stages, 10 constants per stage: static / stable | 42.1 / 94.7 µs | 42.1 / 62.1 µs | +0.1% / −34% |
+| node with 49 scalar constants, stable | 27.2 µs | 10.4 µs | −62% |
+| node with 49 quarter-string constants, stable | 30.5 µs | 12.2 µs | −60% |
+| stable cost per constant, scalars / quarter strings | 484 / 551 ns | 128 / 164 ns | |
+| `Detections` through `Value`, 16 tags, stable | 170 µs | 171 µs | +0.4% |
+| graph frame, serial, metrics Off / Basic | 26.6 / 30.1 µs | 26.2 / 29.1 µs | within noise |
+| graph frame, adaptive, metrics Off | 27.9 µs | 27.8 µs | within noise |
+
+- The 208 B payload shows no cost above run-to-run noise on the rows that isolate it: static
+  paths, serial and adaptive graph frames, allocation counts. The parallel graph rows were bimodal
+  under the rising load on the base runs and are not used.
+- Two zero-constant stable rows rose 4-7% (`scalars n=0`, `Detections through Value` at 0 tags)
+  while their static twins did not; this run cannot tell the new `set_consts` check from the payload
+  size apart.
+- Constants: the stable path now pays 128 ns per scalar constant in isolation, against 115 ns
+  statically. Plugin allocations for constants fell (49 quarter strings: 24 to 12; the 10-constant
+  chain: 172 to 28). Host allocations are unchanged; the 12-stage chain is still 14 on the stable
+  host against 4 static (one per handle edge, see the TODO).
