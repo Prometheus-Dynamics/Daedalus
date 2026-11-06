@@ -77,6 +77,8 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
    codecs for the catalog nodes.
    - Constants sent once: done (stable ABI 3, `set_consts`; v2 plugins still load). 110 ns per
      constant against 250 ns, 0 host allocations per tick.
+   - Known: one `Serial/Off` allocation in 200 loaded runs of `graph_frame_allocations` (2026-11-06),
+     not reproduced in 1,060 traced runs; site unknown.
    - Handle edges at 0 host allocations: parked until the payload layout change lands. The
      allocation is transport's `ForeignStorage` `Arc`; it needs a recycled per-port storage that
      releases the owner on the last drop.
@@ -89,6 +91,9 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
 5. Whole-subgraph crossing: only if the numbers justify it.
 6. Use `lemnos-abi` primitives; hand `crates/rga` and `crates/vglite` to Lemnos, then repoint
    `crates/kernels/src/registry/fixed.rs` and delete ours.
+   - 2026-11-06: `lemnos-drivers-rga` is on Lemnos dev e6103b1 (V4L2 M2M `Rga` and `/dev/rga`
+     `MultiRga`, no dlopen, `caps::route_for`; `Route::Librga` is a deprecated alias). Untested on
+     board. VGLite's command encoding is not ported yet. Repoint only on HeliOS's go.
 7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
    plugin linking. Design in `docs/shared-library.md` (2026-11-05). Started; blocked by Lemnos's
    `lemnos-abi`. In-image node crates link into the surface `cdylib`; only separate plugins use the
