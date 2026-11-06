@@ -1349,6 +1349,17 @@ plugin ABI and does not load.
     tests).
 
 ### Performance
+- **The detector frame allocates 8 per frame (was 9): `exposure` borrows its `String` constant.** The
+  node took `zone: String` by value, so each call cloned the decoded constant; it now takes
+  `zone: &String` (the node macro does not accept `&str` for a constant). That allocation belongs
+  to the node's own signature, not to the runtime, and `const_cache.rs` is unchanged. The budget
+  rows are lowered to the measured 8. The remaining 8 are payloads: six node outputs (`Stats`,
+  `Roi` twice, `Histogram`, `Track`, `Report`) and two adapter `FrameInfo`s, each one `Arc`. Reusing
+  node outputs' allocations was tried with a per-output `PayloadSlot` in the node's state, and
+  reverted: a slot keeps a reference to the allocation while the payload is downstream, so every
+  consumer sees shared storage (`gpu_fallback` failed: `drain_owned` needs a unique payload). Reuse
+  without that needs a design change: small plain-old-data outputs held inline in the payload, or
+  a return buffer the consumer hands back. Not done here.
 - **Adapter lifecycle records allocate nothing at `Profile` and `Trace`.** A record on an adapter
   edge formatted its step list, its detail and its port text, 75 allocations per frame on the
   detector graph (`graph_frame_allocations`), all on its metadata-only adapter edge. Now the path's

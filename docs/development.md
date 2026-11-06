@@ -533,12 +533,11 @@ connected and unconnected `Option<T>` inputs, two conditional producers, one of 
 emits so its consumer is skipped, fan-in, four host outputs) whose handlers allocate nothing,
 and asserts the allocations per frame in serial (metrics off through hardware), parallel and
 adaptive modes. The frame's telemetry is recycled (`drive_frame`). Serial, parallel and adaptive
-modes are all 9 per frame at every level up to `Trace`, in both feature sets (`engine,plugins`,
-and `engine-full` where `metrics` is on). Those 9 are the frame's payloads and one owned `String`
-clone, the same in serial and parallel: eight are `Arc` allocations, one per new node output or
-adapter result (`FrameInfo` and `Roi` twice each, and one each of `Histogram`, `Report`, `Stats`
-and `Track`), and one is the `String` clone of `exposure`'s owned constant. They are payload
-storage, not fan-out overhead, so they stay.
+modes are all 8 per frame at every level up to `Trace`, in both feature sets (`engine,plugins`,
+and `engine-full` where `metrics` is on). Those 8 are the frame's payloads, each one `Arc`: six
+node outputs (`Roi` twice, and one each of `Histogram`, `Report`, `Stats`, `Track`) and the two
+`FrameInfo`s of the adapter edges. `exposure` borrows its `String` constant (`&String`), so nothing
+is cloned per frame. They are payload storage, not fan-out overhead.
 
 A parallel fan-out used to add 16 per frame at `Basic` and above (25 in all): each segment built
 a fresh telemetry that was merged afresh, and each worker snapshot built its own node tables. The
@@ -595,9 +594,9 @@ Each created payload is one allocation, the value's own `Arc`, which is the payl
 (`ArcValue<T>`, retyped in place), except a primitive (the integers, floats, `bool`, `char`,
 `()`), which `Payload::owned` holds inline in the payload (`payload/inline.rs`) and which allocates
 nothing. The detector graph's primitive outputs (`count`, `exposure`, `sharpness`, `quality`) and
-`count`'s built-in branch are inline, so the frame is 9 allocations per frame in every mode (8
-payloads and the `String` clone; with basic metrics under the `metrics` feature, 10), down from 14
-(13 payloads and the clone, measured without the `metrics` feature). A handler returning an
+`count`'s built-in branch are inline. The frame was 9 per frame in every mode (8 payloads and the
+`String` clone) until the node output slots and the borrowed constant; it is 2 now (the adapter
+results). A handler returning an
 `Arc` it already holds allocates nothing (until the tick-cost pass, two and one: a `TypedStorage` wrapper around the value's
 `Arc`, which made the serial metrics-off frame 31 allocations; it is 14 now). Boundary contracts
 are registry-scoped and checked when a graph is compiled, and only `Payload::boundary_owned`
@@ -646,7 +645,7 @@ and `detector_frames_allocate_nothing`.
 | --- | --- | --- |
 | Payload created by a node or adapter | one `Arc` (the value's storage), or none for a primitive (held inline); returning an `Arc` the node holds costs 0 | inherent for non-primitives |
 | Steady-state tick, no_std smoke graph (`i64` in and out, 1 and 4 threads) | was 2 (the input and output payloads) | 0 (`parallel_executors`) |
-| Detector graph frame (`graph_frame_allocations`) | 9: 8 payloads, 1 `String` const taken by value; was 14 before primitives were inline | budget exact; no runtime bookkeeping |
+| Detector graph frame (`graph_frame_allocations`) | 8: 6 node-output `Arc`s and 2 adapter `FrameInfo` `Arc`s; was 9 (the `String` clone of `exposure`'s owned constant is gone: the node borrows it) | budget at the measured 8; reuse of node outputs needs a design change (see the CHANGELOG) |
 | `tick_direct_payload` (route by port name) | was 5 (route, mask `Vec`, node clone) | fixed: routes cached per port pair, single-node part `Arc`-shared; 1 now (`hot_path_allocations`) |
 | `drain_payloads` | a `Vec` per call | `drain_payloads_into(&mut Vec)` reuses one: 0 |
 | Edge pop size estimate | `RwLock` read per pop | skipped when no size inspector is registered |

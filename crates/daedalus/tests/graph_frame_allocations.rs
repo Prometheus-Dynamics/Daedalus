@@ -157,21 +157,19 @@ fn call_site(trace: &str) -> String {
     chain.join("\n            <- ")
 }
 
-/// Payloads one frame creates that allocate, one allocation each (the value's `Arc`, which is the
-/// payload's storage): six node outputs and two metadata-only adapter results. Four of the 14
-/// node outputs return an `Arc` they already hold (wrapped without allocating); `alarm` emits
-/// nothing and `escalate` is skipped. The primitive outputs (`count`, `exposure`, `sharpness`,
-/// `quality`) and the built-in branch of `count` are held inline (no allocation), as is the
-/// host's frame (`Arc`-shared, none).
+/// Payloads one frame creates that allocate, one `Arc` each (the value's storage): six node outputs
+/// (`stats`, `roi`, `histogram`, `track`, `report`, and `refine`'s `Option<Roi>`) and two adapter
+/// results (the `FrameInfo` of each `frame_info` edge). The primitive outputs (`count`, `exposure`,
+/// `sharpness`, `quality`) are held inline, and `preview` and the merged detections are `Arc`s the
+/// node already holds.
 const PAYLOAD_ALLOCATIONS: f64 = 6.0 + 2.0;
-/// The one allocation a handler makes: `exposure` takes its `String` constant by value, so it
-/// gets a clone of the decoded string (its serde enum constant is decoded once and copied).
-const OWNED_STRING_CLONE: f64 = 1.0;
-/// Serial budget: handlers (generated code included: stateful nodes keep their state in a
-/// per-node slot, and configs, including `track`'s serde enum and `String` fields, and constants
-/// are decoded once into a per-node cache that `&T` parameters borrow and owned ones clone)
-/// allocate nothing else, so everything beyond the payloads is runtime bookkeeping, which must
-/// stay at zero.
+/// `exposure` borrows its `String` constant (`&String`), so its handler clones nothing per call.
+/// The node's own signature chose the borrow: an owned `String` parameter clones the decoded text
+/// on every call, and that allocation would belong to the node.
+const OWNED_STRING_CLONE: f64 = 0.0;
+/// Serial budget, measured: 8 per frame (the payloads above), and everything else the frame
+/// allocates is zero. Handlers keep their state, decoded configs and constants in the node's state
+/// slot, so the runtime's own bookkeeping allocates nothing.
 const SERIAL_BUDGET: f64 = PAYLOAD_ALLOCATIONS + OWNED_STRING_CLONE;
 
 #[test]

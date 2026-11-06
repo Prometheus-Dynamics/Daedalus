@@ -280,7 +280,15 @@ fn histogram(frame: &Frame) -> Result<Histogram, NodeError> {
     Ok(Histogram(bins))
 }
 
-/// Owned constants of a serde enum and a `String`: decoded once, then cloned per call.
+/// A serde enum and a `String` constant: decoded once into the node's cache. `weighting` is owned
+/// (a copy of the decoded enum); `zone` is borrowed as `&String`, so its text is not cloned per call.
+/// (`&str` is not a parameter the node macro accepts for a constant: it needs a sized `T`.) An owned
+/// `String` parameter would clone the decoded text on every call, and that allocation would belong to
+/// the node's own signature, not to the runtime.
+#[allow(
+    clippy::ptr_arg,
+    reason = "the node macro takes constants as sized `&T` only"
+)]
 #[node(
     id = "bench.detector.exposure",
     inputs("histogram", "target", "weighting", "zone"),
@@ -290,7 +298,7 @@ fn exposure(
     histogram: &Histogram,
     target: f64,
     weighting: TrackScore,
-    zone: String,
+    zone: &String,
 ) -> Result<f64, NodeError> {
     let bins = match weighting {
         TrackScore::Best => &histogram.0[4..],
