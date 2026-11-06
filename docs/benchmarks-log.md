@@ -166,3 +166,21 @@ measure the same features. The A/B bundles both changes; the rows below say whic
   statically. Plugin allocations for constants fell (49 quarter strings: 24 to 12; the 10-constant
   chain: 172 to 28). Host allocations are unchanged; the 12-stage chain is still 14 on the stable
   host against 4 static (one per handle edge, see the TODO).
+
+### Bisect of the zero-constant stable rows (2026-11-06)
+
+The 4-7% on two zero-constant stable rows above, split over 671715b (A), 9ac2d6d (B: stable ABI 3,
+`Payload` 184 B) and ceacfc6 (C: `Payload` 208 B). Raze #1, pinned with a `sched_setaffinity`
+helper: the stable bench to CPU 3, the graph bench to CPUs 1-3 (CPU 0 keeps IRQs and services).
+
+- Pinned, the parallel graph frame is steady at 37.3 / 37.3 / 36.8 µs (A / B / C); unpinned it had
+  been bimodal at 44-62 µs. Every graph row is within ±1.3% across the three.
+- B against A (three runs each): no shift on the zero-constant stable rows. The `set_consts` check
+  on that path is one `Option` compare on the host and one `None` clone in the plugin.
+- C against B (nine runs each, Mann-Whitney): the stable-minus-static extra rises about 300 ns on
+  `scalars n=0` (p < 0.001) and `Detections` through `Value` at 0 tags (p = 0.001); the handle row
+  and the 12-stage chain do not move. The static twins move 1-4.5% in both directions between the
+  two binaries.
+- Instructions (x86, `perf stat`, pinned, one stable zero-constant node per tick): B 13,461, C 13,393
+  per tick. C does no extra work; the remaining gap is code layout or caching, not the payload
+  size. Cycles on the shared desktop were too noisy to compare. Raze #1 has no `perf`.
