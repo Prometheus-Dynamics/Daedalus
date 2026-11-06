@@ -4,8 +4,8 @@ use super::foreign::{self, ForeignInterfaceMismatch, ForeignInterfaceTable};
 use super::intern::intern;
 use super::library::{LibraryHandle, OpenError};
 use super::stable::{
-    Generation, PluginSlot, STABLE_ABI_VERSION, STABLE_EXTENSION_SYMBOL, StableExtension,
-    StablePlugin, stable_abi_supported,
+    Generation, PluginSlot, STABLE_ABI_VERSION, STABLE_EXTENSION_SYMBOL, STABLE_VERSION_SYMBOL,
+    StableExtension, StablePlugin, stable_abi_supported,
 };
 use super::{
     InstallFn, PLUGIN_ABI_SYMBOL, PLUGIN_ABI_VERSION, PLUGIN_DESCRIPTOR_SYMBOL, PluginDescriptor,
@@ -121,8 +121,22 @@ impl PluginLibrary {
         check_abi_version(unsafe { abi() }, PLUGIN_ABI_VERSION)?;
         let descriptor: DescriptorFn =
             unsafe { symbol(&library, &path, PLUGIN_DESCRIPTOR_SYMBOL) }?;
+        let descriptor = unsafe { descriptor() };
+        // Safety: `export_plugin!` exports the symbol as a `u32` static; a plugin without it
+        // (older builds) is read through its descriptor alone.
+        let version = unsafe {
+            library
+                .library()
+                .get::<*const u32>(STABLE_VERSION_SYMBOL.as_bytes())
+        }
+        .ok()
+        .map(|symbol| *symbol)
+        .filter(|ptr| !ptr.is_null())
+        // Safety: the symbol's address, a live `u32` static of the loaded library.
+        .map(|ptr| unsafe { ptr.read_unaligned() });
+        check_stable_version_symbol(&path, version, descriptor.stable.version)?;
         // Safety: the descriptor comes from a plugin with a matching ABI version.
-        unsafe { Self::from_descriptor(path, descriptor(), Some(library)) }
+        unsafe { Self::from_descriptor(path, descriptor, Some(library)) }
     }
 
     /// # Safety
@@ -587,6 +601,23 @@ unsafe fn stable_extension(library: &LibraryHandle, version: u32) -> Option<Stab
     // Safety: the plugin's own function, which only builds the struct.
     let extension = unsafe { extension() };
     (extension.version == version).then_some(extension)
+}
+
+/// A plugin's `daedalus_plugin_stable_version` (when it exports one) must equal its
+/// descriptor's stable version.
+fn check_stable_version_symbol(
+    path: &Path,
+    symbol: Option<u32>,
+    descriptor: u32,
+) -> Result<(), PluginLibraryError> {
+    match symbol {
+        Some(symbol) if symbol != descriptor => Err(PluginLibraryError::StableVersionSymbol {
+            path: path.to_path_buf(),
+            symbol,
+            descriptor,
+        }),
+        _ => Ok(()),
+    }
 }
 
 /// # Safety

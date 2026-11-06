@@ -22,6 +22,12 @@ plugin ABI and does not load.
   `daedalus_surface_host_schemas` lists an image surface's in-image plugins, ahead of the
   installed libraries. `daedalus::dylib::registry_plugin_schema` builds a `PluginSchema` for a
   plugin installed through the Rust path.
+- `export_plugin!` exports `daedalus_plugin_stable_version`, a 4-byte `u32` static in `.rodata`
+  holding the plugin's `STABLE_ABI_VERSION` (`daedalus::dylib::STABLE_VERSION_SYMBOL`), so an image
+  checker (Gaia) reads a plugin's stable ABI version from the file without loading it. The loader
+  cross-checks it against the descriptor and refuses a mismatch
+  (`PluginLibraryError::StableVersionSymbol`); plugins without it load as before. Test:
+  `dylib_stable_version` (`libloading`, and `objdump -T` for the section and size).
 - Plugin-local objects on the stable plugin path: `daedalus::transport::Local<T>`, a shared object of
   the build that made it. A node port of `Local<T>` crosses as an opaque `daedalus:plugin_local`
   handle (`LocalInterface`, whose data pointer is the object's and whose retain and release are the

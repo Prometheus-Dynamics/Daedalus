@@ -284,6 +284,11 @@ path = "tests/dylib_stable_local.rs"
 required-features = ["engine", "dylib-plugins"]
 
 [[test]]
+name = "dylib_stable_version"
+path = "tests/dylib_stable_version.rs"
+required-features = ["dylib-plugins"]
+
+[[test]]
 name = "dylib_stable_pod"
 path = "tests/dylib_stable_pod.rs"
 required-features = ["engine", "dylib-plugins"]

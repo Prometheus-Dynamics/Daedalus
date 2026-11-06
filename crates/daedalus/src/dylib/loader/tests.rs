@@ -699,3 +699,25 @@ fn info_strings_are_host_copies() {
 }
 
 mod frame_v2;
+
+#[test]
+fn the_stable_version_symbol_must_match_the_descriptor() {
+    let path = std::path::Path::new("libplugin.so");
+    assert!(
+        super::check_stable_version_symbol(path, None, 5).is_ok(),
+        "older plugins lack it"
+    );
+    assert!(super::check_stable_version_symbol(path, Some(5), 5).is_ok());
+    let err = super::check_stable_version_symbol(path, Some(4), 5).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            PluginLibraryError::StableVersionSymbol {
+                symbol: 4,
+                descriptor: 5,
+                ..
+            }
+        ),
+        "{err}"
+    );
+}

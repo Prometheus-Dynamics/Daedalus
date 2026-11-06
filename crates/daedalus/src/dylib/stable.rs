@@ -67,6 +67,12 @@ pub use plugin::{
 pub use services::{HostServices, MetricRecord, SetServicesFn};
 pub use value::{Arena, StableEnum, StableField, StablePodView, StableValue, tag, to_value};
 
+/// The data symbol holding a plugin's [`STABLE_ABI_VERSION`] (a `u32` in read-only data,
+/// exported by [`export_plugin!`](crate::export_plugin) since version 5): an image checker reads
+/// it from the file without loading the library, and the loader cross-checks it against
+/// [`StableHandlers::version`]. Older plugins do not export it.
+pub const STABLE_VERSION_SYMBOL: &str = "daedalus_plugin_stable_version";
+
 /// The stable extension symbol a version-3 plugin exports (see [`StableExtension`]).
 pub const STABLE_EXTENSION_SYMBOL: &str = "daedalus_plugin_stable_extension";
 

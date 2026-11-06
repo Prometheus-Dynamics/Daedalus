@@ -54,6 +54,17 @@ pub enum PluginLibraryError {
     MissingSymbol { path: PathBuf, symbol: &'static str },
     #[error("plugin ABI mismatch: host expects {expected}, plugin reports {found}")]
     AbiMismatch { expected: u32, found: u32 },
+    /// The plugin's `daedalus_plugin_stable_version` symbol disagrees with its descriptor.
+    #[error(
+        "plugin library `{}` exports stable ABI version {symbol} in \
+         `daedalus_plugin_stable_version` but its descriptor says {descriptor}",
+        path.display()
+    )]
+    StableVersionSymbol {
+        path: PathBuf,
+        symbol: u32,
+        descriptor: u32,
+    },
     #[error("plugin info field `{field}` is null or not valid UTF-8")]
     InvalidInfo { field: &'static str },
     #[error("plugin `{plugin}` did not provide a valid schema: {message}")]

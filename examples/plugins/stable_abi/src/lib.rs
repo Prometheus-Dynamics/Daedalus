@@ -219,6 +219,11 @@ mod export {
     pub extern "C" fn daedalus_plugin_stable_extension() -> StableExtension {
         daedalus::dylib::stable_extension()
     }
+
+    /// The stable ABI version, as data (see `STABLE_VERSION_SYMBOL`).
+    #[unsafe(no_mangle)]
+    #[allow(non_upper_case_globals)]
+    pub static daedalus_plugin_stable_version: u32 = daedalus::dylib::STABLE_ABI_VERSION;
 }
 
 /// Records a counter per call and its graph's `title` metadata as a text metric, through the

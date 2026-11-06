@@ -220,6 +220,11 @@ macro_rules! export_plugin {
         pub extern "C" fn daedalus_plugin_stable_extension() -> $crate::dylib::StableExtension {
             $crate::dylib::stable_extension()
         }
+
+        /// The stable ABI version, as data: readable from the file without loading it.
+        #[unsafe(no_mangle)]
+        #[allow(non_upper_case_globals)]
+        pub static daedalus_plugin_stable_version: u32 = $crate::dylib::STABLE_ABI_VERSION;
     };
 }
 

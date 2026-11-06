@@ -28,8 +28,9 @@ pub struct MathPlugin;
 daedalus::export_plugin!(MathPlugin);
 ```
 
-`export_plugin!` emits two unmangled symbols (`daedalus_plugin_abi_version`,
-`daedalus_plugin_descriptor`), so use it once per final shared library. A plugin crate that other
+`export_plugin!` emits unmangled symbols (`daedalus_plugin_abi_version`,
+`daedalus_plugin_descriptor`, `daedalus_plugin_stable_extension` and the data symbol
+`daedalus_plugin_stable_version`, see below), so use it once per final shared library. A plugin crate that other
 crates (hosts, or plugins with `deps`) link must not invoke it in its own library: the symbols
 would end up in every dependent `cdylib` next to that plugin's own and fail to link (a cargo
 feature gate does not help, since features unify, e.g. under `--all-features`). Export it from a
@@ -68,6 +69,19 @@ for path in discover_plugin_libraries(["/usr/lib/app/plugins", "/var/lib/app/plu
 
 `discover_plugin_libraries` returns `.so` / `.dylib` / `.dll` files sorted by file name, skips
 missing directories, and keeps the first occurrence of a file name across directories.
+
+### Reading the stable ABI version without loading
+
+`export_plugin!` also exports `daedalus_plugin_stable_version`
+(`daedalus::dylib::STABLE_VERSION_SYMBOL`): `#[unsafe(no_mangle)] pub static
+daedalus_plugin_stable_version: u32 = STABLE_ABI_VERSION`, exactly 4 bytes in `.rodata` (non-zero
+file contents, not `.bss`). An image checker reads it from the file's dynamic symbol table
+without loading the library (`objdump -T` shows `.rodata`, size 4) and checks it against the
+host's `STABLE_ABI_MIN_VERSION`..=`STABLE_ABI_VERSION`. The loader reads it too and refuses a
+plugin whose symbol disagrees with its descriptor's `StableHandlers::version`
+(`PluginLibraryError::StableVersionSymbol`). Plugins built before it have no such symbol; they
+are read through the descriptor alone. A plugin that exports its symbols by hand (to adjust its
+descriptor, as `examples/plugins/stable_abi` does) exports this one the same way.
 
 ## Install Paths
 
