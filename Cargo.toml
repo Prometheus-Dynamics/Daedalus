@@ -5,8 +5,6 @@ members = [
     "crates/accel",
     "crates/accelerator",
     "crates/kernels",
-    "crates/rga",
-    "crates/vglite",
     "crates/transport",
     "crates/data",
     "crates/wgsl-infer",
@@ -60,8 +58,12 @@ homepage = "https://github.com/Prometheus-Dynamics/Daedalus"
 rust-version = "1.99"
 
 [workspace.dependencies]
-# DMA buffers (dma-heap, dma-buf sync, sync-file fences) and V4L2 mem2mem sessions.
-lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", branch = "dev", version = "2.0.1-dev", default-features = false }
+# Lemnos is pinned by revision, and every Lemnos git dependency names the same one so cargo builds
+# one copy. Bump them together. `lemnos-linux`: DMA buffers (dma-heap, dma-buf sync, sync-file
+# fences) and V4L2 mem2mem sessions. `lemnos-drivers-rga`: the RGA and VGLite fixed-function
+# routes and their capability table (the K230's VGLite rows are `lemnos-drivers-rga::caps`).
+lemnos-linux = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", rev = "952e1c7dd37c698daa477f5caf82fad20d182ca8", version = "2.0.1-dev", default-features = false }
+lemnos-drivers-rga = { git = "https://github.com/Prometheus-Dynamics/Lemnos.git", rev = "952e1c7dd37c698daa477f5caf82fad20d182ca8", version = "2.0.1-dev" }
 # Crates shared with the `no_std` tier (see "Portability" in docs/development.md) are declared
 # without default features; `std` consumers enable `features = ["std"]` themselves.
 daedalus = { package = "daedalus-rs", path = "crates/daedalus", version = "3.0.1-dev", default-features = false }
@@ -69,8 +71,6 @@ daedalus-bench-counters = { path = "crates/bench-counters", version = "3.0.1-dev
 daedalus-core = { path = "crates/core", version = "3.0.1-dev", default-features = false }
 daedalus-kernels = { path = "crates/kernels", version = "3.0.1-dev", default-features = false }
 daedalus-accelerator = { path = "crates/accelerator", version = "3.0.1-dev" }
-daedalus-rga = { path = "crates/rga", version = "3.0.1-dev" }
-daedalus-vglite = { path = "crates/vglite", version = "3.0.1-dev" }
 daedalus-accel = { path = "crates/accel", version = "3.0.1-dev", default-features = false }
 daedalus-transport = { path = "crates/transport", version = "3.0.1-dev", default-features = false }
 daedalus-data = { path = "crates/data", version = "3.0.1-dev", default-features = false }

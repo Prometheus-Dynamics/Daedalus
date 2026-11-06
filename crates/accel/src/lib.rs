@@ -318,6 +318,12 @@ pub struct Kernel {
     /// Extensions the kernel needs beyond the backend's base (sorted or not; compared as a set).
     pub extensions: &'static [Ext],
     /// `path/from/repo/root.rs:line` of the kernel; the gate matches marker files by path.
+    ///
+    /// A kernel in another repo at a pinned revision names it `<repo>@<rev>:<path>` (for example
+    /// `lemnos@952e1c7…:crates/lemnos-drivers-rga/src/v4l2.rs`), and its `test` is named the same
+    /// way. The matrix prints such a source as written. Nothing opens it: the marker scan and the
+    /// `wired` check read only this repo's files. Its evidence comes from a run that records it
+    /// (`docs/accel-evidence/`), so the cells stay untested until one does.
     pub source: &'static str,
     /// The conformance test (`module::path::test_name`) that checks it against scalar.
     pub test: &'static str,

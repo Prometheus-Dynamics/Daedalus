@@ -9,11 +9,13 @@
 #   flame     armv7-unknown-linux-musleabihf, +neon: CPU graph tests, kernel conformance and the
 #             CRC-32 throughput (vmull.p8 vs slice-by-8). Flame is the RV1106G2 target; the
 #             Luckfox Pico Pro (same chip) stands in for it.
-#   k230d     riscv64gc-unknown-linux-musl, +v: the same on real RVV (records the board's VLEN),
-#             and the VGLite tests (they skip on an image without libvg_lite.so).
+#   k230d     riscv64gc-unknown-linux-musl, +v: the same on real RVV (records the board's VLEN).
 #   rockchip  aarch64-unknown-linux-gnu: the CPU set, plus the GPU crate's tests (Mali through
-#             Vulkan), gpu_probe, gpu_bench and the RGA tests (V4L2 mem2mem and librga).
-#   raze      aarch64-unknown-linux-gnu: the CPU set and the GPU set, without the RGA.
+#             Vulkan) and gpu_probe, gpu_bench.
+#   raze      aarch64-unknown-linux-gnu: the CPU set and the GPU set.
+#
+# The RGA and VGLite fixed-function tests are Lemnos's (lemnos-drivers-rga and
+# lemnos-drivers-vglite at the pinned rev): Lemnos runs them on its boards, not here.
 #
 # Output goes to $CARGO_TARGET_DIR/board/RUNNER_NAME/ (logs) and, for the matrix,
 # docs/accel-evidence/RUNNER_NAME-DATE.jsonl. GPU runs take /run/lock/raze-gpu.lock when the
@@ -35,11 +37,11 @@ OUT=$TARGET_DIR/board/$runner
 rev=$(git rev-parse --short HEAD)
 step() { echo "==> $*"; }
 
-gpu=0 rga=0 vglite=0
+gpu=0
 case $profile in
   flame) target=armv7-unknown-linux-musleabihf cc=armv7-cc flags="-C target-feature=+neon" ;;
-  k230d) target=riscv64gc-unknown-linux-musl cc=riscv64-cc flags="-C target-feature=+v" vglite=1 ;;
-  rockchip) target=aarch64-unknown-linux-gnu cc=aarch64-cc flags="" gpu=1 rga=1 ;;
+  k230d) target=riscv64gc-unknown-linux-musl cc=riscv64-cc flags="-C target-feature=+v" ;;
+  rockchip) target=aarch64-unknown-linux-gnu cc=aarch64-cc flags="" gpu=1 ;;
   raze) target=aarch64-unknown-linux-gnu cc=aarch64-cc flags="" gpu=1 ;;
   *) usage ;;
 esac
@@ -74,14 +76,7 @@ if ((gpu)); then
     --example gpu_probe --example gpu_bench
   cp "$TARGET_DIR/$target/release/examples/gpu_probe" "$TARGET_DIR/$target/release/examples/gpu_bench" "$OUT/bin/"
 fi
-if ((rga)); then
-  while read -r name path; do copy "rga-$name" "$path"; done \
-    < <(test_bins -p daedalus-rga --test v4l2 --test librga)
-fi
-if ((vglite)); then
-  while read -r name path; do copy "vglite-$name" "$path"; done \
-    < <(test_bins -p daedalus-vglite --test vglite)
-fi
+# Lemnos runs the RGA and VGLite tests (see the header): none are built here.
 ls "$OUT/bin"
 
 # The script that runs on the board, from its /tmp directory.
@@ -101,7 +96,6 @@ run kernels-throughput ./kernels-conformance --ignored --nocapture --test-thread
 for t in gpu-*; do [ -e "\$t" ] && run "\$t" gpu_lock "./\$t" --include-ignored --test-threads 1; done
 [ -e gpu_probe ] && run gpu_probe gpu_lock ./gpu_probe
 [ -e gpu_bench ] && run gpu_bench gpu_lock ./gpu_bench
-for t in rga-* vglite-*; do [ -e "\$t" ] && run "\$t" "./\$t" --test-threads 1 --nocapture; done
 exit \$status
 EOF
 chmod +x "$OUT/bin/run.sh"

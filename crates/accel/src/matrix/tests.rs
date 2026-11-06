@@ -172,6 +172,35 @@ fn marker_files_need_an_entry_or_an_exemption() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+static EXTERNAL_ROOT: Registry = Registry {
+    repo: "t",
+    name: "external",
+    ops: &[Op::new("t.dot", "a dot product", "t::dot")],
+    kernels: &[Kernel::implemented(
+        "t.dot",
+        Backend::Neon64,
+        "lemnos@952e1c7:crates/lemnos-drivers-rga/src/v4l2.rs",
+        "lemnos@952e1c7:crates/lemnos-drivers-rga/tests/v4l2.rs",
+    )],
+    ..Registry::EMPTY
+};
+
+#[test]
+fn external_kernels_are_named_and_never_opened() {
+    let mut inv = Inventory::default();
+    inv.add_registry(&crate::dump_json(&[&EXTERNAL_ROOT]))
+        .unwrap();
+    assert!(inv.check_registry().is_empty());
+    // The source is not a file here, so no entry is needed for it and nothing is read.
+    let root = std::env::temp_dir().join(format!("accel-external-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/dot.rs"), "use core::arch::x86_64::*;").unwrap();
+    let missing = inv.unregistered_markers(&root).unwrap();
+    assert_eq!(missing, ["src/dot.rs: core::arch without a registry entry"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn vector_instructions_are_recognized_per_isa() {
     let rvv = "vsetvli\ta0, a1, e8, m1, ta, ma\nvle8.v\tv8, (a2)\nadd\ta0, a0, a1\n";

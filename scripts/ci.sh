@@ -376,7 +376,8 @@ cmd_wasm() {
 # `cargo package` for every publishable crate, except the example and fixture crates
 # (`--no-verify`: verifying a package builds it against crates.io, which has no 3.0.0 crates yet;
 # `--exclude-lockfile`: a packaged lockfile resolves against crates.io too, which has no
-# `lemnos-linux` 2.0.1-dev, the git dependency of daedalus-gpu and daedalus-rga).
+# `lemnos-linux` 2.0.1-dev, the git dependency of daedalus-gpu and lemnos-drivers-rga, which
+# daedalus-kernels takes as a Linux dev-dependency).
 # Dev-dependencies on the fixture crates carry no `version`, so they are left out of the published
 # manifests. The facade cannot be packaged alone for the same reason, so its file list is also
 # checked on its own: the listing must print nothing on stderr.

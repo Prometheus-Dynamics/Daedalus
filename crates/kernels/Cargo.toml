@@ -30,3 +30,8 @@ daedalus-accel = { workspace = true }
 
 [dev-dependencies]
 daedalus-accel = { workspace = true, features = ["std"] }
+
+# The RGA and VGLite fixed-function rows in `registry/fixed.rs` are checked against Lemnos's
+# route table. Linux only, where the Lemnos routes are.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+lemnos-drivers-rga = { workspace = true }

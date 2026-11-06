@@ -284,7 +284,15 @@ static PIXEL_KERNELS: [[Kernel; 9]; 4] = [
             T,
             "rgba_red::sse4",
             "rgba_red::v",
-            "rgba_red::avx2"
+            "rgba_red::avx2";
+            Kernel::missing(
+                "daedalus.pixel.rgba_red",
+                Backend::FixedFunction,
+                Status::Gap(
+                    "Y-only output (one byte a pixel): Lemnos's RGA caps serve no Y-only output \
+                     on any route, and librga's gray output is gone",
+                ),
+            )
         ),
         gpu_compute("daedalus.pixel.rgba_red"),
     ),
