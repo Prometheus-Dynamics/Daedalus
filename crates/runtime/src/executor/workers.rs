@@ -5,6 +5,7 @@ use crate::prelude::*;
 use crate::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 
+use super::telemetry::{FrameEvents, PayloadTexts};
 use super::{ExecuteError, ExecutionTelemetry, MetricsLevel, NodeError};
 use daedalus_core::platform::{Clock, Instant};
 
@@ -16,6 +17,9 @@ pub(crate) struct WorkerPool {
     /// back, and the run absorbs them all, leaving each zeroed with its storage. At most one per
     /// concurrent call, so the list never grows past `workers` (its capacity).
     telemetry: Mutex<Vec<ExecutionTelemetry>>,
+    /// The most events one frame has recorded across its workers (seeded from the plan, see
+    /// [`FrameEvents::plan`]). Only raised, so the pool never shrinks its telemetry's room.
+    events: Mutex<FrameEvents>,
 }
 
 impl WorkerPool {
@@ -43,6 +47,7 @@ impl WorkerPool {
         Ok(Self {
             helpers,
             telemetry: Mutex::new(Vec::with_capacity(workers)),
+            events: Mutex::new(FrameEvents::default()),
         })
     }
 
@@ -59,13 +64,18 @@ impl WorkerPool {
         origin: Option<Instant>,
         nodes: usize,
         edges: usize,
+        texts: &Arc<PayloadTexts>,
     ) -> ExecutionTelemetry {
         let kept = self.telemetry.lock().pop();
         let mut telemetry = kept.unwrap_or_else(|| {
+            // Not expected inside a frame (the pool keeps one per concurrent call): a fresh one
+            // still gets the room the frame needs, so it does not grow while recording.
             let mut telemetry = ExecutionTelemetry::default();
             telemetry.reserve_plan(nodes, edges);
+            telemetry.reserve_events(*self.events.lock());
             telemetry
         });
+        telemetry.share_texts_with(texts);
         telemetry.begin_pooled_run(clock, level, origin);
         telemetry
     }
@@ -85,14 +95,26 @@ impl WorkerPool {
         nodes: usize,
         edges: usize,
         transports: &[Option<crate::plan::RuntimeEdgeTransport>],
+        level: MetricsLevel,
     ) {
         let mut kept = self.telemetry.lock();
+        let mut events = self.events.lock();
+        events.raise(FrameEvents::plan(nodes, edges, level));
         while kept.len() < workers {
             let mut telemetry = ExecutionTelemetry::default();
             telemetry.reserve_plan(nodes, edges);
             telemetry.reserve_adapter_texts(transports);
             kept.push(telemetry);
         }
+        for telemetry in kept.iter_mut() {
+            telemetry.reserve_events(*events);
+        }
+    }
+
+    /// Give a run's own telemetry the room the pool's frames have needed, before the run records:
+    /// the run's telemetry absorbs every worker's, so a first parallel frame would otherwise grow it.
+    pub(crate) fn reserve_run_events(&self, target: &mut ExecutionTelemetry) {
+        target.reserve_events(*self.events.lock());
     }
 
     /// Fold every kept worker's telemetry into `target`, zeroing them but keeping their storage.
@@ -105,20 +127,15 @@ impl WorkerPool {
     /// frame, whatever the schedule.
     pub(crate) fn absorb_telemetry(&self, target: &mut ExecutionTelemetry) {
         let mut kept = self.telemetry.lock();
+        let mut events = self.events.lock();
         for telemetry in kept.iter_mut() {
             target.absorb(telemetry);
         }
-        for telemetry in kept.iter() {
-            target.share_payload_texts(telemetry);
-        }
-        let lifecycle = target.data_lifecycle.len();
-        let trace = target.trace.as_ref().map_or(0, Vec::len);
+        // The frame's total, whichever workers recorded it: raise the high-water mark to it.
+        events.raise(FrameEvents::of(target));
+        target.reserve_events(*events);
         for telemetry in kept.iter_mut() {
-            telemetry.share_payload_texts(target);
-            telemetry.data_lifecycle.reserve(lifecycle);
-            if trace > 0 {
-                telemetry.trace.get_or_insert_with(Vec::new).reserve(trace);
-            }
+            telemetry.reserve_events(*events);
         }
     }
 

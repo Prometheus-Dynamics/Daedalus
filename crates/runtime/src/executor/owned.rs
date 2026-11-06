@@ -149,9 +149,12 @@ impl<H: NodeHandler> OwnedExecutor<H> {
         self
     }
 
-    /// Start the parallel worker threads now instead of on the first parallel run.
+    /// Start the parallel worker threads now instead of on the first parallel run, and build what
+    /// a parallel frame builds lazily: the pool's telemetry (sized to the plan), and this executor's
+    /// own telemetry, which absorbs the workers' records. After this, no frame allocates for its
+    /// telemetry whichever path Adaptive picks.
     #[cfg(feature = "threads")]
-    pub fn prewarm_worker_pool(&self) -> Result<(), ExecuteError> {
+    pub fn prewarm_worker_pool(&mut self) -> Result<(), ExecuteError> {
         let workers = self.parallel_workers();
         let pool = super::WorkerPool::get_or_init(&self.core.worker_pool, workers)?;
         pool.reserve_telemetry(
@@ -159,7 +162,9 @@ impl<H: NodeHandler> OwnedExecutor<H> {
             self.nodes.len(),
             self.plan.edges.len(),
             &self.plan.edge_transports,
+            self.core.run_config.metrics_level,
         );
+        pool.reserve_run_events(&mut self.core.telemetry);
         Ok(())
     }
 

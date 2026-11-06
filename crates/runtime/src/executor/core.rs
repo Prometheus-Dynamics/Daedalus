@@ -1,3 +1,4 @@
+use super::telemetry::PayloadTexts;
 use super::{
     DirectSlot, EdgeStorage, ExecutionTelemetry, ExecutorInit, ExecutorRunConfig, MaybeGpu,
     MetricsLevel, NodeMetadataStore, RuntimeDataSizeInspectors,
@@ -56,6 +57,8 @@ pub(crate) struct ExecutorCore {
     pub(crate) direct_slots: Arc<Vec<DirectSlot>>,
     pub(crate) warnings_seen: Arc<Mutex<HashSet<String>>>,
     pub(crate) telemetry: ExecutionTelemetry,
+    /// The payload text table this executor's telemetries share (see [`PayloadTexts`]).
+    pub(crate) payload_texts: Arc<PayloadTexts>,
     pub(crate) data_size_inspectors: RuntimeDataSizeInspectors,
     pub(crate) run_config: ExecutorRunConfig,
     /// Workers a parallel run may use (see `resolve_parallel_workers`).
@@ -97,7 +100,9 @@ impl ExecutorCore {
         init: &ExecutorInit,
         graph_metadata: &BTreeMap<String, daedalus_data::model::Value>,
     ) -> Self {
+        let payload_texts = Arc::new(PayloadTexts::default());
         let mut core = Self {
+            payload_texts: payload_texts.clone(),
             state: StateStore::default(),
             gpu_available: false,
             #[cfg(feature = "gpu")]
@@ -143,6 +148,7 @@ impl ExecutorCore {
             io_envs: Arc::from(Vec::new()),
             port_pool: PortPool::new(),
         };
+        core.telemetry.share_texts_with(&core.payload_texts);
         core.refresh_contexts();
         core.refresh_io_envs();
         let keys = core.node_ids.clone();
@@ -207,6 +213,7 @@ impl ExecutorCore {
     pub(crate) fn snapshot(&self) -> Self {
         #[cfg_attr(feature = "std", allow(unused_mut))]
         let mut snapshot = Self {
+            payload_texts: self.payload_texts.clone(),
             state: self.state.clone(),
             gpu_available: self.gpu_available,
             #[cfg(feature = "gpu")]
@@ -242,6 +249,7 @@ impl ExecutorCore {
             io_envs: self.io_envs.clone(),
             port_pool: PortPool::new(),
         };
+        snapshot.telemetry.share_texts_with(&snapshot.payload_texts);
         // A snapshot may tick on another thread: give it its own pool (a no-op with `std`).
         #[cfg(not(feature = "std"))]
         snapshot.refresh_io_envs();

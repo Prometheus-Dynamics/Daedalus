@@ -60,6 +60,13 @@ where
     let level = exec.core.run_config.metrics_level;
     let origin = exec.core.telemetry.lifecycle_origin();
     let edges = exec.edges.len();
+    pool.reserve_telemetry(
+        workers,
+        exec.nodes.len(),
+        edges,
+        exec.edge_transports,
+        level,
+    );
     let priorities = exec
         .core
         .run_config
@@ -76,13 +83,18 @@ where
         costs,
         priorities,
     );
-    pool.reserve_telemetry(workers, exec.nodes.len(), edges, exec.edge_transports);
     {
         let shared: &Executor<'_, H> = exec;
         pool.fan_out(workers, &|| {
             let mut worker = shared.snapshot_with_direct_slot_access(DirectSlotAccess::Shared);
-            worker.core.telemetry =
-                pool.take_telemetry(&clock, level, origin, shared.nodes.len(), edges);
+            worker.core.telemetry = pool.take_telemetry(
+                &clock,
+                level,
+                origin,
+                shared.nodes.len(),
+                edges,
+                &shared.core.payload_texts,
+            );
             queue.drain(|segment| {
                 let order = schedule
                     .segments

@@ -353,6 +353,7 @@ impl<'a, H: NodeHandler> Executor<'a, H> {
             self.nodes.len(),
             self.edges.len(),
             self.edge_transports,
+            self.core.run_config.metrics_level,
         );
         Ok(())
     }

@@ -1,5 +1,7 @@
+use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::BTreeMap;
+use core::fmt;
 use core::time::Duration;
 use daedalus_core::platform::{Clock, Instant};
 use daedalus_planner::GroupMetadata;
@@ -104,16 +106,27 @@ pub struct ExecutionTelemetry {
     /// The `Payload(<type key>)` texts lifecycle records share (see [`Self::payload_text`]). Kept
     /// across runs, and not part of a telemetry's value.
     #[serde(skip)]
-    payload_texts: PayloadTexts,
+    payload_texts: Option<Arc<PayloadTexts>>,
     /// The adapter path texts lifecycle records share (see [`Self::adapter_text`]). Kept across
     /// runs, and not part of a telemetry's value.
     #[serde(skip)]
     adapter_texts: AdapterTexts,
 }
 
-/// The lifecycle payload texts a telemetry has built, by type key.
-#[derive(Clone, Debug, Default)]
-struct PayloadTexts(BTreeMap<String, IdStr>);
+/// The lifecycle payload texts of one executor, by type key. Its telemetries share one table
+/// (see [`ExecutionTelemetry::share_texts_with`]), so a text any run built is found by every later
+/// run, serial or parallel: a hit reads the table and allocates nothing, and a miss writes it once
+/// per type for the life of the executor. Profile and Trace only.
+#[derive(Default)]
+pub(crate) struct PayloadTexts(crate::sync::RwLock<BTreeMap<String, IdStr>>);
+
+impl fmt::Debug for PayloadTexts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PayloadTexts")
+            .field("types", &self.0.read().len())
+            .finish()
+    }
+}
 
 impl PartialEq for PayloadTexts {
     /// Caches never make two telemetries differ.
@@ -123,6 +136,53 @@ impl PartialEq for PayloadTexts {
 }
 
 impl Eq for PayloadTexts {}
+
+/// Lifecycle records one payload makes on one edge hop: the sites on the edge path, each at most
+/// once per payload per hop (`queue/policy.rs` 4, `serial/edges.rs` 5, `serial_direct_slot.rs` 1).
+/// Nodes record none of their own, so this is the whole lifecycle cost of one payload per edge.
+#[cfg(feature = "threads")]
+const LIFECYCLE_PER_EDGE_HOP: usize = 10;
+
+/// Lifecycle and trace events a frame records, counted over all its workers. The pool keeps its
+/// telemetry with room for the largest frame it has seen, so a frame that splits its nodes
+/// differently across workers never grows any one worker's record vectors.
+#[cfg(feature = "threads")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FrameEvents {
+    pub(crate) lifecycle: usize,
+    pub(crate) trace: usize,
+}
+
+#[cfg(feature = "threads")]
+impl FrameEvents {
+    /// The events `telemetry` holds (after a frame's workers are absorbed into it).
+    pub(crate) fn of(telemetry: &ExecutionTelemetry) -> Self {
+        Self {
+            lifecycle: telemetry.data_lifecycle.len(),
+            trace: telemetry.trace.as_ref().map_or(0, Vec::len),
+        }
+    }
+
+    /// The bound for one frame of a plan of `nodes` nodes and `edges` edges at `level`, with one
+    /// payload per edge per tick: lifecycle records only at `Profile` and above, one trace event
+    /// per node only at `Trace` (the only site that records one, once per node run).
+    pub(crate) fn plan(nodes: usize, edges: usize, level: MetricsLevel) -> Self {
+        Self {
+            lifecycle: if level.is_profile() {
+                edges * LIFECYCLE_PER_EDGE_HOP
+            } else {
+                0
+            },
+            trace: if level.is_trace() { nodes } else { 0 },
+        }
+    }
+
+    /// The larger of each count.
+    pub(crate) fn raise(&mut self, other: Self) {
+        self.lifecycle = self.lifecycle.max(other.lifecycle);
+        self.trace = self.trace.max(other.trace);
+    }
+}
 
 impl ExecutionTelemetry {
     /// The run's recoveries ([`Self::recovery`]), zero when none happened.
@@ -335,12 +395,14 @@ impl ExecutionTelemetry {
     }
 
     /// The run's lifecycle origin (see [`Self::begin_pooled_run`]).
+    #[cfg(feature = "threads")]
     pub(crate) fn lifecycle_origin(&self) -> Option<Instant> {
         self.lifecycle_origin
     }
 
     /// Start a run on a telemetry the worker pool keeps: its clock, metrics level and lifecycle
     /// origin are the run's, and what it already holds is kept (see [`Self::absorb`]).
+    #[cfg(feature = "threads")]
     pub(crate) fn begin_pooled_run(
         &mut self,
         clock: &Clock,
@@ -360,14 +422,29 @@ impl ExecutionTelemetry {
     /// the first time a type key is seen and cloned after that, so recording a payload's lifecycle
     /// allocates nothing once its type is warm.
     pub(crate) fn payload_text(&mut self, type_key: &str) -> IdStr {
-        if let Some(text) = self.payload_texts.0.get(type_key) {
+        // A telemetry an executor shares has its table; one that has none builds its own (a
+        // fresh telemetry allocates nothing until a text is built).
+        let table = self
+            .payload_texts
+            .get_or_insert_with(|| Arc::new(PayloadTexts::default()));
+        let hit = table.0.read().get(type_key).cloned();
+        if let Some(text) = hit {
+            return text;
+        }
+        let mut texts = table.0.write();
+        // Another run may have built it between the read and the write.
+        if let Some(text) = texts.get(type_key) {
             return text.clone();
         }
         let text = IdStr::new(format!("Payload({type_key})"));
-        self.payload_texts
-            .0
-            .insert(type_key.to_string(), text.clone());
+        texts.insert(type_key.to_string(), text.clone());
         text
+    }
+
+    /// Use `texts` as this telemetry's payload text table: an executor's, shared by the telemetry
+    /// it owns and the telemetry its pool keeps for its workers.
+    pub(crate) fn share_texts_with(&mut self, texts: &Arc<PayloadTexts>) {
+        self.payload_texts = Some(texts.clone());
     }
 
     /// The adapter path text of `transport`, the path of edge `edge_idx`: built the first time
@@ -382,6 +459,7 @@ impl ExecutionTelemetry {
 
     /// Build the adapter path texts of `transports` now, so the first lifecycle record of each
     /// adapter edge does not build one.
+    #[cfg(feature = "threads")]
     pub(crate) fn reserve_adapter_texts(
         &mut self,
         transports: &[Option<crate::plan::RuntimeEdgeTransport>],
@@ -397,6 +475,7 @@ impl ExecutionTelemetry {
 
     /// Size the per-index tables for a plan of `nodes` nodes and `edges` edges, so a telemetry
     /// that a worker takes later records into any node or edge without growing its tables.
+    #[cfg(feature = "threads")]
     pub(crate) fn reserve_plan(&mut self, nodes: usize, edges: usize) {
         self.node_metrics.reserve_nodes(nodes);
         self.in_flight_node_transport_metrics.reserve(nodes);
@@ -405,16 +484,21 @@ impl ExecutionTelemetry {
     }
 
     /// Copy into this telemetry the payload texts of `other` that it lacks.
-    pub(crate) fn share_payload_texts(&mut self, other: &ExecutionTelemetry) {
-        for (key, text) in &other.payload_texts.0 {
-            if !self.payload_texts.0.contains_key(key) {
-                self.payload_texts.0.insert(key.clone(), text.clone());
-            }
+    /// Room for `events` lifecycle records and trace events, so recording that many allocates
+    /// nothing. Only grows: a vector already at or past its count is left as it is.
+    #[cfg(feature = "threads")]
+    pub(crate) fn reserve_events(&mut self, events: FrameEvents) {
+        self.data_lifecycle
+            .reserve(events.lifecycle.saturating_sub(self.data_lifecycle.len()));
+        if events.trace > 0 {
+            let trace = self.trace.get_or_insert_with(Vec::new);
+            trace.reserve(events.trace.saturating_sub(trace.len()));
         }
     }
 
     /// Give each of `edges` edge indices an empty entry, so a worker that records into any of them
     /// allocates nothing: a telemetry the pool hands to another worker keeps its entries.
+    #[cfg(feature = "threads")]
     pub(crate) fn reserve_edges(&mut self, edges: usize) {
         for edge in 0..edges {
             self.edge_metrics.entry(edge).or_default();
@@ -424,6 +508,7 @@ impl ExecutionTelemetry {
     /// Fold `other`, a worker's telemetry for the run in progress, into this run's telemetry, and
     /// zero `other` while keeping its storage. [`Self::merge`] folds an owned telemetry instead,
     /// and reads the same as this.
+    #[cfg(feature = "threads")]
     pub(crate) fn absorb(&mut self, other: &mut ExecutionTelemetry) {
         self.nodes_executed += core::mem::take(&mut other.nodes_executed);
         self.cpu_segments += core::mem::take(&mut other.cpu_segments);
