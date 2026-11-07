@@ -12,12 +12,14 @@ use crate::{
 mod boundary;
 mod foreign;
 mod inline;
+mod recycle;
 mod residency;
 mod slot;
 mod storage;
 
 pub use boundary::BoundaryPayloadError;
 use inline::{Body, InlineValue};
+pub use recycle::RecyclePool;
 use residency::ResidencyCache;
 pub use residency::ResidencyCacheKey;
 pub use slot::PayloadSlot;
@@ -264,6 +266,12 @@ impl Payload {
         if let Some(value) = typed_ref::<T>(self.storage.get()) {
             return Some(value);
         }
+        // A recycled node holds its owner out of `typed_ref`'s reach (see `recycle::recycled_ref`).
+        if let Body::Recycled(storage, _) = &self.storage
+            && let Some(value) = recycle::recycled_ref::<T>(&storage.0)
+        {
+            return Some(value);
+        }
         if let Some(storage) = self
             .storage
             .get()
@@ -295,7 +303,7 @@ impl Payload {
         let storage = match &mut self.storage {
             Body::Inline(value, _) => return value.value_mut::<T>(),
             // A handle is lent, never mutated through the payload.
-            Body::Foreign(..) | Body::LocalForeign(..) => return None,
+            Body::Foreign(..) | Body::LocalForeign(..) | Body::Recycled(..) => return None,
             Body::Shared(storage, _) => Arc::get_mut(storage)?,
         };
         if storage.as_any().is::<BoundaryStorage>() {

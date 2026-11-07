@@ -257,7 +257,7 @@ pub(super) fn typed_ref<T: Send + Sync + 'static>(storage: &dyn PayloadStorage) 
 pub(super) fn typed_arc<T: Send + Sync + 'static>(body: &Body) -> Option<Arc<T>> {
     match body {
         Body::Inline(value, _) => (*value).take::<T>().map(Arc::new),
-        Body::Foreign(..) | Body::LocalForeign(..) => None,
+        Body::Foreign(..) | Body::LocalForeign(..) | Body::Recycled(..) => None,
         Body::Shared(storage, _) => arc_value::<T>(storage).or_else(|| {
             storage
                 .as_any()

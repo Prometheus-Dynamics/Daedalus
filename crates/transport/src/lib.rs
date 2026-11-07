@@ -65,7 +65,7 @@ pub use local::{
 };
 pub use payload::{
     BoundaryPayloadError, CopyOutput, OpaquePayloadHandle, OutputProbe, OwnedOutput, Payload,
-    PayloadSlot, PayloadStorage, ResidencyCacheKey,
+    PayloadSlot, PayloadStorage, RecyclePool, ResidencyCacheKey,
 };
 pub use payload_lifecycle::{
     BranchKind, BranchPayload, CorrelationId, PayloadLifecycleStage, PayloadLineage,

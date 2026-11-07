@@ -7,6 +7,7 @@ use core::marker::PhantomData;
 use core::mem::{MaybeUninit, align_of, size_of};
 
 use super::foreign::ForeignStorage;
+use super::recycle::RecycledStorage;
 use super::storage::PayloadStorage;
 use crate::Residency;
 
@@ -29,6 +30,8 @@ pub(super) enum Body {
     Foreign(ForeignStorage<false>, Residency),
     /// A handle this build created ([`Payload::foreign_local`](super::Payload::foreign_local)).
     LocalForeign(ForeignStorage<true>, Residency),
+    /// An owner in a recycled node ([`Payload::providing_recycled`](super::Payload::providing_recycled)).
+    Recycled(RecycledStorage, Residency),
 }
 
 impl Body {
@@ -39,7 +42,8 @@ impl Body {
             Self::Shared(_, residency)
             | Self::Inline(_, residency)
             | Self::Foreign(_, residency)
-            | Self::LocalForeign(_, residency) => *residency,
+            | Self::LocalForeign(_, residency)
+            | Self::Recycled(_, residency) => *residency,
         }
     }
 
@@ -50,6 +54,7 @@ impl Body {
             Self::Inline(value, _) => value,
             Self::Foreign(value, _) => value,
             Self::LocalForeign(value, _) => value,
+            Self::Recycled(value, _) => value,
         }
     }
 
@@ -60,6 +65,7 @@ impl Body {
             Self::Inline(value, _) => Some(value),
             Self::Foreign(value, _) => Some(value),
             Self::LocalForeign(value, _) => Some(value),
+            Self::Recycled(value, _) => Some(value),
         }
     }
 
@@ -67,7 +73,10 @@ impl Body {
     pub(super) fn strong_count(&self) -> usize {
         match self {
             Self::Shared(storage, _) => Arc::strong_count(storage),
-            Self::Inline(_, _) | Self::Foreign(_, _) | Self::LocalForeign(_, _) => 1,
+            Self::Inline(_, _)
+            | Self::Foreign(_, _)
+            | Self::LocalForeign(_, _)
+            | Self::Recycled(_, _) => 1,
         }
     }
 
@@ -78,6 +87,7 @@ impl Body {
             Self::Inline(value, _) => value as *const (dyn PayloadStorage + '_),
             Self::Foreign(value, _) => value as *const (dyn PayloadStorage + '_),
             Self::LocalForeign(value, _) => value as *const (dyn PayloadStorage + '_),
+            Self::Recycled(value, _) => value as *const (dyn PayloadStorage + '_),
         }
     }
 
@@ -89,6 +99,7 @@ impl Body {
             Self::Inline(value, _) => arc_dyn!(value),
             Self::Foreign(value, _) => arc_dyn!(value),
             Self::LocalForeign(value, _) => arc_dyn!(value),
+            Self::Recycled(value, _) => arc_dyn!(value),
         }
     }
 
@@ -103,6 +114,7 @@ impl Body {
             (Self::Inline(a, _), Self::Inline(b, _)) => a.same_value(b),
             (Self::Foreign(a, _), Self::Foreign(b, _)) => a.same_value(b),
             (Self::LocalForeign(a, _), Self::LocalForeign(b, _)) => a.same_value(b),
+            (Self::Recycled(a, _), Self::Recycled(b, _)) => a.same_value(b),
             _ => false,
         }
     }

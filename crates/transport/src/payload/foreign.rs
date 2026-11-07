@@ -244,6 +244,10 @@ impl Payload {
     /// `get_ref::<O>()`. The payload keeps `key` (the owner's key, so graph ports typed by it
     /// still match), unlike [`Self::provide_foreign`], which retypes to `I::KEY`: the stable path
     /// lends a handle by the payload's storage, not its key.
+    ///
+    /// Each call allocates its `Arc`. A stream of frames that must allocate nothing once warm uses
+    /// [`Self::providing_recycled`] with a [`RecyclePool`](crate::RecyclePool) instead: same key
+    /// and views, with the owner's node reused rather than a fresh `Arc`.
     pub fn providing<O, I>(key: impl Into<TypeKey>, owner: Arc<O>, residency: Residency) -> Self
     where
         I: ForeignInterface,
@@ -291,6 +295,7 @@ impl Payload {
             Body::Inline(value, _) => value.to_foreign_handle(),
             Body::Foreign(value, _) => value.to_foreign_handle(),
             Body::LocalForeign(value, _) => value.to_foreign_handle(),
+            Body::Recycled(value, _) => value.to_foreign_handle(),
         }
     }
 }

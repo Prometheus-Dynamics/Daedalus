@@ -17,6 +17,16 @@ plugin ABI and does not load.
 
 ### Added
 
+- `Payload::providing_recycled` and `RecyclePool<O>`: `Payload::providing` for a stream of
+  owners, with no allocation once warm. The owner lives in a node a pool keeps for reuse (one
+  pool per camera or process); the node is a refcounted allocation of the pool, not an `Arc`. The
+  last holder drops the owner first (its buffers close as they do for an `Arc`), then the node
+  goes back on the pool's free list, or is freed when the pool was dropped meanwhile. The payload
+  keeps `providing`'s contract: the same key, a consumer of another build borrows the owner through
+  interface `I` (`ForeignHandle` of the node, retained and released with the payload), and
+  `get_ref::<O>()` reads it in this build. `get_arc`, `get_mut`, `try_into_owned` and
+  `typed_strong_count` do not apply to a node. `get_ref` recognises a node only through this
+  build's own release function and its `TypeId`, never by reading a foreign handle's pointer.
 - `HostBridgeHandle::push_value(port, Value)` and `HostGraph::push_value`: a host pushes a
   `Value` into a host input and it reaches the port's declared type without the host knowing the
   Rust type. The port's key (planner-resolved, set when a bridge attaches to a graph) picks the
