@@ -27,8 +27,10 @@ plugin ABI and does not load.
   -Werror -pedantic`) built against `daedalus_surface.h` and linked to the surface library installs
   the `stable_abi` plugin, compiles a graph, and runs 50 frames with ports by index and a batch
   push; its outputs equal the static graph's. Linux; skipped without a C compiler.
-- `Payload::providing::<O, I>(owner, residency)`: a payload sharing an owner value readable
-  through foreign interface `I`, in one call (`shared_with` then `provide_foreign`). A node
+- `Payload::providing::<O, I>(key, owner, residency)`: a payload of key `key` sharing an owner
+  value readable through foreign interface `I`, in one call (`shared_with` then `provide_foreign`,
+  keeping `key` rather than retyping to `I::KEY`, so ports typed by the owner's key still match;
+  Styx's `frame_payload` uses `styx:framelease`). A node
   returning an owner type with a provider (a camera's frame type providing `daedalus:frame`)
   publishes it this way, so a consumer of another build, such as a stable plugin's node or its
   host, gets a handle of the owner without a copy, while one of this build still reads

@@ -260,8 +260,17 @@ fn a_provided_payload_lends_its_owner_by_handle_and_by_type() {
         value: 21,
         drops: None,
     });
-    let provided = Payload::providing::<Counter, CounterV1>(value.clone(), Residency::Cpu);
-    assert_eq!(provided.type_key().as_str(), "test:counter");
+    let provided = Payload::providing::<Counter, CounterV1>(
+        "test:counter_owner",
+        value.clone(),
+        Residency::Cpu,
+    );
+    // The owner's key stays, so ports typed by it still match.
+    assert_eq!(provided.type_key().as_str(), "test:counter_owner");
+    assert!(
+        provided.foreign_borrow().is_some(),
+        "readable through the interface"
+    );
     assert_eq!(provided.get_ref::<Counter>().map(|c| c.value), Some(21));
     let handle = provided.to_foreign_handle().expect("a handle of the owner");
     assert_eq!(read(&handle), 21);

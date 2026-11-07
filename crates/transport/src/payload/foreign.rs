@@ -237,20 +237,25 @@ impl Payload {
         Ok(Payload::foreign_local(I::KEY, handle, self.residency()).with_lineage(self.lineage))
     }
 
-    /// A payload sharing `owner`, readable through interface `I` (key `I::KEY`): what a node
-    /// returns for an owner type with a provider (a camera's frame type providing
-    /// `daedalus:frame`, say), so a consumer of another build, such as a stable plugin's node or
-    /// its host, gets a [`ForeignHandle`] of the owner (no copy), while a consumer of this build
-    /// still reads `get_ref::<O>()`. [`Self::shared_with`] then [`Self::provide_foreign`].
-    pub fn providing<O, I>(owner: Arc<O>, residency: Residency) -> Self
+    /// A payload of key `key` sharing `owner`, readable through interface `I`: what a node or
+    /// host returns for an owner type with a provider (a camera's frame type providing
+    /// `daedalus:frame`, say). A consumer of another build, such as a stable plugin's node or its
+    /// host, gets a [`ForeignHandle`] of the owner (no copy); a consumer of this build still reads
+    /// `get_ref::<O>()`. The payload keeps `key` (the owner's key, so graph ports typed by it
+    /// still match), unlike [`Self::provide_foreign`], which retypes to `I::KEY`: the stable path
+    /// lends a handle by the payload's storage, not its key.
+    pub fn providing<O, I>(key: impl Into<TypeKey>, owner: Arc<O>, residency: Residency) -> Self
     where
         I: ForeignInterface,
         O: ProvideForeign<I>,
     {
-        Self::shared_with(I::KEY, owner, residency, None, None)
+        let key = key.into();
+        let mut payload = Self::shared_with(key.clone(), owner, residency, None, None)
             .provide_foreign::<O, I>()
             // Shared storage holds an `O`, so this never fails; keep the payload if it did.
-            .unwrap_or_else(|payload| *payload)
+            .unwrap_or_else(|payload| *payload);
+        payload.type_key = key;
+        payload
     }
 
     /// Retype storage that is an `S` at the allocation's address as `ProvidedStorage<S, O, I>`.
