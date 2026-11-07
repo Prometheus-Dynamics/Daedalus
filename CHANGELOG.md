@@ -24,7 +24,9 @@ plugin ABI and does not load.
   goes back on the pool's free list, or is freed when the pool was dropped meanwhile. The payload
   keeps `providing`'s contract: the same key, a consumer of another build borrows the owner through
   interface `I` (`ForeignHandle` of the node, retained and released with the payload), and
-  `get_ref::<O>()` reads it in this build. `get_arc`, `get_mut`, `try_into_owned` and
+  `get_ref::<O>()` reads it in this build. `try_into_owned::<O>()` (and with it a by-value node
+  input) moves the owner out of a payload that is the node's only holder: the node goes back to the
+  pool and nothing is allocated; a shared or lent node is handed back. `get_arc`, `get_mut` and
   `typed_strong_count` do not apply to a node. `get_ref` recognises a node only through this
   build's own release function and its `TypeId`, never by reading a foreign handle's pointer.
 - `HostBridgeHandle::push_value(port, Value)` and `HostGraph::push_value`: a host pushes a

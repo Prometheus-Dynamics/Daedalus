@@ -97,10 +97,72 @@ fn typed_reads_that_need_an_arc_do_not_apply_to_a_node() {
     assert!(payload.get_arc::<Owned>().is_none());
     assert!(payload.get_mut::<Owned>().is_none());
     assert!(payload.typed_strong_count::<Owned>().is_none());
-    let Err(payload) = payload.try_into_owned::<Owned>() else {
-        panic!("a node is handed back");
-    };
     assert_eq!(payload.get_ref::<Owned>().map(|o| o.value), Some(1));
+}
+
+#[test]
+fn a_unique_node_moves_its_owner_out_and_goes_back_to_the_pool() {
+    static DROPS: Count = Count::new(0);
+    let pool = RecyclePool::<Owned>::new();
+    let payload = recycled(&pool, 7, &DROPS);
+    assert!(payload.is_storage_unique());
+    let owned = match payload.try_into_owned::<Owned>() {
+        Ok(owned) => owned,
+        Err(_) => panic!("a unique node moves its owner out"),
+    };
+    assert_eq!(owned.value, 7);
+    assert_eq!(DROPS.load(Order::SeqCst), 0, "moved, not dropped");
+    assert_eq!(pool.idle(), 1, "the node is back on the pool");
+    drop(owned);
+    assert_eq!(DROPS.load(Order::SeqCst), 1);
+    // The idle node is reused, and its value slot holds the new owner only.
+    let again = recycled(&pool, 8, &DROPS);
+    assert_eq!(pool.idle(), 0);
+    assert_eq!(again.get_ref::<Owned>().map(|o| o.value), Some(8));
+    drop(again);
+    assert_eq!(DROPS.load(Order::SeqCst), 2);
+}
+
+#[test]
+fn a_shared_or_lent_node_is_handed_back_by_try_into_owned() {
+    static DROPS: Count = Count::new(0);
+    let pool = RecyclePool::<Owned>::new();
+    let payload = recycled(&pool, 3, &DROPS);
+    let clone = payload.clone();
+    assert!(!payload.is_storage_unique());
+    let Err(payload) = payload.try_into_owned::<Owned>() else {
+        panic!("a shared node is handed back");
+    };
+    drop(clone);
+    let lent = payload.to_foreign_handle().unwrap();
+    let Err(payload) = payload.try_into_owned::<Owned>() else {
+        panic!("a lent node is handed back");
+    };
+    drop(lent);
+    let Err(payload) = payload.try_into_owned::<String>() else {
+        panic!("another type is handed back");
+    };
+    assert_eq!(DROPS.load(Order::SeqCst), 0);
+    let Ok(owned) = payload.try_into_owned::<Owned>() else {
+        panic!("unique again");
+    };
+    assert_eq!(owned.value, 3);
+    drop(owned);
+    assert_eq!(DROPS.load(Order::SeqCst), 1);
+}
+
+#[test]
+fn moving_out_after_the_pool_closed_frees_the_node() {
+    static DROPS: Count = Count::new(0);
+    let pool = RecyclePool::<Owned>::new();
+    let payload = recycled(&pool, 4, &DROPS);
+    drop(pool);
+    let Ok(owned) = payload.try_into_owned::<Owned>() else {
+        panic!("unique");
+    };
+    assert_eq!(owned.value, 4);
+    drop(owned);
+    assert_eq!(DROPS.load(Order::SeqCst), 1);
 }
 
 #[test]

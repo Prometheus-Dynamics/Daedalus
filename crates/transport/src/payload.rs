@@ -331,6 +331,16 @@ impl Payload {
             // Inline values are unique: the copy out of the payload always succeeds.
             return value.take::<T>().ok_or_else(|| Box::new(self));
         }
+        if let Body::Recycled(storage, residency) = self.storage {
+            // A unique node gives up its owner and goes back to its pool.
+            return match storage.try_take::<T>() {
+                Ok(value) => Ok(value),
+                Err(storage) => {
+                    self.storage = Body::Recycled(storage, residency);
+                    Err(Box::new(self))
+                }
+            };
+        }
         if let Some(storage) = self
             .storage
             .get()

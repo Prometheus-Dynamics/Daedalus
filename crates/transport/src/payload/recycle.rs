@@ -247,9 +247,10 @@ impl Payload {
     /// function, where a panic cannot unwind and aborts the process (the same contract as a
     /// foreign handle's owner, see [`ForeignOwner`](crate::ForeignOwner)).
     ///
-    /// [`Self::get_ref`] returns the `O`; [`Self::get_arc`], [`Self::get_mut`] and
-    /// [`Self::try_into_owned`] do not apply to a recycled node (there is no `Arc<O>` to hand
-    /// out), so they return `None` or hand the payload back.
+    /// [`Self::get_ref`] returns the `O`, and [`Self::try_into_owned`] moves it out of a payload
+    /// that is the node's only holder (the node goes back to `pool`, nothing is allocated; a
+    /// shared payload is handed back). [`Self::get_arc`] and [`Self::get_mut`] do not apply to a
+    /// recycled node (there is no `Arc<O>` to hand out), so they return `None`.
     pub fn providing_recycled<O, I>(
         key: impl Into<TypeKey>,
         pool: &RecyclePool<O>,
@@ -318,6 +319,48 @@ impl RecycledStorage {
     pub(super) fn same_value(&self, other: &Self) -> bool {
         core::ptr::eq(self.0.data(), other.0.data())
             && core::ptr::eq(self.0.owner().ptr, other.0.owner().ptr)
+    }
+}
+
+impl RecycledStorage {
+    /// Holders of the node: payload clones and lent handles (one when this storage is alone).
+    pub(super) fn holders(&self) -> usize {
+        match recycled_node(&self.0) {
+            // Safety: the handle holds the node, so it is alive (see `recycled_node`).
+            Some(node) => unsafe { (*node).holders.load(Ordering::Acquire) },
+            None => 1,
+        }
+    }
+
+    /// Move the owner out when this storage is the node's only holder and the owner is a `T`:
+    /// the node goes back to its pool (or is freed when the pool is gone) without dropping the
+    /// value, and nothing is allocated. A shared node, or another type, is handed back.
+    pub(super) fn try_take<T: 'static>(self) -> Result<T, Self> {
+        let Some(node) = recycled_node(&self.0) else {
+            return Err(self);
+        };
+        // Safety: `node` is a live node of this module.
+        let header = unsafe { &*node };
+        if header.type_id != TypeId::of::<T>() || header.holders.load(Ordering::Acquire) != 1 {
+            return Err(self);
+        }
+        let node = node.cast_mut();
+        let value_ptr = unsafe { addr_of!((*node.cast::<Node<T>>()).value) }.cast::<T>();
+        if !core::ptr::eq(value_ptr.cast::<c_void>(), self.0.data()) {
+            return Err(self);
+        }
+        // This storage is the only holder and is owned here, so no other thread can retain the
+        // node meanwhile: the handle is given up without its release, which would drop the value.
+        core::mem::forget(self);
+        // Safety: the node holds an initialized `T` (the TypeId check), which is moved out once;
+        // the node is then idle (no holder), its value slot uninitialized, as a listed node is.
+        let value = unsafe { core::ptr::read(value_ptr) };
+        unsafe {
+            (*node).holders.store(0, Ordering::Relaxed);
+            let pool = core::mem::replace(&mut (*node).pool, null_mut());
+            give_back(pool, node);
+        }
+        Ok(value)
     }
 }
 

@@ -69,14 +69,13 @@ impl Body {
         }
     }
 
-    /// Strong references to the shared storage. An inline value or handle has one: its payload.
+    /// Strong references to the shared storage. An inline value or handle has one: its payload. A
+    /// recycled node counts its holders (payload clones and lent handles).
     pub(super) fn strong_count(&self) -> usize {
         match self {
             Self::Shared(storage, _) => Arc::strong_count(storage),
-            Self::Inline(_, _)
-            | Self::Foreign(_, _)
-            | Self::LocalForeign(_, _)
-            | Self::Recycled(_, _) => 1,
+            Self::Recycled(storage, _) => storage.holders(),
+            Self::Inline(_, _) | Self::Foreign(_, _) | Self::LocalForeign(_, _) => 1,
         }
     }
 
