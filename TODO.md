@@ -25,121 +25,68 @@ The next release is an alpha that covers the Raze (CM5, V3D 7.1) hardware only (
 HeliOS, 2026-11-02). These items come first. The other boards (Rockchip, K230D, RV1106), the MCU
 and CUDA follow after it, under Open. When to release, and what blocks it, stays the user's call.
 
-## Open
+## Leap (GO: user, relayed by HeliOS, 2026-11-06)
 
-### Current list (HeliOS coordinator, 2026-11-03)
+The architecture leap: one small Lemnos kernel module with Rust userspace drivers; every shared
+library in a static and a shared form (Rust core, small versioned C surface, static Rust client
+wrapper, never both in one process); `lemnos-abi` holds the shared handles, status, slabs and
+fences. Static fat LTO stays the default; shared mode is for consumers outside the image, and
+per-frame hot loops stay inside one library. Design: `docs/shared-library.md`. Daedalus's part, in
+order:
 
-Now, in this order. Items not listed here keep their place below. Nothing new is taken on.
-
-- [x] **What:** the allocation flake: `detector_graph_frame_allocation_budget` read
-      `Parallel/Hardware: 9.05` against a budget of 9.
-      **Done (2026-11-03):** 7c48145, CI run 41787751284. No budget changed; 200 of 200 runs under
-      load, 10 of 200 failing before.
-- [x] **What:** the Profile and Trace adapter edge to 0 allocations per frame.
-      **Done (2026-11-03):** the adapter edge allocates 0; the detector frame went from 75 to 9 at
-      Profile, serial and parallel, and Trace is 9. `AdapterPathReport` did not need to change.
-      Adaptive rows at those levels have no budget.
-- [x] **What:** the payload allocations per frame at every metrics level: 0.
-      **Why:** they are on the default frame path, under the zero-allocation rule.
-      **Done (2026-11-05):** `Copy` outputs of at most 32 bytes and alignment 8 are held in the
-      payload (`Payload::plain`, a `PlainValue`), and the node and adapter macros route outputs
-      through `OutputProbe`. The detector frame is 0 in serial, parallel and adaptive modes at all
-      seven levels (`graph_frame_allocations`). A `Payload` is 208 bytes (184 before), so Rust-ABI
-      plugins are rebuilt with the host. Rejected: a per-output `PayloadSlot`, which took it to 2
-      but broke unique handoff (`gpu_fallback`'s `drain_owned`).
-- [x] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
-      `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
-      moved onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stayed until `crates/rga` went to
-      Lemnos (2026-11-06).
-      **Done (2026-11-04):** allocation, sync and mapping go through Lemnos. Two things stay:
-      `gpu_probe`'s per-heap report still opens each heap read-write itself, because that open is
-      what it reports and Lemnos's `open_path` is read-only; and `frame-bench`'s dma-buf mapping is
-      now writable, because Lemnos's `DmaBuf::map` is. `frame_chain` was not re-measured.
-- [x] **[board]** **What:** the stable-path bench on Raze #1 (CM5): cost per constant, a
-      `Detections`-shaped crossing at 0, 4 and 16 tags, a prototype plugin-local handle, and a
-      12-node chain.
-      **Done (2026-11-05):** 52f1199, one run; numbers against the estimates in
-      `docs/benchmarks-log.md` ("Stable plugin path"). Handles on 12 edges cost 18.7 µs; constants
-      0.27-0.36 µs each; `Detections` through `Value` 38 µs per crossing at 4 tags, as a handle
-      2.5 µs at any count.
-
-#> 2026-11-05 (user, via HeliOS): Lemnos goes first. Anything that depends on Lemnos APIs (the
-> rga/vglite hand-off, surfaces on `lemnos-abi`, dma-heap or device changes) waits until HeliOS says
-> Lemnos is ready. Daedalus-only items continue.
-
-## Decided, starts when the user says
-
-Decided, not started. Agents finish the current list, then pause (user, relayed by HeliOS,
-2026-11-03).
-
-1. Stable path gains adapters and serializers (C function pointers keyed by type name), typed
-   `repr(C)` values and views, plugin-local handles, a telemetry sink, constants sent once, and
-   codecs for the catalog nodes.
-   - Constants sent once: done (stable ABI 3, `set_consts`; v2 plugins still load). 110 ns per
-     constant against 250 ns, 0 host allocations per tick.
-   - Telemetry sink and metadata: done (stable ABI 4, `set_services`).
-   - Typed `repr(C)` values and views: done (stable ABI 5, `#[derive(StablePod)]`, `tag::POD`,
-     `PodValue`, `register_stable_pod`). x86 only: `Detections` at 4 tags 4.9 µs against 33 µs
-     through `Value`, 1 / 4 allocations per tick. The CM5 row: the coordinator takes it at the next
-     joint board run.
-   - `StablePod` path to 0 warm allocations (the frame path's target). Per tick at 4 tags the
-     bench counts 1 on the host and 4 in the plugin. The plugin's 4 include the fixture source
-     building its `Vec` (`Detections::sample` then the `TagPod` collect, 3), so they are the
-     handler's own; the host's 1 and the plugin's remaining 1 are not yet attributed (the sink's
-     decode refills the previous call's `Vec`, and the host's `PodValue` slot is reused).
-   - Plugin-local handles: done (`daedalus::transport::Local<T>`, `daedalus:plugin_local`
-     handles). `handle().data()` is one address across edges and ticks (`dylib_stable_local`).
-     0 host allocations per handle edge (2026-11-06, stable ABI 6): the plugin counts its live
-     objects (`live_objects` in the extension) and the host closes an old build at a sweep once
-     the count is 0, so no payload holds a keepalive (`Payload::foreign_kept` is gone). A build
-     that output a `Local` is unloaded but stays mapped (a last release may still be returning
-     through its code on another thread); `dylib_reload_race` hammers it. The `stable_bench` handle prototype still uses its
-     own interface; moving it to `Local` is open.
-   - Adapters and serializers (C function pointers keyed by type name): done (stable ABI 7,
-     `daedalus_plugin_stable_codecs`, `register_value_codec` / `register_local_codec`; the host
-     registers each as a planner adapter to and from its `Value` schema and as the host bridge's
-     serializer of the key; `dylib_stable_codecs`). First client: `Local<T>`. Open: no codec for
-     `StablePod` views or for foreign payloads of another plugin's interface has a user yet.
-   - Codecs for the catalog nodes: not started.
-   - Known: one `Serial/Off` allocation in 200 loaded runs of `graph_frame_allocations` (2026-11-06),
-     not reproduced in 1,060 traced runs; site unknown.
-   - [x] Handle edges at 0 host allocations: done (2026-11-06, branch `frames-zero`). A payload
-     holds its `ForeignHandle` inline (`Body::Foreign`), so the stable path's handle outputs and
-     a frame's push allocate nothing, and nothing keeps the owner past its payloads.
-     `dylib_stable_allocations` asserts 0 for a frame, host and plugin side, static and stable.
-2. `FrameLease` adapter cached per frame on the stable path. Done in Styx (dev 025f346,
-   `from_shared_frame`): a v3 `SharedFrame` becomes a cached `FrameLease`, read in place. Tell Styx
-   if `SharedFrame`, `FrameSource` or `ForeignHandle` change.
-3. Host-side GPU ops and the C vtable for plugins, per
+1. **Stable plugin ABI onto `lemnos-abi`** (shared-library step 2), on `lemnos-abi` 1.0 (frozen:
+   Lemnos dev 47a600c, layout hash 0xa02cfb4a8dd4545b; versions in the SONAME major plus the
+   handshake, since rustc's cdylib version script overrides symbol version nodes): status,
+   handles, descriptors and the handshake from `lemnos-abi` (its `Features`/`write_out`), one STABLE_ABI_VERSION
+   bump, every older layout (2 to 7) still read. Done when the dylib suites pass on both layouts.
+2. **Profile the stable path's per-node cost** (about 3,100 instructions per node per tick on x86,
+   the surface about 1,000 over static) with `bench-counters`; move the `stable_bench` handle
+   prototype onto `Local`; take `StablePod` to 0 warm allocations (1 host and 1 plugin allocation
+   per tick at 4 tags are unattributed). The numbers decide whole-subgraph crossing (item 5).
+3. **Eidos as a `cdylib` plugin**: codecs for the catalog nodes (stable ABI 7 codecs), one real
+   Eidos node on the stable path as a trial, then Eidos whole (the survey: 175 of 175 nodes
+   blocked; generated-node codecs first). Frame publishing is in (`Payload::providing`, 3310894);
+   Styx's `frame_payload` and Eidos's `from_shared_frame` install come with the next joint round,
+   then HeliOS alpha measures per-node cost on the AprilTag and tags+map graphs, Rust ABI against
+   stable.
+4. **The surface's static and shared forms**: `daedalus-surface` / `daedalus-host` exist (surface
+   ABI 1.3, frames, in-image nodes, the C host test). Open: by-index frame calls, a surface frame
+   of bytes at 0 allocations (1 today), `inspect_outputs` and `Vec<u8>` ports through the surface,
+   constant patching through the surface, frames on `lemnos-abi` slabs and fences, a
+   `Payload::providing` variant that takes a size estimate (Styx's frames report
+   `bytes_estimate() == None` since they moved onto it, 2026-11-06), and the clock-domain caveat
+   in `MultiCamera::synchronized`'s docs (Styx's `FrameGrouper` puts sensors on one clock; ours
+   compares stamps as they come).
+5. **Whole-subgraph crossing**: only if item 2's numbers justify it.
+6. **Gaia's link modes** (shared-library step 4): Gaia reads `daedalus_plugin_stable_version` and
+   the surface's `daedalus_surface_stable_abi_min`/`_max` today (a02eda4, verified by Gaia).
+7. **Host-side GPU ops and the C vtable for plugins**, per
    `/mnt/ssd-samsung/helios-notes/gpu-seam.md`.
-4. One real Eidos node on the stable path as a trial, then Eidos as a `cdylib` plugin.
-5. Whole-subgraph crossing: only if the numbers justify it.
-6. [x] Hand-off to Lemnos, done 2026-11-06 (worker branch `lemnos-switch`): `crates/rga` and
-   `crates/vglite` are deleted. `crates/kernels/src/registry/fixed.rs` names `lemnos-drivers-rga`
-   and `lemnos-drivers-vglite` at Lemnos cf3a4ac (pinned in the workspace `Cargo.toml`), and a
-   Linux test ties every row to `caps::route_for`. The librga route is gone: `/dev/rga` is
-   `MultiRga` (`Librga` is a deprecated alias of it in Lemnos). `daedalus.image.line` on VGLite
-   is deferred and runs on the CPU until Lemnos's K230 slope-sweep test passes. Still to come: the
-   `lemnos-abi` use for the C surface. Untested on board.
-7. Shared libraries: static and shared modes, with core, surface and wrapper per dependency, and
-   plugin linking. Design in `docs/shared-library.md` (2026-11-05). State (2026-11-06): step 1,
-   `lemnos-abi`, is at `cf3a4ac` (declared `branch = "dev"`, the commit in the lock). Step 2,
-   moving the stable plugin ABI onto `lemnos-abi` primitives, is NOT done. Step 3 is built as a
-   first version: `daedalus-surface` and `daedalus-host`, with the static-versus-shared test, and
-   dma-buf frames (`push_frame`, `take_frame`, `frame_release`) with no copy. The CM5 cost is in
-   `benchmarks-log.md` (0.43 µs per frame over static-through-stable). A warm frame allocates
-   nothing (2026-11-06: payloads hold foreign handles inline, the tick reuses its telemetry; it
-   was 2, the payload storage at push and at tick). A frame's dma-bufs are released
-   once the graph consumed it or at the lease's release (2026-11-06: recycled frame objects
-   cleared by their last holder; before, each port kept its last frame's buffers until the next
-   push). A plugin-local object's edge allocates nothing on the host either (stable ABI 6: the
-   plugin counts its live objects; `dylib_stable_allocations` asserts 0). An imported acquire
-   fence delays the consumer:
-   tested on Raze #1 with a v3dv `SYNC_FD` (`frames::fence_board`, `benchmarks-log.md`). Step 4 (Gaia's link modes) is not started. In-image
-   node crates link into the surface `cdylib`; only separate plugins use the stable ABI. Gaia's A/B:
-   per-node calls across a library cost 26% on the mirror bench, so the surface is per frame.
-8. Lemnos's kernel module and its Rust userspace drivers: Daedalus's fixed-function nodes and
-   accelerator implementations sit on them.
+8. **Lemnos's kernel module and userspace drivers**: Daedalus's fixed-function nodes and
+   accelerator implementations sit on them (Lemnos owns the units).
+9. **`docs/migration-4.0.md`**: brought up to date after items 1 to 4, since they change the
+   plugin ABI and the surface again.
+
+### Closed in the 2026-11-06 sweep
+
+- `FrameLease` adapter cached per frame: done in Styx (dev 025f346, `from_shared_frame`). Tell
+  Styx if `SharedFrame`, `FrameSource` or `ForeignHandle` change.
+- Hand-off of `crates/rga` and `crates/vglite` to Lemnos: done 2026-11-06 (see Done).
+- Codecs (stable ABI 7): done, 0579eab; adapters on edges into host outputs, 2beb8c2.
+- Host `push_value` for keyed ports (HeliOS alpha worker): done, e5b2cb7. Not done: batch
+  `push_value` (batch entries resolve without a port key) and a JSON helper.
+- Fused-edge carry and Lemnos 80d5d1e: done, 2386f19 and 04d747d.
+- The RVV/NEON matrix evidence: done, c4eb6e2 (pass 123, untested 13, all board-only).
+- The C-compiler CI job: done, 1d40a17 (`crates/host-wrapper/tests/c_host.rs`).
+- A delay hook for `dylib_reload_race`: dropped. A build that lent a `Local` is never unmapped, so
+  the original race cannot happen by construction; a hook would only test the hook.
+- A counter or warning for builds kept mapped: folded into leap item 1 (the plugin lifecycle moves
+  onto `lemnos-abi` handles).
+- The rare `Serial/Off` allocation in `graph_frame_allocations`: closed. 1 in 200 loaded runs once,
+  not reproduced in 1,060 traced runs; reopen with a trace.
+- `eidos-daedalus` link in helios-engine for calibration pushes: replaced by `push_value`.
+
+## Open
 
 ### CI on `dev`
 
@@ -156,6 +103,10 @@ Decided, not started. Agents finish the current list, then pause (user, relayed 
 
 ### Boards
 
+- [ ] **[board] What:** re-measure `frame_chain` on Raze #1 (under `flock`) since `frame-bench`'s
+      dma-buf mapping moved onto `lemnos_linux::dma` (2026-11-04). Written, untested on board.
+      **Done when:** a row in `docs/benchmarks-log.md` against the earlier one.
+      **Blocked by:** a board slot.
 - [ ] **[board] What:** armv7 RV1106, CPU-only (`armv7-unknown-linux-musleabihf`): the CPU graph
       tests and the kernel conformance binary on the board. Written, untested on board.
       **Why:** the user's platform list (2026-10-30); the RV1106 has no compute-capable GPU.
@@ -424,6 +375,45 @@ on 2026-11-02, at f7e05ac.
 
 Each entry cites the commit that did the work, as far as history can attribute it. Where one symbol
 was searched for, the commit is the one that introduced it.
+
+- [x] **What:** the allocation flake: `detector_graph_frame_allocation_budget` read
+      `Parallel/Hardware: 9.05` against a budget of 9.
+      **Done (2026-11-03):** 7c48145, CI run 41787751284. No budget changed; 200 of 200 runs under
+      load, 10 of 200 failing before.
+- [x] **What:** the Profile and Trace adapter edge to 0 allocations per frame.
+      **Done (2026-11-03):** the adapter edge allocates 0; the detector frame went from 75 to 9 at
+      Profile, serial and parallel, and Trace is 9. `AdapterPathReport` did not need to change.
+      Adaptive rows at those levels have no budget.
+- [x] **What:** the payload allocations per frame at every metrics level: 0.
+      **Why:** they are on the default frame path, under the zero-allocation rule.
+      **Done (2026-11-05):** `Copy` outputs of at most 32 bytes and alignment 8 are held in the
+      payload (`Payload::plain`, a `PlainValue`), and the node and adapter macros route outputs
+      through `OutputProbe`. The detector frame is 0 in serial, parallel and adaptive modes at all
+      seven levels (`graph_frame_allocations`). A `Payload` is 208 bytes (184 before), so Rust-ABI
+      plugins are rebuilt with the host. Rejected: a per-output `PayloadSlot`, which took it to 2
+      but broke unique handoff (`gpu_fallback`'s `drain_owned`).
+- [x] **What:** dma-heap cleanup: `crates/frame-bench/src/buffer.rs`,
+      `crates/gpu/examples/gpu_bench/linux/frame_import.rs` and `crates/gpu/examples/gpu_probe.rs`
+      moved onto `lemnos_linux::dma`. `crates/rga/tests/v4l2.rs` stayed until `crates/rga` went to
+      Lemnos (2026-11-06).
+      **Done (2026-11-04):** allocation, sync and mapping go through Lemnos. Two things stay:
+      `gpu_probe`'s per-heap report still opens each heap read-write itself, because that open is
+      what it reports and Lemnos's `open_path` is read-only; and `frame-bench`'s dma-buf mapping is
+      now writable, because Lemnos's `DmaBuf::map` is. `frame_chain` was not re-measured.
+- [x] **[board]** **What:** the stable-path bench on Raze #1 (CM5): cost per constant, a
+      `Detections`-shaped crossing at 0, 4 and 16 tags, a prototype plugin-local handle, and a
+      12-node chain.
+      **Done (2026-11-05):** 52f1199, one run; numbers against the estimates in
+      `docs/benchmarks-log.md` ("Stable plugin path"). Handles on 12 edges cost 18.7 µs; constants
+      0.27-0.36 µs each; `Detections` through `Value` 38 µs per crossing at 4 tags, as a handle
+      2.5 µs at any count.
+- [x] Fused-edge carry at 0 allocations per tick for three or more fused outputs: 2386f19.
+- [x] Stable ABI 7 codecs: 0579eab; adapters on edges into host outputs: 2beb8c2.
+- [x] Surface ABI 1.3 range symbols for Gaia: a02eda4. C11 host test: 1d40a17.
+- [x] Accel matrix evidence for every RVV and NEON cell: c4eb6e2.
+- [x] The rest of stable ABI 7: f386422 (demo bundle as `StablePod`), a1973e8
+      (`declare_stable_port`), 80ecba9 and 3310894 (`Payload::providing`, keeping the key).
+- [x] Host `push_value`: e5b2cb7. The bench workflow's baseline in its own target directory: b0990e6.
 
 - [x] `daedalus-rga`'s V4L2 mem2mem session is Lemnos's `M2mSession` (Lemnos fdbb0c4: crop in
       `QueueSetup`, `v4l2::query`, `find_m2m`). `crates/rga/tests/v4l2.rs` passes on `vim2m`
