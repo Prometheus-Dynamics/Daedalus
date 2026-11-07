@@ -60,6 +60,11 @@ impl<H: NodeHandler> ExecutorConfigTarget for OwnedExecutor<H> {
 }
 
 impl<H: NodeHandler> OwnedExecutor<H> {
+    /// Whether the plan this executor runs needs a GPU context (see `RuntimePlan::needs_gpu`).
+    pub fn needs_gpu(&self) -> bool {
+        self.plan.needs_gpu()
+    }
+
     executor_config_api!();
 
     /// Build an owned executor from a runtime plan and handler.

@@ -294,3 +294,23 @@ fn explanation_lists_device_round_trips_across_nodes() {
     assert_eq!((trips[0].upload_edge, trips[0].download_edge), (up, up));
     assert!(trips[0].nodes.is_empty());
 }
+
+#[test]
+fn needs_gpu_only_for_gpu_nodes_and_device_edges() {
+    let plan = RuntimePlan::try_from_execution(&ExecutionPlan::new(graph_with_single_edge(), vec![]))
+        .expect("plan");
+    assert!(!plan.needs_gpu(), "a CPU-only plan needs no GPU context");
+
+    let mut gpu_node = plan.clone();
+    gpu_node.nodes[0].compute = daedalus_core::compute::ComputeAffinity::GpuPreferred;
+    assert!(gpu_node.needs_gpu(), "a GPU-preferring node needs one");
+
+    let mut device_edge = plan.clone();
+    device_edge.edge_transports = vec![Some(transport(vec![step(
+        daedalus_transport::AdaptKind::DeviceUpload,
+        "cpu",
+        "gpu",
+        Some(daedalus_transport::Residency::Gpu),
+    )]))];
+    assert!(device_edge.needs_gpu(), "a device upload needs one");
+}

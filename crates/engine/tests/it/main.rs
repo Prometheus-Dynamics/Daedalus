@@ -9,5 +9,7 @@ mod host_graph_poll;
 mod host_graph_reload;
 mod host_graph_selected;
 mod host_output_adapters;
+#[cfg(feature = "gpu")]
+mod lazy_gpu;
 mod support;
 mod transport_run;

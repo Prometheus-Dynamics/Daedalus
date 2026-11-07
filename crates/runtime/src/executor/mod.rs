@@ -253,6 +253,11 @@ pub(crate) fn reset_run_storage(
 }
 
 impl<'a, H: NodeHandler> Executor<'a, H> {
+    /// Whether the plan this executor runs needs a GPU context (see `RuntimePlan::needs_gpu`).
+    pub fn needs_gpu(&self) -> bool {
+        crate::plan::gpu_needed(&self.nodes[..], self.edge_transports)
+    }
+
     executor_config_api!();
 
     /// Build an executor from a runtime plan and handler.

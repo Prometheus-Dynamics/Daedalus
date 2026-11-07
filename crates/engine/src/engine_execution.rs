@@ -244,7 +244,7 @@ impl Engine {
     ) -> Result<RunResult, EngineError> {
         super::engine::validate_boundary_contracts(plugins, &graph)?;
         let planner_cfg = plugins
-            .planner_config_with_transport(self.planner_config()?)
+            .planner_config_with_transport(self.planner_config_for(&graph)?)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         let prepared = self.prepare_plan_with_config(graph, planner_cfg)?;
         let planner_cache = prepared.cache_status();

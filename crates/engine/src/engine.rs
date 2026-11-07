@@ -150,7 +150,7 @@ impl Engine {
         }
         #[cfg(feature = "gpu")]
         {
-            if let Some(gpu) = self.get_gpu_handle()? {
+            if let Some(gpu) = self.gpu_handle_if(exec.needs_gpu())? {
                 exec = exec.with_gpu((*gpu).clone());
             }
         }
@@ -193,7 +193,7 @@ impl Engine {
         }
         #[cfg(feature = "gpu")]
         {
-            if let Some(gpu) = self.get_gpu_handle()? {
+            if let Some(gpu) = self.gpu_handle_if(exec.needs_gpu())? {
                 exec = exec.with_gpu((*gpu).clone());
             }
         }
@@ -275,7 +275,7 @@ impl Engine {
     /// Run planner on the provided graph.
     ///
     pub fn plan(&self, graph: Graph) -> Result<daedalus_planner::PlannerOutput, EngineError> {
-        let planner_cfg = self.planner_config()?;
+        let planner_cfg = self.planner_config_for(&graph)?;
         self.plan_with_config(graph, planner_cfg)
     }
 
@@ -288,7 +288,7 @@ impl Engine {
         graph: Graph,
     ) -> Result<daedalus_planner::PlannerOutput, EngineError> {
         let planner_cfg = plugins
-            .planner_config_with_transport(self.planner_config()?)
+            .planner_config_with_transport(self.planner_config_for(&graph)?)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         self.plan_with_config(graph, planner_cfg)
     }
@@ -312,7 +312,7 @@ impl Engine {
 
     /// Run planner through the engine's cache layer and return a prepared plan.
     pub fn prepare_plan(&self, graph: Graph) -> Result<PreparedPlan, EngineError> {
-        let planner_cfg = self.planner_config()?;
+        let planner_cfg = self.planner_config_for(&graph)?;
         self.prepare_plan_with_config(graph, planner_cfg)
     }
 
@@ -324,7 +324,7 @@ impl Engine {
         graph: Graph,
     ) -> Result<PreparedPlan, EngineError> {
         let planner_cfg = plugins
-            .planner_config_with_transport(self.planner_config()?)
+            .planner_config_with_transport(self.planner_config_for(&graph)?)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         self.prepare_plan_with_config(graph, planner_cfg)
     }
@@ -486,7 +486,7 @@ impl Engine {
     ) -> Result<CompiledRun<H>, EngineError> {
         validate_boundary_contracts(plugins, &graph)?;
         let planner_cfg = plugins
-            .planner_config_with_transport(self.planner_config()?)
+            .planner_config_with_transport(self.planner_config_for(&graph)?)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         let prepared = self.prepare_plan_with_config(graph, planner_cfg)?;
         let planner_cache = prepared.cache_status();
@@ -525,7 +525,7 @@ impl Engine {
         let host_alias = host_alias.into();
         validate_boundary_contracts(plugins, &graph)?;
         let planner_cfg = plugins
-            .planner_config_with_transport(self.planner_config()?)
+            .planner_config_with_transport(self.planner_config_for(&graph)?)
             .map_err(|err| EngineError::Config(err.to_string()))?;
         let prepared = self.prepare_plan_with_config(graph, planner_cfg)?;
         let planner_cache = prepared.cache_status();
@@ -597,6 +597,21 @@ impl Engine {
     }
 
     pub fn planner_config(&self) -> Result<PlannerConfig, EngineError> {
+        self.planner_config_with_caps(true)
+    }
+
+    /// The planner configuration for `graph`. The GPU capabilities, which open the device, are
+    /// read only when the graph has a node that prefers or requires a GPU: a CPU-only graph plans
+    /// without creating a GPU context. (The capabilities only validate GPU-affinity nodes.)
+    pub(crate) fn planner_config_for(&self, graph: &Graph) -> Result<PlannerConfig, EngineError> {
+        let wants_gpu = graph
+            .nodes
+            .iter()
+            .any(|node| !matches!(node.compute, daedalus_core::compute::ComputeAffinity::CpuOnly));
+        self.planner_config_with_caps(wants_gpu)
+    }
+
+    fn planner_config_with_caps(&self, want_caps: bool) -> Result<PlannerConfig, EngineError> {
         if self.config.planner.enable_gpu
             && !cfg!(feature = "gpu")
             && matches!(self.config.gpu, GpuBackend::Device | GpuBackend::Mock)
@@ -624,16 +639,33 @@ impl Engine {
         };
         #[cfg(feature = "gpu")]
         {
-            if self.config.planner.enable_gpu {
+            if self.config.planner.enable_gpu && want_caps {
                 let ctx = self.get_gpu_handle()?;
                 cfg.gpu_caps = ctx.as_ref().map(|c| c.capabilities());
             }
         }
         #[cfg(not(feature = "gpu"))]
         {
-            let _ = cfg.enable_gpu;
+            let _ = (cfg.enable_gpu, want_caps);
         }
         Ok(cfg)
+    }
+
+    /// The GPU context when `needed` (a plan that runs on a GPU), else none: a CPU-only plan never
+    /// creates the device.
+    #[cfg(feature = "gpu")]
+    fn gpu_handle_if(
+        &self,
+        needed: bool,
+    ) -> Result<Option<Arc<daedalus_gpu::GpuContextHandle>>, EngineError> {
+        if needed { self.get_gpu_handle() } else { Ok(None) }
+    }
+
+    /// Whether this engine has created its GPU context (tests: a CPU-only plan leaves it absent).
+    #[cfg(feature = "gpu")]
+    #[doc(hidden)]
+    pub fn gpu_context_created(&self) -> bool {
+        self.gpu_handle.lock().is_some()
     }
 
     #[cfg(feature = "gpu")]
