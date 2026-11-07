@@ -148,6 +148,9 @@ cmd_link() {
 cmd_test() {
   step "Running tests"
   cargo test --workspace --all-targets --features "$CI_FEATURES"
+  # The engine's GPU-context tests are gated on the `gpu` feature, which the workspace run does
+  # not enable; the mock backend runs them without a device.
+  cargo test -p daedalus-engine --features gpu-mock,plugins --test it lazy_gpu
   cargo test -p daedalus-rs --features "$CI_FEATURES,dylib-plugins"
   cargo test -p daedalus-daemon --features tcp
 }

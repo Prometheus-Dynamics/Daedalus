@@ -297,8 +297,9 @@ fn explanation_lists_device_round_trips_across_nodes() {
 
 #[test]
 fn needs_gpu_only_for_gpu_nodes_and_device_edges() {
-    let plan = RuntimePlan::try_from_execution(&ExecutionPlan::new(graph_with_single_edge(), vec![]))
-        .expect("plan");
+    let plan =
+        RuntimePlan::try_from_execution(&ExecutionPlan::new(graph_with_single_edge(), vec![]))
+            .expect("plan");
     assert!(!plan.needs_gpu(), "a CPU-only plan needs no GPU context");
 
     let mut gpu_node = plan.clone();
