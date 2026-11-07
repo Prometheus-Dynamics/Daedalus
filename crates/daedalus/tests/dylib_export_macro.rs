@@ -26,7 +26,7 @@ fn demo_contract() -> BoundaryTypeContract {
 
 daedalus::export_plugin!(DemoPlugin, boundary_contracts[demo_contract()]);
 
-unsafe extern "C" fn capture(ctx: *mut c_void, ptr: *const u8, len: usize) {
+extern "C" fn capture(ctx: *mut c_void, ptr: *const u8, len: usize) {
     let slot = unsafe { &mut *ctx.cast::<Option<String>>() };
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     *slot = Some(String::from_utf8_lossy(bytes).into_owned());
@@ -34,7 +34,7 @@ unsafe extern "C" fn capture(ctx: *mut c_void, ptr: *const u8, len: usize) {
 
 fn sink(slot: &mut Option<String>) -> StrSink {
     StrSink {
-        ctx: (slot as *mut Option<String>).cast(),
+        context: (slot as *mut Option<String>).cast(),
         write: Some(capture),
     }
 }

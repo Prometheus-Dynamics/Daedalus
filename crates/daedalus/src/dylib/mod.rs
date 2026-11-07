@@ -274,27 +274,11 @@ impl From<&'static str> for StrView {
     }
 }
 
-/// C-safe callback through which a plugin entry point hands a string (a schema or an error
-/// message) to the host. The bytes are only borrowed for the duration of `write`.
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
-pub struct StrSink {
-    pub ctx: *mut c_void,
-    pub write: Option<unsafe extern "C" fn(ctx: *mut c_void, ptr: *const u8, len: usize)>,
-}
-
-impl StrSink {
-    /// Hand `value` to the host.
-    ///
-    /// # Safety
-    /// `ctx` and `write` must be the pair provided by the host for the current call.
-    pub unsafe fn write(&self, value: &str) {
-        if let Some(write) = self.write {
-            // Safety: guaranteed by the caller.
-            unsafe { write(self.ctx, value.as_ptr(), value.len()) };
-        }
-    }
-}
+/// The C-safe callback through which a plugin entry point hands a string (a schema or an error
+/// message) to the host: `lemnos-abi`'s [`MessageSink`](lemnos_abi::MessageSink), a context and a
+/// `write` callback, borrowed for the duration of the write. The same layout as before the
+/// `lemnos-abi` move (a stable ABI 8 plugin and an older one pass it the same way).
+pub type StrSink = lemnos_abi::MessageSink;
 
 /// Metadata a dynamic plugin reports about itself and the Daedalus build it was compiled with.
 #[repr(C)]

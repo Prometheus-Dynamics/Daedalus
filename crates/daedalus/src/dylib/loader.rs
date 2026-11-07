@@ -677,7 +677,7 @@ unsafe fn symbol<T: Copy>(
         })
 }
 
-pub(crate) unsafe extern "C" fn write_string(ctx: *mut c_void, ptr: *const u8, len: usize) {
+pub(crate) extern "C" fn write_string(ctx: *mut c_void, ptr: *const u8, len: usize) {
     if ctx.is_null() || ptr.is_null() {
         return;
     }
@@ -697,7 +697,7 @@ pub(crate) unsafe extern "C" fn write_string(ctx: *mut c_void, ptr: *const u8, l
 fn call(entry: impl FnOnce(StrSink) -> bool) -> Result<String, String> {
     let mut written: Option<String> = None;
     let sink = StrSink {
-        ctx: (&mut written as *mut Option<String>).cast(),
+        context: (&mut written as *mut Option<String>).cast(),
         write: Some(write_string),
     };
     match (entry(sink), written) {

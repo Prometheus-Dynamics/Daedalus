@@ -36,8 +36,7 @@ unsafe fn guarded(sink: StrSink, body: impl FnOnce() -> Result<(), String>) -> b
             crate::runtime::executor::panic_message(&*payload)
         ),
     };
-    // Safety: forwarded from the caller.
-    unsafe { sink.write(&message) };
+    sink.write(&message);
     false
 }
 

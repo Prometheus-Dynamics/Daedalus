@@ -529,7 +529,7 @@ impl HostNode {
 /// A sink writing into `slot`.
 pub(super) fn string_sink(slot: &mut Option<String>) -> StrSink {
     StrSink {
-        ctx: (slot as *mut Option<String>).cast(),
+        context: (slot as *mut Option<String>).cast(),
         write: Some(loader::write_string),
     }
 }

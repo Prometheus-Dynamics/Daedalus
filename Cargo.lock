@@ -1005,6 +1005,7 @@ dependencies = [
  "daedalus-runtime",
  "daedalus-transport",
  "image",
+ "lemnos-abi",
  "libc",
  "libloading 0.9.0",
  "parking_lot",

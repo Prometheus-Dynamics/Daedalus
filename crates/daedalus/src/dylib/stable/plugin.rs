@@ -513,8 +513,7 @@ pub(super) unsafe fn guarded(error: StrSink, body: impl FnOnce() -> Result<(), F
         Ok(Err(failure)) => failure,
         Err(panic) => (status::PANIC, panic_message(&*panic)),
     };
-    // Safety: forwarded from the caller.
-    unsafe { error.write(&message) };
+    error.write(&message);
     code
 }
 
@@ -583,10 +582,11 @@ pub unsafe fn release(instance: u64) {
     if instance.is_null() {
         return;
     }
-    let _ = catch_unwind(AssertUnwindSafe(|| {
+    // No message goes back from a release, so the `lemnos-abi` guard (a panic is dropped) does.
+    lemnos_abi::guard_or((), || {
         // Safety: guaranteed by the caller.
         drop(unsafe { Box::from_raw(instance) });
-    }));
+    });
 }
 
 /// Most const inputs one instance shares (see `NodeIo`'s shared consts).
@@ -648,8 +648,8 @@ pub unsafe extern "C" fn set_services_entry(
 
 /// The `unload` entry point (see [`super::UnloadFn`]).
 pub fn unload(cell: &StableRuntimeCell) {
-    let _ = catch_unwind(AssertUnwindSafe(|| {
+    lemnos_abi::guard_or((), || {
         let runtime = cell.0.lock().unwrap_or_else(|err| err.into_inner()).take();
         drop(runtime);
-    }));
+    });
 }

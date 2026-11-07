@@ -29,7 +29,7 @@ struct LinkedDependentPlugin;
 // No `deps("example_rust")` on the plugin: linking adds it to the schema anyway.
 daedalus::export_plugin!(LinkedDependentPlugin, deps[ExampleProjectPlugin]);
 
-unsafe extern "C" fn capture(ctx: *mut c_void, ptr: *const u8, len: usize) {
+extern "C" fn capture(ctx: *mut c_void, ptr: *const u8, len: usize) {
     let slot = unsafe { &mut *ctx.cast::<Option<String>>() };
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     *slot = Some(String::from_utf8_lossy(bytes).into_owned());
@@ -37,7 +37,7 @@ unsafe extern "C" fn capture(ctx: *mut c_void, ptr: *const u8, len: usize) {
 
 fn sink(slot: &mut Option<String>) -> StrSink {
     StrSink {
-        ctx: (slot as *mut Option<String>).cast(),
+        context: (slot as *mut Option<String>).cast(),
         write: Some(capture),
     }
 }
