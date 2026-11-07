@@ -12,26 +12,64 @@ use crate::portable::Arc;
 use crate::prelude::*;
 use alloc::collections::{BTreeMap, BTreeSet};
 use core::any::{TypeId, type_name};
+use core::fmt;
 use core::hash::{BuildHasherDefault, Hasher};
 
 use crate::portable::OnceLock;
 
-use daedalus_data::model::TypeExpr;
+use daedalus_data::model::{TypeExpr, Value};
 use daedalus_transport::{Payload, RustTypeIdentity, TypeKey, TypeKeyError};
 
+use crate::io::ConstCoercerMap;
 use crate::transport::{transport_key_typeexpr, typeexpr_transport_key};
 
+/// A payload of the given key built from a `Value` (a payload codec's `from_value`; the same type
+/// as `plugins::payload_codecs::CodecFromValueFn`).
+pub(crate) type ValueFromFn = Arc<dyn Fn(TypeKey, &Value) -> Result<Payload, String> + Send + Sync>;
+
 /// Frozen Rust type → [`TypeKey`] index of one registry (see the module docs). Cheap to clone.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TypeIndex {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug, Default)]
+impl fmt::Debug for TypeIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TypeIndex")
+            .field("keys", &self.inner.keys.len())
+            .field("rust_types", &self.inner.rust_types.len())
+            .field("codecs", &self.inner.codecs.len())
+            .finish()
+    }
+}
+
+#[derive(Default)]
 struct Inner {
     keys: HashMap<TypeId, Resolved, Fnv>,
     /// The Rust type registered per key; payloads under these keys are checked against it.
     rust_types: HashMap<TypeKey, RustTypeIdentity, Fnv>,
+    /// The `Value` → payload conversion of a key with a payload codec ([`ValueRoute::Codec`]).
+    codecs: HashMap<TypeKey, ValueFromFn, Fnv>,
+    /// The registry's const coercers, shared with the nodes ([`ValueRoute::Coerce`]).
+    const_coercers: Option<ConstCoercerMap>,
+}
+
+/// How a `Value` pushed under a key becomes a payload of that key (see
+/// [`TypeIndex::value_route`]).
+pub(crate) enum ValueRoute<'a> {
+    /// The key's payload codec builds the payload.
+    Codec(&'a ValueFromFn),
+    /// The const coercer of the key's Rust type checks the value. The `Value` is the payload:
+    /// node reads coerce it with the same coercer.
+    Coerce {
+        coercers: &'a ConstCoercerMap,
+        rust_type: &'static str,
+    },
+    /// The key names no Rust type the registry knows (builtin or structural), or the `Value`
+    /// itself, so the `Value` is the payload.
+    Passthrough,
+    /// The key is registered for a Rust type with neither a codec nor a const coercer.
+    Unconvertible { rust_type: &'static str },
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +94,18 @@ impl TypeIndex {
         types: impl IntoIterator<Item = (TypeId, TypeKeyUses)>,
         rust_types: impl IntoIterator<Item = (TypeKey, RustTypeIdentity)>,
     ) -> Self {
+        Self::new_with_values(types, rust_types, [], None)
+    }
+
+    /// [`Self::new`] plus the sources that convert a `Value` pushed under a key (see
+    /// `HostBridgeHandle::push_value`): the payload codecs' `from_value` conversions and the
+    /// registry's const coercers.
+    pub fn new_with_values(
+        types: impl IntoIterator<Item = (TypeId, TypeKeyUses)>,
+        rust_types: impl IntoIterator<Item = (TypeKey, RustTypeIdentity)>,
+        codecs: impl IntoIterator<Item = (TypeKey, ValueFromFn)>,
+        const_coercers: Option<ConstCoercerMap>,
+    ) -> Self {
         let mut keys: HashMap<TypeId, Resolved, Fnv> = types
             .into_iter()
             .filter_map(|(id, uses)| {
@@ -72,7 +122,33 @@ impl TypeIndex {
             inner: Arc::new(Inner {
                 keys,
                 rust_types: rust_types.into_iter().collect(),
+                codecs: codecs.into_iter().collect(),
+                const_coercers,
             }),
+        }
+    }
+
+    /// How a `Value` pushed under `key` becomes a payload of `key`. A payload codec wins; then a
+    /// key whose Rust type the registry does not know, or is `Value`, passes the `Value` through;
+    /// then the registry's const coercer of the Rust type.
+    pub(crate) fn value_route(&self, key: &TypeKey) -> ValueRoute<'_> {
+        if let Some(from_value) = self.inner.codecs.get(key) {
+            return ValueRoute::Codec(from_value);
+        }
+        let Some(rust) = self.inner.rust_types.get(key) else {
+            return ValueRoute::Passthrough;
+        };
+        if rust.same_type(&RustTypeIdentity::of::<Value>()) {
+            return ValueRoute::Passthrough;
+        }
+        match &self.inner.const_coercers {
+            Some(coercers) if coercers.read().contains_key(rust.type_name) => ValueRoute::Coerce {
+                coercers,
+                rust_type: rust.type_name,
+            },
+            _ => ValueRoute::Unconvertible {
+                rust_type: rust.type_name,
+            },
         }
     }
 

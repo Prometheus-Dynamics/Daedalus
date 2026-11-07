@@ -18,7 +18,7 @@ use daedalus::engine::{Engine, EngineConfig, HostGraph};
 use daedalus::runtime::handler_registry::HandlerRegistry;
 use daedalus::runtime::host_bridge::PayloadInspection;
 use daedalus::runtime::plugins::{PluginRegistry, RegistryPluginExt};
-use daedalus::transport::{Payload, TypeKey};
+use daedalus::transport::{FeedOutcome, Payload, TypeKey, TypeKeyError};
 use daedalus_plugins_stable_abi::StableAbiPlugin;
 use daedalus_plugins_stable_abi::locals::{TRACKER_KEY, tracker_schema};
 
@@ -122,4 +122,52 @@ fn a_plugin_type_crosses_to_a_host_value_port_and_back() {
         InstallPath::Stable
     );
     trackers_cross_to_values_and_back(&stables);
+}
+
+/// A host input keyed by the tracker's own key: `push_value` builds the tracker from a `Value`
+/// through the key's codec (`from_value`), so the host never names the Rust type.
+fn value_becomes_a_tracker_through_its_codec(registry: &PluginRegistry) {
+    let builder = registry
+        .graph_builder()
+        .unwrap()
+        .input_as("tracker_in", TypeExpr::opaque(TRACKER_KEY))
+        .output_as("hits_back", TypeExpr::Scalar(ValueType::Int))
+        .node_id("stable_abi:local_read", "reader")
+        .connect("tracker_in", "reader.obj")
+        .connect("reader.hits", "hits_back");
+    let mut host = Engine::new(EngineConfig::default())
+        .unwrap()
+        .compile_registry(registry, builder.build())
+        .unwrap();
+
+    let outcome = host.push_value("tracker_in", tracker(7, 3));
+    assert!(
+        matches!(outcome, FeedOutcome::Accepted { .. }),
+        "{outcome:?}"
+    );
+    host.tick().unwrap();
+    assert_eq!(host.take::<i64>("hits_back"), Some(3));
+
+    let error = match host.push_value("tracker_in", Value::Int(1)) {
+        FeedOutcome::Rejected(error) => *error,
+        other => panic!("expected a rejection, got {other:?}"),
+    };
+    assert!(
+        matches!(error, TypeKeyError::ValueRejected { ref port, .. } if port == "tracker_in"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_value_is_converted_to_a_plugin_type_by_its_codec() {
+    let mut statics = PluginRegistry::new();
+    statics.install_plugin(&StableAbiPlugin::new()).unwrap();
+    value_becomes_a_tracker_through_its_codec(&statics);
+
+    let mut stables = PluginRegistry::new();
+    assert_eq!(
+        library().install_into(&mut stables).unwrap(),
+        InstallPath::Stable
+    );
+    value_becomes_a_tracker_through_its_codec(&stables);
 }

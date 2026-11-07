@@ -8,7 +8,7 @@ use crate::prelude::*;
 
 use crate::collections::FastHashMap as HashMap;
 
-use daedalus_transport::{FreshnessPolicy, Payload, PolicyQueue, PressurePolicy};
+use daedalus_transport::{FreshnessPolicy, Payload, PolicyQueue, PressurePolicy, TypeKey};
 
 use crate::handles::PortId;
 use crate::plan::RuntimeEdgePolicy;
@@ -43,6 +43,9 @@ pub(super) struct PortState {
     pub(super) held_fresh: bool,
     /// Lifetime counters; `pending` is filled in from the queue when snapshotted.
     pub(super) stats: HostPortStats,
+    /// The key of the type the graph declares for an inbound port, set when the bridge attaches
+    /// to a graph (see `HostBridgeHandle::declare_input_key`); `push_value` converts through it.
+    pub(super) type_key: Option<TypeKey>,
 }
 
 impl PortState {
@@ -58,6 +61,7 @@ impl PortState {
             held_trigger: false,
             held_fresh: false,
             stats: HostPortStats::default(),
+            type_key: None,
         }
     }
 

@@ -125,6 +125,32 @@ pub enum TypeKeyError {
         found: String,
         expected: String,
     },
+    /// A `Value` was pushed to a host input whose port has no declared type, so no key names
+    /// what to build from it.
+    #[error(
+        "host input `{port}` has no declared type, so a `Value` cannot be converted for it; push \
+         a typed payload (`push_as`/`push_payload`) or declare the port's type (`input_as`)"
+    )]
+    UntypedPort { port: String },
+    /// A `Value` was pushed to a host input whose key is registered for a Rust type this
+    /// registry cannot build from a `Value`.
+    #[error(
+        "host input `{port}` takes `{type_key}` (`{rust_type}`), which this registry cannot build \
+         from a `Value`; register a payload codec for the key (`register_value_codec`), a const \
+         coercer for the type (`register_const_coercer`), or push a typed value"
+    )]
+    ValueUnconvertible {
+        port: String,
+        type_key: TypeKey,
+        rust_type: String,
+    },
+    /// The codec or const coercer of a host input's key rejected the pushed `Value`.
+    #[error("host input `{port}` (`{type_key}`) rejected the value: {reason}")]
+    ValueRejected {
+        port: String,
+        type_key: TypeKey,
+        reason: String,
+    },
 }
 
 fn join_keys(keys: &[TypeKey]) -> String {

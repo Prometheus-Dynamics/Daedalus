@@ -29,6 +29,7 @@ mod ports;
 mod serializers;
 mod takes;
 mod types;
+mod value;
 mod wait;
 pub use batch::{HostBatchOutcomes, HostBatchRejected, HostInputBatch};
 use direction::Direction;

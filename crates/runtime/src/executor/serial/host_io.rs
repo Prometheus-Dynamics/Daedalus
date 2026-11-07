@@ -59,6 +59,20 @@ pub(crate) fn resolve_host_nodes(
             for port in daedalus_planner::host_held_inputs(&node.metadata) {
                 handle.set_held_input(PortId::new(port));
             }
+            // A host input's declared type: the planner's resolved type of the bridge's output
+            // port (`push_value` converts through its key).
+            let dynamic = daedalus_planner::DynamicPortMetadata::from_node_metadata(&node.metadata);
+            for (port, _) in &inbound {
+                let resolved = dynamic
+                    .resolved_type(false, port.as_str())
+                    .filter(|ty| !daedalus_planner::is_generic_marker(ty));
+                if let Some(expr) = resolved {
+                    handle.declare_input_key(
+                        port.clone(),
+                        daedalus_registry::typeexpr_transport_key(&expr),
+                    );
+                }
+            }
             Some(HostNodeIo {
                 node_idx: node_ref.0,
                 handle,

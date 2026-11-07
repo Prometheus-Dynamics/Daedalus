@@ -31,6 +31,7 @@ mod multicam;
 mod patch;
 mod pipeline_cache;
 mod reload;
+mod values;
 
 pub use bindings::{
     HostGraphInput, HostGraphLane, HostGraphOutput, HostGraphPayloadInput, HostGraphPayloadOutput,

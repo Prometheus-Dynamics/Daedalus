@@ -116,7 +116,9 @@ impl PluginRegistry {
     /// Freeze what this registry knows about Rust types into a [`TypeIndex`]: each type
     /// resolves to the key it owns (`#[type_key]`/`DaedalusTypeExpr`, a foreign-type mapping,
     /// [`Self::type_registry`]) or else to the single key ports and adapters use it under, and
-    /// each key to the Rust type recorded for it. Graph builders and compiled graphs capture
+    /// each key to the Rust type recorded for it, and carry the payload codecs and const coercers a
+    /// `Value` pushed under a key is converted with (see `TypeIndex::value_route`). Graph builders
+    /// and compiled graphs capture
     /// one, so lookups only depend on this registry, never on install order or on other
     /// registries in the process.
     pub fn type_index(&self) -> TypeIndex {
@@ -134,11 +136,15 @@ impl PluginRegistry {
         for (id, registered) in self.type_registry.registered_types() {
             types.entry(id).or_default().owned = Some(typeexpr_transport_key(&registered.expr));
         }
-        TypeIndex::new(
+        TypeIndex::new_with_values(
             types,
             self.boundary_types
                 .iter()
                 .map(|(key, identity)| (key.clone(), *identity)),
+            self.payload_codecs
+                .iter()
+                .filter_map(|(key, codec)| Some((key.clone(), codec.from_value.clone()?))),
+            Some(self.const_coercers.clone()),
         )
     }
 

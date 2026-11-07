@@ -120,6 +120,18 @@ another Rust type is refused with `FeedOutcome::Rejected(TypeKeyError::RustTypeM
 in a node later. Payloads under unknown keys, bytes and foreign handles pass; the check compares
 one `u64` per feed and is skipped when the registry records no Rust types.
 
+A host with structured data as a `Value` (a parsed config, a JSON document) and no Rust type for
+it pushes it with `push_value(port, Value)` (`HostBridgeHandle` and `HostGraph`). The port's
+declared type (`input_as`, or the type the planner resolved for it) picks the conversion: a key
+with a payload codec (`register_payload_codec`, a stable-ABI plugin's codec too) builds its
+payload with the codec's `from_value`; a key whose Rust type has a const coercer (a node's input
+or config type, or `register_const_coercer`) validates the value with it, so a wrong shape is
+refused at push as `TypeKeyError::ValueRejected`, and the node reads the value through the same
+coercer; a builtin or structural key takes the value as is. A key registered for a Rust type with
+neither conversion is `TypeKeyError::ValueUnconvertible`, and an undeclared port is
+`TypeKeyError::UntypedPort`. The host names no Rust type: `push_value` with a
+`Struct` `Value` reaches a typed node input the same way a graph constant does.
+
 #### Builtin Numbers
 
 Every builtin number is one Rust type and one key: `i8`, `i16`, `i32`, `i64`, `isize`, `u8`,

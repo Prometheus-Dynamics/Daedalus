@@ -17,6 +17,15 @@ plugin ABI and does not load.
 
 ### Added
 
+- `HostBridgeHandle::push_value(port, Value)` and `HostGraph::push_value`: a host pushes a
+  `Value` into a host input and it reaches the port's declared type without the host knowing the
+  Rust type. The port's key (planner-resolved, set when a bridge attaches to a graph) picks the
+  conversion: a payload codec's `from_value` (also a stable-ABI plugin's codec), or the const
+  coercer of the key's Rust type, which validates the value at push (a wrong shape is refused as
+  `TypeKeyError::ValueRejected`) and the node reads it through the same coercer. A builtin or
+  structural key takes the value as is. New `TypeKeyError` variants `UntypedPort`,
+  `ValueUnconvertible` and `ValueRejected`. `TypeIndex` carries the codecs and const coercers
+  (`TypeIndex::new_with_values`), so a graph's pushes convert with the registry it was compiled from.
 - Surface ABI 1.3: `daedalus_surface_stable_abi_min` and `daedalus_surface_stable_abi_max`, the
   stable plugin ABI range the surface installs (`STABLE_ABI_MIN_VERSION`, `STABLE_ABI_VERSION`)
   as `u32` data in `.rodata`, declared in `daedalus_surface.h`. An image checker reads them from

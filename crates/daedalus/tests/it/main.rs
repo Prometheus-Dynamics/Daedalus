@@ -17,6 +17,7 @@ mod foreign_interfaces;
 mod foreign_type_keys;
 mod graph_document;
 mod host_graph_introspection;
+mod host_push_value;
 mod input_dropped;
 mod numeric_keys;
 mod optional_inputs;
