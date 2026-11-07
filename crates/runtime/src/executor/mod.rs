@@ -181,7 +181,7 @@ type EdgeSpec = RuntimeEdge;
 
 /// Const inputs keyed by pre-built port ids so ticks do not allocate port names or payloads.
 pub(crate) fn node_const_inputs(node: &RuntimeNode) -> Arc<NodeConstInputs> {
-    Arc::new(
+    Arc::new(NodeConstInputs::new(
         node.const_inputs
             .iter()
             .map(|(port, value)| {
@@ -189,7 +189,7 @@ pub(crate) fn node_const_inputs(node: &RuntimeNode) -> Arc<NodeConstInputs> {
                 (port.into(), payload)
             })
             .collect(),
-    )
+    ))
 }
 
 /// Node `node_idx`'s const inputs (one `Arc` clone; `None` without any), which every call

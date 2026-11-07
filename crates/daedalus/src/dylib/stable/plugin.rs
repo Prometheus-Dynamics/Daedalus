@@ -306,7 +306,7 @@ impl StableInstance {
                 .map_err(|message| (status::INVALID_INPUT, message))?;
             decoded.push(port);
         }
-        self.consts = (!decoded.is_empty()).then(|| Arc::new(decoded));
+        self.consts = (!decoded.is_empty()).then(|| Arc::new(NodeConstInputs::from(decoded)));
         Ok(())
     }
 

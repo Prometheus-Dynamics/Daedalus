@@ -117,6 +117,7 @@ pub use gpu_source::{GpuSource, RETRY_BASE, RETRY_CAP, ReadyGpu, RetryingGpu};
 pub mod graph_builder;
 #[cfg(feature = "gpu")]
 pub use gpu_scope::with_current_gpu;
+mod const_index;
 pub mod handler_registry;
 pub mod handles;
 pub mod host_bridge;

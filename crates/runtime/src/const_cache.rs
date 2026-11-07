@@ -276,7 +276,7 @@ mod tests {
     fn shared_const_lists_skip_the_per_port_check_until_replaced() {
         let consts = |level: i64| {
             let payload = CorrelatedPayload::from_edge(Payload::owned("value", Value::Int(level)));
-            Arc::new(vec![(PortId::from_static("level"), payload)])
+            Arc::new(vec![(PortId::from_static("level"), payload)].into())
         };
         let call = |consts: &Arc<NodeConstInputs>, edge: Option<i64>| {
             let inputs = edge.map(|level| {

@@ -131,7 +131,7 @@ pub fn new_const_coercer_map() -> ConstCoercerMap {
 }
 
 /// A node's const inputs as ready-made payloads, shared by its calls (see [`NodeIo`]).
-pub type NodeConstInputs = Vec<NodePort>;
+pub use crate::const_index::NodeConstInputs;
 
 /// What every call of one node shares: the executor's const coercers, type index and clock, and
 /// the node's connected output ports. The executor builds one per node, so a call clones one
@@ -303,7 +303,7 @@ impl NodeIo {
         self.consts
             .as_deref()
             .into_iter()
-            .flatten()
+            .flat_map(|consts| consts.iter())
             .enumerate()
             .filter(move |(idx, _)| taken & (1 << idx) == 0)
     }
@@ -472,16 +472,27 @@ impl NodeIo {
         if let Some(idx) = self.inputs.iter().position(|(name, _)| name == port) {
             return Some(self.inputs.remove(idx).1);
         }
-        let (idx, (_, payload)) = self.untaken_consts().find(|(_, (name, _))| name == port)?;
+        let (idx, (_, payload)) = self.untaken_const(port)?;
         let payload = payload.clone();
         self.consts_taken |= 1 << idx;
         Some(payload)
     }
 
+    /// The payload of input `port`: an edge input first, then an untaken const. Plain loops, not
+    /// the `inputs()` adapter chain: a handler reads each argument with one of these per call.
     pub fn get_payload(&self, port: &str) -> Option<&Payload> {
-        self.inputs()
-            .find(|(name, _)| name == port)
-            .map(|(_, payload)| &payload.inner)
+        if let Some((_, payload)) = self.inputs.iter().find(|(name, _)| name == port) {
+            return Some(&payload.inner);
+        }
+        self.untaken_const(port)
+            .map(|(_, (_, payload))| &payload.inner)
+    }
+
+    /// The first untaken const named `port`, with its index in the node's list.
+    fn untaken_const(&self, port: &str) -> Option<(usize, &NodePort)> {
+        let consts = self.consts.as_deref()?;
+        let idx = consts.find(port)?;
+        (self.consts_taken & (1 << idx) == 0).then(|| (idx, &consts[idx]))
     }
 
     pub fn get_typed_ref<T>(&self, port: &str) -> Option<&T>

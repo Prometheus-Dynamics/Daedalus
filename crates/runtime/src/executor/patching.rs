@@ -23,7 +23,9 @@ pub(crate) fn apply_patch_to_const_inputs(
                     if let Some(entry) = const_inputs.get_mut(idx) {
                         // Copy-on-write: calls holding the old list keep it.
                         let entry = crate::portable::Arc::make_mut(entry);
-                        apply_const_override(entry, &normalized_port, port, value);
+                        entry.edit(|ports| {
+                            apply_const_override(ports, &normalized_port, port, value)
+                        });
                         report.matched_nodes += 1;
                     }
                 }
@@ -83,7 +85,7 @@ fn normalize_port(port: &str) -> String {
 }
 
 fn apply_const_override(
-    const_inputs: &mut NodeConstInputs,
+    const_inputs: &mut Vec<crate::io::NodePort>,
     normalized_port: &str,
     port: &str,
     value: &Option<daedalus_data::model::Value>,
