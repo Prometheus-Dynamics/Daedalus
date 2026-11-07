@@ -41,6 +41,16 @@ plugin ABI and does not load.
   - New `GpuError::NoContext` variant: adding it breaks exhaustive matches on `GpuError`; add an arm.
   Internal: the fallback context (`GPU_CTX`, `ctx()`, `ctx_async()`) is removed; `selection` is
   unchanged, and `shared_context` remains the way to get the process device.
+- **Facade GPU features no longer imply `engine` (`daedalus-rs`).** `gpu` is now `gpu-runtime`:
+  GPU types, registry, planner and runtime support, with no engine. `gpu-wgpu` (and so
+  `gpu-dmabuf`, `gpu-gles`, `gpu-image`, `gpu-async`) no longer imply `gpu-engine`; it enables
+  `daedalus-engine?/gpu-wgpu`, so the engine gets its wgpu backend only when `engine` is also on.
+  `gpu-engine` keeps its meaning: `engine` plus GPU. Consumers that want the GPU-enabled engine
+  must name it: `engine,gpu` or `gpu-engine`. A plugin built with `gpu` or `gpu-wgpu` no longer
+  carries the engine crate: its dependency closure and build shrink, while the linked `.text` is
+  unchanged in the probes (the linker already dropped unreferenced engine code). Measured with
+  `plugins,gpu` and with `plugins,dylib-plugins,gpu-dmabuf` (no `engine` in `cargo tree -i
+  daedalus-engine`).
 - **Stable plugin handshake (changed in place, no bump).** `daedalus::dylib::STABLE_ABI_VERSION`
   stays 7. A plugin may export `daedalus_plugin_stable_abi` (`STABLE_HANDSHAKE_SYMBOL`): a
   `lemnos_abi::AbiVersion` whose layout is `STABLE_LAYOUT_HASH`, the hash of the stable `#[repr(C)]`

@@ -72,9 +72,12 @@ gpu-engine = [
     "engine",
     "daedalus-engine/gpu",
 ]
-gpu = ["gpu-engine"]
-# wgpu backend: Vulkan, plus Metal on Apple and DX12 on Windows.
-gpu-wgpu = ["gpu-engine", "daedalus-gpu/gpu-wgpu", "daedalus-engine/gpu-wgpu"]
+# GPU types, registry, planner and runtime support, without the engine: a plugin built with
+# `gpu` carries no engine. Add `engine` (or use `gpu-engine`) for the GPU-enabled engine.
+gpu = ["gpu-runtime"]
+# wgpu backend: Vulkan, plus Metal on Apple and DX12 on Windows. Does not imply `engine`: with
+# `engine` enabled the engine gets its wgpu backend (`daedalus-engine?/gpu-wgpu`).
+gpu-wgpu = ["gpu-runtime", "daedalus-gpu/gpu-wgpu", "daedalus-engine?/gpu-wgpu"]
 # wgpu's OpenGL/GLES backend for devices without Vulkan (changes wgpu internals, so a boundary
 # feature).
 gpu-gles = ["gpu-wgpu", "daedalus-gpu/gpu-gles"]
