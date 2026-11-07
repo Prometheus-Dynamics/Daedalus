@@ -356,24 +356,39 @@ impl PayloadStorage for RecycledStorage {
 /// never read as a node, and nothing is read from its data or owner pointers. Only a handle that
 /// passes the check reads the node's header.
 fn recycled_header(handle: &ForeignHandle) -> Option<&Header> {
+    // Safety: a node pointer is alive for the handle's borrow (see `recycled_node`).
+    recycled_node(handle).map(|node| unsafe { &*node })
+}
+
+/// The node `handle` holds, as a raw pointer with the provenance of the whole node (the handle's
+/// owner pointer), when `handle` is one of this module's: its owner functions are this module's
+/// [`release`], compared by address (`fn_addr_eq`, not a generic instantiation).
+///
+/// The address is unique to this build's code, and only this module builds owners with it
+/// ([`owner_functions`]): a handle from another build carries that build's function, so it is
+/// never read as a node, and nothing is read from its data or owner pointers. Only a handle that
+/// passes the check reads the node's header. The handle holds a reference to the node, so the
+/// node is alive for the handle's borrow.
+fn recycled_node(handle: &ForeignHandle) -> Option<*const Header> {
     let owner = handle.owner();
     let (_, release_fn) = owner_functions();
     if !core::ptr::fn_addr_eq(owner.release, release_fn) {
         return None;
     }
-    // Safety: `release` is this module's, so `owner.ptr` is a node this module built; the handle
-    // holds a reference to it, so the node is alive for the handle's borrow.
-    Some(unsafe { &*owner.ptr.cast::<Header>() })
+    Some(owner.ptr.cast::<Header>())
 }
 
 /// The `T` a recycled handle holds, when `T` is the owner type of its node: the node's `TypeId`
 /// must be `T`'s, and the handle's data must be the node's value.
 pub(super) fn recycled_ref<T: 'static>(handle: &ForeignHandle) -> Option<&T> {
-    let header = recycled_header(handle)?;
-    if header.type_id != TypeId::of::<T>() {
+    let node = recycled_node(handle)?;
+    // Safety: `node` is a live node of this module (see `recycled_node`).
+    if unsafe { (*node).type_id } != TypeId::of::<T>() {
         return None;
     }
-    let node = core::ptr::from_ref(header).cast::<Node<T>>();
+    // The value is reached through the node pointer itself (the owner pointer, which covers the
+    // whole node), never through a reference to the header alone.
+    let node = node.cast::<Node<T>>();
     // Safety: the header is the first field of a `Node<T>` (`repr(C)`, and `T` is the owner the
     // node was built for, by the `TypeId` check), so the value's address is in the node.
     let value = unsafe { addr_of!((*node).value) }.cast::<T>();
